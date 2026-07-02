@@ -52,8 +52,9 @@ struct InstInfo {
 layout(set = 0, binding = 0) uniform accelerationStructureEXT TLAS;
 layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
 layout(set = 0, binding = 2, scalar) readonly buffer Meshes { MeshDesc meshes[]; };
-// 3 vec4 per material: [0]=baseColor.rgb + alpha, [1]=(metallic,roughness,0,0),
-// [2]=emissive.rgb + 0. mat(id,k) indexes row k of material id.
+// 3 vec4 per material: [0]=baseColor.rgb + alpha,
+// [1]=(metallic,roughness,alphaMode,alphaCutoff), [2]=emissive.rgb + 0.
+// mat(id,k) indexes row k of material id.
 layout(set = 0, binding = 3, scalar) readonly buffer Mats   { vec4 matRows[]; };
 #define mat(id, k) matRows[(id) * 3u + (k)]
 layout(set = 0, binding = 4, scalar) readonly buffer Insts  { InstInfo insts[]; };
@@ -197,8 +198,24 @@ void main() {
     // Base color: material (non-instanced) or per-instance tint (instanced), times
     // the interpolated per-vertex displayColor when present.
     vec3 base;
+    float alpha = 1.0;
+    float metallic = 0.0;
+    float roughness = 0.5;
+    float alphaMode = 0.0;
+    float alphaCutoff = 0.5;
+    vec3 emissive = vec3(0.0);
     if (ii.useMaterial != 0u) {
-      base = (md.matId != 0xffffffffu) ? mat(md.matId, 0u).rgb : vec3(0.6);
+      if (md.matId != 0xffffffffu) {
+        base = mat(md.matId, 0u).rgb;
+        alpha = mat(md.matId, 0u).a;
+        metallic = mat(md.matId, 1u).x;
+        roughness = mat(md.matId, 1u).y;
+        alphaMode = mat(md.matId, 1u).z;
+        alphaCutoff = mat(md.matId, 1u).w;
+        emissive = mat(md.matId, 2u).rgb;
+      } else {
+        base = vec3(0.6);
+      }
     } else {
       base = ii.tint.rgb;  // per-instance color or the prototype's flatColor
     }
@@ -206,13 +223,22 @@ void main() {
       Cols cb = Cols(md.vtxColorAddr);
       base *= fetchCol(cb, i0) * w0 + fetchCol(cb, i1) * bc.x + fetchCol(cb, i2) * bc.y;
     }
+    float materialOpacity = clamp(alpha, 0.0, 1.0);
+    if (alphaMode > 0.5 && alphaMode < 1.5) {
+      materialOpacity = (alpha >= alphaCutoff) ? 1.0 : 0.0;
+    }
 
+    // Render mode (RenderMode in camPos.w). Only shaded/wireframe need the
+    // default hard shadow below; debug AOVs overwrite outc and should avoid this
+    // extra ray query on large RT scenes. AO/soft-shadow modes issue their own
+    // ray queries in their AOV branches.
+    int rmode = int(pc.camPos.w + 0.5);
     vec3 L = normalize(pc.lightDir.xyz);
     float diff = max(dot(N, L), 0.0);
 
     // Shadow ray towards the light (hard shadows).
     float shadow = 1.0;
-    if (diff > 0.0) {
+    if ((rmode == 0 || rmode == 1) && diff > 0.0) {
       rayQueryEXT sq;
       rayQueryInitializeEXT(sq, TLAS,
                             gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
@@ -223,12 +249,24 @@ void main() {
         shadow = 0.0;
       }
     }
-    outc = base * (0.25 + 0.85 * diff * shadow);
+    vec3 V = normalize(pc.camPos.xyz - hit);
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0),
+                     mix(96.0, 8.0, clamp(roughness, 0.0, 1.0)));
+    outc = base * (0.25 + 0.85 * diff * shadow) +
+           vec3(spec * shadow) * mix(0.04, 0.35, clamp(metallic, 0.0, 1.0)) +
+           emissive;
 
     // Render mode (RenderMode in camPos.w): 1=wireframe (edges only), 2=shading
     // normal, 3=material-id, 4=geometric normal, 5=uv set 0, 6=depth (t /
     // depthScale in lightDir.w).
-    int rmode = int(pc.camPos.w + 0.5);
+    if (rmode == 0) {
+      if (alphaMode > 0.5 && alphaMode < 1.5 && materialOpacity <= 0.0) {
+        outc = pc.clearColor.rgb;
+      } else if (alphaMode > 1.5 && materialOpacity < 1.0) {
+        outc = mix(pc.clearColor.rgb, outc, materialOpacity);
+      }
+    }
     if (rmode == 1) {
       float e = min(w0, min(bc.x, bc.y));
       if (e > 0.02) outc = pc.clearColor.rgb;
@@ -266,8 +304,7 @@ void main() {
     } else if (rmode == 11) {  // emissive
       outc = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 2u).rgb : vec3(0.0);
     } else if (rmode == 12) {  // opacity
-      float a = (ii.useMaterial != 0u && md.matId != 0xffffffffu) ? mat(md.matId, 0u).a : 1.0;
-      outc = vec3(a);
+      outc = vec3(materialOpacity);
     } else if (rmode == 13) {  // world position
       outc = clamp((hit - pc.sceneMin.xyz) / pc.sceneExtent.xyz, 0.0, 1.0);
     } else if (rmode == 23) {  // uv checker

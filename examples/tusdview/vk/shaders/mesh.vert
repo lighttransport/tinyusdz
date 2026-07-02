@@ -37,7 +37,7 @@ layout(set = 6, binding = 0, std430) readonly buffer DispMat { vec2 sb[]; } dm;
 layout(push_constant) uniform PushConstants {
   mat4 model;
   vec4 baseColor;   // rgb + .w opacity
-  vec4 matAux;      // .x metallic, .y roughness (AOVs)
+  vec4 matAux;      // .x metallic, .y roughness, .z alphaMode, .w alphaCutoff
   vec4 emissive;    // .xyz emissive (AOV)
   ivec4 ids;        // .x matId, .y flags, .z meshId
 } pc;

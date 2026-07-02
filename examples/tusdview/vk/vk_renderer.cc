@@ -87,7 +87,7 @@ void NormalMatrix3(const float m[16], float out9[9]) {
 struct PushC {
   float model[16];     // 64  world matrix (clip pos + world-space AOVs)
   float baseColor[4];  // 16  rgb + .w opacity
-  float matAux[4];     // 16  .x metallic, .y roughness (material AOVs)
+  float matAux[4];     // 16  .x metallic, .y roughness, .z alphaMode, .w alphaCutoff
   float emissive[4];   // 16  .xyz emissive (material AOV)
   int32_t ids[4];      // 16  .x matId, .y flags, .z meshId, .w pad
 };
@@ -3264,8 +3264,9 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
   texIsUdim_.assign(textureCount > 0 ? static_cast<size_t>(textureCount) : 0, 0);
 
   // RT materials SSBO: 3 vec4 (12 floats) per material -- baseColor.rgb+alpha,
-  // (metallic, roughness, 0, 0), emissive.rgb+0. The raster path's per-draw push
-  // constants still carry only baseColor (matColor_ row 0), read with stride 12.
+  // (metallic, roughness, alphaMode, alphaCutoff), emissive.rgb+0. The raster
+  // path's per-draw push constants still read the shared scalar material lanes
+  // with stride 12.
   matColor_.resize(materials.size() * 12);
   matBaseTex_.resize(materials.size());
   matMetalRoughTex_.resize(materials.size());
@@ -3280,6 +3281,8 @@ void VulkanRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     matColor_[i * 12 + 3] = materials[i].alpha;
     matColor_[i * 12 + 4] = materials[i].metallic;
     matColor_[i * 12 + 5] = materials[i].roughness;
+    matColor_[i * 12 + 6] = static_cast<float>(materials[i].alphaMode);
+    matColor_[i * 12 + 7] = materials[i].alphaCutoff;
     matColor_[i * 12 + 8] = materials[i].emissive[0];
     matColor_[i * 12 + 9] = materials[i].emissive[1];
     matColor_[i * 12 + 10] = materials[i].emissive[2];
@@ -5396,18 +5399,22 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         if (sub.materialId >= 0 &&
             static_cast<size_t>(sub.materialId) * 12 + 10 < matColor_.size()) {
           // matColor_ stride 12: [0..2]=baseColor, [3]=alpha, [4]=metallic,
-          // [5]=roughness, [8..10]=emissive.
+          // [5]=roughness, [6]=alphaMode, [7]=alphaCutoff, [8..10]=emissive.
           const float* mc = &matColor_[static_cast<size_t>(sub.materialId) * 12];
           pc.baseColor[0] = mc[0]; pc.baseColor[1] = mc[1];
           pc.baseColor[2] = mc[2]; pc.baseColor[3] = mc[3];
           pc.matAux[0] = mc[4];          // metallic
           pc.matAux[1] = mc[5];          // roughness
+          pc.matAux[2] = mc[6];          // alphaMode
+          pc.matAux[3] = mc[7];          // alphaCutoff
           pc.emissive[0] = mc[8]; pc.emissive[1] = mc[9]; pc.emissive[2] = mc[10];
         } else {
           pc.baseColor[0] = pc.baseColor[1] = pc.baseColor[2] = 0.6f;
           pc.baseColor[3] = 1.0f;
           pc.matAux[0] = 0.0f;           // metallic default
           pc.matAux[1] = 0.5f;           // roughness default
+          pc.matAux[2] = 0.0f;           // opaque alphaMode
+          pc.matAux[3] = 0.5f;           // alphaCutoff default
         }
         int flags = ((mesh.geometricNormal || displaced || mesh.hasMorph) ? 1 : 0) |
                     (mesh.doubleSided ? 2 : 0) |

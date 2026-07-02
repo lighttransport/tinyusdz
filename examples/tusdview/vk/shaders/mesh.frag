@@ -39,7 +39,7 @@ layout(set = 5, binding = 0) uniform Frame {
 layout(push_constant) uniform PushConstants {
   mat4 model;
   vec4 baseColor;   // rgb + .w opacity
-  vec4 matAux;      // .x metallic, .y roughness (AOVs)
+  vec4 matAux;      // .x metallic, .y roughness, .z alphaMode, .w alphaCutoff
   vec4 emissive;    // .xyz emissive (AOV)
   ivec4 ids;        // .x matId, .y flags, .z meshId
 } pc;
@@ -151,7 +151,14 @@ void main() {
     if (fr.mode.x == 11) {                                                            // emissive
       outColor = vec4(pc.emissive.xyz * sampleEmissive(vUV).rgb, 1.0); return;
     }
-    if (fr.mode.x == 12) { outColor = vec4(vec3(pc.baseColor.a), 1.0); return; }  // opacity
+    if (fr.mode.x == 12) {
+      float opacity = clamp(pc.baseColor.a * sampleBaseColor(vUV).a, 0.0, 1.0);
+      if (pc.matAux.z > 0.5 && pc.matAux.z < 1.5) {
+        opacity = (opacity >= pc.matAux.w) ? 1.0 : 0.0;
+      }
+      outColor = vec4(vec3(opacity), 1.0);
+      return;
+    }
     if (fr.mode.x == 13) {  // world position
       outColor = vec4(clamp((vWorldPos - fr.sceneMin.xyz) / fr.sceneExtent.xyz, 0.0, 1.0), 1.0);
       return;
@@ -230,7 +237,13 @@ void main() {
     }
     if (fr.mode.x == 26) { outColor = vec4(idColor(-1), 1.0); return; }  // instance id: raster non-instanced -> gray
   }
-  vec3 base = pc.baseColor.rgb * sampleBaseColor(vUV).rgb;
+  vec4 baseSample = sampleBaseColor(vUV);
+  float opacity = clamp(pc.baseColor.a * baseSample.a, 0.0, 1.0);
+  if (pc.matAux.z > 0.5 && pc.matAux.z < 1.5) {
+    if (opacity < pc.matAux.w) discard;
+    opacity = 1.0;
+  }
+  vec3 base = pc.baseColor.rgb * baseSample.rgb;
   vec4 mr = sampleMetalRough(vUV);
   float metallic = pc.matAux.x * mr.b;
   float roughness = pc.matAux.y * mr.g;
@@ -244,5 +257,8 @@ void main() {
   float spec = pow(max(dot(N, H), 0.0), mix(96.0, 8.0, clamp(roughness, 0.0, 1.0)));
   vec3 c = base * (0.25 + 0.85 * diff) +
            vec3(spec) * mix(0.04, 0.35, clamp(metallic, 0.0, 1.0)) + emissive;
-  outColor = vec4(c, pc.baseColor.a);
+  if (pc.matAux.z > 1.5 && opacity < 1.0) {
+    c *= opacity;  // pipeline uses premultiplied alpha blending
+  }
+  outColor = vec4(c, opacity);
 }

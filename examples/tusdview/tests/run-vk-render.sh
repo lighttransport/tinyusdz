@@ -19,7 +19,8 @@
 #
 # Usage (from the repo root, after building build/tusdview):
 #   examples/tusdview/tests/run-vk-render.sh
-# Overrides: TUSDVIEW=<binary>  ASSET=<usd file>
+# Overrides: TUSDVIEW=<binary>  ASSET=<usd file>  OPACITY_ASSET=<usd file>
+#            TUSDVIEW_RENDER_TIMEOUT=30s
 # Also run via ctest: `ctest -R tusdview-vk-render`.
 set -uo pipefail
 SKIP=77
@@ -28,6 +29,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TUSDVIEW="${TUSDVIEW:-$REPO_ROOT/build/tusdview}"
 ASSET="${ASSET:-$REPO_ROOT/models/suzanne-pbr.usda}"
+OPACITY_ASSET="${OPACITY_ASSET:-$REPO_ROOT/models/spectral-scene.usda}"
+TUSDVIEW_RENDER_TIMEOUT="${TUSDVIEW_RENDER_TIMEOUT:-30s}"
 
 if [ ! -x "$TUSDVIEW" ]; then
   echo "SKIP: tusdview binary not found at $TUSDVIEW (set TUSDVIEW=...)"
@@ -37,9 +40,21 @@ if [ ! -f "$ASSET" ]; then
   echo "SKIP: asset not found at $ASSET (set ASSET=...)"
   exit $SKIP
 fi
+if [ ! -f "$OPACITY_ASSET" ]; then
+  echo "SKIP: opacity asset not found at $OPACITY_ASSET (set OPACITY_ASSET=...)"
+  exit $SKIP
+fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+run_tusdview() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "$TUSDVIEW_RENDER_TIMEOUT" "$TUSDVIEW" "$@"
+  else
+    "$TUSDVIEW" "$@"
+  fi
+}
 
 # Assert a screenshot has more than one distinct pixel (i.e. is not a flat blank
 # clear). PPM (binary P6) is trivial to parse without external packages; fall
@@ -79,14 +94,31 @@ PY
 run_pass() {
   # $1 = label, rest = extra tusdview flags
   local label="$1"; shift
+  run_asset_pass "$label" "$ASSET" "$@"
+}
+
+run_asset_pass() {
+  # $1 = label, $2 = asset, rest = extra tusdview flags
+  local label="$1"; shift
+  local asset="$1"; shift
   local out="$TMP/vk_${label}.ppm"
   echo "=== tusdview VK pass: $label ==="
   local log
-  log="$("$TUSDVIEW" --headless "$@" --frames 4 --screenshot "$out" "$ASSET" 2>&1)"
+  log="$(run_tusdview --headless "$@" --frames 4 --screenshot "$out" "$asset" 2>&1)"
   echo "$log"
   if ! echo "$log" | grep -q "render stats"; then
     echo "SKIP: Vulkan backend unavailable in this environment ($label)"
     return $SKIP
+  fi
+  if [ "$label" = "profile" ]; then
+    for expected in "large-scene-profile island resolved" "backend=vk" \
+                    "--next=on" "--raster-lod=on" "--rt-lod=on" \
+                    "--max-gpu-mem=10.0"; do
+      if ! echo "$log" | grep -q -- "$expected"; then
+        echo "FAIL: profile pass did not apply expected default: $expected"
+        return 1
+      fi
+    done
   fi
   if [ ! -s "$out" ]; then
     echo "FAIL: no screenshot written ($label)"
@@ -113,5 +145,21 @@ rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
-echo "PASS: Vulkan raster + ray-query render correctly on this GPU"
+# 3) Opacity AOV over non-opaque PreviewSurface constants. This guards the
+#    raster material alphaMode/alphaCutoff push-constant path without adding
+#    private assets.
+run_asset_pass opacity-aov "$OPACITY_ASSET" --backend vk --mode opacity
+rc=$?
+[ $rc -eq $SKIP ] && exit $SKIP
+[ $rc -ne 0 ] && exit $rc
+
+# 4) Large-scene realtime profile wiring. Uses the same tiny fixture so CI does
+#    not need Caldera/Island/ALab, but exercises the preset resolver, --next,
+#    Vulkan headless rendering, raster LOD defaults, and startup diagnostics.
+run_pass profile --large-scene-profile island
+rc=$?
+[ $rc -eq $SKIP ] && exit $SKIP
+[ $rc -ne 0 ] && exit $rc
+
+echo "PASS: Vulkan raster + ray-query + large-scene profile render correctly on this GPU"
 exit 0

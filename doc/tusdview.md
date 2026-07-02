@@ -63,6 +63,9 @@ cd build && ctest -R tusdview-vk-render --output-on-failure
 examples/tusdview/tests/run-vk-render.sh
 ```
 
+Set `TUSDVIEW_RENDER_TIMEOUT` (default `30s`) to bound each tiny headless render
+in the Vulkan test harness when debugging flaky driver paths.
+
 **Verified working — NVIDIA GeForce RTX 5060 Ti (Linux, driver `610.43.02`,
 Vulkan 1.4), 2026-06-28.** Both rasterization and hardware ray query render the
 full scene correctly (raster vs ray-query agree to <1 LSB mean), at the default
@@ -175,6 +178,16 @@ cmake --build build-llvm-mingw -j16 --target tusdview
 ./build_ninja/tusdview --headless --frames 8 --screenshot out.png model.usdz
 ./build_ninja/tusdview --headless --rt --frames 8 --screenshot rt.png model.usdz
 
+# Large-scene realtime presets: resolves existing Vulkan/LOD/budget flags for
+# Caldera, Island, or ALab. Profiles do not enable texture resize or compression.
+./build_ninja/tusdview --headless --large-scene-profile island \
+  --frames 8 --screenshot island.ppm /path/to/island.usda
+
+# Optional local harness. Set any scene path env var that exists on the machine.
+CALDERA=/path/to/caldera.usda ISLAND=/path/to/island.usda ALAB=/path/to/alab.usda \
+  bash examples/tusdview/tests/run-large-scene-profiles.sh
+# Use TUSDVIEW_SCENE_TIMEOUT=10m (default) to bound each large-scene run.
+
 # OpenGL (needs a window/context) on a headless host — wrap in a virtual X server
 # with a 24-bit visual:
 xvfb-run -a -s "-screen 0 1280x800x24" \
@@ -184,6 +197,11 @@ xvfb-run -a -s "-screen 0 1280x800x24" \
 `.png` and `.ppm` outputs are both supported; `--frames N` loads synchronously so
 screenshots are deterministic. Pixel-compare two screenshots (e.g. backend or
 threaded-vs-single parity) with PIL/numpy:
+
+The Vulkan RT shaded mode uses the material base color, alpha, roughness,
+metallic, and emissive constants in the RT material buffer. Texture sampling in
+RT remains a separate follow-up; this branch does not change texture resize or
+compressed-texture behavior.
 
 ```sh
 python3 -c "from PIL import Image; import numpy as np; \

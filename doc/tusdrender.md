@@ -32,6 +32,15 @@ tusdrender models/suzanne-pbr.usda cpu.png -rtPreview -w 320 -height 240 -autofr
 tusdrender models/suzanne-pbr.usda vk.png  -vk  -w 320 -height 240 -autoframe
 # Vulkan hardware ray query (RDNA2+; else falls back to compute trace):
 tusdrender models/suzanne-pbr.usda vkr.png -vkr -w 320 -height 240 -autoframe
+# GPU shading mode. cpu is the current reference path; preview is accepted for
+# upcoming fast GPU material preview and currently falls back to cpu with a log.
+tusdrender models/suzanne-pbr.usda vk-preview.png -vkr -gpuShade preview \
+  -w 320 -height 240 -autoframe
+# Large-scene preset for Vulkan batch/validation runs. Explicit backend, LOD,
+# camera, and memory flags still win; texture resize/compression flags are not
+# changed by the profile.
+tusdrender /path/to/island.usda island.png -largeSceneProfile island \
+  -w 960 -height 540
 # HIP/ROCm compute trace (AMD; kernel compiled at runtime via hiprtc):
 tusdrender models/suzanne-pbr.usda hip.png -hip -w 320 -height 240 -autoframe
 # Direct3D 11 compute trace (Windows):
@@ -41,6 +50,15 @@ tusdrender models/suzanne-pbr.usda d3d.png -d3d -w 320 -height 240 -autoframe
 A correct GPU image must match the `-rtPreview` reference (same framed mesh).
 The startup log prints the chosen device + path, e.g. `backend: LightRT VK
 (compute trace)` / `LightRT D3D11 (compute trace, N rays in 1 dispatch)`.
+GPU traversal is batched; the CPU-side BVH build and shade-after-hit stage honor
+`-threads N` (`0` = hardware concurrency). On Vulkan hardware ray query (`-vkr`
+with ray-query support), tusdrender skips the CPU LightRT BVH build and builds
+the Vulkan acceleration structure directly from the flattened indexed geometry.
+Successful `-vkr` ray-query renders log `ray_query, indexed Vulkan AS, CPU BVH
+skipped`, which the GPU regression script checks. If the driver reports ray-query
+support but AS build/trace fails, `-vkr` logs `compute trace, ray_query fallback`
+and renders through the Vulkan compute path instead of returning a blank/failure.
+Set `TUSDR_FORCE_VKR_FALLBACK=1` to exercise that fallback path in local tests.
 
 ## Fixed (was: "GPU backends mis-render") — 2026-06-28
 

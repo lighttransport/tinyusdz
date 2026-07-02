@@ -2179,6 +2179,16 @@ if(TINYUSDZ_BUILD_TESTS)
     )
     set_tests_properties(tool-tusdrender-gpu-render PROPERTIES
       SKIP_RETURN_CODE 77)
+
+    add_test(
+      NAME tool-tusdrender-large-scene-profiles
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-large-scene-profiles.sh
+    )
+    set_tests_properties(tool-tusdrender-large-scene-profiles PROPERTIES
+      ENVIRONMENT "TUSDRENDER=$<TARGET_FILE:tusdrender>"
+      SKIP_RETURN_CODE 77
+      LABELS "large-scene")
   endif()
 
   #
@@ -2212,6 +2222,16 @@ if(TINYUSDZ_BUILD_TESTS)
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
+
+    add_test(
+      NAME tusdview-large-scene-profiles
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-large-scene-profiles.sh
+    )
+    set_tests_properties(tusdview-large-scene-profiles PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer;large-scene")
 
     #
     # tusdview: CUDA ray-tracing backend run test. Renders headless via --cuda
@@ -2634,6 +2654,24 @@ if(TINYUSDZ_BUILD_TESTS)
                                ${PROJECT_SOURCE_DIR}/tools/tusdrender
                                ${PROJECT_SOURCE_DIR}/src/external/lightrt)
     add_test(NAME feat-tusdr-rt-lod COMMAND feat-tusdr-rt-lod
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # tusdrender GPU flattening must reject malformed/oversized geometry before
+    # handing indexed buffers to LightRT/Vulkan. This protects the large-scene
+    # render paths from uint32 wrap and invalid mesh indices.
+    add_executable(feat-tusdr-gpu-common
+                   tools/tusdrender/tests/test_gpu_common.cc
+                   tools/tusdrender/tusdr_gpu_common.cc)
+    add_sanitizers(feat-tusdr-gpu-common)
+    target_link_libraries(feat-tusdr-gpu-common PRIVATE
+                          ${TINYUSDZ_TARGET_STATIC}
+                          lightrt_c)
+    target_include_directories(feat-tusdr-gpu-common PRIVATE
+                               ${PROJECT_SOURCE_DIR}/src
+                               ${PROJECT_SOURCE_DIR}
+                               ${PROJECT_SOURCE_DIR}/tools/tusdrender
+                               ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+    add_test(NAME feat-tusdr-gpu-common COMMAND feat-tusdr-gpu-common
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # USDC reader must carry the authored specifier (def/over/class) into the
