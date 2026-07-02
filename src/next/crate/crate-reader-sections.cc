@@ -1084,8 +1084,10 @@ bool CrateReader::Impl::ReadPaths() {
   }
   size_t n = static_cast<size_t>(num_encoded);
 
-  // Read 3 compressed integer arrays (delta+LZ4 format)
-  auto read_comp_array = [&](uint32_t* dst, size_t count, const char* name) -> bool {
+  // Read 3 compressed integer arrays (delta+LZ4 format). Reads (stream
+  // cursor) and decodes are split so the parallel gate can overlap the three
+  // independent decompressions.
+  auto read_comp_blob = [&](std::vector<uint8_t>& out, const char* name) -> bool {
     uint64_t comp_size;
     if (!reader()->read_u64(comp_size)) {
       AddError(std::string("Failed to read ") + name + " compressed size");
@@ -1097,17 +1099,22 @@ bool CrateReader::Impl::ReadPaths() {
       return false;
     }
     // Include u64 compressed_size prefix (DecompressCompressedU32 expects it)
-    std::vector<uint8_t> comp_data(8 + static_cast<size_t>(comp_size));
-    std::memcpy(comp_data.data(), &comp_size, 8);
-    if (!reader()->read(comp_data.data() + 8, static_cast<size_t>(comp_size))) {
+    out.resize(8 + static_cast<size_t>(comp_size));
+    std::memcpy(out.data(), &comp_size, 8);
+    if (!reader()->read(out.data() + 8, static_cast<size_t>(comp_size))) {
       AddError(std::string("Failed to read ") + name + " compressed data");
       return false;
     }
+    return true;
+  };
+  auto decode_comp_array = [&](const std::vector<uint8_t>& comp_data,
+                               uint32_t* dst, size_t count,
+                               const char* name) -> bool {
     DecompressResult dr = DecompressCompressedU32(comp_data.data(), comp_data.size(),
                                                    dst, count);
     if (!dr.success) {
       // Fallback: legacy EncodeIntegers (common-prefix, no LZ4)
-      dr = DecompressIntegers(comp_data.data() + 8, static_cast<size_t>(comp_size), count, false);
+      dr = DecompressIntegers(comp_data.data() + 8, comp_data.size() - 8, count, false);
       if (!dr.success) {
         AddError(std::string("Failed to decompress ") + name + ": " + dr.error);
         return false;
@@ -1130,10 +1137,54 @@ bool CrateReader::Impl::ReadPaths() {
   std::vector<uint32_t> element_tokens(n);
   std::vector<uint32_t> jump_raw(n);  // stored as uint32_t, interpreted as int32_t
 
-  if (!read_comp_array(path_indices.data(), n, "path indices") ||
-      !read_comp_array(element_tokens.data(), n, "element tokens") ||
-      !read_comp_array(jump_raw.data(), n, "jump indices")) {
-    return false;
+  {
+    std::vector<uint8_t> blob_pi, blob_et, blob_j;
+    if (!read_comp_blob(blob_pi, "path indices") ||
+        !read_comp_blob(blob_et, "element tokens") ||
+        !read_comp_blob(blob_j, "jump indices")) {
+      return false;
+    }
+    bool ok_pi = false, ok_et = false, ok_j = false;
+    bool overlapped = false;
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+    if (n >= 65536) {
+      std::mutex done_mu;
+      std::condition_variable done_cv;
+      int remaining = 2;
+      auto submit = [&](std::function<void()> fn) {
+        return SubmitPoolTask(options_.num_threads, std::move(fn));
+      };
+      const bool s1 = submit([&]() {
+        ok_pi = decode_comp_array(blob_pi, path_indices.data(), n, "path indices");
+        std::lock_guard<std::mutex> lock(done_mu);
+        if (--remaining == 0) done_cv.notify_all();
+      });
+      const bool s2 = s1 && submit([&]() {
+        ok_et = decode_comp_array(blob_et, element_tokens.data(), n, "element tokens");
+        std::lock_guard<std::mutex> lock(done_mu);
+        if (--remaining == 0) done_cv.notify_all();
+      });
+      if (s1 && s2) {
+        ok_j = decode_comp_array(blob_j, jump_raw.data(), n, "jump indices");
+        std::unique_lock<std::mutex> lock(done_mu);
+        done_cv.wait(lock, [&]() { return remaining == 0; });
+        overlapped = true;
+      } else if (s1) {
+        // Only the first task went out: decode the rest here, then join it.
+        ok_et = decode_comp_array(blob_et, element_tokens.data(), n, "element tokens");
+        ok_j = decode_comp_array(blob_j, jump_raw.data(), n, "jump indices");
+        std::unique_lock<std::mutex> lock(done_mu);
+        done_cv.wait(lock, [&]() { return remaining <= 1; });
+        overlapped = true;
+      }
+    }
+#endif
+    if (!overlapped) {
+      ok_pi = decode_comp_array(blob_pi, path_indices.data(), n, "path indices");
+      ok_et = decode_comp_array(blob_et, element_tokens.data(), n, "element tokens");
+      ok_j = decode_comp_array(blob_j, jump_raw.data(), n, "jump indices");
+    }
+    if (!ok_pi || !ok_et || !ok_j) return false;
   }
 
   std::vector<uint8_t> seen_path_slot(static_cast<size_t>(num_paths), uint8_t{0});

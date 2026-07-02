@@ -763,7 +763,58 @@ bool CrateReader::Impl::BuildStage() {
 
   // Sort by full path (produces correct depth-first order with parents before children)
   const auto t_sort_start = Clock::now();
-  if (!is_prim_entry_sorted_by_path(prim_entries)) {
+  bool parallel_sort_done = false;
+#if defined(TINYUSDZ_NEXT_PARALLEL_BUILD_STAGE)
+  {
+    int nt = options_.num_threads;
+    if (nt <= 0) {
+      nt = static_cast<int>(std::thread::hardware_concurrency());
+      if (nt < 1) nt = 1;
+      nt = std::min(nt, 8);
+    }
+    if (nt > 1 && prim_entries.size() >= 8192 &&
+        !is_prim_entry_sorted_by_path(prim_entries)) {
+      // Sort contiguous chunks on the pool, then serial in-place merge rounds
+      // (each O(n)); std::sort is stable-order-equivalent here because sort
+      // keys (full paths) are unique per prim entry table slot.
+      const auto cmp = [](const PrimEntry& a, const PrimEntry& b) {
+        return a.full_path < b.full_path;
+      };
+      const size_t nchunks = 8;
+      std::vector<size_t> bounds(nchunks + 1);
+      for (size_t k = 0; k <= nchunks; ++k) {
+        bounds[k] = prim_entries.size() * k / nchunks;
+      }
+      std::mutex done_mu;
+      std::condition_variable done_cv;
+      size_t remaining = nchunks;
+      for (size_t k = 0; k < nchunks; ++k) {
+        auto task = [&, k]() {
+          std::sort(prim_entries.begin() + bounds[k],
+                    prim_entries.begin() + bounds[k + 1], cmp);
+          std::lock_guard<std::mutex> lock(done_mu);
+          if (--remaining == 0) done_cv.notify_all();
+        };
+        if (!SubmitPoolTask(options_.num_threads, task)) task();
+      }
+      {
+        std::unique_lock<std::mutex> lock(done_mu);
+        done_cv.wait(lock, [&]() { return remaining == 0; });
+      }
+      for (size_t width = 1; width < nchunks; width *= 2) {
+        for (size_t k = 0; k + width < nchunks; k += 2 * width) {
+          std::inplace_merge(prim_entries.begin() + bounds[k],
+                             prim_entries.begin() + bounds[k + width],
+                             prim_entries.begin() +
+                                 bounds[std::min(k + 2 * width, nchunks)],
+                             cmp);
+        }
+      }
+      parallel_sort_done = true;
+    }
+  }
+#endif
+  if (!parallel_sort_done && !is_prim_entry_sorted_by_path(prim_entries)) {
     std::sort(prim_entries.begin(), prim_entries.end(),
               [](const PrimEntry& a, const PrimEntry& b) {
                 return a.full_path < b.full_path;
