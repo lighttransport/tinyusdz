@@ -371,6 +371,22 @@ bool VulkanRenderer::createDevice(std::string* err) {
   // not enabled in the headless path).
   std::vector<const char*> devExts;
   if (!headless_) devExts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+  // VK_EXT_memory_budget (optional): live per-heap VRAM usage/budget, the only
+  // queried (not estimated) memory number we can report. Purely informational.
+  {
+    uint32_t n = 0;
+    vkEnumerateDeviceExtensionProperties(phys_, nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> have(n);
+    vkEnumerateDeviceExtensionProperties(phys_, nullptr, &n, have.data());
+    for (const auto& e : have) {
+      if (std::strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0) {
+        devExts.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        memBudgetSupported_ = true;
+        break;
+      }
+    }
+  }
   VkDeviceCreateInfo ci{};
   ci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   ci.queueCreateInfoCount = 1;
@@ -486,6 +502,36 @@ bool VulkanRenderer::createDevice(std::string* err) {
     }
   }
   LOGD("ray tracing: rtSupported_=%d after device creation", rtSupported_ ? 1 : 0);
+  {
+    uint64_t used = 0, budget = 0;
+    if (memoryBudget(&used, &budget)) {
+      LOGI("VRAM (VK_EXT_memory_budget): %.2f GiB used / %.2f GiB budget",
+           double(used) / (1024.0 * 1024.0 * 1024.0),
+           double(budget) / (1024.0 * 1024.0 * 1024.0));
+    }
+  }
+  return true;
+}
+
+// Sum device-local heap usage/budget from VK_EXT_memory_budget. Returns false
+// (zeros) when the extension is unavailable. This is the driver's live view of
+// this process's VRAM, unlike the CPU-side --max-gpu-mem estimate.
+bool VulkanRenderer::memoryBudget(uint64_t* usedBytes, uint64_t* budgetBytes) const {
+  *usedBytes = 0;
+  *budgetBytes = 0;
+  if (!memBudgetSupported_ || !phys_) return false;
+  VkPhysicalDeviceMemoryBudgetPropertiesEXT mb{};
+  mb.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+  VkPhysicalDeviceMemoryProperties2 mp{};
+  mp.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+  mp.pNext = &mb;
+  vkGetPhysicalDeviceMemoryProperties2(phys_, &mp);
+  for (uint32_t i = 0; i < mp.memoryProperties.memoryHeapCount; ++i) {
+    if (mp.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+      *usedBytes += mb.heapUsage[i];
+      *budgetBytes += mb.heapBudget[i];
+    }
+  }
   return true;
 }
 
@@ -4236,6 +4282,12 @@ void VulkanRenderer::rebuildTlas() {
                  double(sizes.accelerationStructureSize) / 1e9,
                  double(sizes.buildScratchSize) / 1e9,
                  std::chrono::duration<double, std::milli>(tt - tlasT0).count());
+    uint64_t used = 0, budget = 0;
+    if (memoryBudget(&used, &budget)) {
+      std::fprintf(stderr, "[vk_rt] VRAM: %.2f GiB used / %.2f GiB budget\n",
+                   double(used) / (1024.0 * 1024.0 * 1024.0),
+                   double(budget) / (1024.0 * 1024.0 * 1024.0));
+    }
   }
 
   // Per-mesh descriptor SSBO + materials SSBO.
@@ -5576,9 +5628,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     const double recMs = std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now() - trec0)
                              .count();
+    uint64_t vramUsed = 0, vramBudget = 0;
+    memoryBudget(&vramUsed, &vramBudget);
     std::fprintf(stderr,
-                 "[present] prev-frame GPU wait=%.1fms  CPU record+submit=%.1fms\n",
-                 waitMs, recMs);
+                 "[present] prev-frame GPU wait=%.1fms  CPU record+submit=%.1fms"
+                 "  vram=%.2f/%.2fGiB\n",
+                 waitMs, recMs, double(vramUsed) / (1024.0 * 1024.0 * 1024.0),
+                 double(vramBudget) / (1024.0 * 1024.0 * 1024.0));
   }
 
   if (headless_) {
