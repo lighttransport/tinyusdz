@@ -11,9 +11,9 @@
 
 namespace tusdr {
 
-bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
+bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
-                      GpuTriScene *out) {
+                      GpuTriScene *out, bool build_bvh) {
   // Flatten all meshes into one indexed vertex/index array LightRT can build:
   // flat_verts = unique positions, flat_idx = 3*ntris vertex ids.
   uint32_t base_idx = 0;
@@ -63,11 +63,15 @@ bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
     return false;
   }
 
+  // The ray-query backends build their AS on the GPU from flat_verts/flat_idx;
+  // only the compute-trace backends traverse this CPU BVH.
+  if (!build_bvh) return true;
+
   lrt_tri_build_options bopts;
   std::memset(&bopts, 0, sizeof(bopts));
-  bopts.quality = LRT_TRI_BUILD_DEFAULT;
-  bopts.layout = LRT_TRI_LAYOUT_BVH4;
-  bopts.num_threads = 1;
+  bopts.quality = opt.quality;
+  bopts.layout = LRT_TRI_LAYOUT_BVH4;  // the trace shader's W=4 SoA layout
+  bopts.num_threads = WorkerThreadCount(opt.threads);
 
   lrt_result lrterr = LRT_RESULT_OK;
   out->scene = lrt_tri_scene_build_indexed(out->flat_verts.data(),
