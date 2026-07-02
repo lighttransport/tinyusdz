@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <thread>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -203,11 +204,14 @@ int main(int argc, char **argv) {
   pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
   int parse_threads = 0;
   int write_threads = 0;
-  // Parallel composition is OPT-IN via --compose-threads N (default 1 = serial,
-  // no threading). It is byte-identical to serial; it helps small compose-bound
-  // scenes and currently regresses huge instanced ones, so it stays off by
-  // default. Independent from write/thread flags below.
-  int compose_threads = 1;
+  // Parallel composition: 0 = auto (hardware_concurrency), N = fixed, 1 = serial.
+  // Byte-identical to serial. It parallel pre-warms the sources_cache (the LIVRPS
+  // arc resolution that dominates BuildStage) and fills opinions concurrently.
+  // Now a net win on heavily-instanced scenes too (ALab load+compose -16%, and
+  // two large instanced UE scenes -15%/-2% at auto), so it defaults ON like
+  // parse/write.
+  // Force serial with --compose-threads 1. Independent from write/thread flags.
+  int compose_threads = 0;
   bool timing = false;
   bool parse_profile = false;
   bool async_arrays = true;
@@ -271,8 +275,8 @@ int main(int argc, char **argv) {
         return 2;
       }
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
-      compose_threads = std::atoi(argv[++i]);  // opt-in parallel compose (>1)
-      if (compose_threads < 1) compose_threads = 1;
+      compose_threads = std::atoi(argv[++i]);  // 0=auto, 1=serial, N=fixed
+      if (compose_threads < 0) compose_threads = 0;
     } else if (std::strcmp(argv[i], "--timing") == 0) {
       timing = true;
     } else if (std::strcmp(argv[i], "--parse-profile") == 0) {
@@ -765,9 +769,16 @@ int main(int argc, char **argv) {
     pcp::CompositionOptions opts;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
-    // Parallel compose (pre-warm sources_cache) is OPT-IN via --compose-threads N
-    // and byte-identical to serial. Default 1 = serial (no threading).
-    opts.num_threads = compose_threads;
+    // Parallel compose (pre-warm sources_cache + parallel opinion fill) is
+    // byte-identical to serial. 0 = auto (hardware_concurrency); 1 = serial.
+    {
+      int ct = compose_threads;
+      if (ct == 0) {
+        unsigned hw = std::thread::hardware_concurrency();
+        ct = hw ? static_cast<int>(hw) : 1;
+      }
+      opts.num_threads = ct;
+    }
     // Forward the CLI timing flag to the library (which no longer reads the env):
     // gates the [next_compose]/[next_build]/[next_warm] diagnostics.
     opts.enable_timing = timing;

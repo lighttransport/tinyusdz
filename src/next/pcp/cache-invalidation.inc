@@ -85,9 +85,9 @@
       }
     }
     for (const std::string &k : to_drop) DropIndex(k);
-    // spec_cache_ keys are (stack_idx, site), not prim paths; layer contents
+    // spec cache keys are (stack_idx, site), not prim paths; layer contents
     // changed so clear it entirely.
-    spec_cache_.clear();
+    spec_cache_by_stack_.clear();
     // Sources and lazy composed specs can be populated without a PrimIndex, so
     // site_to_indices is not a complete dependency map for them. Be conservative
     // until lazy composition records its own layer-site dependencies.
