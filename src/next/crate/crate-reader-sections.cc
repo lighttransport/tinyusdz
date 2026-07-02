@@ -1371,6 +1371,31 @@ bool CrateReader::Impl::ReadPaths() {
             buf[0] = '.';
             ++buf;
           }
+          // Fast path: pre-order visitation gives strong tree locality, so a
+          // node's parent usually sits EARLIER IN THE SAME RANGE — its string
+          // is already built and can be block-copied (one sequential memcpy
+          // instead of an ancestor-chain walk of cache misses). Parents are
+          // never property nodes (properties are path-tree leaves), but check
+          // anyway: a '.'-prefixed parent string would corrupt the copy.
+          const uint32_t par_i = parent_of[i];
+          if (par_i != kNoParent && par_i >= r.begin && !rootish[i] &&
+              static_cast<int32_t>(element_tokens[par_i]) >= 0) {
+            const std::string& pstr = paths_[path_indices[par_i]];
+            const size_t base = plen[par_i];
+            if (pstr.size() == base && base >= 1) {
+              const std::string_view ei = elem_of(i);
+              if (base == 1) {  // parent is "/"
+                buf[0] = '/';
+                std::memcpy(buf + 1, ei.data(), ei.size());
+              } else {
+                std::memcpy(buf, pstr.data(), base);
+                buf[base] = '/';
+                std::memcpy(buf + base + 1, ei.data(), ei.size());
+              }
+              paths_[store_idx] = std::move(out);
+              continue;
+            }
+          }
           // Backward ancestor-chain fill.
           size_t j = i;
           for (;;) {
