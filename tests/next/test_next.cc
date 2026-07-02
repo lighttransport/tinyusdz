@@ -298,7 +298,7 @@ void test_lexer() {
 
   tok = lexer.next();
   assert(tok.type == TokenType::Identifier);
-  assert(tok.value == "Mesh");
+  assert(tok.text == "Mesh");
 
   tok = lexer.next();
   assert(tok.type == TokenType::String);

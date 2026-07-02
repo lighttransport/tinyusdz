@@ -19,13 +19,13 @@ bool AsciiParser::Impl::ParsePrim() {
   const Token& spec_tok = lexer_->peek();
   if (spec_tok.type == TokenType::Def) {
     specifier = PrimSpecifier::Def;
-    lexer_->next();
+    lexer_->consume();
   } else if (spec_tok.type == TokenType::Over) {
     specifier = PrimSpecifier::Over;
-    lexer_->next();
+    lexer_->consume();
   } else if (spec_tok.type == TokenType::Class) {
     specifier = PrimSpecifier::Class;
-    lexer_->next();
+    lexer_->consume();
   } else {
     AddError("Expected 'def', 'over', or 'class'");
     return false;
@@ -101,7 +101,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
     }
 
     if (tok.type == TokenType::Reorder) {
-      lexer_->next();
+      lexer_->consume();
       std::string what;
       lexer_->expect(TokenType::Identifier, what);
       if (Match(TokenType::Equals)) SkipValueLike();
@@ -111,7 +111,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
     if (tok.type == TokenType::Prepend || tok.type == TokenType::Append ||
         tok.type == TokenType::Delete || tok.type == TokenType::Add) {
       TokenType op_tok = tok.type;
-      lexer_->next();
+      lexer_->consume();
       if (lexer_->peek().type == TokenType::Rel) {
         PrimSpec::RelationshipListOp op = PrimSpec::RelationshipListOp::Append;
         if (op_tok == TokenType::Prepend) {
@@ -126,8 +126,8 @@ bool AsciiParser::Impl::ParsePrimContents() {
       continue;
     }
 
-    if (tok.type == TokenType::Identifier && tok.value == "variantSet") {
-      lexer_->next();
+    if (tok.type == TokenType::Identifier && tok.text == "variantSet") {
+      lexer_->consume();
       std::string vs_name;
       if (!lexer_->expect(TokenType::String, vs_name)) {
         AddError("Expected variantSet name");
@@ -151,8 +151,8 @@ bool AsciiParser::Impl::ParsePrimContents() {
       continue;
     }
 
-    AddWarning("Skipping unknown token: " + tok.value);
-    lexer_->next();
+    AddWarning("Skipping unknown token: " + std::string(tok.text));
+    lexer_->consume();
   }
 
   return true;
@@ -166,12 +166,12 @@ bool AsciiParser::Impl::ParseAttribute() {
     const Token& tok = lexer_->peek();
     if (tok.type == TokenType::Custom) {
       is_custom = true;
-      lexer_->next();
+      lexer_->consume();
     } else if (tok.type == TokenType::Uniform) {
       is_uniform = true;
-      lexer_->next();
+      lexer_->consume();
     } else if (tok.type == TokenType::Varying) {
-      lexer_->next();
+      lexer_->consume();
     } else {
       break;
     }
@@ -189,7 +189,7 @@ bool AsciiParser::Impl::ParseAttribute() {
 
   bool is_array = false;
   if (Check(TokenType::OpenBracket)) {
-    lexer_->next();
+    lexer_->consume();
     if (!Match(TokenType::CloseBracket)) {
       AddError("Expected ']' for array type");
       return false;
@@ -230,7 +230,7 @@ bool AsciiParser::Impl::ParseAttribute() {
   if (is_uniform) flags |= PropSlot::kFlagUniform;
 
   if (Check(TokenType::Equals)) {
-    lexer_->next();
+    lexer_->consume();
 
     if (type_id == TypeId::Invalid) {
       if (!SkipValueLike()) {
@@ -256,11 +256,11 @@ bool AsciiParser::Impl::ParseAttribute() {
     ParsePropertyMetadata(attr_name);
 
   } else if (Check(TokenType::Dot)) {
-    lexer_->next();
+    lexer_->consume();
     const Token& prop_tok = lexer_->peek();
 
     if (prop_tok.type == TokenType::TimeSamples) {
-      lexer_->next();
+      lexer_->consume();
       if (!Match(TokenType::Equals)) {
         AddError("Expected '=' after timeSamples");
         return false;
@@ -271,8 +271,8 @@ bool AsciiParser::Impl::ParseAttribute() {
       }
       ParsePropertyMetadata(attr_name);
     } else if (prop_tok.type == TokenType::Identifier &&
-               prop_tok.value == "connect") {
-      lexer_->next();
+               prop_tok.text == "connect") {
+      lexer_->consume();
       if (!Match(TokenType::Equals)) {
         AddError("Expected '=' after connect");
         return false;
@@ -283,9 +283,9 @@ bool AsciiParser::Impl::ParseAttribute() {
         cur->add_property_slot(attr_name_id, type_id, flags);
       }
       if (Check(TokenType::None)) {
-        lexer_->next();
+        lexer_->consume();
       } else if (Check(TokenType::OpenBracket)) {
-        lexer_->next();
+        lexer_->consume();
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
           std::string p;
           if (lexer_->expect(TokenType::PathRef, p) && cur) {
@@ -313,8 +313,8 @@ bool AsciiParser::Impl::ParseAttribute() {
       }
       ParsePropertyMetadata(attr_name);
     } else {
-      AddWarning("Unknown attribute property: " + prop_tok.value);
-      lexer_->next();
+      AddWarning("Unknown attribute property: " + std::string(prop_tok.text));
+      lexer_->consume();
     }
   } else {
     builder_->add_property(attr_name, Value(), flags);
@@ -327,7 +327,7 @@ bool AsciiParser::Impl::ParseAttribute() {
 }
 
 bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
-  lexer_->next();
+  lexer_->consume();
 
   std::string rel_name;
   if (!ParseNamespacedName(&rel_name, "relationship name")) {
@@ -342,7 +342,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
 
   std::vector<Path> targets;
   if (Check(TokenType::OpenBracket)) {
-    lexer_->next();
+    lexer_->consume();
     while (!Check(TokenType::CloseBracket) && !AtEnd()) {
       std::string target;
       if (lexer_->expect(TokenType::PathRef, target)) {
@@ -358,7 +358,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
     lexer_->expect(TokenType::PathRef, target);
     targets.emplace_back(target);
   } else if (Check(TokenType::None)) {
-    lexer_->next();
+    lexer_->consume();
   }
 
   if (!targets.empty()) {

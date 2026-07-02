@@ -72,6 +72,9 @@ class MappedFile {
       data_ = nullptr;
       return true;
     }
+    // Plain demand paging: MAP_POPULATE was measured SLOWER here (the upfront
+    // populate serializes on the main thread, while demand minor-faults spread
+    // across the parse and overlap the array worker pool).
     void* p = ::mmap(nullptr, n, PROT_READ, MAP_PRIVATE, fd, 0);
     if (p == MAP_FAILED) {
       ::close(fd);
@@ -134,7 +137,7 @@ bool IsNameToken(const Token& tok) {
     case TokenType::Add:
     case TokenType::Reorder:
     case TokenType::Rel:
-      return !tok.value.empty();
+      return !tok.text.empty();
     default:
       return false;
   }
@@ -142,13 +145,19 @@ bool IsNameToken(const Token& tok) {
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
 namespace {
-// Deferral window. Below the floor, per-item bookkeeping beats the parse cost;
-// at/above the ceiling the existing intra-array parallel path (see
-// kParallelArrayMinBytes in value-parser-arrays.inc) already splits the single
-// array across the pool and must keep doing so — a deferred batch would parse
-// it on one worker.
+// Deferral window. Below the floor, per-item bookkeeping beats the parse cost.
+// Huge arrays are deferred too — one worker parses the whole array serially
+// into the exactly-pre-sized payload while the main thread keeps lexing. That
+// beats the synchronous intra-array parallel path (which blocks the main
+// thread in a per-array join and pays worker-local growth plus a full
+// concatenate copy) on scenes dominated by multi-MB arrays: on flattened
+// Island (9.3GB, 73% of numeric bytes in >=4MiB arrays) it is the difference
+// between the main thread waiting on joins and streaming ahead. The ceiling
+// only bounds the drain-tail: a single array bigger than this would leave one
+// worker parsing alone after lexing finishes, so it stays on the synchronous
+// split path.
 constexpr size_t kDeferredArrayMinBytes = 256;
-constexpr size_t kDeferredArrayMaxBytes = size_t(4) << 20;  // 4 MiB
+constexpr size_t kDeferredArrayMaxBytes = size_t(1) << 30;  // 1 GiB
 }  // namespace
 #endif
 
@@ -394,7 +403,7 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
           else if (k == "scale") scl = v;
         }
       } else {
-        lexer_->next();  // skip unexpected token (avoid spinning)
+        lexer_->consume();  // skip unexpected token (avoid spinning)
       }
       Match(TokenType::Semicolon);
     }

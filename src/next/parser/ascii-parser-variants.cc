@@ -61,7 +61,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
   }
 
   if (Check(TokenType::OpenParen)) {
-    lexer_->next();
+    lexer_->consume();
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
       (void)(Match(TokenType::Prepend) || Match(TokenType::Append) ||
              Match(TokenType::Delete) || Match(TokenType::Reorder) ||
@@ -69,7 +69,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
 
       std::string key;
       if (!lexer_->expect(TokenType::Identifier, key)) {
-        if (!AtEnd()) lexer_->next();
+        if (!AtEnd()) lexer_->consume();
         continue;
       }
       if (!Match(TokenType::Equals)) break;
@@ -95,7 +95,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
             : key == "inherits"   ? &out->inherits
                                   : &out->specializes;
         if (Check(TokenType::None)) {
-          lexer_->next();
+          lexer_->consume();
         } else if (Match(TokenType::OpenBracket)) {
           while (!Check(TokenType::CloseBracket) && !AtEnd()) {
             std::string ref;
@@ -110,7 +110,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
         }
       } else {
         SkipValueLike();
-        while (Check(TokenType::PathRef)) lexer_->next();
+        while (Check(TokenType::PathRef)) lexer_->consume();
         if (Check(TokenType::OpenParen)) SkipValueLike();
       }
     }
@@ -146,13 +146,13 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       builder_ = std::move(host_builder);
       if (!ok) return false;
     } else if (tok.type == TokenType::Rel) {
-      lexer_->next();
+      lexer_->consume();
       std::string rel_name;
       if (!ParseNamespacedName(&rel_name, "relationship name")) break;
       SkipPropertyMetadata();
       if (Match(TokenType::Equals)) {
         if (Check(TokenType::OpenBracket)) {
-          lexer_->next();
+          lexer_->consume();
           while (!Check(TokenType::CloseBracket) && !AtEnd()) {
             std::string target;
             if (lexer_->expect(TokenType::PathRef, target)) {
@@ -168,8 +168,8 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
         }
       }
       SkipPropertyMetadata();
-    } else if (tok.type == TokenType::Identifier && tok.value == "variantSet") {
-      lexer_->next();
+    } else if (tok.type == TokenType::Identifier && tok.text == "variantSet") {
+      lexer_->consume();
       std::string nested_vs_name;
       if (!lexer_->expect(TokenType::String, nested_vs_name)) break;
       if (!Match(TokenType::Equals)) break;
@@ -184,12 +184,12 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
         TokenType tt = lexer_->peek().type;
         if (tt == TokenType::Custom) {
           vflags |= PropSlot::kFlagCustom;
-          lexer_->next();
+          lexer_->consume();
         } else if (tt == TokenType::Uniform) {
           vflags |= PropSlot::kFlagUniform;
-          lexer_->next();
+          lexer_->consume();
         } else if (tt == TokenType::Varying) {
-          lexer_->next();
+          lexer_->consume();
         } else {
           break;
         }
@@ -198,7 +198,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       if (!lexer_->expect(TokenType::Identifier, type_name)) break;
       bool is_array = false;
       if (Check(TokenType::OpenBracket)) {
-        lexer_->next();
+        lexer_->consume();
         Match(TokenType::CloseBracket);
         is_array = true;
       }
@@ -207,11 +207,11 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       if (!ParseNamespacedName(&prop_name, "attribute name")) break;
       SkipPropertyMetadata();
       if (Check(TokenType::Dot)) {
-        lexer_->next();
-        if (!AtEnd()) lexer_->next();
+        lexer_->consume();
+        if (!AtEnd()) lexer_->consume();
         if (Match(TokenType::Equals)) {
           SkipValueLike();
-          while (Check(TokenType::PathRef)) lexer_->next();
+          while (Check(TokenType::PathRef)) lexer_->consume();
         }
         SkipPropertyMetadata();
       } else if (Match(TokenType::Equals)) {
@@ -234,7 +234,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
         SkipPropertyMetadata();
       }
     } else {
-      lexer_->next();
+      lexer_->consume();
     }
   }
 

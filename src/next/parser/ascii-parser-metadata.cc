@@ -12,14 +12,14 @@ namespace next {
 bool AsciiParser::Impl::ParseStageMetadata() {
   // Check for #usda header
   const Token& first = lexer_->peek();
-  if (first.type == TokenType::Identifier && first.value == "#usda") {
+  if (first.type == TokenType::Identifier && first.text == "#usda") {
     // Skip #usda line
     lexer_->skip_line();
   }
 
   // Check for opening paren (metadata block)
   if (Check(TokenType::OpenParen)) {
-    lexer_->next();
+    lexer_->consume();
 
     // Parse metadata key-value pairs
     while (!Check(TokenType::CloseParen) && !AtEnd()) {

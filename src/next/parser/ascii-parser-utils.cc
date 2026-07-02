@@ -19,19 +19,19 @@ bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) 
     return false;
   }
 
-  *out = first.value;
-  lexer_->next();
+  out->assign(first.text.data(), first.text.size());
+  lexer_->consume();
 
   while (Check(TokenType::Colon)) {
-    lexer_->next();
+    lexer_->consume();
     const Token& suffix = lexer_->peek();
     if (!IsNameToken(suffix)) {
       AddError(std::string("Expected namespaced suffix for ") + what);
       return false;
     }
     *out += ":";
-    *out += suffix.value;
-    lexer_->next();
+    out->append(suffix.text.data(), suffix.text.size());
+    lexer_->consume();
   }
 
   return true;
@@ -56,11 +56,11 @@ bool AsciiParser::Impl::SkipBalancedBlock(TokenType open, TokenType close,
     const Token& tok = lexer_->peek();
     if (tok.type == open) {
       ++depth;
-      lexer_->next();
+      lexer_->consume();
       continue;
     }
     if (tok.type == close) {
-      lexer_->next();
+      lexer_->consume();
       if (--depth == 0) {
         return true;
       }
@@ -83,7 +83,7 @@ bool AsciiParser::Impl::SkipBalancedBlock(TokenType open, TokenType close,
       continue;
     }
 
-    lexer_->next();
+    lexer_->consume();
   }
 
   AddError("Unexpected end of input while skipping block");
@@ -102,7 +102,7 @@ bool AsciiParser::Impl::SkipValueLike() {
   }
 
   if (AtEnd()) return false;
-  lexer_->next();
+  lexer_->consume();
   return true;
 }
 
@@ -116,13 +116,13 @@ void AsciiParser::Impl::SkipPropertyMetadata() {
 
 void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
   if (!Check(TokenType::OpenParen)) return;
-  lexer_->next();  // consume '('
+  lexer_->consume();  // consume '('
   PrimSpec* prim = builder_->current();
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
     std::string key;
     if (!lexer_->expect(TokenType::Identifier, key)) {
-      lexer_->next();  // robustness: skip stray token
+      lexer_->consume();  // robustness: skip stray token
       continue;
     }
     if (!Match(TokenType::Equals)) break;
@@ -213,7 +213,7 @@ void AsciiParser::Impl::AddWarning(const std::string& message) {
 
 bool AsciiParser::Impl::Match(TokenType type) {
   if (Check(type)) {
-    lexer_->next();
+    lexer_->consume();
     return true;
   }
   return false;

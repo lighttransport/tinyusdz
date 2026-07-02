@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 namespace tinyusdz {
@@ -27,9 +28,56 @@ inline bool FastFloatParse(const char* b, const char* e, T* out) {
 }
 
 template <class T>
-inline T FastFloatParseToken(const std::string& s) {
+inline T FastFloatParseToken(std::string_view s) {
   T v = T(0);
   FastFloatParse(s.data(), s.data() + s.size(), &v);
+  return v;
+}
+
+// Length-bounded variants for token text held as a string_view into the input
+// buffer (NOT null-terminated — never walk past s.end()). Same lenient
+// semantics as the char* versions below: optional sign + decimal digits,
+// ignore trailing chars, saturate on overflow.
+inline int64_t DecimalToI64(std::string_view s) {
+  const char* p = s.data();
+  const char* const e = s.data() + s.size();
+  if (p >= e) return 0;
+  bool neg = false;
+  if (*p == '+' || *p == '-') {
+    neg = (*p == '-');
+    ++p;
+  }
+  const uint64_t lim =
+      neg ? (static_cast<uint64_t>(INT64_MAX) + 1u)
+          : static_cast<uint64_t>(INT64_MAX);
+  uint64_t v = 0;
+  while (p < e && *p >= '0' && *p <= '9') {
+    const uint64_t d = static_cast<uint64_t>(*p - '0');
+    if (v > (lim - d) / 10u) {
+      v = lim;
+      break;
+    }
+    v = v * 10u + d;
+    ++p;
+  }
+  return neg ? static_cast<int64_t>(0u - v) : static_cast<int64_t>(v);
+}
+
+inline uint64_t DecimalToU64(std::string_view s) {
+  const char* p = s.data();
+  const char* const e = s.data() + s.size();
+  if (p >= e) return 0;
+  if (*p == '+') ++p;
+  uint64_t v = 0;
+  while (p < e && *p >= '0' && *p <= '9') {
+    const uint64_t d = static_cast<uint64_t>(*p - '0');
+    if (v > (UINT64_MAX - d) / 10u) {
+      v = UINT64_MAX;
+      break;
+    }
+    v = v * 10u + d;
+    ++p;
+  }
   return v;
 }
 

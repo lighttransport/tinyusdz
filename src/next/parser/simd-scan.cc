@@ -32,7 +32,10 @@
 // always set on x86-64 and on -msse2 i386; MSVC implies SSE2 for x64 / /arch:SSE2.
 // NEON is mandatory (always available) on AArch64.
 #if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86) && _M_IX86_FP >= 2)
-#include <emmintrin.h>  // SSE2 (baseline on x86-64)
+// immintrin (not just emmintrin): the runtime-dispatched AVX2 kernel uses
+// 256-bit intrinsics via the GCC/Clang `target` attribute; the TU itself is
+// still compiled for the SSE2 baseline.
+#include <immintrin.h>
 #if defined(_MSC_VER)
 #include <intrin.h>  // _BitScanForward (MSVC has no __builtin_ctz)
 #endif
@@ -104,8 +107,69 @@ inline unsigned LowestSetBit(unsigned x) {
 
 }  // namespace
 
+// AVX2 kernel (runtime-dispatched): same stop positions and tallies as the
+// SSE2 loop, 32 bytes per iteration. Compiled via the GCC/Clang `target`
+// attribute so the translation unit itself stays baseline-SSE2; selected once
+// at runtime with __builtin_cpu_supports. popcnt is implied by the avx2
+// target set, but list it explicitly for older GCC.
+#if defined(__GNUC__) || defined(__clang__)
+#define TINYUSDZ_SIMDSCAN_AVX2_DISPATCH 1
+
+__attribute__((target("avx2,popcnt")))
+static const char* ScanArrayStructuralAvx2(const char* p, const char* end,
+                                           size_t* newlines, size_t* commas) {
+  const __m256i lb = _mm256_set1_epi8('[');
+  const __m256i rb = _mm256_set1_epi8(']');
+  const __m256i dq = _mm256_set1_epi8('"');
+  const __m256i sq = _mm256_set1_epi8('\'');
+  const __m256i at = _mm256_set1_epi8('@');
+  const __m256i hs = _mm256_set1_epi8('#');
+  const __m256i nlv = _mm256_set1_epi8('\n');
+  const __m256i cmv = _mm256_set1_epi8(',');
+
+  size_t nl = 0;
+  size_t cm = 0;
+  while (end - p >= 32) {
+    const __m256i v =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(p));
+    __m256i m = _mm256_or_si256(_mm256_cmpeq_epi8(v, lb),
+                                _mm256_cmpeq_epi8(v, rb));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, dq));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, sq));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, at));
+    m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, hs));
+    const unsigned mask = static_cast<unsigned>(_mm256_movemask_epi8(m));
+    const unsigned nlmask =
+        static_cast<unsigned>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, nlv)));
+    const unsigned cmmask =
+        static_cast<unsigned>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, cmv)));
+    if (mask) {
+      const unsigned idx = static_cast<unsigned>(__builtin_ctz(mask));
+      // newlines/commas strictly before the structural byte. idx <= 31, so the
+      // (1u << idx) - 1 mask never shifts by 32.
+      const unsigned before = (1u << idx) - 1u;
+      nl += static_cast<unsigned>(__builtin_popcount(nlmask & before));
+      cm += static_cast<unsigned>(__builtin_popcount(cmmask & before));
+      *newlines += nl;
+      *commas += cm;
+      return p + idx;
+    }
+    nl += static_cast<unsigned>(__builtin_popcount(nlmask));
+    cm += static_cast<unsigned>(__builtin_popcount(cmmask));
+    p += 32;
+  }
+  *newlines += nl;
+  *commas += cm;
+  return ScanScalar(p, end, newlines, commas);  // <32-byte tail
+}
+#endif  // __GNUC__ || __clang__
+
 const char* ScanArrayStructural(const char* p, const char* end,
                                 size_t* newlines, size_t* commas) {
+#if defined(TINYUSDZ_SIMDSCAN_AVX2_DISPATCH)
+  static const bool use_avx2 = __builtin_cpu_supports("avx2");
+  if (use_avx2) return ScanArrayStructuralAvx2(p, end, newlines, commas);
+#endif
   const __m128i lb = _mm_set1_epi8('[');
   const __m128i rb = _mm_set1_epi8(']');
   const __m128i dq = _mm_set1_epi8('"');

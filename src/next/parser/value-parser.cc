@@ -132,7 +132,7 @@ ParseResult ParseValue(Lexer& lexer, TypeId expected_type) {
   // Handle None: an authored value block, not "no value". Preserve it as a block
   // so the writer re-emits `= None` (round-trips USDC ValueBlock + USDA `= None`).
   if (lexer.peek().type == TokenType::None) {
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value::MakeBlock());
   }
 
@@ -330,9 +330,9 @@ ParseResult ParseGenericValue(Lexer& lexer, TypeId& out_type) {
 
   if (tok.type == TokenType::Number) {
     // Try to determine if it's int or float
-    if (tok.value.find('.') != std::string::npos ||
-        tok.value.find('e') != std::string::npos ||
-        tok.value.find('E') != std::string::npos) {
+    if (tok.text.find('.') != std::string_view::npos ||
+        tok.text.find('e') != std::string_view::npos ||
+        tok.text.find('E') != std::string_view::npos) {
       out_type = TypeId::Double;
       return ParseDouble(lexer);
     } else {
@@ -355,7 +355,7 @@ ParseResult ParseGenericValue(Lexer& lexer, TypeId& out_type) {
 
   if (tok.type == TokenType::None) {
     out_type = TypeId::Invalid;
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value());
   }
 

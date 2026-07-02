@@ -1257,7 +1257,7 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
   // Preserve it as a block (not an empty placeholder) so the writer re-emits
   // `= None` rather than collapsing it to a declared-only attribute.
   if (lexer.peek().type == TokenType::None) {
-    lexer.next();
+    lexer.consume();
     return ParseResult::Ok(Value::MakeBlock());
   }
 
@@ -1325,7 +1325,7 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
 
   // Handle empty array
   if (lexer.peek().type == TokenType::CloseBracket) {
-    lexer.next();
+    lexer.consume();
     // Return appropriate empty array based on element type
     if (element_type == TypeId::Float || IsFloat3Like(element_type) ||
         IsFloat2Like(element_type) || IsFloat4Like(element_type)) {
@@ -1395,9 +1395,9 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
 
     // Check for comma or end
     if (lexer.peek().type == TokenType::Comma) {
-      lexer.next();
+      lexer.consume();
     } else if (lexer.peek().type == TokenType::CloseBracket) {
-      lexer.next();
+      lexer.consume();
       break;
     } else {
       return ParseResult::Error("Expected ',' or ']' in array");
