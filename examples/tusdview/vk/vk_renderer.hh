@@ -619,6 +619,10 @@ class VulkanRenderer final : public Renderer {
   std::string techniqueLabel_{"Vulkan"};  // caps_.backend_name points here
   uint32_t scratchAlign_{256};
 
+  // VK_EXT_memory_budget: live device-local VRAM usage/budget (0 = unsupported).
+  bool memBudgetSupported_{false};
+  bool memoryBudget(uint64_t* usedBytes, uint64_t* budgetBytes) const;
+
   PFN_vkGetBufferDeviceAddressKHR pfnGetBufferDeviceAddress_{nullptr};
   PFN_vkGetAccelerationStructureBuildSizesKHR pfnGetASBuildSizes_{nullptr};
   PFN_vkCreateAccelerationStructureKHR pfnCreateAS_{nullptr};

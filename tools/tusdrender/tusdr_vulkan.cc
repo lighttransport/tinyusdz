@@ -42,7 +42,8 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
 
   uint32_t vk_caps = lrt_vk_engine_caps(vk);
   bool has_rt = (vk_caps & LRT_VK_CAP_RAY_QUERY) != 0;
-  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << "\n";
+  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << " ("
+            << (lrt_vk_device_local_bytes(1) >> 20) << " MiB device-local)\n";
   std::cerr << "Vulkan caps: compute=1"
             << ((vk_caps & LRT_VK_CAP_BUFFER_ADDRESS) ? " buf_addr" : "")
             << ((vk_caps & LRT_VK_CAP_ACCEL_STRUCT) ? " accel" : "")
@@ -139,7 +140,8 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
     lrt_vk_engine_destroy(vk);
     return false;
   }
-  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << "\n";
+  std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << " ("
+            << (lrt_vk_device_local_bytes(1) >> 20) << " MiB device-local)\n";
 
   // Marshal the prototype + instance lists for the C API (views into `scene`).
   std::vector<lrt_vk_proto> cprotos(scene.protos.size());
