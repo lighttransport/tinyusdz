@@ -19,6 +19,7 @@
 #include <map>
 #include <string_view>
 #if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
 #include <shared_mutex>
 #endif
 
@@ -103,6 +104,19 @@ private:
       name_to_id_;
   std::unordered_map<uint16_t, uint16_t> base_to_array_type_id_;
 #if defined(TINYUSDZ_ENABLE_THREAD)
+  // RCU-lite read path (same pattern as PropNameTable): immutable snapshot
+  // republished under mu_ after every insert so read HITS skip the rwlock
+  // (the rwlock ping-pong was ~38% of parallel crate build_stage cycles).
+  // Misses and newer-than-snapshot ids fall through to the locked reads.
+  struct Snapshot {
+    std::unordered_map<std::string_view, uint16_t, StringViewHash, StringViewEq>
+        map;
+    std::unordered_map<uint16_t, uint16_t> array_map;
+    std::vector<const std::string*> by_id;
+  };
+  void publish_snapshot_locked();
+  mutable std::atomic<const Snapshot*> snapshot_{nullptr};
+  std::vector<std::unique_ptr<Snapshot>> retired_;  // guarded by mu_
   // The global table is interned into concurrently when prim subtrees (and
   // referenced layers) are parsed on worker threads — same read-mostly pattern
   // as PropNameTable. `get()` returns stable string storage (names_ owns via

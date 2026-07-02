@@ -1538,6 +1538,37 @@ bool CrateReader::Impl::BuildStage() {
         }
         link_stack.push_back(static_cast<uint32_t>(i));
       }
+
+      // Pre-sort property indices in parallel. finalize_properties() is
+      // idempotent (PropIndex::sort just re-sorts already-sorted slots), so
+      // the serial Layer::finalize() pass below becomes a cheap no-op sweep.
+      // Skipped when finalize is disabled (pre-sorting would change the
+      // unfinalized slot order benchmarks observe).
+      if (options_.finalize_stage && total_prims >= 1024) {
+        const size_t fchunk =
+            std::max<size_t>(2048, total_prims / (static_cast<size_t>(nt) * 4));
+        std::mutex fin_mu;
+        std::condition_variable fin_cv;
+        size_t fin_remaining = 0;
+        for (size_t b = 0; b < total_prims; b += fchunk) fin_remaining++;
+        size_t launched = 0;
+        for (size_t b = 0; b < total_prims; b += fchunk) {
+          const size_t e = std::min(total_prims, b + fchunk);
+          auto task = [&, b, e]() {
+            for (size_t i = b; i < e; ++i) {
+              layer.prim_mutable(static_cast<uint32_t>(i))->finalize_properties();
+            }
+            std::lock_guard<std::mutex> lock(fin_mu);
+            if (--fin_remaining == 0) fin_cv.notify_all();
+          };
+          launched++;
+          if (!SubmitPoolTask(options_.num_threads, task)) task();
+        }
+        if (launched) {
+          std::unique_lock<std::mutex> lock(fin_mu);
+          fin_cv.wait(lock, [&]() { return fin_remaining == 0; });
+        }
+      }
       parallel_emit_done = true;
     }
   }

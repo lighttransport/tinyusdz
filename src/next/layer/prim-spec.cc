@@ -51,8 +51,26 @@ uint16_t ApplySchemaPropertyFlags(PropNameId name_id, uint16_t flags) {
 // TypeNameTable
 // ============================================================
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+void TypeNameTable::publish_snapshot_locked() {
+  auto snap = std::make_unique<Snapshot>();
+  snap->map = name_to_id_;
+  snap->array_map = base_to_array_type_id_;
+  snap->by_id.reserve(names_.size());
+  for (const auto& n : names_) snap->by_id.push_back(n.get());
+  snapshot_.store(snap.get(), std::memory_order_release);
+  retired_.push_back(std::move(snap));
+}
+#endif
+
 TypeNameId TypeNameTable::intern(std::string_view name) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
+  // Lock-free HIT against the latest immutable snapshot (misses fall through
+  // to the locked paths — see the Snapshot note in the header).
+  if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
+    auto sit = snap->map.find(name);
+    if (sit != snap->map.end()) return TypeNameId{sit->second};
+  }
   // Read-mostly: try a shared-lock lookup first (the common-type set is
   // pre-registered, so almost every parse-time intern is a hit).
   {
@@ -77,6 +95,9 @@ TypeNameId TypeNameTable::intern(std::string_view name) {
   names_.push_back(std::make_unique<std::string>(name));
   const std::string& key = *names_.back();
   name_to_id_[key] = id;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  publish_snapshot_locked();
+#endif
   return TypeNameId{id};
 }
 
@@ -90,6 +111,12 @@ TypeNameId TypeNameTable::intern_array(std::string_view base_name) {
     return TypeNameId{};
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
+    auto sit = snap->array_map.find(base_id.id);
+    if (sit != snap->array_map.end()) return TypeNameId{sit->second};
+  }
+#endif
   {
 #if defined(TINYUSDZ_ENABLE_THREAD)
     std::shared_lock<std::shared_mutex> rlk(mu_);
@@ -108,23 +135,36 @@ TypeNameId TypeNameTable::intern_array(std::string_view base_name) {
   if (array_id.is_valid()) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
     std::unique_lock<std::shared_mutex> wlk(mu_);
-#endif
     base_to_array_type_id_[base_id.id] = array_id.id;
+    publish_snapshot_locked();
+#else
+    base_to_array_type_id_[base_id.id] = array_id.id;
+#endif
   }
   return array_id;
 }
 
 const std::string& TypeNameTable::get(TypeNameId id) const {
   static const std::string empty;
+  if (!id.is_valid()) return empty;
 #if defined(TINYUSDZ_ENABLE_THREAD)
+  // Lock-free only when the snapshot covers this id (fall through otherwise).
+  if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
+    if (id.id < snap->by_id.size()) return *snap->by_id[id.id];
+  }
   std::shared_lock<std::shared_mutex> rlk(mu_);
 #endif
-  if (!id.is_valid() || id.id >= names_.size()) return empty;
+  if (id.id >= names_.size()) return empty;
   return *names_[id.id];  // unique_ptr storage: stable after unlock
 }
 
 TypeNameId TypeNameTable::find(std::string_view name) const {
 #if defined(TINYUSDZ_ENABLE_THREAD)
+  // Lock-free HIT; a miss falls through to the locked authoritative read.
+  if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
+    auto sit = snap->map.find(name);
+    if (sit != snap->map.end()) return TypeNameId{sit->second};
+  }
   std::shared_lock<std::shared_mutex> rlk(mu_);
 #endif
   auto it = name_to_id_.find(name);

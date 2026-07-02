@@ -533,6 +533,48 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
 
   // Finalize the layer
   const auto t_finalize_start = ProfileClock::now();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Pre-sort property indices in parallel (finalize_properties is idempotent,
+  // so the serial finalize() sweep below no-ops per prim). Only when the
+  // parallel machinery was active for this parse.
+  if (subtree_state_ || deferred_arrays_) {
+    const size_t total_prims = layer_->prim_count();
+    if (total_prims >= 1024) {
+      int nt = options_.num_threads;
+      if (nt <= 0) {
+        nt = static_cast<int>(std::thread::hardware_concurrency());
+        if (nt < 1) nt = 1;
+        nt = std::min(nt, 8);
+      }
+      if (nt > 1) {
+        const size_t fchunk =
+            std::max<size_t>(2048, total_prims / (static_cast<size_t>(nt) * 4));
+        std::mutex fin_mu;
+        std::condition_variable fin_cv;
+        size_t fin_remaining = 0;
+        for (size_t b = 0; b < total_prims; b += fchunk) fin_remaining++;
+        size_t launched = 0;
+        for (size_t b = 0; b < total_prims; b += fchunk) {
+          const size_t e = std::min(total_prims, b + fchunk);
+          auto task = [&, b, e]() {
+            for (size_t i = b; i < e; ++i) {
+              layer_->prim_mutable(static_cast<uint32_t>(i))
+                  ->finalize_properties();
+            }
+            std::lock_guard<std::mutex> lock(fin_mu);
+            if (--fin_remaining == 0) fin_cv.notify_all();
+          };
+          launched++;
+          if (!SubmitPoolTask(options_.num_threads, task)) task();
+        }
+        if (launched) {
+          std::unique_lock<std::mutex> lock(fin_mu);
+          fin_cv.wait(lock, [&]() { return fin_remaining == 0; });
+        }
+      }
+    }
+  }
+#endif
   builder_->finalize();
   const auto t_finalize_end = ProfileClock::now();
 
