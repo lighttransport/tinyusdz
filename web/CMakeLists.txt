@@ -127,6 +127,7 @@ list(
   APPEND
   NEXT_SOURCES
   ${TINYUSDZ_NEXT_DIR}/types/type-info.cc
+  ${TINYUSDZ_NEXT_DIR}/types/token.cc
   ${TINYUSDZ_NEXT_DIR}/types/value.cc
   ${TINYUSDZ_NEXT_DIR}/types/interpolation.cc
   ${TINYUSDZ_NEXT_DIR}/prim/path.cc
