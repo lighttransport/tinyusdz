@@ -801,7 +801,8 @@
     fields_phase_t0 = Clock::now();
 #if defined(TINYUSDZ_ENABLE_THREAD)
     const int nthreads = ResolveThreads();
-    if (nthreads > 1 && layer.prims().size() >= 4096) {
+    constexpr bool kEnableParallelPrimBuild = false;
+    if (kEnableParallelPrimBuild && nthreads > 1 && layer.prims().size() >= 4096) {
       PropNameTable& name_table = GetPropNameTable();
       std::string prop_path;
       auto build_prop_path = [&](std::string_view base, std::string_view name) {

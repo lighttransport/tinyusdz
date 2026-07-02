@@ -343,6 +343,13 @@ Island USDC write **49 s → 29.8 s (−39%)**, Caldera ~7.6 → ~6 s, peak RSS 
    (disjoint sub-ranges → parallel, byte-balanced) instead of an `align()`+append
    loop; plus `WriteToMemory`/`WriteLayerToMemory` **move** the finished buffer out
    (`take_buffer()`) instead of copying the multi-GB crate.
+5. **Parallel structural section preparation** (`crate-writer-write.inc` +
+   `crate-writer-sections.inc`): TOKENS / FIELDS / FIELDSETS / SPECS now build
+   their section payloads into independent buffers, with LZ4/delta work prepared
+   concurrently when the threaded writer is active. The finished buffers are still
+   appended in fixed crate order, so TOC offsets and output bytes remain
+   deterministic. PATHS stays on its specialized path because it synthesizes
+   ancestors and already owns its path-tree optimization.
 
 ## Measured DEAD END — do not retry: per-spec build map-reduce
 
@@ -366,30 +373,25 @@ that. (The inert `BuildOnePrim` factor-out + `frozen_tok_/frozen_str_` scaffoldi
 were kept as committed groundwork; `crate-writer-tables.inc`.) The
 `PathListOp`/`StoreVariantSelectionMap` blocks embed path/string indices, and
 `TimeSamples`/dict blocks embed BLOCK indices, which is what makes a deterministic
-merge intricate — another reason the payoff did not justify it.
+merge intricate — another reason the payoff did not justify it. The selection
+gate for this per-prim map-reduce path is now disabled in
+`crate-writer-fields.inc`; `--write-threads` still feeds the deterministic
+section/value emission work, not this slower merge path.
 
 ## Remaining opportunities (do NOT touch the serial global-dedup floor)
 
 Each is byte-identical-safe and worth at most a few percent — they shave the tail
 and the dedup constants, not the O(specs) global-interning floor:
 
-1. **Precompute block hashes in parallel / faster `InternBlock`.** `InternBlock`
-   (`crate-writer-impl.inc`) recomputes an FNV-1a hash over each block's head/mid/tail
-   on the serial path. Compute hashes during value encoding (or in a parallel pre-pass
-   over `value_data_`) and pass them in, so the serial dedup is just the multimap
-   insert + a memcmp on true collisions. ~the 6% `InternBlock` slice.
-2. **Parallel section LZ4.** TOKENS / FIELDS / FIELDSETS / SPECS each LZ4-compress
-   independently in `Write*Section` (`crate-writer-sections.inc`); compress them on
-   the worker pool and write in order. (PATHS already has the parallel sort.)
-3. **Parallel value ENCODE for non-lazy arrays.** Island's ASCII source means arrays
+1. **Parallel value ENCODE for non-lazy arrays.** Island's ASCII source means arrays
    are non-lazy and fully re-encoded (delta+LZ4 / raw memcpy); that is the one
    embarrassingly-parallel chunk of the build (independent per block). It is only
    ~3–5%, but unlike the structural build it is safe to parallelize: pre-produce the
    block bytes + hash per array in parallel keyed by the source `Value`, then the
    serial walk consumes them (byte-identical, like the USDA writer's chunked path).
-4. **Tagged float/double array compression** (port the classic writer's `'i'`/`'t'`
+2. **Tagged float/double array compression** (port the classic writer's `'i'`/`'t'`
    encoding; see above) as an opt-in — smaller output, not faster.
-5. **The only way past the floor** is to parallelize the global dedup ITSELF — a
+3. **The only way past the floor** is to parallelize the global dedup ITSELF — a
    concurrent/sharded path + block hashmap, or eliminating the local↔global double
    interning. High risk, uncertain payoff, and it breaks deterministic-across-threads
    output; treat ~29.8 s (−39%) as the practical ceiling unless this is attempted.
