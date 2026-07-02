@@ -162,6 +162,22 @@ makes new types data-driven — the C-style dispatch the module already favors
    (25/25 byte-parity). `GetTypeSize`/`GetTypeName` keep using the retained
    `size`/`name` fields.
 
+5. **[LANDED]** Shrank the SBO further **32 → 16 bytes** by boxing `String`/
+   `AssetPath` (32-byte `std::string` → a COW `StringBox` with an 8-byte handle;
+   copy shares, `as_string()` detaches) and the double-vectors/quats that no
+   longer fit (`vec3d`/`vec4d`/`quatd`/`matrix2d` join the already-boxed matrices
+   via `ScalarBox` + a generic `store_scalar_payload`). `TfToken` (4 B),
+   `shared_ptr<Dict>` (16 B), and array/box handles (8 B) still inline.
+   **`sizeof(Value)` 48 → 32.** Profiled on real assets: 91–97% of property
+   Values stay inline (win −24 B each), 3–9% box (double3/string; +16 B + 1
+   alloc). Measured on an 80k-value scene: **RSS −5.6%**, malloc **+2.1%**
+   (one box per `double3` scalar). Bonus: `String` copies are now COW-shared
+   through composition instead of deep-copied. Byte-parity perfect through USDA
+   **and** USDC; 25/25; ASan + TSan clean. **Remaining to hit 24 B:**
+   `storage_` `alignas(16)→alignas(8)` + pack the four flag bools into `uint8_t`
+   bitfields (needs a real `Value()` ctor — C++17 forbids bitfield default-member
+   initializers).
+
 Each step is independently revertable and keeps `sizeof` assertions + the
 byte-identical USDA/USDC roundtrip suite green.
 

@@ -23,10 +23,6 @@ namespace {
 // Type storage helpers
 // ============================================================
 
-// String-like types stored in SBO using std::string
-struct StringStorage {
-  std::string value;
-};
 
 // Array types are heap-allocated and held by an intrusive COW handle in the SBO
 // slot: copying a Value bumps the box refcount (no element copy); the first
@@ -174,6 +170,51 @@ inline bool IsBoxedScalar(TypeId id) { return GetTypeSize(id) > Value::kSBOSize;
 inline const void* scalar_data(TypeId id, const char* storage) {
   return IsBoxedScalar(id) ? ScalarSlot(storage)->data()
                            : static_cast<const void*>(storage);
+}
+
+// Store a POD scalar payload into a fresh Value's SBO: inline if it fits, else a
+// COW ScalarBox. Used by the Make*/Value scalar factories so oversized doubles
+// (vec3d/vec4d/quatd/matrix*) that exceed the 16-byte SBO are boxed.
+inline void store_scalar_payload(char* storage, const void* data, size_t size) {
+  if (size > Value::kSBOSize) {
+    ScalarSlot(storage) = scalar_box_alloc(data, size);
+  } else {
+    // The clamp is a no-op at runtime (this branch has size <= kSBOSize) but
+    // proves to -Wfortify-source that a caller with a compile-time-constant
+    // oversized size never memcpys past the 16-byte SBO here.
+    std::memcpy(storage, data, size > Value::kSBOSize ? 0 : size);
+  }
+}
+
+// COW box holding a String/AssetPath's std::string. std::string is 32 bytes, so
+// it no longer fits the 16-byte SBO; box it (8-byte handle) with the same
+// intrusive-refcount COW as arrays. Unlike ScalarBox this runs the std::string
+// destructor, and strings CAN be mutated (as_string()) so it supports detach.
+struct StringBox {
+  std::atomic<uint32_t> rc;
+  std::string value;
+  explicit StringBox(std::string s) : rc(1), value(std::move(s)) {}
+};
+inline void string_box_retain(StringBox* b) {
+  if (b) b->rc.fetch_add(1, std::memory_order_relaxed);
+}
+inline void string_box_release(StringBox* b) {
+  if (b && b->rc.fetch_sub(1, std::memory_order_acq_rel) == 1) delete b;
+}
+inline StringBox*& StringSlot(char* s) {
+  return *reinterpret_cast<StringBox**>(s);
+}
+inline StringBox* StringSlot(const char* s) {
+  return *reinterpret_cast<StringBox* const*>(s);
+}
+// Privatize before a mutable string access.
+inline void DetachString(char* s) {
+  StringBox*& b = StringSlot(s);
+  if (b && b->rc.load(std::memory_order_acquire) > 1) {
+    StringBox* nb = new StringBox(b->value);
+    string_box_release(b);
+    b = nb;
+  }
 }
 
 // Dictionary values are held by a shared_ptr<Dict> in the SBO slot — the same
@@ -331,19 +372,19 @@ Value::Value(double v) : type_id_(TypeId::Double) {
 }
 
 Value::Value(const char* v) : type_id_(TypeId::String) {
-  new (storage_) StringStorage{std::string(v ? v : "")};
+  StringSlot(storage_) = new StringBox(std::string(v ? v : ""));
 }
 
 Value::Value(std::string_view v) : type_id_(TypeId::String) {
-  new (storage_) StringStorage{std::string(v)};
+  StringSlot(storage_) = new StringBox(std::string(v));
 }
 
 Value::Value(const std::string& v) : type_id_(TypeId::String) {
-  new (storage_) StringStorage{v};
+  StringSlot(storage_) = new StringBox(v);
 }
 
 Value::Value(std::string&& v) : type_id_(TypeId::String) {
-  new (storage_) StringStorage{std::move(v)};
+  StringSlot(storage_) = new StringBox(std::move(v));
 }
 
 // ============================================================
@@ -354,7 +395,7 @@ Value Value::MakeInt2(int32_t x, int32_t y) {
   Value v;
   v.type_id_ = TypeId::Int2;
   int32_t data[2] = {x, y};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -362,7 +403,7 @@ Value Value::MakeInt3(int32_t x, int32_t y, int32_t z) {
   Value v;
   v.type_id_ = TypeId::Int3;
   int32_t data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -370,7 +411,7 @@ Value Value::MakeInt4(int32_t x, int32_t y, int32_t z, int32_t w) {
   Value v;
   v.type_id_ = TypeId::Int4;
   int32_t data[4] = {x, y, z, w};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -378,7 +419,7 @@ Value Value::MakeFloat2(float x, float y) {
   Value v;
   v.type_id_ = TypeId::Float2;
   float data[2] = {x, y};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -386,7 +427,7 @@ Value Value::MakeFloat3(float x, float y, float z) {
   Value v;
   v.type_id_ = TypeId::Float3;
   float data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -394,7 +435,7 @@ Value Value::MakeFloat4(float x, float y, float z, float w) {
   Value v;
   v.type_id_ = TypeId::Float4;
   float data[4] = {x, y, z, w};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -402,7 +443,7 @@ Value Value::MakeDouble2(double x, double y) {
   Value v;
   v.type_id_ = TypeId::Double2;
   double data[2] = {x, y};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -410,7 +451,7 @@ Value Value::MakeDouble3(double x, double y, double z) {
   Value v;
   v.type_id_ = TypeId::Double3;
   double data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -418,7 +459,7 @@ Value Value::MakeDouble4(double x, double y, double z, double w) {
   Value v;
   v.type_id_ = TypeId::Double4;
   double data[4] = {x, y, z, w};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -426,7 +467,7 @@ Value Value::MakeQuatf(float x, float y, float z, float w) {
   Value v;
   v.type_id_ = TypeId::Quatf;
   float data[4] = {x, y, z, w};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -434,14 +475,14 @@ Value Value::MakeQuatd(double x, double y, double z, double w) {
   Value v;
   v.type_id_ = TypeId::Quatd;
   double data[4] = {x, y, z, w};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
 Value Value::MakeMatrix2f(const float* data) {
   Value v;
   v.type_id_ = TypeId::Matrix2f;
-  std::memcpy(v.storage_, data, 4 * sizeof(float));
+  store_scalar_payload(v.storage_, data, 4 * sizeof(float));
   return v;
 }
 
@@ -462,7 +503,7 @@ Value Value::MakeMatrix4f(const float* data) {
 Value Value::MakeMatrix2d(const double* data) {
   Value v;
   v.type_id_ = TypeId::Matrix2d;
-  std::memcpy(v.storage_, data, 4 * sizeof(double));
+  store_scalar_payload(v.storage_, data, 4 * sizeof(double));
   return v;
 }
 
@@ -514,28 +555,28 @@ Value Value::MakeToken(std::string&& s) {
 Value Value::MakeAssetPath(const std::string& s) {
   Value v;
   v.type_id_ = TypeId::AssetPath;
-  new (v.storage_) StringStorage{s};
+  StringSlot(v.storage_) = new StringBox(s);
   return v;
 }
 
 Value Value::MakeAssetPath(const char* s) {
   Value v;
   v.type_id_ = TypeId::AssetPath;
-  new (v.storage_) StringStorage{std::string(s ? s : "")};
+  StringSlot(v.storage_) = new StringBox(std::string(s ? s : ""));
   return v;
 }
 
 Value Value::MakeAssetPath(std::string_view s) {
   Value v;
   v.type_id_ = TypeId::AssetPath;
-  new (v.storage_) StringStorage{std::string(s)};
+  StringSlot(v.storage_) = new StringBox(std::string(s));
   return v;
 }
 
 Value Value::MakeAssetPath(std::string&& s) {
   Value v;
   v.type_id_ = TypeId::AssetPath;
-  new (v.storage_) StringStorage{std::move(s)};
+  StringSlot(v.storage_) = new StringBox(std::move(s));
   return v;
 }
 
@@ -557,7 +598,7 @@ Value Value::MakePoint3f(float x, float y, float z) {
   Value v;
   v.type_id_ = TypeId::Point3f;
   float data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -565,7 +606,7 @@ Value Value::MakePoint3d(double x, double y, double z) {
   Value v;
   v.type_id_ = TypeId::Point3d;
   double data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -573,7 +614,7 @@ Value Value::MakeVector3f(float x, float y, float z) {
   Value v;
   v.type_id_ = TypeId::Vector3f;
   float data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -581,7 +622,7 @@ Value Value::MakeVector3d(double x, double y, double z) {
   Value v;
   v.type_id_ = TypeId::Vector3d;
   double data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -589,7 +630,7 @@ Value Value::MakeNormal3f(float x, float y, float z) {
   Value v;
   v.type_id_ = TypeId::Normal3f;
   float data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -597,7 +638,7 @@ Value Value::MakeNormal3d(double x, double y, double z) {
   Value v;
   v.type_id_ = TypeId::Normal3d;
   double data[3] = {x, y, z};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -605,7 +646,7 @@ Value Value::MakeColor3f(float r, float g, float b) {
   Value v;
   v.type_id_ = TypeId::Color3f;
   float data[3] = {r, g, b};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -613,7 +654,7 @@ Value Value::MakeColor4f(float r, float g, float b, float a) {
   Value v;
   v.type_id_ = TypeId::Color4f;
   float data[4] = {r, g, b, a};
-  std::memcpy(v.storage_, data, sizeof(data));
+  store_scalar_payload(v.storage_, data, sizeof(data));
   return v;
 }
 
@@ -630,13 +671,14 @@ Value Value::MakeFromRaw(TypeId type_id, const void* data) {
   v.type_id_ = type_id;
 
   if (UsesStringStorage(type_id)) {
-    new (v.storage_) StringStorage{std::string(static_cast<const char*>(data))};
+    StringSlot(v.storage_) =
+        new StringBox(std::string(static_cast<const char*>(data)));
   } else {
     size_t size = GetTypeSize(type_id);
     if (size > kSBOSize) {
       ScalarSlot(v.storage_) = scalar_box_alloc(data, size);  // oversized -> box
     } else if (size > 0) {
-      std::memcpy(v.storage_, data, size);
+      store_scalar_payload(v.storage_, data, size);
     }
   }
   return v;
@@ -911,7 +953,7 @@ void Value::destroy() {
   } else if (type_id_ == TypeId::Dictionary) {
     DictSlot(storage_)->~DictHandle();
   } else if (UsesStringStorage(type_id_)) {
-    reinterpret_cast<StringStorage*>(storage_)->~StringStorage();
+    string_box_release(StringSlot(storage_));  // COW release
   } else if (IsBoxedScalar(type_id_)) {
     scalar_box_release(ScalarSlot(storage_));  // COW release of the boxed matrix
   }
@@ -945,7 +987,10 @@ void Value::copy_from(const Value& other) {
   } else if (other.type_id_ == TypeId::Dictionary) {
     new (storage_) DictHandle(*DictSlot(other.storage_));  // refcount++ (CoW)
   } else if (UsesStringStorage(other.type_id_)) {
-    new (storage_) StringStorage{reinterpret_cast<const StringStorage*>(other.storage_)->value};
+    // COW: share the string box (bump refcount, no std::string copy).
+    StringBox* b = StringSlot(other.storage_);
+    string_box_retain(b);
+    StringSlot(storage_) = b;
   } else if (IsBoxedScalar(other.type_id_)) {
     // COW: share the boxed matrix buffer (bump refcount, no element copy).
     ScalarBox* b = ScalarSlot(other.storage_);
@@ -975,8 +1020,9 @@ void Value::move_from(Value&& other) noexcept {
     new (storage_) DictHandle(std::move(*DictSlot(other.storage_)));
     DictSlot(other.storage_)->~DictHandle();
   } else if (UsesStringStorage(other.type_id_)) {
-    new (storage_) StringStorage{std::move(reinterpret_cast<StringStorage*>(other.storage_)->value)};
-    reinterpret_cast<StringStorage*>(other.storage_)->~StringStorage();
+    // Steal the box pointer; other becomes Invalid below (no release).
+    StringSlot(storage_) = StringSlot(other.storage_);
+    StringSlot(other.storage_) = nullptr;
   } else {
     std::memcpy(storage_, other.storage_, kSBOSize);
   }
@@ -1102,11 +1148,12 @@ void* Value::raw_data() {
 #define DEFINE_SCALAR_ACCESSOR(type, type_id_val, ret_type) \
   const ret_type* Value::as_##type() const { \
     if (type_id_ != TypeId::type_id_val || is_array_) return nullptr; \
-    return reinterpret_cast<const ret_type*>(storage_); \
+    return reinterpret_cast<const ret_type*>(scalar_data(type_id_, storage_)); \
   } \
   ret_type* Value::as_##type() { \
     if (type_id_ != TypeId::type_id_val || is_array_) return nullptr; \
-    return reinterpret_cast<ret_type*>(storage_); \
+    return reinterpret_cast<ret_type*>( \
+        const_cast<void*>(scalar_data(type_id_, storage_))); \
   }
 
 DEFINE_SCALAR_ACCESSOR(bool, Bool, bool)
@@ -1121,12 +1168,13 @@ DEFINE_SCALAR_ACCESSOR(double, Double, double)
 
 const std::string* Value::as_string() const {
   if (type_id_ != TypeId::String || is_array_) return nullptr;
-  return &reinterpret_cast<const StringStorage*>(storage_)->value;
+  return &StringSlot(storage_)->value;
 }
 
 std::string* Value::as_string() {
   if (type_id_ != TypeId::String || is_array_) return nullptr;
-  return &reinterpret_cast<StringStorage*>(storage_)->value;
+  DetachString(storage_);  // mutable access: privatize the COW box
+  return &StringSlot(storage_)->value;
 }
 
 const std::string* Value::as_token() const {
@@ -1137,7 +1185,7 @@ const std::string* Value::as_token() const {
 
 const std::string* Value::as_asset_path() const {
   if (type_id_ != TypeId::AssetPath || is_array_) return nullptr;
-  return &reinterpret_cast<const StringStorage*>(storage_)->value;
+  return &StringSlot(storage_)->value;
 }
 
 const Dict* Value::as_dictionary() const {
@@ -1154,22 +1202,22 @@ Dict* Value::as_dictionary() {
 // Vector accessors
 const int32_t* Value::as_int2() const {
   if (type_id_ != TypeId::Int2 || is_array_) return nullptr;
-  return reinterpret_cast<const int32_t*>(storage_);
+  return reinterpret_cast<const int32_t*>(scalar_data(type_id_, storage_));
 }
 
 const int32_t* Value::as_int3() const {
   if (type_id_ != TypeId::Int3 || is_array_) return nullptr;
-  return reinterpret_cast<const int32_t*>(storage_);
+  return reinterpret_cast<const int32_t*>(scalar_data(type_id_, storage_));
 }
 
 const int32_t* Value::as_int4() const {
   if (type_id_ != TypeId::Int4 || is_array_) return nullptr;
-  return reinterpret_cast<const int32_t*>(storage_);
+  return reinterpret_cast<const int32_t*>(scalar_data(type_id_, storage_));
 }
 
 const float* Value::as_float2() const {
   if (type_id_ != TypeId::Float2 || is_array_) return nullptr;
-  return reinterpret_cast<const float*>(storage_);
+  return reinterpret_cast<const float*>(scalar_data(type_id_, storage_));
 }
 
 const float* Value::as_float3() const {
@@ -1177,19 +1225,19 @@ const float* Value::as_float3() const {
       type_id_ != TypeId::Vector3f && type_id_ != TypeId::Normal3f &&
       type_id_ != TypeId::Color3f) return nullptr;
   if (is_array_) return nullptr;
-  return reinterpret_cast<const float*>(storage_);
+  return reinterpret_cast<const float*>(scalar_data(type_id_, storage_));
 }
 
 const float* Value::as_float4() const {
   if (type_id_ != TypeId::Float4 && type_id_ != TypeId::Quatf &&
       type_id_ != TypeId::Color4f) return nullptr;
   if (is_array_) return nullptr;
-  return reinterpret_cast<const float*>(storage_);
+  return reinterpret_cast<const float*>(scalar_data(type_id_, storage_));
 }
 
 const double* Value::as_double2() const {
   if (type_id_ != TypeId::Double2 || is_array_) return nullptr;
-  return reinterpret_cast<const double*>(storage_);
+  return reinterpret_cast<const double*>(scalar_data(type_id_, storage_));
 }
 
 const double* Value::as_double3() const {
@@ -1197,20 +1245,20 @@ const double* Value::as_double3() const {
       type_id_ != TypeId::Vector3d && type_id_ != TypeId::Normal3d &&
       type_id_ != TypeId::Color3d) return nullptr;
   if (is_array_) return nullptr;
-  return reinterpret_cast<const double*>(storage_);
+  return reinterpret_cast<const double*>(scalar_data(type_id_, storage_));
 }
 
 const double* Value::as_double4() const {
   if (type_id_ != TypeId::Double4 && type_id_ != TypeId::Quatd &&
       type_id_ != TypeId::Color4d) return nullptr;
   if (is_array_) return nullptr;
-  return reinterpret_cast<const double*>(storage_);
+  return reinterpret_cast<const double*>(scalar_data(type_id_, storage_));
 }
 
 // Matrix accessors
 const float* Value::as_matrix2f() const {
   if (type_id_ != TypeId::Matrix2f || is_array_) return nullptr;
-  return reinterpret_cast<const float*>(storage_);
+  return reinterpret_cast<const float*>(scalar_data(type_id_, storage_));
 }
 
 const float* Value::as_matrix3f() const {
@@ -1225,7 +1273,7 @@ const float* Value::as_matrix4f() const {
 
 const double* Value::as_matrix2d() const {
   if (type_id_ != TypeId::Matrix2d || is_array_) return nullptr;
-  return reinterpret_cast<const double*>(storage_);
+  return reinterpret_cast<const double*>(scalar_data(type_id_, storage_));
 }
 
 const double* Value::as_matrix3d() const {
@@ -1390,8 +1438,7 @@ bool Value::operator==(const Value& other) const {
   }
 
   if (UsesStringStorage(type_id_)) {
-    return reinterpret_cast<const StringStorage*>(storage_)->value ==
-           reinterpret_cast<const StringStorage*>(other.storage_)->value;
+    return StringSlot(storage_)->value == StringSlot(other.storage_)->value;
   }
 
   size_t size = GetTypeSize(type_id_);
@@ -1513,7 +1560,7 @@ uint64_t Value::hash() const {
 
   // Hash string types
   if (UsesStringStorage(type_id_)) {
-    const auto& s = reinterpret_cast<const StringStorage*>(storage_)->value;
+    const auto& s = StringSlot(storage_)->value;
     if (!s.empty()) {
       h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(s.data()), s.size());
     }
@@ -1591,7 +1638,7 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
   }
 
   if (UsesStringStorage(type_id_)) {
-    const auto& s = reinterpret_cast<const StringStorage*>(storage_)->value;
+    const auto& s = StringSlot(storage_)->value;
     *out_size = s.size();
     return reinterpret_cast<const uint8_t*>(s.data());
   }
