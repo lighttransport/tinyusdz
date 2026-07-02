@@ -535,7 +535,7 @@ private:
       const uint64_t payload = v.payload();
       if (payload == 0) return v;
 
-      auto merge_time_samples = [&](auto&& self, uint64_t local_idx) -> uint64_t {
+      auto merge_time_samples = [&](uint64_t local_idx) -> uint64_t {
         if (local_idx == 0) return uint64_t(0);
         if (local_idx < local_to_global.size() &&
             local_to_global[local_idx] != UINT64_MAX) {
@@ -567,7 +567,7 @@ private:
         return global_idx;
       };
 
-      auto merge_path_list = [&](auto&& self, uint64_t local_idx) -> uint64_t {
+      auto merge_path_list = [&](uint64_t local_idx) -> uint64_t {
         if (local_idx == 0) return uint64_t(0);
         if (local_idx < local_to_global.size() &&
             local_to_global[local_idx] != UINT64_MAX) {
@@ -597,7 +597,7 @@ private:
         return global_idx;
       };
 
-      auto merge_value_block = [&](auto&& self, uint64_t local_idx) -> uint64_t {
+      auto merge_value_block = [&](uint64_t local_idx) -> uint64_t {
         if (local_idx == 0) return uint64_t(0);
         if (local_idx < local_to_global.size() &&
             local_to_global[local_idx] != UINT64_MAX) {
@@ -629,11 +629,11 @@ private:
 
       uint64_t global_idx = 0;
       if (v.type_id() == CrateTypeId::TimeSamples) {
-        global_idx = merge_time_samples(merge_time_samples, payload);
+        global_idx = merge_time_samples(payload);
       } else if (v.type_id() == CrateTypeId::PathListOp) {
-        global_idx = merge_path_list(merge_path_list, payload);
+        global_idx = merge_path_list(payload);
       } else {
-        global_idx = merge_value_block(merge_value_block, payload);
+        global_idx = merge_value_block(payload);
       }
       return ValueRep::Make(v.type_id(), global_idx, v.is_array(), false,
                             v.is_compressed());
