@@ -9,7 +9,7 @@
 # so keep the desktop quiet during a measurement run.
 #
 # Usage:
-#   scripts/bench_vram.sh [options] -- COMMAND [ARGS...]
+#   benchmark/tusdrender/bench_vram.sh [options] -- COMMAND [ARGS...]
 #
 # Options:
 #   -l LABEL    label for the report line (default: first word of COMMAND)
@@ -21,13 +21,13 @@
 #   -k          keep OUTDIR (default: removed unless the run fails)
 #
 # Environment of the target command is passed through, so wrap with e.g.
-#   TUSDVIEW_TIME_PRESENT=1 TUSDVIEW_RT_TIMING=1 scripts/bench_vram.sh ...
+#   TUSDVIEW_TIME_PRESENT=1 TUSDVIEW_RT_TIMING=1 benchmark/tusdrender/bench_vram.sh ...
 # to get the renderer's own stage timings echoed into the report.
 #
 # Exit code: the command's exit code, or 1 if an image check fails.
 #
 # Examples:
-#   scripts/bench_vram.sh -l island-rt -i /tmp/out.ppm -- \
+#   benchmark/tusdrender/bench_vram.sh -l island-rt -i /tmp/out.ppm -- \
 #     ./build/tusdview --headless --next --rt --rt-lod --camera shotCam \
 #       --frames 8 --screenshot /tmp/out.ppm /mnt/disk1/data/island/usd/island.usda
 #
