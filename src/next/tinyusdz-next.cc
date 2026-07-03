@@ -226,37 +226,32 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
                          comp_opts);
 }
 
-bool LoadUSDComposed(const std::string& filename, Stage* stage,
-                     const LoadUSDOptions& load_options,
-                     std::string* warn, std::string* err,
-                     const pcp::CompositionOptions* comp_opts) {
-  // Lazy single-layer load first (keeps arrays as lazy ValueRefs).
-  if (!LoadUSD(filename, stage, load_options, warn, err)) {
-    return false;
-  }
+namespace {
+
+// Compose an already-loaded root stage IN PLACE: resolve its composition arcs
+// (sublayers / references / payloads / inherits / specializes / variants /
+// relocates / instancing) through the PCP engine, anchored to `anchor_path`'s
+// directory. Self-contained / pre-flattened roots are a no-op fast path (the
+// lazy stage is kept as-is, byte-identical). Shared by LoadUSDComposed (file)
+// and LoadUSDComposedFromMemory. When the root is USDC borrowed from a caller
+// buffer, that buffer must outlive the composed stage (its lazy arrays read
+// from it) -- the caller owns that lifetime.
+//
+// Keep NATIVE instancing (detect_instances=true, the default): each prototype
+// group's geometry is stored ONCE and consumers traverse instances transparently
+// via UsdPrim::GetChildren(); detect_instances=false would duplicate every
+// instance's geometry into the stage and OOM on large scenes.
+bool ComposeStageInPlace(Stage* stage, const std::string& anchor_path,
+                         const LoadUSDOptions& load_options,
+                         const pcp::CompositionOptions* comp_opts,
+                         std::string* warn, std::string* err) {
   Layer* root = stage->GetRootLayer();
   if (!root || !RootNeedsComposition(*root)) {
-    // No external/internal arcs to resolve — keep the lazy stage as-is. This is
-    // the byte-identical fast path for pre-flattened / self-contained scenes.
-    return true;
+    return true;  // self-contained / pre-flattened: keep the lazy stage as-is.
   }
 
-  // The root has composition arcs. Resolve them through the full PCP composition
-  // engine (sublayers + references + payloads + inherits/specializes + variants
-  // + relocates + instancing), anchored to the input file's directory. External
-  // USDC layers load lazily.
-  //
-  // Keep NATIVE instancing (detect_instances=true, the default): each prototype
-  // group's geometry is stored ONCE (the prototype member holds the subtree;
-  // sibling instances carry instance_prototype meta and emit empty). Consumers
-  // traverse instances transparently via UsdPrim::GetChildren(), which follows
-  // instance_prototype to the prototype's children — so tusdrender expands every
-  // instance into the flat triangle/BVH stream at its own world transform while
-  // the composed STAGE keeps just one copy per prototype. (Inline expansion via
-  // detect_instances=false instead duplicates every instance's geometry into the
-  // stage and OOMs on large scenes like Caldera beachhead/capital.)
   AssetResolver resolver;
-  resolver.SetWorkingDirectory(DirOfPath(filename));
+  resolver.SetWorkingDirectory(DirOfPath(anchor_path));
 
   pcp::CompositionOptions copts;
   copts.load_payloads = true;
@@ -309,9 +304,9 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
     return false;
   }
   if (!pcp::ComposeStageFromLayer(std::move(root_layer), resolver, &composed,
-                                  filename, copts, &cwarn, &cerr)) {
+                                  anchor_path, copts, &cwarn, &cerr)) {
     if (err) {
-      *err = "composition failed for " + filename +
+      *err = "composition failed for " + anchor_path +
              (cerr.empty() ? "" : ": " + cerr);
     }
     return false;
@@ -322,6 +317,52 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   }
   *stage = std::move(composed);
   return true;
+}
+
+}  // namespace
+
+bool LoadUSDComposed(const std::string& filename, Stage* stage,
+                     const LoadUSDOptions& load_options,
+                     std::string* warn, std::string* err,
+                     const pcp::CompositionOptions* comp_opts) {
+  // Lazy single-layer load first (keeps arrays as lazy ValueRefs), then compose.
+  if (!LoadUSD(filename, stage, load_options, warn, err)) {
+    return false;
+  }
+  return ComposeStageInPlace(stage, filename, load_options, comp_opts, warn, err);
+}
+
+bool LoadUSDComposedFromMemory(const uint8_t* data, size_t size,
+                               const std::string& anchor_path, Stage* stage,
+                               std::string* warn, std::string* err,
+                               const pcp::CompositionOptions* comp_opts) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+  if (!data || size == 0) {
+    if (err) *err = "empty buffer";
+    return false;
+  }
+  // Zero-copy for USDC: parse the caller's *borrowed* buffer (its lazy arrays
+  // read straight from it, so the caller must keep `data` alive for the composed
+  // stage's whole lifetime). USDA/USDZ retain no dependency on the buffer, so
+  // the plain memory load is used for them.
+  if (DetectFormat(data, size) == FileFormat::USDC) {
+    USDCLoadResult r = LoadUSDCFromMemoryBorrowed(data, size, USDCLoadOptions{});
+    if (!r.success) {
+      if (err) *err = r.error_summary;
+      return false;
+    }
+    if (warn && !r.warnings.empty()) {
+      for (const auto& w : r.warnings) *warn += w + "\n";
+    }
+    *stage = std::move(r.stage);
+  } else if (!LoadUSDFromMemory(data, size, stage, warn, err)) {
+    return false;
+  }
+  return ComposeStageInPlace(stage, anchor_path, LoadUSDOptions{}, comp_opts,
+                             warn, err);
 }
 
 bool LoadUSDA(const std::string& filename, Stage* stage,

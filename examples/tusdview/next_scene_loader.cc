@@ -19,6 +19,7 @@
 #include "log.hh"
 
 // `next` + tydra-next (built on demand; see CMakeLists.txt).
+#include "next/io/file-util.hh"  // io::MMapFile (zero-copy USDC load)
 #include "next/tinyusdz-next.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
@@ -719,12 +720,52 @@ void BuildNextVolumes(const tnext::Stage& stage, const std::string& usdPath,
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl) {
-  // --- 1. Compose with the next loader (default options load payloads). ---
+  // --- 1. Compose with the next loader (default options load payloads).
+  //        Zero-copy fast path: mmap the input via the next_io helper and
+  //        compose the *borrowed* bytes -- the stage's lazy arrays read straight
+  //        from the mapping (kept alive by mmap_guard, declared BEFORE `stage`
+  //        so it is destroyed AFTER it). Falls back to the path-based loader
+  //        when mmap is unavailable. ---
+  struct MmapGuard {
+    tnext::io::MMapFileHandle handle;
+    ~MmapGuard() {
+      if (handle.addr) {
+        std::string e;
+        tnext::io::UnmapFile(handle, &e);
+      }
+    }
+  } mmap_guard;
+
   tnext::Stage stage;
   std::string lwarn, lerr;
-  if (!tnext::LoadUSDComposed(path, &stage, &lwarn, &lerr, /*comp_opts=*/nullptr)) {
-    if (err) *err = "next: compose failed: " + lerr;
-    return false;
+  bool loaded = false;
+  bool mmapped = false;
+  {
+    std::string merr;
+    if (tnext::io::MMapFile(path, &mmap_guard.handle, /*writable=*/false,
+                            &merr)) {
+      mmapped = true;
+      loaded = tnext::LoadUSDComposedFromMemory(
+          mmap_guard.handle.addr, static_cast<size_t>(mmap_guard.handle.size),
+          path, &stage, &lwarn, &lerr, /*comp_opts=*/nullptr);
+      if (!loaded) {
+        std::string ue;  // compose failed on the mapping: drop it
+        tnext::io::UnmapFile(mmap_guard.handle, &ue);
+        mmap_guard.handle = tnext::io::MMapFileHandle{};
+      }
+    }
+  }
+  if (!loaded) {
+    if (mmapped) {  // mmap worked but compose failed -> real error
+      if (err) *err = "next: compose failed: " + lerr;
+      return false;
+    }
+    // mmap unavailable -> path-based fallback.
+    if (!tnext::LoadUSDComposed(path, &stage, &lwarn, &lerr,
+                                /*comp_opts=*/nullptr)) {
+      if (err) *err = "next: compose failed: " + lerr;
+      return false;
+    }
   }
   if (warn && !lwarn.empty()) *warn = lwarn;
   const double time = std::isnan(opts.timecode) ? 0.0 : opts.timecode;
