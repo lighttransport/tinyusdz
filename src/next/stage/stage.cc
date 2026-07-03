@@ -360,18 +360,19 @@ bool Stage::HasPrimAtPath(const std::string& path) const {
 }
 
 bool Stage::TraverseImpl(uint32_t prim_index, const Layer* layer,
-                          const std::function<bool(const UsdPrim&)>& callback) const {
+                         bool (*callback)(const UsdPrim&, void*),
+                         void* user) const {
   const PrimSpec* spec = layer->prim(prim_index);
   if (!spec) return true;
 
   UsdPrim prim(spec, layer, prim_index);
 
   // Call callback, stop if returns false
-  if (!callback(prim)) return false;
+  if (!callback(prim, user)) return false;
 
   // Recurse to children, propagate stop signal
   for (uint32_t child_idx : spec->child_indices()) {
-    if (!TraverseImpl(child_idx, layer, callback)) {
+    if (!TraverseImpl(child_idx, layer, callback, user)) {
       return false;
     }
   }

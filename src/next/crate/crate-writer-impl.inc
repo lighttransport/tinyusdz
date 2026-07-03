@@ -528,118 +528,124 @@ private:
     value_data_.push_back({TypeId::Invalid, std::vector<uint8_t>()});
   }
 
-  ValueRep RemapLocalValueRep(Impl& local, ValueRep rep,
+  // Recursively rewrite a local ValueRep's block indices/paths into this (the
+  // merge target) writer's global tables. C-style: three plain block helpers +
+  // this dispatcher, mutually recursive by ordinary member calls (was a nest of
+  // Y-combinator `auto&&`-recursive generic lambdas -> template instantiation).
+  ValueRep RemapLocalValueRep(Impl& local, ValueRep v,
                               std::vector<uint64_t>& local_to_global) {
-    auto remap = [&](auto&& remap, ValueRep v) -> ValueRep {
-      if (v.is_inlined()) return v;
-      const uint64_t payload = v.payload();
-      if (payload == 0) return v;
+    if (v.is_inlined()) return v;
+    const uint64_t payload = v.payload();
+    if (payload == 0) return v;
 
-      auto merge_time_samples = [&](auto&& self, uint64_t local_idx) -> uint64_t {
-        if (local_idx == 0) return uint64_t(0);
-        if (local_idx < local_to_global.size() &&
-            local_to_global[local_idx] != UINT64_MAX) {
-          return local_to_global[local_idx];
-        }
-        if (local_idx >= local.value_data_.size()) return uint64_t(0);
-        DataBlock block = std::move(local.value_data_[local_idx]);
-        block.has_hash = false;
-        if (block.data.size() >= 32) {
-          uint64_t raw = 0;
-          std::memcpy(&raw, block.data.data() + 8, 8);
-          raw = remap(remap, ValueRep(raw)).raw();
-          std::memcpy(block.data.data() + 8, &raw, 8);
+    uint64_t global_idx = 0;
+    if (v.type_id() == CrateTypeId::TimeSamples) {
+      global_idx = RemapTimeSamplesBlock(local, payload, local_to_global);
+    } else if (v.type_id() == CrateTypeId::PathListOp) {
+      global_idx = RemapPathListBlock(local, payload, local_to_global);
+    } else {
+      global_idx = RemapValueBlock(local, payload, local_to_global);
+    }
+    return ValueRep::Make(v.type_id(), global_idx, v.is_array(), false,
+                          v.is_compressed());
+  }
 
-          uint64_t count = 0;
-          std::memcpy(&count, block.data.data() + 24, 8);
-          const size_t max_count = (block.data.size() - 32) / 8;
-          if (count > max_count) count = max_count;
-          for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
-            const size_t off = 32 + i * 8;
-            std::memcpy(&raw, block.data.data() + off, 8);
-            raw = remap(remap, ValueRep(raw)).raw();
-            std::memcpy(block.data.data() + off, &raw, 8);
-          }
-        }
-        CacheBlockHash(&block);
-        uint64_t global_idx = InternBlock(std::move(block));
-        if (local_idx < local_to_global.size()) local_to_global[local_idx] = global_idx;
-        return global_idx;
-      };
+  // TimeSamples indirection block: remap the header value-rep + each sample rep.
+  uint64_t RemapTimeSamplesBlock(Impl& local, uint64_t local_idx,
+                                 std::vector<uint64_t>& local_to_global) {
+    if (local_idx == 0) return uint64_t(0);
+    if (local_idx < local_to_global.size() &&
+        local_to_global[local_idx] != UINT64_MAX) {
+      return local_to_global[local_idx];
+    }
+    if (local_idx >= local.value_data_.size()) return uint64_t(0);
+    DataBlock block = std::move(local.value_data_[local_idx]);
+    block.has_hash = false;
+    if (block.data.size() >= 32) {
+      uint64_t raw = 0;
+      std::memcpy(&raw, block.data.data() + 8, 8);
+      raw = RemapLocalValueRep(local, ValueRep(raw), local_to_global).raw();
+      std::memcpy(block.data.data() + 8, &raw, 8);
 
-      auto merge_path_list = [&](auto&& self, uint64_t local_idx) -> uint64_t {
-        if (local_idx == 0) return uint64_t(0);
-        if (local_idx < local_to_global.size() &&
-            local_to_global[local_idx] != UINT64_MAX) {
-          return local_to_global[local_idx];
-        }
-        if (local_idx >= local.value_data_.size()) return uint64_t(0);
-        DataBlock block = std::move(local.value_data_[local_idx]);
-        block.has_hash = false;
-        if (block.data.size() >= 9) {
-          uint64_t count = 0;
-          std::memcpy(&count, block.data.data() + 1, 8);
-          const size_t max_count = (block.data.size() - 9) / 4;
-          if (count > max_count) count = max_count;
-          for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
-            uint32_t local_path_idx = 0;
-            std::memcpy(&local_path_idx, block.data.data() + 9 + i * 4, 4);
-            uint32_t global_path_idx = local_path_idx;
-            if (!local.frozen_path_ && local_path_idx < local.paths_.size()) {
-              global_path_idx = InternPath(local.paths_[local_path_idx]);
-            }
-            std::memcpy(block.data.data() + 9 + i * 4, &global_path_idx, 4);
-          }
-        }
-        CacheBlockHash(&block);
-        uint64_t global_idx = InternBlock(std::move(block));
-        if (local_idx < local_to_global.size()) local_to_global[local_idx] = global_idx;
-        return global_idx;
-      };
-
-      auto merge_value_block = [&](auto&& self, uint64_t local_idx) -> uint64_t {
-        if (local_idx == 0) return uint64_t(0);
-        if (local_idx < local_to_global.size() &&
-            local_to_global[local_idx] != UINT64_MAX) {
-          return local_to_global[local_idx];
-        }
-        if (local_idx >= local.value_data_.size()) return uint64_t(0);
-
-        DataBlock block = std::move(local.value_data_[local_idx]);
-        if (block.type == TypeId::Dictionary && block.data.size() >= 8) {
-          block.has_hash = false;
-          uint64_t count = 0;
-          std::memcpy(&count, block.data.data(), 8);
-          const size_t max_count = (block.data.size() - 8) / 20;
-          if (count > max_count) count = max_count;
-          for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
-            const size_t off = 8 + i * 20 + 12;
-            uint64_t raw = 0;
-            std::memcpy(&raw, block.data.data() + off, 8);
-            raw = remap(remap, ValueRep(raw)).raw();
-            std::memcpy(block.data.data() + off, &raw, 8);
-          }
-          CacheBlockHash(&block);
-        }
-
-        uint64_t global_idx = InternBlock(std::move(block));
-        if (local_idx < local_to_global.size()) local_to_global[local_idx] = global_idx;
-        return global_idx;
-      };
-
-      uint64_t global_idx = 0;
-      if (v.type_id() == CrateTypeId::TimeSamples) {
-        global_idx = merge_time_samples(merge_time_samples, payload);
-      } else if (v.type_id() == CrateTypeId::PathListOp) {
-        global_idx = merge_path_list(merge_path_list, payload);
-      } else {
-        global_idx = merge_value_block(merge_value_block, payload);
+      uint64_t count = 0;
+      std::memcpy(&count, block.data.data() + 24, 8);
+      const size_t max_count = (block.data.size() - 32) / 8;
+      if (count > max_count) count = max_count;
+      for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+        const size_t off = 32 + i * 8;
+        std::memcpy(&raw, block.data.data() + off, 8);
+        raw = RemapLocalValueRep(local, ValueRep(raw), local_to_global).raw();
+        std::memcpy(block.data.data() + off, &raw, 8);
       }
-      return ValueRep::Make(v.type_id(), global_idx, v.is_array(), false,
-                            v.is_compressed());
-    };
+    }
+    CacheBlockHash(&block);
+    uint64_t global_idx = InternBlock(std::move(block));
+    if (local_idx < local_to_global.size()) local_to_global[local_idx] = global_idx;
+    return global_idx;
+  }
 
-    return remap(remap, rep);
+  // PathListOp block: remap each embedded local path index into a global one.
+  uint64_t RemapPathListBlock(Impl& local, uint64_t local_idx,
+                              std::vector<uint64_t>& local_to_global) {
+    if (local_idx == 0) return uint64_t(0);
+    if (local_idx < local_to_global.size() &&
+        local_to_global[local_idx] != UINT64_MAX) {
+      return local_to_global[local_idx];
+    }
+    if (local_idx >= local.value_data_.size()) return uint64_t(0);
+    DataBlock block = std::move(local.value_data_[local_idx]);
+    block.has_hash = false;
+    if (block.data.size() >= 9) {
+      uint64_t count = 0;
+      std::memcpy(&count, block.data.data() + 1, 8);
+      const size_t max_count = (block.data.size() - 9) / 4;
+      if (count > max_count) count = max_count;
+      for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+        uint32_t local_path_idx = 0;
+        std::memcpy(&local_path_idx, block.data.data() + 9 + i * 4, 4);
+        uint32_t global_path_idx = local_path_idx;
+        if (!local.frozen_path_ && local_path_idx < local.paths_.size()) {
+          global_path_idx = InternPath(local.paths_[local_path_idx]);
+        }
+        std::memcpy(block.data.data() + 9 + i * 4, &global_path_idx, 4);
+      }
+    }
+    CacheBlockHash(&block);
+    uint64_t global_idx = InternBlock(std::move(block));
+    if (local_idx < local_to_global.size()) local_to_global[local_idx] = global_idx;
+    return global_idx;
+  }
+
+  // Plain value block: only Dictionary blocks embed nested value-reps to remap.
+  uint64_t RemapValueBlock(Impl& local, uint64_t local_idx,
+                           std::vector<uint64_t>& local_to_global) {
+    if (local_idx == 0) return uint64_t(0);
+    if (local_idx < local_to_global.size() &&
+        local_to_global[local_idx] != UINT64_MAX) {
+      return local_to_global[local_idx];
+    }
+    if (local_idx >= local.value_data_.size()) return uint64_t(0);
+
+    DataBlock block = std::move(local.value_data_[local_idx]);
+    if (block.type == TypeId::Dictionary && block.data.size() >= 8) {
+      block.has_hash = false;
+      uint64_t count = 0;
+      std::memcpy(&count, block.data.data(), 8);
+      const size_t max_count = (block.data.size() - 8) / 20;
+      if (count > max_count) count = max_count;
+      for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+        const size_t off = 8 + i * 20 + 12;
+        uint64_t raw = 0;
+        std::memcpy(&raw, block.data.data() + off, 8);
+        raw = RemapLocalValueRep(local, ValueRep(raw), local_to_global).raw();
+        std::memcpy(block.data.data() + off, &raw, 8);
+      }
+      CacheBlockHash(&block);
+    }
+
+    uint64_t global_idx = InternBlock(std::move(block));
+    if (local_idx < local_to_global.size()) local_to_global[local_idx] = global_idx;
+    return global_idx;
   }
 
   // Append `block` to value_data_ unless an existing block has identical bytes;
