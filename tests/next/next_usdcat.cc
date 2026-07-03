@@ -24,9 +24,11 @@
 #include <unistd.h>
 
 #include "logger.hh"  // tinyusdz::logging (next routes diagnostics through it)
+#include "next/io/file-util.hh"  // io::MMapFile (zero-copy USDC fast path)
 #include "next/parser/ascii-parser.hh"
 #include "next/pcp/cache.hh"
 #include "next/pcp/layer-registry.hh"
+#include "next/reader/usdc-reader.hh"  // LoadUSDCFromMemoryBorrowed
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
 #include "next/tinyusdz-next.hh"
@@ -752,6 +754,19 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  // Holds the mmap of a zero-copy USDC load. Declared BEFORE `stage` so it is
+  // destroyed AFTER it: the stage's lazy arrays read straight from the mapping,
+  // which must stay valid for the stage's whole lifetime.
+  struct MmapGuard {
+    io::MMapFileHandle handle;
+    ~MmapGuard() {
+      if (handle.addr) {
+        std::string e;
+        io::UnmapFile(handle, &e);
+      }
+    }
+  } mmap_guard;
+
   std::string warn, err;
   Stage stage;
   bool ok = false;
@@ -786,7 +801,53 @@ int main(int argc, char **argv) {
   } else {
     LoadUSDOptions load_opts;
     load_opts.usdc_options = usdc_opts;
-    ok = LoadUSD(filename, &stage, load_opts, &warn, &err);
+
+    // Zero-copy fast path: mmap the input via the next_io helper and, if it is a
+    // crate (USDC) file, parse the *borrowed* bytes -- the stage's lazy arrays
+    // read directly from the mapping (kept alive by mmap_guard). This mirrors
+    // how the legacy tusdcat loads (io::MMapFile -> parse-from-memory), avoiding
+    // a whole-file heap copy. USDA / USDZ / bare `.usd` (and mmap failure) fall
+    // back to LoadUSD, which auto-detects and handles those formats.
+    bool used_mmap = false;
+    {
+      std::string merr;
+      if (io::MMapFile(filename, &mmap_guard.handle, /*writable=*/false, &merr)) {
+        const uint8_t* data = mmap_guard.handle.addr;
+        const size_t nbytes = static_cast<size_t>(mmap_guard.handle.size);
+        const bool is_crate =
+            nbytes >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0;
+        const uint64_t cap = usdc_opts.crate_options.max_memory;
+        if (is_crate && (cap == 0 || nbytes <= cap)) {
+          USDCLoadResult r =
+              LoadUSDCFromMemoryBorrowed(data, nbytes, usdc_opts);
+          if (r.success) {
+            stage = std::move(r.stage);
+            for (const auto& w : r.warnings) warn += w + "\n";
+            ok = true;
+            used_mmap = true;
+            if (timing) {
+              std::fprintf(stderr,
+                           "[next_usdcat] zero-copy mmap load: %zu bytes\n",
+                           nbytes);
+            }
+          } else {
+            err = r.error_summary;
+          }
+        }
+        if (!used_mmap) {
+          // Not crate, over budget, or parse failed: drop the mapping and let
+          // LoadUSD handle it from the path.
+          std::string ue;
+          io::UnmapFile(mmap_guard.handle, &ue);
+          mmap_guard.handle = io::MMapFileHandle{};
+        }
+      }
+    }
+
+    if (!used_mmap) {
+      err.clear();
+      ok = LoadUSD(filename, &stage, load_opts, &warn, &err);
+    }
   }
   const auto t_loaded = Clock::now();
 
