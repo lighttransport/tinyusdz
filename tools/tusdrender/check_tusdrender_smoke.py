@@ -98,7 +98,7 @@ def main():
     out = outdir / "tusdrender-smoke.png"
     cmd = [
         exe,
-        str(srcdir / "tests/usda/suzanne.usda"),
+        str(srcdir / "models/suzanne.usda"),
         str(out),
         "-w",
         "64",
