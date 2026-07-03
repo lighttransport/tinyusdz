@@ -6,8 +6,11 @@
 #include "usda-reader.hh"
 #include "../strfmt.hh"
 
-#include <fstream>
 #include <cstring>
+
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include "../io/file-util.hh"  // IsUSDAFile header sniff (file-based)
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -96,24 +99,16 @@ bool IsUSDAFile(const char* filename) {
   if (!filename) {
     return false;
   }
-
-  std::ifstream file(filename, std::ios::binary);
-  if (!file.is_open()) {
-    return false;
-  }
-
-  // Read first 16 bytes and look for #usda signature
-  char buffer[16] = {0};
-  file.read(buffer, sizeof(buffer) - 1);
-
-  // Check for #usda header
-  if (std::strncmp(buffer, "#usda", 5) == 0) {
-    return true;
-  }
-
-  // Could also start with whitespace or comments
-  // For now, just check for the #usda signature
-  return false;
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  std::vector<uint8_t> header;
+  std::string err;
+  if (!io::ReadFileHeader(&header, &err, filename, 16)) return false;
+  return header.size() >= 5 &&
+         std::memcmp(header.data(), "#usda", 5) == 0;
+#else
+  (void)filename;
+  return false;  // no filesystem in the freestanding/WASM build
+#endif
 }
 
 }  // namespace next
