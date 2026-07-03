@@ -200,6 +200,19 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
 bool WriteUSDToMemory(std::vector<uint8_t>& out, const Stage& stage,
                       USDFormat format, std::string* err = nullptr);
 
+/// Load + compose a stage from an in-memory buffer (auto-detects USDA/USDC/USDZ),
+/// resolving composition arcs anchored to `anchor_path`'s directory (external
+/// layers are still read from disk, so this needs file I/O to compose scenes
+/// with external references). For USDC the buffer is BORROWED (zero-copy): keep
+/// `data` valid for the whole lifetime of the returned stage. A caller that
+/// mmaps a file (via the next_io utility) and passes the mapping here gets a
+/// zero-copy composed load.
+bool LoadUSDComposedFromMemory(const uint8_t* data, size_t size,
+                               const std::string& anchor_path, Stage* stage,
+                               std::string* warn = nullptr,
+                               std::string* err = nullptr,
+                               const pcp::CompositionOptions* comp_opts = nullptr);
+
 // ============================================================
 // Convenience writing functions (wrap writer APIs)
 // ============================================================
