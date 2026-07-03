@@ -789,3 +789,34 @@ exactly (Caldera `9d680d8c…`, Island `8fef4b2c…`, ALab `992471c3…`), and t
 current output is deterministic run-to-run. So the entire freestanding /
 zero-copy-mmap / C-style refactor series is behavior-preserving on the public
 large scenes.
+
+### 8.1 Profile-driven optimizations (2026-07)
+
+`perf record --call-graph dwarf` on the two heaviest scenes:
+
+**Caldera is write-bound** (write ≈ 65 % of total). The USDA write phase spent
+~17 % in `__memmove` alone — a per-scalar stack-buffer→`std::string::_M_append`
+copy in `ChunkedStream`. Formatting each number **directly into the chunk buffer
+tail** (raw `char[]` + cursor; `IntTo`/`UIntTo`/`dtos_to` write into `buf_+len_`)
+removes that copy. Byte-identical (writer parity tests + scene sha256 unchanged):
+
+| Scene write phase | before | after |
+|---|---:|---:|
+| Caldera | 4.57 s (887 MB/s) | **3.94 s (~1020 MB/s)** |
+| Island  | 5.87 s (1507 MB/s) | **5.13 s (~1725 MB/s)** |
+
+Remaining write cost is now the float formatter itself (`zmij::write_usd_fast`
+~27 % on Island, whose 21 M-element `quath` orientations widen to float) — near
+the practical dtoa floor.
+
+**Island is compose-bound** (`build_stage` ≈ 6.2 s; write 5.1 s). Time-sliced
+perf of the compose phase shows it is dominated by **std::string-keyed map +
+small-allocation churn**: ~16 % `malloc`/`free` (+ ~20 % kernel page-fault
+handling from heap/mmap growth), `Cache::Impl::Specs` string lookups ~7.7 %,
+`std::hash<string>` ~5.5 %, and ~1.3 % just freeing the cache maps in `~Impl()`.
+The single-threaded `[next_warm] discover` frontier walk is another ~1.2 s serial
+stretch. The high-leverage fix is the Part-C **arena/pool allocator for compose
+transients + interned-id (not string) keying for `Specs`/`SourcesForPath`**, plus
+parallelizing `discover`. That is a substantial, correctness-critical change to
+the compose engine (byte-identical composition must hold) — tracked as the next
+compose lever, not landed here.
