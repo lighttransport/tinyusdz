@@ -18,6 +18,10 @@
 #include <string>
 #include <vector>
 
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include "../io/file-util.hh"  // io::MMapFileHandle (mmap backing)
+#endif
+
 namespace tinyusdz {
 namespace next {
 
@@ -43,11 +47,12 @@ class CrateDataSource {
   static std::shared_ptr<CrateDataSource> Adopt(std::string&& bytes,
                                                 CrateVersion version);
 
-  /// Memory-map `filename` read-only and adopt the mapping as the backing
-  /// (Phase 8.3). Returns nullptr when mmap is unavailable on this platform
-  /// (non-posix / WASM) or the mapping fails -- the caller should then fall
-  /// back to the owned-buffer Adopt path. The mapping is released (munmap) by
-  /// the destructor, i.e. once the last shared_ptr (reader or lazy value)
+  /// Memory-map `filename` read-only (via the next_io utility) and adopt the
+  /// mapping as the backing (Phase 8.3). Returns nullptr when file I/O is
+  /// disabled (freestanding / WASM: TINYUSDZ_NEXT_ENABLE_FILEIO off), mmap is
+  /// unavailable, or the mapping fails -- the caller should then fall back to
+  /// the owned-buffer Adopt path. The mapping is released (UnmapFile) by the
+  /// destructor, i.e. once the last shared_ptr (reader or lazy value)
   /// referencing this source is gone. Tables can be installed later via
   /// set_tables(); version via set_version().
   static std::shared_ptr<CrateDataSource> MmapFile(const std::string& filename);
@@ -55,15 +60,25 @@ class CrateDataSource {
   ~CrateDataSource();
 
   /// Whether this source is backed by a memory mapping (vs an owned buffer).
-  bool is_mmapped() const { return mmap_base_ != nullptr; }
+  bool is_mmapped() const {
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+    return mmap_handle_.addr != nullptr;
+#else
+    return false;
+#endif
+  }
 
   const uint8_t* base() const {
-    if (mmap_base_) return mmap_base_;
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+    if (mmap_handle_.addr) return mmap_handle_.addr;
+#endif
     if (borrowed_base_) return borrowed_base_;
     return reinterpret_cast<const uint8_t*>(bytes_.data());
   }
   size_t size() const {
-    if (mmap_base_) return mmap_size_;
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+    if (mmap_handle_.addr) return static_cast<size_t>(mmap_handle_.size);
+#endif
     return borrowed_base_ ? borrowed_size_ : bytes_.size();
   }
   CrateVersion version() const { return version_; }
@@ -94,13 +109,13 @@ class CrateDataSource {
 
   // Backing is one of:
   //   - owned byte string (bytes_)
-  //   - mmap-backed read-only mapping (mmap_base_)
+  //   - mmap-backed read-only mapping (mmap_handle_; FILEIO builds only)
   //   - borrowed, non-owning buffer (borrowed_base_)
   // base()/size() abstract over all three so every reader stays backing-agnostic.
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  io::MMapFileHandle mmap_handle_;  // mmap mode: mapping (released in the dtor)
+#endif
   std::string bytes_;       // owned mode: the retained crate (never reallocated)
-  const uint8_t* mmap_base_ = nullptr;  // mmap mode: mapped region start
-  size_t mmap_size_ = 0;                // mmap mode: mapped length (== file size)
-  void* mmap_addr_ = nullptr;           // region to munmap in the destructor
   const uint8_t* borrowed_base_ = nullptr;  // borrowed mode: non-owning base
   size_t borrowed_size_ = 0;  // borrowed mode: borrowed buffer length
 
