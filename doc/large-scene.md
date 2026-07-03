@@ -836,9 +836,40 @@ swapping glibc `ptmalloc` for a drop-in thread-caching allocator (byte-identical
 tcmalloc cut *both* compose (−25…31 %) and write (−16…18 %); Caldera RSS
 2.72→2.12 GiB. jemalloc helped compose but slowed the ASCII write, so tcmalloc is
 preferred. This is exposed as the CMake option **`TINYUSDZ_NEXT_WITH_TCMALLOC`**
-(OFF by default) which links `tcmalloc_minimal` (else `tcmalloc`, else `jemalloc`)
-FIRST into the CLI tools; the library itself never forces an allocator. Runtime
-equivalent for any build: `LD_PRELOAD=libtcmalloc_minimal.so.4`. A hand-rolled
-compose arena was therefore *not* pursued — the drop-in allocator captures the
-same win globally (compose + write + PrimSpec building) with zero compose-engine
-risk.
+(OFF by default) which links `tcmalloc_minimal` (else `tcmalloc`, else `mimalloc`,
+else `jemalloc`) FIRST into the CLI tools; the library itself never forces an
+allocator. Runtime equivalent for any build:
+`LD_PRELOAD=libtcmalloc_minimal.so.4`. A hand-rolled compose arena was therefore
+*not* pursued — the drop-in allocator captures the same win globally (compose +
+write + PrimSpec building) with zero compose-engine risk.
+
+**Tuning the allocator to this workload (mimalloc).** The flatten process is
+short-lived and allocation-*accumulating* (compose materializes millions of
+`PrimSpec`s that stay live until the write drains them), so an allocator that
+**returns freed memory to the OS mid-run** (`madvise(MADV_DONTNEED)` / purge) just
+burns syscalls and re-faults. Findings (best-of-3 total, byte-identical, sha256
+unchanged):
+
+| total / peak RSS | tcmalloc | mimalloc *default* | **mimalloc `MIMALLOC_PURGE_DELAY=-1`** |
+|---|---:|---:|---:|
+| Caldera | 5.21 s / 2.13 GiB | 5.99 s | **4.16 s (−20 % vs tcmalloc) / 3.18 GiB** |
+| Island  | 9.75 s / 5.77 GiB | 10.68 s | 9.63 s / 7.45 GiB |
+
+- **tcmalloc needs no tuning** — `TCMALLOC_RELEASE_RATE=0`,
+  `TCMALLOC_MAX_TOTAL_THREAD_CACHE_BYTES` (256 MiB…1 GiB), and
+  `TCMALLOC_AGGRESSIVE_DECOMMIT=0` were all a wash (`tcmalloc_minimal` already
+  avoids aggressive decommit). It stays the robust default: system-available,
+  lowest RSS, zero env.
+- **mimalloc's *default* purges** and is *slower* than tcmalloc; with purging off
+  (`MIMALLOC_PURGE_DELAY=-1`) it is the **fastest allocator on churn-heavy compose
+  (Caldera −20 %)**, a tie on geometry-heavy Island — but trades **more RSS** that
+  grows with scene size (+1 GiB Caldera, +1.7 GiB Island, since freed memory is
+  never returned). `MIMALLOC_EAGER_COMMIT=1` / a finite `PURGE_DELAY` added
+  nothing (the process finishes before any purge would fire).
+- **Recommendation:** keep tcmalloc as the linked default (robust, low RSS). For a
+  batch flatten that is compose-bound and RSS-comfortable within budget, prefer
+  **mimalloc + `MIMALLOC_PURGE_DELAY=-1`** (build mimalloc, then
+  `LD_PRELOAD=libmimalloc.so MIMALLOC_PURGE_DELAY=-1`, or install `libmimalloc.so`
+  so the CMake option links it). The portable takeaway is workload-shaped, not
+  allocator-specific: **disable allocator memory-return for this short-lived
+  accumulate-then-drain process.**
