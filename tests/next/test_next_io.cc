@@ -185,6 +185,15 @@ static void test_bare_usd_is_crate() {
 int main() {
   printf("next USD I/O establishment test (next-core only)\n");
 
+  // The memory-only path is always available (freestanding). The file-based
+  // Load*/Write* are compiled only when next-core is built with file I/O
+  // (TINYUSDZ_NEXT_ENABLE_FILEIO), so guard those cases on the same macro.
+  printf("[memory-only round-trip (freestanding)]\n");
+  test_memory_roundtrip("USDA WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDA);
+  test_memory_roundtrip("USDC WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDC);
+  test_memory_roundtrip("USDZ WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDZ);
+
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
   printf("[WriteUSD/LoadUSD extension round-trip]\n");
   test_writeusd_loadusd_roundtrip("/tmp/next_io_test.usda");
   test_writeusd_loadusd_roundtrip("/tmp/next_io_test.usdc");
@@ -195,13 +204,11 @@ int main() {
   test_format_specific("USDC WriteUSDC/LoadUSDC", "/tmp/next_io_fs.usdc");
   test_format_specific("USDZ WriteUSDZ/LoadUSDZ", "/tmp/next_io_fs.usdz");
 
-  printf("[memory-only round-trip (freestanding)]\n");
-  test_memory_roundtrip("USDA WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDA);
-  test_memory_roundtrip("USDC WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDC);
-  test_memory_roundtrip("USDZ WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDZ);
-
   printf("[extension dispatch]\n");
   test_bare_usd_is_crate();
+#else
+  printf("[file I/O tests skipped: built without TINYUSDZ_NEXT_ENABLE_FILEIO]\n");
+#endif
 
   printf("\n%d/%d passed\n", test_count - fail_count, test_count);
   return fail_count == 0 ? 0 : 1;
