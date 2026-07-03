@@ -12,8 +12,13 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <memory>
+
+// The file-based Load*/Write* umbrella functions read/detect via next_io; gated
+// so the freestanding / WASM build exposes only the *FromMemory / *ToMemory API.
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include "io/file-util.hh"
+#endif
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <thread>
 #endif
@@ -81,20 +86,27 @@ FileFormat DetectFormatFromExtension(const std::string& filename) {
 }
 
 FileFormat DetectFormatFromFileHeader(const std::string& filename, std::string* err) {
-  std::ifstream ifs(filename, std::ios::binary);
-  if (!ifs) {
-    if (err) *err = "Failed to open file for format detection: " + filename;
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  std::vector<uint8_t> header;
+  std::string read_err;
+  if (!io::ReadFileHeader(&header, &read_err, filename, 4096) ||
+      header.empty()) {
+    if (err) {
+      *err = read_err.empty() ? ("Failed to read file header: " + filename)
+                              : read_err;
+    }
     return FileFormat::Unknown;
   }
-
-  uint8_t header[4096] = {};
-  ifs.read(reinterpret_cast<char*>(header), sizeof(header));
-  const std::streamsize nread = ifs.gcount();
-  if (nread <= 0) {
-    if (err) *err = "Failed to read file header: " + filename;
-    return FileFormat::Unknown;
+  return DetectFormat(header.data(), header.size());
+#else
+  (void)filename;
+  if (err) {
+    *err =
+        "File I/O is disabled in this build (memory-only next-core). Use "
+        "LoadUSDFromMemory.";
   }
-  return DetectFormat(header, static_cast<size_t>(nread));
+  return FileFormat::Unknown;
+#endif
 }
 
 size_t MinNonZero(size_t a, size_t b) {

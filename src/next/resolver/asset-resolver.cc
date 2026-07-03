@@ -5,16 +5,25 @@
 
 #include "asset-resolver.hh"
 #include <algorithm>
-#include <fstream>
 #include <cstring>
 
+// Existence / cwd probes are the resolver's only filesystem touch; they are
+// gated on FILEIO so the freestanding / WASM build has no syscalls (resolution
+// there goes through the custom ResolverCallback + LayerRegistry::Preload).
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
 #ifdef _WIN32
 #include <direct.h>
-#define PATH_SEPARATOR '\\'
-#define ALT_PATH_SEPARATOR '/'
+#include <fstream>
 #else
 #include <unistd.h>
 #include <sys/stat.h>
+#endif
+#endif  // TINYUSDZ_NEXT_ENABLE_FILEIO
+
+#ifdef _WIN32
+#define PATH_SEPARATOR '\\'
+#define ALT_PATH_SEPARATOR '/'
+#else
 #define PATH_SEPARATOR '/'
 #define ALT_PATH_SEPARATOR '\\'
 #endif
@@ -28,10 +37,10 @@ namespace {
 std::unique_ptr<AssetResolver> g_default_resolver;
 
 bool FileExistsImpl(const std::string& path) {
-#if defined(__EMSCRIPTEN__)
-  // wasm builds may have no filesystem at all (-sFILESYSTEM=0), where even a
-  // stat syscall aborts. Resolution there goes through the custom resolver
-  // (asset-cache backed); plain file paths never exist.
+#if !defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  // Freestanding / WASM: no filesystem (a stat syscall aborts under
+  // -sFILESYSTEM=0). Resolution goes through the custom resolver (asset-cache
+  // backed); plain file paths never exist.
   (void)path;
   return false;
 #elif defined(_WIN32)
@@ -73,8 +82,8 @@ std::string NormalizePackageEntryPath(std::string path) {
 }
 
 std::string GetCurrentWorkingDirectory() {
-#if defined(__EMSCRIPTEN__)
-  // No filesystem (and the getcwd syscall ABORTS under -sFILESYSTEM=0).
+#if !defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  // Freestanding / WASM: no filesystem (getcwd ABORTS under -sFILESYSTEM=0).
   return ".";
 #elif defined(_WIN32)
   char buffer[4096];
