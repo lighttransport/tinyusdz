@@ -1,8 +1,11 @@
 #include "usdz-reader.hh"
 #include <cstring>
 #include <algorithm>
-#include <fstream>
 #include <limits>
+
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include "../io/file-util.hh"
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -41,31 +44,25 @@ bool CheckedAdd(size_t a, size_t b, size_t* out) {
 bool USDZReader::OpenFile(const std::string& filename,
                           const USDZReadOptions& options) {
   error_.clear();
-  std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
-  if (!ifs) {
-    error_ = "failed to open USDZ file: " + filename;
-    return false;
-  }
-  std::streampos end = ifs.tellg();
-  if (end < std::streampos(0)) {
-    error_ = "failed to determine USDZ file size: " + filename;
-    return false;
-  }
-  size_t sz = static_cast<size_t>(end);
-  if (options.max_archive_size > 0 && sz > options.max_archive_size) {
-    error_ = "USDZ archive exceeds maximum memory limit";
-    return false;
-  }
-  ifs.seekg(0);
-  file_data_.resize(sz);
-  if (sz && !ifs.read(reinterpret_cast<char*>(file_data_.data()),
-                      static_cast<std::streamsize>(sz))) {
-    error_ = "failed to read USDZ file: " + filename;
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  // Read the whole archive into memory via next_io, then parse from the buffer.
+  std::string err;
+  if (!io::ReadWholeFile(
+          &file_data_, &err, filename,
+          options.max_archive_size ? options.max_archive_size : 0)) {
+    error_ = err.empty() ? ("failed to open USDZ file: " + filename) : err;
     file_data_.clear();
     return false;
   }
-  ifs.close();
-  return Open(file_data_.data(), sz, options);
+  return Open(file_data_.data(), file_data_.size(), options);
+#else
+  (void)filename;
+  (void)options;
+  error_ =
+      "File I/O is disabled in this build (memory-only next-core). "
+      "Use USDZReader::Open(data, size) with an in-memory buffer.";
+  return false;
+#endif
 }
 
 bool USDZReader::Open(const uint8_t* data, size_t size,

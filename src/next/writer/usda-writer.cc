@@ -1002,7 +1002,14 @@ USDAWriteResult WriteUSDAToFile(const char* filename, const Stage& stage,
     result.error = "Null filename";
     return result;
   }
-
+#if !defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  (void)stage;
+  (void)options;
+  result.error =
+      "File I/O is disabled in this build (memory-only next-core). Use "
+      "WriteUSDAToString.";
+  return result;
+#else
   // Native default backend: C stdio with a large (StreamWriter) buffer + blocked
   // writes, so library file output reaches disk at device speed.
   std::FILE* fp = std::fopen(filename, "wb");
@@ -1020,6 +1027,7 @@ USDAWriteResult WriteUSDAToFile(const char* filename, const Stage& stage,
     result.error = "Error writing to file";
   }
   return result;
+#endif
 }
 
 std::string WriteLayerToString(const Layer& layer, const USDAWriteOptions& options) {
@@ -1068,7 +1076,15 @@ USDAWriteResult WriteLayer(std::ostream& os, const Layer& layer,
 USDAWriteResult WriteLayerToFile(const std::string& filename, const Layer& layer,
                                   const USDAWriteOptions& options) {
   USDAWriteResult result;
-
+#if !defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  (void)filename;
+  (void)layer;
+  (void)options;
+  result.error =
+      "File I/O is disabled in this build (memory-only next-core). Use "
+      "WriteLayerToString.";
+  return result;
+#else
   std::FILE* fp = std::fopen(filename.c_str(), "wb");
   if (!fp) {
     result.error = "Failed to open file for writing: " + filename;
@@ -1083,6 +1099,7 @@ USDAWriteResult WriteLayerToFile(const std::string& filename, const Layer& layer
     result.error = "Error writing to file";
   }
   return result;
+#endif
 }
 
 }  // namespace next
