@@ -51,6 +51,7 @@
 // Writers
 #include "writer/usda-writer.hh"
 #include "writer/usdc-writer.hh"
+#include "writer/usdz-writer.hh"
 
 // Asset resolution
 #include "resolver/asset-resolver.hh"
@@ -111,7 +112,10 @@ struct LoadUSDOptions {
   USDZReadOptions usdz_options;
 };
 
-/// Load a USD file (auto-detects format: USDA, USDC)
+/// Load a USD file (auto-detects format: USDA, USDC, or USDZ). Format is chosen
+/// by extension, falling back to the file header magic (`#usda`, `PXR-USDC`,
+/// or the `PK\x03\x04` zip magic for `.usd` / extension-less inputs). A USDZ
+/// archive loads its first `.usdc` (else `.usda`) entry as the stage.
 /// @param filename Path to the USD file
 /// @param stage Output stage (populated on success)
 /// @param warn Warning messages (optional)
@@ -160,9 +164,27 @@ bool LoadUSDC(const std::string& filename, Stage* stage,
               const USDCLoadOptions& options, std::string* warn = nullptr,
               std::string* err = nullptr);
 
+/// Load USDZ (zip package) file: reads the archive's first `.usdc` entry (else
+/// its first `.usda` entry) into `stage`. The options overload takes the umbrella
+/// LoadUSDOptions because a USDZ package carries an inner USDA/USDC layer whose
+/// own reader options (and the shared memory cap) apply.
+bool LoadUSDZ(const std::string& filename, Stage* stage,
+              std::string* warn = nullptr, std::string* err = nullptr);
+
+bool LoadUSDZ(const std::string& filename, Stage* stage,
+              const LoadUSDOptions& options, std::string* warn = nullptr,
+              std::string* err = nullptr);
+
 // ============================================================
 // Convenience writing functions (wrap writer APIs)
 // ============================================================
+
+/// Write a stage to a USD file, choosing the format from the filename
+/// extension: `.usda` -> USDA (ASCII), `.usdc` -> USDC (crate), `.usdz` -> USDZ
+/// (zip package). A bare `.usd` (or unknown extension) is written as USDC. This
+/// is the write-side counterpart to LoadUSD.
+bool WriteUSD(const Stage& stage, const std::string& filename,
+              std::string* err = nullptr);
 
 /// Write stage to USDA file
 bool WriteUSDA(const Stage& stage, const std::string& filename,
@@ -170,6 +192,10 @@ bool WriteUSDA(const Stage& stage, const std::string& filename,
 
 /// Write stage to USDC file
 bool WriteUSDC(const Stage& stage, const std::string& filename,
+               std::string* err = nullptr);
+
+/// Write stage to USDZ (zip package) file
+bool WriteUSDZ(const Stage& stage, const std::string& filename,
                std::string* err = nullptr);
 
 }  // namespace next
