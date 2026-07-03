@@ -119,6 +119,37 @@ static void test_format_specific(const char* label, const char* path) {
   PASS();
 }
 
+// Memory-only round-trip: WriteUSDToMemory -> LoadUSDFromMemory (auto-detect).
+// This is the freestanding path (no filesystem).
+static void test_memory_roundtrip(const char* label, USDFormat fmt) {
+  TEST(label);
+  const Stage src = MakeTestStage();
+  const size_t want = CountPrims(src);
+
+  std::vector<uint8_t> buf;
+  std::string err;
+  if (!WriteUSDToMemory(buf, src, fmt, &err)) {
+    FAIL(("WriteUSDToMemory failed: " + err).c_str());
+    return;
+  }
+  if (buf.empty()) {
+    FAIL("WriteUSDToMemory produced empty buffer");
+    return;
+  }
+
+  Stage loaded;
+  std::string warn, lerr;
+  if (!LoadUSDFromMemory(buf.data(), buf.size(), &loaded, &warn, &lerr)) {
+    FAIL(("LoadUSDFromMemory failed: " + lerr).c_str());
+    return;
+  }
+  if (CountPrims(loaded) != want) {
+    FAIL("prim count mismatch");
+    return;
+  }
+  PASS();
+}
+
 // A bare `.usd` must be written as crate (USDC) and load back via auto-detect.
 static void test_bare_usd_is_crate() {
   TEST("WriteUSD(.usd) writes USDC (crate)");
@@ -163,6 +194,11 @@ int main() {
   test_format_specific("USDA WriteUSDA/LoadUSDA", "/tmp/next_io_fs.usda");
   test_format_specific("USDC WriteUSDC/LoadUSDC", "/tmp/next_io_fs.usdc");
   test_format_specific("USDZ WriteUSDZ/LoadUSDZ", "/tmp/next_io_fs.usdz");
+
+  printf("[memory-only round-trip (freestanding)]\n");
+  test_memory_roundtrip("USDA WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDA);
+  test_memory_roundtrip("USDC WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDC);
+  test_memory_roundtrip("USDZ WriteUSDToMemory/LoadUSDFromMemory", USDFormat::USDZ);
 
   printf("[extension dispatch]\n");
   test_bare_usd_is_crate();
