@@ -753,3 +753,39 @@ benchmark scenes at (8 threads, inputs on tmpfs, byte-identical to serial):
 Escape hatches: `--no-async-arrays`, `--no-parallel-prims`,
 `-DTINYUSDZ_NEXT_DISABLE_PARALLEL_BUILD_STAGE`. See doc/refator-next.md
 (2026-07 section) for the mechanism list.
+
+## 8. 2026-07 next-core (freestanding I/O split) stream benchmark
+
+After the `next_core` freestanding split (`src/next/io` filesystem utility; USDC
+mmap and every `*FromFile` routed through `tinyusdz::next::io` under
+`TINYUSDZ_NEXT_ENABLE_FILEIO`), the full compose+stream-write path was
+re-benchmarked to confirm **no speed/RSS regression and byte-identical output**.
+Release build, `TINYUSDZ_NEXT_ENABLE_THREAD=ON`, 32-thread/16-core workstation,
+inputs on `/mnt/disk1/data`, output streamed to `/dev/null`:
+
+```sh
+/usr/bin/time -v env TINYUSDZ_NEXT_TIMING=1 \
+  build-next-release/next_usdcat -f --timing -o /dev/null <root.usda>
+```
+
+| Scene (full flatten) | load+compose | write | write throughput | total | max RSS | flatten bytes |
+|---|---:|---:|---:|---:|---:|---:|
+| Caldera `caldera.usda` | 2.49 s | 4.57 s | 887 MB/s | 7.06 s | **2.72 GiB** | 4.25 GB |
+| Island `island.usda`   | 8.08 s | 5.87 s | 1507 MB/s | 13.95 s | **5.38 GiB** | 9.28 GB |
+| ALab (merged) `entry.usda` | 2.11 s | 0.57 s | 2209 MB/s | 2.68 s | **0.94 GiB** | 1.31 GB |
+
+All three are **at or below** the §6.1/§6.2/§7 stream-next numbers (Caldera write
+still ~850–925 MB/s band; Island now 1507 MB/s / 5.38 GiB vs the earlier
+~1000 MB/s / ~8.0 GiB; ALab 2.68 s vs 5.1 s) — the freestanding split did not
+regress the streaming path, and the crate reader confirms it is mmap-backed
+(`[next_crate_read] … mmap=1`). Island still emits 19 non-fatal `max_array_elements`
+warnings for XGen USDC layers (large-scene stress result, not a full-fidelity
+Island flatten).
+
+**Byte-identical parity:** the streamed USDA for each scene was `sha256`-compared
+between the current tree and a session-start baseline (`930b432c`, before the
+TU-split / C-style-de-templating / freestanding-I/O work). All three match
+exactly (Caldera `9d680d8c…`, Island `8fef4b2c…`, ALab `992471c3…`), and the
+current output is deterministic run-to-run. So the entire freestanding /
+zero-copy-mmap / C-style refactor series is behavior-preserving on the public
+large scenes.
