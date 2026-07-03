@@ -10,7 +10,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
+
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include "../io/file-util.hh"  // io::ReadWholeFile / ReadFileHeader
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -159,63 +162,43 @@ CrateReadResult CrateReader::Impl::ReadOwned(std::string&& owned) {
 }
 
 CrateReadResult CrateReader::Impl::ReadFile(const char* filename) {
-  if (options_.max_memory) {
-    std::ifstream probe(filename, std::ios::binary | std::ios::ate);
-    if (!probe.is_open()) {
-      CrateReadResult result;
-      result.errors.push_back({0, std::string("Failed to open file: ") + filename});
-      return result;
-    }
-    std::streamsize probed_size = probe.tellg();
-    if (probed_size < 0) {
-      CrateReadResult result;
-      result.errors.push_back({0, "Failed to determine file size"});
-      return result;
-    }
-    if (static_cast<uint64_t>(probed_size) >
-        static_cast<uint64_t>(options_.max_memory)) {
-      CrateReadResult result;
-      result.errors.push_back({0, "File exceeds max_memory budget"});
-      return result;
-    }
-  }
-
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  // Prefer a zero-copy mmap backing when enabled; the mmap is lazy (pages fault
+  // on access), so mapping then rejecting an oversized file costs nothing.
   if (options_.use_mmap) {
     if (auto src = CrateDataSource::MmapFile(filename)) {
+      if (options_.max_memory &&
+          static_cast<uint64_t>(src->size()) >
+              static_cast<uint64_t>(options_.max_memory)) {
+        CrateReadResult result;
+        result.errors.push_back({0, "File exceeds max_memory budget"});
+        return result;
+      }
       source_ = std::move(src);
       return ParseFromSource();
     }
   }
 
-  std::ifstream file(filename, std::ios::binary | std::ios::ate);
-  if (!file.is_open()) {
+  // Fallback: read the whole file into an owned buffer via the next_io utility.
+  std::vector<uint8_t> data;
+  std::string err;
+  if (!io::ReadWholeFile(&data, &err, filename,
+                         options_.max_memory ? options_.max_memory : 0)) {
     CrateReadResult result;
-    result.errors.push_back({0, std::string("Failed to open file: ") + filename});
+    result.errors.push_back(
+        {0, err.empty() ? std::string("Failed to read file: ") + filename : err});
     return result;
   }
-
-  std::streamsize size = file.tellg();
-  if (size < 0) {
-    CrateReadResult result;
-    result.errors.push_back({0, "Failed to determine file size"});
-    return result;
-  }
-  if (options_.max_memory &&
-      static_cast<uint64_t>(size) > static_cast<uint64_t>(options_.max_memory)) {
-    CrateReadResult result;
-    result.errors.push_back({0, "File exceeds max_memory budget"});
-    return result;
-  }
-  file.seekg(0, std::ios::beg);
-
-  std::string data(static_cast<size_t>(size), '\0');
-  if (!file.read(&data[0], size)) {
-    CrateReadResult result;
-    result.errors.push_back({0, "Failed to read file contents"});
-    return result;
-  }
-
-  return ReadOwned(std::move(data));
+  return ReadOwned(
+      std::string(reinterpret_cast<const char*>(data.data()), data.size()));
+#else
+  (void)filename;
+  CrateReadResult result;
+  result.errors.push_back(
+      {0, "File I/O is disabled in this build (memory-only next-core). Use "
+          "Read/ReadBorrowed/ReadOwned with an in-memory buffer."});
+  return result;
+#endif
 }
 
 CrateReader::CrateReader(const CrateReadOptions& options)
@@ -267,14 +250,15 @@ bool IsUSDCData(const uint8_t* data, size_t size) {
 }
 
 bool IsUSDCFile(const char* filename) {
-  std::ifstream file(filename, std::ios::binary);
-  if (!file.is_open()) return false;
-
-  char magic[8];
-  file.read(magic, 8);
-  if (!file) return false;
-
-  return std::memcmp(magic, kCrateMagic, 8) == 0;
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  std::vector<uint8_t> header;
+  std::string err;
+  if (!io::ReadFileHeader(&header, &err, filename, 8)) return false;
+  return header.size() >= 8 && std::memcmp(header.data(), kCrateMagic, 8) == 0;
+#else
+  (void)filename;
+  return false;
+#endif
 }
 
 }  // namespace next
