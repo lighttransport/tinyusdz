@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <functional>
+#include <type_traits>
 
 namespace tinyusdz {
 namespace next {
@@ -278,8 +278,11 @@ private:
 
   // Internal helpers
   void UpdateMetaFromRootLayer();
+  // C-style traversal core: plain function-pointer + void* context (no
+  // std::function -> no heap alloc / indirect vtable call). The public
+  // Traverse<Fn> template below is a thin captureless trampoline over this.
   bool TraverseImpl(uint32_t prim_index, const Layer* layer,
-                    const std::function<bool(const UsdPrim&)>& callback) const;
+                    bool (*callback)(const UsdPrim&, void*), void* user) const;
 };
 
 // ============================================================
@@ -290,9 +293,14 @@ template<typename Fn>
 void Stage::Traverse(Fn&& callback) const {
   if (!root_layer_) return;
 
-  std::function<bool(const UsdPrim&)> fn = std::forward<Fn>(callback);
+  // Captureless trampoline -> plain function pointer; `callback` (its lifetime
+  // spans this call) is passed as the void* context. No std::function.
+  using Cb = std::remove_reference_t<Fn>;
+  bool (*tramp)(const UsdPrim&, void*) = [](const UsdPrim& p, void* u) -> bool {
+    return (*static_cast<Cb*>(u))(p);
+  };
   for (uint32_t idx : root_layer_->root_indices()) {
-    TraverseImpl(idx, root_layer_.get(), fn);
+    TraverseImpl(idx, root_layer_.get(), tramp, &callback);
   }
 }
 
