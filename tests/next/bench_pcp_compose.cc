@@ -153,7 +153,7 @@ static int do_compose(size_t M, size_t R, size_t verts) {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
 
   Timer t;
   t.start();
@@ -233,7 +233,7 @@ static int do_deep(size_t D) {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
 
   pcp::CompositionOptions opts;
   opts.max_depth = static_cast<uint32_t>(D + 8);

@@ -20,7 +20,6 @@
 #include "../strfmt.hh"
 
 #include <deque>
-#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -130,11 +129,22 @@ struct CompositionOptions {
   // the CLI sets this from its own flag/env.
   bool enable_timing = false;
 
-  /// Per-payload load policy. Invoked with (prim path that authors the payload,
-  /// payload asset path); return true to load, false to defer. When null, the
-  /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)
-  /// Must be thread-safe when PrewarmPrimIndices runs with num_threads != 1.
-  std::function<bool(const Path &, const std::string &)> payload_policy;
+  /// Per-payload load policy: C-style function pointer + opaque user context
+  /// (replaces std::function -- no heap alloc / vtable). Invoked with (prim path
+  /// that authors the payload, payload asset path); return true to load, false
+  /// to defer. When fn is null, the `load_payloads` flag is used. (Per-prim
+  /// Load/UnloadPayload overrides this.) `user` is caller-owned and must outlive
+  /// composition. Must be thread-safe when PrewarmPrimIndices runs multi-thread.
+  struct PayloadPolicy {
+    bool (*fn)(const Path &prim_path, const std::string &asset,
+               void *user) = nullptr;
+    void *user = nullptr;
+    explicit operator bool() const { return fn != nullptr; }
+    bool operator()(const Path &prim_path, const std::string &asset) const {
+      return fn(prim_path, asset, user);
+    }
+  };
+  PayloadPolicy payload_policy;
 
   /// Variant selection overrides: map of variantSet -> variantName. Overrides
   /// any authored variantSelection on the same set (stronger than authored).

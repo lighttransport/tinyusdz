@@ -715,10 +715,10 @@ void test_usda_backend_parity() {
   std::string sink_string;
   {
     StreamWriter writer(
-        [&sink_string](const char* data, size_t n) {
-          sink_string.append(data, n);
+        {[](const char* data, size_t n, void* user) {
+          static_cast<std::string*>(user)->append(data, n);
           return true;
-        },
+        }, &sink_string},
         7);
     USDAWriteResult result = WriteUSDA(writer, stage, opts);
     assert(result.success);
@@ -782,10 +782,10 @@ void test_usda_layer_backend_parity() {
   std::string sink_string;
   {
     StreamWriter writer(
-        [&sink_string](const char* data, size_t n) {
-          sink_string.append(data, n);
+        {[](const char* data, size_t n, void* user) {
+          static_cast<std::string*>(user)->append(data, n);
           return true;
-        },
+        }, &sink_string},
         5);
     USDAWriteResult result = WriteLayer(writer, layer, opts);
     assert(result.success);
@@ -826,9 +826,9 @@ void test_usda_stream_failure() {
 
   {
     StreamWriter writer(
-        [](const char*, size_t) {
+        {[](const char*, size_t, void*) {
           return false;
-        },
+        }, nullptr},
         8);
     USDAWriteResult result = WriteUSDA(writer, stage);
     assert(!result.success);
@@ -843,9 +843,9 @@ void test_usda_stream_failure() {
 
   {
     StreamWriter writer(
-        [](const char*, size_t) {
+        {[](const char*, size_t, void*) {
           return false;
-        },
+        }, nullptr},
         8);
     USDAWriteResult result = WriteLayer(writer, raw_layer);
     assert(!result.success);

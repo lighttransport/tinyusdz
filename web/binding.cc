@@ -87,6 +87,24 @@
 
 namespace {
 
+// C-style CrateWriteSink bridge to a JS chunk callback (used by the streaming
+// flatten binders below). Replaces a per-site capturing lambda now that
+// CrateWriteSink is a plain function-pointer + void* context.
+struct JsChunkSinkCtx {
+  emscripten::val *chunkCb;
+  bool *aborted;
+};
+inline bool JsChunkSink(const uint8_t *data, size_t size, void *user) {
+  JsChunkSinkCtx *c = static_cast<JsChunkSinkCtx *>(user);
+  emscripten::val view(emscripten::typed_memory_view(size, data));
+  emscripten::val r = (*c->chunkCb)(view);
+  if (r.isFalse()) {  // strictly false aborts; undefined/anything else continues
+    *c->aborted = true;
+    return false;
+  }
+  return true;
+}
+
 // When binding.cc is compiled with -fno-rtti, embind emits canonical local
 // type IDs instead of std::type_info pointers. Emscripten's builtin embind
 // registration is compiled separately, so register the builtin wire types again
@@ -6845,16 +6863,8 @@ class TinyUSDZLoaderNative {
     tinyusdz::next::pipeline::FlattenStats stats;
     std::string err;
     bool aborted = false;
-    tinyusdz::next::CrateWriteSink sink =
-        [&](const uint8_t *data, size_t size) -> bool {
-      emscripten::val view(emscripten::typed_memory_view(size, data));
-      emscripten::val r = chunkCb(view);
-      if (r.isFalse()) {  // strictly false aborts; undefined/anything else continues
-        aborted = true;
-        return false;
-      }
-      return true;
-    };
+    JsChunkSinkCtx sinkCtx{&chunkCb, &aborted};
+    tinyusdz::next::CrateWriteSink sink{&JsChunkSink, &sinkCtx};
     bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
         std::move(input), sink, opts, &stats, &err);
     result.set("success", ok);
@@ -7045,16 +7055,8 @@ class TinyUSDZLoaderNative {
           std::move(input), out, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
-      tinyusdz::next::CrateWriteSink sink =
-          [&](const uint8_t *data, size_t size) -> bool {
-        emscripten::val view(emscripten::typed_memory_view(size, data));
-        emscripten::val r = chunkCb(view);
-        if (r.isFalse()) {
-          aborted = true;
-          return false;
-        }
-        return true;
-      };
+      JsChunkSinkCtx sinkCtx{&chunkCb, &aborted};
+      tinyusdz::next::CrateWriteSink sink{&JsChunkSink, &sinkCtx};
       ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
           std::move(input), sink, opts, &stats, &err);
     }
@@ -7298,16 +7300,8 @@ class TinyUSDZLoaderNative {
           root_data, root_size, out, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
-      tinyusdz::next::CrateWriteSink sink =
-          [&](const uint8_t *data, size_t size) -> bool {
-        emscripten::val view(emscripten::typed_memory_view(size, data));
-        emscripten::val r = chunkCb(view);
-        if (r.isFalse()) {
-          aborted = true;
-          return false;
-        }
-        return true;
-      };
+      JsChunkSinkCtx sinkCtx{&chunkCb, &aborted};
+      tinyusdz::next::CrateWriteSink sink{&JsChunkSink, &sinkCtx};
       ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCToSink(
           root_data, root_size, sink, opts, &stats, &err);
     }

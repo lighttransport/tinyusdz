@@ -62,9 +62,13 @@ namespace pcp {
         // (site-local) namespace into the composed namespace, so a referenced
         // asset's internal targets (e.g. material:binding, .connect) resolve to
         // their flattened paths. Identity for local opinions.
+        const NamespaceMapping &nm = Mapping(s.map_idx);
         Compositor::CopyLocalOpinions(
             *out, *spec, s.offset.offset, s.offset.scale,
-            [&](const std::string &p) { return Mapping(s.map_idx).Apply(p); });
+            {[](const std::string &p, void *user) {
+               return static_cast<const NamespaceMapping *>(user)->Apply(p);
+             },
+             const_cast<NamespaceMapping *>(&nm)});
       }
     }
 

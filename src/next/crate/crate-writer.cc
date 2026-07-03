@@ -126,9 +126,11 @@ CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer
   if (!ofs) { CrateWriteResult r; r.error = "Failed to open file"; return r; }
 
   BufferedFileSink file_sink(&ofs);
-  CrateWriteSink sink = [&](const uint8_t* data, size_t size) -> bool {
-    return file_sink.Write(data, size);
-  };
+  CrateWriteSink sink{[](const uint8_t* data, size_t size, void* user) -> bool {
+                        return static_cast<BufferedFileSink*>(user)->Write(data,
+                                                                           size);
+                      },
+                      &file_sink};
   CrateWriteResult result = WriteLayerToSink(sink, layer);
   auto t1 = std::chrono::steady_clock::now();
   if (!result.success) return result;
@@ -159,10 +161,12 @@ CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, c
 
 CrateWriteResult CrateWriter::WriteLayerToString(std::string& buffer, const Layer& layer) {
   buffer.clear();
-  CrateWriteSink sink = [&buffer](const uint8_t* data, size_t size) -> bool {
-    buffer.append(reinterpret_cast<const char*>(data), size);
-    return true;
-  };
+  CrateWriteSink sink{[](const uint8_t* data, size_t size, void* user) -> bool {
+                        std::string* buf = static_cast<std::string*>(user);
+                        buf->append(reinterpret_cast<const char*>(data), size);
+                        return true;
+                      },
+                      &buffer};
   return WriteLayerToSink(sink, layer);
 }
 

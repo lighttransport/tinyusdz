@@ -18,9 +18,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <functional>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace tinyusdz {
@@ -30,7 +30,16 @@ class StreamWriter {
  public:
   // A block sink writes [data, data+n) to the destination; returns false on
   // error. Called for full buffers and oversized chunks ("blocked" I/O).
-  using BlockSink = std::function<bool(const char* data, size_t n)>;
+  // C-style: plain function pointer + opaque user context (no std::function).
+  // `user` is caller-owned and must outlive the StreamWriter.
+  struct BlockSink {
+    bool (*fn)(const char* data, size_t n, void* user) = nullptr;
+    void* user = nullptr;
+    explicit operator bool() const { return fn != nullptr; }
+    bool operator()(const char* data, size_t n) const {
+      return fn(data, n, user);
+    }
+  };
 
   // Sink-backed: buffer, flushing in `bufcap`-sized blocks.
   explicit StreamWriter(BlockSink sink, size_t bufcap = (1u << 20))
@@ -97,18 +106,21 @@ class StreamWriter {
 // Native stdio: write blocks to an existing FILE* via fwrite. This is the
 // default backend; on WASM/WASI a host supplies its own BlockSink instead.
 inline StreamWriter::BlockSink StdioSink(std::FILE* fp) {
-  return [fp](const char* data, size_t n) -> bool {
-    return std::fwrite(data, 1, n, fp) == n;
-  };
+  return {[](const char* data, size_t n, void* user) -> bool {
+            return std::fwrite(data, 1, n, static_cast<std::FILE*>(user)) == n;
+          },
+          fp};
 }
 
 // Compatibility backend: write blocks to a std::ostream (keeps the existing
 // std::ostream-based WriteUSDA overloads working).
 inline StreamWriter::BlockSink OstreamSink(std::ostream& os) {
-  return [&os](const char* data, size_t n) -> bool {
-    os.write(data, static_cast<std::streamsize>(n));
-    return static_cast<bool>(os);
-  };
+  return {[](const char* data, size_t n, void* user) -> bool {
+            std::ostream& os = *static_cast<std::ostream*>(user);
+            os.write(data, static_cast<std::streamsize>(n));
+            return static_cast<bool>(os);
+          },
+          &os};
 }
 
 }  // namespace next

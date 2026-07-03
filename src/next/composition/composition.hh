@@ -72,6 +72,20 @@ struct CompositionError {
 using LayerLoader = std::function<std::unique_ptr<Layer>(
     const std::string& resolved_path, std::string* error)>;
 
+/// Optional path remapper for CopyLocalOpinions: C-style function pointer +
+/// opaque user context (replaces std::function -- no heap alloc / vtable). Maps
+/// a source (arc-local) target path string into the composed namespace. Default
+/// (fn null) leaves targets verbatim. Call-scoped: `user` need only outlive the
+/// CopyLocalOpinions call.
+struct PathRemap {
+  std::string (*fn)(const std::string& path, void* user) = nullptr;
+  void* user = nullptr;
+  explicit operator bool() const { return fn != nullptr; }
+  std::string operator()(const std::string& path) const {
+    return fn(path, user);
+  }
+};
+
 /// Compositor - composes layers into a flattened view
 class Compositor {
 public:
@@ -140,8 +154,7 @@ public:
   /// resolve to their flattened paths. Default (empty) leaves targets verbatim.
   static void CopyLocalOpinions(
       PrimSpec& target, const PrimSpec& source, double time_offset = 0.0,
-      double time_scale = 1.0,
-      const std::function<std::string(const std::string&)>& remap_path = {});
+      double time_scale = 1.0, const PathRemap& remap_path = {});
 
   // ============================================================
   // Layer cache
