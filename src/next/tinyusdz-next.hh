@@ -176,6 +176,31 @@ bool LoadUSDZ(const std::string& filename, Stage* stage,
               std::string* err = nullptr);
 
 // ============================================================
+// Memory-only (freestanding) I/O
+//
+// These operate purely on in-memory buffers -- no filesystem -- and are
+// available in every build (including the freestanding / WASM profile where the
+// file-based Load*/Write* above are compiled out). Tools that want file access
+// mmap/read a file with the next_io utility and feed the bytes here.
+// ============================================================
+
+/// USD encodings, for the memory writer and other format-explicit calls.
+enum class USDFormat { USDA, USDC, USDZ };
+
+/// Load a stage from an in-memory buffer, auto-detecting USDA/USDC/USDZ from the
+/// leading magic. `data` must stay valid only for the duration of the call.
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       std::string* warn = nullptr, std::string* err = nullptr);
+
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       const LoadUSDOptions& options, std::string* warn = nullptr,
+                       std::string* err = nullptr);
+
+/// Serialize a stage to an in-memory buffer in the requested encoding.
+bool WriteUSDToMemory(std::vector<uint8_t>& out, const Stage& stage,
+                      USDFormat format, std::string* err = nullptr);
+
+// ============================================================
 // Convenience writing functions (wrap writer APIs)
 // ============================================================
 

@@ -374,22 +374,12 @@ bool LoadUSDZ(const std::string& filename, Stage* stage, std::string* warn,
   return LoadUSDZ(filename, stage, LoadUSDOptions{}, warn, err);
 }
 
-bool LoadUSDZ(const std::string& filename, Stage* stage,
-              const LoadUSDOptions& options, std::string* warn,
-              std::string* err) {
-  if (!stage) {
-    if (err) *err = "stage is null";
-    return false;
-  }
-
-  USDZReader usdz;
-  if (!usdz.OpenFile(filename, EffectiveUSDZOptions(options))) {
-    if (err) {
-      *err = usdz.Error().empty() ? "Failed to open USDZ file" : usdz.Error();
-    }
-    return false;
-  }
-
+// Load the stage from an already-opened USDZ archive: pick its first .usdc
+// (else .usda) entry and parse it from the archive's in-memory bytes. Shared by
+// the file-based LoadUSDZ and the memory-based LoadUSDFromMemory.
+static bool LoadStageFromUSDZ(USDZReader& usdz, const LoadUSDOptions& options,
+                              Stage* stage, std::string* warn,
+                              std::string* err) {
   // Prefer a .usdc entry, then fall back to a .usda entry.
   int idx = usdz.FindUSDCFile();
   FileFormat inner_fmt = FileFormat::USDC;
@@ -434,6 +424,115 @@ bool LoadUSDZ(const std::string& filename, Stage* stage,
     *stage = std::move(result.stage);
   }
   return true;
+}
+
+bool LoadUSDZ(const std::string& filename, Stage* stage,
+              const LoadUSDOptions& options, std::string* warn,
+              std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+  USDZReader usdz;
+  if (!usdz.OpenFile(filename, EffectiveUSDZOptions(options))) {
+    if (err) {
+      *err = usdz.Error().empty() ? "Failed to open USDZ file" : usdz.Error();
+    }
+    return false;
+  }
+  return LoadStageFromUSDZ(usdz, options, stage, warn, err);
+}
+
+// --- memory-only I/O (freestanding) ----------------------------------------
+
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       std::string* warn, std::string* err) {
+  return LoadUSDFromMemory(data, size, stage, LoadUSDOptions{}, warn, err);
+}
+
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       const LoadUSDOptions& options, std::string* warn,
+                       std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+  if (!data || size == 0) {
+    if (err) *err = "empty buffer";
+    return false;
+  }
+  switch (DetectFormat(data, size)) {
+    case FileFormat::USDA: {
+      LoadResult result =
+          LoadUSDAFromString(reinterpret_cast<const char*>(data), size,
+                             EffectiveUSDAOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+    case FileFormat::USDC: {
+      USDCLoadResult result =
+          LoadUSDCFromMemory(data, size, EffectiveUSDCOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+    case FileFormat::USDZ: {
+      USDZReader usdz;
+      if (!usdz.Open(data, size, EffectiveUSDZOptions(options))) {
+        if (err) {
+          *err = usdz.Error().empty() ? "Failed to open USDZ buffer"
+                                      : usdz.Error();
+        }
+        return false;
+      }
+      return LoadStageFromUSDZ(usdz, options, stage, warn, err);
+    }
+    default:
+      if (err) *err = "Unknown USD format (memory buffer)";
+      return false;
+  }
+}
+
+bool WriteUSDToMemory(std::vector<uint8_t>& out, const Stage& stage,
+                      USDFormat format, std::string* err) {
+  switch (format) {
+    case USDFormat::USDA: {
+      std::string s = WriteUSDAToString(stage);
+      out.assign(s.begin(), s.end());
+      return true;
+    }
+    case USDFormat::USDC: {
+      USDCWriteResult result = WriteUSDCToMemory(out, stage);
+      if (!result.success) {
+        if (err) *err = result.error;
+        return false;
+      }
+      return true;
+    }
+    case USDFormat::USDZ: {
+      USDZWriteResult result = WriteUSDZToMemory(out, stage);
+      if (!result.success) {
+        if (err) *err = result.error;
+        return false;
+      }
+      return true;
+    }
+  }
+  if (err) *err = "Unknown USD format";
+  return false;
 }
 
 bool WriteUSDA(const Stage& stage, const std::string& filename,
