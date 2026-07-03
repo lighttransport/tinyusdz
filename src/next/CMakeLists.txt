@@ -374,6 +374,45 @@ if(TINYUSDZ_NEXT_ENABLE_FILEIO)
 endif()
 
 # ------------------------------------------------------------------
+# Optional drop-in allocator for the CLI tools. The compose+stream path is
+# allocation-heavy (millions of small PrimSpec/Src allocations across threads);
+# glibc's ptmalloc is a bottleneck there. Linking tcmalloc/jemalloc cut Caldera
+# ~20% total / ~22% RSS and Island ~22% (byte-identical -- an allocator does not
+# change output). This links the allocator FIRST into the tool executables only;
+# the library never forces an allocator (apps choose). Equivalent at runtime to
+# `LD_PRELOAD=libtcmalloc_minimal.so.4`. See doc/large-scene.md §8.1.
+# ------------------------------------------------------------------
+option(TINYUSDZ_NEXT_WITH_TCMALLOC
+    "Link a drop-in tcmalloc/jemalloc allocator into the next CLI tools (faster compose+write)" OFF)
+set(TINYUSDZ_NEXT_ALLOCATOR_LIB "")
+if(TINYUSDZ_NEXT_WITH_TCMALLOC)
+    # Prefer tcmalloc_minimal -- it sped up BOTH compose and the write phase in
+    # measurement. jemalloc is only a last resort: it helps compose but can slow
+    # the ASCII write. tcmalloc frequently ships only the versioned runtime
+    # (libtcmalloc_minimal.so.N) with no -dev `.so` symlink, so also look for that
+    # and link it by full path.
+    find_library(TINYUSDZ_NEXT_ALLOC_TCMALLOC NAMES tcmalloc_minimal tcmalloc)
+    if(NOT TINYUSDZ_NEXT_ALLOC_TCMALLOC)
+        find_file(TINYUSDZ_NEXT_ALLOC_TCMALLOC
+            NAMES libtcmalloc_minimal.so.4 libtcmalloc.so.4
+            PATHS /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /usr/lib /lib)
+    endif()
+    if(TINYUSDZ_NEXT_ALLOC_TCMALLOC)
+        set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_TCMALLOC}")
+    else()
+        find_library(TINYUSDZ_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
+        if(TINYUSDZ_NEXT_ALLOC_JEMALLOC)
+            set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_JEMALLOC}")
+        endif()
+    endif()
+    if(TINYUSDZ_NEXT_ALLOCATOR_LIB)
+        message(STATUS "next: linking allocator ${TINYUSDZ_NEXT_ALLOCATOR_LIB} into CLI tools")
+    else()
+        message(WARNING "TINYUSDZ_NEXT_WITH_TCMALLOC=ON but no tcmalloc/jemalloc found; using system malloc")
+    endif()
+endif()
+
+# ------------------------------------------------------------------
 # tinyusdz_next: the full library (core + C API). This retains the historical
 # target name that the tests, tydra_next, and the Python module link against.
 # The C API depends on the schema/eval convenience layer, so it is only built
@@ -544,7 +583,9 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_executable(next_usdcat
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/next_usdcat.cc
     )
-    target_link_libraries(next_usdcat PRIVATE tinyusdz_next)
+    # Allocator (if enabled) must precede the rest so it wins symbol resolution.
+    target_link_libraries(next_usdcat PRIVATE
+        ${TINYUSDZ_NEXT_ALLOCATOR_LIB} tinyusdz_next)
 
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions

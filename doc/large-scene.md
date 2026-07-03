@@ -815,8 +815,30 @@ small-allocation churn**: ~16 % `malloc`/`free` (+ ~20 % kernel page-fault
 handling from heap/mmap growth), `Cache::Impl::Specs` string lookups ~7.7 %,
 `std::hash<string>` ~5.5 %, and ~1.3 % just freeing the cache maps in `~Impl()`.
 The single-threaded `[next_warm] discover` frontier walk is another ~1.2 s serial
-stretch. The high-leverage fix is the Part-C **arena/pool allocator for compose
-transients + interned-id (not string) keying for `Specs`/`SourcesForPath`**, plus
-parallelizing `discover`. That is a substantial, correctness-critical change to
-the compose engine (byte-identical composition must hold) — tracked as the next
-compose lever, not landed here.
+stretch. Investigating the arena/id-keying lever revealed two things: (1) the read-side
+`Specs` is **already memoized** (`Src.specs_`), and interning a site is itself a
+string hash, so id-keying only *moves* hashes rather than removing them — no net
+win; and (2) most of the allocation is **inherent** (materializing millions of
+composed `PrimSpec`s for a full non-deferred flatten) and a per-`Impl` `pmr`
+arena conflicts with `MergeSources`, which *steals (moves)* each worker's
+`vector<Src>` into the main `Impl`.
+
+So the real bottleneck is the **general allocator**, not the keying. Confirmed by
+swapping glibc `ptmalloc` for a drop-in thread-caching allocator (byte-identical
+— an allocator does not change output):
+
+| total (best-of-3) | glibc | **tcmalloc_minimal** |
+|---|---:|---:|
+| Caldera | 6.42 s | **5.17 s (−19 %)** |
+| Island  | 12.70 s | **9.84 s (−22 %)** |
+| ALab    | 2.68 s | **1.92 s (−28 %)** |
+
+tcmalloc cut *both* compose (−25…31 %) and write (−16…18 %); Caldera RSS
+2.72→2.12 GiB. jemalloc helped compose but slowed the ASCII write, so tcmalloc is
+preferred. This is exposed as the CMake option **`TINYUSDZ_NEXT_WITH_TCMALLOC`**
+(OFF by default) which links `tcmalloc_minimal` (else `tcmalloc`, else `jemalloc`)
+FIRST into the CLI tools; the library itself never forces an allocator. Runtime
+equivalent for any build: `LD_PRELOAD=libtcmalloc_minimal.so.4`. A hand-rolled
+compose arena was therefore *not* pursued — the drop-in allocator captures the
+same win globally (compose + write + PrimSpec building) with zero compose-engine
+risk.
