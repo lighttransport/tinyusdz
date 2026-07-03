@@ -146,6 +146,9 @@ set(TINYUSDZ_NEXT_HEADERS
     support/arena.hh
     support/small_vector.hh
 
+    # Filesystem utility (next_io; excluded from freestanding/WASM builds)
+    io/file-util.hh
+
     # Type system
     types/type-id.hh
     types/type-info.hh
@@ -338,6 +341,36 @@ if(TINYUSDZ_NEXT_ENABLE_THREAD)
     find_package(Threads REQUIRED)
     target_compile_definitions(next_core PUBLIC TINYUSDZ_ENABLE_THREAD)
     target_link_libraries(next_core PUBLIC Threads::Threads)
+endif()
+
+# ------------------------------------------------------------------
+# next_io: the filesystem utility (mmap / whole-file read-write / path helpers),
+# ported self-contained from legacy src/io-util.cc into tinyusdz::next::io. It is
+# the ONLY next component that performs raw filesystem I/O. next-core proper is
+# memory-only (freestanding); when TINYUSDZ_NEXT_ENABLE_FILEIO is ON, next_core
+# also compiles its file-based Load*/Write* entry points and links next_io. The
+# option is forced OFF for the freestanding profiles (minimal / Emscripten /
+# WASI), so those builds carry no filesystem syscalls at all.
+# ------------------------------------------------------------------
+if(TINYUSDZ_NEXT_CORE_MINIMAL OR EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "WASI")
+    set(_next_fileio_default OFF)
+else()
+    set(_next_fileio_default ON)
+endif()
+option(TINYUSDZ_NEXT_ENABLE_FILEIO
+    "Build next_io + next-core's file-based entry points (OFF = memory-only freestanding core)"
+    ${_next_fileio_default})
+
+if(TINYUSDZ_NEXT_ENABLE_FILEIO)
+    add_library(next_io STATIC ${CMAKE_CURRENT_SOURCE_DIR}/io/file-util.cc)
+    target_compile_features(next_io PUBLIC cxx_std_17)
+    target_include_directories(next_io PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
+        $<INSTALL_INTERFACE:include>
+    )
+    _next_apply_cxx_flags(next_io)
+    target_compile_definitions(next_core PUBLIC TINYUSDZ_NEXT_ENABLE_FILEIO)
+    target_link_libraries(next_core PUBLIC next_io)
 endif()
 
 # ------------------------------------------------------------------
