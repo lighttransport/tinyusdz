@@ -491,6 +491,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_usdz_writer PRIVATE tinyusdz_next)
 
+    add_executable(test_next_io
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_next_io.cc
+    )
+    target_link_libraries(test_next_io PRIVATE tinyusdz_next)
+
     add_executable(test_composition
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_composition.cc
     )
@@ -669,6 +674,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_usdz_writer COMMAND test_usdz_writer
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_next_io COMMAND test_next_io
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_composition COMMAND test_composition
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_crash_regressions COMMAND test_crash_regressions
@@ -703,6 +710,7 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_schemas_ext
         next_test_usdcat_roundtrip
         next_test_usdz_writer
+        next_test_next_io
         next_test_composition
         next_test_crash_regressions
         next_test_usdc_malformed
