@@ -9,7 +9,6 @@
 #include "crate-format.hh"
 #include "../layer/layer.hh"
 #include "../stage/stage.hh"
-#include <functional>
 #include <string>
 #include <vector>
 
@@ -18,7 +17,16 @@ namespace next {
 
 /// Output sink for streaming crate writes: receives the file bytes in order, in
 /// chunks. Returns false to abort the write. See WriteLayerToSink().
-using CrateWriteSink = std::function<bool(const uint8_t* data, size_t size)>;
+/// C-style: plain function pointer + opaque user context (no std::function --
+/// no heap alloc / vtable). `user` is caller-owned and must outlive the write.
+struct CrateWriteSink {
+  bool (*fn)(const uint8_t* data, size_t size, void* user) = nullptr;
+  void* user = nullptr;
+  explicit operator bool() const { return fn != nullptr; }
+  bool operator()(const uint8_t* data, size_t size) const {
+    return fn(data, size, user);
+  }
+};
 
 /// Options for crate writing
 struct CrateWriteOptions {

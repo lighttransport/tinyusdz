@@ -246,7 +246,7 @@ static RunResult RunBuild(const Scene &sc, int num_threads,
                           const pcp::LoadRules *rules = nullptr) {
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   pcp::CompositionOptions opts;
   opts.num_threads = num_threads;
   auto opened = pcp::Cache::Open(resolver, sc.root, "", opts);
@@ -468,7 +468,7 @@ static void test_layer_registry_inflight_failure_diagnostics() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   pcp::LayerRegistry reg;
 
   const int kThreads = 16;

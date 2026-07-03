@@ -286,8 +286,7 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
 
 void Compositor::CopyLocalOpinions(
     PrimSpec& target, const PrimSpec& source, double time_offset,
-    double time_scale,
-    const std::function<std::string(const std::string&)>& remap_path) {
+    double time_scale, const PathRemap& remap_path) {
   auto map_target = [&](const Path& p) -> Path {
     return remap_path ? Path(remap_path(p.str())) : p;
   };

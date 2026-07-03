@@ -840,7 +840,7 @@ static void test_compose_prim_invalidate_layer_without_index() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &p, const std::string &) { return p; });
+      {[](const std::string &p, const std::string &, void *) { return p; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, root);
   assert(opened);
   pcp::Cache cache = std::move(*opened);
@@ -999,7 +999,7 @@ static void test_deferred_payload() {
   auto root = BuildRootLayer();
 
   pcp::CompositionOptions opts;
-  opts.payload_policy = [](const Path &, const std::string &) { return false; };
+  opts.payload_policy = {[](const Path &, const std::string &, void *) { return false; }, nullptr};
   auto opened = pcp::Cache::Open(resolver, root, "", opts);
   assert(opened);
   pcp::Cache cache = std::move(*opened);
@@ -1093,7 +1093,7 @@ static void test_layer_offset_timesamples() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
   assert(opened);
   pcp::Cache cache = std::move(*opened);
@@ -1176,7 +1176,7 @@ static void test_payload_in_instance() {
 
   AssetResolver resolver;
   pcp::CompositionOptions opts;
-  opts.payload_policy = [](const Path &, const std::string &) { return false; };
+  opts.payload_policy = {[](const Path &, const std::string &, void *) { return false; }, nullptr};
   auto opened = pcp::Cache::Open(resolver, root, "", opts);
   assert(opened);
   pcp::Cache cache = std::move(*opened);
@@ -1618,7 +1618,7 @@ static void test_implied_inherit() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
   assert(opened);
   pcp::Cache cache = std::move(*opened);
@@ -1708,7 +1708,7 @@ static void test_parallel_prewarm() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
 
   pcp::CompositionOptions opts;
   opts.num_threads = 4;
@@ -1771,7 +1771,7 @@ static void test_cross_source_variant() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
   assert(opened);
   pcp::Cache cache = std::move(*opened);
@@ -1832,7 +1832,7 @@ static void test_implied_intermediate() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
   assert(opened);
   pcp::Cache cache = std::move(*opened);
@@ -2786,7 +2786,7 @@ static void test_mutual_reference_cycle() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &p, const std::string &) { return p; });
+      {[](const std::string &p, const std::string &, void *) { return p; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
   assert(opened);
   pcp::Cache cache = std::move(*opened);
@@ -2937,7 +2937,7 @@ static void test_reference_chain_at_max_depth() {
     }
     AssetResolver resolver;
     resolver.SetCustomResolver(
-        [](const std::string &p, const std::string &) { return p; });
+        {[](const std::string &p, const std::string &, void *) { return p; }, nullptr});
     pcp::CompositionOptions opts;
     opts.max_depth = max_depth;
     auto opened = pcp::Cache::Open(resolver, rootL, "", opts);
@@ -3110,7 +3110,7 @@ static void test_variant_selected_field() {
 
   AssetResolver resolver;
   resolver.SetCustomResolver(
-      [](const std::string &a, const std::string &) { return a; });
+      {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
   assert(opened);
   pcp::Cache cache = std::move(*opened);

@@ -9,7 +9,6 @@
 
 #include <string>
 #include <vector>
-#include <functional>
 #include <memory>
 
 namespace tinyusdz {
@@ -33,10 +32,21 @@ struct ResolverConfig {
   bool search_recursively = false;         // Search subdirectories
 };
 
-/// Custom resolver callback type
-/// Returns resolved path, or empty string if not resolved
-using ResolverCallback = std::function<std::string(const std::string& asset_path,
-                                                    const std::string& anchor_path)>;
+/// Custom resolver callback: C-style function pointer + opaque user context
+/// (replaces std::function -- no heap alloc / vtable). Returns the resolved
+/// path, or empty if not resolved. `user` is caller-owned and must outlive the
+/// resolver. Default-constructed (fn == nullptr) means "no custom resolver".
+struct ResolverCallback {
+  std::string (*fn)(const std::string& asset_path,
+                    const std::string& anchor_path, void* user) = nullptr;
+  void* user = nullptr;
+
+  explicit operator bool() const { return fn != nullptr; }
+  std::string operator()(const std::string& asset_path,
+                         const std::string& anchor_path) const {
+    return fn(asset_path, anchor_path, user);
+  }
+};
 
 /// AssetResolver - resolves asset paths
 class AssetResolver {
