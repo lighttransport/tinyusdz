@@ -3,7 +3,10 @@
 
 #include <array>
 #include <cstring>
-#include <fstream>
+
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include "../io/file-util.hh"
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -209,17 +212,23 @@ USDZWriteResult WriteUSDZToFile(const std::string& filename, const Stage& stage)
   std::vector<uint8_t> buf;
   auto result = WriteUSDZToMemory(buf, stage);
   if (!result.success) return result;
-
-  std::ofstream ofs(filename, std::ios::binary);
-  if (!ofs) {
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  std::string err;
+  if (!io::WriteWholeFile(filename, buf.data(), buf.size(), &err)) {
     result.success = false;
-    result.error = "Failed to open file for writing: " + filename;
+    result.error = err.empty() ? ("Failed to write file: " + filename) : err;
     return result;
   }
-  ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
   result.bytes_written = buf.size();
   result.success = true;
   return result;
+#else
+  (void)filename;
+  result.success = false;
+  result.error =
+      "File I/O is disabled in this build. Use WriteUSDZToMemory.";
+  return result;
+#endif
 }
 
 USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
@@ -258,17 +267,23 @@ USDZWriteResult WriteUSDZFromUSDCToFile(const std::string& filename,
   std::vector<uint8_t> buf;
   auto result = WriteUSDZFromUSDCToMemory(buf, usdc_data, usdc_size);
   if (!result.success) return result;
-
-  std::ofstream ofs(filename, std::ios::binary);
-  if (!ofs) {
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  std::string err;
+  if (!io::WriteWholeFile(filename, buf.data(), buf.size(), &err)) {
     result.success = false;
-    result.error = "Failed to open file for writing: " + filename;
+    result.error = err.empty() ? ("Failed to write file: " + filename) : err;
     return result;
   }
-  ofs.write(reinterpret_cast<const char*>(buf.data()), buf.size());
   result.bytes_written = buf.size();
   result.success = true;
   return result;
+#else
+  (void)filename;
+  result.success = false;
+  result.error =
+      "File I/O is disabled in this build. Use WriteUSDZFromUSDCToMemory.";
+  return result;
+#endif
 }
 
 } // namespace next

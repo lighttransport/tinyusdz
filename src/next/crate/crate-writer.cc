@@ -15,12 +15,18 @@
 #include "../composition/composition.hh"
 #include "../types/type-id.hh"
 #include <deque>
-#include <fstream>
 #include <array>
 #include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <cstdio>
+
+// The streaming crate-to-file writer lives behind the FILEIO gate (it holds an
+// std::ofstream). The freestanding / WASM build is memory-only (WriteToMemory /
+// WriteToString / WriteLayerToSink).
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include <fstream>
+#endif
 #include <cstdlib>
 #include <unordered_map>
 #include <string_view>
@@ -41,6 +47,7 @@ namespace next {
 
 namespace {
 
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
 class BufferedFileSink {
  public:
   explicit BufferedFileSink(std::ofstream* ofs, size_t capacity = 16u << 20)
@@ -82,6 +89,7 @@ class BufferedFileSink {
   size_t pos_ = 0;
   size_t bytes_written_ = 0;
 };
+#endif  // TINYUSDZ_NEXT_ENABLE_FILEIO
 
 }  // namespace
 
@@ -120,6 +128,14 @@ CrateWriteResult CrateWriter::WriteToString(std::string& buffer, const Stage& st
 
 CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer& layer) {
   if (!filename) { CrateWriteResult r; r.error = "Null filename"; return r; }
+#if !defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  (void)layer;
+  CrateWriteResult r;
+  r.error =
+      "File I/O is disabled in this build (memory-only next-core). Use "
+      "WriteToMemory / WriteToString / WriteLayerToSink.";
+  return r;
+#else
   const bool timing = impl_->enable_timing();
   auto t0 = std::chrono::steady_clock::now();
   std::ofstream ofs(filename, std::ios::out | std::ios::binary);
@@ -151,6 +167,7 @@ CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer
                  stream_ms, flush_ms, file_sink.bytes_written());
   }
   return result;
+#endif  // TINYUSDZ_NEXT_ENABLE_FILEIO
 }
 
 CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, const Layer& layer) {
