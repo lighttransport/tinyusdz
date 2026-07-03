@@ -12,7 +12,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <fstream>
+
+// Loading a layer from a path is file I/O; gated so the freestanding / WASM
+// build has none (external layers come in via LayerRegistry::Preload).
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include "../io/file-util.hh"
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -168,6 +173,17 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
                                          const LayerLoadOptions &options) {
+#if !defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  (void)resolved_path;
+  (void)warn;
+  (void)options;
+  if (err) {
+    *err +=
+        "File I/O is disabled in this build (memory-only next-core); external "
+        "layers must be supplied via LayerRegistry::Preload.\n";
+  }
+  return nullptr;
+#else
   if (AssetResolver::IsPackagePath(resolved_path)) {
     std::string package_file;
     std::string entry_name;
@@ -182,10 +198,11 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   // `.usd` is ambiguous (USDA text OR crate binary). Disambiguate by the crate
   // magic ("PXR-USDC"); UE-exported scenes ship the root layer as `.usd` crate.
   if (ext == "usd") {
-    char magic[8] = {0};
-    std::ifstream f(resolved_path, std::ios::binary);
-    if (f.read(magic, sizeof(magic)) &&
-        std::memcmp(magic, "PXR-USDC", sizeof(magic)) == 0) {
+    std::vector<uint8_t> magic;
+    std::string sniff_err;
+    if (io::ReadFileHeader(&magic, &sniff_err, resolved_path, 8) &&
+        magic.size() >= 8 &&
+        std::memcmp(magic.data(), "PXR-USDC", 8) == 0) {
       ext = "usdc";
     } else {
       ext = "usda";
@@ -227,6 +244,7 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
     *err += "Unsupported layer file format for: " + resolved_path + "\n";
   }
   return nullptr;
+#endif  // TINYUSDZ_NEXT_ENABLE_FILEIO
 }
 
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,

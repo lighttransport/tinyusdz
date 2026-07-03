@@ -8,8 +8,10 @@
 #include <cstring>
 #include <chrono>
 #include <cctype>
-#include <fstream>
 #include <iterator>  // std::istreambuf_iterator (not guaranteed via <fstream> on MSVC)
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include <fstream>  // FileSizeBytes stat (file-based flatten entry points only)
+#endif
 #include <set>
 
 #include "../layer/layer.hh"
@@ -181,10 +183,15 @@ bool FlattenLoaded(CrateReadResult&& rr, size_t input_bytes,
 }
 
 uint64_t FileSizeBytes(const std::string& filename) {
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
   std::ifstream f(filename, std::ios::binary | std::ios::ate);
   if (!f) return 0;
   std::streamoff end = f.tellg();
   return end > 0 ? static_cast<uint64_t>(end) : 0;
+#else
+  (void)filename;
+  return 0;
+#endif
 }
 
 bool EndsWithNoCase(const std::string& s, const char* suffix) {
