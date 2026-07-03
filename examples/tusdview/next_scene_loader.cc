@@ -101,15 +101,22 @@ std::vector<int64_t> ReadInt64s(const tnext::UsdPrim& p, const char* name, doubl
 }
 std::vector<std::string> ReadTokens(const tnext::UsdPrim& p, const char* name,
                                     double t) {
-  auto pull = [](const tnext::Value* v) -> std::vector<std::string> {
+  auto to_strings =
+      [](const std::vector<tnext::TfToken>* a) -> std::vector<std::string> {
+    std::vector<std::string> out;
+    if (a) {
+      out.reserve(a->size());
+      for (const tnext::TfToken& t : *a) out.push_back(t.str());
+    }
+    return out;
+  };
+  auto pull = [&](const tnext::Value* v) -> std::vector<std::string> {
     if (!v) return {};
     if (v->is_lazy()) {
       tnext::Value tmp = v->materialized_copy();
-      if (const auto* a = tmp.as_token_array()) return *a;
-      return {};
+      return to_strings(tmp.as_token_array());
     }
-    if (const auto* a = v->as_token_array()) return *a;
-    return {};
+    return to_strings(v->as_token_array());
   };
   std::vector<std::string> r = pull(p.GetValueAtTime(name, t));
   if (r.empty()) r = pull(p.GetPropertyValue(name));
