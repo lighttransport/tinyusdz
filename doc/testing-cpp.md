@@ -715,7 +715,6 @@ Files that were reduced to stay within bounds:
 Large fixture files outside `tests/usda/` and `tests/usdc/` (not affected by the token limit, listed for reference):
 
 - `tests/feat/node-mtlx/RealisticScene.usda` (244K)
-- `tests/usda/suzanne.usda` (148K) — geometry data, tokens are short
 - `tests/feat/node-mtlx/ChainTest.usda` (84K)
 - `tests/feat/node-mtlx/ExtractPatternTest.usda` (72K)
 
