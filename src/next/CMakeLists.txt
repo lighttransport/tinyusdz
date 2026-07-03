@@ -93,6 +93,11 @@ set(NEXT_CORE_SOURCES
     pcp/layer-registry.cc
     pcp/load-rules.cc
     pcp/cache.cc
+    # cache.cc's Cache::Impl methods are split across these TUs (declared in
+    # cache-internal.hh) so the ~6.5s cache TU compiles in parallel.
+    pcp/cache-methods-warm.cc
+    pcp/cache-methods-arc.cc
+    pcp/cache-methods-compose.cc
 
     # High-level API
     tinyusdz-next.cc
@@ -231,6 +236,7 @@ set(TINYUSDZ_NEXT_HEADERS
     pcp/layer-registry.hh
     pcp/cache-arc-expansion.inc
     pcp/cache.hh
+    pcp/cache-internal.hh
     pcp/cache-compose.inc
     pcp/cache-invalidation.inc
     pcp/cache-layer-stack.inc
