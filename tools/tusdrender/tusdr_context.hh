@@ -6,9 +6,31 @@
 
 #include "tusdr_types.hh"
 
+#include "next/io/file-util.hh"  // io::MMapFileHandle (zero-copy USDC load)
+
 namespace tusdr {
 
+// RAII holder for the input file's memory mapping when the scene is loaded
+// zero-copy (io::MMapFile + LoadUSDComposedFromMemory borrowing the bytes). The
+// mapping is released (UnmapFile) on destruction.
+struct MmapHold {
+  tinyusdz::next::io::MMapFileHandle handle;
+  MmapHold() = default;
+  MmapHold(const MmapHold &) = delete;
+  MmapHold &operator=(const MmapHold &) = delete;
+  ~MmapHold() {
+    if (handle.addr) {
+      std::string e;
+      tinyusdz::next::io::UnmapFile(handle, &e);
+    }
+  }
+};
+
 struct RenderContext {
+  // The input file mapping for a zero-copy (borrowed) load. Declared FIRST so it
+  // is destroyed LAST -- after `stage`, whose lazy arrays read from the mapping.
+  // Empty (handle.addr == nullptr) for non-mmap / eager loads.
+  MmapHold input_mmap;
   tinyusdz::next::Stage stage;  // keeps the lazy point/index arrays alive
   // Flat (no-instance) path buffers: default allocator so the shared
   // Shade/RenderImage signatures stay std::vector. The big, OOM-prone instanced

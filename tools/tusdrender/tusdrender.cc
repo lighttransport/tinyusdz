@@ -152,14 +152,37 @@ int main(int argc, char **argv) {
   // Vulkan backend: loads the scene through the `next` lazy loader, then
   // renders via Vulkan rasterizer or ray tracer.
   if (opt.vulkan) {
-    // Load through next loader.
+    // Load through the next loader. Zero-copy fast path: mmap the input via the
+    // next_io helper and compose the *borrowed* bytes; `input_mmap` is declared
+    // before `stage` so it outlives it (the stage's lazy arrays read from the
+    // mapping). Falls back to the path-based loader when mmap is unavailable.
+    tusdr::MmapHold input_mmap;
     tinyusdz::next::Stage stage;
     std::string warn, err;
     tinyusdz::next::pcp::CompositionOptions comp_opts;
     if (!opt.variant_overrides.empty())
       comp_opts.variant_overrides = opt.variant_overrides;
-    if (!tinyusdz::next::LoadUSDComposed(opt.input, &stage, &warn, &err,
-                                         &comp_opts)) {
+    bool loaded = false, mmapped = false;
+    {
+      std::string merr;
+      if (tinyusdz::next::io::MMapFile(opt.input, &input_mmap.handle,
+                                       /*writable=*/false, &merr)) {
+        mmapped = true;
+        loaded = tinyusdz::next::LoadUSDComposedFromMemory(
+            input_mmap.handle.addr, static_cast<size_t>(input_mmap.handle.size),
+            opt.input, &stage, &warn, &err, &comp_opts);
+        if (!loaded) {
+          std::string ue;
+          tinyusdz::next::io::UnmapFile(input_mmap.handle, &ue);
+          input_mmap.handle = tinyusdz::next::io::MMapFileHandle{};
+        }
+      }
+    }
+    if (!loaded && !mmapped) {
+      loaded = tinyusdz::next::LoadUSDComposed(opt.input, &stage, &warn, &err,
+                                               &comp_opts);
+    }
+    if (!loaded) {
       if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
       std::cerr << "Failed to load USD: " << err << "\n";
       return EXIT_FAILURE;

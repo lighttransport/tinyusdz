@@ -1073,11 +1073,11 @@ bool PathMatchesMask(const std::string &path,
 // transform varies with time).
 bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim) {
   const tinyusdz::next::Value *orderv = prim.GetPropertyValue("xformOpOrder");
-  const std::vector<std::string> *order =
+  const std::vector<tinyusdz::next::TfToken> *order =
       orderv ? orderv->as_token_array() : nullptr;
   if (!order) return false;
-  for (const std::string &raw : *order) {
-    std::string op = raw;
+  for (const tinyusdz::next::TfToken &tok : *order) {
+    std::string op = tok.str();
     if (op.rfind("!invert!", 0) == 0) op = op.substr(8);
     if (op == "!resetXformStack!") continue;
     if (prim.HasTimeSamples(op)) return true;
@@ -3324,8 +3324,32 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   tinyusdz::next::pcp::CompositionOptions comp_opts;
   if (!opt.variant_overrides.empty())
     comp_opts.variant_overrides = opt.variant_overrides;
-  if (!tinyusdz::next::LoadUSDComposed(opt.input, &ctx.stage, &warn, &err,
-                                       &comp_opts)) {
+  // Zero-copy fast path: mmap the input via the next_io helper and compose the
+  // *borrowed* bytes -- ctx.stage's lazy point/index arrays read straight from
+  // the mapping, held by ctx.input_mmap for the render's lifetime. Falls back to
+  // the path-based loader when mmap is unavailable.
+  bool loaded = false, mmapped = false;
+  {
+    std::string merr;
+    if (tinyusdz::next::io::MMapFile(opt.input, &ctx.input_mmap.handle,
+                                     /*writable=*/false, &merr)) {
+      mmapped = true;
+      loaded = tinyusdz::next::LoadUSDComposedFromMemory(
+          ctx.input_mmap.handle.addr,
+          static_cast<size_t>(ctx.input_mmap.handle.size), opt.input,
+          &ctx.stage, &warn, &err, &comp_opts);
+      if (!loaded) {  // compose failed on the mapping: drop it
+        std::string ue;
+        tinyusdz::next::io::UnmapFile(ctx.input_mmap.handle, &ue);
+        ctx.input_mmap.handle = tinyusdz::next::io::MMapFileHandle{};
+      }
+    }
+  }
+  if (!loaded && !mmapped) {  // mmap unavailable -> path-based fallback
+    loaded = tinyusdz::next::LoadUSDComposed(opt.input, &ctx.stage, &warn, &err,
+                                             &comp_opts);
+  }
+  if (!loaded) {
     if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
     std::cerr << "Failed to load USD (next): " << err << "\n";
     return false;
