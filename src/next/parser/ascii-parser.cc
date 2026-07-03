@@ -11,20 +11,15 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <fstream>
 #include <system_error>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <thread>
 #endif
 
-#if defined(_WIN32)
-#define TINYUSDZ_NEXT_HAVE_MMAP 0
-#else
-#define TINYUSDZ_NEXT_HAVE_MMAP 1
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
+// USDA-from-file lives behind the FILEIO gate; it maps/reads through next_io.
+// The freestanding / WASM build (FILEIO off) is memory-only (ParseString).
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+#include "../io/file-util.hh"
 #endif
 
 namespace tinyusdz {
@@ -38,6 +33,9 @@ double ProfileMs(ProfileClock::duration d) {
   return std::chrono::duration<double, std::milli>(d).count();
 }
 
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+// Read-only mmap of the input file, via the next_io utility (demand-paged; the
+// pages fault in across the parse and overlap the array worker pool).
 class MappedFile {
  public:
   MappedFile() = default;
@@ -46,78 +44,35 @@ class MappedFile {
   MappedFile& operator=(const MappedFile&) = delete;
 
   bool Open(const char* filename, size_t max_file_size, std::string* err) {
-#if TINYUSDZ_NEXT_HAVE_MMAP
-    int fd = ::open(filename, O_RDONLY);
-    if (fd < 0) {
-      if (err) *err = "Failed to open file";
+    std::string e;
+    if (!io::MMapFile(filename, &handle_, /*writable=*/false, &e)) {
+      if (err) *err = e.empty() ? "Failed to mmap file" : e;
       return false;
     }
-    struct stat st;
-    if (::fstat(fd, &st) != 0) {
-      ::close(fd);
-      if (err) *err = "Failed to stat file";
-      return false;
-    }
-    if (st.st_size < 0) {
-      ::close(fd);
-      if (err) *err = "Invalid file size";
-      return false;
-    }
-    const size_t n = static_cast<size_t>(st.st_size);
-    if (max_file_size > 0 && n > max_file_size) {
-      ::close(fd);
+    if (max_file_size > 0 && handle_.size > max_file_size) {
+      io::UnmapFile(handle_, &e);
+      handle_ = io::MMapFileHandle{};
       if (err) *err = "File size exceeds maximum allowed";
       return false;
     }
-    if (n == 0) {
-      fd_ = fd;
-      size_ = 0;
-      data_ = nullptr;
-      return true;
-    }
-    // Plain demand paging: MAP_POPULATE was measured SLOWER here (the upfront
-    // populate serializes on the main thread, while demand minor-faults spread
-    // across the parse and overlap the array worker pool).
-    void* p = ::mmap(nullptr, n, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (p == MAP_FAILED) {
-      ::close(fd);
-      if (err) *err = "Failed to mmap file";
-      return false;
-    }
-    fd_ = fd;
-    data_ = static_cast<const char*>(p);
-    size_ = n;
     return true;
-#else
-    (void)filename;
-    (void)max_file_size;
-    if (err) *err = "mmap unavailable";
-    return false;
-#endif
   }
 
   void Close() {
-#if TINYUSDZ_NEXT_HAVE_MMAP
-    if (data_ && size_) {
-      ::munmap(const_cast<char*>(data_), size_);
+    if (handle_.addr) {
+      std::string e;
+      io::UnmapFile(handle_, &e);
+      handle_ = io::MMapFileHandle{};
     }
-    if (fd_ >= 0) {
-      ::close(fd_);
-    }
-#endif
-    data_ = nullptr;
-    size_ = 0;
-    fd_ = -1;
   }
 
-  const char* data() const { return data_; }
-  size_t size() const { return size_; }
+  const char* data() const { return reinterpret_cast<const char*>(handle_.addr); }
+  size_t size() const { return static_cast<size_t>(handle_.size); }
 
  private:
-  const char* data_ = nullptr;
-  size_t size_ = 0;
-  int fd_ = -1;
+  io::MMapFileHandle handle_;
 };
+#endif  // TINYUSDZ_NEXT_ENABLE_FILEIO
 
 }  // namespace
 
@@ -604,6 +559,7 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
 }
 
 bool AsciiParser::Impl::ParseFile(const char* filename) {
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
   const auto t_open_start = ProfileClock::now();
   MappedFile mapped;
   std::string map_error;
@@ -616,36 +572,28 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
     return Parse(mapped.size() ? mapped.data() : &empty, mapped.size());
   }
 
-  std::ifstream file(filename, std::ios::binary | std::ios::ate);
-  if (!file.is_open()) {
-    AddError(std::string("Failed to open file: ") + filename);
+  // Fallback: whole-file read via next_io (mmap unavailable / failed).
+  std::vector<uint8_t> content;
+  std::string read_err;
+  if (!io::ReadWholeFile(&content, &read_err, filename, options_.max_file_size)) {
+    AddError(read_err.empty() ? (std::string("Failed to open file: ") + filename)
+                              : read_err);
     return false;
   }
   if (options_.profile) {
     options_.profile->file_open_ms += ProfileMs(ProfileClock::now() - t_open_start);
   }
-
-  size_t size = static_cast<size_t>(file.tellg());
-  file.seekg(0, std::ios::beg);
-  if (options_.max_file_size > 0 && size > options_.max_file_size) {
-    AddError("File size exceeds maximum allowed");
-    return false;
-  }
-
-  // Default-init (NOT value-init) the buffer: `new char[]` leaves the bytes
-  // uninitialized, so we skip zero-filling hundreds of MB we immediately
-  // overwrite with file.read (the zero-fill was ~8% of a big-file parse).
-  std::unique_ptr<char[]> content(new char[size ? size : 1]);
-  const auto t_read_start = ProfileClock::now();
-  if (size && !file.read(content.get(), static_cast<std::streamsize>(size))) {
-    AddError("Failed to read file contents");
-    return false;
-  }
-  if (options_.profile) {
-    options_.profile->file_read_ms += ProfileMs(ProfileClock::now() - t_read_start);
-  }
-
-  return Parse(content.get(), size);
+  const char empty = '\0';
+  return Parse(content.empty() ? &empty
+                               : reinterpret_cast<const char*>(content.data()),
+               content.size());
+#else
+  (void)filename;
+  AddError(
+      "File I/O is disabled in this build (memory-only next-core). "
+      "Use AsciiParser::ParseString / the LoadUSD*FromMemory API.");
+  return false;
+#endif
 }
 
 // Read one composition-arc reference into canonical "@asset@</prim>" /
