@@ -400,9 +400,18 @@ if(TINYUSDZ_NEXT_WITH_TCMALLOC)
     if(TINYUSDZ_NEXT_ALLOC_TCMALLOC)
         set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_TCMALLOC}")
     else()
-        find_library(TINYUSDZ_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
-        if(TINYUSDZ_NEXT_ALLOC_JEMALLOC)
-            set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_JEMALLOC}")
+        # mimalloc: FASTER than tcmalloc on alloc-churn-heavy compose (Caldera
+        # -20%) but ONLY with purging off -- run with MIMALLOC_PURGE_DELAY=-1
+        # (its default purges memory to the OS and is slower than tcmalloc). Uses
+        # more RSS. jemalloc is the last resort (helps compose, slows the write).
+        find_library(TINYUSDZ_NEXT_ALLOC_MIMALLOC NAMES mimalloc)
+        if(TINYUSDZ_NEXT_ALLOC_MIMALLOC)
+            set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_MIMALLOC}")
+        else()
+            find_library(TINYUSDZ_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
+            if(TINYUSDZ_NEXT_ALLOC_JEMALLOC)
+                set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_JEMALLOC}")
+            endif()
         endif()
     endif()
     if(TINYUSDZ_NEXT_ALLOCATOR_LIB)
