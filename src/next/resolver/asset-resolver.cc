@@ -347,7 +347,28 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
 }
 
 bool AssetResolver::FileExists(const std::string& path) const {
+#if defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  // Cached lstat: the suffix fallback probes the same candidate paths across a
+  // scene's many references to the same asset. (Freestanding builds always miss
+  // in FileExistsImpl, so caching there is pointless.)
+  {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(file_exists_mu_);
+#endif
+    auto it = file_exists_cache_.find(path);
+    if (it != file_exists_cache_.end()) return it->second;
+  }
+  const bool exists = FileExistsImpl(path);
+  {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(file_exists_mu_);
+#endif
+    file_exists_cache_.emplace(path, exists);
+  }
+  return exists;
+#else
   return FileExistsImpl(path);
+#endif
 }
 
 // ============================================================

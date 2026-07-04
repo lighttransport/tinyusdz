@@ -10,6 +10,10 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <unordered_map>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -147,6 +151,16 @@ private:
   ResolvedAsset ResolveInternal(const std::string& asset_path,
                                 const std::string& anchor_path) const;
   bool FileExists(const std::string& path) const;
+
+  // Stat cache: FileExists() results keyed by full path. The UE suffix fallback
+  // re-probes the same candidate paths for every one of a scene's (often
+  // thousands of) references to the same asset -- GetOrLoad calls Resolve()
+  // before its resolved-path cache -- so this collapses those lstat syscalls to
+  // one per distinct path. Thread-safe (Resolve runs on parallel pcp workers).
+  mutable std::unordered_map<std::string, bool> file_exists_cache_;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  mutable std::mutex file_exists_mu_;
+#endif
 };
 
 /// Global default resolver
