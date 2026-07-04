@@ -157,6 +157,166 @@ struct Src {
   mutable const std::vector<SpecRef> *specs_ = nullptr;
 };
 
+// path -> expanded composition sources. The compose structure pass hammers
+// this (SourcesForPath: one find + one get_or_create per composed prim, plus
+// a parent read). Was std::unordered_map<string, vector<Src>>: node alloc,
+// pointer chase, per-byte std::hash. This is an open-addressed hash->index
+// table over STABLE value storage (a deque of vector<Src>): the loop in
+// SourcesForPath reads a parent slot's ref, then inserts the child slot, and
+// returns a slot ref to its caller — all of which must survive later inserts,
+// so values live in a deque (append never moves) and rehash rebuilds only the
+// index slots. Erase is invalidation-only (never on the flatten hot path):
+// tombstones keep the probe chain valid; dead deque entries are reclaimed on
+// clear(). Default copy deep-copies (worker seeding).
+struct SrcCache {
+  static uint64_t Hash(const std::string &s) {
+    return StackSpecCache::HashSite(s.data(), s.size());
+  }
+  struct Slot {
+    uint64_t hash = 0;
+    uint32_t idx = 0;
+    uint8_t state = 0;  // 0 empty, 1 used, 2 tombstone
+  };
+  std::vector<Slot> slots_;
+  std::deque<std::string> keys_;           // keys_[i] backs vals_[i]
+  std::deque<std::vector<Src>> vals_;      // STABLE value storage
+  std::vector<uint8_t> live_;              // parallel to vals_ (1 = live)
+  size_t count_ = 0;                       // live entries
+  size_t occupied_ = 0;                    // used + tombstone slots
+
+  size_t size() const { return count_; }
+
+  void clear() {  // full free (drops the ~280k path-string keys)
+    std::vector<Slot>().swap(slots_);
+    std::deque<std::string>().swap(keys_);
+    std::deque<std::vector<Src>>().swap(vals_);
+    std::vector<uint8_t>().swap(live_);
+    count_ = 0;
+    occupied_ = 0;
+  }
+
+  std::vector<Src> *find(const std::string &k) {
+    if (slots_.empty()) return nullptr;
+    const uint64_t h = Hash(k);
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    for (;;) {
+      const Slot &s = slots_[i];
+      if (s.state == 0) return nullptr;
+      if (s.state == 1 && s.hash == h) {
+        const std::string &key = keys_[s.idx];
+        if (key.size() == k.size() &&
+            std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          return &vals_[s.idx];
+        }
+      }
+      i = (i + 1) & mask;
+    }
+  }
+  bool contains(const std::string &k) { return find(k) != nullptr; }
+
+  // find-or-insert; returns a reference that stays valid across later inserts.
+  std::vector<Src> &get_or_create(const std::string &k) {
+    const uint64_t h = Hash(k);
+    if (slots_.empty() || (occupied_ + 1) * 2 > slots_.size()) rehash();
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    size_t first_free = SIZE_MAX;
+    for (;;) {
+      Slot &s = slots_[i];
+      if (s.state == 0) {
+        const size_t at = (first_free == SIZE_MAX) ? i : first_free;
+        return emplace_at(at, h, k, /*was_tomb=*/slots_[at].state == 2);
+      }
+      if (s.state == 2) {
+        if (first_free == SIZE_MAX) first_free = i;
+      } else if (s.hash == h) {
+        const std::string &key = keys_[s.idx];
+        if (key.size() == k.size() &&
+            std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          return vals_[s.idx];
+        }
+      }
+      i = (i + 1) & mask;
+    }
+  }
+
+  // Insert only if absent (merge path). Consumes v when it inserts.
+  void emplace_if_absent(const std::string &k, std::vector<Src> &&v) {
+    if (contains(k)) return;
+    get_or_create(k) = std::move(v);
+  }
+
+  void erase(const std::string &k) {
+    if (slots_.empty()) return;
+    const uint64_t h = Hash(k);
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    for (;;) {
+      Slot &s = slots_[i];
+      if (s.state == 0) return;
+      if (s.state == 1 && s.hash == h) {
+        const std::string &key = keys_[s.idx];
+        if (key.size() == k.size() &&
+            std::memcmp(key.data(), k.data(), k.size()) == 0) {
+          live_[s.idx] = 0;
+          std::string().swap(keys_[s.idx]);
+          std::vector<Src>().swap(vals_[s.idx]);
+          s.state = 2;  // tombstone: keeps the probe chain valid
+          --count_;
+          return;
+        }
+      }
+      i = (i + 1) & mask;
+    }
+  }
+
+  template <typename Pred>
+  void erase_if(Pred pred) {
+    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
+      if (live_[vi] && pred(keys_[vi])) erase(keys_[vi]);
+    }
+  }
+
+  template <typename Fn>
+  void for_each(Fn fn) {
+    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
+      if (live_[vi]) fn(const_cast<const std::string &>(keys_[vi]), vals_[vi]);
+    }
+  }
+
+ private:
+  std::vector<Src> &emplace_at(size_t slot, uint64_t h, const std::string &k,
+                               bool was_tomb) {
+    const uint32_t vi = static_cast<uint32_t>(vals_.size());
+    keys_.emplace_back(k);
+    vals_.emplace_back();
+    live_.push_back(1);
+    slots_[slot].hash = h;
+    slots_[slot].idx = vi;
+    slots_[slot].state = 1;
+    ++count_;
+    if (!was_tomb) ++occupied_;
+    return vals_[vi];
+  }
+  void rehash() {
+    const size_t new_cap = slots_.empty() ? 16 : slots_.size() * 2;
+    slots_.assign(new_cap, Slot{});
+    occupied_ = 0;
+    const size_t mask = new_cap - 1;
+    for (uint32_t vi = 0; vi < live_.size(); ++vi) {
+      if (!live_[vi]) continue;
+      const uint64_t h = Hash(keys_[vi]);
+      size_t i = static_cast<size_t>(h) & mask;
+      while (slots_[i].state != 0) i = (i + 1) & mask;
+      slots_[i].hash = h;
+      slots_[i].idx = vi;
+      slots_[i].state = 1;
+      ++occupied_;
+    }
+  }
+};
+
 // Reverse-dependency key: which (layer, prim-path) an index read from.
 struct Site {
   std::string layer_id;
@@ -233,7 +393,7 @@ struct Cache::Impl {
   }
 
   std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
-  std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
+  SrcCache sources_cache;  // path -> expanded sources (open-addressed, stable values)
 
   // Pool of namespace mappings shared by Src.map_idx. Index 0 is identity, so a
   // default Src (and the bulk of subtree children) needs no pool entry. New
