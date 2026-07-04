@@ -37,6 +37,15 @@
 
 using namespace tinyusdz::next;
 
+#if defined(TINYUSDZ_NEXT_ALLOC_JEMALLOC)
+// jemalloc reads this weak global at init. Disabling decay-purging
+// (dirty/muzzy decay = -1, i.e. never return freed pages to the OS) matches this
+// short-lived accumulate-then-drain flatten: it removes jemalloc's write-phase
+// purge stall, making it the fastest allocator on the large scenes at RSS
+// on par with tcmalloc. See doc/large-scene.md §8.1. Byte-identical output.
+extern "C" const char *malloc_conf = "dirty_decay_ms:-1,muzzy_decay_ms:-1";
+#endif
+
 struct USDCReadCaps {
   size_t max_tokens = 1024 * 1024;
   size_t max_strings = 1024 * 1024;
