@@ -46,20 +46,61 @@
     return idx;
   }
 
-  uint32_t InternPath(const std::string& path) {
-    std::string_view key(path);
+  // Intern a full path whose storage OUTLIVES this write (the input Layer's
+  // own path/target strings, string literals): the canonical (stem, name)
+  // views point straight into the caller's bytes — no copy, no concatenation.
+  uint32_t InternPathStable(std::string_view full) {
+    std::string_view stem, name;
+    CanonicalSplitPath(full, &stem, &name);
+    return InternPathSplit(stem, name, HashView(stem), /*stable=*/true);
+  }
+
+  // Intern a full path from TRANSIENT storage (parsed arc targets, worker
+  // merge): copied into path_owned_ on first sight.
+  uint32_t InternPathCopy(std::string_view full) {
+    std::string_view stem, name;
+    CanonicalSplitPath(full, &stem, &name);
+    return InternPathSplit(stem, name, HashView(stem), /*stable=*/false);
+  }
+
+  // Property fast path: (prim path, property name) with the prim's stem hash
+  // computed ONCE per prim by the caller. Valid because property names never
+  // contain '.' or '/' (so the canonical split of stem+'.'+name is exactly
+  // (stem, name)), and both views are stable (Layer / PropNameTable).
+  uint32_t InternPropPath(std::string_view stem, std::string_view name,
+                          uint64_t stem_hash) {
+    return InternPathSplit(stem, name, stem_hash, /*stable=*/true);
+  }
+
+  uint32_t InternPathSplit(std::string_view stem, std::string_view name,
+                           uint64_t stem_hash, bool stable) {
+    const uint64_t h = PathPairHash(stem_hash, name);
     if (frozen_path_) {
-      auto it = frozen_path_->find(key);
-      if (it != frozen_path_->end()) return *it;
+      const uint32_t* it = frozen_path_->find(stem, name, h);
+      if (it) return *it;
       frozen_miss_ = true;
       return 0;
     }
     bool found = false;
-    FlatStringViewU32Map::Entry* e = path_to_index_.probe(key, &found);
+    FlatPathKeyMap::Entry* e = path_to_index_.probe(stem, name, h, &found);
     if (found) return e->value;
-    uint32_t idx = static_cast<uint32_t>(paths_.size());
-    paths_.push_back(path);
-    path_to_index_.commit_insert(e, std::string_view(paths_.back()), idx);
+    const uint32_t idx = static_cast<uint32_t>(paths_.size());
+    if (!stable) {
+      // Re-anchor the views into an owned copy of the full string.
+      std::string& owned = path_owned_.emplace_back();
+      owned.reserve(stem.size() + (name.empty() ? 0 : name.size() + 1));
+      owned.assign(stem.data(), stem.size());
+      if (!name.empty()) {
+        owned.push_back('.');
+        owned.append(name.data(), name.size());
+      }
+      stem = std::string_view(owned.data(), stem.size());
+      if (!name.empty()) {
+        name = std::string_view(owned.data() + stem.size() + 1, name.size());
+      }
+    }
+    paths_.push_back(PathRec{stem, name});
+    path_to_index_.commit(e, stem, name, idx);
     return idx;
   }
 

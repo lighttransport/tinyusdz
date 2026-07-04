@@ -221,7 +221,7 @@
             CompositionArc arc = Compositor::ParseReference(s);
             path = arc.prim_path.empty() ? s : arc.prim_path;
           }
-          uint32_t path_idx = path.empty() ? 0u : InternPath(path);
+          uint32_t path_idx = path.empty() ? 0u : InternPathCopy(path);
           std::memcpy(raw.data() + cursor, &path_idx, 4);
           cursor += 4;
         }
@@ -274,7 +274,7 @@
           }
 
           uint32_t asset_idx = InternString(arc.asset_path);
-          uint32_t path_idx = arc.prim_path.empty() ? 0u : InternPath(arc.prim_path);
+          uint32_t path_idx = arc.prim_path.empty() ? 0u : InternPathCopy(arc.prim_path);
           std::memcpy(raw.data() + cursor, &asset_idx, 4);
           std::memcpy(raw.data() + cursor + 4, &path_idx, 4);
           cursor += 8;
@@ -518,7 +518,7 @@
       // normal name -> Prim.) Using the right spec type keeps the unflattened
       // output readable by pxrUSD (which rejects a Prim named "{...}").
       CrateSpec spec;
-      spec.path_index.value = InternPath(prim_path);
+      spec.path_index.value = InternPathStable(prim_path);
       spec.fieldset_index.value = fs_idx;
       spec.spec_type = SpecType::Prim;
       {
@@ -682,7 +682,7 @@
       uint32_t fs_idx = AddFieldset(std::move(fieldset));
 
       CrateSpec spec;
-      spec.path_index.value = InternPath("/");
+      spec.path_index.value = InternPathStable("/");
       spec.fieldset_index.value = fs_idx;
       spec.spec_type = SpecType::PseudoRoot;
       specs_.push_back(spec);
@@ -783,7 +783,8 @@
       for (const auto& ws : worker.specs_) {
         CrateSpec spec = ws;
         if (!worker.frozen_path_ && ws.path_index.value < worker.paths_.size()) {
-          spec.path_index.value = InternPath(worker.paths_[ws.path_index.value]);
+          spec.path_index.value =
+              InternPathCopy(worker.PathFullString(ws.path_index.value));
         }
         spec.fieldset_index.value = fieldset_base + ws.fieldset_index.value;
         specs_.push_back(spec);
@@ -824,16 +825,16 @@
       };
       for (const auto& prim : layer.prims()) {
         const std::string& base = prim.path().str();
-        InternPath(base);
+        InternPathStable(base);
         for (const auto& slot : prim.properties().slots()) {
           const std::string& prop_name = name_table.get(slot.name_id);
           build_prop_path(base, prop_name);
-          InternPath(prop_path);
+          InternPathCopy(prop_path);
           if (slot.flags & PropSlot::kFlagConnection) {
             if (const std::vector<Path>* conns =
                     prim.connection(slot.name_id)) {
               for (const auto& p : *conns) {
-                if (!p.str().empty()) InternPath(p.str());
+                if (!p.str().empty()) InternPathStable(p.str());
               }
             }
           }
@@ -841,7 +842,7 @@
         for (auto prop_id : prim.time_sampled_properties()) {
           const std::string& prop_name = name_table.get(prop_id);
           build_prop_path(base, prop_name);
-          InternPath(prop_path);
+          InternPathCopy(prop_path);
         }
         struct RelationshipEntry {
           std::string_view name;
@@ -864,9 +865,9 @@
           for (size_t ri = 0; ri < rels.size(); ++ri) {
             const auto& rel = rels[ri];
             build_prop_path(base, rel.name);
-            InternPath(prop_path);
+            InternPathCopy(prop_path);
             for (const auto& p : *rel.targets) {
-              if (!p.str().empty()) InternPath(p.str());
+              if (!p.str().empty()) InternPathStable(p.str());
             }
           }
         }
