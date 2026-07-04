@@ -904,6 +904,7 @@ int main(int argc, char **argv) {
     USDCWriteOptions copts;
     copts.crate_options.num_threads = write_threads;
     copts.crate_options.consume_values = consume_values;  // stage discarded below
+    copts.crate_options.enable_timing = timing;  // [next_crate_write] phase lines
     const auto t_w0 = Clock::now();
     USDCWriteResult res;
     std::vector<uint8_t> memory;

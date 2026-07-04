@@ -54,11 +54,12 @@
       frozen_miss_ = true;
       return 0;
     }
-    auto it = path_to_index_.find(key);
-    if (it != path_to_index_.end()) return *it;
+    bool found = false;
+    FlatStringViewU32Map::Entry* e = path_to_index_.probe(key, &found);
+    if (found) return e->value;
     uint32_t idx = static_cast<uint32_t>(paths_.size());
     paths_.push_back(path);
-    path_to_index_.set(std::string_view(paths_.back()), idx);
+    path_to_index_.commit_insert(e, std::string_view(paths_.back()), idx);
     return idx;
   }
 

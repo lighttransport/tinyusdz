@@ -122,6 +122,38 @@ private:
       return nullptr;
     }
 
+    // Single-probe find-or-prepare-insert: returns the entry for `key`, either
+    // the existing one (*found=true) or the empty slot it hashes to
+    // (*found=false; the caller MUST fill key/value/used and did ++count via
+    // commit_insert). Rehash happens up front so the returned pointer stays
+    // valid. Saves the second full hash+probe chain of a find()-then-set()
+    // pair on long keys (multi-million-path intern loops).
+    Entry* probe(std::string_view key, bool* found) {
+      ensure_room();
+      const size_t mask = slots.size() - 1;
+      size_t h = static_cast<size_t>(HashView(key)) & mask;
+      for (;;) {
+        Entry& e = slots[h];
+        if (!e.used) {
+          *found = false;
+          return &e;
+        }
+        if (e.key.size() == key.size() &&
+            (e.key.empty() ||
+             std::memcmp(e.key.data(), key.data(), key.size()) == 0)) {
+          *found = true;
+          return &e;
+        }
+        h = (h + 1) & mask;
+      }
+    }
+    void commit_insert(Entry* e, std::string_view stored_key, uint32_t value) {
+      e->key = stored_key;
+      e->value = value;
+      e->used = true;
+      ++count;
+    }
+
     const uint32_t* find(std::string_view key) const {
       if (slots.empty()) return nullptr;
       const size_t mask = slots.size() - 1;
