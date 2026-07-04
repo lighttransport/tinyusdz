@@ -619,6 +619,14 @@
       current_offset += value_data_[i].size();
     }
 
+    // Debug: NEXT_DEBUG_VALUE_OFFSET=<absolute file offset> attributes the
+    // value block containing that byte to its field token + owning spec paths.
+    // Must run BEFORE the patch loop below (field payloads are still block
+    // indices here).
+    if (const char* dbg_env = std::getenv("NEXT_DEBUG_VALUE_OFFSET")) {
+      DumpValueOffsetAttribution(strtoull(dbg_env, nullptr, 0));
+    }
+
     // Patch all field ValueReps with actual file offsets (absolute).
     for (auto& field : fields_) {
       if (field.value_rep.is_inlined()) continue;
@@ -652,6 +660,63 @@
     }
 
     return current_offset;
+  }
+
+  // Debug helper for NEXT_DEBUG_VALUE_OFFSET: report which value block holds
+  // the given absolute file offset, which fields reference that block, and
+  // which specs own those fields. Called before ValueReps are patched, so a
+  // non-inlined field payload is still the value_data_ block index.
+  void DumpValueOffsetAttribution(uint64_t abs_offset) const {
+    if (abs_offset < value_start_offset_) return;
+    const uint64_t rel = abs_offset - value_start_offset_;
+    // value_offsets_ is ascending: find the last block starting at or before rel.
+    auto it = std::upper_bound(value_offsets_.begin(), value_offsets_.end(), rel);
+    if (it == value_offsets_.begin()) return;
+    const size_t bi = static_cast<size_t>((it - value_offsets_.begin()) - 1);
+    const DataBlock& blk = value_data_[bi];
+    if (rel >= value_offsets_[bi] + blk.size()) {
+      fprintf(stderr,
+              "[value-offset-debug] abs=%llu falls in alignment padding after "
+              "block %zu\n",
+              (unsigned long long)abs_offset, bi);
+      return;
+    }
+    fprintf(stderr,
+            "[value-offset-debug] abs=%llu -> block=%zu type=%u size=%zu "
+            "is_ref=%d rel_in_block=%llu (of %zu blocks)\n",
+            (unsigned long long)abs_offset, bi, (unsigned)blk.type, blk.size(),
+            blk.is_ref() ? 1 : 0,
+            (unsigned long long)(rel - value_offsets_[bi]), value_data_.size());
+    for (size_t fi = 0; fi < fields_.size(); ++fi) {
+      const CrateField& f = fields_[fi];
+      if (f.value_rep.is_inlined()) continue;
+      if (f.value_rep.payload() != bi) continue;
+      const uint32_t ti = f.token_index.value;
+      const std::string_view tok =
+          (ti < tokens_.size()) ? tokens_[ti] : std::string_view("<bad-token>");
+      fprintf(stderr,
+              "[value-offset-debug]   field=%zu token='%.*s' crate_type=%u "
+              "array=%d compressed=%d\n",
+              fi, (int)tok.size(), tok.data(),
+              (unsigned)f.value_rep.type_id(), f.value_rep.is_array() ? 1 : 0,
+              f.value_rep.is_compressed() ? 1 : 0);
+      for (size_t si = 0; si < specs_.size(); ++si) {
+        const uint32_t fs = specs_[si].fieldset_index.value;
+        if (fs >= fieldset_offsets_.size()) continue;
+        const uint32_t off = fieldset_offsets_[fs];
+        const uint32_t cnt = fieldset_sizes_[fs];
+        for (uint32_t k = 0; k < cnt; ++k) {
+          if (fieldset_items_[off + k] == fi) {
+            const uint32_t pi = specs_[si].path_index.value;
+            fprintf(stderr,
+                    "[value-offset-debug]     spec=%zu spec_type=%u path='%s'\n",
+                    si, (unsigned)specs_[si].spec_type,
+                    (pi < paths_.size()) ? paths_[pi].c_str() : "<bad-path>");
+            break;
+          }
+        }
+      }
+    }
   }
 
   // Emit the VALUE section data blocks into buffer_ (in-memory path), 8-byte
