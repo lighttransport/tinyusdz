@@ -5,6 +5,10 @@
 
 #include "layer.hh"
 #include <algorithm>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#include <vector>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -133,9 +137,38 @@ void Layer::finalize(bool path_index_prebuilt) {
     build_path_index();
   }
 
-  // Finalize each prim's properties (sort for binary search)
-  for (auto& prim : prims_) {
-    prim.finalize_properties();
+  // Finalize each prim's properties (sort for binary search). Each prim's
+  // sort is independent (it orders the prim's own slots by name; the global
+  // PropNameTable is only READ, and its reader path is concurrency-safe), so
+  // large layers finalize in parallel — byte-identical results. The 64k
+  // threshold keeps small layers (and per-worker layers during parallel
+  // scene load) on the serial path to avoid nested thread fan-out.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (prims_.size() >= 65536) {
+    unsigned hw = std::thread::hardware_concurrency();
+    const int P = static_cast<int>(hw ? (hw < 16u ? hw : 16u) : 1u);
+    if (P > 1) {
+      std::vector<std::thread> pool;
+      pool.reserve(static_cast<size_t>(P));
+      const size_t n = prims_.size();
+      for (int t = 0; t < P; ++t) {
+        const size_t lo = n * static_cast<size_t>(t) / static_cast<size_t>(P);
+        const size_t hi =
+            n * (static_cast<size_t>(t) + 1u) / static_cast<size_t>(P);
+        pool.emplace_back([this, lo, hi] {
+          for (size_t i = lo; i < hi; ++i) prims_[i].finalize_properties();
+        });
+      }
+      for (auto& th : pool) th.join();
+    } else {
+      for (auto& prim : prims_) prim.finalize_properties();
+    }
+  } else
+#endif
+  {
+    for (auto& prim : prims_) {
+      prim.finalize_properties();
+    }
   }
 
   // The prim array is append-only during build and immutable after finalize:

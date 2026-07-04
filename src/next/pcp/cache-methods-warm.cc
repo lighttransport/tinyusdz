@@ -41,6 +41,13 @@ namespace pcp {
       }
     }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
+    using ProfClk = std::chrono::steady_clock;
+    auto seg_ms = [](ProfClk::time_point a, ProfClk::time_point b) {
+      return std::chrono::duration_cast<std::chrono::nanoseconds>(b - a).count() /
+             1e6;
+    };
+    auto seg_t0 = ProfClk::now();
+    double warm_ms = 0.0, structure_ms = 0.0, inst_ms = 0.0, fin_ms = 0.0;
 #if defined(TINYUSDZ_ENABLE_THREAD)
     // Pre-warm sources_cache in parallel: SourcesForPath (LIVRPS arc resolution)
     // is the dominant SERIAL cost of the structure pass below (ALab: ~1.5 s).
@@ -56,6 +63,8 @@ namespace pcp {
       ParallelWarmSources(root_names, options.num_threads, warn, err);
     }
 #endif
+    warm_ms = seg_ms(seg_t0, ProfClk::now());
+    seg_t0 = ProfClk::now();
     // Structure pass (serial): walk every root, fixing each prim's slot/parent/
     // child-order/instancing and recording its (slot, sources) for opinion fill.
     fill_.clear();
@@ -63,6 +72,7 @@ namespace pcp {
       BuildStage(out.get(), {Path("/" + nm), Path("/" + nm), 0, true, 1},
                  warn, err);
     }
+    structure_ms = seg_ms(seg_t0, ProfClk::now());
     // Opinion-fill pass: compose every slot's opinions, in parallel when
     // num_threads > 1 (each slot is independent; sources_cache is read-only here).
     auto fill_t0 = std::chrono::steady_clock::now();
@@ -79,6 +89,7 @@ namespace pcp {
                   "ms register=" + FormatMilliseconds(prof_reg_ns_ / 1e6) + "ms");
     }
 
+    seg_t0 = ProfClk::now();
     switch (options.instance_flatten_mode) {
       case InstanceFlattenMode::Holder:
         FlattenInstances(out.get());
@@ -89,8 +100,17 @@ namespace pcp {
       case InstanceFlattenMode::Native:
         break;
     }
+    inst_ms = seg_ms(seg_t0, ProfClk::now());
 
+    seg_t0 = ProfClk::now();
     out->finalize();
+    fin_ms = seg_ms(seg_t0, ProfClk::now());
+    if (options.enable_timing) {
+      TUSDZ_LOG_I("[next_build] segments warm=" + FormatMilliseconds(warm_ms) +
+                  "ms structure=" + FormatMilliseconds(structure_ms) +
+                  "ms flatten_inst=" + FormatMilliseconds(inst_ms) +
+                  "ms finalize=" + FormatMilliseconds(fin_ms) + "ms");
+    }
     out->meta() = root->meta();
     stage->SetRootLayer(std::move(*out));
     return true;
