@@ -36,6 +36,8 @@
 #endif
 
 #include "next/pipeline/flatten.hh"
+#include "next/reader/usdz-reader.hh"
+#include "next/writer/usdz-writer.hh"
 #include "usdz-convert.hh"
 
 namespace {
@@ -122,6 +124,8 @@ int main(int argc, char** argv) {
   // --- 1. next-core flatten: collect referenced assets ------------------------
   next::pipeline::FlattenOptions fopts;
   fopts.read.num_threads = num_threads;
+  fopts.use_pcp_compose = true;            // parallel pcp compose (fast path)
+  fopts.compose_num_threads = num_threads;  // 0 = auto
   next::pipeline::FlattenStats st1;
   std::vector<uint8_t> flat1;
   std::string err;
@@ -204,6 +208,57 @@ int main(int argc, char** argv) {
   if (!ok) {
     std::fprintf(stderr, "next_usdzconvert: package failed: %s\n", err.c_str());
     return 1;
+  }
+
+  // --- 5. re-serialize the packaged root through the next crate writer so it
+  //        gets cross-spec value-block dedup (the legacy writer the packager uses
+  //        does not); texture entries pass through verbatim. -------------------
+  {
+    next::USDZReader zr;
+    if (zr.OpenFile(output)) {
+      size_t root_idx = SIZE_MAX;
+      for (size_t i = 0; i < zr.NumEntries(); i++) {
+        std::string e = Ext(zr.EntryName(i));
+        if (e == "usdc" || e == "usda" || e == "usd") { root_idx = i; break; }
+      }
+      std::vector<uint8_t> dedup_root;
+      next::pipeline::FlattenOptions ro;
+      ro.flatten = false;  // self-contained root -> re-serialize (dedup), no compose
+      next::pipeline::FlattenStats rs;
+      std::string rerr;
+      if (root_idx != SIZE_MAX &&
+          next::pipeline::FlattenUSDCToUSDC(zr.EntryData(root_idx),
+                                            zr.EntrySize(root_idx), dedup_root,
+                                            ro, &rs, &rerr) &&
+          dedup_root.size() < zr.EntrySize(root_idx)) {
+        std::vector<next::USDZEntry> ents(zr.NumEntries());
+        for (size_t i = 0; i < zr.NumEntries(); i++) {
+          ents[i].name = zr.EntryName(i);
+          if (i == root_idx) {
+            ents[i].data = dedup_root.data();
+            ents[i].size = dedup_root.size();
+          } else {
+            ents[i].data = zr.EntryData(i);
+            ents[i].size = zr.EntrySize(i);
+          }
+        }
+        if (root_idx != 0) std::swap(ents[0], ents[root_idx]);  // root must be first
+        std::vector<uint8_t> repacked;
+        if (next::WriteUSDZFromEntriesToMemory(repacked, ents).success) {
+          FILE* f = std::fopen(output.c_str(), "wb");
+          if (f) {
+            std::fwrite(repacked.data(), 1, repacked.size(), f);
+            std::fclose(f);
+            cstats.output_size = repacked.size();
+            if (verbose) {
+              std::fprintf(stderr,
+                  "[dedup root] root %zu -> %zu bytes (next writer); usdz %zu bytes\n",
+                  zr.EntrySize(root_idx), dedup_root.size(), repacked.size());
+            }
+          }
+        }
+      }
+    }
   }
   std::fprintf(stderr,
       "next_usdzconvert: wrote %s (%zu bytes) — textures: %zu, resized: %zu, "
