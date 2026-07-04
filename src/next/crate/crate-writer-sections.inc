@@ -711,10 +711,20 @@
         if (!sink(kZeros, static_cast<size_t>(pad))) return false;
         pos += pad;
       }
-      const size_t sz = value_data_[i].size();
+      const DataBlock& blk = value_data_[i];
+      const size_t sz = blk.size();
       if (sz) {
-        if (!sink(value_data_[i].bytes(), sz)) return false;
+        if (!sink(blk.bytes(), sz)) return false;
         pos += sz;
+        // Pass-through arrays are refs into a read-only source mmap; each is
+        // written exactly once here and never read again this call. Hint the OS
+        // to drop the pages we just streamed so RSS stays flat instead of
+        // faulting the entire (multi-GB) input in. No-op for owned/inline blocks
+        // and off Linux. Byte-identity is unaffected (output already emitted).
+        if (blk.is_ref() && blk.src) {
+          blk.src->DropResidentRange(static_cast<size_t>(blk.src_offset),
+                                     static_cast<size_t>(blk.src_len));
+        }
       }
     }
     return true;

@@ -102,6 +102,16 @@ class CrateDataSource {
   /// yet, or on a malformed block.
   bool MaterializeArray(const LazyArrayRef& ref, Value* out) const;
 
+  /// Hint that [offset, offset+len) of the mapping will not be read again, so
+  /// the OS may drop its resident pages (madvise MADV_DONTNEED). Correctness-safe
+  /// for a read-only file mapping: a later access simply re-faults identical
+  /// bytes from the file. No-op unless this source is a genuine file mmap (owned
+  /// or borrowed buffers are left untouched) and only on Linux. Used by the crate
+  /// writer to keep RSS flat while streaming multi-GB pass-through arrays out to
+  /// a file: each array's source pages are freed right after being written, so
+  /// the whole input never has to be resident at once.
+  void DropResidentRange(size_t offset, size_t len) const;
+
  private:
   CrateDataSource() = default;
   CrateDataSource(const CrateDataSource&) = delete;
