@@ -2030,6 +2030,11 @@ endif(TINYUSDZ_BUILD_EXAMPLES)
 if(TINYUSDZ_BUILD_TOOLS)
   add_subdirectory(tools/tusddumpcrate)
   add_subdirectory(tools/tusdzconvert)
+  # next_usdzconvert flattens via the next-core + next_io stack, so it needs the
+  # next-core gate (which links `next_core` into the build).
+  if(TINYUSDZ_WITH_NEXT_CORE)
+    add_subdirectory(tools/next_usdzconvert)
+  endif()
   # tusddiff uses the Tydra diff-and-compare API.
   if(TINYUSDZ_WITH_TYDRA)
     add_subdirectory(tools/tusddiff)
