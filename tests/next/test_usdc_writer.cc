@@ -14,6 +14,7 @@
 
 #include "next/stage/stage.hh"
 #include "next/layer/layer.hh"
+#include "next/layer/property-index.hh"
 #include "next/types/value.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-format.hh"
@@ -693,6 +694,145 @@ void test_usdc_thread_count_parity() {
   std::cout << "  USDC writer thread-count parity test passed!\n\n";
 }
 
+// Regression: flatten-output nondeterminism class 1 (fixed by sorting
+// PropIndex slots by NAME). PropNameId assignment order is run-unstable
+// (names are interned concurrently while layers load in parallel), and the
+// crate writer emits the `properties` field, property specs and value blocks
+// in slots() order — so an id-derived slot order leaked run-to-run
+// nondeterminism into the crate bytes. Simulate an id order that DISAGREES
+// with name order (intern the lexicographically-later name first) and assert
+// (a) slots() come out name-sorted, (b) the crate bytes are independent of
+// property ADD order.
+void test_usdc_slot_order_interning_independent() {
+  std::cout << "Testing slot-order independence from PropNameId order...\n";
+
+  PropNameTable& table = GetPropNameTable();
+  // Unique names for this test; interning "zz" BEFORE "aa" gives it the
+  // SMALLER PropNameId, so id order contradicts name order.
+  const char* kLate = "zz_slot_order_regression";
+  const char* kEarly = "aa_slot_order_regression";
+  PropNameId zz = table.intern(kLate);
+  PropNameId aa = table.intern(kEarly);
+  (void)zz;
+  (void)aa;
+
+  auto build = [&](bool reversed) -> Layer {
+    Layer layer;
+    PrimSpec prim("Shape", "Xform");
+    prim.set_path(Path("/Shape"));
+    const std::vector<double> darr = {0.5600000023841858, -1.25, 42.0};
+    if (!reversed) {
+      prim.add_property(kLate, Value::MakeDoubleArray(darr));
+      prim.add_property(kEarly, Value(int32_t(7)));
+    } else {
+      prim.add_property(kEarly, Value(int32_t(7)));
+      prim.add_property(kLate, Value::MakeDoubleArray(darr));
+    }
+    layer.add_prim(std::move(prim));
+    layer.finalize();
+    return layer;
+  };
+
+  Layer l1 = build(false);
+  const PrimSpec* p = l1.prim_at_path("/Shape");
+  assert(p && p->properties().slots().size() == 2);
+  // Canonical order is NAME order ("aa..." first), NOT intern-id order
+  // ("zz..." was interned first and has the smaller id).
+  assert(table.get(p->properties().slots()[0].name_id) == kEarly &&
+         "slots must be name-sorted, not PropNameId-sorted");
+  assert(table.get(p->properties().slots()[1].name_id) == kLate);
+  // find() by id must still resolve both post-sort.
+  assert(p->property(kEarly) && p->property(kLate));
+
+  Layer l2 = build(true);
+  std::vector<uint8_t> b1, b2;
+  CrateWriter w1, w2;
+  assert(w1.WriteLayerToMemory(b1, l1).success);
+  assert(w2.WriteLayerToMemory(b2, l2).success);
+  assert(b1 == b2 && "crate bytes must be independent of property add order");
+
+  std::cout << "  slot-order interning-independence test passed!\n\n";
+}
+
+// Shared fixture for the consume/determinism tests: a prim with a double[]
+// default (the value class behind the Island 2-byte nondeterminism), a
+// non-inlinable double scalar, an AssetPath default and time samples.
+static Layer BuildConsumeFixtureLayer() {
+  Layer layer;
+  PrimSpec prim("Geom", "Mesh");
+  prim.set_path(Path("/Geom"));
+  prim.add_property("param",
+                    Value::MakeDoubleArray({0.5600000023841858, 1.5, -2.25}));
+  prim.add_property("weight", Value(3.14159265358979));  // Double block
+  prim.add_property("file", Value::MakeAssetPath("textures/albedo.png"));
+  PropNameId anim = GetPropNameTable().intern("anim_value");
+  prim.add_time_sample(anim, 0.0, Value(1.0));
+  prim.add_time_sample(anim, 10.0, Value(2.0));
+  layer.add_prim(std::move(prim));
+  layer.finalize();
+  return layer;
+}
+
+// Regression: CrateWriteOptions::consume_values must be byte-neutral, and a
+// consuming write must keep the layer structurally valid with AssetPath
+// defaults intact (post-write asset collection depends on them) while other
+// value payloads are released.
+void test_usdc_consume_values_byte_identity() {
+  std::cout << "Testing consume_values byte identity + AssetPath retention...\n";
+
+  Layer keep = BuildConsumeFixtureLayer();
+  Layer consumed = BuildConsumeFixtureLayer();
+
+  CrateWriteOptions keep_opts;  // consume_values = false
+  std::vector<uint8_t> b1;
+  CrateWriter w1(keep_opts);
+  assert(w1.WriteLayerToMemory(b1, keep).success);
+
+  CrateWriteOptions consume_opts;
+  consume_opts.consume_values = true;
+  std::vector<uint8_t> b2;
+  CrateWriter w2(consume_opts);
+  assert(w2.WriteLayerToMemory(b2, consumed).success);
+
+  assert(b1 == b2 && "consume_values must not change the output bytes");
+
+  const PrimSpec* p = consumed.prim_at_path("/Geom");
+  assert(p);
+  // Non-asset values are released (empty but present: slots stay valid).
+  const Value* darr = p->property_value("param");
+  assert(darr && darr->is_empty() && "double[] payload should be released");
+  const Value* dsc = p->property_value("weight");
+  assert(dsc && dsc->is_empty() && "double scalar payload should be released");
+  // AssetPath defaults survive for post-write asset collection.
+  const Value* ap = p->property_value("file");
+  assert(ap && ap->as_asset_path() &&
+         *ap->as_asset_path() == "textures/albedo.png" &&
+         "AssetPath default must survive a consuming write");
+  // The non-consuming layer keeps everything.
+  const PrimSpec* pk = keep.prim_at_path("/Geom");
+  assert(pk && pk->property_value("param") &&
+         !pk->property_value("param")->is_empty());
+
+  std::cout << "  consume_values byte identity test passed!\n\n";
+}
+
+// Regression: flatten-output nondeterminism class 2 (uninitialized bytes in
+// a value block — the double[]-as-scalar encode read raw_data() of an array).
+// Cheap in-process guard: writing the same content twice from independently
+// built layers must produce identical bytes. (Full-scene determinism is
+// checked by scripts/run-next-checks.sh RUN_DETERMINISM.)
+void test_usdc_double_write_determinism() {
+  std::cout << "Testing double-write byte determinism...\n";
+  Layer a = BuildConsumeFixtureLayer();
+  Layer b = BuildConsumeFixtureLayer();
+  std::vector<uint8_t> ba, bb;
+  CrateWriter wa, wb;
+  assert(wa.WriteLayerToMemory(ba, a).success);
+  assert(wb.WriteLayerToMemory(bb, b).success);
+  assert(ba == bb && "two writes of identical content must be byte-identical");
+  std::cout << "  double-write determinism test passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Writer Tests ===\n\n";
 
@@ -710,6 +850,9 @@ int main() {
     test_usdc_encode_value_fallback_roundtrip();
     test_usdc_value_block_roundtrip();
     test_usdc_thread_count_parity();
+    test_usdc_slot_order_interning_independent();
+    test_usdc_consume_values_byte_identity();
+    test_usdc_double_write_determinism();
 
     std::cout << "=== All USDC writer tests passed! ===\n";
     return 0;
