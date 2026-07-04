@@ -111,6 +111,57 @@ std::unique_ptr<Layer> ExtractSubtree(const Layer& src,
   return out;
 }
 
+// Strip SELECTED-variant "{vset=sel}" path segments so a graft materializes
+// under the composed (selected) prim; returns "" if any segment names an
+// UNSELECTED variant (that content is dropped from the flatten). Selections are
+// read from the owning prim in `layer`. Handles reader-produced variant content
+// (e.g. a UE mesh asset's LOD material network) that arrives via a nested
+// reference in a LATER graft round -- after ApplyVariants already ran, so it
+// still carries its "{LOD=sel}" holder segment.
+enum class VariantPathAction { Materialize, Drop, Defer };
+// Resolve "{vset=sel}" holder segments in a graft path against the owning prims'
+// variant selections in `layer`. Materialize -> `*out` is the stripped path;
+// Drop -> the segment names an UNSELECTED variant; Defer -> the owner prim (or
+// its selection) is not in `layer` yet, so retry in a later graft round (the
+// owner may still be pending).
+VariantPathAction MaterializeVariantPath(const Layer& layer,
+                                         const std::string& path,
+                                         std::string* out) {
+  out->clear();
+  size_t i = 0;
+  while (true) {
+    size_t brace = path.find("/{", i);
+    if (brace == std::string::npos) {
+      out->append(path, i, std::string::npos);
+      return VariantPathAction::Materialize;
+    }
+    out->append(path, i, brace - i);
+    size_t close = path.find('}', brace + 2);
+    if (close == std::string::npos) return VariantPathAction::Drop;  // malformed
+    const std::string seg = path.substr(brace + 2, close - (brace + 2));  // vset=var
+    size_t eq = seg.find('=');
+    if (eq == std::string::npos) return VariantPathAction::Drop;
+    const std::string vset = seg.substr(0, eq);
+    const std::string var = seg.substr(eq + 1);
+    const PrimSpec* owner = layer.prim_at_path(*out);
+    if (!owner) return VariantPathAction::Defer;  // owner not materialized yet
+    std::string selected;
+    bool declared = false;
+    for (const auto& vs : owner->meta().variantSets()) {
+      if (vs.name == vset) { selected = vs.selected; declared = true; break; }
+    }
+    if (selected.empty()) {
+      VariantSelection legacy =
+          Compositor::ParseVariantSelection(owner->meta().variantSelection);
+      if (legacy.variant_set == vset) { selected = legacy.variant_name; declared = true; }
+    }
+    // Owner present but its variant selection hasn't been grafted yet -> defer.
+    if (!declared || selected.empty()) return VariantPathAction::Defer;
+    if (selected != var) return VariantPathAction::Drop;  // unselected
+    i = close + 1;  // strip the selected segment, keep composing the rest
+  }
+}
+
 }  // namespace
 
 // ============================================================
@@ -164,28 +215,64 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
     std::vector<PendingGraft> batch = std::move(pending_graft_);
     pending_graft_.clear();
     std::vector<std::pair<size_t, std::string>> added;  // index in result, anchor
+    std::vector<PendingGraft> deferred;
+    bool state_changed = false;  // an add/merge this round (may reveal owners)
     for (auto& g : batch) {
       std::string gp = g.prim.path().str();
-      // Variant-holder prims and unselected variant content keep a "{...}"
-      // segment in their path; a flatten never materializes those.
-      if (gp.find('{') != std::string::npos) continue;
+      // Grafts still carrying a "{vset=sel}" variant-holder segment: materialize
+      // SELECTED-variant content at the stripped path (a late nested-reference
+      // graft ApplyVariants could not re-root); DROP unselected content; DEFER if
+      // the owner prim's selection is not composed yet (retry next round).
+      if (gp.find('{') != std::string::npos) {
+        std::string materialized;
+        VariantPathAction act = MaterializeVariantPath(*result, gp, &materialized);
+        if (act == VariantPathAction::Drop) continue;
+        if (act == VariantPathAction::Defer) {
+          deferred.push_back(std::move(g));
+          continue;
+        }
+        g.prim.set_path(Path(materialized));
+        gp = std::move(materialized);
+      }
       if (PrimSpec* existing = result->prim_at_path_mutable(gp)) {
         // A local spec already exists at this path (e.g. the root layer
         // authors `over "LOD1"` material-binding overrides on a prim whose
         // definition arrives via a referenced file's variant). Local opinions
         // win; the graft fills in type/properties/children content.
         CopyLocalOpinions(*existing, g.prim);
+        // The grafted spec may carry its OWN external composition arcs -- e.g. a
+        // UE material `def "UnrealMaterial" (references=@WorldGridMaterial.usd@)`
+        // arriving via a mesh reference, whose shader network lives in the
+        // further-referenced file. Merging via CopyLocalOpinions neither resolves
+        // those arcs nor (because `existing` is already in arc_resolved_) lets a
+        // later ResolveArcsForPrim expand them, so graft them onto `existing` now.
+        for (const auto& ref_str : g.prim.meta().references) {
+          ResolveRefArc(*result, *existing, ParseReference(ref_str), g.anchor, 0);
+        }
+        if (options_.load_payloads) {
+          for (const auto& pl_str : g.prim.meta().payloads) {
+            ResolveRefArc(*result, *existing, ParsePayload(pl_str), g.anchor, 0);
+          }
+        }
+        state_changed = true;
         continue;
       }
       added.emplace_back(result->prim_count(), g.anchor);
       result->add_prim(std::move(g.prim));
+      state_changed = true;
     }
-    if (added.empty()) break;
-    result->build_path_index();
-    for (const auto& a : added) {
-      PrimSpec* p = result->prim_mutable(static_cast<uint32_t>(a.first));
-      if (p) ResolveArcsForPrim(*result, *p, a.second, 0);
+    if (!added.empty()) {
+      result->build_path_index();
+      for (const auto& a : added) {
+        PrimSpec* p = result->prim_mutable(static_cast<uint32_t>(a.first));
+        if (p) ResolveArcsForPrim(*result, *p, a.second, 0);
+      }
     }
+    // Retry deferred grafts next round -- but only if the layer changed (an
+    // add/merge may have just composed a deferred graft's owner). If nothing
+    // changed, the deferred owners will never appear, so stop.
+    if (!state_changed) break;
+    for (auto& d : deferred) pending_graft_.push_back(std::move(d));
   }
   pending_graft_.clear();
   graft_paths_.clear();
