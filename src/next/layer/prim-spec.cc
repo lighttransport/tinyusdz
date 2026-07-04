@@ -313,6 +313,14 @@ void ValueStorage::clear() {
   values_.clear();
 }
 
+void ValueStorage::release_payloads() {
+  for (auto& v : values_) {
+    // Keep AssetPath values: post-write asset collection reads them.
+    if (v.type_id() == TypeId::AssetPath) continue;
+    v = Value();
+  }
+}
+
 // ============================================================
 // TimeSampleStorage
 // ============================================================
@@ -459,6 +467,13 @@ void TimeSampleStorage::clear() {
   values_.clear();
   hash_to_offsets_.clear();
   dedup_count_ = 0;
+}
+
+void TimeSampleStorage::release_payloads() {
+  for (auto& v : values_) v = Value();
+  // The dedup index only accelerates future add()s; a released store is
+  // write-and-discard, so free it too.
+  hash_to_offsets_.clear();
 }
 
 TimeSampleStorage::Stats TimeSampleStorage::stats() const {
@@ -923,6 +938,11 @@ PropMeta& PrimSpec::ensure_property_meta(PropNameId name_id) {
 
 void PrimSpec::add_child_index(uint32_t index) {
   child_indices_.push_back(index);
+}
+
+void PrimSpec::release_value_payloads() {
+  if (values_) values_->release_payloads();
+  if (time_samples_) time_samples_->release_payloads();
 }
 
 size_t PrimSpec::memory_usage() const {

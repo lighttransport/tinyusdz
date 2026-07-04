@@ -529,6 +529,16 @@
         }
       }
       specs_.push_back(spec);
+
+      // consume_values: every field referencing this prim's values is now
+      // built (blocks interned above), and no later writer pass reads property
+      // values — release them so the composed layer shrinks as value blocks
+      // accumulate instead of coexisting in full. Safe in the parallel build:
+      // each prim is visited by exactly one worker, and cross-prim reads
+      // (variant-owner check) touch meta only.
+      if (options_.consume_values) {
+        const_cast<PrimSpec&>(prim).release_value_payloads();
+      }
   }
 
   void BuildFieldsAndSpecs(const Layer& layer) {

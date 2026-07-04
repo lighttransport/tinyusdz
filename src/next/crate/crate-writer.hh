@@ -61,6 +61,17 @@ struct CrateWriteOptions {
 
   /// Enable writer timing counters and print timing summary after write.
   bool enable_timing = false;
+
+  /// Consume the input layer's property values while writing: after a prim's
+  /// fields are built (its values encoded into the crate's value blocks), the
+  /// prim's default values and time samples are released
+  /// (PrimSpec::release_value_payloads), so the composed layer and the staged
+  /// value blocks never coexist in full — a large peak-RSS cut on
+  /// write-and-discard flows (flatten-to-file). The layer stays structurally
+  /// valid but value-stripped (AssetPath defaults are kept for post-write
+  /// asset collection). Requires the caller's layer to be genuinely mutable;
+  /// output bytes are identical to a non-consuming write. Default off.
+  bool consume_values = false;
 };
 
 /// Result of crate write operation
