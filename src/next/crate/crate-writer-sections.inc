@@ -173,18 +173,52 @@
       };
       constexpr size_t npos = std::string_view::npos;
 
+      // Ancestors already walked THROUGH in this pass. Invariant: a node is
+      // marked only while a walk that continues to the top of its chain (or
+      // to another walked node, inductively the same) is in progress — so
+      // stopping at a walked node skips only re-walks whose add()s would all
+      // be no-ops. The synthesized SET and its append ORDER (which feeds
+      // paths_ and thus the emitted path table) are identical to the full
+      // walk; only redundant hash probes are skipped. Cuts the scan from
+      // O(paths x depth) probes to O(paths + unique ancestors) — the
+      // dominant cost of this phase on deep trees (Island: 3.35M paths,
+      // ~10-level chains shared by thousands of siblings).
+      // Views point into paths_ / synth storage (both stable deques).
+      FlatStringViewU32Map walked;
+      walked.reserve(1 << 17);
+
+      // A prim's property paths are interned consecutively, so consecutive
+      // scans usually strip to the SAME prim part — recognize
+      // "<last_stripped>.<name-without-separators>" with a prefix memcmp +
+      // short suffix scan, skipping the full-path rfind()s and the hash
+      // probe entirely for the common case.
+      std::string_view last_stripped;
       auto scan_one = [&](std::string_view cur) {
+        if (!last_stripped.empty() && cur.size() > last_stripped.size() + 1 &&
+            cur[last_stripped.size()] == '.' &&
+            std::memcmp(cur.data(), last_stripped.data(),
+                        last_stripped.size()) == 0 &&
+            cur.find_first_of("/.", last_stripped.size() + 1) == npos) {
+          return;  // property of the previously-verified prim
+        }
         const size_t dot = cur.rfind('.');
         const size_t slash = cur.rfind('/');
         if (dot != npos && (slash == npos || dot > slash)) {
           cur = cur.substr(0, dot);  // property path: start from its prim part
-          if (!cur.empty() && cur != "/") add(cur);
+          if (cur.empty() || cur == "/") return;
+          if (cur == last_stripped) return;  // same prim as previous scan
+          last_stripped = cur;
+          if (walked.find(cur) != walked.end()) return;
+          add(cur);
+          walked.set(cur, 0);
         }
         while (cur.size() > 1) {
           const size_t sl = cur.rfind('/');
           if (sl == npos || sl == 0) break;
           cur = cur.substr(0, sl);
+          if (walked.find(cur) != walked.end()) break;
           add(cur);
+          walked.set(cur, 0);
         }
       };
 
@@ -225,36 +259,61 @@
     std::vector<uint32_t> local_name_len(path_count, 0);
 
     path_phase_t0 = Clock::now();
-    for (uint32_t i = 0; i < static_cast<uint32_t>(path_count); ++i) {
-      const std::string& p = paths_[i];
-      if (p.empty() || p == "/") {
-        local_name_pos[i] = 0;
-        local_name_len[i] = 0;
-        continue;
-      }
+    // Per-index parent/local-name resolution is independent: paths_ and the
+    // (fully built) path_to_index_ are read-only here and every write goes to
+    // a disjoint slot — contiguous ranges parallelize byte-identically.
+    auto resolve_parent_range = [&](uint32_t lo, uint32_t hi) {
+      for (uint32_t i = lo; i < hi; ++i) {
+        const std::string& p = paths_[i];
+        if (p.empty() || p == "/") {
+          local_name_pos[i] = 0;
+          local_name_len[i] = 0;
+          continue;
+        }
 
-      const size_t slash = p.rfind('/');
-      const size_t dot = p.rfind('.');
-      size_t parent_end;
-      if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
-        parent_end = dot;
-      } else {
-        parent_end = slash;
-      }
+        const size_t slash = p.rfind('/');
+        const size_t dot = p.rfind('.');
+        size_t parent_end;
+        if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
+          parent_end = dot;
+        } else {
+          parent_end = slash;
+        }
 
-      const size_t name_pos = (parent_end == std::string::npos) ? 0u : parent_end + 1u;
-      local_name_pos[i] = static_cast<uint32_t>(name_pos);
-      local_name_len[i] = static_cast<uint32_t>(p.size() - name_pos);
-      if (parent_end == std::string::npos) continue;
+        const size_t name_pos = (parent_end == std::string::npos) ? 0u : parent_end + 1u;
+        local_name_pos[i] = static_cast<uint32_t>(name_pos);
+        local_name_len[i] = static_cast<uint32_t>(p.size() - name_pos);
+        if (parent_end == std::string::npos) continue;
 
-      std::string_view parent_path = (parent_end == 0u)
-                                        ? std::string_view("/")
-                                        : std::string_view(p.data(), parent_end);
-      const uint32_t* parent_idx = path_to_index_.find(parent_path);
-      if (parent_idx) {
-        parent[i] = *parent_idx;
+        std::string_view parent_path = (parent_end == 0u)
+                                          ? std::string_view("/")
+                                          : std::string_view(p.data(), parent_end);
+        const uint32_t* parent_idx = path_to_index_.find(parent_path);
+        if (parent_idx) {
+          parent[i] = *parent_idx;
+        }
       }
+    };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (const int P = (std::min)(ResolveThreads(), 16);
+        P > 1 && path_count >= 65536) {
+      std::vector<std::thread> pool;
+      pool.reserve(static_cast<size_t>(P));
+      const uint64_t n = static_cast<uint64_t>(path_count);
+      for (int t = 0; t < P; ++t) {
+        const uint32_t lo = static_cast<uint32_t>(n * static_cast<uint64_t>(t) / P);
+        const uint32_t hi =
+            static_cast<uint32_t>(n * (static_cast<uint64_t>(t) + 1u) / P);
+        pool.emplace_back(
+            [&resolve_parent_range, lo, hi] { resolve_parent_range(lo, hi); });
+      }
+      for (auto& th : pool) th.join();
+    } else {
+      resolve_parent_range(0, static_cast<uint32_t>(path_count));
     }
+#else
+    resolve_parent_range(0, static_cast<uint32_t>(path_count));
+#endif
     timing_.paths_parent_ms = MsSince(path_phase_t0);
 
     // Count children for each parent plus a synthetic no-parent bucket.
@@ -295,13 +354,36 @@
         children[child_write[key]++] = i;
       }
 
-      for (uint32_t p = 0; p <= static_cast<uint32_t>(path_count); ++p) {
-        const uint32_t b = child_offsets[p];
-        const uint32_t e = child_offsets[p + 1];
-        if (e - b <= 1) continue;
-        std::sort(children.data() + b, children.data() + e,
-                  local_name_less);
+      // Each parent's child range is a disjoint slice of `children` and the
+      // comparator reads only immutable tables — sorting ranges in parallel
+      // is byte-identical. Stride assignment spreads the (rare) huge ranges.
+      auto sort_children_stride = [&](uint32_t first, uint32_t step) {
+        for (uint32_t p = first; p <= static_cast<uint32_t>(path_count);
+             p += step) {
+          const uint32_t b = child_offsets[p];
+          const uint32_t e = child_offsets[p + 1];
+          if (e - b <= 1) continue;
+          std::sort(children.data() + b, children.data() + e, local_name_less);
+        }
+      };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+      if (const int P = (std::min)(ResolveThreads(), 16);
+          P > 1 && path_count >= 65536) {
+        std::vector<std::thread> pool;
+        pool.reserve(static_cast<size_t>(P));
+        for (int t = 0; t < P; ++t) {
+          pool.emplace_back([&sort_children_stride, t, P] {
+            sort_children_stride(static_cast<uint32_t>(t),
+                                 static_cast<uint32_t>(P));
+          });
+        }
+        for (auto& th : pool) th.join();
+      } else {
+        sort_children_stride(0, 1);
       }
+#else
+      sort_children_stride(0, 1);
+#endif
     }
     timing_.paths_sort_ms = MsSince(path_phase_t0);
 
@@ -380,25 +462,6 @@
       token_view_to_index.set(tokens_[i], i);
     }
 
-    // Last path element name ("" for root) and property marker in one scan.
-    auto element_info = [](const std::string& p, bool* is_prop) -> std::string_view {
-      *is_prop = false;
-      if (p.empty() || p == "/") return std::string_view();
-      const size_t slash = p.rfind('/');
-      const size_t dot = p.rfind('.');
-      if (dot != std::string::npos &&
-          (slash == std::string::npos || dot > slash)) {
-        *is_prop = true;
-        return std::string_view(p.data() + dot + 1, p.size() - dot - 1);
-      }
-      const size_t pos = (slash == std::string::npos) ? 0 : slash + 1;
-      return std::string_view(p.data() + pos, p.size() - pos);
-    };
-    auto token_for_path_element = [&](std::string_view name) -> uint32_t {
-      auto it = token_view_to_index.find(name);
-      if (it != token_view_to_index.end()) return *it;
-      return InternToken(name);
-    };
     // Emit each node. has_child == "the next node in pre-order is our child".
     std::vector<uint32_t> sorted_pos(path_count, 0xFFFFFFFFu);
     for (uint32_t i = 0; i < num_paths; ++i) {
@@ -406,34 +469,88 @@
     }
 
     path_phase_t0 = Clock::now();
-    for (uint32_t i = 0; i < num_paths; ++i) {
-      const uint32_t node = sorted[i];
-      path_indices[i] = node;
-      const std::string& p = paths_[node];
-      const bool is_root = (p == "/");
-      bool is_prop = false;
-      std::string_view elem = is_root ? std::string_view()
-                                      : element_info(p, &is_prop);
-      int32_t tok = static_cast<int32_t>(
-          token_for_path_element(elem));
-      // Property element tokens are negated (pxr's is_property marker).
-      if (is_prop) tok = -tok;
-      element_tokens[i] = tok;
+    // Element name/property-marker come straight from the parent phase's
+    // local_name_pos/len (name_pos-1 is '.' exactly when the local element is
+    // a property), so the emit loop is a pure read of precomputed tables plus
+    // a token lookup. All element tokens are pre-registered by the path-token
+    // pass, so lookups are expected to always HIT — which makes the loop
+    // parallelizable. Misses (defensive) are collected and resolved serially
+    // in node order afterwards: InternToken dedups, and both the serial loop
+    // and this two-pass form intern new tokens in the same node order, so the
+    // output is byte-identical either way.
+    auto emit_range = [&](uint32_t lo, uint32_t hi,
+                          std::vector<uint32_t>* miss_out) {
+      for (uint32_t i = lo; i < hi; ++i) {
+        const uint32_t node = sorted[i];
+        path_indices[i] = node;
+        const std::string& p = paths_[node];
+        const uint32_t np = local_name_pos[node];
+        const uint32_t nl = local_name_len[node];
+        const std::string_view elem(p.data() + np, nl);
+        const bool is_prop = (np > 0) && (p[np - 1] == '.');
+        const uint32_t* it = token_view_to_index.find(elem);
+        if (it) {
+          int32_t tok = static_cast<int32_t>(*it);
+          if (is_prop) tok = -tok;
+          element_tokens[i] = tok;
+        } else if (miss_out) {
+          miss_out->push_back(i);
+        } else {
+          int32_t tok = static_cast<int32_t>(InternToken(elem));
+          if (is_prop) tok = -tok;
+          element_tokens[i] = tok;
+        }
 
-      const bool has_child = (i + 1 < num_paths) && (parent[sorted[i + 1]] == node);
-      const uint32_t nxt = next_sibling[node];
-      const bool has_sibling = (nxt != kNoNode);
-      if (has_sibling && has_child) {
-        jump_indices[i] =
-            static_cast<int32_t>(static_cast<int32_t>(sorted_pos[nxt]) - static_cast<int32_t>(i));
-      } else if (has_sibling) {
-        jump_indices[i] = 0;
-      } else if (has_child) {
-        jump_indices[i] = -1;
-      } else {
-        jump_indices[i] = -2;
+        const bool has_child =
+            (i + 1 < num_paths) && (parent[sorted[i + 1]] == node);
+        const uint32_t nxt = next_sibling[node];
+        const bool has_sibling = (nxt != kNoNode);
+        if (has_sibling && has_child) {
+          jump_indices[i] = static_cast<int32_t>(
+              static_cast<int32_t>(sorted_pos[nxt]) - static_cast<int32_t>(i));
+        } else if (has_sibling) {
+          jump_indices[i] = 0;
+        } else if (has_child) {
+          jump_indices[i] = -1;
+        } else {
+          jump_indices[i] = -2;
+        }
       }
+    };
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (const int P = (std::min)(ResolveThreads(), 16);
+        P > 1 && num_paths >= 65536) {
+      std::vector<std::vector<uint32_t>> misses(static_cast<size_t>(P));
+      std::vector<std::thread> pool;
+      pool.reserve(static_cast<size_t>(P));
+      const uint64_t n = num_paths;
+      for (int t = 0; t < P; ++t) {
+        const uint32_t lo = static_cast<uint32_t>(n * static_cast<uint64_t>(t) / P);
+        const uint32_t hi =
+            static_cast<uint32_t>(n * (static_cast<uint64_t>(t) + 1u) / P);
+        std::vector<uint32_t>* m = &misses[static_cast<size_t>(t)];
+        pool.emplace_back([&emit_range, lo, hi, m] { emit_range(lo, hi, m); });
+      }
+      for (auto& th : pool) th.join();
+      // Resolve any misses serially in global node order (contiguous ranges
+      // keep per-thread miss lists already ordered).
+      for (const auto& mlist : misses) {
+        for (uint32_t i : mlist) {
+          const uint32_t node = sorted[i];
+          const std::string& p = paths_[node];
+          const uint32_t np = local_name_pos[node];
+          const std::string_view elem(p.data() + np, local_name_len[node]);
+          int32_t tok = static_cast<int32_t>(InternToken(elem));
+          if ((np > 0) && (p[np - 1] == '.')) tok = -tok;
+          element_tokens[i] = tok;
+        }
+      }
+    } else {
+      emit_range(0, num_paths, nullptr);
     }
+#else
+    emit_range(0, num_paths, nullptr);
+#endif
     timing_.paths_emit_ms = MsSince(path_phase_t0);
 
     // Write 3 compressed arrays using Usd_IntegerCompression (delta + LZ4)

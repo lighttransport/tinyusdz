@@ -105,24 +105,43 @@
         if (token_to_index_.find(comp) != nullptr) return;
         InternToken(comp);
       };
-      for (const auto& path : paths_) {
+      const size_t path_n = paths_.size();
+      // Consecutive-prefix memo: consecutive paths usually share a long
+      // component prefix (a prim's property paths, then siblings). If this
+      // path starts with the PREVIOUS path's parent prefix (up to and
+      // including its last separator), those prefix components were interned
+      // (or no-op re-interned) by the previous loop step — re-splitting them
+      // would be pure no-ops, so resume the split at the tail. Byte-identical
+      // regardless of path order (the memo only refers to the step that just
+      // ran), and falls back to the full split whenever the prefix differs.
+      std::string_view last_prefix;
+      for (size_t i = 0; i < path_n; ++i) {
+        const std::string& path = paths_[i];
         if (path.empty() || path == "/") {
           InternToken("");  // Token 0 = empty string for root path marker
-        } else {
-          // Split into path-element tokens and register each. Property paths use
-          // a '.' separator between the prim path and the property name
-          // ("/a/b.prop"), so split on BOTH '/' and '.' — otherwise the trailing
-          // "b.prop" would be interned as one bogus token (and "prop" would be
-          // missing, only to be re-added later, after the TOKENS section).
-          size_t start = 1;
-          for (size_t pos = start; pos <= path.size(); ++pos) {
-            if (pos == path.size() || path[pos] == '/' || path[pos] == '.') {
-              intern_token_view(
-                  std::string_view(path.data() + start, pos - start));
-              start = pos + 1;
-            }
+          continue;
+        }
+        // Split into path-element tokens and register each. Property paths use
+        // a '.' separator between the prim path and the property name
+        // ("/a/b.prop"), so split on BOTH '/' and '.' — otherwise the trailing
+        // "b.prop" would be interned as one bogus token (and "prop" would be
+        // missing, only to be re-added later, after the TOKENS section).
+        size_t start = 1;
+        if (last_prefix.size() > 1 && path.size() > last_prefix.size() &&
+            std::memcmp(path.data(), last_prefix.data(), last_prefix.size()) ==
+                0) {
+          start = last_prefix.size();  // first char after the shared separator
+        }
+        for (size_t pos = start; pos <= path.size(); ++pos) {
+          if (pos == path.size() || path[pos] == '/' || path[pos] == '.') {
+            intern_token_view(std::string_view(path.data() + start, pos - start));
+            start = pos + 1;
           }
         }
+        const size_t sep = path.find_last_of("/.");
+        last_prefix = (sep == std::string::npos)
+                          ? std::string_view()
+                          : std::string_view(path.data(), sep + 1);
       }
       timing_.prereg_path_tokens_ms = MsSince(t0);
     }
