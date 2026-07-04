@@ -236,6 +236,9 @@
       return prop_path;
     };
 
+    // Slots are name-sorted (PropIndex::sort sorts by name, not the run-unstable
+    // PropNameId), so this emits the `properties` field, specs and value blocks
+    // in a deterministic, canonical order.
     for (const auto& slot : prim.properties().slots()) {
       const std::string& prop_name = name_table.get(slot.name_id);
       const uint32_t prop_tok = InternToken(prop_name);

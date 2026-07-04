@@ -319,10 +319,16 @@ const PropSlot* PropIndex::find(PropNameId name_id) const {
   if (!name_id.is_valid()) return nullptr;
 
   if (sorted_) {
-    // Binary search
-    auto it = std::lower_bound(slots_.begin(), slots_.end(), name_id,
-        [](const PropSlot& slot, PropNameId id) {
-          return slot.name_id < id;
+    // Slots are sorted by NAME (see sort()), not by the raw PropNameId, so
+    // binary-search by the target's name. (PropNameId assignment order is not
+    // stable across runs -- names are interned concurrently during parse/load --
+    // so a name_id-ordered layout would be nondeterministic; name order is
+    // canonical and stable. get() is O(1).)
+    const PropNameTable& table = GetPropNameTable();
+    const std::string& target = table.get(name_id);
+    auto it = std::lower_bound(slots_.begin(), slots_.end(), target,
+        [&table](const PropSlot& slot, const std::string& name) {
+          return table.get(slot.name_id) < name;
         });
     if (it != slots_.end() && it->name_id == name_id) {
       return &(*it);
@@ -360,9 +366,17 @@ const PropSlot* PropIndex::find(const std::string& name) const {
 }
 
 void PropIndex::sort() {
+  // Sort by property NAME, not by PropNameId. The id is a global interning index
+  // whose assignment order is nondeterministic across runs (property names are
+  // interned concurrently while layers load in parallel), so a name_id-ordered
+  // slot list would make every consumer of slots() order nondeterministic --
+  // most visibly the USDC writer, whose `properties` field, spec-emit order and
+  // value-block layout are all driven by this order (the USDA writer already
+  // sorts by name). Name order is canonical, stable, and matches the USDA writer.
+  const PropNameTable& table = GetPropNameTable();
   std::sort(slots_.begin(), slots_.end(),
-      [](const PropSlot& a, const PropSlot& b) {
-        return a.name_id < b.name_id;
+      [&table](const PropSlot& a, const PropSlot& b) {
+        return table.get(a.name_id) < table.get(b.name_id);
       });
   sorted_ = true;
 }
