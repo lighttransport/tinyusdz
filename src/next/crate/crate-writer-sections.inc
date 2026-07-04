@@ -156,19 +156,22 @@
     // ancestors are omitted from PATHS, OpenUSD can load the layer but builds a
     // corrupted root child table and may crash when exporting the raw SdfLayer.
     {
-      // Probe existing paths through path_to_index_ and keep a small synthesized
-      // set instead of building a multi-M entry membership table for every scene.
+      // Every synthesized ancestor is a PRIM path (stem, "") whose stem is a
+      // SUBSTRING of an existing path's stem — and all stems view stable
+      // storage (the Layer's prim paths, path_owned_, or the PropNameTable),
+      // so ancestors are stored as views, no copy. `synth_have` keys on the
+      // ancestor stem (name always empty).
       FlatStringViewU32Map synth_have;
       synth_have.reserve(1024);
-      std::deque<std::string> synth;
+      std::vector<std::string_view> synth;  // ancestor stems, in add order
       const size_t orig = paths_.size();
-      auto add = [&](std::string_view v) -> bool {
-        if (path_to_index_.find(v) != path_to_index_.end()) {
+      auto add = [&](std::string_view stem) -> bool {
+        if (path_to_index_.find(stem, std::string_view(), HashView(stem))) {
           return false;
         }
-        if (synth_have.find(v) != synth_have.end()) return false;
-        synth.emplace_back(v);
-        synth_have.set(std::string_view(synth.back()), 0);
+        if (synth_have.find(stem) != synth_have.end()) return false;
+        synth.push_back(stem);
+        synth_have.set(stem, 0);
         return true;
       };
       constexpr size_t npos = std::string_view::npos;
@@ -177,40 +180,37 @@
       // marked only while a walk that continues to the top of its chain (or
       // to another walked node, inductively the same) is in progress — so
       // stopping at a walked node skips only re-walks whose add()s would all
-      // be no-ops. The synthesized SET and its append ORDER (which feeds
-      // paths_ and thus the emitted path table) are identical to the full
-      // walk; only redundant hash probes are skipped. Cuts the scan from
-      // O(paths x depth) probes to O(paths + unique ancestors) — the
-      // dominant cost of this phase on deep trees (Island: 3.35M paths,
-      // ~10-level chains shared by thousands of siblings).
-      // Views point into paths_ / synth storage (both stable deques).
+      // be no-ops. The synthesized SET and its append ORDER are identical to
+      // the naive walk; only redundant hash probes are skipped. Cuts the scan
+      // from O(paths x depth) probes to O(paths + unique ancestors).
       FlatStringViewU32Map walked;
       walked.reserve(1 << 17);
 
-      // A prim's property paths are interned consecutively, so consecutive
-      // scans usually strip to the SAME prim part — recognize
-      // "<last_stripped>.<name-without-separators>" with a prefix memcmp +
-      // short suffix scan, skipping the full-path rfind()s and the hash
-      // probe entirely for the common case.
-      std::string_view last_stripped;
-      auto scan_one = [&](std::string_view cur) {
-        if (!last_stripped.empty() && cur.size() > last_stripped.size() + 1 &&
-            cur[last_stripped.size()] == '.' &&
-            std::memcmp(cur.data(), last_stripped.data(),
-                        last_stripped.size()) == 0 &&
-            cur.find_first_of("/.", last_stripped.size() + 1) == npos) {
-          return;  // property of the previously-verified prim
+      // Consecutive rows usually share the exact stem (a prim's property rows,
+      // then its prim-path row): the first fully walks it, so an exact match
+      // is a total skip. Safe because the walk depends only on `stem` — the
+      // first occurrence adds the stem (property) or is a real prim path
+      // (prim, add() no-ops) and marks its ancestors walked either way.
+      std::string_view last_stem;
+
+      // Walk one path's ancestors. `stem` is the prim part (property paths and
+      // prim paths both carry it verbatim in PathRec); `is_property` adds the
+      // stem itself as a candidate ancestor (a property's prim is not the path
+      // row, so it may be an unsynthesized parent), a prim only walks upward.
+      auto scan_rec = [&](std::string_view stem, bool is_property) {
+        if (stem.empty() || stem == "/") return;
+        if (stem.size() == last_stem.size() && !last_stem.empty() &&
+            (stem.data() == last_stem.data() ||
+             std::memcmp(stem.data(), last_stem.data(), stem.size()) == 0)) {
+          return;
         }
-        const size_t dot = cur.rfind('.');
-        const size_t slash = cur.rfind('/');
-        if (dot != npos && (slash == npos || dot > slash)) {
-          cur = cur.substr(0, dot);  // property path: start from its prim part
-          if (cur.empty() || cur == "/") return;
-          if (cur == last_stripped) return;  // same prim as previous scan
-          last_stripped = cur;
-          if (walked.find(cur) != walked.end()) return;
-          add(cur);
-          walked.set(cur, 0);
+        last_stem = stem;
+        std::string_view cur = stem;
+        if (is_property) {
+          if (walked.find(cur) == walked.end()) {
+            add(cur);
+            walked.set(cur, 0);
+          }
         }
         while (cur.size() > 1) {
           const size_t sl = cur.rfind('/');
@@ -223,7 +223,8 @@
       };
 
       for (size_t i = 0; i < orig; ++i) {
-        scan_one(std::string_view(paths_[i]));
+        const PathRec& r = paths_[i];
+        scan_rec(r.stem, !r.name.empty());
       }
 
       std::vector<uint32_t> scan = ancestor_scan_path_indices_;
@@ -231,12 +232,17 @@
       scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
       for (uint32_t path_idx : scan) {
         if (path_idx >= orig) continue;
-        scan_one(std::string_view(paths_[path_idx]));
+        const PathRec& r = paths_[path_idx];
+        scan_rec(r.stem, !r.name.empty());
       }
-      for (auto& s : synth) {
+      for (std::string_view s : synth) {
         uint32_t idx = static_cast<uint32_t>(paths_.size());
-        paths_.push_back(std::move(s));
-        path_to_index_.set(std::string_view(paths_.back()), idx);
+        paths_.push_back(PathRec{s, std::string_view()});
+        bool found = false;
+        FlatPathKeyMap::Entry* e = path_to_index_.probe(
+            s, std::string_view(),
+            PathPairHash(HashView(s), std::string_view()), &found);
+        path_to_index_.commit(e, s, std::string_view(), idx);
       }
     }
     timing_.paths_synth_ms = MsSince(path_phase_t0);
@@ -252,43 +258,44 @@
       return t;
     }();
     const size_t path_count = paths_.size();
-    // parent + local element span
+    // parent + local element (the last path component) + property marker.
     constexpr uint32_t kNoNode = 0xFFFFFFFF;
     std::vector<uint32_t> parent(path_count, kNoNode);
-    std::vector<uint32_t> local_name_pos(path_count, 0);
-    std::vector<uint32_t> local_name_len(path_count, 0);
+    std::vector<std::string_view> local_elem(path_count);
+    std::vector<uint8_t> is_prop(path_count, 0);
 
     path_phase_t0 = Clock::now();
-    // Per-index parent/local-name resolution is independent: paths_ and the
+    // Per-index parent/local-element resolution is independent: paths_ and the
     // (fully built) path_to_index_ are read-only here and every write goes to
-    // a disjoint slot — contiguous ranges parallelize byte-identically.
+    // a disjoint slot — contiguous ranges parallelize byte-identically. Each
+    // path's parent is the (stem, "") prim path one component up; for a
+    // property row the parent IS its stem, for a prim row it is the stem with
+    // its last '/'-component removed.
     auto resolve_parent_range = [&](uint32_t lo, uint32_t hi) {
       for (uint32_t i = lo; i < hi; ++i) {
-        const std::string& p = paths_[i];
-        if (p.empty() || p == "/") {
-          local_name_pos[i] = 0;
-          local_name_len[i] = 0;
-          continue;
+        const PathRec& r = paths_[i];
+        if (r.name.empty() && (r.stem.empty() || r.stem == "/")) {
+          continue;  // root / pseudo-root: no local element, no parent
         }
-
-        const size_t slash = p.rfind('/');
-        const size_t dot = p.rfind('.');
-        size_t parent_end;
-        if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
-          parent_end = dot;
+        std::string_view parent_stem;
+        if (!r.name.empty()) {
+          // Property: element = name, parent = this prim (the stem).
+          local_elem[i] = r.name;
+          is_prop[i] = 1;
+          parent_stem = r.stem;
         } else {
-          parent_end = slash;
+          // Prim path: element = tail after last '/', parent = stem above it.
+          const size_t slash = r.stem.rfind('/');
+          if (slash == std::string_view::npos) {
+            local_elem[i] = r.stem;
+            continue;  // no '/' -> top-level, no parent
+          }
+          local_elem[i] = r.stem.substr(slash + 1);
+          parent_stem =
+              (slash == 0) ? std::string_view("/") : r.stem.substr(0, slash);
         }
-
-        const size_t name_pos = (parent_end == std::string::npos) ? 0u : parent_end + 1u;
-        local_name_pos[i] = static_cast<uint32_t>(name_pos);
-        local_name_len[i] = static_cast<uint32_t>(p.size() - name_pos);
-        if (parent_end == std::string::npos) continue;
-
-        std::string_view parent_path = (parent_end == 0u)
-                                          ? std::string_view("/")
-                                          : std::string_view(p.data(), parent_end);
-        const uint32_t* parent_idx = path_to_index_.find(parent_path);
+        const uint32_t* parent_idx = path_to_index_.find(
+            parent_stem, std::string_view(), HashView(parent_stem));
         if (parent_idx) {
           parent[i] = *parent_idx;
         }
@@ -329,12 +336,8 @@
     }
 
     auto local_name_less = [&](uint32_t a, uint32_t b) -> bool {
-      const std::string_view a_name(
-          paths_[a].data() + local_name_pos[a],
-          local_name_len[a] ? local_name_len[a] : 0u);
-      const std::string_view b_name(
-          paths_[b].data() + local_name_pos[b],
-          local_name_len[b] ? local_name_len[b] : 0u);
+      const std::string_view a_name = local_elem[a];
+      const std::string_view b_name = local_elem[b];
 
       const size_t n = (std::min)(a_name.size(), b_name.size());
       const unsigned char* pa = reinterpret_cast<const unsigned char*>(a_name.data());
@@ -470,34 +473,30 @@
 
     path_phase_t0 = Clock::now();
     // Element name/property-marker come straight from the parent phase's
-    // local_name_pos/len (name_pos-1 is '.' exactly when the local element is
-    // a property), so the emit loop is a pure read of precomputed tables plus
-    // a token lookup. All element tokens are pre-registered by the path-token
-    // pass, so lookups are expected to always HIT — which makes the loop
-    // parallelizable. Misses (defensive) are collected and resolved serially
-    // in node order afterwards: InternToken dedups, and both the serial loop
-    // and this two-pass form intern new tokens in the same node order, so the
-    // output is byte-identical either way.
+    // local_elem/is_prop, so the emit loop is a pure read of precomputed
+    // tables plus a token lookup. All element tokens are pre-registered by the
+    // path-token pass, so lookups are expected to always HIT — which makes the
+    // loop parallelizable. Misses (defensive) are collected and resolved
+    // serially in node order afterwards: InternToken dedups, and both the
+    // serial loop and this two-pass form intern new tokens in the same node
+    // order, so the output is byte-identical either way.
     auto emit_range = [&](uint32_t lo, uint32_t hi,
                           std::vector<uint32_t>* miss_out) {
       for (uint32_t i = lo; i < hi; ++i) {
         const uint32_t node = sorted[i];
         path_indices[i] = node;
-        const std::string& p = paths_[node];
-        const uint32_t np = local_name_pos[node];
-        const uint32_t nl = local_name_len[node];
-        const std::string_view elem(p.data() + np, nl);
-        const bool is_prop = (np > 0) && (p[np - 1] == '.');
+        const std::string_view elem = local_elem[node];
+        const bool prop = is_prop[node] != 0;
         const uint32_t* it = token_view_to_index.find(elem);
         if (it) {
           int32_t tok = static_cast<int32_t>(*it);
-          if (is_prop) tok = -tok;
+          if (prop) tok = -tok;
           element_tokens[i] = tok;
         } else if (miss_out) {
           miss_out->push_back(i);
         } else {
           int32_t tok = static_cast<int32_t>(InternToken(elem));
-          if (is_prop) tok = -tok;
+          if (prop) tok = -tok;
           element_tokens[i] = tok;
         }
 
@@ -537,11 +536,8 @@
       for (const auto& mlist : misses) {
         for (uint32_t i : mlist) {
           const uint32_t node = sorted[i];
-          const std::string& p = paths_[node];
-          const uint32_t np = local_name_pos[node];
-          const std::string_view elem(p.data() + np, local_name_len[node]);
-          int32_t tok = static_cast<int32_t>(InternToken(elem));
-          if ((np > 0) && (p[np - 1] == '.')) tok = -tok;
+          int32_t tok = static_cast<int32_t>(InternToken(local_elem[node]));
+          if (is_prop[node]) tok = -tok;
           element_tokens[i] = tok;
         }
       }
@@ -825,10 +821,11 @@
         for (uint32_t k = 0; k < cnt; ++k) {
           if (fieldset_items_[off + k] == fi) {
             const uint32_t pi = specs_[si].path_index.value;
+            const std::string pstr =
+                (pi < paths_.size()) ? PathFullString(pi) : "<bad-path>";
             fprintf(stderr,
                     "[value-offset-debug]     spec=%zu spec_type=%u path='%s'\n",
-                    si, (unsigned)specs_[si].spec_type,
-                    (pi < paths_.size()) ? paths_[pi].c_str() : "<bad-path>");
+                    si, (unsigned)specs_[si].spec_type, pstr.c_str());
             break;
           }
         }

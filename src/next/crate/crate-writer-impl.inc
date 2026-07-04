@@ -262,10 +262,166 @@ private:
   std::vector<uint32_t> string_indices_;
   FlatStringViewU32Map string_to_index_;
 
-  // Paths
-  std::deque<std::string> paths_;
+  // Paths, stored as canonical (stem, name) view pairs instead of owned
+  // concatenated strings: `name` is the part after the LAST '.' when that dot
+  // follows the last '/' (the property separator — exactly the split every
+  // consumer of this table already applied to the full string), empty
+  // otherwise. Stems/names VIEW stable storage: the input Layer's own path
+  // strings and the global PropNameTable for spec paths, `path_owned_` for
+  // strings we must copy (parsed arc targets, synthesized ancestors). This
+  // removes the per-property concatenation + per-string allocation of the old
+  // deque<std::string> (Island: 3.35M paths), and lets property interning
+  // reuse one cached stem hash per prim.
+  struct PathRec {
+    std::string_view stem;
+    std::string_view name;  // empty => the path is just `stem`
+  };
+  static void CanonicalSplitPath(std::string_view full, std::string_view* stem,
+                                 std::string_view* name) {
+    const size_t dot = full.rfind('.');
+    if (dot != std::string_view::npos) {
+      const size_t slash = full.rfind('/');
+      if (slash == std::string_view::npos || dot > slash) {
+        *stem = full.substr(0, dot);
+        *name = full.substr(dot + 1);
+        return;
+      }
+    }
+    *stem = full;
+    *name = std::string_view();
+  }
+  static uint64_t PathPairHash(uint64_t stem_hash, std::string_view name) {
+    if (name.empty()) return stem_hash;
+    const uint64_t hn = HashView(name);
+    return stem_hash ^ (hn * 0x9E3779B97F4A7C15ull + (stem_hash << 6) +
+                        (stem_hash >> 2));
+  }
+  // Materialized full path (stem [+ '.' + name]) for the rare consumers that
+  // need a contiguous string (debug attribution, worker-merge re-intern).
+  std::string PathFullString(uint32_t idx) const {
+    std::string out;
+    if (idx < paths_.size()) {
+      const PathRec& r = paths_[idx];
+      out.assign(r.stem.data(), r.stem.size());
+      if (!r.name.empty()) {
+        out.push_back('.');
+        out.append(r.name.data(), r.name.size());
+      }
+    }
+    return out;
+  }
+
+  // Open-addressed (stem, name) -> path index map. Same scheme as
+  // FlatStringViewU32Map; equality is componentwise (canonical splits of equal
+  // full paths are equal), with a data-pointer fast path for the repeated
+  // same-prim probes of the property intern loop.
+  struct FlatPathKeyMap {
+    struct Entry {
+      std::string_view stem;
+      std::string_view name;
+      uint32_t value = 0;
+      bool used = false;
+    };
+    std::vector<Entry> slots;
+    size_t count = 0;
+
+    void reserve(size_t n) {
+      size_t cap = 1;
+      while (cap < n * 2 + 16) cap <<= 1;
+      slots.assign(cap, {});
+      count = 0;
+    }
+    void clear() {
+      slots.clear();
+      count = 0;
+    }
+    bool needs_rehash() const {
+      if (slots.empty()) return false;
+      return (count + 1) * 2 > slots.size();
+    }
+    void rehash() {
+      const size_t old_cap = slots.size();
+      std::vector<Entry> old_slots = std::move(slots);
+      const size_t cap = (old_cap == 0) ? 16 : old_cap * 2;
+      slots.assign(cap, {});
+      count = 0;
+      for (const auto& e : old_slots) {
+        if (!e.used) continue;
+        bool found = false;
+        Entry* ne = probe(e.stem, e.name, PathPairHash(HashView(e.stem), e.name),
+                          &found);
+        ne->stem = e.stem;
+        ne->name = e.name;
+        ne->value = e.value;
+        ne->used = true;
+        ++count;
+      }
+    }
+    static bool KeyEq(const Entry& e, std::string_view stem,
+                      std::string_view name) {
+      if (e.stem.size() != stem.size() || e.name.size() != name.size()) {
+        return false;
+      }
+      if (e.stem.data() != stem.data() &&
+          (!stem.empty() &&
+           std::memcmp(e.stem.data(), stem.data(), stem.size()) != 0)) {
+        return false;
+      }
+      if (e.name.empty()) return true;
+      return e.name.data() == name.data() ||
+             std::memcmp(e.name.data(), name.data(), name.size()) == 0;
+    }
+    // Single-probe find-or-prepare-insert (see FlatStringViewU32Map::probe).
+    Entry* probe(std::string_view stem, std::string_view name, uint64_t hash,
+                 bool* found) {
+      if (slots.empty() || needs_rehash()) {
+        if (slots.empty()) {
+          reserve(16);
+        } else {
+          rehash();
+        }
+      }
+      const size_t mask = slots.size() - 1;
+      size_t h = static_cast<size_t>(hash) & mask;
+      for (;;) {
+        Entry& e = slots[h];
+        if (!e.used) {
+          *found = false;
+          return &e;
+        }
+        if (KeyEq(e, stem, name)) {
+          *found = true;
+          return &e;
+        }
+        h = (h + 1) & mask;
+      }
+    }
+    void commit(Entry* e, std::string_view stem, std::string_view name,
+                uint32_t value) {
+      e->stem = stem;
+      e->name = name;
+      e->value = value;
+      e->used = true;
+      ++count;
+    }
+    const uint32_t* find(std::string_view stem, std::string_view name,
+                         uint64_t hash) const {
+      if (slots.empty()) return nullptr;
+      const size_t mask = slots.size() - 1;
+      size_t h = static_cast<size_t>(hash) & mask;
+      while (slots[h].used) {
+        const Entry& e = slots[h];
+        if (KeyEq(e, stem, name)) return &e.value;
+        h = (h + 1) & mask;
+      }
+      return nullptr;
+    }
+  };
+
+  std::deque<PathRec> paths_;
+  std::deque<std::string> path_owned_;
   std::vector<uint32_t> ancestor_scan_path_indices_;
-  FlatStringViewU32Map path_to_index_;
+  FlatPathKeyMap path_to_index_;
 
   // Fields and fieldsets
   std::vector<CrateField> fields_;
@@ -547,6 +703,7 @@ private:
     fieldset_extra_next_.clear();
     specs_.clear();
     paths_.clear();
+    path_owned_.clear();
     ancestor_scan_path_indices_.clear();
     path_to_index_.clear();
     value_data_.clear();
@@ -637,7 +794,8 @@ private:
         std::memcpy(&local_path_idx, block.data.data() + 9 + i * 4, 4);
         uint32_t global_path_idx = local_path_idx;
         if (!local.frozen_path_ && local_path_idx < local.paths_.size()) {
-          global_path_idx = InternPath(local.paths_[local_path_idx]);
+          global_path_idx =
+              InternPathCopy(local.PathFullString(local_path_idx));
         }
         std::memcpy(block.data.data() + 9 + i * 4, &global_path_idx, 4);
       }
@@ -719,7 +877,7 @@ private:
       frozen_tok_ = nullptr;
   const FlatStringViewU32Map*
       frozen_str_ = nullptr;
-  const FlatStringViewU32Map* frozen_path_ = nullptr;
+  const FlatPathKeyMap* frozen_path_ = nullptr;
   bool frozen_miss_ = false;
 
   // Cross-spec block dedup: content hash -> block indices with that hash.

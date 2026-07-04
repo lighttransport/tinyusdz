@@ -26,7 +26,7 @@
     for (const auto& t : targets) {
       const std::string& path = t.str();
       if (path.empty()) continue;
-      const uint32_t idx = InternPath(path);
+      const uint32_t idx = InternPathStable(path);  // Path owned by the Layer
       ancestor_scan_path_indices_.push_back(idx);
       std::memcpy(blob.data() + cursor, &idx, 4);
       cursor += 4;
@@ -191,7 +191,7 @@
     return ts_field;
   }
 
-  void EmitPropertySpec(const std::string& prop_path, SpecType st,
+  void EmitPropertySpec(uint32_t path_index, SpecType st,
                         const std::vector<CrateField>& field_list) {
     SmallU32List fs;
     for (const auto& f : field_list) {
@@ -200,13 +200,13 @@
     }
     uint32_t fs_idx = AddFieldset(fs);
     CrateSpec spec;
-    spec.path_index.value = InternPath(prop_path);
+    spec.path_index.value = path_index;
     spec.fieldset_index.value = fs_idx;
     spec.spec_type = st;
     specs_.push_back(spec);
   }
 
-  void EmitPropertySpec(const std::string& prop_path, SpecType st,
+  void EmitPropertySpec(uint32_t path_index, SpecType st,
                         const SmallFieldList& field_list) {
     SmallU32List fs;
     field_list.ForEach([&](const CrateField& f) {
@@ -215,7 +215,7 @@
     });
     uint32_t fs_idx = AddFieldset(std::move(fs));
     CrateSpec spec;
-    spec.path_index.value = InternPath(prop_path);
+    spec.path_index.value = path_index;
     spec.fieldset_index.value = fs_idx;
     spec.spec_type = st;
     specs_.push_back(spec);
@@ -226,14 +226,22 @@
     std::vector<uint32_t> emitted_prop_tokens;
     PropNameTable& name_table = GetPropNameTable();
     const std::string& base = prim.path().str();
-    std::string prop_path;
-    auto make_prop_path = [&](std::string_view name) -> const std::string& {
-      const size_t needed = base.size() + 1 + name.size();
-      if (prop_path.capacity() < needed) prop_path.reserve(needed);
-      prop_path.assign(base);
-      prop_path.push_back('.');
-      prop_path.append(name);
-      return prop_path;
+    const std::string_view base_view(base);
+    // One stem hash per prim: every property-path intern below then costs a
+    // short name hash + one probe instead of hashing the whole prefixed path.
+    const uint64_t base_hash = HashView(base_view);
+    auto intern_prop = [&](std::string_view name) -> uint32_t {
+      if (name.find_first_of("./") != std::string_view::npos) {
+        // Property/relationship names never contain path separators in
+        // practice; canonicalize defensively if one ever does.
+        std::string full;
+        full.reserve(base_view.size() + 1 + name.size());
+        full.assign(base_view.data(), base_view.size());
+        full.push_back('.');
+        full.append(name.data(), name.size());
+        return InternPathCopy(full);
+      }
+      return InternPropPath(base_view, name, base_hash);
     };
 
     // Slots are name-sorted (PropIndex::sort sorts by name, not the run-unstable
@@ -324,7 +332,7 @@
         }
       }
 
-      EmitPropertySpec(make_prop_path(prop_name), SpecType::Attribute, flds);
+      EmitPropertySpec(intern_prop(prop_name), SpecType::Attribute, flds);
       prop_name_tokens.push_back(prop_tok);
       emitted_prop_tokens.push_back(prop_tok);
     }
@@ -357,7 +365,7 @@
                          false, true);
       flds.push_back(tf);
       flds.push_back(BuildTimeSamplesField(prim, prop_id));
-      EmitPropertySpec(make_prop_path(prop_name), SpecType::Attribute, flds);
+      EmitPropertySpec(intern_prop(prop_name), SpecType::Attribute, flds);
       prop_name_tokens.push_back(prop_tok);
     }
 
@@ -396,7 +404,7 @@
           flds.push_back(rf);
         }
       }
-      EmitPropertySpec(make_prop_path(rel_name), SpecType::Relationship, flds);
+      EmitPropertySpec(intern_prop(rel_name), SpecType::Relationship, flds);
       prop_name_tokens.push_back(rel_tok);
     }
 

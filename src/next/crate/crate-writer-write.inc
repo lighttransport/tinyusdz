@@ -26,6 +26,7 @@
     string_storage_.clear();
     string_to_index_.clear();
     paths_.clear();
+    path_owned_.clear();
     ancestor_scan_path_indices_.clear();
     path_to_index_.clear();
     fields_.clear();
@@ -66,7 +67,7 @@
       for (const auto& p : layer.prims()) nprop += p.properties().slots().size();
       const size_t nspec = nprim + nprop + 16;
       ancestor_scan_path_indices_.reserve(nprim / 8 + 16);
-      path_to_index_.reserve(nspec * 2);
+      path_to_index_.reserve(nspec);  // entries ~= nspec; 50% max load
       specs_.reserve(nspec);
       fieldset_offsets_.reserve(nspec);
       fieldset_sizes_.reserve(nspec);
@@ -106,42 +107,37 @@
         InternToken(comp);
       };
       const size_t path_n = paths_.size();
-      // Consecutive-prefix memo: consecutive paths usually share a long
-      // component prefix (a prim's property paths, then siblings). If this
-      // path starts with the PREVIOUS path's parent prefix (up to and
-      // including its last separator), those prefix components were interned
-      // (or no-op re-interned) by the previous loop step — re-splitting them
-      // would be pure no-ops, so resume the split at the tail. Byte-identical
-      // regardless of path order (the memo only refers to the step that just
-      // ran), and falls back to the full split whenever the prefix differs.
-      std::string_view last_prefix;
+      // Consecutive rows usually share the same stem (a prim's property paths
+      // arrive together): when this row's stem equals the previous row's, its
+      // components were interned by that row (as news or as no-op re-interns),
+      // so only the name element can be new — the token table CONTENT AND
+      // ORDER match the old full-string split exactly.
+      std::string_view prev_stem;
       for (size_t i = 0; i < path_n; ++i) {
-        const std::string& path = paths_[i];
-        if (path.empty() || path == "/") {
+        const PathRec& r = paths_[i];
+        if (r.stem.empty() || (r.name.empty() && r.stem == "/")) {
           InternToken("");  // Token 0 = empty string for root path marker
           continue;
         }
-        // Split into path-element tokens and register each. Property paths use
-        // a '.' separator between the prim path and the property name
-        // ("/a/b.prop"), so split on BOTH '/' and '.' — otherwise the trailing
-        // "b.prop" would be interned as one bogus token (and "prop" would be
-        // missing, only to be re-added later, after the TOKENS section).
-        size_t start = 1;
-        if (last_prefix.size() > 1 && path.size() > last_prefix.size() &&
-            std::memcmp(path.data(), last_prefix.data(), last_prefix.size()) ==
-                0) {
-          start = last_prefix.size();  // first char after the shared separator
-        }
-        for (size_t pos = start; pos <= path.size(); ++pos) {
-          if (pos == path.size() || path[pos] == '/' || path[pos] == '.') {
-            intern_token_view(std::string_view(path.data() + start, pos - start));
-            start = pos + 1;
+        const bool same_stem =
+            r.stem.size() == prev_stem.size() && !prev_stem.empty() &&
+            (r.stem.data() == prev_stem.data() ||
+             std::memcmp(r.stem.data(), prev_stem.data(), r.stem.size()) == 0);
+        if (!same_stem) {
+          // Split the stem into path-element tokens (both '/' and '.'
+          // separate elements, matching the historical full-string split).
+          size_t start = 1;
+          for (size_t pos = start; pos <= r.stem.size(); ++pos) {
+            if (pos == r.stem.size() || r.stem[pos] == '/' ||
+                r.stem[pos] == '.') {
+              intern_token_view(
+                  std::string_view(r.stem.data() + start, pos - start));
+              start = pos + 1;
+            }
           }
+          prev_stem = r.stem;
         }
-        const size_t sep = path.find_last_of("/.");
-        last_prefix = (sep == std::string::npos)
-                          ? std::string_view()
-                          : std::string_view(path.data(), sep + 1);
+        if (!r.name.empty()) intern_token_view(r.name);
       }
       timing_.prereg_path_tokens_ms = MsSince(t0);
     }
