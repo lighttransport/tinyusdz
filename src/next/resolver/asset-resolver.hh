@@ -22,6 +22,7 @@ struct ResolvedAsset {
   bool is_package = false;      // Whether this is inside a package (USDZ)
   std::string package_path;     // If in package, the package file path
   std::string asset_in_package; // If in package, path within package
+  bool used_suffix_fallback = false;  // Resolved via the UE suffix fallback
 };
 
 /// Asset resolver configuration
@@ -30,6 +31,11 @@ struct ResolverConfig {
   std::string working_directory;           // Base directory for relative paths
   bool allow_absolute_paths = true;        // Allow absolute path resolution
   bool search_recursively = false;         // Search subdirectories
+  // Rebase asset paths authored against another machine's layout (e.g. an
+  // UnrealEngine export's `../../../USD_Exports/Scene/Assets/mesh.usd` or
+  // `F:/USD_Exports/...`) by retrying progressively shorter path suffixes
+  // against the anchor dir / cwd / search paths on a literal-resolution miss.
+  bool enable_suffix_fallback = true;
 };
 
 /// Custom resolver callback: C-style function pointer + opaque user context
