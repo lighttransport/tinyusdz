@@ -702,6 +702,9 @@ bool CrateReader::Impl::ReadFieldsets() {
     AddError("Failed to read fieldset count");
     return false;
   }
+  // Publish the count NOW (synchronously, before any async DecodeFieldsetsPayload
+  // dispatch) so ReadSpecs can bounds-check without racing the worker's resize.
+  num_fieldsets_ = num_fieldsets;
 
   // fieldset_indices_ entries index into fields_; bound the count to avoid a
   // huge allocation from a malformed value (no dedicated max, reuse max_fields).
@@ -969,7 +972,7 @@ bool CrateReader::Impl::ReadSpecs() {
       read_comp_array(fieldset_vals.data(), static_cast<size_t>(num_specs), remaining_size) &&
       read_comp_array(type_vals.data(), static_cast<size_t>(num_specs), remaining_size)) {
     for (size_t i = 0; i < num_specs; i++) {
-      if (fieldset_vals[i] >= fieldset_indices_.size()) {
+      if (fieldset_vals[i] >= num_fieldsets_) {
         AddError("Spec fieldset index out of range");
         return false;
       }
@@ -1003,7 +1006,7 @@ bool CrateReader::Impl::ReadSpecs() {
     for (size_t i = 0; i < num_specs; i++) {
       std::memcpy(&specs_[i].path_index.value, ptr, 4); ptr += 4;
       std::memcpy(&specs_[i].fieldset_index.value, ptr, 4); ptr += 4;
-      if (specs_[i].fieldset_index.value >= fieldset_indices_.size()) {
+      if (specs_[i].fieldset_index.value >= num_fieldsets_) {
         AddError("Spec fieldset index out of range");
         return false;
       }
@@ -1017,7 +1020,7 @@ bool CrateReader::Impl::ReadSpecs() {
     if (dr.success) {
       const uint32_t* vals = reinterpret_cast<const uint32_t*>(dr.data.data());
       for (size_t i = 0; i < num_specs; i++) {
-        if (vals[i * 3 + 1] >= fieldset_indices_.size()) {
+        if (vals[i * 3 + 1] >= num_fieldsets_) {
           AddError("Spec fieldset index out of range");
           return false;
         }
