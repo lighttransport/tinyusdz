@@ -58,6 +58,10 @@ in each entry.
 | nanozlib | Apache 2.0 | `src/external/nanozlib.h` |
 | nanobind | BSD 3-Clause | `src/external/nanobind/LICENSE` |
 | pybind11 | BSD 3-Clause | `src/external/pybind11/LICENSE` |
+| tir image resizer (tinyexr tools) | BSD 3-Clause | `src/external/textools/resize/LICENSE` |
+| texcomp texture compressor (tinyexr tools) | Apache 2.0 | `src/external/textools/texcomp/LICENSE`, `NOTICE.md` |
+| texpipe texture pipeline (tinyexr tools) | Apache 2.0 | `src/external/textools/texpipe/LICENSE` |
+| envmap IBL library (tinyexr tools) | Apache 2.0 | `src/external/textools/envmap/LICENSE` |
 
 ## Examples, Tools, And Development Assets
 
