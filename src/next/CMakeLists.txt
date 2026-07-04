@@ -388,39 +388,38 @@ set(TINYUSDZ_NEXT_ALLOCATOR_LIB "")
 set(TINYUSDZ_NEXT_ALLOCATOR_IS_JEMALLOC OFF)
 if(TINYUSDZ_NEXT_WITH_TCMALLOC)
     # Allocator ranking from measurement (doc/large-scene.md §8.1; byte-identical
-    # -- an allocator does not change output). tcmalloc is the SAFE DEFAULT:
-    #   1. tcmalloc_minimal -- robust, needs no config, low RSS; sped up BOTH
-    #      compose and write. Often ships only the versioned runtime
-    #      (libtcmalloc_minimal.so.N) with no -dev `.so` symlink, so also find_file
-    #      that and link by full path.
-    #   2. jemalloc -- MEASURED FASTEST (Caldera 4.11s/2.08GiB, Island 9.37s;
-    #      beats tcmalloc on speed AND RSS) once decay-purging is disabled via the
-    #      baked `malloc_conf` global (TINYUSDZ_NEXT_ALLOC_JEMALLOC define). It is
-    #      still not the DEFAULT only for deployability (tcmalloc is the more
-    #      commonly-installed system lib and needs no config). NOTE: jemalloc's
-    #      heap layout used to EXPOSE a crate-reader data race that dropped prim
-    #      subtrees -- that race is now FIXED (see the crate-reader num_fieldsets_
-    #      change), so jemalloc is safe to prefer where installed.
+    # -- an allocator does not change output). jemalloc is the PREFERRED default:
+    #   1. jemalloc -- MEASURED FASTEST (Caldera 4.11s/2.08GiB -20% vs tcmalloc AND
+    #      lower RSS; Island 9.37s) once decay-purging is disabled. That config
+    #      (dirty_decay_ms:-1,muzzy_decay_ms:-1) is BAKED into the tool via
+    #      jemalloc's static `malloc_conf` global under the
+    #      TINYUSDZ_NEXT_ALLOC_JEMALLOC define -- no env var needed. Source vendored
+    #      at src/external/jemalloc (provenance only; a system/prebuilt libjemalloc
+    #      is linked). (Its heap layout once exposed a crate-reader data race that
+    #      dropped prim subtrees; that race is FIXED -- see crate num_fieldsets_.)
+    #   2. tcmalloc_minimal -- robust, zero-config runner-up; sped up compose AND
+    #      write. Often ships only the versioned runtime (libtcmalloc_minimal.so.N)
+    #      with no -dev `.so` symlink, so also find_file that and link by full path.
     #   3. mimalloc -- fast only with MIMALLOC_PURGE_DELAY=-1 (default purges, is
     #      slower than tcmalloc) and costs +1GiB RSS; last resort.
     # (tbbmalloc barely beat glibc and snmalloc was mid-pack -- not searched.)
-    find_library(TINYUSDZ_NEXT_ALLOC_TCMALLOC NAMES tcmalloc_minimal tcmalloc)
-    if(NOT TINYUSDZ_NEXT_ALLOC_TCMALLOC)
-        find_file(TINYUSDZ_NEXT_ALLOC_TCMALLOC
-            NAMES libtcmalloc_minimal.so.4 libtcmalloc.so.4
-            PATHS /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /usr/lib /lib)
-    endif()
-    if(TINYUSDZ_NEXT_ALLOC_TCMALLOC)
-        set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_TCMALLOC}")
+    find_library(TINYUSDZ_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
+    if(TINYUSDZ_NEXT_ALLOC_JEMALLOC)
+        set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_JEMALLOC}")
+        set(TINYUSDZ_NEXT_ALLOCATOR_IS_JEMALLOC ON)
     else()
-        find_library(TINYUSDZ_NEXT_ALLOC_MIMALLOC NAMES mimalloc)
-        if(TINYUSDZ_NEXT_ALLOC_MIMALLOC)
-            set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_MIMALLOC}")
+        find_library(TINYUSDZ_NEXT_ALLOC_TCMALLOC NAMES tcmalloc_minimal tcmalloc)
+        if(NOT TINYUSDZ_NEXT_ALLOC_TCMALLOC)
+            find_file(TINYUSDZ_NEXT_ALLOC_TCMALLOC
+                NAMES libtcmalloc_minimal.so.4 libtcmalloc.so.4
+                PATHS /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /usr/lib /lib)
+        endif()
+        if(TINYUSDZ_NEXT_ALLOC_TCMALLOC)
+            set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_TCMALLOC}")
         else()
-            find_library(TINYUSDZ_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
-            if(TINYUSDZ_NEXT_ALLOC_JEMALLOC)
-                set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_JEMALLOC}")
-                set(TINYUSDZ_NEXT_ALLOCATOR_IS_JEMALLOC ON)
+            find_library(TINYUSDZ_NEXT_ALLOC_MIMALLOC NAMES mimalloc)
+            if(TINYUSDZ_NEXT_ALLOC_MIMALLOC)
+                set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_MIMALLOC}")
             endif()
         endif()
     endif()
@@ -651,6 +650,48 @@ if(TINYUSDZ_NEXT_BUILD_FUZZERS)
         target_compile_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
         target_link_options(fuzz_${fz} PRIVATE ${NEXT_FUZZ_BIN_FLAGS})
     endforeach()
+endif()
+
+# ============================================================
+# ThreadSanitizer regression tests (opt-in)
+# ============================================================
+# Guards the data races fixed in the crate reader (async fieldsets decode vs
+# ReadSpecs) and the PropNameTable/TfToken frozen fast path. Enabling this
+# instruments next_core (and, via PUBLIC link flags, everything that links it)
+# with -fsanitize=thread and registers the TSan tests, so a `ctest` run FAILS if
+# a race is reintroduced. Requires threads; use a dedicated build dir:
+#   cmake -S src/next -B build-next-tsan -DTINYUSDZ_NEXT_BUILD_TESTS=ON \
+#         -DTINYUSDZ_NEXT_ENABLE_THREAD=ON -DTINYUSDZ_NEXT_BUILD_TSAN_TESTS=ON
+option(TINYUSDZ_NEXT_BUILD_TSAN_TESTS
+    "Instrument with -fsanitize=thread and register the TSan regression tests" OFF)
+if(TINYUSDZ_NEXT_BUILD_TSAN_TESTS)
+    if(NOT TINYUSDZ_NEXT_ENABLE_THREAD)
+        message(FATAL_ERROR "TINYUSDZ_NEXT_BUILD_TSAN_TESTS requires TINYUSDZ_NEXT_ENABLE_THREAD=ON")
+    endif()
+    if(NOT TINYUSDZ_NEXT_BUILD_TESTS)
+        message(FATAL_ERROR "TINYUSDZ_NEXT_BUILD_TSAN_TESTS requires TINYUSDZ_NEXT_BUILD_TESTS=ON")
+    endif()
+    set(NEXT_TSAN_FLAGS -fsanitize=thread -g -fno-omit-frame-pointer)
+    # PUBLIC so every consumer (tools + tests) links the TSan runtime and is
+    # instrumented -- a TSan program must be built whole.
+    target_compile_options(next_core PUBLIC ${NEXT_TSAN_FLAGS})
+    target_link_options(next_core PUBLIC ${NEXT_TSAN_FLAGS})
+    add_executable(tsan_propname
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/tsan_propname.cc)
+    target_link_libraries(tsan_propname PRIVATE tinyusdz_next)
+    # Some kernels make TSan abort at startup with "unexpected memory mapping"
+    # (high-entropy ASLR); run under `setarch -R` (ADDR_NO_RANDOMIZE) when
+    # available. A detected race aborts nonzero -> the test FAILS.
+    find_program(NEXT_SETARCH setarch)
+    if(NEXT_SETARCH)
+        add_test(NAME next_test_tsan_propname
+            COMMAND ${NEXT_SETARCH} -R $<TARGET_FILE:tsan_propname>)
+    else()
+        add_test(NAME next_test_tsan_propname COMMAND tsan_propname)
+    endif()
+    set_tests_properties(next_test_tsan_propname PROPERTIES
+        ENVIRONMENT "TSAN_OPTIONS=halt_on_error=1:exitcode=66"
+        LABELS "next;tsan")
 endif()
 
 # Tydra Next (render data conversion)
