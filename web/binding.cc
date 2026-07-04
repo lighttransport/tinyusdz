@@ -7004,7 +7004,7 @@ class TinyUSDZLoaderNative {
     // Compose with the full parallel pcp engine (resolves the complete
     // LIVRPS+variant set -- e.g. UE per-LOD material subtrees the serial
     // Compositor drops) via the loader below (asset cache, not the filesystem).
-    opts.use_pcp_compose = true;
+    opts.use_pcp_compose = false;  // fixed Compositor is the stable path
 
     // Loader: pull the layer's bytes out of the asset cache (consuming the
     // entry — the parsed layer retains its own copy as the lazy-array source)
@@ -7190,7 +7190,7 @@ class TinyUSDZLoaderNative {
     opts.root_anchor_path = state.root_name;
     opts.fail_on_composition_error = true;
     opts.asset_path_remap = state.asset_path_remap;
-    opts.use_pcp_compose = true;  // full parallel pcp composition (see above)
+    opts.use_pcp_compose = false;  // fixed Compositor is the stable path
 
     using tinyusdz::next::AssetResolver;
     AssetResolver resolver;
