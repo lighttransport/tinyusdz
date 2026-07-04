@@ -383,14 +383,27 @@ endif()
 # `LD_PRELOAD=libtcmalloc_minimal.so.4`. See doc/large-scene.md §8.1.
 # ------------------------------------------------------------------
 option(TINYUSDZ_NEXT_WITH_TCMALLOC
-    "Link a drop-in tcmalloc/jemalloc allocator into the next CLI tools (faster compose+write)" OFF)
+    "Link a drop-in allocator (jemalloc/tcmalloc/mimalloc) into the next CLI tools (faster compose+write)" OFF)
 set(TINYUSDZ_NEXT_ALLOCATOR_LIB "")
+set(TINYUSDZ_NEXT_ALLOCATOR_IS_JEMALLOC OFF)
 if(TINYUSDZ_NEXT_WITH_TCMALLOC)
-    # Prefer tcmalloc_minimal -- it sped up BOTH compose and the write phase in
-    # measurement. jemalloc is only a last resort: it helps compose but can slow
-    # the ASCII write. tcmalloc frequently ships only the versioned runtime
-    # (libtcmalloc_minimal.so.N) with no -dev `.so` symlink, so also look for that
-    # and link it by full path.
+    # Allocator ranking from measurement (doc/large-scene.md §8.1; byte-identical
+    # -- an allocator does not change output). tcmalloc is the SAFE DEFAULT:
+    #   1. tcmalloc_minimal -- robust, needs no config, low RSS; sped up BOTH
+    #      compose and write. Often ships only the versioned runtime
+    #      (libtcmalloc_minimal.so.N) with no -dev `.so` symlink, so also find_file
+    #      that and link by full path.
+    #   2. jemalloc -- MEASURED FASTEST (Caldera 4.11s/2.08GiB, Island 9.37s;
+    #      beats tcmalloc on speed AND RSS) once decay-purging is disabled via the
+    #      baked `malloc_conf` global (TINYUSDZ_NEXT_ALLOC_JEMALLOC define). It is
+    #      still not the DEFAULT only for deployability (tcmalloc is the more
+    #      commonly-installed system lib and needs no config). NOTE: jemalloc's
+    #      heap layout used to EXPOSE a crate-reader data race that dropped prim
+    #      subtrees -- that race is now FIXED (see the crate-reader num_fieldsets_
+    #      change), so jemalloc is safe to prefer where installed.
+    #   3. mimalloc -- fast only with MIMALLOC_PURGE_DELAY=-1 (default purges, is
+    #      slower than tcmalloc) and costs +1GiB RSS; last resort.
+    # (tbbmalloc barely beat glibc and snmalloc was mid-pack -- not searched.)
     find_library(TINYUSDZ_NEXT_ALLOC_TCMALLOC NAMES tcmalloc_minimal tcmalloc)
     if(NOT TINYUSDZ_NEXT_ALLOC_TCMALLOC)
         find_file(TINYUSDZ_NEXT_ALLOC_TCMALLOC
@@ -400,10 +413,6 @@ if(TINYUSDZ_NEXT_WITH_TCMALLOC)
     if(TINYUSDZ_NEXT_ALLOC_TCMALLOC)
         set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_TCMALLOC}")
     else()
-        # mimalloc: FASTER than tcmalloc on alloc-churn-heavy compose (Caldera
-        # -20%) but ONLY with purging off -- run with MIMALLOC_PURGE_DELAY=-1
-        # (its default purges memory to the OS and is slower than tcmalloc). Uses
-        # more RSS. jemalloc is the last resort (helps compose, slows the write).
         find_library(TINYUSDZ_NEXT_ALLOC_MIMALLOC NAMES mimalloc)
         if(TINYUSDZ_NEXT_ALLOC_MIMALLOC)
             set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_MIMALLOC}")
@@ -411,13 +420,14 @@ if(TINYUSDZ_NEXT_WITH_TCMALLOC)
             find_library(TINYUSDZ_NEXT_ALLOC_JEMALLOC NAMES jemalloc)
             if(TINYUSDZ_NEXT_ALLOC_JEMALLOC)
                 set(TINYUSDZ_NEXT_ALLOCATOR_LIB "${TINYUSDZ_NEXT_ALLOC_JEMALLOC}")
+                set(TINYUSDZ_NEXT_ALLOCATOR_IS_JEMALLOC ON)
             endif()
         endif()
     endif()
     if(TINYUSDZ_NEXT_ALLOCATOR_LIB)
         message(STATUS "next: linking allocator ${TINYUSDZ_NEXT_ALLOCATOR_LIB} into CLI tools")
     else()
-        message(WARNING "TINYUSDZ_NEXT_WITH_TCMALLOC=ON but no tcmalloc/jemalloc found; using system malloc")
+        message(WARNING "TINYUSDZ_NEXT_WITH_TCMALLOC=ON but no tcmalloc/mimalloc/jemalloc found; using system malloc")
     endif()
 endif()
 
@@ -595,6 +605,12 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     # Allocator (if enabled) must precede the rest so it wins symbol resolution.
     target_link_libraries(next_usdcat PRIVATE
         ${TINYUSDZ_NEXT_ALLOCATOR_LIB} tinyusdz_next)
+    # When jemalloc is the linked allocator, bake its no-purge config into the
+    # tool via jemalloc's static `malloc_conf` global (see next_usdcat.cc) so the
+    # write-phase decay-purge stall is avoided without any MALLOC_CONF env var.
+    if(TINYUSDZ_NEXT_ALLOCATOR_IS_JEMALLOC)
+        target_compile_definitions(next_usdcat PRIVATE TINYUSDZ_NEXT_ALLOC_JEMALLOC=1)
+    endif()
 
     # Replays minimized fuzzer-found crash inputs (run under ASAN/UBSAN).
     add_executable(test_crash_regressions

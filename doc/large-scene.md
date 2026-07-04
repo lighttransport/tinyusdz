@@ -873,3 +873,36 @@ unchanged):
   so the CMake option links it). The portable takeaway is workload-shaped, not
   allocator-specific: **disable allocator memory-return for this short-lived
   accumulate-then-drain process.**
+
+**Widening the search — jemalloc (no-purge) is the fastest, and it uncovered a
+latent bug.** Applying the same no-purge insight to jemalloc — its analogue is
+`MALLOC_CONF=dirty_decay_ms:-1,muzzy_decay_ms:-1`, bakeable into the binary via
+jemalloc's static `const char* malloc_conf` global (no env needed) — makes
+jemalloc the fastest allocator measured, *and* at RSS on par with tcmalloc (unlike
+mimalloc, which needed +1 GiB):
+
+| total / peak RSS | glibc | tbbmalloc | snmalloc | tcmalloc | **jemalloc no-purge** |
+|---|---:|---:|---:|---:|---:|
+| Caldera | 6316 / 2.74 | 6114 / 2.40 | 5347 / 3.24 | 5122 / 2.13 | **4113 / 2.08** |
+| Island  | — | — | — | 9749 / 5.77 | **9374 / 6.41** |
+
+jemalloc has the fastest allocator core (best compose on both scenes); its only
+weakness — a slow ASCII-write phase — was decay-*purging during the write*, which
+the no-purge config removes. Intel **tbbmalloc** barely beat glibc; **snmalloc**
+and **mimalloc** were mid-pack. tcmalloc remains the linked default for
+deployability (system-available, zero-config), with jemalloc/mimalloc also found
+by the CMake option.
+
+**A data race, exposed by the allocator swap.** Linking jemalloc turned the
+compose+write output *nondeterministic* under CPU load — some runs dropped a whole
+prim subtree (Caldera lost the 4224-prim `breadcrumbs` sublayer). This was **not a
+jemalloc bug**: jemalloc's heap layout merely exposed a latent data race in the
+USDC crate reader, where `ReadSpecs` bounds-checked against `fieldset_indices_`
+while an async `DecodeFieldsetsPayload` worker was still `resize()`-ing it (a
+pre-resize read of size 0 failed every spec → the layer's crate read failed → its
+prims vanished). tcmalloc/glibc happened to mask it. TSan-confirmed and **fixed**
+(bounds-check against a synchronously-published `num_fieldsets_`); the full flatten
+is now TSan-clean and deterministic (16/16 identical under jemalloc + 12× load).
+A secondary `PropNameTable`/`TfToken` frozen-fast-path race (lock-free reads of the
+mutable table racing a concurrent intern) was fixed in the same pass. Lesson: an
+allocator swap is a cheap, effective *fuzzer* for latent shared-memory races.
