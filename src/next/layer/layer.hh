@@ -98,6 +98,15 @@ public:
   /// subtrees out of order. Clears the path index (rebuild after).
   void sort_prims_by_path();
 
+  /// Whether child_indices reliably reflect the current prim hierarchy. True for
+  /// freshly-read layers (the readers build them). Composition mutates the layer
+  /// (appends grafts, sorts) WITHOUT maintaining child_indices, so it marks the
+  /// layer invalid; consumers that walk child_indices (GraftSubtree's fast path)
+  /// must then fall back to a path-prefix scan or a materialized subtree is
+  /// silently skipped.
+  bool child_indices_valid() const { return child_indices_valid_; }
+  void set_child_indices_valid(bool v) { child_indices_valid_ = v; }
+
   /// Clone the layer. PrimSpecs are deep-cloned, while Value array payloads keep
   /// their copy-on-write/lazy shared backing, so this is cheap for crate-backed
   /// large arrays.
@@ -186,6 +195,7 @@ private:
   std::unordered_map<std::string, uint32_t> path_to_index_;
   LayerMeta meta_;
   bool finalized_ = false;
+  bool child_indices_valid_ = true;
 };
 
 /// Layer builder - helper for constructing layers from parsed data

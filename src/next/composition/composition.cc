@@ -184,6 +184,9 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
 
   auto result = std::make_unique<Layer>();
   result->meta() = root_layer.meta();
+  // Composition appends grafts and sorts without maintaining child_indices;
+  // GraftSubtree must path-scan this layer (and any composed sublayer).
+  result->set_child_indices_valid(false);
 
   // Pass 1 — merge local opinions (sublayers weakest-first, then the root
   // layer strongest). Arc-free scenes are fully composed by this pass alone.
@@ -754,7 +757,7 @@ void Compositor::GraftSubtree(const Layer& src, const std::string& src_anchor,
   };
 
   const PrimSpec* root = src.prim_at_path(src_root);
-  if (root && root->child_count() > 0) {
+  if (src.child_indices_valid() && root && root->child_count() > 0) {
     bool valid_child_links = true;
     std::vector<uint32_t> stack(root->child_indices().begin(),
                                 root->child_indices().end());
