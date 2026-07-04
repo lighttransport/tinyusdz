@@ -59,6 +59,7 @@ void Layer::sort_prims_by_path() {
                      return a.path().str() < b.path().str();
                    });
   path_to_index_.clear();
+  child_indices_valid_ = false;  // indices no longer match the reordered prims
 }
 
 Layer Layer::Clone() const {
