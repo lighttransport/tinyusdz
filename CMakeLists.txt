@@ -315,6 +315,11 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
 # ---------
 
+# -- textools (vendored tir/texcomp/texpipe/envmap texture tools) --
+option(TINYUSDZ_WITH_TEXTOOLS
+       "Build the vendored pure-C11 texture tools (tir resize, texcomp block compression, texpipe mip pipeline, envmap IBL) used by tusdview/tusdrender" ON)
+# ---------
+
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
@@ -1018,6 +1023,49 @@ if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
     find_package(zstd REQUIRED)
   endif()
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
+endif()
+
+# -- textools (vendored tir/texcomp/texpipe/envmap; src/external/textools/) --
+if(TINYUSDZ_WITH_TEXTOOLS)
+  # Pure-C11 texture tool stack from tinyexr's tools/ subtree (see
+  # src/external/textools/README.tinyusdz.md for provenance). Built as a
+  # standalone static lib consumed by tusdview/tusdrender — core libtinyusdz
+  # does not depend on it. x86 SIMD is runtime-dispatched inside the TUs; only
+  # the SVE kernel TU needs an arch flag (runtime HWCAP-gated).
+  set(TEXTOOLS_DIR ${PROJECT_SOURCE_DIR}/src/external/textools)
+  file(GLOB TEXTOOLS_SOURCES
+       ${TEXTOOLS_DIR}/resize/src/*.c
+       ${TEXTOOLS_DIR}/texcomp/src/*.c
+       ${TEXTOOLS_DIR}/texpipe/src/*.c
+       ${TEXTOOLS_DIR}/envmap/src/*.c)
+  add_library(tinyusdz_textools STATIC ${TEXTOOLS_SOURCES})
+  target_include_directories(tinyusdz_textools PUBLIC
+      ${TEXTOOLS_DIR}/resize/include
+      ${TEXTOOLS_DIR}/texcomp/include
+      ${TEXTOOLS_DIR}/texpipe/include
+      ${TEXTOOLS_DIR}/envmap/include)
+  target_compile_features(tinyusdz_textools PRIVATE c_std_11)
+  if(NOT MSVC)
+    # Third-party code: exempt from -Weverything/-Werror.
+    target_compile_options(tinyusdz_textools PRIVATE -w)
+  endif()
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64" AND NOT MSVC)
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag("-march=armv8-a+sve" TEXTOOLS_HAS_SVE)
+    if(TEXTOOLS_HAS_SVE)
+      set_source_files_properties(${TEXTOOLS_DIR}/resize/src/tir_kernels_sve.c
+        PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
+    endif()
+  endif()
+  if(UNIX)
+    target_compile_definitions(tinyusdz_textools PRIVATE
+      TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
+    find_package(Threads REQUIRED)
+    target_link_libraries(tinyusdz_textools PUBLIC Threads::Threads)
+  endif()
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tinyusdz_textools PUBLIC m)
+  endif()
 endif()
 
 # -- nanoimage --
@@ -2113,6 +2161,39 @@ endif()
 if(TINYUSDZ_BUILD_TESTS)
 
   enable_testing()
+
+  #
+  # textools (vendored tir/texcomp/texpipe/envmap) upstream self-tests.
+  # Plain-C main() programs, no GPU/display needed.
+  #
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    set(TEXTOOLS_TEST_PROGRAMS
+      "textools_tir_test|${TEXTOOLS_DIR}/resize/tests/tir_test.c|textools-tir"
+      "textools_tir_f16_test|${TEXTOOLS_DIR}/resize/tests/tir_f16_test.c|textools-tir-f16"
+      "textools_texcomp_test|${TEXTOOLS_DIR}/texcomp/test/test_texcomp.c|textools-texcomp"
+      "textools_texpipe_test|${TEXTOOLS_DIR}/texpipe/test/test_texpipe.c|textools-texpipe"
+      "textools_envmap_test|${TEXTOOLS_DIR}/envmap/test/test_envmap.c|textools-envmap"
+      "textools_pbr_test|${TEXTOOLS_DIR}/envmap/test/test_pbr.c|textools-pbr")
+    foreach(entry IN LISTS TEXTOOLS_TEST_PROGRAMS)
+      string(REPLACE "|" ";" entry "${entry}")
+      list(GET entry 0 tt_target)
+      list(GET entry 1 tt_source)
+      list(GET entry 2 tt_name)
+      add_executable(${tt_target} ${tt_source})
+      target_link_libraries(${tt_target} PRIVATE tinyusdz_textools)
+      # Some tests poke library internals (tir_internal.h / texcomp_internal.h).
+      target_include_directories(${tt_target} PRIVATE
+        ${TEXTOOLS_DIR}/resize/src ${TEXTOOLS_DIR}/texcomp/src)
+      target_compile_features(${tt_target} PRIVATE c_std_11)
+      if(NOT MSVC)
+        target_compile_options(${tt_target} PRIVATE -w)
+      endif()
+      add_test(NAME ${tt_name} COMMAND ${tt_target})
+      set_tests_properties(${tt_name} PROPERTIES LABELS "textools")
+    endforeach()
+    # ASTC encode coverage is slow in debug builds.
+    set_tests_properties(textools-texcomp PROPERTIES TIMEOUT 600)
+  endif()
 
   #
   # Standalone tester
