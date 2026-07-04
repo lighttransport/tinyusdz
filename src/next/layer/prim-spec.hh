@@ -504,6 +504,13 @@ public:
   /// Clear all storage
   void clear();
 
+  /// Free every stored value's heap payload (each element becomes an empty
+  /// Value) while keeping offsets valid, so slots still resolve. AssetPath
+  /// values are kept intact: post-write asset collection
+  /// (CollectReferencedAssets) reads them after the crate bytes are emitted.
+  /// Used by the crate writer's consume_values mode.
+  void release_payloads();
+
 private:
   std::vector<Value> values_;
 };
@@ -558,6 +565,11 @@ public:
 
   /// Clear all storage
   void clear();
+
+  /// Free every sample value's heap payload (each becomes an empty Value)
+  /// while keeping the (time, offset) tables valid; also drops the dedup
+  /// index. Used by the crate writer's consume_values mode.
+  void release_payloads();
 
   /// Statistics
   struct Stats {
@@ -849,6 +861,14 @@ public:
 
   /// Get approximate memory usage
   size_t memory_usage() const;
+
+  /// Free the heap payloads of every property default value and time sample
+  /// (AssetPath defaults are kept — see ValueStorage::release_payloads). Slot
+  /// tables, names, types, meta, relationships and connections stay valid, so
+  /// the PrimSpec remains structurally usable but value-stripped. Used by the
+  /// crate writer's consume_values mode to cut peak RSS on write-and-discard
+  /// flows.
+  void release_value_payloads();
 
 private:
   std::string name_;

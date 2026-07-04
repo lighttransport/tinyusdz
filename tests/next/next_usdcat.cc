@@ -219,6 +219,10 @@ int main(int argc, char **argv) {
   std::map<std::string, std::string> variant_overrides;
   int parse_threads = 0;
   int write_threads = 0;
+  // Flatten-to-USDC: release composed property values as the writer interns
+  // their blocks (the stage is discarded right after the write). Byte-identical
+  // output; --no-consume-values keeps the composed stage intact.
+  bool consume_values = true;
   // Parallel composition: 0 = auto (hardware_concurrency), N = fixed, 1 = serial.
   // Byte-identical to serial. It parallel pre-warms the sources_cache (the LIVRPS
   // arc resolution that dominates BuildStage) and fills opinions concurrently.
@@ -289,6 +293,8 @@ int main(int argc, char **argv) {
                              "(deterministic|usdcat)\n", m);
         return 2;
       }
+    } else if (std::strcmp(argv[i], "--no-consume-values") == 0) {
+      consume_values = false;
     } else if (std::strcmp(argv[i], "--variant") == 0 && i + 1 < argc) {
       const char* sel = argv[++i];
       const char* eq = std::strchr(sel, '=');
@@ -419,6 +425,7 @@ int main(int argc, char **argv) {
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] "
                          "[--variant set=name ...] "
+                         "[--no-consume-values] "
                          "file.usd[acz]\n");
     return 2;
   }
@@ -896,6 +903,7 @@ int main(int argc, char **argv) {
   if (flatten && (write_usdc_memory || (out_path && IsUSDCPath(out_path)))) {
     USDCWriteOptions copts;
     copts.crate_options.num_threads = write_threads;
+    copts.crate_options.consume_values = consume_values;  // stage discarded below
     const auto t_w0 = Clock::now();
     USDCWriteResult res;
     std::vector<uint8_t> memory;
