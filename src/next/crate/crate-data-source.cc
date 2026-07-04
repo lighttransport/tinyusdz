@@ -22,6 +22,13 @@
 #include "../io/file-util.hh"
 #endif
 
+// MADV_DONTNEED page-dropping for streamed pass-through arrays (Linux only).
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <unistd.h>
+#include <cstdlib>
+#endif
+
 namespace tinyusdz {
 namespace next {
 
@@ -82,6 +89,38 @@ CrateDataSource::~CrateDataSource() {
     io::UnmapFile(mmap_handle_, &err);
     mmap_handle_.addr = nullptr;
   }
+#endif
+}
+
+void CrateDataSource::DropResidentRange(size_t offset, size_t len) const {
+#if defined(__linux__) && defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
+  if (!is_mmapped() || len == 0) return;
+  // Kill-switch for A/B measurement; the mapping is read-only so dropping pages
+  // is always correctness-safe (a re-read simply re-faults from the file).
+  static const bool disabled = std::getenv("NEXT_NO_STREAM_MADVISE") != nullptr;
+  if (disabled) return;
+  const size_t map_size = size();
+  if (offset >= map_size) return;
+  if (len > map_size - offset) len = map_size - offset;
+  const long ps = ::sysconf(_SC_PAGESIZE);
+  if (ps <= 0) return;
+  const size_t page = static_cast<size_t>(ps);
+  // Drop only the page-aligned INTERIOR of [offset, offset+len): round the start
+  // up and the end down to page boundaries so we never evict a boundary page
+  // that an adjacent array (streamed at a different time) still shares. Small
+  // arrays that don't span a whole interior page are simply left resident.
+  const uintptr_t b = reinterpret_cast<uintptr_t>(base());
+  const uintptr_t start = b + offset;
+  const uintptr_t end = start + len;
+  const uintptr_t astart = (start + page - 1) & ~(uintptr_t(page) - 1);
+  const uintptr_t aend = end & ~(uintptr_t(page) - 1);
+  if (aend > astart) {
+    ::madvise(reinterpret_cast<void*>(astart),
+              static_cast<size_t>(aend - astart), MADV_DONTNEED);
+  }
+#else
+  (void)offset;
+  (void)len;
 #endif
 }
 
