@@ -646,11 +646,16 @@ void test_roundtrip_vec_matrix_arrays() {
     m4f_as_d[i] = double(m4f[i]);
   }
   std::vector<double> d3 = {1.5, 2.5, 3.5, 4.5, 5.5, 6.5};    // 2 x Double3
+  // Plain double[] regression: EncodeValue's scalar Double branch used to
+  // hijack arrays (no is_array guard) and emit 8 bytes of the ArrayBox header
+  // as a scalar double (garbage, nondeterministic).
+  std::vector<double> dd = {0.5600000023841858, -1.25, 42.0, 1e-9};
   b.add_property("v4", Value::MakeFloatCompArray(std::vector<float>(v4), TypeId::Float4, 4));
   b.add_property("qf", Value::MakeFloatCompArray(std::vector<float>(qf), TypeId::Quatf, 4));
   b.add_property("m4", Value::MakeDoubleCompArray(std::vector<double>(m4), TypeId::Matrix4d, 16));
   b.add_property("m4f", Value::MakeFloatCompArray(std::vector<float>(m4f), TypeId::Matrix4f, 16));
   b.add_property("d3", Value::MakeDoubleCompArray(std::vector<double>(d3), TypeId::Double3, 3));
+  b.add_property("dd", Value::MakeDoubleArray(std::vector<double>(dd)));
   b.end_prim();
   b.finalize();
 
@@ -692,6 +697,7 @@ void test_roundtrip_vec_matrix_arrays() {
   check_d("m4", m4, TypeId::Matrix4d);
   check_d("m4f", m4f_as_d, TypeId::Matrix4d);
   check_d("d3", d3, TypeId::Double3);
+  check_d("dd", dd, TypeId::Double);
 
   std::cout << "  vec/matrix/quat array roundtrip passed!\n\n";
 }

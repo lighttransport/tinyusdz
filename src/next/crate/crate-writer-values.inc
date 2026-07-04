@@ -158,8 +158,12 @@
       }
     }
 
-    // Double / TimeCode (always stored in VALUE section, not inlined)
-    if (type_id == TypeId::Double || type_id == TypeId::TimeCode) {
+    // Scalar Double / TimeCode (always stored in VALUE section, not inlined).
+    // MUST be scalar-only: an array that fell through the pass-through fast
+    // path above would otherwise be encoded as one "double" read from
+    // raw_data(), which for a lazy array is the LazyArrayRef control struct
+    // (uninitialized padding included), not element data.
+    if (!is_array && (type_id == TypeId::Double || type_id == TypeId::TimeCode)) {
       const void* raw = val.raw_data();
       const double* v = static_cast<const double*>(raw);
       if (v) {
