@@ -120,6 +120,8 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
     // Route external-arc loading through the pipeline's loader (e.g. the WASM
     // asset cache) instead of pcp's default filesystem load.
     pcp_opts.layer_loader = opts.layer_loader;
+    // Convert-time variant selection (stronger than authored selections).
+    pcp_opts.variant_overrides = opts.variant_overrides;
     Stage stage;
     std::string pcp_warn;
     if (!pcp::ComposeStageFromLayer(root_view, res, &stage, opts.root_anchor_path,
@@ -137,6 +139,12 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
     }
     layer = composed.get();
   } else if (opts.flatten && !IsSelfContained(*root)) {
+    if (!opts.variant_overrides.empty()) {
+      // The serial Compositor has no override hook; failing loudly beats
+      // silently composing the authored selections instead.
+      if (err) *err = "variant_overrides requires use_pcp_compose=true";
+      return false;
+    }
     Compositor comp;
     comp.SetOptions(opts.composition);
     if (opts.resolver) comp.SetResolver(opts.resolver);

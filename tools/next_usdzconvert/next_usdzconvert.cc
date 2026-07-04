@@ -6,7 +6,7 @@
 // compose), then handed to the shared texture resize/encode + zip packager.
 //
 //   next_usdzconvert <root.usd> <out.usdz> [-resizeTextures N] [-textureFormat png|jpeg|keep]
-//                    [-numThreads N] [-v]
+//                    [-variant set=name ...] [-numThreads N] [-v]
 //
 // Pipeline:
 //   1. next-core flatten (pipeline::FlattenUSDFileToUSDC) -> collect the
@@ -98,6 +98,7 @@ int main(int argc, char** argv) {
   int resize = 0, num_threads = 0;
   std::string tex_format = "keep";
   bool verbose = false;
+  std::map<std::string, std::string> variant_overrides;
 
   std::vector<std::string> pos;
   for (int i = 1; i < argc; i++) {
@@ -105,13 +106,28 @@ int main(int argc, char** argv) {
     if (a == "-resizeTextures" && i + 1 < argc) resize = std::atoi(argv[++i]);
     else if (a == "-textureFormat" && i + 1 < argc) tex_format = argv[++i];
     else if (a == "-numThreads" && i + 1 < argc) num_threads = std::atoi(argv[++i]);
+    else if (a == "-variant" && i + 1 < argc) {
+      // -variant set=name (repeatable): convert-time variant selection,
+      // stronger than authored variantSelections on the same set (e.g.
+      // "-variant lod=low" bakes the low LOD into the flattened package).
+      std::string sel = argv[++i];
+      size_t eq = sel.find('=');
+      if (eq == std::string::npos || eq == 0 || eq + 1 >= sel.size()) {
+        std::fprintf(stderr,
+            "next_usdzconvert: -variant expects <variantSet>=<name>, got '%s'\n",
+            sel.c_str());
+        return 1;
+      }
+      variant_overrides[sel.substr(0, eq)] = sel.substr(eq + 1);
+    }
     else if (a == "-v") verbose = true;
     else pos.push_back(a);
   }
   if (pos.size() < 2) {
     std::fprintf(stderr,
         "Usage: next_usdzconvert <root.usd> <out.usdz> [-resizeTextures N] "
-        "[-textureFormat png|jpeg|keep] [-numThreads N] [-v]\n");
+        "[-textureFormat png|jpeg|keep] [-variant set=name ...] "
+        "[-numThreads N] [-v]\n");
     return 1;
   }
   input = pos[0];
@@ -126,6 +142,7 @@ int main(int argc, char** argv) {
   fopts.read.num_threads = num_threads;
   fopts.use_pcp_compose = true;            // parallel pcp compose (fast path)
   fopts.compose_num_threads = num_threads;  // 0 = auto
+  fopts.variant_overrides = variant_overrides;  // -variant set=name selections
   next::pipeline::FlattenStats st1;
   std::vector<uint8_t> flat1;
   std::string err;

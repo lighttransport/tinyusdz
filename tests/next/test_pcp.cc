@@ -493,6 +493,67 @@ static void test_parallel_compose_byte_identical() {
   std::cout << "  OK" << std::endl;
 }
 
+// A caller-supplied variant override (CompositionOptions::variant_overrides)
+// must beat EVERY authored selection: the asset's own default AND a selection
+// authored on the referencing prim. Regression: the override used to be
+// applied to the selection map only AFTER arc expansion consumed it (a no-op).
+static void test_variant_overrides() {
+  std::cout << "test_variant_overrides..." << std::endl;
+  const std::string asset = "/tmp/next_vo_asset.usda";
+  const std::string root = "/tmp/next_vo_root.usda";
+  { std::ofstream o(asset);
+    o << "#usda 1.0\n"
+         "def Xform \"Chair\" (\n"
+         "    variants = {\n"
+         "        string lod = \"high\"\n"
+         "    }\n"
+         "    add variantSets = \"lod\"\n"
+         ")\n{\n"
+         "    variantSet \"lod\" = {\n"
+         "        \"high\" {\n"
+         "            def \"Geom\" {\n"
+         "                custom string which = \"I_high\"\n"
+         "            }\n"
+         "        }\n"
+         "        \"low\" {\n"
+         "            def \"Geom\" {\n"
+         "                custom string which = \"I_low\"\n"
+         "            }\n"
+         "        }\n"
+         "    }\n}\n"; }
+  { std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def \"C\" (\n"
+         "    prepend references = @./next_vo_asset.usda@</Chair>\n"
+         "    variants = {\n"
+         "        string lod = \"high\"\n"
+         "    }\n"
+         ")\n{\n}\n"; }
+  auto compose = [&](const std::map<std::string, std::string>& ov) {
+    AssetResolver resolver;
+    resolver.SetWorkingDirectory("/tmp");
+    pcp::CompositionOptions opts;
+    opts.variant_overrides = ov;
+    Stage stage;
+    std::string warn, err;
+    assert(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
+    return WriteUSDAToString(stage);
+  };
+  const std::string authored = compose({});
+  assert(authored.find("I_high") != std::string::npos &&
+         "authored selection (high) must compose without overrides");
+  assert(authored.find("I_low") == std::string::npos &&
+         "unselected variant leaked into the authored-selection flatten");
+  const std::string overridden = compose({{"lod", "low"}});
+  assert(overridden.find("I_low") != std::string::npos &&
+         "variant override (lod=low) was not applied");
+  assert(overridden.find("I_high") == std::string::npos &&
+         "variant override failed to suppress the authored selection");
+  std::remove(asset.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 // An authored value block (`= None`) is a real opinion that blocks weaker values
 // and must round-trip as `= None`, NOT collapse to a declared-only attribute
 // (the 13.5k-line Moana Island residual: indexed-primvar `:indices = None`).
@@ -3144,6 +3205,7 @@ int main() {
   test_usda_connection_and_custom_rel();
   test_variant_option_payload_arc();
   test_parallel_compose_byte_identical();
+  test_variant_overrides();
   test_value_block_roundtrip();
   test_extracted_prototypes();
   test_extracted_prototypes_collision_and_remap();

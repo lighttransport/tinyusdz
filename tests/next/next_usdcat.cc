@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <map>
 #include <thread>
 #include <iostream>
 #include <string>
@@ -213,6 +214,9 @@ int main(int argc, char **argv) {
   // keeps instancing; `prototypes` = usdcat-style /Flattened_Prototype_N.
   pcp::InstanceFlattenMode inst_mode = pcp::InstanceFlattenMode::Holder;
   pcp::PrototypeNumbering proto_num = pcp::PrototypeNumbering::Deterministic;
+  // --variant set=name (repeatable): compose-time variant selection overrides,
+  // stronger than authored variantSelections on the same set. -f only.
+  std::map<std::string, std::string> variant_overrides;
   int parse_threads = 0;
   int write_threads = 0;
   // Parallel composition: 0 = auto (hardware_concurrency), N = fixed, 1 = serial.
@@ -285,6 +289,17 @@ int main(int argc, char **argv) {
                              "(deterministic|usdcat)\n", m);
         return 2;
       }
+    } else if (std::strcmp(argv[i], "--variant") == 0 && i + 1 < argc) {
+      const char* sel = argv[++i];
+      const char* eq = std::strchr(sel, '=');
+      if (!eq || eq == sel || !eq[1]) {
+        std::fprintf(stderr,
+                     "ERR : --variant expects <variantSet>=<name>, got '%s'\n",
+                     sel);
+        return 2;
+      }
+      variant_overrides[std::string(sel, static_cast<size_t>(eq - sel))] =
+          std::string(eq + 1);
     } else if (std::strcmp(argv[i], "--compose-threads") == 0 && i + 1 < argc) {
       compose_threads = std::atoi(argv[++i]);  // 0=auto, 1=serial, N=fixed
       if (compose_threads < 0) compose_threads = 0;
@@ -403,6 +418,7 @@ int main(int argc, char **argv) {
                          "[--instance-mode native|holder|prototypes] "
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] "
+                         "[--variant set=name ...] "
                          "file.usd[acz]\n");
     return 2;
   }
@@ -416,6 +432,11 @@ int main(int argc, char **argv) {
   }
   if (parse_only && !rewrite_layer) {
     std::fprintf(stderr, "--parse-only requires --rewrite-layer.\n");
+    return 2;
+  }
+  if (!variant_overrides.empty() && !flatten) {
+    std::fprintf(stderr, "--variant requires -f (variant selection is applied "
+                         "at compose time).\n");
     return 2;
   }
 
@@ -793,6 +814,7 @@ int main(int argc, char **argv) {
     pcp::CompositionOptions opts;
     opts.instance_flatten_mode = inst_mode;  // default Holder (self-contained)
     opts.prototype_numbering = proto_num;
+    opts.variant_overrides = variant_overrides;  // --variant set=name
     // Parallel compose (pre-warm sources_cache + parallel opinion fill) is
     // byte-identical to serial. 0 = auto (hardware_concurrency); 1 = serial.
     {
