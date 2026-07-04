@@ -1,6 +1,6 @@
 // Targeted TSan repro for the PropNameTable frozen-fast-path data race.
 // freeze() then concurrent lock-free reads + a genuinely-new intern = UB.
-#include "layer/property-index.hh"
+#include "next/layer/property-index.hh"
 #include <thread>
 #include <vector>
 #include <string>
