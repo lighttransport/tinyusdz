@@ -64,15 +64,21 @@ public:
   /// Pre-register common USD property names for faster lookup
   void register_common_names();
 
-  /// Freeze the table for lock-free concurrent reads. After composition the set
-  /// of interned names is fixed; rendering does millions of find()/get() calls
-  /// across many threads, and the per-call shared_lock then contends purely on
-  /// the lock's own cache line (a measured ~14% of an Island render). Once
-  /// frozen, find()/get() skip the lock entirely (concurrent reads of the now
-  /// immutable map/deque are safe). A subsequent intern() unfreezes (re-enabling
-  /// locking) so a later load/compose is still correct -- callers must not intern
-  /// concurrently with frozen lock-free reads (the load and render phases are
-  /// disjoint). No-op when built without TINYUSDZ_ENABLE_THREAD.
+  /// Freeze the table to allow a lock-free find() MISS. After composition the
+  /// set of interned names is fixed; rendering does millions of find() calls
+  /// across many threads, and a find() that misses would otherwise take a
+  /// shared_lock that contends purely on the lock's own cache line (a measured
+  /// ~14% of an Island render). When frozen, a find() whose name is not in the
+  /// immutable snapshot returns "absent" WITHOUT locking, reading only the
+  /// snapshot -- never the mutable name_to_id_/names_.
+  ///
+  /// Safety: HITS are always lock-free via the immutable snapshot regardless of
+  /// this flag; intern() and get() never read the mutable structures lock-free
+  /// (a concurrent intern() rehash/push_back would be a data race -- previously
+  /// it was, TSan-confirmed). So an intern() concurrent with frozen reads is now
+  /// safe: a frozen find() may observe a just-inserted name as a benign stale
+  /// miss, but never corrupts. freeze() is sticky (no auto-unfreeze on insert).
+  /// No-op when built without TINYUSDZ_ENABLE_THREAD.
   void freeze();
   void unfreeze();
 

@@ -60,14 +60,14 @@ struct TfTokenTable::Impl {
 
   uint32_t intern(std::string_view s) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
+    // Lock-free HIT via the immutable snapshot (serves the common case without a
+    // lock regardless of frozen_). A snapshot MISS must NOT read name_to_id_
+    // lock-free -- a concurrent intern() rehash would be a data race (the same
+    // frozen-fast-path bug fixed in PropNameTable) -- so it falls through to the
+    // locked path below.
     if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
       auto sit = snap->map.find(s);
       if (sit != snap->map.end()) return sit->second;
-    }
-    if (frozen_.load(std::memory_order_acquire)) {
-      auto it = name_to_id_.find(s);
-      if (it != name_to_id_.end()) return it->second;
-      frozen_.store(false, std::memory_order_release);
     }
     {
       std::shared_lock<std::shared_mutex> rlk(mu_);
@@ -102,27 +102,35 @@ struct TfTokenTable::Impl {
     if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
       if (id < snap->by_id.size()) return *snap->by_id[id];
     }
-    if (!frozen_.load(std::memory_order_acquire)) {
+    // Snapshot miss: authoritative locked read, NEVER lock-free even when frozen
+    // (a concurrent intern() push_back reallocates names_).
+    {
       std::shared_lock<std::shared_mutex> rlk(mu_);
       if (id >= names_.size()) return empty;
       return *names_[id];
     }
-#endif
+#else
     if (id >= names_.size()) return empty;
     return *names_[id];
+#endif
   }
 
   bool contains(std::string_view s) const {
 #if defined(TINYUSDZ_ENABLE_THREAD)
     if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
       if (snap->map.find(s) != snap->map.end()) return true;
+      // Frozen: the snapshot is authoritative, so a miss means absent -- answer
+      // lock-free from the IMMUTABLE snapshot only (never the mutable
+      // name_to_id_, which a concurrent intern() may be rehashing).
+      if (frozen_.load(std::memory_order_acquire)) return false;
     }
-    if (!frozen_.load(std::memory_order_acquire)) {
+    {
       std::shared_lock<std::shared_mutex> rlk(mu_);
       return name_to_id_.find(s) != name_to_id_.end();
     }
-#endif
+#else
     return name_to_id_.find(s) != name_to_id_.end();
+#endif
   }
 
   size_t size() const {

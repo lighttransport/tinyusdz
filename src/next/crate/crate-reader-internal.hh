@@ -229,6 +229,13 @@ class CrateReader::Impl {
   std::vector<uint32_t> string_indices_;
   std::vector<CrateField> fields_;
   std::vector<uint32_t> fieldset_indices_;
+  // Fieldset count from the fieldsets header, set SYNCHRONOUSLY in ReadFieldsets
+  // before DecodeFieldsetsPayload is (possibly) dispatched to a worker. ReadSpecs
+  // bounds-checks spec fieldset indices against this instead of
+  // fieldset_indices_.size(), which the async worker is still resize()-ing --
+  // that read was a data race that could fail the whole crate read (dropping a
+  // layer's prims) under thread-scheduling pressure.
+  uint64_t num_fieldsets_ = 0;
   std::vector<uint32_t> fieldset_offsets_;
   std::vector<uint32_t> fieldset_counts_;
   std::vector<CrateSpec> specs_;

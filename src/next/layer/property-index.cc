@@ -47,21 +47,16 @@ void PropNameTable::publish_snapshot_locked() {
 
 PropNameId PropNameTable::intern(std::string_view name) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  // Lock-free hit path against the latest immutable snapshot.
+  // Lock-free HIT path against the latest immutable snapshot. This already
+  // serves the common compose-time intern (every property name was interned at
+  // parse) without a lock, regardless of frozen_. A snapshot MISS must never
+  // read the mutable name_to_id_/names_ lock-free -- a concurrent intern()
+  // rehash/push_back would be a data race (TSan-confirmed: the old "frozen fast
+  // path" read name_to_id_ here while another thread inserted) -- so it falls
+  // through to the locked path below.
   if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
     auto sit = snap->map.find(name);
     if (sit != snap->map.end()) return PropNameId{sit->second};
-  }
-  if (frozen_.load(std::memory_order_acquire)) {
-    // Frozen fast path: the common compose-time intern is a HIT (every property
-    // name was interned at parse), so resolve it lock-free against the immutable
-    // map and stay frozen. Only a genuinely NEW name mutates the table, which
-    // can't coexist with lock-free readers -- so it unfreezes (back to locking)
-    // before inserting. Callers keep frozen lock-free reads and new interns in
-    // disjoint phases, so no reader is in flight at that transition.
-    auto it = name_to_id_.find(name);
-    if (it != name_to_id_.end()) return PropNameId{it->second};
-    frozen_.store(false, std::memory_order_release);
   }
   {
     std::shared_lock<std::shared_mutex> rlk(mu_);
@@ -110,17 +105,19 @@ const std::string& PropNameTable::get(PropNameId id) const {
   if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
     if (id.id < snap->by_id.size()) return *snap->by_id[id.id];
   }
-  if (!frozen_.load(std::memory_order_acquire)) {
-    // Shared lock: a concurrent intern() on another thread may push_back names_
-    // (parallel composition warms referenced layers on workers). When frozen the
-    // name storage is immutable, so concurrent reads need no lock.
+  // Snapshot miss (id newer than the loaded snapshot). Read names_ under the
+  // shared lock -- NEVER lock-free, even when frozen: a concurrent intern()
+  // push_back reallocates names_ and racing on names_.size()/[] is UB
+  // (TSan-confirmed). Out-of-snapshot ids are rare, so the lock cost is minimal.
+  {
     std::shared_lock<std::shared_mutex> rlk(mu_);
     if (id.id >= names_.size()) return empty;
     return *names_[id.id];
   }
-#endif
+#else
   if (id.id >= names_.size()) return empty;
   return *names_[id.id];
+#endif
 }
 
 PropNameId PropNameTable::find(const std::string& name) const {
@@ -137,26 +134,31 @@ PropNameId PropNameTable::find(const std::string& name) const {
 
 PropNameId PropNameTable::find(std::string_view name) const {
 #if defined(TINYUSDZ_ENABLE_THREAD)
-  // Lock-free HIT only; a miss falls through (the name may have been
-  // interned after this snapshot was published).
+  // Lock-free HIT against the latest immutable snapshot.
   if (const Snapshot* snap = snapshot_.load(std::memory_order_acquire)) {
     auto sit = snap->map.find(name);
     if (sit != snap->map.end()) return PropNameId{sit->second};
+    // Frozen read-only phase: the snapshot is authoritative, so a miss means
+    // absent. Resolve it lock-free from the IMMUTABLE snapshot only -- never the
+    // mutable name_to_id_, which a concurrent intern() may be rehashing (that
+    // lock-free read was a data race). This keeps the rwlock-free find-miss that
+    // matters for multi-thread rendering, safely: a concurrent insert during the
+    // frozen phase is at worst observed as a benign stale miss, not UB.
+    if (frozen_.load(std::memory_order_acquire)) return PropNameId{};
   }
-  if (!frozen_.load(std::memory_order_acquire)) {
-    // Shared lock vs. a concurrent intern() rehash of name_to_id_. When frozen
-    // the map is immutable, so concurrent lookups need no lock -- this removes
-    // the rwlock cache-line contention that dominates multi-thread rendering.
+  // Not frozen (or no snapshot yet): authoritative locked lookup.
+  {
     std::shared_lock<std::shared_mutex> rlk(mu_);
     auto it = name_to_id_.find(name);
     return it != name_to_id_.end() ? PropNameId{it->second} : PropNameId{};
   }
-#endif
+#else
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return PropNameId{it->second};
   }
   return PropNameId{};
+#endif
 }
 
 PropNameId PropNameTable::find(const char* name) const {
