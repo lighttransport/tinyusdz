@@ -13,6 +13,7 @@
 #include "../resolver/asset-resolver.hh"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -95,6 +96,13 @@ class LayerRegistry {
     by_resolved_[resolved_id] = std::move(layer);
   }
 
+  /// Install a custom loader used INSTEAD of the filesystem on a cache miss
+  /// (the resolved id is passed through, e.g. a WASM asset-cache key). Set once
+  /// before composing; read locklessly by GetOrLoad (single-writer at setup).
+  using CustomLoader = std::function<std::unique_ptr<Layer>(
+      const std::string &resolved_id, std::string *error)>;
+  void SetLayerLoader(CustomLoader loader) { loader_ = std::move(loader); }
+
   /// Drop a single cached layer by resolved path. Caller must have already
   /// invalidated every PrimIndex that referenced it.
   void Drop(const std::string &resolved_path);
@@ -120,6 +128,7 @@ class LayerRegistry {
 
  private:
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
+  CustomLoader loader_;  // when set, replaces the filesystem load
   size_t parse_count_ = 0;
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // Heap-allocated so the registry stays movable. Guards by_resolved_/parse_count_

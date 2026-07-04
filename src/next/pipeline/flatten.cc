@@ -117,6 +117,9 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
     pcp_opts.num_threads = opts.compose_num_threads;
     // Self-contained flatten (no residual native-instance prototypes to package).
     pcp_opts.instance_flatten_mode = pcp::InstanceFlattenMode::Holder;
+    // Route external-arc loading through the pipeline's loader (e.g. the WASM
+    // asset cache) instead of pcp's default filesystem load.
+    pcp_opts.layer_loader = opts.layer_loader;
     Stage stage;
     std::string pcp_warn;
     if (!pcp::ComposeStageFromLayer(root_view, res, &stage, opts.root_anchor_path,
