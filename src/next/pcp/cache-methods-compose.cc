@@ -327,19 +327,19 @@ namespace pcp {
     if (!no_srcfree) {
       fill_srcs.resize(fill_.size());
       for (size_t i = 0; i < fill_.size(); ++i) {
-        auto it = sources_cache.find(fill_[i].second);
-        if (it != sources_cache.end()) fill_srcs[i] = std::move(it->second);
+        if (std::vector<Src> *v = sources_cache.find(fill_[i].second))
+          fill_srcs[i] = std::move(*v);
       }
-      std::unordered_map<std::string, std::vector<Src>>().swap(sources_cache);
+      sources_cache.clear();
     }
 
     auto do_range = [&](size_t b, size_t e) {
       for (size_t i = b; i < e; ++i) {
         if (no_srcfree) {
-          auto it = sources_cache.find(fill_[i].second);
-          if (it == sources_cache.end()) continue;
+          std::vector<Src> *v = sources_cache.find(fill_[i].second);
+          if (!v) continue;
           if (PrimSpec *ps = out->prim_mutable(fill_[i].first)) {
-            ComposeOpinions(it->second, ps);
+            ComposeOpinions(*v, ps);
           }
           continue;
         }
@@ -496,10 +496,8 @@ namespace pcp {
     for (const std::string &k : to_drop) DropIndex(k);
 
     // sources_cache + deferred state may have descendants not in index_cache.
-    for (auto it = sources_cache.begin(); it != sources_cache.end();) {
-      if (IsPathAtOrUnder(it->first, base)) it = sources_cache.erase(it);
-      else ++it;
-    }
+    sources_cache.erase_if(
+        [&](const std::string &k) { return IsPathAtOrUnder(k, base); });
     for (auto it = deferred_payload_prims.begin();
          it != deferred_payload_prims.end();) {
       if (IsPathAtOrUnder(*it, base)) it = deferred_payload_prims.erase(it);
@@ -651,12 +649,13 @@ namespace pcp {
       map_remap.emplace(wm, m);
       return m;
     };
-    for (auto &kv : w.sources_cache) {
-      if (sources_cache.count(kv.first)) continue;
+    w.sources_cache.for_each([&](const std::string &key,
+                                 std::vector<Src> &wsrcs) {
+      if (sources_cache.contains(key)) return;
       // The worker Impl is discarded right after this merge and warms subtrees
       // disjoint from the other workers (shared seeded keys are skipped above),
       // so steal its Src vector instead of copying it.
-      std::vector<Src> srcs = std::move(kv.second);
+      std::vector<Src> srcs = std::move(wsrcs);
       for (Src &s : srcs) {
         s.stack_idx = remap(s.stack_idx);
         s.map_idx = remap_map(s.map_idx);
@@ -664,8 +663,8 @@ namespace pcp {
         // the stack_idx just changed; drop it so main re-resolves via SpecsFor.
         s.specs_ = nullptr;
       }
-      sources_cache.emplace(kv.first, std::move(srcs));
-    }
+      sources_cache.get_or_create(key) = std::move(srcs);
+    });
   }
 #endif
 

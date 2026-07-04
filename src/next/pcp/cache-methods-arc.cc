@@ -370,8 +370,7 @@ namespace pcp {
   const std::vector<Src> &Cache::Impl::SourcesForPath(const Path &path, std::string *warn,
                                          std::string *err) {
     {
-      auto it = sources_cache.find(path.str());
-      if (it != sources_cache.end()) return it->second;
+      if (const std::vector<Src> *v = sources_cache.find(path.str())) return *v;
     }
 
     // Collect the uncached ancestor chain (leaf -> topmost uncached), then
@@ -384,7 +383,7 @@ namespace pcp {
         pending.push_back(cur);
         Path parent = cur.parent();
         if (parent.is_root() || parent.empty() || parent.str() == "/") break;
-        if (sources_cache.count(parent.str())) break;
+        if (sources_cache.contains(parent.str())) break;
         cur = parent;
       }
     }
@@ -404,7 +403,9 @@ namespace pcp {
         s.site = key;
         base.push_back(std::move(s));
       } else {
-        const std::vector<Src> &psrc = sources_cache[parent.str()];
+        // Parent is guaranteed present: the pending loop stopped at the first
+        // cached ancestor, and lower pending entries were filled below.
+        const std::vector<Src> &psrc = *sources_cache.find(parent.str());
         const std::string cn = p.name();
         base.reserve(psrc.size());
         for (const Src &ps : psrc) {
@@ -421,9 +422,10 @@ namespace pcp {
         }
       }
 
-      // unordered_map element refs are stable across later inserts, and
-      // pending[0] (the queried leaf) is filled last, so this captures it.
-      std::vector<Src> &slot = sources_cache[key];
+      // SrcCache values live in a deque, so this ref stays valid across later
+      // inserts (child iterations read it as their parent; pending[0], the
+      // queried leaf, is filled last and returned).
+      std::vector<Src> &slot = sources_cache.get_or_create(key);
       slot = ExpandList(base, warn, err);
       result = &slot;
     }
