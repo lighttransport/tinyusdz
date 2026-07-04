@@ -7,6 +7,8 @@
 
 #include "cache-internal.hh"
 
+#include <cstdlib>  // getenv (incremental-srcfree kill-switch)
+
 namespace tinyusdz {
 namespace next {
 namespace pcp {
@@ -303,13 +305,49 @@ namespace pcp {
     // Frozen, those go lock-free. A genuinely new name would unfreeze and fall
     // back to locking.
     GetPropNameTable().freeze();
+
+    // Move each slot's composition sources OUT of the shared sources_cache into a
+    // fill-indexed vector, then drop the whole map. The structure walk is done,
+    // so nothing calls SourcesForPath again; each fill slot's src_path is unique
+    // (one namespace path visited once -> no two slots share an entry), so a move
+    // is exact. Dropping the map frees its 280k+ path-string KEYS up front, and
+    // the parallel fill below frees each slot's Src vector the instant its
+    // opinions are composed -- so the ~600 MB of transient composition state
+    // shrinks to zero as the output fills in, instead of coexisting in full with
+    // the finished stage (the pcp compose-phase memory wall). Safe: sources_cache
+    // is a pure cache (SourcesForPath rebuilds from root on any later miss), and a
+    // moved Src keeps its specs_ pointer into the still-live spec_cache.
+#if !defined(_WIN32)
+    static const bool no_srcfree =
+        std::getenv("NEXT_NO_INCREMENTAL_SRCFREE") != nullptr;
+#else
+    const bool no_srcfree = true;  // extraction pass below is skipped
+#endif
+    std::vector<std::vector<Src>> fill_srcs;
+    if (!no_srcfree) {
+      fill_srcs.resize(fill_.size());
+      for (size_t i = 0; i < fill_.size(); ++i) {
+        auto it = sources_cache.find(fill_[i].second);
+        if (it != sources_cache.end()) fill_srcs[i] = std::move(it->second);
+      }
+      std::unordered_map<std::string, std::vector<Src>>().swap(sources_cache);
+    }
+
     auto do_range = [&](size_t b, size_t e) {
       for (size_t i = b; i < e; ++i) {
-        auto it = sources_cache.find(fill_[i].second);
-        if (it == sources_cache.end()) continue;
-        if (PrimSpec *ps = out->prim_mutable(fill_[i].first)) {
-          ComposeOpinions(it->second, ps);
+        if (no_srcfree) {
+          auto it = sources_cache.find(fill_[i].second);
+          if (it == sources_cache.end()) continue;
+          if (PrimSpec *ps = out->prim_mutable(fill_[i].first)) {
+            ComposeOpinions(it->second, ps);
+          }
+          continue;
         }
+        if (fill_srcs[i].empty()) continue;
+        if (PrimSpec *ps = out->prim_mutable(fill_[i].first)) {
+          ComposeOpinions(fill_srcs[i], ps);
+        }
+        std::vector<Src>().swap(fill_srcs[i]);  // free this slot's sources now
       }
     };
 #if defined(TINYUSDZ_ENABLE_THREAD)
