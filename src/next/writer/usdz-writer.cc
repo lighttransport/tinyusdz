@@ -261,6 +261,31 @@ USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
   return result;
 }
 
+USDZWriteResult WriteUSDZFromEntriesToMemory(
+    std::vector<uint8_t>& buffer, const std::vector<USDZEntry>& entries) {
+  USDZWriteResult result;
+  if (entries.empty()) {
+    result.error = "No entries";
+    return result;
+  }
+  buffer.clear();
+  std::vector<CentralDirEntry> cdes;
+  cdes.reserve(entries.size());
+  std::string err;
+  for (const USDZEntry& e : entries) {
+    CentralDirEntry cde;
+    if (!WriteLocalFileHeader(buffer, e.name, e.data, e.size, &cde, &err)) {
+      result.error = err.empty() ? "Failed to write ZIP entry" : err;
+      return result;
+    }
+    cdes.push_back(cde);
+  }
+  WriteCentralDirectory(buffer, cdes);
+  result.bytes_written = buffer.size();
+  result.success = true;
+  return result;
+}
+
 USDZWriteResult WriteUSDZFromUSDCToFile(const std::string& filename,
                                          const uint8_t* usdc_data,
                                          size_t usdc_size) {
