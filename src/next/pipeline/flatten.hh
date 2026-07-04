@@ -77,6 +77,14 @@ struct FlattenOptions {
   // (e.g. the wasm asset-cache loader).
   bool use_pcp_compose = false;
   int compose_num_threads = 0;  // pcp worker hint (0 = auto, 1 = serial)
+
+  // Variant selection overrides applied at compose time: variantSet -> variant
+  // name, stronger than any authored variantSelection on the same set (e.g.
+  // {{"lod", "low"}} selects "low" on every prim defining an "lod" variantSet).
+  // Supported on the pcp compose path only; a non-empty map on the serial
+  // Compositor path fails the flatten with an explicit error rather than
+  // silently composing the authored selections.
+  std::map<std::string, std::string> variant_overrides;
 };
 
 /// Filesystem-backed LayerLoader for native multi-file flattens: reads the
