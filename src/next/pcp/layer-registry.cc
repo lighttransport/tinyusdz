@@ -296,8 +296,12 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 
   // Parse WITHOUT holding the lock, so other paths load concurrently.
   LoadOutcome outcome;
-  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err,
-                                    options);
+  if (loader_) {
+    outcome.layer = std::shared_ptr<Layer>(loader_(resolved, &outcome.err));
+  } else {
+    outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err,
+                                      options);
+  }
   {
     std::lock_guard<std::mutex> lk(*mu_);
     if (outcome.layer) {
@@ -316,8 +320,9 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return it->second;  // Cache hit -- no re-parse.
   }
 
-  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err,
-                                                   options);
+  std::shared_ptr<Layer> layer =
+      loader_ ? std::shared_ptr<Layer>(loader_(resolved, err))
+              : LoadLayerFromFile(resolved, warn, err, options);
   if (!layer) {
     return nullptr;
   }

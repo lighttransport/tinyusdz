@@ -20,6 +20,7 @@
 #include "../strfmt.hh"
 
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -122,6 +123,14 @@ struct CompositionOptions {
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;
+
+  // Optional custom loader for external reference/payload/sublayer arcs. When
+  // set, the compositor's LayerRegistry loads a resolved id through this instead
+  // of the filesystem -- e.g. the WASM asset-cache path, which has no files.
+  // Signature mirrors pipeline::LayerLoader.
+  std::function<std::unique_ptr<Layer>(const std::string& resolved_id,
+                                       std::string* error)>
+      layer_loader;
 
   // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
   // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env

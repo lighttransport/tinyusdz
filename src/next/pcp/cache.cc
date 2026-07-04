@@ -29,6 +29,11 @@ nonstd::expected<Cache, std::string> Cache::Open(
   Cache cache;
   cache.impl_->resolver = &resolver;
   cache.impl_->options = options;
+  // Custom loader (e.g. WASM asset cache) replaces the filesystem load. Install
+  // before InternLayerStack, which loads the root's sublayers.
+  if (options.layer_loader) {
+    cache.impl_->registry.SetLayerLoader(options.layer_loader);
+  }
   // Back-compat: a lone `flatten_instances = true` (mode left Native) means the
   // self-contained Holder flatten.
   if (cache.impl_->options.flatten_instances &&
