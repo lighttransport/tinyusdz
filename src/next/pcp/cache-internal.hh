@@ -20,6 +20,7 @@
 #include "../../logger.hh"                 // tinyusdz::logging TUSDZ_LOG_*
 
 #include <algorithm>
+#include <cstring>
 #include <deque>
 #include <limits>
 #include <chrono>
@@ -45,6 +46,91 @@ struct SpecRef {
   const PrimSpec *spec = nullptr;
   const Layer *layer = nullptr;
   std::string layer_id;
+};
+
+// Per-layer-stack memo of FindSpecs(site) results (the compose hot path:
+// Specs() is the single largest self-cost during BuildStage). Replaces a
+// std::unordered_map<string, vector<SpecRef>>: an open-addressed
+// hash->value-index table (cache-friendly, no per-entry node alloc) over
+// STABLE value storage (a deque, so a returned `const vector<SpecRef>&`
+// stays valid across later inserts — required, callers and Src::specs_ hold
+// it). A fast 8-byte-chunked mix hash replaces std::hash's per-byte path.
+struct StackSpecCache {
+  static uint64_t HashSite(const char *p, size_t n) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+      uint64_t k;
+      std::memcpy(&k, p + i, 8);
+      h = (h ^ k) * 0x100000001b3ull;
+      h = (h << 27) | (h >> 37);
+    }
+    for (; i < n; ++i) h = (h ^ static_cast<uint8_t>(p[i])) * 0x100000001b3ull;
+    h ^= h >> 33;
+    return h ? h : 1;  // reserve 0 for empty slot
+  }
+
+  struct Slot {
+    uint64_t hash = 0;  // 0 = empty
+    uint32_t val_idx = 0;
+  };
+  std::vector<Slot> slots_;
+  std::deque<std::string> keys_;              // keys_[i] backs vals_[i]
+  std::deque<std::vector<SpecRef>> vals_;     // stable value storage
+  size_t count_ = 0;
+
+  std::vector<SpecRef> *find(const std::string &site, uint64_t h) {
+    if (slots_.empty()) return nullptr;
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    while (slots_[i].hash != 0) {
+      if (slots_[i].hash == h) {
+        const uint32_t vi = slots_[i].val_idx;
+        const std::string &k = keys_[vi];
+        if (k.size() == site.size() &&
+            std::memcmp(k.data(), site.data(), site.size()) == 0) {
+          return &vals_[vi];
+        }
+      }
+      i = (i + 1) & mask;
+    }
+    return nullptr;
+  }
+
+  std::vector<SpecRef> &insert(const std::string &site, uint64_t h,
+                               std::vector<SpecRef> &&v) {
+    if (slots_.empty() || (count_ + 1) * 2 > slots_.size()) rehash();
+    const uint32_t vi = static_cast<uint32_t>(vals_.size());
+    keys_.emplace_back(site);
+    vals_.emplace_back(std::move(v));
+    place(h, vi);
+    ++count_;
+    return vals_[vi];
+  }
+
+  void clear() {
+    slots_.clear();
+    keys_.clear();
+    vals_.clear();
+    count_ = 0;
+  }
+
+ private:
+  void place(uint64_t h, uint32_t vi) {
+    const size_t mask = slots_.size() - 1;
+    size_t i = static_cast<size_t>(h) & mask;
+    while (slots_[i].hash != 0) i = (i + 1) & mask;
+    slots_[i].hash = h;
+    slots_[i].val_idx = vi;
+  }
+  void rehash() {
+    const size_t new_cap = slots_.empty() ? 16 : slots_.size() * 2;
+    std::vector<Slot> old = std::move(slots_);
+    slots_.assign(new_cap, Slot{});
+    for (const Slot &s : old) {
+      if (s.hash != 0) place(s.hash, s.val_idx);
+    }
+  }
 };
 
 // A single composition source (one node's worth of provenance).
@@ -220,8 +306,7 @@ struct Cache::Impl {
                                uint32_t depth, std::string *warn,
                                std::string *err);
 
-  mutable std::deque<std::unordered_map<std::string, std::vector<SpecRef>>>
-      spec_cache_by_stack_;
+  mutable std::deque<StackSpecCache> spec_cache_by_stack_;
 
   const std::vector<SpecRef> &Specs(uint32_t stack_idx,
                                     const std::string &site) const;

@@ -435,10 +435,10 @@ namespace pcp {
     if (stack_idx >= spec_cache_by_stack_.size())
       spec_cache_by_stack_.resize(stack_idx + 1);
     auto &m = spec_cache_by_stack_[stack_idx];
-    auto it = m.find(site);  // keys by the caller's string, no key copy
-    if (it != m.end()) return it->second;
+    const uint64_t h = StackSpecCache::HashSite(site.data(), site.size());
+    if (std::vector<SpecRef> *v = m.find(site, h)) return *v;
     std::vector<SpecRef> refs = FindSpecs(layer_stacks[stack_idx], site);
-    return m.emplace(site, std::move(refs)).first->second;
+    return m.insert(site, h, std::move(refs));
   }
 
   const std::vector<SpecRef> &Cache::Impl::SpecsFor(const Src &s) const {
