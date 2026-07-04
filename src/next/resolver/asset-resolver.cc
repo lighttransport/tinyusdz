@@ -81,6 +81,51 @@ std::string NormalizePackageEntryPath(std::string path) {
   return out;
 }
 
+// Progressively shorter path suffixes of `asset_path`, longest first, down to
+// the basename -- used to rebase paths authored against another machine's
+// layout (UnrealEngine exports). Mirrors io::AssetPathSuffixCandidates but is
+// kept self-contained so next-core stays free of the legacy io-util.
+std::vector<std::string> SuffixCandidates(const std::string& asset_path) {
+  std::vector<std::string> candidates;
+  if (asset_path.empty()) return candidates;
+
+  std::string p = asset_path;
+  for (char& c : p) {
+    if (c == '\\') c = '/';
+  }
+
+  // Strip a Windows drive prefix (e.g. "F:").
+  if (p.size() >= 2 &&
+      ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) &&
+      p[1] == ':') {
+    p = p.substr(2);
+  }
+
+  // Strip leading '/', './' and '../' runs.
+  size_t pos = 0;
+  while (pos < p.size()) {
+    if (p[pos] == '/') {
+      pos++;
+    } else if (p.compare(pos, 2, "./") == 0) {
+      pos += 2;
+    } else if (p.compare(pos, 3, "../") == 0) {
+      pos += 3;
+    } else {
+      break;
+    }
+  }
+  p = p.substr(pos);
+
+  // Emit progressively shorter suffixes, longest first, down to the basename.
+  while (!p.empty()) {
+    if (p != asset_path) candidates.push_back(p);
+    size_t slash = p.find('/');
+    if (slash == std::string::npos) break;
+    p = p.substr(slash + 1);
+  }
+  return candidates;
+}
+
 std::string GetCurrentWorkingDirectory() {
 #if !defined(TINYUSDZ_NEXT_ENABLE_FILEIO)
   // Freestanding / WASM: no filesystem (getcwd ABORTS under -sFILESYSTEM=0).
@@ -260,6 +305,38 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
       result.resolved_path = candidate;
       result.exists = true;
       return result;
+    }
+  }
+
+  // UE-export suffix fallback: the literal path escaped the scene root (e.g.
+  // `../../../USD_Exports/Scene/Assets/mesh.usd`). Retry progressively shorter
+  // path suffixes against the anchor dir, cwd, search paths, and any custom
+  // resolver (its asset cache may be keyed by suffix), longest first.
+  if (config_.enable_suffix_fallback) {
+    std::vector<std::string> bases;
+    if (!anchor_path.empty()) bases.push_back(GetDirectory(anchor_path));
+    bases.push_back(config_.working_directory);
+    for (const auto& sp : config_.search_paths) bases.push_back(sp);
+
+    for (const std::string& cand : SuffixCandidates(asset_path)) {
+      for (const std::string& base : bases) {
+        std::string c = NormalizePath(JoinPath(base, cand));
+        if (FileExists(c)) {
+          result.resolved_path = c;
+          result.exists = true;
+          result.used_suffix_fallback = true;
+          return result;
+        }
+      }
+      if (custom_resolver_) {
+        std::string custom_result = custom_resolver_(cand, anchor_path);
+        if (!custom_result.empty()) {
+          result.resolved_path = NormalizePath(custom_result);
+          result.exists = true;
+          result.used_suffix_fallback = true;
+          return result;
+        }
+      }
     }
   }
 
