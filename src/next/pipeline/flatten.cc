@@ -15,8 +15,10 @@
 #include <set>
 
 #include "../layer/layer.hh"
+#include "../pcp/cache.hh"           // pcp::ComposeStageFromLayer (parallel compose)
 #include "../pcp/layer-registry.hh"
 #include "../reader/usdc-reader.hh"
+#include "../resolver/asset-resolver.hh"
 #include "../stage/stage.hh"
 
 #include <memory>
@@ -104,7 +106,34 @@ bool FlattenLayer(std::unique_ptr<Layer> root_owner, size_t input_bytes,
   std::unique_ptr<Layer> composed;
   const Layer* layer = root;
   const auto compose_begin = Clock::now();
-  if (opts.flatten && !IsSelfContained(*root)) {
+  if (opts.flatten && opts.use_pcp_compose && !IsSelfContained(*root)) {
+    // Parallel pcp composition. A non-owning shared_ptr hands the root to pcp
+    // for the call; `root_owner` retains ownership and outlives the write, and
+    // the composed layer's lazy Values carry their own source-buffer keepalive.
+    std::shared_ptr<Layer> root_view(root_owner.get(), [](Layer*) {});
+    AssetResolver fallback_resolver;
+    AssetResolver& res = opts.resolver ? *opts.resolver : fallback_resolver;
+    pcp::CompositionOptions pcp_opts;
+    pcp_opts.num_threads = opts.compose_num_threads;
+    // Self-contained flatten (no residual native-instance prototypes to package).
+    pcp_opts.instance_flatten_mode = pcp::InstanceFlattenMode::Holder;
+    Stage stage;
+    std::string pcp_warn;
+    if (!pcp::ComposeStageFromLayer(root_view, res, &stage, opts.root_anchor_path,
+                                    pcp_opts, &pcp_warn, err)) {
+      if (err && err->empty()) *err = "pcp composition failed";
+      return false;
+    }
+    composed = stage.ReleaseRootLayer();
+    if (!composed) {
+      if (err) *err = "pcp composition produced no layer";
+      return false;
+    }
+    if (stats && !pcp_warn.empty()) {
+      stats->composition_errors.push_back(pcp_warn);
+    }
+    layer = composed.get();
+  } else if (opts.flatten && !IsSelfContained(*root)) {
     Compositor comp;
     comp.SetOptions(opts.composition);
     if (opts.resolver) comp.SetResolver(opts.resolver);
