@@ -158,9 +158,20 @@ list(
   ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
   ${TINYUSDZ_NEXT_DIR}/reader/usdc-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/reader/usda-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/reader/usdz-reader.cc
   ${TINYUSDZ_NEXT_DIR}/schema/geom-mesh.cc
   ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
   ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
+  # Full parallel pcp composition engine (FlattenOptions::use_pcp_compose), so
+  # the WASM next path composes the complete LIVRPS+variant set. External arcs
+  # load through the asset-cache loader hook (LayerRegistry::SetLayerLoader).
+  ${TINYUSDZ_NEXT_DIR}/pcp/cache.cc
+  ${TINYUSDZ_NEXT_DIR}/pcp/cache-methods-arc.cc
+  ${TINYUSDZ_NEXT_DIR}/pcp/cache-methods-compose.cc
+  ${TINYUSDZ_NEXT_DIR}/pcp/cache-methods-warm.cc
+  ${TINYUSDZ_NEXT_DIR}/pcp/layer-registry.cc
+  ${TINYUSDZ_NEXT_DIR}/pcp/load-rules.cc
 )
 
 list(

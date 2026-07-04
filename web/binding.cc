@@ -6954,21 +6954,31 @@ class TinyUSDZLoaderNative {
         !layerExistsCb.isNull() && !layerExistsCb.isUndefined();
     const bool has_layer_fetch =
         !layerFetchCb.isNull() && !layerFetchCb.isUndefined();
-    resolver.SetCustomResolver(
-        [this, consumed, resolved_cache, layerExistsCb, has_layer_exists](
-            const std::string &asset, const std::string &anchor) -> std::string {
+    // ResolverCallback is a C-style fn-ptr + void* user (no std::function), so
+    // the captured state lives in a local ctx and the callback is a captureless
+    // lambda decayed to a function pointer. `rctx` outlives the flatten below.
+    struct MultiResolverCtx {
+      EMAssetResolutionResolver *em;
+      std::shared_ptr<std::unordered_set<std::string>> consumed;
+      std::shared_ptr<std::unordered_map<std::string, std::string>> resolved_cache;
+      emscripten::val layerExistsCb;
+      bool has_layer_exists;
+    } rctx{&em_resolver_, consumed, resolved_cache, layerExistsCb,
+           has_layer_exists};
+    tinyusdz::next::ResolverCallback rcb;
+    rcb.user = &rctx;
+    rcb.fn = +[](const std::string &asset, const std::string &anchor,
+                 void *user) -> std::string {
+      auto *ctx = static_cast<MultiResolverCtx *>(user);
       const std::string cache_key = anchor + "\n" + asset;
-      auto hit = resolved_cache->find(cache_key);
-      if (hit != resolved_cache->end()) {
-        return hit->second;
-      }
-      auto try_key = [this, &consumed, &layerExistsCb, has_layer_exists](
-                         std::string key) -> std::string {
+      auto hit = ctx->resolved_cache->find(cache_key);
+      if (hit != ctx->resolved_cache->end()) return hit->second;
+      auto try_key = [ctx](std::string key) -> std::string {
         key = AssetResolver::NormalizePath(key);
         while (key.rfind("./", 0) == 0) key = key.substr(2);
-        if (em_resolver_.has(key) || consumed->count(key)) return key;
-        if (has_layer_exists) {
-          emscripten::val exists = layerExistsCb(key);
+        if (ctx->em->has(key) || ctx->consumed->count(key)) return key;
+        if (ctx->has_layer_exists) {
+          emscripten::val exists = ctx->layerExistsCb(key);
           if (exists.isTrue()) return key;
         }
         return std::string();
@@ -6976,29 +6986,25 @@ class TinyUSDZLoaderNative {
       if (!anchor.empty()) {
         std::string k = try_key(AssetResolver::JoinPath(
             AssetResolver::GetDirectory(anchor), asset));
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
+        if (!k.empty()) { (*ctx->resolved_cache)[cache_key] = k; return k; }
       }
       {
         std::string k = try_key(asset);
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
+        if (!k.empty()) { (*ctx->resolved_cache)[cache_key] = k; return k; }
       }
       for (const auto &cand : tinyusdz::io::AssetPathSuffixCandidates(asset)) {
         std::string k = try_key(cand);
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
+        if (!k.empty()) { (*ctx->resolved_cache)[cache_key] = k; return k; }
       }
-      (*resolved_cache)[cache_key] = std::string();
+      (*ctx->resolved_cache)[cache_key] = std::string();
       return std::string();
-    });
+    };
+    resolver.SetCustomResolver(rcb);
     opts.resolver = &resolver;
+    // Compose with the full parallel pcp engine (resolves the complete
+    // LIVRPS+variant set -- e.g. UE per-LOD material subtrees the serial
+    // Compositor drops) via the loader below (asset cache, not the filesystem).
+    opts.use_pcp_compose = true;
 
     // Loader: pull the layer's bytes out of the asset cache (consuming the
     // entry — the parsed layer retains its own copy as the lazy-array source)
@@ -7184,6 +7190,7 @@ class TinyUSDZLoaderNative {
     opts.root_anchor_path = state.root_name;
     opts.fail_on_composition_error = true;
     opts.asset_path_remap = state.asset_path_remap;
+    opts.use_pcp_compose = true;  // full parallel pcp composition (see above)
 
     using tinyusdz::next::AssetResolver;
     AssetResolver resolver;
@@ -7191,39 +7198,38 @@ class TinyUSDZLoaderNative {
     auto consumed = std::make_shared<std::unordered_set<std::string>>();
     auto resolved_cache =
         std::make_shared<std::unordered_map<std::string, std::string>>();
-    resolver.SetCustomResolver(
-        [&state, consumed, resolved_cache](const std::string &asset,
-                                           const std::string &anchor) -> std::string {
+    struct AsyncResolverCtx {
+      NextAsyncFlattenSession *state;
+      std::shared_ptr<std::unordered_set<std::string>> consumed;
+      std::shared_ptr<std::unordered_map<std::string, std::string>> resolved_cache;
+    } rctx{&state, consumed, resolved_cache};
+    tinyusdz::next::ResolverCallback rcb;
+    rcb.user = &rctx;
+    rcb.fn = +[](const std::string &asset, const std::string &anchor,
+                 void *user) -> std::string {
+      auto *ctx = static_cast<AsyncResolverCtx *>(user);
       const std::string cache_key = anchor + "\n" + asset;
-      auto hit = resolved_cache->find(cache_key);
-      if (hit != resolved_cache->end()) return hit->second;
-      auto try_key = [&state, &consumed](std::string key) -> std::string {
+      auto hit = ctx->resolved_cache->find(cache_key);
+      if (hit != ctx->resolved_cache->end()) return hit->second;
+      auto try_key = [ctx](std::string key) -> std::string {
         key = AssetResolver::NormalizePath(key);
         while (key.rfind("./", 0) == 0) key = key.substr(2);
-        return (state.layers.count(key) || consumed->count(key)) ? key
-                                                                 : std::string();
+        return (ctx->state->layers.count(key) || ctx->consumed->count(key))
+                   ? key
+                   : std::string();
       };
       if (!anchor.empty()) {
         std::string k = try_key(AssetResolver::JoinPath(
             AssetResolver::GetDirectory(anchor), asset));
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
+        if (!k.empty()) { (*ctx->resolved_cache)[cache_key] = k; return k; }
       }
       {
         std::string k = try_key(asset);
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
+        if (!k.empty()) { (*ctx->resolved_cache)[cache_key] = k; return k; }
       }
       for (const auto &cand : tinyusdz::io::AssetPathSuffixCandidates(asset)) {
         std::string k = try_key(cand);
-        if (!k.empty()) {
-          (*resolved_cache)[cache_key] = k;
-          return k;
-        }
+        if (!k.empty()) { (*ctx->resolved_cache)[cache_key] = k; return k; }
       }
       // Return the best normalized candidate so the loader can surface exactly
       // which layer JS should fetch.
@@ -7234,9 +7240,10 @@ class TinyUSDZLoaderNative {
       }
       request = AssetResolver::NormalizePath(request);
       while (request.rfind("./", 0) == 0) request = request.substr(2);
-      (*resolved_cache)[cache_key] = request;
+      (*ctx->resolved_cache)[cache_key] = request;
       return request;
-    });
+    };
+    resolver.SetCustomResolver(rcb);
     opts.resolver = &resolver;
 
     const tinyusdz::next::CrateReadOptions read_opts = opts.read;
