@@ -1054,6 +1054,31 @@ function nextAllocAndFill(native, usd, usdcBytes, maxBufferBytes, log) {
   return info.uuid;
 }
 
+// Like nextAllocAndFill, but streams the root bytes straight from the file into
+// the wasm heap via `readInto(dest, destOff, fileOff, len)` (a ranged read that
+// writes directly into `dest`). `dest` is a Node Buffer view over the wasm heap,
+// so there is NO intermediate JS allocation at all — the full root is never held
+// as a JS Buffer, so JS and wasm do not both hold the whole root during
+// ingestion (the peak driver for a large monolithic root). Returns the buffer
+// uuid, or null if the zero-copy allocation was declined.
+function nextAllocAndFillChunked(native, usd, size, readInto, maxBufferBytes, log) {
+  const info = usd.allocateZeroCopyBuffer('__next_input__', size, maxBufferBytes || 0);
+  if (!info || !info.success) {
+    log(`next: zero-copy alloc declined (${info && info.error}); falling back.`);
+    return null;
+  }
+  const ptr = Number(info.bufferPtr);
+  const CHUNK = 16 * 1024 * 1024;
+  for (let off = 0; off < size; off += CHUNK) {
+    const n = Math.min(CHUNK, size - off);
+    // A fresh Buffer view over the (possibly grown) wasm heap for each chunk —
+    // Buffer.from aliases the ArrayBuffer, no copy; fs read writes into wasm.
+    const heapView = Buffer.from(native.HEAPU8.buffer, ptr + off, n);
+    readInto(heapView, 0, off, n);
+  }
+  return info.uuid;
+}
+
 // Stream a USDC buffer into the WASM heap (chunked, single copy) and flatten it
 // with the next low-memory lazy-ValueRep pipeline. Returns
 // { data: Uint8Array, stats } or null if the next pipeline is unavailable or
@@ -1707,6 +1732,28 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     let usdBytesTotal = 0;
     let usdLayersPreloaded = 0;
     let rootBytes = null;
+
+    // Chunked root ingestion: when the source supports ranged reads and we won't
+    // need the root bytes on the JS side (next pipeline with a USDC root, and no
+    // auto-colorspace texture resize), stream the root layer straight from the
+    // file into the wasm heap in 16 MiB chunks rather than holding it as a full
+    // JS Buffer. Removes the ~2x-root peak of JS and wasm both holding the whole
+    // root during ingestion (the dominant cost for a large monolithic root).
+    const needRootForColorspace = (opts.maxTextureSize || 0) > 0 &&
+      String(opts.resizeColorspace || '').toLowerCase() === 'auto';
+    let chunkRoot = null;  // { size } when the root will be chunk-ingested
+    if (opts.pipeline === 'next' && !needRootForColorspace &&
+        typeof source.readRange === 'function' &&
+        typeof source.entrySize === 'function' &&
+        typeof usd.nextFlattenMultiBufferToSink === 'function') {
+      const magic = source.readRange(rootPath, 0, 8);
+      const isUSDC = magic.length >= 8 &&
+        magic[0] === 0x50 && magic[1] === 0x58 && magic[2] === 0x52 &&
+        magic[3] === 0x2d && magic[4] === 0x55 && magic[5] === 0x53 &&
+        magic[6] === 0x44 && magic[7] === 0x43;  // "PXR-USDC"
+      if (isUSDC) chunkRoot = { size: source.entrySize(rootPath) };
+    }
+
     const preloadUsdDependencies = async () => {
       for (const key of usdKeys) {
         if (key === rootPath) continue;
@@ -1719,6 +1766,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     };
     for (const key of usdKeys) {
       if ((canFetchUsdLayerSync || canFetchUsdLayerAsync) && key !== rootPath) continue;
+      if (chunkRoot && key === rootPath) continue;  // chunk-ingested below, no Buffer
       // eslint-disable-next-line no-await-in-loop
       const bytes = await source.fetch(key);
       usdBytesTotal += bytes.length;
@@ -1726,7 +1774,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       if (key === rootPath) rootBytes = bytes;
       else usd.setAsset(assetNameFor(key), bytes);
     }
-    if (!rootBytes) throw new Error(`root ${rootPath} not fetchable from source`);
+    if (!rootBytes && !chunkRoot) throw new Error(`root ${rootPath} not fetchable from source`);
     if (canFetchUsdLayerSync || canFetchUsdLayerAsync) {
       log(`streaming: ${usdKeys.length} USD layer(s), ${usdLayersPreloaded} preloaded ` +
           `(${(usdBytesTotal / 1e6).toFixed(1)} MB); dependency layers load on demand; textures stream on demand`);
@@ -1743,14 +1791,26 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     // call and applied after composition before the root crate is streamed.
     let nextRoot = null;  // { uuid, anchor } when the next pipeline is armed
     if (opts.pipeline === 'next') {
-      const rootIsUSDC = rootBytes.length >= 8 &&
+      const rootIsUSDC = chunkRoot ? true : (rootBytes.length >= 8 &&
         rootBytes[0] === 0x50 && rootBytes[1] === 0x58 && rootBytes[2] === 0x52 &&
         rootBytes[3] === 0x2d && rootBytes[4] === 0x55 && rootBytes[5] === 0x53 &&
-        rootBytes[6] === 0x44 && rootBytes[7] === 0x43;  // "PXR-USDC"
+        rootBytes[6] === 0x44 && rootBytes[7] === 0x43);  // "PXR-USDC"
       if (rootIsUSDC && typeof usd.nextFlattenMultiBufferToSink === 'function') {
         const maxBufferBytes = Number(opts.maxMemMb || 0) > 0
           ? Number(opts.maxMemMb) * 1024 * 1024 : 0;
-        const uuid = nextAllocAndFill(native, usd, rootBytes, maxBufferBytes, log);
+        let uuid = chunkRoot
+          ? nextAllocAndFillChunked(native, usd, chunkRoot.size,
+              (dest, destOff, fileOff, len) =>
+                source.readInto(rootPath, fileOff, dest, destOff, len),
+              maxBufferBytes, log)
+          : nextAllocAndFill(native, usd, rootBytes, maxBufferBytes, log);
+        if (uuid === null && chunkRoot) {
+          // Zero-copy alloc declined (root exceeds the cap): fall back to a full
+          // fetch so the legacy in-heap path can still run.
+          rootBytes = await source.fetch(rootPath);
+          chunkRoot = null;
+          uuid = nextAllocAndFill(native, usd, rootBytes, maxBufferBytes, log);
+        }
         if (uuid !== null) {
           nextRoot = {
             uuid,
