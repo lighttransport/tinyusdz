@@ -311,17 +311,19 @@ function usdzSource(file) {
   }
 
   // Resolve an entry's data offset from its local header (name/extra lengths in
-  // the local header can differ from the central directory's), then read it.
-  const readEntry = (key) => {
+  // the local header can differ from the central directory's). Cached per key.
+  const dataOffsetOf = (key) => {
     const e = entries.get(key);
     if (!e) throw new Error(`entry not in archive: ${key}`);
-    const lh = readAt(e.localOffset, 30);
-    if (lh.readUInt32LE(0) !== 0x04034b50) throw new Error(`bad local header: ${key}`);
-    const nameLen = lh.readUInt16LE(26);
-    const extraLen = lh.readUInt16LE(28);
-    const dataOffset = e.localOffset + 30 + nameLen + extraLen;
-    return new Uint8Array(readAt(dataOffset, e.size));
+    if (e.dataOffset === undefined) {
+      const lh = readAt(e.localOffset, 30);
+      if (lh.readUInt32LE(0) !== 0x04034b50) throw new Error(`bad local header: ${key}`);
+      e.dataOffset = e.localOffset + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28);
+    }
+    return e.dataOffset;
   };
+  const readEntry = (key) =>
+    new Uint8Array(readAt(dataOffsetOf(key), entries.get(key).size));
 
   return {
     keys,
@@ -329,6 +331,25 @@ function usdzSource(file) {
     otherBytes,
     fetch: async (key) => readEntry(key),
     fetchSync: (key) => readEntry(key),
+    // Byte length of an entry, and a ranged read of it — lets a large root layer
+    // stream into the wasm heap in chunks without ever materializing the whole
+    // entry as a JS Buffer (avoids holding the root in both JS and wasm at once).
+    entrySize: (key) => entries.get(key).size,
+    readRange: (key, off, len) =>
+      new Uint8Array(readAt(dataOffsetOf(key) + off, len)),
+    // Read `len` bytes at entry-relative `off` directly into `dest` at `destOff`
+    // (dest may be a Buffer view over the wasm heap), with no intermediate JS
+    // allocation. Returns bytes read.
+    readInto: (key, off, dest, destOff, len) => {
+      const base = dataOffsetOf(key) + off;
+      let got = 0;
+      while (got < len) {
+        const n = fs.readSync(fd, dest, destOff + got, len - got, base + got);
+        if (n <= 0) break;
+        got += n;
+      }
+      return got;
+    },
     close: () => { try { fs.closeSync(fd); } catch { /* ignore */ } },
   };
 }
@@ -559,23 +580,18 @@ async function main() {
   }
 
   // --pipeline next on a single self-contained .usdz: stream lazily from the
-  // archive instead of slurping the whole file with readFileSync. Only the USD
-  // layers enter wasm for composition; textures are read by offset and streamed
-  // straight to the output zip, so the full input archive is never resident.
-  // Requires an output path (streaming sink) and flatten (default on).
-  //
-  // Gate on texture bytes: streaming avoids slurping the non-USD (texture/audio)
-  // payload, but adds a separate read of the root layer. For a texture-light
-  // archive (e.g. one monolithic .usdc) there is nothing to stream and the extra
-  // root copy only raises peak RSS, so keep those on the in-memory path.
+  // archive instead of slurping the whole file with readFileSync. The root USDC
+  // is ingested into wasm in 16 MiB chunks read by offset from the file (never a
+  // full JS Buffer), and textures are read by offset and streamed straight to
+  // the output zip, so neither the input archive nor a duplicate root layer is
+  // fully resident on the JS side. Applies to every single .usdz (chunked root
+  // ingestion removes the old penalty that made a texture-light monolithic root
+  // prefer the in-memory path). Requires an output path (streaming sink) and
+  // flatten (default on).
   if (o.pipeline === 'next' && o.output && o.flatten !== false && o.input &&
       /\.usdz$/i.test(o.input) && fs.statSync(o.input).isFile()) {
-    const src = usdzSource(o.input);
-    if (src.otherBytes >= 64 * 1024 * 1024) {
-      await runStreamingConvert(native, o, src);
-      return;
-    }
-    src.close();  // texture-light: fall through to the in-memory next path
+    await runStreamingConvert(native, o, usdzSource(o.input));
+    return;
   }
 
   // Build the asset map and determine the root USD's relative path.
