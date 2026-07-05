@@ -2252,6 +2252,13 @@ if(TINYUSDZ_BUILD_TESTS)
   # GPU CI stays green.
   if(TARGET tusdrender)
     add_test(
+      NAME tool-tusdrender-instancer-invisible-ids
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-instancer-invisible-ids.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+
+    add_test(
       NAME tool-tusdrender-gpu-render
       COMMAND bash
               ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-gpu-render.sh
@@ -2278,12 +2285,100 @@ if(TINYUSDZ_BUILD_TESTS)
   # renderer is available, so it is harmless on headless CI without a GPU.
   #
   if(TARGET tusdview)
+    if(TARGET tusdview_lightrt_bridge_test)
+      add_test(
+        NAME tusdview-lightrt-bridge
+        COMMAND tusdview_lightrt_bridge_test
+      )
+      set_tests_properties(tusdview-lightrt-bridge PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_lightrt_mtlx_eval_test)
+      add_test(
+        NAME tusdview-lightrt-mtlx-eval
+        COMMAND tusdview_lightrt_mtlx_eval_test
+      )
+      set_tests_properties(tusdview-lightrt-mtlx-eval PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_openpbr_material_test)
+      add_test(
+        NAME tusdview-openpbr-material
+        COMMAND tusdview_openpbr_material_test
+      )
+      set_tests_properties(tusdview-openpbr-material PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_lighting_test)
+      add_test(
+        NAME tusdview-lighting
+        COMMAND tusdview_lighting_test
+      )
+      set_tests_properties(tusdview-lighting PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_geometry_primvar_test)
+      add_test(
+        NAME tusdview-geometry-primvar
+        COMMAND tusdview_geometry_primvar_test
+      )
+      set_tests_properties(tusdview-geometry-primvar PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_texture_pipeline_test)
+      add_test(
+        NAME tusdview-texture-pipeline
+        COMMAND tusdview_texture_pipeline_test
+      )
+      set_tests_properties(tusdview-texture-pipeline PROPERTIES
+        LABELS "viewer")
+    endif()
+
+    # tusdview: raster alpha-blending regression. Renders overlapping opaque +
+    # 50%-opacity planes on GL and Vulkan and asserts the overlap is blended
+    # (not the opaque-blue a non-blending forward renderer produced). SKIPs
+    # (return 77) without a GPU, so harmless on headless CI.
+    add_test(
+      NAME tusdview-transparency
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-transparency.sh
+    )
+    set_tests_properties(tusdview-transparency PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
     add_test(
       NAME tusdview-inst-morph-cull
       COMMAND bash
               ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-inst-morph-cull.sh
     )
     set_tests_properties(tusdview-inst-morph-cull PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    add_test(
+      NAME tusdview-instancer-invisible-ids
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-instancer-invisible-ids.sh
+    )
+    set_tests_properties(tusdview-instancer-invisible-ids PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    # tusdview: the DEFAULT (tydra) load path renders PointInstancer instances
+    # (RenderScene::instances -> DrawMeshCPU::instanceXforms). Guards against a
+    # regression to the pre-BuildDrawInstances behavior where only --next placed
+    # instances and the tydra path showed "instances 0/0". Also covers a
+    # referenced (composed) prototype and the instance-aware camera framing.
+    add_test(
+      NAME tusdview-tydra-pointinstancer
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-tydra-pointinstancer.sh
+    )
+    set_tests_properties(tusdview-tydra-pointinstancer PROPERTIES
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
@@ -2330,6 +2425,52 @@ if(TINYUSDZ_BUILD_TESTS)
       SKIP_RETURN_CODE 77
       LABELS "viewer")
 
+    # tusdview: CUDA AOV-mode smoke. Exercises the shared CUDA/HIP ray tracer
+    # through NVRTC across representative debug AOV branches. SKIPs (77) when
+    # CUDA is unavailable.
+    add_test(
+      NAME tusdview-cuda-aov
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cuda-aov.sh
+    )
+    set_tests_properties(tusdview-cuda-aov PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    # tusdview: external usd-assets smoke harness. This enumerates USD-family
+    # files under USD_ASSETS_ROOT and renders them through Vulkan raster, Vulkan
+    # ray query, and CUDA RT. It SKIPs unless USD_ASSETS_ROOT is set in the ctest
+    # environment, so normal CI does not depend on a local asset checkout.
+    add_test(
+      NAME tusdview-usd-assets-render-smoke
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
+    )
+    set_tests_properties(tusdview-usd-assets-render-smoke PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer;external-assets")
+
+    # tusdview: checked-in smoke render of a curated subset of the repo's own
+    # models/ across Vulkan raster, Vulkan ray query, and CUDA RT (no external
+    # asset checkout needed). Covers textured / skinned / blendshape / normal-map
+    # / NURBS / plain-geometry paths. Fails on load_error/timeout/backend_error
+    # (regressions loading or rendering the models), but treats backend_unavailable
+    # as a pass so it is a no-op on GPU-less CI. This is the guard that caught the
+    # CUDA rest-pose skinning regression.
+    add_test(
+      NAME tusdview-models-render-smoke
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
+    )
+    set_tests_properties(tusdview-models-render-smoke PROPERTIES
+      ENVIRONMENT
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;USD_ASSETS_ROOT=${PROJECT_SOURCE_DIR}/models;TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,cuda-rt;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=45s;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,no_renderable,rendered_with_warnings;TUSDVIEW_USD_ASSETS_FILES=texture-cat-plane.usdz uv-quad-textured.usda skintest.usda blendshape.usda mtlx-normalmap-cube.usda tusdview-nurbs-patch.usda tri-torus-shared-normal.usda tusdview-analytic-prims.usda tusdview-transparency.usda"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 600
+      LABELS "viewer")
+
     # tusdview: HIP/ROCm ray-tracing backend run test. Renders headless via --hip
     # (HIP runtime + hiprtc loaded at runtime through hipew; no link-time ROCm
     # toolkit) and asserts a non-blank frame. Needs a real AMD/ROCm device; SKIPs
@@ -2356,6 +2497,18 @@ if(TINYUSDZ_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-hip-aov.sh
     )
     set_tests_properties(tusdview-hip-aov PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    # tusdview: Vulkan ray-query AOV smoke. Requires an RT-capable Vulkan device;
+    # SKIPs (77) if --rt falls back to raster.
+    add_test(
+      NAME tusdview-vk-rt-aov
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-rt-aov.sh
+    )
+    set_tests_properties(tusdview-vk-rt-aov PROPERTIES
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
@@ -2491,6 +2644,27 @@ if(TINYUSDZ_BUILD_TESTS)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
+
+    add_test(
+      NAME tusdview-vk-rt-skinning-screenshot-diff
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/tusdview/compare-skinning-screenshots.py
+              --app "$<TARGET_FILE:tusdview>"
+              --model "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+              --out-dir "${CMAKE_BINARY_DIR}/Testing/tusdview-vk-rt-skinning"
+              --backend vk
+              --rt
+              --mode position
+              --headless
+              --skip-unavailable
+              --frames 4
+              --time 12
+              --max-mean 4.0
+              --max-pixel 180
+              --max-changed-ratio 0.35
+      )
+    set_tests_properties(tusdview-vk-rt-skinning-screenshot-diff PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
   endif()
 
   #

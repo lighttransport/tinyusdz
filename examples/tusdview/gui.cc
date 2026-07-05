@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -49,6 +50,35 @@ const char* NodeTypeName(tydra::NodeType t) {
     case tydra::NodeType::GeometryLight: return "GeometryLight";
     default: return "Node";
   }
+}
+
+const char* MaterialParamTypeName(DrawMaterialParamType t) {
+  switch (t) {
+    case DrawMaterialParamType::Float: return "float";
+    case DrawMaterialParamType::Vec2: return "vec2";
+    case DrawMaterialParamType::Vec3: return "vec3";
+    case DrawMaterialParamType::Vec4: return "vec4";
+    default: return "value";
+  }
+}
+
+const char* MaterialParamChannelName(int channel) {
+  switch (channel) {
+    case 0: return "R";
+    case 1: return "G";
+    case 2: return "B";
+    case 3: return "A";
+    default: return "-";
+  }
+}
+
+bool HasNonIdentityUvXform(const DrawUvXformCPU& uv) {
+  return std::fabs(uv.m00 - 1.0f) > 1.0e-6f ||
+         std::fabs(uv.m01) > 1.0e-6f ||
+         std::fabs(uv.m10) > 1.0e-6f ||
+         std::fabs(uv.m11 - 1.0f) > 1.0e-6f ||
+         std::fabs(uv.tx) > 1.0e-6f ||
+         std::fabs(uv.ty) > 1.0e-6f;
 }
 
 // Greyed, word-wrapped hint text (TextDisabled does not wrap and would clip in
@@ -426,7 +456,14 @@ void Gui::drawDockspaceAndMenu() {
   const ImGuiID dockId = ImGui::GetID("TusdviewDockspace");
   ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
   if (!dockBuilt_) {
-    buildDefaultLayout(dockId);
+    bool hasSavedIni = false;
+    if (const char* ini = ImGui::GetIO().IniFilename) {
+      std::error_code ec;
+      hasSavedIni = std::filesystem::is_regular_file(std::filesystem::path(ini), ec);
+    }
+    if (!hasSavedIni) {
+      buildDefaultLayout(dockId);
+    }
     dockBuilt_ = true;
   }
 
@@ -1837,6 +1874,10 @@ void Gui::drawCameraPanel() {
     if (ImGui::SliderFloat("Dolly sensitivity", &dolly, 0.1f, 4.0f, "%.2f")) {
       cam_->setDollySensitivity(dolly);
     }
+    bool legacyYaw = !cam_->invertYaw();
+    if (ImGui::Checkbox("Legacy yaw direction", &legacyYaw)) {
+      cam_->setInvertYaw(!legacyYaw);
+    }
     bool invert = cam_->invertDolly();
     if (ImGui::Checkbox("Invert dolly", &invert)) {
       cam_->setInvertDolly(invert);
@@ -1845,6 +1886,7 @@ void Gui::drawCameraPanel() {
       cam_->setOrbitSensitivity(1.0f);
       cam_->setPanSensitivity(1.0f);
       cam_->setDollySensitivity(1.0f);
+      cam_->setInvertYaw(true);
       cam_->setInvertDolly(false);
     }
     ImGui::SameLine();
@@ -1941,12 +1983,176 @@ void Gui::drawMaterialsPanel() {
         if (mat.alphaMode == static_cast<int>(AlphaMode::Mask)) {
           ImGui::Text("Alpha cutoff: %.3f", mat.alphaCutoff);
         }
+        if (mat.hasOpenPBRSurface) ImGui::TextUnformatted("Shader: OpenPBRSurface");
+        else if (mat.hasUsdPreviewSurface) ImGui::TextUnformatted("Shader: UsdPreviewSurface");
+        if (!mat.params.empty()) {
+          ImGui::Text("Shader inputs: %zu", mat.params.size());
+        }
+        if (mat.hasLightRtOpenPBR) {
+          ImGui::Text("LightRT flags: textures=%s normals=%s",
+                      mat.lightRtOpenPBR.hasTextureInputs ? "yes" : "no",
+                      mat.lightRtOpenPBR.hasNormalInput ? "yes" : "no");
+        }
         if (mat.baseColorTex >= 0) ImGui::Text("Base color tex: %d", mat.baseColorTex);
         if (mat.metalRoughTex >= 0) ImGui::Text("Metallic/roughness tex: %d", mat.metalRoughTex);
         if (mat.normalTex >= 0) ImGui::Text("Normal tex: %d", mat.normalTex);
+        if (mat.coatNormalTex >= 0) ImGui::Text("Coat normal tex: %d", mat.coatNormalTex);
         if (mat.emissiveTex >= 0) ImGui::Text("Emissive tex: %d", mat.emissiveTex);
+        if (!mat.params.empty() && ImGui::TreeNode("Shader inputs")) {
+          if (ImGui::BeginTable("##shader_inputs", 8,
+                                ImGuiTableFlags_BordersInnerV |
+                                    ImGuiTableFlags_RowBg |
+                                    ImGuiTableFlags_Resizable |
+                                    ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Shader");
+            ImGui::TableSetupColumn("Input");
+            ImGui::TableSetupColumn("Type");
+            ImGui::TableSetupColumn("Value");
+            ImGui::TableSetupColumn("Texture");
+            ImGui::TableSetupColumn("Channel");
+            ImGui::TableSetupColumn("Scale/Bias");
+            ImGui::TableSetupColumn("UV");
+            ImGui::TableHeadersRow();
+            for (const DrawMaterialParamCPU& param : mat.params) {
+              ImGui::TableNextRow();
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(param.shader.c_str());
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(param.name.c_str());
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(MaterialParamTypeName(param.type));
+              ImGui::TableNextColumn();
+              if (param.type == DrawMaterialParamType::Float) {
+                ImGui::Text("%.3f", param.value[0]);
+              } else if (param.type == DrawMaterialParamType::Vec2) {
+                ImGui::Text("%.3f %.3f", param.value[0], param.value[1]);
+              } else {
+                ImGui::Text("%.3f %.3f %.3f", param.value[0], param.value[1],
+                            param.value[2]);
+              }
+              ImGui::TableNextColumn();
+              if (param.texture >= 0) ImGui::Text("%d", param.texture);
+              else if (param.renderTexture >= 0) ImGui::Text("render:%d", param.renderTexture);
+              else ImGui::TextUnformatted("-");
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(MaterialParamChannelName(param.channel));
+              ImGui::TableNextColumn();
+              const bool hasScaleBias =
+                  std::fabs(param.sample.scale[0] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[1] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[2] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[3] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[0]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[1]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[2]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[3]) > 1.0e-6f;
+              if (hasScaleBias) {
+                ImGui::Text("%.2f %.2f %.2f %.2f / %.2f %.2f %.2f %.2f",
+                            param.sample.scale[0], param.sample.scale[1],
+                            param.sample.scale[2], param.sample.scale[3],
+                            param.sample.bias[0], param.sample.bias[1],
+                            param.sample.bias[2], param.sample.bias[3]);
+              } else {
+                ImGui::TextUnformatted("-");
+              }
+              ImGui::TableNextColumn();
+              if (HasNonIdentityUvXform(param.sample.uv)) {
+                ImGui::Text("%.2f %.2f %.2f / %.2f %.2f %.2f",
+                            param.sample.uv.m00, param.sample.uv.m01,
+                            param.sample.uv.tx, param.sample.uv.m10,
+                            param.sample.uv.m11, param.sample.uv.ty);
+              } else {
+                ImGui::TextUnformatted("-");
+              }
+            }
+            ImGui::EndTable();
+          }
+          ImGui::TreePop();
+        }
       }
       ImGui::PopID();
+    }
+    if (!draw_->textures.empty() &&
+        ImGui::CollapsingHeader("Texture Preview", ImGuiTreeNodeFlags_DefaultOpen)) {
+      const float thumb = 96.0f;
+      const float gap = ImGui::GetStyle().ItemSpacing.x;
+      const float avail = ImGui::GetContentRegionAvail().x;
+      int cols = static_cast<int>((avail + gap) / (thumb + gap));
+      if (cols < 1) cols = 1;
+      for (size_t ti = 0; ti < draw_->textures.size(); ++ti) {
+        if (ti > 0 && (static_cast<int>(ti) % cols) != 0) ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(ti));
+        ImGui::BeginGroup();
+        const DrawTextureCPU& tex = draw_->textures[ti];
+        const light3d::Image* img = &tex.image;
+        if (tex.isUdim && !tex.udimTiles.empty()) img = &tex.udimTiles[0].image;
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, ImVec2(p.x + thumb, p.y + thumb),
+                          IM_COL32(30, 30, 30, 255));
+        if (img && img->width > 0 && img->height > 0 && img->channels >= 4 &&
+            !img->data.empty()) {
+          const int cells = 32;
+          const float cell = thumb / static_cast<float>(cells);
+          for (int y = 0; y < cells; ++y) {
+            const int sy = (y * img->height) / cells;
+            for (int x = 0; x < cells; ++x) {
+              const int sx = (x * img->width) / cells;
+              const size_t off =
+                  (static_cast<size_t>(sy) * static_cast<size_t>(img->width) +
+                   static_cast<size_t>(sx)) *
+                  4u;
+              if (off + 3 >= img->data.size()) continue;
+              const ImU32 c = IM_COL32(img->data[off + 0], img->data[off + 1],
+                                       img->data[off + 2], img->data[off + 3]);
+              dl->AddRectFilled(ImVec2(p.x + x * cell, p.y + y * cell),
+                                ImVec2(p.x + (x + 1) * cell + 0.5f,
+                                       p.y + (y + 1) * cell + 0.5f),
+                                c);
+            }
+          }
+        }
+        dl->AddRect(p, ImVec2(p.x + thumb, p.y + thumb),
+                    IM_COL32(90, 90, 90, 255));
+        ImGui::Dummy(ImVec2(thumb, thumb));
+        ImGui::Text("#%zu %dx%d%s", ti, img ? img->width : 0, img ? img->height : 0,
+                    tex.isUdim ? " UDIM" : "");
+        if (tex.isUdim) {
+          ImGui::Text("tiles %zu", tex.udimTiles.size());
+        }
+        if (tex.renderUdimId >= 0) ImGui::Text("udim image set %d", tex.renderUdimId);
+        else if (tex.renderImageId >= 0) ImGui::Text("image %d", tex.renderImageId);
+        ImGui::Text("wrap %d/%d%s", tex.wrapS, tex.wrapT,
+                    tex.srgb ? " sRGB" : " raw");
+        if (!tex.assetIdentifier.empty()) {
+          std::string label = std::filesystem::path(tex.assetIdentifier).filename().string();
+          if (label.empty()) label = tex.assetIdentifier;
+          ImGui::TextWrapped("%s", label.c_str());
+          if (ImGui::IsItemHovered()) {
+            std::string tip = tex.assetIdentifier;
+            if (tex.isUdim && !tex.udimTiles.empty()) {
+              tip += "\n";
+              const size_t n = std::min<size_t>(tex.udimTiles.size(), 8);
+              for (size_t ui = 0; ui < n; ++ui) {
+                const DrawUdimTileCPU& tile = tex.udimTiles[ui];
+                tip += std::to_string(tile.udim) + " image " +
+                       std::to_string(tile.renderImageId);
+                if (!tile.assetIdentifier.empty()) {
+                  tip += " ";
+                  tip += tile.assetIdentifier;
+                }
+                tip += "\n";
+              }
+              if (tex.udimTiles.size() > n) {
+                tip += "...";
+              }
+            }
+            ImGui::SetTooltip("%s", tip.c_str());
+          }
+        }
+        ImGui::EndGroup();
+        ImGui::PopID();
+      }
     }
   } else {
     ImGui::TextDisabled("No materials loaded.");
@@ -3115,10 +3321,32 @@ void Gui::drawViewport() {
     // samples out-of-bounds -> GPU fault / device loss (VK). Skip it until it's ready.
     if (tex) ImGui::Image(tex, avail, uv0, uv1);
     else ImGui::Dummy(avail);
-    vpHovered_ = ImGui::IsItemHovered();
-    handleNavigation();
+    const bool imageHovered = ImGui::IsItemHovered();
     const ImVec2 imageMin = ImGui::GetItemRectMin();
     const ImVec2 imageMax = ImGui::GetItemRectMax();
+    bool navButtonHovered = false;
+    {
+      const float buttonSize = ImGui::GetFrameHeight();
+      ImGui::SetCursorScreenPos(ImVec2(imageMax.x - buttonSize - 8.0f,
+                                       imageMin.y + 8.0f));
+      ImGui::PushID("viewport_nav_help");
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+      ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(18, 20, 24, 180));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(42, 48, 58, 220));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(64, 72, 86, 240));
+      if (ImGui::Button("?", ImVec2(buttonSize, buttonSize))) {
+        showNavHelp_ = !showNavHelp_;
+      }
+      navButtonHovered = ImGui::IsItemHovered();
+      if (navButtonHovered) {
+        ImGui::SetTooltip("Viewport navigation");
+      }
+      ImGui::PopStyleColor(3);
+      ImGui::PopStyleVar();
+      ImGui::PopID();
+    }
+    vpHovered_ = imageHovered && !navButtonHovered;
+    handleNavigation();
     drawNavigationOverlay(imageMin, imageMax);
 
     // Prim path labels overlay
@@ -3344,6 +3572,12 @@ void Gui::renderViewportScene(FramePacket* packet) {
       p.sceneExtent[i] = std::max(1e-4f, draw_->aabbMax[i] - draw_->aabbMin[i]);
     }
   }
+  if (draw_ && draw_->hasPreviewLight) {
+    for (int i = 0; i < 3; ++i) {
+      p.lightDir[i] = draw_->previewLightDir[i];
+      p.lightColor[i] = draw_->previewLightColor[i];
+    }
+  }
   // Per-phase frame timing (TUSDVIEW_TIME_FRAME): isolates where a heavy scene
   // spends its frame -- instance cull/upload (CPU + GPU upload) vs renderFrame
   // (GPU draw submission). The GPU rasterisation itself lands largely in present()
@@ -3386,6 +3620,10 @@ void Gui::renderViewportScene(FramePacket* packet) {
   packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
   packet->mode = p.mode;
   for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
+  for (int i = 0; i < 3; ++i) {
+    packet->lightDir[i] = p.lightDir[i];
+    packet->lightColor[i] = p.lightColor[i];
+  }
   packet->depthScale = p.depthScale;
   for (int i = 0; i < 3; ++i) { packet->sceneMin[i] = p.sceneMin[i]; packet->sceneExtent[i] = p.sceneExtent[i]; }
   packet->highlightMeshIndex = p.highlightMeshIndex;

@@ -68,6 +68,23 @@ bool BuildGpuSkinningFrame(
     const tinyusdz::tydra::RenderScene& render, DrawScene* draw, double timecode,
     SkinningFrameCPU* frame, bool updateSkinnedHelpers);
 
+struct RtSkinnedMeshUpload {
+  int meshIndex{-1};
+  std::vector<DrawVertex> vertices;
+};
+
+// Ray-query RT cannot use the raster vertex shader's morph/skinning path: the
+// BLAS is built from actual vertex buffers. Build per-mesh posed DrawVertex
+// buffers from the retained rest DrawScene so the renderer can update the VBO and
+// rebuild the acceleration structure without re-running Tydra conversion.
+bool BuildRtSkinnedMeshVertices(
+    const tinyusdz::Stage& stage,
+    const tinyusdz::tydra::RenderScene& render, DrawScene* draw,
+    double timecode,
+    const std::unordered_map<std::string, float>* blendOverride,
+    bool updateSkinnedHelpers,
+    std::vector<RtSkinnedMeshUpload>* outUploads);
+
 // Update each draw mesh's world transform to its value at `timecode`, evaluated
 // from the Stage's xform hierarchy. For scenes whose node transforms animate
 // alongside GPU skeletal skinning (e.g. a moving SkelRoot), this poses node

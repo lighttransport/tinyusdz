@@ -326,7 +326,7 @@ class Gui {
   bool showPurposeRender_{true};
   bool showPurposeProxy_{true};
   bool showPurposeGuide_{false};
-  bool showNavHelp_{true};
+  bool showNavHelp_{false};
   bool showAbout_{false};
   bool cullEnabled_{true};  // per-mesh + per-instance frustum culling (View menu)
   // Per-frame render stats (computed in buildViewVisibilityMask + the per-instance

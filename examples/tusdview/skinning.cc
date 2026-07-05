@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "displacement_bake.hh"
 #include "tydra/scene-access.hh"  // SkinPointsLBS, ConcatJointTransforms, ListPrims
 #include "usdSkel.hh"             // SkelAnimation
 #include "xform.hh"               // inverse, to_matrix
@@ -442,6 +443,244 @@ void TransformPointWorld(const float m[16], const point3f& p, float out[3]) {
   out[2] = m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14];
 }
 
+bool BuildComposedSkinningMatrices(
+    const tydra::RenderScene& render, const DrawMeshCPU& dm, double timecode,
+    std::unordered_map<int, std::vector<matrix4d>>* skinCache,
+    std::vector<matrix4d>* composed) {
+  if (!skinCache || !composed || dm.skelId < 0 || dm.skinMatrixBase < 0) {
+    return false;
+  }
+  if (dm.skelId >= static_cast<int>(render.skeletons.size())) return false;
+  auto cit = skinCache->find(dm.skelId);
+  if (cit == skinCache->end()) {
+    std::vector<matrix4d> sm;
+    if (!BuildSkinningMatrices(render, dm.skelId, timecode, &sm)) return false;
+    cit = skinCache->emplace(dm.skelId, std::move(sm)).first;
+  }
+  const matrix4d geomBind = MatrixFromDraw(dm.skinGeomBind);
+  const matrix4d invGeomBind = tinyusdz::inverse(geomBind);
+  composed->clear();
+  composed->reserve(cit->second.size());
+  for (const matrix4d& m : cit->second) {
+    composed->push_back(geomBind * m * invGeomBind);
+  }
+  return !composed->empty();
+}
+
+bool ApplyMorphTargetsToVertices(
+    const DrawMeshCPU& dm,
+    const std::unordered_map<std::string, float>& blendWeights,
+    std::vector<DrawVertex>* verts) {
+  if (!verts || dm.morphs.empty()) return false;
+  bool touched = false;
+  for (const MorphTargetCPU& mt : dm.morphs) {
+    auto wit = blendWeights.find(mt.name);
+    if (wit == blendWeights.end() || wit->second == 0.0f) continue;
+    std::vector<float> ibW;
+    ibW.reserve(mt.inbetweens.size());
+    for (const MorphInbetweenCPU& ib : mt.inbetweens) ibW.push_back(ib.weight);
+    const MorphBracket br = FindMorphBracket(ibW, wit->second);
+    const int last = static_cast<int>(mt.inbetweens.size()) + 1;
+    auto offsetAt = [&](int si, size_t k, float out[3]) {
+      out[0] = out[1] = out[2] = 0.0f;
+      if (si == 0) return;
+      const std::vector<float>* src = nullptr;
+      if (si == last) {
+        src = &mt.dpos;
+      } else {
+        const size_t ib = static_cast<size_t>(si - 1);
+        if (ib < mt.inbetweens.size()) src = &mt.inbetweens[ib].dpos;
+      }
+      if (!src || k * 3 + 2 >= src->size()) return;
+      out[0] = (*src)[k * 3 + 0];
+      out[1] = (*src)[k * 3 + 1];
+      out[2] = (*src)[k * 3 + 2];
+    };
+    for (size_t k = 0; k < mt.vtx.size(); ++k) {
+      const uint32_t vi = mt.vtx[k];
+      if (vi >= verts->size()) continue;
+      float lo[3], hi[3];
+      offsetAt(br.lo, k, lo);
+      offsetAt(br.hi, k, hi);
+      DrawVertex& v = (*verts)[vi];
+      v.px += lo[0] + (hi[0] - lo[0]) * br.t;
+      v.py += lo[1] + (hi[1] - lo[1]) * br.t;
+      v.pz += lo[2] + (hi[2] - lo[2]) * br.t;
+      touched = true;
+    }
+  }
+  return touched;
+}
+
+bool ApplySkinningToVertices(const DrawMeshCPU& dm,
+                             const std::vector<matrix4d>& mats,
+                             std::vector<DrawVertex>* verts) {
+  if (!verts || mats.empty()) return false;
+  const bool skinned =
+      dm.skelId >= 0 && dm.skinMatrixBase >= 0 &&
+      dm.jointIdx.size() == verts->size() * 4 &&
+      dm.jointWt.size() == verts->size() * 4;
+  const bool extendedSkinned =
+      skinned && dm.influenceOffsetCount.size() == verts->size() * 2 &&
+      !dm.influenceTexels.empty() && dm.influenceTexels.size() % 4 == 0;
+  if (!skinned && !extendedSkinned) return false;
+
+  for (size_t vi = 0; vi < verts->size(); ++vi) {
+    const DrawVertex& in = (*verts)[vi];
+    const point3f p{in.px, in.py, in.pz};
+    point3f acc{0.0f, 0.0f, 0.0f};
+    float sum = 0.0f;
+    if (extendedSkinned) {
+      const uint32_t offset = dm.influenceOffsetCount[vi * 2 + 0];
+      const uint32_t count = dm.influenceOffsetCount[vi * 2 + 1];
+      const size_t texelCount = dm.influenceTexels.size() / 4;
+      for (uint32_t k = 0; k < count; ++k) {
+        const size_t texel = static_cast<size_t>(offset) + k;
+        if (texel >= texelCount) break;
+        const size_t base = texel * 4;
+        const float w = dm.influenceTexels[base + 1];
+        if (w <= 0.0f) continue;
+        const uint32_t absIdx =
+            static_cast<uint32_t>(std::max(0.0f, dm.influenceTexels[base] + 0.5f));
+        if (absIdx < static_cast<uint32_t>(dm.skinMatrixBase)) continue;
+        const size_t localIdx = static_cast<size_t>(absIdx - dm.skinMatrixBase);
+        if (localIdx >= mats.size()) continue;
+        const point3f q = TransformPointRow(p, mats[localIdx]);
+        acc.x += q.x * w;
+        acc.y += q.y * w;
+        acc.z += q.z * w;
+        sum += w;
+      }
+    } else {
+      for (size_t k = 0; k < 4; ++k) {
+        const float w = dm.jointWt[vi * 4 + k];
+        if (w <= 0.0f) continue;
+        const uint32_t absIdx = dm.jointIdx[vi * 4 + k];
+        if (absIdx < static_cast<uint32_t>(dm.skinMatrixBase)) continue;
+        const size_t localIdx = static_cast<size_t>(absIdx - dm.skinMatrixBase);
+        if (localIdx >= mats.size()) continue;
+        const point3f q = TransformPointRow(p, mats[localIdx]);
+        acc.x += q.x * w;
+        acc.y += q.y * w;
+        acc.z += q.z * w;
+        sum += w;
+      }
+    }
+    if (sum > 0.0f) {
+      DrawVertex& out = (*verts)[vi];
+      out.px = acc.x;
+      out.py = acc.y;
+      out.pz = acc.z;
+    }
+  }
+  return true;
+}
+
+void RecomputeSmoothNormals(std::vector<DrawVertex>* verts,
+                            const std::vector<uint32_t>& indices,
+                            float normalSign) {
+  if (!verts || verts->empty()) return;
+  for (DrawVertex& v : *verts) v.nx = v.ny = v.nz = 0.0f;
+  for (size_t t = 0; t + 2 < indices.size(); t += 3) {
+    const uint32_t ia = indices[t + 0], ib = indices[t + 1], ic = indices[t + 2];
+    if (ia >= verts->size() || ib >= verts->size() || ic >= verts->size()) continue;
+    const DrawVertex& a = (*verts)[ia];
+    const DrawVertex& b = (*verts)[ib];
+    const DrawVertex& c = (*verts)[ic];
+    const float e1x = b.px - a.px, e1y = b.py - a.py, e1z = b.pz - a.pz;
+    const float e2x = c.px - a.px, e2y = c.py - a.py, e2z = c.pz - a.pz;
+    const float nx = (e1y * e2z - e1z * e2y) * normalSign;
+    const float ny = (e1z * e2x - e1x * e2z) * normalSign;
+    const float nz = (e1x * e2y - e1y * e2x) * normalSign;
+    DrawVertex* tri[3] = {&(*verts)[ia], &(*verts)[ib], &(*verts)[ic]};
+    for (DrawVertex* v : tri) {
+      v->nx += nx;
+      v->ny += ny;
+      v->nz += nz;
+    }
+  }
+  for (DrawVertex& v : *verts) {
+    const float len = std::sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+    if (len > 1e-12f) {
+      const float inv = 1.0f / len;
+      v.nx *= inv;
+      v.ny *= inv;
+      v.nz *= inv;
+    }
+  }
+}
+
+void UpdateMeshBoundsFromVertices(DrawMeshCPU* dm,
+                                  const std::vector<DrawVertex>& verts,
+                                  bool updateSkinnedHelpers) {
+  if (!dm) return;
+  bool first = true;
+  float mn[3] = {std::numeric_limits<float>::max(),
+                 std::numeric_limits<float>::max(),
+                 std::numeric_limits<float>::max()};
+  float mx[3] = {-std::numeric_limits<float>::max(),
+                 -std::numeric_limits<float>::max(),
+                 -std::numeric_limits<float>::max()};
+  const size_t sampleStep =
+      updateSkinnedHelpers && verts.size() > 8192
+          ? (verts.size() + 8191) / 8192
+          : 1;
+  dm->skinnedHelperPoints.clear();
+  if (updateSkinnedHelpers && dm->skelId >= 0) {
+    dm->skinnedHelperPoints.reserve(((verts.size() + sampleStep - 1) / sampleStep) * 3);
+  }
+  for (size_t vi = 0; vi < verts.size(); ++vi) {
+    const point3f local{verts[vi].px, verts[vi].py, verts[vi].pz};
+    if (updateSkinnedHelpers && dm->skelId >= 0 && (vi % sampleStep) == 0) {
+      dm->skinnedHelperPoints.push_back(local.x);
+      dm->skinnedHelperPoints.push_back(local.y);
+      dm->skinnedHelperPoints.push_back(local.z);
+    }
+    float w[3];
+    TransformPointWorld(dm->world, local, w);
+    for (int c = 0; c < 3; ++c) {
+      mn[c] = std::min(mn[c], w[c]);
+      mx[c] = std::max(mx[c], w[c]);
+    }
+    first = false;
+  }
+  if (!first) {
+    for (int c = 0; c < 3; ++c) {
+      dm->aabbMin[c] = mn[c];
+      dm->aabbMax[c] = mx[c];
+    }
+  }
+}
+
+void RecomputeDrawSceneBounds(DrawScene* draw) {
+  if (!draw) return;
+  bool first = true;
+  float mn[3] = {std::numeric_limits<float>::max(),
+                 std::numeric_limits<float>::max(),
+                 std::numeric_limits<float>::max()};
+  float mx[3] = {-std::numeric_limits<float>::max(),
+                 -std::numeric_limits<float>::max(),
+                 -std::numeric_limits<float>::max()};
+  for (const DrawMeshCPU& dm : draw->meshes) {
+    if (dm.aabbMin[0] > dm.aabbMax[0] || dm.aabbMin[1] > dm.aabbMax[1] ||
+        dm.aabbMin[2] > dm.aabbMax[2]) {
+      continue;
+    }
+    for (int c = 0; c < 3; ++c) {
+      mn[c] = std::min(mn[c], dm.aabbMin[c]);
+      mx[c] = std::max(mx[c], dm.aabbMax[c]);
+    }
+    first = false;
+  }
+  draw->hasBounds = !first;
+  if (draw->hasBounds) {
+    for (int c = 0; c < 3; ++c) {
+      draw->aabbMin[c] = mn[c];
+      draw->aabbMax[c] = mx[c];
+    }
+  }
+}
+
 
 }  // namespace
 
@@ -680,6 +919,66 @@ bool BuildGpuSkinningFrame(
       draw->aabbMax[c] = sceneMx[c];
     }
   }
+  return true;
+}
+
+bool BuildRtSkinnedMeshVertices(
+    const tinyusdz::Stage& stage, const tydra::RenderScene& render,
+    DrawScene* draw, double timecode,
+    const std::unordered_map<std::string, float>* blendOverride,
+    bool updateSkinnedHelpers,
+    std::vector<RtSkinnedMeshUpload>* outUploads) {
+  if (!draw || !outUploads) return false;
+  outUploads->clear();
+  if (draw->meshes.empty()) return true;
+
+  std::unordered_map<std::string, float> blendWeights =
+      GatherBlendWeights(stage, timecode);
+  if (blendOverride) {
+    for (const auto& kv : *blendOverride) blendWeights[kv.first] = kv.second;
+  }
+
+  std::unordered_map<int, std::vector<matrix4d>> skinCache;
+  std::vector<matrix4d> composed;
+  bool anyBoundsChanged = false;
+
+  for (size_t mi = 0; mi < draw->meshes.size(); ++mi) {
+    DrawMeshCPU& dm = draw->meshes[mi];
+    const bool hasMorph = !dm.morphs.empty();
+    const bool hasSkinAttrs =
+        dm.skelId >= 0 && dm.skinMatrixBase >= 0 &&
+        dm.jointIdx.size() == dm.vertices.size() * 4 &&
+        dm.jointWt.size() == dm.vertices.size() * 4;
+    if (!hasMorph && !hasSkinAttrs) continue;
+
+    std::vector<DrawVertex> verts = dm.vertices;
+    bool deformed = false;
+    if (hasMorph) {
+      ApplyMorphTargetsToVertices(dm, blendWeights, &verts);
+      deformed = true;  // upload rest pose too so stale morphs can be cleared.
+    }
+    if (hasSkinAttrs &&
+        BuildComposedSkinningMatrices(render, dm, timecode, &skinCache, &composed)) {
+      if (ApplySkinningToVertices(dm, composed, &verts)) deformed = true;
+    }
+    if (!deformed) continue;
+
+    if (!dm.geometricNormal) RecomputeSmoothNormals(&verts, dm.indices, dm.normalSign);
+    UpdateMeshBoundsFromVertices(&dm, verts, updateSkinnedHelpers);
+    anyBoundsChanged = true;
+
+    RtSkinnedMeshUpload upload;
+    upload.meshIndex = static_cast<int>(mi);
+    DrawMeshCPU displacedMesh = dm;
+    displacedMesh.vertices = verts;
+    if (!BakeDisplacedVertices(*draw, displacedMesh, /*globalScale=*/1.0f,
+                               &upload.vertices)) {
+      upload.vertices = std::move(verts);
+    }
+    outUploads->push_back(std::move(upload));
+  }
+
+  if (anyBoundsChanged) RecomputeDrawSceneBounds(draw);
   return true;
 }
 

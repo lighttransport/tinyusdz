@@ -8,10 +8,16 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <map>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
+#include <utility>
 
 #include <unistd.h>  // sysconf (RSS page size for the post-RT-build free log)
 
@@ -44,6 +50,30 @@ void GlfwErrorCallback(int code, const char* desc) {
 constexpr int kBaseWindowWidth = 1280;
 constexpr int kBaseWindowHeight = 800;
 constexpr int kMaxGpuTextureInfluences = 256;
+constexpr float kPi = 3.14159265358979323846f;
+constexpr float kDeg2Rad = kPi / 180.0f;
+
+struct AutoSubdivisionView {
+  float fovYDeg{60.0f};
+  float aspect{1.3333f};
+  float yaw{0.6f};
+  float pitch{0.35f};
+  float quality{1.0f};
+  float camDolly{1.0f};
+  int viewportHeight{kBaseWindowHeight};
+};
+
+void CopyPreviewLightDir(const DrawScene& draw, float out[3]) {
+  if (draw.hasPreviewLight) {
+    out[0] = draw.previewLightDir[0];
+    out[1] = draw.previewLightDir[1];
+    out[2] = draw.previewLightDir[2];
+  } else {
+    out[0] = 0.40160966f;
+    out[1] = 0.64257544f;
+    out[2] = 0.48193160f;
+  }
+}
 
 // Write top-down RGBA8 rows as a binary PPM (RGB).
 void WritePPM(const std::string& path, const std::vector<uint8_t>& rgba, int w, int h) {
@@ -69,6 +99,175 @@ std::string LowerExtension(const std::string& path) {
     return static_cast<char>(std::tolower(c));
   });
   return ext;
+}
+
+light3d::Vec3 DirFromAngles(float yaw, float pitch, int upAxis) {
+  const float cp = std::cos(pitch);
+  const float sp = std::sin(pitch);
+  const float sy = std::sin(yaw);
+  const float cy = std::cos(yaw);
+  if (upAxis == 2) {
+    return light3d::Vec3{sy * cp, cy * cp, sp};
+  }
+  return light3d::Vec3{sy * cp, sp, cy * cp};
+}
+
+bool ValidAabb(const float mn[3], const float mx[3]) {
+  for (int a = 0; a < 3; ++a) {
+    if (!std::isfinite(mn[a]) || !std::isfinite(mx[a]) || mx[a] < mn[a]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool AutoSubdivisionFitBounds(const DrawScene& draw, float fitMin[3],
+                              float fitMax[3]) {
+  float ngMin[3] = {1e30f, 1e30f, 1e30f};
+  float ngMax[3] = {-1e30f, -1e30f, -1e30f};
+  bool ngValid = false;
+  for (const DrawMeshCPU& m : draw.meshes) {
+    if (m.purpose == "guide") continue;
+    if (!ValidAabb(m.aabbMin, m.aabbMax)) continue;
+    for (int a = 0; a < 3; ++a) {
+      ngMin[a] = std::min(ngMin[a], m.aabbMin[a]);
+      ngMax[a] = std::max(ngMax[a], m.aabbMax[a]);
+    }
+    ngValid = true;
+  }
+  if (ngValid) {
+    for (int a = 0; a < 3; ++a) {
+      fitMin[a] = ngMin[a];
+      fitMax[a] = ngMax[a];
+    }
+    return true;
+  }
+  if (draw.hasBounds && ValidAabb(draw.aabbMin, draw.aabbMax)) {
+    for (int a = 0; a < 3; ++a) {
+      fitMin[a] = draw.aabbMin[a];
+      fitMax[a] = draw.aabbMax[a];
+    }
+    return true;
+  }
+  return false;
+}
+
+int AutoSubdivisionLevel(float projectedRadiusPx, int maxLevel) {
+  if (!(projectedRadiusPx > 64.0f)) return 0;
+  int level = 1;
+  if (projectedRadiusPx > 160.0f) level = 2;
+  if (projectedRadiusPx > 360.0f) level = 3;
+  if (projectedRadiusPx > 800.0f) level = 4;
+  if (projectedRadiusPx > 1600.0f) level = 5;
+  if (projectedRadiusPx > 3200.0f) level = 6;
+  return std::min(level, std::max(0, maxLevel));
+}
+
+bool EstimateAutoSubdivisionLevels(
+    const DrawScene& draw, const AutoSubdivisionView& view, int sceneLevel,
+    int maxLevel, const std::map<std::string, int>& explicitPrimLevels,
+    std::map<std::string, int>* autoPrimLevels) {
+  if (!autoPrimLevels) return false;
+  autoPrimLevels->clear();
+  maxLevel = std::max(0, std::min(maxLevel, 10));
+  if (maxLevel <= 0 || draw.meshes.empty()) return false;
+
+  float fitMin[3], fitMax[3];
+  if (!AutoSubdivisionFitBounds(draw, fitMin, fitMax)) return false;
+
+  const float cx = 0.5f * (fitMin[0] + fitMax[0]);
+  const float cy = 0.5f * (fitMin[1] + fitMax[1]);
+  const float cz = 0.5f * (fitMin[2] + fitMax[2]);
+  const float dx = fitMax[0] - fitMin[0];
+  const float dy = fitMax[1] - fitMin[1];
+  const float dz = fitMax[2] - fitMin[2];
+  float sceneRadius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+  if (!(sceneRadius > 1e-4f)) sceneRadius = 1.0f;
+
+  const float fovYDeg = std::max(5.0f, std::min(175.0f, view.fovYDeg));
+  const float halfV = 0.5f * fovYDeg * kDeg2Rad;
+  const float aspect = std::max(0.05f, view.aspect);
+  const float halfH = std::atan(std::tan(halfV) * aspect);
+  const float halfMin = std::max(1e-3f, std::min(halfV, halfH));
+  float fitDistance = (sceneRadius / std::sin(halfMin)) * 1.1f;
+  if (view.camDolly > 0.0f) fitDistance *= view.camDolly;
+
+  const int upAxis = (draw.upAxis == "Z") ? 2 : 1;
+  const light3d::Vec3 eye =
+      light3d::Vec3{cx, cy, cz} + DirFromAngles(view.yaw, view.pitch, upAxis) *
+                                      std::max(fitDistance, 1e-3f);
+  const float viewportH =
+      static_cast<float>(std::max(1, view.viewportHeight));
+  const float pixelScale = viewportH / (2.0f * std::tan(halfV));
+  const float quality = std::max(0.25f, view.quality);
+
+  for (const DrawMeshCPU& m : draw.meshes) {
+    if (m.absPath.empty() || m.purpose == "guide") continue;
+    if (explicitPrimLevels.find(m.absPath) != explicitPrimLevels.end()) continue;
+    if (!ValidAabb(m.aabbMin, m.aabbMax)) continue;
+
+    const float mx = 0.5f * (m.aabbMin[0] + m.aabbMax[0]);
+    const float my = 0.5f * (m.aabbMin[1] + m.aabbMax[1]);
+    const float mz = 0.5f * (m.aabbMin[2] + m.aabbMax[2]);
+    const float mdx = m.aabbMax[0] - m.aabbMin[0];
+    const float mdy = m.aabbMax[1] - m.aabbMin[1];
+    const float mdz = m.aabbMax[2] - m.aabbMin[2];
+    const float radius = 0.5f * std::sqrt(mdx * mdx + mdy * mdy + mdz * mdz);
+    if (!(radius > 1e-6f)) continue;
+    const light3d::Vec3 center{mx, my, mz};
+    const float centerDist = light3d::length(center - eye);
+    const float dist = std::max(1e-3f, centerDist - radius);
+    const float projectedRadiusPx = (radius * pixelScale / dist) * quality;
+    const int level = AutoSubdivisionLevel(projectedRadiusPx, maxLevel);
+    if (level > std::max(0, sceneLevel)) {
+      (*autoPrimLevels)[m.absPath] = level;
+    }
+  }
+  return !autoPrimLevels->empty();
+}
+
+bool LoadUsdMaybeAutoSubdivision(
+    const std::string& path, LoadOptions opts, LoadedScene* out, DrawScene* draw,
+    bool rtPath, LoadControl* ctrl, const AutoSubdivisionView& view) {
+  bool ok = LoadUSD(path, opts, out, draw, rtPath, ctrl);
+  if (!ok || !draw || !opts.subdivisionAuto || (ctrl && ctrl->cancel.load())) {
+    return ok;
+  }
+
+  std::map<std::string, int> autoPrimLevels;
+  if (!EstimateAutoSubdivisionLevels(*draw, view, opts.subdivisionLevel,
+                                     opts.subdivisionAutoMaxLevel,
+                                     opts.subdivisionPrimLevels,
+                                     &autoPrimLevels)) {
+    return ok;
+  }
+
+  LoadOptions refinedOpts = opts;
+  refinedOpts.subdivisionAuto = false;
+  for (const auto& kv : autoPrimLevels) {
+    refinedOpts.subdivisionPrimLevels.emplace(kv.first, kv.second);
+  }
+
+  int maxApplied = 0;
+  for (const auto& kv : refinedOpts.subdivisionPrimLevels) {
+    maxApplied = std::max(maxApplied, kv.second);
+  }
+  LOGI("auto subdivision: %zu prim override(s), max level %d",
+       autoPrimLevels.size(), maxApplied);
+
+  LoadedScene refined;
+  DrawScene refinedDraw;
+  if (LoadUSD(path, refinedOpts, &refined, &refinedDraw, rtPath, ctrl)) {
+    *out = std::move(refined);
+    *draw = std::move(refinedDraw);
+    return true;
+  }
+
+  if (!refined.err.empty()) {
+    out->warn += "Auto subdivision retry failed; using base mesh: " +
+                 refined.err + "\n";
+  }
+  return ok;
 }
 }  // anonymous namespace
 
@@ -225,7 +424,30 @@ bool App::initImGui(std::string* err) {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-  io.IniFilename = nullptr;  // don't litter imgui.ini next to the binary
+  imguiIniPath_.clear();
+  std::optional<std::filesystem::path> iniPath;
+  if (!configPath_.empty()) {
+    iniPath = configPath_.parent_path() / "imgui.ini";
+  } else {
+    iniPath = DefaultImGuiIniPath();
+  }
+  if (iniPath) {
+    std::error_code ec;
+    const std::filesystem::path dir = iniPath->parent_path();
+    if (!dir.empty()) {
+      std::filesystem::create_directories(dir, ec);
+    }
+    if (ec) {
+      LOGW("could not create ImGui state directory %s: %s", dir.string().c_str(),
+           ec.message().c_str());
+      io.IniFilename = nullptr;
+    } else {
+      imguiIniPath_ = iniPath->string();
+      io.IniFilename = imguiIniPath_.c_str();
+    }
+  } else {
+    io.IniFilename = nullptr;
+  }
 
   // HiDPI: load Cascadia Mono at a scaled pixel size and scale widget metrics
   // so the UI is readable on 4K panels. Baking the scale into the font size
@@ -426,6 +648,7 @@ void App::applyLoaded(bool ok, bool progressive) {
     // the next frames (stepProgressiveUpload) so geometry pops in and the UI
     // stays at frame rate instead of stalling on one big upload.
     renderer_->beginScene(draw_.materials, static_cast<int>(draw_.textures.size()));
+    renderer_->setLights(draw_.lights);
     progressiveActive_ = true;
     LOGI("loaded %s: %zu mesh(es), %zu tri(s)%s; streaming to GPU...",
          loaded_.filepath.c_str(), draw_.meshes.size(), draw_.triangleCount,
@@ -531,6 +754,9 @@ void App::applyLoaded(bool ok, bool progressive) {
               !std::isfinite(m.aabbMax[a])) { good = false; break; }
         }
         if (!good) continue;
+        // Instanced prototypes carry world-space bounds in aabbMin/aabbMax (set
+        // by BuildDrawInstances / the next loader), so no per-instance expansion
+        // is needed here.
         for (int a = 0; a < 3; ++a) {
           ngMin[a] = std::min(ngMin[a], m.aabbMin[a]);
           ngMax[a] = std::max(ngMax[a], m.aabbMax[a]);
@@ -650,15 +876,28 @@ void App::loadFileBlocking(const std::string& path) {
   const bool gpuRestLoad = std::isfinite(loadOpts_.timecode) &&
                            skinningRequested_ == SkinningMode::GPU;
   if (gpuRestLoad) opts.timecode = std::numeric_limits<double>::quiet_NaN();
+  int autoW = 0, autoH = 0;
+  getRequestedWindowSize(&autoW, &autoH);
+  const AutoSubdivisionView autoSubdivView{
+      camera_.fovYDeg(),
+      autoH > 0 ? static_cast<float>(std::max(1, autoW)) /
+                      static_cast<float>(autoH)
+                : camera_.aspect(),
+      camera_.yaw(),
+      camera_.pitch(),
+      tessQuality_,
+      camDolly_,
+      std::max(1, autoH)};
   // Streaming convert+build in one pass (also fully populates tmp.render).
-  bool ok = LoadUSD(path, opts, &tmp, &drawTmp, rtPath_, &loadCtrl_);
+  bool ok = LoadUsdMaybeAutoSubdivision(path, opts, &tmp, &drawTmp, rtPath_,
+                                        &loadCtrl_, autoSubdivView);
   if (ok && gpuRestLoad) {
     const bool skeletal = SceneHasSkeletalSkinning(tmp.render);
     const bool morph = SceneHasBlendShapes(tmp.render);
     const int maxInfluences = MaxSkinInfluenceCount(tmp.render);
     const bool gpuEligible =
         renderer_ && renderer_->caps().supportsGpuSkinning &&
-        !renderer_->rayTracingActive() && (skeletal || morph) &&
+        (skeletal || morph) &&
         (!skeletal || (drawTmp.boneMatrixCount > 0 &&
                        (maxInfluences <= 4 ||
                         (renderer_->caps().supportsExtendedGpuSkinning &&
@@ -726,7 +965,20 @@ void App::startLoadAsync(const std::string& path) {
     opts.timecode = std::numeric_limits<double>::quiet_NaN();
   }
   const bool useNext = useNextLoader_;
-  loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext]() {
+  int autoW = 0, autoH = 0;
+  getRequestedWindowSize(&autoW, &autoH);
+  const AutoSubdivisionView autoSubdivView{
+      camera_.fovYDeg(),
+      autoH > 0 ? static_cast<float>(std::max(1, autoW)) /
+                      static_cast<float>(autoH)
+                : camera_.aspect(),
+      camera_.yaw(),
+      camera_.pitch(),
+      tessQuality_,
+      camDolly_,
+      std::max(1, autoH)};
+  loadThread_ = std::thread([this, path, opts, lp, dp, rt, useNext,
+                             autoSubdivView]() {
     if (useNext) {
       lp->ok = LoadUSDViaNext(path, opts, dp, &lp->warn, &lp->err, &loadCtrl_,
                               &pendingNextStage_);
@@ -745,7 +997,8 @@ void App::startLoadAsync(const std::string& path) {
         }
       }
     } else {
-      LoadUSD(path, opts, lp, dp, rt, &loadCtrl_);
+      LoadUsdMaybeAutoSubdivision(path, opts, lp, dp, rt, &loadCtrl_,
+                                  autoSubdivView);
     }
     loadFinished_.store(true, std::memory_order_release);
   });
@@ -861,14 +1114,21 @@ void App::updateSkinningEffective() {
     skinningReason_ = "GPU skinning unsupported by renderer";
     return;
   }
-  if (renderer_->rayTracingActive()) {
-    skinningReason_ = "ray tracing uses CPU-skinned BLAS geometry";
-    return;
-  }
+  const bool rtActive = renderer_->rayTracingActive();
   const bool skeletal = SceneHasSkeletalSkinning(loaded_.render);
   const bool morph = SceneHasBlendShapes(loaded_.render);
   if (!loaded_.ok || (!skeletal && !morph)) {
     skinningReason_ = "scene has no skeletal skinning or blendshapes";
+    return;
+  }
+  // The CUDA/HIP ray tracers read CPU-side draw_ geometry directly, so GPU
+  // (vertex-shader) skinning never reaches them: they would trace the rest
+  // pose. Force CPU skinning so the reconvert path bakes the posed geometry
+  // into draw_ before the tracer builds its BLAS. (Also avoids the spurious
+  // "renderer mesh count 0 != draw mesh count" warning, since the raster
+  // renderer holds no meshes on the tracer-owned screenshot path.)
+  if (cudaRt_ || hipRt_) {
+    skinningReason_ = "CPU skinning (CUDA/HIP tracer reads CPU geometry)";
     return;
   }
   const int maxInfluences = MaxSkinInfluenceCount(loaded_.render);
@@ -892,9 +1152,15 @@ void App::updateSkinningEffective() {
     return;
   }
   skinningEffective_ = SkinningMode::GPU;
-  skinningReason_ = skeletal && morph ? "GPU skeletal + blendshape skinning"
-                    : morph           ? "GPU blendshape morph"
-                                      : "GPU skeletal skinning";
+  if (rtActive) {
+    skinningReason_ = skeletal && morph
+                          ? "RT skeletal + blendshape skinning"
+                          : morph ? "RT blendshape morph" : "RT skeletal skinning";
+  } else {
+    skinningReason_ = skeletal && morph ? "GPU skeletal + blendshape skinning"
+                      : morph           ? "GPU blendshape morph"
+                                        : "GPU skeletal skinning";
+  }
 }
 
 void App::updateGpuSkinningFrameIfNeeded() {
@@ -931,6 +1197,20 @@ void App::updateGpuSkinningFrameIfNeeded() {
     for (size_t i = 0; i < draw_.meshes.size(); ++i) {
       renderer_->updateMeshWorld(static_cast<int>(i), draw_.meshes[i].world);
     }
+  }
+
+  if (renderer_->rayTracingActive()) {
+    if (!idxOk) return;
+    std::vector<RtSkinnedMeshUpload> uploads;
+    if (BuildRtSkinnedMeshVertices(loaded_.stage, loaded_.render, &draw_,
+                                   animTime_, gui_.blendOverrides(),
+                                   gui_.showSkeletonOverlay(), &uploads)) {
+      for (const RtSkinnedMeshUpload& upload : uploads) {
+        renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
+      }
+    }
+    skinFrameTime_ = animTime_;
+    return;
   }
 
   // Bone matrices for GPU skinning. Blendshapes are applied in the vertex shader
@@ -1305,7 +1585,8 @@ bool App::renderHipViewport() {
   const light3d::Mat4 inv = pv.inverse();
   const light3d::Vec3 eye = camera_.eye();
   const float camPos[3] = {eye.x, eye.y, eye.z};
-  const float lightDir[3] = {0.5f, 0.8f, 0.6f};
+  float lightDir[3];
+  CopyPreviewLightDir(draw_, lightDir);
   const float clear[3] = {0.12f, 0.12f, 0.13f};
   const int rmode = static_cast<int>(gui_.renderMode());
   float depthScale = 1.0f;
@@ -1570,6 +1851,7 @@ int App::run(const std::string& initialFile, int maxFrames,
     LOGE("no renderer for requested backend");
     return 1;
   }
+  renderer_->setDevicePreference(devicePreference_);
   if (headless_) renderer_->setHeadlessSize(winW, winH);
 
 #if defined(TUSDVIEW_ENABLE_GL_THREAD)
@@ -2080,7 +2362,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       const light3d::Mat4 inv = pv.inverse();
       const light3d::Vec3 eye = camera_.eye();
       const float camPos[3] = {eye.x, eye.y, eye.z};
-      const float lightDir[3] = {0.5f, 0.8f, 0.6f};  // same fixed light as the RT/raster path
+      float lightDir[3];
+      CopyPreviewLightDir(draw_, lightDir);
       const float clear[3] = {0.12f, 0.12f, 0.13f};
       const int rmode = static_cast<int>(gui_.renderMode());
       float depthScale = 1.0f;
@@ -2139,7 +2422,8 @@ int App::run(const std::string& initialFile, int maxFrames,
       const light3d::Mat4 inv = pv.inverse();
       const light3d::Vec3 eye = camera_.eye();
       const float camPos[3] = {eye.x, eye.y, eye.z};
-      const float lightDir[3] = {0.5f, 0.8f, 0.6f};  // same fixed light as the RT/raster path
+      float lightDir[3];
+      CopyPreviewLightDir(draw_, lightDir);
       const float clear[3] = {0.12f, 0.12f, 0.13f};
       const int rmode = static_cast<int>(gui_.renderMode());
       float depthScale = 1.0f;

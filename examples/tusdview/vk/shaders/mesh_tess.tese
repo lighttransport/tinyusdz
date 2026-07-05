@@ -20,10 +20,26 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 camPos;
   vec4 sceneMin;
   vec4 sceneExtent;
+  vec4 lightDir;
+  vec4 lightColor;
   ivec4 mode;
+  mat4 envRot;        // world -> environment rotation (dome IBL)
+  vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
+  vec4 iblParams;     // .x = prefiltered mip count
 } fr;
-// Per-material displacement texture scale/bias (height = texel*scale + bias).
-layout(set = 6, binding = 0, std430) readonly buffer DispMat { vec2 sb[]; } dm;
+struct MaterialTexParam {
+  vec4 baseUv0; vec4 baseUv1;
+  vec4 mrUv0; vec4 mrUv1;
+  vec4 normalUv0; vec4 normalUv1;
+  vec4 emissiveUv0; vec4 emissiveUv1;
+  vec4 dispUv0; vec4 dispUv1;
+  vec4 baseScale; vec4 baseBias;
+  vec4 normalScale; vec4 normalBias;
+  vec4 emissiveScale; vec4 emissiveBias;
+  vec4 scalar0;
+  vec4 scalar1;
+};
+layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
 layout(push_constant) uniform PushConstants {
   mat4 model;
@@ -48,8 +64,11 @@ void main() {
   // normalize(vec3(0)) is NaN; guard so zero normals can't corrupt the position.
   vec3 nrm = dot(nsum, nsum) > 1e-12 ? normalize(nsum) : vec3(0.0);
   vec2 uv = bc.x * tcUV[0] + bc.y * tcUV[1] + bc.z * tcUV[2];
-  vec2 dsb = pc.ids.x >= 0 ? dm.sb[pc.ids.x] : vec2(1.0, 0.0);
-  float disp = textureLod(uDisplacementTex, uv, 0.0).r * dsb.x + dsb.y;
+  int mid = max(pc.ids.x, 0);
+  vec2 duv = vec2(dot(vec3(uv, 1.0), mtp.p[mid].dispUv0.xyz),
+                  dot(vec3(uv, 1.0), mtp.p[mid].dispUv1.xyz));
+  vec2 dsb = pc.ids.x >= 0 ? mtp.p[mid].scalar1.zw : vec2(1.0, 0.0);
+  float disp = textureLod(uDisplacementTex, duv, 0.0).r * dsb.x + dsb.y;
   pos += nrm * (disp * fr.disp.x);
   mat3 nmat = transpose(inverse(mat3(pc.model)));
   vNormalW = nmat * nrm;
