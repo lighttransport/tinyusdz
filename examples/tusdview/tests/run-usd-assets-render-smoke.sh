@@ -6,6 +6,14 @@
 # usd-wg/assets checkout or another USD asset suite. Without it, the script
 # SKIPs so normal ctest runs do not depend on large assets.
 #
+# Each (mode, asset) is classified into a bucket: load_error, timeout,
+# backend_unavailable, backend_error, no_renderable, rendered_with_warnings,
+# rendered, or golden_mismatch. Results are written as TSV (results.tsv) and
+# JSON (results.json). With a golden baseline (--golden / TUSDVIEW_USD_ASSETS_
+# GOLDEN), each successful render is fingerprinted (coarse 12x12x3 quantized
+# grid) and compared, catching gross visual regressions the non-blank check
+# cannot. Record/refresh a baseline with --update-golden.
+#
 # Backends:
 #   vk-raster : tusdview --headless --backend vk
 #   vk-rt     : tusdview --headless --backend vk --rt
@@ -54,6 +62,17 @@ VK_DEVICE="${TUSDVIEW_VK_DEVICE:-}"
 NVIDIA_OFFLOAD="${TUSDVIEW_NVIDIA_OFFLOAD:-auto}"
 USE_XVFB="${TUSDVIEW_XVFB:-auto}"
 FAIL_ON="${TUSDVIEW_USD_ASSETS_FAIL_ON:-load_error,timeout,backend_error}"
+# Golden-fingerprint regression layer (opt-in). Point GOLDEN at a TSV baseline
+# (mode<TAB>asset<TAB>fingerprint). With GOLDEN_UPDATE=1 the baseline is
+# (re)written from this run instead of compared. GOLDEN_TOL is the max L1
+# distance (sum of per-nibble deltas over a 12x12x3 quantized grid, range
+# 0..6480) tolerated before a render is downgraded to golden_mismatch.
+GOLDEN_FILE="${TUSDVIEW_USD_ASSETS_GOLDEN:-}"
+GOLDEN_UPDATE="${TUSDVIEW_USD_ASSETS_GOLDEN_UPDATE:-0}"
+GOLDEN_TOL="${TUSDVIEW_USD_ASSETS_GOLDEN_TOL:-160}"
+FINGERPRINT_PY="$SCRIPT_DIR/asset_fingerprint.py"
+# JSON mirror of results.tsv (default on; set to a path or empty to disable).
+JSON_OUT="${TUSDVIEW_USD_ASSETS_JSON:-auto}"
 
 usage() {
   cat <<EOF
@@ -69,12 +88,17 @@ Options:
   --timeout DUR    Per-render timeout(1) duration (default: 45s)
   --vk-device DEV  Forward --vk-device DEV to Vulkan modes
   --fail-on LIST   Comma statuses that make the script fail
+  --golden FILE    Compare rendered fingerprints against a golden TSV baseline
+  --update-golden FILE  (Re)write the golden baseline from this run
+  --golden-tol N   Max fingerprint L1 distance before golden_mismatch (default 160)
+  --json FILE      Also write results as JSON (default: <out>/results.json)
 
 Environment:
   TUSDVIEW=/path/to/tusdview
   TUSDRENDER=/path/to/tusdrender
   TUSDVIEW_NVIDIA_OFFLOAD=auto|1|0
   TUSDVIEW_XVFB=auto|1|0|external
+  TUSDVIEW_USD_ASSETS_GOLDEN=FILE  TUSDVIEW_USD_ASSETS_GOLDEN_UPDATE=1
 EOF
 }
 
@@ -89,6 +113,10 @@ while [ "$#" -gt 0 ]; do
     --timeout) TIMEOUT_DUR="$2"; shift 2 ;;
     --vk-device) VK_DEVICE="$2"; shift 2 ;;
     --fail-on) FAIL_ON="$2"; shift 2 ;;
+    --golden) GOLDEN_FILE="$2"; shift 2 ;;
+    --update-golden) GOLDEN_FILE="$2"; GOLDEN_UPDATE=1; shift 2 ;;
+    --golden-tol) GOLDEN_TOL="$2"; shift 2 ;;
+    --json) JSON_OUT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR: unknown option: $1" >&2; usage >&2; exit 1 ;;
   esac
@@ -108,6 +136,16 @@ if [ ! -d "$USD_ASSETS_ROOT" ]; then
   exit "$SKIP"
 fi
 
+# Opt-in gate: if TUSDVIEW_USD_ASSETS_GATE names an env var and that var is
+# empty/unset, SKIP. Golden fingerprints are a per-machine baseline, so the
+# checked-in golden ctest gates on TUSDVIEW_RUN_GOLDEN to avoid false failures
+# on CI GPUs that differ from the machine that recorded the baseline.
+GATE_VAR="${TUSDVIEW_USD_ASSETS_GATE:-}"
+if [ -n "$GATE_VAR" ] && [ -z "${!GATE_VAR:-}" ]; then
+  echo "SKIP: gate variable '$GATE_VAR' is not set (opt-in test)"
+  exit "$SKIP"
+fi
+
 if [ -z "$OUT_DIR" ]; then
   OUT_DIR="$(mktemp -d)"
   CLEAN_OUT=1
@@ -119,7 +157,29 @@ trap '[ "$CLEAN_OUT" -eq 1 ] && rm -rf "$OUT_DIR"' EXIT
 
 RESULTS="$OUT_DIR/results.tsv"
 : > "$RESULTS"
-printf 'mode\tstatus\tasset\timage\tlog\n' >> "$RESULTS"
+printf 'mode\tstatus\tgolden\tasset\timage\tlog\n' >> "$RESULTS"
+
+# Golden baseline handling. In compare mode, load mode+asset -> fingerprint into
+# an associative array. In update mode, freshly computed fingerprints are
+# collected and written out at the end.
+GOLDEN_ENABLED=0
+declare -A GOLDEN_EXPECT
+NEW_GOLDEN="$OUT_DIR/new-golden.tsv"
+: > "$NEW_GOLDEN"
+if [ -n "$GOLDEN_FILE" ]; then
+  if [ ! -x "$FINGERPRINT_PY" ] && ! command -v python3 >/dev/null 2>&1; then
+    echo "WARN: golden requested but python3/asset_fingerprint.py unavailable; disabling golden" >&2
+  else
+    GOLDEN_ENABLED=1
+    if [ "$GOLDEN_UPDATE" != "1" ] && [ -f "$GOLDEN_FILE" ]; then
+      while IFS=$'\t' read -r g_mode g_asset g_fp; do
+        [ -z "$g_mode" ] && continue
+        case "$g_mode" in \#*) continue ;; esac
+        GOLDEN_EXPECT["$g_mode|$g_asset"]="$g_fp"
+      done < "$GOLDEN_FILE"
+    fi
+  fi
+fi
 
 has_status() {
   case ",$1," in
@@ -251,8 +311,8 @@ run_one() {
       ;;
     tusdr-cpu|tusdr-vk|tusdr-vkr)
       if [ ! -x "$TUSDRENDER_BIN" ]; then
-        printf '%s\t%s\t%s\t%s\t%s\n' "$mode" "backend_unavailable" "$rel" "" "" >> "$RESULTS"
-        printf '%-9s %-22s %s\n' "$mode" "backend_unavailable" "$rel"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "backend_unavailable" "-" "$rel" "" "" >> "$RESULTS"
+        printf '%-9s %-22s %-9s %s\n' "$mode" "backend_unavailable" "-" "$rel"
         return 0
       fi
       ;;
@@ -337,8 +397,34 @@ run_one() {
     status="rendered"
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\n' "$mode" "$status" "$rel" "$out" "$log" >> "$RESULTS"
-  printf '%-9s %-22s %s\n' "$mode" "$status" "$rel"
+  # Golden-fingerprint check: only meaningful for a real (non-blank) render.
+  # A mismatch overrides the status so the existing FAIL_ON path handles it.
+  local golden="-"
+  if [ "$GOLDEN_ENABLED" -eq 1 ] \
+     && { [ "$status" = "rendered" ] || [ "$status" = "rendered_with_warnings" ]; } \
+     && [ -s "$out" ]; then
+    local fp
+    fp="$(python3 "$FINGERPRINT_PY" hash "$out" 2>/dev/null)"
+    if [ -z "$fp" ]; then
+      golden="nohash"
+    elif [ "$GOLDEN_UPDATE" = "1" ]; then
+      printf '%s\t%s\t%s\n' "$mode" "$rel" "$fp" >> "$NEW_GOLDEN"
+      golden="updated"
+    else
+      local expect="${GOLDEN_EXPECT["$mode|$rel"]:-}"
+      if [ -z "$expect" ]; then
+        golden="missing"
+      elif python3 "$FINGERPRINT_PY" compare "$fp" "$expect" "$GOLDEN_TOL" >/dev/null 2>&1; then
+        golden="ok"
+      else
+        golden="mismatch"
+        status="golden_mismatch"
+      fi
+    fi
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "$status" "$golden" "$rel" "$out" "$log" >> "$RESULTS"
+  printf '%-9s %-22s %-9s %s\n' "$mode" "$status" "$golden" "$rel"
 
   if has_status "$FAIL_ON" "$status"; then
     return 1
@@ -397,9 +483,44 @@ for asset in "${ASSETS[@]}"; do
   done
 done
 
+# Persist an updated golden baseline (sorted + de-duplicated, last wins).
+if [ "$GOLDEN_ENABLED" -eq 1 ] && [ "$GOLDEN_UPDATE" = "1" ]; then
+  {
+    printf '# tusdview usd-assets render fingerprints (mode<TAB>asset<TAB>fp).\n'
+    printf '# Per-machine baseline; regenerate with --update-golden.\n'
+    sort -t$'\t' -k1,1 -k2,2 "$NEW_GOLDEN"
+  } > "$GOLDEN_FILE"
+  echo "golden : wrote $(grep -cv '^#' "$GOLDEN_FILE") fingerprints -> $GOLDEN_FILE"
+fi
+
+# Machine-readable JSON mirror of the TSV.
+if [ "$JSON_OUT" = "auto" ]; then
+  JSON_OUT="$OUT_DIR/results.json"
+fi
+if [ -n "$JSON_OUT" ] && command -v python3 >/dev/null 2>&1; then
+  python3 - "$RESULTS" "$JSON_OUT" <<'PY'
+import csv, json, sys
+rows = []
+with open(sys.argv[1], newline="") as f:
+    for r in csv.DictReader(f, delimiter="\t"):
+        rows.append(r)
+summary = {}
+for r in rows:
+    key = "%s/%s" % (r.get("mode", ""), r.get("status", ""))
+    summary[key] = summary.get(key, 0) + 1
+with open(sys.argv[2], "w") as f:
+    json.dump({"results": rows, "summary": summary}, f, indent=2)
+PY
+  echo "json   : $JSON_OUT"
+fi
+
 echo
 echo "Summary:"
 awk 'NR > 1 { counts[$1 "\t" $2]++ } END { for (k in counts) print counts[k] "\t" k }' "$RESULTS" | sort -k2,2 -k3,3
+if [ "$GOLDEN_ENABLED" -eq 1 ] && [ "$GOLDEN_UPDATE" != "1" ]; then
+  echo "Golden:"
+  awk -F'\t' 'NR > 1 && $3 != "-" { g[$3]++ } END { for (k in g) print g[k] "\t" k }' "$RESULTS" | sort -k2,2
+fi
 echo "results: $RESULTS"
 
 if [ "$fail" -ne 0 ]; then
