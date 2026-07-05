@@ -256,6 +256,83 @@ function folderSource(dir) {
   };
 }
 
+// Lazy source over a single self-contained .usdz: list entry names from the
+// ZIP central directory up front, then read each entry's bytes on demand by
+// seeking to its stored offset. USDZ is always STORE (no compression) and
+// 64-byte data-aligned, so no inflate is needed and the whole archive never
+// enters memory at once (unlike readFileSync + unpack). This lets a single
+// .usdz feed convertSourceToUSDZStreaming: only USD layers load into wasm for
+// composition and textures stream from the file straight to the output zip.
+function usdzSource(file) {
+  const fd = fs.openSync(file, 'r');
+  const fileSize = fs.fstatSync(fd).size;
+  const readAt = (pos, len) => {
+    const buf = Buffer.allocUnsafe(len);
+    let got = 0;
+    while (got < len) {
+      const n = fs.readSync(fd, buf, got, len - got, pos + got);
+      if (n <= 0) break;
+      got += n;
+    }
+    return buf;
+  };
+
+  // Locate the End Of Central Directory record (scan the tail for its
+  // signature; USDZ has no zip comment so it is typically the last 22 bytes).
+  const tailLen = Math.min(fileSize, 65557);
+  const tail = readAt(fileSize - tailLen, tailLen);
+  let eocd = -1;
+  for (let i = tail.length - 22; i >= 0; i--) {
+    if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error(`not a valid .usdz/zip: ${file}`);
+  const cdCount = tail.readUInt16LE(eocd + 10);
+  const cdSize = tail.readUInt32LE(eocd + 12);
+  const cdOffset = tail.readUInt32LE(eocd + 16);
+
+  // Parse the central directory: name -> { dataOffset, size }.
+  const cd = readAt(cdOffset, cdSize);
+  const entries = new Map();
+  const keys = [];
+  let usdBytes = 0, otherBytes = 0;   // to gauge whether streaming pays off
+  let p = 0;
+  for (let n = 0; n < cdCount && p + 46 <= cd.length; n++) {
+    if (cd.readUInt32LE(p) !== 0x02014b50) break;
+    const size = cd.readUInt32LE(p + 24);          // uncompressed == compressed (STORE)
+    const nameLen = cd.readUInt16LE(p + 28);
+    const extraLen = cd.readUInt16LE(p + 30);
+    const commentLen = cd.readUInt16LE(p + 32);
+    const localOffset = cd.readUInt32LE(p + 42);
+    const name = cd.toString('utf8', p + 46, p + 46 + nameLen);
+    entries.set(name, { localOffset, size });
+    keys.push(name);
+    if (/\.(usda?|usdc)$/i.test(name)) usdBytes += size; else otherBytes += size;
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+
+  // Resolve an entry's data offset from its local header (name/extra lengths in
+  // the local header can differ from the central directory's), then read it.
+  const readEntry = (key) => {
+    const e = entries.get(key);
+    if (!e) throw new Error(`entry not in archive: ${key}`);
+    const lh = readAt(e.localOffset, 30);
+    if (lh.readUInt32LE(0) !== 0x04034b50) throw new Error(`bad local header: ${key}`);
+    const nameLen = lh.readUInt16LE(26);
+    const extraLen = lh.readUInt16LE(28);
+    const dataOffset = e.localOffset + 30 + nameLen + extraLen;
+    return new Uint8Array(readAt(dataOffset, e.size));
+  };
+
+  return {
+    keys,
+    usdBytes,
+    otherBytes,
+    fetch: async (key) => readEntry(key),
+    fetchSync: (key) => readEntry(key),
+    close: () => { try { fs.closeSync(fd); } catch { /* ignore */ } },
+  };
+}
+
 // --url-list file: JSON, either [{key, url}, ...], ["url", ...] (key = path
 // part after the last common base), or { baseUrl, files: ["rel", ...] }.
 function urlListSource(file) {
@@ -282,9 +359,16 @@ function urlListSource(file) {
   };
 }
 
-async function runStreamingConvert(native, o) {
+async function runStreamingConvert(native, o, prebuiltSource) {
   const log = o.verbose ? (m) => console.log(m) : () => {};
-  const source = o.urlList ? urlListSource(o.urlList) : folderSource(o.input);
+  // A single self-contained .usdz streams lazily from its own archive (entries
+  // read by offset); a folder walks the dir; a url-list fetches over HTTP.
+  const source = prebuiltSource
+    || (o.urlList
+      ? urlListSource(o.urlList)
+      : (o.input && /\.usdz$/i.test(o.input) && fs.statSync(o.input).isFile())
+        ? usdzSource(o.input)
+        : folderSource(o.input));
   if (!o.output) { console.error('--pipeline stream requires -o <output.usdz>'); process.exit(1); }
 
   let streamFd = null, streamBytes = 0;
@@ -312,7 +396,7 @@ async function runStreamingConvert(native, o) {
       pngEncoder: o.pngEncoder,
       maxUsdcMb: o.maxUsdcMb,
       maxMemMb: o.maxMemMb,
-      pipeline: o.pipeline === 'stream-next' ? 'next' : undefined,
+      pipeline: (o.pipeline === 'stream-next' || o.pipeline === 'next') ? 'next' : undefined,
       streamWrite: o.streamWrite,
       optimizeMaterials: o.optimizeMaterials,
       materialAtlasSize: o.materialAtlasSize,
@@ -336,6 +420,7 @@ async function runStreamingConvert(native, o) {
       `audio: ${stats.audio}, other assets: ${stats.otherAssets}`);
   } finally {
     if (texturePool) texturePool.destroy();
+    if (typeof source.close === 'function') source.close();
   }
 }
 
@@ -471,6 +556,26 @@ async function main() {
   if (o.pipeline === 'stream' || o.pipeline === 'stream-next') {
     await runStreamingConvert(native, o);
     return;
+  }
+
+  // --pipeline next on a single self-contained .usdz: stream lazily from the
+  // archive instead of slurping the whole file with readFileSync. Only the USD
+  // layers enter wasm for composition; textures are read by offset and streamed
+  // straight to the output zip, so the full input archive is never resident.
+  // Requires an output path (streaming sink) and flatten (default on).
+  //
+  // Gate on texture bytes: streaming avoids slurping the non-USD (texture/audio)
+  // payload, but adds a separate read of the root layer. For a texture-light
+  // archive (e.g. one monolithic .usdc) there is nothing to stream and the extra
+  // root copy only raises peak RSS, so keep those on the in-memory path.
+  if (o.pipeline === 'next' && o.output && o.flatten !== false && o.input &&
+      /\.usdz$/i.test(o.input) && fs.statSync(o.input).isFile()) {
+    const src = usdzSource(o.input);
+    if (src.otherBytes >= 64 * 1024 * 1024) {
+      await runStreamingConvert(native, o, src);
+      return;
+    }
+    src.close();  // texture-light: fall through to the in-memory next path
   }
 
   // Build the asset map and determine the root USD's relative path.
