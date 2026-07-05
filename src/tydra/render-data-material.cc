@@ -3033,6 +3033,11 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               return true;
             }
           }
+          // Capture the constant-evaluator's diagnostic (e.g. "Unsupported node
+          // type ...") so it can be surfaced in the fallback warning below;
+          // otherwise it is lost (it only reached DCOUT before).
+          const std::string mtlx_const_err =
+              const_result ? std::string() : const_result.error();
           // Interface passthrough: the connection may target a Material /
           // Shader / NodeGraph interface input that holds a constant value
           // (e.g. `Material.inputs:metalness = 1`, common in flattened
@@ -3097,8 +3102,10 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           }
           PushWarn(fmt::format(
               "MaterialX connection for {} could not be resolved to a "
-              "texture or constant ({}); using the parameter default instead.",
-              param_name, mtlx_result.error()));
+              "texture or constant ({}){}; using the parameter default instead.",
+              param_name, mtlx_result.error(),
+              mtlx_const_err.empty() ? std::string()
+                                     : " [" + mtlx_const_err + "]"));
           return true;
         }
       }

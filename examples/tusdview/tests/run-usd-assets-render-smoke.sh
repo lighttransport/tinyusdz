@@ -188,6 +188,24 @@ has_status() {
   esac
 }
 
+# Classify a non-blank render's log into rendered / rendered_with_warnings /
+# degraded_material. Prefers tusdview's structured "load summary:" line (emitted
+# only when there are actionable diagnostics) and the "using default material"
+# signal (both tools) for the most severe bucket, then falls back to the broad
+# warning grep for anything else.
+classify_rendered() {
+  local log="$1"
+  if grep -Eq 'load summary:.*degraded_materials=[1-9]' "$log" \
+     || grep -Eiq 'using default material' "$log"; then
+    echo "degraded_material"
+  elif grep -Eq 'load summary:' "$log" \
+       || grep -Eiq 'warn|warning|unsupported|fallback|TODO|failed to load texture|failed to load environment' "$log"; then
+    echo "rendered_with_warnings"
+  else
+    echo "rendered"
+  fi
+}
+
 should_use_nvidia_offload() {
   case "$NVIDIA_OFFLOAD" in
     1|ON|on|true|TRUE|yes|YES) return 0 ;;
@@ -370,11 +388,7 @@ run_one() {
   elif [[ "$mode" == tusdr-* ]] && [ ! -s "$out" ]; then
     status="backend_error"
   elif [[ "$mode" == tusdr-* ]] && nonblank_file "$out"; then
-    if grep -Eiq 'warn|warning|unsupported|fallback|TODO|failed to load texture|failed to load environment' "$log"; then
-      status="rendered_with_warnings"
-    else
-      status="rendered"
-    fi
+    status="$(classify_rendered "$log")"
   elif [[ "$mode" == tusdr-* ]]; then
     status="no_renderable"
   elif [ "$mode" = "cuda-rt" ] && ! grep -q 'CUDA RT wrote' "$log"; then
@@ -384,17 +398,11 @@ run_one() {
   elif [ ! -s "$out" ]; then
     status="backend_error"
   elif nonblank_ppm "$out"; then
-    if grep -Eiq 'warn|warning|unsupported|fallback|TODO' "$log"; then
-      status="rendered_with_warnings"
-    else
-      status="rendered"
-    fi
+    status="$(classify_rendered "$log")"
   elif ! nonblank_ppm "$out"; then
     status="no_renderable"
-  elif grep -Eiq 'warn|warning|unsupported|fallback|TODO' "$log"; then
-    status="rendered_with_warnings"
   else
-    status="rendered"
+    status="$(classify_rendered "$log")"
   fi
 
   # Golden-fingerprint check: only meaningful for a real (non-blank) render.
