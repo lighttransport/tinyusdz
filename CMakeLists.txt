@@ -2383,6 +2383,20 @@ if(TINYUSDZ_BUILD_TESTS)
       SKIP_RETURN_CODE 77
       LABELS "viewer")
 
+    # tusdview: renderer-parity degraded-material policy. A material that fails to
+    # convert (unknown shader) must render with the substituted default material
+    # (loadable) AND be reported in the structured load summary as a
+    # degraded_material, which the usd-assets smoke harness fails on.
+    add_test(
+      NAME tusdview-degraded-material
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-degraded-material.sh
+    )
+    set_tests_properties(tusdview-degraded-material PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
     #
     # tusdview: Vulkan backend run test. Renders headless via --backend vk and
     # --rt (ray query) and asserts a non-blank frame. Needs a real Vulkan device
@@ -2466,7 +2480,7 @@ if(TINYUSDZ_BUILD_TESTS)
     )
     set_tests_properties(tusdview-models-render-smoke PROPERTIES
       ENVIRONMENT
-        "TUSDVIEW=$<TARGET_FILE:tusdview>;USD_ASSETS_ROOT=${PROJECT_SOURCE_DIR}/models;TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,cuda-rt;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=45s;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,no_renderable,rendered_with_warnings;TUSDVIEW_USD_ASSETS_FILES=texture-cat-plane.usdz uv-quad-textured.usda skintest.usda blendshape.usda mtlx-normalmap-cube.usda tusdview-nurbs-patch.usda tri-torus-shared-normal.usda tusdview-analytic-prims.usda tusdview-transparency.usda"
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;USD_ASSETS_ROOT=${PROJECT_SOURCE_DIR}/models;TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,cuda-rt;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=45s;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,no_renderable,degraded_material;TUSDVIEW_USD_ASSETS_FILES=texture-cat-plane.usdz uv-quad-textured.usda skintest.usda blendshape.usda mtlx-normalmap-cube.usda tusdview-nurbs-patch.usda tri-torus-shared-normal.usda tusdview-analytic-prims.usda tusdview-transparency.usda"
       SKIP_RETURN_CODE 77
       TIMEOUT 600
       LABELS "viewer")

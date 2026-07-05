@@ -676,6 +676,25 @@ void App::applyLoaded(bool ok, bool progressive) {
       LOGE("load failed: %s", loaded_.err.c_str());
     }
   }
+  // Structured end-of-load diagnostic summary (renderer-parity work). The
+  // converter's warnings and the draw-side skipped list are otherwise only
+  // visible in the ImGui panel; surface a greppable, machine-parseable line so
+  // headless runs and the usd-assets smoke harness can distinguish a full
+  // material fallback (degraded) from a benign missing normal-map texture.
+  if (ok) {
+    const LoadDiagnostics diag =
+        CategorizeLoadWarnings(loaded_.warn, draw_.skipped);
+    if (diag.actionable() > 0) {
+      LOGW(
+          "load summary: degraded_materials=%d missing_textures=%d "
+          "unsupported_mtlx=%d skipped=%d other=%d",
+          diag.degraded_material, diag.missing_texture, diag.unsupported_mtlx,
+          diag.skipped, diag.other);
+      for (const std::string& ex : diag.examples) {
+        LOGW("  - %s", ex.c_str());
+      }
+    }
+  }
   // Pose the GPU frame now that the renderer holds the meshes (the per-mesh
   // morph vertex upload needs them present; the bone texture is global). For the
   // progressive path meshes stream in over later frames — the main loop re-poses

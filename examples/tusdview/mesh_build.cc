@@ -2229,6 +2229,55 @@ bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
 // light's (reversed) direction, else the first finite light's direction from
 // the scene center, else a fixed fallback. Public so the `next` loader (which
 // builds its own DrawScene) can apply the same derivation.
+LoadDiagnostics CategorizeLoadWarnings(
+    const std::string& warn_blob, const std::vector<std::string>& skipped) {
+  LoadDiagnostics d;
+  auto contains = [](const std::string& hay, const char* needle) {
+    return hay.find(needle) != std::string::npos;
+  };
+  size_t start = 0;
+  while (start <= warn_blob.size()) {
+    size_t nl = warn_blob.find('\n', start);
+    const std::string line = warn_blob.substr(
+        start, nl == std::string::npos ? std::string::npos : nl - start);
+    start = (nl == std::string::npos) ? warn_blob.size() + 1 : nl + 1;
+    // Trim trailing whitespace/CR; skip blank lines.
+    size_t end = line.find_last_not_of(" \t\r");
+    if (end == std::string::npos) continue;
+    const std::string l = line.substr(0, end + 1);
+
+    // Order matters: a full fallback ("using default material") is the most
+    // severe and is checked first; unsupported-mtlx before the generic
+    // missing-texture bucket since its message also mentions resolution.
+    int* bucket = nullptr;
+    if (contains(l, "using default material") ||
+        contains(l, "Material conversion failed")) {
+      bucket = &d.degraded_material;
+    } else if (contains(l, "Unsupported node type")) {
+      bucket = &d.unsupported_mtlx;
+    } else if (contains(l, "failed to load texture") ||
+               contains(l, "Failed to load texture") ||
+               contains(l, "Failed to load image") ||
+               contains(l, "could not be resolved to a UsdUVTexture") ||
+               contains(l, "could not be resolved to a texture") ||
+               contains(l, "Failed to find MaterialX texture") ||
+               contains(l, "Failed to convert MaterialX texture")) {
+      bucket = &d.missing_texture;
+    } else {
+      bucket = &d.other;
+    }
+    (*bucket)++;
+    if (d.examples.size() < 6 && bucket != &d.other) d.examples.push_back(l);
+  }
+
+  d.skipped = static_cast<int>(skipped.size());
+  for (const std::string& s : skipped) {
+    if (d.examples.size() >= 6) break;
+    d.examples.push_back("skipped: " + s);
+  }
+  return d;
+}
+
 void UpdatePreviewLight(DrawScene* draw) {
   if (!draw) return;
   float fallback[3]{0.5f, 0.8f, 0.6f};

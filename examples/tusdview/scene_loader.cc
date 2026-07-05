@@ -396,6 +396,13 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // Graceful skip for missing/failed textures (these are already defaults).
   matc.allow_texture_load_failure = true;
   matc.allow_missing_asset = true;
+  // Renderer-parity policy: a material that fails to convert (unknown shader,
+  // unresolvable network) should NOT sink the whole load. Substitute the default
+  // material so the geometry still renders; tydra records a "using default
+  // material" warning that the app's load summary reports as a degraded_material,
+  // which the smoke harness fails on. Keeps degraded scenes loadable while still
+  // flagging the regression.
+  matc.assign_default_material = true;
 
   // RenderSceneConverter is non-copyable / non-movable: keep it local.
   tinyusdz::tydra::RenderSceneConverter converter;
