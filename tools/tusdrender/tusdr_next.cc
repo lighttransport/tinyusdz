@@ -727,7 +727,10 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
       id = adopt(img, asset_path);
     }
   }
-  if (id < 0) std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
+  if (id < 0) {
+    if (tc.missing_textures) (*tc.missing_textures)++;
+    std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
+  }
   tc.by_key[key] = id;
   return id;
 }
@@ -2837,6 +2840,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       tc.base_dir = DirName(opt.input);
       tc.usdz = usdz_ptr;
       tc.options = &opt;
+      tc.missing_textures = &ctx.stats.missing_textures;
       std::unordered_map<std::string, ResolvedMat> mat_cache;
       for (MeshJobNext &job : base_jobs) {
         ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
@@ -2933,6 +2937,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     tc.base_dir = DirName(opt.input);
     tc.usdz = usdz_ptr;
     tc.options = &opt;
+    tc.missing_textures = &ctx.stats.missing_textures;
     std::unordered_map<std::string, ResolvedMat> mat_cache;
     for (MeshJobNext &job : base_jobs) {
       ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
@@ -3887,6 +3892,7 @@ void PrintRTStats(const RenderContext &ctx) {
   std::cerr << "rt loader: next\n";
   std::cerr << "rt meshes: " << ctx.stats.meshes << "\n";
   std::cerr << "rt skipped meshes: " << ctx.stats.skipped_meshes << "\n";
+  std::cerr << "rt missing textures: " << ctx.stats.missing_textures << "\n";
   std::cerr << "rt purpose default triangles: "
             << ctx.stats.purpose_default_triangles << "\n";
   std::cerr << "rt purpose guide triangles: "
@@ -3989,9 +3995,24 @@ std::string SubstituteFrame(const std::string &path, long frame) {
   return path.substr(0, dot) + buf + path.substr(dot);
 }
 
+// Structured, greppable end-of-load diagnostic summary, mirroring tusdview's
+// `load summary:` line so both tools feed the usd-assets smoke harness the same
+// way. Printed unconditionally (independent of -stats) when there is something
+// actionable to report. degraded_materials / unsupported_mtlx are not tracked
+// by the next loader yet (it substitutes a grey default material silently), so
+// they are reported as 0; missing_textures and skipped are real counts.
+static void PrintLoadSummaryNext(const RenderContext &ctx) {
+  const size_t missing = ctx.stats.missing_textures;
+  const size_t skipped = ctx.stats.skipped_meshes;
+  if (missing + skipped == 0) return;
+  std::cerr << "load summary: degraded_materials=0 missing_textures=" << missing
+            << " unsupported_mtlx=0 skipped=" << skipped << " other=0\n";
+}
+
 int RunRTPreviewNext(const Options &opt) {
   RenderContext ctx;
   if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
+  PrintLoadSummaryNext(ctx);
   if (opt.stats) PrintRTStats(ctx);
 
   // Animation: -frames renders one image per time code, re-evaluating geometry,
