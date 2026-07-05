@@ -6272,19 +6272,38 @@ class TinyUSDZLoaderNative {
       error_ = "not loaded as layer";
       return false;
     }
-    if (composited_) {
-      layer_ = std::move(composed_layer_);
-    }
+    // Always resolve from the pristine base `layer_` into `composed_layer_` —
+    // ApplyVariantSelector strips variant info from its output, so folding a
+    // prior result back into `layer_` (as composeVariants does) would make
+    // repeated selections (LOD switching) operate on a variant-free layer.
+    // `layer_` is const input here, so it stays pristine across calls.
     if (!tinyusdz::ApplyVariantSelector(layer_, variant_name, &composed_layer_,
                                         &warn_, &error_)) {
-      if (composited_) {
-        loaded_as_layer_ = false;
-        composited_ = false;
-      }
+      composited_ = false;
       return false;
     }
     composited_ = true;
     return true;
+  }
+
+  // Number of variants in the `LOD` variantSet (max across prims) on the
+  // pristine layer — sizes a viewer LOD selector. Call before
+  // applyVariantSelection (which strips variant info from the composed layer).
+  // Returns 0 when there is no `LOD` variantSet.
+  int lodVariantCount() {
+    if (!loaded_as_layer_) return 0;
+    int maxc = 0;
+    std::function<void(const tinyusdz::PrimSpec &)> visit =
+        [&](const tinyusdz::PrimSpec &ps) {
+          const auto it = ps.variantSets().find("LOD");
+          if (it != ps.variantSets().end()) {
+            maxc = std::max(maxc, static_cast<int>(it->second.variantSet.size()));
+          }
+          for (const auto &c : ps.children()) visit(c);
+        };
+    const tinyusdz::Layer &L = composited_ ? composed_layer_ : layer_;
+    for (const auto &kv : L.primspecs()) visit(kv.second);
+    return maxc;
   }
 
   bool layerToRenderScene() {
@@ -11275,6 +11294,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 
       .function("applyVariantSelection",
                 &TinyUSDZLoaderNative::applyVariantSelection)
+
+      .function("lodVariantCount",
+                &TinyUSDZLoaderNative::lodVariantCount)
 
       .function("layerToRenderScene",
                 &TinyUSDZLoaderNative::layerToRenderScene)
