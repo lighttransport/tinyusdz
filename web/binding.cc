@@ -1981,6 +1981,7 @@ json AttributeValueJson(const tinyusdz::Attribute &attr) {
   if (auto v = attr.get_value<std::vector<int32_t>>()) return v.value();
   if (auto v = attr.get_value<std::vector<float>>()) return v.value();
   if (auto v = attr.get_value<std::vector<double>>()) return v.value();
+  if (auto v = attr.get_value<std::vector<std::string>>()) return v.value();
   if (auto v = attr.get_value<std::vector<tinyusdz::value::token>>()) {
     json arr = json::array();
     for (const auto &tok : v.value()) {
