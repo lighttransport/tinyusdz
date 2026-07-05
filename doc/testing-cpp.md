@@ -50,7 +50,11 @@ The full regression pass has three parts:
 1. All CMake/CTest-registered tests, including parser corpus tests, roundtrip
    corpus tests, registered feature tests, benchmarks in quick mode, MCP tests,
    and the main Acutest unit suite.
-2. The standalone Debug `next` CTest suite.
+2. The standalone Debug `next` CTest suite (and, for `src/next/` composition /
+   crate / writer / `pcp` changes, the fuller
+   [Full `next` regression gate](#full-next-regression-gate): both thread
+   configs, byte-identity/determinism, ThreadSanitizer, and the
+   `next_usdzconvert` end-to-end path).
 3. The Node.js `tusdcat` vs OpenUSD v26.05 `usdcat` comparison runner, which
    checks TinyUSDZ output against `usdcat` over the USDA and USDC fixture
    corpora.
@@ -535,6 +539,77 @@ Current USDC-focused next coverage:
   mesh arrays, per-property metadata, relationships, connection-flagged
   properties, Shader/Material links, PointInstancer arrays/prototypes, ids, and
   time samples.
+
+#### Full `next` regression gate
+
+Run this whole gate for changes touching `src/next/` composition, crate IO, the
+writer, the `pcp` cache, or `tools/next_usdzconvert`. `assert()`-based unit
+tests need **Debug** (see the caveat above); the byte-identity / TSan /
+end-to-end checks run any build (they validate the tool's *output* and thread
+behavior, not `assert()`s).
+
+1. **Unit tests — both thread configs, Debug.** The threaded and serial
+   (`TINYUSDZ_ENABLE_THREAD` on/off) builds must both pass; this is what proves
+   the `#if defined(TINYUSDZ_ENABLE_THREAD)` guards around the parallel writer
+   loops and the `pcp` warm are correct.
+
+   ```bash
+   BUILD_DIR=build-next        THREADS=ON  BUILD_TYPE=Debug scripts/run-next-checks.sh
+   BUILD_DIR=build-next-serial THREADS=OFF BUILD_TYPE=Debug scripts/run-next-checks.sh
+   # Include the opt-in benchmark + usd-wg corpus gates when relevant:
+   RUN_BENCH=1 RUN_CORPUS=1 USD_WG_ASSETS_DIR=<usd-wg/assets> \
+     BUILD_TYPE=Debug scripts/run-next-checks.sh
+   ```
+
+2. **Byte-identity / determinism on large scenes.** Composition and writer
+   changes must keep flatten output byte-for-byte stable (unstable interning
+   order or uninitialized bytes have leaked into crate output before — see the
+   PropIndex name-sort and `double[]`-encode fixes). Use a Release build for
+   speed and diff sha256 across runs / thread counts. The determinism gate is
+   built into the checks script:
+
+   ```bash
+   RUN_DETERMINISM=1 DET_SCENES="<scene.usd[acz]> ..." DET_RUNS=3 \
+     BUILD_TYPE=Release scripts/run-next-checks.sh
+   # Or directly, e.g. flatten par vs --write-threads 1 must match, and
+   # --rewrite-layer par vs serial must match:
+   build-next/next_usdcat -f <scene> -o out.usdc && sha256sum out.usdc
+   build-next/next_usdcat -f --compose-threads 1 <scene> -o out2.usdc && cmp out.usdc out2.usdc
+   ```
+
+3. **ThreadSanitizer.** Any change to a threaded path (parallel compose warm /
+   fill, parallel `Layer::finalize`, parallel PATHS-section loops, parallel
+   section prep, the open-addressed compose caches) must be TSan-clean on a
+   large, heavily-parallel scene. On kernel ≥ 6.8, run under `setarch -R`
+   (ASLR off) or TSan aborts.
+
+   ```bash
+   cmake -S src/next -B build-next-tsan -G Ninja \
+     -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DTINYUSDZ_NEXT_ENABLE_THREAD=ON \
+     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+     -DCMAKE_CXX_FLAGS="-fsanitize=thread -O1 -g" \
+     -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+   ninja -C build-next-tsan next_usdcat
+   setarch "$(uname -m)" -R build-next-tsan/next_usdcat -f <big-scene> -o /dev/shm/x.usdc 2>tsan.log
+   grep -c "WARNING: ThreadSanitizer" tsan.log   # must be 0
+   ```
+
+4. **`next_usdzconvert` end-to-end (next-core + next_io).** Confirms the
+   native USD→USDZ path (mmap file IO, lazy arrays, `pcp` compose, texture
+   pack) still composes and packages, and the result reloads. Needs
+   `-DTINYUSDZ_BUILD_TOOLS=ON` + `-DTINYUSDZ_WITH_NEXT_CORE=ON` in the main
+   `build/`.
+
+   ```bash
+   build/tools/next_usdzconvert/next_usdzconvert <root.usd> out.usdz \
+     -resizeTextures 512 -textureFormat png
+   build/tusdcat -l out.usdz   # reload check
+   ```
+
+5. **Roundtrip vs OpenUSD `usdcat`** — the same
+   `tests/run-usdcat-compare.sh` as the main gate (see
+   [Full Regression Tests](#full-regression-tests)); expect 0 `Different`,
+   only known `XFAIL`s (files pxr cannot parse / UTF-8 asset paths).
 
 ### CMake targets not in ctest
 
