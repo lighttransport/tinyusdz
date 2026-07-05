@@ -174,6 +174,140 @@ def Xform "Root" {
 }
 
 // ---------------------------------------------------------------------------
+// d2. MaterialX NodeGraph constant folding of the newly-supported ops:
+//     swizzle, separate (per-channel output), smoothstep, ifgreatereq, saturate.
+//     A UsdPreviewSurface's inputs connect to NodeGraph outputs that fold to
+//     constants; the converter must evaluate them into the surface shader.
+// ---------------------------------------------------------------------------
+void tydra_renderscene_mtlx_nodegraph_ops_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "Root" {
+  def Mesh "MyMesh" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+  ) {
+    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0,1,2]
+    rel material:binding = </Root/Materials/MyMat>
+  }
+  def Scope "Materials" {
+    def Material "MyMat" {
+      token outputs:surface.connect = </Root/Materials/MyMat/PreviewSurface.outputs:surface>
+      def Shader "PreviewSurface" {
+        uniform token info:id = "ND_UsdPreviewSurface_surfaceshader"
+        color3f inputs:diffuseColor.connect = </Root/Materials/MyMat/NG.outputs:diff_out>
+        color3f inputs:emissiveColor.connect = </Root/Materials/MyMat/NG.outputs:emis_out>
+        float inputs:roughness.connect = </Root/Materials/MyMat/NG.outputs:rough_out>
+        float inputs:metallic.connect = </Root/Materials/MyMat/NG.outputs:metal_out>
+        float inputs:clearcoat.connect = </Root/Materials/MyMat/NG.outputs:coat_out>
+        token outputs:surface
+      }
+      def NodeGraph "NG" {
+        color3f outputs:diff_out.connect = </Root/Materials/MyMat/NG/swizzleNode.outputs:out>
+        color3f outputs:emis_out.connect = </Root/Materials/MyMat/NG/satNode.outputs:out>
+        float outputs:rough_out.connect = </Root/Materials/MyMat/NG/sepNode.outputs:outg>
+        float outputs:metal_out.connect = </Root/Materials/MyMat/NG/smoothNode.outputs:out>
+        float outputs:coat_out.connect = </Root/Materials/MyMat/NG/condNode.outputs:out>
+
+        def Shader "constNode" {
+          uniform token info:id = "ND_constant_color3"
+          color3f inputs:value = (0.1, 0.6, 0.9)
+          color3f outputs:out
+        }
+        def Shader "swizzleNode" {
+          uniform token info:id = "ND_swizzle_color3_color3"
+          color3f inputs:in.connect = </Root/Materials/MyMat/NG/constNode.outputs:out>
+          string inputs:channels = "bgr"
+          color3f outputs:out
+        }
+        def Shader "sepNode" {
+          uniform token info:id = "ND_separate3_color3"
+          color3f inputs:in.connect = </Root/Materials/MyMat/NG/constNode.outputs:out>
+          float outputs:outr
+          float outputs:outg
+          float outputs:outb
+        }
+        def Shader "smoothNode" {
+          uniform token info:id = "ND_smoothstep_float"
+          float inputs:in = 0.8
+          float inputs:low = 0.0
+          float inputs:high = 1.0
+          float outputs:out
+        }
+        def Shader "condNode" {
+          uniform token info:id = "ND_ifgreatereq_float"
+          float inputs:value1 = 0.5
+          float inputs:value2 = 0.5
+          float inputs:in1 = 0.7
+          float inputs:in2 = 0.2
+          float outputs:out
+        }
+        def Shader "satNode" {
+          uniform token info:id = "ND_saturate_color3"
+          color3f inputs:in.connect = </Root/Materials/MyMat/NG/constNode.outputs:out>
+          float inputs:amount = 0.0
+          color3f outputs:out
+        }
+      }
+    }
+  }
+}
+)";
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "test.usda", &stage, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+
+  ok = converter.ConvertToRenderScene(env, &scene);
+  TEST_CHECK(ok);
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  TEST_CHECK(scene.materials.size() >= 1);
+  if (scene.materials.empty()) return;
+  const tydra::RenderMaterial &mat = scene.materials[0];
+  TEST_CHECK(mat.surfaceShader.has_value());
+  if (!mat.surfaceShader) return;
+  const tydra::PreviewSurfaceShader &s = *mat.surfaceShader;
+
+  auto near = [](float a, float b) { return std::fabs(a - b) < 1e-3f; };
+
+  // swizzle "bgr" of (0.1,0.6,0.9) -> (0.9,0.6,0.1)
+  TEST_CHECK(near(s.diffuseColor.value[0], 0.9f));
+  TEST_CHECK(near(s.diffuseColor.value[1], 0.6f));
+  TEST_CHECK(near(s.diffuseColor.value[2], 0.1f));
+  TEST_MSG("swizzle diffuseColor = (%f,%f,%f)", s.diffuseColor.value[0],
+           s.diffuseColor.value[1], s.diffuseColor.value[2]);
+
+  // separate3(.outg) of (0.1,0.6,0.9) -> 0.6
+  TEST_CHECK(near(s.roughness.value, 0.6f));
+  TEST_MSG("separate outg roughness = %f", s.roughness.value);
+
+  // smoothstep(0.8, 0, 1) = 0.8^2*(3-2*0.8) = 0.896
+  TEST_CHECK(near(s.metallic.value, 0.896f));
+  TEST_MSG("smoothstep metallic = %f", s.metallic.value);
+
+  // ifgreatereq(0.5 >= 0.5) ? 0.7 : 0.2 -> 0.7
+  TEST_CHECK(near(s.clearcoat.value, 0.7f));
+  TEST_MSG("ifgreatereq clearcoat = %f", s.clearcoat.value);
+
+  // saturate(amount=0) collapses to luminance:
+  // 0.2126*0.1 + 0.7152*0.6 + 0.0722*0.9 = 0.51536
+  TEST_CHECK(near(s.emissiveColor.value[0], 0.51536f));
+  TEST_CHECK(near(s.emissiveColor.value[1], 0.51536f));
+  TEST_CHECK(near(s.emissiveColor.value[2], 0.51536f));
+  TEST_MSG("saturate emissiveColor = (%f,%f,%f)", s.emissiveColor.value[0],
+           s.emissiveColor.value[1], s.emissiveColor.value[2]);
+}
+
+// ---------------------------------------------------------------------------
 // e. SphereLight -> verify light in converted scene
 // ---------------------------------------------------------------------------
 void tydra_renderscene_sphere_light_test(void) {

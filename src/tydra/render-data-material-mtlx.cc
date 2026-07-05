@@ -101,10 +101,14 @@ static const Shader *FindShaderInNodeGraph(
   return nullptr;
 }
 
-// Forward declaration
+// Forward declaration.
+// `output_name` is the name of the node output being read (the prop_part of the
+// connection that led here, e.g. "outr"/"outg"/"outb" on a separate node, with
+// any "outputs:" prefix stripped). It is only meaningful for multi-output nodes
+// (separate/swizzle); single-output nodes ignore it.
 static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     const Stage &stage, const Prim *ng_prim, const Shader *shader,
-    int max_depth);
+    int max_depth, const std::string &output_name = "");
 
 // Helper: get the property map for a shader (prefer ShaderNode props if present)
 static const std::map<std::string, Property> &GetShaderProps(
@@ -112,6 +116,169 @@ static const std::map<std::string, Property> &GetShaderProps(
   const ShaderNode *sn = shader->value.as<ShaderNode>();
   if (sn && !sn->props.empty()) return sn->props;
   return shader->props;
+}
+
+static const Shader *FindMtlxShaderForPath(
+    const Stage &stage, const Prim *material_prim,
+    const std::string &prim_path) {
+  std::string err;
+  const Prim *prim{nullptr};
+  if (stage.find_prim_at_path(Path(prim_path, ""), prim, &err) && prim) {
+    return prim->as<Shader>();
+  }
+  if (!material_prim) {
+    return nullptr;
+  }
+
+  const size_t last_slash = prim_path.rfind('/');
+  const std::string target_name =
+      (last_slash != std::string::npos) ? prim_path.substr(last_slash + 1)
+                                        : prim_path;
+  for (const auto &child : material_prim->children()) {
+    if (!child.as<NodeGraph>()) {
+      continue;
+    }
+    for (const auto &ng_child : child.children()) {
+      if (ng_child.element_name() == target_name) {
+        return ng_child.as<Shader>();
+      }
+    }
+  }
+  return nullptr;
+}
+
+static bool MtlxInputConnection(const std::map<std::string, Property> &props,
+                                const std::string &name, Path *path_out) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (!attr.has_connections() || attr.connections().empty()) {
+    return false;
+  }
+  if (path_out) {
+    *path_out = attr.connections()[0];
+  }
+  return true;
+}
+
+static bool MtlxStringOrTokenInput(
+    const std::map<std::string, Property> &props, const std::string &name,
+    std::string *value_out) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (auto v = attr.get_value<std::string>()) {
+    if (value_out) {
+      *value_out = *v;
+    }
+    return true;
+  }
+  if (auto v = attr.get_value<value::token>()) {
+    if (value_out) {
+      *value_out = v->str();
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool MtlxIntInput(const std::map<std::string, Property> &props,
+                         const std::string &name, int *value_out) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (auto v = attr.get_value<int>()) {
+    if (value_out) {
+      *value_out = *v;
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool MtlxFloat2Input(const std::map<std::string, Property> &props,
+                            const std::string &name, value::float2 *value_out) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (auto v = attr.get_value<value::float2>()) {
+    if (value_out) {
+      *value_out = *v;
+    }
+    return true;
+  }
+  return false;
+}
+
+static void ExtractMtlxTexcoordInfoFromConnection(
+    const Stage &stage, const Prim *material_prim, const Path &start_path,
+    MtlxNodeGraphInfo *info) {
+  if (!info) {
+    return;
+  }
+
+  Path current_path = start_path;
+  int depth = 10;
+  while (depth-- > 0) {
+    const Shader *shader =
+        FindMtlxShaderForPath(stage, material_prim, current_path.prim_part());
+    if (!shader) {
+      return;
+    }
+    const std::map<std::string, Property> &props = GetShaderProps(shader);
+    const std::string &node_type = shader->info_id;
+
+    if (node_type.find("ND_geompropvalue_") == 0) {
+      std::string geomprop;
+      if (MtlxStringOrTokenInput(props, "inputs:geomprop", &geomprop) &&
+          !geomprop.empty()) {
+        info->geomprop_name = geomprop;
+        info->has_geomprop = true;
+      }
+      return;
+    }
+
+    if (node_type == "ND_texcoord_vector2" ||
+        node_type == "ND_texcoord_vector3") {
+      MtlxIntInput(props, "inputs:index", &info->texcoord_index);
+      return;
+    }
+
+    if (node_type.find("ND_place2d_") == 0) {
+      value::float2 v;
+      if (MtlxFloat2Input(props, "inputs:scale", &v) ||
+          MtlxFloat2Input(props, "inputs:uvtiling", &v)) {
+        info->uvtiling[0] = v[0];
+        info->uvtiling[1] = v[1];
+        info->has_uvtransform = true;
+      }
+      if (MtlxFloat2Input(props, "inputs:translation", &v) ||
+          MtlxFloat2Input(props, "inputs:uvoffset", &v)) {
+        info->uvoffset[0] = v[0];
+        info->uvoffset[1] = v[1];
+        info->has_uvtransform = true;
+      }
+      if (MtlxInputConnection(props, "inputs:texcoord", &current_path)) {
+        continue;
+      }
+      return;
+    }
+
+    if (MtlxInputConnection(props, "inputs:texcoord", &current_path) ||
+        MtlxInputConnection(props, "inputs:in", &current_path) ||
+        MtlxInputConnection(props, "inputs:in1", &current_path)) {
+      continue;
+    }
+    return;
+  }
 }
 
 // Helper: resolve a generic input to MtlxConstVal (constant or connected)
@@ -131,16 +298,19 @@ static nonstd::expected<MtlxConstVal, std::string> ResolveInput(
   }
   const Attribute &attr = it->second.get_attribute();
 
-  // If connected, follow recursively
+  // If connected, follow recursively, carrying the connected output's name so
+  // multi-output nodes (separate/swizzle) can return the requested channel.
   if (attr.has_connections() && !attr.connections().empty()) {
-    const Shader *next = FindShaderInNodeGraph(
-        stage, ng_prim, attr.connections()[0].prim_part());
+    const Path &conn = attr.connections()[0];
+    const Shader *next = FindShaderInNodeGraph(stage, ng_prim, conn.prim_part());
     if (!next) {
       return nonstd::make_unexpected(
-          fmt::format("Cannot find shader at {}",
-                      attr.connections()[0].prim_part()));
+          fmt::format("Cannot find shader at {}", conn.prim_part()));
     }
-    return EvaluateMtlxConstant(stage, ng_prim, next, max_depth - 1);
+    std::string out_name = conn.prop_part();
+    // USD stores MaterialX outputs as "outputs:<name>"; strip the schema prefix.
+    if (out_name.compare(0, 8, "outputs:") == 0) out_name = out_name.substr(8);
+    return EvaluateMtlxConstant(stage, ng_prim, next, max_depth - 1, out_name);
   }
 
   // Read constant value
@@ -216,6 +386,29 @@ static void HSVtoRGB(float h, float s, float v, float &r, float &g, float &b) {
   }
 }
 
+// Map a MaterialX separate-node output name ("outr"/"outg"/"outb"/"outa" or
+// "outx"/"outy"/"outz"/"outw") to a component index. Returns -1 for an unnamed
+// or unrecognized output.
+static int MtlxOutputChannelIndex(const std::string &out_name) {
+  if (out_name == "outr" || out_name == "outx") return 0;
+  if (out_name == "outg" || out_name == "outy") return 1;
+  if (out_name == "outb" || out_name == "outz") return 2;
+  if (out_name == "outa" || out_name == "outw") return 3;
+  return -1;
+}
+
+// Map a single MaterialX swizzle channel character to a component index.
+// r/x=0, g/y=1, b/z=2, a/w=3. Returns -1 for '0'/'1' constants or unknowns.
+static int MtlxSwizzleCharIndex(char c) {
+  switch (c) {
+    case 'r': case 'x': return 0;
+    case 'g': case 'y': return 1;
+    case 'b': case 'z': return 2;
+    case 'a': case 'w': return 3;
+    default: return -1;
+  }
+}
+
 // Evaluate a MaterialX node graph expression that produces a constant value.
 // Supports float and color3 node types with constant or connected inputs.
 // Returns the evaluated value or an error.
@@ -223,7 +416,8 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     const Stage &stage,
     const Prim *ng_prim,
     const Shader *shader,
-    int max_depth = 10) {
+    int max_depth,
+    const std::string &output_name) {
   if (max_depth <= 0) {
     return nonstd::make_unexpected("Max evaluation depth exceeded");
   }
@@ -399,8 +593,12 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     return r;
   }
 
-  // --- Conditional: ifgreater (float) ---
-  if (nt == "ND_ifgreater_float") {
+  // --- Conditionals: ifgreater / ifgreatereq / ifequal (any output type) ---
+  // Compares scalar value1 vs value2 and selects in1/in2. Covers every typed
+  // variant (ND_ifgreater_float, ND_ifgreater_color3, ...), superseding the
+  // former float-only handler.
+  if (nt.find("ND_ifgreater_") == 0 || nt.find("ND_ifgreatereq_") == 0 ||
+      nt.find("ND_ifequal_") == 0) {
     auto val1 = RESOLVE("inputs:value1");
     if (!val1) return nonstd::make_unexpected(val1.error());
     auto val2 = RESOLVE("inputs:value2");
@@ -409,7 +607,50 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     if (!in1) return nonstd::make_unexpected(in1.error());
     auto in2 = RESOLVE("inputs:in2");
     if (!in2) return nonstd::make_unexpected(in2.error());
-    return (val1->as_float() > val2->as_float()) ? *in1 : *in2;
+    const float a = val1->as_float(), b = val2->as_float();
+    bool cond;
+    if (nt.find("ND_ifgreatereq_") == 0) cond = (a >= b);
+    else if (nt.find("ND_ifgreater_") == 0) cond = (a > b);
+    else cond = (a == b);  // ifequal
+    return cond ? *in1 : *in2;
+  }
+
+  // --- Smoothstep (Hermite interpolation, per component) ---
+  if (nt.find("ND_smoothstep_") == 0) {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    auto lo = RESOLVE("inputs:low");
+    if (!lo) return nonstd::make_unexpected(lo.error());
+    auto hi = RESOLVE("inputs:high");
+    if (!hi) return nonstd::make_unexpected(hi.error());
+    MtlxConstVal r; r.n = v->n;
+    for (int i = 0; i < v->n; ++i) {
+      size_t ui = static_cast<size_t>(i);
+      float l = (i < lo->n) ? lo->v[ui] : lo->v[0];
+      float h = (i < hi->n) ? hi->v[ui] : hi->v[0];
+      float denom = h - l;
+      float t = (std::abs(denom) > 1e-7f) ? (v->v[ui] - l) / denom : 0.0f;
+      t = (std::max)(0.0f, (std::min)(1.0f, t));
+      r.v[ui] = t * t * (3.0f - 2.0f * t);
+    }
+    return r;
+  }
+
+  // --- Saturate (adjust color saturation toward/away from luminance) ---
+  // MaterialX definition: out = lerp(luminance(in), in, amount). NOT clamp01.
+  if (nt.find("ND_saturate_") == 0) {
+    auto v = RESOLVE("inputs:in");
+    if (!v) return nonstd::make_unexpected(v.error());
+    auto amt = RESOLVE("inputs:amount");
+    const float a = amt ? amt->as_float() : 1.0f;  // amount defaults to 1
+    const float lum =
+        0.2126f * v->v[0] + 0.7152f * v->v[1] + 0.0722f * v->v[2];
+    MtlxConstVal r; r.n = v->n;
+    for (int i = 0; i < v->n; ++i) {
+      size_t ui = static_cast<size_t>(i);
+      r.v[ui] = lum + (v->v[ui] - lum) * a;
+    }
+    return r;
   }
 
   // --- Mix (lerp between bg and fg) ---
@@ -459,6 +700,18 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     return r;
   }
 
+  // --- Combine2 (two floats → vector2) ---
+  if (nt.find("ND_combine2_") == 0) {
+    auto c1 = RESOLVE("inputs:in1");
+    if (!c1) return nonstd::make_unexpected(c1.error());
+    auto c2 = RESOLVE("inputs:in2");
+    if (!c2) return nonstd::make_unexpected(c2.error());
+    MtlxConstVal r; r.n = 2;
+    r.v[0] = c1->as_float();
+    r.v[1] = c2->as_float();
+    return r;
+  }
+
   // --- Combine3 (three floats → color3) ---
   if (nt.find("ND_combine3_") == 0) {
     auto c1 = RESOLVE("inputs:in1");
@@ -470,7 +723,7 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     return MtlxConstVal::Color3(c1->as_float(), c2->as_float(), c3->as_float());
   }
 
-  // --- Extract (color3 → float by index) ---
+  // --- Extract (vectorN → float by index) ---
   if (nt.find("ND_extract_") == 0) {
     auto in_v = RESOLVE("inputs:in");
     if (!in_v) return nonstd::make_unexpected(in_v.error());
@@ -481,11 +734,44 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     return MtlxConstVal::Float(in_v->v[static_cast<size_t>(i)]);
   }
 
-  // --- Separate3 (color3 → 3 outputs, but we return the full color3) ---
-  if (nt.find("ND_separate3_") == 0) {
+  // --- Separate2/3/4 (vectorN → per-channel float outputs) ---
+  // The requested output channel comes from the connection that led here
+  // (output_name = outr/outg/outb/outa or outx/outy/outz/outw). When the caller
+  // did not name a channel, fall back to returning the whole value.
+  if (nt.find("ND_separate2_") == 0 || nt.find("ND_separate3_") == 0 ||
+      nt.find("ND_separate4_") == 0) {
     auto in_v = RESOLVE("inputs:in");
     if (!in_v) return nonstd::make_unexpected(in_v.error());
-    return *in_v;
+    int ch = MtlxOutputChannelIndex(output_name);
+    if (ch < 0) return *in_v;  // unnamed output
+    if (ch >= in_v->n) ch = in_v->n - 1;
+    return MtlxConstVal::Float(in_v->v[static_cast<size_t>(ch)]);
+  }
+
+  // --- Swizzle (reorder/broadcast channels via a "channels" string) ---
+  if (nt.find("ND_swizzle_") == 0) {
+    auto in_v = RESOLVE("inputs:in");
+    if (!in_v) return nonstd::make_unexpected(in_v.error());
+    std::string channels;
+    auto cit = props.find("inputs:channels");
+    if (cit != props.end() && cit->second.is_attribute()) {
+      const Attribute &ca = cit->second.get_attribute();
+      if (auto s = ca.get_value<std::string>()) channels = *s;
+      else if (auto t = ca.get_value<value::token>()) channels = t->str();
+    }
+    if (channels.empty()) return *in_v;
+    MtlxConstVal r;
+    r.n = (std::min)(static_cast<int>(channels.size()), 3);
+    for (int i = 0; i < r.n; ++i) {
+      int ch = MtlxSwizzleCharIndex(channels[static_cast<size_t>(i)]);
+      float val = 0.0f;
+      if (ch >= 0) {
+        if (ch >= in_v->n) ch = in_v->n - 1;
+        val = in_v->v[static_cast<size_t>(ch)];
+      }
+      r.v[static_cast<size_t>(i)] = val;
+    }
+    return r;
   }
 
   // --- HSV adjust (two variants) ---
@@ -543,14 +829,21 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
 
   #undef RESOLVE
 
-  return nonstd::make_unexpected(
-      fmt::format("Unsupported node type for constant evaluation: {}", nt));
+  // Structured, actionable diagnostic: name the node type AND the offending node
+  // (and its enclosing NodeGraph) so an unsupported node can be located quickly.
+  return nonstd::make_unexpected(fmt::format(
+      "Unsupported node type for constant evaluation: '{}' (node '{}'{})", nt,
+      shader->name.empty() ? "<unnamed>" : shader->name,
+      (ng_prim && !ng_prim->element_name().empty())
+          ? fmt::format(" in NodeGraph '{}'", ng_prim->element_name())
+          : std::string()));
 }
 
 // Resolve a NodeGraph connection path to the NodeGraph prim and target shader.
 // Shared logic for both float and color3 evaluation entry points.
 static nonstd::expected<std::pair<const Prim *, const Shader *>, std::string>
-ResolveNodeGraphTarget(const Stage &stage, const Path &connection_path) {
+ResolveNodeGraphTarget(const Stage &stage, const Path &connection_path,
+                       std::string *target_out_name = nullptr) {
   const std::string prim_part = connection_path.prim_part();
   const std::string prop_part = connection_path.prop_part();
 
@@ -627,6 +920,14 @@ ResolveNodeGraphTarget(const Stage &stage, const Path &connection_path) {
         fmt::format("Shader not found at {}", target_path.prim_part()));
   }
 
+  if (target_out_name) {
+    // The node output the NodeGraph output points at (e.g. "outr" on a separate
+    // node), so a top-level separate/swizzle returns the right channel.
+    std::string on = target_path.prop_part();
+    if (on.compare(0, 8, "outputs:") == 0) on = on.substr(8);
+    *target_out_name = on;
+  }
+
   return std::make_pair(ng_prim, target_shader);
 }
 
@@ -636,9 +937,12 @@ ResolveNodeGraphTarget(const Stage &stage, const Path &connection_path) {
 
 nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxNodeGraphAsConstant(
     const Stage &stage, const Path &connection_path) {
-  auto target = ResolveNodeGraphTarget(stage, connection_path);
+  std::string target_out_name;
+  auto target =
+      ResolveNodeGraphTarget(stage, connection_path, &target_out_name);
   if (!target) return nonstd::make_unexpected(target.error());
-  return EvaluateMtlxConstant(stage, target->first, target->second);
+  return EvaluateMtlxConstant(stage, target->first, target->second,
+                              /*max_depth=*/10, target_out_name);
 }
 
 nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
@@ -848,6 +1152,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
           info.normal_map_texture = asset_val.value().GetAssetPath();
           DCOUT("Found normal_map_texture: " << info.normal_map_texture);
         }
+      }
+      Path texcoord_path;
+      if (MtlxInputConnection(*shader_props, "inputs:texcoord",
+                              &texcoord_path)) {
+        ExtractMtlxTexcoordInfoFromConnection(stage, material_prim,
+                                              texcoord_path, &info);
       }
       break;  // End of chain
     } else if (node_type == "ND_normalize_vector3" ||
@@ -1159,6 +1469,12 @@ nonstd::expected<MtlxNodeGraphInfo, std::string> ExtractMtlxNodeGraphInfo(
           info.uvoffset[1] = (*offset_val)[1];
           info.has_uvtransform = true;
         }
+      }
+      Path texcoord_path;
+      if (MtlxInputConnection(*shader_props, "inputs:texcoord",
+                              &texcoord_path)) {
+        ExtractMtlxTexcoordInfoFromConnection(stage, material_prim,
+                                              texcoord_path, &info);
       }
       break;  // End of chain
     //
