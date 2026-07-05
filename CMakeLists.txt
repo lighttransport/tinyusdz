@@ -2471,6 +2471,30 @@ if(TINYUSDZ_BUILD_TESTS)
       TIMEOUT 600
       LABELS "viewer")
 
+    # tusdview: golden-fingerprint regression check for the same curated models
+    # subset (vk-raster, the most reproducible path). Compares a coarse 12x12x3
+    # quantized fingerprint of each render against the checked-in baseline
+    # (examples/tusdview/tests/models-render-goldens.tsv) and fails on
+    # golden_mismatch, catching gross visual regressions (blank/wrong-color/lost
+    # geometry) that the non-blank smoke cannot. Fingerprints are a PER-MACHINE
+    # baseline (GPU/driver dependent), so this is OPT-IN: it SKIPs unless
+    # TUSDVIEW_RUN_GOLDEN is set in the environment. Regenerate the baseline with
+    #   TUSDVIEW=<bin> USD_ASSETS_ROOT=models TUSDVIEW_USD_ASSETS_MODES=vk-raster \
+    #   TUSDVIEW_XVFB=1 TUSDVIEW_USD_ASSETS_FILES="..." \
+    #   TUSDVIEW_USD_ASSETS_GOLDEN=examples/tusdview/tests/models-render-goldens.tsv \
+    #   TUSDVIEW_USD_ASSETS_GOLDEN_UPDATE=1 bash .../run-usd-assets-render-smoke.sh
+    add_test(
+      NAME tusdview-models-golden
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
+    )
+    set_tests_properties(tusdview-models-golden PROPERTIES
+      ENVIRONMENT
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;USD_ASSETS_ROOT=${PROJECT_SOURCE_DIR}/models;TUSDVIEW_USD_ASSETS_MODES=vk-raster;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=45s;TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_GOLDEN;TUSDVIEW_USD_ASSETS_GOLDEN=${PROJECT_SOURCE_DIR}/examples/tusdview/tests/models-render-goldens.tsv;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,no_renderable,golden_mismatch;TUSDVIEW_USD_ASSETS_FILES=texture-cat-plane.usdz uv-quad-textured.usda skintest.usda blendshape.usda mtlx-normalmap-cube.usda tusdview-nurbs-patch.usda tri-torus-shared-normal.usda tusdview-analytic-prims.usda tusdview-transparency.usda"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 600
+      LABELS "viewer")
+
     # tusdview: HIP/ROCm ray-tracing backend run test. Renders headless via --hip
     # (HIP runtime + hiprtc loaded at runtime through hipew; no link-time ROCm
     # toolkit) and asserts a non-blank frame. Needs a real AMD/ROCm device; SKIPs
