@@ -758,6 +758,15 @@ public:
   /// Check if any property has time samples
   bool has_any_time_samples() const;
 
+  /// Share `source`'s entire time-sample storage into this prim by reference
+  /// (O(1) shared_ptr aliasing), instead of copying every sample. Only valid
+  /// when this prim has no time samples yet and no time remap is needed; the
+  /// caller (composition) guards those preconditions. Subsequent mutations are
+  /// protected by copy-on-write (see cow_time_samples). Eliminates the flatten
+  /// value-duplicate for the common single-source case. No-op (returns false)
+  /// if `source` has no time samples or this prim already has some.
+  bool share_time_samples_from(const PrimSpec& source);
+
   /// Get time sample statistics (for debugging/profiling)
   TimeSampleStorage::Stats time_sample_stats() const;
 
@@ -917,8 +926,16 @@ private:
   PropIndex props_;
   std::unique_ptr<ValueStorage> values_;
 
-  // TimeSamples storage with deduplication
-  std::unique_ptr<TimeSampleStorage> time_samples_;
+  // TimeSamples storage with deduplication. shared_ptr (not unique_ptr) so the
+  // composition flatten can alias a source prim's storage instead of copying
+  // every sample (see share_time_samples_from); copy-on-write via
+  // cow_time_samples() keeps aliased storages independent on mutation.
+  std::shared_ptr<TimeSampleStorage> time_samples_;
+
+  // Return a uniquely-owned TimeSampleStorage for in-place mutation, cloning
+  // first if the current storage is shared (copy-on-write), and allocating one
+  // if absent. Every mutating time-sample path must go through this.
+  TimeSampleStorage& cow_time_samples();
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
