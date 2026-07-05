@@ -11413,9 +11413,6 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("composeVariants",
                 &TinyUSDZLoaderNative::composeVariants)
 
-      .function("applyVariantSelection",
-                &TinyUSDZLoaderNative::applyVariantSelection)
-
       .function("lodVariantCount",
                 &TinyUSDZLoaderNative::lodVariantCount)
 
