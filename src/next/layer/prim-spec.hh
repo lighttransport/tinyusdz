@@ -571,6 +571,14 @@ public:
   /// index. Used by the crate writer's consume_values mode.
   void release_payloads();
 
+  /// Free the value-dedup acceleration index (hash -> offsets), keeping the
+  /// sample values and (time, offset) tables intact. The index only speeds up
+  /// future add_dedup() calls; after a layer is finalized no more samples are
+  /// added, so it is pure dead weight. For heavily time-sampled scenes it is
+  /// the single largest storage cost (held once per source layer and again per
+  /// composed layer). Output is unaffected — offsets are already assigned.
+  void drop_dedup_index();
+
   /// Statistics
   struct Stats {
     size_t property_count;     // Properties with time samples
@@ -588,14 +596,44 @@ private:
   // Value storage
   std::vector<Value> values_;
 
-  // Deduplication: hash -> list of (offset, hash) for collision handling
-  std::unordered_map<uint64_t, std::vector<uint32_t>> hash_to_offsets_;
+  // Value-dedup index: hash -> chain of value offsets, as two flat contiguous
+  // vectors (open-addressed buckets + index-chained entries) instead of an
+  // unordered_map<hash, vector<offset>>. The map allocated one node plus one
+  // small vector per unique hash -- ~1 allocation per stored sample -- which,
+  // for animation-dense scenes with millions of samples, is the dominant source
+  // of allocator churn and fragmentation (peak RSS stays high even after the
+  // index is dropped). The flat form is contiguous, smaller, and frees cleanly.
+  // Output is unaffected: values_ holds only unique values (dedup never stores a
+  // duplicate), so at most one entry matches a given value and the offset it
+  // returns is independent of bucket-chain order.
+  struct ValueDedupIndex {
+    static constexpr uint32_t kInvalid = ~uint32_t(0);
+    struct Entry {
+      uint64_t hash;
+      uint32_t offset;  // index into values_
+      uint32_t next;    // next entry in the same bucket, or kInvalid
+    };
+    std::vector<uint32_t> buckets;  // power-of-two size; head entry per bucket
+    std::vector<Entry> entries;     // one per unique value, parallel to values_
+    void reset() { buckets.clear(); entries.clear(); }
+    void free() {
+      std::vector<uint32_t>().swap(buckets);
+      std::vector<Entry>().swap(entries);
+    }
+    size_t memory_bytes() const {
+      return buckets.capacity() * sizeof(uint32_t) +
+             entries.capacity() * sizeof(Entry);
+    }
+  };
+  ValueDedupIndex dedup_;
 
   // Stats
   size_t dedup_count_ = 0;
 
   // Find existing value or store new one
   uint32_t find_or_store(Value value);
+  // Rebuild the dedup bucket array (grow) from the current entries.
+  void rehash_dedup(size_t new_bucket_count);
 };
 
 /// PrimSpec - unified spec/prim representation
