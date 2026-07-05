@@ -742,6 +742,8 @@ TEST_LIST = {
     tydra_renderscene_xform_hierarchy_test },
   { "tydra_renderscene_material_binding_test",
     tydra_renderscene_material_binding_test },
+  { "tydra_renderscene_mtlx_nodegraph_ops_test",
+    tydra_renderscene_mtlx_nodegraph_ops_test },
   { "tydra_renderscene_sphere_light_test",
     tydra_renderscene_sphere_light_test },
   { "tydra_renderscene_camera_test", tydra_renderscene_camera_test },
