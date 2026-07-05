@@ -6,7 +6,7 @@
 #include <iostream>
 #include <sstream>
 #include <fstream>
-#include <cassert>
+#include "test-check.hh"
 #include <cstdio>
 #include <iterator>
 #include <limits>
@@ -39,7 +39,7 @@ void assert_stream_value_matches_string(const Value& value,
     StreamWriter writer(&actual);
     PrintValue(writer, value, opts);
   }
-  assert(actual == expected);
+  NEXT_CHECK(actual == expected);
 }
 
 void test_value_printer() {
@@ -49,21 +49,21 @@ void test_value_printer() {
   {
     Value v = Value(42);
     std::string s = PrintValue(v);
-    assert(s == "42");
+    NEXT_CHECK(s == "42");
     std::cout << "  Int: " << s << "\n";
   }
 
   {
     Value v = Value(3.14159f);
     std::string s = PrintValue(v);
-    assert(contains(s, "3.14159"));
+    NEXT_CHECK(contains(s, "3.14159"));
     std::cout << "  Float: " << s << "\n";
   }
 
   {
     Value v = Value(true);
     std::string s = PrintValue(v);
-    assert(s == "true");
+    NEXT_CHECK(s == "true");
     std::cout << "  Bool: " << s << "\n";
   }
 
@@ -71,10 +71,10 @@ void test_value_printer() {
   {
     Value v = Value::MakeFloat3(1.0f, 2.0f, 3.0f);
     std::string s = PrintValue(v);
-    assert(contains(s, "("));
-    assert(contains(s, "1"));
-    assert(contains(s, "2"));
-    assert(contains(s, "3"));
+    NEXT_CHECK(contains(s, "("));
+    NEXT_CHECK(contains(s, "1"));
+    NEXT_CHECK(contains(s, "2"));
+    NEXT_CHECK(contains(s, "3"));
     std::cout << "  Float3: " << s << "\n";
   }
 
@@ -82,7 +82,7 @@ void test_value_printer() {
   {
     Value v = Value(std::string("hello world"));
     std::string s = PrintValue(v);
-    assert(contains(s, "\"hello world\""));
+    NEXT_CHECK(contains(s, "\"hello world\""));
     std::cout << "  String: " << s << "\n";
   }
 
@@ -91,9 +91,9 @@ void test_value_printer() {
     std::vector<float> arr = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
     Value v = Value::MakeFloatArray(arr);
     std::string s = PrintValue(v);
-    assert(contains(s, "["));
-    assert(contains(s, "1"));
-    assert(contains(s, "5"));
+    NEXT_CHECK(contains(s, "["));
+    NEXT_CHECK(contains(s, "1"));
+    NEXT_CHECK(contains(s, "5"));
     assert_stream_value_matches_string(v);
     std::cout << "  Float array: " << s << "\n";
   }
@@ -193,14 +193,14 @@ void test_hot_array_formatting_parity() {
       size_t n = dtos_to(buf, v);
       std::string s_append;
       dtos_append(s_append, v);
-      assert(std::string(buf, n) == s_append);
+      NEXT_CHECK(std::string(buf, n) == s_append);
     }
     for (double v : dedge) {
       char buf[kDtoaBufSize];
       size_t n = dtos_to(buf, v);
       std::string s_append;
       dtos_append(s_append, v);
-      assert(std::string(buf, n) == s_append);
+      NEXT_CHECK(std::string(buf, n) == s_append);
     }
     const int64_t ivals[] = {0, 1, -1, 123456789, -987654321,
                              std::numeric_limits<int64_t>::min(),
@@ -210,7 +210,7 @@ void test_hot_array_formatting_parity() {
       size_t n = IntTo(buf, v);
       std::string s_append;
       AppendInt(s_append, v);
-      assert(std::string(buf, n) == s_append);
+      NEXT_CHECK(std::string(buf, n) == s_append);
     }
     const uint64_t uvals[] = {0u, 1u, 123456789u,
                               std::numeric_limits<uint64_t>::max()};
@@ -219,7 +219,7 @@ void test_hot_array_formatting_parity() {
       size_t n = UIntTo(buf, v);
       std::string s_append;
       AppendUInt(s_append, v);
-      assert(std::string(buf, n) == s_append);
+      NEXT_CHECK(std::string(buf, n) == s_append);
     }
   }
 
@@ -231,7 +231,7 @@ void test_hot_array_formatting_parity() {
 // correctness foundation of the parallel writer's intra-array splitting.
 void check_range_reconstruction(const Value& v, const std::vector<size_t>& cuts) {
   PrintOptions opts;  // no truncation
-  assert(IsChunkableArray(v, opts));
+  NEXT_CHECK(IsChunkableArray(v, opts));
   const std::string full = PrintValue(v, opts);
   const size_t n = ArrayElementCount(v);
 
@@ -249,10 +249,10 @@ void check_range_reconstruction(const Value& v, const std::vector<size_t>& cuts)
       bool ok = PrintArrayRangeToStream(w, v, opts, b[k], b[k + 1],
                                         /*open=*/k == 0,
                                         /*close=*/k + 2 == b.size());
-      assert(ok);
+      NEXT_CHECK(ok);
     }
   }
-  assert(actual == full);
+  NEXT_CHECK(actual == full);
 }
 
 void test_array_range_split_parity() {
@@ -308,12 +308,12 @@ void test_array_range_split_parity() {
   // Non-chunkable types report false.
   {
     PrintOptions opts;
-    assert(!IsChunkableArray(Value::MakeTokenArray(std::vector<std::string>{"a", "b"}), opts));
-    assert(!IsChunkableArray(Value::MakeBoolArray({true, false}), opts));
-    assert(!IsChunkableArray(Value(42), opts));  // scalar
+    NEXT_CHECK(!IsChunkableArray(Value::MakeTokenArray(std::vector<std::string>{"a", "b"}), opts));
+    NEXT_CHECK(!IsChunkableArray(Value::MakeBoolArray({true, false}), opts));
+    NEXT_CHECK(!IsChunkableArray(Value(42), opts));  // scalar
     PrintOptions trunc;
     trunc.max_array_elements = 2;
-    assert(!IsChunkableArray(Value::MakeIntArray({1, 2, 3, 4}), trunc));
+    NEXT_CHECK(!IsChunkableArray(Value::MakeIntArray({1, 2, 3, 4}), trunc));
   }
 
   std::cout << "  array range split parity passed!\n\n";
@@ -342,18 +342,18 @@ void test_lazy_usdc_stream_value_printer() {
 
   std::vector<uint8_t> usdc;
   USDCWriteResult wr = WriteLayerToUSDCMemory(usdc, layer);
-  assert(wr.success);
+  NEXT_CHECK(wr.success);
 
   USDCLoadResult lr = LoadUSDCFromMemory(usdc.data(), usdc.size());
-  assert(lr.success);
+  NEXT_CHECK(lr.success);
   const Layer* loaded = lr.stage.GetRootLayer();
-  assert(loaded);
+  NEXT_CHECK(loaded);
   const PrimSpec* prim = loaded->prim_at_path("/Root");
-  assert(prim);
+  NEXT_CHECK(prim);
   const Value* lazy_points = prim->property_value("points");
   const Value* lazy_indices = prim->property_value("faceVertexIndices");
-  assert(lazy_points && lazy_points->is_lazy());
-  assert(lazy_indices && lazy_indices->is_lazy());
+  NEXT_CHECK(lazy_points && lazy_points->is_lazy());
+  NEXT_CHECK(lazy_indices && lazy_indices->is_lazy());
 
   const std::string expected_points = PrintValue(lazy_points->materialized_copy());
   std::string actual_points;
@@ -361,7 +361,7 @@ void test_lazy_usdc_stream_value_printer() {
     StreamWriter writer(&actual_points);
     PrintValue(writer, *lazy_points);
   }
-  assert(actual_points == expected_points);
+  NEXT_CHECK(actual_points == expected_points);
 
   const std::string expected_indices = PrintValue(lazy_indices->materialized_copy());
   std::string actual_indices;
@@ -369,7 +369,7 @@ void test_lazy_usdc_stream_value_printer() {
     StreamWriter writer(&actual_indices);
     PrintValue(writer, *lazy_indices);
   }
-  assert(actual_indices == expected_indices);
+  NEXT_CHECK(actual_indices == expected_indices);
 
   std::cout << "  lazy USDC array stream value-printer test passed!\n\n";
 }
@@ -408,13 +408,13 @@ void test_layer_printer() {
   std::string output = PrintLayer(layer);
   std::cout << "Layer output:\n" << output << "\n";
 
-  assert(contains(output, "#usda 1.0"));
-  assert(contains(output, "defaultPrim"));
-  assert(contains(output, "World"));
-  assert(contains(output, "Mesh"));
-  assert(contains(output, "Cube"));
-  assert(contains(output, "extent"));
-  assert(contains(output, "points"));
+  NEXT_CHECK(contains(output, "#usda 1.0"));
+  NEXT_CHECK(contains(output, "defaultPrim"));
+  NEXT_CHECK(contains(output, "World"));
+  NEXT_CHECK(contains(output, "Mesh"));
+  NEXT_CHECK(contains(output, "Cube"));
+  NEXT_CHECK(contains(output, "extent"));
+  NEXT_CHECK(contains(output, "points"));
 
   std::cout << "  prim-printer tests passed!\n\n";
 }
@@ -453,18 +453,18 @@ void test_stage_writer() {
 
   std::cout << "Stage USDA output:\n" << output << "\n";
 
-  assert(contains(output, "#usda 1.0"));
-  assert(contains(output, "defaultPrim"));
-  assert(contains(output, "Root"));
-  assert(contains(output, "Materials"));
-  assert(contains(output, "Metal"));
-  assert(contains(output, "Material"));
-  assert(contains(output, "roughness"));
+  NEXT_CHECK(contains(output, "#usda 1.0"));
+  NEXT_CHECK(contains(output, "defaultPrim"));
+  NEXT_CHECK(contains(output, "Root"));
+  NEXT_CHECK(contains(output, "Materials"));
+  NEXT_CHECK(contains(output, "Metal"));
+  NEXT_CHECK(contains(output, "Material"));
+  NEXT_CHECK(contains(output, "roughness"));
 
   // Test write to file
   USDAWriteResult result = WriteUSDAToFile("/tmp/test_output.usda", stage, opts);
-  assert(result.success);
-  assert(result.bytes_written > 0);
+  NEXT_CHECK(result.success);
+  NEXT_CHECK(result.bytes_written > 0);
   std::cout << "  Wrote " << result.bytes_written << " bytes to /tmp/test_output.usda\n";
 
   std::cout << "  usda-writer tests passed!\n\n";
@@ -498,44 +498,44 @@ void test_time_samples() {
   std::string output = WriteUSDAToString(stage);
   std::cout << "Time samples output:\n" << output << "\n";
 
-  assert(contains(output, ".timeSamples"));
-  assert(contains(output, "0:"));
-  assert(contains(output, "50:"));
-  assert(contains(output, "100:"));
+  NEXT_CHECK(contains(output, ".timeSamples"));
+  NEXT_CHECK(contains(output, "0:"));
+  NEXT_CHECK(contains(output, "50:"));
+  NEXT_CHECK(contains(output, "100:"));
 
   // Test GetValueAtTime via UsdPrim
   auto prims = stage.GetRootPrims();
-  assert(!prims.empty());
+  NEXT_CHECK(!prims.empty());
 
   const UsdPrim& prim = prims[0];
-  assert(prim.HasTimeSamples("xformOp:translate"));
+  NEXT_CHECK(prim.HasTimeSamples("xformOp:translate"));
 
   auto times = prim.GetTimeSampleTimes("xformOp:translate");
-  assert(times.size() == 3);
-  assert(times[0] == 0.0);
-  assert(times[1] == 50.0);
-  assert(times[2] == 100.0);
+  NEXT_CHECK(times.size() == 3);
+  NEXT_CHECK(times[0] == 0.0);
+  NEXT_CHECK(times[1] == 50.0);
+  NEXT_CHECK(times[2] == 100.0);
 
   // Test GetValueAtTime
   const Value* val_at_0 = prim.GetValueAtTime("xformOp:translate", 0.0);
-  assert(val_at_0 != nullptr);
+  NEXT_CHECK(val_at_0 != nullptr);
   const float* v0 = val_at_0->as_float3();
-  assert(v0 != nullptr);
-  assert(v0[0] == 0.0f && v0[1] == 0.0f && v0[2] == 0.0f);
+  NEXT_CHECK(v0 != nullptr);
+  NEXT_CHECK(v0[0] == 0.0f && v0[1] == 0.0f && v0[2] == 0.0f);
 
   const Value* val_at_50 = prim.GetValueAtTime("xformOp:translate", 50.0);
-  assert(val_at_50 != nullptr);
+  NEXT_CHECK(val_at_50 != nullptr);
   const float* v50 = val_at_50->as_float3();
-  assert(v50 != nullptr);
-  assert(v50[0] == 10.0f && v50[1] == 5.0f && v50[2] == 0.0f);
+  NEXT_CHECK(v50 != nullptr);
+  NEXT_CHECK(v50[0] == 10.0f && v50[1] == 5.0f && v50[2] == 0.0f);
 
   // Test interpolation (held - should return previous sample)
   const Value* val_at_25 = prim.GetValueAtTime("xformOp:translate", 25.0);
-  assert(val_at_25 != nullptr);
+  NEXT_CHECK(val_at_25 != nullptr);
   const float* v25 = val_at_25->as_float3();
-  assert(v25 != nullptr);
+  NEXT_CHECK(v25 != nullptr);
   // Should be same as t=0 (held interpolation)
-  assert(v25[0] == 0.0f);
+  NEXT_CHECK(v25[0] == 0.0f);
 
   std::cout << "  time samples test passed!\n\n";
 }
@@ -587,8 +587,8 @@ void test_parallel_writer_parity() {
 
   const std::string serial = WriteUSDAToString(stage, serial_opts);
   const std::string parallel = WriteUSDAToString(stage, par_opts);
-  assert(serial.size() > kPts);  // sanity: arrays were emitted
-  assert(serial == parallel);
+  NEXT_CHECK(serial.size() > kPts);  // sanity: arrays were emitted
+  NEXT_CHECK(serial == parallel);
 
   std::cout << "  parallel-writer byte parity passed!\n\n";
 }
@@ -659,15 +659,15 @@ void test_roundtrip() {
   std::cout << "Complex Stage USDA output:\n" << output << "\n";
 
   // Verify structure
-  assert(contains(output, "World"));
-  assert(contains(output, "Character"));
-  assert(contains(output, "Body"));
-  assert(contains(output, "Mesh"));
-  assert(contains(output, "faceVertexCounts"));
-  assert(contains(output, "faceVertexIndices"));
-  assert(contains(output, "points"));
-  assert(contains(output, "upAxis = \"Z\""));
-  assert(contains(output, "timeCodesPerSecond"));
+  NEXT_CHECK(contains(output, "World"));
+  NEXT_CHECK(contains(output, "Character"));
+  NEXT_CHECK(contains(output, "Body"));
+  NEXT_CHECK(contains(output, "Mesh"));
+  NEXT_CHECK(contains(output, "faceVertexCounts"));
+  NEXT_CHECK(contains(output, "faceVertexIndices"));
+  NEXT_CHECK(contains(output, "points"));
+  NEXT_CHECK(contains(output, "upAxis = \"Z\""));
+  NEXT_CHECK(contains(output, "timeCodesPerSecond"));
 
   std::cout << "  roundtrip test passed!\n\n";
 }
@@ -701,16 +701,16 @@ void test_usda_backend_parity() {
   opts.sort_properties = true;
 
   const std::string expected = WriteUSDAToString(stage, opts);
-  assert(!expected.empty());
+  NEXT_CHECK(!expected.empty());
 
   std::string stream_string;
   {
     StreamWriter writer(&stream_string);
     USDAWriteResult result = WriteUSDA(writer, stage, opts);
-    assert(result.success);
-    assert(result.bytes_written == expected.size());
+    NEXT_CHECK(result.success);
+    NEXT_CHECK(result.bytes_written == expected.size());
   }
-  assert(stream_string == expected);
+  NEXT_CHECK(stream_string == expected);
 
   std::string sink_string;
   {
@@ -721,25 +721,25 @@ void test_usda_backend_parity() {
         }, &sink_string},
         7);
     USDAWriteResult result = WriteUSDA(writer, stage, opts);
-    assert(result.success);
-    assert(result.bytes_written == expected.size());
+    NEXT_CHECK(result.success);
+    NEXT_CHECK(result.bytes_written == expected.size());
   }
-  assert(sink_string == expected);
+  NEXT_CHECK(sink_string == expected);
 
   std::ostringstream oss;
   USDAWriteResult ostream_result = WriteUSDA(oss, stage, opts);
-  assert(ostream_result.success);
-  assert(ostream_result.bytes_written == expected.size());
-  assert(oss.str() == expected);
+  NEXT_CHECK(ostream_result.success);
+  NEXT_CHECK(ostream_result.bytes_written == expected.size());
+  NEXT_CHECK(oss.str() == expected);
 
   const char* path = "/tmp/tinyusdz_next_writer_backend_parity.usda";
   USDAWriteResult file_result = WriteUSDAToFile(path, stage, opts);
-  assert(file_result.success);
-  assert(file_result.bytes_written == expected.size());
+  NEXT_CHECK(file_result.success);
+  NEXT_CHECK(file_result.bytes_written == expected.size());
   std::ifstream ifs(path, std::ios::binary);
   std::string file_text((std::istreambuf_iterator<char>(ifs)),
                         std::istreambuf_iterator<char>());
-  assert(file_text == expected);
+  NEXT_CHECK(file_text == expected);
   std::remove(path);
 
   std::cout << "  USDA writer backend parity test passed!\n\n";
@@ -768,16 +768,16 @@ void test_usda_layer_backend_parity() {
   opts.sort_properties = true;
 
   const std::string expected = WriteLayerToString(layer, opts);
-  assert(!expected.empty());
+  NEXT_CHECK(!expected.empty());
 
   std::string stream_string;
   {
     StreamWriter writer(&stream_string);
     USDAWriteResult result = WriteLayer(writer, layer, opts);
-    assert(result.success);
-    assert(result.bytes_written == expected.size());
+    NEXT_CHECK(result.success);
+    NEXT_CHECK(result.bytes_written == expected.size());
   }
-  assert(stream_string == expected);
+  NEXT_CHECK(stream_string == expected);
 
   std::string sink_string;
   {
@@ -788,25 +788,25 @@ void test_usda_layer_backend_parity() {
         }, &sink_string},
         5);
     USDAWriteResult result = WriteLayer(writer, layer, opts);
-    assert(result.success);
-    assert(result.bytes_written == expected.size());
+    NEXT_CHECK(result.success);
+    NEXT_CHECK(result.bytes_written == expected.size());
   }
-  assert(sink_string == expected);
+  NEXT_CHECK(sink_string == expected);
 
   std::ostringstream oss;
   USDAWriteResult ostream_result = WriteLayer(oss, layer, opts);
-  assert(ostream_result.success);
-  assert(ostream_result.bytes_written == expected.size());
-  assert(oss.str() == expected);
+  NEXT_CHECK(ostream_result.success);
+  NEXT_CHECK(ostream_result.bytes_written == expected.size());
+  NEXT_CHECK(oss.str() == expected);
 
   const std::string path = "/tmp/tinyusdz_next_layer_backend_parity.usda";
   USDAWriteResult file_result = WriteLayerToFile(path, layer, opts);
-  assert(file_result.success);
-  assert(file_result.bytes_written == expected.size());
+  NEXT_CHECK(file_result.success);
+  NEXT_CHECK(file_result.bytes_written == expected.size());
   std::ifstream ifs(path, std::ios::binary);
   std::string file_text((std::istreambuf_iterator<char>(ifs)),
                         std::istreambuf_iterator<char>());
-  assert(file_text == expected);
+  NEXT_CHECK(file_text == expected);
   std::remove(path.c_str());
 
   std::cout << "  USDA layer writer backend parity test passed!\n\n";
@@ -831,8 +831,8 @@ void test_usda_stream_failure() {
         }, nullptr},
         8);
     USDAWriteResult result = WriteUSDA(writer, stage);
-    assert(!result.success);
-    assert(!result.error.empty());
+    NEXT_CHECK(!result.success);
+    NEXT_CHECK(!result.error.empty());
   }
 
   Layer raw_layer;
@@ -848,8 +848,8 @@ void test_usda_stream_failure() {
         }, nullptr},
         8);
     USDAWriteResult result = WriteLayer(writer, raw_layer);
-    assert(!result.success);
-    assert(!result.error.empty());
+    NEXT_CHECK(!result.success);
+    NEXT_CHECK(!result.error.empty());
   }
 
   std::cout << "  USDA StreamWriter failure propagation test passed!\n\n";
@@ -862,13 +862,13 @@ void test_usda_api_error_paths() {
   std::string out;
   StreamWriter stream(&out);
   USDAWriteResult empty_stage_result = WriteUSDA(stream, empty_stage);
-  assert(!empty_stage_result.success);
-  assert(!empty_stage_result.error.empty());
+  NEXT_CHECK(!empty_stage_result.success);
+  NEXT_CHECK(!empty_stage_result.error.empty());
 
   USDAWriteResult null_file_result =
       WriteUSDAToFile(static_cast<const char*>(nullptr), empty_stage);
-  assert(!null_file_result.success);
-  assert(!null_file_result.error.empty());
+  NEXT_CHECK(!null_file_result.success);
+  NEXT_CHECK(!null_file_result.error.empty());
 
   std::cout << "  USDA writer API error path test passed!\n\n";
 }
@@ -888,14 +888,14 @@ void test_custom_qualifier_opt_in() {
 
   // Default: no `custom`, but the property itself is still emitted.
   std::string def = WriteUSDAToString(stage);
-  assert(!contains(def, "custom ") && "custom emitted by default");
-  assert(contains(def, "bool isAsset") && "custom property dropped entirely");
+  NEXT_CHECK(!contains(def, "custom ") && "custom emitted by default");
+  NEXT_CHECK(contains(def, "bool isAsset") && "custom property dropped entirely");
 
   // Opt-in: the `custom` qualifier is restored (legacy / openusd-compat).
   USDAWriteOptions opts;
   opts.emit_custom = true;
   std::string oc = WriteUSDAToString(stage, opts);
-  assert(contains(oc, "custom bool isAsset") &&
+  NEXT_CHECK(contains(oc, "custom bool isAsset") &&
          "custom qualifier missing under emit_custom");
   std::cout << "  custom opt-in test passed!\n\n";
 }
@@ -927,13 +927,13 @@ void test_timesamples_metadata_placement() {
   size_t decl = usda.find("color3f[] primvars:displayColor (");
   size_t interp = usda.find("interpolation = \"constant\"");
   size_t ts = usda.find("primvars:displayColor.timeSamples = {");
-  assert(decl != std::string::npos && ts != std::string::npos &&
+  NEXT_CHECK(decl != std::string::npos && ts != std::string::npos &&
          "both the declaration and the .timeSamples block must be emitted");
-  assert(decl < ts && interp != std::string::npos && interp < ts &&
+  NEXT_CHECK(decl < ts && interp != std::string::npos && interp < ts &&
          "metadata must precede the .timeSamples block");
   // The invalid form appends metadata right after the closing brace.
-  assert(usda.find("}\n                ) ") == std::string::npos);
-  assert(usda.find("} (") == std::string::npos &&
+  NEXT_CHECK(usda.find("}\n                ) ") == std::string::npos);
+  NEXT_CHECK(usda.find("} (") == std::string::npos &&
          "metadata must NOT follow the .timeSamples closing brace");
   std::cout << "  timeSamples metadata placement test passed!\n\n";
 }

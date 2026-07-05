@@ -7,7 +7,7 @@
 // reach the targeted reader guard, then must reject cleanly without crashing or
 // allocating based on hostile counts.
 
-#include <cassert>
+#include "test-check.hh"
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -33,7 +33,7 @@ void PutU64(std::vector<uint8_t>* out, uint64_t v) {
 }
 
 void PatchI64(std::vector<uint8_t>* out, size_t pos, int64_t v) {
-  assert(pos + 8 <= out->size());
+  NEXT_CHECK(pos + 8 <= out->size());
   uint64_t uv = static_cast<uint64_t>(v);
   for (int i = 0; i < 8; ++i) (*out)[pos + size_t(i)] = uint8_t(uv >> (i * 8));
 }
@@ -118,7 +118,7 @@ std::vector<uint8_t> TokensFromRaw(uint64_t count,
   PutU64(&out, count);
   PutU64(&out, static_cast<uint64_t>(raw.size()));
   CompressResult cr = CompressCrateBlob(raw.data(), raw.size());
-  assert(cr.success);
+  NEXT_CHECK(cr.success);
   PutU64(&out, static_cast<uint64_t>(cr.data.size()));
   out.insert(out.end(), cr.data.begin(), cr.data.end());
   return out;
@@ -144,7 +144,7 @@ std::vector<uint8_t> CompressedFieldIndices(
   std::vector<uint8_t> delta =
       EncodeDeltaU32(indices.data(), indices.size());
   CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
-  assert(cr.success);
+  NEXT_CHECK(cr.success);
   return cr.data;
 }
 
@@ -156,7 +156,7 @@ std::vector<uint8_t> CompressedValueReps(
     std::memcpy(raw.data() + i * sizeof(uint64_t), &v, sizeof(uint64_t));
   }
   CompressResult cr = CompressCrateBlob(raw.data(), raw.size());
-  assert(cr.success);
+  NEXT_CHECK(cr.success);
   return cr.data;
 }
 
@@ -169,7 +169,7 @@ void AppendCompressedU32Array(std::vector<uint8_t>* out,
 
 std::vector<uint8_t> FieldTable(const std::vector<uint32_t>& token_indices,
                                 const std::vector<ValueRep>& reps) {
-  assert(token_indices.size() == reps.size());
+  NEXT_CHECK(token_indices.size() == reps.size());
   std::vector<uint8_t> out;
   PutU64(&out, static_cast<uint64_t>(token_indices.size()));
   std::vector<uint8_t> indices = CompressedFieldIndices(token_indices);
@@ -184,7 +184,7 @@ std::vector<uint8_t> FieldTable(const std::vector<uint32_t>& token_indices,
 std::vector<uint8_t> FieldTableRawReps(
     const std::vector<uint32_t>& token_indices,
     const std::vector<ValueRep>& reps) {
-  assert(token_indices.size() == reps.size());
+  NEXT_CHECK(token_indices.size() == reps.size());
   std::vector<uint8_t> out;
   PutU64(&out, static_cast<uint64_t>(token_indices.size()));
   std::vector<uint8_t> indices = CompressedFieldIndices(token_indices);
@@ -214,8 +214,8 @@ std::vector<uint8_t> SpecsEmpty() {
 std::vector<uint8_t> SpecsCompressed(const std::vector<uint32_t>& path_indices,
                                      const std::vector<uint32_t>& fieldsets,
                                      const std::vector<uint32_t>& spec_types) {
-  assert(path_indices.size() == fieldsets.size());
-  assert(path_indices.size() == spec_types.size());
+  NEXT_CHECK(path_indices.size() == fieldsets.size());
+  NEXT_CHECK(path_indices.size() == spec_types.size());
   std::vector<uint8_t> out;
   PutU64(&out, static_cast<uint64_t>(path_indices.size()));
   AppendCompressedU32Array(&out, path_indices);
@@ -232,8 +232,8 @@ std::vector<uint8_t> PathsCompressedCount(uint64_t total_paths,
                                           const std::vector<uint32_t>& path_indices,
                                           const std::vector<uint32_t>& element_tokens,
                                           const std::vector<uint32_t>& jumps) {
-  assert(path_indices.size() == element_tokens.size());
-  assert(path_indices.size() == jumps.size());
+  NEXT_CHECK(path_indices.size() == element_tokens.size());
+  NEXT_CHECK(path_indices.size() == jumps.size());
   std::vector<uint8_t> out;
   PutU64(&out, total_paths);
   PutU64(&out, static_cast<uint64_t>(path_indices.size()));
@@ -336,8 +336,8 @@ void ExpectReject(const char* name, const std::vector<uint8_t>& bytes,
   if (r.success) {
     std::cerr << "Malformed case unexpectedly loaded: " << name << std::endl;
   }
-  assert(!r.success);
-  assert(!r.errors.empty() || !r.error_summary.empty());
+  NEXT_CHECK(!r.success);
+  NEXT_CHECK(!r.errors.empty() || !r.error_summary.empty());
   std::cout << "  rejected " << name << std::endl;
 }
 

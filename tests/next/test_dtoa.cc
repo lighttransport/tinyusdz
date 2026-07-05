@@ -14,7 +14,7 @@
 // Fast by default (a few million samples, ~1 s) for ctest; pass "exhaustive" to
 // also sweep all 2^32 float bit patterns.
 
-#include <cassert>
+#include "test-check.hh"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>

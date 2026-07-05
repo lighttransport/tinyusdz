@@ -7,7 +7,7 @@
 // into the retained source buffer, materialize correctly on access, and share
 // the backing buffer across copies (shared_ptr refcount).
 
-#include <cassert>
+#include "test-check.hh"
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -36,12 +36,12 @@ int main() {
     Value empty = Value::MakeFloatArray(std::vector<float>{});
     ArrayScratch<float> scratch;
     ArrayView<float> view;
-    assert(GetFloatArrayView(empty, &scratch, &view));
-    assert(view.empty());
-    assert(view.begin() == view.end());
+    NEXT_CHECK(GetFloatArrayView(empty, &scratch, &view));
+    NEXT_CHECK(view.empty());
+    NEXT_CHECK(view.begin() == view.end());
     std::vector<float> copied(view.begin(), view.end());
-    assert(copied.empty());
-    assert(view.size_bytes() == 0);
+    NEXT_CHECK(copied.empty());
+    NEXT_CHECK(view.size_bytes() == 0);
   }
 
   // ---- Build a stage with numeric POD arrays --------------------------------
@@ -104,8 +104,8 @@ int main() {
   // ---- Write to USDC in memory ---------------------------------------------
   std::vector<uint8_t> buf;
   USDCWriteResult wr = WriteUSDCToMemory(buf, stage);
-  assert(wr.success);
-  assert(!buf.empty());
+  NEXT_CHECK(wr.success);
+  NEXT_CHECK(!buf.empty());
 
   // ---- Read it back ---------------------------------------------------------
   USDCLoadResult lr = LoadUSDCFromMemory(buf.data(), buf.size());
@@ -117,63 +117,63 @@ int main() {
   }
 
   UsdPrim mesh = lr.stage.GetPrimAtPath("/Mesh1");
-  assert(mesh.IsValid());
+  NEXT_CHECK(mesh.IsValid());
   const PrimSpec* ps = mesh.GetPrimSpec();
-  assert(ps);
+  NEXT_CHECK(ps);
 
   // ---- TimeSamples: lazy array values --------------------------------------
-  assert(mesh.HasTimeSamples("velocities"));
+  NEXT_CHECK(mesh.HasTimeSamples("velocities"));
   std::vector<double> velocity_times = mesh.GetTimeSampleTimes("velocities");
-  assert(velocity_times.size() == 2);
-  assert(velocity_times[0] == 0.0);
-  assert(velocity_times[1] == 1.0);
+  NEXT_CHECK(velocity_times.size() == 2);
+  NEXT_CHECK(velocity_times[0] == 0.0);
+  NEXT_CHECK(velocity_times[1] == 1.0);
   const Value* v0 = mesh.GetValueAtTime("velocities", 0.0);
   const Value* v1 = mesh.GetValueAtTime("velocities", 1.0);
-  assert(v0 && v1);
-  assert(v0->is_array() && v1->is_array());
-  assert(v0->is_lazy() && v1->is_lazy());
-  assert(!v0->is_dirty() && !v1->is_dirty());
-  assert(v0->array_size() == velocities0.size() / 3);
-  assert(v1->array_size() == velocities1.size() / 3);
+  NEXT_CHECK(v0 && v1);
+  NEXT_CHECK(v0->is_array() && v1->is_array());
+  NEXT_CHECK(v0->is_lazy() && v1->is_lazy());
+  NEXT_CHECK(!v0->is_dirty() && !v1->is_dirty());
+  NEXT_CHECK(v0->array_size() == velocities0.size() / 3);
+  NEXT_CHECK(v1->array_size() == velocities1.size() / 3);
   {
     ArrayScratch<float> scratch;
     ArrayView<float> view;
-    assert(GetFloatArrayView(*v0, &scratch, &view));
-    assert(view.size == velocities0.size());
+    NEXT_CHECK(GetFloatArrayView(*v0, &scratch, &view));
+    NEXT_CHECK(view.size == velocities0.size());
     for (size_t i = 0; i < velocities0.size(); i++) {
-      assert(view[i] == velocities0[i]);
+      NEXT_CHECK(view[i] == velocities0[i]);
     }
-    assert(v0->is_lazy());
+    NEXT_CHECK(v0->is_lazy());
   }
   Value v1_copy = v1->materialized_copy();
-  assert(!v1_copy.is_lazy());
-  assert(v1->is_lazy());
+  NEXT_CHECK(!v1_copy.is_lazy());
+  NEXT_CHECK(v1->is_lazy());
   const std::vector<float>* v1_arr = v1_copy.as_float_array();
-  assert(v1_arr && *v1_arr == velocities1);
+  NEXT_CHECK(v1_arr && *v1_arr == velocities1);
   std::cout << "  time-sampled array values came back lazy" << std::endl;
 
   // ---- points: lazy Vec3f -> Float3 ----------------------------------------
   const Value* pv = ps->property_value("points");
-  assert(pv);
-  assert(pv->is_array());
-  assert(pv->is_lazy());                          // lazy BEFORE any access
-  assert(!pv->is_dirty());
-  assert(pv->array_size() == points.size() / 3);  // count without materializing
+  NEXT_CHECK(pv);
+  NEXT_CHECK(pv->is_array());
+  NEXT_CHECK(pv->is_lazy());                          // lazy BEFORE any access
+  NEXT_CHECK(!pv->is_dirty());
+  NEXT_CHECK(pv->array_size() == points.size() / 3);  // count without materializing
   std::cout << "  points came back lazy (count=" << pv->array_size() << ")" << std::endl;
 
   // Copy the lazy value: must stay lazy and SHARE the source buffer.
   {
     Value copy = *pv;
-    assert(copy.is_lazy());
-    assert(copy.lazy_ref() && pv->lazy_ref());
-    assert(copy.lazy_ref()->source.get() == pv->lazy_ref()->source.get());
+    NEXT_CHECK(copy.is_lazy());
+    NEXT_CHECK(copy.lazy_ref() && pv->lazy_ref());
+    NEXT_CHECK(copy.lazy_ref()->source.get() == pv->lazy_ref()->source.get());
     long uc_before = pv->lazy_ref()->source.use_count();
-    assert(uc_before >= 2);  // pv + copy both reference it
+    NEXT_CHECK(uc_before >= 2);  // pv + copy both reference it
     // Materializing the copy must not disturb the original.
     const std::vector<float>* carr = copy.as_float_array();
-    assert(carr && carr->size() == points.size());
-    assert(!copy.is_lazy());
-    assert(pv->is_lazy());   // original untouched
+    NEXT_CHECK(carr && carr->size() == points.size());
+    NEXT_CHECK(!copy.is_lazy());
+    NEXT_CHECK(pv->is_lazy());   // original untouched
     (void)uc_before;
   }
   // After the copy is destroyed, the original still resolves.
@@ -183,206 +183,206 @@ int main() {
   // array). The decoded temp must match the source bytes, and pv stays lazy.
   {
     Value mc = pv->materialized_copy();
-    assert(!mc.is_lazy());                 // returned value is decoded
-    assert(pv->is_lazy());                 // ORIGINAL untouched (still lazy)
+    NEXT_CHECK(!mc.is_lazy());                 // returned value is decoded
+    NEXT_CHECK(pv->is_lazy());                 // ORIGINAL untouched (still lazy)
     const std::vector<float>* mcarr = mc.as_float_array();
-    assert(mcarr && mcarr->size() == points.size());
-    for (size_t i = 0; i < points.size(); i++) assert((*mcarr)[i] == points[i]);
+    NEXT_CHECK(mcarr && mcarr->size() == points.size());
+    for (size_t i = 0; i < points.size(); i++) NEXT_CHECK((*mcarr)[i] == points[i]);
   }
-  assert(pv->is_lazy());  // still lazy after the temp is destroyed
+  NEXT_CHECK(pv->is_lazy());  // still lazy after the temp is destroyed
 
   // Borrowed read-only view: direct pointer into the retained crate payload for
   // uncompressed POD arrays, without materializing or dirtying the Value.
   {
     ArrayScratch<float> scratch;
     ArrayView<float> view;
-    assert(GetFloatArrayView(*pv, &scratch, &view));
-    assert(view.borrowed);
-    assert(view.size == points.size());
-    assert(scratch.storage.empty());
-    for (size_t i = 0; i < points.size(); i++) assert(view[i] == points[i]);
-    assert(pv->is_lazy());
-    assert(!pv->is_dirty());
+    NEXT_CHECK(GetFloatArrayView(*pv, &scratch, &view));
+    NEXT_CHECK(view.borrowed);
+    NEXT_CHECK(view.size == points.size());
+    NEXT_CHECK(scratch.storage.empty());
+    for (size_t i = 0; i < points.size(); i++) NEXT_CHECK(view[i] == points[i]);
+    NEXT_CHECK(pv->is_lazy());
+    NEXT_CHECK(!pv->is_dirty());
     std::cout << "  points borrowed view reads without materializing" << std::endl;
   }
 
   // Materialize the original via accessor; verify contents byte-for-byte.
   const std::vector<float>* arr = pv->as_float_array();
-  assert(arr);
-  assert(arr->size() == points.size());
-  for (size_t i = 0; i < points.size(); i++) assert((*arr)[i] == points[i]);
-  assert(!pv->is_lazy());  // materialized after access
+  NEXT_CHECK(arr);
+  NEXT_CHECK(arr->size() == points.size());
+  for (size_t i = 0; i < points.size(); i++) NEXT_CHECK((*arr)[i] == points[i]);
+  NEXT_CHECK(!pv->is_lazy());  // materialized after access
   std::cout << "  points materialized correctly (" << arr->size() << " floats)" << std::endl;
 
   // ---- faceVertexIndices: lazy Int -----------------------------------------
   const Value* iv = ps->property_value("faceVertexIndices");
-  assert(iv);
-  assert(iv->is_lazy());
+  NEXT_CHECK(iv);
+  NEXT_CHECK(iv->is_lazy());
   {
     ArrayScratch<int32_t> scratch;
     ArrayView<int32_t> view;
-    assert(GetIntArrayView(*iv, &scratch, &view));
-    assert(view.size == indices.size());
-    for (size_t i = 0; i < indices.size(); i++) assert(view[i] == indices[i]);
-    assert(iv->is_lazy());
-    assert(!iv->is_dirty());
+    NEXT_CHECK(GetIntArrayView(*iv, &scratch, &view));
+    NEXT_CHECK(view.size == indices.size());
+    for (size_t i = 0; i < indices.size(); i++) NEXT_CHECK(view[i] == indices[i]);
+    NEXT_CHECK(iv->is_lazy());
+    NEXT_CHECK(!iv->is_dirty());
     std::cout << "  indices view reads without materializing source"
               << (view.borrowed ? " (borrowed)" : " (scratch)") << std::endl;
   }
   const std::vector<int32_t>* ia = iv->as_int_array();
-  assert(ia);
-  assert(*ia == indices);
-  assert(!iv->is_lazy());
+  NEXT_CHECK(ia);
+  NEXT_CHECK(*ia == indices);
+  NEXT_CHECK(!iv->is_lazy());
   std::cout << "  indices materialized correctly (" << ia->size() << " ints)" << std::endl;
 
   // ---- unsigned integer arrays: lazy UInt / UInt64 views --------------------
   const Value* uv = ps->property_value("primvars:ids");
-  assert(uv && uv->is_lazy());
+  NEXT_CHECK(uv && uv->is_lazy());
   {
     ArrayScratch<uint32_t> scratch;
     ArrayView<uint32_t> view;
-    assert(GetUIntArrayView(*uv, &scratch, &view));
-    assert(view.size == uids.size());
-    assert(view.size_bytes() == uids.size() * sizeof(uint32_t));
-    for (size_t i = 0; i < uids.size(); i++) assert(view[i] == uids[i]);
-    assert(uv->is_lazy());
-    assert(!uv->is_dirty());
+    NEXT_CHECK(GetUIntArrayView(*uv, &scratch, &view));
+    NEXT_CHECK(view.size == uids.size());
+    NEXT_CHECK(view.size_bytes() == uids.size() * sizeof(uint32_t));
+    for (size_t i = 0; i < uids.size(); i++) NEXT_CHECK(view[i] == uids[i]);
+    NEXT_CHECK(uv->is_lazy());
+    NEXT_CHECK(!uv->is_dirty());
   }
   const Value* u64v = ps->property_value("primvars:hashes");
-  assert(u64v && u64v->is_lazy());
+  NEXT_CHECK(u64v && u64v->is_lazy());
   {
     ArrayScratch<uint64_t> scratch;
     ArrayView<uint64_t> view;
-    assert(GetUInt64ArrayView(*u64v, &scratch, &view));
-    assert(view.size == hashes.size());
-    assert(view.size_bytes() == hashes.size() * sizeof(uint64_t));
-    for (size_t i = 0; i < hashes.size(); i++) assert(view[i] == hashes[i]);
-    assert(u64v->is_lazy());
-    assert(!u64v->is_dirty());
+    NEXT_CHECK(GetUInt64ArrayView(*u64v, &scratch, &view));
+    NEXT_CHECK(view.size == hashes.size());
+    NEXT_CHECK(view.size_bytes() == hashes.size() * sizeof(uint64_t));
+    for (size_t i = 0; i < hashes.size(); i++) NEXT_CHECK(view[i] == hashes[i]);
+    NEXT_CHECK(u64v->is_lazy());
+    NEXT_CHECK(!u64v->is_dirty());
     std::cout << "  unsigned integer views read without materializing source"
               << (view.borrowed ? " (borrowed)" : " (scratch)") << std::endl;
   }
 
   // ---- orientations / xforms: newly supported vector/matrix array laziness --
   const Value* qv = ps->property_value("orientations");
-  assert(qv && qv->is_array() && qv->is_lazy());
+  NEXT_CHECK(qv && qv->is_array() && qv->is_lazy());
   const std::vector<float>* qa = qv->as_float_array();
-  assert(qa && *qa == quats);
+  NEXT_CHECK(qa && *qa == quats);
   const Value* mv = ps->property_value("xforms");
-  assert(mv && mv->is_array() && mv->is_lazy());
+  NEXT_CHECK(mv && mv->is_array() && mv->is_lazy());
   const std::vector<double>* ma = mv->as_double_array();
-  assert(ma && *ma == matrices);
+  NEXT_CHECK(ma && *ma == matrices);
   std::cout << "  quat/matrix arrays came back lazy and materialized correctly" << std::endl;
 
   // ---- vec4f / vec2d: doc-named POD types must also be lazy -----------------
   const Value* tv = ps->property_value("tangents");
-  assert(tv && tv->is_array() && tv->is_lazy());
+  NEXT_CHECK(tv && tv->is_array() && tv->is_lazy());
   const std::vector<float>* ta = tv->as_float_array();
-  assert(ta && *ta == tangents);
+  NEXT_CHECK(ta && *ta == tangents);
   const Value* ev = ps->property_value("extent");
-  assert(ev && ev->is_array() && ev->is_lazy());
+  NEXT_CHECK(ev && ev->is_array() && ev->is_lazy());
   const std::vector<double>* ea = ev->as_double_array();
-  assert(ea && *ea == extents);
+  NEXT_CHECK(ea && *ea == extents);
   std::cout << "  vec4f/vec2d arrays came back lazy and materialized correctly" << std::endl;
 
   // ---- A2: composition (Clone + Compositor) preserves laziness -------------
   {
     USDCLoadResult lr2 = LoadUSDCFromMemory(buf.data(), buf.size());
-    assert(lr2.success);
+    NEXT_CHECK(lr2.success);
     const Layer* layer = lr2.stage.GetRootLayer();
-    assert(layer);
+    NEXT_CHECK(layer);
     const PrimSpec* sps = layer->prim_at_path("/Mesh1");
-    assert(sps);
+    NEXT_CHECK(sps);
     const Value* sv = sps->property_value("points");
-    assert(sv && sv->is_lazy());
+    NEXT_CHECK(sv && sv->is_lazy());
     const CrateDataSource* src = sv->lazy_ref()->source.get();
     long uc0 = sv->lazy_ref()->source.use_count();
 
     // PrimSpec::Clone() preserves laziness and shares the source buffer.
     PrimSpec clone = sps->Clone();
     const Value* cv = clone.property_value("points");
-    assert(cv && cv->is_lazy());
-    assert(cv->lazy_ref()->source.get() == src);
-    assert(sv->lazy_ref()->source.use_count() > uc0);  // buffer shared, not copied
+    NEXT_CHECK(cv && cv->is_lazy());
+    NEXT_CHECK(cv->lazy_ref()->source.get() == src);
+    NEXT_CHECK(sv->lazy_ref()->source.use_count() > uc0);  // buffer shared, not copied
     std::cout << "  Clone() preserved lazy + shared source" << std::endl;
 
     // Compositor::Compose() preserves laziness and shares the source buffer.
     Compositor comp;
     std::unique_ptr<Layer> composed = comp.Compose(*layer);
-    assert(composed);
+    NEXT_CHECK(composed);
     const PrimSpec* cps = composed->prim_at_path("/Mesh1");
-    assert(cps);
+    NEXT_CHECK(cps);
     const Value* compv = cps->property_value("points");
-    assert(compv && compv->is_lazy());
-    assert(compv->lazy_ref()->source.get() == src);
+    NEXT_CHECK(compv && compv->is_lazy());
+    NEXT_CHECK(compv->lazy_ref()->source.get() == src);
     std::cout << "  Compose() preserved lazy + shared source" << std::endl;
 
     // Materializing the composed value must not disturb the source layer value.
     const std::vector<float>* compArr = compv->as_float_array();
-    assert(compArr && compArr->size() == points.size());
-    assert(!compv->is_lazy());
-    assert(sv->is_lazy());  // original opinion untouched
+    NEXT_CHECK(compArr && compArr->size() == points.size());
+    NEXT_CHECK(!compv->is_lazy());
+    NEXT_CHECK(sv->is_lazy());  // original opinion untouched
     std::cout << "  composition materialize is independent of source" << std::endl;
   }
 
   // ---- A3: writer byte pass-through ----------------------------------------
   {
     USDCLoadResult lr3 = LoadUSDCFromMemory(buf.data(), buf.size());
-    assert(lr3.success);
+    NEXT_CHECK(lr3.success);
     const Layer* layer = lr3.stage.GetRootLayer();
-    assert(layer);
+    NEXT_CHECK(layer);
 
     CrateWriter writer;
     std::vector<uint8_t> out;
     CrateWriteResult wres = writer.WriteLayerToMemory(out, *layer);
-    assert(wres.success);
+    NEXT_CHECK(wres.success);
     // Numeric arrays (points Vec3f, indices Int, ids UInt, hashes UInt64,
     // orientations Quatf, xforms Matrix4d, tangents Vec4f, extent Vec2d, and
     // two velocities TimeSamples) copied verbatim.
-    assert(wres.arrays_passed_through >= 10);
-    assert(wres.arrays_reencoded == 0);
+    NEXT_CHECK(wres.arrays_passed_through >= 10);
+    NEXT_CHECK(wres.arrays_reencoded == 0);
     std::cout << "  writer passed through " << wres.arrays_passed_through
               << " arrays (" << wres.arrays_reencoded << " reencoded)" << std::endl;
 
     // Re-read the pass-through output and verify contents are bit-identical.
     USDCLoadResult lr4 = LoadUSDCFromMemory(out.data(), out.size());
-    assert(lr4.success);
+    NEXT_CHECK(lr4.success);
     UsdPrim mesh4 = lr4.stage.GetPrimAtPath("/Mesh1");
-    assert(mesh4.IsValid());
+    NEXT_CHECK(mesh4.IsValid());
     const PrimSpec* ps4 = lr4.stage.GetRootLayer()->prim_at_path("/Mesh1");
-    assert(ps4);
+    NEXT_CHECK(ps4);
     const std::vector<float>* pa = ps4->property_value("points")->as_float_array();
-    assert(pa && pa->size() == points.size());
-    for (size_t i = 0; i < points.size(); i++) assert((*pa)[i] == points[i]);
+    NEXT_CHECK(pa && pa->size() == points.size());
+    for (size_t i = 0; i < points.size(); i++) NEXT_CHECK((*pa)[i] == points[i]);
     const std::vector<int32_t>* ix =
         ps4->property_value("faceVertexIndices")->as_int_array();
-    assert(ix && *ix == indices);
+    NEXT_CHECK(ix && *ix == indices);
     const std::vector<uint32_t>* ux =
         ps4->property_value("primvars:ids")->as_uint_array();
-    assert(ux && *ux == uids);
+    NEXT_CHECK(ux && *ux == uids);
     const std::vector<uint64_t>* u64x =
         ps4->property_value("primvars:hashes")->as_uint64_array();
-    assert(u64x && *u64x == hashes);
+    NEXT_CHECK(u64x && *u64x == hashes);
     const std::vector<float>* oq =
         ps4->property_value("orientations")->as_float_array();
-    assert(oq && *oq == quats);
+    NEXT_CHECK(oq && *oq == quats);
     const std::vector<double>* xm =
         ps4->property_value("xforms")->as_double_array();
-    assert(xm && *xm == matrices);
+    NEXT_CHECK(xm && *xm == matrices);
     const Value* rv0 = mesh4.GetValueAtTime("velocities", 0.0);
     const Value* rv1 = mesh4.GetValueAtTime("velocities", 1.0);
-    assert(rv0 && rv1 && rv0->is_lazy() && rv1->is_lazy());
+    NEXT_CHECK(rv0 && rv1 && rv0->is_lazy() && rv1->is_lazy());
     const std::vector<float>* rv0a = rv0->as_float_array();
     const std::vector<float>* rv1a = rv1->as_float_array();
-    assert(rv0a && *rv0a == velocities0);
-    assert(rv1a && *rv1a == velocities1);
+    NEXT_CHECK(rv0a && *rv0a == velocities0);
+    NEXT_CHECK(rv1a && *rv1a == velocities1);
     std::cout << "  pass-through output re-reads identically" << std::endl;
 
     // Dirty flag: a mutable accessor marks the value so pass-through is skipped.
     Value dv = *layer->prim_at_path("/Mesh1")->property_value("points");
-    assert(dv.is_lazy() && !dv.is_dirty());
+    NEXT_CHECK(dv.is_lazy() && !dv.is_dirty());
     (void)dv.as_float_array();  // non-const accessor materializes + dirties
-    assert(!dv.is_lazy() && dv.is_dirty());
+    NEXT_CHECK(!dv.is_lazy() && dv.is_dirty());
     std::cout << "  mutable access sets dirty (disables pass-through)" << std::endl;
   }
 
@@ -394,36 +394,36 @@ int main() {
     std::string ferr;
     bool ok = pipeline::FlattenUSDCToUSDC(buf.data(), buf.size(), fout, fopts,
                                           &fstats, &ferr);
-    assert(ok);
-    assert(fstats.arrays_passed_through >= 10);
-    assert(fstats.arrays_reencoded == 0);
+    NEXT_CHECK(ok);
+    NEXT_CHECK(fstats.arrays_passed_through >= 10);
+    NEXT_CHECK(fstats.arrays_reencoded == 0);
     std::cout << "  FlattenUSDCToUSDC: " << fstats.input_bytes << " -> "
               << fstats.output_bytes << " bytes, passthrough="
               << fstats.arrays_passed_through << std::endl;
 
     // Flattened output re-reads with identical array contents.
     USDCLoadResult lr5 = LoadUSDCFromMemory(fout.data(), fout.size());
-    assert(lr5.success);
+    NEXT_CHECK(lr5.success);
     UsdPrim mesh5 = lr5.stage.GetPrimAtPath("/Mesh1");
-    assert(mesh5.IsValid());
+    NEXT_CHECK(mesh5.IsValid());
     const PrimSpec* ps5 = lr5.stage.GetRootLayer()->prim_at_path("/Mesh1");
-    assert(ps5);
+    NEXT_CHECK(ps5);
     const std::vector<float>* fpa = ps5->property_value("points")->as_float_array();
-    assert(fpa && fpa->size() == points.size());
-    for (size_t i = 0; i < points.size(); i++) assert((*fpa)[i] == points[i]);
+    NEXT_CHECK(fpa && fpa->size() == points.size());
+    for (size_t i = 0; i < points.size(); i++) NEXT_CHECK((*fpa)[i] == points[i]);
     const std::vector<float>* fqa =
         ps5->property_value("orientations")->as_float_array();
-    assert(fqa && *fqa == quats);
+    NEXT_CHECK(fqa && *fqa == quats);
     const std::vector<double>* fma =
         ps5->property_value("xforms")->as_double_array();
-    assert(fma && *fma == matrices);
+    NEXT_CHECK(fma && *fma == matrices);
     const Value* fv0 = mesh5.GetValueAtTime("velocities", 0.0);
     const Value* fv1 = mesh5.GetValueAtTime("velocities", 1.0);
-    assert(fv0 && fv1);
+    NEXT_CHECK(fv0 && fv1);
     const std::vector<float>* fv0a = fv0->as_float_array();
     const std::vector<float>* fv1a = fv1->as_float_array();
-    assert(fv0a && *fv0a == velocities0);
-    assert(fv1a && *fv1a == velocities1);
+    NEXT_CHECK(fv0a && *fv0a == velocities0);
+    NEXT_CHECK(fv1a && *fv1a == velocities1);
     std::cout << "  facade output re-reads identically" << std::endl;
 
     // Filesystem facade: USDA root + USDA sublayer must compose and write USDC.
@@ -474,16 +474,16 @@ int main() {
       pipeline::FlattenStats file_stats;
       std::vector<uint8_t> file_out;
       std::string file_err;
-      assert(pipeline::FlattenUSDFileToUSDC(root_path, file_out, fopts,
+      NEXT_CHECK(pipeline::FlattenUSDFileToUSDC(root_path, file_out, fopts,
                                             &file_stats, &file_err));
-      assert(!file_out.empty());
+      NEXT_CHECK(!file_out.empty());
       USDCLoadResult file_lr = LoadUSDCFromMemory(file_out.data(),
                                                   file_out.size());
-      assert(file_lr.success);
-      assert(file_lr.stage.GetPrimAtPath("/World/FromSub").IsValid());
-      assert(file_lr.stage.GetPrimAtPath("/World/Local").IsValid());
-      assert(file_lr.stage.GetPrimAtPath("/World/RefSlot/FromReference").IsValid());
-      assert(file_stats.prim_count >= 3);
+      NEXT_CHECK(file_lr.success);
+      NEXT_CHECK(file_lr.stage.GetPrimAtPath("/World/FromSub").IsValid());
+      NEXT_CHECK(file_lr.stage.GetPrimAtPath("/World/Local").IsValid());
+      NEXT_CHECK(file_lr.stage.GetPrimAtPath("/World/RefSlot/FromReference").IsValid());
+      NEXT_CHECK(file_stats.prim_count >= 3);
       std::cout << "  FlattenUSDFileToUSDC composes USDA sublayers/references" << std::endl;
     }
 
@@ -492,9 +492,9 @@ int main() {
     std::vector<uint8_t> oout;
     std::string oin(reinterpret_cast<const char*>(buf.data()), buf.size());
     bool ook = pipeline::FlattenUSDCToUSDCOwned(std::move(oin), oout, {}, &ostats, &ferr);
-    assert(ook);
-    assert(ostats.arrays_passed_through == fstats.arrays_passed_through);
-    assert(oout.size() == fout.size());
+    NEXT_CHECK(ook);
+    NEXT_CHECK(ostats.arrays_passed_through == fstats.arrays_passed_through);
+    NEXT_CHECK(oout.size() == fout.size());
     std::cout << "  owned facade path matches (passthrough="
               << ostats.arrays_passed_through << ")" << std::endl;
   }
@@ -511,19 +511,19 @@ int main() {
     // Default load path memory-maps the file. Lazy values read straight from
     // the mapping; their CrateDataSource reports is_mmapped().
     USDCLoadResult lm = LoadUSDCFromFile(path);
-    assert(lm.success);
+    NEXT_CHECK(lm.success);
     const PrimSpec* mps = lm.stage.GetRootLayer()->prim_at_path("/Mesh1");
-    assert(mps);
+    NEXT_CHECK(mps);
     const Value* mpv = mps->property_value("points");
-    assert(mpv && mpv->is_lazy());
-    assert(mpv->lazy_ref()->source->is_mmapped() &&
+    NEXT_CHECK(mpv && mpv->is_lazy());
+    NEXT_CHECK(mpv->lazy_ref()->source->is_mmapped() &&
            "default file load should be mmap-backed");
     const std::vector<float>* mpa = mpv->as_float_array();
-    assert(mpa && mpa->size() == points.size());
-    for (size_t i = 0; i < points.size(); i++) assert((*mpa)[i] == points[i]);
+    NEXT_CHECK(mpa && mpa->size() == points.size());
+    for (size_t i = 0; i < points.size(); i++) NEXT_CHECK((*mpa)[i] == points[i]);
     // The mapping must outlive the reader: a lazy value materialized after the
     // load (above) already proved the shared_ptr keeps the mapping alive.
-    assert(lm.source_was_mmap);
+    NEXT_CHECK(lm.source_was_mmap);
     std::cout << "  file load is mmap-backed and materializes correctly"
               << std::endl;
 
@@ -531,24 +531,24 @@ int main() {
     USDCLoadOptions opt;
     opt.crate_options.use_mmap = false;
     USDCLoadResult lo = LoadUSDCFromFile(path, opt);
-    assert(lo.success);
-    assert(!lo.source_was_mmap);
+    NEXT_CHECK(lo.success);
+    NEXT_CHECK(!lo.source_was_mmap);
     const Value* opv =
         lo.stage.GetRootLayer()->prim_at_path("/Mesh1")->property_value("points");
-    assert(opv && opv->is_lazy());
-    assert(!opv->lazy_ref()->source->is_mmapped() &&
+    NEXT_CHECK(opv && opv->is_lazy());
+    NEXT_CHECK(!opv->lazy_ref()->source->is_mmapped() &&
            "use_mmap=false must use the owned buffer");
     const std::vector<float>* opa = opv->as_float_array();
-    assert(opa && *opa == *mpa);
+    NEXT_CHECK(opa && *opa == *mpa);
     std::cout << "  use_mmap=false falls back to owned buffer, same data"
               << std::endl;
 
     pipeline::FlattenStats mmap_stats;
     std::vector<uint8_t> mmap_out;
     std::string mmap_err;
-    assert(pipeline::FlattenUSDFileToUSDC(path, mmap_out, {}, &mmap_stats,
+    NEXT_CHECK(pipeline::FlattenUSDFileToUSDC(path, mmap_out, {}, &mmap_stats,
                                           &mmap_err));
-    assert(mmap_stats.input_was_mmap);
+    NEXT_CHECK(mmap_stats.input_was_mmap);
     std::cout << "  file-path flatten reports mmap input attribution"
               << std::endl;
 

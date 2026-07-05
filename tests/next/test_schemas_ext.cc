@@ -12,7 +12,7 @@
 #include "next/schema/physics-collision.hh"
 #include "next/prim/path.hh"
 #include <cstdio>
-#include <cassert>
+#include "test-check.hh"
 #include <string>
 #include <vector>
 

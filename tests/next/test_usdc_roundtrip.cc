@@ -7,7 +7,7 @@
 
 #include <iostream>
 #include <fstream>
-#include <cassert>
+#include "test-check.hh"
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -31,38 +31,38 @@ static const Value* DictFind(const Value& dv, const char* key) {
 }
 
 static const PrimSpec* MustPrim(const Layer* layer, const char* path) {
-  assert(layer);
+  NEXT_CHECK(layer);
   const PrimSpec* prim = layer->prim_at_path(path);
-  assert(prim && "expected prim missing");
+  NEXT_CHECK(prim && "expected prim missing");
   return prim;
 }
 
 static const Value* MustProp(const PrimSpec* prim, const char* name) {
-  assert(prim);
+  NEXT_CHECK(prim);
   const Value* value = prim->property_value(name);
-  assert(value && "expected property missing");
+  NEXT_CHECK(value && "expected property missing");
   return value;
 }
 
 static void CheckFloatArray(const Value* value, TypeId type,
                             const std::vector<float>& expected) {
-  assert(value && value->is_array() && value->type_id() == type);
+  NEXT_CHECK(value && value->is_array() && value->type_id() == type);
   const std::vector<float>* arr = value->as_float_array();
-  assert(arr && *arr == expected);
+  NEXT_CHECK(arr && *arr == expected);
 }
 
 static void CheckIntArray(const Value* value,
                           const std::vector<int32_t>& expected) {
-  assert(value && value->is_array() && value->type_id() == TypeId::Int);
+  NEXT_CHECK(value && value->is_array() && value->type_id() == TypeId::Int);
   const std::vector<int32_t>* arr = value->as_int_array();
-  assert(arr && *arr == expected);
+  NEXT_CHECK(arr && *arr == expected);
 }
 
 static void CheckInt64Array(const Value* value,
                             const std::vector<int64_t>& expected) {
-  assert(value && value->is_array() && value->type_id() == TypeId::Int64);
+  NEXT_CHECK(value && value->is_array() && value->type_id() == TypeId::Int64);
   const std::vector<int64_t>* arr = value->as_int64_array();
-  assert(arr && *arr == expected);
+  NEXT_CHECK(arr && *arr == expected);
 }
 
 // ============================================================
@@ -256,7 +256,7 @@ void test_roundtrip_schema_types() {
   layer.begin_prim("Helper", "Scope");
   {
     PrimSpec* prim = layer.current();
-    assert(prim);
+    NEXT_CHECK(prim);
     prim->meta().doc() = "A helper scope";
     prim->meta().hidden = true;
   }
@@ -271,7 +271,7 @@ void test_roundtrip_schema_types() {
   CrateWriter writer;
   CrateWriteResult result = writer.WriteToMemory(buffer, stage);
 
-  assert(result.success);
+  NEXT_CHECK(result.success);
   std::cout << "  Written " << result.bytes_written << " bytes\n";
   std::cout << "  Tokens: " << result.token_count << "\n";
   std::cout << "  Paths: " << result.path_count << "\n";
@@ -279,16 +279,16 @@ void test_roundtrip_schema_types() {
   std::cout << "  Fields: " << result.field_count << "\n";
 
   // Verify basic structure
-  assert(buffer.size() >= kCrateBootstrapSize);
-  assert(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
+  NEXT_CHECK(buffer.size() >= kCrateBootstrapSize);
+  NEXT_CHECK(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
 
   // Parse TOC
   TocInfo toc;
   // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
-  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // outside NEXT_CHECK() — under NDEBUG `NEXT_CHECK(expr)` does not evaluate `expr`,
   // which would leave `toc` empty and null-deref the section lookups below.
   const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
-  assert(toc_parsed);
+  NEXT_CHECK(toc_parsed);
   (void)toc_parsed;
 
   // Verify required sections exist
@@ -299,34 +299,34 @@ void test_roundtrip_schema_types() {
   auto* paths_sec = toc.find("PATHS");
   auto* specs_sec = toc.find("SPECS");
 
-  assert(tokens_sec != nullptr);
-  assert(strings_sec != nullptr);
-  assert(fields_sec != nullptr);
-  assert(fieldsets_sec != nullptr);
-  assert(paths_sec != nullptr);
-  assert(specs_sec != nullptr);
+  NEXT_CHECK(tokens_sec != nullptr);
+  NEXT_CHECK(strings_sec != nullptr);
+  NEXT_CHECK(fields_sec != nullptr);
+  NEXT_CHECK(fieldsets_sec != nullptr);
+  NEXT_CHECK(paths_sec != nullptr);
+  NEXT_CHECK(specs_sec != nullptr);
 
   // VALUE section is not in TOC (pxrUSD stores it between bootstrap
   // and structural sections, not in the TOC). Verify it exists between
   // bootstrap end (64) and first structural section.
   if (toc.sections.size() > 0) {
-    assert(toc.sections[0].start > 64);
+    NEXT_CHECK(toc.sections[0].start > 64);
   }
 
   // Verify section order
-  assert(std::strncmp(toc.sections[0].name, "TOKENS", 6) == 0);
-  assert(std::strncmp(toc.sections[1].name, "STRINGS", 7) == 0);
-  assert(std::strncmp(toc.sections[2].name, "FIELDS", 6) == 0);
-  assert(std::strncmp(toc.sections[3].name, "FIELDSETS", 9) == 0);
-  assert(std::strncmp(toc.sections[4].name, "PATHS", 5) == 0);
-  assert(std::strncmp(toc.sections[5].name, "SPECS", 5) == 0);
+  NEXT_CHECK(std::strncmp(toc.sections[0].name, "TOKENS", 6) == 0);
+  NEXT_CHECK(std::strncmp(toc.sections[1].name, "STRINGS", 7) == 0);
+  NEXT_CHECK(std::strncmp(toc.sections[2].name, "FIELDS", 6) == 0);
+  NEXT_CHECK(std::strncmp(toc.sections[3].name, "FIELDSETS", 9) == 0);
+  NEXT_CHECK(std::strncmp(toc.sections[4].name, "PATHS", 5) == 0);
+  NEXT_CHECK(std::strncmp(toc.sections[5].name, "SPECS", 5) == 0);
 
   // Verify sections are non-empty
-  assert(tokens_sec->size > 8);
-  assert(paths_sec->size >= 8);
-  assert(specs_sec->size >= 8);
-  assert(fields_sec->size >= 8);
-  assert(fieldsets_sec->size >= 8);
+  NEXT_CHECK(tokens_sec->size > 8);
+  NEXT_CHECK(paths_sec->size >= 8);
+  NEXT_CHECK(specs_sec->size >= 8);
+  NEXT_CHECK(fields_sec->size >= 8);
+  NEXT_CHECK(fieldsets_sec->size >= 8);
 
   // Verify no overlap between sections
   for (size_t i = 0; i < toc.sections.size(); i++) {
@@ -335,7 +335,7 @@ void test_roundtrip_schema_types() {
       int64_t a_end = a_start + toc.sections[i].size;
       int64_t b_start = toc.sections[j].start;
       int64_t b_end = b_start + toc.sections[j].size;
-      assert(!(a_start < b_end && b_start < a_end));
+      NEXT_CHECK(!(a_start < b_end && b_start < a_end));
     }
   }
 
@@ -356,7 +356,7 @@ void test_roundtrip_schema_types() {
       DecompressResult dr = DecompressCrateBlob(
           tdata + 24, static_cast<size_t>(comp_size),
           static_cast<size_t>(uncomp_size));
-      assert(dr.success);
+      NEXT_CHECK(dr.success);
       tok_raw = std::move(dr.data);
     }
 
@@ -373,7 +373,7 @@ void test_roundtrip_schema_types() {
       ptr += tok.size() + 1;
     }
 
-    assert(token_list.size() == num_tokens);
+    NEXT_CHECK(token_list.size() == num_tokens);
 
     // Verify schema tokens exist
     auto check_token = [&](const std::string& t) {
@@ -385,7 +385,7 @@ void test_roundtrip_schema_types() {
         if (token_list.size() > 20)
           std::cerr << " ... (" << (token_list.size() - 20) << " more)";
         std::cerr << "\n";
-        assert(false);
+        NEXT_CHECK(false);
       }
     };
 
@@ -439,20 +439,20 @@ void test_roundtrip_schema_types() {
   const char* test_file = "/tmp/test_roundtrip_schema.usdc";
   CrateWriter file_writer;
   CrateWriteResult file_result = file_writer.WriteToFile(test_file, stage);
-  assert(file_result.success);
+  NEXT_CHECK(file_result.success);
   std::cout << "  Wrote to " << test_file << " ("
             << file_result.bytes_written << " bytes)\n";
 
   // Verify file matches memory
   std::ifstream ifs(test_file, std::ios::binary | std::ios::ate);
-  assert(ifs.is_open());
+  NEXT_CHECK(ifs.is_open());
   size_t file_size = static_cast<size_t>(ifs.tellg());
   ifs.close();
   if (file_size != buffer.size()) {
     std::cerr << "  file_size=" << file_size << " buffer_size=" << buffer.size()
               << "\n";
     std::cerr.flush();
-    assert(file_size == buffer.size());
+    NEXT_CHECK(file_size == buffer.size());
   }
 
   std::cout << "  roundtrip schema types test passed!\n\n";
@@ -480,19 +480,19 @@ void test_roundtrip_layer_metadata() {
   CrateWriter writer;
   std::vector<uint8_t> buffer;
   CrateWriteResult result = writer.WriteLayerToMemory(buffer, layer);
-  assert(result.success);
+  NEXT_CHECK(result.success);
 
   // Parse TOC and verify
   TocInfo toc;
   // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
-  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // outside NEXT_CHECK() — under NDEBUG `NEXT_CHECK(expr)` does not evaluate `expr`,
   // which would leave `toc` empty and null-deref the section lookups below.
   const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
-  assert(toc_parsed);
+  NEXT_CHECK(toc_parsed);
   (void)toc_parsed;
 
   auto* tokens_sec = toc.find("TOKENS");
-  assert(tokens_sec != nullptr);
+  NEXT_CHECK(tokens_sec != nullptr);
 
   // Verify version in bootstrap
   uint8_t v_major = buffer[8];
@@ -538,7 +538,7 @@ void test_roundtrip_time_samples() {
   CrateWriter writer;
   std::vector<uint8_t> buffer;
   CrateWriteResult result = writer.WriteLayerToMemory(buffer, layer);
-  assert(result.success);
+  NEXT_CHECK(result.success);
 
   std::cout << "  Written " << result.bytes_written << " bytes\n";
   std::cout << "  Tokens: " << result.token_count
@@ -547,48 +547,48 @@ void test_roundtrip_time_samples() {
             << "  Fields: " << result.field_count << "\n";
 
   // Verify basic structure
-  assert(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
+  NEXT_CHECK(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
 
   TocInfo toc;
   // NOTE: ParseUSDCBinary() populates `toc` as a side effect, so it must run
-  // outside assert() — under NDEBUG `assert(expr)` does not evaluate `expr`,
+  // outside NEXT_CHECK() — under NDEBUG `NEXT_CHECK(expr)` does not evaluate `expr`,
   // which would leave `toc` empty and null-deref the section lookups below.
   const bool toc_parsed = ParseUSDCBinary(buffer.data(), buffer.size(), toc);
-  assert(toc_parsed);
+  NEXT_CHECK(toc_parsed);
   (void)toc_parsed;
 
   auto* ts = toc.find("TOKENS");
-  assert(ts != nullptr);
+  NEXT_CHECK(ts != nullptr);
 
   // Read back and verify the time samples decode per-property (Phase: crate
   // TimeSamples decoding — previously skipped on read).
   CrateReader reader;
   CrateReadResult rr = reader.Read(buffer.data(), buffer.size());
-  assert(rr.success && "re-read of time-sampled layer failed");
+  NEXT_CHECK(rr.success && "re-read of time-sampled layer failed");
   const PrimSpec* anim = rr.stage.GetRootLayer()->prim_at_path("/Animated");
-  assert(anim);
+  NEXT_CHECK(anim);
 
   PropNameId tr = GetPropNameTable().find("xformOp:translate");
-  assert(tr.is_valid() && anim->has_time_samples(tr));
+  NEXT_CHECK(tr.is_valid() && anim->has_time_samples(tr));
   const auto* tr_samples = anim->time_samples(tr);
-  assert(tr_samples && tr_samples->size() == 3 && "translate: 3 samples expected");
+  NEXT_CHECK(tr_samples && tr_samples->size() == 3 && "translate: 3 samples expected");
   // Sample at t=50 should be (10,5,0).
   bool found_50 = false;
   for (const auto& kv : *tr_samples) {
     if (std::abs(kv.first - 50.0) < 1e-9) {
       const Value* v = anim->time_sample_value(kv.second);
-      assert(v && v->is_array() == false);
+      NEXT_CHECK(v && v->is_array() == false);
       const float* f3 = v->as_float3();
-      assert(f3 && f3[0] == 10.0f && f3[1] == 5.0f && f3[2] == 0.0f);
+      NEXT_CHECK(f3 && f3[0] == 10.0f && f3[1] == 5.0f && f3[2] == 0.0f);
       found_50 = true;
     }
   }
-  assert(found_50 && "translate sample at t=50 missing/wrong");
+  NEXT_CHECK(found_50 && "translate sample at t=50 missing/wrong");
 
   PropNameId wt = GetPropNameTable().find("weight");
-  assert(wt.is_valid() && anim->has_time_samples(wt));
+  NEXT_CHECK(wt.is_valid() && anim->has_time_samples(wt));
   const auto* wt_samples = anim->time_samples(wt);
-  assert(wt_samples && wt_samples->size() == 2 && "weight: 2 samples expected");
+  NEXT_CHECK(wt_samples && wt_samples->size() == 2 && "weight: 2 samples expected");
 
   std::cout << "  roundtrip time samples test passed!\n\n";
 }
@@ -611,18 +611,18 @@ void test_write_usdc_from_stage_api() {
   // Test WriteUSDCToFile
   const char* test_file = "/tmp/test_api_output.usdc";
   USDCWriteResult file_result = WriteUSDCToFile(test_file, stage);
-  assert(file_result.success);
+  NEXT_CHECK(file_result.success);
   std::cout << "  WriteUSDCToFile: " << file_result.bytes_written << " bytes\n";
 
   // Test WriteLayerToUSDCMemory
   const Layer* root_layer = stage.GetRootLayer();
-  assert(root_layer != nullptr);
+  NEXT_CHECK(root_layer != nullptr);
   std::vector<uint8_t> mem_buffer;
   USDCWriteResult mem_result = WriteLayerToUSDCMemory(mem_buffer, *root_layer);
-  assert(mem_result.success);
+  NEXT_CHECK(mem_result.success);
   std::cout << "  WriteLayerToUSDCMemory: " << mem_result.bytes_written << " bytes\n";
 
-  assert(std::memcmp(mem_buffer.data(), kCrateMagic, 8) == 0);
+  NEXT_CHECK(std::memcmp(mem_buffer.data(), kCrateMagic, 8) == 0);
 
   std::cout << "  WriteUSDC stage API test passed!\n\n";
 }
@@ -662,35 +662,35 @@ void test_roundtrip_vec_matrix_arrays() {
   CrateWriter writer;
   std::vector<uint8_t> buf;
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
-  assert(wr.success);
+  NEXT_CHECK(wr.success);
 
   {
     CrateReadOptions limited;
     limited.max_memory = 1;
     CrateReader limited_reader(limited);
     CrateReadResult limited_result = limited_reader.Read(buf.data(), buf.size());
-    assert(!limited_result.success && !limited_result.errors.empty() &&
+    NEXT_CHECK(!limited_result.success && !limited_result.errors.empty() &&
            "max_memory must reject oversized in-memory crate input");
   }
 
   CrateReader reader;
   CrateReadResult rr = reader.Read(buf.data(), buf.size());
-  assert(rr.success && "re-read of vec/matrix arrays failed");
+  NEXT_CHECK(rr.success && "re-read of vec/matrix arrays failed");
   const Layer* rl = rr.stage.GetRootLayer();
   const PrimSpec* geo = rl->prim_at_path("/Geo");
-  assert(geo);
+  NEXT_CHECK(geo);
 
   auto check_f = [&](const char* name, const std::vector<float>& expect, TypeId t) {
     const Value* val = geo->property_value(name);
-    assert(val && val->is_array() && val->type_id() == t);
+    NEXT_CHECK(val && val->is_array() && val->type_id() == t);
     const std::vector<float>* arr = val->as_float_array();
-    assert(arr && *arr == expect);
+    NEXT_CHECK(arr && *arr == expect);
   };
   auto check_d = [&](const char* name, const std::vector<double>& expect, TypeId t) {
     const Value* val = geo->property_value(name);
-    assert(val && val->is_array() && val->type_id() == t);
+    NEXT_CHECK(val && val->is_array() && val->type_id() == t);
     const std::vector<double>* arr = val->as_double_array();
-    assert(arr && *arr == expect);
+    NEXT_CHECK(arr && *arr == expect);
   };
   check_f("v4", v4, TypeId::Float4);
   check_f("qf", qf, TypeId::Quatf);
@@ -715,7 +715,7 @@ void test_high_level_memory_caps() {
   CrateWriter writer;
   std::vector<uint8_t> buf;
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
-  assert(wr.success);
+  NEXT_CHECK(wr.success);
 
   const char* usdc_file = "/tmp/next_memcap_highlevel.usdc";
   {
@@ -729,14 +729,14 @@ void test_high_level_memory_caps() {
   Stage limited_stage;
   std::string warn, err;
   bool ok = LoadUSD(usdc_file, &limited_stage, load_opts, &warn, &err);
-  assert(!ok && "LoadUSD max_memory must reject oversized USDC input");
+  NEXT_CHECK(!ok && "LoadUSD max_memory must reject oversized USDC input");
 
   USDCLoadOptions usdc_opts;
   usdc_opts.crate_options.max_memory = 1;
   warn.clear();
   err.clear();
   ok = LoadUSDC(usdc_file, &limited_stage, usdc_opts, &warn, &err);
-  assert(!ok && "LoadUSDC options must reject oversized USDC input");
+  NEXT_CHECK(!ok && "LoadUSDC options must reject oversized USDC input");
 
   const char* usda_file = "/tmp/next_memcap_highlevel.usda";
   {
@@ -746,14 +746,14 @@ void test_high_level_memory_caps() {
   warn.clear();
   err.clear();
   ok = LoadUSD(usda_file, &limited_stage, load_opts, &warn, &err);
-  assert(!ok && "LoadUSD max_memory must reject oversized USDA input");
+  NEXT_CHECK(!ok && "LoadUSD max_memory must reject oversized USDA input");
 
   LoadOptions usda_opts;
   usda_opts.parse_options.max_file_size = 1;
   warn.clear();
   err.clear();
   ok = LoadUSDA(usda_file, &limited_stage, usda_opts, &warn, &err);
-  assert(!ok && "LoadUSDA options must reject oversized USDA input");
+  NEXT_CHECK(!ok && "LoadUSDA options must reject oversized USDA input");
 
   const char* asset_file = "/tmp/next_memcap_ext_asset.usda";
   const char* root_file = "/tmp/next_memcap_ext_root.usda";
@@ -775,15 +775,15 @@ void test_high_level_memory_caps() {
 
   LoadUSDOptions composed_opts;
   composed_opts.max_memory = root_text.size() + 8;
-  assert(root_text.size() <= composed_opts.max_memory);
-  assert(asset_text.size() > composed_opts.max_memory);
+  NEXT_CHECK(root_text.size() <= composed_opts.max_memory);
+  NEXT_CHECK(asset_text.size() > composed_opts.max_memory);
   warn.clear();
   err.clear();
   pcp::CompositionOptions comp_opts;
   comp_opts.error_when_asset_not_found = true;
   ok = LoadUSDComposed(root_file, &limited_stage, composed_opts, &warn, &err,
                        &comp_opts);
-  assert(!ok && "LoadUSDComposed must cap external composition layers");
+  NEXT_CHECK(!ok && "LoadUSDComposed must cap external composition layers");
 
   std::remove(usdc_file);
   std::remove(usda_file);
@@ -804,11 +804,11 @@ void test_half_conversion() {
     if (exp == 0x1Fu && mant != 0) continue;  // skip NaN (payload not preserved)
     float f = HalfToFloat(h);
     uint16_t h2 = FloatToHalf(f);
-    assert(h2 == h && "half->float->half not exact");
+    NEXT_CHECK(h2 == h && "half->float->half not exact");
     ++checked;
   }
-  assert(HalfToFloat(0x3C00) == 1.0f && "half 1.0");
-  assert(HalfToFloat(0xC000) == -2.0f && "half -2.0");
+  NEXT_CHECK(HalfToFloat(0x3C00) == 1.0f && "half 1.0");
+  NEXT_CHECK(HalfToFloat(0xC000) == -2.0f && "half -2.0");
   std::cout << "  " << checked << " half patterns round-tripped exactly\n\n";
 }
 
@@ -832,19 +832,19 @@ void test_roundtrip_half_arrays() {
   CrateWriter writer;
   std::vector<uint8_t> buf;
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
-  assert(wr.success);
+  NEXT_CHECK(wr.success);
 
   CrateReader reader;
   CrateReadResult rr = reader.Read(buf.data(), buf.size());
-  assert(rr.success && "re-read of half arrays failed");
+  NEXT_CHECK(rr.success && "re-read of half arrays failed");
   const PrimSpec* geo = rr.stage.GetRootLayer()->prim_at_path("/Geo");
-  assert(geo);
+  NEXT_CHECK(geo);
 
   auto check = [&](const char* name, const std::vector<float>& expect, TypeId t) {
     const Value* v = geo->property_value(name);
-    assert(v && v->is_array() && v->type_id() == t);
+    NEXT_CHECK(v && v->is_array() && v->type_id() == t);
     const std::vector<float>* arr = v->as_float_array();  // materializes half->float
-    assert(arr && *arr == expect);
+    NEXT_CHECK(arr && *arr == expect);
   };
   check("h1", h1, TypeId::Half);
   check("h3", h3, TypeId::Half3);
@@ -879,27 +879,27 @@ void test_roundtrip_arc_listops() {
   CrateWriter writer;
   std::vector<uint8_t> buf;
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
-  assert(wr.success);
+  NEXT_CHECK(wr.success);
 
   CrateReader reader;
   CrateReadResult rr = reader.Read(buf.data(), buf.size());
-  assert(rr.success && "re-read of arc list-ops failed");
+  NEXT_CHECK(rr.success && "re-read of arc list-ops failed");
   const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
-  assert(p);
+  NEXT_CHECK(p);
 
   // The within-spec effective list round-trips.
-  assert(p->meta().references.size() == 1 && p->meta().references[0] == "</B>");
+  NEXT_CHECK(p->meta().references.size() == 1 && p->meta().references[0] == "</B>");
   // The non-explicit edit round-trips.
   const ArcListOpEdits* ed = p->meta().arc_edits();
-  assert(ed && "references edit must survive the crate roundtrip");
-  assert(ed->references.authored);
-  assert(!ed->references.is_explicit);
-  assert(ed->references.prepended.size() == 1 &&
+  NEXT_CHECK(ed && "references edit must survive the crate roundtrip");
+  NEXT_CHECK(ed->references.authored);
+  NEXT_CHECK(!ed->references.is_explicit);
+  NEXT_CHECK(ed->references.prepended.size() == 1 &&
          ed->references.prepended[0] == "</B>");
-  assert(ed->references.deleted.size() == 1 &&
+  NEXT_CHECK(ed->references.deleted.size() == 1 &&
          ed->references.deleted[0] == "</A>");
   // Bare inherits: no companion field, so its edit stays explicit (default).
-  assert(!ed->inherits.authored && ed->inherits.is_explicit &&
+  NEXT_CHECK(!ed->inherits.authored && ed->inherits.is_explicit &&
          ed->inherits.prepended.empty());
   std::cout << "  arc list-op crate roundtrip passed!\n\n";
 }
@@ -931,42 +931,42 @@ void test_roundtrip_arc_metadata_dicts() {
   CrateWriter writer;
   std::vector<uint8_t> buf;
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
-  assert(wr.success);
+  NEXT_CHECK(wr.success);
 
   CrateReader reader;
   CrateReadResult rr = reader.Read(buf.data(), buf.size());
-  assert(rr.success && "re-read of arc metadata dictionaries failed");
+  NEXT_CHECK(rr.success && "re-read of arc metadata dictionaries failed");
   const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/AssetRef");
-  assert(p);
+  NEXT_CHECK(p);
 
-  assert(p->meta().references.size() == 1);
+  NEXT_CHECK(p->meta().references.size() == 1);
   if (p->meta().references[0] != "@asset.usda@</Model>") {
     std::cout << "  ref=" << p->meta().references[0] << "\n";
-    assert(p->meta().references[0] == "@asset.usda@</Model>");
+    NEXT_CHECK(p->meta().references[0] == "@asset.usda@</Model>");
   }
-  assert(p->meta().payloads.size() == 1);
+  NEXT_CHECK(p->meta().payloads.size() == 1);
   if (p->meta().payloads[0] != "@payload.usda@</Payload>") {
     std::cerr << "  payload=" << p->meta().payloads[0] << "\n";
     std::cerr.flush();
-    assert(p->meta().payloads[0] == "@payload.usda@</Payload>");
+    NEXT_CHECK(p->meta().payloads[0] == "@payload.usda@</Payload>");
   }
 
   const Value& cd = p->meta().customData();
-  assert(cd.is_dictionary());
+  NEXT_CHECK(cd.is_dictionary());
   const Value* source = DictFind(cd, "source");
-  assert(source && source->as_string() && *source->as_string() == "reference-fixture");
+  NEXT_CHECK(source && source->as_string() && *source->as_string() == "reference-fixture");
   const Value* enabled = DictFind(cd, "enabled");
-  assert(enabled && enabled->as_bool() && *enabled->as_bool());
+  NEXT_CHECK(enabled && enabled->as_bool() && *enabled->as_bool());
   const Value* revision = DictFind(cd, "revision");
-  assert(revision && revision->as_int() && *revision->as_int() == 7);
+  NEXT_CHECK(revision && revision->as_int() && *revision->as_int() == 7);
 
   const Value& ai = p->meta().assetInfo();
-  assert(ai.is_dictionary());
+  NEXT_CHECK(ai.is_dictionary());
   const Value* identifier = DictFind(ai, "identifier");
-  assert(identifier && identifier->as_asset_path() &&
+  NEXT_CHECK(identifier && identifier->as_asset_path() &&
          *identifier->as_asset_path() == "asset.usda");
   const Value* kind = DictFind(ai, "kind");
-  assert(kind && kind->as_token() && *kind->as_token() == "component");
+  NEXT_CHECK(kind && kind->as_token() && *kind->as_token() == "component");
 
   std::cout << "  arc metadata dictionary crate roundtrip passed!\n\n";
 }
@@ -984,18 +984,18 @@ void test_roundtrip_custom_qualifier() {
   CrateWriter writer;
   std::vector<uint8_t> buf;
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
-  assert(wr.success);
+  NEXT_CHECK(wr.success);
 
   CrateReader reader;
   CrateReadResult rr = reader.Read(buf.data(), buf.size());
-  assert(rr.success && "re-read of custom-qualified attr failed");
+  NEXT_CHECK(rr.success && "re-read of custom-qualified attr failed");
   const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
-  assert(p);
+  NEXT_CHECK(p);
 
   const PropSlot* a = p->property("isAsset");
-  assert(a && a->is_custom() && "custom flag lost across the crate roundtrip");
+  NEXT_CHECK(a && a->is_custom() && "custom flag lost across the crate roundtrip");
   const PropSlot* pl = p->property("plain");
-  assert(pl && !pl->is_custom() && "non-custom attr gained a custom flag");
+  NEXT_CHECK(pl && !pl->is_custom() && "non-custom attr gained a custom flag");
   std::cout << "  custom-qualifier crate roundtrip passed!\n\n";
 }
 
@@ -1012,21 +1012,21 @@ void test_roundtrip_api_schemas() {
   CrateWriter writer;
   std::vector<uint8_t> buf;
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
-  assert(wr.success);
+  NEXT_CHECK(wr.success);
 
   CrateReader reader;
   CrateReadResult rr = reader.Read(buf.data(), buf.size());
-  assert(rr.success && "re-read of apiSchemas failed");
+  NEXT_CHECK(rr.success && "re-read of apiSchemas failed");
   const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
-  assert(p);
+  NEXT_CHECK(p);
 
   // apiSchemas must land in PrimSpecMeta (pxr writes it in the metadata block),
   // NOT leak back as a phantom `token[] apiSchemas` body property.
-  assert(p->meta().apiSchemas().size() == 2 &&
+  NEXT_CHECK(p->meta().apiSchemas().size() == 2 &&
          "apiSchemas did not round-trip into PrimSpecMeta");
-  assert(p->meta().apiSchemas()[0].str() == "MaterialBindingAPI");
-  assert(p->meta().apiSchemas()[1].str() == "PhysicsCollisionAPI");
-  assert(p->property("apiSchemas") == nullptr &&
+  NEXT_CHECK(p->meta().apiSchemas()[0].str() == "MaterialBindingAPI");
+  NEXT_CHECK(p->meta().apiSchemas()[1].str() == "PhysicsCollisionAPI");
+  NEXT_CHECK(p->property("apiSchemas") == nullptr &&
          "apiSchemas leaked as a phantom body property");
   std::cout << "  apiSchemas crate roundtrip passed!\n\n";
 }
@@ -1056,7 +1056,7 @@ void test_comprehensive_usdc_fixture() {
   b.begin_prim("World", "Xform");
   {
     PrimSpec* world = b.current();
-    assert(world);
+    NEXT_CHECK(world);
     world->meta().doc() = "fixture root";
     world->meta().apiSchemas().emplace_back("MaterialBindingAPI");
     world->meta().references.push_back("@asset.usda@</Asset>");
@@ -1176,35 +1176,35 @@ void test_comprehensive_usdc_fixture() {
   CrateWriter writer;
   std::vector<uint8_t> buf;
   CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
-  assert(wr.success && "failed to write comprehensive fixture");
+  NEXT_CHECK(wr.success && "failed to write comprehensive fixture");
 
   CrateReader reader;
   CrateReadResult rr = reader.Read(buf.data(), buf.size());
-  assert(rr.success && "failed to read comprehensive fixture");
+  NEXT_CHECK(rr.success && "failed to read comprehensive fixture");
   const Layer* rl = rr.stage.GetRootLayer();
-  assert(rl);
+  NEXT_CHECK(rl);
 
-  assert(rl->meta().defaultPrim == "World");
-  assert(rl->meta().upAxis == "Z");
-  assert(rl->meta().framesPerSecond_set);
-  assert(rl->meta().framesPerSecond == 24.0);
-  assert(rl->meta().customLayerData.is_dictionary());
+  NEXT_CHECK(rl->meta().defaultPrim == "World");
+  NEXT_CHECK(rl->meta().upAxis == "Z");
+  NEXT_CHECK(rl->meta().framesPerSecond_set);
+  NEXT_CHECK(rl->meta().framesPerSecond == 24.0);
+  NEXT_CHECK(rl->meta().customLayerData.is_dictionary());
   const Value* fixture = DictFind(rl->meta().customLayerData, "fixture");
-  assert(fixture && fixture->as_string() &&
+  NEXT_CHECK(fixture && fixture->as_string() &&
          *fixture->as_string() == "comprehensive-usdc");
 
   const PrimSpec* world = MustPrim(rl, "/World");
-  assert(world->type_name() == "Xform");
-  assert(world->meta().apiSchemas().size() == 1);
-  assert(world->meta().apiSchemas()[0].str() == "MaterialBindingAPI");
-  assert(world->meta().references.size() == 1);
-  assert(world->meta().payloads.size() == 1);
-  assert(world->meta().inherits.size() == 1);
-  assert(world->meta().specializes.size() == 1);
-  assert(world->meta().customData().is_dictionary());
-  assert(world->meta().assetInfo().is_dictionary());
+  NEXT_CHECK(world->type_name() == "Xform");
+  NEXT_CHECK(world->meta().apiSchemas().size() == 1);
+  NEXT_CHECK(world->meta().apiSchemas()[0].str() == "MaterialBindingAPI");
+  NEXT_CHECK(world->meta().references.size() == 1);
+  NEXT_CHECK(world->meta().payloads.size() == 1);
+  NEXT_CHECK(world->meta().inherits.size() == 1);
+  NEXT_CHECK(world->meta().specializes.size() == 1);
+  NEXT_CHECK(world->meta().customData().is_dictionary());
+  NEXT_CHECK(world->meta().assetInfo().is_dictionary());
   PropNameId xform_op = GetPropNameTable().find("xformOp:translate");
-  assert(xform_op.is_valid() && world->has_time_samples(xform_op));
+  NEXT_CHECK(xform_op.is_valid() && world->has_time_samples(xform_op));
   const auto* xform_samples = world->time_samples(xform_op);
   if (!xform_samples) {
     std::cerr << "xformOp:translate has no time samples\n";
@@ -1226,48 +1226,48 @@ void test_comprehensive_usdc_fixture() {
   CheckFloatArray(MustProp(mesh, "primvars:displayColor"), TypeId::Float3,
                   display_color);
   const PropMeta* color_meta = mesh->property_meta("primvars:displayColor");
-  assert(color_meta);
-  assert((color_meta->authored & PropMeta::kInterpolation) &&
+  NEXT_CHECK(color_meta);
+  NEXT_CHECK((color_meta->authored & PropMeta::kInterpolation) &&
          color_meta->interpolation == "vertex");
-  assert((color_meta->authored & PropMeta::kColorSpace) &&
+  NEXT_CHECK((color_meta->authored & PropMeta::kColorSpace) &&
          color_meta->colorSpace == "sRGB");
-  assert((color_meta->authored & PropMeta::kElementSize) &&
+  NEXT_CHECK((color_meta->authored & PropMeta::kElementSize) &&
          color_meta->elementSize == 1);
-  assert((color_meta->authored & PropMeta::kCustomData) &&
+  NEXT_CHECK((color_meta->authored & PropMeta::kCustomData) &&
          color_meta->customData.is_dictionary());
   const std::vector<Path>* mat_targets = mesh->relationship("material:binding");
-  assert(mat_targets && mat_targets->size() == 1 &&
+  NEXT_CHECK(mat_targets && mat_targets->size() == 1 &&
          (*mat_targets)[0].str() == "/Material");
 
   const PrimSpec* material = MustPrim(rl, "/Material");
   const PropSlot* surface_slot = material->property("outputs:surface");
-  assert(surface_slot && surface_slot->is_connection());
+  NEXT_CHECK(surface_slot && surface_slot->is_connection());
   const std::vector<Path>* surface =
       material->connection("outputs:surface");
-  assert(surface && surface->size() == 1 &&
+  NEXT_CHECK(surface && surface->size() == 1 &&
          (*surface)[0].str() == "/Shader.outputs:surface");
 
   const PrimSpec* shader = MustPrim(rl, "/Shader");
   const Value* shader_id = MustProp(shader, "info:id");
-  assert(shader_id->as_token() &&
+  NEXT_CHECK(shader_id->as_token() &&
          *shader_id->as_token() == "UsdPreviewSurface");
   const PropSlot* diffuse_slot = shader->property("inputs:diffuseColor");
-  assert(diffuse_slot && diffuse_slot->is_connection());
+  NEXT_CHECK(diffuse_slot && diffuse_slot->is_connection());
   const std::vector<Path>* diffuse_conn =
       shader->connection("inputs:diffuseColor");
-  assert(diffuse_conn && diffuse_conn->size() == 1 &&
+  NEXT_CHECK(diffuse_conn && diffuse_conn->size() == 1 &&
          (*diffuse_conn)[0].str() == "/Texture.outputs:rgb");
 
   const PrimSpec* texture = MustPrim(rl, "/Texture");
   const Value* texture_file = MustProp(texture, "inputs:file");
-  assert(texture_file->as_asset_path() &&
+  NEXT_CHECK(texture_file->as_asset_path() &&
          *texture_file->as_asset_path() == "albedo.png");
 
   const PrimSpec* instancer = MustPrim(rl, "/Instancer");
-  assert(instancer->type_name() == "PointInstancer");
+  NEXT_CHECK(instancer->type_name() == "PointInstancer");
   const std::vector<Path>* prototypes =
       instancer->relationship("prototypes");
-  assert(prototypes && prototypes->size() == 1 &&
+  NEXT_CHECK(prototypes && prototypes->size() == 1 &&
          (*prototypes)[0].str() == "/Mesh");
   CheckIntArray(MustProp(instancer, "protoIndices"), proto_indices);
   CheckFloatArray(MustProp(instancer, "positions"), TypeId::Float3,
@@ -1278,9 +1278,9 @@ void test_comprehensive_usdc_fixture() {
   CheckInt64Array(MustProp(instancer, "ids"), ids);
   CheckInt64Array(MustProp(instancer, "invisibleIds"), invisible_ids);
   PropNameId positions_id = GetPropNameTable().find("positions");
-  assert(positions_id.is_valid() && instancer->has_time_samples(positions_id));
+  NEXT_CHECK(positions_id.is_valid() && instancer->has_time_samples(positions_id));
   const auto* position_samples = instancer->time_samples(positions_id);
-  assert(position_samples && position_samples->size() == 2);
+  NEXT_CHECK(position_samples && position_samples->size() == 2);
   bool found_t2 = false;
   for (const auto& sample : *position_samples) {
     if (std::abs(sample.first - 2.0) < 1e-9) {
@@ -1289,7 +1289,7 @@ void test_comprehensive_usdc_fixture() {
       found_t2 = true;
     }
   }
-  assert(found_t2 && "PointInstancer positions t=2 sample missing");
+  NEXT_CHECK(found_t2 && "PointInstancer positions t=2 sample missing");
 
   std::cout << "  comprehensive USDC fixture roundtrip passed! ("
             << wr.bytes_written << " bytes)\n\n";

@@ -5,7 +5,7 @@
 
 #include <iostream>
 #include <fstream>
-#include <cassert>
+#include "test-check.hh"
 #include <cstdio>
 #include <cstring>
 #include <iterator>
@@ -30,20 +30,20 @@ bool contains(const std::string& str, const std::string& substr) {
 
 std::vector<uint8_t> read_file_bytes(const std::string& path) {
   std::ifstream ifs(path, std::ios::binary | std::ios::ate);
-  assert(ifs.is_open());
+  NEXT_CHECK(ifs.is_open());
   std::vector<uint8_t> bytes(static_cast<size_t>(ifs.tellg()));
   ifs.seekg(0);
   if (!bytes.empty()) {
     ifs.read(reinterpret_cast<char*>(bytes.data()),
              static_cast<std::streamsize>(bytes.size()));
-    assert(static_cast<size_t>(ifs.gcount()) == bytes.size());
+    NEXT_CHECK(static_cast<size_t>(ifs.gcount()) == bytes.size());
   }
   return bytes;
 }
 
 std::string read_file_text(const std::string& path) {
   std::ifstream ifs(path, std::ios::binary);
-  assert(ifs.is_open());
+  NEXT_CHECK(ifs.is_open());
   return std::string((std::istreambuf_iterator<char>(ifs)),
                      std::istreambuf_iterator<char>());
 }
@@ -94,7 +94,7 @@ void test_crate_writer_basic() {
   if (!result.success) {
     std::cout << "  Error: " << result.error << "\n";
   }
-  assert(result.success);
+  NEXT_CHECK(result.success);
 
   std::cout << "  Bytes written: " << result.bytes_written << "\n";
   std::cout << "  Token count: " << result.token_count << "\n";
@@ -103,8 +103,8 @@ void test_crate_writer_basic() {
   std::cout << "  Field count: " << result.field_count << "\n";
 
   // Verify magic number
-  assert(buffer.size() >= 8);
-  assert(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
+  NEXT_CHECK(buffer.size() >= 8);
+  NEXT_CHECK(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
   std::cout << "  Magic number verified\n";
 
   // Verify version
@@ -162,7 +162,7 @@ void test_usdc_writer_file() {
   if (!result.success) {
     std::cout << "  Error: " << result.error << "\n";
   }
-  assert(result.success);
+  NEXT_CHECK(result.success);
 
   std::cout << "  Wrote " << result.bytes_written << " bytes to " << test_file << "\n";
   std::cout << "  Tokens: " << result.token_count << "\n";
@@ -171,13 +171,13 @@ void test_usdc_writer_file() {
 
   // Verify file exists and has content
   std::ifstream check(test_file, std::ios::binary | std::ios::ate);
-  assert(check.is_open());
+  NEXT_CHECK(check.is_open());
   size_t file_size = check.tellg();
-  assert(file_size == result.bytes_written);
+  NEXT_CHECK(file_size == result.bytes_written);
   std::cout << "  File size verified: " << file_size << " bytes\n";
   check.close();
   std::string debug_usda = read_file_text("/tmp/test_output.usda");
-  assert(debug_usda == WriteUSDAToString(stage));
+  NEXT_CHECK(debug_usda == WriteUSDAToString(stage));
   std::remove(test_file);
   std::remove("/tmp/test_output.usda");
 
@@ -208,33 +208,33 @@ void test_usdc_roundtrip() {
   // Write to memory and read back through the high-level USDC reader.
   std::vector<uint8_t> buffer;
   USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
-  assert(write_result.success);
+  NEXT_CHECK(write_result.success);
   std::cout << "  Written " << write_result.bytes_written << " bytes\n";
 
-  assert(buffer.size() == write_result.bytes_written);
-  assert(buffer.size() >= 64);
-  assert(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
+  NEXT_CHECK(buffer.size() == write_result.bytes_written);
+  NEXT_CHECK(buffer.size() >= 64);
+  NEXT_CHECK(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
 
   USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
-  assert(read_result.success);
+  NEXT_CHECK(read_result.success);
   std::string actual_usda = WriteUSDAToString(read_result.stage);
-  assert(read_result.stage.GetPrimCount() == stage.GetPrimCount());
-  assert(read_result.stage.GetMeta().defaultPrim == "TestPrim");
+  NEXT_CHECK(read_result.stage.GetPrimCount() == stage.GetPrimCount());
+  NEXT_CHECK(read_result.stage.GetMeta().defaultPrim == "TestPrim");
   UsdPrim root = read_result.stage.GetPrimAtPath("/TestPrim");
-  assert(root.IsValid());
-  assert(root.GetTypeName() == "Xform");
+  NEXT_CHECK(root.IsValid());
+  NEXT_CHECK(root.GetTypeName() == "Xform");
   UsdPrim cube = read_result.stage.GetPrimAtPath("/Cube");
-  assert(cube.IsValid());
-  assert(cube.GetTypeName() == "Mesh");
+  NEXT_CHECK(cube.IsValid());
+  NEXT_CHECK(cube.GetTypeName() == "Mesh");
   const Value* read_points = cube.GetPropertyValue("points");
-  assert(read_points != nullptr);
-  assert(read_points->array_size() == 3);
+  NEXT_CHECK(read_points != nullptr);
+  NEXT_CHECK(read_points->array_size() == 3);
   const std::vector<float>* read_points_array = read_points->as_float_array();
-  assert(read_points_array != nullptr);
-  assert(*read_points_array == points);
-  assert(contains(actual_usda, "def Xform \"TestPrim\""));
-  assert(contains(actual_usda, "def Mesh \"Cube\""));
-  assert(contains(actual_usda, "float3[] points"));
+  NEXT_CHECK(read_points_array != nullptr);
+  NEXT_CHECK(*read_points_array == points);
+  NEXT_CHECK(contains(actual_usda, "def Xform \"TestPrim\""));
+  NEXT_CHECK(contains(actual_usda, "def Mesh \"Cube\""));
+  NEXT_CHECK(contains(actual_usda, "float3[] points"));
 
   std::cout << "  USDC roundtrip test passed!\n\n";
 }
@@ -264,15 +264,15 @@ void test_usdc_stage_backend_parity() {
   Stage stage = stage_builder.Build();
   std::vector<uint8_t> memory;
   USDCWriteResult memory_result = WriteUSDCToMemory(memory, stage);
-  assert(memory_result.success);
-  assert(memory_result.bytes_written == memory.size());
+  NEXT_CHECK(memory_result.success);
+  NEXT_CHECK(memory_result.bytes_written == memory.size());
 
   const std::string path = "/tmp/tinyusdz_next_usdc_stage_backend_parity.usdc";
   USDCWriteResult file_result = WriteUSDCToFile(path, stage);
-  assert(file_result.success);
-  assert(file_result.bytes_written == memory_result.bytes_written);
+  NEXT_CHECK(file_result.success);
+  NEXT_CHECK(file_result.bytes_written == memory_result.bytes_written);
   std::vector<uint8_t> file_bytes = read_file_bytes(path);
-  assert(file_bytes == memory);
+  NEXT_CHECK(file_bytes == memory);
   std::remove(path.c_str());
 
   std::cout << "  USDC Stage backend parity test passed!\n\n";
@@ -301,13 +301,13 @@ void test_layer_to_usdc() {
   std::vector<uint8_t> buffer;
   USDCWriteResult result = WriteLayerToUSDCMemory(buffer, layer);
 
-  assert(result.success);
+  NEXT_CHECK(result.success);
   std::cout << "  Layer written: " << result.bytes_written << " bytes\n";
   std::cout << "  Specs: " << result.spec_count << "\n";
 
   // Verify magic
-  assert(buffer.size() >= 8);
-  assert(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
+  NEXT_CHECK(buffer.size() >= 8);
+  NEXT_CHECK(std::memcmp(buffer.data(), kCrateMagic, 8) == 0);
 
   std::cout << "  Layer to USDC test passed!\n\n";
 }
@@ -332,15 +332,15 @@ void test_usdc_layer_backend_parity() {
 
   std::vector<uint8_t> memory;
   USDCWriteResult memory_result = WriteLayerToUSDCMemory(memory, layer);
-  assert(memory_result.success);
-  assert(memory_result.bytes_written == memory.size());
+  NEXT_CHECK(memory_result.success);
+  NEXT_CHECK(memory_result.bytes_written == memory.size());
 
   const std::string path = "/tmp/tinyusdz_next_usdc_layer_backend_parity.usdc";
   USDCWriteResult file_result = WriteLayerToUSDCFile(path, layer);
-  assert(file_result.success);
-  assert(file_result.bytes_written == memory_result.bytes_written);
+  NEXT_CHECK(file_result.success);
+  NEXT_CHECK(file_result.bytes_written == memory_result.bytes_written);
   std::vector<uint8_t> file_bytes = read_file_bytes(path);
-  assert(file_bytes == memory);
+  NEXT_CHECK(file_bytes == memory);
   std::remove(path.c_str());
 
   std::cout << "  USDC Layer backend parity test passed!\n\n";
@@ -349,12 +349,12 @@ void test_usdc_layer_backend_parity() {
 void test_usdc_path_check() {
   std::cout << "Testing IsUSDCPath...\n";
 
-  assert(IsUSDCPath("model.usdc") == true);
-  assert(IsUSDCPath("model.usd") == true);
-  assert(IsUSDCPath("model.USDC") == true);
-  assert(IsUSDCPath("model.usda") == false);
-  assert(IsUSDCPath("model.txt") == false);
-  assert(IsUSDCPath("/path/to/file.usdc") == true);
+  NEXT_CHECK(IsUSDCPath("model.usdc") == true);
+  NEXT_CHECK(IsUSDCPath("model.usd") == true);
+  NEXT_CHECK(IsUSDCPath("model.USDC") == true);
+  NEXT_CHECK(IsUSDCPath("model.usda") == false);
+  NEXT_CHECK(IsUSDCPath("model.txt") == false);
+  NEXT_CHECK(IsUSDCPath("/path/to/file.usdc") == true);
 
   std::cout << "  IsUSDCPath test passed!\n\n";
 }
@@ -370,18 +370,18 @@ void test_usdc_api_error_paths() {
   Stage stage = stage_builder.Build();
 
   USDCWriteResult null_write = WriteUSDCToFile(static_cast<const char*>(nullptr), stage);
-  assert(!null_write.success);
-  assert(!null_write.error.empty());
+  NEXT_CHECK(!null_write.success);
+  NEXT_CHECK(!null_write.error.empty());
 
   USDCLoadResult null_read = LoadUSDCFromFile(static_cast<const char*>(nullptr));
-  assert(!null_read.success);
-  assert(!null_read.error_summary.empty());
+  NEXT_CHECK(!null_read.success);
+  NEXT_CHECK(!null_read.error_summary.empty());
 
   const uint8_t not_usdc[] = {'n', 'o', 't', 'u', 's', 'd', 'c'};
-  assert(!IsUSDCData(not_usdc, sizeof(not_usdc)));
+  NEXT_CHECK(!IsUSDCData(not_usdc, sizeof(not_usdc)));
   USDCLoadResult load_result = LoadUSDCFromMemory(not_usdc, sizeof(not_usdc));
-  assert(!load_result.success);
-  assert(!load_result.error_summary.empty() || !load_result.errors.empty());
+  NEXT_CHECK(!load_result.success);
+  NEXT_CHECK(!load_result.error_summary.empty() || !load_result.errors.empty());
 
   const std::string bad_path = "/tmp/tinyusdz_next_not_usdc.txt";
   std::remove(bad_path.c_str());
@@ -389,29 +389,29 @@ void test_usdc_api_error_paths() {
     std::ofstream ofs(bad_path, std::ios::binary);
     ofs.write(reinterpret_cast<const char*>(not_usdc),
               static_cast<std::streamsize>(sizeof(not_usdc)));
-    assert(ofs.good());
+    NEXT_CHECK(ofs.good());
   }
-  assert(!IsUSDCFile(bad_path.c_str()));
+  NEXT_CHECK(!IsUSDCFile(bad_path.c_str()));
   USDCLoadResult bad_file_result = LoadUSDCFromFile(bad_path);
-  assert(!bad_file_result.success);
-  assert(!bad_file_result.error_summary.empty() ||
+  NEXT_CHECK(!bad_file_result.success);
+  NEXT_CHECK(!bad_file_result.error_summary.empty() ||
          !bad_file_result.errors.empty());
   std::remove(bad_path.c_str());
 
   std::vector<uint8_t> buffer;
   USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
-  assert(write_result.success);
+  NEXT_CHECK(write_result.success);
   const std::string good_path = "/tmp/tinyusdz_next_is_usdc_file.usdc";
   std::remove(good_path.c_str());
   {
     std::ofstream ofs(good_path, std::ios::binary);
     ofs.write(reinterpret_cast<const char*>(buffer.data()),
               static_cast<std::streamsize>(buffer.size()));
-    assert(ofs.good());
+    NEXT_CHECK(ofs.good());
   }
-  assert(IsUSDCFile(good_path.c_str()));
+  NEXT_CHECK(IsUSDCFile(good_path.c_str()));
   USDCLoadResult good_file_result = LoadUSDCFromFile(good_path);
-  assert(good_file_result.success);
+  NEXT_CHECK(good_file_result.success);
   std::remove(good_path.c_str());
 
   std::cout << "  USDC API error path test passed!\n\n";
@@ -433,31 +433,31 @@ void test_usdc_bool_array_roundtrip() {
 
   std::vector<uint8_t> buffer;
   USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
-  assert(write_result.success);
-  assert(!buffer.empty());
+  NEXT_CHECK(write_result.success);
+  NEXT_CHECK(!buffer.empty());
 
   USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
   if (!read_result.success) {
     std::cout << "  Error: " << read_result.error_summary << "\n";
   }
-  assert(read_result.success);
+  NEXT_CHECK(read_result.success);
   UsdPrim root = read_result.stage.GetPrimAtPath("/Root");
-  assert(root.IsValid());
+  NEXT_CHECK(root.IsValid());
 
   const Value* bool_array_value = root.GetPropertyValue("boolArray");
-  assert(bool_array_value);
+  NEXT_CHECK(bool_array_value);
   const std::vector<uint8_t>* bool_array = bool_array_value->as_bool_array();
-  assert(bool_array);
-  assert((*bool_array) == std::vector<uint8_t>({1, 0, 1, 1, 0, 0, 1, 0, 1}));
+  NEXT_CHECK(bool_array);
+  NEXT_CHECK((*bool_array) == std::vector<uint8_t>({1, 0, 1, 1, 0, 0, 1, 0, 1}));
 
   const Value* single_bool_value = root.GetPropertyValue("singleBool");
-  assert(single_bool_value);
+  NEXT_CHECK(single_bool_value);
   const bool* single_bool = single_bool_value->as_bool();
-  assert(single_bool && *single_bool);
+  NEXT_CHECK(single_bool && *single_bool);
 
   const std::string usda = WriteUSDAToString(read_result.stage);
-  assert(contains(usda, "bool[] boolArray"));
-  assert(contains(usda, "bool singleBool = true"));
+  NEXT_CHECK(contains(usda, "bool[] boolArray"));
+  NEXT_CHECK(contains(usda, "bool singleBool = true"));
 
   std::cout << "  USDC bool array roundtrip test passed!\n\n";
 }
@@ -494,35 +494,35 @@ void test_usdc_relationship_connection_roundtrip() {
 
   std::vector<uint8_t> buffer;
   USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
-  assert(write_result.success);
-  assert(!buffer.empty());
+  NEXT_CHECK(write_result.success);
+  NEXT_CHECK(!buffer.empty());
 
   USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
   if (!read_result.success) {
     std::cout << "  Error: " << read_result.error_summary << "\n";
   }
-  assert(read_result.success);
+  NEXT_CHECK(read_result.success);
 
   UsdPrim mesh = read_result.stage.GetPrimAtPath("/Mesh");
-  assert(mesh.IsValid());
+  NEXT_CHECK(mesh.IsValid());
   const std::vector<Path>* binding = mesh.GetRelationship("material:binding");
-  assert(binding && binding->size() == 1);
-  assert((*binding)[0].str() == "/Mat");
+  NEXT_CHECK(binding && binding->size() == 1);
+  NEXT_CHECK((*binding)[0].str() == "/Mat");
 
   const PrimSpec* spec = mesh.GetPrimSpec();
-  assert(spec);
+  NEXT_CHECK(spec);
   const std::vector<Path>* conns = spec->connection("inputs:diffuseColor");
-  assert(conns && conns->size() == 1);
-  assert((*conns)[0].str() == "/Shader.outputs:surface");
+  NEXT_CHECK(conns && conns->size() == 1);
+  NEXT_CHECK((*conns)[0].str() == "/Shader.outputs:surface");
   const PropSlot* slot = spec->property("inputs:diffuseColor");
-  assert(slot && slot->is_connection());
-  assert(spec->property_value("inputs:diffuseColor") == nullptr);
+  NEXT_CHECK(slot && slot->is_connection());
+  NEXT_CHECK(spec->property_value("inputs:diffuseColor") == nullptr);
 
   const std::string usda = WriteUSDAToString(read_result.stage);
-  assert(contains(usda, "rel material:binding"));
-  assert(contains(usda, "</Mat>"));
-  assert(contains(usda, "inputs:diffuseColor.connect"));
-  assert(contains(usda, "</Shader.outputs:surface>"));
+  NEXT_CHECK(contains(usda, "rel material:binding"));
+  NEXT_CHECK(contains(usda, "</Mat>"));
+  NEXT_CHECK(contains(usda, "inputs:diffuseColor.connect"));
+  NEXT_CHECK(contains(usda, "</Shader.outputs:surface>"));
 
   std::cout << "  USDC relationship/connection roundtrip test passed!\n\n";
 }
@@ -565,53 +565,53 @@ void test_usdc_encode_value_fallback_roundtrip() {
 
   std::vector<uint8_t> buffer;
   USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
-  assert(write_result.success);
-  assert(!buffer.empty());
+  NEXT_CHECK(write_result.success);
+  NEXT_CHECK(!buffer.empty());
 
   USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
   if (!read_result.success) {
     std::cout << "  Error: " << read_result.error_summary << "\n";
   }
-  assert(read_result.success);
+  NEXT_CHECK(read_result.success);
 
   UsdPrim root = read_result.stage.GetPrimAtPath("/Root");
-  assert(root.IsValid());
+  NEXT_CHECK(root.IsValid());
   auto prop = [&](const char* name) -> const Value* {
     const Value* v = root.GetPropertyValue(name);
-    assert(v && "expected property missing");
+    NEXT_CHECK(v && "expected property missing");
     return v;
   };
 
-  assert(prop("i64")->as_int64() && *prop("i64")->as_int64() == -1234567890123LL);
-  assert(prop("u64")->as_uint64() && *prop("u64")->as_uint64() == 1234567890123ULL);
-  assert(prop("f2")->as_float2() && prop("f2")->as_float2()[0] == 1.25f &&
+  NEXT_CHECK(prop("i64")->as_int64() && *prop("i64")->as_int64() == -1234567890123LL);
+  NEXT_CHECK(prop("u64")->as_uint64() && *prop("u64")->as_uint64() == 1234567890123ULL);
+  NEXT_CHECK(prop("f2")->as_float2() && prop("f2")->as_float2()[0] == 1.25f &&
          prop("f2")->as_float2()[1] == -2.5f);
-  assert(prop("f4")->as_float4() && prop("f4")->as_float4()[3] == 4.0f);
-  assert(prop("d2")->as_double2() && prop("d2")->as_double2()[1] == -20.0);
-  assert(prop("d3")->as_double3() && prop("d3")->as_double3()[2] == 3.0);
+  NEXT_CHECK(prop("f4")->as_float4() && prop("f4")->as_float4()[3] == 4.0f);
+  NEXT_CHECK(prop("d2")->as_double2() && prop("d2")->as_double2()[1] == -20.0);
+  NEXT_CHECK(prop("d3")->as_double3() && prop("d3")->as_double3()[2] == 3.0);
   // Matrix4f is encoded in crate as Matrix4d, matching OpenUSD's crate type.
-  assert(prop("m4f")->as_matrix4d());
+  NEXT_CHECK(prop("m4f")->as_matrix4d());
   for (int i = 0; i < 16; ++i) {
-    assert(prop("m4f")->as_matrix4d()[i] == static_cast<double>(matrix4f[i]));
+    NEXT_CHECK(prop("m4f")->as_matrix4d()[i] == static_cast<double>(matrix4f[i]));
   }
-  assert(prop("str")->as_string() && *prop("str")->as_string() == "hello");
-  assert(prop("tok")->as_token() && *prop("tok")->as_token() == "render");
-  assert(prop("asset")->as_asset_path() &&
+  NEXT_CHECK(prop("str")->as_string() && *prop("str")->as_string() == "hello");
+  NEXT_CHECK(prop("tok")->as_token() && *prop("tok")->as_token() == "render");
+  NEXT_CHECK(prop("asset")->as_asset_path() &&
          *prop("asset")->as_asset_path() == "model.usda");
 
   const Dict* rd = prop("dict")->as_dictionary();
-  assert(rd);
+  NEXT_CHECK(rd);
   const Value* name = rd->find("name");
-  assert(name && name->as_string() && *name->as_string() == "fallback");
+  NEXT_CHECK(name && name->as_string() && *name->as_string() == "fallback");
   const Value* asset = rd->find("asset");
-  assert(asset && asset->as_asset_path() &&
+  NEXT_CHECK(asset && asset->as_asset_path() &&
          *asset->as_asset_path() == "tex/albedo.png");
   const Value* nested_value = rd->find("nested");
-  assert(nested_value && nested_value->as_dictionary());
+  NEXT_CHECK(nested_value && nested_value->as_dictionary());
   const Value* label = nested_value->as_dictionary()->find("label");
-  assert(label && label->as_string() && *label->as_string() == "inner");
+  NEXT_CHECK(label && label->as_string() && *label->as_string() == "inner");
   const Value* weight = nested_value->as_dictionary()->find("weight");
-  assert(weight && weight->as_double() && *weight->as_double() == 2.5);
+  NEXT_CHECK(weight && weight->as_double() && *weight->as_double() == 2.5);
 
   std::cout << "  USDC EncodeValue fallback roundtrip test passed!\n\n";
 }
@@ -632,14 +632,14 @@ void test_usdc_value_block_roundtrip() {
   Stage stage = stage_builder.Build();
   std::vector<uint8_t> buffer;
   USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
-  assert(write_result.success);
+  NEXT_CHECK(write_result.success);
   USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
-  assert(read_result.success);
+  NEXT_CHECK(read_result.success);
 
   UsdPrim mesh = read_result.stage.GetPrimAtPath("/Mesh");
-  assert(mesh.IsValid());
+  NEXT_CHECK(mesh.IsValid());
   const Value* prop = mesh.GetPropertyValue("primvars:displayColor:indices");
-  assert(prop && prop->is_block());
+  NEXT_CHECK(prop && prop->is_block());
 
   std::cout << "  USDC ValueBlock roundtrip test passed!\n\n";
 }
@@ -670,26 +670,26 @@ void test_usdc_thread_count_parity() {
   serial_opts.crate_options.num_threads = 1;
   std::vector<uint8_t> serial;
   USDCWriteResult serial_result = WriteUSDCToMemory(serial, stage, serial_opts);
-  assert(serial_result.success);
-  assert(serial_result.bytes_written == serial.size());
+  NEXT_CHECK(serial_result.success);
+  NEXT_CHECK(serial_result.bytes_written == serial.size());
 
   USDCWriteOptions threaded_opts;
   threaded_opts.crate_options.num_threads = 8;
   std::vector<uint8_t> threaded;
   USDCWriteResult threaded_result = WriteUSDCToMemory(threaded, stage, threaded_opts);
-  assert(threaded_result.success);
-  assert(threaded_result.bytes_written == threaded.size());
+  NEXT_CHECK(threaded_result.success);
+  NEXT_CHECK(threaded_result.bytes_written == threaded.size());
 
-  assert(threaded == serial);
+  NEXT_CHECK(threaded == serial);
 
   USDCLoadResult read_result =
       LoadUSDCFromMemoryBorrowed(threaded.data(), threaded.size());
-  assert(read_result.success);
-  assert(read_result.stage.GetPrimCount() == static_cast<size_t>(kPrimCount));
+  NEXT_CHECK(read_result.success);
+  NEXT_CHECK(read_result.stage.GetPrimCount() == static_cast<size_t>(kPrimCount));
   UsdPrim last = read_result.stage.GetPrimAtPath("/P2999");
-  assert(last.IsValid());
+  NEXT_CHECK(last.IsValid());
   const Value* id = last.GetPropertyValue("id");
-  assert(id && id->as_int() && *id->as_int() == 2999);
+  NEXT_CHECK(id && id->as_int() && *id->as_int() == 2999);
 
   std::cout << "  USDC writer thread-count parity test passed!\n\n";
 }
@@ -735,21 +735,21 @@ void test_usdc_slot_order_interning_independent() {
 
   Layer l1 = build(false);
   const PrimSpec* p = l1.prim_at_path("/Shape");
-  assert(p && p->properties().slots().size() == 2);
+  NEXT_CHECK(p && p->properties().slots().size() == 2);
   // Canonical order is NAME order ("aa..." first), NOT intern-id order
   // ("zz..." was interned first and has the smaller id).
-  assert(table.get(p->properties().slots()[0].name_id) == kEarly &&
+  NEXT_CHECK(table.get(p->properties().slots()[0].name_id) == kEarly &&
          "slots must be name-sorted, not PropNameId-sorted");
-  assert(table.get(p->properties().slots()[1].name_id) == kLate);
+  NEXT_CHECK(table.get(p->properties().slots()[1].name_id) == kLate);
   // find() by id must still resolve both post-sort.
-  assert(p->property(kEarly) && p->property(kLate));
+  NEXT_CHECK(p->property(kEarly) && p->property(kLate));
 
   Layer l2 = build(true);
   std::vector<uint8_t> b1, b2;
   CrateWriter w1, w2;
-  assert(w1.WriteLayerToMemory(b1, l1).success);
-  assert(w2.WriteLayerToMemory(b2, l2).success);
-  assert(b1 == b2 && "crate bytes must be independent of property add order");
+  NEXT_CHECK(w1.WriteLayerToMemory(b1, l1).success);
+  NEXT_CHECK(w2.WriteLayerToMemory(b2, l2).success);
+  NEXT_CHECK(b1 == b2 && "crate bytes must be independent of property add order");
 
   std::cout << "  slot-order interning-independence test passed!\n\n";
 }
@@ -786,31 +786,31 @@ void test_usdc_consume_values_byte_identity() {
   CrateWriteOptions keep_opts;  // consume_values = false
   std::vector<uint8_t> b1;
   CrateWriter w1(keep_opts);
-  assert(w1.WriteLayerToMemory(b1, keep).success);
+  NEXT_CHECK(w1.WriteLayerToMemory(b1, keep).success);
 
   CrateWriteOptions consume_opts;
   consume_opts.consume_values = true;
   std::vector<uint8_t> b2;
   CrateWriter w2(consume_opts);
-  assert(w2.WriteLayerToMemory(b2, consumed).success);
+  NEXT_CHECK(w2.WriteLayerToMemory(b2, consumed).success);
 
-  assert(b1 == b2 && "consume_values must not change the output bytes");
+  NEXT_CHECK(b1 == b2 && "consume_values must not change the output bytes");
 
   const PrimSpec* p = consumed.prim_at_path("/Geom");
-  assert(p);
+  NEXT_CHECK(p);
   // Non-asset values are released (empty but present: slots stay valid).
   const Value* darr = p->property_value("param");
-  assert(darr && darr->is_empty() && "double[] payload should be released");
+  NEXT_CHECK(darr && darr->is_empty() && "double[] payload should be released");
   const Value* dsc = p->property_value("weight");
-  assert(dsc && dsc->is_empty() && "double scalar payload should be released");
+  NEXT_CHECK(dsc && dsc->is_empty() && "double scalar payload should be released");
   // AssetPath defaults survive for post-write asset collection.
   const Value* ap = p->property_value("file");
-  assert(ap && ap->as_asset_path() &&
+  NEXT_CHECK(ap && ap->as_asset_path() &&
          *ap->as_asset_path() == "textures/albedo.png" &&
          "AssetPath default must survive a consuming write");
   // The non-consuming layer keeps everything.
   const PrimSpec* pk = keep.prim_at_path("/Geom");
-  assert(pk && pk->property_value("param") &&
+  NEXT_CHECK(pk && pk->property_value("param") &&
          !pk->property_value("param")->is_empty());
 
   std::cout << "  consume_values byte identity test passed!\n\n";
@@ -827,9 +827,9 @@ void test_usdc_double_write_determinism() {
   Layer b = BuildConsumeFixtureLayer();
   std::vector<uint8_t> ba, bb;
   CrateWriter wa, wb;
-  assert(wa.WriteLayerToMemory(ba, a).success);
-  assert(wb.WriteLayerToMemory(bb, b).success);
-  assert(ba == bb && "two writes of identical content must be byte-identical");
+  NEXT_CHECK(wa.WriteLayerToMemory(ba, a).success);
+  NEXT_CHECK(wb.WriteLayerToMemory(bb, b).success);
+  NEXT_CHECK(ba == bb && "two writes of identical content must be byte-identical");
   std::cout << "  double-write determinism test passed!\n\n";
 }
 

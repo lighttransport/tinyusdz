@@ -6,7 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cassert>
+#include "test-check.hh"
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -167,24 +167,24 @@ static void test_compute_prim_index() {
   auto root = BuildRootLayer();
 
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened && "Cache::Open failed");
+  NEXT_CHECK(opened && "Cache::Open failed");
   pcp::Cache cache = std::move(*opened);
 
   std::string warn, err;
   const pcp::PrimIndex *idx = cache.ComputePrimIndex(Path("/World/A"), &warn, &err);
-  assert(idx != nullptr && "no PrimIndex for /World/A");
+  NEXT_CHECK(idx != nullptr && "no PrimIndex for /World/A");
   // Root node + one reference node (to /Lib/Model).
-  assert(idx->GetNodeCount() >= 2);
-  assert(idx->HasAnySpecs());
+  NEXT_CHECK(idx->GetNodeCount() >= 2);
+  NEXT_CHECK(idx->HasAnySpecs());
   std::cout << idx->DumpToString();
 
   // Caching: second query returns the same pointer.
   const pcp::PrimIndex *idx2 = cache.ComputePrimIndex(Path("/World/A"), &warn, &err);
-  assert(idx == idx2);
-  assert(cache.HasComputedPrimIndex(Path("/World/A")));
+  NEXT_CHECK(idx == idx2);
+  NEXT_CHECK(cache.HasComputedPrimIndex(Path("/World/A")));
 
   // A prim with no local spec returns nullptr (phase-1 behavior).
-  assert(cache.ComputePrimIndex(Path("/Nope"), &warn, &err) == nullptr);
+  NEXT_CHECK(cache.ComputePrimIndex(Path("/Nope"), &warn, &err) == nullptr);
 
   std::cout << "  OK" << std::endl;
 }
@@ -200,51 +200,51 @@ static void test_compose_prim_lazy() {
   // Reference stage built eagerly.
   auto root_a = BuildRootLayer();
   auto oa = pcp::Cache::Open(resolver, root_a);
-  assert(oa);
+  NEXT_CHECK(oa);
   pcp::Cache eager = std::move(*oa);
   Stage stage;
-  assert(eager.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(eager.BuildStage(&stage, &warn, &err));
 
   // Lazy cache: never BuildStage'd.
   auto root_b = BuildRootLayer();
   auto ob = pcp::Cache::Open(resolver, root_b);
-  assert(ob);
+  NEXT_CHECK(ob);
   pcp::Cache lazy = std::move(*ob);
 
   // /World/A: type "Mesh" + "size" both come through the reference, lazily.
   const PrimSpec *a = lazy.ComposePrim(Path("/World/A"), &warn, &err);
-  assert(a && "ComposePrim(/World/A) failed");
+  NEXT_CHECK(a && "ComposePrim(/World/A) failed");
   UsdPrim sa = stage.GetPrimAtPath("/World/A");
-  assert(a->type_name() == sa.GetTypeName() && a->type_name() == "Mesh");
-  assert((a->property_value("size") != nullptr) ==
+  NEXT_CHECK(a->type_name() == sa.GetTypeName() && a->type_name() == "Mesh");
+  NEXT_CHECK((a->property_value("size") != nullptr) ==
          (sa.GetPropertyValue("size") != nullptr));
-  assert(a->property_value("size") != nullptr);
+  NEXT_CHECK(a->property_value("size") != nullptr);
 
   // /World/A/Inner: a child reached through the reference composes lazily too.
   const PrimSpec *inner = lazy.ComposePrim(Path("/World/A/Inner"), &warn, &err);
-  assert(inner && inner->type_name() == "Sphere");
+  NEXT_CHECK(inner && inner->type_name() == "Sphere");
 
   // Composed child names match the eager stage for this non-instance prim.
   std::vector<std::string> kids =
       lazy.ComposedChildNames(Path("/World/A"), &warn, &err);
   bool has_inner = false;
   for (const std::string &k : kids) if (k == "Inner") has_inner = true;
-  assert(has_inner && "ComposedChildNames missed the referenced child");
+  NEXT_CHECK(has_inner && "ComposedChildNames missed the referenced child");
 
   // Caching: a second compose returns the same borrowed pointer.
-  assert(lazy.ComposePrim(Path("/World/A"), &warn, &err) == a);
+  NEXT_CHECK(lazy.ComposePrim(Path("/World/A"), &warn, &err) == a);
   // A path with no opinions composes to nullptr.
-  assert(lazy.ComposePrim(Path("/Nope"), &warn, &err) == nullptr);
+  NEXT_CHECK(lazy.ComposePrim(Path("/Nope"), &warn, &err) == nullptr);
 
   // Invalidate drops the lazily-composed spec; a recompose still yields a
   // valid, correctly-composed spec. (Pointer identity is not asserted here: the
   // freed spec's heap address may be reused by the recomposed one.)
   lazy.Invalidate(Path("/World/A"));
   const PrimSpec *a2 = lazy.ComposePrim(Path("/World/A"), &warn, &err);
-  assert(a2 && a2->type_name() == "Mesh" && a2->property_value("size") &&
+  NEXT_CHECK(a2 && a2->type_name() == "Mesh" && a2->property_value("size") &&
          "recompose after Invalidate must yield a valid spec");
   // And it is cached again (repeat returns the same borrowed pointer).
-  assert(lazy.ComposePrim(Path("/World/A"), &warn, &err) == a2);
+  NEXT_CHECK(lazy.ComposePrim(Path("/World/A"), &warn, &err) == a2);
   std::cout << "  OK" << std::endl;
 }
 
@@ -282,16 +282,16 @@ static void test_child_order_weak_to_strong() {
   auto root = std::make_shared<Layer>(std::move(layer));
 
   auto o = pcp::Cache::Open(resolver, root);
-  assert(o);
+  NEXT_CHECK(o);
   pcp::Cache cache = std::move(*o);
 
   std::vector<std::string> kids =
       cache.ComposedChildNames(Path("/Inst"), &warn, &err);
-  assert(kids.size() == 3 && "Inst should have 3 children");
-  assert(kids[0] == "X" && "common child X first (reference position)");
-  assert(kids[1] == "Materials" &&
+  NEXT_CHECK(kids.size() == 3 && "Inst should have 3 children");
+  NEXT_CHECK(kids[0] == "X" && "common child X first (reference position)");
+  NEXT_CHECK(kids[1] == "Materials" &&
          "reference-only Materials before local-only (weak->strong)");
-  assert(kids[2] == "LocalOnly" && "local-only child last");
+  NEXT_CHECK(kids[2] == "LocalOnly" && "local-only child last");
   std::cout << "  OK" << std::endl;
 }
 
@@ -339,31 +339,31 @@ static void test_crate_style_variant_holder() {
   auto root = std::make_shared<Layer>(std::move(layer));
 
   auto o = pcp::Cache::Open(resolver, root);
-  assert(o);
+  NEXT_CHECK(o);
   pcp::Cache cache = std::move(*o);
 
   std::vector<std::string> kids =
       cache.ComposedChildNames(Path("/Inst"), &warn, &err);
   // No bracketed marker child; variant content grafted; weak->strong order.
   for (const std::string &k : kids)
-    assert(k.front() != '{' && "variant holder marker leaked as a child");
-  assert(kids.size() == 3 && "Inst should have LOD0, Materials, LOD1");
-  assert(kids[0] == "LOD0" && "variant child LOD0 first");
-  assert(kids[1] == "Materials" && "asset-local Materials second");
-  assert(kids[2] == "LOD1" && "host-local LOD1 last");
+    NEXT_CHECK(k.front() != '{' && "variant holder marker leaked as a child");
+  NEXT_CHECK(kids.size() == 3 && "Inst should have LOD0, Materials, LOD1");
+  NEXT_CHECK(kids[0] == "LOD0" && "variant child LOD0 first");
+  NEXT_CHECK(kids[1] == "Materials" && "asset-local Materials second");
+  NEXT_CHECK(kids[2] == "LOD1" && "host-local LOD1 last");
 
   // Flatten must DROP variant-selection metadata: the selected variant's content
   // is grafted inline, so pxr's flattened output carries no `variants = {...}` /
   // variantSets (usdcat emits zero). Build + write and confirm none leak.
   Stage stage;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
   std::string usda = WriteUSDAToString(stage);
-  assert(usda.find("variants = {") == std::string::npos &&
+  NEXT_CHECK(usda.find("variants = {") == std::string::npos &&
          "variant selection metadata must not survive flatten");
-  assert(usda.find("variantSet") == std::string::npos &&
+  NEXT_CHECK(usda.find("variantSet") == std::string::npos &&
          "variantSet metadata/property must not survive flatten");
   // The selected variant's content (LOD0) is still present inline.
-  assert(usda.find("\"LOD0\"") != std::string::npos &&
+  NEXT_CHECK(usda.find("\"LOD0\"") != std::string::npos &&
          "selected variant content missing from flattened output");
   std::cout << "  OK" << std::endl;
 }
@@ -388,14 +388,14 @@ static void test_usda_connection_and_custom_rel() {
   Stage stage;
   std::string warn, err;
   // custom rel must not fail the parse.
-  assert(pcp::ComposeStageFromFile(f, resolver, &stage, {}, &warn, &err));
+  NEXT_CHECK(pcp::ComposeStageFromFile(f, resolver, &stage, {}, &warn, &err));
   std::string usda = WriteUSDAToString(stage);
-  assert(usda.find("inputs:metallic.connect = </Other.inputs:metallic>") !=
+  NEXT_CHECK(usda.find("inputs:metallic.connect = </Other.inputs:metallic>") !=
              std::string::npos &&
          "connection must re-emit as `.connect`");
-  assert(usda.find("inputs:metallic = \"") == std::string::npos &&
+  NEXT_CHECK(usda.find("inputs:metallic = \"") == std::string::npos &&
          "connection wrongly emitted as a string value");
-  assert(usda.find("field:density") != std::string::npos &&
+  NEXT_CHECK(usda.find("field:density") != std::string::npos &&
          "custom rel target dropped");
   std::remove(f.c_str());
   std::cout << "  OK" << std::endl;
@@ -436,11 +436,11 @@ static void test_variant_option_payload_arc() {
   resolver.SetWorkingDirectory("/tmp");
   Stage stage;
   std::string warn, err;
-  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  NEXT_CHECK(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
   std::string usda = WriteUSDAToString(stage);
-  assert(usda.find("def Mesh \"shape\"") != std::string::npos &&
+  NEXT_CHECK(usda.find("def Mesh \"shape\"") != std::string::npos &&
          "variant-option payload geometry was not composed");
-  assert(usda.find("points = [(0, 0, 0)") != std::string::npos &&
+  NEXT_CHECK(usda.find("points = [(0, 0, 0)") != std::string::npos &&
          "variant-option payload mesh points missing");
   std::remove(geo.c_str());
   std::remove(root.c_str());
@@ -481,12 +481,12 @@ static void test_parallel_compose_byte_identical() {
     opts.num_threads = nthreads;
     Stage stage;
     std::string warn, err;
-    assert(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
+    NEXT_CHECK(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
     return WriteUSDAToString(stage);
   };
   const std::string serial = compose(1);
   const std::string parallel = compose(4);
-  assert(serial == parallel &&
+  NEXT_CHECK(serial == parallel &&
          "parallel compose (--compose-threads) must be byte-identical to serial");
   std::remove(asset.c_str());
   std::remove(root.c_str());
@@ -536,18 +536,18 @@ static void test_variant_overrides() {
     opts.variant_overrides = ov;
     Stage stage;
     std::string warn, err;
-    assert(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
+    NEXT_CHECK(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
     return WriteUSDAToString(stage);
   };
   const std::string authored = compose({});
-  assert(authored.find("I_high") != std::string::npos &&
+  NEXT_CHECK(authored.find("I_high") != std::string::npos &&
          "authored selection (high) must compose without overrides");
-  assert(authored.find("I_low") == std::string::npos &&
+  NEXT_CHECK(authored.find("I_low") == std::string::npos &&
          "unselected variant leaked into the authored-selection flatten");
   const std::string overridden = compose({{"lod", "low"}});
-  assert(overridden.find("I_low") != std::string::npos &&
+  NEXT_CHECK(overridden.find("I_low") != std::string::npos &&
          "variant override (lod=low) was not applied");
-  assert(overridden.find("I_high") == std::string::npos &&
+  NEXT_CHECK(overridden.find("I_high") == std::string::npos &&
          "variant override failed to suppress the authored selection");
   std::remove(asset.c_str());
   std::remove(root.c_str());
@@ -571,13 +571,13 @@ static void test_value_block_roundtrip() {
          "    int[] primvars:displayColor:indices = None\n}\n"; }
   AssetResolver resolver; resolver.SetWorkingDirectory("/tmp");
   Stage stage; std::string warn, err;
-  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  NEXT_CHECK(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
   std::string usda = WriteUSDAToString(stage);
   // The block must win over the weaker array and re-emit as `= None`.
-  assert(usda.find("int[] primvars:displayColor:indices = None") !=
+  NEXT_CHECK(usda.find("int[] primvars:displayColor:indices = None") !=
              std::string::npos &&
          "value block did not re-emit as `= None`");
-  assert(usda.find("indices = [0, 1, 2]") == std::string::npos &&
+  NEXT_CHECK(usda.find("indices = [0, 1, 2]") == std::string::npos &&
          "value block failed to suppress the weaker array opinion");
   std::remove(base.c_str());
   std::remove(root.c_str());
@@ -616,30 +616,30 @@ static void test_extracted_prototypes() {
     pcp::CompositionOptions opts;
     opts.instance_flatten_mode = pcp::InstanceFlattenMode::ExtractedPrototypes;
     opts.prototype_numbering = num;
-    assert(pcp::ComposeStageFromFile(f, resolver, &stage, opts, &warn, &err));
+    NEXT_CHECK(pcp::ComposeStageFromFile(f, resolver, &stage, opts, &warn, &err));
     return WriteUSDAToString(stage);
   };
   const std::string usda = flatten(pcp::PrototypeNumbering::Deterministic);
   const auto npos = std::string::npos;
   // Two prototype groups extracted to root /Flattened_Prototype_N `over`s.
-  assert(usda.find("over \"Flattened_Prototype_1\"") != npos &&
+  NEXT_CHECK(usda.find("over \"Flattened_Prototype_1\"") != npos &&
          "no extracted prototype root");
-  assert(usda.find("over \"Flattened_Prototype_2\"") != npos &&
+  NEXT_CHECK(usda.find("over \"Flattened_Prototype_2\"") != npos &&
          "second prototype group not extracted");
   // The leaf geometry moved onto a prototype root (not inline under an instance).
-  assert(usda.find("def Mesh \"M\"") != npos && "prototype geometry lost");
+  NEXT_CHECK(usda.find("def Mesh \"M\"") != npos && "prototype geometry lost");
   // Instances reference a /Flattened_Prototype_N (not the in-place holder path).
-  assert(usda.find("</Flattened_Prototype_1>") != npos &&
+  NEXT_CHECK(usda.find("</Flattened_Prototype_1>") != npos &&
          "instances do not reference the extracted prototype");
   // Nested: the Cluster prototype's members reference the Leaf prototype root.
-  assert(usda.find("</Flattened_Prototype_2>") != npos &&
+  NEXT_CHECK(usda.find("</Flattened_Prototype_2>") != npos &&
          "nested prototype reference missing");
   // Determinism: a second compose is byte-identical.
-  assert(flatten(pcp::PrototypeNumbering::Deterministic) == usda &&
+  NEXT_CHECK(flatten(pcp::PrototypeNumbering::Deterministic) == usda &&
          "deterministic numbering is not reproducible");
   // The usdcat-compatible scheme is also deterministic run-to-run.
   const std::string uc = flatten(pcp::PrototypeNumbering::UsdcatCompatible);
-  assert(flatten(pcp::PrototypeNumbering::UsdcatCompatible) == uc &&
+  NEXT_CHECK(flatten(pcp::PrototypeNumbering::UsdcatCompatible) == uc &&
          "usdcat-compatible numbering is not reproducible");
   std::remove(f.c_str());
   std::cout << "  OK" << std::endl;
@@ -677,30 +677,30 @@ static void test_extracted_prototypes_collision_and_remap() {
   opts.prototype_numbering = pcp::PrototypeNumbering::Deterministic;
   Stage stage;
   std::string warn, err;
-  assert(pcp::ComposeStageFromFile(f, resolver, &stage, opts, &warn, &err));
+  NEXT_CHECK(pcp::ComposeStageFromFile(f, resolver, &stage, opts, &warn, &err));
 
   UsdPrim user = stage.GetPrimAtPath("/Flattened_Prototype_1");
-  assert(user.IsValid() && user.GetPropertyValue("user") &&
+  NEXT_CHECK(user.IsValid() && user.GetPropertyValue("user") &&
          "user-authored /Flattened_Prototype_1 must survive name collision");
   UsdPrim proto = stage.GetPrimAtPath("/Flattened_Prototype_2");
-  assert(proto.IsValid() && "extracted prototype did not skip occupied name");
+  NEXT_CHECK(proto.IsValid() && "extracted prototype did not skip occupied name");
   UsdPrim mesh = stage.GetPrimAtPath("/Flattened_Prototype_2/Mesh");
-  assert(mesh.IsValid());
+  NEXT_CHECK(mesh.IsValid());
   const std::vector<Path>* binding = mesh.GetRelationship("material:binding");
-  assert(binding && binding->size() == 1);
-  assert((*binding)[0].str() == "/Flattened_Prototype_2/Mat" &&
+  NEXT_CHECK(binding && binding->size() == 1);
+  NEXT_CHECK((*binding)[0].str() == "/Flattened_Prototype_2/Mat" &&
          "internal relationship target was not remapped to extracted prototype");
 
   UsdPrim a = stage.GetPrimAtPath("/World/A");
   UsdPrim b = stage.GetPrimAtPath("/World/B");
-  assert(a.IsValid() && b.IsValid());
-  assert(a.GetChildCount() == 0 && b.GetChildCount() == 0 &&
+  NEXT_CHECK(a.IsValid() && b.IsValid());
+  NEXT_CHECK(a.GetChildCount() == 0 && b.GetChildCount() == 0 &&
          "original instance members must be orphaned after extraction");
   const bool a_refs = !a.GetMeta().references.empty() &&
                       a.GetMeta().references[0] == "</Flattened_Prototype_2>";
   const bool b_refs = !b.GetMeta().references.empty() &&
                       b.GetMeta().references[0] == "</Flattened_Prototype_2>";
-  assert(a_refs && b_refs &&
+  NEXT_CHECK(a_refs && b_refs &&
          "instance members must reference the extracted prototype root");
 
   std::remove(f.c_str());
@@ -756,11 +756,11 @@ static void test_connection_namespace_remap() {
   auto root = std::make_shared<Layer>(std::move(layer));
 
   auto o = pcp::Cache::Open(resolver, root);
-  assert(o);
+  NEXT_CHECK(o);
   pcp::Cache cache = std::move(*o);
 
   Stage stage;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
   std::string usda = WriteUSDAToString(stage);
 
   // Connections must resolve to the composed namespace, NOT the asset-local one.
@@ -769,9 +769,9 @@ static void test_connection_namespace_remap() {
   // are sufficient. /Lib/Mat is also authored here as the internal-ref source,
   // with its own identity-mapped connections, so a global "/Lib/Mat" absence
   // check would not hold.)
-  assert(usda.find("</World/Bound.inputs:stPrimvarName>") != std::string::npos &&
+  NEXT_CHECK(usda.find("</World/Bound.inputs:stPrimvarName>") != std::string::npos &&
          "'.' boundary: root-prim-own-property connection not remapped");
-  assert(usda.find("</World/Bound/Reader.outputs:result>") != std::string::npos &&
+  NEXT_CHECK(usda.find("</World/Bound/Reader.outputs:result>") != std::string::npos &&
          "'/' boundary: descendant connection not remapped");
   std::cout << "  OK" << std::endl;
 }
@@ -828,24 +828,24 @@ static void test_value_connection_field_compose() {
   auto root = std::make_shared<Layer>(std::move(layer));
 
   auto o = pcp::Cache::Open(resolver, root);
-  assert(o);
+  NEXT_CHECK(o);
   pcp::Cache cache = std::move(*o);
 
   Stage stage;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
   std::string usda = WriteUSDAToString(stage);
 
   // (A) connection-only override must keep the weaker default value.
-  assert(usda.find("inputs:metallic = 0") != std::string::npos &&
+  NEXT_CHECK(usda.find("inputs:metallic = 0") != std::string::npos &&
          "weak source's default value was dropped by the connection-only over");
-  assert(usda.find("inputs:metallic.connect = </World/Bound/Tex.outputs:r>") !=
+  NEXT_CHECK(usda.find("inputs:metallic.connect = </World/Bound/Tex.outputs:r>") !=
              std::string::npos &&
          "connection opinion missing");
   // (B) value-only override must keep the weaker connection (remapped), proving
   // value and connection compose as independent fields in BOTH directions.
-  assert(usda.find("inputs:roughness = 0") != std::string::npos &&
+  NEXT_CHECK(usda.find("inputs:roughness = 0") != std::string::npos &&
          "roughness value missing");
-  assert(usda.find("inputs:roughness.connect = </World/Bound/Tex2.outputs:r>") !=
+  NEXT_CHECK(usda.find("inputs:roughness.connect = </World/Bound/Tex2.outputs:r>") !=
              std::string::npos &&
          "weak source's connection was dropped by the value-only over");
   std::cout << "  OK" << std::endl;
@@ -857,23 +857,23 @@ static void test_compose_prim_dependency_invalidate() {
   std::string warn, err;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   // Build the dependency map, then lazily compose a prim whose opinions come
   // from the class site. Invalidating the class must drop the dependent lazy
   // composed prim, not just its PrimIndex.
-  assert(cache.ComputePrimIndex(Path("/World/I"), &warn, &err) != nullptr);
+  NEXT_CHECK(cache.ComputePrimIndex(Path("/World/I"), &warn, &err) != nullptr);
   const PrimSpec *before = cache.ComposePrim(Path("/World/I"), &warn, &err);
-  assert(before && before->property_value("newClassOpinion") == nullptr);
+  NEXT_CHECK(before && before->property_value("newClassOpinion") == nullptr);
 
   PrimSpec *cls = root->prim_at_path_mutable("/_class_Base");
-  assert(cls);
+  NEXT_CHECK(cls);
   cls->add_property("newClassOpinion", Value(int32_t(42)));
   cache.Invalidate(Path("/_class_Base"));
 
   const PrimSpec *after = cache.ComposePrim(Path("/World/I"), &warn, &err);
-  assert(after && after->property_value("newClassOpinion") &&
+  NEXT_CHECK(after && after->property_value("newClassOpinion") &&
          "dependency invalidation must drop stale ComposePrim cache entries");
   std::cout << "  OK" << std::endl;
 }
@@ -903,24 +903,24 @@ static void test_compose_prim_invalidate_layer_without_index() {
   resolver.SetCustomResolver(
       {[](const std::string &p, const std::string &, void *) { return p; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   cache.PreloadLayer("asset", asset);
 
   std::string warn, err;
   const PrimSpec *before = cache.ComposePrim(Path("/World/R"), &warn, &err);
-  assert(before && before->property_value("freshLayerOpinion") == nullptr);
-  assert(!cache.HasComputedPrimIndex(Path("/World/R")) &&
+  NEXT_CHECK(before && before->property_value("freshLayerOpinion") == nullptr);
+  NEXT_CHECK(!cache.HasComputedPrimIndex(Path("/World/R")) &&
          "test must exercise lazy composition without PrimIndex dependencies");
 
   PrimSpec *a = asset->prim_at_path_mutable("/A");
-  assert(a);
+  NEXT_CHECK(a);
   a->add_property("freshLayerOpinion", Value(int32_t(7)));
   cache.InvalidateLayer("asset");
   cache.PreloadLayer("asset", asset);
 
   const PrimSpec *after = cache.ComposePrim(Path("/World/R"), &warn, &err);
-  assert(after && after->property_value("freshLayerOpinion") &&
+  NEXT_CHECK(after && after->property_value("freshLayerOpinion") &&
          "InvalidateLayer must drop lazy ComposePrim caches even without a PrimIndex");
   std::cout << "  OK" << std::endl;
 }
@@ -948,34 +948,34 @@ static void test_eval_attribute_lazy() {
   }
   AssetResolver resolver;
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   // Default value, composed lazily (no BuildStage).
   EvalResult r1 = EvalAttributeLazy(cache, Path("/Src"), "value");
-  assert(r1.success && r1.from_default);
+  NEXT_CHECK(r1.success && r1.from_default);
   const float *f1 = r1.value.as_float();
-  assert(f1 && *f1 == 0.5f);
+  NEXT_CHECK(f1 && *f1 == 0.5f);
 
   // Time sample interpolated at t=5 -> 2.0.
   EvalOptions opts;
   opts.time = 5.0;
   EvalResult r2 = EvalAttributeLazy(cache, Path("/Src"), "anim", opts);
-  assert(r2.success && r2.from_time_sample);
+  NEXT_CHECK(r2.success && r2.from_time_sample);
   const float *f2 = r2.value.as_float();
-  assert(f2 && *f2 == 2.0f);
+  NEXT_CHECK(f2 && *f2 == 2.0f);
 
   // Connection following: /Dst.value resolves to /Src.value == 0.5.
   EvalResult r3 = EvalAttributeLazy(cache, Path("/Dst"), "value");
-  assert(r3.success && r3.from_connection);
+  NEXT_CHECK(r3.success && r3.from_connection);
   const float *f3 = r3.value.as_float();
-  assert(f3 && *f3 == 0.5f);
+  NEXT_CHECK(f3 && *f3 == 0.5f);
 
   // No opinion -> unsuccessful.
   EvalResult r4 = EvalAttributeLazy(cache, Path("/Nope"), "x");
-  assert(!r4.success);
+  NEXT_CHECK(!r4.success);
 
-  assert(cache.HasComputedPrimIndex(Path("/Src")) == false &&
+  NEXT_CHECK(cache.HasComputedPrimIndex(Path("/Src")) == false &&
          "lazy eval must not have built a PrimIndex via ComputePrimIndex");
   std::cout << "  OK" << std::endl;
 }
@@ -985,28 +985,28 @@ static void test_build_stage() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
   bool ok = cache.BuildStage(&stage, &warn, &err);
-  assert(ok && "BuildStage failed");
+  NEXT_CHECK(ok && "BuildStage failed");
 
   // /World/A composed the reference: it should now be typed "Mesh", carry the
   // referenced "size" property, and have the referenced child "Inner".
   UsdPrim a = stage.GetPrimAtPath("/World/A");
-  assert(a.IsValid() && "/World/A missing");
-  assert(a.GetTypeName() == "Mesh" && "reference did not compose type");
-  assert(a.GetPropertyValue("size") != nullptr && "referenced property missing");
+  NEXT_CHECK(a.IsValid() && "/World/A missing");
+  NEXT_CHECK(a.GetTypeName() == "Mesh" && "reference did not compose type");
+  NEXT_CHECK(a.GetPropertyValue("size") != nullptr && "referenced property missing");
 
   UsdPrim inner = stage.GetPrimAtPath("/World/A/Inner");
-  assert(inner.IsValid() && "referenced child /World/A/Inner missing");
-  assert(inner.GetTypeName() == "Sphere");
+  NEXT_CHECK(inner.IsValid() && "referenced child /World/A/Inner missing");
+  NEXT_CHECK(inner.GetTypeName() == "Sphere");
 
   // The source prim is still present too.
   UsdPrim model = stage.GetPrimAtPath("/Lib/Model");
-  assert(model.IsValid() && "/Lib/Model missing");
+  NEXT_CHECK(model.IsValid() && "/Lib/Model missing");
 
   std::cout << "  OK" << std::endl;
 }
@@ -1016,20 +1016,20 @@ static void test_invalidate() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   std::string warn, err;
   cache.ComputePrimIndex(Path("/World/A"), &warn, &err);
-  assert(cache.HasComputedPrimIndex(Path("/World/A")));
-  assert(cache.ComputedPrimIndexCount() == 1);
+  NEXT_CHECK(cache.HasComputedPrimIndex(Path("/World/A")));
+  NEXT_CHECK(cache.ComputedPrimIndexCount() == 1);
 
   cache.Invalidate(Path("/World/A"));
-  assert(!cache.HasComputedPrimIndex(Path("/World/A")));
-  assert(cache.ComputedPrimIndexCount() == 0);
+  NEXT_CHECK(!cache.HasComputedPrimIndex(Path("/World/A")));
+  NEXT_CHECK(cache.ComputedPrimIndexCount() == 0);
 
   // Recompute works after invalidation.
-  assert(cache.ComputePrimIndex(Path("/World/A"), &warn, &err) != nullptr);
+  NEXT_CHECK(cache.ComputePrimIndex(Path("/World/A"), &warn, &err) != nullptr);
   std::cout << "  OK" << std::endl;
 }
 
@@ -1040,7 +1040,7 @@ static void test_ancestral_compute() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   std::string warn, err;
@@ -1048,8 +1048,8 @@ static void test_ancestral_compute() {
   // child is Inner. No local spec at /World/A/Inner.
   const pcp::PrimIndex *inner =
       cache.ComputePrimIndex(Path("/World/A/Inner"), &warn, &err);
-  assert(inner != nullptr && "ancestral composition failed for /World/A/Inner");
-  assert(inner->HasAnySpecs());
+  NEXT_CHECK(inner != nullptr && "ancestral composition failed for /World/A/Inner");
+  NEXT_CHECK(inner->HasAnySpecs());
   std::cout << "  OK" << std::endl;
 }
 
@@ -1062,28 +1062,28 @@ static void test_deferred_payload() {
   pcp::CompositionOptions opts;
   opts.payload_policy = {[](const Path &, const std::string &, void *) { return false; }, nullptr};
   auto opened = pcp::Cache::Open(resolver, root, "", opts);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   // Payload deferred: /World/P composed but WITHOUT the payload's content.
-  assert(cache.HasDeferredPayload(Path("/World/P")) && "payload not deferred");
+  NEXT_CHECK(cache.HasDeferredPayload(Path("/World/P")) && "payload not deferred");
   UsdPrim p = stage.GetPrimAtPath("/World/P");
-  assert(p.IsValid());
-  assert(p.GetPropertyValue("size") == nullptr && "payload content leaked while deferred");
-  assert(!stage.GetPrimAtPath("/World/P/Inner").IsValid());
+  NEXT_CHECK(p.IsValid());
+  NEXT_CHECK(p.GetPropertyValue("size") == nullptr && "payload content leaked while deferred");
+  NEXT_CHECK(!stage.GetPrimAtPath("/World/P/Inner").IsValid());
 
   // Load the payload and recompose: content now present.
-  assert(cache.LoadPayload(Path("/World/P"), &warn, &err));
-  assert(!cache.HasDeferredPayload(Path("/World/P")));
+  NEXT_CHECK(cache.LoadPayload(Path("/World/P"), &warn, &err));
+  NEXT_CHECK(!cache.HasDeferredPayload(Path("/World/P")));
   Stage stage2;
-  assert(cache.BuildStage(&stage2, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage2, &warn, &err));
   UsdPrim p2 = stage2.GetPrimAtPath("/World/P");
-  assert(p2.GetPropertyValue("size") != nullptr && "payload did not load");
-  assert(stage2.GetPrimAtPath("/World/P/Inner").IsValid());
+  NEXT_CHECK(p2.GetPropertyValue("size") != nullptr && "payload did not load");
+  NEXT_CHECK(stage2.GetPrimAtPath("/World/P/Inner").IsValid());
   std::cout << "  OK" << std::endl;
 }
 
@@ -1096,31 +1096,31 @@ static void test_load_rules_lifecycle() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);  // default: load all payloads
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   std::string warn, err;
   // Initially loaded (default policy), so not deferred.
   Stage s0;
-  assert(cache.BuildStage(&s0, &warn, &err));
-  assert(!cache.HasDeferredPayload(Path("/World/P")));
-  assert(s0.GetPrimAtPath("/World/P/Inner").IsValid() && "payload not loaded by default");
+  NEXT_CHECK(cache.BuildStage(&s0, &warn, &err));
+  NEXT_CHECK(!cache.HasDeferredPayload(Path("/World/P")));
+  NEXT_CHECK(s0.GetPrimAtPath("/World/P/Inner").IsValid() && "payload not loaded by default");
 
   // Unload it: HasDeferredPayload must be TRUE right away (recompose happened),
   // not stale -- this is the S7 fix.
-  assert(cache.UnloadPayload(Path("/World/P")));
-  assert(cache.HasDeferredPayload(Path("/World/P")) &&
+  NEXT_CHECK(cache.UnloadPayload(Path("/World/P")));
+  NEXT_CHECK(cache.HasDeferredPayload(Path("/World/P")) &&
          "UnloadPayload left HasDeferredPayload stale");
   Stage s1;
-  assert(cache.BuildStage(&s1, &warn, &err));
-  assert(!s1.GetPrimAtPath("/World/P/Inner").IsValid() && "payload content leaked after unload");
+  NEXT_CHECK(cache.BuildStage(&s1, &warn, &err));
+  NEXT_CHECK(!s1.GetPrimAtPath("/World/P/Inner").IsValid() && "payload content leaked after unload");
 
   // Load it back with descendants.
-  assert(cache.LoadPayload(Path("/World/P"), &warn, &err));
-  assert(!cache.HasDeferredPayload(Path("/World/P")));
+  NEXT_CHECK(cache.LoadPayload(Path("/World/P"), &warn, &err));
+  NEXT_CHECK(!cache.HasDeferredPayload(Path("/World/P")));
   Stage s2;
-  assert(cache.BuildStage(&s2, &warn, &err));
-  assert(s2.GetPrimAtPath("/World/P/Inner").IsValid() && "payload did not reload");
+  NEXT_CHECK(cache.BuildStage(&s2, &warn, &err));
+  NEXT_CHECK(s2.GetPrimAtPath("/World/P/Inner").IsValid() && "payload did not reload");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1156,22 +1156,22 @@ static void test_layer_offset_timesamples() {
   resolver.SetCustomResolver(
       {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   cache.PreloadLayer("asset", asset);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   UsdPrim r = stage.GetPrimAtPath("/World/R");
-  assert(r.IsValid());
+  NEXT_CHECK(r.IsValid());
   // Original sample times 0 and 10 map to 100 and 120 (= 100 + 2*10).
   const Value *at100 = r.GetValueAtTime("size", 100.0);
   const Value *at120 = r.GetValueAtTime("size", 120.0);
-  assert(at100 && at100->as_float3() && at100->as_float3()[0] == 0.0f &&
+  NEXT_CHECK(at100 && at100->as_float3() && at100->as_float3()[0] == 0.0f &&
          "sample at t=0 not remapped to t=100");
-  assert(at120 && at120->as_float3() && at120->as_float3()[0] == 10.0f &&
+  NEXT_CHECK(at120 && at120->as_float3() && at120->as_float3()[0] == 10.0f &&
          "sample at t=10 not remapped to t=120");
   std::cout << "  OK" << std::endl;
 }
@@ -1183,7 +1183,7 @@ static void test_set_load_rules() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   // Unload the whole stage: /World/P's payload is now deferred.
@@ -1193,17 +1193,17 @@ static void test_set_load_rules() {
 
   std::string warn, err;
   Stage s0;
-  assert(cache.BuildStage(&s0, &warn, &err));
-  assert(cache.HasDeferredPayload(Path("/World/P")));
-  assert(!s0.GetPrimAtPath("/World/P/Inner").IsValid());
+  NEXT_CHECK(cache.BuildStage(&s0, &warn, &err));
+  NEXT_CHECK(cache.HasDeferredPayload(Path("/World/P")));
+  NEXT_CHECK(!s0.GetPrimAtPath("/World/P/Inner").IsValid());
 
   // Re-include just /World/P.
   rules.LoadWithDescendants("/World/P");
   cache.SetLoadRules(rules);
   Stage s1;
-  assert(cache.BuildStage(&s1, &warn, &err));
-  assert(!cache.HasDeferredPayload(Path("/World/P")));
-  assert(s1.GetPrimAtPath("/World/P/Inner").IsValid() && "targeted load did not include payload");
+  NEXT_CHECK(cache.BuildStage(&s1, &warn, &err));
+  NEXT_CHECK(!cache.HasDeferredPayload(Path("/World/P")));
+  NEXT_CHECK(s1.GetPrimAtPath("/World/P/Inner").IsValid() && "targeted load did not include payload");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1239,27 +1239,27 @@ static void test_payload_in_instance() {
   pcp::CompositionOptions opts;
   opts.payload_policy = {[](const Path &, const std::string &, void *) { return false; }, nullptr};
   auto opened = pcp::Cache::Open(resolver, root, "", opts);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   std::string warn, err;
   Stage s0;
-  assert(cache.BuildStage(&s0, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&s0, &warn, &err));
   // Both deferred-payload instances share one prototype.
-  assert(cache.GetPrototype(Path("/World/Pa")) ==
+  NEXT_CHECK(cache.GetPrototype(Path("/World/Pa")) ==
              cache.GetPrototype(Path("/World/Pb")) &&
          "deferred-payload instances did not share a prototype");
   const size_t protos_before = cache.PrototypeCount();
 
   // Load Pa's payload: its arc set now includes the payload content, so its key
   // diverges from Pb's -> Pa is no longer grouped with Pb.
-  assert(cache.LoadPayload(Path("/World/Pa"), &warn, &err));
+  NEXT_CHECK(cache.LoadPayload(Path("/World/Pa"), &warn, &err));
   Stage s1;
-  assert(cache.BuildStage(&s1, &warn, &err));
-  assert(cache.GetPrototype(Path("/World/Pa")) !=
+  NEXT_CHECK(cache.BuildStage(&s1, &warn, &err));
+  NEXT_CHECK(cache.GetPrototype(Path("/World/Pa")) !=
              cache.GetPrototype(Path("/World/Pb")) &&
          "loading a payload did not split the instance from its group");
-  assert(cache.PrototypeCount() > protos_before);
+  NEXT_CHECK(cache.PrototypeCount() > protos_before);
   std::cout << "  OK" << std::endl;
 }
 
@@ -1291,25 +1291,25 @@ static void test_specialize_chain() {
   }
   AssetResolver resolver;
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   UsdPrim p = stage.GetPrimAtPath("/P");
-  assert(p.IsValid());
+  NEXT_CHECK(p.IsValid());
   auto fval = [&](const char *n) -> float {
     const Value *v = p.GetPropertyValue(n);
-    assert(v && "missing composed property");
+    NEXT_CHECK(v && "missing composed property");
     const float *f = v->as_float();
-    assert(f);
+    NEXT_CHECK(f);
     return *f;
   };
-  assert(fval("val") == 1.0f && "local opinion must win over the chain");
-  assert(fval("pOnly") == 10.0f);
-  assert(fval("bOnly") == 20.0f && "direct specialize opinion must compose");
-  assert(fval("cOnly") == 30.0f && "transitive specialize chain must compose");
+  NEXT_CHECK(fval("val") == 1.0f && "local opinion must win over the chain");
+  NEXT_CHECK(fval("pOnly") == 10.0f);
+  NEXT_CHECK(fval("bOnly") == 20.0f && "direct specialize opinion must compose");
+  NEXT_CHECK(fval("cOnly") == 30.0f && "transitive specialize chain must compose");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1351,21 +1351,21 @@ static void test_cross_layer_arc_dedup() {
     opts.apply_list_ops = flag;
     auto opened = pcp::Cache::Open(resolver, root_layer,
                                    "/tmp/next_pcp_listop_root.usda", opts);
-    assert(opened);
+    NEXT_CHECK(opened);
     pcp::Cache cache = std::move(*opened);
     const pcp::PrimIndex *idx =
         cache.ComputePrimIndex(Path("/World/Dup"), &w, &e);
-    assert(idx);
+    NEXT_CHECK(idx);
     // The reference resolves either way: the composed type is still "Mesh".
     Stage stage;
-    assert(cache.BuildStage(&stage, &w, &e));
-    assert(stage.GetPrimAtPath("/World/Dup").GetTypeName() == "Mesh");
+    NEXT_CHECK(cache.BuildStage(&stage, &w, &e));
+    NEXT_CHECK(stage.GetPrimAtPath("/World/Dup").GetTypeName() == "Mesh");
     return idx->GetNodeCount();
   };
 
   int without = node_count(false);
   int with = node_count(true);
-  assert(with < without && "apply_list_ops must drop the duplicate arc node");
+  NEXT_CHECK(with < without && "apply_list_ops must drop the duplicate arc node");
   std::remove(sub.c_str());
   std::cout << "  OK (" << without << " -> " << with << " nodes)" << std::endl;
 }
@@ -1375,27 +1375,27 @@ static void test_inherits_specializes() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   // Inherit composes the class type.
   UsdPrim i = stage.GetPrimAtPath("/World/I");
-  assert(i.IsValid());
-  assert(i.GetTypeName() == "Scope" && "inherit did not compose class type");
+  NEXT_CHECK(i.IsValid());
+  NEXT_CHECK(i.GetTypeName() == "Scope" && "inherit did not compose class type");
 
   // Inherit (Scope) is STRONGER than the reference (Mesh).
   UsdPrim ir = stage.GetPrimAtPath("/World/IR");
-  assert(ir.IsValid());
-  assert(ir.GetTypeName() == "Scope" && "inherit should outrank reference");
+  NEXT_CHECK(ir.IsValid());
+  NEXT_CHECK(ir.GetTypeName() == "Scope" && "inherit should outrank reference");
 
   // Specialize (Scope) is WEAKER than the reference (Mesh).
   UsdPrim sp = stage.GetPrimAtPath("/World/SP");
-  assert(sp.IsValid());
-  assert(sp.GetTypeName() == "Mesh" && "reference should outrank specialize");
+  NEXT_CHECK(sp.IsValid());
+  NEXT_CHECK(sp.GetTypeName() == "Mesh" && "reference should outrank specialize");
 
   std::cout << "  OK" << std::endl;
 }
@@ -1427,15 +1427,15 @@ static void test_variant_inline_property_flags() {
   resolver.SetWorkingDirectory("/tmp");
   Stage stage;
   std::string warn, err;
-  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  NEXT_CHECK(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
 
   // emit_custom on so the (preserved) custom flag is visible in the output.
   USDAWriteOptions opts;
   opts.emit_custom = true;
   std::string usda = WriteUSDAToString(stage, opts);
-  assert(usda.find("custom bool isAsset") != std::string::npos &&
+  NEXT_CHECK(usda.find("custom bool isAsset") != std::string::npos &&
          "custom flag dropped from variant-grafted property");
-  assert(usda.find("uniform token axis") != std::string::npos &&
+  NEXT_CHECK(usda.find("uniform token axis") != std::string::npos &&
          "uniform flag dropped from variant-grafted property");
   std::remove(root.c_str());
   std::cout << "  OK" << std::endl;
@@ -1446,18 +1446,18 @@ static void test_variants() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   UsdPrim v = stage.GetPrimAtPath("/World/V");
-  assert(v.IsValid());
-  assert(v.GetPropertyValue("variantHigh") != nullptr &&
+  NEXT_CHECK(v.IsValid());
+  NEXT_CHECK(v.GetPropertyValue("variantHigh") != nullptr &&
          "selected variant 'high' not grafted");
-  assert(v.GetPropertyValue("variantLow") == nullptr &&
+  NEXT_CHECK(v.GetPropertyValue("variantLow") == nullptr &&
          "non-selected variant 'low' leaked");
   std::cout << "  OK" << std::endl;
 }
@@ -1498,18 +1498,18 @@ static void test_variant_content_key_stable() {
   std::string warn, err;
   AssetResolver r1;
   auto o1 = pcp::Cache::Open(r1, build());
-  assert(o1);
+  NEXT_CHECK(o1);
   pcp::Cache c1 = std::move(*o1);
   std::string k1 = c1.ComputeInstanceKey(Path("/VC"), &warn, &err);
 
   AssetResolver r2;
   auto o2 = pcp::Cache::Open(r2, build());
-  assert(o2);
+  NEXT_CHECK(o2);
   pcp::Cache c2 = std::move(*o2);
   std::string k2 = c2.ComputeInstanceKey(Path("/VC"), &warn, &err);
 
-  assert(k1 == k2 && "variant-content instance key not stable across runs");
-  assert(k1.find("0x") == std::string::npos &&
+  NEXT_CHECK(k1 == k2 && "variant-content instance key not stable across runs");
+  NEXT_CHECK(k1.find("0x") == std::string::npos &&
          "instance key still encodes a raw pointer");
   std::cout << "  OK" << std::endl;
 }
@@ -1520,26 +1520,26 @@ static void test_variants_v2() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   // Content variant grafts a host property AND a child prim.
   UsdPrim vc = stage.GetPrimAtPath("/World/VC");
-  assert(vc.IsValid());
-  assert(vc.GetPropertyValue("hostProp") != nullptr && "variant host opinion missing");
+  NEXT_CHECK(vc.IsValid());
+  NEXT_CHECK(vc.GetPropertyValue("hostProp") != nullptr && "variant host opinion missing");
   UsdPrim geom = stage.GetPrimAtPath("/World/VC/Geom");
-  assert(geom.IsValid() && "variant child prim not grafted");
-  assert(geom.GetTypeName() == "Mesh");
+  NEXT_CHECK(geom.IsValid() && "variant child prim not grafted");
+  NEXT_CHECK(geom.GetTypeName() == "Mesh");
 
   // Multi-selection: both selected variant sets contribute.
   UsdPrim mv = stage.GetPrimAtPath("/World/MV");
-  assert(mv.IsValid());
-  assert(mv.GetPropertyValue("p1") != nullptr && "variant set s1 not applied");
-  assert(mv.GetPropertyValue("p2") != nullptr && "variant set s2 not applied");
+  NEXT_CHECK(mv.IsValid());
+  NEXT_CHECK(mv.GetPropertyValue("p1") != nullptr && "variant set s1 not applied");
+  NEXT_CHECK(mv.GetPropertyValue("p2") != nullptr && "variant set s2 not applied");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1568,21 +1568,21 @@ static void test_flatten_instances() {
   opts.flatten_instances = true;
   Stage stage;
   std::string warn, err;
-  assert(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
+  NEXT_CHECK(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
   std::string usda = WriteUSDAToString(stage);
 
   // One of {A,B} is the content holder; the other is an empty instanceable
   // prim referencing the holder by internal path </W/A> or </W/B>.
   const bool refs_a = usda.find("</W/A>") != std::string::npos;
   const bool refs_b = usda.find("</W/B>") != std::string::npos;
-  assert((refs_a ^ refs_b) &&
+  NEXT_CHECK((refs_a ^ refs_b) &&
          "exactly one of A/B must reference the other as the prototype holder");
   // The holder retains the composed subtree (Mesh M with n=1).
-  assert(usda.find("def Mesh \"M\"") != std::string::npos &&
+  NEXT_CHECK(usda.find("def Mesh \"M\"") != std::string::npos &&
          usda.find("int n = 1") != std::string::npos &&
          "prototype holder lost its composed subtree");
   // Internal reference, NOT an external asset path (@...@).
-  assert(usda.find("@</W/") == std::string::npos &&
+  NEXT_CHECK(usda.find("@</W/") == std::string::npos &&
          "internal reference was wrongly emitted as an asset path");
   std::remove(asset.c_str());
   std::remove(root.c_str());
@@ -1594,33 +1594,33 @@ static void test_instancing() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   std::string warn, err;
   std::vector<Path> paths{Path("/World/Inst1"), Path("/World/Inst2"),
                           Path("/World/Inst3")};
-  assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+  NEXT_CHECK(cache.PrewarmPrimIndices(paths, &warn, &err));
 
   // Two distinct prototypes: {Inst1,Inst2} share, Inst3 is its own.
-  assert(cache.PrototypeCount() == 2);
+  NEXT_CHECK(cache.PrototypeCount() == 2);
 
   std::string k1 = cache.ComputeInstanceKey(Path("/World/Inst1"), &warn, &err);
   std::string k2 = cache.ComputeInstanceKey(Path("/World/Inst2"), &warn, &err);
   std::string k3 = cache.ComputeInstanceKey(Path("/World/Inst3"), &warn, &err);
-  assert(k1 == k2 && "same-asset instances must share a key");
-  assert(k1 != k3 && "different-asset instances must differ");
+  NEXT_CHECK(k1 == k2 && "same-asset instances must share a key");
+  NEXT_CHECK(k1 != k3 && "different-asset instances must differ");
 
   Path p1 = cache.GetPrototype(Path("/World/Inst1"));
   Path p2 = cache.GetPrototype(Path("/World/Inst2"));
-  assert(p1 == p2 && "Inst1/Inst2 must share a prototype");
-  assert(cache.GetInstancesForPrototype(p1).size() == 2);
+  NEXT_CHECK(p1 == p2 && "Inst1/Inst2 must share a prototype");
+  NEXT_CHECK(cache.GetInstancesForPrototype(p1).size() == 2);
 
   // Exactly one of the two is the prototype (IsInstance == false), the other an
   // instance (IsInstance == true).
   bool i1 = cache.IsInstance(Path("/World/Inst1"));
   bool i2 = cache.IsInstance(Path("/World/Inst2"));
-  assert(i1 != i2);
+  NEXT_CHECK(i1 != i2);
   std::cout << "  OK" << std::endl;
 }
 
@@ -1630,16 +1630,16 @@ static void test_relocates() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
-  assert(stage.GetPrimAtPath("/World/New").IsValid() && "relocate target missing");
-  assert(!stage.GetPrimAtPath("/World/Old").IsValid() && "relocate source leaked");
-  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Scope");
+  NEXT_CHECK(stage.GetPrimAtPath("/World/New").IsValid() && "relocate target missing");
+  NEXT_CHECK(!stage.GetPrimAtPath("/World/Old").IsValid() && "relocate source leaked");
+  NEXT_CHECK(stage.GetPrimAtPath("/World/New").GetTypeName() == "Scope");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1681,20 +1681,20 @@ static void test_implied_inherit() {
   resolver.SetCustomResolver(
       {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   cache.PreloadLayer("mem_asset", asset);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   UsdPrim q = stage.GetPrimAtPath("/World/Q");
-  assert(q.IsValid());
-  assert(q.GetTypeName() == "Mesh" && "cross-file reference type missing");
-  assert(q.GetPropertyValue("libClassProp") != nullptr &&
+  NEXT_CHECK(q.IsValid());
+  NEXT_CHECK(q.GetTypeName() == "Mesh" && "cross-file reference type missing");
+  NEXT_CHECK(q.GetPropertyValue("libClassProp") != nullptr &&
          "direct (referenced-stack) inherit missing");
-  assert(q.GetPropertyValue("rootClassProp") != nullptr &&
+  NEXT_CHECK(q.GetPropertyValue("rootClassProp") != nullptr &&
          "IMPLIED root-stack inherit override missing");
   std::cout << "  OK" << std::endl;
 }
@@ -1706,30 +1706,30 @@ static void test_instance_proxy() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   UsdPrim i1 = stage.GetPrimAtPath("/World/Inst1");
   UsdPrim i2 = stage.GetPrimAtPath("/World/Inst2");
-  assert(i1.IsValid() && i2.IsValid());
+  NEXT_CHECK(i1.IsValid() && i2.IsValid());
 
   // Inst1 is the prototype (subtree materialized); Inst2 links to it.
-  assert(i1.GetMeta().instance_prototype().empty());
-  assert(i2.GetMeta().instance_prototype() == "/World/Inst1");
+  NEXT_CHECK(i1.GetMeta().instance_prototype().empty());
+  NEXT_CHECK(i2.GetMeta().instance_prototype() == "/World/Inst1");
 
   // The prototype owns the referenced child; the instance's subtree is NOT
   // duplicated in the layer.
-  assert(stage.GetPrimAtPath("/World/Inst1/Inner").IsValid());
-  assert(!stage.GetPrimAtPath("/World/Inst2/Inner").IsValid() &&
+  NEXT_CHECK(stage.GetPrimAtPath("/World/Inst1/Inner").IsValid());
+  NEXT_CHECK(!stage.GetPrimAtPath("/World/Inst2/Inner").IsValid() &&
          "instance subtree was duplicated");
 
   // ...but child access through the instance is transparent (proxy).
-  assert(i2.GetChildCount() == i1.GetChildCount());
-  assert(i2.GetChild("Inner").IsValid() && "instance proxy child access failed");
+  NEXT_CHECK(i2.GetChildCount() == i1.GetChildCount());
+  NEXT_CHECK(i2.GetChild("Inner").IsValid() && "instance proxy child access failed");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1774,7 +1774,7 @@ static void test_parallel_prewarm() {
   pcp::CompositionOptions opts;
   opts.num_threads = 4;
   auto opened = pcp::Cache::Open(resolver, rootL, "", opts);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   for (int k = 0; k < N; ++k) {
     cache.PreloadLayer("asset_" + std::to_string(k), assets[k]);
@@ -1784,14 +1784,14 @@ static void test_parallel_prewarm() {
   for (int k = 0; k < N; ++k) paths.push_back(Path("/World/R" + std::to_string(k)));
 
   std::string warn, err;
-  assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+  NEXT_CHECK(cache.PrewarmPrimIndices(paths, &warn, &err));
 
   // Every prim's index is built and composed the referenced Mesh.
   for (int k = 0; k < N; ++k) {
     Path p("/World/R" + std::to_string(k));
-    assert(cache.HasComputedPrimIndex(p));
+    NEXT_CHECK(cache.HasComputedPrimIndex(p));
     const pcp::PrimIndex *idx = cache.ComputePrimIndex(p, &warn, &err);
-    assert(idx && idx->GetNodeCount() >= 2);
+    NEXT_CHECK(idx && idx->GetNodeCount() >= 2);
   }
   std::cout << "  OK" << std::endl;
 }
@@ -1834,17 +1834,17 @@ static void test_cross_source_variant() {
   resolver.SetCustomResolver(
       {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   cache.PreloadLayer("cs_asset", asset);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   UsdPrim cs = stage.GetPrimAtPath("/World/CS");
-  assert(cs.IsValid());
-  assert(cs.GetPropertyValue("xvar") != nullptr &&
+  NEXT_CHECK(cs.IsValid());
+  NEXT_CHECK(cs.GetPropertyValue("xvar") != nullptr &&
          "cross-source variant selection failed");
   std::cout << "  OK" << std::endl;
 }
@@ -1895,22 +1895,22 @@ static void test_implied_intermediate() {
   resolver.SetCustomResolver(
       {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   cache.PreloadLayer("assetA", A);
   cache.PreloadLayer("assetB", B);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   UsdPrim t = stage.GetPrimAtPath("/World/T");
-  assert(t.IsValid());
-  assert(t.GetTypeName() == "Mesh");
-  assert(t.GetPropertyValue("fooB") != nullptr && "direct (B stack) class missing");
-  assert(t.GetPropertyValue("fooA") != nullptr &&
+  NEXT_CHECK(t.IsValid());
+  NEXT_CHECK(t.GetTypeName() == "Mesh");
+  NEXT_CHECK(t.GetPropertyValue("fooB") != nullptr && "direct (B stack) class missing");
+  NEXT_CHECK(t.GetPropertyValue("fooA") != nullptr &&
          "implied INTERMEDIATE (A stack) class missing");
-  assert(t.GetPropertyValue("fooRoot") != nullptr &&
+  NEXT_CHECK(t.GetPropertyValue("fooRoot") != nullptr &&
          "implied root class missing");
   std::cout << "  OK" << std::endl;
 }
@@ -1950,15 +1950,15 @@ static void test_writer_listop_fidelity() {
   std::string out = WriteLayerToString(layer, USDAWriteOptions());
   // The edit's qualifiers are preserved (old writer always emitted `prepend`
   // and never `delete`).
-  assert(out.find("prepend references = [") != std::string::npos);
-  assert(out.find("delete references = [") != std::string::npos);
+  NEXT_CHECK(out.find("prepend references = [") != std::string::npos);
+  NEXT_CHECK(out.find("delete references = [") != std::string::npos);
   // The bare prim emits an unqualified (explicit) list. It is the only prim
   // whose `references = [` is not preceded by a qualifier word.
-  assert(out.find("\n        references = [") != std::string::npos ||
+  NEXT_CHECK(out.find("\n        references = [") != std::string::npos ||
          out.find("\n    references = [") != std::string::npos);
-  assert(out.find("inherits = [") != std::string::npos &&
+  NEXT_CHECK(out.find("inherits = [") != std::string::npos &&
          "USDA writer must emit inherits arcs");
-  assert(out.find("specializes = [") != std::string::npos &&
+  NEXT_CHECK(out.find("specializes = [") != std::string::npos &&
          "USDA writer must emit specializes arcs");
   std::cout << "  OK" << std::endl;
 }
@@ -1995,9 +1995,9 @@ static void test_cross_layer_listops() {
     Stage stage;
     std::string w, e;
     bool ok = pcp::ComposeStageFromFile(base + file, resolver, &stage, opts, &w, &e);
-    assert(ok && "ComposeStageFromFile failed");
+    NEXT_CHECK(ok && "ComposeStageFromFile failed");
     UsdPrim p = stage.GetPrimAtPath(prim);
-    assert(p.IsValid());
+    NEXT_CHECK(p.IsValid());
     return {p.GetPropertyValue("fromA") != nullptr,
             p.GetPropertyValue("fromB") != nullptr};
   };
@@ -2006,17 +2006,17 @@ static void test_cross_layer_listops() {
   // weak </Lib/A> so only fromB survives.
   const std::string del = "listop-xlayer-delete-000.usda";
   auto p_off = compose(del, false, "/P");
-  assert(p_off.first && p_off.second && "default: weak+strong arcs both compose");
+  NEXT_CHECK(p_off.first && p_off.second && "default: weak+strong arcs both compose");
   auto p_on = compose(del, true, "/P");
-  assert(!p_on.first && p_on.second && "delete must drop the weak arc cross-layer");
+  NEXT_CHECK(!p_on.first && p_on.second && "delete must drop the weak arc cross-layer");
 
   // EXPLICIT fixture: /Q. Off -> both arcs; on -> the bare list replaces the
   // weak </Lib/A> so only fromB survives.
   const std::string exp = "listop-xlayer-explicit-000.usda";
   auto q_off = compose(exp, false, "/Q");
-  assert(q_off.first && q_off.second);
+  NEXT_CHECK(q_off.first && q_off.second);
   auto q_on = compose(exp, true, "/Q");
-  assert(!q_on.first && q_on.second && "explicit list must replace the weak arc");
+  NEXT_CHECK(!q_on.first && q_on.second && "explicit list must replace the weak arc");
 
   // Empty explicit list: still authored, and must clear weaker references.
   const std::string empty_sub = "/tmp/next_pcp_empty_explicit_sub.usda";
@@ -2056,10 +2056,10 @@ static void test_cross_layer_listops() {
       empty_root, empty_resolver, &empty_stage, empty_opts, &empty_warn,
       &empty_err);
   if (!empty_ok) std::cout << "  [diag] err=" << empty_err << std::endl;
-  assert(empty_ok);
+  NEXT_CHECK(empty_ok);
   UsdPrim e = empty_stage.GetPrimAtPath("/E");
-  assert(e.IsValid());
-  assert(e.GetPropertyValue("fromA") == nullptr &&
+  NEXT_CHECK(e.IsValid());
+  NEXT_CHECK(e.GetPropertyValue("fromA") == nullptr &&
          "empty explicit list must clear weaker references");
   std::remove(empty_sub.c_str());
   std::remove(empty_root.c_str());
@@ -2109,12 +2109,12 @@ static void test_listop_edit_does_not_clear_other_arc_fields() {
   std::string warn, err;
   bool ok = pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err);
   if (!ok) std::cout << "  [diag] err=" << err << std::endl;
-  assert(ok);
+  NEXT_CHECK(ok);
   UsdPrim p = stage.GetPrimAtPath("/P");
-  assert(p.IsValid());
-  assert(p.GetPropertyValue("refProp") &&
+  NEXT_CHECK(p.IsValid());
+  NEXT_CHECK(p.GetPropertyValue("refProp") &&
          "strong references list-op should compose");
-  assert(p.GetPropertyValue("payloadProp") &&
+  NEXT_CHECK(p.GetPropertyValue("payloadProp") &&
          "references edit must not clear weak payload opinions");
 
   std::remove(weak.c_str());
@@ -2144,11 +2144,11 @@ static void test_compose_from_file() {
   std::string warn, err;
   bool ok = pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err);
   if (!ok) std::cout << "  [diag] err=" << err << std::endl;
-  assert(ok && "ComposeStageFromFile failed");
+  NEXT_CHECK(ok && "ComposeStageFromFile failed");
 
   UsdPrim q = stage.GetPrimAtPath("/World/Q");
-  assert(q.IsValid() && "/World/Q missing");
-  assert(q.GetTypeName() == "Mesh" &&
+  NEXT_CHECK(q.IsValid() && "/World/Q missing");
+  NEXT_CHECK(q.GetTypeName() == "Mesh" &&
          "cross-file reference did not compose through the loader");
 
   std::remove(ref.c_str());
@@ -2189,17 +2189,17 @@ static void test_nested_relative_reference() {
   std::string warn, err;
   bool ok = pcp::ComposeStageFromFile("/tmp/nrr_root.usda", resolver, &stage, {},
                                       &warn, &err);
-  assert(ok && "ComposeStageFromFile failed");
+  NEXT_CHECK(ok && "ComposeStageFromFile failed");
 
   // The mesh reference composes (type Mesh), and the nested material reference
   // (anchored to the mesh's dir) must ALSO compose -- proving `../../Materials`
   // resolved correctly.
   UsdPrim m = stage.GetPrimAtPath("/World/M");
-  assert(m.IsValid() && m.GetTypeName() == "Mesh" && "mesh ref did not compose");
+  NEXT_CHECK(m.IsValid() && m.GetTypeName() == "Mesh" && "mesh ref did not compose");
   // A failed nested layer load is non-fatal (accumulated in err/warn, not a
   // hard failure), so the load-failure string is the real regression signal.
   const std::string diag = warn + err;
-  assert(diag.find("Failed to load") == std::string::npos &&
+  NEXT_CHECK(diag.find("Failed to load") == std::string::npos &&
          diag.find("Failed to open") == std::string::npos &&
          "nested ../../ material layer failed to load (anchor double-strip)");
 
@@ -2235,15 +2235,15 @@ static void test_sublayer_authored_reference_anchor() {
   resolver.SetWorkingDirectory("/tmp/sar");
   Stage stage;
   std::string warn, err;
-  assert(pcp::ComposeStageFromFile("/tmp/sar/entry.usda", resolver, &stage, {},
+  NEXT_CHECK(pcp::ComposeStageFromFile("/tmp/sar/entry.usda", resolver, &stage, {},
                                    &warn, &err));
   // The reference (authored in the sublayer, relative to the sublayer's dir)
   // must compose: /World/P picks up the asset's Mesh type + marker.
   UsdPrim p = stage.GetPrimAtPath("/World/P");
-  assert(p.IsValid() && p.GetTypeName() == "Mesh" &&
+  NEXT_CHECK(p.IsValid() && p.GetTypeName() == "Mesh" &&
          "sublayer-authored relative reference failed to anchor/compose");
   const std::string diag = warn + err;
-  assert(diag.find("Failed to load") == std::string::npos &&
+  NEXT_CHECK(diag.find("Failed to load") == std::string::npos &&
          diag.find("Failed to open") == std::string::npos &&
          "sublayer-authored reference anchored to the wrong (root) layer");
 
@@ -2308,34 +2308,34 @@ static void test_sublayer_stack_composition() {
   std::string warn, err;
   auto opened = pcp::Cache::Open(resolver, root_layer,
                                  "/tmp/next_pcp_sublayer_root.usda");
-  assert(opened && "sublayer Cache::Open failed");
+  NEXT_CHECK(opened && "sublayer Cache::Open failed");
   pcp::Cache cache = std::move(*opened);
   Stage stage;
   bool ok = cache.BuildStage(&stage, &warn, &err);
   if (!ok) std::cout << "  [diag] err=" << err << std::endl;
-  assert(ok && "sublayer BuildStage failed");
+  NEXT_CHECK(ok && "sublayer BuildStage failed");
 
   UsdPrim world = stage.GetPrimAtPath("/World");
-  assert(world.IsValid());
-  assert(world.GetPropertyValue("weakVal") != nullptr &&
+  NEXT_CHECK(world.IsValid());
+  NEXT_CHECK(world.GetPropertyValue("weakVal") != nullptr &&
          "weaker sublayer property did not fill");
-  assert(stage.GetPrimAtPath("/World/StrongChild").IsValid());
-  assert(stage.GetPrimAtPath("/World/WeakChild").IsValid() &&
+  NEXT_CHECK(stage.GetPrimAtPath("/World/StrongChild").IsValid());
+  NEXT_CHECK(stage.GetPrimAtPath("/World/WeakChild").IsValid() &&
          "weaker sublayer child missing");
-  assert(stage.GetPrimAtPath("/OnlyInSub").IsValid() &&
+  NEXT_CHECK(stage.GetPrimAtPath("/OnlyInSub").IsValid() &&
          "sublayer-only root missing");
 
   UsdPrim sub_ref = stage.GetPrimAtPath("/World/SubRef");
-  assert(sub_ref.IsValid());
-  assert(sub_ref.GetTypeName() == "Mesh" &&
+  NEXT_CHECK(sub_ref.IsValid());
+  NEXT_CHECK(sub_ref.GetTypeName() == "Mesh" &&
          "sublayer-authored reference did not compose");
-  assert(sub_ref.GetPropertyValue("modelVal") != nullptr);
+  NEXT_CHECK(sub_ref.GetPropertyValue("modelVal") != nullptr);
 
   UsdPrim sub_payload = stage.GetPrimAtPath("/World/SubPayload");
-  assert(sub_payload.IsValid());
-  assert(sub_payload.GetTypeName() == "Mesh" &&
+  NEXT_CHECK(sub_payload.IsValid());
+  NEXT_CHECK(sub_payload.GetTypeName() == "Mesh" &&
          "sublayer-authored payload did not compose");
-  assert(sub_payload.GetPropertyValue("modelVal") != nullptr);
+  NEXT_CHECK(sub_payload.GetPropertyValue("modelVal") != nullptr);
 
   std::remove(sub.c_str());
   std::cout << "  OK" << std::endl;
@@ -2408,7 +2408,7 @@ static void test_usdz_package_layers() {
         BuildSinglePrimStage("World", "Xform", "weakVal", 42);
     USDZWriteResult wr =
         WriteUSDZToFile("/tmp/next_pcp_sublayer_pkg.usdz", sub_stage);
-    assert(wr.success && "failed to write sublayer USDZ fixture");
+    NEXT_CHECK(wr.success && "failed to write sublayer USDZ fixture");
 
     {
       std::ofstream f("/tmp/next_pcp_usdz_sublayer_root.usda");
@@ -2427,12 +2427,12 @@ static void test_usdz_package_layers() {
     bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_sublayer_root.usda",
                               &stage, &warn, &err);
     if (!ok) std::cout << "  [diag] err=" << err << std::endl;
-    assert(ok && "LoadUSDComposed failed for direct USDZ sublayer");
+    NEXT_CHECK(ok && "LoadUSDComposed failed for direct USDZ sublayer");
     UsdPrim world = stage.GetPrimAtPath("/World");
-    assert(world.IsValid());
-    assert(world.GetPropertyValue("weakVal") != nullptr &&
+    NEXT_CHECK(world.IsValid());
+    NEXT_CHECK(world.GetPropertyValue("weakVal") != nullptr &&
            "direct USDZ sublayer weak opinion missing");
-    assert(world.GetPropertyValue("strongVal") != nullptr &&
+    NEXT_CHECK(world.GetPropertyValue("strongVal") != nullptr &&
            "direct USDZ sublayer strong root opinion missing");
   }
 
@@ -2441,7 +2441,7 @@ static void test_usdz_package_layers() {
         BuildSinglePrimStage("Asset", "Xform", "pkgVal", 99);
     USDZWriteResult wr =
         WriteUSDZToFile("/tmp/next_pcp_ref_pkg.usdz", ref_stage);
-    assert(wr.success && "failed to write reference USDZ fixture");
+    NEXT_CHECK(wr.success && "failed to write reference USDZ fixture");
 
     {
       std::ofstream f("/tmp/next_pcp_usdz_ref_root.usda");
@@ -2462,10 +2462,10 @@ static void test_usdz_package_layers() {
     bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_ref_root.usda",
                               &stage, &warn, &err);
     if (!ok) std::cout << "  [diag] err=" << err << std::endl;
-    assert(ok && "LoadUSDComposed failed for USDZ package reference");
+    NEXT_CHECK(ok && "LoadUSDComposed failed for USDZ package reference");
     UsdPrim p = stage.GetPrimAtPath("/World/P");
-    assert(p.IsValid());
-    assert(p.GetPropertyValue("pkgVal") != nullptr &&
+    NEXT_CHECK(p.IsValid());
+    NEXT_CHECK(p.GetPropertyValue("pkgVal") != nullptr &&
            "USDZ package-path reference opinion missing");
   }
 
@@ -2502,10 +2502,10 @@ static void test_usdz_package_layers() {
     bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_pkg_anchor_root.usda",
                               &stage, &warn, &err);
     if (!ok) std::cout << "  [diag] err=" << err << std::endl;
-    assert(ok && "LoadUSDComposed failed for package-internal reference");
+    NEXT_CHECK(ok && "LoadUSDComposed failed for package-internal reference");
     UsdPrim p = stage.GetPrimAtPath("/World/P");
-    assert(p.IsValid());
-    assert(p.GetPropertyValue("siblingVal") != nullptr &&
+    NEXT_CHECK(p.IsValid());
+    NEXT_CHECK(p.GetPropertyValue("siblingVal") != nullptr &&
            "relative reference inside USDZ package did not resolve to sibling entry");
   }
 
@@ -2542,8 +2542,8 @@ static void test_sublayer_cycle_and_depth() {
   resolver.SetWorkingDirectory("/tmp");
   std::string warn, err;
   auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root);
-  assert(!cycle_opened && "sublayer cycle should fail Cache::Open");
-  assert(cycle_opened.error().find("Sublayer cycle") != std::string::npos);
+  NEXT_CHECK(!cycle_opened && "sublayer cycle should fail Cache::Open");
+  NEXT_CHECK(cycle_opened.error().find("Sublayer cycle") != std::string::npos);
 
   const std::string depth_sub = "/tmp/next_pcp_depth_sub.usda";
   {
@@ -2566,7 +2566,7 @@ static void test_sublayer_cycle_and_depth() {
   opts.max_depth = 0;
   auto opened = pcp::Cache::Open(resolver, root_layer,
                                  "/tmp/next_pcp_depth_root.usda", opts);
-  assert(!opened && "sublayer depth overflow should fail Cache::Open");
+  NEXT_CHECK(!opened && "sublayer depth overflow should fail Cache::Open");
 
   std::remove(cycle_root.c_str());
   std::remove(depth_sub.c_str());
@@ -2593,14 +2593,14 @@ static void test_node_overflow_fails_cleanly() {
 
   AssetResolver resolver;
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   std::string warn, err;
   const pcp::PrimIndex *idx =
       cache.ComputePrimIndex(Path("/Boom"), &warn, &err);
-  assert(idx == nullptr && "overflowing PrimIndex should not be published");
-  assert(err.find("uint16 capacity") != std::string::npos);
-  assert(!cache.HasComputedPrimIndex(Path("/Boom")));
+  NEXT_CHECK(idx == nullptr && "overflowing PrimIndex should not be published");
+  NEXT_CHECK(err.find("uint16 capacity") != std::string::npos);
+  NEXT_CHECK(!cache.HasComputedPrimIndex(Path("/Boom")));
   std::cout << "  OK" << std::endl;
 }
 
@@ -2612,7 +2612,7 @@ static void test_concurrent_queries() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   const std::vector<std::string> existing = {
@@ -2635,7 +2635,7 @@ static void test_concurrent_queries() {
   std::vector<std::thread> ts;
   for (int i = 0; i < kThreads; ++i) ts.emplace_back(worker);
   for (auto &t : ts) t.join();
-  assert(ok.load());
+  NEXT_CHECK(ok.load());
 #else
   std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
 #endif
@@ -2652,7 +2652,7 @@ static void test_concurrent_payload_edits() {
   AssetResolver resolver;
   auto root = BuildRootLayer();
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   std::atomic<bool> stop{false};
@@ -2744,10 +2744,10 @@ static void test_parallel_build_matches_serial() {
     pcp::CompositionOptions opts;
     opts.num_threads = num_threads;
     auto opened = pcp::Cache::Open(resolver, root, "", opts);
-    assert(opened);
+    NEXT_CHECK(opened);
     pcp::Cache cache = std::move(*opened);
     std::string warn, err;
-    assert(cache.PrewarmPrimIndices(paths, &warn, &err));
+    NEXT_CHECK(cache.PrewarmPrimIndices(paths, &warn, &err));
     std::vector<std::string> dumps;
     for (const Path &p : paths) {
       dumps.push_back(CanonIndex(cache.ComputePrimIndex(p, &warn, &err)));
@@ -2764,14 +2764,14 @@ static void test_parallel_build_matches_serial() {
                 << serial.first[i] << "\n   parallel: " << parallel.first[i]
                 << std::endl;
     }
-    assert(serial.first[i] == parallel.first[i] &&
+    NEXT_CHECK(serial.first[i] == parallel.first[i] &&
            "parallel-built index differs from serial");
   }
-  assert(serial.second == parallel.second &&
+  NEXT_CHECK(serial.second == parallel.second &&
          "parallel instance groupings differ from serial");
   // Sanity: the instanceable prims actually grouped (Inst1+Inst2 share a
   // prototype; Inst3 is its own), so the ordered-merge path was exercised.
-  assert(!parallel.second.empty() && "expected instance groupings");
+  NEXT_CHECK(!parallel.second.empty() && "expected instance groupings");
 #else
   std::cout << "  (skipped: build with -DTINYUSDZ_NEXT_ENABLE_THREAD=ON)\n";
 #endif
@@ -2801,16 +2801,16 @@ static void test_ancestor_reference_cycle() {
 
   AssetResolver resolver;
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
-  assert(!err.empty() && "ancestor-reference cycle must be reported");
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(!err.empty() && "ancestor-reference cycle must be reported");
   // The cycle arc is dropped: /A/B exists, but no unbounded /A/B/B/... chain.
-  assert(stage.GetPrimAtPath("/A/B").IsValid());
-  assert(!stage.GetPrimAtPath("/A/B/B/B/B/B/B/B/B").IsValid());
+  NEXT_CHECK(stage.GetPrimAtPath("/A/B").IsValid());
+  NEXT_CHECK(!stage.GetPrimAtPath("/A/B/B/B/B/B/B/B/B").IsValid());
   std::cout << "  OK" << std::endl;
 }
 
@@ -2849,20 +2849,20 @@ static void test_mutual_reference_cycle() {
   resolver.SetCustomResolver(
       {[](const std::string &p, const std::string &, void *) { return p; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   cache.PreloadLayer("asset_a", a);
   cache.PreloadLayer("asset_b", b);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
-  assert(!err.empty() && "mutual reference cycle must be reported");
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(!err.empty() && "mutual reference cycle must be reported");
   // Opinions up to the cycle point still compose.
   UsdPrim x = stage.GetPrimAtPath("/X");
-  assert(x.IsValid());
-  assert(x.GetPropertyValue("fromA") != nullptr);
-  assert(x.GetPropertyValue("fromB") != nullptr);
+  NEXT_CHECK(x.IsValid());
+  NEXT_CHECK(x.GetPropertyValue("fromA") != nullptr);
+  NEXT_CHECK(x.GetPropertyValue("fromB") != nullptr);
   std::cout << "  OK" << std::endl;
 }
 
@@ -2879,13 +2879,13 @@ static void test_self_payload_cycle() {
   }
   AssetResolver resolver;
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
-  assert(!err.empty() && "self-payload cycle must be reported");
-  assert(stage.GetPrimAtPath("/P").IsValid());
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(!err.empty() && "self-payload cycle must be reported");
+  NEXT_CHECK(stage.GetPrimAtPath("/P").IsValid());
   std::cout << "  OK" << std::endl;
 }
 
@@ -2918,15 +2918,15 @@ static void test_variant_content_cycle() {
   }
   AssetResolver resolver;
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
-  assert(!err.empty() && "variant-content self-reference must be reported");
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(!err.empty() && "variant-content self-reference must be reported");
   UsdPrim vc = stage.GetPrimAtPath("/VC");
-  assert(vc.IsValid());
-  assert(vc.GetPropertyValue("vProp") != nullptr);
+  NEXT_CHECK(vc.IsValid());
+  NEXT_CHECK(vc.GetPropertyValue("vProp") != nullptr);
   std::cout << "  OK" << std::endl;
 }
 
@@ -2946,24 +2946,24 @@ static void test_deep_hierarchy() {
   {
     AssetResolver resolver;
     auto opened = pcp::Cache::Open(resolver, build_deep(1000));
-    assert(opened);
+    NEXT_CHECK(opened);
     pcp::Cache cache = std::move(*opened);
     Stage stage;
     std::string warn, err;
-    assert(cache.BuildStage(&stage, &warn, &err));
-    assert(err.empty() && "1000-deep authored hierarchy must compose");
+    NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
+    NEXT_CHECK(err.empty() && "1000-deep authored hierarchy must compose");
   }
   {
     AssetResolver resolver;
     pcp::CompositionOptions opts;
     opts.max_namespace_depth = 64;
     auto opened = pcp::Cache::Open(resolver, build_deep(100), "", opts);
-    assert(opened);
+    NEXT_CHECK(opened);
     pcp::Cache cache = std::move(*opened);
     Stage stage;
     std::string warn, err;
-    assert(cache.BuildStage(&stage, &warn, &err));
-    assert(!err.empty() && "beyond-backstop depth must be reported");
+    NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
+    NEXT_CHECK(!err.empty() && "beyond-backstop depth must be reported");
   }
   std::cout << "  OK" << std::endl;
 }
@@ -3002,21 +3002,21 @@ static void test_reference_chain_at_max_depth() {
     pcp::CompositionOptions opts;
     opts.max_depth = max_depth;
     auto opened = pcp::Cache::Open(resolver, rootL, "", opts);
-    assert(opened);
+    NEXT_CHECK(opened);
     pcp::Cache cache = std::move(*opened);
     for (size_t k = 0; k < D; ++k)
       cache.PreloadLayer("chain_" + std::to_string(k), chain[k]);
     Stage stage;
     std::string warn;
-    assert(cache.BuildStage(&stage, &warn, err_out));
+    NEXT_CHECK(cache.BuildStage(&stage, &warn, err_out));
     return stage.GetPrimAtPath("/Top").GetPropertyValue("deepest") != nullptr;
   };
 
   std::string err;
-  assert(run_chain(100, 256, &err) && err.empty() &&
+  NEXT_CHECK(run_chain(100, 256, &err) && err.empty() &&
          "short chain must compose fully");
   err.clear();
-  assert(!run_chain(300, 256, &err) && !err.empty() &&
+  NEXT_CHECK(!run_chain(300, 256, &err) && !err.empty() &&
          "over-max_depth chain must error (and not crash)");
   std::cout << "  OK" << std::endl;
 }
@@ -3042,32 +3042,32 @@ static void test_typed_composition_issues() {
 
   AssetResolver resolver;
   auto opened = pcp::Cache::Open(resolver, root);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   // Build with err==nullptr: typed issues must still accumulate.
   Stage stage;
-  assert(cache.BuildStage(&stage, nullptr, nullptr));
+  NEXT_CHECK(cache.BuildStage(&stage, nullptr, nullptr));
   const auto &issues = cache.GetCompositionIssues();
   bool saw_cycle = false;
   for (const auto &iss : issues) {
     if (iss.code == EC::ArcCycle) {
       saw_cycle = true;
-      assert(!iss.message.empty() && !iss.site.empty());
+      NEXT_CHECK(!iss.message.empty() && !iss.site.empty());
     }
   }
-  assert(saw_cycle && "ArcCycle issue must be recorded even with err==nullptr");
+  NEXT_CHECK(saw_cycle && "ArcCycle issue must be recorded even with err==nullptr");
 
   // Invalidate begins a fresh diagnostics cycle (and bounds accumulation).
   cache.Invalidate(Path("/A"));
-  assert(cache.GetCompositionIssues().empty() && "Invalidate must drop issues");
+  NEXT_CHECK(cache.GetCompositionIssues().empty() && "Invalidate must drop issues");
 
   // Recomposing re-accumulates, and an explicit Clear drops them again.
   Stage stage2;
-  assert(cache.BuildStage(&stage2, nullptr, nullptr));
-  assert(!cache.GetCompositionIssues().empty() && "recompose re-accumulates");
+  NEXT_CHECK(cache.BuildStage(&stage2, nullptr, nullptr));
+  NEXT_CHECK(!cache.GetCompositionIssues().empty() && "recompose re-accumulates");
   cache.ClearCompositionIssues();
-  assert(cache.GetCompositionIssues().empty() && "Clear must drop issues");
+  NEXT_CHECK(cache.GetCompositionIssues().empty() && "Clear must drop issues");
   std::cout << "  OK" << std::endl;
 }
 
@@ -3083,7 +3083,7 @@ static void test_prototype_order_independent() {
   auto compute_in_order = [&](const std::vector<std::string> &order) {
     auto root = BuildRootLayer();
     auto opened = pcp::Cache::Open(resolver, root);
-    assert(opened);
+    NEXT_CHECK(opened);
     pcp::Cache cache = std::move(*opened);
     for (const std::string &p : order) {
       cache.ComputePrimIndex(Path(p), &warn, &err);
@@ -3091,19 +3091,19 @@ static void test_prototype_order_independent() {
     // Both instances must agree on the prototype, and it must be the min path.
     Path p1 = cache.GetPrototype(Path("/World/Inst1"));
     Path p2 = cache.GetPrototype(Path("/World/Inst2"));
-    assert(p1 == p2 && "Inst1/Inst2 must share a prototype");
-    assert(p1 == Path("/World/Inst1") &&
+    NEXT_CHECK(p1 == p2 && "Inst1/Inst2 must share a prototype");
+    NEXT_CHECK(p1 == Path("/World/Inst1") &&
            "prototype must be the lexicographically-smallest member");
     // Exactly one is the prototype (Inst1), the other an instance (Inst2).
-    assert(!cache.IsInstance(Path("/World/Inst1")));
-    assert(cache.IsInstance(Path("/World/Inst2")));
+    NEXT_CHECK(!cache.IsInstance(Path("/World/Inst1")));
+    NEXT_CHECK(cache.IsInstance(Path("/World/Inst2")));
     return p1.str();
   };
 
   // Compute Inst2 before Inst1, and vice versa: same result either way.
   std::string a = compute_in_order({"/World/Inst2", "/World/Inst1"});
   std::string b = compute_in_order({"/World/Inst1", "/World/Inst2"});
-  assert(a == b && "prototype choice must not depend on computation order");
+  NEXT_CHECK(a == b && "prototype choice must not depend on computation order");
   std::cout << "  OK" << std::endl;
 }
 
@@ -3173,23 +3173,23 @@ static void test_variant_selected_field() {
   resolver.SetCustomResolver(
       {[](const std::string &a, const std::string &, void *) { return a; }, nullptr});
   auto opened = pcp::Cache::Open(resolver, rootL);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   Stage stage;
   std::string warn, err;
-  assert(cache.BuildStage(&stage, &warn, &err));
+  NEXT_CHECK(cache.BuildStage(&stage, &warn, &err));
 
   UsdPrim p = stage.GetPrimAtPath("/World/P");
-  assert(p.IsValid());
-  assert(p.GetPropertyValue("L") != nullptr &&
+  NEXT_CHECK(p.IsValid());
+  NEXT_CHECK(p.GetPropertyValue("L") != nullptr &&
          "multi-set: first set 'lod' applied");
-  assert(p.GetPropertyValue("S") != nullptr &&
+  NEXT_CHECK(p.GetPropertyValue("S") != nullptr &&
          "multi-set: SECOND set 'shade' applied (dropped if vs.selected ignored)");
 
   UsdPrim q = stage.GetPrimAtPath("/World/Q");
-  assert(q.IsValid());
-  assert(q.GetPropertyValue("G") != nullptr &&
+  NEXT_CHECK(q.IsValid());
+  NEXT_CHECK(q.GetPropertyValue("G") != nullptr &&
          "vs.selected-only selection applied");
 
   std::cout << "  OK" << std::endl;

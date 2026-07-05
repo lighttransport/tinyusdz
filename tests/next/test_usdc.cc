@@ -4,7 +4,7 @@
 // TinyUSDZ Next - USDC Reader Unit Tests
 
 #include <iostream>
-#include <cassert>
+#include "test-check.hh"
 #include <cstring>
 #include <fstream>
 #include <vector>
@@ -25,26 +25,26 @@ void test_value_rep() {
 
   // Test basic ValueRep construction
   ValueRep rep1(0);
-  assert(rep1.raw() == 0);
-  assert(!rep1.is_array());
-  assert(!rep1.is_inlined());
-  assert(!rep1.is_compressed());
-  assert(rep1.type_id() == CrateTypeId::Invalid);
-  assert(rep1.payload() == 0);
+  NEXT_CHECK(rep1.raw() == 0);
+  NEXT_CHECK(!rep1.is_array());
+  NEXT_CHECK(!rep1.is_inlined());
+  NEXT_CHECK(!rep1.is_compressed());
+  NEXT_CHECK(rep1.type_id() == CrateTypeId::Invalid);
+  NEXT_CHECK(rep1.payload() == 0);
 
   // Test with flags set
   ValueRep rep2 = ValueRep::Make(CrateTypeId::Float, 12345, false, true, false);
-  assert(rep2.type_id() == CrateTypeId::Float);
-  assert(rep2.payload() == 12345);
-  assert(rep2.is_inlined());
-  assert(!rep2.is_array());
-  assert(!rep2.is_compressed());
+  NEXT_CHECK(rep2.type_id() == CrateTypeId::Float);
+  NEXT_CHECK(rep2.payload() == 12345);
+  NEXT_CHECK(rep2.is_inlined());
+  NEXT_CHECK(!rep2.is_array());
+  NEXT_CHECK(!rep2.is_compressed());
 
   // Test array flag
   ValueRep rep3 = ValueRep::Make(CrateTypeId::Vec3f, 1000, true, false, false);
-  assert(rep3.is_array());
-  assert(!rep3.is_inlined());
-  assert(rep3.type_id() == CrateTypeId::Vec3f);
+  NEXT_CHECK(rep3.is_array());
+  NEXT_CHECK(!rep3.is_inlined());
+  NEXT_CHECK(rep3.type_id() == CrateTypeId::Vec3f);
 
   std::cout << "  ValueRep tests passed!" << std::endl;
 }
@@ -63,31 +63,31 @@ void test_stream_reader() {
   StreamReader reader(data.data(), data.size());
 
   // Test reading
-  assert(reader.size() == data.size());
-  assert(reader.position() == 0);
-  assert(!reader.at_end());
+  NEXT_CHECK(reader.size() == data.size());
+  NEXT_CHECK(reader.position() == 0);
+  NEXT_CHECK(!reader.at_end());
 
   uint32_t v1;
-  assert(reader.read_u32(v1));
-  assert(v1 == 0x04030201);  // Little-endian
+  NEXT_CHECK(reader.read_u32(v1));
+  NEXT_CHECK(v1 == 0x04030201);  // Little-endian
 
   uint32_t v2;
-  assert(reader.read_u32(v2));
-  assert(v2 == 0x08070605);
+  NEXT_CHECK(reader.read_u32(v2));
+  NEXT_CHECK(v2 == 0x08070605);
 
   std::string s;
-  assert(reader.read_cstring(s));
-  assert(s == "Hello");
+  NEXT_CHECK(reader.read_cstring(s));
+  NEXT_CHECK(s == "Hello");
 
   float f;
-  assert(reader.read_f32(f));
-  assert(f == 1.0f);
+  NEXT_CHECK(reader.read_f32(f));
+  NEXT_CHECK(f == 1.0f);
 
-  assert(reader.at_end());
+  NEXT_CHECK(reader.at_end());
 
   // Test seeking
-  assert(reader.seek(0));
-  assert(reader.position() == 0);
+  NEXT_CHECK(reader.seek(0));
+  NEXT_CHECK(reader.position() == 0);
 
   std::cout << "  StreamReader tests passed!" << std::endl;
 }
@@ -95,17 +95,17 @@ void test_stream_reader() {
 void test_crate_type_names() {
   std::cout << "Testing CrateTypeId names..." << std::endl;
 
-  assert(std::strcmp(CrateTypeIdName(CrateTypeId::Bool), "Bool") == 0);
-  assert(std::strcmp(CrateTypeIdName(CrateTypeId::Float), "Float") == 0);
-  assert(std::strcmp(CrateTypeIdName(CrateTypeId::Vec3f), "Vec3f") == 0);
-  assert(std::strcmp(CrateTypeIdName(CrateTypeId::Matrix4d), "Matrix4d") == 0);
-  assert(std::strcmp(CrateTypeIdName(CrateTypeId::Token), "Token") == 0);
+  NEXT_CHECK(std::strcmp(CrateTypeIdName(CrateTypeId::Bool), "Bool") == 0);
+  NEXT_CHECK(std::strcmp(CrateTypeIdName(CrateTypeId::Float), "Float") == 0);
+  NEXT_CHECK(std::strcmp(CrateTypeIdName(CrateTypeId::Vec3f), "Vec3f") == 0);
+  NEXT_CHECK(std::strcmp(CrateTypeIdName(CrateTypeId::Matrix4d), "Matrix4d") == 0);
+  NEXT_CHECK(std::strcmp(CrateTypeIdName(CrateTypeId::Token), "Token") == 0);
 
   // Test sizes
-  assert(CrateTypeIdSize(CrateTypeId::Float) == 4);
-  assert(CrateTypeIdSize(CrateTypeId::Double) == 8);
-  assert(CrateTypeIdSize(CrateTypeId::Vec3f) == 12);
-  assert(CrateTypeIdSize(CrateTypeId::Matrix4d) == 128);
+  NEXT_CHECK(CrateTypeIdSize(CrateTypeId::Float) == 4);
+  NEXT_CHECK(CrateTypeIdSize(CrateTypeId::Double) == 8);
+  NEXT_CHECK(CrateTypeIdSize(CrateTypeId::Vec3f) == 12);
+  NEXT_CHECK(CrateTypeIdSize(CrateTypeId::Matrix4d) == 128);
 
   std::cout << "  CrateTypeId tests passed!" << std::endl;
 }
@@ -115,18 +115,18 @@ void test_is_usdc_data() {
 
   // Valid USDC magic
   uint8_t valid_magic[] = {'P', 'X', 'R', '-', 'U', 'S', 'D', 'C', 0, 0, 0, 0};
-  assert(IsUSDCData(valid_magic, sizeof(valid_magic)));
+  NEXT_CHECK(IsUSDCData(valid_magic, sizeof(valid_magic)));
 
   // Invalid magic
   uint8_t invalid_magic[] = {'P', 'X', 'R', '-', 'U', 'S', 'D', 'A', 0, 0, 0, 0};
-  assert(!IsUSDCData(invalid_magic, sizeof(invalid_magic)));
+  NEXT_CHECK(!IsUSDCData(invalid_magic, sizeof(invalid_magic)));
 
   // Too short
   uint8_t short_data[] = {'P', 'X', 'R'};
-  assert(!IsUSDCData(short_data, sizeof(short_data)));
+  NEXT_CHECK(!IsUSDCData(short_data, sizeof(short_data)));
 
   // Null data
-  assert(!IsUSDCData(nullptr, 0));
+  NEXT_CHECK(!IsUSDCData(nullptr, 0));
 
   std::cout << "  IsUSDCData tests passed!" << std::endl;
 }
@@ -136,13 +136,13 @@ void test_lz4_decompression() {
 
   // Test with empty input
   DecompressResult r1 = DecompressLZ4(nullptr, 0, 0);
-  assert(!r1.success);
+  NEXT_CHECK(!r1.success);
 
   // Test with zero uncompressed size
   uint8_t dummy[] = {0};
   DecompressResult r2 = DecompressLZ4(dummy, 1, 0);
-  assert(r2.success);
-  assert(r2.data.empty());
+  NEXT_CHECK(r2.success);
+  NEXT_CHECK(r2.data.empty());
 
   std::cout << "  LZ4 decompression tests passed!" << std::endl;
 }
@@ -154,19 +154,19 @@ void test_crate_reader_invalid() {
 
   // Empty data
   CrateReadResult r1 = reader.Read(nullptr, 0);
-  assert(!r1.success);
-  assert(!r1.errors.empty());
+  NEXT_CHECK(!r1.success);
+  NEXT_CHECK(!r1.errors.empty());
 
   // Too short
   uint8_t short_data[] = {1, 2, 3, 4};
   CrateReadResult r2 = reader.Read(short_data, sizeof(short_data));
-  assert(!r2.success);
+  NEXT_CHECK(!r2.success);
 
   // Invalid magic
   uint8_t invalid_magic[100] = {0};
   std::memcpy(invalid_magic, "INVALID!", 8);
   CrateReadResult r3 = reader.Read(invalid_magic, sizeof(invalid_magic));
-  assert(!r3.success);
+  NEXT_CHECK(!r3.success);
 
   std::cout << "  CrateReader invalid data tests passed!" << std::endl;
 }
@@ -202,8 +202,8 @@ void test_read_usdc_file() {
         std::cout << "  Error: " << result.errors[0].message << std::endl;
       }
     }
-    assert(result.success);
-    assert(!result.stage.GetRootPrims().empty());
+    NEXT_CHECK(result.success);
+    NEXT_CHECK(!result.stage.GetRootPrims().empty());
   } else {
     std::cout << "  Skipping required fixture assertion (tests/usdc/simple.usdc not found from cwd)" << std::endl;
   }
@@ -279,7 +279,7 @@ void test_openusd_compressed_value_reps_equal_raw_size() {
   std::ifstream ifs(found, std::ios::binary);
   std::string bytes((std::istreambuf_iterator<char>(ifs)),
                     std::istreambuf_iterator<char>());
-  assert(!bytes.empty());
+  NEXT_CHECK(!bytes.empty());
 
   CrateReader reader;
   CrateReadResult result = reader.ReadOwned(std::move(bytes));
@@ -289,14 +289,14 @@ void test_openusd_compressed_value_reps_equal_raw_size() {
                                         : result.errors[0].message)
               << std::endl;
   }
-  assert(result.success);
+  NEXT_CHECK(result.success);
 
   const Layer* layer = result.stage.GetRootLayer();
-  assert(layer);
+  NEXT_CHECK(layer);
   const PrimSpec* sphere = layer->prim_at_path("/sphere1");
-  assert(sphere);
-  assert(sphere->meta().references.size() == 1);
-  assert(sphere->meta().references[0].find("scene-001.usdc") != std::string::npos);
+  NEXT_CHECK(sphere);
+  NEXT_CHECK(sphere->meta().references.size() == 1);
+  NEXT_CHECK(sphere->meta().references[0].find("scene-001.usdc") != std::string::npos);
 
   std::cout << "  OpenUSD compressed ValueRep edge case passed!" << std::endl;
 }
