@@ -9,7 +9,7 @@
 #include "next/schema/usd-lux.hh"
 #include "next/schema/usd-shade.hh"
 #include <cstdio>
-#include <cassert>
+#include "test-check.hh"
 #include <string>
 #include <vector>
 
@@ -88,9 +88,9 @@ void test_mesh_schema() {
   if (!prim.IsValid()) { FAIL("prim not found"); return; }
   if (!IsMesh(prim)) { FAIL("expected Mesh"); return; }
   UsdGeomMesh mesh(prim);
-  assert(mesh.IsValid());
-  assert(mesh.GetFaceCount() == 6);
-  assert(mesh.GetPointCount() == 8);
+  NEXT_CHECK(mesh.IsValid());
+  NEXT_CHECK(mesh.GetFaceCount() == 6);
+  NEXT_CHECK(mesh.GetPointCount() == 8);
   PASS();
 }
 
@@ -110,29 +110,29 @@ void test_point_instancer_schema() {
   if (!prim.IsValid()) { FAIL("prim not found"); return; }
   if (!IsPointInstancer(prim)) { FAIL("expected PointInstancer"); return; }
   UsdGeomPointInstancer pi(prim);
-  assert(pi.IsValid());
-  assert(pi.GetPrototypes().size() == 1);
-  assert(pi.GetPrototypes()[0].str() == "/TestMesh");
-  assert(pi.GetInstanceCount() == 2);
-  assert(pi.GetProtoIndices() == std::vector<int32_t>({0, 0}));
-  assert(pi.GetPositions() == std::vector<float>({0, 0, 0, 2, 0, 0}));
-  assert(pi.GetScales() == std::vector<float>({1, 1, 1, 2, 2, 2}));
-  assert(pi.GetVelocities() == std::vector<float>({0, 0, 1, 0, 0, 2}));
-  assert(pi.GetAngularVelocities() ==
+  NEXT_CHECK(pi.IsValid());
+  NEXT_CHECK(pi.GetPrototypes().size() == 1);
+  NEXT_CHECK(pi.GetPrototypes()[0].str() == "/TestMesh");
+  NEXT_CHECK(pi.GetInstanceCount() == 2);
+  NEXT_CHECK(pi.GetProtoIndices() == std::vector<int32_t>({0, 0}));
+  NEXT_CHECK(pi.GetPositions() == std::vector<float>({0, 0, 0, 2, 0, 0}));
+  NEXT_CHECK(pi.GetScales() == std::vector<float>({1, 1, 1, 2, 2, 2}));
+  NEXT_CHECK(pi.GetVelocities() == std::vector<float>({0, 0, 1, 0, 0, 2}));
+  NEXT_CHECK(pi.GetAngularVelocities() ==
          std::vector<float>({0, 1, 0, 0, 2, 0}));
-  assert(pi.GetIds() == std::vector<int64_t>({100, 101}));
-  assert(pi.GetInvisibleIds() == std::vector<int64_t>({101}));
+  NEXT_CHECK(pi.GetIds() == std::vector<int64_t>({100, 101}));
+  NEXT_CHECK(pi.GetInvisibleIds() == std::vector<int64_t>({101}));
   std::string reason;
-  assert(pi.HasValidInstanceArrays(0.0, &reason));
-  assert(reason.empty());
+  NEXT_CHECK(pi.HasValidInstanceArrays(0.0, &reason));
+  NEXT_CHECK(reason.empty());
   std::vector<PointInstancerTransform> transforms = pi.ComputeInstanceTransforms();
-  assert(transforms.size() == 2);
-  assert(transforms[0].matrix[12] == 0.0);
-  assert(transforms[1].matrix[0] == 2.0);
-  assert(transforms[1].matrix[12] == 2.0);
+  NEXT_CHECK(transforms.size() == 2);
+  NEXT_CHECK(transforms[0].matrix[12] == 0.0);
+  NEXT_CHECK(transforms[1].matrix[0] == 2.0);
+  NEXT_CHECK(transforms[1].matrix[12] == 2.0);
 
   auto all = GetAllPointInstancers(stage);
-  assert(all.size() == 1);
+  NEXT_CHECK(all.size() == 1);
 
   StageBuilder bad_sb;
   auto& bad_layer = bad_sb.GetLayerBuilder();
@@ -147,8 +147,8 @@ void test_point_instancer_schema() {
   bad_layer.finalize();
   Stage bad_stage = bad_sb.Build();
   UsdGeomPointInstancer bad_pi(bad_stage.GetPrimAtPath("/BadInst"));
-  assert(!bad_pi.HasValidInstanceArrays(0.0, &reason));
-  assert(reason == "velocities size does not match protoIndices");
+  NEXT_CHECK(!bad_pi.HasValidInstanceArrays(0.0, &reason));
+  NEXT_CHECK(reason == "velocities size does not match protoIndices");
   PASS();
 }
 

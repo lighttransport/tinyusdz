@@ -9,7 +9,7 @@
 // nested stage customLayerData dict, prim customData/assetInfo (incl. token[]),
 // and a property-level customData dict.
 
-#include <cassert>
+#include "test-check.hh"
 #include <iostream>
 
 #include "next/reader/usdc-reader.hh"
@@ -112,67 +112,67 @@ int main() {
   USDCLoadResult r = LoadUSDCFromMemory(kPxrDictUsdc, sizeof(kPxrDictUsdc));
   if (!r.success) {
     std::cerr << "load failed: " << r.error_summary << std::endl;
-    assert(false);
+    NEXT_CHECK(false);
   }
 
   // Stage customLayerData (nested dict; mixed scalar types).
-  assert(r.stage.GetRootLayer());
+  NEXT_CHECK(r.stage.GetRootLayer());
   const Value& cld = r.stage.GetRootLayer()->meta().customLayerData;
-  assert(cld.is_dictionary());
+  NEXT_CHECK(cld.is_dictionary());
   {
     const Value* creator = DictFind(cld, "creator");
-    assert(creator && creator->as_string() && *creator->as_string() == "tinyusdz-test");
+    NEXT_CHECK(creator && creator->as_string() && *creator->as_string() == "tinyusdz-test");
     const Value* ver = DictFind(cld, "version");
-    assert(ver && ver->as_int() && *ver->as_int() == 7);
+    NEXT_CHECK(ver && ver->as_int() && *ver->as_int() == 7);
     const Value* nested = DictFind(cld, "nested");
-    assert(nested && nested->is_dictionary());
+    NEXT_CHECK(nested && nested->is_dictionary());
     const Value* inner = DictFind(*nested, "inner");
-    assert(inner && inner->as_string() && *inner->as_string() == "deep");
+    NEXT_CHECK(inner && inner->as_string() && *inner->as_string() == "deep");
     const Value* ratio = DictFind(*nested, "ratio");
-    assert(ratio && ratio->as_double() && *ratio->as_double() == 0.5);
+    NEXT_CHECK(ratio && ratio->as_double() && *ratio->as_double() == 0.5);
   }
 
   std::vector<UsdPrim> roots = r.stage.GetRootPrims();
-  assert(roots.size() == 1);
+  NEXT_CHECK(roots.size() == 1);
   const UsdPrim& w = roots[0];
-  assert(w.GetName() == "W");
-  assert(w.GetMeta().kind() == "component");
+  NEXT_CHECK(w.GetName() == "W");
+  NEXT_CHECK(w.GetMeta().kind() == "component");
 
   // Prim customData (int / bool / string).
   {
     const Value& cd = w.GetMeta().customData();
-    assert(cd.is_dictionary());
+    NEXT_CHECK(cd.is_dictionary());
     const Value* note = DictFind(cd, "note");
-    assert(note && note->as_string() && *note->as_string() == "hello");
+    NEXT_CHECK(note && note->as_string() && *note->as_string() == "hello");
     const Value* flag = DictFind(cd, "flag");
-    assert(flag && flag->as_bool() && *flag->as_bool() == true);
+    NEXT_CHECK(flag && flag->as_bool() && *flag->as_bool() == true);
     const Value* count = DictFind(cd, "count");
-    assert(count && count->as_int() && *count->as_int() == 42);
+    NEXT_CHECK(count && count->as_int() && *count->as_int() == 42);
   }
 
   // Prim assetInfo (string + token[] array value inside a dict).
   {
     const Value& ai = w.GetMeta().assetInfo();
-    assert(ai.is_dictionary());
+    NEXT_CHECK(ai.is_dictionary());
     const Value* name = DictFind(ai, "name");
-    assert(name && name->as_string() && *name->as_string() == "Widget");
+    NEXT_CHECK(name && name->as_string() && *name->as_string() == "Widget");
     const Value* tags = DictFind(ai, "tags");
-    assert(tags && tags->as_token_array());
-    assert(tags->as_token_array()->size() == 2);
-    assert((*tags->as_token_array())[0].str() == "a");
-    assert((*tags->as_token_array())[1].str() == "b");
+    NEXT_CHECK(tags && tags->as_token_array());
+    NEXT_CHECK(tags->as_token_array()->size() == 2);
+    NEXT_CHECK((*tags->as_token_array())[0].str() == "a");
+    NEXT_CHECK((*tags->as_token_array())[1].str() == "b");
   }
 
   // Property-level customData dict.
   {
     UsdPrim radius_owner = w;  // 'radius' is a property of W
     const PrimSpec* spec = radius_owner.GetPrimSpec();
-    assert(spec);
+    NEXT_CHECK(spec);
     const PropMeta* pm = spec->property_meta("radius");
-    assert(pm && (pm->authored & PropMeta::kCustomData));
-    assert(pm->customData.is_dictionary());
+    NEXT_CHECK(pm && (pm->authored & PropMeta::kCustomData));
+    NEXT_CHECK(pm->customData.is_dictionary());
     const Value* units = DictFind(pm->customData, "units");
-    assert(units && units->as_string() && *units->as_string() == "m");
+    NEXT_CHECK(units && units->as_string() && *units->as_string() == "m");
   }
 
   std::cout << "  Binary dict decode test passed!" << std::endl;

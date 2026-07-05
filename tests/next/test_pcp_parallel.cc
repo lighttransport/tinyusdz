@@ -16,7 +16,7 @@
 // trivially and these tests still build + pass.
 
 #include <algorithm>
-#include <cassert>
+#include "test-check.hh"
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -250,13 +250,13 @@ static RunResult RunBuild(const Scene &sc, int num_threads,
   pcp::CompositionOptions opts;
   opts.num_threads = num_threads;
   auto opened = pcp::Cache::Open(resolver, sc.root, "", opts);
-  assert(opened && "Cache::Open failed");
+  NEXT_CHECK(opened && "Cache::Open failed");
   pcp::Cache cache = std::move(*opened);
   for (const auto &a : sc.assets) cache.PreloadLayer(a.first, a.second);
   if (rules) cache.SetLoadRules(*rules);
 
   std::string warn, err;
-  assert(cache.PrewarmPrimIndices(sc.paths, &warn, &err));
+  NEXT_CHECK(cache.PrewarmPrimIndices(sc.paths, &warn, &err));
 
   RunResult r;
   r.dumps.reserve(sc.paths.size());
@@ -273,7 +273,7 @@ static RunResult RunBuild(const Scene &sc, int num_threads,
 
 static void Compare(const Scene &sc, const RunResult &a, const RunResult &b,
                     const char *label) {
-  assert(a.dumps.size() == b.dumps.size());
+  NEXT_CHECK(a.dumps.size() == b.dumps.size());
   size_t mism = 0;
   for (size_t i = 0; i < a.dumps.size(); ++i) {
     if (a.dumps[i] != b.dumps[i]) {
@@ -285,10 +285,10 @@ static void Compare(const Scene &sc, const RunResult &a, const RunResult &b,
       ++mism;
     }
   }
-  assert(mism == 0 && "parallel index differs from serial");
-  assert(a.instances == b.instances && "instance groupings differ");
-  assert(a.index_count == b.index_count && "computed-index count differs");
-  assert(a.deferred_payloads == b.deferred_payloads &&
+  NEXT_CHECK(mism == 0 && "parallel index differs from serial");
+  NEXT_CHECK(a.instances == b.instances && "instance groupings differ");
+  NEXT_CHECK(a.index_count == b.index_count && "computed-index count differs");
+  NEXT_CHECK(a.deferred_payloads == b.deferred_payloads &&
          "deferred payload state differs");
 }
 
@@ -306,8 +306,8 @@ static void test_minimal_parallel() {
   Compare(sc, serial, par, "minimal");
   // Every preloaded asset is shared (parse-once): registry holds exactly the
   // assets, none parsed from disk.
-  assert(par.reg_size == sc.n_assets);
-  assert(par.parse_count == 0);
+  NEXT_CHECK(par.reg_size == sc.n_assets);
+  NEXT_CHECK(par.parse_count == 0);
   std::cout << "  OK" << std::endl;
 }
 
@@ -321,8 +321,8 @@ static void test_complex_parallel() {
   Compare(sc, serial, par, "complex");
   // The instanceable prims must have grouped into prototypes (otherwise the
   // ordered-merge instancing path wasn't exercised).
-  assert(!par.instances.empty() && "expected instance groupings");
-  assert(par.reg_size == sc.n_assets && par.parse_count == 0);
+  NEXT_CHECK(!par.instances.empty() && "expected instance groupings");
+  NEXT_CHECK(par.reg_size == sc.n_assets && par.parse_count == 0);
   std::cout << "  OK (" << sc.paths.size() << " paths)" << std::endl;
 }
 
@@ -362,8 +362,8 @@ static void test_parallel_load_rules_match_serial() {
   RunResult serial = RunBuild(sc, 1, &rules);
   RunResult par = RunBuild(sc, 8, &rules);
   Compare(sc, serial, par, "load-rules");
-  assert(serial.deferred_payloads.find("/World/P1;") != std::string::npos);
-  assert(serial.deferred_payloads.find("/World/P0;") == std::string::npos);
+  NEXT_CHECK(serial.deferred_payloads.find("/World/P1;") != std::string::npos);
+  NEXT_CHECK(serial.deferred_payloads.find("/World/P0;") == std::string::npos);
   std::cout << "  OK" << std::endl;
 }
 
@@ -388,13 +388,13 @@ static void test_stress_parallel() {
       first_par = par;
     } else {
       // Determinism across parallel runs (catches order-dependent races).
-      assert(par.dumps == first_par.dumps && "parallel runs disagree");
-      assert(par.instances == first_par.instances);
+      NEXT_CHECK(par.dumps == first_par.dumps && "parallel runs disagree");
+      NEXT_CHECK(par.instances == first_par.instances);
     }
   }
-  assert(serial.index_count > 0);
-  assert(!serial.instances.empty() && "expected prototype groups in stress scene");
-  assert(serial.reg_size == sc.n_assets && serial.parse_count == 0 &&
+  NEXT_CHECK(serial.index_count > 0);
+  NEXT_CHECK(!serial.instances.empty() && "expected prototype groups in stress scene");
+  NEXT_CHECK(serial.reg_size == sc.n_assets && serial.parse_count == 0 &&
          "shared registry should hold exactly the pooled assets, parsed once");
   std::cout << "  OK (" << sc.paths.size() << " paths, " << kThreads
             << " threads x " << kRounds << " rounds)" << std::endl;
@@ -431,7 +431,7 @@ static void test_parallel_same_asset_parse_once() {
   pcp::CompositionOptions opts;
   opts.num_threads = 8;
   auto opened = pcp::Cache::Open(resolver, root, "", opts);
-  assert(opened);
+  NEXT_CHECK(opened);
   pcp::Cache cache = std::move(*opened);
 
   std::vector<Path> paths;
@@ -440,13 +440,13 @@ static void test_parallel_same_asset_parse_once() {
   }
 
   std::string warn, err;
-  assert(cache.PrewarmPrimIndices(paths, &warn, &err));
-  assert(cache.layer_registry().parse_count() == 1 &&
+  NEXT_CHECK(cache.PrewarmPrimIndices(paths, &warn, &err));
+  NEXT_CHECK(cache.layer_registry().parse_count() == 1 &&
          "same referenced asset should be parsed exactly once");
-  assert(cache.layer_registry().size() == 1);
+  NEXT_CHECK(cache.layer_registry().size() == 1);
   for (const Path &p : paths) {
     const pcp::PrimIndex *idx = cache.ComputePrimIndex(p, &warn, &err);
-    assert(idx && idx->GetNodeCount() >= 2);
+    NEXT_CHECK(idx && idx->GetNodeCount() >= 2);
   }
 
   std::remove(asset_path.c_str());
@@ -485,7 +485,7 @@ static void test_layer_registry_inflight_failure_diagnostics() {
       std::shared_ptr<Layer> layer =
           reg.GetOrLoad(resolver, asset_path, "", &warn[static_cast<size_t>(i)],
                         &err[static_cast<size_t>(i)]);
-      assert(!layer);
+      NEXT_CHECK(!layer);
     });
   }
   while (ready.load() != kThreads) std::this_thread::yield();
@@ -493,7 +493,7 @@ static void test_layer_registry_inflight_failure_diagnostics() {
   for (auto &t : threads) t.join();
 
   for (int i = 0; i < kThreads; ++i) {
-    assert(!err[static_cast<size_t>(i)].empty() &&
+    NEXT_CHECK(!err[static_cast<size_t>(i)].empty() &&
            "same-path waiters must receive parse diagnostics");
   }
   std::remove(asset_path.c_str());

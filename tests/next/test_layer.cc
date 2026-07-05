@@ -4,7 +4,7 @@
 // Test for Layer/PrimSpec functionality
 
 #include <iostream>
-#include <cassert>
+#include "test-check.hh"
 #include <cmath>
 
 #include "next/layer/layer.hh"
@@ -20,17 +20,17 @@ void test_prop_name_table() {
 
   // Common names should be pre-registered
   PropNameId points_id = table.find("points");
-  assert(points_id.is_valid() && "points should be pre-registered");
-  assert(table.id_points == points_id && "id_points should match find result");
+  NEXT_CHECK(points_id.is_valid() && "points should be pre-registered");
+  NEXT_CHECK(table.id_points == points_id && "id_points should match find result");
 
   // Intern new name
   PropNameId custom_id = table.intern("myCustomProp");
-  assert(custom_id.is_valid() && "custom prop should be interned");
-  assert(table.get(custom_id) == "myCustomProp" && "should get back same name");
+  NEXT_CHECK(custom_id.is_valid() && "custom prop should be interned");
+  NEXT_CHECK(table.get(custom_id) == "myCustomProp" && "should get back same name");
 
   // Re-interning returns same ID
   PropNameId custom_id2 = table.intern("myCustomProp");
-  assert(custom_id == custom_id2 && "re-intern should return same ID");
+  NEXT_CHECK(custom_id == custom_id2 && "re-intern should return same ID");
 
   std::cout << "  PropNameTable: PASSED" << std::endl;
 }
@@ -56,24 +56,24 @@ void test_prop_index() {
   slot2.flags = PropSlot::kFlagCustom;
   index.add(slot2);
 
-  assert(index.size() == 2 && "should have 2 slots");
+  NEXT_CHECK(index.size() == 2 && "should have 2 slots");
 
   // Find by name
   const PropSlot* found = index.find("prop1");
-  assert(found != nullptr && "should find prop1");
-  assert(found->value_offset == 0 && "should have correct offset");
+  NEXT_CHECK(found != nullptr && "should find prop1");
+  NEXT_CHECK(found->value_offset == 0 && "should have correct offset");
 
   found = index.find("prop2");
-  assert(found != nullptr && "should find prop2");
-  assert(found->is_custom() && "prop2 should be custom");
+  NEXT_CHECK(found != nullptr && "should find prop2");
+  NEXT_CHECK(found->is_custom() && "prop2 should be custom");
 
   // Sort for binary search
   index.sort();
-  assert(index.is_sorted() && "should be sorted");
+  NEXT_CHECK(index.is_sorted() && "should be sorted");
 
   // Find after sort
   found = index.find("prop1");
-  assert(found != nullptr && "should still find prop1 after sort");
+  NEXT_CHECK(found != nullptr && "should still find prop1 after sort");
 
   std::cout << "  PropIndex: PASSED" << std::endl;
 }
@@ -83,9 +83,9 @@ void test_prim_spec() {
 
   PrimSpec prim("myPrim", "Mesh");
 
-  assert(prim.name() == "myPrim" && "name should match");
-  assert(prim.type_name() == "Mesh" && "type_name should match");
-  assert(prim.specifier() == PrimSpecifier::Def && "default specifier should be Def");
+  NEXT_CHECK(prim.name() == "myPrim" && "name should match");
+  NEXT_CHECK(prim.type_name() == "Mesh" && "type_name should match");
+  NEXT_CHECK(prim.specifier() == PrimSpecifier::Def && "default specifier should be Def");
 
   // Add properties (flat float array for float3[])
   prim.add_property("points", Value::MakeFloat3Array(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}));
@@ -97,18 +97,18 @@ void test_prim_spec() {
 
   // Lookup properties
   const PropSlot* slot = prim.property("points");
-  assert(slot != nullptr && "should find points property");
+  NEXT_CHECK(slot != nullptr && "should find points property");
 
   const Value* val = prim.property_value("points");
-  assert(val != nullptr && "should get points value");
-  assert(val->is_array() && "points should be array");
+  NEXT_CHECK(val != nullptr && "should get points value");
+  NEXT_CHECK(val->is_array() && "points should be array");
 
   slot = prim.property("faceVertexCounts");
-  assert(slot != nullptr && "should find faceVertexCounts");
+  NEXT_CHECK(slot != nullptr && "should find faceVertexCounts");
 
   // Non-existent property
   slot = prim.property("nonExistent");
-  assert(slot == nullptr && "should not find non-existent property");
+  NEXT_CHECK(slot == nullptr && "should not find non-existent property");
 
   std::cout << "  PrimSpec: PASSED" << std::endl;
 }
@@ -142,31 +142,31 @@ void test_layer_builder() {
   builder.finalize();
 
   // Verify structure
-  assert(layer.prim_count() == 3 && "should have 3 prims");
-  assert(layer.root_indices().size() == 1 && "should have 1 root");
+  NEXT_CHECK(layer.prim_count() == 3 && "should have 3 prims");
+  NEXT_CHECK(layer.root_indices().size() == 1 && "should have 1 root");
 
   // Check paths
   const PrimSpec* world = layer.prim_at_path("/World");
-  assert(world != nullptr && "should find /World");
-  assert(world->type_name() == "Xform" && "World should be Xform");
-  assert(world->child_count() == 2 && "World should have 2 children");
+  NEXT_CHECK(world != nullptr && "should find /World");
+  NEXT_CHECK(world->type_name() == "Xform" && "World should be Xform");
+  NEXT_CHECK(world->child_count() == 2 && "World should have 2 children");
 
   const PrimSpec* mesh = layer.prim_at_path("/World/Mesh");
-  assert(mesh != nullptr && "should find /World/Mesh");
-  assert(mesh->type_name() == "Mesh" && "should be Mesh type");
+  NEXT_CHECK(mesh != nullptr && "should find /World/Mesh");
+  NEXT_CHECK(mesh->type_name() == "Mesh" && "should be Mesh type");
 
   const PrimSpec* light = layer.prim_at_path("/World/Light");
-  assert(light != nullptr && "should find /World/Light");
-  assert(light->type_name() == "SphereLight" && "should be SphereLight type");
+  NEXT_CHECK(light != nullptr && "should find /World/Light");
+  NEXT_CHECK(light->type_name() == "SphereLight" && "should be SphereLight type");
 
   // Check properties
   const Value* points = mesh->property_value("points");
-  assert(points != nullptr && "mesh should have points");
+  NEXT_CHECK(points != nullptr && "mesh should have points");
 
   const Value* intensity = light->property_value("intensity");
-  assert(intensity != nullptr && "light should have intensity");
-  assert(intensity->as_float() != nullptr && "intensity should be float");
-  assert(*intensity->as_float() == 100.0f && "intensity should be 100");
+  NEXT_CHECK(intensity != nullptr && "light should have intensity");
+  NEXT_CHECK(intensity->as_float() != nullptr && "intensity should be float");
+  NEXT_CHECK(*intensity->as_float() == 100.0f && "intensity should be 100");
 
   std::cout << "  LayerBuilder: PASSED" << std::endl;
 }
@@ -187,10 +187,10 @@ void test_layer_stats() {
   builder.finalize();
 
   Layer::Stats stats = layer.stats();
-  assert(stats.prim_count == 11 && "should have 11 prims (1 root + 10 children)");
-  assert(stats.root_count == 1 && "should have 1 root");
-  assert(stats.total_properties == 10 && "should have 10 properties (1 per child)");
-  assert(stats.memory_bytes > 0 && "memory usage should be positive");
+  NEXT_CHECK(stats.prim_count == 11 && "should have 11 prims (1 root + 10 children)");
+  NEXT_CHECK(stats.root_count == 1 && "should have 1 root");
+  NEXT_CHECK(stats.total_properties == 10 && "should have 10 properties (1 per child)");
+  NEXT_CHECK(stats.memory_bytes > 0 && "memory usage should be positive");
 
   std::cout << "  Layer stats: PASSED" << std::endl;
   std::cout << "  Memory usage: " << stats.memory_bytes << " bytes" << std::endl;
@@ -206,10 +206,10 @@ void test_metadata() {
   layer.meta().timeCodesPerSecond = 30.0;
   layer.meta().subLayers.push_back("./sublayer.usda");
 
-  assert(layer.meta().defaultPrim == "World" && "defaultPrim should match");
-  assert(layer.meta().upAxis == "Z" && "upAxis should match");
-  assert(layer.meta().metersPerUnit == 1.0 && "metersPerUnit should match");
-  assert(layer.meta().subLayers.size() == 1 && "should have 1 sublayer");
+  NEXT_CHECK(layer.meta().defaultPrim == "World" && "defaultPrim should match");
+  NEXT_CHECK(layer.meta().upAxis == "Z" && "upAxis should match");
+  NEXT_CHECK(layer.meta().metersPerUnit == 1.0 && "metersPerUnit should match");
+  NEXT_CHECK(layer.meta().subLayers.size() == 1 && "should have 1 sublayer");
 
   std::cout << "  Metadata: PASSED" << std::endl;
 }
@@ -229,22 +229,22 @@ void test_interpolation() {
 
     // Test exact match
     auto result = prim.interpolate_time_sample(opacity_id, 0.0);
-    assert(result.success && "should interpolate at t=0");
-    assert(!result.interpolated && "should be exact match");
-    assert(*result.value.as_float() == 0.0f && "should be 0.0");
+    NEXT_CHECK(result.success && "should interpolate at t=0");
+    NEXT_CHECK(!result.interpolated && "should be exact match");
+    NEXT_CHECK(*result.value.as_float() == 0.0f && "should be 0.0");
 
     // Test linear interpolation at t=0.5
     result = prim.interpolate_time_sample(opacity_id, 0.5);
-    assert(result.success && "should interpolate at t=0.5");
-    assert(result.interpolated && "should be interpolated");
+    NEXT_CHECK(result.success && "should interpolate at t=0.5");
+    NEXT_CHECK(result.interpolated && "should be interpolated");
     float val = *result.value.as_float();
-    assert(std::abs(val - 0.5f) < 0.001f && "should be ~0.5");
+    NEXT_CHECK(std::abs(val - 0.5f) < 0.001f && "should be ~0.5");
 
     // Test held interpolation
     result = prim.interpolate_time_sample(opacity_id, 0.5, TimeInterpolation::Held);
-    assert(result.success && "should work with held");
-    assert(!result.interpolated && "held should not interpolate");
-    assert(*result.value.as_float() == 0.0f && "held should use lower value");
+    NEXT_CHECK(result.success && "should work with held");
+    NEXT_CHECK(!result.interpolated && "held should not interpolate");
+    NEXT_CHECK(*result.value.as_float() == 0.0f && "held should use lower value");
   }
 
   // Test vector interpolation (float3)
@@ -259,12 +259,12 @@ void test_interpolation() {
 
     // Test interpolation at t=0.5
     auto result = prim.interpolate_time_sample(translate_id, 0.5);
-    assert(result.success && "should interpolate float3");
+    NEXT_CHECK(result.success && "should interpolate float3");
     const float* v = result.value.as_float3();
-    assert(v != nullptr && "should have float3");
-    assert(std::abs(v[0] - 5.0f) < 0.001f && "x should be 5");
-    assert(std::abs(v[1] - 10.0f) < 0.001f && "y should be 10");
-    assert(std::abs(v[2] - 15.0f) < 0.001f && "z should be 15");
+    NEXT_CHECK(v != nullptr && "should have float3");
+    NEXT_CHECK(std::abs(v[0] - 5.0f) < 0.001f && "x should be 5");
+    NEXT_CHECK(std::abs(v[1] - 10.0f) < 0.001f && "y should be 10");
+    NEXT_CHECK(std::abs(v[2] - 15.0f) < 0.001f && "z should be 15");
   }
 
   // Test extrapolation (before first / after last)
@@ -278,13 +278,13 @@ void test_interpolation() {
 
     // Before first sample - should use first value
     auto result = prim.interpolate_time_sample(scale_id, 0.0);
-    assert(result.success && "should work before first");
-    assert(*result.value.as_float() == 100.0f && "should use first value");
+    NEXT_CHECK(result.success && "should work before first");
+    NEXT_CHECK(*result.value.as_float() == 100.0f && "should use first value");
 
     // After last sample - should use last value
     result = prim.interpolate_time_sample(scale_id, 10.0);
-    assert(result.success && "should work after last");
-    assert(*result.value.as_float() == 200.0f && "should use last value");
+    NEXT_CHECK(result.success && "should work after last");
+    NEXT_CHECK(*result.value.as_float() == 200.0f && "should use last value");
   }
 
   std::cout << "  Time sample interpolation: PASSED" << std::endl;
@@ -312,44 +312,44 @@ void test_time_samples() {
   prim.add_time_sample(points_id, 4.0, Value::MakeFloat3Array(moved_data));  // Same as t=3
 
   // Check that we have time samples
-  assert(prim.has_time_samples(points_id) && "should have time samples for points");
-  assert(prim.has_any_time_samples() && "should have some time samples");
+  NEXT_CHECK(prim.has_time_samples(points_id) && "should have time samples for points");
+  NEXT_CHECK(prim.has_any_time_samples() && "should have some time samples");
 
   // Get time samples
   const auto* samples = prim.time_samples(points_id);
-  assert(samples != nullptr && "should get time samples");
-  assert(samples->size() == 5 && "should have 5 time samples");
+  NEXT_CHECK(samples != nullptr && "should get time samples");
+  NEXT_CHECK(samples->size() == 5 && "should have 5 time samples");
 
   // Verify time values
-  assert((*samples)[0].first == 0.0 && "first sample at t=0");
-  assert((*samples)[4].first == 4.0 && "last sample at t=4");
+  NEXT_CHECK((*samples)[0].first == 0.0 && "first sample at t=0");
+  NEXT_CHECK((*samples)[4].first == 4.0 && "last sample at t=4");
 
   // Check deduplication stats
   auto stats = prim.time_sample_stats();
-  assert(stats.total_samples == 5 && "should have 5 total samples");
+  NEXT_CHECK(stats.total_samples == 5 && "should have 5 total samples");
   // frames 0,1,2 share one value, frames 3,4 share another = 2 unique values
-  assert(stats.unique_values == 2 && "should have 2 unique values");
+  NEXT_CHECK(stats.unique_values == 2 && "should have 2 unique values");
   // 3 duplicates: frame 1 and 2 reuse frame 0's value, frame 4 reuses frame 3's value
-  assert(stats.dedup_count == 3 && "should have 3 deduplicated values");
+  NEXT_CHECK(stats.dedup_count == 3 && "should have 3 deduplicated values");
 
   // Verify we can access the values
   const Value* val0 = prim.time_sample_value((*samples)[0].second);
   const Value* val1 = prim.time_sample_value((*samples)[1].second);
   const Value* val3 = prim.time_sample_value((*samples)[3].second);
 
-  assert(val0 != nullptr && "should get value at t=0");
-  assert(val1 != nullptr && "should get value at t=1");
+  NEXT_CHECK(val0 != nullptr && "should get value at t=0");
+  NEXT_CHECK(val1 != nullptr && "should get value at t=1");
 
   // Offsets should be the same for deduplicated values
-  assert((*samples)[0].second == (*samples)[1].second && "t=0 and t=1 should share offset");
-  assert((*samples)[0].second == (*samples)[2].second && "t=0 and t=2 should share offset");
-  assert((*samples)[3].second == (*samples)[4].second && "t=3 and t=4 should share offset");
-  assert((*samples)[0].second != (*samples)[3].second && "t=0 and t=3 should have different offsets");
+  NEXT_CHECK((*samples)[0].second == (*samples)[1].second && "t=0 and t=1 should share offset");
+  NEXT_CHECK((*samples)[0].second == (*samples)[2].second && "t=0 and t=2 should share offset");
+  NEXT_CHECK((*samples)[3].second == (*samples)[4].second && "t=3 and t=4 should share offset");
+  NEXT_CHECK((*samples)[0].second != (*samples)[3].second && "t=0 and t=3 should have different offsets");
 
   // Get properties with time samples
   auto props = prim.time_sampled_properties();
-  assert(props.size() == 1 && "should have 1 property with time samples");
-  assert(props[0] == points_id && "should be points property");
+  NEXT_CHECK(props.size() == 1 && "should have 1 property with time samples");
+  NEXT_CHECK(props[0] == points_id && "should be points property");
 
   std::cout << "  Time samples with deduplication: PASSED" << std::endl;
   std::cout << "    Total samples: " << stats.total_samples << std::endl;
@@ -376,12 +376,12 @@ void test_relationships() {
   builder.finalize();
 
   const PrimSpec* mesh = layer.prim_at_path("/Mesh");
-  assert(mesh != nullptr && "should find mesh");
+  NEXT_CHECK(mesh != nullptr && "should find mesh");
 
   const std::vector<Path>* targets = mesh->relationship("material:binding");
-  assert(targets != nullptr && "should have material:binding relationship");
-  assert(targets->size() == 1 && "should have 1 target");
-  assert((*targets)[0].str() == "/Materials/MyMaterial" && "target should match");
+  NEXT_CHECK(targets != nullptr && "should have material:binding relationship");
+  NEXT_CHECK(targets->size() == 1 && "should have 1 target");
+  NEXT_CHECK((*targets)[0].str() == "/Materials/MyMaterial" && "target should match");
 
   std::cout << "  Relationships: PASSED" << std::endl;
 }

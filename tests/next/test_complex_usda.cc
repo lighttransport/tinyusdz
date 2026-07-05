@@ -4,7 +4,7 @@
 // TinyUSDZ Next - Complex USDA parsing test
 
 #include <iostream>
-#include <cassert>
+#include "test-check.hh"
 #include <string>
 
 #include "next/reader/usda-reader.hh"
@@ -67,56 +67,56 @@ def Xform "World" (
     for (const auto& err : result.errors) {
       std::cerr << "  Line " << err.line << ": " << err.message << std::endl;
     }
-    assert(false);
+    NEXT_CHECK(false);
   }
 
   // Verify stage metadata
-  assert(result.stage.GetMeta().defaultPrim == "World");
-  assert(result.stage.GetMeta().upAxis == "Y");
-  assert(result.stage.GetMeta().metersPerUnit == 0.01);
-  assert(result.stage.GetMeta().timeCodesPerSecond == 24);
-  assert(result.stage.GetMeta().startTimeCode == 0);
-  assert(result.stage.GetMeta().endTimeCode == 100);
+  NEXT_CHECK(result.stage.GetMeta().defaultPrim == "World");
+  NEXT_CHECK(result.stage.GetMeta().upAxis == "Y");
+  NEXT_CHECK(result.stage.GetMeta().metersPerUnit == 0.01);
+  NEXT_CHECK(result.stage.GetMeta().timeCodesPerSecond == 24);
+  NEXT_CHECK(result.stage.GetMeta().startTimeCode == 0);
+  NEXT_CHECK(result.stage.GetMeta().endTimeCode == 100);
 
   // Verify structure
   std::vector<UsdPrim> roots = result.stage.GetRootPrims();
-  assert(roots.size() == 1);
+  NEXT_CHECK(roots.size() == 1);
   const UsdPrim& world = roots[0];
-  assert(world.GetName() == "World");
-  assert(world.GetTypeName() == "Xform");
-  assert(world.GetChildCount() == 2);  // Cube and Materials
+  NEXT_CHECK(world.GetName() == "World");
+  NEXT_CHECK(world.GetTypeName() == "Xform");
+  NEXT_CHECK(world.GetChildCount() == 2);  // Cube and Materials
 
   // Find Cube
   UsdPrim cube = world.GetChild("Cube");
-  assert(cube);
-  assert(cube.GetTypeName() == "Mesh");
-  assert(cube.HasProperty("points"));
-  assert(cube.HasProperty("faceVertexCounts"));
-  assert(cube.HasProperty("faceVertexIndices"));
-  assert(cube.HasProperty("normals"));
+  NEXT_CHECK(cube);
+  NEXT_CHECK(cube.GetTypeName() == "Mesh");
+  NEXT_CHECK(cube.HasProperty("points"));
+  NEXT_CHECK(cube.HasProperty("faceVertexCounts"));
+  NEXT_CHECK(cube.HasProperty("faceVertexIndices"));
+  NEXT_CHECK(cube.HasProperty("normals"));
 
   // Check relationship
   const std::vector<Path>* binding = cube.GetRelationship("material:binding");
-  assert(binding != nullptr);
-  assert(binding->size() == 1);
-  assert((*binding)[0].str() == "/World/Materials/Red");
+  NEXT_CHECK(binding != nullptr);
+  NEXT_CHECK(binding->size() == 1);
+  NEXT_CHECK((*binding)[0].str() == "/World/Materials/Red");
 
   // Find Materials
   UsdPrim materials = world.GetChild("Materials");
-  assert(materials);
-  assert(materials.GetTypeName() == "Scope");
+  NEXT_CHECK(materials);
+  NEXT_CHECK(materials.GetTypeName() == "Scope");
 
   // Find Red material
   UsdPrim red = materials.GetChild("Red");
-  assert(red);
-  assert(red.GetTypeName() == "Material");
+  NEXT_CHECK(red);
+  NEXT_CHECK(red.GetTypeName() == "Material");
 
   // Find Surface shader
   UsdPrim surface = red.GetChild("Surface");
-  assert(surface);
-  assert(surface.GetTypeName() == "Shader");
-  assert(surface.HasProperty("inputs:diffuseColor"));
-  assert(surface.HasProperty("inputs:roughness"));
+  NEXT_CHECK(surface);
+  NEXT_CHECK(surface.GetTypeName() == "Shader");
+  NEXT_CHECK(surface.HasProperty("inputs:diffuseColor"));
+  NEXT_CHECK(surface.HasProperty("inputs:roughness"));
 
   std::cout << "  Complex USDA test passed!" << std::endl;
 }
@@ -142,21 +142,21 @@ def Xform "Cube" {
 
   if (!result.success) {
     std::cerr << "Parse failed: " << result.error_summary << std::endl;
-    assert(false);
+    NEXT_CHECK(false);
   }
 
   std::vector<UsdPrim> roots = result.stage.GetRootPrims();
-  assert(roots.size() == 1);
+  NEXT_CHECK(roots.size() == 1);
   const UsdPrim& cube = roots[0];
-  assert(cube.GetName() == "Cube");
+  NEXT_CHECK(cube.GetName() == "Cube");
 
-  assert(cube.HasTimeSamples("xformOp:translate"));
+  NEXT_CHECK(cube.HasTimeSamples("xformOp:translate"));
 
   std::vector<double> times = cube.GetTimeSampleTimes("xformOp:translate");
-  assert(times.size() == 5);
-  assert(times[0] == 0);
-  assert(times[1] == 24);
-  assert(times[4] == 96);
+  NEXT_CHECK(times.size() == 5);
+  NEXT_CHECK(times[0] == 0);
+  NEXT_CHECK(times[1] == 24);
+  NEXT_CHECK(times[4] == 96);
 
   std::cout << "  Animation test passed!" << std::endl;
 }
@@ -215,36 +215,36 @@ line two
     for (const auto& err : result.errors) {
       std::cerr << "  Line " << err.line << ": " << err.message << std::endl;
     }
-    assert(false);
+    NEXT_CHECK(false);
   }
 
   std::vector<UsdPrim> roots = result.stage.GetRootPrims();
-  assert(roots.size() == 1);
+  NEXT_CHECK(roots.size() == 1);
   const UsdPrim& world = roots[0];
   UsdPrim mesh = world.GetChild("Mesh");
-  assert(mesh);
-  assert(mesh.HasProperty("points"));
-  assert(mesh.HasProperty("primvars:height:indices"));
-  assert(mesh.HasProperty("primvars:uv"));
-  assert(mesh.HasProperty("orientations"));
-  assert(mesh.HasProperty("shadow:enable"));
-  assert(mesh.HasProperty("shadow:flags"));
-  assert(mesh.HasProperty("primvars:tags"));
-  assert(mesh.HasProperty("sourceSnippets"));
-  assert(mesh.HasProperty("scalarHalf"));
-  assert(mesh.HasProperty("halfPoint"));
-  assert(mesh.HasProperty("halfOrientation"));
-  assert(mesh.HasProperty("uvMatrix"));
-  assert(mesh.HasProperty("localMatrix"));
-  assert(mesh.HasProperty("uvMatrixD"));
-  assert(mesh.HasProperty("objectIds"));
+  NEXT_CHECK(mesh);
+  NEXT_CHECK(mesh.HasProperty("points"));
+  NEXT_CHECK(mesh.HasProperty("primvars:height:indices"));
+  NEXT_CHECK(mesh.HasProperty("primvars:uv"));
+  NEXT_CHECK(mesh.HasProperty("orientations"));
+  NEXT_CHECK(mesh.HasProperty("shadow:enable"));
+  NEXT_CHECK(mesh.HasProperty("shadow:flags"));
+  NEXT_CHECK(mesh.HasProperty("primvars:tags"));
+  NEXT_CHECK(mesh.HasProperty("sourceSnippets"));
+  NEXT_CHECK(mesh.HasProperty("scalarHalf"));
+  NEXT_CHECK(mesh.HasProperty("halfPoint"));
+  NEXT_CHECK(mesh.HasProperty("halfOrientation"));
+  NEXT_CHECK(mesh.HasProperty("uvMatrix"));
+  NEXT_CHECK(mesh.HasProperty("localMatrix"));
+  NEXT_CHECK(mesh.HasProperty("uvMatrixD"));
+  NEXT_CHECK(mesh.HasProperty("objectIds"));
 
-  assert(mesh.HasTimeSamples("extent"));
-  assert(mesh.GetTimeSampleTimes("extent").size() == 1);
+  NEXT_CHECK(mesh.HasTimeSamples("extent"));
+  NEXT_CHECK(mesh.GetTimeSampleTimes("extent").size() == 1);
 
   UsdPrim shader = world.GetChild("Shader");
-  assert(shader);
-  assert(shader.HasProperty("info:sourceCode"));
+  NEXT_CHECK(shader);
+  NEXT_CHECK(shader.HasProperty("info:sourceCode"));
 
   std::cout << "  Large-scene ASCII grammar regression test passed!" << std::endl;
 }
@@ -289,53 +289,53 @@ def Xform "W" (
 
   auto check = [](const Stage& stage) {
     std::vector<UsdPrim> roots = stage.GetRootPrims();
-    assert(roots.size() == 1);
+    NEXT_CHECK(roots.size() == 1);
     const UsdPrim& w = roots[0];
     // Prim metadata
-    assert(w.GetMeta().kind() == "component");
-    assert(w.GetMeta().displayName() == "My World");
-    assert(w.GetMeta().instanceable == true);
+    NEXT_CHECK(w.GetMeta().kind() == "component");
+    NEXT_CHECK(w.GetMeta().displayName() == "My World");
+    NEXT_CHECK(w.GetMeta().instanceable == true);
     // customData dictionary
-    assert(w.GetMeta().customData().is_dictionary());
+    NEXT_CHECK(w.GetMeta().customData().is_dictionary());
     const Dict* cd = w.GetMeta().customData().as_dictionary();
-    assert(cd && cd->find("note") && cd->find("note")->as_string());
-    assert(*cd->find("note")->as_string() == "hello");
+    NEXT_CHECK(cd && cd->find("note") && cd->find("note")->as_string());
+    NEXT_CHECK(*cd->find("note")->as_string() == "hello");
     // String/token arrays carry real values (regression for the data-loss bug)
     const Value* tags = w.GetPropertyValue("tags");
-    assert(tags && tags->as_token_array());
-    assert(tags->as_token_array()->size() == 3);
-    assert((*tags->as_token_array())[1].str() == "beta");
+    NEXT_CHECK(tags && tags->as_token_array());
+    NEXT_CHECK(tags->as_token_array()->size() == 3);
+    NEXT_CHECK((*tags->as_token_array())[1].str() == "beta");
     const Value* names = w.GetPropertyValue("names");
-    assert(names && names->as_token_array() &&
+    NEXT_CHECK(names && names->as_token_array() &&
            names->as_token_array()->size() == 2);
   };
 
   LoadResult r1 = LoadUSDAFromString(input);
   if (!r1.success) {
     std::cerr << "Parse failed: " << r1.error_summary << std::endl;
-    assert(false);
+    NEXT_CHECK(false);
   }
   check(r1.stage);
 
   // Write it back out and confirm the new opinions are emitted.
   std::string out = WriteUSDAToString(r1.stage);
-  assert(out.find("kind = \"component\"") != std::string::npos);
-  assert(out.find("displayName = \"My World\"") != std::string::npos);
-  assert(out.find("instanceable = true") != std::string::npos);
-  assert(out.find("framesPerSecond = 30") != std::string::npos);
-  assert(out.find("customData = {") != std::string::npos);
-  assert(out.find("customLayerData = {") != std::string::npos);
-  assert(out.find("\"alpha\", \"beta\", \"gamma\"") != std::string::npos);
-  assert(out.find("interpolation = \"constant\"") != std::string::npos);
-  assert(out.find("inf") != std::string::npos);
-  assert(out.find("-inf") != std::string::npos);
+  NEXT_CHECK(out.find("kind = \"component\"") != std::string::npos);
+  NEXT_CHECK(out.find("displayName = \"My World\"") != std::string::npos);
+  NEXT_CHECK(out.find("instanceable = true") != std::string::npos);
+  NEXT_CHECK(out.find("framesPerSecond = 30") != std::string::npos);
+  NEXT_CHECK(out.find("customData = {") != std::string::npos);
+  NEXT_CHECK(out.find("customLayerData = {") != std::string::npos);
+  NEXT_CHECK(out.find("\"alpha\", \"beta\", \"gamma\"") != std::string::npos);
+  NEXT_CHECK(out.find("interpolation = \"constant\"") != std::string::npos);
+  NEXT_CHECK(out.find("inf") != std::string::npos);
+  NEXT_CHECK(out.find("-inf") != std::string::npos);
 
   // Re-parse the written USDA and confirm the same facts survive a round-trip.
   LoadResult r2 = LoadUSDAFromString(out.c_str());
   if (!r2.success) {
     std::cerr << "Re-parse failed: " << r2.error_summary << std::endl;
     std::cerr << out << std::endl;
-    assert(false);
+    NEXT_CHECK(false);
   }
   check(r2.stage);
 
@@ -360,28 +360,28 @@ def Xform "World"
   LoadResult r = LoadUSDAFromString(input);
   if (!r.success) {
     std::cerr << "Parse failed: " << r.error_summary << std::endl;
-    assert(false);
+    NEXT_CHECK(false);
   }
 
   UsdPrim world = r.stage.GetPrimAtPath("/World");
-  assert(world.IsValid());
+  NEXT_CHECK(world.IsValid());
   const std::vector<Path>* targets = world.GetRelationship("targets");
-  assert(targets && targets->size() == 4);
-  assert((*targets)[0].str() == "/Root");
-  assert((*targets)[1].str() == "/A");
-  assert((*targets)[2].str() == "/C");
-  assert((*targets)[3].str() == "/D");
+  NEXT_CHECK(targets && targets->size() == 4);
+  NEXT_CHECK((*targets)[0].str() == "/Root");
+  NEXT_CHECK((*targets)[1].str() == "/A");
+  NEXT_CHECK((*targets)[2].str() == "/C");
+  NEXT_CHECK((*targets)[3].str() == "/D");
 
   std::string out = WriteUSDAToString(r.stage);
   LoadResult r2 = LoadUSDAFromString(out.c_str());
-  assert(r2.success);
+  NEXT_CHECK(r2.success);
   UsdPrim world2 = r2.stage.GetPrimAtPath("/World");
   const std::vector<Path>* targets2 = world2.GetRelationship("targets");
-  assert(targets2 && targets2->size() == 4);
-  assert((*targets2)[0].str() == "/Root");
-  assert((*targets2)[1].str() == "/A");
-  assert((*targets2)[2].str() == "/C");
-  assert((*targets2)[3].str() == "/D");
+  NEXT_CHECK(targets2 && targets2->size() == 4);
+  NEXT_CHECK((*targets2)[0].str() == "/Root");
+  NEXT_CHECK((*targets2)[1].str() == "/A");
+  NEXT_CHECK((*targets2)[2].str() == "/C");
+  NEXT_CHECK((*targets2)[3].str() == "/D");
 
   std::cout << "  Relationship body list-ops passed!" << std::endl;
 }

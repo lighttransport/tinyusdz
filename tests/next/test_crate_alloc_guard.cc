@@ -10,7 +10,7 @@
 // decoder directly with a 16-byte buffer claiming 1e9 elements and asserts it
 // fails fast without a huge allocation.
 
-#include <cassert>
+#include "test-check.hh"
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -88,13 +88,13 @@ int main() {
   std::cout << "=== TinyUSDZ Next Crate Allocation-Guard Test ===" << std::endl;
 
   // Element types spanning the largest in-memory strides.
-  assert(RejectsHugeArray(CrateTypeId::Matrix4d));  // 128 B/elem
-  assert(RejectsHugeArray(CrateTypeId::Double));    // 8 B/elem
-  assert(RejectsHugeArray(CrateTypeId::Vec3f));     // 12 B/elem
-  assert(RejectsHugeArray(CrateTypeId::Int));       // 4 B/elem
-  assert(RejectsHugeArray(CrateTypeId::Token));     // 4 B index/elem
-  assert(RejectsRaisedLimitOverflowCount());
-  assert(RejectsCompressedHugeBlob());
+  NEXT_CHECK(RejectsHugeArray(CrateTypeId::Matrix4d));  // 128 B/elem
+  NEXT_CHECK(RejectsHugeArray(CrateTypeId::Double));    // 8 B/elem
+  NEXT_CHECK(RejectsHugeArray(CrateTypeId::Vec3f));     // 12 B/elem
+  NEXT_CHECK(RejectsHugeArray(CrateTypeId::Int));       // 4 B/elem
+  NEXT_CHECK(RejectsHugeArray(CrateTypeId::Token));     // 4 B index/elem
+  NEXT_CHECK(RejectsRaisedLimitOverflowCount());
+  NEXT_CHECK(RejectsCompressedHugeBlob());
 
   // Sanity: a small, fully-present array still decodes. Layout (payload != 0,
   // since payload 0 is the empty-array marker):
@@ -116,8 +116,8 @@ int main() {
     Value out;
     bool ok = DecodeCrateArray(buf.data(), buf.size(), rep, tokens,
                                1024ull * 1024 * 1024, &out);
-    assert(ok && out.as_float_array() && out.as_float_array()->size() == 2);
-    assert((*out.as_float_array())[0] == 1.5f);
+    NEXT_CHECK(ok && out.as_float_array() && out.as_float_array()->size() == 2);
+    NEXT_CHECK((*out.as_float_array())[0] == 1.5f);
   }
 
   // Bool arrays are raw byte arrays in this implementation. A compressed bool
@@ -140,12 +140,12 @@ int main() {
     Value out;
     bool ok = DecodeCrateArray(buf.data(), buf.size(), raw_rep, tokens,
                                1024ull * 1024 * 1024, &out);
-    assert(ok);
+    NEXT_CHECK(ok);
     const std::vector<uint8_t>* arr = out.as_bool_array();
-    assert(arr && arr->size() == 3);
-    assert((*arr)[0] == 0);
-    assert((*arr)[1] == 1);
-    assert((*arr)[2] == 1);
+    NEXT_CHECK(arr && arr->size() == 3);
+    NEXT_CHECK((*arr)[0] == 0);
+    NEXT_CHECK((*arr)[1] == 1);
+    NEXT_CHECK((*arr)[2] == 1);
 
     ValueRep compressed_rep = ValueRep::Make(CrateTypeId::Bool,
                                              /*payload=*/8,
@@ -157,8 +157,8 @@ int main() {
                                           compressed_rep, tokens,
                                           1024ull * 1024 * 1024,
                                           &compressed_out);
-    assert(!compressed_ok);
-    assert(compressed_out.is_empty());
+    NEXT_CHECK(!compressed_ok);
+    NEXT_CHECK(compressed_out.is_empty());
   }
 
   // ProbeArrayBlock is intentionally conservative for layouts we cannot safely
@@ -177,15 +177,15 @@ int main() {
                                   /*is_compressed=*/true);
     LazyArrayRef ref;
     bool ok = ProbeArrayBlock(source, rep, 1024, &ref);
-    assert(ok);
-    assert(ref.source.get() == source.get());
-    assert(ref.block_offset == 8);
-    assert(ref.block_len == 0);
-    assert(ref.element_count == 3);
-    assert(ref.crate_type == CrateTypeId::Bool);
-    assert(ref.value_type == TypeId::Bool);
-    assert(ref.src_elem_stride == 1);
-    assert(ref.is_compressed);
+    NEXT_CHECK(ok);
+    NEXT_CHECK(ref.source.get() == source.get());
+    NEXT_CHECK(ref.block_offset == 8);
+    NEXT_CHECK(ref.block_len == 0);
+    NEXT_CHECK(ref.element_count == 3);
+    NEXT_CHECK(ref.crate_type == CrateTypeId::Bool);
+    NEXT_CHECK(ref.value_type == TypeId::Bool);
+    NEXT_CHECK(ref.src_elem_stride == 1);
+    NEXT_CHECK(ref.is_compressed);
   }
 
   // A known raw layout whose payload extends past EOF is also probed without a
@@ -200,14 +200,14 @@ int main() {
                                   /*is_compressed=*/false);
     LazyArrayRef ref;
     bool ok = ProbeArrayBlock(source, rep, 1024, &ref);
-    assert(ok);
-    assert(ref.block_offset == 8);
-    assert(ref.block_len == 0);
-    assert(ref.element_count == 2);
-    assert(ref.crate_type == CrateTypeId::Float);
-    assert(ref.value_type == TypeId::Float);
-    assert(ref.src_elem_stride == 4);
-    assert(!ref.is_compressed);
+    NEXT_CHECK(ok);
+    NEXT_CHECK(ref.block_offset == 8);
+    NEXT_CHECK(ref.block_len == 0);
+    NEXT_CHECK(ref.element_count == 2);
+    NEXT_CHECK(ref.crate_type == CrateTypeId::Float);
+    NEXT_CHECK(ref.value_type == TypeId::Float);
+    NEXT_CHECK(ref.src_elem_stride == 4);
+    NEXT_CHECK(!ref.is_compressed);
   }
 
   // Fully-present raw POD arrays get an exact pass-through range.
@@ -225,11 +225,11 @@ int main() {
                                   /*is_compressed=*/false);
     LazyArrayRef ref;
     bool ok = ProbeArrayBlock(source, rep, 1024, &ref);
-    assert(ok);
-    assert(ref.block_offset == 8);
-    assert(ref.block_len == 16);
-    assert(ref.element_count == 2);
-    assert(ref.src_elem_stride == 4);
+    NEXT_CHECK(ok);
+    NEXT_CHECK(ref.block_offset == 8);
+    NEXT_CHECK(ref.block_len == 16);
+    NEXT_CHECK(ref.element_count == 2);
+    NEXT_CHECK(ref.src_elem_stride == 4);
   }
 
   std::cout << "  Allocation-guard test passed!" << std::endl;

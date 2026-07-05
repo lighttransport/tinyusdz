@@ -7,7 +7,7 @@
 // per-property metadata.
 
 #include <iostream>
-#include <cassert>
+#include "test-check.hh"
 #include <string>
 #include <vector>
 
@@ -69,32 +69,32 @@ def Xform "World" (
 // Asserts the structural / value facts that every backing format must preserve.
 static void CheckCore(const Stage& s, const char* via) {
   std::vector<UsdPrim> roots = s.GetRootPrims();
-  assert(roots.size() == 1);
+  NEXT_CHECK(roots.size() == 1);
   UsdPrim world = roots[0];
-  assert(world.GetName() == "World");
-  assert(world.GetTypeName() == "Xform");
-  assert(world.GetChildCount() == 2);
+  NEXT_CHECK(world.GetName() == "World");
+  NEXT_CHECK(world.GetTypeName() == "Xform");
+  NEXT_CHECK(world.GetChildCount() == 2);
 
   UsdPrim mesh = world.GetChild("Mesh");
-  assert(mesh && mesh.GetTypeName() == "Mesh");
+  NEXT_CHECK(mesh && mesh.GetTypeName() == "Mesh");
 
   const Value* pts = mesh.GetPropertyValue("points");
-  assert(pts && pts->as_float_array() && pts->as_float_array()->size() == 9);
+  NEXT_CHECK(pts && pts->as_float_array() && pts->as_float_array()->size() == 9);
 
   const Value* joints = mesh.GetPropertyValue("joints");
-  assert(joints && joints->as_token_array() &&
+  NEXT_CHECK(joints && joints->as_token_array() &&
          joints->as_token_array()->size() == 2 &&
          (*joints->as_token_array())[1].str() == "hip");
 
   const Value* labels = mesh.GetPropertyValue("labels");
-  assert(labels && labels->as_token_array() &&
+  NEXT_CHECK(labels && labels->as_token_array() &&
          labels->as_token_array()->size() == 3);
 
   const Value* scale = mesh.GetPropertyValue("scale");
-  assert(scale && scale->as_double() && *scale->as_double() == 2.5);
+  NEXT_CHECK(scale && scale->as_double() && *scale->as_double() == 2.5);
 
   const std::vector<Path>* bind = mesh.GetRelationship("material:binding");
-  assert(bind && bind->size() == 1 && (*bind)[0].str() == "/World/Mat");
+  NEXT_CHECK(bind && bind->size() == 1 && (*bind)[0].str() == "/World/Mat");
 
   std::cout << "    core fidelity ok (" << via << ")" << std::endl;
 }
@@ -102,39 +102,39 @@ static void CheckCore(const Stage& s, const char* via) {
 // Asserts the metadata / dictionary / per-property-metadata facts.
 static void CheckMeta(const Stage& s, const char* via) {
   // Stage-level metadata (framesPerSecond + customLayerData dict).
-  assert(s.GetRootLayer());
+  NEXT_CHECK(s.GetRootLayer());
   const LayerMeta& lm = s.GetRootLayer()->meta();
-  assert(lm.framesPerSecond_set && lm.framesPerSecond == 24);
-  assert(lm.customLayerData.is_dictionary());
+  NEXT_CHECK(lm.framesPerSecond_set && lm.framesPerSecond == 24);
+  NEXT_CHECK(lm.customLayerData.is_dictionary());
   const Dict* cld = lm.customLayerData.as_dictionary();
-  assert(cld && cld->find("creator") && cld->find("creator")->as_string() &&
+  NEXT_CHECK(cld && cld->find("creator") && cld->find("creator")->as_string() &&
          *cld->find("creator")->as_string() == "tinyusdz");
   const Value* stats = cld->find("stats");
-  assert(stats && stats->is_dictionary() &&
+  NEXT_CHECK(stats && stats->is_dictionary() &&
          stats->as_dictionary()->find("prims") &&
          *stats->as_dictionary()->find("prims")->as_int() == 2);
 
   UsdPrim world = s.GetRootPrims()[0];
-  assert(world.GetMeta().kind() == "component");
-  assert(world.GetMeta().displayName() == "Root");
+  NEXT_CHECK(world.GetMeta().kind() == "component");
+  NEXT_CHECK(world.GetMeta().displayName() == "Root");
 
-  assert(world.GetMeta().customData().is_dictionary());
+  NEXT_CHECK(world.GetMeta().customData().is_dictionary());
   const Dict* wcd = world.GetMeta().customData().as_dictionary();
-  assert(wcd && wcd->find("note") && wcd->find("note")->as_string() &&
+  NEXT_CHECK(wcd && wcd->find("note") && wcd->find("note")->as_string() &&
          *wcd->find("note")->as_string() == "hello");
-  assert(wcd->find("count") && wcd->find("count")->as_int() &&
+  NEXT_CHECK(wcd->find("count") && wcd->find("count")->as_int() &&
          *wcd->find("count")->as_int() == 7);
 
   UsdPrim mesh = world.GetChild("Mesh");
-  assert(mesh.GetMeta().assetInfo().is_dictionary());
+  NEXT_CHECK(mesh.GetMeta().assetInfo().is_dictionary());
 
   const PrimSpec* mspec = mesh.GetPrimSpec();
-  assert(mspec);
+  NEXT_CHECK(mspec);
   const PropMeta* pm = mspec->property_meta("primvars:displayColor");
-  assert(pm && (pm->authored & PropMeta::kInterpolation));
-  assert(pm->interpolation == "constant");
-  assert(pm->authored & PropMeta::kElementSize);
-  assert(pm->elementSize == 1);
+  NEXT_CHECK(pm && (pm->authored & PropMeta::kInterpolation));
+  NEXT_CHECK(pm->interpolation == "constant");
+  NEXT_CHECK(pm->authored & PropMeta::kElementSize);
+  NEXT_CHECK(pm->elementSize == 1);
 
   std::cout << "    metadata/dict/prop-meta fidelity ok (" << via << ")"
             << std::endl;
@@ -144,7 +144,7 @@ static Stage ParseUSDA(const char* src) {
   LoadResult r = LoadUSDAFromString(src);
   if (!r.success) {
     std::cerr << "USDA parse failed: " << r.error_summary << std::endl;
-    assert(false);
+    NEXT_CHECK(false);
   }
   return std::move(r.stage);
 }
@@ -170,14 +170,14 @@ void test_usdc_roundtrip() {
   USDCWriteResult wr = WriteUSDCToMemory(buf, s0);
   if (!wr.success) {
     std::cerr << "USDC write failed: " << wr.error << std::endl;
-    assert(false);
+    NEXT_CHECK(false);
   }
-  assert(!buf.empty());
+  NEXT_CHECK(!buf.empty());
 
   USDCLoadResult lr = LoadUSDCFromMemory(buf.data(), buf.size());
   if (!lr.success) {
     std::cerr << "USDC read failed: " << lr.error_summary << std::endl;
-    assert(false);
+    NEXT_CHECK(false);
   }
   CheckCore(lr.stage, "usdc roundtrip");
   CheckMeta(lr.stage, "usdc roundtrip");
