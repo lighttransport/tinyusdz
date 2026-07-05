@@ -548,22 +548,9 @@ PrimSpec PrimSpec::Clone() const {
     c.values_ = std::make_unique<ValueStorage>(*values_);
   }
 
-  // Deep copy time samples
-  if (time_samples_) {
-    c.time_samples_ = std::make_unique<TimeSampleStorage>();
-    // Copy time samples per property
-    for (auto prop_id : time_sampled_properties()) {
-      auto* samples = time_samples(prop_id);
-      if (samples) {
-        for (const auto& [t, offset] : *samples) {
-          const Value* v = time_sample_value(offset);
-          if (v) {
-            c.add_time_sample(prop_id, t, *v);
-          }
-        }
-      }
-    }
-  }
+  // Share time samples by reference (O(1)); copy-on-write clones them if either
+  // this prim or the copy later mutates its storage.
+  c.time_samples_ = time_samples_;
 
   // Deep copy relationships
   c.relationships_ = relationships_;
@@ -779,7 +766,7 @@ size_t PrimSpec::remap_asset_paths(
     }
   }
   if (time_samples_) {
-    count += time_samples_->remap_asset_paths(remap);
+    count += cow_time_samples().remap_asset_paths(remap);
   }
   return count;
 }
@@ -792,10 +779,16 @@ void PrimSpec::finalize_properties() {
   props_.sort();
   // A finalized layer is immutable: no more time samples will be added, so free
   // the per-storage value-dedup index (hash -> offsets). For heavily
-  // time-sampled scenes this is the dominant memory cost and is held twice
-  // (source layer + composed layer). Sample values/offsets are untouched, so
-  // output is byte-identical.
-  if (time_samples_) time_samples_->drop_dedup_index();
+  // time-sampled scenes this is the dominant memory cost. Sample values/offsets
+  // are untouched, so output is byte-identical.
+  //
+  // Only when uniquely owned: a storage shared from a finalized source layer
+  // already had its index dropped there, and Layer::finalize runs in parallel,
+  // so racing drops on a shared storage would be a data race. use_count() is an
+  // atomic load and nothing mutates the refcount during finalize.
+  if (time_samples_ && time_samples_.use_count() == 1) {
+    time_samples_->drop_dedup_index();
+  }
 }
 
 void PrimSpec::mark_property_time_sampled(PropNameId name_id) {
@@ -804,17 +797,35 @@ void PrimSpec::mark_property_time_sampled(PropNameId name_id) {
   }
 }
 
+TimeSampleStorage& PrimSpec::cow_time_samples() {
+  if (!time_samples_) {
+    time_samples_ = std::make_shared<TimeSampleStorage>();
+  } else if (time_samples_.use_count() > 1) {
+    // Shared (aliased into a source prim's storage): clone before mutating so
+    // the other holder is unaffected. Each PrimSpec is mutated by a single
+    // thread, so the read of use_count()/clone here is not racy.
+    time_samples_ = std::make_shared<TimeSampleStorage>(*time_samples_);
+  }
+  return *time_samples_;
+}
+
+bool PrimSpec::share_time_samples_from(const PrimSpec& source) {
+  if (time_samples_ || !source.time_samples_) return false;
+  time_samples_ = source.time_samples_;  // O(1) shared_ptr alias
+  return true;
+}
+
 void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value,
                                bool dedup) {
   // Use deduplicated storage for array values (common case for animation).
   // `dedup=false` is for deferred-fill values from the async USDA array parser:
   // their payload is not filled yet, so find_or_store()'s content hash would be
   // meaningless (same reasoning as the is_lazy() bypass in add_dedup).
-  if (!time_samples_) time_samples_ = std::make_unique<TimeSampleStorage>();
+  TimeSampleStorage& ts = cow_time_samples();
   if (dedup) {
-    time_samples_->add_dedup(name_id, time, std::move(value));
+    ts.add_dedup(name_id, time, std::move(value));
   } else {
-    time_samples_->add(name_id, time, std::move(value));
+    ts.add(name_id, time, std::move(value));
   }
 }
 
@@ -969,7 +980,10 @@ void PrimSpec::add_child_index(uint32_t index) {
 
 void PrimSpec::release_value_payloads() {
   if (values_) values_->release_payloads();
-  if (time_samples_) time_samples_->release_payloads();
+  // COW: releasing payloads mutates the storage, so isolate from any aliased
+  // holder first (clone-then-release only frees this prim's copy; correct,
+  // though the shared case is rare -- consume mode).
+  if (time_samples_) cow_time_samples().release_payloads();
 }
 
 size_t PrimSpec::memory_usage() const {

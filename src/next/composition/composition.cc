@@ -449,21 +449,33 @@ void Compositor::CopyLocalOpinions(
     }
   }
 
-  // Copy time-sampled properties
-  for (auto ts_prop_id : source.time_sampled_properties()) {
-    auto* samples = source.time_samples(ts_prop_id);
-    if (!samples) continue;
+  // Copy time-sampled properties. Fast path: when the target has no time
+  // samples yet and this source needs no time remap (identity offset/scale),
+  // the composed result is exactly the source's samples, so share the whole
+  // time-sample storage by reference (O(1) shared_ptr alias) instead of copying
+  // every sample. Copy-on-write in PrimSpec keeps aliased storages independent
+  // if either is later mutated. This eliminates the flatten value-duplicate for
+  // the common single-source case -- the dominant memory cost of
+  // animation-dense scenes (millions of samples otherwise copied source->dest).
+  if (time_offset == 0.0 && time_scale == 1.0 &&
+      source.has_any_time_samples() && !target.has_any_time_samples()) {
+    target.share_time_samples_from(source);
+  } else {
+    for (auto ts_prop_id : source.time_sampled_properties()) {
+      auto* samples = source.time_samples(ts_prop_id);
+      if (!samples) continue;
 
-    // Check if target already has time samples for this property
-    bool target_has_ts = target.has_time_samples(ts_prop_id);
-    if (!target_has_ts) {
-      // Copy time samples from source to target, remapping the sample time by
-      // the layer offset (t -> time_offset + time_scale*t).
-      for (const auto& [time, val_offset] : *samples) {
-        const Value* val = source.time_sample_value(val_offset);
-        if (val) {
-          target.add_time_sample(ts_prop_id, time_offset + time_scale * time,
-                                 *val);
+      // Check if target already has time samples for this property
+      bool target_has_ts = target.has_time_samples(ts_prop_id);
+      if (!target_has_ts) {
+        // Copy time samples from source to target, remapping the sample time by
+        // the layer offset (t -> time_offset + time_scale*t).
+        for (const auto& [time, val_offset] : *samples) {
+          const Value* val = source.time_sample_value(val_offset);
+          if (val) {
+            target.add_time_sample(ts_prop_id, time_offset + time_scale * time,
+                                   *val);
+          }
         }
       }
     }
