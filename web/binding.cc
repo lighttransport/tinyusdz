@@ -76,6 +76,7 @@
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
 #include "usdShade.hh"
+#include "usdSkel.hh"  // Skeleton / SkelRoot / SkelAnimation (mh:* profile)
 #include "pprint-enum.hh"
 #include "stage.hh"
 #include "sha256.hh"
@@ -1983,6 +1984,26 @@ json AttributeValueJson(const tinyusdz::Attribute &attr) {
   }
 
   return {{"unsupportedType", attr.type_name()}};
+}
+
+// mh:* attribute → JSON. Time-sampled float[] curves (mh:rig:guiControlValues,
+// mh:animatedMapWeights) become { timeSamples: [{t, v:[...]}, ...] }; other
+// attrs fall through to AttributeValueJson (scalars + static arrays).
+json MhAttrJson(const tinyusdz::Attribute &attr) {
+  if (attr.get_var().has_timesamples()) {
+    const auto &ts = attr.get_var().ts_raw();
+    json samples = json::array();
+    for (size_t i = 0; i < ts.size(); ++i) {
+      const auto t = ts.get_time(i);
+      if (!t) continue;
+      std::vector<float> v;
+      if (attr.get_value(static_cast<double>(*t), &v)) {
+        samples.push_back({{"t", *t}, {"v", v}});
+      }
+    }
+    return json{{"timeSamples", samples}};
+  }
+  return AttributeValueJson(attr);
 }
 
 void AddPropertyMap(json &props, json &rels,
@@ -6241,7 +6262,31 @@ class TinyUSDZLoaderNative {
 
     return true;
   }
-  
+
+  // External variant override (LIVRPS V): force `variant_name` on every
+  // variantSet in the layer tree (e.g. LOD="LOD2"), unlike composeVariants
+  // which honors the authored selection. Pair with layerToRenderScene() to
+  // rebuild the scene at that variant (USD `LOD` variantSet switching).
+  bool applyVariantSelection(const std::string &variant_name) {
+    if (!loaded_as_layer_) {
+      error_ = "not loaded as layer";
+      return false;
+    }
+    if (composited_) {
+      layer_ = std::move(composed_layer_);
+    }
+    if (!tinyusdz::ApplyVariantSelector(layer_, variant_name, &composed_layer_,
+                                        &warn_, &error_)) {
+      if (composited_) {
+        loaded_as_layer_ = false;
+        composited_ = false;
+      }
+      return false;
+    }
+    composited_ = true;
+    return true;
+  }
+
   bool layerToRenderScene() {
 
     if (!loaded_as_layer_) {
@@ -7580,6 +7625,59 @@ class TinyUSDZLoaderNative {
       AppendPhysicsPrimJson(prim, "/" + prim.element_name(), root["prims"], 0);
     }
 
+    return root.dump();
+  }
+
+  /// Structured metahuman-usd-1.0 (mh:*) profile: one entry per Skeleton /
+  /// SkelAnimation / Material / SkelRoot prim carrying mh:* attributes or
+  /// relationships. Shaped for the web reader (src/mh-profile.js) — avoids
+  /// brittle exportAsUSDA text parsing, and carries time-sampled control
+  /// curves as { timeSamples: [{t, v}] }. Returns "[]" when none.
+  std::string getMhProfileJSON() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return std::string("[]");
+    }
+    json root = json::array();
+    std::function<void(const tinyusdz::Prim &, const std::string &, int)> visit =
+        [&](const tinyusdz::Prim &prim, const std::string &path, int depth) {
+          if (depth > 1024) return;  // guard deeply nested stages (as AppendPhysicsPrimJson)
+          const std::map<std::string, tinyusdz::Property> *props = nullptr;
+          if (const auto *s = prim.as<tinyusdz::Skeleton>()) props = &s->props;
+          else if (const auto *a = prim.as<tinyusdz::SkelAnimation>()) props = &a->props;
+          else if (const auto *m = prim.as<tinyusdz::Material>()) props = &m->props;
+          else if (const auto *r = prim.as<tinyusdz::SkelRoot>()) props = &r->props;
+          if (props) {
+            json attrs = json::object();
+            json rels = json::object();
+            for (const auto &kv : *props) {
+              if (kv.first.rfind("mh:", 0) != 0) continue;
+              if (const tinyusdz::Attribute *at = kv.second.get_attribute_or_null()) {
+                attrs[kv.first] = MhAttrJson(*at);
+              } else if (kv.second.is_relationship()) {
+                json targets = json::array();
+                for (const auto &p : kv.second.get_relationTargets()) {
+                  targets.push_back(PathName(p));
+                }
+                rels[kv.first] = targets;
+              }
+            }
+            if (!attrs.empty() || !rels.empty()) {
+              json item;
+              item["path"] = path;
+              item["type"] = prim.type_name();
+              item["attrs"] = attrs;
+              if (!rels.empty()) item["rels"] = rels;
+              root.push_back(std::move(item));
+            }
+          }
+          for (const auto &child : prim.children()) {
+            visit(child, path + "/" + child.element_name(), depth + 1);
+          }
+        };
+    for (const auto &prim : stage.root_prims()) {
+      visit(prim, "/" + prim.element_name(), 0);
+    }
     return root.dump();
   }
 
@@ -11175,6 +11273,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("composeVariants",
                 &TinyUSDZLoaderNative::composeVariants)
 
+      .function("applyVariantSelection",
+                &TinyUSDZLoaderNative::applyVariantSelection)
+
       .function("layerToRenderScene",
                 &TinyUSDZLoaderNative::layerToRenderScene)
     
@@ -11311,6 +11412,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("exportAsUSDZWithOptions", &TinyUSDZLoaderNative::exportAsUSDZWithOptions)
       .function("exportLayerAsUSDZWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDZWithOptions)
       .function("extractPhysicsSceneJSON", &TinyUSDZLoaderNative::extractPhysicsSceneJSON)
+      .function("getMhProfileJSON", &TinyUSDZLoaderNative::getMhProfileJSON)
       .function("createSampleScene", &TinyUSDZLoaderNative::createSampleScene)
       .function("clearURDFMeshBuffers", &TinyUSDZLoaderNative::clearURDFMeshBuffers)
       .function("setVisualMesh", &TinyUSDZLoaderNative::setVisualMesh)
