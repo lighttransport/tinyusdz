@@ -54,6 +54,40 @@ std::string FirstUSDZEntryName(const std::vector<uint8_t> &data) {
                      name_len);
 }
 
+std::vector<uint8_t> MakeUnalignedStoredZipWithUSDARoot() {
+  const std::string name = "root.usda";
+  const std::string usda = "#usda 1.0\n\ndef Xform \"root\"\n{\n}\n";
+  std::vector<uint8_t> data(30, 0);
+
+  auto put16 = [&data](size_t offset, uint16_t v) {
+    data[offset + 0] = static_cast<uint8_t>(v & 0xffu);
+    data[offset + 1] = static_cast<uint8_t>((v >> 8) & 0xffu);
+  };
+  auto put32 = [&data](size_t offset, uint32_t v) {
+    data[offset + 0] = static_cast<uint8_t>(v & 0xffu);
+    data[offset + 1] = static_cast<uint8_t>((v >> 8) & 0xffu);
+    data[offset + 2] = static_cast<uint8_t>((v >> 16) & 0xffu);
+    data[offset + 3] = static_cast<uint8_t>((v >> 24) & 0xffu);
+  };
+
+  data[0] = 0x50;
+  data[1] = 0x4b;
+  data[2] = 0x03;
+  data[3] = 0x04;
+  put16(4, 20);  // version needed
+  put16(8, 0);   // stored
+  put32(18, static_cast<uint32_t>(usda.size()));
+  put32(22, static_cast<uint32_t>(usda.size()));
+  put16(26, static_cast<uint16_t>(name.size()));
+  put16(28, 0);  // no extra field, so file data starts at byte 39
+
+  data.insert(data.end(), name.begin(), name.end());
+  TEST_CHECK((data.size() % 64) != 0);
+  data.insert(data.end(), usda.begin(), usda.end());
+  data.resize(128, 0);
+  return data;
+}
+
 }  // namespace
 
 // Test 1: Basic USDZ write -> read roundtrip
@@ -147,6 +181,33 @@ void usdz_writer_is_usdz_prefix_detection_test(void) {
   std::string fmt;
   TEST_CHECK(tinyusdz::IsUSD(usdz_data.data(), prefix, &fmt));
   TEST_CHECK(fmt == "usdz");
+}
+
+void usdz_reader_loads_unaligned_stored_zip_test(void) {
+  std::vector<uint8_t> usdz_data = MakeUnalignedStoredZipWithUSDARoot();
+
+  std::string warn, err;
+  TEST_CHECK(tinyusdz::IsUSDZ(usdz_data.data(), usdz_data.size()));
+
+  bool valid = tinyusdz::ValidateUSDZ(usdz_data.data(), usdz_data.size(), &warn,
+                                      &err);
+  TEST_CHECK(!valid);
+  TEST_CHECK(err.find("not 64-byte aligned") != std::string::npos ||
+             err.find("Missing end of central directory") != std::string::npos);
+
+  tinyusdz::Stage loaded_stage;
+  warn.clear();
+  err.clear();
+  bool ret = tinyusdz::LoadUSDZFromMemory(usdz_data.data(), usdz_data.size(),
+                                          "unaligned.usdz", &loaded_stage,
+                                          &warn, &err);
+  TEST_CHECK(ret);
+  if (!ret) {
+    TEST_MSG("LoadUSDZFromMemory failed: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(warn.find("not 64-byte aligned") != std::string::npos);
+  TEST_CHECK(loaded_stage.root_prims().size() == 1);
 }
 
 void usdz_writer_root_layer_format_test(void) {
