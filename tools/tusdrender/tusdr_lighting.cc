@@ -3,7 +3,12 @@
 // specular, BRDF LUT, lat-long sampling) and legacy light collection.
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <vector>
+
+#if defined(TUSDR_WITH_TEXTOOLS)
+#include "envmap.h"
+#endif
 
 #include "image-loader.hh"
 #include "tusdr_context.hh"
@@ -244,10 +249,77 @@ void BuildBrdfLut(int size, IblCache *ibl) {
 // Build the IBL pyramids (diffuse irradiance + prefiltered specular mips + BRDF
 // LUT) from a ready environment map. Shared by the legacy (tydra texture) and
 // next (file / dome light) paths.
+namespace {
+bool g_ibl_envmap_backend = false;
+}  // namespace
+
+void SetIblBackendEnvmap(bool enabled) { g_ibl_envmap_backend = enabled; }
+
+#if defined(TUSDR_WITH_TEXTOOLS)
+// Vendored envmap-library IBL precompute (-ibl envmap): GGX prefilter,
+// irradiance and BRDF LUT computed on cubes, resampled back to the lat-long
+// EnvImages the integrator consumes. Same chain shape as the built-in path.
+static bool BuildIblFromEnvTextools(EnvImage &&env, IblCache *ibl) {
+  em_image src{};
+  src.proj = EM_PROJ_EQUIRECT;
+  src.width = env.width;
+  src.height = env.height;
+  src.channels = 3;
+  src.faces = 1;
+  src.data = &env.pixels[0].x;  // Vec3 = 3 contiguous floats
+
+  auto cube_to_latlong = [](const em_image &cube, int dstW, EnvImage *out) {
+    em_image eq{};
+    if (!EM_OK(em_convert(nullptr, &cube, EM_PROJ_EQUIRECT, dstW, &eq))) {
+      return false;
+    }
+    out->width = eq.width;
+    out->height = eq.height;
+    out->pixels.resize(size_t(eq.width) * size_t(eq.height));
+    std::memcpy(&out->pixels[0].x, eq.data,
+                out->pixels.size() * 3 * sizeof(float));
+    em_image_free(nullptr, &eq);
+    return true;
+  };
+
+  const int levels = 5;
+  em_image spec[5];
+  for (auto &l : spec) l = em_image{};
+  bool ok = EM_OK(em_prefilter_specular(nullptr, &src, 64, levels, 64, spec));
+  em_image irr{};
+  if (ok) ok = EM_OK(em_irradiance_cube(nullptr, &src, 16, 256, &irr));
+  if (ok) {
+    ibl->prefiltered.assign(size_t(levels), EnvImage{});
+    for (int l = 0; ok && l < levels; ++l) {
+      ok = cube_to_latlong(spec[l], std::max(4, 64 >> l),
+                           &ibl->prefiltered[size_t(l)]);
+    }
+  }
+  if (ok) ok = cube_to_latlong(irr, 32, &ibl->diffuse);
+  for (auto &l : spec) em_image_free(nullptr, &l);
+  em_image_free(nullptr, &irr);
+  if (!ok) return false;
+  // Same [roughness][NdotV] row-major (scale, bias) layout as BuildBrdfLut.
+  ibl->brdf_size = 64;
+  ibl->brdf_lut.assign(size_t(64) * 64 * 2, 0.0f);
+  em_brdf_lut(64, 1024, ibl->brdf_lut.data());
+  ibl->env = std::move(env);
+  ibl->valid = true;
+  return true;
+}
+#endif  // TUSDR_WITH_TEXTOOLS
+
 bool BuildIblFromEnv(EnvImage &&env, IblCache *ibl) {
   if (!ibl || env.width <= 0 || env.height <= 0 || env.pixels.empty()) {
     return false;
   }
+#if defined(TUSDR_WITH_TEXTOOLS)
+  if (g_ibl_envmap_backend) {
+    return BuildIblFromEnvTextools(std::move(env), ibl);
+  }
+#else
+  (void)g_ibl_envmap_backend;
+#endif
   ibl->env = std::move(env);
   ibl->diffuse = ConvolveDiffuseEnv(ibl->env, 32, 16);
   ibl->prefiltered.clear();
@@ -270,7 +342,12 @@ bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
   if (!DecodeTextureToEnvImage(scene, lights.dome.texture_id, &env)) {
     return false;
   }
-  return BuildIblFromEnv(std::move(env), ibl);
+  if (!BuildIblFromEnv(std::move(env), ibl)) return false;
+  ibl->rotated = lights.dome_rotated;
+  ibl->rx = lights.dome_rx;
+  ibl->ry = lights.dome_ry;
+  ibl->rz = lights.dome_rz;
+  return true;
 }
 
 // Load a lat-long environment map (HDR float, or 8-bit) from a file into an
@@ -427,7 +504,7 @@ void CollectLights(const RenderScene &scene, LightCache *cache) {
       case RenderLight::Type::Geometry:
         AddFiniteLight(light, PreviewLight::Kind::Mesh, cache);
         break;
-      case RenderLight::Type::Dome:
+      case RenderLight::Type::Dome: {
         cache->has_dome = true;
         cache->dome.kind = PreviewLight::Kind::Dome;
         cache->dome.radiance = LightColor(light);
@@ -436,7 +513,35 @@ void CollectLights(const RenderScene &scene, LightCache *cache) {
         cache->dome.texture_file = light.textureFile;
         cache->env_color = Add(cache->env_color, cache->dome.radiance);
         cache->env_cdf.clear();
+        // Dome orientation: local axes in world = normalized rows of the world
+        // rotation. Flagged only when meaningfully non-identity so
+        // untransformed domes stay byte-identical (matches the next path).
+        {
+          Vec3 ax{light.transform.m[0][0], light.transform.m[0][1],
+                  light.transform.m[0][2]};
+          Vec3 ay{light.transform.m[1][0], light.transform.m[1][1],
+                  light.transform.m[1][2]};
+          Vec3 az{light.transform.m[2][0], light.transform.m[2][1],
+                  light.transform.m[2][2]};
+          const float la = Length(ax), lb = Length(ay), lc = Length(az);
+          if (la > 1.0e-8f && lb > 1.0e-8f && lc > 1.0e-8f) {
+            ax = Mul(ax, 1.0f / la);
+            ay = Mul(ay, 1.0f / lb);
+            az = Mul(az, 1.0f / lc);
+            const float dev =
+                std::fabs(ax.x - 1.0f) + std::fabs(ax.y) + std::fabs(ax.z) +
+                std::fabs(ay.x) + std::fabs(ay.y - 1.0f) + std::fabs(ay.z) +
+                std::fabs(az.x) + std::fabs(az.y) + std::fabs(az.z - 1.0f);
+            if (dev > 1.0e-6f) {
+              cache->dome_rotated = true;
+              cache->dome_rx = ax;
+              cache->dome_ry = ay;
+              cache->dome_rz = az;
+            }
+          }
+        }
         break;
+      }
       case RenderLight::Type::Portal:
         std::cerr << "WARN: PortalLight ignored: " << light.name << "\n";
         break;

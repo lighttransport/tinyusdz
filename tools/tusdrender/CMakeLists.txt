@@ -78,6 +78,12 @@ target_link_libraries(tusdrender
   lightrt_c
 )
 
+# Vendored texture tools: the opt-in `-ibl envmap` DomeLight IBL backend.
+if(TINYUSDZ_WITH_TEXTOOLS)
+  target_link_libraries(tusdrender tinyusdz_textools)
+  target_compile_definitions(tusdrender PRIVATE TUSDR_WITH_TEXTOOLS)
+endif()
+
 # tusdrender uses the experimental `next` lazy loader (fast, low-memory USDC
 # parse) as the default for the RT preview path, plus tydra_next for bit-exact
 # world transforms. Build those targets on demand and link them.

@@ -90,6 +90,48 @@ extern "C" {
 // tusdr names they use (Vec3, Options, RTPreviewStats, qjs::*, ...).
 using namespace tusdr;
 
+namespace {
+
+uint8_t FloatToByte(float v) {
+  if (!std::isfinite(v)) return 0;
+  v = std::max(0.0f, std::min(1.0f, v));
+  return static_cast<uint8_t>(std::round(v * 255.0f));
+}
+
+tinyusdz::Image MakeBlankImage(const Options &opt, int height) {
+  tinyusdz::Image img;
+  img.width = std::max(1, opt.width);
+  img.height = std::max(1, height);
+  img.channels = 4;
+  img.bpp = 8;
+  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.data.resize(size_t(img.width) * size_t(img.height) * 4);
+  const uint8_t r = FloatToByte(opt.bg.x);
+  const uint8_t g = FloatToByte(opt.bg.y);
+  const uint8_t b = FloatToByte(opt.bg.z);
+  for (size_t i = 0; i + 3 < img.data.size(); i += 4) {
+    img.data[i + 0] = r;
+    img.data[i + 1] = g;
+    img.data[i + 2] = b;
+    img.data[i + 3] = 255;
+  }
+  return img;
+}
+
+bool WriteBlankImage(const Options &opt, int height) {
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
+  auto ret = tinyusdz::image::WriteImageToFile(
+      opt.output, MakeBlankImage(opt, height), wopt);
+  if (!ret) {
+    std::cerr << "Failed to write image: " << ret.error() << "\n";
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
 static const char *LargeSceneProfileName(Options::LargeSceneProfile p) {
   switch (p) {
     case Options::LargeSceneProfile::Off: return "off";
@@ -704,6 +746,7 @@ int main(int argc, char **argv) {
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
   }
+  SetIblBackendEnvmap(opt.ibl_envmap);
   ApplyLargeSceneProfile(&opt);
 
   // Configure the process memory budget: -maxMem <GiB>, else auto
@@ -1000,8 +1043,10 @@ int main(int argc, char **argv) {
     }
 
     if (geos.empty()) {
-      std::cerr << "No renderable geometry found.\n";
-      return EXIT_FAILURE;
+      std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
+      return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
+                 ? EXIT_SUCCESS
+                 : EXIT_FAILURE;
     }
 
     // Resolve camera.
@@ -1246,6 +1291,12 @@ int main(int argc, char **argv) {
       std::cerr << rt_err << "\n";
       return EXIT_FAILURE;
     }
+    if (tris.empty()) {
+      std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
+      return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
+                 ? EXIT_SUCCESS
+                 : EXIT_FAILURE;
+    }
 
     lrt_tri_build_options build_opts;
     std::memset(&build_opts, 0, sizeof(build_opts));
@@ -1396,8 +1447,10 @@ int main(int argc, char **argv) {
   ExpandBoundsByVolume(volumes, &bounds);
 
   if (tris.empty() && !has_direct && volumes.empty()) {
-    std::cerr << "No renderable geometry found.\n";
-    return EXIT_FAILURE;
+    std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
+    return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
+               ? EXIT_SUCCESS
+               : EXIT_FAILURE;
   }
 
   lrt_tri_build_options build_opts;
