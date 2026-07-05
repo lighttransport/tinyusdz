@@ -113,6 +113,9 @@ float GeometrySmith(float ndotv, float ndotl, float roughness);
 void BuildBrdfLut(int size, IblCache *ibl);
 
 bool BuildIblFromEnv(EnvImage &&env, IblCache *ibl);
+// -ibl envmap: switch BuildIblFromEnv to the vendored envmap-library backend
+// (opt-in; no-op when built without TUSDR_WITH_TEXTOOLS).
+void SetIblBackendEnvmap(bool enabled);
 
 bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
                    IblCache *ibl);

@@ -50,6 +50,17 @@ std::vector<int64_t> ReadInt64ArrayLazy(const tinyusdz::next::UsdPrim &prim,
   return tinyusdz::tydra::next::ReadInt64ArrayCopy(prim, name, time);
 }
 
+bool PointInstanceHidden(size_t index, size_t instance_count,
+                         const std::vector<int64_t> &ids,
+                         const std::unordered_set<int64_t> &hidden) {
+  if (hidden.empty()) return false;
+  if (ids.size() == instance_count) return hidden.count(ids[index]) != 0;
+  if (index > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+    return false;
+  }
+  return hidden.count(static_cast<int64_t>(index)) != 0;
+}
+
 // Templated on the output buffer type so the flat path can stream into plain
 // std::vector (ctx.tris) while the instanced path streams into the budget-tracked
 // Blas FloatVec/TriVec (so the big instanced geometry is capped/pooled).
@@ -1401,10 +1412,11 @@ size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
 // Expand a UsdGeomPointInstancer into world-space MeshJobNext placements for the
 // GPU flatten path. Mirrors CollectPointInstancer's instance iteration (same
 // prototype resolution by child name -> stage path, same InstanceTRS *
-// instancer_world transform, same invisibleIds skip), but instead of reserving a
-// shared BLAS + emitting an InstanceRT it bakes each prototype's mesh jobs to
-// world space per instance. Each prototype's local mesh jobs are collected once
-// (with nested instancers expanded recursively) and re-placed per instance.
+// instancer_world transform, same invisibleIds/inactiveIds skip), but instead of
+// reserving a shared BLAS + emitting an InstanceRT it bakes each prototype's
+// mesh jobs to world space per instance. Each prototype's local mesh jobs are
+// collected once (with nested instancers expanded recursively) and re-placed per
+// instance.
 static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::Stage &stage,
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
@@ -1456,15 +1468,18 @@ static void ExpandPointInstancerJobsNext(
   const std::vector<float> scales = ReadFloatArrayLazy(instancer, "scales", time);
   const std::vector<int64_t> invisible =
       ReadInt64ArrayLazy(instancer, "invisibleIds", time);
-  const std::unordered_set<int64_t> invisible_set(invisible.begin(),
-                                                  invisible.end());
+  const std::vector<int64_t> inactive =
+      ReadInt64ArrayLazy(instancer, "inactiveIds", time);
+  const std::vector<int64_t> ids = ReadInt64ArrayLazy(instancer, "ids", time);
+  std::unordered_set<int64_t> hidden_set(invisible.begin(), invisible.end());
+  hidden_set.insert(inactive.begin(), inactive.end());
 
   static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   for (size_t i = 0; i < n; ++i) {
     if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
       break;  // instance budget reached
-    if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
+    if (PointInstanceHidden(i, n, ids, hidden_set)) continue;
     const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
     if (pidx < 0 || size_t(pidx) >= targets->size()) continue;
     const std::vector<MeshJobNext> &pjobs = get_proto_jobs(size_t(pidx));
@@ -1993,9 +2008,10 @@ int32_t ReserveCurveProto(const tinyusdz::next::Stage &stage,
 // relationship; they are normally descendants of the instancer, so we resolve
 // each target by leaf name among the instancer's children first (robust to
 // whether composition re-rooted the authored target paths) and fall back to an
-// absolute stage lookup. `invisibleIds` are skipped. The instancer's children
-// are the prototypes, so the caller must NOT descend into it. Curve prototypes
-// are deduped into a curve BLAS and instanced through the same TLAS as meshes.
+// absolute stage lookup. `invisibleIds`/`inactiveIds` are skipped. The
+// instancer's children are the prototypes, so the caller must NOT descend into
+// it. Curve prototypes are deduped into a curve BLAS and instanced through the
+// same TLAS as meshes.
 void CollectPointInstancer(const tinyusdz::next::Stage &stage,
                            const tinyusdz::next::UsdPrim &instancer,
                            const matrix4d &instancer_world,
@@ -2061,14 +2077,17 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
   const std::vector<float> scales = ReadFloatArrayLazy(instancer, "scales", time);
   const std::vector<int64_t> invisible =
       ReadInt64ArrayLazy(instancer, "invisibleIds", time);
-  const std::unordered_set<int64_t> invisible_set(invisible.begin(),
-                                                  invisible.end());
+  const std::vector<int64_t> inactive =
+      ReadInt64ArrayLazy(instancer, "inactiveIds", time);
+  const std::vector<int64_t> ids = ReadInt64ArrayLazy(instancer, "ids", time);
+  std::unordered_set<int64_t> hidden_set(invisible.begin(), invisible.end());
+  hidden_set.insert(inactive.begin(), inactive.end());
 
   static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   size_t emitted = 0;
   for (size_t i = 0; i < n; ++i) {
-    if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
+    if (PointInstanceHidden(i, n, ids, hidden_set)) continue;
     const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
     if (pidx < 0 || size_t(pidx) >= proto_blas.size()) continue;
     const int32_t blas_id = proto_blas[size_t(pidx)];

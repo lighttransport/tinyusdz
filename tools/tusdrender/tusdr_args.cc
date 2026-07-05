@@ -114,6 +114,8 @@ void PrintUsage(const char *prog) {
       << "  -noShadows             Disable hard shadow rays.\n"
       << "  -smooth                Interpolate authored normals (smooth shading)\n"
       << "                         instead of per-face geometric normals.\n"
+      << "  -ibl <default|envmap>  DomeLight IBL precompute backend: the built-in\n"
+      << "                         reference, or the vendored envmap library.\n"
       << "  -noDisplace            Disable UsdPreviewSurface displacement.\n"
       << "  -displaceScale <f>     Global displacement multiplier (default 1.0).\n"
       << "  -rtPreview             Use mmap zero-copy mesh preview path for large USDC.\n"
@@ -315,6 +317,17 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
     } else if (a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
+    } else if (a == "-ibl" || a == "--ibl") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "default") {
+        opt->ibl_envmap = false;
+      } else if (std::string(v) == "envmap") {
+        opt->ibl_envmap = true;
+      } else {
+        std::cerr << "-ibl must be default or envmap.\n";
+        return false;
+      }
     } else if (a == "-noDisplace" || a == "--noDisplace") {
       opt->displace = false;
     } else if (a == "-texMaxSize" || a == "--texMaxSize") {

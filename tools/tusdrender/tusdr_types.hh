@@ -438,6 +438,13 @@ struct LightCache {
   std::vector<float> env_cdf;
   bool has_dome{false};
   PreviewLight dome;
+  // Dome orientation (local axes in world, normalized rows of the dome's world
+  // rotation); copied into IblCache::rx/ry/rz so authored dome rotations
+  // orient the environment. Identity + !rotated when untransformed.
+  bool dome_rotated{false};
+  Vec3 dome_rx{1.0f, 0.0f, 0.0f};
+  Vec3 dome_ry{0.0f, 1.0f, 0.0f};
+  Vec3 dome_rz{0.0f, 0.0f, 1.0f};
   Vec3 env_color{0.0f, 0.0f, 0.0f};
 };
 
@@ -510,6 +517,7 @@ struct Options {
   bool rt_preview{false};
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool smooth{false};       // interpolate authored normals (smooth shading)
+  bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
   lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
   int threads{0};
