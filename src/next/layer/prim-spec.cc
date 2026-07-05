@@ -331,29 +331,47 @@ TimeSampleStorage::TimeSampleStorage() {
 
 TimeSampleStorage::~TimeSampleStorage() = default;
 
+void TimeSampleStorage::rehash_dedup(size_t new_bucket_count) {
+  dedup_.buckets.assign(new_bucket_count, ValueDedupIndex::kInvalid);
+  const uint32_t mask = static_cast<uint32_t>(new_bucket_count - 1);
+  for (uint32_t i = 0; i < dedup_.entries.size(); ++i) {
+    const uint32_t slot = static_cast<uint32_t>(dedup_.entries[i].hash & mask);
+    dedup_.entries[i].next = dedup_.buckets[slot];
+    dedup_.buckets[slot] = i;
+  }
+}
+
 uint32_t TimeSampleStorage::find_or_store(Value value) {
   // Compute hash
   uint64_t h = value.hash();
 
-  // Check for existing value with same hash
-  auto it = hash_to_offsets_.find(h);
-  if (it != hash_to_offsets_.end()) {
-    // Check each offset for equality (handle hash collisions)
-    for (uint32_t offset : it->second) {
-      if (values_[offset] == value) {
-        // Found duplicate - reuse existing offset
+  // Probe the bucket chain for an equal value (handles hash collisions). Since
+  // values_ holds only unique values, at most one entry can match.
+  if (!dedup_.buckets.empty()) {
+    const uint32_t mask = static_cast<uint32_t>(dedup_.buckets.size() - 1);
+    for (uint32_t e = dedup_.buckets[h & mask]; e != ValueDedupIndex::kInvalid;
+         e = dedup_.entries[e].next) {
+      const ValueDedupIndex::Entry& ent = dedup_.entries[e];
+      if (ent.hash == h && values_[ent.offset] == value) {
         ++dedup_count_;
-        return offset;
+        return ent.offset;
       }
     }
   }
 
-  // Store new value
+  // Store new value.
   uint32_t offset = static_cast<uint32_t>(values_.size());
   values_.push_back(std::move(value));
 
-  // Add to hash table
-  hash_to_offsets_[h].push_back(offset);
+  // Grow the bucket array when the load factor would exceed ~0.5.
+  if (dedup_.buckets.empty() ||
+      (dedup_.entries.size() + 1) * 2 >= dedup_.buckets.size()) {
+    rehash_dedup(dedup_.buckets.empty() ? 16 : dedup_.buckets.size() * 2);
+  }
+  const uint32_t mask = static_cast<uint32_t>(dedup_.buckets.size() - 1);
+  const uint32_t slot = static_cast<uint32_t>(h & mask);
+  dedup_.entries.push_back({h, offset, dedup_.buckets[slot]});
+  dedup_.buckets[slot] = static_cast<uint32_t>(dedup_.entries.size() - 1);
 
   return offset;
 }
@@ -454,10 +472,8 @@ size_t TimeSampleStorage::memory_usage() const {
     size += kv.second.capacity() * sizeof(std::pair<double, uint32_t>);
   }
 
-  // Hash table
-  for (const auto& kv : hash_to_offsets_) {
-    size += kv.second.capacity() * sizeof(uint32_t);
-  }
+  // Dedup index
+  size += dedup_.memory_bytes();
 
   return size;
 }
@@ -465,7 +481,7 @@ size_t TimeSampleStorage::memory_usage() const {
 void TimeSampleStorage::clear() {
   samples_.clear();
   values_.clear();
-  hash_to_offsets_.clear();
+  dedup_.reset();
   dedup_count_ = 0;
 }
 
@@ -473,7 +489,12 @@ void TimeSampleStorage::release_payloads() {
   for (auto& v : values_) v = Value();
   // The dedup index only accelerates future add()s; a released store is
   // write-and-discard, so free it too.
-  hash_to_offsets_.clear();
+  dedup_.free();
+}
+
+void TimeSampleStorage::drop_dedup_index() {
+  // Return the index storage to the allocator (both flat vectors).
+  dedup_.free();
 }
 
 TimeSampleStorage::Stats TimeSampleStorage::stats() const {
@@ -769,6 +790,12 @@ void PrimSpec::reserve_properties(size_t count) {
 
 void PrimSpec::finalize_properties() {
   props_.sort();
+  // A finalized layer is immutable: no more time samples will be added, so free
+  // the per-storage value-dedup index (hash -> offsets). For heavily
+  // time-sampled scenes this is the dominant memory cost and is held twice
+  // (source layer + composed layer). Sample values/offsets are untouched, so
+  // output is byte-identical.
+  if (time_samples_) time_samples_->drop_dedup_index();
 }
 
 void PrimSpec::mark_property_time_sampled(PropNameId name_id) {
