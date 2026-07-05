@@ -2397,6 +2397,26 @@ if(TINYUSDZ_BUILD_TESTS)
       SKIP_RETURN_CODE 77
       LABELS "viewer")
 
+    # tusdview: cross-backend renderer parity (§9). Renders the curated models in
+    # Vulkan raster, Vulkan ray query, and CUDA RT and asserts they draw the same
+    # triangle count -- a shading-independent geometry invariant that catches a
+    # backend silently dropping geometry (pixel comparison is unreliable across
+    # backends due to legitimate lighting/tone differences, which are reported
+    # informationally via silhouette coverage). Deterministic + portable (counts
+    # match regardless of GPU); SKIPs when fewer than two backends are available,
+    # so it is a no-op on GPU-less CI.
+    add_test(
+      NAME tusdview-backend-parity
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh
+    )
+    set_tests_properties(tusdview-backend-parity PROPERTIES
+      ENVIRONMENT
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDVIEW_PARITY_FILES=skintest.usda texture-cat-plane.usdz tusdview-analytic-prims.usda tusdview-transparency.usda blendshape.usda tusdview-nurbs-patch.usda tri-torus-shared-normal.usda mtlx-normalmap-cube.usda"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 600
+      LABELS "viewer")
+
     #
     # tusdview: Vulkan backend run test. Renders headless via --backend vk and
     # --rt (ray query) and asserts a non-blank frame. Needs a real Vulkan device
