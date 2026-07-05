@@ -1313,6 +1313,10 @@ struct RenderMesh {
       0.18f, 0.18f,
       0.18f};  // displayColor primvar(The number of array elements = 1) in USD.
                // default is set to the same in UsdPreviewSurface::diffuseColor
+  // True when a constant (single-element) primvars:displayColor was authored on
+  // the prim and stored in `displayColor` above (vs the 0.18 default). Lets a
+  // consumer distinguish an authored constant color from the fallback.
+  bool has_authored_displayColor{false};
   float displayOpacity{
       1.0};  // displayOpacity primvar(The number of array elements = 1) in USD
   bool is_rightHanded{true};  // orientation attribute in USD.

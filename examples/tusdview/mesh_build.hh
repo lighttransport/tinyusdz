@@ -18,6 +18,11 @@ namespace tusdview {
 // purpose today.
 void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw);
 
+// Derive the raster preview key light (draw->previewLightDir/Color/hasPreview
+// Light) from draw->lights. Called by BuildDrawScene; also usable by the `next`
+// loader, which assembles its own DrawScene.
+void UpdatePreviewLight(DrawScene* draw);
+
 // Convert `rs` (already triangulated + single-indexed by the converter) into a
 // renderable DrawScene: interleaved vertices, per-material submeshes, world
 // transforms (from the node hierarchy), decoded RGBA8 textures and a world-space

@@ -27,7 +27,12 @@
 #include "value-types.hh"              // value::matrix4d / quatf / double3
 #include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
 #include "io-util.hh"                  // io::GetBaseDir
+#include "image-loader.hh"             // DomeLight envmap decode (IBL bake)
+#include "mesh_build.hh"               // UpdatePreviewLight
+#include "texture_tools.hh"            // TexToolsBuildDomeIbl / ProbeToEquirect
 #include "usdVol.hh"                   // OpenVDB (.vdb) loader
+
+#include <chrono>
 
 namespace tusdview {
 
@@ -99,6 +104,18 @@ std::vector<int32_t> ReadInts(const tnext::UsdPrim& p, const char* name, double 
 std::vector<int64_t> ReadInt64s(const tnext::UsdPrim& p, const char* name, double t) {
   return tydn::ReadInt64ArrayCopy(p, name, t);
 }
+
+bool PointInstanceHidden(size_t index, size_t instance_count,
+                         const tydn::ValueArrayRead<int64_t>& ids,
+                         const std::unordered_set<int64_t>& hidden) {
+  if (hidden.empty()) return false;
+  if (ids.size() == instance_count) return hidden.count(ids[index]) != 0;
+  if (index > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+    return false;
+  }
+  return hidden.count(static_cast<int64_t>(index)) != 0;
+}
+
 // Linearly-interpolated float-array read across time samples (the next stage's
 // GetValueAtTime/GetInterpolatedValue snap to the nearest sample for arrays).
 // Brackets `t` between the two surrounding samples and lerps element-wise; falls
@@ -780,12 +797,17 @@ void EmitInstancedProto(const tnext::Stage& stage,
       tydn::ReadFloatArray(ni, "scales", time, &scales);
       tydn::ValueArrayRead<int64_t> invis;
       tydn::ReadInt64Array(ni, "invisibleIds", time, &invis);
-      const std::unordered_set<int64_t> invisSet(invis.begin(), invis.end());
+      tydn::ValueArrayRead<int64_t> inactive;
+      tydn::ReadInt64Array(ni, "inactiveIds", time, &inactive);
+      tydn::ValueArrayRead<int64_t> ids;
+      tydn::ReadInt64Array(ni, "ids", time, &ids);
+      std::unordered_set<int64_t> hiddenSet(invis.begin(), invis.end());
+      hiddenSet.insert(inactive.begin(), inactive.end());
       const std::vector<tnext::Path>* iprotos = ni.GetRelationship("prototypes");
       if (!iprotos) continue;
       std::vector<std::vector<uint32_t>> byProto(iprotos->size());
       for (size_t i = 0; i < n; ++i) {
-        if (!invisSet.empty() && invisSet.count(int64_t(i))) continue;
+        if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
         const int pix = (i < protoIdx.size()) ? protoIdx[i] : 0;
         if (pix >= 0 && pix < int(iprotos->size())) byProto[pix].push_back(uint32_t(i));
       }
@@ -943,6 +965,260 @@ void BuildNextMorphWeights(
   }
 }
 
+// IEEE binary16 -> float32 (EXR half envmaps).
+static float NextHalfToFloat(uint16_t h) {
+  const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+  uint32_t exp = (h >> 10) & 0x1Fu;
+  uint32_t man = h & 0x3FFu;
+  uint32_t bits;
+  if (exp == 0) {
+    if (man == 0) {
+      bits = sign;
+    } else {
+      exp = 127 - 15 + 1;
+      while (!(man & 0x400u)) {
+        man <<= 1;
+        --exp;
+      }
+      man &= 0x3FFu;
+      bits = sign | (exp << 23) | (man << 13);
+    }
+  } else if (exp == 31) {
+    bits = sign | 0x7F800000u | (man << 13);
+  } else {
+    bits = sign | ((exp - 15 + 127) << 23) | (man << 13);
+  }
+  float f;
+  std::memcpy(&f, &bits, sizeof(f));
+  return f;
+}
+
+// DomeLight support for the `next` path: walk the stage for DomeLight prims,
+// decode the envmap to float RGB (8-bit treated as linear, matching the tydra
+// dome loader), and bake the split-sum IBL so raster ambient / instanced
+// ambient / RT miss backgrounds light up on the large-scene path too.
+void BuildNextLights(const tnext::Stage& stage, const std::string& usdPath,
+                     double time, const TextureRuntimeOptions& texOpts,
+                     DrawScene* draw) {
+  const std::string baseDir = tinyusdz::io::GetBaseDir(usdPath);
+
+  std::function<void(const tnext::UsdPrim&)> rec = [&](const tnext::UsdPrim& p) {
+    if (p.GetTypeName() == "DomeLight" || p.GetTypeName() == "DomeLight_1") {
+      DrawLightCPU light;
+      light.type = DrawLightCPU::Type::Dome;
+      light.name = p.GetName();
+      light.absPath = p.GetPath().str();
+
+      double w16[16];
+      if (tydn::ComputeWorldTransform(stage, p, w16, time)) {
+        for (int i = 0; i < 16; ++i) {
+          light.transform[i] = static_cast<float>(w16[i]);
+        }
+      } else {
+        for (int i = 0; i < 16; ++i) light.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
+      }
+
+      auto readF = [&](const char* name, float fallback) {
+        if (const tnext::Value* v = p.GetPropertyValue(name)) {
+          if (const float* f = v->as_float()) return *f;
+        }
+        return fallback;
+      };
+      light.intensity = readF("inputs:intensity", 1.0f);
+      light.exposure = readF("inputs:exposure", 0.0f);
+      if (const tnext::Value* v = p.GetPropertyValue("inputs:color")) {
+        if (const float* c = v->as_float3()) {
+          light.color[0] = c[0];
+          light.color[1] = c[1];
+          light.color[2] = c[2];
+        }
+      }
+      const float scale = light.intensity * std::pow(2.0f, light.exposure);
+      for (int c = 0; c < 3; ++c) {
+        light.effectiveColor[c] = light.color[c] * scale;
+        light.normalizedColor[c] = light.color[c];
+      }
+      light.effectiveIntensity = scale;
+
+      light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Automatic;
+      if (const tnext::Value* v = p.GetPropertyValue("inputs:texture:format")) {
+        if (const std::string* tk = v->as_token()) {
+          if (*tk == "latlong")
+            light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Latlong;
+          else if (*tk == "mirroredBall")
+            light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::MirroredBall;
+          else if (*tk == "angular")
+            light.domeTextureFormat = DrawLightCPU::DomeTextureFormat::Angular;
+        }
+      }
+
+      const tnext::Value* fv = p.GetPropertyValue("inputs:texture:file");
+      const std::string* ap = fv ? fv->as_asset_path() : nullptr;
+      if (ap && !ap->empty()) {
+        light.textureFile = *ap;
+        std::string tpath = *ap;
+        if (!tpath.empty() && tpath[0] != '/' && !baseDir.empty()) {
+          tpath = baseDir + "/" + tpath;
+        }
+        if (texOpts.domeIbl > 0 && TexToolsAvailable()) {
+          const auto t0 = std::chrono::steady_clock::now();
+          std::vector<float> rgb;
+          int ew = 0, eh = 0;
+          auto res = tinyusdz::image::LoadImageFromFile(tpath);
+          if (res) {
+            const tinyusdz::Image& img = res.value().image;
+            const size_t npix =
+                static_cast<size_t>(img.width) * static_cast<size_t>(img.height);
+            const int ch = img.channels;
+            if (img.width > 0 && img.height > 0 && ch >= 1) {
+              rgb.resize(npix * 3);
+              bool decoded = true;
+              if (img.format == tinyusdz::Image::PixelFormat::Float &&
+                  img.bpp == 32) {
+                const float* px = reinterpret_cast<const float*>(img.data.data());
+                for (size_t i = 0; i < npix; ++i) {
+                  const float c0 = px[i * ch + 0];
+                  rgb[i * 3 + 0] = c0;
+                  rgb[i * 3 + 1] = ch > 1 ? px[i * ch + 1] : c0;
+                  rgb[i * 3 + 2] = ch > 2 ? px[i * ch + 2] : c0;
+                }
+              } else if (img.format == tinyusdz::Image::PixelFormat::Float &&
+                         img.bpp == 16) {
+                const uint16_t* px =
+                    reinterpret_cast<const uint16_t*>(img.data.data());
+                for (size_t i = 0; i < npix; ++i) {
+                  const float c0 = NextHalfToFloat(px[i * ch + 0]);
+                  rgb[i * 3 + 0] = c0;
+                  rgb[i * 3 + 1] = ch > 1 ? NextHalfToFloat(px[i * ch + 1]) : c0;
+                  rgb[i * 3 + 2] = ch > 2 ? NextHalfToFloat(px[i * ch + 2]) : c0;
+                }
+              } else if (img.bpp == 8) {
+                const uint8_t* px = img.data.data();
+                for (size_t i = 0; i < npix; ++i) {
+                  const float c0 = static_cast<float>(px[i * ch + 0]) / 255.0f;
+                  rgb[i * 3 + 0] = c0;
+                  rgb[i * 3 + 1] =
+                      ch > 1 ? static_cast<float>(px[i * ch + 1]) / 255.0f : c0;
+                  rgb[i * 3 + 2] =
+                      ch > 2 ? static_cast<float>(px[i * ch + 2]) / 255.0f : c0;
+                }
+              } else {
+                decoded = false;
+              }
+              if (decoded) {
+                ew = img.width;
+                eh = img.height;
+                if (light.domeTextureFormat ==
+                        DrawLightCPU::DomeTextureFormat::MirroredBall ||
+                    light.domeTextureFormat ==
+                        DrawLightCPU::DomeTextureFormat::Angular) {
+                  std::vector<float> eq;
+                  int eqH = 0;
+                  const int eqW = std::min(2048, std::max(256, 2 * ew));
+                  if (TexToolsProbeToEquirect(
+                          rgb.data(), ew, eh,
+                          static_cast<int>(light.domeTextureFormat), eqW, &eq,
+                          &eqH)) {
+                    rgb = std::move(eq);
+                    ew = eqW;
+                    eh = eqH;
+                  } else {
+                    decoded = false;
+                  }
+                }
+              }
+              if (decoded &&
+                  TexToolsBuildDomeIbl(rgb.data(), ew, eh, texOpts.domeIbl >= 2,
+                                       &light.ibl)) {
+                const double ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count();
+                fprintf(stderr,
+                        "[tusdview] dome IBL bake (next) '%s': %dx%d -> spec %d/irr %d in %.0f ms\n",
+                        light.name.c_str(), ew, eh, light.ibl.specFaceSize,
+                        light.ibl.irrFaceSize, ms);
+              }
+            }
+          } else {
+            fprintf(stderr, "[tusdview] dome envmap load failed (next): %s\n",
+                    tpath.c_str());
+          }
+        }
+      }
+      draw->lights.push_back(std::move(light));
+    } else {
+      // Non-dome lights: enough for the raster preview key-light derivation
+      // (UpdatePreviewLight uses a Distant light's direction, else a finite
+      // light's position). Type name -> DrawLightCPU::Type.
+      const std::string ty = p.GetTypeName();
+      DrawLightCPU::Type lt = DrawLightCPU::Type::Point;
+      bool isLight = true;
+      if (ty == "DistantLight" || ty == "DistantLight_1")
+        lt = DrawLightCPU::Type::Distant;
+      else if (ty == "SphereLight")
+        lt = DrawLightCPU::Type::Sphere;
+      else if (ty == "RectLight")
+        lt = DrawLightCPU::Type::Rect;
+      else if (ty == "DiskLight")
+        lt = DrawLightCPU::Type::Disk;
+      else if (ty == "CylinderLight")
+        lt = DrawLightCPU::Type::Cylinder;
+      else
+        isLight = false;
+
+      if (isLight) {
+        DrawLightCPU light;
+        light.type = lt;
+        light.name = p.GetName();
+        light.absPath = p.GetPath().str();
+
+        double w16[16];
+        const bool haveXf = tydn::ComputeWorldTransform(stage, p, w16, time);
+        if (haveXf) {
+          for (int i = 0; i < 16; ++i) {
+            light.transform[i] = static_cast<float>(w16[i]);
+          }
+          // Row 3 = translation (position); light faces local -Z, so the
+          // emission direction is -(row 2). Matches the tydra RenderLight
+          // derivation (render-data.cc).
+          light.position[0] = static_cast<float>(w16[12]);
+          light.position[1] = static_cast<float>(w16[13]);
+          light.position[2] = static_cast<float>(w16[14]);
+          light.direction[0] = -static_cast<float>(w16[8]);
+          light.direction[1] = -static_cast<float>(w16[9]);
+          light.direction[2] = -static_cast<float>(w16[10]);
+        }
+
+        auto readF = [&](const char* name, float fallback) {
+          if (const tnext::Value* v = p.GetPropertyValue(name)) {
+            if (const float* f = v->as_float()) return *f;
+          }
+          return fallback;
+        };
+        light.intensity = readF("inputs:intensity", 1.0f);
+        light.exposure = readF("inputs:exposure", 0.0f);
+        if (const tnext::Value* v = p.GetPropertyValue("inputs:color")) {
+          if (const float* c = v->as_float3()) {
+            light.color[0] = c[0];
+            light.color[1] = c[1];
+            light.color[2] = c[2];
+          }
+        }
+        const float sc = light.intensity * std::pow(2.0f, light.exposure);
+        for (int c = 0; c < 3; ++c) {
+          light.effectiveColor[c] = light.color[c] * sc;
+          light.normalizedColor[c] = light.color[c];
+        }
+        light.effectiveIntensity = sc;
+        draw->lights.push_back(std::move(light));
+      }
+    }
+    for (const tnext::UsdPrim& child : p.GetChildren()) rec(child);
+  };
+  for (const tnext::UsdPrim& root : stage.GetRootPrims()) rec(root);
+}
+
 // UsdVol volumes for the `next` path: walk the stage, find Volume prims,
 // resolve each `field:*` relationship to its field-asset prim, load the .vdb
 // (relative to the USD file dir), and emit a DrawVolumeCPU. Extends `bounds`
@@ -1095,7 +1371,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       tydn::ReadFloatArray(p, "scales", time, &scales);
       tydn::ValueArrayRead<int64_t> invis;
       tydn::ReadInt64Array(p, "invisibleIds", time, &invis);
-      std::unordered_set<int64_t> invisSet(invis.begin(), invis.end());
+      tydn::ValueArrayRead<int64_t> inactive;
+      tydn::ReadInt64Array(p, "inactiveIds", time, &inactive);
+      tydn::ValueArrayRead<int64_t> ids;
+      tydn::ReadInt64Array(p, "ids", time, &ids);
+      std::unordered_set<int64_t> hiddenSet(invis.begin(), invis.end());
+      hiddenSet.insert(inactive.begin(), inactive.end());
       // Optional per-instance displayColor on the instancer (rgb/instance).
       tydn::ValueArrayRead<float> instCol;
       tydn::ReadFloatArray(p, "primvars:displayColor", time, &instCol);
@@ -1106,7 +1387,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         // Bucket instance indices by prototype for an O(instances) pass.
         std::vector<std::vector<uint32_t>> byProto(protos->size());
         for (size_t i = 0; i < n; ++i) {
-          if (!invisSet.empty() && invisSet.count(int64_t(i))) continue;
+          if (PointInstanceHidden(i, n, ids, hiddenSet)) continue;
           int pi = (i < protoIdx.size()) ? protoIdx[i] : 0;
           if (pi >= 0 && pi < int(protos->size())) byProto[pi].push_back(uint32_t(i));
         }
@@ -1324,6 +1605,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
   // UsdVol volumes (OpenVDB): emit DrawVolumeCPU + extend bounds.
   BuildNextVolumes(stage, path, time, draw, &bounds);
+  BuildNextLights(stage, path, time, opts.textureOptions, draw);
 
   if (bounds.has) {
     for (int k = 0; k < 3; ++k) {
@@ -1331,6 +1613,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
     draw->hasBounds = true;
   }
+
+  // Derive the raster preview key light from the lights BuildNextLights added
+  // (after bounds, so finite-light directions use the scene center).
+  UpdatePreviewLight(draw);
 
   // Purpose breakdown (so the GUI's purpose toggles have something to hide).
   size_t nGuide = 0, nProxy = 0, nRender = 0;

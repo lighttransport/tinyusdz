@@ -19,7 +19,8 @@
 #
 # Usage (from the repo root, after building build/tusdview):
 #   examples/tusdview/tests/run-vk-render.sh
-# Overrides: TUSDVIEW=<binary>  ASSET=<usd file>  OPACITY_ASSET=<usd file>
+# Overrides: TUSDVIEW=<binary>  ASSET=<usd file>
+#            CURVES_ASSET=<usd file>  NURBS_ASSET=<usd file>
 #            TUSDVIEW_RENDER_TIMEOUT=30s
 # Also run via ctest: `ctest -R tusdview-vk-render`.
 set -uo pipefail
@@ -29,7 +30,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TUSDVIEW="${TUSDVIEW:-$REPO_ROOT/build/tusdview}"
 ASSET="${ASSET:-$REPO_ROOT/models/suzanne-pbr.usda}"
-OPACITY_ASSET="${OPACITY_ASSET:-$REPO_ROOT/models/spectral-scene.usda}"
+CURVES_ASSET="${CURVES_ASSET:-$REPO_ROOT/models/tusdview-curves-ribbons.usda}"
+NURBS_ASSET="${NURBS_ASSET:-$REPO_ROOT/models/tusdview-nurbs-patch.usda}"
 TUSDVIEW_RENDER_TIMEOUT="${TUSDVIEW_RENDER_TIMEOUT:-30s}"
 
 if [ ! -x "$TUSDVIEW" ]; then
@@ -40,13 +42,75 @@ if [ ! -f "$ASSET" ]; then
   echo "SKIP: asset not found at $ASSET (set ASSET=...)"
   exit $SKIP
 fi
-if [ ! -f "$OPACITY_ASSET" ]; then
-  echo "SKIP: opacity asset not found at $OPACITY_ASSET (set OPACITY_ASSET=...)"
+if [ ! -f "$CURVES_ASSET" ]; then
+  echo "SKIP: curves asset not found at $CURVES_ASSET (set CURVES_ASSET=...)"
+  exit $SKIP
+fi
+if [ ! -f "$NURBS_ASSET" ]; then
+  echo "SKIP: NURBS asset not found at $NURBS_ASSET (set NURBS_ASSET=...)"
   exit $SKIP
 fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+MASK_ASSET="$TMP/vk_mask_opacity.usda"
+cat > "$MASK_ASSET" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "World"
+)
+def Xform "World"
+{
+    def Mesh "Low" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/CutLow>
+        point3f[] points = [(-1.2, -1, 0), (-0.1, -1, 0), (-0.1, 1, 0), (-1.2, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        uniform token subdivisionScheme = "none"
+    }
+    def Mesh "High" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/CutHigh>
+        point3f[] points = [(0.1, -1, 0), (1.2, -1, 0), (1.2, 1, 0), (0.1, 1, 0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        uniform token subdivisionScheme = "none"
+    }
+    def Scope "Materials"
+    {
+        def Material "CutLow"
+        {
+            token outputs:surface.connect = </World/Materials/CutLow/Preview.outputs:surface>
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.8, 0.1, 0.1)
+                float inputs:opacity = 0.25
+                float inputs:opacityThreshold = 0.5
+                token outputs:surface
+            }
+        }
+        def Material "CutHigh"
+        {
+            token outputs:surface.connect = </World/Materials/CutHigh/Preview.outputs:surface>
+            def Shader "Preview"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.1, 0.3, 0.9)
+                float inputs:opacity = 0.75
+                float inputs:opacityThreshold = 0.5
+                token outputs:surface
+            }
+        }
+    }
+}
+USD
 
 run_tusdview() {
   if command -v timeout >/dev/null 2>&1; then
@@ -89,6 +153,36 @@ PY
   fi
   # No python3: just require the file to be larger than a trivial header.
   [ "$(wc -c < "$img")" -gt 64 ]
+}
+
+binary_opacity() {
+  local img="$1"
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 0
+  fi
+  python3 - "$img" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read()
+if not data.startswith(b"P6"):
+    sys.exit(2)
+tok, i, vals = [], 2, []
+while len(vals) < 3 and i < len(data):
+    c = data[i:i+1]
+    if c.isspace():
+        if tok: vals.append(b"".join(tok)); tok = []
+    elif c == b"#":
+        while i < len(data) and data[i:i+1] != b"\n": i += 1
+    else:
+        tok.append(c)
+    i += 1
+w, h, mx = (int(v) for v in vals)
+px = data[i+1:]
+vals = [px[p] for p in range(0, min(len(px), w*h*3), 3)
+        if len(px[p:p+3]) == 3]
+dark = sum(1 for v in vals if v <= 16)
+bright = sum(1 for v in vals if v >= 240)
+sys.exit(0 if dark > 0 and bright > 0 else 1)
+PY
 }
 
 run_pass() {
@@ -145,15 +239,30 @@ rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
-# 3) Opacity AOV over non-opaque PreviewSurface constants. This guards the
-#    raster material alphaMode/alphaCutoff push-constant path without adding
-#    private assets.
-run_asset_pass opacity-aov "$OPACITY_ASSET" --backend vk --mode opacity
+# 3) Masked opacity AOV over generated PreviewSurface constants. This guards the
+#    raster material alphaMode/alphaCutoff push-constant path without private
+#    assets: opacity 0.25 below cutoff becomes black, 0.75 becomes white.
+run_asset_pass opacity-aov "$MASK_ASSET" --backend vk --mode opacity
+rc=$?
+[ $rc -eq $SKIP ] && exit $SKIP
+[ $rc -ne 0 ] && exit $rc
+if ! binary_opacity "$TMP/vk_opacity-aov.ppm"; then
+  echo "FAIL: opacity AOV did not contain binary masked opacity"
+  exit 1
+fi
+
+# 4) Generated raster mesh coverage for unsupported-but-renderable schemas.
+run_asset_pass curves-ribbons "$CURVES_ASSET" --backend vk --time 0
 rc=$?
 [ $rc -eq $SKIP ] && exit $SKIP
 [ $rc -ne 0 ] && exit $rc
 
-# 4) Large-scene realtime profile wiring. Uses the same tiny fixture so CI does
+run_asset_pass nurbs-patch "$NURBS_ASSET" --backend vk --time 0
+rc=$?
+[ $rc -eq $SKIP ] && exit $SKIP
+[ $rc -ne 0 ] && exit $rc
+
+# 5) Large-scene realtime profile wiring. Uses the same tiny fixture so CI does
 #    not need Caldera/Island/ALab, but exercises the preset resolver, --next,
 #    Vulkan headless rendering, raster LOD defaults, and startup diagnostics.
 run_pass profile --large-scene-profile island

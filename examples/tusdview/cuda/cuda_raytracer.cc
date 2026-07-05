@@ -52,12 +52,15 @@ CudaRayTracer::~CudaRayTracer() {
 
 void CudaRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { cuMemFree(static_cast<CUdeviceptr>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_); F(dMatTex_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_);
+  F(dMatLightRt_); F(dMatTex_);
+  F(dMatTexParam_); F(dLightParams_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_);
   F(dVolDens_); F(dVolParams_);
   numVols_ = 0;
   numMats_ = 0;
+  numLights_ = 0;
   numTextures_ = 0;
   outCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
@@ -147,6 +150,7 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   tlasNodeCount_ = hs.tlasNodeCount;
   nodeCount_ = blasNodeCount_ + tlasNodeCount_;
   numMats_ = hs.numMats;
+  numLights_ = hs.numLights;
   numTextures_ = hs.numTextures;
   numVols_ = hs.numVols;
 
@@ -175,6 +179,8 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.tlas.data(), hs.tlas.size() * sizeof(Node), &dTlasNodes_)) return false;
   if (!up(hs.instances.data(), hs.instances.size() * sizeof(Inst), &dInstances_)) return false;
   if (!up(hs.matTex.data(), hs.matTex.size() * sizeof(int), &dMatTex_)) return false;
+  if (!up(hs.matTexParam.data(), hs.matTexParam.size() * sizeof(float),
+          &dMatTexParam_)) return false;
   if (!up(hs.texels.data(), hs.texels.size(), &dTexels_)) return false;
   if (!up(hs.textures.data(), hs.textures.size() * sizeof(HostTextureDesc), &dTextures_)) return false;
   if (hs.numVols > 0) {
@@ -183,6 +189,10 @@ bool CudaRayTracer::build(const DrawScene& scene, size_t maxTris,
       return false;
   }
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
+  if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
+          &dMatLightRt_)) return false;
+  if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
+          &dLightParams_)) return false;
   if (progress) progress->phase = 4;  // done
   return true;
 }
@@ -215,20 +225,26 @@ bool CudaRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   cam.lightDir[3] = depthScale;  // depth AOV normalizer
   for (int i = 0; i < 3; ++i) { cam.sceneMin[i] = sceneMin[i]; cam.sceneExtent[i] = sceneExtent[i]; }
   CUdeviceptr dT = dTris_, dN = dNrms_, dC = dCols_, dG = dGeo_, dM = dMat_,
-              dMP = dMatPbr_, dMT = dMatTex_, dTx = dTexels_, dTD = dTextures_,
+              dMP = dMatPbr_, dML = dMatLightRt_, dMT = dMatTex_,
+              dTx = dTexels_, dTD = dTextures_,
               dU = dUV_, dU1 = dUV1_, dIn = dInfl_, dF = dFace_,
               dDw = dDomW_, dDj = dDomJoint_, dBl = dBlasNodes_, dTl = dTlasNodes_,
               dI = dInstances_, dO = dOut_;
+  CUdeviceptr dMTP = dMatTexParam_;
+  CUdeviceptr dLP = dLightParams_;
   CUdeviceptr dVD = dVolDens_, dVP = dVolParams_, dEm = dEmask_;
   int numMats = numMats_;
+  int numLights = numLights_;
   int numTextures = numTextures_;
   int numVols = numVols_;
-  // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,numMats,
-  // matTex,texels,textures,numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
+  // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,
+  // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
+  // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
   // volDens,volParams,numVols,emask.
-  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dMT, &dTx,
-                  &dTD, &numTextures, &dU, &dU1, &dIn, &dF,  &dDw, &dDj,
-                  &dBl, &dTl, &dI, &dO, &w, &h, &cam,
+  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &dML, &numMats, &dLP,
+                  &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
+                  &dIn, &dF,  &dDw,
+                  &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols, &dEm};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   const int samples = spp < 1 ? 1 : spp;

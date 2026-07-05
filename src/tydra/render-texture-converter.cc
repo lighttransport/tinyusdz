@@ -146,6 +146,12 @@ bool DefaultTextureImageLoaderFunction(
   texImage.width = result.value().image.width;
   texImage.height = result.value().image.height;
 
+  // `imageData` receives the decoder output as-is, so the buffer's texel type
+  // equals the asset's texel type (HDR/EXR = Float32, 16-bit PNG = UInt16,
+  // ...). Without this, float buffers were tagged UInt8 and every consumer
+  // read the raw float bytes as 8-bit texels (garbage for HDR envmaps).
+  texImage.texelComponentType = texImage.assetTexelComponentType;
+
   (*texImageOut) = texImage;
 
   // raw image data

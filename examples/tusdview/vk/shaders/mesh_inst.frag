@@ -18,13 +18,23 @@ struct DrawMeta { ivec4 ids; };  // .x meshId, .y flags (as before)
 layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
 
 // Frame UBO (set 5): camera / scene bbox / renderMode (frame-constant).
+// DomeLight IBL irradiance (diffuse-only: prototypes carry no material
+// scalars). Set 0 is otherwise unused by the instanced pipeline; a 1x1 black
+// cube is bound when no dome IBL is baked.
+layout(set = 0, binding = 0) uniform samplerCube uIrradianceMap;
+
 layout(set = 5, binding = 0) uniform Frame {
   vec4 disp;
   mat4 viewProj;
   vec4 camPos;       // xyz camera, w depthScale
   vec4 sceneMin;
   vec4 sceneExtent;
+  vec4 lightDir;
+  vec4 lightColor;
   ivec4 mode;        // .x renderMode
+  mat4 envRot;        // world -> environment rotation (dome IBL)
+  vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
+  vec4 iblParams;     // .x = prefiltered mip count
 } fr;
 layout(push_constant) uniform InstPushC { ivec4 draw; } pc;  // .x = baseDraw (unused here)
 
@@ -97,10 +107,20 @@ void main() {
     outColor = vec4(0.18, 0.18, 0.18, 1.0); return;
   }
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);
-  vec3 L = normalize(vec3(1.0, 1.0, 1.0));
+  vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
+               ? normalize(fr.lightDir.xyz)
+               : normalize(vec3(1.0, 1.0, 1.0));
+  vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
+                        ? fr.lightColor.rgb
+                        : vec3(1.0);
   float NdotL = max(dot(N, L), 0.0);
   vec3 H = normalize(L + V);
   float NdotH = max(dot(N, H), 0.0);
-  vec3 col = vColor * (0.05 + NdotL) + vec3(0.15) * pow(NdotH, 32.0);
+  vec3 amb = (fr.iblColor.w > 0.5)
+                 ? texture(uIrradianceMap, normalize(mat3(fr.envRot) * N)).rgb *
+                       fr.iblColor.rgb
+                 : vec3(0.05);
+  vec3 col = vColor * (amb + lightColor * NdotL) +
+             lightColor * vec3(0.15) * pow(NdotH, 32.0);
   outColor = vec4(col, 1.0);  // instanced prototypes carry no selection emissive
 }

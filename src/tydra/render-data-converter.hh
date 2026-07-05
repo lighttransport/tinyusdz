@@ -126,6 +126,9 @@ struct MeshConverterConfig {
   // Subdivision surface tessellation level. When > 0, meshes with authored
   // subdivisionScheme are tessellated before downstream Tydra mesh conversion.
   int32_t subdivision_level{0};
+  // Per-mesh subdivision overrides keyed by absolute prim path. Values < 0 are
+  // ignored; values >= 0 override subdivision_level for that mesh only.
+  std::map<std::string, int32_t> subdivision_prim_levels;
 
   // Triangulation method for polygons with 5+ vertices
   enum class TriangulationMethod {
@@ -899,6 +902,8 @@ class RenderSceneConverter {
   const std::string &GetWarning() const { return _warn; }
   const std::string &GetError() const { return _err; }
   const std::string &GetTimingInfo() const { return _timing_info; }
+  void AddWarning(const std::string &msg) { _warn += msg + "\n"; }
+  void ClearError() { _err.clear(); }
 
   // Prim path <-> index for corresponding array
   // e.g. meshMap: primPath/index to `meshes`.

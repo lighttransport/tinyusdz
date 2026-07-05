@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "gpu_scene.hh"
@@ -24,6 +25,13 @@ struct ImDrawData;
 namespace tusdview {
 
 enum class Backend { GL, Vulkan };
+
+struct RendererDevicePreference {
+  // Vulkan device selector. Empty = automatic. Non-empty accepts either a
+  // physical-device index ("0", "1", ...) or a case-insensitive substring of
+  // the device name / driver name / driver info.
+  std::optional<std::string> vulkanDevice;
+};
 
 // Shaded/Wireframe + debug AOVs. Normals = the shading normal used by the lit path;
 // GeomNormal = the geometric face normal; Uv = texcoord set 0; Depth = camera
@@ -98,6 +106,8 @@ struct RenderFrameParams {
   // triangulation diagonals are dropped via per-triangle source face ids.
   int wireMode{0};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
+  float lightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
+  float lightColor[3]{1.0f, 1.0f, 1.0f};
   float depthScale{1.0f};  // Depth AOV: normalize camera distance by this (scene extent)
   float sceneMin[3]{0, 0, 0};     // Position AOV: scene bbox min
   float sceneExtent[3]{1, 1, 1};  // Position AOV: scene bbox size (max-min)
@@ -158,6 +168,9 @@ class Renderer {
   // before init() when `window` is null. No-op for backends that need a window.
   virtual void setHeadlessSize(int /*w*/, int /*h*/) {}
 
+  virtual void setDevicePreference(
+      const RendererDevicePreference& /*preference*/) {}
+
   // Resize the headless composite at runtime (recreate the offscreen swap images
   // + framebuffers). Returns false if unsupported / not headless. The caller must
   // also update ImGui's DisplaySize. No-op for backends that need a window.
@@ -172,6 +185,7 @@ class Renderer {
   // texture slots by index.
   virtual void beginScene(const std::vector<DrawMaterialCPU>& materials,
                           int textureCount) = 0;
+  virtual void setLights(const std::vector<DrawLightCPU>& /*lights*/) {}
   // Append one mesh (uploaded immediately). Rendered from the next frame on.
   virtual void appendMesh(const DrawMeshCPU& mesh) = 0;
   // Append one UsdVol volume (OpenVDB). Default: no-op (backend has no volume
@@ -225,6 +239,7 @@ class Renderer {
   // synchronous path so screenshots are deterministic).
   bool uploadScene(const DrawScene& scene, std::string* /*err*/) {
     beginScene(scene.materials, static_cast<int>(scene.textures.size()));
+    setLights(scene.lights);
     for (size_t i = 0; i < scene.textures.size(); ++i) {
       uploadTexture(static_cast<int>(i), scene.textures[i]);
     }

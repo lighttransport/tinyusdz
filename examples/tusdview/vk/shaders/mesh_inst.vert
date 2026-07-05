@@ -34,7 +34,12 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 camPos;       // xyz camera, w depthScale
   vec4 sceneMin;
   vec4 sceneExtent;
+  vec4 lightDir;
+  vec4 lightColor;
   ivec4 mode;        // .x renderMode
+  mat4 envRot;        // world -> environment rotation (dome IBL)
+  vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
+  vec4 iblParams;     // .x = prefiltered mip count
 } fr;
 // Per-draw push constant: the base index of this draw in the DrawMeta SSBO. In
 // the per-mesh loop each draw is separate (gl_DrawIDARB == 0) so baseDraw selects
