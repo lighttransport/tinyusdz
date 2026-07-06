@@ -16,11 +16,13 @@
 //    schema as legacy tydra::serializeMaterial — flat UsdPreviewSurface
 //    (surfaceShader + *TextureId) AND nested OpenPBR (openPBR.<layer>.<param>)
 //  - textures: getTexture full metadata (uv transform, bias/scale, wrap,
-//    channel, image id); getImageCopy exposes each image's RAW ENCODED bytes
-//    (png/jpg/...) pulled straight from the USDZ archive (encoded=true +
-//    mimeType) — the JS/app decodes them (this lean module carries no image
-//    codec). getImagePtr/image DECODE, instancing, skinning, and external-ref
-//    composition remain follow-up increments.
+//    channel, image id); getImageCopy/getImagePtr expose each image's RAW
+//    ENCODED bytes (png/jpg/...) pulled straight from the USDZ archive with
+//    bufferId>=0 so the three.js loader Blob-decodes PNG/JPEG itself.
+//  - image decode: decodeEXR / decodeHDR module functions (tinyexr v3 C
+//    backend for EXR, stb_image for HDR) so the JS EXR/HDR texture path
+//    decodes in-wasm. Instancing, skinning, and external-ref composition
+//    remain follow-up increments.
 //
 // tydra_next is being refactored elsewhere — this binding consumes it
 // read-only and adds nothing to it.
@@ -42,6 +44,16 @@
 #include "next/stage/stage.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-data.hh"
+
+#if defined(TINYUSDZ_NEXT_WITH_EXR)
+#include "exr.h"  // tinyexr v3 pure-C11 backend (src/external/tinyexr/include)
+// stb_image HDR (Radiance RGBE) decoder — implemented in stb_hdr.cc.
+extern "C" float* stbi_loadf_from_memory(const unsigned char* buffer, int len,
+                                         int* x, int* y, int* channels_in_file,
+                                         int desired_channels);
+extern "C" void stbi_image_free(void* retval_from_stbi_load);
+extern "C" int stbi_is_hdr_from_memory(const unsigned char* buffer, int len);
+#endif
 
 using emscripten::typed_memory_view;
 using emscripten::val;
@@ -607,7 +619,128 @@ class TinyUSDZLoaderNative {
   std::unordered_map<int, ImageBytes> image_bytes_;
 };
 
+// ============================================================================
+// Image decode (module-level free functions, matching the legacy binding):
+// decodeEXR / decodeHDR return { success, width, height, channels:4,
+// data:(Float32Array|Uint16Array), pixelFormat }. The three.js loader's
+// EXR/HDR path (TinyUSDZLoaderUtils.decodeEXRFromBuffer / decodeHDR) calls
+// these when present, else falls back to THREE.EXRLoader/HDRLoader on a Blob.
+// ============================================================================
+namespace {
+
+#if defined(TINYUSDZ_NEXT_WITH_EXR)
+// Pack an RGBA fp32 buffer into the requested output format and attach it to
+// `result` (float32 -> Float32Array; float16 -> half via Uint16Array).
+void set_pixels(val& result, const std::vector<float>& rgba,
+                const std::string& format) {
+  const size_t n = rgba.size();
+  if (format == "float16") {
+    std::vector<uint16_t> half(n);
+    exr_float_to_half(rgba.data(), half.data(), n);
+    val a = val::global("Uint16Array").new_(n);
+    a.call<void>("set", val(typed_memory_view(n, half.data())));
+    result.set("data", a);
+    result.set("pixelFormat", std::string("float16"));
+    result.set("bitsPerChannel", 16);
+  } else {
+    val a = val::global("Float32Array").new_(n);
+    a.call<void>("set", val(typed_memory_view(n, rgba.data())));
+    result.set("data", a);
+    result.set("pixelFormat", std::string("float32"));
+    result.set("bitsPerChannel", 32);
+  }
+}
+
+val decodeEXR(const val& data, const std::string& format) {
+  val result = val::object();
+  std::vector<uint8_t> buf = emscripten::convertJSArrayToNumberVector<uint8_t>(data);
+  exr_image img;
+  std::memset(&img, 0, sizeof(img));
+  const exr_result r = exr_load_from_memory(buf.data(), buf.size(), nullptr, &img);
+  if (!EXR_OK(r)) {
+    result.set("success", false);
+    result.set("error", std::string(exr_result_string(r)));
+    return result;
+  }
+  if (img.num_parts < 1 || img.parts == nullptr) {
+    exr_image_free(&img);
+    result.set("success", false); result.set("error", std::string("EXR has no parts"));
+    return result;
+  }
+  const exr_part* part = &img.parts[0];
+  if (part->is_deep || part->images == nullptr || part->width <= 0 || part->height <= 0) {
+    exr_image_free(&img);
+    result.set("success", false); result.set("error", std::string("EXR part deep or empty"));
+    return result;
+  }
+  int iR = -1, iG = -1, iB = -1, iA = -1, iY = -1;
+  for (int c = 0; c < part->header.num_channels; ++c) {
+    const char* n = part->header.channels[c].name;
+    if (!std::strcmp(n, "R")) iR = c; else if (!std::strcmp(n, "G")) iG = c;
+    else if (!std::strcmp(n, "B")) iB = c; else if (!std::strcmp(n, "A")) iA = c;
+    else if (!std::strcmp(n, "Y")) iY = c;
+  }
+  if (iR < 0 && iG < 0 && iB < 0 && iY < 0) {
+    exr_image_free(&img);
+    result.set("success", false); result.set("error", std::string("EXR has no R/G/B/Y channel"));
+    return result;
+  }
+  const size_t npix = size_t(part->width) * size_t(part->height);
+  auto getf = [&](int idx, size_t p) -> float {
+    if (idx < 0 || !part->images[idx]) return 0.0f;
+    const void* base = part->images[idx];
+    switch (part->header.channels[idx].pixel_type) {
+      case EXR_PIXEL_HALF: { uint16_t h = reinterpret_cast<const uint16_t*>(base)[p]; float f; exr_half_to_float(&h, &f, 1); return f; }
+      case EXR_PIXEL_FLOAT: return reinterpret_cast<const float*>(base)[p];
+      case EXR_PIXEL_UINT: return float(reinterpret_cast<const uint32_t*>(base)[p]);
+    }
+    return 0.0f;
+  };
+  std::vector<float> rgba(npix * 4);
+  for (size_t p = 0; p < npix; ++p) {
+    rgba[p*4+0] = iR >= 0 ? getf(iR, p) : getf(iY, p);
+    rgba[p*4+1] = iG >= 0 ? getf(iG, p) : getf(iY, p);
+    rgba[p*4+2] = iB >= 0 ? getf(iB, p) : getf(iY, p);
+    rgba[p*4+3] = iA >= 0 ? getf(iA, p) : 1.0f;
+  }
+  const int w = part->width, h = part->height;
+  exr_image_free(&img);
+  set_pixels(result, rgba, format);
+  result.set("success", true);
+  result.set("width", w); result.set("height", h); result.set("channels", 4);
+  return result;
+}
+
+val decodeHDR(const val& data, const std::string& format) {
+  val result = val::object();
+  std::vector<uint8_t> buf = emscripten::convertJSArrayToNumberVector<uint8_t>(data);
+  int w = 0, hh = 0, comp = 0;
+  float* px = stbi_loadf_from_memory(buf.data(), static_cast<int>(buf.size()),
+                                     &w, &hh, &comp, 4);  // force RGBA
+  if (!px) {
+    result.set("success", false); result.set("error", std::string("Failed to decode HDR"));
+    return result;
+  }
+  std::vector<float> rgba(px, px + size_t(w) * size_t(hh) * 4);
+  stbi_image_free(px);
+  set_pixels(result, rgba, format);
+  result.set("success", true);
+  result.set("width", w); result.set("height", hh); result.set("channels", 4);
+  return result;
+}
+val decodeEXRDefault(const val& d) { return decodeEXR(d, "float32"); }
+val decodeHDRDefault(const val& d) { return decodeHDR(d, "float16"); }
+#endif  // TINYUSDZ_NEXT_WITH_EXR
+
+}  // namespace
+
 EMSCRIPTEN_BINDINGS(tinyusdz_next) {
+#if defined(TINYUSDZ_NEXT_WITH_EXR)
+  emscripten::function("decodeEXR", &decodeEXR);
+  emscripten::function("decodeHDR", &decodeHDR);
+  emscripten::function("decodeEXRDefault", &decodeEXRDefault);
+  emscripten::function("decodeHDRDefault", &decodeHDRDefault);
+#endif
   emscripten::class_<TinyUSDZLoaderNative>("TinyUSDZLoaderNative")
       .constructor<>()
       .function("ok", &TinyUSDZLoaderNative::ok)

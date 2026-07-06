@@ -43,11 +43,26 @@ set(TINYUSDZ_NEXT_CORE_MINIMAL OFF CACHE BOOL "" FORCE)
 # AND tydra_next.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../src/next next_core_build EXCLUDE_FROM_ALL)
 
+# EXR (tinyexr v3, pure-C11 backend) + HDR (stb_image) decode for texture
+# images. Compiled straight into this module — the ONLY codecs it carries; the
+# rest of image handling stays out of the lean core. The v3 SIMD TUs guard on
+# arch and compile to no-ops on wasm, so the whole src/ glob is safe.
+set(TINYEXR_V3_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../src/external/tinyexr)
+file(GLOB TINYEXR_V3_SOURCES ${TINYEXR_V3_DIR}/src/*.c)
+# Minimal codec set: HTJ2K (EXR_NO_JPH) and ZSTD (EXR_NO_ZSTD) compiled out —
+# the v3 core is self-contained (its own DEFLATE via fpnge), no miniz/zlib.
+set_source_files_properties(${TINYEXR_V3_SOURCES} PROPERTIES
+  INCLUDE_DIRECTORIES "${TINYEXR_V3_DIR}/include;${TINYEXR_V3_DIR}/src"
+  COMPILE_DEFINITIONS "EXR_NO_JPH;EXR_NO_ZSTD")
+
 # Target name differs from the `tinyusdz_next` library target defined in
 # src/next; OUTPUT_NAME still emits tinyusdz_next.{js,wasm}.
-add_executable(tinyusdz_next_module binding-next.cc)
+add_executable(tinyusdz_next_module binding-next.cc stb_hdr.cc ${TINYEXR_V3_SOURCES})
 target_link_libraries(tinyusdz_next_module PRIVATE tydra_next tinyusdz_next)
-target_include_directories(tinyusdz_next_module PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
+target_include_directories(tinyusdz_next_module PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+  ${TINYEXR_V3_DIR}/include)
+target_compile_definitions(tinyusdz_next_module PRIVATE TINYUSDZ_NEXT_WITH_EXR=1)
 
 # Emit next to the existing module so the JS side imports it the same way.
 set(OUTPUT_WASM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../js/src/tinyusdz)
