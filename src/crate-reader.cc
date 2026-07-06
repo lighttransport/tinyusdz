@@ -133,9 +133,129 @@ bool CrateReader::ReportProgress(float progress) {
   return _progress_callback(progress, _progress_userptr);
 }
 
-std::string CrateReader::GetError() { return _err; }
+std::string CrateReader::GetError() {
+  ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+  return _err;
+}
 
-std::string CrateReader::GetWarning() { return _warn; }
+std::string CrateReader::GetWarning() {
+  ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+  return _warn;
+}
+
+//
+// Per-thread stream & decompression scratch state for parallel prim
+// reconstruction. One active parallel reader at a time per thread (the
+// generation counter invalidates stale slots when a reader re-enables
+// parallel io or another reader takes over).
+//
+namespace {
+
+struct CrateThreadIOState {
+  const void *owner{nullptr};
+  uint64_t generation{0};
+  std::unique_ptr<StreamReader> sr;
+  std::vector<char> comp_buffer;
+  std::vector<char> working_buffer;
+  size_t comp_buffer_budget{0};
+  size_t working_buffer_budget{0};
+  std::unordered_set<uint64_t> recursion_guard;
+  // Value-unpack nesting depths (dev-side stack-overflow hardening) — kept
+  // per-thread for the same reason as the recursion guard.
+  uint32_t custom_data_depth{0};
+  uint32_t array_edit_depth{0};
+};
+
+CrateThreadIOState &GetCrateTLS() {
+  static thread_local CrateThreadIOState s_tls;
+  return s_tls;
+}
+
+}  // namespace
+
+void CrateReader::set_parallel_io_active(bool onoff) {
+  if (onoff) {
+    _parallel_io_generation++;
+  }
+  _parallel_io_active = onoff;
+}
+
+const StreamReader *CrateReader::sr() const {
+  if (_parallel_io_active) {
+    CrateThreadIOState &tls = GetCrateTLS();
+    if ((tls.owner != this) || (tls.generation != _parallel_io_generation)) {
+      tls.owner = this;
+      tls.generation = _parallel_io_generation;
+      tls.sr.reset(
+          new StreamReader(_sr->data(), _sr->size(), _sr->swap_endian()));
+      tls.comp_buffer.clear();
+      tls.working_buffer.clear();
+      tls.comp_buffer_budget = 0;
+      tls.working_buffer_budget = 0;
+      tls.recursion_guard.clear();
+      tls.custom_data_depth = 0;
+      tls.array_edit_depth = 0;
+    }
+    return tls.sr.get();
+  }
+  return _sr;
+}
+
+std::vector<char> &CrateReader::decomp_comp_buffer() const {
+  if (_parallel_io_active) {
+    sr();  // ensure the TLS slot is bound to this reader/generation
+    return GetCrateTLS().comp_buffer;
+  }
+  return _decomp_comp_buffer;
+}
+
+std::vector<char> &CrateReader::decomp_working_buffer() const {
+  if (_parallel_io_active) {
+    sr();
+    return GetCrateTLS().working_buffer;
+  }
+  return _decomp_working_buffer;
+}
+
+size_t &CrateReader::decomp_comp_buffer_budget() const {
+  if (_parallel_io_active) {
+    sr();
+    return GetCrateTLS().comp_buffer_budget;
+  }
+  return _decomp_comp_buffer_budget;
+}
+
+size_t &CrateReader::decomp_working_buffer_budget() const {
+  if (_parallel_io_active) {
+    sr();
+    return GetCrateTLS().working_buffer_budget;
+  }
+  return _decomp_working_buffer_budget;
+}
+
+std::unordered_set<uint64_t> &CrateReader::unpack_recursion_guard() const {
+  if (_parallel_io_active) {
+    sr();
+    return GetCrateTLS().recursion_guard;
+  }
+  return unpackRecursionGuard;
+}
+
+uint32_t &CrateReader::custom_data_depth() const {
+  if (_parallel_io_active) {
+    sr();
+    return GetCrateTLS().custom_data_depth;
+  }
+  return _customDataDepth;
+}
+
+uint32_t &CrateReader::array_edit_depth() const {
+  if (_parallel_io_active) {
+    sr();
+    return GetCrateTLS().array_edit_depth;
+  }
+  return _arrayEditDepth;
+}
 
 bool CrateReader::HasField(const std::string &key) const {
   // Simple linear search
@@ -218,7 +338,7 @@ nonstd::optional<std::string> CrateReader::GetPathString(
 bool CrateReader::ReadIndex(crate::Index *i) {
   // string is serialized as StringIndex
   uint32_t value;
-  if (!_sr->read4(&value)) {
+  if (!sr()->read4(&value)) {
     PUSH_ERROR("Failed to read Index");
     return false;
   }
@@ -231,7 +351,7 @@ bool CrateReader::ReadIndex(crate::Index *i) {
 
 bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
   uint64_t n;
-  if (!_sr->read8(&n)) {
+  if (!sr()->read8(&n)) {
     return false;
   }
 
@@ -250,7 +370,7 @@ bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in ReadIndices: n * sizeof(crate::Index)");
   }
 
-  if (datalen > _sr->size()) {
+  if (datalen > sr()->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Indices data exceeds USDC size.");
   }
 
@@ -258,7 +378,7 @@ bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
 
   indices->resize(size_t(n));
 
-  if (datalen != _sr->read(datalen, datalen,
+  if (datalen != sr()->read(datalen, datalen,
                           reinterpret_cast<uint8_t *>(indices->data()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Indices array.");
   }
@@ -308,7 +428,7 @@ nonstd::optional<std::string> CrateReader::GetSpecString(
 }
 
 bool CrateReader::ReadValueRep(crate::ValueRep *rep) {
-  if (!_sr->read8(reinterpret_cast<uint64_t *>(rep))) {
+  if (!sr()->read8(reinterpret_cast<uint64_t *>(rep))) {
     PUSH_ERROR("Failed to read ValueRep.");
     return false;
   }
@@ -326,7 +446,7 @@ bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
   size_t length;
 
   uint64_t n;
-  if (!_sr->read8(&n)) {
+  if (!sr()->read8(&n)) {
     _err += "Failed to read the number of array elements.\n";
     return false;
   }
@@ -357,7 +477,7 @@ bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
 
   d->resize(length);
 
-  if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
+  if (!sr()->read(sizeof(double) * length, sizeof(double) * length,
                  reinterpret_cast<uint8_t *>(d->data()))) {
     _err += "Failed to read double vector data.\n";
     return false;
@@ -370,7 +490,7 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<std::string> &result) -> bool {
     uint64_t n{0};
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
@@ -389,7 +509,7 @@ bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!_sr->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       PUSH_ERROR("Failed to read STRING_VECTOR data.");
@@ -516,10 +636,10 @@ bool CrateReader::ReadLayerOffset(LayerOffset *d) {
   static_assert(sizeof(LayerOffset) == 8 * 2, "LayerOffset must be 16bytes");
 
   // double x 2
-  if (!_sr->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_offset)))) {
+  if (!sr()->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_offset)))) {
     return false;
   }
-  if (!_sr->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_scale)))) {
+  if (!sr()->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&(d->_scale)))) {
     return false;
   }
 
@@ -530,7 +650,7 @@ bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
   // array data is not compressed
 
   uint64_t n{0};
-  if (!_sr->read8(&n)) {
+  if (!sr()->read8(&n)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     return false;
   }
@@ -553,7 +673,7 @@ bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
 
   d->resize(size_t(n));
 
-  if (!_sr->read(size_t(n) * sizeof(LayerOffset),
+  if (!sr()->read(size_t(n) * sizeof(LayerOffset),
                  size_t(n) * sizeof(LayerOffset),
                  reinterpret_cast<uint8_t *>(d->data()))) {
     PUSH_ERROR("Failed to read LayerOffset[] data.");
@@ -567,7 +687,7 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
     uint64_t n{0};
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
@@ -587,7 +707,7 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!_sr->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
@@ -622,7 +742,7 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
 bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
   // read ListOpHeader
   ListOpHeader h;
-  if (!_sr->read1(&h.bits)) {
+  if (!sr()->read1(&h.bits)) {
     _err += "Failed to read ListOpHeader\n";
     return false;
   }
@@ -634,7 +754,7 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<value::token> &result) -> bool {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       _err += "Failed to read # of elements in ListOp.\n";
       return false;
     }
@@ -654,7 +774,7 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!_sr->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
@@ -740,7 +860,7 @@ bool CrateReader::ReadTokenListOp(ListOp<value::token> *d) {
 bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
   // read ListOpHeader
   ListOpHeader h;
-  if (!_sr->read1(&h.bits)) {
+  if (!sr()->read1(&h.bits)) {
     _err += "Failed to read ListOpHeader\n";
     return false;
   }
@@ -752,7 +872,7 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<std::string> &result) -> bool {
     uint64_t n{0};
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
@@ -773,7 +893,7 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!_sr->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
@@ -859,7 +979,7 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
 bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   // read ListOpHeader
   ListOpHeader h;
-  if (!_sr->read1(&h.bits)) {
+  if (!sr()->read1(&h.bits)) {
     PUSH_ERROR("Failed to read ListOpHeader.");
     return false;
   }
@@ -872,7 +992,7 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
     uint64_t n{0};
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
@@ -892,7 +1012,7 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
 
     std::vector<crate::Index> ivalue(static_cast<size_t>(n));
 
-    if (!_sr->read(size_t(n) * sizeof(crate::Index),
+    if (!sr()->read(size_t(n) * sizeof(crate::Index),
                    size_t(n) * sizeof(crate::Index),
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       PUSH_ERROR("Failed to read ListOp data..");
@@ -984,7 +1104,7 @@ bool CrateReader::ReadArray(std::vector<Reference> *d) {
   }
 
   uint64_t n{0};
-  if (!_sr->read8(&n)) {
+  if (!sr()->read8(&n)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     return false;
   }
@@ -1020,17 +1140,17 @@ bool CrateReader::ReadArray(std::vector<Payload> *d) {
   uint64_t n{0};
   if (VERSION_LESS_THAN_0_8_0(_version)) {
     uint32_t shapesize; // not used
-    if (!_sr->read4(&shapesize)) {
+    if (!sr()->read4(&shapesize)) {
       PUSH_ERROR("Failed to read the number of array elements.");
       return false;
     }
     uint32_t _n;
-    if (!_sr->read4(&_n)) {
+    if (!sr()->read4(&_n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     }
     n = _n;
   } else {
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
@@ -1069,17 +1189,17 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
   uint64_t n{0};
   if (VERSION_LESS_THAN_0_8_0(_version)) {
     uint32_t shapesize; // not used
-    if (!_sr->read4(&shapesize)) {
+    if (!sr()->read4(&shapesize)) {
       PUSH_ERROR("Failed to read the number of array elements.");
       return false;
     }
     uint32_t _n;
-    if (!_sr->read4(&_n)) {
+    if (!sr()->read4(&_n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     }
     n = _n;
   } else {
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
@@ -1123,7 +1243,8 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
 
   if constexpr (std::is_trivially_copyable<T>::value) {
     d->resize(size_t(n));
-    if (!_sr->read(sizeof(T) * n, sizeof(T) * size_t(n),
+    // sr(): per-thread stream state during parallel reconstruction (round 3).
+    if (!sr()->read(sizeof(T) * n, sizeof(T) * size_t(n),
                    reinterpret_cast<uint8_t *>(d->data()))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read array data");
     }
@@ -1162,7 +1283,7 @@ template<typename T>
 bool CrateReader::ReadListOp(ListOp<T> *d) {
   // read ListOpHeader
   ListOpHeader h;
-  if (!_sr->read1(&h.bits)) {
+  if (!sr()->read1(&h.bits)) {
     PUSH_ERROR("Failed to read ListOpHeader.");
     return false;
   }
@@ -1257,26 +1378,26 @@ bool CrateReader::ReadSection(crate::Section *s) {
   size_t name_len = crate::kSectionNameMaxLength + 1;
 
   if (name_len !=
-      _sr->read(name_len, name_len, reinterpret_cast<uint8_t *>(s->name))) {
+      sr()->read(name_len, name_len, reinterpret_cast<uint8_t *>(s->name))) {
     _err += "Failed to read section.name.\n";
     return false;
   }
 
-  if (!_sr->read8(&s->start)) {
+  if (!sr()->read8(&s->start)) {
     _err += "Failed to read section.start.\n";
     return false;
   }
 
-  if (size_t(s->start) > _sr->size()) {
+  if (size_t(s->start) > sr()->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Section start offset exceeds USDC file size.");
   }
 
-  if (!_sr->read8(&s->size)) {
+  if (!sr()->read8(&s->size)) {
     _err += "Failed to read section.size.\n";
     return false;
   }
 
-  if (size_t(s->start + s->size) > _sr->size()) {
+  if (size_t(s->start + s->size) > sr()->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Section end offset exceeds USDC file size.");
   }
 
@@ -1302,7 +1423,7 @@ bool CrateReader::ReadTokens() {
   }
 
   const crate::Section &sec = _toc.sections[size_t(_tokens_index)];
-  if (!_sr->seek_set(uint64_t(sec.start))) {
+  if (!sr()->seek_set(uint64_t(sec.start))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to move to `TOKENS` section.");
     return false;
   }
@@ -1316,7 +1437,7 @@ bool CrateReader::ReadTokens() {
 
   // # of tokens.
   uint64_t num_tokens;
-  if (!_sr->read8(&num_tokens)) {
+  if (!sr()->read8(&num_tokens)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read # of tokens at `TOKENS` section.");
   }
 
@@ -1334,7 +1455,7 @@ bool CrateReader::ReadTokens() {
 
   // Compressed token data.
   uint64_t uncompressedSize;
-  if (!_sr->read8(&uncompressedSize)) {
+  if (!sr()->read8(&uncompressedSize)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uncompressedSize at `TOKENS` section.");
   }
 
@@ -1359,7 +1480,7 @@ bool CrateReader::ReadTokens() {
   }
 
   uint64_t compressedSize;
-  if (!_sr->read8(&compressedSize)) {
+  if (!sr()->read8(&compressedSize)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedSize at `TOKENS` section.");
   }
 
@@ -1369,7 +1490,7 @@ bool CrateReader::ReadTokens() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "compressedSize is too small or zero bytes.");
   }
 
-  if (compressedSize > _sr->size()) {
+  if (compressedSize > sr()->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed data size exceeds input file size.");
   }
 
@@ -1491,7 +1612,7 @@ bool CrateReader::ReadStrings() {
     return true;
   }
 
-  if (!_sr->seek_set(uint64_t(s.start))) {
+  if (!sr()->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `STRINGS` section.\n";
     return false;
   }
@@ -1535,13 +1656,13 @@ bool CrateReader::ReadFields() {
     return true;
   }
 
-  if (!_sr->seek_set(uint64_t(s.start))) {
+  if (!sr()->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `FIELDS` section.\n";
     return false;
   }
 
   uint64_t num_fields;
-  if (!_sr->read8(&num_fields)) {
+  if (!sr()->read8(&num_fields)) {
     _err += "Failed to read # of fields at `FIELDS` section.\n";
     return false;
   }
@@ -1602,7 +1723,7 @@ bool CrateReader::ReadFields() {
   // Value reps(LZ4 compressed)
   {
     uint64_t reps_size; // compressed size
-    if (!_sr->read8(&reps_size)) {
+    if (!sr()->read8(&reps_size)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read value reps legnth at `FIELDS` section.");
     }
 
@@ -1610,7 +1731,7 @@ bool CrateReader::ReadFields() {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid byte size of Value reps data.");
     }
 
-    if (reps_size > _sr->size()) {
+    if (reps_size > sr()->size()) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed Value reps size exceeds USDC data.");
     }
 
@@ -1672,13 +1793,13 @@ bool CrateReader::ReadFieldSets() {
 
   const crate::Section &s = _toc.sections[size_t(_fieldsets_index)];
 
-  if (!_sr->seek_set(uint64_t(s.start))) {
+  if (!sr()->seek_set(uint64_t(s.start))) {
     _err += "Failed to move to `FIELDSETS` section.\n";
     return false;
   }
 
   uint64_t num_fieldsets;
-  if (!_sr->read8(&num_fieldsets)) {
+  if (!sr()->read8(&num_fieldsets)) {
     _err += "Failed to read # of fieldsets at `FIELDSETS` section.\n";
     return false;
   }
@@ -1724,11 +1845,11 @@ bool CrateReader::ReadFieldSets() {
   if (!ReserveDecompressionBuffers(compBufferSize, workBufferSize)) {
     return false;
   }
-  std::vector<char> &comp_buffer = _decomp_comp_buffer;
-  std::vector<char> &working_space = _decomp_working_buffer;
+  std::vector<char> &comp_buffer = decomp_comp_buffer();
+  std::vector<char> &working_space = decomp_working_buffer();
 
   uint64_t fsets_size;
-  if (!_sr->read8(&fsets_size)) {
+  if (!sr()->read8(&fsets_size)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read fieldsets size at `FIELDSETS` section.");
   }
 
@@ -1739,12 +1860,12 @@ bool CrateReader::ReadFieldSets() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "fsets_size exceeds comp_buffer size (corrupted USDC).");
   }
 
-  if (fsets_size > _sr->size()) {
+  if (fsets_size > sr()->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "FieldSets compressed data exceeds USDC data.");
   }
 
   if (fsets_size !=
-      _sr->read(size_t(fsets_size), size_t(fsets_size),
+      sr()->read(size_t(fsets_size), size_t(fsets_size),
                 reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read fieldsets data at `FIELDSETS` section.");
   }
@@ -2047,22 +2168,22 @@ bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
 
 bool CrateReader::ReserveDecompressionBuffers(
     const size_t comp_buffer_size, const size_t working_buffer_size) const {
-  if (comp_buffer_size > _decomp_comp_buffer_budget) {
-    const size_t delta = comp_buffer_size - _decomp_comp_buffer_budget;
+  if (comp_buffer_size > decomp_comp_buffer_budget()) {
+    const size_t delta = comp_buffer_size - decomp_comp_buffer_budget();
     CHECK_MEMORY_USAGE(delta);
-    _decomp_comp_buffer_budget = comp_buffer_size;
+    decomp_comp_buffer_budget() = comp_buffer_size;
   }
-  if (_decomp_comp_buffer.size() < comp_buffer_size) {
-    _decomp_comp_buffer.resize(comp_buffer_size);
+  if (decomp_comp_buffer().size() < comp_buffer_size) {
+    decomp_comp_buffer().resize(comp_buffer_size);
   }
 
-  if (working_buffer_size > _decomp_working_buffer_budget) {
-    const size_t delta = working_buffer_size - _decomp_working_buffer_budget;
+  if (working_buffer_size > decomp_working_buffer_budget()) {
+    const size_t delta = working_buffer_size - decomp_working_buffer_budget();
     CHECK_MEMORY_USAGE(delta);
-    _decomp_working_buffer_budget = working_buffer_size;
+    decomp_working_buffer_budget() = working_buffer_size;
   }
-  if (_decomp_working_buffer.size() < working_buffer_size) {
-    _decomp_working_buffer.resize(working_buffer_size);
+  if (decomp_working_buffer().size() < working_buffer_size) {
+    decomp_working_buffer().resize(working_buffer_size);
   }
 
   return true;
@@ -2089,13 +2210,13 @@ bool CrateReader::ReadSpecs() {
 
   const crate::Section &s = _toc.sections[size_t(_specs_index)];
 
-  if (!_sr->seek_set(uint64_t(s.start))) {
+  if (!sr()->seek_set(uint64_t(s.start))) {
     PUSH_ERROR("Failed to move to `SPECS` section.");
     return false;
   }
 
   uint64_t num_specs;
-  if (!_sr->read8(&num_specs)) {
+  if (!sr()->read8(&num_specs)) {
     PUSH_ERROR("Failed to read # of specs size at `SPECS` section.");
     return false;
   }
@@ -2144,13 +2265,13 @@ bool CrateReader::ReadSpecs() {
   if (!ReserveDecompressionBuffers(compBufferSize, workBufferSize)) {
     return false;
   }
-  std::vector<char> &comp_buffer = _decomp_comp_buffer;
-  std::vector<char> &working_space = _decomp_working_buffer;
+  std::vector<char> &comp_buffer = decomp_comp_buffer();
+  std::vector<char> &working_space = decomp_working_buffer();
 
   // path indices
   {
     uint64_t path_indexes_size;
-    if (!_sr->read8(&path_indexes_size)) {
+    if (!sr()->read8(&path_indexes_size)) {
       PUSH_ERROR("Failed to read path indexes size at `SPECS` section.");
       return false;
     }
@@ -2163,7 +2284,7 @@ bool CrateReader::ReadSpecs() {
     }
 
     if (path_indexes_size !=
-        _sr->read(size_t(path_indexes_size), size_t(path_indexes_size),
+        sr()->read(size_t(path_indexes_size), size_t(path_indexes_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
       PUSH_ERROR("Failed to read path indexes data at `SPECS` section.");
       return false;
@@ -2186,7 +2307,7 @@ bool CrateReader::ReadSpecs() {
   // fieldset indices
   {
     uint64_t fset_indexes_size;
-    if (!_sr->read8(&fset_indexes_size)) {
+    if (!sr()->read8(&fset_indexes_size)) {
       PUSH_ERROR("Failed to read fieldset indexes size at `SPECS` section.");
       return false;
     }
@@ -2196,7 +2317,7 @@ bool CrateReader::ReadSpecs() {
       return false;
     }
     if (fset_indexes_size !=
-        _sr->read(size_t(fset_indexes_size), size_t(fset_indexes_size),
+        sr()->read(size_t(fset_indexes_size), size_t(fset_indexes_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
       PUSH_ERROR("Failed to read fieldset indexes data at `SPECS` section.");
       return false;
@@ -2219,7 +2340,7 @@ bool CrateReader::ReadSpecs() {
   // spec types
   {
     uint64_t spectype_size;
-    if (!_sr->read8(&spectype_size)) {
+    if (!sr()->read8(&spectype_size)) {
       PUSH_ERROR("Failed to read spectype size at `SPECS` section.");
       return false;
     }
@@ -2229,7 +2350,7 @@ bool CrateReader::ReadSpecs() {
       return false;
     }
     if (spectype_size !=
-        _sr->read(size_t(spectype_size), size_t(spectype_size),
+        sr()->read(size_t(spectype_size), size_t(spectype_size),
                   reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
       PUSH_ERROR("Failed to read spectype data at `SPECS` section.");
       return false;
@@ -2286,13 +2407,13 @@ bool CrateReader::ReadPaths() {
 
   const crate::Section &s = _toc.sections[size_t(_paths_index)];
 
-  if (!_sr->seek_set(uint64_t(s.start))) {
+  if (!sr()->seek_set(uint64_t(s.start))) {
     PUSH_ERROR("Failed to move to `PATHS` section.");
     return false;
   }
 
   uint64_t num_paths;
-  if (!_sr->read8(&num_paths)) {
+  if (!sr()->read8(&num_paths)) {
     PUSH_ERROR("Failed to read # of paths at `PATHS` section.");
     return false;
   }
@@ -2346,7 +2467,7 @@ bool CrateReader::ReadBootStrap() {
 
   // parse header.
   uint8_t magic[8];
-  if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
+  if (8 != sr()->read(/* req */ 8, /* dst len */ 8, magic)) {
     PUSH_ERROR("Failed to read magic number.");
     return false;
   }
@@ -2359,7 +2480,7 @@ bool CrateReader::ReadBootStrap() {
 
   // parse version(first 3 bytes from 8 bytes)
   uint8_t version[8];
-  if (8 != _sr->read(8, 8, version)) {
+  if (8 != sr()->read(8, 8, version)) {
     PUSH_ERROR("Failed to read magic number.");
     return false;
   }
@@ -2388,14 +2509,14 @@ bool CrateReader::ReadBootStrap() {
   }
 
   _toc_offset = 0;
-  if (!_sr->read8(&_toc_offset)) {
+  if (!sr()->read8(&_toc_offset)) {
     PUSH_ERROR("Failed to read TOC offset.");
     return false;
   }
 
-  if ((_toc_offset <= 88) || (_toc_offset >= int64_t(_sr->size()))) {
+  if ((_toc_offset <= 88) || (_toc_offset >= int64_t(sr()->size()))) {
     PUSH_ERROR("Invalid TOC offset value: " + std::to_string(_toc_offset) +
-               ", filesize = " + std::to_string(_sr->size()) + ".");
+               ", filesize = " + std::to_string(sr()->size()) + ".");
     return false;
   }
 
@@ -2415,19 +2536,19 @@ bool CrateReader::ReadTOC() {
 
   DCOUT(fmt::format("Memory budget: {} bytes", _config.maxMemoryBudget));
 
-  if ((_toc_offset <= 88) || (_toc_offset >= int64_t(_sr->size()))) {
+  if ((_toc_offset <= 88) || (_toc_offset >= int64_t(sr()->size()))) {
     PUSH_ERROR("Invalid toc offset.");
     return false;
   }
 
-  if (!_sr->seek_set(uint64_t(_toc_offset))) {
+  if (!sr()->seek_set(uint64_t(_toc_offset))) {
     PUSH_ERROR("Failed to move to TOC offset.");
     return false;
   }
 
   // read # of sections.
   uint64_t num_sections{0};
-  if (!_sr->read8(&num_sections)) {
+  if (!sr()->read8(&num_sections)) {
     PUSH_ERROR("Failed to read TOC(# of sections).");
     return false;
   }
@@ -2462,11 +2583,11 @@ bool CrateReader::ReadTOC() {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid or empty section size."));
     }
 
-    if (size_t(_toc.sections[i].size) > _sr->size()) {
+    if (size_t(_toc.sections[i].size) > sr()->size()) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section size exceeds input USDC data size."));
     }
 
-    if (size_t(_toc.sections[i].start) > _sr->size()) {
+    if (size_t(_toc.sections[i].start) > sr()->size()) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start byte offset exceeds input USDC data size."));
     }
 
@@ -2481,7 +2602,7 @@ bool CrateReader::ReadTOC() {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section end offset exceeds 32bit max."));
       }
     }
-    if (end_offset > _sr->size()) {
+    if (end_offset > sr()->size()) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section byte offset + size exceeds input USDC data size."));
     }
 

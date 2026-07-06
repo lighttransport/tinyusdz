@@ -82,7 +82,7 @@ bool CrateReader::ReadVariantSelectionMap(VariantSelectionMap *d) {
   // [key, value] * n
 
   uint64_t sz;
-  if (!_sr->read8(&sz)) {
+  if (!sr()->read8(&sz)) {
     _err += "Failed to read the number of elements for VariantsMap data.\n";
     return false;
   }
@@ -116,18 +116,18 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
   // A dict element value can itself be a DICTIONARY, so ReadCustomData recurses
   // through UnpackValueRep. maxDictElements caps breadth, not nesting depth (or
   // an offset cycle), so bound the depth here.
-  if (_customDataDepth > _config.maxValueRecursion) {
+  if (custom_data_depth() > _config.maxValueRecursion) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many nested Dictionary values.");
   }
-  ++_customDataDepth;
+  ++custom_data_depth();
   struct CustomDataDepthGuard {
     uint32_t &d;
     ~CustomDataDepthGuard() { --d; }
-  } _cdguard{_customDataDepth};
+  } _cdguard{custom_data_depth()};
 
   CustomDataType dict;
   uint64_t sz;
-  if (!_sr->read8(&sz)) {
+  if (!sr()->read8(&sz)) {
     _err += "Failed to read the number of elements for Dictionary data.\n";
     return false;
   }
@@ -149,7 +149,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     // 8byte for the offset for recursive value. See RecursiveRead() in
     // crateFile.cpp for details.
     int64_t offset{0};
-    if (!_sr->read8(&offset)) {
+    if (!sr()->read8(&offset)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
     }
 
@@ -157,7 +157,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
     if (offset < (std::numeric_limits<int64_t>::min)() + 8) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Dictionary value offset {} would underflow int64.", offset));
     }
-    if (!_sr->seek_from_current(offset - 8)) {
+    if (!sr()->seek_from_current(offset - 8)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek. Invalid offset value: " + std::to_string(offset));
     }
 
@@ -170,7 +170,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
 
     DCOUT("vrep =" << crate::GetCrateDataTypeName(rep.GetType()));
 
-    auto saved_position = _sr->tell();
+    auto saved_position = sr()->tell();
 
     crate::CrateValue value;
     if (!UnpackValueRep(rep, &value)) {
@@ -189,7 +189,7 @@ bool CrateReader::ReadCustomData(CustomDataType *d) {
 
     dict.emplace(key, std::move(var));
 
-    if (!_sr->seek_set(saved_position)) {
+    if (!sr()->seek_set(saved_position)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
     }
   }
@@ -898,7 +898,7 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
 
   // Seek to the payload offset
   uint64_t offset = rep.GetPayload();
-  if (!_sr->seek_set(offset)) {
+  if (!sr()->seek_set(offset)) {
     return false;
   }
 
@@ -906,12 +906,12 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
   uint64_t n = 0;
   if (VERSION_LESS_THAN_0_8_0(_version)) {
     uint32_t shapesize;
-    if (!_sr->read4(&shapesize)) return false;
+    if (!sr()->read4(&shapesize)) return false;
     uint32_t n32;
-    if (!_sr->read4(&n32)) return false;
+    if (!sr()->read4(&n32)) return false;
     n = n32;
   } else {
-    if (!_sr->read8(&n)) return false;
+    if (!sr()->read8(&n)) return false;
   }
 
   if (n > _config.maxArrayElements) {
@@ -926,7 +926,7 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
   }
 
   // Record the byte offset where data starts (right after the count)
-  ref->byte_offset = _sr->tell();
+  ref->byte_offset = sr()->tell();
   ref->element_count = n;
   ref->element_size = elem_size;
   ref->type_id = uint32_t(dty.dtype_id);
@@ -940,7 +940,7 @@ bool CrateReader::DescribeValueRep(const crate::ValueRep &rep,
     return false;
   }
   uint64_t data_end = ref->byte_offset + data_size;
-  if (!_sr->seek_set(data_end)) {
+  if (!sr()->seek_set(data_end)) {
     return false;
   }
 
@@ -1013,7 +1013,7 @@ bool CrateReader::UnpackArrayEditRep(const crate::ValueRep &rep,
     return true;
   }
 
-  if (!_sr->seek_set(rep.GetPayload())) {
+  if (!sr()->seek_set(rep.GetPayload())) {
     PUSH_ERROR("Invalid offset for array edit value.");
     return false;
   }
@@ -1021,15 +1021,15 @@ bool CrateReader::UnpackArrayEditRep(const crate::ValueRep &rep,
   // A VtArrayEdit's valuesRep/indexesRep may themselves be array edits whose
   // payload points back to this offset (self-loop) — the recursion seeks to a
   // fixed offset and consumes no input, so bound it.
-  if (_arrayEditDepth > _config.maxValueRecursion) {
+  if (array_edit_depth() > _config.maxValueRecursion) {
     PUSH_ERROR("Too many nested array-edit values.");
     return false;
   }
-  ++_arrayEditDepth;
+  ++array_edit_depth();
   struct ArrayEditDepthGuard {
     uint32_t &d;
     ~ArrayEditDepthGuard() { --d; }
-  } _aeguard{_arrayEditDepth};
+  } _aeguard{array_edit_depth()};
 
   crate::ValueRep valuesRep, indexesRep;
   if (!ReadValueRep(&valuesRep)) {
@@ -1041,7 +1041,7 @@ bool CrateReader::UnpackArrayEditRep(const crate::ValueRep &rep,
     return false;
   }
   uint8_t isDense{0};
-  if (!_sr->read1(&isDense)) {
+  if (!sr()->read1(&isDense)) {
     PUSH_ERROR("Failed to read array edit isDense flag.");
     return false;
   }
@@ -1188,7 +1188,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     return true;
   }
 
-  if (!_sr->seek_set(offset)) {
+  if (!sr()->seek_set(offset)) {
     PUSH_ERROR("Invalid offset.");
     return false;
   }
@@ -1215,7 +1215,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         // bool is encoded as 8bit value.
 
         uint64_t n;
-        if (!_sr->read8(&n)) {
+        if (!sr()->read8(&n)) {
           PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
@@ -1231,7 +1231,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(uint8_t_size);
 
         std::vector<uint8_t> data(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(uint8_t),
+        if (!sr()->read(size_t(n) * sizeof(uint8_t),
                        size_t(n) * sizeof(uint8_t),
                        reinterpret_cast<uint8_t *>(data.data()))) {
           PUSH_ERROR("Failed to read bool array.");
@@ -1266,17 +1266,17 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
             return false;
           }
@@ -1300,7 +1300,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
-          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+          if (!sr()->read(size_t(n) * sizeof(crate::Index),
                          size_t(n) * sizeof(crate::Index),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read StringIndex array.");
@@ -1331,7 +1331,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(crate::Index));
 
         crate::Index v;
-        if (!_sr->read(sizeof(crate::Index), sizeof(crate::Index),
+        if (!sr()->read(sizeof(crate::Index), sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read uint64 data.");
           return false;
@@ -1362,7 +1362,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         uint64_t n;
-        if (!_sr->read8(&n)) {
+        if (!sr()->read8(&n)) {
           PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
@@ -1402,7 +1402,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
-          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+          if (!sr()->read(size_t(n) * sizeof(crate::Index),
                          size_t(n) * sizeof(crate::Index),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read TokenIndex array.");
@@ -1435,7 +1435,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
       if (rep.IsArray()) {
         uint64_t n;
-        if (!_sr->read8(&n)) {
+        if (!sr()->read8(&n)) {
           PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
@@ -1458,7 +1458,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
-          if (!_sr->read(size_t(n) * sizeof(crate::Index),
+          if (!sr()->read(size_t(n) * sizeof(crate::Index),
                          size_t(n) * sizeof(crate::Index),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read TokenIndex array.");
@@ -1491,7 +1491,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(crate::Index));
 
         crate::Index v;
-        if (!_sr->read(sizeof(crate::Index), sizeof(crate::Index),
+        if (!sr()->read(sizeof(crate::Index), sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read StringIndex data.");
           return false;
@@ -1515,7 +1515,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       CHECK_MEMORY_USAGE(sizeof(uint32_t));
 
       uint32_t raw{0};
-      if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
+      if (!sr()->read(sizeof(uint32_t), sizeof(uint32_t),
                      reinterpret_cast<uint8_t *>(&raw))) {
         PUSH_ERROR("Failed to read enum value.");
         return false;
@@ -1558,7 +1558,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         uint64_t n;
-        if (!_sr->read8(&n)) {
+        if (!sr()->read8(&n)) {
           PUSH_ERROR("Failed to read the number of array elements.");
           return false;
         }
@@ -1574,7 +1574,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(uint8_t_size);
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(uint8_t),
+        if (!sr()->read(size_t(n) * sizeof(uint8_t),
                        size_t(n) * sizeof(uint8_t),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read uchar array.");
@@ -1670,7 +1670,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(int64_t));
 
         int64_t v;
-        if (!_sr->read(sizeof(int64_t), sizeof(int64_t),
+        if (!sr()->read(sizeof(int64_t), sizeof(int64_t),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read int64 data.");
           return false;
@@ -1710,7 +1710,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(uint64_t));
 
         uint64_t v;
-        if (!_sr->read(sizeof(uint64_t), sizeof(uint64_t),
+        if (!sr()->read(sizeof(uint64_t), sizeof(uint64_t),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read uint64 data.");
           return false;
@@ -1767,7 +1767,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(float));
 
         float v{0.0f};
-        if (!_sr->read_float(&v)) {
+        if (!sr()->read_float(&v)) {
           PUSH_ERROR("Failed to read Float value.");
           return false;
         }
@@ -1803,7 +1803,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(double));
 
         double v{0.0};
-        if (!_sr->read_double(&v)) {
+        if (!sr()->read_double(&v)) {
           PUSH_ERROR("Failed to read Double value.");
           return false;
         }
@@ -1842,7 +1842,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(double));
 
         value::timecode v{0.0};
-        if (!_sr->read_double(&v.value)) {
+        if (!sr()->read_double(&v.value)) {
           PUSH_ERROR("Failed to read TimeCode value.");
           return false;
         }
@@ -1864,18 +1864,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -1898,7 +1898,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::matrix2d),
+        if (!sr()->read(size_t(n) * sizeof(value::matrix2d),
                        size_t(n) * sizeof(value::matrix2d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Matrix2d array.");
@@ -1913,7 +1913,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(value::matrix2d));
 
         value::matrix2d v;
-        if (!_sr->read(sizeof(value::matrix2d), sizeof(value::matrix2d),
+        if (!sr()->read(sizeof(value::matrix2d), sizeof(value::matrix2d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix2d` type\n";
           return false;
@@ -1939,18 +1939,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -1972,7 +1972,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_matrix3d_size);
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::matrix3d),
+        if (!sr()->read(size_t(n) * sizeof(value::matrix3d),
                        size_t(n) * sizeof(value::matrix3d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Matrix3d array.");
@@ -1987,7 +1987,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(value::matrix3d));
 
         value::matrix3d v;
-        if (!_sr->read(sizeof(value::matrix3d), sizeof(value::matrix3d),
+        if (!sr()->read(sizeof(value::matrix3d), sizeof(value::matrix3d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix3d` type\n";
           return false;
@@ -2014,18 +2014,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2047,7 +2047,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_matrix4d_size);
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::matrix4d),
+        if (!sr()->read(size_t(n) * sizeof(value::matrix4d),
                        size_t(n) * sizeof(value::matrix4d),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Matrix4d array.");
@@ -2062,7 +2062,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(value::matrix4d));
 
         value::matrix4d v;
-        if (!_sr->read(sizeof(value::matrix4d), sizeof(value::matrix4d),
+        if (!sr()->read(sizeof(value::matrix4d), sizeof(value::matrix4d),
                        reinterpret_cast<uint8_t *>(v.m))) {
           _err += "Failed to read value of `matrix4d` type\n";
           return false;
@@ -2085,18 +2085,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2118,7 +2118,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_quatd_size);
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quatd),
+        if (!sr()->read(size_t(n) * sizeof(value::quatd),
                        size_t(n) * sizeof(value::quatd),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quatf array.");
@@ -2140,7 +2140,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         // tinyusdz's value::quatd struct matches the Crate layout, so
         // memcpy reads the bytes directly.
         value::quatd v;
-        if (!_sr->read(sizeof(v), sizeof(v),
+        if (!sr()->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatd value\n";
           return false;
@@ -2162,18 +2162,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2195,7 +2195,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_quatf_size);
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quatf),
+        if (!sr()->read(size_t(n) * sizeof(value::quatf),
                        size_t(n) * sizeof(value::quatf),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quatf array.");
@@ -2214,7 +2214,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         // Crate wire layout is [x, y, z, w] = (imag, real). See
         // QUATD note above and value-types.hh:957.
         value::quatf v;
-        if (!_sr->read(sizeof(v), sizeof(v),
+        if (!sr()->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quatf value\n";
           return false;
@@ -2237,18 +2237,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2270,7 +2270,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_quath_size);
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::quath),
+        if (!sr()->read(size_t(n) * sizeof(value::quath),
                        size_t(n) * sizeof(value::quath),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read Quath array.");
@@ -2290,7 +2290,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         // components stored as raw uint16 bit patterns. See QUATD note
         // above and value-types.hh:957.
         value::quath v;
-        if (!_sr->read(sizeof(v), sizeof(v),
+        if (!sr()->read(sizeof(v), sizeof(v),
                        reinterpret_cast<uint8_t *>(&v))) {
           _err += "Failed to read Quath value\n";
           return false;
@@ -2315,18 +2315,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2351,7 +2351,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::double2> v;
         // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double2),
+        if (!sr()->read(size_t(n) * sizeof(value::double2),
                        size_t(n) * sizeof(value::double2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double2 array.");
@@ -2365,7 +2365,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double2));
         value::double2 v;
-        if (!_sr->read(sizeof(value::double2), sizeof(value::double2),
+        if (!sr()->read(sizeof(value::double2), sizeof(value::double2),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read double2 data.");
           return false;
@@ -2391,18 +2391,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2427,7 +2427,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::float2> v;
         // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::float2),
+        if (!sr()->read(size_t(n) * sizeof(value::float2),
                        size_t(n) * sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read float2 array.");
@@ -2443,7 +2443,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float2));
         value::float2 v;
-        if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
+        if (!sr()->read(sizeof(value::float2), sizeof(value::float2),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read float2 data.");
           return false;
@@ -2468,18 +2468,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2498,7 +2498,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::half2> v;
         // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half2),
+        if (!sr()->read(size_t(n) * sizeof(value::half2),
                        size_t(n) * sizeof(value::half2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half2 array.");
@@ -2511,7 +2511,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half2));
         value::half2 v;
-        if (!_sr->read(sizeof(value::half2), sizeof(value::half2),
+        if (!sr()->read(sizeof(value::half2), sizeof(value::half2),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read half2");
           return false;
@@ -2537,18 +2537,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2565,7 +2565,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_int2_size);
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int2),
+        if (!sr()->read(size_t(n) * sizeof(value::int2),
                        size_t(n) * sizeof(value::int2),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int2 array.");
@@ -2578,7 +2578,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int2));
         value::int2 v;
-        if (!_sr->read(sizeof(value::int2), sizeof(value::int2),
+        if (!sr()->read(sizeof(value::int2), sizeof(value::int2),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read int2");
           return false;
@@ -2604,18 +2604,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2634,7 +2634,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::double3> v;
         // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::double3),
+        if (!sr()->read(size_t(n) * sizeof(value::double3),
                        size_t(n) * sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read double3 array.");
@@ -2647,7 +2647,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double3));
         value::double3 v;
-        if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
+        if (!sr()->read(sizeof(value::double3), sizeof(value::double3),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read double3");
           return false;
@@ -2673,18 +2673,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2704,7 +2704,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           // Regular allocation for compressed data or when mmap is disabled.
           std::vector<value::float3> v;
           v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::float3),
+          if (!sr()->read(size_t(n) * sizeof(value::float3),
                          size_t(n) * sizeof(value::float3),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read float3 array.");
@@ -2718,7 +2718,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float3));
         value::float3 v;
-        if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
+        if (!sr()->read(sizeof(value::float3), sizeof(value::float3),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read float3");
           return false;
@@ -2745,18 +2745,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2776,7 +2776,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         {
           // Regular allocation for compressed data or when mmap is disabled
           v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::half3),
+          if (!sr()->read(size_t(n) * sizeof(value::half3),
                          size_t(n) * sizeof(value::half3),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read half3 array.");
@@ -2790,7 +2790,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half3));
         value::half3 v;
-        if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
+        if (!sr()->read(sizeof(value::half3), sizeof(value::half3),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read half3");
           return false;
@@ -2815,18 +2815,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2846,7 +2846,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         {
           // Regular allocation for compressed data or when mmap is disabled
           v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::int3),
+          if (!sr()->read(size_t(n) * sizeof(value::int3),
                          size_t(n) * sizeof(value::int3),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read int3 array.");
@@ -2860,7 +2860,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int3));
         value::int3 v;
-        if (!_sr->read(sizeof(value::int3), sizeof(value::int3),
+        if (!sr()->read(sizeof(value::int3), sizeof(value::int3),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read int3");
           return false;
@@ -2886,18 +2886,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2917,7 +2917,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         {
           // Regular allocation for compressed data or when mmap is disabled
           v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::double4),
+          if (!sr()->read(size_t(n) * sizeof(value::double4),
                          size_t(n) * sizeof(value::double4),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read double4 array.");
@@ -2931,7 +2931,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double4));
         value::double4 v;
-        if (!_sr->read(sizeof(value::double4), sizeof(value::double4),
+        if (!sr()->read(sizeof(value::double4), sizeof(value::double4),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read double4");
           return false;
@@ -2956,18 +2956,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -2987,7 +2987,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         {
           // Regular allocation for compressed data or when mmap is disabled
           v.resize(static_cast<size_t>(n));
-          if (!_sr->read(size_t(n) * sizeof(value::float4),
+          if (!sr()->read(size_t(n) * sizeof(value::float4),
                          size_t(n) * sizeof(value::float4),
                          reinterpret_cast<uint8_t *>(v.data()))) {
             PUSH_ERROR("Failed to read float4 array.");
@@ -3001,7 +3001,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float4));
         value::float4 v;
-        if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
+        if (!sr()->read(sizeof(value::float4), sizeof(value::float4),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read float4");
           return false;
@@ -3026,18 +3026,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize; // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -3056,7 +3056,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<value::half4> v;
         // Always use std::vector - no mmap view mode
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::half4),
+        if (!sr()->read(size_t(n) * sizeof(value::half4),
                        size_t(n) * sizeof(value::half4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read half4 array.");
@@ -3069,7 +3069,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::half4));
         value::half4 v;
-        if (!_sr->read(sizeof(value::half4), sizeof(value::half4),
+        if (!sr()->read(sizeof(value::half4), sizeof(value::half4),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read half4");
           return false;
@@ -3094,18 +3094,18 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
@@ -3122,7 +3122,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(value_int4_size);
 
         v.resize(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(value::int4),
+        if (!sr()->read(size_t(n) * sizeof(value::int4),
                        size_t(n) * sizeof(value::int4),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read int4 array.");
@@ -3135,7 +3135,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::int4));
         value::int4 v;
-        if (!_sr->read(sizeof(value::int4), sizeof(value::int4),
+        if (!sr()->read(sizeof(value::int4), sizeof(value::int4),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read int4");
           return false;
@@ -3222,7 +3222,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR: {
       // std::vector<Index>
       uint64_t n{0};
-      if (!_sr->read8(&n)) {
+      if (!sr()->read8(&n)) {
         PUSH_ERROR("Failed to read the number of TokenVector elements (offset=" +
                    std::to_string(offset) + ").");
         return false;
@@ -3248,7 +3248,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
-          if (!_sr->read(static_cast<size_t>(n) * sizeof(crate::Index),
+          if (!sr()->read(static_cast<size_t>(n) * sizeof(crate::Index),
                          static_cast<size_t>(n) * sizeof(crate::Index),
                          reinterpret_cast<uint8_t *>(indices.data()))) {
             PUSH_ERROR("Failed to read TokenVector value.");
@@ -3454,7 +3454,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         return false;
       }
 
-      if (unpackRecursionGuard.size() > _config.maxValueRecursion) {
+      if (unpack_recursion_guard().size() > _config.maxValueRecursion) {
         // To many recursive stacks. We report error
         PUSH_ERROR(
             "Too many recursion when decoding generic VALUE data.");
@@ -3462,17 +3462,17 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       }
 
       const uint64_t local_rep_key = local_rep.GetData();
-      if (unpackRecursionGuard.count(local_rep_key)) {
+      if (unpack_recursion_guard().count(local_rep_key)) {
         // Recursion detected.
         PUSH_ERROR(
             "Corrupted Value data detected.");
         return false;
       } else {
-        unpackRecursionGuard.insert(local_rep_key);
+        unpack_recursion_guard().insert(local_rep_key);
 
         crate::CrateValue local_val;
         bool ret = UnpackValueRep(local_rep, &local_val);
-        unpackRecursionGuard.erase(local_rep_key);
+        unpack_recursion_guard().erase(local_rep_key);
         if (!ret) {
           return false;
         }
@@ -3488,24 +3488,24 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       // 8byte for the offset for recursive value. See RecursiveRead() in
       // https://github.com/PixarAnimationStudios/USD/blob/release/pxr/usd/usd/crateFile.cpp for details.
       int64_t local_offset{0};
-      if (!_sr->read8(&local_offset)) {
+      if (!sr()->read8(&local_offset)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the offset for value in Dictionary.");
         return false;
       }
 
       DCOUT("UnregisteredValue  offset = " << local_offset);
-      DCOUT("tell = " << _sr->tell());
+      DCOUT("tell = " << sr()->tell());
 
       // -8 to compensate sizeof(offset). Guard against int64 underflow.
       if (local_offset < (std::numeric_limits<int64_t>::min)() + 8) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("UNREGISTERED_VALUE offset {} would underflow int64.", local_offset));
       }
-      if (!_sr->seek_from_current(local_offset - 8)) {
+      if (!sr()->seek_from_current(local_offset - 8)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek to UNREGISTERD_VALUE content. Invalid offset value: " +
                 std::to_string(local_offset));
       }
 
-      uint64_t saved_position = _sr->tell();
+      uint64_t saved_position = sr()->tell();
 
       crate::ValueRep local_rep{0};
       if (!ReadValueRep(&local_rep)) {
@@ -3542,7 +3542,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             // unregisteredMetas maps instead of treating it as a typed string.
             value->SetUnregisteredValueString(str);
 
-            if (!_sr->seek_set(saved_position)) {
+            if (!sr()->seek_set(saved_position)) {
               PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
             }
             return true;
@@ -3570,7 +3570,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           }
         }
         value->Set(std::move(dict));
-        if (!_sr->seek_set(saved_position)) {
+        if (!sr()->seek_set(saved_position)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");
         }
         return true;
@@ -3596,17 +3596,17 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         uint64_t n{0};
         if (VERSION_LESS_THAN_0_8_0(_version)) {
           uint32_t shapesize;  // not used
-          if (!_sr->read4(&shapesize)) {
+          if (!sr()->read4(&shapesize)) {
             PUSH_ERROR("Failed to read the number of array elements.");
             return false;
           }
           uint32_t _n;
-          if (!_sr->read4(&_n)) {
+          if (!sr()->read4(&_n)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
           }
           n = _n;
         } else {
-          if (!_sr->read8(&n)) {
+          if (!sr()->read8(&n)) {
             PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
             return false;
           }
@@ -3623,7 +3623,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(crate_Index_size);
 
         std::vector<crate::Index> v(static_cast<size_t>(n));
-        if (!_sr->read(size_t(n) * sizeof(crate::Index),
+        if (!sr()->read(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(v.data()))) {
           PUSH_ERROR("Failed to read StringIndex array.");
@@ -3645,7 +3645,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         CHECK_MEMORY_USAGE(sizeof(crate::Index));
 
         crate::Index v;
-        if (!_sr->read(sizeof(crate::Index), sizeof(crate::Index),
+        if (!sr()->read(sizeof(crate::Index), sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(&v))) {
           PUSH_ERROR("Failed to read StringIndex for PathExpression.");
           return false;
@@ -3670,7 +3670,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       // SdfPath is stored as a PathIndex into the crate's path table. A target
       // of `<>` (the empty path) marks a deletion relocate.
       uint64_t n{0};
-      if (!_sr->read8(&n)) {
+      if (!sr()->read8(&n)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of relocates.");
       }
 
@@ -3729,17 +3729,17 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       //   Read<vector<uint8_t>>  : ts-binary blob (uint64 count + bytes)
       //   ReadMap<map<double, VtDictionary>> : per-knot customData
       uint64_t blobSize{0};
-      if (!_sr->read8(&blobSize)) {
+      if (!sr()->read8(&blobSize)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline blob size.");
       }
-      if (blobSize > _sr->size()) {
+      if (blobSize > sr()->size()) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid spline blob size.");
       }
       CHECK_MEMORY_USAGE(blobSize);
 
       std::vector<uint8_t> blob(static_cast<size_t>(blobSize));
       if (blobSize > 0) {
-        if (!_sr->read(static_cast<size_t>(blobSize),
+        if (!sr()->read(static_cast<size_t>(blobSize),
                        static_cast<size_t>(blobSize), blob.data())) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline blob.");
         }
@@ -3756,7 +3756,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       // back here -- this value lives at its own offset, so leaving them
       // unconsumed does not affect other value reads.
       uint64_t cdCount{0};
-      if (!_sr->read8(&cdCount)) {
+      if (!sr()->read8(&cdCount)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read spline customData count.");
       }
       if (cdCount > 0) {
