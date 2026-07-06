@@ -49,6 +49,7 @@
 #include "next/tinyusdz-next.hh"  // LoadUSDFromMemory (USDA/USDC/USDZ auto-detect)
 #include "next/reader/usdz-reader.hh"  // USDZReader (raw archive entry access)
 #include "next/crate/crate-reader.hh"  // CrateReader (referenced-layer parse)
+#include "next/reader/usda-reader.hh"  // LoadUSDAFromString (USDA archive layer)
 #include "next/pipeline/flatten.hh"    // FlattenUSDCToUSDC + layer_loader
 #include "next/stage/stage.hh"
 #include "tydra/next/render-converter.hh"
@@ -202,10 +203,11 @@ class TinyUSDZLoaderNative {
 
     // For a USDZ with a USDC root, flatten the root first so external references
     // to OTHER layers IN THE ARCHIVE are resolved: the compositor's layer_loader
-    // pulls each referenced crate straight from the archive (no filesystem).
-    // (USDA-root or USDA-dependency archives fall back to the direct load, which
-    // resolves only intra-file composition — the next loader does not yet
-    // compose USDA dependencies.)
+    // pulls each referenced layer straight from the archive (no filesystem),
+    // parsing either a crate (PXR-USDC) or a USDA text layer.
+    // (A USDA-root archive still falls back to the direct load below, which
+    // resolves only intra-file composition; usdz roots are effectively always
+    // crate, and a standalone .usda buffer has no archive to resolve against.)
     if (have_zip) {
       int root = zip.FindUSDCFile();
       if (root >= 0) {
@@ -218,13 +220,29 @@ class TinyUSDZLoaderNative {
                               std::string* err) -> std::unique_ptr<tn::Layer> {
               const int idx = findZipEntry(zip, key);
               if (idx < 0) { if (err) *err = "not in archive: " + key; return nullptr; }
-              std::string bytes(
-                  reinterpret_cast<const char*>(zip.EntryData(static_cast<size_t>(idx))),
-                  zip.EntrySize(static_cast<size_t>(idx)));
-              if (bytes.size() < 8 || std::memcmp(bytes.data(), "PXR-USDC", 8) != 0) {
-                if (err) *err = "USDA layer dependencies are not supported: " + key;
-                return nullptr;
+              const uint8_t* ed = zip.EntryData(static_cast<size_t>(idx));
+              const size_t es = zip.EntrySize(static_cast<size_t>(idx));
+              if (!ed || es == 0) { if (err) *err = "empty layer: " + key; return nullptr; }
+
+              // USDA text layer (anything that is not a crate). Parse from memory
+              // and hand the compositor its root Layer -- same as the native
+              // LoadLayerFromUSDZ USDA branch.
+              if (es < 8 || std::memcmp(ed, "PXR-USDC", 8) != 0) {
+                tn::LoadResult lr = tn::LoadUSDAFromString(
+                    reinterpret_cast<const char*>(ed), es);
+                if (!lr.success) {
+                  if (err) *err = lr.error_summary.empty()
+                                      ? ("USDA layer parse failed: " + key)
+                                      : lr.error_summary;
+                  return nullptr;
+                }
+                std::unique_ptr<tn::Layer> layer = lr.stage.ReleaseRootLayer();
+                if (layer) layer->build_path_index();
+                return layer;
               }
+
+              // USDC (crate) layer.
+              std::string bytes(reinterpret_cast<const char*>(ed), es);
               tn::CrateReader reader(read_opts);
               tn::CrateReadResult rr = reader.ReadOwned(std::move(bytes));
               if (!rr.success) {
