@@ -838,12 +838,12 @@ static bool GetFieldAssetInfo(const tinyusdz::Prim &prim,
                               value::AssetPath *filePath,
                               std::string *fieldName) {
   const FieldAsset *fa = nullptr;
-  if (const auto *p = prim.as<OpenVDBAsset>()) {
-    fa = p;
-  } else if (const auto *p = prim.as<Field3DAsset>()) {
-    fa = p;
-  } else if (const auto *p = prim.as<FieldAsset>()) {
-    fa = p;
+  if (const auto *openvdb_asset = prim.as<OpenVDBAsset>()) {
+    fa = openvdb_asset;
+  } else if (const auto *field3d_asset = prim.as<Field3DAsset>()) {
+    fa = field3d_asset;
+  } else if (const auto *field_asset = prim.as<FieldAsset>()) {
+    fa = field_asset;
   }
   if (!fa) return false;
 

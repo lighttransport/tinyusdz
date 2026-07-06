@@ -16,9 +16,11 @@ namespace tsd {
 namespace {
 
 bool ToU32(size_t n, uint32_t *out) {
+#if !defined(__EMSCRIPTEN__) || defined(__wasm64__)
   if (n > size_t((std::numeric_limits<uint32_t>::max)())) {
     return false;
   }
+#endif
   *out = uint32_t(n);
   return true;
 }
