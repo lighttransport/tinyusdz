@@ -40,6 +40,8 @@ import {
 // Configuration
 // ===========================================
 
+const DEFAULT_USD_MODEL_URI = './assets/skintest-animated.usda';
+
 // Scene setup
 const scene = new THREE.Scene();
 window._scene = scene; // Debug: expose for console access
@@ -889,7 +891,7 @@ async function createConfiguredLoader() {
 		? animationParams.targetBoneCount
 		: 4;
 
-	return createConfiguredTinyUSDZLoader({
+	const loader = await createConfiguredTinyUSDZLoader({
 		initOptions: { useZstdCompressedWasm: false, useMemory64: false },
 		skinningOptions: {
 			enableBoneReduction,
@@ -898,6 +900,33 @@ async function createConfiguredLoader() {
 			logger: console
 		}
 	});
+	window._tinyusdz_module = loader.native_;
+	window._tinyusdz_wasm_memory = {
+		get buffer() {
+			return loader.native_?.HEAPU8?.buffer ?? null;
+		}
+	};
+	return loader;
+}
+
+function getStartupUSDModelURI() {
+	const params = new URLSearchParams(window.location.search);
+	for (const key of ['uri', 'url', 'src', 'model']) {
+		const value = params.get(key);
+		if (value) return value;
+	}
+	return DEFAULT_USD_MODEL_URI;
+}
+
+function getDisplayNameFromURI(uri) {
+	try {
+		const parsed = new URL(uri, window.location.href);
+		const pathname = parsed.pathname || uri;
+		const basename = pathname.split('/').filter(Boolean).pop();
+		return basename || uri;
+	} catch {
+		return uri.split('/').pop() || uri;
+	}
 }
 
 function normalizeVariantInfos(variantInfos) {
@@ -989,6 +1018,114 @@ async function parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filenam
 	return { usdScene, variantInfos };
 }
 
+function formatDurationMs(ms) {
+	if (!Number.isFinite(ms)) return 'n/a';
+	if (ms < 1000) return `${ms.toFixed(0)} ms`;
+	return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+	if (!Number.isFinite(bytes)) return 'n/a';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	let value = bytes;
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+	const jsHeap = performance.memory?.usedJSHeapSize;
+	const wasmHeap =
+		window._tinyusdz_wasm_memory?.buffer?.byteLength ??
+		window._tinyusdz_module?.HEAPU8?.buffer?.byteLength;
+	return {
+		jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+		wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+	};
+}
+
+function formatMemoryUse(before, after, key) {
+	const current = after?.[key];
+	if (!Number.isFinite(current)) return 'n/a';
+
+	const previous = before?.[key];
+	if (!Number.isFinite(previous)) {
+		return formatBytes(current);
+	}
+
+	const delta = current - previous;
+	const sign = delta > 0 ? '+' : '';
+	return `${formatBytes(current)} (${sign}${formatBytes(delta)})`;
+}
+
+function updateLoadStatsPanel(stats) {
+	const container = document.getElementById('load-stats');
+	const details = document.getElementById('loadStatsDetails');
+	if (!container || !details) return;
+
+	container.style.display = '';
+
+	if (stats.status === 'loading') {
+		details.textContent = 'Loading...';
+		return;
+	}
+
+	if (stats.status === 'failed') {
+		details.textContent = 'Failed';
+		return;
+	}
+
+	const lines = [
+		`File: ${formatBytes(stats.fileSize)}`,
+		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
+		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Total: ${formatDurationMs(stats.totalMs)}`,
+		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+	];
+
+	details.textContent = lines.join('\n');
+	details.style.whiteSpace = 'pre-line';
+}
+
+function beginLoadStats(fileSize = null) {
+	const stats = {
+		status: 'loading',
+		startTime: performance.now(),
+		fileSize,
+		fetchMs: null,
+		parseMs: null,
+		processMs: null,
+		totalMs: null,
+		memoryBefore: captureMemorySnapshot(),
+		memoryAfter: null
+	};
+	updateLoadStatsPanel(stats);
+	return stats;
+}
+
+async function parseAndProcessUSD(loader, arrayBuffer, filename, stats) {
+	const parseStart = performance.now();
+	const { usdScene: usd_scene, variantInfos } =
+		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, currentVariantSelection);
+	stats.parseMs = performance.now() - parseStart;
+	updateVariantControls(variantInfos, currentVariantSelection);
+
+	console.log('USD scene loaded:', usd_scene);
+
+	const processStart = performance.now();
+	await processUSDScene(usd_scene, filename);
+	stats.processMs = performance.now() - processStart;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	stats.status = 'done';
+	updateLoadStatsPanel(stats);
+}
+
 /**
  * Generate joint hierarchy text with clickable elements
  * @param {Array<THREE.Bone>} bones - Array of bones
@@ -1025,15 +1162,23 @@ async function loadUSDModel() {
 	const loader = await createConfiguredLoader();
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest-animated.usda";
+	const usd_filename = DEFAULT_USD_MODEL_URI;
+	const stats = beginLoadStats();
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
+	const fetchStart = performance.now();
 	const response = await fetch(usd_filename);
 	if (!response.ok) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
 		throw new Error(`Failed to fetch: ${response.statusText}`);
 	}
 	const arrayBuffer = await response.arrayBuffer();
+	stats.fetchMs = performance.now() - fetchStart;
+	stats.fileSize = arrayBuffer.byteLength;
 	currentUSDSource = {
 		type: 'url',
 		url: usd_filename,
@@ -1041,14 +1186,52 @@ async function loadUSDModel() {
 		arrayBuffer: arrayBuffer.slice(0)
 	};
 
-	const { usdScene: usd_scene, variantInfos } =
-		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, usd_filename, currentVariantSelection);
-	updateVariantControls(variantInfos, currentVariantSelection);
+	try {
+		await parseAndProcessUSD(loader, arrayBuffer, usd_filename, stats);
+	} catch (error) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw error;
+	}
+}
 
-	console.log('USD scene loaded:', usd_scene);
+async function loadUSDModelFromURI(uri) {
+	const loader = await createConfiguredLoader();
+	const stats = beginLoadStats();
+	const displayName = getDisplayNameFromURI(uri);
 
-	// Process the loaded scene
-	await processUSDScene(usd_scene, usd_filename);
+	console.log(`Loading USD file from URI: ${uri}`);
+
+	const fetchStart = performance.now();
+	const response = await fetch(uri);
+	if (!response.ok) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw new Error(`Failed to fetch ${uri}: ${response.statusText}`);
+	}
+	const arrayBuffer = await response.arrayBuffer();
+	stats.fetchMs = performance.now() - fetchStart;
+	stats.fileSize = arrayBuffer.byteLength;
+	currentUSDSource = {
+		type: 'url',
+		url: uri,
+		filename: displayName,
+		arrayBuffer: arrayBuffer.slice(0)
+	};
+
+	try {
+		await parseAndProcessUSD(loader, arrayBuffer, displayName, stats);
+	} catch (error) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw error;
+	}
 }
 
 /**
@@ -1058,6 +1241,8 @@ async function loadUSDModel() {
  */
 async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	const loader = await createConfiguredLoader();
+	const stats = beginLoadStats(arrayBuffer.byteLength);
+	stats.fetchMs = null;
 
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
@@ -1067,14 +1252,15 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		arrayBuffer: arrayBuffer.slice(0)
 	};
 
-	const { usdScene: usd_scene, variantInfos } =
-		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, currentVariantSelection);
-	updateVariantControls(variantInfos, currentVariantSelection);
-
-	console.log('USD scene loaded:', usd_scene);
-
-	// Process the loaded scene
-	await processUSDScene(usd_scene, filename);
+	try {
+		await parseAndProcessUSD(loader, arrayBuffer, filename, stats);
+	} catch (error) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw error;
+	}
 }
 
 async function reloadCurrentUSDWithVariant(variantSelection) {
@@ -1585,9 +1771,9 @@ if (variantSelect) {
 	});
 }
 
-// Load USD model on startup
-loadUSDModel().catch((error) => {
-	console.error('Failed to load default USD file:', error);
+// Load USD model on startup. `?uri=/models/foo.usdz` overrides the built-in default.
+loadUSDModelFromURI(getStartupUSDModelURI()).catch((error) => {
+	console.error('Failed to load startup USD file:', error);
 	console.error('Error details:', error.message || error);
 	console.log('Please upload a USD file (with or without skeletal animation).');
 	// Update UI to show error
