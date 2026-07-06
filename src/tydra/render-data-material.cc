@@ -1179,6 +1179,7 @@ static std::string ResolveMtlxTexcoordVarname(
     const Stage &stage, const Shader &image_shader, const Path &image_path,
     const Prim *ng_prim, const std::string &default_texcoords_primvar_name,
     MtlxTexcoordTransform *transform_out) {
+  (void)image_path;
   const std::string fallback =
       MtlxDefaultTexcoordName(default_texcoords_primvar_name);
   MtlxTexcoordTransform transform;

@@ -156,7 +156,8 @@ InstanceKey ComputeInstanceKey(const PrimIndex &index,
 // PrimIndex incremental-mutation helpers (friends of PrimIndex)
 // ---------------------------------------------------------------------------
 
-CompNode &GetMutableNode(PrimIndex &index, uint16_t node_idx) {
+CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
+                         uint16_t node_idx) {
   return index._nodes[node_idx];
 }
 
@@ -415,8 +416,8 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
         if (LoadLayerFromMemory(asset.data(), asset.size(), resolved_path, &layer,
                                 warn, err)) {
           auto layer_ptr = std::make_unique<Layer>(std::move(layer));
-          result = layer_ptr.get();
           ctx->_loaded_layers.push_back(std::move(layer_ptr));
+          result = ctx->_loaded_layers.back().get();
         }
       }
     }

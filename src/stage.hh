@@ -144,7 +144,9 @@ class Stage {
   ///
   /// @return Const array of Root Prims.
   ///
-  const std::vector<Prim> &root_prims() const { return _root_nodes; }
+  const std::vector<Prim> &root_prims() const TINYUSDZ_LIFETIMEBOUND {
+    return _root_nodes;
+  }
 
   ///
   /// @brief Reference to Root Prims array
@@ -152,7 +154,9 @@ class Stage {
   /// @return Array of Root Prims.
   /// TODO: Deprecate non-const `root_prims()` API and use `add_root_prim()` instead.
   ///
-  std::vector<Prim> &root_prims() { return _root_nodes; }
+  std::vector<Prim> &root_prims() TINYUSDZ_LIFETIMEBOUND {
+    return _root_nodes;
+  }
 
   ///
   /// Add Prim to root.
@@ -208,9 +212,11 @@ class Stage {
   ///
   /// @return Stage metadatum struct.
   ///
-  const StageMetas &metas() const { return stage_metas; }
+  const StageMetas &metas() const TINYUSDZ_LIFETIMEBOUND {
+    return stage_metas;
+  }
 
-  StageMetas &metas() { return stage_metas; }
+  StageMetas &metas() TINYUSDZ_LIFETIMEBOUND { return stage_metas; }
 
   ///
   /// @brief Assign unique Prim id inside this Stage.
@@ -285,11 +291,11 @@ class Stage {
   ///
   bool compose(bool addSourceFileComment = true) const;
 
-  const std::string &get_warning() const {
+  const std::string &get_warning() const TINYUSDZ_LIFETIMEBOUND {
     return _warn;
   }
 
-  const std::string &get_error() const {
+  const std::string &get_error() const TINYUSDZ_LIFETIMEBOUND {
     return _err;
   }
 
@@ -462,8 +468,12 @@ class Stage {
   bool adopt_mmap_file(io::MMapFileHandle &&handle);
   bool adopt_mmap_buffer(std::vector<uint8_t> &&buffer);
   void clear_mmap_data();
-  const MMapArrayTable *mmap_table() const { return _mmap_table.get(); }
-  const MMapDataSource *mmap_source() const { return _mmap_source.get(); }
+  const MMapArrayTable *mmap_table() const TINYUSDZ_LIFETIMEBOUND {
+    return _mmap_table.get();
+  }
+  const MMapDataSource *mmap_source() const TINYUSDZ_LIFETIMEBOUND {
+    return _mmap_source.get();
+  }
   bool has_mmap_zero_copy() const;
 };
 

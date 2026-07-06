@@ -18,8 +18,11 @@
 #include "core/model-scope.hh"  // Model, Scope
 #include "usdGeom.hh"
 #include "usdLux.hh"
+#include "usdPhysics.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "mjcPhysics.hh"
+#include "newtonPhysics.hh"
 #include "value-types.hh"
 
 #define PushError(s) \
@@ -82,6 +85,19 @@ RECONSTRUCT_PRIM_DECL(BlendShape);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 RECONSTRUCT_PRIM_DECL(NodeGraph);
+RECONSTRUCT_PRIM_DECL(PhysicsScene);
+RECONSTRUCT_PRIM_DECL(PhysicsJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsRevoluteJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsPrismaticJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsSphericalJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsFixedJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsDistanceJoint);
+RECONSTRUCT_PRIM_DECL(PhysicsCollisionGroup);
+RECONSTRUCT_PRIM_DECL(MjcActuator);
+RECONSTRUCT_PRIM_DECL(MjcTendon);
+RECONSTRUCT_PRIM_DECL(MjcKeyframe);
+RECONSTRUCT_PRIM_DECL(MjcSensor);
+RECONSTRUCT_PRIM_DECL(NewtonActuator);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -179,6 +195,19 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(BlendShape)
   RECONSTRUCT_PRIM(Shader)
   RECONSTRUCT_PRIM(NodeGraph)
+  RECONSTRUCT_PRIM(PhysicsScene)
+  RECONSTRUCT_PRIM(PhysicsJoint)
+  RECONSTRUCT_PRIM(PhysicsRevoluteJoint)
+  RECONSTRUCT_PRIM(PhysicsPrismaticJoint)
+  RECONSTRUCT_PRIM(PhysicsSphericalJoint)
+  RECONSTRUCT_PRIM(PhysicsFixedJoint)
+  RECONSTRUCT_PRIM(PhysicsDistanceJoint)
+  RECONSTRUCT_PRIM(PhysicsCollisionGroup)
+  RECONSTRUCT_PRIM(MjcActuator)
+  RECONSTRUCT_PRIM(MjcTendon)
+  RECONSTRUCT_PRIM(MjcKeyframe)
+  RECONSTRUCT_PRIM(MjcSensor)
+  RECONSTRUCT_PRIM(NewtonActuator)
   RECONSTRUCT_PRIM(Material) {
     PUSH_WARN("TODO or unsupported prim type: " << primspec.typeName());
     return nonstd::nullopt;

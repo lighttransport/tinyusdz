@@ -499,7 +499,9 @@ bool ConvertPhysicsToJson(
         ss << Indent(2, sp) << "}";
       };
 
-      for (const auto &[p, j] : data.revoluteJoints) {
+      for (const auto &item : data.revoluteJoints) {
+        const auto &p = item.first;
+        const auto &j = item.second;
         emitJoint(p, "PhysicsRevoluteJoint", *j, j->props, [&]() {
           auto axis = j->axis.get_value();
           if (axis.has_value()) EmitKV(ss, 3, sp, "axis", JsonStr(axis.value().str()));
@@ -509,7 +511,9 @@ bool ConvertPhysicsToJson(
           if (hi.has_value()) EmitKV(ss, 3, sp, "upperLimit", JsonNum(hi.value()));
         });
       }
-      for (const auto &[p, j] : data.prismaticJoints) {
+      for (const auto &item : data.prismaticJoints) {
+        const auto &p = item.first;
+        const auto &j = item.second;
         emitJoint(p, "PhysicsPrismaticJoint", *j, j->props, [&]() {
           auto axis = j->axis.get_value();
           if (axis.has_value()) EmitKV(ss, 3, sp, "axis", JsonStr(axis.value().str()));
@@ -519,7 +523,9 @@ bool ConvertPhysicsToJson(
           if (hi.has_value()) EmitKV(ss, 3, sp, "upperLimit", JsonNum(hi.value()));
         });
       }
-      for (const auto &[p, j] : data.sphericalJoints) {
+      for (const auto &item : data.sphericalJoints) {
+        const auto &p = item.first;
+        const auto &j = item.second;
         emitJoint(p, "PhysicsSphericalJoint", *j, j->props, [&]() {
           auto axis = j->axis.get_value();
           if (axis.has_value()) EmitKV(ss, 3, sp, "axis", JsonStr(axis.value().str()));
@@ -529,10 +535,14 @@ bool ConvertPhysicsToJson(
           if (c1.has_value()) EmitKV(ss, 3, sp, "coneAngle1Limit", JsonNum(c1.value()));
         });
       }
-      for (const auto &[p, j] : data.fixedJoints) {
+      for (const auto &item : data.fixedJoints) {
+        const auto &p = item.first;
+        const auto &j = item.second;
         emitJoint(p, "PhysicsFixedJoint", *j, j->props, []() {});
       }
-      for (const auto &[p, j] : data.distanceJoints) {
+      for (const auto &item : data.distanceJoints) {
+        const auto &p = item.first;
+        const auto &j = item.second;
         emitJoint(p, "PhysicsDistanceJoint", *j, j->props, [&]() {
           auto lo = j->minDistance.get_value();
           if (lo.has_value()) EmitKV(ss, 3, sp, "minDistance", JsonNum(lo.value()));

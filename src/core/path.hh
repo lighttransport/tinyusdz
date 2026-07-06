@@ -394,7 +394,7 @@ class Path {
   }
 
   // Strip '/'
-  Path &make_relative() {
+  Path &make_relative() TINYUSDZ_LIFETIMEBOUND {
     if (is_absolute_path() && (_prim_len > 1)) {
       // Remove leading '/' from the single buffer and shift offsets left by 1.
       _full.erase(0, 1);
@@ -466,7 +466,7 @@ class Path {
     std::string part;       // e.g. `variantColor` for {variantColor=green}
     std::string selection;  // e.g. `green`; could be empty.
   };
-  VariantTokens &mutable_variant() {
+  VariantTokens &mutable_variant() TINYUSDZ_LIFETIMEBOUND {
     if (!_variant) {
       _variant.reset(new VariantTokens());
     }

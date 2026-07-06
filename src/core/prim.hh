@@ -144,32 +144,38 @@ class Prim {
                      std::string *err = nullptr);
 
   // TODO: Deprecate this API to disallow direct modification of children.
-  std::vector<Prim> &children() { return _children; }
+  std::vector<Prim> &children() TINYUSDZ_LIFETIMEBOUND { return _children; }
 
-  const std::vector<Prim> &children() const { return _children; }
+  const std::vector<Prim> &children() const TINYUSDZ_LIFETIMEBOUND {
+    return _children;
+  }
 
-  const value::Value &data() const { return _data; }
-  value::Value &get_data() { return _data; }
+  const value::Value &data() const TINYUSDZ_LIFETIMEBOUND { return _data; }
+  value::Value &get_data() TINYUSDZ_LIFETIMEBOUND { return _data; }
 
-  Specifier &specifier() { return _specifier; }
+  Specifier &specifier() TINYUSDZ_LIFETIMEBOUND { return _specifier; }
 
   Specifier specifier() const { return _specifier; }
 
   // local_path is reserved for Prim composition.
   // for a while please use absolute_path(full Prim absolute path) or
   // element_name(leaf Prim name).
-  Path &local_path() { return _path; }
-  const Path &local_path() const { return _path; }
+  Path &local_path() TINYUSDZ_LIFETIMEBOUND { return _path; }
+  const Path &local_path() const TINYUSDZ_LIFETIMEBOUND { return _path; }
 
   ///
   /// Absolute Prim Path(e.g. "/xform/mesh0") is available after
   /// Stage::compute_absolute_path() or assign it manually by an app.
   ///
-  Path &absolute_path() { return _abs_path; }
-  const Path &absolute_path() const { return _abs_path; }
+  Path &absolute_path() TINYUSDZ_LIFETIMEBOUND { return _abs_path; }
+  const Path &absolute_path() const TINYUSDZ_LIFETIMEBOUND {
+    return _abs_path;
+  }
 
-  Path &element_path() { return _elementPath; }
-  const Path &element_path() const { return _elementPath; }
+  Path &element_path() TINYUSDZ_LIFETIMEBOUND { return _elementPath; }
+  const Path &element_path() const TINYUSDZ_LIFETIMEBOUND {
+    return _elementPath;
+  }
 
   // elementName = element_path's prim part
   tstring_view element_name() const { return _elementPath.prim_part(); }
@@ -178,8 +184,12 @@ class Prim {
 
   uint32_t type_id() const { return _data.type_id(); }
 
-  std::string &prim_type_name() { return _prim_type_name; }
-  const std::string &prim_type_name() const { return _prim_type_name; }
+  std::string &prim_type_name() TINYUSDZ_LIFETIMEBOUND {
+    return _prim_type_name;
+  }
+  const std::string &prim_type_name() const TINYUSDZ_LIFETIMEBOUND {
+    return _prim_type_name;
+  }
 
   template <typename T>
   bool is() const {
@@ -200,18 +210,21 @@ class Prim {
     return nullptr;
   }
 
-  const PrimMeta &metas() const;
-  PrimMeta &metas();
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND;
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND;
 
   int64_t prim_id() const { return _prim_id; }
 
-  int64_t &prim_id() { return _prim_id; }
+  int64_t &prim_id() TINYUSDZ_LIFETIMEBOUND { return _prim_id; }
 
-  const std::map<std::string, VariantSet> &variantSets() const {
+  const std::map<std::string, VariantSet> &variantSets() const
+      TINYUSDZ_LIFETIMEBOUND {
     return _variantSets;
   }
 
-  std::map<std::string, VariantSet> &variantSets() { return _variantSets; }
+  std::map<std::string, VariantSet> &variantSets() TINYUSDZ_LIFETIMEBOUND {
+    return _variantSets;
+  }
 
   ///
   /// Get indices for children().

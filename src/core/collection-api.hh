@@ -86,7 +86,8 @@ class Collection
     return _instances.at(name, coll);
   }
 
-  CollectionInstance &get_or_add_instance(const std::string &name) {
+  CollectionInstance &get_or_add_instance(const std::string &name)
+      TINYUSDZ_LIFETIMEBOUND {
     return _instances.get_or_add(name);
   }
 

@@ -292,7 +292,8 @@ class PrimIndex {
 };
 
 // Incremental payload (un)load helpers (friends of PrimIndex).
-CompNode &GetMutableNode(PrimIndex &index, uint16_t node_idx);
+CompNode &GetMutableNode(PrimIndex &index TINYUSDZ_LIFETIMEBOUND,
+                         uint16_t node_idx);
 void RecomputeStrengthOrder(PrimIndex &index);
 
 /// Compose a PrimSpec by walking a PrimIndex in strength order (strongest

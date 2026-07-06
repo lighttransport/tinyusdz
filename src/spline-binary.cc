@@ -157,14 +157,12 @@ bool EncodeSplineToBinary(const SplineData &sd, std::vector<uint8_t> *out,
   }
 
   // Knot section.
-#if !defined(__EMSCRIPTEN__) || defined(__wasm64__)
-  if (sd.knots.size() >
-      size_t((std::numeric_limits<uint32_t>::max)())) {
+  const uint64_t knot_count = static_cast<uint64_t>(sd.knots.size());
+  if (knot_count > uint64_t{std::numeric_limits<uint32_t>::max()}) {
     if (err) *err = "Too many spline knots to encode.";
     return false;
   }
-#endif
-  Wr<uint32_t>(out, static_cast<uint32_t>(sd.knots.size()));
+  Wr<uint32_t>(out, static_cast<uint32_t>(knot_count));
 
   for (const SplineKnotData &k : sd.knots) {
     uint8_t flag = static_cast<uint8_t>(
