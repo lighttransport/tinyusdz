@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 // import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';    // Available for EXR env presets
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -30,6 +30,41 @@ try {
     console.log('BridgeClient loaded');
 } catch (e) {
     console.warn('BridgeClient not available:', e.message);
+}
+
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+    for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
+        const value = params.get(key);
+        if (value) return value;
+    }
+    return null;
+}
+
+function getDisplayNameFromURI(uri) {
+    try {
+        const parsed = new URL(uri, window.location.href);
+        return parsed.pathname.split('/').filter(Boolean).pop() || uri;
+    } catch {
+        return uri.split('/').pop() || uri;
+    }
+}
+
+function formatDurationMs(ms) {
+    if (!Number.isFinite(ms)) return 'n/a';
+    return ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+    if (!Number.isFinite(bytes)) return 'n/a';
+    const sign = bytes < 0 ? '-' : '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = Math.abs(bytes);
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex++;
+    }
+    return `${sign}${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 // ============================================================================
@@ -127,6 +162,10 @@ const state = {
     undoStack: [],              // array of JSON-serialized graph snapshots (pre-change)
     redoStack: [],
     _pendingHistorySnapshot: null,  // snapshot taken on pointerdown, committed if graph changed
+
+    loadStats: null,
+    frameCount: 0,
+    lastFpsUpdateMs: performance.now(),
 };
 
 // ============================================================================
@@ -2187,7 +2226,7 @@ async function loadEnvironment(preset) {
     if (path.startsWith('hdr:')) {
         const url = path.substring('hdr:'.length);
         try {
-            const loader = new RGBELoader();
+            const loader = new HDRLoader();
             const texture = await loader.loadAsync(url);
             texture.mapping = THREE.EquirectangularReflectionMapping;
             // Use high-res PMREM (cube 512) to avoid LOD discontinuities at low roughness
@@ -2443,13 +2482,20 @@ async function initLoader() {
 async function loadUSDFile(file) {
     showLoading(true);
     updateStatus(`Loading ${file.name}...`);
+    const stats = beginLoadStats(null, file.name);
 
     try {
+        const readStart = performance.now();
         const arrayBuffer = await file.arrayBuffer();
+        stats.fetchMs = performance.now() - readStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        updateLoadStatsPanel();
 
+        const parseStart = performance.now();
         state.usdData = await new Promise((resolve, reject) => {
             state.loader.parse(arrayBuffer, file.name, resolve, reject);
         });
+        stats.parseMs = performance.now() - parseStart;
 
         if (!state.usdData) {
             throw new Error('Failed to parse USD file');
@@ -2463,7 +2509,9 @@ async function loadUSDFile(file) {
         }
 
         // Build scene (material loading consolidated inside buildScene)
+        const processStart = performance.now();
         await buildScene();
+        stats.processMs = performance.now() - processStart;
 
         // Update material selector
         updateMaterialSelector();
@@ -2474,9 +2522,68 @@ async function loadUSDFile(file) {
         }
 
         showToast(`Loaded ${file.name}`);
+        finishLoadStats(stats);
 
     } catch (error) {
+        failLoadStats(stats);
         console.error('Load error:', error);
+        updateStatus(`Error: ${error.message}`);
+        showToast(`Failed: ${error.message}`);
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function loadUSDFromURI(uri) {
+    const displayName = getDisplayNameFromURI(uri);
+    showLoading(true);
+    updateStatus(`Loading ${displayName}...`);
+    const stats = beginLoadStats(null, displayName);
+
+    try {
+        const fetchStart = performance.now();
+        const response = await fetch(uri);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch ${uri}: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        stats.fetchMs = performance.now() - fetchStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        updateLoadStatsPanel();
+
+        const lastSlash = uri.lastIndexOf('/');
+        state.assetBaseUrl = lastSlash >= 0 ? uri.substring(0, lastSlash + 1) : '';
+
+        const parseStart = performance.now();
+        state.usdData = await new Promise((resolve, reject) => {
+            state.loader.parse(arrayBuffer, displayName, resolve, reject);
+        });
+        stats.parseMs = performance.now() - parseStart;
+
+        if (!state.usdData) {
+            throw new Error('Failed to parse USD file');
+        }
+
+        clearSelection();
+        if (state.currentModel) {
+            state.scene.remove(state.currentModel);
+            disposeObject(state.currentModel);
+        }
+
+        const processStart = performance.now();
+        await buildScene();
+        stats.processMs = performance.now() - processStart;
+
+        updateMaterialSelector();
+        if (state.materialData.length > 0) {
+            selectMaterial(0);
+        }
+
+        showToast(`Loaded ${displayName}`);
+        finishLoadStats(stats);
+    } catch (error) {
+        failLoadStats(stats);
+        console.error(`Load error (${uri}):`, error);
         updateStatus(`Error: ${error.message}`);
         showToast(`Failed: ${error.message}`);
     } finally {
@@ -3380,6 +3487,75 @@ function updateStatus(text) {
     document.getElementById('status').textContent = text;
 }
 
+function captureMemorySnapshot() {
+    const jsHeap = performance.memory?.usedJSHeapSize;
+    const wasmHeap = state.loader?.native_?.HEAPU8?.buffer?.byteLength;
+    return {
+        jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+        wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+    };
+}
+
+function formatMemoryUse(before, after, key) {
+    const current = after?.[key];
+    if (!Number.isFinite(current)) return 'n/a';
+    const previous = before?.[key];
+    if (!Number.isFinite(previous)) return formatBytes(current);
+    const delta = current - previous;
+    return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
+}
+
+function beginLoadStats(fileSize = null, filename = '-') {
+    state.loadStats = {
+        startTime: performance.now(),
+        fileSize,
+        fetchMs: null,
+        parseMs: null,
+        processMs: null,
+        totalMs: null,
+        memoryBefore: captureMemorySnapshot(),
+        memoryAfter: null
+    };
+    const fileEl = document.getElementById('current-file');
+    if (fileEl) fileEl.textContent = filename;
+    updateLoadStatsPanel('Loading...');
+    return state.loadStats;
+}
+
+function updateLoadStatsPanel(overrideText = null) {
+    const el = document.getElementById('load-stats');
+    const stats = state.loadStats;
+    if (!el || !stats) return;
+    el.style.display = 'block';
+    if (overrideText) {
+        el.textContent = overrideText;
+        return;
+    }
+    el.textContent = [
+        `File: ${formatBytes(stats.fileSize)}`,
+        `Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+        `Parse/load: ${formatDurationMs(stats.parseMs)}`,
+        `Process/build: ${formatDurationMs(stats.processMs)}`,
+        `Total: ${formatDurationMs(stats.totalMs)}`,
+        `JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+        `WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+    ].join('\n');
+}
+
+function finishLoadStats(stats = state.loadStats) {
+    if (!stats) return;
+    stats.totalMs = performance.now() - stats.startTime;
+    stats.memoryAfter = captureMemorySnapshot();
+    updateLoadStatsPanel();
+}
+
+function failLoadStats(stats = state.loadStats) {
+    if (!stats) return;
+    stats.totalMs = performance.now() - stats.startTime;
+    stats.memoryAfter = captureMemorySnapshot();
+    updateLoadStatsPanel('Failed');
+}
+
 function showLoading(visible) {
     document.getElementById('loading').classList.toggle('visible', visible);
 }
@@ -3450,18 +3626,25 @@ window.loadBlenderSample = async function() {
     state.assetBaseUrl = lastSlash >= 0 ? assetPath.substring(0, lastSlash + 1) : '';
     showLoading(true);
     updateStatus('Loading ' + filename + '...');
+    const stats = beginLoadStats(null, filename);
 
     try {
+        const fetchStart = performance.now();
         const response = await fetch(assetPath);
         if (!response.ok) {
             throw new Error(`Failed to fetch: ${response.status}`);
         }
 
         const arrayBuffer = await response.arrayBuffer();
+        stats.fetchMs = performance.now() - fetchStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        updateLoadStatsPanel();
 
+        const parseStart = performance.now();
         state.usdData = await new Promise((resolve, reject) => {
             state.loader.parse(arrayBuffer, filename, resolve, reject);
         });
+        stats.parseMs = performance.now() - parseStart;
 
         if (!state.usdData) {
             throw new Error('Failed to parse USD file');
@@ -3475,7 +3658,9 @@ window.loadBlenderSample = async function() {
         }
 
         // Build scene (material loading consolidated inside buildScene)
+        const processStart = performance.now();
         await buildScene();
+        stats.processMs = performance.now() - processStart;
 
         // Update material selector
         updateMaterialSelector();
@@ -3488,8 +3673,10 @@ window.loadBlenderSample = async function() {
         const numMaterials = state.usdData.numMaterials();
         console.log(`Found ${numMaterials} materials`);
         showToast(`Loaded ${filename} (${numMaterials} materials)`);
+        finishLoadStats(stats);
 
     } catch (error) {
+        failLoadStats(stats);
         console.error('Load error:', error);
         updateStatus(`Error: ${error.message}`);
         showToast(`Failed: ${error.message}`);
@@ -4387,6 +4574,15 @@ function animate() {
     if (state.renderNeeded || controlsActive) {
         state.renderer.render(state.scene, state.camera);
         state.renderNeeded = false;
+        state.frameCount++;
+        const now = performance.now();
+        if (now - state.lastFpsUpdateMs >= 500) {
+            const fps = state.frameCount * 1000 / (now - state.lastFpsUpdateMs);
+            const fpsEl = document.getElementById('fps-value');
+            if (fpsEl) fpsEl.textContent = fps.toFixed(1);
+            state.frameCount = 0;
+            state.lastFpsUpdateMs = now;
+        }
     }
 
     // LiteGraph: skip drawing entirely when the panel is collapsed for performance.
@@ -4467,6 +4663,30 @@ async function init() {
     document.getElementById('file-input').addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) loadUSDFile(file);
+        e.target.value = '';
+    });
+
+    document.body.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        document.body.classList.add('drag-over');
+    });
+
+    document.body.addEventListener('dragleave', (e) => {
+        if (!e.relatedTarget || !document.body.contains(e.relatedTarget)) {
+            document.body.classList.remove('drag-over');
+        }
+    });
+
+    document.body.addEventListener('drop', (e) => {
+        e.preventDefault();
+        document.body.classList.remove('drag-over');
+        const file = e.dataTransfer?.files?.[0];
+        if (!file) return;
+        if (!/\.(usd|usda|usdc|usdz)$/i.test(file.name)) {
+            showToast('Please drop a USD file (.usd, .usda, .usdc, .usdz)');
+            return;
+        }
+        loadUSDFile(file);
     });
 
     // Keyboard shortcuts for node graph fitting and undo/redo
@@ -4504,8 +4724,13 @@ async function init() {
     // Initial resize
     onWindowResize();
 
-    // Load default asset
-    loadBlenderSample();
+    // Load URL asset or default asset
+    const startupURI = getStartupUSDModelURI();
+    if (startupURI) {
+        loadUSDFromURI(startupURI);
+    } else {
+        loadBlenderSample();
+    }
 }
 
 init().catch(console.error);

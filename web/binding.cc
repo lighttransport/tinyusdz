@@ -40,6 +40,7 @@
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 #include "next/schema/geom-mesh.hh"
+#include "next/schema/geom-xform.hh"
 #include "next/schema/usd-shade.hh"
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"
@@ -455,6 +456,71 @@ EM_JS(int, isTinyUSDZDebugEnabled, (), {
 
 static inline bool IsTinyUSDZDebugEnabled() {
   return isTinyUSDZDebugEnabled() != 0;
+}
+
+#if defined(TINYUSDZ_WASM_MEMORY64)
+EM_JS(emscripten::EM_VAL, copyHeapTypedArrayForJS,
+      (double ptr, double length, int type), {
+  const p = Number(ptr);
+  const n = Number(length);
+  const buffer = HEAPU8.buffer;
+  let out;
+  switch (type) {
+    case 0: out = new Float32Array(new Float32Array(buffer, p, n)); break;
+    case 1: out = new Float64Array(new Float64Array(buffer, p, n)); break;
+    case 2: out = new Int8Array(new Int8Array(buffer, p, n)); break;
+    case 3: out = new Int16Array(new Int16Array(buffer, p, n)); break;
+    case 4: out = new Int32Array(new Int32Array(buffer, p, n)); break;
+    case 5: out = new Uint16Array(new Uint16Array(buffer, p, n)); break;
+    case 6: out = new Uint32Array(new Uint32Array(buffer, p, n)); break;
+    default: out = new Uint8Array(new Uint8Array(buffer, p, n)); break;
+  }
+  return BigInt(Emval.toHandle(out));
+});
+#else
+EM_JS(emscripten::EM_VAL, copyHeapTypedArrayForJS,
+      (double ptr, double length, int type), {
+  const p = Number(ptr);
+  const n = Number(length);
+  const buffer = HEAPU8.buffer;
+  let out;
+  switch (type) {
+    case 0: out = new Float32Array(new Float32Array(buffer, p, n)); break;
+    case 1: out = new Float64Array(new Float64Array(buffer, p, n)); break;
+    case 2: out = new Int8Array(new Int8Array(buffer, p, n)); break;
+    case 3: out = new Int16Array(new Int16Array(buffer, p, n)); break;
+    case 4: out = new Int32Array(new Int32Array(buffer, p, n)); break;
+    case 5: out = new Uint16Array(new Uint16Array(buffer, p, n)); break;
+    case 6: out = new Uint32Array(new Uint32Array(buffer, p, n)); break;
+    default: out = new Uint8Array(new Uint8Array(buffer, p, n)); break;
+  }
+  return Emval.toHandle(out);
+});
+#endif
+
+template <typename T>
+static emscripten::val MakeOwnedHeapTypedArray(size_t n, const T *ptr) {
+  int type = 7;
+  if constexpr (std::is_same<T, float>::value) {
+    type = 0;
+  } else if constexpr (std::is_same<T, double>::value) {
+    type = 1;
+  } else if constexpr (std::is_same<T, int8_t>::value) {
+    type = 2;
+  } else if constexpr (std::is_same<T, int16_t>::value) {
+    type = 3;
+  } else if constexpr (std::is_same<T, int32_t>::value ||
+                       std::is_same<T, int>::value) {
+    type = 4;
+  } else if constexpr (std::is_same<T, uint16_t>::value) {
+    type = 5;
+  } else if constexpr (std::is_same<T, uint32_t>::value) {
+    type = 6;
+  }
+
+  return emscripten::val::take_ownership(copyHeapTypedArrayForJS(
+      static_cast<double>(reinterpret_cast<uintptr_t>(ptr)),
+      static_cast<double>(n), type));
 }
 
 static inline void ReportTinyUSDZDebugEvent(
@@ -3671,16 +3737,12 @@ class TinyUSDZLoaderNative {
     bone_texture_data_ = std::move(textureData);
     bone_vertex_offsets_ = std::move(vertexOffsets);
 
-    result.set("textureData", emscripten::val(emscripten::typed_memory_view(
-        bone_texture_data_.size(), bone_texture_data_.data())));
-    result.set("vertexOffsets", emscripten::val(emscripten::typed_memory_view(
-        bone_vertex_offsets_.size(), bone_vertex_offsets_.data())));
-
-    // Re-set with valid pointers
-    result.set("textureData", emscripten::val(emscripten::typed_memory_view(
-        bone_texture_data_.size(), bone_texture_data_.data())));
-    result.set("vertexOffsets", emscripten::val(emscripten::typed_memory_view(
-        bone_vertex_offsets_.size(), bone_vertex_offsets_.data())));
+    result.set("textureData",
+               typedArray_(bone_texture_data_.size(),
+                           bone_texture_data_.data(), /* copy */ true));
+    result.set("vertexOffsets",
+               typedArray_(bone_vertex_offsets_.size(),
+                           bone_vertex_offsets_.data(), /* copy */ true));
 
     return result;
   }
@@ -4109,7 +4171,20 @@ class TinyUSDZLoaderNative {
     tex.set("textureImageId", int(t.texture_image_id));
     tex.set("wrapS", to_string(t.wrapS));
     tex.set("wrapT", to_string(t.wrapT));
-    //  TOOD: bias, scale, rot/scale/trans, etc
+    tex.set("hasTransform2d", bool(t.has_transform2d));
+    tex.set("txRotation", float(t.tx_rotation));
+    tex.set("txScaleU", float(t.tx_scale[0]));
+    tex.set("txScaleV", float(t.tx_scale[1]));
+    tex.set("txTranslationU", float(t.tx_translation[0]));
+    tex.set("txTranslationV", float(t.tx_translation[1]));
+    emscripten::val bias = emscripten::val::array();
+    emscripten::val scale = emscripten::val::array();
+    for (int i = 0; i < 4; i++) {
+      bias.set(i, float(t.bias[static_cast<size_t>(i)]));
+      scale.set(i, float(t.scale[static_cast<size_t>(i)]));
+    }
+    tex.set("bias", bias);
+    tex.set("scale", scale);
 
     // UDIM: expose remap (combined atlas) or sparse-tile linkage.
     tex.set("isUDIM", bool(t.is_udim));
@@ -4169,7 +4244,7 @@ class TinyUSDZLoaderNative {
     return buildImageVal_(img_id);
   }
 
-  emscripten::val buildImageVal_(int img_id) const {
+  emscripten::val buildImageVal_(int img_id, bool copy_arrays = false) const {
     emscripten::val img = emscripten::val::object();
 
     if (!loaded_) {
@@ -4196,8 +4271,7 @@ class TinyUSDZLoaderNative {
 
       // TODO: Support HDR
 
-      img.set("data",
-              emscripten::typed_memory_view(b.data.size(), b.data.data()));
+      img.set("data", typedArray_(b.data.size(), b.data.data(), copy_arrays));
     }
 
     return img;
@@ -4245,22 +4319,16 @@ class TinyUSDZLoaderNative {
     return a;
   }
 
-  // Replace every (possibly nested) TypedArray in `v` with an owned JS-heap
-  // copy (`.slice()`), turning a heap-aliasing getMesh()/getImage() result into
-  // a retain-safe one without duplicating those builders.
-  static void deepCopyTypedArrays_(emscripten::val v) {
-    emscripten::val keys = emscripten::val::global("Object").call<emscripten::val>("keys", v);
-    const size_t n = keys["length"].as<size_t>();
-    for (size_t i = 0; i < n; i++) {
-      const std::string k = keys[i].as<std::string>();
-      emscripten::val child = v[k];
-      if (child.isNull() || child.isUndefined()) continue;
-      if (!child["BYTES_PER_ELEMENT"].isUndefined()) {
-        v.set(k, child.call<emscripten::val>("slice"));  // TypedArray -> owned copy
-      } else if (child.typeOf().as<std::string>() == "object") {
-        deepCopyTypedArrays_(child);  // recurse (e.g. uvSets.uvN.data)
-      }
+  template <typename T>
+  static emscripten::val typedArray_(size_t n, const T *ptr, bool copy) {
+    if (!copy) {
+      return emscripten::val(emscripten::typed_memory_view(n, ptr));
     }
+
+    // Keep source-view creation and the copy inside one JS call. Creating a
+    // typed_memory_view in C++ and then invoking another embind method can grow
+    // WASM memory in between, detaching the view under pressure.
+    return MakeOwnedHeapTypedArray(n, ptr);
   }
 
   void warnDeprecated_(const char *fn, const char *repl) const {
@@ -4388,9 +4456,7 @@ class TinyUSDZLoaderNative {
 
   // Owned, retain-safe drop-in for getMesh(): identical shape, copied arrays.
   emscripten::val getMeshCopy(int mesh_id) const {
-    emscripten::val m = buildMeshVal_(mesh_id);
-    deepCopyTypedArrays_(m);
-    return m;
+    return buildMeshVal_(mesh_id, /* copy_arrays */ true);
   }
 
   // Zero-copy image descriptor: {width,height,channels,decoded,colorSpace,
@@ -4467,9 +4533,7 @@ class TinyUSDZLoaderNative {
   // Owned, retain-safe drop-in for getImage(): identical shape, copied data.
   emscripten::val getImageCopy(int img_id) {
     ensureImageBufferLoaded_(img_id);
-    emscripten::val m = buildImageVal_(img_id);
-    deepCopyTypedArrays_(m);
-    return m;
+    return buildImageVal_(img_id, /* copy_arrays */ true);
   }
 
   // Image metadata common to getImage/getImagePtr/getImageCopy (no pixel data).
@@ -4496,7 +4560,7 @@ class TinyUSDZLoaderNative {
     return buildMeshVal_(mesh_id);
   }
 
-  emscripten::val buildMeshVal_(int mesh_id) const {
+  emscripten::val buildMeshVal_(int mesh_id, bool copy_arrays = false) const {
     emscripten::val mesh = emscripten::val::object();
 
     if (!loaded_) {
@@ -4509,16 +4573,21 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::tydra::RenderMesh &rmesh =
         render_scene_.meshes[size_t(mesh_id)];
+    const size_t point_scalar_count = rmesh.points.size() * 3;
 
     //if (rmesh.has_indices()) {
       const uint32_t *indices_ptr = rmesh.faceVertexIndices().data();
+      mesh.set("faceVertexIndicesLength",
+               static_cast<double>(rmesh.faceVertexIndices().size()));
       mesh.set("faceVertexIndices",
-               emscripten::typed_memory_view(rmesh.faceVertexIndices().size(),
-                                             indices_ptr));
+               typedArray_(rmesh.faceVertexIndices().size(), indices_ptr,
+                           copy_arrays));
       const uint32_t *counts_ptr = rmesh.faceVertexCounts().data();
+      mesh.set("faceVertexCountsLength",
+               static_cast<double>(rmesh.faceVertexCounts().size()));
       mesh.set("faceVertexCounts",
-               emscripten::typed_memory_view(rmesh.faceVertexCounts().size(),
-                                             counts_ptr));
+               typedArray_(rmesh.faceVertexCounts().size(), counts_ptr,
+                           copy_arrays));
     //} else {
     //  // Assume all triangles and facevarying attributes.
     //  if (!rmesh.is_triangulated()) {
@@ -4537,8 +4606,9 @@ class TinyUSDZLoaderNative {
     const float *points_ptr =
         reinterpret_cast<const float *>(rmesh.points.data());
     // vec3
-    mesh.set("points", emscripten::typed_memory_view(rmesh.points.size() * 3,
-                                                     points_ptr));
+    mesh.set("pointsLength", static_cast<double>(point_scalar_count));
+    mesh.set("points", typedArray_(point_scalar_count, points_ptr,
+                                   copy_arrays));
 
     if (!rmesh.normals.empty()) {
       using tinyusdz::tydra::VertexAttributeFormat;
@@ -4546,15 +4616,17 @@ class TinyUSDZLoaderNative {
         // SNorm8x3 — pass as Int8Array; Three.js uses normalized=true
         const int8_t *normals_ptr =
             reinterpret_cast<const int8_t *>(rmesh.normals.data.data());
-        mesh.set("normals", emscripten::typed_memory_view(
-                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normals",
+                 typedArray_(rmesh.normals.vertex_count() * 3, normals_ptr,
+                             copy_arrays));
         mesh.set("normalsFormat", std::string("snorm8"));
       } else if (rmesh.normals.format == VertexAttributeFormat::Short3) {
         // SNorm16x3 — pass as Int16Array; Three.js uses normalized=true
         const int16_t *normals_ptr =
             reinterpret_cast<const int16_t *>(rmesh.normals.data.data());
-        mesh.set("normals", emscripten::typed_memory_view(
-                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normals",
+                 typedArray_(rmesh.normals.vertex_count() * 3, normals_ptr,
+                             copy_arrays));
         mesh.set("normalsFormat", std::string("snorm16"));
       } else if (rmesh.normals.format == VertexAttributeFormat::Uint) {
         // Packed 1010102 — Three.js can't use this; unpack to float3 cache
@@ -4567,14 +4639,15 @@ class TinyUSDZLoaderNative {
         for (size_t i = 0; i < nv; i++) {
           unpack_normal_1010102(P[i], cache[i*3+0], cache[i*3+1], cache[i*3+2]);
         }
-        mesh.set("normals", emscripten::typed_memory_view(nv * 3, cache.data()));
+        mesh.set("normals", typedArray_(nv * 3, cache.data(), copy_arrays));
         mesh.set("normalsFormat", std::string("float32"));
       } else {
         // Float3 (Vec3) — pass as Float32Array
         const float *normals_ptr =
             reinterpret_cast<const float *>(rmesh.normals.data.data());
-        mesh.set("normals", emscripten::typed_memory_view(
-                                rmesh.normals.vertex_count() * 3, normals_ptr));
+        mesh.set("normals",
+                 typedArray_(rmesh.normals.vertex_count() * 3, normals_ptr,
+                             copy_arrays));
         mesh.set("normalsFormat", std::string("float32"));
       }
     }
@@ -4591,8 +4664,9 @@ class TinyUSDZLoaderNative {
 
         // Create UV set object with metadata
         emscripten::val uvSet = emscripten::val::object();
-        uvSet.set("data", emscripten::typed_memory_view(
-                     uv_data.vertex_count() * 2, uvs_ptr));
+        uvSet.set("data",
+                  typedArray_(uv_data.vertex_count() * 2, uvs_ptr,
+                              copy_arrays));
         uvSet.set("vertexCount", uv_data.vertex_count());
         uvSet.set("slotId", int(uvSlotId));
 
@@ -4608,8 +4682,8 @@ class TinyUSDZLoaderNative {
         const float *uvs_ptr = reinterpret_cast<const float *>(
             rmesh.texcoords.at(0).data.data());
         mesh.set("texcoords",
-                 emscripten::typed_memory_view(
-                     rmesh.texcoords.at(0).vertex_count() * 2, uvs_ptr));
+                 typedArray_(rmesh.texcoords.at(0).vertex_count() * 2,
+                             uvs_ptr, copy_arrays));
       }
     }
 
@@ -4714,14 +4788,14 @@ class TinyUSDZLoaderNative {
           cache[i*4+3] = 1.0f;
         }
       }
-      mesh.set("tangents", emscripten::typed_memory_view(cache.size(), cache.data()));
+      mesh.set("tangents", typedArray_(cache.size(), cache.data(), copy_arrays));
 
       // Also expose raw packed tangent buffer for direct WebGL2 upload
       if (rmesh.tangents.format == VertexAttributeFormat::Uint) {
         // Uint32Array for GL_INT_2_10_10_10_REV
         const uint32_t *raw = reinterpret_cast<const uint32_t *>(
             rmesh.tangents.data.data());
-        mesh.set("tangentsPacked", emscripten::typed_memory_view(nv, raw));
+        mesh.set("tangentsPacked", typedArray_(nv, raw, copy_arrays));
         mesh.set("tangentsPackedFormat", emscripten::val("INT_2_10_10_10_REV"));
       }
     }
@@ -4733,7 +4807,7 @@ class TinyUSDZLoaderNative {
     mesh.set("isAreaLight", rmesh.is_area_light);
     if (rmesh.is_area_light) {
       const float *light_color_ptr = rmesh.light_color.data();
-      mesh.set("lightColor", emscripten::typed_memory_view(3, light_color_ptr));
+      mesh.set("lightColor", typedArray_(3, light_color_ptr, copy_arrays));
       mesh.set("lightIntensity", rmesh.light_intensity);
       mesh.set("lightExposure", rmesh.light_exposure);
       mesh.set("lightNormalize", rmesh.light_normalize);
@@ -4744,17 +4818,15 @@ class TinyUSDZLoaderNative {
     if (!rmesh.joint_and_weights.jointIndices.empty()) {
       const int *joint_indices_ptr = rmesh.joint_and_weights.jointIndices.data();
       mesh.set("jointIndices",
-               emscripten::typed_memory_view(
-                   rmesh.joint_and_weights.jointIndices.size(),
-                   joint_indices_ptr));
+               typedArray_(rmesh.joint_and_weights.jointIndices.size(),
+                           joint_indices_ptr, copy_arrays));
     }
 
     if (!rmesh.joint_and_weights.jointWeights.empty()) {
       const float *joint_weights_ptr = rmesh.joint_and_weights.jointWeights.data();
       mesh.set("jointWeights",
-               emscripten::typed_memory_view(
-                   rmesh.joint_and_weights.jointWeights.size(),
-                   joint_weights_ptr));
+               typedArray_(rmesh.joint_and_weights.jointWeights.size(),
+                           joint_weights_ptr, copy_arrays));
     }
 
     // Export element size (influences per vertex)
@@ -4771,7 +4843,7 @@ class TinyUSDZLoaderNative {
         reinterpret_cast<const double *>(
             rmesh.joint_and_weights.geomBindTransform.m);
     mesh.set("geomBindTransform",
-             emscripten::typed_memory_view(16, geom_bind_ptr));
+             typedArray_(16, geom_bind_ptr, copy_arrays));
     // Flag indicating whether geomBindTransform was explicitly authored in USD
     // If false, the identity matrix is being used as a fallback
     mesh.set("hasGeomBindTransform", rmesh.joint_and_weights.hasGeomBindTransform);
@@ -4890,7 +4962,10 @@ class TinyUSDZLoaderNative {
         // Store in cache and update mesh pointer
         auto& cache = reordered_mesh_cache_[mesh_id];
         cache.points = std::move(reorderedPoints);
-        mesh.set("points", emscripten::typed_memory_view(cache.points.size(), cache.points.data()));
+        mesh.set("pointsLength", static_cast<double>(cache.points.size()));
+        mesh.set("points",
+                 typedArray_(cache.points.size(), cache.points.data(),
+                             copy_arrays));
       }
 
       // Reorder normals - per-vertex if single_indexable, facevarying otherwise
@@ -4921,8 +4996,9 @@ class TinyUSDZLoaderNative {
           }
           auto& cache = reordered_mesh_cache_[mesh_id];
           cache.normals_i16 = std::move(reordered);
-          mesh.set("normals", emscripten::typed_memory_view(
-              cache.normals_i16.size(), cache.normals_i16.data()));
+          mesh.set("normals",
+                   typedArray_(cache.normals_i16.size(),
+                               cache.normals_i16.data(), copy_arrays));
           mesh.set("normalsFormat", std::string("snorm16"));
         } else if (isSnorm8) {
           const int8_t* src = reinterpret_cast<const int8_t*>(rmesh.normals.data.data());
@@ -4944,8 +5020,9 @@ class TinyUSDZLoaderNative {
           }
           auto& cache = reordered_mesh_cache_[mesh_id];
           cache.normals_i8 = std::move(reordered);
-          mesh.set("normals", emscripten::typed_memory_view(
-              cache.normals_i8.size(), cache.normals_i8.data()));
+          mesh.set("normals",
+                   typedArray_(cache.normals_i8.size(),
+                               cache.normals_i8.data(), copy_arrays));
           mesh.set("normalsFormat", std::string("snorm8"));
         } else {
           // Float3 (Vec3) or unpacked from 1010102
@@ -4978,8 +5055,9 @@ class TinyUSDZLoaderNative {
           }
           auto& cache = reordered_mesh_cache_[mesh_id];
           cache.normals = std::move(reordered);
-          mesh.set("normals", emscripten::typed_memory_view(
-              cache.normals.size(), cache.normals.data()));
+          mesh.set("normals",
+                   typedArray_(cache.normals.size(), cache.normals.data(),
+                               copy_arrays));
           mesh.set("normalsFormat", std::string("float32"));
         }
       }
@@ -5012,7 +5090,9 @@ class TinyUSDZLoaderNative {
         }
         auto& cache = reordered_mesh_cache_[mesh_id];
         cache.texcoords = std::move(reorderedTexcoords);
-        mesh.set("texcoords", emscripten::typed_memory_view(cache.texcoords.size(), cache.texcoords.data()));
+        mesh.set("texcoords",
+                 typedArray_(cache.texcoords.size(), cache.texcoords.data(),
+                             copy_arrays));
       }
 
       // Reorder tangents as vec4 — use tangents4_cache_ (already unpacked from any
@@ -5041,7 +5121,9 @@ class TinyUSDZLoaderNative {
         }
         auto& cache = reordered_mesh_cache_[mesh_id];
         cache.tangents = std::move(reorderedTangents);
-        mesh.set("tangents", emscripten::typed_memory_view(cache.tangents.size(), cache.tangents.data()));
+        mesh.set("tangents",
+                 typedArray_(cache.tangents.size(), cache.tangents.data(),
+                             copy_arrays));
       }
 
       // Reorder vertex skinning data. Joint indices/weights are authored per
@@ -5095,10 +5177,12 @@ class TinyUSDZLoaderNative {
             }
           }
 
-          mesh.set("jointIndices", emscripten::typed_memory_view(
-              cache.jointIndices.size(), cache.jointIndices.data()));
-          mesh.set("jointWeights", emscripten::typed_memory_view(
-              cache.jointWeights.size(), cache.jointWeights.data()));
+          mesh.set("jointIndices",
+                   typedArray_(cache.jointIndices.size(),
+                               cache.jointIndices.data(), copy_arrays));
+          mesh.set("jointWeights",
+                   typedArray_(cache.jointWeights.size(),
+                               cache.jointWeights.data(), copy_arrays));
         }
       }
 
@@ -5110,8 +5194,11 @@ class TinyUSDZLoaderNative {
       }
       auto& cache = reordered_mesh_cache_[mesh_id];
       cache.faceVertexIndices = std::move(newIndices);
-      mesh.set("faceVertexIndices", emscripten::typed_memory_view(
-          cache.faceVertexIndices.size(), cache.faceVertexIndices.data()));
+      mesh.set("faceVertexIndicesLength",
+               static_cast<double>(cache.faceVertexIndices.size()));
+      mesh.set("faceVertexIndices",
+               typedArray_(cache.faceVertexIndices.size(),
+                           cache.faceVertexIndices.data(), copy_arrays));
     }
 
     return mesh;
@@ -5305,9 +5392,15 @@ class TinyUSDZLoaderNative {
       }
       track.set("interpolation", interpolation);
 
-      // Convert times and values to typed arrays for efficiency
-      track.set("times", emscripten::typed_memory_view(sampler.times.size(), sampler.times.data()));
-      track.set("values", emscripten::typed_memory_view(sampler.values.size(), sampler.values.data()));
+      // Copy eagerly. JS callers retain animation tracks after usd_scene.delete(),
+      // and returning heap views can detach if WASM memory grows while building
+      // the animation object or later scene data.
+      track.set("times",
+                typedArray_(sampler.times.size(), sampler.times.data(),
+                            /* copy */ true));
+      track.set("values",
+                typedArray_(sampler.values.size(), sampler.values.data(),
+                            /* copy */ true));
 
       // Add property path for reference
       std::string pathStr;
@@ -5388,8 +5481,12 @@ class TinyUSDZLoaderNative {
     emscripten::val samplers = emscripten::val::array();
     for (const auto &sampler : clip.samplers) {
       emscripten::val samp = emscripten::val::object();
-      samp.set("times", emscripten::typed_memory_view(sampler.times.size(), sampler.times.data()));
-      samp.set("values", emscripten::typed_memory_view(sampler.values.size(), sampler.values.data()));
+      samp.set("times",
+               typedArray_(sampler.times.size(), sampler.times.data(),
+                           /* copy */ true));
+      samp.set("values",
+               typedArray_(sampler.values.size(), sampler.values.data(),
+                           /* copy */ true));
 
       std::string interpolation;
       switch (sampler.interpolation) {
@@ -6421,13 +6518,10 @@ class TinyUSDZLoaderNative {
     if (em_resolver_.has(name)) {
       const AssetCacheEntry &entry = em_resolver_.get(name);
       val.set("name", name);
-      emscripten::val u8 =
-          emscripten::val::global("Uint8Array").new_(emscripten::val(static_cast<double>(entry.binary.size())));
-      u8.call<void>("set",
-                    emscripten::val(emscripten::typed_memory_view(
-                        entry.binary.size(),
-                        reinterpret_cast<const uint8_t *>(entry.binary.data()))));
-      val.set("data", u8);
+      val.set("data",
+              MakeOwnedHeapTypedArray(
+                  entry.binary.size(),
+                  reinterpret_cast<const uint8_t *>(entry.binary.data())));
       val.set("sha256", entry.sha256_hash);
       val.set("uuid", entry.uuid);
     }
@@ -6464,13 +6558,10 @@ class TinyUSDZLoaderNative {
     const std::string name = em_resolver_.findAssetByUUID(uuid);
 
     val.set("name", name);
-    emscripten::val u8 =
-        emscripten::val::global("Uint8Array").new_(emscripten::val(static_cast<double>(entry.binary.size())));
-    u8.call<void>("set",
-                  emscripten::val(emscripten::typed_memory_view(
-                      entry.binary.size(),
-                      reinterpret_cast<const uint8_t *>(entry.binary.data()))));
-    val.set("data", u8);
+    val.set("data",
+            MakeOwnedHeapTypedArray(
+                entry.binary.size(),
+                reinterpret_cast<const uint8_t *>(entry.binary.data())));
     val.set("sha256", entry.sha256_hash);
     val.set("uuid", entry.uuid);
 
@@ -6771,17 +6862,7 @@ class TinyUSDZLoaderNative {
   /// may retain must therefore hand back an independent JS-owned copy. Same
   /// idiom as getAsset()/getAssetByUUID().
   static emscripten::val toOwnedUint8Array(const std::vector<uint8_t> &bytes) {
-    // Pass the length as a double (JS Number), not size_t: under wasm64
-    // (MEMORY64) size_t marshals to a BigInt and `new Uint8Array(bigint)`
-    // throws "Cannot convert a BigInt value to a number". double is exact for
-    // these sizes and works on both wasm32 and wasm64.
-    emscripten::val u8 = emscripten::val::global("Uint8Array").new_(
-        static_cast<double>(bytes.size()));
-    if (!bytes.empty()) {
-      u8.call<void>("set", emscripten::val(emscripten::typed_memory_view(
-                               bytes.size(), bytes.data())));
-    }
-    return u8;
+    return MakeOwnedHeapTypedArray(bytes.size(), bytes.data());
   }
 
   static bool copyUint8ArrayToString(const emscripten::val &data,
@@ -9200,24 +9281,12 @@ emscripten::val decodeEXR(const emscripten::val& data,
     std::vector<uint16_t> fp16Data(pixelCount);
     convertFloat32ToFloat16(rgba, fp16Data.data(), pixelCount);
 
-    emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
-    emscripten::val jsHeap = emscripten::val(
-        emscripten::typed_memory_view(pixelCount, fp16Data.data()));
-    pixelData.call<void>("set", jsHeap);
-
-    result.set("data", pixelData);
+    result.set("data", MakeOwnedHeapTypedArray(pixelCount, fp16Data.data()));
     result.set("pixelFormat", std::string("float16"));
     result.set("bitsPerChannel", 16);
   } else {
     // Return as Float32Array (default)
-    emscripten::val Float32Array = emscripten::val::global("Float32Array");
-    emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
-    emscripten::val jsHeap = emscripten::val(
-        emscripten::typed_memory_view(pixelCount, rgba));
-    pixelData.call<void>("set", jsHeap);
-
-    result.set("data", pixelData);
+    result.set("data", MakeOwnedHeapTypedArray(pixelCount, rgba));
     result.set("pixelFormat", std::string("float32"));
     result.set("bitsPerChannel", 32);
   }
@@ -9364,13 +9433,7 @@ emscripten::val decodeHDR(const emscripten::val& data,
 
   if (outputFormat == "float32") {
     // Return as Float32Array
-    emscripten::val Float32Array = emscripten::val::global("Float32Array");
-    emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
-    emscripten::val jsHeap = emscripten::val(
-        emscripten::typed_memory_view(pixelCount, floatData));
-    pixelData.call<void>("set", jsHeap);
-
-    result.set("data", pixelData);
+    result.set("data", MakeOwnedHeapTypedArray(pixelCount, floatData));
     result.set("pixelFormat", std::string("float32"));
     result.set("bitsPerChannel", 32);
   } else {
@@ -9378,13 +9441,7 @@ emscripten::val decodeHDR(const emscripten::val& data,
     std::vector<uint16_t> fp16Data(pixelCount);
     convertFloat32ToFloat16(floatData, fp16Data.data(), pixelCount);
 
-    emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
-    emscripten::val jsHeap = emscripten::val(
-        emscripten::typed_memory_view(pixelCount, fp16Data.data()));
-    pixelData.call<void>("set", jsHeap);
-
-    result.set("data", pixelData);
+    result.set("data", MakeOwnedHeapTypedArray(pixelCount, fp16Data.data()));
     result.set("pixelFormat", std::string("float16"));
     result.set("bitsPerChannel", 16);
   }
@@ -9477,24 +9534,12 @@ emscripten::val decodeImage(const emscripten::val& data,
       std::vector<uint16_t> fp16Data(pixelCount);
       convertFloat32ToFloat16(srcData, fp16Data.data(), pixelCount);
 
-      emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-      emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
-      emscripten::val jsHeap = emscripten::val(
-          emscripten::typed_memory_view(pixelCount, fp16Data.data()));
-      pixelData.call<void>("set", jsHeap);
-
-      result.set("data", pixelData);
+      result.set("data", MakeOwnedHeapTypedArray(pixelCount, fp16Data.data()));
       result.set("pixelFormat", std::string("float16"));
       result.set("bitsPerChannel", 16);
     } else {
       // Keep as float32
-      emscripten::val Float32Array = emscripten::val::global("Float32Array");
-      emscripten::val pixelData = Float32Array.new_(emscripten::val(static_cast<double>(pixelCount)));
-      emscripten::val jsHeap = emscripten::val(
-          emscripten::typed_memory_view(pixelCount, srcData));
-      pixelData.call<void>("set", jsHeap);
-
-      result.set("data", pixelData);
+      result.set("data", MakeOwnedHeapTypedArray(pixelCount, srcData));
       result.set("pixelFormat", std::string("float32"));
       result.set("bitsPerChannel", 32);
     }
@@ -9511,25 +9556,13 @@ emscripten::val decodeImage(const emscripten::val& data,
     const uint16_t* srcData = reinterpret_cast<const uint16_t*>(img.data.data());
 
     // Return as Uint16Array (native format)
-    emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-    emscripten::val pixelData = Uint16Array.new_(emscripten::val(static_cast<double>(pixelCount)));
-    emscripten::val jsHeap = emscripten::val(
-        emscripten::typed_memory_view(pixelCount, srcData));
-    pixelData.call<void>("set", jsHeap);
-
-    result.set("data", pixelData);
+    result.set("data", MakeOwnedHeapTypedArray(pixelCount, srcData));
     result.set("pixelFormat", std::string("uint16"));
     result.set("bitsPerChannel", 16);
   }
   // Handle 8-bit data
   else {
-    emscripten::val Uint8Array = emscripten::val::global("Uint8Array");
-    emscripten::val pixelData = Uint8Array.new_(emscripten::val(static_cast<double>(dataSize)));
-    emscripten::val jsHeap = emscripten::val(
-        emscripten::typed_memory_view(dataSize, img.data.data()));
-    pixelData.call<void>("set", jsHeap);
-
-    result.set("data", pixelData);
+    result.set("data", MakeOwnedHeapTypedArray(dataSize, img.data.data()));
     result.set("pixelFormat", std::string("uint8"));
     result.set("bitsPerChannel", 8);
   }
@@ -9560,13 +9593,7 @@ emscripten::val convertFloat32ToFloat16Array(const emscripten::val& float32Data)
   convertFloat32ToFloat16(srcData.data(), fp16Data.data(), count);
 
   // Return as Uint16Array
-  emscripten::val Uint16Array = emscripten::val::global("Uint16Array");
-  emscripten::val result = Uint16Array.new_(emscripten::val(static_cast<double>(count)));
-  emscripten::val jsHeap = emscripten::val(
-      emscripten::typed_memory_view(count, fp16Data.data()));
-  result.call<void>("set", jsHeap);
-
-  return result;
+  return MakeOwnedHeapTypedArray(count, fp16Data.data());
 }
 
 ///
@@ -9589,13 +9616,7 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
   }
 
   // Return as Float32Array
-  emscripten::val Float32Array = emscripten::val::global("Float32Array");
-  emscripten::val result = Float32Array.new_(emscripten::val(static_cast<double>(count)));
-  emscripten::val jsHeap = emscripten::val(
-      emscripten::typed_memory_view(count, fp32Data.data()));
-  result.call<void>("set", jsHeap);
-
-  return result;
+  return MakeOwnedHeapTypedArray(count, fp32Data.data());
 }
 
 // ============================================================================
@@ -9669,6 +9690,19 @@ class RenderStream {
   int meshCount() const { return loaded_ ? static_cast<int>(meshes_.size()) : 0; }
   std::string error() const { return error_; }
 
+  emscripten::val getSceneMetadata() const {
+    emscripten::val metadata = emscripten::val::object();
+    if (!loaded_) return metadata;
+    const tinyusdz::next::StageMeta &meta = stage_.GetMeta();
+    metadata.set("upAxis", meta.upAxis);
+    metadata.set("metersPerUnit", meta.metersPerUnit);
+    metadata.set("framesPerSecond", meta.framesPerSecond);
+    metadata.set("timeCodesPerSecond", meta.timeCodesPerSecond);
+    metadata.set("startTimeCode", meta.startTimeCode);
+    metadata.set("endTimeCode", meta.endTimeCode);
+    return metadata;
+  }
+
   // Materialize mesh i's geometry into the scratch and return zero-copy
   // descriptors {points,indices,normals,uv0} + resolved material. Valid until the
   // next getMesh()/end(); the JS caller must upload before calling getMesh again.
@@ -9690,11 +9724,15 @@ class RenderStream {
 
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
+    out.set("primPath", prim.GetPath().str());
     out.set("points", heapF_(s_points_, 3));
     if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
     if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
+    out.set("localMatrix", matArray_(localMatrix_(prim)));
+    out.set("worldMatrix", matArray_(worldMatrix_(prim)));
     out.set("material", resolveMaterial_(prim));
+    addGeomSubsetMaterials_(prim, out);
     return out;
   }
 
@@ -10032,6 +10070,28 @@ class RenderStream {
     }
   }
 
+  static std::vector<uint32_t> faceTriangleStarts_(
+      const std::vector<int32_t> &fvc) {
+    std::vector<uint32_t> starts;
+    starts.reserve(fvc.size() + 1);
+    uint32_t cursor = 0;
+    for (int32_t n : fvc) {
+      starts.push_back(cursor);
+      if (n >= 3) cursor += static_cast<uint32_t>(n - 2);
+    }
+    starts.push_back(cursor);
+    return starts;
+  }
+
+  static std::vector<int32_t> matIntStatic_(
+      const tinyusdz::next::UsdPrim &prim, const char *name) {
+    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    if (!v) return {};
+    tinyusdz::next::Value tmp = *v;
+    const std::vector<int32_t> *a = tmp.as_int_array();
+    return a ? *a : std::vector<int32_t>{};
+  }
+
   // Area-weighted vertex normals from the triangulated indices.
   static void computeNormals_(const std::vector<float> &pos,
                               const std::vector<uint32_t> &idx,
@@ -10083,12 +10143,58 @@ class RenderStream {
     a.call<void>("push", c[2]);
     return a;
   }
+  static emscripten::val matArray_(const std::array<double, 16> &m) {
+    emscripten::val a = emscripten::val::array();
+    for (double v : m) a.call<void>("push", v);
+    return a;
+  }
+  static std::array<double, 16> identityMatrix_() {
+    return {1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0};
+  }
+  static std::array<double, 16> multiplyMatrix_(
+      const std::array<double, 16> &a, const std::array<double, 16> &b) {
+    std::array<double, 16> r{};
+    for (int row = 0; row < 4; ++row) {
+      for (int col = 0; col < 4; ++col) {
+        double v = 0.0;
+        for (int k = 0; k < 4; ++k) {
+          v += a[static_cast<size_t>(row * 4 + k)] *
+               b[static_cast<size_t>(k * 4 + col)];
+        }
+        r[static_cast<size_t>(row * 4 + col)] = v;
+      }
+    }
+    return r;
+  }
+  static std::array<double, 16> localMatrix_(
+      const tinyusdz::next::UsdPrim &prim) {
+    std::array<double, 16> m = identityMatrix_();
+    tinyusdz::next::UsdGeomXform xform(prim);
+    double raw[16];
+    if (!xform.ComputeLocalTransform(raw)) return m;
+    for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
+    return m;
+  }
+  static std::array<double, 16> worldMatrix_(
+      const tinyusdz::next::UsdPrim &prim) {
+    std::vector<tinyusdz::next::UsdPrim> chain;
+    for (tinyusdz::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
+      chain.push_back(p);
+    }
+    std::array<double, 16> world = identityMatrix_();
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+      const std::array<double, 16> local = localMatrix_(*it);
+      world = multiplyMatrix_(local, world);
+    }
+    return world;
+  }
 
-  // Resolve the mesh's bound material to UsdPreviewSurface values + texture
-  // asset paths (resolved to GPU textures by the JS caller from the archive).
-  emscripten::val resolveMaterial_(const tinyusdz::next::UsdPrim &prim) {
+  emscripten::val materialObjectForPrim_(
+      const tinyusdz::next::UsdPrim &mat) {
     emscripten::val m = emscripten::val::object();
-    tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, prim);
     if (!mat.IsValid()) return m;
     // Resolve the surface shader: prefer the material's outputs:surface (a
     // connection), but fall back to the first UsdPreviewSurface child shader —
@@ -10126,6 +10232,82 @@ class RenderStream {
     return m;
   }
 
+  // Resolve the prim's bound material to UsdPreviewSurface values + texture
+  // asset paths (resolved to GPU textures by the JS caller from the archive).
+  emscripten::val resolveMaterial_(const tinyusdz::next::UsdPrim &prim) {
+    tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, prim);
+    return materialObjectForPrim_(mat);
+  }
+
+  void addGeomSubsetMaterials_(const tinyusdz::next::UsdPrim &prim,
+                               emscripten::val &out) {
+    std::vector<int32_t> fvc = matIntStatic_(prim, "faceVertexCounts");
+    if (fvc.empty()) return;
+
+    struct SubsetInfo {
+      tinyusdz::next::UsdPrim prim;
+      std::vector<int32_t> faces;
+    };
+    std::vector<SubsetInfo> subsets;
+    for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+      if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
+      const tinyusdz::next::Value *family = child.GetPropertyValue("familyName");
+      if (family) {
+        const std::string *tok = family->as_token();
+        if (tok && *tok != "materialBind") continue;
+      }
+      std::vector<int32_t> faces = matIntStatic_(child, "indices");
+      if (faces.empty()) continue;
+      tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, child);
+      if (!mat.IsValid()) continue;
+      subsets.push_back({child, std::move(faces)});
+    }
+    if (subsets.empty()) return;
+
+    std::vector<int> face_material(fvc.size(), -1);
+    emscripten::val materials = emscripten::val::array();
+    for (size_t i = 0; i < subsets.size(); ++i) {
+      const int mat_index = static_cast<int>(i);
+      for (int32_t face : subsets[i].faces) {
+        if (face >= 0 && static_cast<size_t>(face) < face_material.size()) {
+          face_material[static_cast<size_t>(face)] = mat_index;
+        }
+      }
+      tinyusdz::next::UsdPrim mat =
+          tinyusdz::next::GetBoundMaterial(stage_, subsets[i].prim);
+      materials.set(mat_index, materialObjectForPrim_(mat));
+    }
+
+    const std::vector<uint32_t> tri_starts = faceTriangleStarts_(fvc);
+    emscripten::val groups = emscripten::val::array();
+    int group_index = 0;
+    size_t face_begin = 0;
+    while (face_begin < face_material.size()) {
+      const int mat_index = face_material[face_begin];
+      size_t face_end = face_begin + 1;
+      while (face_end < face_material.size() &&
+             face_material[face_end] == mat_index) {
+        face_end++;
+      }
+      if (mat_index >= 0 && face_begin < tri_starts.size() &&
+          face_end < tri_starts.size()) {
+        const uint32_t start = tri_starts[face_begin] * 3u;
+        const uint32_t count = (tri_starts[face_end] - tri_starts[face_begin]) * 3u;
+        if (count > 0) {
+          emscripten::val g = emscripten::val::object();
+          g.set("start", static_cast<int>(start));
+          g.set("count", static_cast<int>(count));
+          g.set("materialIndex", mat_index);
+          groups.set(group_index++, g);
+        }
+      }
+      face_begin = face_end;
+    }
+
+    out.set("materials", materials);
+    out.set("submeshes", groups);
+  }
+
   tinyusdz::next::Stage stage_;
   std::vector<tinyusdz::next::UsdGeomMesh> meshes_;
   bool loaded_ = false;
@@ -10139,6 +10321,7 @@ EMSCRIPTEN_BINDINGS(render_stream_module) {
       .constructor<>()
       .function("begin", &RenderStream::begin)
       .function("meshCount", &RenderStream::meshCount)
+      .function("getSceneMetadata", &RenderStream::getSceneMetadata)
       .function("getMesh", &RenderStream::getMesh)
       .function("error", &RenderStream::error)
       .function("end", &RenderStream::end);
