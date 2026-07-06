@@ -16,6 +16,7 @@
 #include "dynamic-bitset.hh"
 #include "memory-budget.hh"
 #include "core/prim-spec.hh"  // PrimSpec (transitively: property, composition-types, prim-enums, prim-metas, variant-types)
+#include "spin-mutex.hh"
 #include "stream-reader.hh"
 #include "typed-array-core.hh"
 
@@ -568,7 +569,7 @@ class CrateReader {
       PushError("[Crate]: Reached maximum memory budget");
       return false;
     }
-    if (!_sr->read(nbytes, nbytes, reinterpret_cast<uint8_t *>(value))) {
+    if (!sr()->read(nbytes, nbytes, reinterpret_cast<uint8_t *>(value))) {
       PushError(std::string(__func__) + "(): " + read_error);
       return false;
     }
@@ -609,22 +610,62 @@ class CrateReader {
 
   const StreamReader *_sr{};
 
-  void PushError(const std::string &s) const { _err += s + "\n"; }
-  void PushWarn(const std::string &s) const { _warn += s + "\n"; }
+  //
+  // Parallel reconstruction support. The StreamReader cursor and the
+  // decompression scratch buffers are per-thread state: while
+  // set_parallel_io_active(true) is in effect, sr()/decomp_*() return
+  // thread-local instances over the same underlying memory. All crate read
+  // paths access the stream and scratch buffers exclusively through these
+  // accessors.
+  //
+  const StreamReader *sr() const;
+  std::vector<char> &decomp_comp_buffer() const;
+  std::vector<char> &decomp_working_buffer() const;
+  size_t &decomp_comp_buffer_budget() const;
+  size_t &decomp_working_buffer_budget() const;
+  std::unordered_set<uint64_t> &unpack_recursion_guard() const;
+  // Per-thread (during parallel reconstruction) value-unpack nesting depths.
+  uint32_t &custom_data_depth() const;
+  uint32_t &array_edit_depth() const;
+
+ public:
+  /// Enable/disable per-thread stream & scratch state (called by the USDC
+  /// reader around parallel prim reconstruction). Not reentrant.
+  void set_parallel_io_active(bool onoff);
+
+ private:
+  bool _parallel_io_active{false};
+  uint64_t _parallel_io_generation{0};
+
+  // Diagnostics can be pushed from worker threads during parallel
+  // reconstruction.
+  void PushError(const std::string &s) const {
+    ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+    _err += s + "\n";
+  }
+  void PushWarn(const std::string &s) const {
+    ScopedSpinLock<SpinMutex> lk(_diag_mutex);
+    _warn += s + "\n";
+  }
+  mutable SpinMutex _diag_mutex;
   mutable std::string _err;
   mutable std::string _warn;
 
   ProgressCallback _progress_callback;  // Default-initialized (empty)
   void *_progress_userptr{nullptr};
 
-  // To prevent recursive Value unpack(The Value encodes itself)
-  std::unordered_set<uint64_t> unpackRecursionGuard;
+  // To prevent recursive Value unpack(The Value encodes itself).
+  // Access through unpack_recursion_guard() (thread-local during parallel
+  // reconstruction).
+  mutable std::unordered_set<uint64_t> unpackRecursionGuard;
   // Nesting depth for ReadCustomData (crate DICTIONARY) — capped against
   // _config.maxValueRecursion to stop a deeply-nested / cyclic dict from
-  // overflowing the native stack.
-  uint32_t _customDataDepth{0};
-  // Nesting depth for UnpackArrayEditRep (VtArrayEdit) — same purpose.
-  uint32_t _arrayEditDepth{0};
+  // overflowing the native stack. Access through custom_data_depth()
+  // (thread-local during parallel reconstruction).
+  mutable uint32_t _customDataDepth{0};
+  // Nesting depth for UnpackArrayEditRep (VtArrayEdit) — same purpose;
+  // access through array_edit_depth().
+  mutable uint32_t _arrayEditDepth{0};
 
   bool ReserveDecompressionBuffers(size_t comp_buffer_size,
                                    size_t working_buffer_size) const;
@@ -638,7 +679,10 @@ class CrateReader {
   // Shared times cache: deduplicates times arrays that share the same file
   // offset (ValueRep payload). Multiple TimeSamples in a crate file often
   // reference the same times array; this avoids redundant copies.
+  // Guarded by _times_cache_mutex (accessed from worker threads during
+  // parallel reconstruction).
   std::unordered_map<uint64_t, std::shared_ptr<std::vector<double>>> _shared_times_cache;
+  mutable SpinMutex _times_cache_mutex;
 
   // Reusable buffers for integer decompression to avoid repeated allocation
   // These are mutable because they're used as internal working buffers in const-like operations

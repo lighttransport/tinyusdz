@@ -82,7 +82,7 @@ bool CrateReader::ReadCompressedInts(Int *out,
   size_t compBufferSize = Compressor::GetCompressedBufferSize(num_ints);
 
   uint64_t compSize;
-  if (!_sr->read8(&compSize)) {
+  if (!sr()->read8(&compSize)) {
     return false;
   }
 
@@ -90,7 +90,7 @@ bool CrateReader::ReadCompressedInts(Int *out,
     PUSH_ERROR_AND_RETURN_TAG(kTag, "compSize exceeds compBufferSize (corrupted USDC).");
   }
 
-  if (compSize > _sr->size()) {
+  if (compSize > sr()->size()) {
     return false;
   }
 
@@ -103,8 +103,8 @@ bool CrateReader::ReadCompressedInts(Int *out,
     return false;
   }
 
-  if (!_sr->read(size_t(compSize), size_t(compSize),
-                reinterpret_cast<uint8_t *>(_decomp_comp_buffer.data()))) {
+  if (!sr()->read(size_t(compSize), size_t(compSize),
+                reinterpret_cast<uint8_t *>(decomp_comp_buffer().data()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedInts.");
   }
 
@@ -116,8 +116,8 @@ bool CrateReader::ReadCompressedInts(Int *out,
   }
 
   bool ret = Compressor::DecompressFromBuffer(
-      _decomp_comp_buffer.data(), size_t(compSize), out, num_ints, &_err,
-      _decomp_working_buffer.data());
+      decomp_comp_buffer().data(), size_t(compSize), out, num_ints, &_err,
+      decomp_working_buffer().data());
 
   return ret;
 }
@@ -129,18 +129,18 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
   // < ver 0.7.0  use 32bit
   if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
     uint32_t n;
-    if (!_sr->read4(&n)) {
+    if (!sr()->read4(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     }
     length = size_t(n);
   } else {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
@@ -175,7 +175,7 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
 
   if (!is_compressed) {
 
-    if (!_sr->read(byte_count, byte_count,
+    if (!sr()->read(byte_count, byte_count,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read integer array data.");
     }
@@ -187,7 +187,7 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
     if (length < crate::kMinCompressedArraySize) {
       size_t sz = sizeof(T) * length;
       // Not stored in compressed for smaller data
-      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uncompressed integer array data.");
       }
       return true;
@@ -203,18 +203,18 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
   // < ver 0.7.0  use 32bit
   if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
     uint32_t n;
-    if (!_sr->read4(&n)) {
+    if (!sr()->read4(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     }
     length = size_t(n);
   } else {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
@@ -242,7 +242,7 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
   if (!is_compressed) {
 
 
-    if (!_sr->read(sizeof(uint16_t) * length, sizeof(uint16_t) * length,
+    if (!sr()->read(sizeof(uint16_t) * length, sizeof(uint16_t) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read half array data.\n";
       return false;
@@ -259,7 +259,7 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
       size_t sz = sizeof(uint16_t) * length;
       // Not stored in compressed.
       // reader.ReadContiguous(odata, osize);
-      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -268,7 +268,7 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
 
     // Read the code
     char code;
-    if (!_sr->read1(&code)) {
+    if (!sr()->read1(&code)) {
       _err += "Failed to read the code.\n";
       return false;
     }
@@ -293,7 +293,7 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
     } else if (code == 't') {
       // Lookup table & indexes.
       uint32_t lutSize;
-      if (!_sr->read4(&lutSize)) {
+      if (!sr()->read4(&lutSize)) {
         _err += "Failed to read lutSize in ReadHalfArray.\n";
         return false;
       }
@@ -309,7 +309,7 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
 
       std::vector<value::half> lut;
       lut.resize(lutSize);
-      if (!_sr->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
+      if (!sr()->read(sizeof(value::half) * lutSize, sizeof(value::half) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut table in ReadHalfArray.\n";
@@ -350,19 +350,19 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
   // < ver 0.7.0  use 32bit
   if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
     uint32_t n;
-    if (!_sr->read4(&n)) {
+    if (!sr()->read4(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
     length = size_t(n);
   } else {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
@@ -389,7 +389,7 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
   if (!is_compressed) {
 
-    if (!_sr->read(sizeof(float) * length, sizeof(float) * length,
+    if (!sr()->read(sizeof(float) * length, sizeof(float) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read float array data.\n";
       return false;
@@ -406,7 +406,7 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
       size_t sz = sizeof(float) * length;
       // Not stored in compressed.
       // reader.ReadContiguous(odata, osize);
-      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -415,7 +415,7 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
     // Read the code
     char code;
-    if (!_sr->read1(&code)) {
+    if (!sr()->read1(&code)) {
       _err += "Failed to read the code.\n";
       return false;
     }
@@ -439,7 +439,7 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
     } else if (code == 't') {
       // Lookup table & indexes.
       uint32_t lutSize;
-      if (!_sr->read4(&lutSize)) {
+      if (!sr()->read4(&lutSize)) {
         _err += "Failed to read lutSize in ReadFloatArray.\n";
         return false;
       }
@@ -458,7 +458,7 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
       std::vector<float> lut;
       lut.resize(lutSize);
-      if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
+      if (!sr()->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadFloatArray.\n";
         return false;
@@ -495,19 +495,19 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
   // < ver 0.7.0  use 32bit
   if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
     uint32_t n;
-    if (!_sr->read4(&n)) {
+    if (!sr()->read4(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
     length = size_t(n);
   } else {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
@@ -539,7 +539,7 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
   if (!is_compressed) {
 
-    if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
+    if (!sr()->read(sizeof(double) * length, sizeof(double) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read double array data.\n";
       return false;
@@ -558,7 +558,7 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
       size_t sz = sizeof(double) * length;
       // Not stored in compressed.
       // reader.ReadContiguous(odata, osize);
-      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -567,7 +567,7 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
     // Read the code
     char code;
-    if (!_sr->read1(&code)) {
+    if (!sr()->read1(&code)) {
       _err += "Failed to read the code.\n";
       return false;
     }
@@ -589,7 +589,7 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     } else if (code == 't') {
       // Lookup table & indexes.
       uint32_t lutSize;
-      if (!_sr->read4(&lutSize)) {
+      if (!sr()->read4(&lutSize)) {
         _err += "Failed to read lutSize in ReadDoubleArray.\n";
         return false;
       }
@@ -608,7 +608,7 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
       std::vector<double> lut;
       lut.resize(lutSize);
-      if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
+      if (!sr()->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         _err += "Failed to read lut table in ReadDoubleArray.\n";
         return false;
@@ -644,19 +644,19 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
   // < ver 0.7.0  use 32bit
   if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
     uint32_t n;
-    if (!_sr->read4(&n)) {
+    if (!sr()->read4(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
     length = size_t(n);
   } else {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
@@ -681,7 +681,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
   d->resize(length);
 
   if (!is_compressed) {
-    if (!_sr->read(sizeof(float) * length, sizeof(float) * length,
+    if (!sr()->read(sizeof(float) * length, sizeof(float) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read float array data.\n";
       return false;
@@ -691,7 +691,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
     // Handle compressed data
     if (length < crate::kMinCompressedArraySize) {
       size_t sz = sizeof(float) * length;
-      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -699,7 +699,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
     }
 
     char code;
-    if (!_sr->read1(&code)) {
+    if (!sr()->read1(&code)) {
       _err += "Failed to read the code.\n";
       return false;
     }
@@ -720,7 +720,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
       REDUCE_MEMORY_USAGE(tmp_bytes);
     } else if (code == 't') {
       uint32_t lutSize;
-      if (!_sr->read4(&lutSize)) {
+      if (!sr()->read4(&lutSize)) {
         _err += "Failed to read lutSize in ReadFloatArrayTyped.\n";
         return false;
       }
@@ -736,7 +736,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
 
       std::vector<float> lut;
       lut.resize(lutSize);
-      if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
+      if (!sr()->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut table in ReadFloatArrayTyped.\n";
@@ -775,19 +775,19 @@ bool CrateReader::ReadFloat2ArrayTyped(TypedArray<value::float2> *d) {
   // < ver 0.7.0  use 32bit
   if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
     uint32_t n;
-    if (!_sr->read4(&n)) {
+    if (!sr()->read4(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
     length = size_t(n);
   } else {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
@@ -807,7 +807,7 @@ bool CrateReader::ReadFloat2ArrayTyped(TypedArray<value::float2> *d) {
 
   d->resize(length);
 
-  if (!_sr->read(sizeof(value::float2) * length, sizeof(value::float2) * length,
+  if (!sr()->read(sizeof(value::float2) * length, sizeof(value::float2) * length,
                  reinterpret_cast<uint8_t *>(d->data()))) {
     _err += "Failed to read float2 array data.\n";
     return false;
@@ -821,19 +821,19 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
   // < ver 0.7.0  use 32bit
   if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
     uint32_t n;
-    if (!_sr->read4(&n)) {
+    if (!sr()->read4(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
     length = size_t(n);
   } else {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
@@ -863,7 +863,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
   d->resize(length);
 
   if (!is_compressed) {
-    if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
+    if (!sr()->read(sizeof(double) * length, sizeof(double) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read double array data.\n";
       return false;
@@ -873,7 +873,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
     // Handle compressed data
     if (length < crate::kMinCompressedArraySize) {
       size_t sz = sizeof(double) * length;
-      if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+      if (!sr()->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read uncompressed array data.\n";
         return false;
       }
@@ -881,7 +881,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
     }
 
     char code;
-    if (!_sr->read1(&code)) {
+    if (!sr()->read1(&code)) {
       _err += "Failed to read the code.\n";
       return false;
     }
@@ -901,7 +901,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
       REDUCE_MEMORY_USAGE(tmp_bytes);
     } else if (code == 't') {
       uint32_t lutSize;
-      if (!_sr->read4(&lutSize)) {
+      if (!sr()->read4(&lutSize)) {
         _err += "Failed to read lutSize in ReadDoubleArrayTyped.\n";
         return false;
       }
@@ -917,7 +917,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
 
       std::vector<double> lut;
       lut.resize(lutSize);
-      if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
+      if (!sr()->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
         REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut table in ReadDoubleArrayTyped.\n";
@@ -957,19 +957,19 @@ bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
   // < ver 0.7.0  use 32bit
   if (VERSION_LESS_THAN_0_8_0(_version)) {
       uint32_t shapesize; // not used
-      if (!_sr->read4(&shapesize)) {
+      if (!sr()->read4(&shapesize)) {
         PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
     uint32_t n;
-    if (!_sr->read4(&n)) {
+    if (!sr()->read4(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
     length = size_t(n);
   } else {
     uint64_t n;
-    if (!_sr->read8(&n)) {
+    if (!sr()->read8(&n)) {
       _err += "Failed to read the number of array elements.\n";
       return false;
     }
@@ -995,7 +995,7 @@ bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
   d->resize(length);
 
   if (!is_compressed) {
-    if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
+    if (!sr()->read(sizeof(T) * length, sizeof(T) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read int array data.\n";
       return false;

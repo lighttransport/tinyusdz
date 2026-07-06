@@ -88,7 +88,16 @@ bool USDCReader::Impl::ReconstructPrim(const Specifier &spec, const crate::Crate
   reconstruct_options.strict_allowedToken_check = _config.strict_allowedToken_check;
   reconstruct_options.strict_shader_type_check = _config.strict_shader_type_check;
 
-  if (!prim::ReconstructPrim<T>(spec, properties, refs, prim, &_warn, &_err, reconstruct_options)) {
+  // Per-call diagnostic buffers, merged under lock: this runs on worker
+  // threads during parallel prim reconstruction.
+  std::string local_warn;
+  std::string local_err;
+  const bool reconstruct_ok = prim::ReconstructPrim<T>(
+      spec, properties, refs, prim, &local_warn, &local_err,
+      reconstruct_options);
+  AppendWarnRaw(local_warn);
+  AppendErrorRaw(local_err);
+  if (!reconstruct_ok) {
     return false;
   }
 
