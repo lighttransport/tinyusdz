@@ -242,10 +242,21 @@
                                            bool is_payload) {
         if (values.empty()) return;
 
-        const bool payload_has_offset =
+        // pxr/legacy per-item layout (read INTERLEAVED, one item at a time):
+        //   assetPath(u32 str idx), primPath(u32 path idx),
+        //   [layerOffset(f64 offset, f64 scale)]  -- references always; payloads
+        //                                            only from crate 0.8.0,
+        //   [customData(u64 dict count + entries)] -- REFERENCES ONLY.
+        // So a reference item is 4+4+16+8 = 32 B, a 0.8 payload 4+4+16 = 24 B,
+        // and a pre-0.8 payload 4+4 = 8 B. next authors no per-arc customData,
+        // so the reference dict count is always 0. (Payloads carry no customData
+        // at all — emitting one made pxr/legacy misread the following item.)
+        const bool has_offset =
             !is_payload || (options_.version_minor >= 8);
+        const bool has_customdata = !is_payload;
 
-        const size_t bytes_per_item = payload_has_offset ? 32u : 8u;
+        const size_t bytes_per_item =
+            8u + (has_offset ? 16u : 0u) + (has_customdata ? 8u : 0u);
 
         size_t n = values.size();
         size_t items_bytes = 0;
@@ -279,10 +290,7 @@
           std::memcpy(raw.data() + cursor + 4, &path_idx, 4);
           cursor += 8;
 
-          if (payload_has_offset) {
-            uint64_t dict_count = 0;
-            std::memcpy(raw.data() + cursor, &dict_count, 8);
-            cursor += 8;
+          if (has_offset) {
             double offset = 0.0;
             double scale = 1.0;
             if (!arc.layer_offset.empty()) {
@@ -291,6 +299,11 @@
             std::memcpy(raw.data() + cursor, &offset, 8);
             std::memcpy(raw.data() + cursor + 8, &scale, 8);
             cursor += 16;
+          }
+          if (has_customdata) {
+            uint64_t dict_count = 0;  // empty customData dict
+            std::memcpy(raw.data() + cursor, &dict_count, 8);
+            cursor += 8;
           }
         }
 

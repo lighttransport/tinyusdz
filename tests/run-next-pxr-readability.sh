@@ -8,6 +8,9 @@
 #            reader reject ("Attempted to unpack unsupported type enum value 0").
 #   bug #2 - a flattened layer retaining a `subLayers` metadata field (written
 #            as token[], which pxr/legacy require to be string[]).
+#   bug #3 - Reference/Payload ListOp items mis-encoded: customData written
+#            before the layerOffset (and a bogus customData slot on payloads),
+#            so pxr/legacy read a layerOffset double as the customData count.
 #
 # Env overrides:
 #   NEXT_USDCAT  path to next_usdcat  (default: build-next/next_usdcat)
@@ -39,7 +42,8 @@ fi
 # Collect inputs: the crafted .usda scenes, plus NormalsTextureBiasAndScale
 # from a models dir if present (extracted so textures resolve).
 inputs=()
-for f in "$SCENES_DIR"/value-less.usda "$SCENES_DIR"/sublayers-main.usda; do
+for f in "$SCENES_DIR"/value-less.usda "$SCENES_DIR"/sublayers-main.usda \
+         "$SCENES_DIR"/references.usda; do
   [ -f "$f" ] && inputs+=("$f")
 done
 for md in "${MODELS_DIR:-}" "$ROOT_DIR/../models"; do

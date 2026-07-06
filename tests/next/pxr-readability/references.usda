@@ -1,0 +1,14 @@
+#usda 1.0
+(
+    doc = "Reference/payload ListOp items must encode as assetPath, primPath, layerOffset, customData (bug 3) - external arcs are retained in the flattened output."
+)
+def "InternalTarget" { double radius = 2.0 }
+def Xform "Root"
+{
+    def "ViaInternal" ( references = </InternalTarget> ) {}
+    def "ViaExternalMulti" (
+        references = [ @./assetA.usd@</Geo>, @./assetB.usd@</Geo> ]
+    ) {}
+    def "ViaOffset" ( references = @./clip.usd@</Anim> (offset = 12; scale = 2) ) {}
+    def "ViaPayload" ( payload = @./deferred.usd@</P> ) {}
+}
