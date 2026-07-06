@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RGBELoader as HDRLoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
 import { LoaderUtils } from "three"
@@ -1321,6 +1321,70 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return geometry;
     }
 
+    static compactIndexedMaterialGroups(geometry, submeshes, materialIdToIndex, materials = null) {
+        if (!geometry?.index || !Array.isArray(submeshes) || submeshes.length < 2) {
+            return false;
+        }
+        if (Array.isArray(materials) && materials.some((mat) => mat?.transparent)) {
+            return false;
+        }
+
+        const indexArray = geometry.index.array;
+        if (!indexArray || !Number.isFinite(indexArray.length) || indexArray.length === 0) {
+            return false;
+        }
+
+        const buckets = new Map();
+        let copiedCount = 0;
+        for (const submesh of submeshes) {
+            const start = submesh.start | 0;
+            const count = submesh.count | 0;
+            if (count <= 0 || start < 0 || start + count > indexArray.length) {
+                return false;
+            }
+            const matIndex = materialIdToIndex.get(submesh.materialId);
+            if (matIndex === undefined) {
+                return false;
+            }
+            if (!buckets.has(matIndex)) {
+                buckets.set(matIndex, []);
+            }
+            buckets.get(matIndex).push({ start, count });
+            copiedCount += count;
+        }
+
+        if (copiedCount !== indexArray.length || buckets.size >= submeshes.length) {
+            return false;
+        }
+
+        const reordered = new indexArray.constructor(indexArray.length);
+        const groups = [];
+        let offset = 0;
+        for (const [matIndex, ranges] of buckets.entries()) {
+            const groupStart = offset;
+            for (const range of ranges) {
+                reordered.set(indexArray.subarray(range.start, range.start + range.count), offset);
+                offset += range.count;
+            }
+            groups.push({
+                start: groupStart,
+                count: offset - groupStart,
+                materialIndex: matIndex
+            });
+        }
+
+        geometry.setIndex(new THREE.BufferAttribute(reordered, 1));
+        geometry.clearGroups();
+        for (const group of groups) {
+            geometry.addGroup(group.start, group.count, group.materialIndex);
+        }
+        geometry.userData.compactedMaterialGroups = {
+            before: submeshes.length,
+            after: groups.length
+        };
+        return true;
+    }
+
     static async setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
 
         const geometryStart = performance.now();
@@ -1328,7 +1392,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             this.convertUsdMeshPtrToThreeMesh(mesh, options) :
             this.convertUsdMeshToThreeMesh(mesh, options);
         if (!geometry) {
-            throw new Error('Failed to build Three.js geometry');
+            const meshName = mesh?.primName || mesh?.absPath || '(unknown mesh)';
+            const pointCount = mesh?.vertexCount ?? mesh?.points?.count ?? (mesh?.points?.length ? mesh.points.length / 3 : 0);
+            const indexCount = mesh?.indices?.length ?? mesh?.faceVertexIndices?.length ?? 0;
+            throw new Error(`Failed to build Three.js geometry for "${meshName}" (points=${pointCount}, indices=${indexCount})`);
         }
         if (options._debugState) {
             options._debugState.geometryMs += performance.now() - geometryStart;
@@ -1511,10 +1578,24 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 }
             }
 
-            // Third pass: add geometry groups using pre-computed submesh data (from C++)
-            for (const submesh of submeshes) {
-                const matIndex = materialIdToIndex.get(submesh.materialId);
-                geometry.addGroup(submesh.start, submesh.count, matIndex);
+            // Third pass: add geometry groups using pre-computed submesh data
+            // (from C++). Many USD files author one GeomSubset per face, which
+            // would otherwise become one Three.js draw call per face. For indexed
+            // geometry, reorder the index buffer by material and emit one group
+            // per material.
+            const compactedGroups = options.compactMaterialGroups !== false &&
+                this.compactIndexedMaterialGroups(geometry, submeshes, materialIdToIndex, materials);
+            if (compactedGroups && options._debugState) {
+                const compact = geometry.userData.compactedMaterialGroups;
+                options._debugState.compactedGroupMeshes++;
+                options._debugState.compactedGroupsBefore += compact.before;
+                options._debugState.compactedGroupsAfter += compact.after;
+            }
+            if (!compactedGroups) {
+                for (const submesh of submeshes) {
+                    const matIndex = materialIdToIndex.get(submesh.materialId);
+                    geometry.addGroup(submesh.start, submesh.count, matIndex);
+                }
             }
 
 
@@ -1609,6 +1690,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 singleMaterialMeshes: 0,
                 multiMaterialMeshes: 0,
                 subsetMaterialRefs: 0,
+                compactedGroupMeshes: 0,
+                compactedGroupsBefore: 0,
+                compactedGroupsAfter: 0,
                 aggregateMs: 0,
                 aggregateInputMeshes: 0,
                 aggregateOutputMeshes: 0,
@@ -1666,7 +1750,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const state = options._debugState;
         const totalMs = performance.now() - state.startMs;
         this._debugBuild(options, 'build:summary',
-            `total=${totalMs.toFixed(1)}ms count=${state.countMs.toFixed(1)}ms meshCopy=${state.meshCopyMs.toFixed(1)}ms geometry=${state.geometryMs.toFixed(1)}ms material=${state.materialMs.toFixed(1)}ms materialSignature=${state.materialSignatureMs.toFixed(1)}ms materialConvert=${state.materialConvertMs.toFixed(1)}ms meshCreate=${state.meshCreateMs.toFixed(1)}ms transform=${state.transformMs.toFixed(1)}ms userData=${state.userDataMs.toFixed(1)}ms childAdd=${state.childAddMs.toFixed(1)}ms aggregate=${state.aggregateMs.toFixed(1)}ms/${state.aggregateInputMeshes}->${state.aggregateOutputMeshes} skipped=${state.aggregateSkippedMeshes} yield=${state.yieldMs.toFixed(1)}ms/${state.yieldCount} materialCache=${state.materialCacheHits}/${state.materialCacheMisses} materialSignatureCache=${state.materialSignatureCacheHits}/${state.materialSignatureCacheMisses} meshPtr=${state.meshPtrHits}/${state.meshPtrFallbacks} single=${state.singleMaterialMeshes} multi=${state.multiMaterialMeshes} subsetRefs=${state.subsetMaterialRefs}`);
+            `total=${totalMs.toFixed(1)}ms count=${state.countMs.toFixed(1)}ms meshCopy=${state.meshCopyMs.toFixed(1)}ms geometry=${state.geometryMs.toFixed(1)}ms material=${state.materialMs.toFixed(1)}ms materialSignature=${state.materialSignatureMs.toFixed(1)}ms materialConvert=${state.materialConvertMs.toFixed(1)}ms meshCreate=${state.meshCreateMs.toFixed(1)}ms transform=${state.transformMs.toFixed(1)}ms userData=${state.userDataMs.toFixed(1)}ms childAdd=${state.childAddMs.toFixed(1)}ms aggregate=${state.aggregateMs.toFixed(1)}ms/${state.aggregateInputMeshes}->${state.aggregateOutputMeshes} skipped=${state.aggregateSkippedMeshes} yield=${state.yieldMs.toFixed(1)}ms/${state.yieldCount} materialCache=${state.materialCacheHits}/${state.materialCacheMisses} materialSignatureCache=${state.materialSignatureCacheHits}/${state.materialSignatureCacheMisses} meshPtr=${state.meshPtrHits}/${state.meshPtrFallbacks} single=${state.singleMaterialMeshes} multi=${state.multiMaterialMeshes} subsetRefs=${state.subsetMaterialRefs} compactGroups=${state.compactedGroupMeshes}/${state.compactedGroupsBefore}->${state.compactedGroupsAfter}`);
     }
 
     static _geometryAttributeSignature(geometry) {
@@ -1994,7 +2078,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 usdScene && typeof usdScene.getMeshPtr === 'function';
             if (useMeshPtr) {
                 const ptrMesh = usdScene.getMeshPtr(usdNode.contentId);
-                if (ptrMesh && ptrMesh.points &&
+                if (ptrMesh && ptrMesh.points && ptrMesh.points.length > 0 &&
                     (!ptrMesh.hasSubmeshes || ptrMesh.submeshes)) {
                     mesh = ptrMesh;
                     mesh._meshPtr = true;

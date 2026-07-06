@@ -770,6 +770,11 @@ function handleToggleUpAxis({ apply }) {
 // Render loop
 // ============================================================================
 
+const fpsState = {
+    lastUpdateMs: performance.now(),
+    frames: 0
+};
+
 function animate() {
     // Use _origRAF directly — the wrapped requestAnimationFrame is only for
     // coroutine yield points (pause/delay). The render loop must always run.
@@ -779,6 +784,16 @@ function animate() {
         setTimeout(animate, 16);
     }
     three.renderer.render(three.scene, three.camera);
+    fpsState.frames++;
+    const now = performance.now();
+    if (now - fpsState.lastUpdateMs >= 500) {
+        self.postMessage({
+            type: 'fps',
+            fps: fpsState.frames * 1000 / (now - fpsState.lastUpdateMs)
+        });
+        fpsState.frames = 0;
+        fpsState.lastUpdateMs = now;
+    }
 }
 
 // ============================================================================
