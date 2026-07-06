@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RGBELoader as HDRLoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
@@ -18,6 +18,7 @@ import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.
 
 const DEFAULT_BACKGROUND_COLOR = 0x1a1a1a;
 const CAMERA_PADDING = 1.2;
+const MAX_RENDER_PIXEL_RATIO = 2.0;
 
 const ENV_PRESETS = {
     'usd_dome': 'usd',
@@ -47,6 +48,119 @@ function traceLoadPhase(name, detail = '') {
     }
     const elapsed = (performance.now() - TRACE_LOAD_T0).toFixed(1);
     console.log(`[materialx-load] ${elapsed} ms ${name}${detail ? ` ${detail}` : ''}`);
+}
+
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+    for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
+        const value = params.get(key);
+        if (value) return value;
+    }
+    return null;
+}
+
+function getDisplayNameFromURI(uri) {
+    try {
+        const parsed = new URL(uri, window.location.href);
+        const pathname = parsed.pathname || uri;
+        const basename = pathname.split('/').filter(Boolean).pop();
+        return basename || uri;
+    } catch {
+        return uri.split('/').pop() || uri;
+    }
+}
+
+function formatDurationMs(ms) {
+    if (!Number.isFinite(ms)) return 'n/a';
+    if (ms < 1000) return `${ms.toFixed(0)} ms`;
+    return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+    if (!Number.isFinite(bytes)) return 'n/a';
+    const sign = bytes < 0 ? '-' : '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = Math.abs(bytes);
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex++;
+    }
+    return `${sign}${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+    const jsHeap = performance.memory?.usedJSHeapSize;
+    const wasmHeap = loaderState.loader?.native_?.HEAPU8?.buffer?.byteLength;
+    return {
+        jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+        wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+    };
+}
+
+function formatMemoryUse(before, after, key) {
+    const current = after?.[key];
+    if (!Number.isFinite(current)) return 'n/a';
+
+    const previous = before?.[key];
+    if (!Number.isFinite(previous)) {
+        return formatBytes(current);
+    }
+
+    const delta = current - previous;
+    const sign = delta > 0 ? '+' : '';
+    return `${formatBytes(current)} (${sign}${formatBytes(delta)})`;
+}
+
+function updateLoadStatsPanel(stats) {
+    const container = document.getElementById('load-stats');
+    const details = document.getElementById('load-stats-details');
+    if (!container || !details) return;
+
+    container.style.display = 'block';
+
+    if (stats.status === 'loading') {
+        details.textContent = 'Loading...';
+        return;
+    }
+
+    if (stats.status === 'failed') {
+        details.textContent = 'Failed';
+        return;
+    }
+
+    details.textContent = [
+        `File: ${formatBytes(stats.fileSize)}`,
+        `Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+        `Parse/load: ${formatDurationMs(stats.parseMs)}`,
+        `Process/build: ${formatDurationMs(stats.processMs)}`,
+        `Total: ${formatDurationMs(stats.totalMs)}`,
+        `JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+        `WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+    ].join('\n');
+}
+
+function beginLoadStats(fileSize = null) {
+    const stats = {
+        status: 'loading',
+        startTime: performance.now(),
+        fileSize,
+        fetchMs: null,
+        parseMs: null,
+        processMs: null,
+        totalMs: null,
+        memoryBefore: captureMemorySnapshot(),
+        memoryAfter: null
+    };
+    updateLoadStatsPanel(stats);
+    return stats;
+}
+
+function failLoadStats(stats) {
+    if (!stats || stats.status === 'done') return;
+    stats.status = 'failed';
+    stats.totalMs = performance.now() - stats.startTime;
+    stats.memoryAfter = captureMemorySnapshot();
+    updateLoadStatsPanel(stats);
 }
 
 // ACES 2.0 Tonemapping Shader
@@ -280,10 +394,16 @@ const threeState = {
     axesHelper: null
 };
 
+const frameState = {
+    lastFpsUpdateMs: performance.now(),
+    frameCount: 0
+};
+
 // USD loader state
 const loaderState = {
     loader: null,
-    nativeLoader: null
+    nativeLoader: null,
+    currentFileName: ''
 };
 
 // Scene state
@@ -331,7 +451,8 @@ const guiState = {
     envPresetController: null,
     envColorController: null,
     envColorspaceController: null,
-    envIntensityController: null
+    envIntensityController: null,
+    hidden: false
 };
 
 // User settings
@@ -459,7 +580,7 @@ async function init() {
     traceLoadPhase('init:start');
     // URL parameter support for batch rendering (check early for autoRender mode)
     const urlParams = new URLSearchParams(window.location.search);
-    const usdPath = urlParams.get('usd');
+    const usdPath = getStartupUSDModelURI(urlParams);
     const autoRender = urlParams.get('autoRender') === 'true';
     settings.fastMaterials = urlParams.get('fastMaterials') === 'true';
     if (urlParams.has('fastMaterialMode')) {
@@ -542,25 +663,7 @@ async function init() {
 
     if (usdPath) {
         // Load USD file from URL parameter
-        updateStatus(`Loading ${usdPath}...`);
-        try {
-            const response = await fetch(usdPath);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch ${usdPath}: ${response.statusText}`);
-            }
-            const arrayBuffer = await response.arrayBuffer();
-            traceLoadPhase('usd:fetch-done', `${arrayBuffer.byteLength} bytes`);
-            const data = new Uint8Array(arrayBuffer);
-            await loadUSDFromData(data, usdPath);
-        } catch (error) {
-            console.error(`Failed to load USD file (${usdPath}):`, error);
-            updateStatus(`Error: ${error.message}`);
-            if (autoRender) {
-                // Signal error state for batch runner
-                window.renderComplete = true;
-                window.renderError = error.message;
-            }
-        }
+        await loadUSDFromURI(usdPath, autoRender);
     } else {
         await loadDefaultUSDFile();
     }
@@ -574,6 +677,33 @@ async function init() {
             window.renderComplete = true;
             console.log(`Render complete signaled after ${renderTimeout}ms`);
         }, renderTimeout);
+    }
+}
+
+async function loadUSDFromURI(uri, autoRender = false) {
+    const displayName = getDisplayNameFromURI(uri);
+    const stats = beginLoadStats();
+    updateStatus(`Loading ${displayName}...`);
+    try {
+        const fetchStart = performance.now();
+        const response = await fetch(uri);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch ${uri}: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        stats.fetchMs = performance.now() - fetchStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        traceLoadPhase('usd:fetch-done', `${arrayBuffer.byteLength} bytes`);
+        const data = new Uint8Array(arrayBuffer);
+        await loadUSDFromData(data, displayName, stats);
+    } catch (error) {
+        failLoadStats(stats);
+        console.error(`Failed to load USD file (${uri}):`, error);
+        updateStatus(`Error: ${error.message}`);
+        if (autoRender) {
+            window.renderComplete = true;
+            window.renderError = error.message;
+        }
     }
 }
 
@@ -598,7 +728,7 @@ function initThreeJS() {
     }
 
     threeState.renderer.setSize(window.innerWidth, window.innerHeight);
-    threeState.renderer.setPixelRatio(window.devicePixelRatio);
+    threeState.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO));
     // Initialize tonemapping from settings (default: aces_1.3)
     setTonemapping(settings.toneMapping);
     threeState.renderer.toneMappingExposure = settings.exposure;
@@ -615,7 +745,9 @@ function initControls() {
     threeState.controls.dampingFactor = 0.05;
     threeState.controls.screenSpacePanning = true;
     threeState.controls.minDistance = 0.1;
-    threeState.controls.maxDistance = 500;
+    threeState.controls.maxDistance = Infinity;
+    threeState.controls.zoomSpeed = 0.8;
+    threeState.controls.panSpeed = 1.0;
     threeState.controls.mouseButtons = {
         LEFT: THREE.MOUSE.ROTATE,
         MIDDLE: THREE.MOUSE.PAN,
@@ -912,6 +1044,7 @@ Use 'openpbr' implementation to get accurate OpenPBR rendering.
 
 function setupEventListeners() {
     window.addEventListener('resize', onWindowResize);
+    window.addEventListener('keydown', onKeyDown);
 
     const fileInput = document.getElementById('file-input');
     fileInput.addEventListener('change', onFileSelect);
@@ -923,6 +1056,12 @@ function setupEventListeners() {
 
     // Object picking - use click event
     container.addEventListener('click', onCanvasClick);
+
+    const visibilityToggle = document.getElementById('gui-visibility-toggle');
+    if (visibilityToggle) {
+        visibilityToggle.addEventListener('click', () => setGuiHidden(!guiState.hidden));
+        setGuiHidden(false);
+    }
 }
 
 /*
@@ -1725,21 +1864,27 @@ async function loadDefaultScene() {
     updateStatus('Loading default scene...');
     const encoder = new TextEncoder();
     const data = encoder.encode(DEFAULT_USDA_SCENE);
-    await loadUSDFromData(data, 'default.usda');
+    const stats = beginLoadStats(data.byteLength);
+    await loadUSDFromData(data, 'default.usda', stats);
 }
 
 async function loadDefaultUSDFile() {
     const defaultFile = './assets/fancy-teapot-mtlx.usdz';
+    const stats = beginLoadStats();
     updateStatus(`Loading ${defaultFile}...`);
     try {
+        const fetchStart = performance.now();
         const response = await fetch(defaultFile);
         if (!response.ok) {
             throw new Error(`Failed to fetch ${defaultFile}: ${response.statusText}`);
         }
         const arrayBuffer = await response.arrayBuffer();
+        stats.fetchMs = performance.now() - fetchStart;
+        stats.fileSize = arrayBuffer.byteLength;
         const data = new Uint8Array(arrayBuffer);
-        await loadUSDFromData(data, defaultFile);
+        await loadUSDFromData(data, defaultFile, stats);
     } catch (error) {
+        failLoadStats(stats);
         console.error(`Failed to load default USD file (${defaultFile}):`, error);
         updateStatus(`Failed to load ${defaultFile}, loading fallback scene...`);
         await loadDefaultScene();
@@ -1747,19 +1892,29 @@ async function loadDefaultUSDFile() {
 }
 
 async function loadUSDFromFile(file) {
+    const stats = beginLoadStats();
     updateStatus(`Loading: ${file.name}...`);
     try {
+        const readStart = performance.now();
         const arrayBuffer = await file.arrayBuffer();
+        stats.fetchMs = performance.now() - readStart;
+        stats.fileSize = arrayBuffer.byteLength;
         const data = new Uint8Array(arrayBuffer);
-        await loadUSDFromData(data, file.name);
+        await loadUSDFromData(data, file.name, stats);
     } catch (error) {
+        failLoadStats(stats);
         console.error('Failed to load USD file:', error);
         updateStatus(`Error: ${error.message}`);
     }
 }
 
-async function loadUSDFromData(data, filename) {
+async function loadUSDFromData(data, filename, stats = null) {
+    stats = stats || beginLoadStats(data.byteLength);
+    if (!Number.isFinite(stats.fileSize)) {
+        stats.fileSize = data.byteLength;
+    }
     traceLoadPhase('loadUSDFromData:start', `${filename} ${data.byteLength} bytes`);
+    loaderState.currentFileName = filename || '';
     clearScene();
     traceLoadPhase('loadUSDFromData:clearScene-done');
 
@@ -1787,6 +1942,7 @@ async function loadUSDFromData(data, filename) {
         };
     }
     let success = false;
+    const parseStart = performance.now();
     try {
         success = withNativeInfoLogFilter(() => loaderState.nativeLoader.loadFromBinary(data, filename));
     } finally {
@@ -1794,12 +1950,15 @@ async function loadUSDFromData(data, filename) {
             loaderState.loader.native_.onTinyUSDZDebug = previousDebugCallback;
         }
     }
+    stats.parseMs = performance.now() - parseStart;
     traceLoadPhase('native:loadFromBinary:done', `success=${success}`);
     if (!success) {
+        failLoadStats(stats);
         updateStatus(`Failed to parse USD file: ${filename}`);
-        return;
+        throw new Error(`Failed to parse USD file: ${filename}`);
     }
 
+    const processStart = performance.now();
     traceLoadPhase('metadata:start');
     loadSceneMetadata();
     traceLoadPhase('metadata:done');
@@ -1821,6 +1980,11 @@ async function loadUSDFromData(data, filename) {
     traceLoadPhase('modelInfo:start');
     updateModelInfo();
     traceLoadPhase('modelInfo:done');
+    stats.processMs = performance.now() - processStart;
+    stats.totalMs = performance.now() - stats.startTime;
+    stats.memoryAfter = captureMemorySnapshot();
+    stats.status = 'done';
+    updateLoadStatsPanel(stats);
 }
 
 function isNativeInfoLog(args) {
@@ -1916,6 +2080,7 @@ async function buildSceneGraph() {
         meshAggregation: settings.meshAggregation,
         meshAggregationMinMeshes: settings.meshAggregationMinMeshes,
         computeMissingTangents: settings.computeMissingTangents,
+        sourceFileName: loaderState.currentFileName,
         yieldMode: settings.buildYieldMode,
         yieldIntervalMs: settings.buildYieldIntervalMs,
         debugLogEveryMeshes: 250,
@@ -2253,6 +2418,7 @@ function updateModelInfo() {
     const renderMeshes = countRenderMeshesFromScene();
 
     document.getElementById('model-info').style.display = 'block';
+    document.getElementById('current-file').textContent = loaderState.currentFileName || '-';
     document.getElementById('mesh-count').textContent = renderMeshes && renderMeshes !== numMeshes ?
         `${renderMeshes} (${numMeshes} native)` :
         numMeshes;
@@ -2837,7 +3003,7 @@ function fitCameraToScene() {
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
-    const boundingSphereRadius = size.length() * 0.5;
+    const boundingSphereRadius = Math.max(size.length() * 0.5, 0.001);
     const fov = threeState.camera.fov * (Math.PI / 180);
     const aspectRatio = threeState.camera.aspect;
 
@@ -2858,10 +3024,18 @@ function fitCameraToScene() {
     threeState.camera.lookAt(center);
     threeState.controls.target.copy(center);
 
-    threeState.camera.near = Math.max(0.1, cameraDistance / 100);
-    threeState.camera.far = Math.max(1000, cameraDistance * 10);
+    const minDistance = Math.max(boundingSphereRadius * 0.0005, 0.001);
+    const maxDistance = Math.max(cameraDistance * 50, boundingSphereRadius * 100, 1000);
+
+    threeState.camera.near = Math.max(boundingSphereRadius / 100000, 0.001);
+    threeState.camera.far = Math.max(maxDistance * 2, cameraDistance * 10, 1000);
     threeState.camera.updateProjectionMatrix();
 
+    threeState.controls.minDistance = minDistance;
+    threeState.controls.maxDistance = maxDistance;
+    threeState.controls.panSpeed = Math.max(boundingSphereRadius / 200, 1.0);
+    threeState.controls.keyPanSpeed = Math.max(boundingSphereRadius / 50, 20.0);
+    threeState.controls.zoomSpeed = Math.max(0.8, Math.min(1.5, boundingSphereRadius / 500));
     threeState.controls.update();
 }
 
@@ -3807,6 +3981,7 @@ function countMeshes() {
 function onWindowResize() {
     threeState.camera.aspect = window.innerWidth / window.innerHeight;
     threeState.camera.updateProjectionMatrix();
+    threeState.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO));
     threeState.renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
@@ -3845,6 +4020,32 @@ function onFileDrop(event) {
     }
 }
 
+function setGuiHidden(hidden) {
+    guiState.hidden = hidden;
+    document.body.classList.toggle('gui-hidden', hidden);
+    const toggle = document.getElementById('gui-visibility-toggle');
+    if (toggle) {
+        toggle.title = hidden ? 'Show UI (H)' : 'Hide UI (H)';
+        toggle.setAttribute('aria-label', hidden ? 'Show UI' : 'Hide UI');
+    }
+}
+
+function isEditableElement(element) {
+    if (!element) return false;
+    const tag = element.tagName;
+    return element.isContentEditable ||
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT';
+}
+
+function onKeyDown(event) {
+    if (event.key !== 'h' && event.key !== 'H') return;
+    if (event.ctrlKey || event.metaKey || event.altKey || isEditableElement(event.target)) return;
+    event.preventDefault();
+    setGuiHidden(!guiState.hidden);
+}
+
 // ============================================================================
 // UI Helpers
 // ============================================================================
@@ -3864,6 +4065,17 @@ window.loadFile = () => document.getElementById('file-input').click();
 
 function animate() {
     requestAnimationFrame(animate);
+    frameState.frameCount++;
+    const now = performance.now();
+    if (now - frameState.lastFpsUpdateMs >= 500) {
+        const fps = frameState.frameCount * 1000 / (now - frameState.lastFpsUpdateMs);
+        const fpsEl = document.getElementById('fps-value');
+        if (fpsEl) {
+            fpsEl.textContent = fps.toFixed(1);
+        }
+        frameState.frameCount = 0;
+        frameState.lastFpsUpdateMs = now;
+    }
     threeState.controls.update();
 
     // Animation disabled for now - may revisit later
