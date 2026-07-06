@@ -4084,6 +4084,72 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       }
       DCOUT("# of blendshapes : " << blendshapes.size());
 
+      if (visitorEnv->deferred_mesh_jobs) {
+        // Deferred (parallel-capable) mode: pre-assign the mesh id, warm the
+        // shared lookup caches the job will read, and queue the geometry
+        // conversion. Ids and registration order match the inline path.
+        uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
+        if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+          if (err) {
+            (*err) += "Mesh index too large.\n";
+          }
+          return false;
+        }
+
+        // Warm _uvNameCache for every material this mesh can reference.
+        auto warm_uv = [&](const std::string &mat_path_str) {
+          if (mat_path_str.empty()) {
+            return;
+          }
+          const auto it =
+              visitorEnv->converter->materialMap.find(mat_path_str);
+          if (it != visitorEnv->converter->materialMap.s_end()) {
+            visitorEnv->converter->WarmUVNameCache(int64_t(it->second));
+          }
+        };
+        warm_uv(material_path.material_path);
+        warm_uv(material_path.backface_material_path);
+        if (material_path.default_material_id >= 0) {
+          visitorEnv->converter->WarmUVNameCache(
+              material_path.default_material_id);
+        }
+        for (const auto &sm : subset_material_path_map) {
+          warm_uv(sm.second.material_path);
+          warm_uv(sm.second.backface_material_path);
+          if (sm.second.default_material_id >= 0) {
+            visitorEnv->converter->WarmUVNameCache(
+                sm.second.default_material_id);
+          }
+        }
+
+        // Register the bound skeleton (if any) now so worker threads only
+        // read the skeleton tables.
+        if (!visitorEnv->converter->EnsureSkeletonRegistered(
+                *visitorEnv->env, abs_path, *pmesh)) {
+          if (err) {
+            (*err) += fmt::format("Skeleton conversion failed for mesh: {}\n{}\n",
+                                  abs_path.full_path_name(),
+                                  visitorEnv->converter->GetError());
+          }
+          return false;
+        }
+
+        visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
+        visitorEnv->converter->meshes.emplace_back();  // placeholder slot
+
+        DeferredMeshJob job;
+        job.abs_path = abs_path;
+        job.mesh = pmesh;
+        job.material_path = material_path;
+        job.subset_material_path_map = std::move(subset_material_path_map);
+        job.material_subsets = std::move(material_subsets);
+        job.blendshapes = std::move(blendshapes);
+        job.mesh_slot = size_t(mesh_id);
+        visitorEnv->deferred_mesh_jobs->emplace_back(std::move(job));
+
+        return true;  // progress/streaming handled by the job driver
+      }
+
       RenderMesh rmesh;
 
       const auto mesh_start = TydraPerfClock::now();

@@ -25,6 +25,11 @@
 #include <sstream>
 #include <unordered_map>
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
+
 #include "common-utils.hh"
 #include "common-types.hh"
 #include "image-loader.hh"
@@ -1830,6 +1835,31 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
   _allSkelRoots = &allSkelRoots;
   _allAnimations = &allAnimations;
 
+  // Parallel GeomMesh conversion: the visitor resolves materials/skeletons
+  // serially (deterministic ids) and queues geometry jobs which run on worker
+  // threads afterwards. Requires a thread-enabled build; disabled when
+  // streaming (sink expects per-mesh delivery during traversal).
+  std::vector<DeferredMeshJob> deferred_mesh_jobs;
+  bool parallel_meshes = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  uint32_t num_mesh_threads = 1;
+  {
+    const uint32_t hw =
+        (std::max)(1u, std::thread::hardware_concurrency());
+    num_mesh_threads = env.scene_config.max_mesh_conversion_threads
+                           ? (std::min)(
+                                 env.scene_config.max_mesh_conversion_threads,
+                                 hw)
+                           : hw;
+    parallel_meshes = env.scene_config.parallel_mesh_conversion &&
+                      (num_mesh_threads > 1) && !_sink && (total_meshes > 1);
+  }
+#endif
+  if (parallel_meshes) {
+    menv.deferred_mesh_jobs = &deferred_mesh_jobs;
+    deferred_mesh_jobs.reserve(total_meshes);
+  }
+
   {
     const auto phase_start = TydraPerfClock::now();
     bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
@@ -1839,6 +1869,108 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
       PUSH_ERROR_AND_RETURN(err);
     }
   }
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (parallel_meshes && !deferred_mesh_jobs.empty()) {
+    const auto phase_start = TydraPerfClock::now();
+
+    // Prevent `skeletons` reallocation while worker threads read entries and
+    // the rare non-pre-registered skeleton is appended under _skel_mutex.
+    skeletons.reserve(skeletons.size() + allSkeletons.size());
+
+    _freeze_shared_caches = true;
+
+    const size_t num_jobs = deferred_mesh_jobs.size();
+    std::atomic<size_t> next_job{0};
+    std::atomic<size_t> completed{0};
+    std::atomic<bool> failed{false};
+    std::atomic<bool> cancelled{false};
+    std::vector<uint8_t> job_ok(num_jobs, 1);
+
+    const uint32_t nworkers =
+        uint32_t((std::min)(size_t(num_mesh_threads), num_jobs));
+    std::vector<std::thread> workers;
+    workers.reserve(nworkers);
+    for (uint32_t t = 0; t < nworkers; t++) {
+      workers.emplace_back([&]() {
+        while (true) {
+          const size_t i = next_job.fetch_add(1);
+          if (i >= num_jobs) {
+            break;
+          }
+          if (failed.load(std::memory_order_relaxed) ||
+              cancelled.load(std::memory_order_relaxed)) {
+            completed.fetch_add(1);
+            continue;
+          }
+          DeferredMeshJob &job = deferred_mesh_jobs[i];
+          RenderMesh rmesh;
+          if (!ConvertMesh(env, job.abs_path, *job.mesh, job.material_path,
+                           job.subset_material_path_map, materialMap,
+                           job.material_subsets, job.blendshapes, &rmesh)) {
+            job_ok[i] = 0;
+            failed.store(true, std::memory_order_relaxed);
+          } else {
+            meshes[job.mesh_slot] = std::move(rmesh);
+          }
+          completed.fetch_add(1);
+        }
+      });
+    }
+
+    // Progress (and cancellation) from the calling thread only — user
+    // callbacks are never invoked from workers.
+    size_t last_reported = size_t(-1);
+    while (completed.load() < num_jobs) {
+      const size_t done = completed.load();
+      if (done != last_reported) {
+        last_reported = done;
+        const size_t processed = menv.meshes_processed + done;
+        std::string msg = "Converting mesh " + std::to_string(processed) +
+                          "/" + std::to_string(menv.meshes_total);
+        if (!ReportMeshProgress(processed, menv.meshes_total, "", msg)) {
+          cancelled.store(true, std::memory_order_relaxed);
+          break;
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    for (auto &w : workers) {
+      w.join();
+    }
+
+    _freeze_shared_caches = false;
+
+    if (cancelled.load()) {
+      PushError("Conversion cancelled by user.\n");
+      return false;
+    }
+    if (failed.load()) {
+      // Report the first failing mesh (job order) for determinism.
+      for (size_t i = 0; i < num_jobs; i++) {
+        if (!job_ok[i]) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Mesh conversion failed: {}\n{}",
+              deferred_mesh_jobs[i].abs_path.full_path_name(), GetError()));
+        }
+      }
+      return false;  // unreachable
+    }
+
+    menv.meshes_processed += num_jobs;
+    {
+      const size_t processed = menv.meshes_processed;
+      std::string msg = "Converting mesh " + std::to_string(processed) + "/" +
+                        std::to_string(menv.meshes_total);
+      if (!ReportMeshProgress(processed, menv.meshes_total, "", msg)) {
+        PushError("Conversion cancelled by user.\n");
+        return false;
+      }
+    }
+
+    menv.convert_mesh_ns += uint64_t(ElapsedMs(phase_start) * 1e6);
+  }
+#endif  // TINYUSDZ_ENABLE_THREAD
 
   // Add standalone skeletons (not referenced by any mesh) to the render scene.
   // This ensures skeletons with SkelAnimations but no bound meshes are still
@@ -1975,79 +2107,147 @@ bool RenderSceneConverter::ConvertToRenderSceneImpl(
   //
   // 6. Extract xformOp animations from nodes with time-sampled transforms
   //
+  // Collect nodes with stable pre-order indices, extract animations per node
+  // — in parallel on thread-enabled builds (nodes touch disjoint prims) —
+  // then merge results in node order so ids/dedup match the serial output
+  // exactly. Value-clip nodes stay serial (shared clip layer caches + I/O).
   {
     const auto phase_start = TydraPerfClock::now();
-    // Single-pass depth-first traversal with stable node indices.
-    // This avoids repeatedly counting subtree sizes.
-    std::function<void(const XformNode&, int32_t&, int32_t)> extractAnimationsFromNode;
-    extractAnimationsFromNode = [&](const XformNode& node, int32_t& next_node_index, int32_t depth) {
+
+    struct AnimNodeEntry {
+      const XformNode *node{nullptr};
+      int32_t node_index{0};
+      bool has_clips{false};
+    };
+    std::vector<AnimNodeEntry> anim_nodes;
+
+    std::function<void(const XformNode &, int32_t &, int32_t)> collectNodes;
+    collectNodes = [&](const XformNode &node, int32_t &next_node_index,
+                       int32_t depth) {
       if (size_t(depth) >= kMaxDefaultTraversalLimit) return;
       const int32_t node_index = next_node_index++;
-
       if (node.prim) {
-        const Path &prim_path = node.absolute_path;
-
-        // Check if this node has a prim with xformOps.
-        if (IsXformablePrim(*node.prim)) {
-          const Xformable *xformable = nullptr;
-          if (CastToXformable(*node.prim, &xformable) && xformable) {
-            AnimationClip anim;
-            bool converted = false;
-
-            // Prefer value clip animation baking when enabled.
-            if (env.scene_config.enable_value_clips &&
-                ConvertValueClipAnimation(env, *node.prim, prim_path,
-                                          node_index, &anim)) {
-              converted = true;
-            }
-
-            // Fallback to direct xformOp sampling when no clip animation exists.
-            if (!converted && xformable->has_timesamples()) {
-              if (ExtractXformOpAnimation(env, prim_path, node.element_name,
-                                          *xformable, node_index, &anim)) {
-                converted = true;
-              }
-            }
-
-            if (converted) {
-              // Check if animation with this path already exists via O(1) lookup
-              const auto &anim_abs_path = anim.abs_path;
-              if (_animPathToIndex.find(anim_abs_path) ==
-                  _animPathToIndex.end()) {
-                DCOUT("Extracted animation from: " << anim_abs_path);
-                _animPathToIndex[anim_abs_path] =
-                    int32_t(animations.size());
-                animations.emplace_back(std::move(anim));
-              }
-            }
-          }
-        }
-
-        AnimationClip property_anim;
-        if (ExtractPrimPropertyAnimation(env, *node.prim, prim_path,
-                                         node_index, &property_anim)) {
-          const std::string property_anim_key =
-              property_anim.abs_path + "#properties";
-          if (_animPathToIndex.find(property_anim_key) ==
-              _animPathToIndex.end()) {
-            DCOUT("Extracted property animation from: "
-                  << property_anim.abs_path);
-            _animPathToIndex[property_anim_key] =
-                int32_t(animations.size());
-            animations.emplace_back(std::move(property_anim));
-          }
-        }
+        AnimNodeEntry e;
+        e.node = &node;
+        e.node_index = node_index;
+        e.has_clips = env.scene_config.enable_value_clips &&
+                      node.prim->metas().has_clips();
+        anim_nodes.push_back(e);
       }
-
-      for (const auto& child : node.children) {
-        extractAnimationsFromNode(child, next_node_index, depth + 1);
+      for (const auto &child : node.children) {
+        collectNodes(child, next_node_index, depth + 1);
       }
     };
 
     int32_t current_node_index = 0;
-    for (const auto& root : xform_node.children) {
-      extractAnimationsFromNode(root, current_node_index, 0);
+    for (const auto &root : xform_node.children) {
+      collectNodes(root, current_node_index, 0);
     }
+
+    struct AnimNodeResult {
+      bool has_anim{false};
+      AnimationClip anim;
+      bool has_prop{false};
+      AnimationClip prop;
+    };
+    std::vector<AnimNodeResult> anim_results(anim_nodes.size());
+
+    auto extract_one = [&](size_t i) {
+      const AnimNodeEntry &entry = anim_nodes[i];
+      const XformNode &node = *entry.node;
+      const Path &prim_path = node.absolute_path;
+      AnimNodeResult &r = anim_results[i];
+
+      // Check if this node has a prim with xformOps.
+      if (IsXformablePrim(*node.prim)) {
+        const Xformable *xformable = nullptr;
+        if (CastToXformable(*node.prim, &xformable) && xformable) {
+          bool converted = false;
+
+          // Prefer value clip animation baking when enabled.
+          if (entry.has_clips &&
+              ConvertValueClipAnimation(env, *node.prim, prim_path,
+                                        entry.node_index, &r.anim)) {
+            converted = true;
+          }
+
+          // Fallback to direct xformOp sampling when no clip animation
+          // exists.
+          if (!converted && xformable->has_timesamples()) {
+            if (ExtractXformOpAnimation(env, prim_path, node.element_name,
+                                        *xformable, entry.node_index,
+                                        &r.anim)) {
+              converted = true;
+            }
+          }
+          r.has_anim = converted;
+        }
+      }
+
+      if (ExtractPrimPropertyAnimation(env, *node.prim, prim_path,
+                                       entry.node_index, &r.prop)) {
+        r.has_prop = true;
+      }
+    };
+
+    bool anim_extracted_parallel = false;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel_meshes && anim_nodes.size() > 1) {
+      // Clip nodes serially first (shared clip caches), the rest on workers.
+      for (size_t i = 0; i < anim_nodes.size(); i++) {
+        if (anim_nodes[i].has_clips) {
+          extract_one(i);
+        }
+      }
+      std::atomic<size_t> next_anim{0};
+      const uint32_t nworkers =
+          uint32_t((std::min)(size_t(num_mesh_threads), anim_nodes.size()));
+      std::vector<std::thread> workers;
+      workers.reserve(nworkers);
+      for (uint32_t t = 0; t < nworkers; t++) {
+        workers.emplace_back([&]() {
+          while (true) {
+            const size_t i = next_anim.fetch_add(1);
+            if (i >= anim_nodes.size()) break;
+            if (anim_nodes[i].has_clips) continue;  // done serially above
+            extract_one(i);
+          }
+        });
+      }
+      for (auto &w : workers) {
+        w.join();
+      }
+      anim_extracted_parallel = true;
+    }
+#endif
+    if (!anim_extracted_parallel) {
+      for (size_t i = 0; i < anim_nodes.size(); i++) {
+        extract_one(i);
+      }
+    }
+
+    // Merge in node order — ids and dedup identical to the serial loop.
+    for (size_t i = 0; i < anim_nodes.size(); i++) {
+      AnimNodeResult &r = anim_results[i];
+      if (r.has_anim) {
+        const auto &anim_abs_path = r.anim.abs_path;
+        if (_animPathToIndex.find(anim_abs_path) == _animPathToIndex.end()) {
+          DCOUT("Extracted animation from: " << anim_abs_path);
+          _animPathToIndex[anim_abs_path] = int32_t(animations.size());
+          animations.emplace_back(std::move(r.anim));
+        }
+      }
+      if (r.has_prop) {
+        const std::string property_anim_key = r.prop.abs_path + "#properties";
+        if (_animPathToIndex.find(property_anim_key) ==
+            _animPathToIndex.end()) {
+          DCOUT("Extracted property animation from: " << r.prop.abs_path);
+          _animPathToIndex[property_anim_key] = int32_t(animations.size());
+          animations.emplace_back(std::move(r.prop));
+        }
+      }
+    }
+
     xform_anim_ms = ElapsedMs(phase_start);
   }
 

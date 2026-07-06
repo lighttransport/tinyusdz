@@ -14,6 +14,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <map>
 
 #include "render-data.hh"
@@ -21,6 +22,35 @@
 
 namespace tinyusdz {
 namespace tydra {
+
+// Tiny spinlock guarding converter diagnostic/cache state during parallel
+// mesh conversion. Deliberately NOT std::mutex: TINYUSDZ_ENABLE_THREAD is a
+// build-private define, so the class layout must not depend on it (a
+// consumer TU compiled without the define would otherwise see a different
+// RenderSceneConverter size). Contention is rare (diagnostics and cold cache
+// paths only), so a spinlock is appropriate — and it compiles unchanged in
+// single-threaded WASM/WASI builds.
+struct DiagMutex {
+  void lock() {
+    while (_flag.test_and_set(std::memory_order_acquire)) {
+    }
+  }
+  void unlock() { _flag.clear(std::memory_order_release); }
+
+ private:
+  std::atomic_flag _flag = ATOMIC_FLAG_INIT;
+};
+
+// Minimal scoped lock (avoids requiring <mutex> in no-thread builds).
+template <typename M>
+struct DiagLockGuard {
+  explicit DiagLockGuard(M &m) : _m(m) { _m.lock(); }
+  ~DiagLockGuard() { _m.unlock(); }
+  DiagLockGuard(const DiagLockGuard &) = delete;
+  DiagLockGuard &operator=(const DiagLockGuard &) = delete;
+ private:
+  M &_m;
+};
 
 ///
 /// Texture image loader callback
@@ -511,6 +541,17 @@ struct RenderSceneConverterConfig {
   // (one RenderInstance per visible instance; geometry is shared via mesh_id,
   // not duplicated). See RenderSceneConverter::ExpandPointInstancer.
   bool expand_point_instancers{true};
+
+  // Convert GeomMesh prims on multiple threads. Only effective when the
+  // library is built with TINYUSDZ_ENABLE_THREAD and no streaming sink is
+  // attached (streaming implies per-mesh delivery order). Materials,
+  // skeletons and all id assignments are still resolved serially in
+  // traversal order, so the resulting RenderScene is identical to the
+  // single-threaded output.
+  bool parallel_mesh_conversion{true};
+
+  // Thread count for parallel mesh conversion. 0 = hardware concurrency.
+  uint32_t max_mesh_conversion_threads{0};
 };
 
 //
@@ -1478,9 +1519,20 @@ class RenderSceneConverter {
   ///
   bool IsMeshMergeable(const RenderMesh &mesh) const;
 
-  void PushInfo(const std::string &msg) { _info += msg + "\n"; }
-  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
-  void PushError(const std::string &msg) { _err += msg + "\n"; }
+  // Thread-safe: ConvertMesh may run on worker threads (parallel mesh
+  // conversion); all diagnostic writes funnel through these.
+  void PushInfo(const std::string &msg) {
+    DiagLockGuard<DiagMutex> lk(_diag_mutex);
+    _info += msg + "\n";
+  }
+  void PushWarn(const std::string &msg) {
+    DiagLockGuard<DiagMutex> lk(_diag_mutex);
+    _warn += msg + "\n";
+  }
+  void PushError(const std::string &msg) {
+    DiagLockGuard<DiagMutex> lk(_diag_mutex);
+    _err += msg + "\n";
+  }
 
   ///
   /// Call progress callback if set.
@@ -1509,6 +1561,41 @@ class RenderSceneConverter {
   std::string _info;
   std::string _err;
   std::string _warn;
+
+  // Guards _info/_warn/_err (ConvertMesh may run on worker threads).
+  DiagMutex _diag_mutex;
+
+  // Guards skeleton registration (skeletons/_skelPathToIndex) on the rare
+  // path where a skeleton was not pre-registered before parallel mesh
+  // conversion. `skeletons` is reserve()d up front so concurrent reads of
+  // already-registered entries stay valid while another thread appends.
+  DiagMutex _skel_mutex;
+
+  // True while worker threads convert meshes: shared lookup caches
+  // (_uvNameCache, _skelNameToIndexCache) must not be mutated — cache misses
+  // compute locally instead.
+  bool _freeze_shared_caches{false};
+
+ public:
+  ///
+  /// Pre-warm helpers for parallel mesh conversion. Called serially (in
+  /// traversal order) before ConvertMesh jobs run on worker threads so the
+  /// jobs only read shared converter state.
+  ///
+
+  /// Populate _uvNameCache for `rmaterial_id` (no-op if cached or invalid id).
+  void WarmUVNameCache(int64_t rmaterial_id);
+
+  /// Resolve the skeleton bound to `mesh` (explicit skel:skeleton rel or
+  /// ancestor SkelRoot discovery) and register it into `skeletons` /
+  /// _skelPathToIndex / _skelNameToIndexCache if not already registered.
+  /// Mirrors the binding logic inside ConvertMesh; returns false only on a
+  /// conversion error (a mesh without skeleton returns true).
+  bool EnsureSkeletonRegistered(const RenderSceneConverterEnv &env,
+                                const Path &abs_prim_path,
+                                const GeomMesh &mesh);
+
+ private:
 
   // Progress callback
   ProgressCallback _progress_callback{nullptr};

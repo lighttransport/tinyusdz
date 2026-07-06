@@ -9,3 +9,4 @@ void tydra_renderscene_camera_test(void);
 void tydra_renderscene_memory_estimation_test(void);
 void tydra_renderscene_streaming_equivalence_test(void);
 void tydra_renderscene_streaming_cancel_test(void);
+void tydra_renderscene_property_anim_bake_test(void);

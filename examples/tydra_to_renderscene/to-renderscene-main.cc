@@ -559,6 +559,7 @@ int main(int argc, char **argv) {
   if (profile) {
     double _conv_ms = std::chrono::duration<double, std::milli>(_t_conv_end - _t_conv_begin).count();
     std::cerr << "[timing] RenderScene conversion: " << _conv_ms << " ms\n";
+    std::cerr << "[timing] phases: " << converter.GetTimingInfo() << "\n";
   }
   if (!ret) {
     std::cerr << "Failed to convert USD Stage to RenderScene: \n"
@@ -614,6 +615,43 @@ int main(int argc, char **argv) {
     }
 
     std::cout << "\n";
+  }
+
+  if (memstat) {
+    // Animation memory breakdown: top clips by sampler float count
+    struct AnimStat { size_t idx; size_t bytes; size_t nch; size_t nsamplers; };
+    std::vector<AnimStat> astats;
+    size_t anim_total = 0;
+    for (size_t i = 0; i < render_scene.animations.size(); i++) {
+      const auto &a = render_scene.animations[i];
+      size_t b = 0;
+      for (const auto &s : a.samplers) {
+        b += s.times.size() * sizeof(float) + s.values.size() * sizeof(float);
+      }
+      anim_total += b;
+      astats.push_back({i, b, a.channels.size(), a.samplers.size()});
+    }
+    std::sort(astats.begin(), astats.end(),
+              [](const AnimStat &x, const AnimStat &y) { return x.bytes > y.bytes; });
+    std::cout << "# Animations: " << render_scene.animations.size()
+              << " total " << format_memory_size(anim_total) << "\n";
+    for (size_t i = 0; i < astats.size() && i < 10; i++) {
+      const auto &a = render_scene.animations[astats[i].idx];
+      std::cout << "  [" << astats[i].idx << "] " << a.abs_path << " ("
+                << a.name << "): " << format_memory_size(astats[i].bytes)
+                << " channels=" << astats[i].nch
+                << " samplers=" << astats[i].nsamplers;
+      // print largest sampler shape + first channel property name
+      size_t maxv = 0, maxt = 0;
+      for (const auto &s : a.samplers) {
+        if (s.values.size() > maxv) { maxv = s.values.size(); maxt = s.times.size(); }
+      }
+      std::string pname;
+      for (const auto &c : a.channels) {
+        if (!c.property_name.empty()) { pname = c.property_name; break; }
+      }
+      std::cout << " maxSampler=" << maxt << "t/" << maxv << "v prop=" << pname << "\n";
+    }
   }
 
   // Dump animation timesamples if requested
