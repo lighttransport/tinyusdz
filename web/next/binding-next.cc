@@ -21,8 +21,15 @@
 //    bufferId>=0 so the three.js loader Blob-decodes PNG/JPEG itself.
 //  - image decode: decodeEXR / decodeHDR module functions (tinyexr v3 C
 //    backend for EXR, stb_image for HDR) so the JS EXR/HDR texture path
-//    decodes in-wasm. Instancing, skinning, and external-ref composition
-//    remain follow-up increments.
+//    decodes in-wasm.
+//  - instancing: numInstances / getInstance / getInstancesForMesh from the
+//    flattened point-instancer draws.
+//  - skinning: numSkeletons / getSkeleton (joint tree) + getMeshCopy skin
+//    fields (per-vertex joint weights flow once tydra_next fills mesh.skin).
+//  - external references: a USDZ with a USDC root composes references to OTHER
+//    USDC layers IN THE ARCHIVE (flatten pipeline + a layer_loader that pulls
+//    each referenced crate from the archive). USDA-layer dependencies are not
+//    composed (the next loader does not support them yet).
 //
 // tydra_next is being refactored elsewhere — this binding consumes it
 // read-only and adds nothing to it.
@@ -41,6 +48,8 @@
 
 #include "next/tinyusdz-next.hh"  // LoadUSDFromMemory (USDA/USDC/USDZ auto-detect)
 #include "next/reader/usdz-reader.hh"  // USDZReader (raw archive entry access)
+#include "next/crate/crate-reader.hh"  // CrateReader (referenced-layer parse)
+#include "next/pipeline/flatten.hh"    // FlattenUSDCToUSDC + layer_loader
 #include "next/stage/stage.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-data.hh"
@@ -180,23 +189,78 @@ class TinyUSDZLoaderNative {
   // ---- load ---------------------------------------------------------------
   bool loadFromBinary(const std::string& binary, const std::string& /*filename*/) {
     reset();
-    tn::Stage stage;
-    std::string w, e;
     const uint8_t* p = reinterpret_cast<const uint8_t*>(binary.data());
-    if (!tn::LoadUSDFromMemory(p, binary.size(), &stage, &w, &e)) {
+    const bool is_usdz = binary.size() >= 4 && p[0] == 'P' && p[1] == 'K' &&
+                         p[2] == 0x03 && p[3] == 0x04;
+    tn::USDZReader zip;
+    const bool have_zip = is_usdz && zip.Open(p, binary.size());
+
+    tn::Stage stage;
+    std::vector<uint8_t> flattened;  // kept alive through Convert (lazy arrays)
+    std::string w, e;
+    bool loaded = false;
+
+    // For a USDZ with a USDC root, flatten the root first so external references
+    // to OTHER layers IN THE ARCHIVE are resolved: the compositor's layer_loader
+    // pulls each referenced crate straight from the archive (no filesystem).
+    // (USDA-root or USDA-dependency archives fall back to the direct load, which
+    // resolves only intra-file composition — the next loader does not yet
+    // compose USDA dependencies.)
+    if (have_zip) {
+      int root = zip.FindUSDCFile();
+      if (root >= 0) {
+        const uint8_t* rd = zip.EntryData(static_cast<size_t>(root));
+        const size_t rn = zip.EntrySize(static_cast<size_t>(root));
+        tn::pipeline::FlattenOptions fopts;
+        const tn::CrateReadOptions read_opts = fopts.read;
+        fopts.layer_loader =
+            [&zip, read_opts](const std::string& key,
+                              std::string* err) -> std::unique_ptr<tn::Layer> {
+              const int idx = findZipEntry(zip, key);
+              if (idx < 0) { if (err) *err = "not in archive: " + key; return nullptr; }
+              std::string bytes(
+                  reinterpret_cast<const char*>(zip.EntryData(static_cast<size_t>(idx))),
+                  zip.EntrySize(static_cast<size_t>(idx)));
+              if (bytes.size() < 8 || std::memcmp(bytes.data(), "PXR-USDC", 8) != 0) {
+                if (err) *err = "USDA layer dependencies are not supported: " + key;
+                return nullptr;
+              }
+              tn::CrateReader reader(read_opts);
+              tn::CrateReadResult rr = reader.ReadOwned(std::move(bytes));
+              if (!rr.success) {
+                if (err) *err = rr.errors.empty() ? ("crate read failed: " + key)
+                                                  : rr.errors[0].message;
+                return nullptr;
+              }
+              std::unique_ptr<tn::Layer> layer = rr.stage.ReleaseRootLayer();
+              if (layer) layer->build_path_index();
+              return layer;
+            };
+        std::string ferr;
+        if (tn::pipeline::FlattenUSDCToUSDC(rd, rn, flattened, fopts, nullptr, &ferr) &&
+            !flattened.empty()) {
+          loaded = tn::LoadUSDFromMemory(flattened.data(), flattened.size(),
+                                         &stage, &w, &e);
+        }
+      }
+    }
+    if (!loaded) {
+      // Non-usdz, USDA-root usdz, or a flatten miss: direct load (intra-file
+      // composition only).
+      loaded = tn::LoadUSDFromMemory(p, binary.size(), &stage, &w, &e);
+    }
+    if (!loaded) {
       error_ = e.empty() ? "failed to load USD" : e;
       warn_ = w;
       return false;
     }
+
     // For a USDZ, hand the converter a texture loader that pulls each image's
     // RAW ENCODED bytes (png/jpg/...) straight from the archive (no filesystem,
     // no in-wasm image decode). getImageCopy exposes them with encoded=true +
     // mimeType so the JS/app decodes via the browser (createImageBitmap).
     td::ConverterConfig cfg;
-    tn::USDZReader zip;
-    const bool is_usdz = binary.size() >= 4 && p[0] == 'P' && p[1] == 'K' &&
-                         p[2] == 0x03 && p[3] == 0x04;
-    if (is_usdz && zip.Open(p, binary.size())) {
+    if (have_zip) {
       cfg.material.custom_texture_loader =
           [&zip](const std::string& asset, td::TextureImage* out) -> bool {
             const int idx = findZipEntry(zip, asset);
