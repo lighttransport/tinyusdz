@@ -4,6 +4,8 @@
 // TinyUSDZ Next - UsdGeomXform Schema Implementation
 
 #include "geom-xform.hh"
+
+#include <algorithm>
 #include <cstring>
 #include <cmath>
 
@@ -26,6 +28,7 @@ std::vector<std::string> UsdGeomXform::GetXformOpOrder() const {
 
 XformOpType UsdGeomXform::ParseOpType(const std::string& op_name) const {
   // Parse op name like "xformOp:translate" or "xformOp:rotateX:pivot"
+  if (op_name.find("rotateXYZ") != std::string::npos) return XformOpType::Rotate;
   if (op_name.find("translate") != std::string::npos) return XformOpType::Translate;
   if (op_name.find("rotateX") != std::string::npos) return XformOpType::RotateX;
   if (op_name.find("rotateY") != std::string::npos) return XformOpType::RotateY;
@@ -36,6 +39,136 @@ XformOpType UsdGeomXform::ParseOpType(const std::string& op_name) const {
   if (op_name.find("transform") != std::string::npos) return XformOpType::Transform;
   return XformOpType::Unknown;
 }
+
+namespace {
+
+void Identity(double* m) {
+  std::fill(m, m + 16, 0.0);
+  m[0] = m[5] = m[10] = m[15] = 1.0;
+}
+
+void Multiply(const double* a, const double* b, double* out) {
+  double r[16];
+  for (int row = 0; row < 4; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      double v = 0.0;
+      for (int k = 0; k < 4; ++k) {
+        v += a[row * 4 + k] * b[k * 4 + col];
+      }
+      r[row * 4 + col] = v;
+    }
+  }
+  std::memcpy(out, r, sizeof(r));
+}
+
+void Translation(double x, double y, double z, double* m) {
+  Identity(m);
+  m[12] = x;
+  m[13] = y;
+  m[14] = z;
+}
+
+void Scale(double x, double y, double z, double* m) {
+  Identity(m);
+  m[0] = x;
+  m[5] = y;
+  m[10] = z;
+}
+
+void RotateX(double degrees, double* m) {
+  Identity(m);
+  const double a = degrees * std::acos(-1.0) / 180.0;
+  const double c = std::cos(a);
+  const double s = std::sin(a);
+  m[5] = c;
+  m[6] = s;
+  m[9] = -s;
+  m[10] = c;
+}
+
+void RotateY(double degrees, double* m) {
+  Identity(m);
+  const double a = degrees * std::acos(-1.0) / 180.0;
+  const double c = std::cos(a);
+  const double s = std::sin(a);
+  m[0] = c;
+  m[2] = -s;
+  m[8] = s;
+  m[10] = c;
+}
+
+void RotateZ(double degrees, double* m) {
+  Identity(m);
+  const double a = degrees * std::acos(-1.0) / 180.0;
+  const double c = std::cos(a);
+  const double s = std::sin(a);
+  m[0] = c;
+  m[1] = s;
+  m[4] = -s;
+  m[5] = c;
+}
+
+bool ReadScalar(const Value& value, double* out) {
+  if (const float* f = value.as_float()) {
+    *out = static_cast<double>(*f);
+    return true;
+  }
+  if (const double* d = value.as_double()) {
+    *out = *d;
+    return true;
+  }
+  return false;
+}
+
+bool ReadVec3(const Value& value, double* x, double* y, double* z) {
+  if (const float* f = value.as_float3()) {
+    *x = static_cast<double>(f[0]);
+    *y = static_cast<double>(f[1]);
+    *z = static_cast<double>(f[2]);
+    return true;
+  }
+  if (const double* d = value.as_double3()) {
+    *x = d[0];
+    *y = d[1];
+    *z = d[2];
+    return true;
+  }
+  return false;
+}
+
+bool ReadMatrix(const Value& value, double* m) {
+  if (const float* f = value.as_matrix4f()) {
+    for (int i = 0; i < 16; ++i) m[i] = static_cast<double>(f[i]);
+    return true;
+  }
+  if (const double* d = value.as_matrix4d()) {
+    std::memcpy(m, d, 16 * sizeof(double));
+    return true;
+  }
+  return false;
+}
+
+bool BuildRotateABC(const XformOpType type, const double x, const double y,
+                    const double z, double* m) {
+  double rx[16], ry[16], rz[16], tmp[16];
+  RotateX(x, rx);
+  RotateY(y, ry);
+  RotateZ(z, rz);
+  Identity(m);
+  auto append = [&](const char axis) {
+    const double* r = (axis == 'X') ? rx : ((axis == 'Y') ? ry : rz);
+    Multiply(r, m, tmp);
+    std::memcpy(m, tmp, sizeof(tmp));
+  };
+  switch (type) {
+    case XformOpType::Rotate:
+      append('X'); append('Y'); append('Z'); return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
 
 std::vector<XformOp> UsdGeomXform::GetXformOps() const {
   std::vector<XformOp> ops;
@@ -212,52 +345,93 @@ bool UsdGeomXform::GetOrientation(float* w, float* x, float* y, float* z) const 
 bool UsdGeomXform::ComputeLocalTransform(float* matrix) const {
   if (!IsValid() || !matrix) return false;
 
-  // Initialize to identity
-  std::memset(matrix, 0, 16 * sizeof(float));
-  matrix[0] = matrix[5] = matrix[10] = matrix[15] = 1.0f;
-
-  // Check for full transform matrix first
-  const Value* val = prim_.GetPropertyValue("xformOp:transform");
-  if (val) {
-    const float* m = val->as_matrix4f();
-    if (m) {
-      std::memcpy(matrix, m, 16 * sizeof(float));
-      return true;
-    }
-    const double* md = val->as_matrix4d();
-    if (md) {
-      for (int i = 0; i < 16; ++i) {
-        matrix[i] = static_cast<float>(md[i]);
-      }
-      return true;
-    }
+  double dmatrix[16];
+  if (!ComputeLocalTransform(dmatrix)) return false;
+  for (int i = 0; i < 16; ++i) {
+    matrix[i] = static_cast<float>(dmatrix[i]);
   }
-
-  // Build transform from individual operations
-  // For simplicity, just apply TRS in that order
-  float tx = 0, ty = 0, tz = 0;
-  float sx = 1, sy = 1, sz = 1;
-
-  GetTranslation(&tx, &ty, &tz);
-  GetScale(&sx, &sy, &sz);
-
-  // Simple TRS matrix (no rotation for now - would need proper quaternion/euler handling)
-  matrix[0] = sx;
-  matrix[5] = sy;
-  matrix[10] = sz;
-  matrix[12] = tx;
-  matrix[13] = ty;
-  matrix[14] = tz;
-
   return true;
 }
 
 bool UsdGeomXform::ComputeLocalTransform(double* matrix) const {
-  float fmatrix[16];
-  if (!ComputeLocalTransform(fmatrix)) return false;
+  if (!IsValid() || !matrix) return false;
 
-  for (int i = 0; i < 16; ++i) {
-    matrix[i] = fmatrix[i];
+  std::vector<XformOp> ops = GetXformOps();
+  if (ops.empty()) {
+    Identity(matrix);
+    return true;
+  }
+
+  Identity(matrix);
+  for (const XformOp& op : ops) {
+    if (op.type == XformOpType::Unknown) continue;
+    double m[16];
+    Identity(m);
+    switch (op.type) {
+      case XformOpType::Translate: {
+        double x = 0.0, y = 0.0, z = 0.0;
+        if (!ReadVec3(op.value, &x, &y, &z)) return false;
+        if (op.is_inverse) {
+          x = -x;
+          y = -y;
+          z = -z;
+        }
+        Translation(x, y, z, m);
+        break;
+      }
+      case XformOpType::Scale: {
+        double x = 1.0, y = 1.0, z = 1.0;
+        if (!ReadVec3(op.value, &x, &y, &z)) return false;
+        if (op.is_inverse) {
+          if (x == 0.0 || y == 0.0 || z == 0.0) return false;
+          x = 1.0 / x;
+          y = 1.0 / y;
+          z = 1.0 / z;
+        }
+        Scale(x, y, z, m);
+        break;
+      }
+      case XformOpType::RotateX: {
+        double a = 0.0;
+        if (!ReadScalar(op.value, &a)) return false;
+        RotateX(op.is_inverse ? -a : a, m);
+        break;
+      }
+      case XformOpType::RotateY: {
+        double a = 0.0;
+        if (!ReadScalar(op.value, &a)) return false;
+        RotateY(op.is_inverse ? -a : a, m);
+        break;
+      }
+      case XformOpType::RotateZ: {
+        double a = 0.0;
+        if (!ReadScalar(op.value, &a)) return false;
+        RotateZ(op.is_inverse ? -a : a, m);
+        break;
+      }
+      case XformOpType::Rotate: {
+        double x = 0.0, y = 0.0, z = 0.0;
+        if (!ReadVec3(op.value, &x, &y, &z)) return false;
+        if (op.is_inverse) {
+          x = -x;
+          y = -y;
+          z = -z;
+        }
+        if (!BuildRotateABC(op.type, x, y, z, m)) return false;
+        break;
+      }
+      case XformOpType::Transform: {
+        if (!ReadMatrix(op.value, m)) return false;
+        if (op.is_inverse) return false;
+        break;
+      }
+      case XformOpType::Orient:
+      case XformOpType::Unknown:
+        break;
+    }
+    double tmp[16];
+    Multiply(m, matrix, tmp);
+    std::memcpy(matrix, tmp, sizeof(tmp));
   }
   return true;
 }

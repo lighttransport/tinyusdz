@@ -70,6 +70,76 @@ const frameState = {
 	frameCount: 0
 };
 
+class NextTextureLoadingManager {
+	constructor() {
+		this.tasks = [];
+		this.promiseCache = new Map();
+		this.total = 0;
+		this.loaded = 0;
+		this.failed = 0;
+		this.aborted = false;
+	}
+
+	queueTexture(material, mapProperty, adapter, assetPath, colorRole = 'data') {
+		if (!assetPath) return;
+		this.tasks.push({ material, mapProperty, adapter, assetPath, colorRole });
+		this.total = this.tasks.length;
+	}
+
+	reset() {
+		this.tasks = [];
+		this.promiseCache.clear();
+		this.total = 0;
+		this.loaded = 0;
+		this.failed = 0;
+		this.aborted = false;
+	}
+
+	abort() {
+		this.aborted = true;
+	}
+
+	async startLoading({ concurrency = 4, yieldInterval = 16, onTextureLoaded = null, onProgress = null } = {}) {
+		this.aborted = false;
+		let nextIndex = 0;
+		const worker = async () => {
+			while (!this.aborted && nextIndex < this.tasks.length) {
+				const task = this.tasks[nextIndex++];
+				try {
+					const texture = await this.loadTexture(task);
+					if (texture && !this.aborted) {
+						task.material[task.mapProperty] = texture;
+						task.material.needsUpdate = true;
+						if (onTextureLoaded) onTextureLoaded(task.material, texture, task);
+					}
+					this.loaded++;
+				} catch (error) {
+					this.failed++;
+					console.warn('[material-dedup] next texture load failed', {
+						assetPath: task.assetPath,
+						mapProperty: task.mapProperty,
+						error: error?.message || String(error)
+					});
+				}
+				if (onProgress) {
+					onProgress({ loaded: this.loaded, failed: this.failed, total: this.total });
+				}
+				await new Promise((resolve) => setTimeout(resolve, yieldInterval));
+			}
+		};
+		await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+	}
+
+	async loadTexture(task) {
+		const role = task.colorRole === 'color' ? 'color' : 'data';
+		const key = `${role}:${task.assetPath}`;
+		if (!this.promiseCache.has(key)) {
+			this.promiseCache.set(key, loadNextArchiveTexture(task.adapter, task.assetPath, role));
+		}
+		return this.promiseCache.get(key);
+	}
+}
+
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
 	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
 		const value = params.get(key);
@@ -174,6 +244,8 @@ function failLoadStats(stats) {
 
 // Optimization + scene-transform parameters (driven by lil-gui).
 const params = {
+	backend: 'legacy',
+
 	// Tydra render-scene optimizations.
 	materialDedup: true,
 	mergeMeshes: true,
@@ -404,6 +476,138 @@ function countsFromUsd(usd) {
 	};
 }
 
+function isNextScene(usd) {
+	return usd && usd.__backend === 'next';
+}
+
+function textureColorRoleForMap(mapProperty) {
+	return (mapProperty === 'map' || mapProperty === 'emissiveMap') ? 'color' : 'data';
+}
+
+async function loadNextArchiveTexture(adapter, assetPath, role = 'data') {
+	const bytes = adapter.getArchiveTextureBytes(assetPath);
+	if (!bytes) {
+		throw new Error(`texture asset not found in archive: ${assetPath}`);
+	}
+	const blob = new Blob([bytes.slice ? bytes.slice() : bytes]);
+	const blobUrl = URL.createObjectURL(blob);
+	try {
+		const texture = await new THREE.TextureLoader().loadAsync(blobUrl);
+		texture.colorSpace = role === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+		texture.wrapS = THREE.RepeatWrapping;
+		texture.wrapT = THREE.RepeatWrapping;
+		texture.flipY = true;
+		texture.needsUpdate = true;
+		return texture;
+	} finally {
+		URL.revokeObjectURL(blobUrl);
+	}
+}
+
+function createNextMaterial(mesh, adapter, textureManager, skipTextures) {
+	const src = mesh.material || {};
+	const paths = mesh.texturePaths || {};
+	const hasBaseMap = !!paths.baseColor && !skipTextures;
+	const material = new THREE.MeshPhysicalMaterial({
+		color: hasBaseMap ? new THREE.Color(1, 1, 1) :
+			new THREE.Color(src.baseColor?.[0] ?? 0.8, src.baseColor?.[1] ?? 0.8, src.baseColor?.[2] ?? 0.8),
+		metalness: src.metallic ?? 0,
+		roughness: src.roughness ?? 0.5,
+		emissive: new THREE.Color(src.emissive?.[0] ?? 0, src.emissive?.[1] ?? 0, src.emissive?.[2] ?? 0),
+		transparent: (src.opacity ?? 1) < 1,
+		opacity: src.opacity ?? 1,
+		alphaTest: (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0
+	});
+	material.userData.nextTexturePaths = paths;
+
+	const queue = (mapProperty, assetPath) => {
+		if (!assetPath || skipTextures || !textureManager) return;
+		textureManager.queueTexture(
+			material, mapProperty, adapter, assetPath, textureColorRoleForMap(mapProperty));
+	};
+	queue('map', paths.baseColor);
+	queue('normalMap', paths.normal);
+	queue('roughnessMap', paths.roughness);
+	queue('metalnessMap', paths.metallic);
+	queue('aoMap', paths.occlusion);
+	queue('emissiveMap', paths.emissive);
+	return material;
+}
+
+function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures = false } = {}) {
+	const group = new THREE.Group();
+	group.name = adapter.filename || 'next-scene';
+	const manager = (lazyTextures && !skipTextures) ? new NextTextureLoadingManager() : null;
+	const applyUsdRowMajorMatrix = (object, matrix) => {
+		if (!Array.isArray(matrix) || matrix.length !== 16) return;
+		object.matrix.set(
+			matrix[0], matrix[4], matrix[8], matrix[12],
+			matrix[1], matrix[5], matrix[9], matrix[13],
+			matrix[2], matrix[6], matrix[10], matrix[14],
+			matrix[3], matrix[7], matrix[11], matrix[15]
+		);
+		object.matrixAutoUpdate = false;
+	};
+
+	for (const mesh of adapter.meshes || []) {
+		if (!mesh.points || mesh.points.length === 0) continue;
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
+		if (mesh.normals && mesh.normals.length) {
+			geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+		} else {
+			geometry.computeVertexNormals();
+		}
+		if (mesh.uv0 && mesh.uv0.length) {
+			geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.uv0, 2));
+			geometry.setAttribute('uv2', new THREE.BufferAttribute(mesh.uv0, 2));
+		}
+		if (mesh.indices && mesh.indices.length) {
+			geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+		}
+		geometry.computeBoundingSphere();
+		let material = createNextMaterial(mesh, adapter, manager, skipTextures);
+		if (Array.isArray(mesh.materials) && mesh.materials.length && Array.isArray(mesh.submeshes) && mesh.submeshes.length) {
+			const materialEntries = mesh.materials.map((entry) => ({
+				material: entry.material || mesh.material,
+				texturePaths: entry.texturePaths || {},
+				materialKey: entry.materialKey || mesh.materialKey
+			}));
+			materialEntries.push({
+				material: mesh.material,
+				texturePaths: mesh.texturePaths,
+				materialKey: mesh.materialKey
+			});
+			const fallbackIndex = materialEntries.length - 1;
+			material = materialEntries.map((entry) => createNextMaterial(entry, adapter, manager, skipTextures));
+			const covered = [];
+			for (const group of mesh.submeshes) {
+				const start = Math.max(0, group.start | 0);
+				const count = Math.max(0, group.count | 0);
+				if (count <= 0) continue;
+				const materialIndex = (group.materialIndex >= 0 && group.materialIndex < material.length)
+					? group.materialIndex : fallbackIndex;
+				geometry.addGroup(start, count, materialIndex);
+				covered.push([start, start + count]);
+			}
+			const total = mesh.indices && mesh.indices.length ? mesh.indices.length : mesh.points.length / 3;
+			covered.sort((a, b) => a[0] - b[0]);
+			let cursor = 0;
+			for (const [start, end] of covered) {
+				if (start > cursor) geometry.addGroup(cursor, start - cursor, fallbackIndex);
+				cursor = Math.max(cursor, end);
+			}
+			if (cursor < total) geometry.addGroup(cursor, total - cursor, fallbackIndex);
+		}
+		const threeMesh = new THREE.Mesh(geometry, material);
+		threeMesh.name = mesh.primPath || mesh.primName || `mesh_${mesh.index}`;
+		applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);
+		group.add(threeMesh);
+	}
+
+	return { node: group, textureManager: manager };
+}
+
 // Read scene metadata (upAxis / metersPerUnit) defensively.
 function readSceneMeta(usd) {
 	const md = (usd.getSceneMetadata) ? usd.getSceneMetadata() : {};
@@ -580,6 +784,7 @@ function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
 async function convertScene(bytes, name, opts) {
 	await ensureLoader();
 	const usd = await parseWithOptions(bytes, name, {
+		backend: opts.backend || params.backend || 'legacy',
 		materialDedup: !!opts.materialDedup,
 		mergeMeshes: !!opts.mergeMeshes,
 		mergeMeshesBakeTransform: !!opts.mergeMeshesBakeTransform,
@@ -625,6 +830,21 @@ async function mountScene(usd,
 	abortTextureManager();
 	disposeSceneRoot();
 	disposeTextureCache();
+
+	if (isNextScene(usd)) {
+		const built = buildNextThreeNode(usd, { skipTextures, lazyTextures });
+		if (postProcess) {
+			applyJsPostProcess(built.node);
+		} else {
+			jsPostStats = null;
+		}
+		usdSceneRoot.add(built.node);
+		applySceneTransform();
+		applyDoubleSided();
+		textureManager = built.textureManager;
+		updateDebugHandle();
+		return;
+	}
 
 	const usdRootNode = usd.getDefaultRootNode();
 	const defaultMtl = new THREE.MeshStandardMaterial({
@@ -832,6 +1052,9 @@ async function reapplyThreePostProcess() {
 
 function describeOptions() {
 	const on = [];
+	const backend = currentUsd?.__backend || params.backend || 'legacy';
+	const backendNote = `backend ${backend}` +
+		(currentUsd?.__backendFallbackReason ? ` (fallback: ${currentUsd.__backendFallbackReason})` : '');
 	if (params.materialDedup) on.push('material-dedup');
 	if (params.mergeMeshes) on.push(params.mergeMeshesBakeTransform ? 'merge-meshes(bake)' : 'merge-meshes');
 	if (params.flattenRenderTree) on.push('flatten-tree');
@@ -850,7 +1073,7 @@ function describeOptions() {
 	}
 	const jsNote = js.length ? ` · three.js: ${js.join(', ')}` : '';
 
-	return (on.length ? on.join(', ') : 'no optimizations') +
+	return `${backendNote} · ` + (on.length ? on.join(', ') : 'no optimizations') +
 		` · upAxis ${sceneMeta.upAxis}${scaleNote}${jsNote}`;
 }
 
@@ -918,6 +1141,11 @@ function refreshGuiControllers() {
 
 function buildGui() {
 	gui = new GUI({ title: 'Dedup / Optimization' });
+
+	const backendFolder = gui.addFolder('Backend');
+	guiControllers.push(backendFolder.add(params, 'backend', ['legacy', 'next', 'auto'])
+		.name('Loader Backend').onChange(rebuild));
+	backendFolder.open();
 
 	const optFolder = gui.addFolder('Tydra Optimizations');
 	guiControllers.push(optFolder.add(params, 'materialDedup').name('Material Dedup').onChange(rebuild));
@@ -1067,6 +1295,10 @@ async function main() {
 		return v == null ? cur : (v === '1' || v === 'true');
 	};
 	params.loadTextures = flag('textures', params.loadTextures);
+	const backend = search.get('backend');
+	if (backend === 'legacy' || backend === 'next' || backend === 'auto') {
+		params.backend = backend;
+	}
 	params.materialDedup = flag('dedup', params.materialDedup);
 	params.mergeMeshes = flag('merge', params.mergeMeshes);
 	params.mergeMeshesBakeTransform = flag('bake', params.mergeMeshesBakeTransform);

@@ -40,6 +40,7 @@
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 #include "next/schema/geom-mesh.hh"
+#include "next/schema/geom-xform.hh"
 #include "next/schema/usd-shade.hh"
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"
@@ -9689,6 +9690,19 @@ class RenderStream {
   int meshCount() const { return loaded_ ? static_cast<int>(meshes_.size()) : 0; }
   std::string error() const { return error_; }
 
+  emscripten::val getSceneMetadata() const {
+    emscripten::val metadata = emscripten::val::object();
+    if (!loaded_) return metadata;
+    const tinyusdz::next::StageMeta &meta = stage_.GetMeta();
+    metadata.set("upAxis", meta.upAxis);
+    metadata.set("metersPerUnit", meta.metersPerUnit);
+    metadata.set("framesPerSecond", meta.framesPerSecond);
+    metadata.set("timeCodesPerSecond", meta.timeCodesPerSecond);
+    metadata.set("startTimeCode", meta.startTimeCode);
+    metadata.set("endTimeCode", meta.endTimeCode);
+    return metadata;
+  }
+
   // Materialize mesh i's geometry into the scratch and return zero-copy
   // descriptors {points,indices,normals,uv0} + resolved material. Valid until the
   // next getMesh()/end(); the JS caller must upload before calling getMesh again.
@@ -9710,11 +9724,15 @@ class RenderStream {
 
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
+    out.set("primPath", prim.GetPath().str());
     out.set("points", heapF_(s_points_, 3));
     if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
     if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
+    out.set("localMatrix", matArray_(localMatrix_(prim)));
+    out.set("worldMatrix", matArray_(worldMatrix_(prim)));
     out.set("material", resolveMaterial_(prim));
+    addGeomSubsetMaterials_(prim, out);
     return out;
   }
 
@@ -10052,6 +10070,28 @@ class RenderStream {
     }
   }
 
+  static std::vector<uint32_t> faceTriangleStarts_(
+      const std::vector<int32_t> &fvc) {
+    std::vector<uint32_t> starts;
+    starts.reserve(fvc.size() + 1);
+    uint32_t cursor = 0;
+    for (int32_t n : fvc) {
+      starts.push_back(cursor);
+      if (n >= 3) cursor += static_cast<uint32_t>(n - 2);
+    }
+    starts.push_back(cursor);
+    return starts;
+  }
+
+  static std::vector<int32_t> matIntStatic_(
+      const tinyusdz::next::UsdPrim &prim, const char *name) {
+    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    if (!v) return {};
+    tinyusdz::next::Value tmp = *v;
+    const std::vector<int32_t> *a = tmp.as_int_array();
+    return a ? *a : std::vector<int32_t>{};
+  }
+
   // Area-weighted vertex normals from the triangulated indices.
   static void computeNormals_(const std::vector<float> &pos,
                               const std::vector<uint32_t> &idx,
@@ -10103,12 +10143,58 @@ class RenderStream {
     a.call<void>("push", c[2]);
     return a;
   }
+  static emscripten::val matArray_(const std::array<double, 16> &m) {
+    emscripten::val a = emscripten::val::array();
+    for (double v : m) a.call<void>("push", v);
+    return a;
+  }
+  static std::array<double, 16> identityMatrix_() {
+    return {1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0};
+  }
+  static std::array<double, 16> multiplyMatrix_(
+      const std::array<double, 16> &a, const std::array<double, 16> &b) {
+    std::array<double, 16> r{};
+    for (int row = 0; row < 4; ++row) {
+      for (int col = 0; col < 4; ++col) {
+        double v = 0.0;
+        for (int k = 0; k < 4; ++k) {
+          v += a[static_cast<size_t>(row * 4 + k)] *
+               b[static_cast<size_t>(k * 4 + col)];
+        }
+        r[static_cast<size_t>(row * 4 + col)] = v;
+      }
+    }
+    return r;
+  }
+  static std::array<double, 16> localMatrix_(
+      const tinyusdz::next::UsdPrim &prim) {
+    std::array<double, 16> m = identityMatrix_();
+    tinyusdz::next::UsdGeomXform xform(prim);
+    double raw[16];
+    if (!xform.ComputeLocalTransform(raw)) return m;
+    for (int i = 0; i < 16; ++i) m[static_cast<size_t>(i)] = raw[i];
+    return m;
+  }
+  static std::array<double, 16> worldMatrix_(
+      const tinyusdz::next::UsdPrim &prim) {
+    std::vector<tinyusdz::next::UsdPrim> chain;
+    for (tinyusdz::next::UsdPrim p = prim; p.IsValid(); p = p.GetParent()) {
+      chain.push_back(p);
+    }
+    std::array<double, 16> world = identityMatrix_();
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+      const std::array<double, 16> local = localMatrix_(*it);
+      world = multiplyMatrix_(local, world);
+    }
+    return world;
+  }
 
-  // Resolve the mesh's bound material to UsdPreviewSurface values + texture
-  // asset paths (resolved to GPU textures by the JS caller from the archive).
-  emscripten::val resolveMaterial_(const tinyusdz::next::UsdPrim &prim) {
+  emscripten::val materialObjectForPrim_(
+      const tinyusdz::next::UsdPrim &mat) {
     emscripten::val m = emscripten::val::object();
-    tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, prim);
     if (!mat.IsValid()) return m;
     // Resolve the surface shader: prefer the material's outputs:surface (a
     // connection), but fall back to the first UsdPreviewSurface child shader —
@@ -10146,6 +10232,82 @@ class RenderStream {
     return m;
   }
 
+  // Resolve the prim's bound material to UsdPreviewSurface values + texture
+  // asset paths (resolved to GPU textures by the JS caller from the archive).
+  emscripten::val resolveMaterial_(const tinyusdz::next::UsdPrim &prim) {
+    tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, prim);
+    return materialObjectForPrim_(mat);
+  }
+
+  void addGeomSubsetMaterials_(const tinyusdz::next::UsdPrim &prim,
+                               emscripten::val &out) {
+    std::vector<int32_t> fvc = matIntStatic_(prim, "faceVertexCounts");
+    if (fvc.empty()) return;
+
+    struct SubsetInfo {
+      tinyusdz::next::UsdPrim prim;
+      std::vector<int32_t> faces;
+    };
+    std::vector<SubsetInfo> subsets;
+    for (const tinyusdz::next::UsdPrim &child : prim.GetChildren()) {
+      if (!child.IsValid() || child.GetTypeName() != "GeomSubset") continue;
+      const tinyusdz::next::Value *family = child.GetPropertyValue("familyName");
+      if (family) {
+        const std::string *tok = family->as_token();
+        if (tok && *tok != "materialBind") continue;
+      }
+      std::vector<int32_t> faces = matIntStatic_(child, "indices");
+      if (faces.empty()) continue;
+      tinyusdz::next::UsdPrim mat = tinyusdz::next::GetBoundMaterial(stage_, child);
+      if (!mat.IsValid()) continue;
+      subsets.push_back({child, std::move(faces)});
+    }
+    if (subsets.empty()) return;
+
+    std::vector<int> face_material(fvc.size(), -1);
+    emscripten::val materials = emscripten::val::array();
+    for (size_t i = 0; i < subsets.size(); ++i) {
+      const int mat_index = static_cast<int>(i);
+      for (int32_t face : subsets[i].faces) {
+        if (face >= 0 && static_cast<size_t>(face) < face_material.size()) {
+          face_material[static_cast<size_t>(face)] = mat_index;
+        }
+      }
+      tinyusdz::next::UsdPrim mat =
+          tinyusdz::next::GetBoundMaterial(stage_, subsets[i].prim);
+      materials.set(mat_index, materialObjectForPrim_(mat));
+    }
+
+    const std::vector<uint32_t> tri_starts = faceTriangleStarts_(fvc);
+    emscripten::val groups = emscripten::val::array();
+    int group_index = 0;
+    size_t face_begin = 0;
+    while (face_begin < face_material.size()) {
+      const int mat_index = face_material[face_begin];
+      size_t face_end = face_begin + 1;
+      while (face_end < face_material.size() &&
+             face_material[face_end] == mat_index) {
+        face_end++;
+      }
+      if (mat_index >= 0 && face_begin < tri_starts.size() &&
+          face_end < tri_starts.size()) {
+        const uint32_t start = tri_starts[face_begin] * 3u;
+        const uint32_t count = (tri_starts[face_end] - tri_starts[face_begin]) * 3u;
+        if (count > 0) {
+          emscripten::val g = emscripten::val::object();
+          g.set("start", static_cast<int>(start));
+          g.set("count", static_cast<int>(count));
+          g.set("materialIndex", mat_index);
+          groups.set(group_index++, g);
+        }
+      }
+      face_begin = face_end;
+    }
+
+    out.set("materials", materials);
+    out.set("submeshes", groups);
+  }
+
   tinyusdz::next::Stage stage_;
   std::vector<tinyusdz::next::UsdGeomMesh> meshes_;
   bool loaded_ = false;
@@ -10159,6 +10321,7 @@ EMSCRIPTEN_BINDINGS(render_stream_module) {
       .constructor<>()
       .function("begin", &RenderStream::begin)
       .function("meshCount", &RenderStream::meshCount)
+      .function("getSceneMetadata", &RenderStream::getSceneMetadata)
       .function("getMesh", &RenderStream::getMesh)
       .function("error", &RenderStream::error)
       .function("end", &RenderStream::end);
