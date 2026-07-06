@@ -131,7 +131,7 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
 
 // Orbit controls
@@ -1459,6 +1459,7 @@ async function processUSDScene(usd_scene, filename) {
 		overrideMaterial: false,
 		envMap: null,
 		envMapIntensity: 1.0,
+		sourceFileName: filename,
 	};
 
 	// Monitor WASM heap for growth during scene building.
@@ -1472,7 +1473,7 @@ async function processUSDScene(usd_scene, filename) {
 	if (wasmHeapBefore !== null && window._tinyusdz_wasm_memory) {
 		const wasmHeapAfter = window._tinyusdz_wasm_memory.buffer.byteLength;
 		if (wasmHeapAfter !== wasmHeapBefore) {
-			console.error(`[WASM HEAP GREW] ${wasmHeapBefore} → ${wasmHeapAfter} bytes during buildThreeNode! typed_memory_view buffers may be DETACHED.`);
+			console.warn(`[WASM HEAP GREW] ${wasmHeapBefore} -> ${wasmHeapAfter} bytes during buildThreeNode. Retained raw heap views would detach; getMeshCopy/getMeshPtr copies are expected to remain safe.`);
 		}
 	}
 
