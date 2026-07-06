@@ -1960,7 +1960,8 @@ bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
   std::map<std::string, std::string>
       variant_selection;  // empty = use variant settings in PrimSpec.
 
-  if (!VariantSelectPrimSpec(dst, primspec, variant_selection, warn, err)) {
+  if (!VariantSelectPrimSpec(dst, std::move(primspec), variant_selection, warn,
+                             err)) {
     return false;
   }
 
@@ -3294,7 +3295,7 @@ bool ApplyDeferredVariantSelectionsRec(
   }
 
   PrimSpec dst;
-  if (!VariantSelectPrimSpec(dst, primspec, selection, warn, err)) {
+  if (!VariantSelectPrimSpec(dst, std::move(primspec), selection, warn, err)) {
     return false;
   }
 
@@ -3686,7 +3687,8 @@ bool ApplyVariantSelectorRec(uint32_t depth,
 
     if (!selections.empty()) {
       PrimSpec dst;
-      if (!VariantSelectPrimSpec(dst, primspec, selections, warn, err)) {
+      if (!VariantSelectPrimSpec(dst, std::move(primspec), selections, warn,
+                                 err)) {
         return false;
       }
       primspec = std::move(dst);
