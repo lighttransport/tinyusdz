@@ -23,13 +23,8 @@ extern "C" {
 #endif
 
 #if defined(TINYUSDZ_WITH_EXR)
-#if defined(TINYUSDZ_EXR_V3)
-// Pure-C11 tinyexr v3 C backend (default).
+// Pure-C11 tinyexr v3 C backend (the legacy v1 API is retired to src/attic).
 #include "external/tinyexr/include/exr.h"
-#else
-// Legacy v1 backend (deprecated; TINYUSDZ_USE_TINYEXR_V3=OFF).
-#include "external/tinyexr.h"
-#endif
 #endif
 
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)

@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 #if defined(TINYUSDZ_WITH_EXR)
-#if defined(TINYUSDZ_EXR_V3)
+// Pure-C11 tinyexr v3 C backend (the legacy v1 API is retired to src/attic).
 #include "external/tinyexr/include/exr.h"
-#else
-#include "external/tinyexr.h"
-#endif
 #endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
