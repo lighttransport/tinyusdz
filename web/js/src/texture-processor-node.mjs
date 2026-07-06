@@ -12,7 +12,10 @@ import os from 'node:os';
 import { Worker } from 'node:worker_threads';
 
 export function createNodeTextureProcessor(opts = {}) {
-  const concurrency = Math.max(1, opts.concurrency || (os.cpus().length - 1));
+  // Cap the default worker count: texture decode throughput saturates well
+  // before core count on many-core machines, while peak RSS scales with the
+  // number of workers that ever held a full-size decode buffer.
+  const concurrency = Math.max(1, opts.concurrency || Math.min(16, os.cpus().length - 1));
   const workers = [];
   const idle = [];
   const waiters = [];

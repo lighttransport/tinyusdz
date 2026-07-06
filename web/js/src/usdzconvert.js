@@ -1047,6 +1047,9 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
 
   let rootUSDC = null;
   const usd = new native.TinyUSDZLoaderNative();
+  const tPhase0 = Date.now();
+  let tPhaseRoot = 0;   // layers ingested + root composed/written
+  let tPhaseTex = 0;    // texture stage done
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
         typeof usd.setUSDCExportLimitMB === 'function') {
@@ -1294,6 +1297,9 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
   // 1) Flatten the root layer low-heap. Textures are NOT registered in WASM.
   let rootUSDC = null;
   const usd = new native.TinyUSDZLoaderNative();
+  const tPhase0 = Date.now();
+  let tPhaseRoot = 0;   // layers ingested + root composed/written
+  let tPhaseTex = 0;    // texture stage done
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
         typeof usd.setUSDCExportLimitMB === 'function') {
@@ -1752,6 +1758,9 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
   };
 
   const usd = new native.TinyUSDZLoaderNative();
+  const tPhase0 = Date.now();
+  let tPhaseRoot = 0;   // layers ingested + root composed/written
+  let tPhaseTex = 0;    // texture stage done
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
         typeof usd.setUSDCExportLimitMB === 'function') {
@@ -2111,13 +2120,31 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       zw.addEntry(rootName, rootOut);
     }
 
+    tPhaseRoot = Date.now();
+
     const pickResizeCs = makeResizeCsPicker(native, rootBytes, opts);
     const wantResize = (opts.maxTextureSize || 0) > 0;
     const wantWork = (fmt) => fmt && (wantResize || opts.reencode !== false || textureFormat !== 'keep');
 
     // Bounded prefetch pipeline: fetch/process up to `width` textures ahead,
     // append to the zip in order so at most `width` outputs are in memory.
+    // Admission is additionally byte-budgeted when the source can report file
+    // sizes: N huge 4K textures decoded concurrently (RGBA ~5-8x the PNG
+    // bytes, per worker) dominate peak RSS, while small textures are
+    // effectively free — so budget by estimated in-flight bytes instead of
+    // only a fixed count.
     const width = Math.max(1, opts.textureConcurrency || 4);
+    const memBudgetBytes =
+        Math.max(64 * 1024 * 1024,
+                 (opts.textureMemoryBudgetMB || 1024) * 1024 * 1024);
+    const sizeOf = (typeof source.size === 'function') ? source.size : null;
+    const estimateCost = (plan) => {
+      if (!sizeOf) return 0;
+      let sz = 0;
+      try { sz = Number(sizeOf(plan.path)) || 0; } catch (e) { sz = 0; }
+      // input + decoded RGBA + resize/encode working set; floor for tiny files
+      return Math.max(4 * 1024 * 1024, sz * 8);
+    };
     const includeUnusedTextures = opts.includeUnusedTextures === true;
     const texturePlans = referencedAssetNames && !includeUnusedTextures
       ? plans.filter((plan) =>
@@ -2191,7 +2218,13 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
             reencoded = true;
           }
         } catch (err) {
-          log(`  ${plan.name}: texture processor failed (${err && err.message ? err.message : err}); trying WASM`);
+          if (!stats.textureProcessorFailures) stats.textureProcessorFailures = 0;
+          stats.textureProcessorFailures++;
+          if (stats.textureProcessorFailures === 1) {
+            log(`  WARNING: texture processor failed (${err && err.message ? err.message : err}); falling back to the sequential WASM codec (this is much slower — check that web/js dependencies are installed, e.g. \`npm install\` for pngjs)`);
+          } else {
+            log(`  ${plan.name}: texture processor failed; trying WASM`);
+          }
         }
       }
       if (outBytes === bytes && wantWork(plan.format)) {
@@ -2223,17 +2256,26 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
 
     const inflight = [];
     let planIdx = 0;
+    let inflightCost = 0;
     const pump = () => {
       while (planIdx < texturePlans.length && inflight.length < width) {
-        const plan = texturePlans[planIdx++];
-        inflight.push({ plan, promise: processOne(plan) });
+        const plan = texturePlans[planIdx];
+        const cost = estimateCost(plan);
+        // Always keep at least one job running; otherwise respect the budget.
+        if (inflight.length > 0 && (inflightCost + cost) > memBudgetBytes) {
+          break;
+        }
+        planIdx++;
+        inflightCost += cost;
+        inflight.push({ plan, cost, promise: processOne(plan) });
       }
     };
     pump();
     while (inflight.length) {
-      const { plan, promise } = inflight.shift();
+      const { plan, cost, promise } = inflight.shift();
       // eslint-disable-next-line no-await-in-loop
       const r = await promise;
+      inflightCost -= cost;
       if (r.error) {
         // A referenced texture could not be fetched — fail cleanly rather than
         // emit an archive missing the asset. Any remaining in-flight jobs resolve
@@ -2256,6 +2298,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       log(`  ${archiveName}: ${outBytes.length} bytes${resized ? ' [resized]' : reencoded ? ' [reencoded]' : ' [passthrough]'}`);
       pump();
     }
+    tPhaseTex = Date.now();
 
     // 6. Non-USD, non-image assets (audio etc.) pass through, also streamed.
     for (const key of keys) {
@@ -2272,6 +2315,15 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     }
 
     zw.finalize();
+
+    {
+      const tEnd = Date.now();
+      const rootMs = (tPhaseRoot || tEnd) - tPhase0;
+      const texMs = tPhaseTex ? (tPhaseTex - (tPhaseRoot || tPhase0)) : 0;
+      const tailMs = tEnd - (tPhaseTex || tPhaseRoot || tPhase0);
+      stats.timings = { composeAndRootMs: rootMs, texturesMs: texMs, packageTailMs: tailMs, totalMs: tEnd - tPhase0 };
+      log(`streaming timings: compose+root ${rootMs} ms, textures ${texMs} ms, tail ${tailMs} ms, total ${tEnd - tPhase0} ms`);
+    }
 
     if (opts.zipSink) {
       return { usdz: null, streamedToSink: true, stats };

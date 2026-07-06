@@ -10,6 +10,21 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+// glibc creates one malloc arena per thread by default; the texture worker
+// pool then RETAINS each thread's peak allocations (multi-GB for 4K PNG
+// decodes). Capping arenas before malloc initializes cuts peak RSS roughly in
+// half at no throughput cost — which requires the env var to be set before
+// process start, so re-exec once. Opt out by setting MALLOC_ARENA_MAX
+// yourself.
+if (process.platform === 'linux' && !process.env.MALLOC_ARENA_MAX) {
+  const r = spawnSync(process.execPath, process.argv.slice(1), {
+    stdio: 'inherit',
+    env: { ...process.env, MALLOC_ARENA_MAX: '2' },
+  });
+  process.exit(r.status === null ? 1 : r.status);
+}
 import { convertFolderToUSDZ, convertSourceToUSDZStreaming, loadWasm, parseByteSize } from '../src/usdzconvert.js';
 
 // Load the Emscripten glue directly (no three.js / vite-node dependency) so the
@@ -99,6 +114,8 @@ Convert options:
                            js (PNG via worker_threads pool + pngjs/node zlib,
                            parallel; non-PNG falls back to wasm)
   --texture-jobs <N>       Worker threads for --texture-codec js (default: cores-1)
+  --texture-mem-budget <MB> Cap estimated in-flight texture bytes during the
+                           streaming texture stage (default: 1024)
   --no-reencode            Copy unmodified textures through unchanged
   --optimize-materials <mode>
                            Material optimization: off, dedupe, preview, atlas.
@@ -194,6 +211,7 @@ function parseArgs() {
     else if (a === '--stream-write') o.streamWrite = true;
     else if (a === '--no-stream-write') o.streamWrite = false;
     else if (a === '--texture-codec') o.textureCodec = args[++i];
+    else if (a === '--texture-mem-budget') o.textureMemBudgetMb = parseInt(args[++i], 10) || 0;
     else if (a === '--texture-jobs') o.textureJobs = parseInt(args[++i], 10) || 0;
     else if (a === '--include-unused-textures') o.includeUnusedTextures = true;
     else if (a === '--optimize-materials') o.optimizeMaterials = args[++i];
@@ -253,6 +271,8 @@ function folderSource(dir) {
     keys,
     fetch: async (key) => new Uint8Array(await fs.promises.readFile(path.join(dir, key))),
     fetchSync: (key) => new Uint8Array(fs.readFileSync(path.join(dir, key))),
+    // File size for memory-budgeted texture admission (streaming pipeline).
+    size: (key) => { try { return fs.statSync(path.join(dir, key)).size; } catch (e) { return 0; } },
   };
 }
 
@@ -432,6 +452,7 @@ async function runStreamingConvert(native, o, prebuiltSource) {
       meshMergeMinGroupSize: o.meshMergeMinGroupSize,
       textureProcessor: texturePool ? texturePool.processor : undefined,
       textureConcurrency: texturePool ? texturePool.concurrency : 4,
+      textureMemoryBudgetMB: o.textureMemBudgetMb || 1024,
       zipSink,
       log,
     });
