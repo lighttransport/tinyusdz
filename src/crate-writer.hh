@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <atomic>
 #include <vector>
 #include <unordered_map>
 #include <memory>
@@ -253,7 +254,9 @@ public:
   ///
   /// Get estimated memory usage
   ///
-  int64_t GetMemoryUsageEstimate() const { return memory_used_estimate_; }
+  int64_t GetMemoryUsageEstimate() const {
+    return memory_used_estimate_.load(std::memory_order_relaxed);
+  }
 
   ///
   /// Check if file size limit would be exceeded
@@ -266,7 +269,8 @@ public:
   /// Check if memory limit would be exceeded
   ///
   bool WouldExceedMemoryLimit(int64_t additional_bytes) const {
-    return (memory_used_estimate_ + additional_bytes) > options_.max_memory_bytes;
+    return (memory_used_estimate_.load(std::memory_order_relaxed) +
+            additional_bytes) > options_.max_memory_bytes;
   }
 
   // Error context tracking
@@ -395,6 +399,13 @@ private:
     SpecType spec_type;  // Store the spec type for later use
     crate::Spec spec;
     crate::FieldValuePairVector fields;
+    // Number of fields present when AddSpec ran. The parallel stage->specs
+    // token replay registers only this prefix: fields appended AFTER AddSpec
+    // (e.g. the post-hoc `properties` field) were never pre-registered by the
+    // serial writer either — their tokens are first seen during Finalize's
+    // field packing, and replaying them early would shift every later token
+    // index (byte-diff).
+    uint32_t fields_at_addspec = 0;
   };
 
   // ======================================================================
@@ -898,7 +909,11 @@ private:
 
   // Memory and file size tracking for resource limits
   int64_t bytes_written_ = 0;           // Current file size in bytes
-  int64_t memory_used_estimate_ = 0;    // Estimated memory usage (tokens, strings, paths, specs, etc.)
+  // Estimated memory usage (tokens, strings, paths, specs, etc.). Atomic:
+  // the parallel stage->specs conversion accounts from worker threads.
+  // (Unconditionally atomic — TINYUSDZ_ENABLE_THREAD is a private compile
+  // definition, so class layout must not depend on it.)
+  std::atomic<int64_t> memory_used_estimate_{0};
 
   // Error context stack for detailed error messages
   ErrorContextStack error_context_{options_.error_context_depth};
@@ -939,6 +954,22 @@ private:
 
   // Spec data (accumulated before writing)
   std::vector<SpecData> spec_data_;
+
+  // --- Parallel stage->specs conversion support -------------------------
+  // Per-thread spec sink: when set (worker threads of the parallel
+  // conversion), AddSpec appends here instead of spec_data_ and SKIPS
+  // field-name token pre-registration — the tokens are replayed serially in
+  // DFS spec order after assembly, reproducing the serial writer's token
+  // numbering byte-for-byte.
+  static std::vector<SpecData>*& tls_spec_sink();
+  std::vector<SpecData>& active_spec_buffer() {
+    std::vector<SpecData>* sink = tls_spec_sink();
+    return sink ? *sink : spec_data_;
+  }
+  // Parallel whole-stage prim conversion (called by ConvertStageToSpecs when
+  // the stage is large and TINYUSDZ_ENABLE_THREAD is on). Byte-identical to
+  // the serial DFS.
+  bool ConvertRootPrimsParallel(const Stage& stage, std::string* err);
 
   // Table of contents (filled during writing)
   crate::TableOfContents toc_;

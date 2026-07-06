@@ -319,7 +319,10 @@ bool CrateWriter::AddSpec(const Path& path,
     if (err) {
       *err = "Adding spec would exceed memory limit of " +
              std::to_string(options_.max_memory_bytes / (1024*1024)) + " MB. " +
-             "Current usage: " + std::to_string(memory_used_estimate_ / (1024*1024)) + " MB";
+             "Current usage: " +
+             std::to_string(memory_used_estimate_.load(std::memory_order_relaxed) /
+                            (1024 * 1024)) +
+             " MB";
     }
     return false;
   }
@@ -333,12 +336,18 @@ bool CrateWriter::AddSpec(const Path& path,
   spec_data.fields = std::move(fields);
 
   // Pre-register tokens from field names (token indices are assigned in
-  // first-seen order, so this must stay before Finalize).
-  for (const auto& field : spec_data.fields) {
-    GetOrCreateToken(field.first);
+  // first-seen order, so this must stay before Finalize). Under a per-thread
+  // spec sink (parallel stage->specs conversion) registration is skipped
+  // here and replayed serially in DFS spec order after assembly — same
+  // first-seen order, byte-identical token numbering.
+  spec_data.fields_at_addspec = static_cast<uint32_t>(spec_data.fields.size());
+  if (!tls_spec_sink()) {
+    for (const auto& field : spec_data.fields) {
+      GetOrCreateToken(field.first);
+    }
   }
 
-  spec_data_.push_back(std::move(spec_data));
+  active_spec_buffer().push_back(std::move(spec_data));
   memory_used_estimate_ += estimated_memory;
 
   // NOTE: no GetOrCreatePath(path) here — Finalize() clears and rebuilds the
