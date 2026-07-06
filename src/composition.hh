@@ -495,6 +495,17 @@ bool VariantSelectPrimSpec(PrimSpec &dst, const PrimSpec &src,
                            std::string *err);
 
 ///
+/// Move-in variant of VariantSelectPrimSpec: identical result, but `src` is
+/// consumed (left in a valid-but-unspecified state). Prefer this when the
+/// caller immediately replaces `src` with `dst` — it removes one full
+/// PrimSpec-subtree deep copy per variant prim and all copies for prims
+/// without variants.
+///
+bool VariantSelectPrimSpec(PrimSpec &dst, PrimSpec &&src,
+                           const std::map<std::string, std::string> &variant_selection, std::string *warn,
+                           std::string *err);
+
+///
 /// Resolve variant in PrimSpec tree and write result to `dst`.
 /// `dst` does not contain any variant info.
 ///

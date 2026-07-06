@@ -196,9 +196,11 @@ public:
   /// @param spec_type Type of spec (Prim, Attribute, etc.)
   /// @param fields Map of field name -> value for this spec
   ///
+  /// `fields` is taken by value: pass with std::move() where possible —
+  /// field values can carry large arrays and are stored, not inspected.
   bool AddSpec(const Path& path,
                SpecType spec_type,
-               const crate::FieldValuePairVector& fields,
+               crate::FieldValuePairVector fields,
                std::string* err = nullptr);
 
   ///

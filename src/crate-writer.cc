@@ -282,7 +282,7 @@ bool CrateWriter::Open(std::string* err) {
 
 bool CrateWriter::AddSpec(const Path& path,
                            SpecType spec_type,
-                           const crate::FieldValuePairVector& fields,
+                           crate::FieldValuePairVector fields,
                            std::string* err) {
   if (!is_open_) {
     if (err) *err = "File not open";
@@ -302,17 +302,13 @@ bool CrateWriter::AddSpec(const Path& path,
     return true;  // Silently skip duplicate (not an error)
   }
 
-  // Create spec data
-  SpecData spec_data;
-  spec_data.path = path;
-  spec_data.spec_type = spec_type;  // Store the spec type
-  spec_data.fields = fields;
-
   // Estimate memory usage for this spec
   // Path + field names + approximate field value sizes
-  int64_t estimated_memory = path.full_path_name().size();  // Path string
+  // (prim+prop part sizes; avoids allocating a full_path_name() string)
+  int64_t estimated_memory =
+      int64_t(path.prim_part().size() + path.prop_part().size() + 1);
   for (const auto& field : fields) {
-    estimated_memory += field.first.size();  // Field name
+    estimated_memory += int64_t(field.first.size());  // Field name
     estimated_memory += 64;  // Approximate field value overhead
   }
 
@@ -326,19 +322,27 @@ bool CrateWriter::AddSpec(const Path& path,
     return false;
   }
 
-  // We'll fill in the actual crate::Spec later during Finalize
-  // For now, just accumulate the data
-  spec_data_.push_back(spec_data);
+  // Create spec data. We'll fill in the actual crate::Spec later during
+  // Finalize; for now, just accumulate the data (moved, not copied — field
+  // values can carry large arrays).
+  SpecData spec_data;
+  spec_data.path = path;
+  spec_data.spec_type = spec_type;  // Store the spec type
+  spec_data.fields = std::move(fields);
+
+  // Pre-register tokens from field names (token indices are assigned in
+  // first-seen order, so this must stay before Finalize).
+  for (const auto& field : spec_data.fields) {
+    GetOrCreateToken(field.first);
+  }
+
+  spec_data_.push_back(std::move(spec_data));
   spec_path_set_.emplace(path, 1u);
   memory_used_estimate_ += estimated_memory;
 
-  // Pre-register the path for deduplication
-  GetOrCreatePath(path);
-
-  // Pre-register tokens from field names
-  for (const auto& field : fields) {
-    GetOrCreateToken(field.first);
-  }
+  // NOTE: no GetOrCreatePath(path) here — Finalize() clears and rebuilds the
+  // path table from the sorted specs, so pre-registering paths was pure
+  // wasted work (hash + ancestor walk per spec).
 
   return true;
 }
@@ -374,13 +378,32 @@ bool CrateWriter::Finalize(std::string* err) {
   // This ensures path indices assigned here match the path tree encoding.
   //
   // PseudoRoot ("/") MUST be first (required by USD spec)
-  std::sort(spec_data_.begin(), spec_data_.end(),
-    [](const SpecData& a, const SpecData& b) {
-      // Use the same path comparison as pathlib::SortSimplePaths
-      pathlib::SimplePath a_path(a.path.prim_part(), a.path.prop_part());
-      pathlib::SimplePath b_path(b.path.prim_part(), b.path.prop_part());
-      return pathlib::ComparePaths(a_path, b_path) < 0;
+  //
+  // Schwartzian transform: parse each spec path once and sort an index
+  // array — ComparePaths() re-parses both paths per comparison, which made
+  // this sort the dominant cost of writing large flattened stages.
+  {
+    const size_t n = spec_data_.size();
+    std::vector<pathlib::ParsedSimplePath> keys;
+    keys.reserve(n);
+    for (const auto& sd : spec_data_) {
+      keys.push_back(pathlib::MakeParsedSimplePath(sd.path.prim_part(),
+                                                   sd.path.prop_part()));
+    }
+    std::vector<uint32_t> order(n);
+    for (size_t i = 0; i < n; i++) {
+      order[i] = uint32_t(i);
+    }
+    std::sort(order.begin(), order.end(), [&keys](uint32_t a, uint32_t b) {
+      return pathlib::CompareParsedPaths(keys[a], keys[b]) < 0;
     });
+    std::vector<SpecData> sorted_specs;
+    sorted_specs.reserve(n);
+    for (size_t i = 0; i < n; i++) {
+      sorted_specs.push_back(std::move(spec_data_[order[i]]));
+    }
+    spec_data_ = std::move(sorted_specs);
+  }
 
   // Verify that the first spec is PseudoRoot (required by USD spec)
   if (!spec_data_.empty()) {
@@ -399,16 +422,21 @@ bool CrateWriter::Finalize(std::string* err) {
   }
 
   // CRITICAL: Rebuild path deduplication table to match sorted order
-  // Path indices must correspond to the sorted spec order
+  // Path indices must correspond to the sorted spec order.
+  // Specs are sorted, so duplicate paths (if any) are adjacent — dedup by
+  // comparing with the previous path and assign each spec's path index here
+  // (one hash-map insert per unique path; the old flow did a find+insert per
+  // spec plus a separate GetOrCreatePath lookup per spec below).
   path_to_index_.clear();
   paths_.clear();
-  for (const auto& spec_data : spec_data_) {
-    if (path_to_index_.find(spec_data.path) == path_to_index_.end()) {
+  for (auto& spec_data : spec_data_) {
+    if (paths_.empty() || !(paths_.back() == spec_data.path)) {
       crate::PathIndex idx;
       idx.value = static_cast<uint32_t>(paths_.size());
       path_to_index_[spec_data.path] = idx;
       paths_.push_back(spec_data.path);
     }
+    spec_data.spec.path_index.value = static_cast<uint32_t>(paths_.size() - 1);
   }
 
   // Build field and fieldset tables
@@ -446,9 +474,7 @@ bool CrateWriter::Finalize(std::string* err) {
     // Get or create fieldset
     crate::FieldSetIndex fieldset_idx = GetOrCreateFieldSet(field_indices);
 
-    // Temporarily assign path_index (will be updated after sorting)
-    crate::PathIndex path_idx = GetOrCreatePath(spec_data.path);
-    spec_data.spec.path_index = path_idx;
+    // (spec.path_index was assigned in the sorted-rebuild loop above.)
     spec_data.spec.fieldset_index = fieldset_idx;
     spec_data.spec.spec_type = spec_data.spec_type;  // Use the stored spec type
   }

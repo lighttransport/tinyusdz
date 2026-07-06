@@ -31,6 +31,38 @@ namespace crate {
 int ComparePaths(const IPath& lhs, const IPath& rhs);
 
 ///
+/// Precomputed (parsed) sort key for a path.
+///
+/// ComparePaths() re-parses both paths' prim parts into elements on every
+/// invocation, which makes N-log-N sorts over large spec/path tables
+/// allocation-bound. Parse each path once with MakeParsedSimplePath() and
+/// sort with CompareParsedPaths() instead — the ordering is identical
+/// (ComparePaths() itself is implemented on top of these).
+///
+struct PathElement {
+  std::string name;
+  bool is_absolute = false;
+  bool is_property = false;
+  int depth = 0;
+
+  PathElement() = default;
+  PathElement(const std::string& n, bool abs, bool prop, int d)
+    : name(n), is_absolute(abs), is_property(prop), depth(d) {}
+};
+
+struct ParsedSimplePath {
+  std::vector<PathElement> prim_elements;  // prim part only
+  bool is_absolute = false;
+  std::string prop;                        // property part ("" if none)
+};
+
+ParsedSimplePath MakeParsedSimplePath(const std::string& prim_part,
+                                      const std::string& prop_part);
+
+int CompareParsedPaths(const ParsedSimplePath& lhs,
+                       const ParsedSimplePath& rhs);
+
+///
 /// Sort a vector of paths in-place using OpenUSD-compatible ordering
 ///
 /// This modifies the input vector to be in sorted order.

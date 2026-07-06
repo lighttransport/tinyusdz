@@ -599,8 +599,12 @@ bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err) {
   return true;
 }
 
-bool VariantSelectPrimSpec(
-    PrimSpec &dst, const PrimSpec &src,
+// Shared implementation. When `consume_src` is true, `src` may be moved from
+// (the caller owns it and discards it immediately after) — this removes one
+// full PrimSpec-subtree deep copy per variant prim and all copies for prims
+// without variants.
+static bool VariantSelectPrimSpecImpl(
+    PrimSpec &dst, PrimSpec &src, bool consume_src,
     const std::map<std::string, std::string> &variant_selection,
     std::string *warn, std::string *err) {
   if (src.metas().variants && src.metas().variantSets) {
@@ -610,7 +614,11 @@ bool VariantSelectPrimSpec(
       (*warn) +=
           "`variants` are authored, but `variantSets` is not authored.\n";
     }
-    dst = src;
+    if (consume_src) {
+      dst = std::move(src);
+    } else {
+      dst = src;
+    }
     dst.metas().variants.reset();
     dst.metas().variantSets.reset();
     dst.variantSets().clear();
@@ -620,14 +628,22 @@ bool VariantSelectPrimSpec(
       (*warn) +=
           "`variantSets` are authored, but `variants` is not authored.\n";
     }
-    dst = src;
+    if (consume_src) {
+      dst = std::move(src);
+    } else {
+      dst = src;
+    }
     dst.metas().variants.reset();
     dst.metas().variantSets.reset();
     dst.variantSets().clear();
     // nothing to do.
     return true;
   } else {
-    dst = src;
+    if (consume_src) {
+      dst = std::move(src);
+    } else {
+      dst = src;
+    }
     return true;
   }
 
@@ -643,7 +659,9 @@ bool VariantSelectPrimSpec(
 
   dst = src;
 
-  PrimSpec ps = src;  // temp PrimSpec. Init with src.
+  // temp PrimSpec. Init with src (moved when the caller donates src; from
+  // here on only `dst`/`ps` are read).
+  PrimSpec ps = consume_src ? PrimSpec(std::move(src)) : PrimSpec(src);
 
   // Evaluate from the last element.
   for (int64_t i = int64_t(allVariantSetNames.size()) - 1; i >= 0; i--) {
@@ -785,6 +803,24 @@ bool VariantSelectPrimSpec(
   dst.variantSets().clear();
 
   return true;
+}
+
+bool VariantSelectPrimSpec(
+    PrimSpec &dst, const PrimSpec &src,
+    const std::map<std::string, std::string> &variant_selection,
+    std::string *warn, std::string *err) {
+  // Const source: the impl never mutates src when consume_src is false.
+  return VariantSelectPrimSpecImpl(dst, const_cast<PrimSpec &>(src),
+                                   /* consume_src */ false, variant_selection,
+                                   warn, err);
+}
+
+bool VariantSelectPrimSpec(
+    PrimSpec &dst, PrimSpec &&src,
+    const std::map<std::string, std::string> &variant_selection,
+    std::string *warn, std::string *err) {
+  return VariantSelectPrimSpecImpl(dst, src, /* consume_src */ true,
+                                   variant_selection, warn, err);
 }
 
 }  // namespace tinyusdz
