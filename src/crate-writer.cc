@@ -297,8 +297,10 @@ bool CrateWriter::AddSpec(const Path& path,
   // Check for duplicate specs with same path (USD Crate requires each path to
   // appear only once). O(1) via spec_path_set_ — a prior implementation did an
   // O(n^2) linear scan of spec_data_, each step allocating two full_path_name()
-  // strings, which dominated write time for spec-dense scenes.
-  if (spec_path_set_.count(path)) {
+  // strings, which dominated write time for spec-dense scenes. Single
+  // emplace (one Path hash) doubles as the membership test; rolled back on
+  // the rare memory-limit failure below.
+  if (!spec_path_set_.emplace(path, 1u).second) {
     return true;  // Silently skip duplicate (not an error)
   }
 
@@ -314,6 +316,7 @@ bool CrateWriter::AddSpec(const Path& path,
 
   // Check memory limit
   if (WouldExceedMemoryLimit(estimated_memory)) {
+    spec_path_set_.erase(path);  // roll back the membership insert above
     if (err) {
       *err = "Adding spec would exceed memory limit of " +
              std::to_string(options_.max_memory_bytes / (1024*1024)) + " MB. " +
@@ -337,7 +340,6 @@ bool CrateWriter::AddSpec(const Path& path,
   }
 
   spec_data_.push_back(std::move(spec_data));
-  spec_path_set_.emplace(path, 1u);
   memory_used_estimate_ += estimated_memory;
 
   // NOTE: no GetOrCreatePath(path) here — Finalize() clears and rebuilds the
@@ -346,6 +348,45 @@ bool CrateWriter::AddSpec(const Path& path,
 
   return true;
 }
+
+namespace {
+
+// Flattened crate-path sort key; plain byte comparison of two keys reproduces
+// pathlib::CompareParsedPaths ordering (see the sort in Finalize).
+std::string BuildCratePathSortKey(const tinyusdz::Path& path) {
+  const std::string& prim = path.prim_part();
+  const std::string& prop = path.prop_part();
+  std::string key;
+  key.reserve(prim.size() + prop.size() + 2);
+  const bool is_abs = !prim.empty() && (prim[0] == '/');
+  key.push_back(is_abs ? '\x01' : '\x7e');
+  // Join prim elements with '\x02', skipping empty segments (mirrors
+  // ParsePath). Root "/" contributes a single empty element, i.e. nothing
+  // beyond the marker — which sorts before every non-root absolute path.
+  size_t start = is_abs ? 1 : 0;
+  bool first = true;
+  while (start < prim.size()) {
+    size_t end = prim.find('/', start);
+    if (end == std::string::npos) {
+      end = prim.size();
+    }
+    if (end > start) {
+      if (!first) {
+        key.push_back('\x02');
+      }
+      key.append(prim, start, end - start);
+      first = false;
+    }
+    start = end + 1;
+  }
+  if (!prop.empty()) {
+    key.push_back('\x01');
+    key.append(prop);
+  }
+  return key;
+}
+
+}  // namespace
 
 bool CrateWriter::Finalize(std::string* err) {
   if (!is_open_) {
@@ -379,23 +420,26 @@ bool CrateWriter::Finalize(std::string* err) {
   //
   // PseudoRoot ("/") MUST be first (required by USD spec)
   //
-  // Schwartzian transform: parse each spec path once and sort an index
-  // array — ComparePaths() re-parses both paths per comparison, which made
-  // this sort the dominant cost of writing large flattened stages.
+  // Schwartzian transform with FLATTENED string keys: the crate path order
+  // (absolute-first, element-wise lexicographic with shorter-prefix-first,
+  // properties before children, property names bytewise) is encoded into a
+  // single byte string per path — '\x01' marks absolute (relative gets
+  // '\x7e' so it sorts after every absolute path), elements join with
+  // '\x02' and the property appends after '\x01' ('\x01' < '\x02' puts
+  // /A.prop before /A/B). Plain std::string comparison then reproduces
+  // pathlib::CompareParsedPaths exactly, without re-parsing per comparison.
   {
     const size_t n = spec_data_.size();
-    std::vector<pathlib::ParsedSimplePath> keys;
-    keys.reserve(n);
-    for (const auto& sd : spec_data_) {
-      keys.push_back(pathlib::MakeParsedSimplePath(sd.path.prim_part(),
-                                                   sd.path.prop_part()));
+    std::vector<std::string> keys(n);
+    for (size_t i = 0; i < n; i++) {
+      keys[i] = BuildCratePathSortKey(spec_data_[i].path);
     }
     std::vector<uint32_t> order(n);
     for (size_t i = 0; i < n; i++) {
       order[i] = uint32_t(i);
     }
     std::sort(order.begin(), order.end(), [&keys](uint32_t a, uint32_t b) {
-      return pathlib::CompareParsedPaths(keys[a], keys[b]) < 0;
+      return keys[a] < keys[b];
     });
     std::vector<SpecData> sorted_specs;
     sorted_specs.reserve(n);
@@ -923,17 +967,62 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     sorted_paths.emplace_back(path, kv.second);
   }
 
-  // Sort using Path::operator< (lexicographic USD path comparison)
-  std::sort(sorted_paths.begin(), sorted_paths.end(),
-    [](const std::pair<Path, crate::PathIndex>& a,
-       const std::pair<Path, crate::PathIndex>& b) {
-      return a.first < b.first;
-    });
+  // Sort using Path::operator< (lexicographic USD path comparison).
+  // Path::LessThan builds both full path names per comparison; for the
+  // valid+absolute paths the writer produces, its ordering equals a plain
+  // byte comparison of the full path names — so precompute those once and
+  // sort by them. Any invalid/relative path (never produced by the spec
+  // converters) falls back to the original comparator.
+  {
+    bool all_simple = true;
+    for (const auto& sp : sorted_paths) {
+      if (!sp.first.is_valid() || !sp.first.is_absolute_path()) {
+        all_simple = false;
+        break;
+      }
+    }
+    if (all_simple) {
+      const size_t n = sorted_paths.size();
+      std::vector<std::string> fulls(n);
+      for (size_t i = 0; i < n; i++) {
+        fulls[i] = sorted_paths[i].first.full_path_name();
+      }
+      std::vector<uint32_t> order(n);
+      for (size_t i = 0; i < n; i++) order[i] = uint32_t(i);
+      std::sort(order.begin(), order.end(), [&fulls](uint32_t a, uint32_t b) {
+        return fulls[a] < fulls[b];
+      });
+      std::vector<std::pair<Path, crate::PathIndex>> sorted2;
+      sorted2.reserve(n);
+      for (size_t i = 0; i < n; i++) {
+        sorted2.push_back(std::move(sorted_paths[order[i]]));
+      }
+      sorted_paths = std::move(sorted2);
+    } else {
+      std::sort(sorted_paths.begin(), sorted_paths.end(),
+        [](const std::pair<Path, crate::PathIndex>& a,
+           const std::pair<Path, crate::PathIndex>& b) {
+          return a.first < b.first;
+        });
+    }
+  }
 
   size_t num_encoded_paths = sorted_paths.size();
   if (num_encoded_paths == 0) {
     if (err) *err = "No paths to encode";
     return false;
+  }
+
+  // Precompute per-entry strings the tree builder consults repeatedly:
+  // get_parent_path().full_path_name() allocated a Path plus a string per
+  // check (2-3x per node) — now one parent string per node.
+  std::vector<std::string> parent_fulls(num_encoded_paths);
+  for (size_t i = 0; i < num_encoded_paths; i++) {
+    parent_fulls[i] = sorted_paths[i].first.get_parent_path().full_path_name();
+  }
+  std::vector<std::string> node_fulls(num_encoded_paths);
+  for (size_t i = 0; i < num_encoded_paths; i++) {
+    node_fulls[i] = sorted_paths[i].first.full_path_name();
   }
 
   // Build the three compressed arrays directly from sorted paths
@@ -983,16 +1072,14 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       if (nextIdx != nextSubtreeIdx && nextIdx < num_encoded_paths) {
         if (sorted_paths[pIdx].first.is_root_path()) {
           has_child = true;
-        } else if (sorted_paths[nextIdx].first.get_parent_path().full_path_name() ==
-                   sorted_paths[pIdx].first.full_path_name()) {
+        } else if (parent_fulls[nextIdx] == node_fulls[pIdx]) {
           has_child = true;
         }
       }
 
       if (nextSubtreeIdx != endIdx && nextSubtreeIdx < num_encoded_paths) {
         if (!sorted_paths[pIdx].first.is_root_path() &&
-            sorted_paths[nextSubtreeIdx].first.get_parent_path().full_path_name() ==
-            sorted_paths[pIdx].first.get_parent_path().full_path_name()) {
+            parent_fulls[nextSubtreeIdx] == parent_fulls[pIdx]) {
           has_sibling = true;
         }
       }

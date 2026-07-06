@@ -1358,19 +1358,20 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             primspec.metas().arc_origins.push_back(origin);
           }
 
-          // `inherits` op
-          if (!InheritPrimSpec(primspec, prepared_src, warn, err)) {
+          // `inherits` op (prepared_src is donated — capture what the
+          // Model-type fixup below needs first)
+          const std::string prepared_typeName = prepared_src.typeName();
+          if (!InheritPrimSpec(primspec, std::move(prepared_src), warn, err)) {
             PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
                                               reference.asset_path));
           }
 
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-            if (prepared_src.typeName().empty() ||
-                prepared_src.typeName() == "Model") {
+            if (prepared_typeName.empty() || prepared_typeName == "Model") {
               // pass
             } else {
-              primspec.typeName() = prepared_src.typeName();
+              primspec.typeName() = prepared_typeName;
             }
           }
 
@@ -1626,19 +1627,20 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied arc paths.
           PropagateImpliedArcPaths(prepared_src, primspec);
 
-          // `inherits` op
-          if (!InheritPrimSpec(primspec, prepared_src, warn, err)) {
+          // `inherits` op (prepared_src is donated — capture what the
+          // Model-type fixup below needs first)
+          const std::string prepared_typeName = prepared_src.typeName();
+          if (!InheritPrimSpec(primspec, std::move(prepared_src), warn, err)) {
             PUSH_ERROR_AND_RETURN(
                 fmt::format("Failed to payload layer `{}`", asset_path));
           }
 
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-            if (prepared_src.typeName().empty() ||
-                prepared_src.typeName() == "Model") {
+            if (prepared_typeName.empty() || prepared_typeName == "Model") {
               // pass
             } else {
-              primspec.typeName() = prepared_src.typeName();
+              primspec.typeName() = prepared_typeName;
             }
           }
 
@@ -2418,7 +2420,7 @@ bool CompositeInherits(const Layer &in_layer, Layer *composited_layer,
 
 // Forward declare InheritPrimSpecImpl — reused by Specializes (same semantics)
 namespace detail {
-static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
+static bool InheritPrimSpecImpl(PrimSpec &dst, PrimSpec &src, bool consume_src,
                                 std::string *warn, std::string *err);
 }  // namespace detail
 
@@ -2469,7 +2471,9 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
             "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
       }
 
-      if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
+      if (!detail::InheritPrimSpecImpl(primspec,
+                                       const_cast<PrimSpec &>(*src_ps),
+                                       /* consume_src */ false, warn, err)) {
         visited.erase(key);
         return false;
       }
@@ -2496,7 +2500,10 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
             if (!visited.count(key)) {
               visited.insert(key);
               DCOUT("Applying implied specialize from " << spPath.prim_part());
-              if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
+              if (!detail::InheritPrimSpecImpl(primspec,
+                                               const_cast<PrimSpec &>(*src_ps),
+                                               /* consume_src */ false, warn,
+                                               err)) {
                 visited.erase(key);
                 return false;
               }
@@ -2680,7 +2687,10 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
 //
 // TODO: Support nested inherits?
 //
-static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
+// When `consume_src` is true, `src` may be moved from (callers pass a
+// discardable prepared arc PrimSpec) — removes one full subtree deep copy
+// per composed reference/payload arc.
+static bool InheritPrimSpecImpl(PrimSpec &dst, PrimSpec &src, bool consume_src,
                                 std::string *warn, std::string *err) {
   DCOUT("inherit begin\n");
   (void)warn;
@@ -2689,7 +2699,9 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
 
   // Create PrimSpec from `src`,
   // Then override it with `dst`
-  PrimSpec ps = src;  // copy
+  PrimSpec ps = consume_src ? PrimSpec(std::move(src)) : PrimSpec(src);
+  // NOTE: `src` must not be read below (may be moved from); `ps` holds its
+  // content verbatim at this point.
 
   // Keep PrimSpec name from `dst`
   ps.name() = dst.name();
@@ -2700,7 +2712,7 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   if (!dst.typeName().empty()) {
     // dst has a typeName -- if dst is defining (def/class), it wins
     ps.typeName() = dst.typeName();
-  } else if (dst.specifier() == Specifier::Over && !src.typeName().empty()) {
+  } else if (dst.specifier() == Specifier::Over && !ps.typeName().empty()) {
     // dst is an over with no typeName: inherit from src (the definition)
     // ps.typeName() already has src's typeName from the copy
   }
@@ -2820,7 +2832,15 @@ bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 
 bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                      std::string *err) {
-  return detail::InheritPrimSpecImpl(dst, src, warn, err);
+  // Const source: the impl never mutates src when consume_src is false.
+  return detail::InheritPrimSpecImpl(dst, const_cast<PrimSpec &>(src),
+                                     /* consume_src */ false, warn, err);
+}
+
+bool InheritPrimSpec(PrimSpec &dst, PrimSpec &&src, std::string *warn,
+                     std::string *err) {
+  return detail::InheritPrimSpecImpl(dst, src, /* consume_src */ true, warn,
+                                     err);
 }
 
 
