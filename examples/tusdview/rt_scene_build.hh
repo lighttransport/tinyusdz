@@ -17,6 +17,18 @@
 
 namespace tusdview {
 
+// 20 vec4 per light: 10 rows of packed DrawLightCPU params, 3 rows holding
+// the world->environment rotation (rows of R^T; dome env sampling on miss),
+// and 7 rows carrying the order-2 SH irradiance (27 floats, coeff-major RGB;
+// the RT surface ambient term).
+constexpr int kRtLightParamFloats = 80;
+
+// Pack a DrawLightCPU into the vec4-friendly RT light layout. `mappedEnvmapTexture`
+// is backend-specific: HostScene maps to its compact RT texture table, while
+// raster/RT backends may pass their own texture slot id.
+void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
+                       float* dst);
+
 // Live progress for a (possibly background-threaded) scene build. Polled by the
 // UI to show a responsive progress overlay during the multi-second build.
 struct BuildProgress {
@@ -38,7 +50,7 @@ struct BuildProgress {
 struct Inst {
   float w2o[12];   // world->object (affine inverse of o2w)
   float o2w[12];   // object->world (row-major 3x4)
-  float tint[3];   // per-instance color
+  float tint[4];   // per-instance color/opacity
   int blasRoot;    // global node index of this instance's BLAS root
   int instId;      // stable instance id (instance-id AOV)
 };
@@ -75,11 +87,22 @@ struct HostScene {
   std::vector<Node> tlas;       // TLAS nodes (root at 0)
   std::vector<Inst> instances;  // leaf-order (matches the TLAS)
   std::vector<float> matPbr;
+  // 56 floats/material: vec4-friendly LightRT/OpenPBR constant fallback.
+  // See lightrt_mtlx_bridge.hh PackLightRtOpenPBR.
+  std::vector<float> matLightRt;
   std::vector<int> matTex;  // 4 ints/material: base, metalRough, normal, emissive
+  // UV affine rows, scale/bias vectors and scalar channel selectors. See
+  // lightrt_mtlx_bridge.hh PackRtMaterialTextureParams.
+  std::vector<float> matTexParam;
   int numMats = 0;
   std::vector<uint8_t> texels;
   std::vector<HostTextureDesc> textures;
   int numTextures = 0;
+  // 40 floats/light: type/flags/texture ids, transform basis, derived radiance,
+  // shape size, shaping, shadow, and dome metadata. This is uploaded by RT
+  // backends when full USD light evaluation lands.
+  std::vector<float> lightParams;
+  int numLights = 0;
   std::vector<float> volDens;
   std::vector<HostVolParam> volParams;
   int numVols = 0;

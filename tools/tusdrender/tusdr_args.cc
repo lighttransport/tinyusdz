@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <string>
 
 #include "asset-resolution.hh"
@@ -66,6 +67,29 @@ bool ParseColor(const std::string &s, Vec3 *out) {
   return true;
 }
 
+bool ParseLargeSceneProfile(const std::string &s,
+                            Options::LargeSceneProfile *out) {
+  if (!out) return false;
+  std::string v = s;
+  for (char &c : v) {
+    c = char(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (v == "off") {
+    *out = Options::LargeSceneProfile::Off;
+  } else if (v == "auto") {
+    *out = Options::LargeSceneProfile::Auto;
+  } else if (v == "caldera") {
+    *out = Options::LargeSceneProfile::Caldera;
+  } else if (v == "island") {
+    *out = Options::LargeSceneProfile::Island;
+  } else if (v == "alab") {
+    *out = Options::LargeSceneProfile::ALab;
+  } else {
+    return false;
+  }
+  return true;
+}
+
 void PrintUsage(const char *prog) {
   std::cout
       << "tusdrender - CPU preview raytrace renderer for USD\n\n"
@@ -90,6 +114,8 @@ void PrintUsage(const char *prog) {
       << "  -noShadows             Disable hard shadow rays.\n"
       << "  -smooth                Interpolate authored normals (smooth shading)\n"
       << "                         instead of per-face geometric normals.\n"
+      << "  -ibl <default|envmap>  DomeLight IBL precompute backend: the built-in\n"
+      << "                         reference, or the vendored envmap library.\n"
       << "  -noDisplace            Disable UsdPreviewSurface displacement.\n"
       << "  -displaceScale <f>     Global displacement multiplier (default 1.0).\n"
       << "  -rtPreview             Use mmap zero-copy mesh preview path for large USDC.\n"
@@ -135,7 +161,18 @@ void PrintUsage(const char *prog) {
       << "                         non-district overlays; 0=off, default 2000000).\n"
       << "  -lodContainer <name>   Namespace prim whose children are LOD districts\n"
       << "                         (default mp_wz_island_geo, the Caldera layout).\n"
+      << "  -largeSceneProfile off|auto|caldera|island|alab\n"
+      << "                         Resolve a Vulkan large-scene preset over existing\n"
+      << "                         backend/LOD/memory knobs. Explicit CLI flags win;\n"
+      << "                         texture resize/compression flags are unchanged.\n"
       << "  -legacyLoad            Use the legacy eager loader (next is default).\n"
+      << "  -materialResolver legacy|tydra-next|compare\n"
+      << "                         next-loader material resolver. legacy is the\n"
+      << "                         current hand-rolled path; tydra-next is opt-in;\n"
+      << "                         compare renders legacy and reports differences.\n"
+      << "  -materialShading legacy|lightrt-bsdf\n"
+      << "                         CPU material shading path. lightrt-bsdf is an\n"
+      << "                         experimental opt-in direct-light BSDF path.\n"
 #ifdef TINYUSDZ_WITH_QJS
       << "  -js <file.js>          Drive rendering from a JavaScript script.\n"
       << "                         Scene + BVH stay resident across renders\n"
@@ -162,6 +199,10 @@ void PrintUsage(const char *prog) {
       << "  -vkInstanced          -vkr + a true two-level GPU TLAS (one BLAS per\n"
       << "                        prototype, shared across instances; saves VRAM on\n"
       << "                        instanced scenes). Falls back to flat if no shares.\n"
+      << "  -gpuShade cpu|preview GPU backend shading mode. cpu preserves the current\n"
+      << "                        reference CPU shade-after-hit path; preview reserves\n"
+      << "                        the fast GPU-preview shader path and currently falls\n"
+      << "                        back to cpu until that shader path is enabled.\n"
       << "  -d3d                  Use the Direct3D 11 compute backend (Windows).\n"
       << "  -hip                  Use the HIP/ROCm GPU-compute backend (AMD).\n"
       << "  -texMaxSize <N>       Downsize loaded textures whose longest edge exceeds N.\n"
@@ -210,6 +251,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       const char *v = need_value(a.c_str());
       if (!v) return false;
       opt->camera = v;
+      opt->camera_explicit = true;
     } else if (a == "-fitScale" || a == "--fitScale") {
       const char *v = need_value(a.c_str());
       if (!v) return false;
@@ -282,6 +324,17 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
     } else if (a == "-smooth" || a == "--smooth") {
       opt->smooth = true;
+    } else if (a == "-ibl" || a == "--ibl") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      if (std::string(v) == "default") {
+        opt->ibl_envmap = false;
+      } else if (std::string(v) == "envmap") {
+        opt->ibl_envmap = true;
+      } else {
+        std::cerr << "-ibl must be default or envmap.\n";
+        return false;
+      }
     } else if (a == "-noDisplace" || a == "--noDisplace") {
       opt->displace = false;
     } else if (a == "-texMaxSize" || a == "--texMaxSize") {
@@ -334,8 +387,35 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
                a == "-mmapRt" || a == "--mmapRt") {
       opt->rt_preview = true;
       opt->direct_prims = false;
+      opt->backend_explicit = true;
     } else if (a == "-legacyLoad" || a == "--legacyLoad") {
       opt->legacy_load = true;
+    } else if (a == "-materialResolver" || a == "--materialResolver") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode = v;
+      if (mode == "legacy") {
+        opt->material_resolver = Options::MaterialResolver::Legacy;
+      } else if (mode == "tydra-next") {
+        opt->material_resolver = Options::MaterialResolver::TydraNext;
+      } else if (mode == "compare") {
+        opt->material_resolver = Options::MaterialResolver::Compare;
+      } else {
+        std::cerr << "Invalid material resolver. Expected legacy, tydra-next, or compare.\n";
+        return false;
+      }
+    } else if (a == "-materialShading" || a == "--materialShading") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode = v;
+      if (mode == "legacy") {
+        opt->material_shading = Options::MaterialShading::Legacy;
+      } else if (mode == "lightrt-bsdf") {
+        opt->material_shading = Options::MaterialShading::LightRtBsdf;
+      } else {
+        std::cerr << "Invalid material shading. Expected legacy or lightrt-bsdf.\n";
+        return false;
+      }
     } else if (a == "-progress" || a == "--progress") {
       opt->progress = true;
     } else if (a == "-quality" || a == "--quality") {
@@ -367,8 +447,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->max_mem_gib = g;
+      opt->max_mem_explicit = true;
     } else if (a == "-lodStream" || a == "--lodStream") {
       opt->lod_stream = true;
+      opt->lod_stream_explicit = true;
     } else if (a == "-maxVram" || a == "--maxVram") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
@@ -378,8 +460,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->max_vram_gib = g;
+      opt->max_vram_explicit = true;
     } else if (a == "-rtLod" || a == "--rtLod") {
       opt->rt_lod = true;
+      opt->rt_lod_explicit = true;
     } else if (a == "-rtLodNoProxy" || a == "--rtLodNoProxy") {
       opt->rt_lod_proxy = false;
     } else if (a == "-rtLodFrustumCull" || a == "--rtLodFrustumCull") {
@@ -393,6 +477,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->rt_lod_full_px = float(g);
+      opt->rt_lod_full_px_explicit = true;
     } else if (a == "-rtLodCullPx" || a == "--rtLodCullPx") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
@@ -402,6 +487,7 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->rt_lod_cull_px = float(g);
+      opt->rt_lod_cull_px_explicit = true;
     } else if (a == "-lodDistrictMem" || a == "--lodDistrictMem") {
       const char *v = need_value(a.c_str());
       char *end = nullptr;
@@ -518,19 +604,53 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
         return false;
       }
       opt->variant_overrides[s.substr(0, eq)] = s.substr(eq + 1);
+    } else if (a == "-largeSceneProfile" || a == "--largeSceneProfile" ||
+               a == "-large-scene-profile" || a == "--large-scene-profile") {
+      const char *v = need_value(a.c_str());
+      if (!v || !ParseLargeSceneProfile(v, &opt->large_scene_profile)) {
+        std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
+        return false;
+      }
+    } else if (a.rfind("--largeSceneProfile=", 0) == 0) {
+      if (!ParseLargeSceneProfile(a.substr(20), &opt->large_scene_profile)) {
+        std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
+        return false;
+      }
+    } else if (a.rfind("--large-scene-profile=", 0) == 0) {
+      if (!ParseLargeSceneProfile(a.substr(22), &opt->large_scene_profile)) {
+        std::cerr << "-largeSceneProfile must be off, auto, caldera, island, or alab.\n";
+        return false;
+      }
     } else if (a == "-vk" || a == "--vk") {
       opt->vulkan = true;
+      opt->backend_explicit = true;
     } else if (a == "-vkr" || a == "--vkr") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
+      opt->backend_explicit = true;
     } else if (a == "-vkInstanced" || a == "--vkInstanced") {
       opt->vulkan = true;
       opt->vulkan_rt = true;
       opt->vulkan_instanced = true;
+      opt->backend_explicit = true;
+    } else if (a == "-gpuShade" || a == "--gpuShade") {
+      const char *v = need_value(a.c_str());
+      if (!v) return false;
+      std::string mode = v;
+      if (mode == "cpu") {
+        opt->gpu_shade = Options::GpuShadeMode::Cpu;
+      } else if (mode == "preview") {
+        opt->gpu_shade = Options::GpuShadeMode::Preview;
+      } else {
+        std::cerr << "-gpuShade must be cpu or preview.\n";
+        return false;
+      }
     } else if (a == "-d3d" || a == "--d3d" || a == "-dx" || a == "--dx") {
       opt->use_d3d = true;
+      opt->backend_explicit = true;
     } else if (a == "-hip" || a == "--hip") {
       opt->hip = true;
+      opt->backend_explicit = true;
     } else if (a == "-js" || a == "--js") {
       const char *v = need_value(a.c_str());
       if (!v) {

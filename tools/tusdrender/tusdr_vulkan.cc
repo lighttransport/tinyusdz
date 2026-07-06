@@ -42,6 +42,7 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
 
   uint32_t vk_caps = lrt_vk_engine_caps(vk);
   bool has_rt = (vk_caps & LRT_VK_CAP_RAY_QUERY) != 0;
+  const bool use_hw_rt = has_rt && opt.vulkan_rt;
   std::cerr << "Vulkan device: " << lrt_vk_engine_device_name(vk) << " ("
             << (lrt_vk_device_local_bytes(1) >> 20) << " MiB device-local)\n";
   std::cerr << "Vulkan caps: compute=1"
@@ -51,9 +52,9 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
             << "\n";
 
   GpuTriScene s;
-  const bool use_rt = has_rt && opt.vulkan_rt;
   auto t0 = std::chrono::steady_clock::now();
-  if (!BuildGpuTriScene(opt, base_colors, geos, &s, /*build_bvh=*/!use_rt)) {
+  if (!BuildGpuTriScene(base_colors, geos, opt.threads, !use_hw_rt, &s,
+                        opt.quality)) {
     lrt_vk_engine_destroy(vk);
     return false;
   }
@@ -64,14 +65,24 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   const int w = opt.width > 0 ? opt.width : 960;
   const int h = height;
   const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "Vulkan", &nrays)) {
+    if (s.scene) lrt_tri_scene_free(s.scene);
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  const uint32_t ray_count = uint32_t(nrays);
   std::vector<lrt_ray> rays;
   GenerateCameraRays(camera, w, h, spp, &rays);
 
-  std::vector<lrt_hit> hits(rays.size());
+  std::vector<lrt_hit> hits(nrays);
   lrt_result trerr = LRT_RESULT_OK;
   int traced = -1;
   double as_build_s = 0.0, trace_s = 0.0;
-  if (use_rt) {
+  bool used_hw_rt = false;
+  bool ray_query_fallback = false;
+  const bool force_vkr_fallback = std::getenv("TUSDR_FORCE_VKR_FALLBACK") != nullptr;
+  if (use_hw_rt) {
     // Build the ray-query acceleration structure directly from the indexed mesh
     // (the GPU builds a VK_INDEX_TYPE_UINT32 BLAS, so no de-indexing needed);
     // primitiveIndex == triangle build order == caller index, matching the
@@ -83,20 +94,40 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
     as_build_s = SecsSince(t0);
     if (rtx) {
       t0 = std::chrono::steady_clock::now();
-      traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), uint32_t(rays.size()),
-                                      hits.data(), &trerr);
+      if (force_vkr_fallback) {
+        trerr = LRT_RESULT_UNSUPPORTED;
+      } else {
+        traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), ray_count,
+                                        hits.data(), &trerr);
+      }
       trace_s = SecsSince(t0);
       lrt_vk_rtx_scene_free(vk, rtx);
     }
+    if (traced >= 0) {
+      used_hw_rt = true;
+    } else {
+      std::cerr << "Vulkan ray-query trace failed (rc=" << trerr
+                << "); falling back to compute trace.\n";
+      t0 = std::chrono::steady_clock::now();
+      if (!BuildGpuCpuScene(opt.threads, &s, opt.quality)) {
+        lrt_vk_engine_destroy(vk);
+        return false;
+      }
+      trerr = LRT_RESULT_OK;
+      traced = lrt_vk_trace_scene(vk, s.scene, rays.data(), ray_count,
+                                  hits.data(), &trerr);
+      trace_s = SecsSince(t0);
+      ray_query_fallback = traced >= 0;
+    }
   } else {
     t0 = std::chrono::steady_clock::now();
-    traced = lrt_vk_trace_scene(vk, s.scene, rays.data(), uint32_t(rays.size()),
+    traced = lrt_vk_trace_scene(vk, s.scene, rays.data(), ray_count,
                                 hits.data(), &trerr);
     trace_s = SecsSince(t0);
   }
   if (traced < 0) {
     std::cerr << "Vulkan trace failed (rc=" << trerr << ").\n";
-    lrt_tri_scene_free(s.scene);
+    if (s.scene) lrt_tri_scene_free(s.scene);
     lrt_vk_engine_destroy(vk);
     return false;
   }
@@ -105,16 +136,23 @@ bool RunVulkanLightRT(const Options &opt, const std::vector<Vec3> &base_colors,
   bool ok = ShadeAndWriteImage(opt, s, rays, hits, w, h, spp);
   if (opt.stats) {
     std::cerr << "[gpu-stats] flatten+bvh " << flatten_s << " s, ";
-    if (use_rt) std::cerr << "as-build " << as_build_s << " s, ";
+    if (use_hw_rt) std::cerr << "as-build " << as_build_s << " s, ";
     std::cerr << "trace " << trace_s << " s, shade+write " << SecsSince(t0)
               << " s\n";  // compute-path trace includes the BVH upload
   }
   if (ok) {
     std::cerr << "triangles: " << s.ntris << " (" << geos.size() << " meshes)\n";
-    std::cerr << "backend: LightRT VK ("
-              << (use_rt ? "ray_query" : "compute trace") << ")\n";
+    std::cerr << "backend: LightRT VK (";
+    if (used_hw_rt) {
+      std::cerr << "ray_query, indexed Vulkan AS, CPU BVH skipped";
+    } else if (ray_query_fallback) {
+      std::cerr << "compute trace, ray_query fallback";
+    } else {
+      std::cerr << "compute trace";
+    }
+    std::cerr << ")\n";
   }
-  lrt_tri_scene_free(s.scene);
+  if (s.scene) lrt_tri_scene_free(s.scene);
   lrt_vk_engine_destroy(vk);
   return ok;
 }
@@ -183,9 +221,15 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
   const int w = opt.width > 0 ? opt.width : 960;
   const int h = height;
   const int spp = std::max(1, opt.samples);
+  size_t nrays = 0;
+  if (!ValidateGpuFrameSize(w, h, spp, "Vulkan instanced", &nrays)) {
+    lrt_vk_engine_destroy(vk);
+    return false;
+  }
+  const uint32_t ray_count = uint32_t(nrays);
   std::vector<lrt_ray> rays;
   GenerateCameraRays(camera, w, h, spp, &rays);
-  std::vector<InstSampleHit> decoded(rays.size());
+  std::vector<InstSampleHit> decoded(nrays);
 
   lrt_result builderr = LRT_RESULT_OK, trerr = LRT_RESULT_OK;
   int traced = -1;
@@ -215,7 +259,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
     std::vector<lrt_hit_wide> hits(rays.size());
     t0 = std::chrono::steady_clock::now();
     traced = lrt_vk_rtx_scene_trace_wide(vk, rtx, rays.data(),
-                                         uint32_t(rays.size()), hits.data(), &trerr);
+                                         ray_count, hits.data(), &trerr);
     trace_s = SecsSince(t0);
     lrt_vk_rtx_scene_free(vk, rtx);
     if (traced >= 0)
@@ -242,7 +286,7 @@ bool RunVulkanLightRTInstanced(const Options &opt, GpuInstancedScene &scene,
     scene.stride = stride;
     std::vector<lrt_hit> hits(rays.size());
     t0 = std::chrono::steady_clock::now();
-    traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), uint32_t(rays.size()),
+    traced = lrt_vk_rtx_scene_trace(vk, rtx, rays.data(), ray_count,
                                     hits.data(), &trerr);
     trace_s = SecsSince(t0);
     lrt_vk_rtx_scene_free(vk, rtx);

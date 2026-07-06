@@ -107,6 +107,10 @@ class RenderSceneConverter {
   bool ConvertMesh(const UsdPrim& prim, RenderMesh* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
+  bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
+                       const UsdPrim& prim,
+                       RenderMaterial* out,
+                       RenderScene* scene);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);
   bool ConvertCamera(const UsdPrim& prim, RenderCamera* out);
   bool ConvertSkeleton(const UsdPrim& prim, Skeleton* out);
@@ -123,7 +127,8 @@ class RenderSceneConverter {
   void BuildNodeHierarchy(const RenderExtractResult& extracted, RenderScene* scene);
   void AssignMaterialBindings(const ::tinyusdz::next::Stage& stage,
                               RenderScene* scene);
-  void AssignPointInstanceDrawMaterials(RenderScene* scene);
+  void AssignPointInstanceDrawMaterials(const ::tinyusdz::next::Stage& stage,
+                                        RenderScene* scene);
   void DuplicatePointInstanceMeshes(RenderScene* scene);
 
   // Extract mesh data directly into chunked arrays
@@ -142,10 +147,6 @@ class RenderSceneConverter {
   bool ComputeVertexNormals(RenderMesh* mesh);
 
   // Material extraction
-  bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
-                       const UsdPrim& prim,
-                       RenderMaterial* out,
-                       RenderScene* scene);
   bool ExtractPreviewSurface(const ::tinyusdz::next::Stage& stage,
                              const UsdPrim& shader_prim,
                              PreviewSurfaceShader* out,

@@ -77,6 +77,8 @@ struct PointInstancerData {
   std::vector<int64_t> ids;
   std::vector<int64_t> invisible_ids;
   std::vector<int64_t> inactive_ids;
+  std::vector<float> display_colors;
+  std::vector<float> display_opacities;
   std::vector<::tinyusdz::next::PointInstancerTransform> transforms;
   bool valid = false;
   std::string validation_error;

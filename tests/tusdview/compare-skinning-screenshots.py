@@ -7,6 +7,7 @@
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -22,6 +23,27 @@ def parse_args():
     parser.add_argument("--model", required=True, help="USD model with skeletal animation.")
     parser.add_argument("--out-dir", required=True, help="Directory for screenshots/report.")
     parser.add_argument("--backend", default="gl", choices=("gl", "vk", "vulkan"))
+    parser.add_argument("--rt", action="store_true", help="Enable Vulkan ray-query RT.")
+    parser.add_argument("--mode", default=None, help="Forward --mode NAME to tusdview.")
+    parser.add_argument("--vk-device", default=None, help="Forward --vk-device INDEX|NAME to tusdview.")
+    parser.add_argument("--headless", action="store_true", help="Use tusdview's Vulkan headless path.")
+    parser.add_argument(
+        "--skip-unavailable",
+        action="store_true",
+        help="Return 77 when the requested backend/RT/GPU skinning path is unavailable.",
+    )
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Environment variable to set for tusdview; may be repeated.",
+    )
+    parser.add_argument(
+        "--nvidia-offload",
+        action="store_true",
+        help="Set common PRIME render-offload environment variables for NVIDIA.",
+    )
     parser.add_argument("--frames", type=int, default=4)
     parser.add_argument("--time", type=float, default=12.0)
     parser.add_argument("--width", type=int, default=1280)
@@ -34,12 +56,42 @@ def parse_args():
     return parser.parse_args()
 
 
+class SkipTest(RuntimeError):
+    pass
+
+
 def fail(message):
     print(f"ERROR: {message}", file=sys.stderr)
     return 1
 
 
+def skip(message):
+    print(f"SKIP: {message}")
+    return 77
+
+
+def child_env(args):
+    env = os.environ.copy()
+    if args.nvidia_offload:
+        env.setdefault("__NV_PRIME_RENDER_OFFLOAD", "1")
+        env.setdefault("__GLX_VENDOR_LIBRARY_NAME", "nvidia")
+        env.setdefault(
+            "__EGL_VENDOR_LIBRARY_FILENAMES",
+            "/usr/share/glvnd/egl_vendor.d/10_nvidia.json",
+        )
+    for item in args.env:
+        if "=" not in item:
+            raise ValueError(f"--env expects NAME=VALUE, got {item!r}")
+        name, value = item.split("=", 1)
+        if not name:
+            raise ValueError("--env variable name must not be empty")
+        env[name] = value
+    return env
+
+
 def command_prefix(args):
+    if args.headless:
+        return []
     if args.no_xvfb or platform.system() != "Linux":
         return []
     xvfb_run = args.xvfb_run or shutil.which("xvfb-run")
@@ -50,8 +102,17 @@ def command_prefix(args):
 
 
 def run_viewer(args, mode, output_path):
-    cmd = command_prefix(args) + [
-        args.app,
+    prefix = command_prefix(args)
+    cmd = prefix + [args.app]
+    if args.headless:
+        cmd.append("--headless")
+    if args.rt:
+        cmd.append("--rt")
+    if args.vk_device:
+        cmd += ["--vk-device", args.vk_device]
+    if args.mode:
+        cmd += ["--mode", args.mode]
+    cmd += [
         "--backend",
         args.backend,
         "--frames",
@@ -64,17 +125,43 @@ def run_viewer(args, mode, output_path):
         str(output_path),
         args.model,
     ]
-    proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    proc = subprocess.run(
+        cmd, text=True, capture_output=True, check=False, env=child_env(args)
+    )
     log = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
+        if args.skip_unavailable and (
+            "Vulkan" in log
+            or "GLFW" in log
+            or "ray tracing is unavailable" in log
+            or "GPU skinning unsupported" in log
+        ):
+            raise SkipTest(
+                f"{mode} render unavailable with exit code {proc.returncode}"
+            )
         raise RuntimeError(
             f"{mode} render failed with exit code {proc.returncode}\n"
             f"command: {' '.join(cmd)}\n"
             f"stdout:\n{proc.stdout}\n"
             f"stderr:\n{proc.stderr}"
         )
+    if args.rt and "ray tracing is unavailable" in log:
+        if args.skip_unavailable:
+            raise SkipTest("Vulkan ray tracing unavailable")
+        raise RuntimeError(
+            f"{mode} render requested --rt, but ray tracing was unavailable\n"
+            f"command: {' '.join(cmd)}\n"
+            f"stdout:\n{proc.stdout}\n"
+            f"stderr:\n{proc.stderr}"
+        )
     expected = f"skinning: {mode.upper()}"
     if expected not in log:
+        if args.skip_unavailable and (
+            "GPU skinning unsupported" in log
+            or "requested GPU, using CPU" in log
+            or "ray tracing is unavailable" in log
+        ):
+            raise SkipTest(f"{mode} render did not use requested GPU skinning path")
         raise RuntimeError(
             f"{mode} render did not report '{expected}'\n"
             f"command: {' '.join(cmd)}\n"
@@ -199,6 +286,8 @@ def main():
         cpu_run = run_viewer(args, "cpu", cpu_path)
         gpu_run = run_viewer(args, "gpu", gpu_path)
         metrics = compare_ppm(cpu_path, gpu_path)
+    except SkipTest as exc:
+        return skip(str(exc))
     except Exception as exc:
         return fail(str(exc))
 
@@ -206,6 +295,10 @@ def main():
         "app": str(app),
         "model": str(model),
         "backend": args.backend,
+        "rt": args.rt,
+        "mode": args.mode,
+        "vk_device": args.vk_device,
+        "headless": args.headless,
         "frames": args.frames,
         "time": args.time,
         "thresholds": {

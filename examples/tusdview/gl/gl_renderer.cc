@@ -32,6 +32,11 @@ GLint GLWrap(int w) {
   }
 }
 
+void SetUvUniform(GLint loc0, GLint loc1, const DrawUvXformCPU& uv) {
+  glUniform3f(loc0, uv.m00, uv.m01, uv.tx);
+  glUniform3f(loc1, uv.m10, uv.m11, uv.ty);
+}
+
 GLenum GLCompressedFormat(DrawCompressedFormat format, bool srgb) {
   switch (format) {
     case DrawCompressedFormat::BC1:
@@ -40,6 +45,10 @@ GLenum GLCompressedFormat(DrawCompressedFormat format, bool srgb) {
     case DrawCompressedFormat::BC3:
       return srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
                   : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    case DrawCompressedFormat::BC7:
+      // GL_ARB_texture_compression_bptc (core since GL 4.2).
+      return srgb ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM
+                  : GL_COMPRESSED_RGBA_BPTC_UNORM;
     case DrawCompressedFormat::None:
     default:
       return 0;
@@ -113,6 +122,12 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uModel_ = glGetUniformLocation(program_, "uModel");
   uNormalMat_ = glGetUniformLocation(program_, "uNormalMatrix");
   uCameraPos_ = glGetUniformLocation(program_, "uCameraPos");
+  uLightDir_ = glGetUniformLocation(program_, "uLightDir");
+  uLightColor_ = glGetUniformLocation(program_, "uLightColor");
+  uHasIbl_ = glGetUniformLocation(program_, "uHasIbl");
+  uIblColor_ = glGetUniformLocation(program_, "uIblColor");
+  uEnvRotation_ = glGetUniformLocation(program_, "uEnvRotation");
+  uPrefilteredLods_ = glGetUniformLocation(program_, "uPrefilteredLods");
   uGeometricNormal_ = glGetUniformLocation(program_, "uGeometricNormal");
   uRenderMode_ = glGetUniformLocation(program_, "uRenderMode");
   uMatId_ = glGetUniformLocation(program_, "uMatId");
@@ -131,6 +146,8 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
   uEmissive_ = glGetUniformLocation(program_, "uEmissive");
   uAlpha_ = glGetUniformLocation(program_, "uAlpha");
+  uAlphaMode_ = glGetUniformLocation(program_, "uAlphaMode");
+  uAlphaCutoff_ = glGetUniformLocation(program_, "uAlphaCutoff");
   uHasBaseColorTex_ = glGetUniformLocation(program_, "uHasBaseColorTex");
   uHasMetalRoughTex_ = glGetUniformLocation(program_, "uHasMetalRoughTex");
   uHasNormalTex_ = glGetUniformLocation(program_, "uHasNormalTex");
@@ -139,6 +156,26 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uMetalRoughTexIsUdim_ = glGetUniformLocation(program_, "uMetalRoughTexIsUdim");
   uNormalTexIsUdim_ = glGetUniformLocation(program_, "uNormalTexIsUdim");
   uEmissiveTexIsUdim_ = glGetUniformLocation(program_, "uEmissiveTexIsUdim");
+  uBaseColorUv0_ = glGetUniformLocation(program_, "uBaseColorUv0");
+  uBaseColorUv1_ = glGetUniformLocation(program_, "uBaseColorUv1");
+  uMetalRoughUv0_ = glGetUniformLocation(program_, "uMetalRoughUv0");
+  uMetalRoughUv1_ = glGetUniformLocation(program_, "uMetalRoughUv1");
+  uNormalUv0_ = glGetUniformLocation(program_, "uNormalUv0");
+  uNormalUv1_ = glGetUniformLocation(program_, "uNormalUv1");
+  uEmissiveUv0_ = glGetUniformLocation(program_, "uEmissiveUv0");
+  uEmissiveUv1_ = glGetUniformLocation(program_, "uEmissiveUv1");
+  uBaseColorTexScale_ = glGetUniformLocation(program_, "uBaseColorTexScale");
+  uBaseColorTexBias_ = glGetUniformLocation(program_, "uBaseColorTexBias");
+  uNormalTexScale_ = glGetUniformLocation(program_, "uNormalTexScale");
+  uNormalTexBias_ = glGetUniformLocation(program_, "uNormalTexBias");
+  uEmissiveTexScale_ = glGetUniformLocation(program_, "uEmissiveTexScale");
+  uEmissiveTexBias_ = glGetUniformLocation(program_, "uEmissiveTexBias");
+  uMetallicChannel_ = glGetUniformLocation(program_, "uMetallicChannel");
+  uRoughnessChannel_ = glGetUniformLocation(program_, "uRoughnessChannel");
+  uMetallicTexScale_ = glGetUniformLocation(program_, "uMetallicTexScale");
+  uMetallicTexBias_ = glGetUniformLocation(program_, "uMetallicTexBias");
+  uRoughnessTexScale_ = glGetUniformLocation(program_, "uRoughnessTexScale");
+  uRoughnessTexBias_ = glGetUniformLocation(program_, "uRoughnessTexBias");
   uHasDisplacement_ = glGetUniformLocation(program_, "uHasDisplacement");
   uHasDisplacementTex_ = glGetUniformLocation(program_, "uHasDisplacementTex");
   uDisplacementConst_ = glGetUniformLocation(program_, "uDisplacementConst");
@@ -170,6 +207,12 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(program_, "uMorphDeltaTex"), 8);  // GPU morph
   glUniform1i(glGetUniformLocation(program_, "uMorphCoeffTex"), 9);
   glUniform1i(glGetUniformLocation(program_, "uMorphChanTex"), 10);  // skip pre-check
+  glUniform1i(glGetUniformLocation(program_, "uIrradianceMap"), 19);  // dome IBL
+  glUniform1i(glGetUniformLocation(program_, "uPrefilteredMap"), 20);
+  glUniform1i(glGetUniformLocation(program_, "uBrdfLut"), 21);
+  // Filter across cube-face borders (core since GL 3.2); matters for the
+  // low-res prefiltered/irradiance cubes.
+  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
   uHasMorph_ = glGetUniformLocation(program_, "uHasMorph");
   glUseProgram(0);
 
@@ -197,6 +240,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "layout(location=5) in vec4 aRow2;\n"
       "layout(location=9) in vec3 aColor;\n"     // per-instance color or constant
       "layout(location=10) in vec3 aVtxColor;\n"  // per-vertex prototype color (or 1)
+      "layout(location=11) in float aOpacity;\n"  // per-instance opacity or constant
       // GPU blendshape morph (shared by instanced prototypes): per-vertex CSR
       // (offset,count) + delta/coeff/channelId texture-buffers, summed into the
       // local position before the per-instance transform. Same scheme + units
@@ -210,6 +254,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "out vec3 vWorldPos;\n"
       "out vec3 vNormal;\n"
       "out vec3 vColor;\n"
+      "out float vOpacity;\n"
       "flat out int vInstanceId;\n"
       "void main(){\n"
       "  vInstanceId = gl_InstanceID;\n"
@@ -233,6 +278,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  vNormal = normalize(n);\n"
       // Prototype per-vertex displayColor x per-instance color (both default 1).
       "  vColor = aColor * aVtxColor;\n"
+      "  vOpacity = clamp(aOpacity, 0.0, 1.0);\n"
       "  gl_Position = uViewProj * vec4(wp, 1.0);\n"
       "}\n";
   static const char* kInstancedFS =
@@ -240,8 +286,16 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "in vec3 vWorldPos;\n"
       "in vec3 vNormal;\n"
       "in vec3 vColor;\n"
+      "in float vOpacity;\n"
       "flat in int vInstanceId;\n"
       "uniform vec3 uCameraPos;\n"
+      "uniform vec3 uLightDir;\n"
+      "uniform vec3 uLightColor;\n"
+      // DomeLight IBL (diffuse-only here: prototypes carry no material scalars).
+      "uniform bool uHasIbl;\n"
+      "uniform vec3 uIblColor;\n"
+      "uniform mat3 uEnvRotation;\n"
+      "uniform samplerCube uIrradianceMap;\n"
       "uniform vec3 uEmissive;\n"  // selection-highlight override (else 0)
       // Debug-AOV uniforms (mirror the non-instanced material shader). Instanced
       // prototypes carry no UVs or material scalars, so UV / roughness / metallic /
@@ -310,13 +364,15 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  vec3 V = normalize(uCameraPos - vWorldPos);\n"
       "  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;\n"
       "  float facing = max(dot(Nf, V), 0.0);\n"
-      "  vec3 L = normalize(vec3(0.3, 0.5, 0.8));\n"
+      "  vec3 L = (dot(uLightDir,uLightDir)>1e-8) ? normalize(uLightDir) : normalize(vec3(0.3,0.5,0.8));\n"
+      "  vec3 lightColor = (dot(uLightColor,uLightColor)>1e-8) ? uLightColor : vec3(1.0);\n"
       "  float key = dot(Nf, L) * 0.5 + 0.5;\n"
       "  float shade = 0.25 + 0.75 * (0.6 * facing + 0.4 * key);\n"
       "  vec3 H = normalize(L + V);\n"
       "  float NdotH = max(dot(Nf, H), 0.0);\n"
-      "  vec3 col = vColor * shade + vec3(0.12) * pow(NdotH, 32.0) * facing;\n"
-      "  FragColor = vec4(col + uEmissive, 1.0);\n"
+      "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.25);\n"
+      "  vec3 col = vColor * (amb + lightColor * (shade - 0.25)) + lightColor * 0.12 * pow(NdotH, 32.0) * facing;\n"
+      "  FragColor = vec4(col + uEmissive, vOpacity);\n"
       "}\n";
   instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
   if (!instProgram_) {
@@ -326,6 +382,11 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUseProgram(instProgram_);
   iUViewProj_ = glGetUniformLocation(instProgram_, "uViewProj");
   iCameraPos_ = glGetUniformLocation(instProgram_, "uCameraPos");
+  iLightDir_ = glGetUniformLocation(instProgram_, "uLightDir");
+  iHasIbl_ = glGetUniformLocation(instProgram_, "uHasIbl");
+  iIblColor_ = glGetUniformLocation(instProgram_, "uIblColor");
+  iEnvRotation_ = glGetUniformLocation(instProgram_, "uEnvRotation");
+  iLightColor_ = glGetUniformLocation(instProgram_, "uLightColor");
   iEmissive_ = glGetUniformLocation(instProgram_, "uEmissive");
   iRenderMode_ = glGetUniformLocation(instProgram_, "uRenderMode");
   iDepthScale_ = glGetUniformLocation(instProgram_, "uDepthScale");
@@ -340,6 +401,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphDeltaTex"), 8);
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphCoeffTex"), 9);
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphChanTex"), 10);
+  glUniform1i(glGetUniformLocation(instProgram_, "uIrradianceMap"), 19);
   glUseProgram(0);
 
   buildWireProgram();  // flat polygon-edge wireframe (best-effort; non-fatal)
@@ -715,6 +777,9 @@ void GLRenderer::buildTessProgram() {
       "#version 410 core\n"
       "in vec3 vWorldPos; in vec3 vNormal; in vec2 vUV;\n"
       "uniform vec3 uCameraPos; uniform vec3 uBaseColor;\n"
+      "uniform vec3 uLightDir; uniform vec3 uLightColor;\n"
+      "uniform bool uHasIbl; uniform vec3 uIblColor; uniform mat3 uEnvRotation;\n"
+      "uniform samplerCube uIrradianceMap;\n"
       "uniform sampler2D uBaseColorTex; uniform bool uHasBaseColorTex;\n"
       "out vec4 FragColor;\n"
       "void main(){\n"
@@ -729,11 +794,13 @@ void GLRenderer::buildTessProgram() {
       "  vec3 V=normalize(uCameraPos-vWorldPos);\n"
       "  vec3 Nf=(dot(N,V)<0.0)?-N:N;\n"
       "  float facing=max(dot(Nf,V),0.0);\n"
-      "  vec3 L=normalize(vec3(0.3,0.5,0.8));\n"
+      "  vec3 L=(dot(uLightDir,uLightDir)>1e-8)?normalize(uLightDir):normalize(vec3(0.3,0.5,0.8));\n"
+      "  vec3 lightColor=(dot(uLightColor,uLightColor)>1e-8)?uLightColor:vec3(1.0);\n"
       "  float key=dot(Nf,L)*0.5+0.5;\n"
       "  float shade=0.25+0.75*(0.6*facing+0.4*key);\n"
       "  vec3 H=normalize(L+V); float NdotH=max(dot(Nf,H),0.0);\n"
-      "  vec3 col=base*shade+vec3(0.12)*pow(NdotH,32.0)*facing;\n"
+      "  vec3 amb=uHasIbl?texture(uIrradianceMap,normalize(uEnvRotation*Nf)).rgb*uIblColor:vec3(0.25);\n"
+      "  vec3 col=base*(amb+lightColor*(shade-0.25))+lightColor*0.12*pow(NdotH,32.0)*facing;\n"
       "  FragColor=vec4(col,1.0);\n"
       "}\n";
   std::string terr;
@@ -749,6 +816,11 @@ void GLRenderer::buildTessProgram() {
   tModel_ = glGetUniformLocation(tessProgram_, "uModel");
   tNormalMat_ = glGetUniformLocation(tessProgram_, "uNormalMatrix");
   tCameraPos_ = glGetUniformLocation(tessProgram_, "uCameraPos");
+  tLightDir_ = glGetUniformLocation(tessProgram_, "uLightDir");
+  tLightColor_ = glGetUniformLocation(tessProgram_, "uLightColor");
+  tHasIbl_ = glGetUniformLocation(tessProgram_, "uHasIbl");
+  tIblColor_ = glGetUniformLocation(tessProgram_, "uIblColor");
+  tEnvRotation_ = glGetUniformLocation(tessProgram_, "uEnvRotation");
   tBaseColor_ = glGetUniformLocation(tessProgram_, "uBaseColor");
   tHasBaseColorTex_ = glGetUniformLocation(tessProgram_, "uHasBaseColorTex");
   tHasDisplacementTex_ = glGetUniformLocation(tessProgram_, "uHasDisplacementTex");
@@ -771,6 +843,7 @@ void GLRenderer::buildTessProgram() {
   glUniform1i(glGetUniformLocation(tessProgram_, "uMorphChanTex"), 10);
   glUniform1i(glGetUniformLocation(tessProgram_, "uBoneTex"), 4);
   glUniform1i(glGetUniformLocation(tessProgram_, "uInfluenceTex"), 5);
+  glUniform1i(glGetUniformLocation(tessProgram_, "uIrradianceMap"), 19);
   glUseProgram(0);
   tessAvailable_ = true;
 }
@@ -784,6 +857,7 @@ void GLRenderer::destroyScene() {
     if (m.jointVbo) glDeleteBuffers(1, &m.jointVbo);
     if (m.instanceVbo) glDeleteBuffers(1, &m.instanceVbo);
     if (m.instanceColorVbo) glDeleteBuffers(1, &m.instanceColorVbo);
+    if (m.instanceOpacityVbo) glDeleteBuffers(1, &m.instanceOpacityVbo);
     if (m.vertexColorVbo) glDeleteBuffers(1, &m.vertexColorVbo);
     if (m.uv1Vbo) glDeleteBuffers(1, &m.uv1Vbo);
     if (m.morphInflVbo) glDeleteBuffers(1, &m.morphInflVbo);
@@ -812,6 +886,7 @@ void GLRenderer::destroyScene() {
   }
   textures_.clear();
   materials_.clear();
+  destroyIblTextures();
 }
 
 void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
@@ -832,11 +907,24 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.emissive[1] = m.emissive[1];
     gm.emissive[2] = m.emissive[2];
     gm.alpha = m.alpha;
+    gm.alphaMode = m.alphaMode;
+    gm.alphaCutoff = m.alphaCutoff;
     gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
     gm.metalRoughTex = m.metalRoughTex;
     gm.normalTex = m.normalTex;
     gm.emissiveTex = m.emissiveTex;
+    gm.baseColorSample = m.baseColorSample;
+    gm.metalRoughSample = m.metalRoughSample;
+    gm.normalSample = m.normalSample;
+    gm.emissiveSample = m.emissiveSample;
+    gm.metallicChannel = m.metallicChannel;
+    gm.roughnessChannel = m.roughnessChannel;
+    gm.metallicTexScale = m.metallicTexScale;
+    gm.metallicTexBias = m.metallicTexBias;
+    gm.roughnessTexScale = m.roughnessTexScale;
+    gm.roughnessTexBias = m.roughnessTexBias;
     gm.displacementTex = m.displacementTex;
+    gm.displacementUv = m.displacementUv;
     gm.displacementConst = m.displacementConst;
     gm.displacementTexScale = m.displacementTexScale;
     gm.displacementTexBias = m.displacementTexBias;
@@ -872,6 +960,26 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     const GLenum compressedFmt = compressedArray
                                      ? GLCompressedFormat(arrayFormat, t.srgb)
                                      : 0;
+    // Precomputed per-tile mip chains (FinalizeDrawTextures): usable for the
+    // array only when every tile carries the same level count (+ equal
+    // per-level payload sizes on the compressed path).
+    size_t arrayMips = t.udimTiles.empty() ? 0 : t.udimTiles[0].mipImages.size();
+    for (const DrawUdimTileCPU& tile : t.udimTiles) {
+      if (tile.mipImages.size() != arrayMips) { arrayMips = 0; break; }
+      if (compressedFmt != 0 &&
+          tile.compressed.mips.size() != arrayMips) { arrayMips = 0; break; }
+    }
+    if (compressedFmt != 0 && arrayMips > 0) {
+      for (size_t l = 1; l <= arrayMips && arrayMips > 0; ++l) {
+        const DrawCompressedMipCPU& ref = t.udimTiles[0].compressed.mips[l - 1];
+        for (const DrawUdimTileCPU& tile : t.udimTiles) {
+          if (tile.compressed.mips[l - 1].data.size() != ref.data.size()) {
+            arrayMips = 0;
+            break;
+          }
+        }
+      }
+    }
     if (compressedFmt != 0) {
       std::vector<uint8_t> layers;
       layers.reserve(layerBytes * t.udimTiles.size());
@@ -883,6 +991,19 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                              t.udimTileWidth, t.udimTileHeight,
                              static_cast<GLsizei>(t.udimTiles.size()), 0,
                              static_cast<GLsizei>(layers.size()), layers.data());
+      for (size_t l = 1; l <= arrayMips; ++l) {
+        const DrawCompressedMipCPU& ref = t.udimTiles[0].compressed.mips[l - 1];
+        std::vector<uint8_t> lvl;
+        lvl.reserve(ref.data.size() * t.udimTiles.size());
+        for (const DrawUdimTileCPU& tile : t.udimTiles) {
+          const DrawCompressedMipCPU& m = tile.compressed.mips[l - 1];
+          lvl.insert(lvl.end(), m.data.begin(), m.data.end());
+        }
+        glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l),
+                               compressedFmt, ref.width, ref.height,
+                               static_cast<GLsizei>(t.udimTiles.size()), 0,
+                               static_cast<GLsizei>(lvl.size()), lvl.data());
+      }
     } else {
       glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, t.udimTileWidth,
                    t.udimTileHeight, static_cast<GLsizei>(t.udimTiles.size()), 0,
@@ -898,8 +1019,30 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                         t.udimTileHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
                         img.data.data());
       }
+      for (size_t l = 1; l <= arrayMips; ++l) {
+        const light3d::Image& ref = t.udimTiles[0].mipImages[l - 1];
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l), GL_RGBA8,
+                     ref.width, ref.height,
+                     static_cast<GLsizei>(t.udimTiles.size()), 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
+        for (size_t layer = 0; layer < t.udimTiles.size(); ++layer) {
+          const light3d::Image& img = t.udimTiles[layer].mipImages[l - 1];
+          if (img.width != ref.width || img.height != ref.height ||
+              img.data.empty()) {
+            continue;
+          }
+          glTexSubImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l), 0, 0,
+                          static_cast<GLint>(layer), img.width, img.height, 1,
+                          GL_RGBA, GL_UNSIGNED_BYTE, img.data.data());
+        }
+      }
     }
-    glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    if (arrayMips > 0) {
+      glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,
+                      static_cast<GLint>(arrayMips));
+    } else {
+      glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
@@ -947,17 +1090,45 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
     // Upload as plain RGBA8 (texels used as-is; see note: the simple shader and
     // linear RGBA8 target don't re-encode gamma).
     const GLenum fmt = GLCompressedFormat(t.compressed.format, t.srgb);
-    if (t.requestedCompressed && fmt != 0 && !t.compressed.data.empty()) {
+    const bool useCompressed =
+        t.requestedCompressed && fmt != 0 && !t.compressed.data.empty();
+    // Precomputed content-aware mips (sRGB/alpha-coverage/normal-aware,
+    // FinalizeDrawTextures) replace glGenerateMipmap when present. This also
+    // gives compressed textures real mips (glGenerateMipmap is typically a
+    // no-op on BC-compressed textures).
+    const bool precomputedMips =
+        useCompressed ? !t.compressed.mips.empty() : !t.mipImages.empty();
+    if (useCompressed) {
       glCompressedTexImage2D(GL_TEXTURE_2D, 0, fmt, t.compressed.width,
                              t.compressed.height, 0,
                              static_cast<GLsizei>(t.compressed.data.size()),
                              t.compressed.data.data());
+      for (size_t l = 0; l < t.compressed.mips.size(); ++l) {
+        const DrawCompressedMipCPU& mip = t.compressed.mips[l];
+        glCompressedTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l + 1), fmt,
+                               mip.width, mip.height, 0,
+                               static_cast<GLsizei>(mip.data.size()),
+                               mip.data.data());
+      }
     } else {
       glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0,
                    GL_RGBA, GL_UNSIGNED_BYTE,
                    t.image.data.empty() ? nullptr : t.image.data.data());
+      for (size_t l = 0; l < t.mipImages.size(); ++l) {
+        const light3d::Image& mip = t.mipImages[l];
+        glTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l + 1), GL_RGBA8,
+                     mip.width, mip.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     mip.data.empty() ? nullptr : mip.data.data());
+      }
     }
-    glGenerateMipmap(GL_TEXTURE_2D);
+    if (precomputedMips) {
+      const size_t levels =
+          useCompressed ? t.compressed.mips.size() : t.mipImages.size();
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
+                      static_cast<GLint>(levels));
+    } else {
+      glGenerateMipmap(GL_TEXTURE_2D);
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GLWrap(t.wrapS));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GLWrap(t.wrapT));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -969,6 +1140,96 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (old.arrayTex) glDeleteTextures(1, &old.arrayTex);
   if (old.lutTex) glDeleteTextures(1, &old.lutTex);
   old = gpu;
+}
+
+void GLRenderer::destroyIblTextures() {
+  if (iblIrrTex_) glDeleteTextures(1, &iblIrrTex_);
+  if (iblSpecTex_) glDeleteTextures(1, &iblSpecTex_);
+  if (iblLutTex_) glDeleteTextures(1, &iblLutTex_);
+  iblIrrTex_ = iblSpecTex_ = iblLutTex_ = 0;
+  iblSpecLods_ = 0;
+  iblActive_ = false;
+}
+
+void GLRenderer::setLights(const std::vector<DrawLightCPU>& lights) {
+  destroyIblTextures();
+  const DrawLightCPU* dome = nullptr;
+  for (const DrawLightCPU& l : lights) {
+    if (l.type == DrawLightCPU::Type::Dome && l.ibl.valid) {
+      dome = &l;
+      break;
+    }
+  }
+  if (!dome) return;
+  const DomeIblCPU& ibl = dome->ibl;
+
+  // GGX-prefiltered specular chain: one cube level per roughness step.
+  glGenTextures(1, &iblSpecTex_);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, iblSpecTex_);
+  for (size_t l = 0; l < ibl.specLevels.size(); ++l) {
+    const int fs = std::max(1, ibl.specFaceSize >> l);
+    const float* data = ibl.specLevels[l].data();
+    for (int f = 0; f < 6; ++f) {
+      glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + static_cast<GLenum>(f),
+                   static_cast<GLint>(l), GL_RGB16F, fs, fs, 0, GL_RGB,
+                   GL_FLOAT, data + static_cast<size_t>(f) * fs * fs * 3);
+    }
+  }
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER,
+                  GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_LEVEL,
+                  static_cast<GLint>(ibl.specLevels.size()) - 1);
+
+  // Diffuse irradiance cube (single level).
+  glGenTextures(1, &iblIrrTex_);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, iblIrrTex_);
+  for (int f = 0; f < 6; ++f) {
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + static_cast<GLenum>(f), 0,
+                 GL_RGB16F, ibl.irrFaceSize, ibl.irrFaceSize, 0, GL_RGB,
+                 GL_FLOAT,
+                 ibl.irradiance.data() +
+                     static_cast<size_t>(f) * ibl.irrFaceSize * ibl.irrFaceSize * 3);
+  }
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+
+  // Split-sum BRDF LUT (scale, bias).
+  glGenTextures(1, &iblLutTex_);
+  glBindTexture(GL_TEXTURE_2D, iblLutTex_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, ibl.lutSize, ibl.lutSize, 0, GL_RG,
+               GL_FLOAT, ibl.brdfLut.data());
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  iblSpecLods_ = static_cast<int>(ibl.specLevels.size());
+  iblColor_[0] = dome->effectiveColor[0];
+  iblColor_[1] = dome->effectiveColor[1];
+  iblColor_[2] = dome->effectiveColor[2];
+  // World -> environment: transpose of the dome transform's normalized
+  // rotation block (column-major 4x4 -> column-major 3x3).
+  for (int c = 0; c < 3; ++c) {
+    float col[3] = {dome->transform[c * 4 + 0], dome->transform[c * 4 + 1],
+                    dome->transform[c * 4 + 2]};
+    const float len =
+        std::sqrt(col[0] * col[0] + col[1] * col[1] + col[2] * col[2]);
+    const float inv = (len > 1e-12f) ? 1.0f / len : 1.0f;
+    // Row c of the inverse rotation = normalized column c of the transform.
+    iblRotation_[0 * 3 + c] = col[0] * inv;
+    iblRotation_[1 * 3 + c] = col[1] * inv;
+    iblRotation_[2 * 3 + c] = col[2] * inv;
+  }
+  iblActive_ = true;
 }
 
 void GLRenderer::uploadSkinningFrame(const SkinningFrameCPU& skin) {
@@ -1057,6 +1318,9 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   if (gm.vbo) glDeleteBuffers(1, &gm.vbo);
   if (gm.ebo) glDeleteBuffers(1, &gm.ebo);
   if (gm.wireEbo) glDeleteBuffers(1, &gm.wireEbo);
+  if (gm.instanceVbo) glDeleteBuffers(1, &gm.instanceVbo);
+  if (gm.instanceColorVbo) glDeleteBuffers(1, &gm.instanceColorVbo);
+  if (gm.instanceOpacityVbo) glDeleteBuffers(1, &gm.instanceOpacityVbo);
   if (gm.jointVbo) glDeleteBuffers(1, &gm.jointVbo);
   if (gm.weightVbo) glDeleteBuffers(1, &gm.weightVbo);
   if (gm.influenceVbo) glDeleteBuffers(1, &gm.influenceVbo);
@@ -1077,6 +1341,19 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
   gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
+  // Mesh-space bbox center for the translucency back-to-front sort.
+  if (!sm.vertices.empty()) {
+    float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
+    float hi[3] = {lo[0], lo[1], lo[2]};
+    for (const DrawVertex& v : sm.vertices) {
+      lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+      lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+      lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+    }
+    gm.localCentroid[0] = 0.5f * (lo[0] + hi[0]);
+    gm.localCentroid[1] = 0.5f * (lo[1] + hi[1]);
+    gm.localCentroid[2] = 0.5f * (lo[2] + hi[2]);
+  }
 
   glGenVertexArrays(1, &gm.vao);
   glBindVertexArray(gm.vao);
@@ -1162,6 +1439,19 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       sm.influenceTexHeight > 0 && sm.maxInfluencesPerVertex > 4;
   gm.influenceTexWidth = sm.influenceTexWidth;
   gm.vertexCount = sm.vertices.size();
+  // Mesh-space bbox center for the translucency back-to-front sort.
+  if (!sm.vertices.empty()) {
+    float lo[3] = {sm.vertices[0].px, sm.vertices[0].py, sm.vertices[0].pz};
+    float hi[3] = {lo[0], lo[1], lo[2]};
+    for (const DrawVertex& v : sm.vertices) {
+      lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+      lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+      lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+    }
+    gm.localCentroid[0] = 0.5f * (lo[0] + hi[0]);
+    gm.localCentroid[1] = 0.5f * (lo[1] + hi[1]);
+    gm.localCentroid[2] = 0.5f * (lo[2] + hi[2]);
+  }
 
   glGenVertexArrays(1, &gm.vao);
   glBindVertexArray(gm.vao);
@@ -1375,9 +1665,10 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
                             (void*)(static_cast<uintptr_t>(r * 4 * sizeof(float))));
       glVertexAttribDivisor(loc, 1);
     }
-    // Per-instance displayColor (attrib 9, divisor 1) when present; otherwise a
-    // per-draw constant set at draw time (see flatColor in the instanced pass).
+    // Per-instance displayColor/displayOpacity (attribs 9/11, divisor 1) when
+    // present; otherwise per-draw constants are set at draw time.
     std::memcpy(gm.flatColor, sm.flatColor, sizeof(gm.flatColor));
+    gm.flatOpacity = sm.flatOpacity;
     if (sm.instanceColors.size() == sm.instanceXforms.size() / 12 * 3 &&
         !sm.instanceColors.empty()) {
       gm.hasInstanceColors = true;
@@ -1391,6 +1682,27 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glVertexAttribDivisor(9, 1);
     } else {
       glDisableVertexAttribArray(9);  // constant color set per draw
+    }
+    if (sm.instanceOpacities.size() == sm.instanceXforms.size() / 12 &&
+        !sm.instanceOpacities.empty()) {
+      gm.hasInstanceOpacities = true;
+      for (float opacity : sm.instanceOpacities) {
+        if (opacity < 1.0f - 1.0e-6f) {
+          gm.hasTranslucentInstances = true;
+          break;
+        }
+      }
+      glGenBuffers(1, &gm.instanceOpacityVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, gm.instanceOpacityVbo);
+      glBufferData(GL_ARRAY_BUFFER,
+                   static_cast<GLsizeiptr>(sm.instanceOpacities.size() * sizeof(float)),
+                   sm.instanceOpacities.data(), GL_DYNAMIC_DRAW);
+      glEnableVertexAttribArray(11);
+      glVertexAttribPointer(11, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
+      glVertexAttribDivisor(11, 1);
+    } else {
+      gm.hasTranslucentInstances = gm.flatOpacity < 1.0f - 1.0e-6f;
+      glDisableVertexAttribArray(11);  // constant opacity set per draw
     }
   }
 
@@ -1459,7 +1771,9 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
 }
 
 void GLRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
-                                          const float* colors, uint32_t count) {
+                                          const float* colors,
+                                          const float* opacities,
+                                          uint32_t count) {
   if (meshIndex >= meshes_.size()) return;
   GLMesh& m = meshes_[meshIndex];
   if (m.instanceCount <= 0) return;
@@ -1477,6 +1791,11 @@ void GLRenderer::updateInstanceVisibility(size_t meshIndex, const float* xforms,
     glBindBuffer(GL_ARRAY_BUFFER, m.instanceColorVbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0,
                     static_cast<GLsizeiptr>(count) * 3 * sizeof(float), colors);
+  }
+  if (m.instanceOpacityVbo && opacities) {
+    glBindBuffer(GL_ARRAY_BUFFER, m.instanceOpacityVbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0,
+                    static_cast<GLsizeiptr>(count) * sizeof(float), opacities);
   }
   glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
@@ -1682,13 +2001,42 @@ void GLRenderer::drawWireframe(const RenderFrameParams& params, const float wire
 }
 
 void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
-                            const float* overrideEmissive) {
+                            const float* overrideEmissive, AlphaPass alphaPass) {
   static const GLMaterial kDefault;
   light3d::Mat4 P = ToMat4(params.proj);
   light3d::Mat4 V = ToMat4(params.view);
 
+  auto matTranslucent = [&](int materialId) -> bool {
+    if (materialId < 0 || static_cast<size_t>(materialId) >= materials_.size())
+      return false;
+    return materials_[static_cast<size_t>(materialId)].alphaMode == 2;  // Blend
+  };
+
+  // Draw order. For the translucent pass, sort meshes back-to-front by world
+  // centroid distance to the camera so alpha "over" composites correctly.
+  std::vector<size_t> order(meshes_.size());
+  for (size_t i = 0; i < meshes_.size(); ++i) order[i] = i;
+  if (alphaPass == AlphaPass::Translucent) {
+    std::vector<float> dist(meshes_.size(), 0.0f);
+    for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+      const GLMesh& m = meshes_[mi];
+      const float* c = m.localCentroid;
+      // world * centroid (column-major world[16]).
+      const float wx = m.world[0]*c[0] + m.world[4]*c[1] + m.world[8]*c[2] + m.world[12];
+      const float wy = m.world[1]*c[0] + m.world[5]*c[1] + m.world[9]*c[2] + m.world[13];
+      const float wz = m.world[2]*c[0] + m.world[6]*c[1] + m.world[10]*c[2] + m.world[14];
+      const float dx = wx - params.cameraPos[0];
+      const float dy = wy - params.cameraPos[1];
+      const float dz = wz - params.cameraPos[2];
+      dist[mi] = dx*dx + dy*dy + dz*dz;
+    }
+    std::sort(order.begin(), order.end(),
+              [&](size_t a, size_t b) { return dist[a] > dist[b]; });
+  }
+
   int cullState = -1;  // -1 unknown; dedup glEnable/glDisable(GL_CULL_FACE)
-  for (size_t mi = 0; mi < meshes_.size(); ++mi) {
+  for (size_t oi = 0; oi < order.size(); ++oi) {
+    const size_t mi = order[oi];
     if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
         !params.meshVisible[mi]) {
       continue;  // hidden by the viewer's per-mesh visibility mask
@@ -1756,6 +2104,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
 
     glBindVertexArray(mesh.vao);
     for (const auto& sub : mesh.submeshes) {
+      // Alpha-class filtering: the opaque pass skips Blend submeshes, the
+      // translucent pass skips the rest. `All` (AOV/wireframe) draws everything.
+      if (alphaPass == AlphaPass::Opaque && matTranslucent(sub.materialId)) continue;
+      if (alphaPass == AlphaPass::Translucent && !matTranslucent(sub.materialId)) continue;
       const GLMaterial& mat =
           (sub.materialId >= 0 && static_cast<size_t>(sub.materialId) < materials_.size())
               ? materials_[static_cast<size_t>(sub.materialId)]
@@ -1801,6 +2153,13 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniformMatrix4fv(tModel_, 1, GL_FALSE, W.m);
         glUniformMatrix3fv(tNormalMat_, 1, GL_FALSE, nmat);
         glUniform3fv(tCameraPos_, 1, params.cameraPos);
+        glUniform3fv(tLightDir_, 1, params.lightDir);
+        glUniform1i(tHasIbl_, iblActive_ ? 1 : 0);
+        if (iblActive_) {
+          glUniform3fv(tIblColor_, 1, iblColor_);
+          glUniformMatrix3fv(tEnvRotation_, 1, GL_FALSE, iblRotation_);
+        }
+        glUniform3fv(tLightColor_, 1, params.lightColor);
         glUniform3fv(tBaseColor_, 1, dmat.baseColor);
         glUniform1i(tHasBaseColorTex_, dmat.baseColorTex >= 0 ? 1 : 0);
         glUniform1i(tHasDisplacementTex_, dmat.displacementTex >= 0 ? 1 : 0);
@@ -1869,6 +2228,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1f(uRoughness_, 1.f);
         glUniform3fv(uEmissive_, 1, overrideEmissive);
         glUniform1f(uAlpha_, 1.f);
+        glUniform1i(uAlphaMode_, 0);
+        glUniform1f(uAlphaCutoff_, 0.5f);
         glUniform1i(uHasBaseColorTex_, 0);
         glUniform1i(uHasMetalRoughTex_, 0);
         glUniform1i(uHasNormalTex_, 0);
@@ -1883,6 +2244,24 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform1f(uRoughness_, mat.roughness);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
+        glUniform1i(uAlphaMode_, mat.alphaMode);
+        glUniform1f(uAlphaCutoff_, mat.alphaCutoff);
+        SetUvUniform(uBaseColorUv0_, uBaseColorUv1_, mat.baseColorSample.uv);
+        SetUvUniform(uMetalRoughUv0_, uMetalRoughUv1_, mat.metalRoughSample.uv);
+        SetUvUniform(uNormalUv0_, uNormalUv1_, mat.normalSample.uv);
+        SetUvUniform(uEmissiveUv0_, uEmissiveUv1_, mat.emissiveSample.uv);
+        glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
+        glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
+        glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);
+        glUniform4fv(uNormalTexBias_, 1, mat.normalSample.bias);
+        glUniform4fv(uEmissiveTexScale_, 1, mat.emissiveSample.scale);
+        glUniform4fv(uEmissiveTexBias_, 1, mat.emissiveSample.bias);
+        glUniform1i(uMetallicChannel_, mat.metallicChannel);
+        glUniform1i(uRoughnessChannel_, mat.roughnessChannel);
+        glUniform1f(uMetallicTexScale_, mat.metallicTexScale);
+        glUniform1f(uMetallicTexBias_, mat.metallicTexBias);
+        glUniform1f(uRoughnessTexScale_, mat.roughnessTexScale);
+        glUniform1f(uRoughnessTexBias_, mat.roughnessTexBias);
         auto bindMaterialTexture = [&](int slot, GLenum texUnit2D,
                                        GLenum texUnitArray, GLenum texUnitLut,
                                        GLint hasLoc, GLint isUdimLoc) {
@@ -1923,7 +2302,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
 
   // Instanced pass: PointInstancer prototypes drawn with glDrawElementsInstanced.
   // Flat-shaded (default gray material, hardcoded headlight in the fragment
-  // shader); each instance's model matrix comes from vertex attribs 6-9.
+  // shader); each instance's model matrix comes from vertex attribs 3-5, color
+  // from attrib 9, opacity from attrib 11. Batches with any instance opacity < 1
+  // draw in the translucent pass; the rest draw in opaque/All.
   bool anyInstanced = false;
   for (const GLMesh& m : meshes_) {
     if (m.instanceCount > 0) { anyInstanced = true; break; }
@@ -1933,6 +2314,13 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUseProgram(instProgram_);
     glUniformMatrix4fv(iUViewProj_, 1, GL_FALSE, VP.m);
     glUniform3fv(iCameraPos_, 1, params.cameraPos);
+    glUniform3fv(iLightDir_, 1, params.lightDir);
+    glUniform1i(iHasIbl_, iblActive_ ? 1 : 0);
+    if (iblActive_) {
+      glUniform3fv(iIblColor_, 1, iblColor_);
+      glUniformMatrix3fv(iEnvRotation_, 1, GL_FALSE, iblRotation_);
+    }
+    glUniform3fv(iLightColor_, 1, params.lightColor);
     const float black[3] = {0.0f, 0.0f, 0.0f};
     glUniform3fv(iEmissive_, 1, overrideEmissive ? overrideEmissive : black);
     glUniform1i(iRenderMode_, static_cast<int>(params.mode));
@@ -1947,6 +2335,8 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       }
       const GLMesh& mesh = meshes_[mi];
       if (mesh.instanceCount <= 0 || mesh.drawInstanceCount <= 0) continue;
+      if (alphaPass == AlphaPass::Opaque && mesh.hasTranslucentInstances) continue;
+      if (alphaPass == AlphaPass::Translucent && !mesh.hasTranslucentInstances) continue;
       glUniform1i(iMeshId_, static_cast<int>(mi));
       glUniform1i(iGeometricNormal_, mesh.geometricNormal ? 1 : 0);
       glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
@@ -1965,6 +2355,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       // Constant per-draw color when there is no per-instance color array (the
       // generic vertex-attribute value feeds aColor for every instance).
       if (!mesh.hasInstanceColors) glVertexAttrib3fv(9, mesh.flatColor);
+      if (!mesh.hasInstanceOpacities) glVertexAttrib1f(11, mesh.flatOpacity);
       // Default per-vertex color to white when the prototype has none (the VAO
       // supplies attrib 10 from vertexColorVbo otherwise).
       if (!mesh.vertexColorVbo) glVertexAttrib3f(10, 1.0f, 1.0f, 1.0f);
@@ -1991,7 +2382,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     // LOD box proxies (optimization B): one instanced draw of the shared unit cube
     // for every distant instance the cull collapsed. Flat geometric-normal shading;
     // tint from the per-instance color (attrib 9), white per-vertex color.
-    if (boxProxyCount_ > 0) {
+    if (boxProxyCount_ > 0 && alphaPass != AlphaPass::Translucent) {
       glUniform1i(iMeshId_, -1);
       glUniform1i(iGeometricNormal_, 1);
       glUniform1i(iDoubleSided_, 0);
@@ -2007,6 +2398,7 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glVertexAttrib3f(1, 0.0f, 1.0f, 0.0f);    // constant normal (FS uses geometric)
       glVertexAttribI2ui(8, 0u, 0u);            // no morph
       glVertexAttrib3f(10, 1.0f, 1.0f, 1.0f);   // white per-vertex color (tint=attr 9)
+      glVertexAttrib1f(11, 1.0f);               // box proxies are opaque
       glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr,
                               static_cast<GLsizei>(boxProxyCount_));
     }
@@ -2061,6 +2453,21 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
 
   glUseProgram(program_);
   glUniform3fv(uCameraPos_, 1, params.cameraPos);
+  glUniform3fv(uLightDir_, 1, params.lightDir);
+  glUniform3fv(uLightColor_, 1, params.lightColor);
+  glUniform1i(uHasIbl_, iblActive_ ? 1 : 0);
+  if (iblActive_) {
+    glUniform3fv(uIblColor_, 1, iblColor_);
+    glUniformMatrix3fv(uEnvRotation_, 1, GL_FALSE, iblRotation_);
+    glUniform1i(uPrefilteredLods_, iblSpecLods_);
+    glActiveTexture(GL_TEXTURE19);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, iblIrrTex_);
+    glActiveTexture(GL_TEXTURE20);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, iblSpecTex_);
+    glActiveTexture(GL_TEXTURE21);
+    glBindTexture(GL_TEXTURE_2D, iblLutTex_);
+    glActiveTexture(GL_TEXTURE0);
+  }
 
   // Resolve the wireframe state: explicit params.wireMode wins; the legacy
   // RenderMode::Wireframe maps to "wireframe only".
@@ -2078,8 +2485,23 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     drawWireframe(params, wireCol);
   } else {
-    // Shaded fill, optionally with the polygon-edge wireframe overlaid on top.
-    drawMeshes(params, /*wireframe=*/false, nullptr);
+    // Shaded fill. In the lit mode (RenderMode 0), draw opaque geometry first,
+    // then translucent (Blend) materials in a separate back-to-front, blended,
+    // depth-write-off pass so transparency composites over what's behind it.
+    // AOV / debug modes draw everything in one unblended pass (blending would
+    // corrupt the encoded AOV values).
+    const bool shaded = (static_cast<int>(params.mode) == 0);
+    if (shaded) {
+      drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::Opaque);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glDepthMask(GL_FALSE);
+      drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::Translucent);
+      glDepthMask(GL_TRUE);
+      glDisable(GL_BLEND);
+    } else {
+      drawMeshes(params, /*wireframe=*/false, nullptr, AlphaPass::All);
+    }
     if (wireMode == 2 && haveWire) drawWireframe(params, wireCol);
   }
 
@@ -2109,6 +2531,8 @@ void GLRenderer::renderFrame(const RenderFrameParams& params) {
     glUniform3f(uBaseColor_, 0, 0, 0);
     glUniform3fv(uEmissive_, 1, orange);
     glUniform1f(uAlpha_, 1.f);
+    glUniform1i(uAlphaMode_, 0);
+    glUniform1f(uAlphaCutoff_, 0.5f);
     glUniform1i(uHasBaseColorTex_, 0);
     glUniform1i(uHasMetalRoughTex_, 0);
     glUniform1i(uHasNormalTex_, 0);

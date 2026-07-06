@@ -47,6 +47,9 @@ static Stage MakeSkelStage() {
   layer.end_prim();
 
   layer.begin_prim("Anim", "SkelAnimation");
+  layer.add_property("blendShapes", Value::MakeTokenArray({"Smile", "Blink"}));
+  layer.add_property("blendShapeWeights", Value::MakeFloatArray({0.25f, 0.75f}));
+  layer.add_property("joints", Value::MakeTokenArray(joints));
   layer.add_property("translations", Value::MakeFloat3Array({0,0,0, 0,10,0, 0,20,0}));
   layer.add_property("rotations", Value::MakeFloatArray({1,0,0,0, 1,0,0,0, 1,0,0,0}));
   layer.end_prim();
@@ -250,6 +253,14 @@ void test_skel_animation() {
   SkelAnimationData data;
   if (!GetSkelAnimationData(stage, prim, &data)) { FAIL("GetSkelAnimationData"); return; }
   if (!data.hasTranslations) { FAIL("expected translations"); return; }
+  if (!data.hasBlendShapes) { FAIL("expected blendShapeWeights"); return; }
+  if (data.blendShapes.size() != 2 || data.blendShapes[0] != "Smile" ||
+      data.blendShapes[1] != "Blink") { FAIL("expected blendShapes token array"); return; }
+  if (data.blendShapeWeights.size() != 2 || data.blendShapeWeights[0] != 0.25f ||
+      data.blendShapeWeights[1] != 0.75f) { FAIL("expected blendShapeWeights"); return; }
+  if (data.joints.size() != 3 || data.joints[1] != "Hip/Spine") {
+    FAIL("expected joints token array"); return;
+  }
   PASS();
 }
 

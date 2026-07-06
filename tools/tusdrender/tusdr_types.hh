@@ -438,6 +438,13 @@ struct LightCache {
   std::vector<float> env_cdf;
   bool has_dome{false};
   PreviewLight dome;
+  // Dome orientation (local axes in world, normalized rows of the dome's world
+  // rotation); copied into IblCache::rx/ry/rz so authored dome rotations
+  // orient the environment. Identity + !rotated when untransformed.
+  bool dome_rotated{false};
+  Vec3 dome_rx{1.0f, 0.0f, 0.0f};
+  Vec3 dome_ry{0.0f, 1.0f, 0.0f};
+  Vec3 dome_rz{0.0f, 0.0f, 1.0f};
   Vec3 env_color{0.0f, 0.0f, 0.0f};
 };
 
@@ -497,10 +504,25 @@ struct Options {
   bool no_assetresolver{false};
   bool stats{false};
   bool direct_prims{true};
+  enum class LargeSceneProfile { Off, Auto, Caldera, Island, ALab };
+  LargeSceneProfile large_scene_profile{LargeSceneProfile::Off};
+  bool backend_explicit{false};  // -rtPreview/-vk/-vkr/-vkInstanced/-d3d/-hip
+  bool camera_explicit{false};
+  bool max_mem_explicit{false};
+  bool max_vram_explicit{false};
+  bool lod_stream_explicit{false};
+  bool rt_lod_explicit{false};
+  bool rt_lod_full_px_explicit{false};
+  bool rt_lod_cull_px_explicit{false};
   bool rt_preview{false};
   bool legacy_load{false};  // use the legacy eager loader instead of `next`
   bool smooth{false};       // interpolate authored normals (smooth shading)
+  bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
+  enum class MaterialResolver { Legacy, TydraNext, Compare };
+  MaterialResolver material_resolver{MaterialResolver::Legacy};
+  enum class MaterialShading { Legacy, LightRtBsdf };
+  MaterialShading material_shading{MaterialShading::Legacy};
   lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
   int threads{0};
   int subdivision_level{0};
@@ -552,6 +574,8 @@ struct Options {
   float rt_lod_cull_px{2.0f};      // -rtLodCullPx
   bool vulkan{false};              // -vk: use Vulkan backend
   bool vulkan_rt{false};           // -vkr: use Vulkan ray tracing backend
+  enum class GpuShadeMode { Cpu, Preview };
+  GpuShadeMode gpu_shade{GpuShadeMode::Cpu};  // -gpuShade cpu|preview
   // -vkInstanced: on -vkr, build a TRUE two-level GPU TLAS (one BLAS per
   // prototype, one instance per placement) instead of flattening instances into
   // one world-space BLAS. Stores instanced geometry ONCE on the device (memory
@@ -631,6 +655,8 @@ struct RTPreviewStats {
   size_t meshes_with_mmap_points{0};
   size_t meshes_with_owned_points{0};
   size_t skipped_meshes{0};
+  size_t degraded_materials{0};  // materials that fell back after resolver failure
+  size_t missing_textures{0};  // textures/images that failed to load or resolve
   size_t triangles{0};
   uint64_t mmap_deferred_bytes{0};
   uint64_t copied_point_bytes{0};
@@ -679,6 +705,7 @@ struct Blas {
   IdxVec indices;
   TriStoreVec tris;   // local p0/p1/p2/n/purpose + mat_id (into mat_table)
   std::vector<TriMat> mat_table;  // one entry per source mesh-job
+  std::vector<tinyusdz::tydra::LightRtOpenPBRParams> openpbr_table;
   FloatVec tri_uvs;   // 6 floats/tri (parallel to tris) or empty
   ByteVec tri_colors;   // 12 bytes/tri (per-corner RGBA8, prim_id order) or empty
   // Phase 5: per-corner colors reordered into BVH leaf-slot order (12 bytes/slot)
@@ -707,6 +734,7 @@ struct Blas {
       indices = std::move(o.indices);
       tris = std::move(o.tris);
       mat_table = std::move(o.mat_table);
+      openpbr_table = std::move(o.openpbr_table);
       tri_uvs = std::move(o.tri_uvs);
       tri_colors = std::move(o.tri_colors);
       tri_colors_slot = std::move(o.tri_colors_slot);
@@ -780,6 +808,8 @@ struct MeshJobNext {
   bool vertex_color{false};              // displayColor/Opacity is per-vertex
   float displacement{0.0f};              // inputs:displacement constant (scene units)
   ScalarTex displacement_tex;            // inputs:displacement texture + channel
+  bool has_openpbr{false};
+  tinyusdz::tydra::LightRtOpenPBRParams openpbr;
 };
 
 struct TextureCache {
@@ -789,6 +819,8 @@ struct TextureCache {
   const tinyusdz::next::USDZReader *usdz{nullptr};
   const Options *options{nullptr};
   size_t decoded_bytes{0};
+  size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
+  size_t *missing_textures{nullptr};  // -> RTPreviewStats::missing_textures
 };
 
 struct ResolvedMat {
@@ -818,6 +850,8 @@ struct ResolvedMat {
   bool vertex_color{false};
   float displacement{0.0f};
   ScalarTex displacement_tex;
+  bool has_openpbr{false};
+  tinyusdz::tydra::LightRtOpenPBRParams openpbr;
 };
 
 struct ProtoBuildReq {

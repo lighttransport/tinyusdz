@@ -32,6 +32,7 @@
 #endif
 
 #include "value-types.hh"
+#include "tydra/openpbr-params.hh"
 #include "xform.hh"
 
 namespace tusdr {
@@ -301,6 +302,7 @@ static constexpr uint32_t kPurposeProxyBit = 1u << 2u;
 static constexpr uint32_t kPurposeGuideBit = 1u << 3u;
 static constexpr uint32_t kPurposeDefaultMask =
     kPurposeDefaultBit | kPurposeRenderBit | kPurposeProxyBit;
+static constexpr uint32_t kNoOpenPBRMaterial = UINT32_MAX;
 
 struct TriInfo {
   Vec3 p0;
@@ -322,9 +324,17 @@ struct TriInfo {
   uint8_t rough_ch{0};          // source channel (0=r,1=g,2=b,3=a)
   uint8_t metal_ch{0};
   uint8_t occ_ch{0};
+  float rough_tex_scale{1.0f};
+  float rough_tex_bias{0.0f};
+  float metal_tex_scale{1.0f};
+  float metal_tex_bias{0.0f};
+  float occ_tex_scale{1.0f};
+  float occ_tex_bias{0.0f};
   float opacity{1.0f};          // displayOpacity / UsdPreviewSurface opacity; <1 = blend
   int32_t opacity_tex_id{-1};   // UsdPreviewSurface inputs:opacity texture, or -1
   uint8_t opacity_ch{0};        // opacity texture source channel (often 'a')
+  float opacity_tex_scale{1.0f};
+  float opacity_tex_bias{0.0f};
   float opacity_threshold{0.0f}; // inputs:opacityThreshold; >0 = alpha cutout (mask)
   float clearcoat{0.0f};        // inputs:clearcoat weight (2nd specular lobe)
   float clearcoat_roughness{0.01f}; // inputs:clearcoatRoughness
@@ -332,10 +342,15 @@ struct TriInfo {
   int32_t clearcoat_rough_tex_id{-1}; // clearcoat-roughness texture, or -1
   uint8_t clearcoat_ch{0};
   uint8_t clearcoat_rough_ch{0};
+  float clearcoat_tex_scale{1.0f};
+  float clearcoat_tex_bias{0.0f};
+  float clearcoat_rough_tex_scale{1.0f};
+  float clearcoat_rough_tex_bias{0.0f};
   Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor (specular workflow F0)
   int32_t specular_tex_id{-1};       // specularColor texture, or -1
   float ior{1.5f};                   // inputs:ior; dielectric F0 = ((ior-1)/(ior+1))^2
   uint8_t use_specular_workflow{0};  // inputs:useSpecularWorkflow
+  uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
 };
 
 // Per-material shading parameters, factored out of the per-triangle record. A
@@ -368,10 +383,23 @@ struct TriMat {
   uint8_t opacity_ch{0};
   uint8_t clearcoat_ch{0};
   uint8_t clearcoat_rough_ch{0};
+  float rough_tex_scale{1.0f};
+  float rough_tex_bias{0.0f};
+  float metal_tex_scale{1.0f};
+  float metal_tex_bias{0.0f};
+  float occ_tex_scale{1.0f};
+  float occ_tex_bias{0.0f};
+  float opacity_tex_scale{1.0f};
+  float opacity_tex_bias{0.0f};
+  float clearcoat_tex_scale{1.0f};
+  float clearcoat_tex_bias{0.0f};
+  float clearcoat_rough_tex_scale{1.0f};
+  float clearcoat_rough_tex_bias{0.0f};
   Vec3 specular_color{0.0f, 0.0f, 0.0f}; // inputs:specularColor (specular workflow)
   int32_t specular_tex_id{-1};
   float ior{1.5f};
   uint8_t use_specular_workflow{0};
+  uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
 };
 
 // Slim per-triangle record for instanced BLAS storage: just a material id into
@@ -427,10 +455,23 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.opacity_ch = m.opacity_ch;
   t.clearcoat_ch = m.clearcoat_ch;
   t.clearcoat_rough_ch = m.clearcoat_rough_ch;
+  t.rough_tex_scale = m.rough_tex_scale;
+  t.rough_tex_bias = m.rough_tex_bias;
+  t.metal_tex_scale = m.metal_tex_scale;
+  t.metal_tex_bias = m.metal_tex_bias;
+  t.occ_tex_scale = m.occ_tex_scale;
+  t.occ_tex_bias = m.occ_tex_bias;
+  t.opacity_tex_scale = m.opacity_tex_scale;
+  t.opacity_tex_bias = m.opacity_tex_bias;
+  t.clearcoat_tex_scale = m.clearcoat_tex_scale;
+  t.clearcoat_tex_bias = m.clearcoat_tex_bias;
+  t.clearcoat_rough_tex_scale = m.clearcoat_rough_tex_scale;
+  t.clearcoat_rough_tex_bias = m.clearcoat_rough_tex_bias;
   t.specular_color = m.specular_color;
   t.specular_tex_id = m.specular_tex_id;
   t.ior = m.ior;
   t.use_specular_workflow = m.use_specular_workflow;
+  t.openpbr_id = m.openpbr_id;
   return t;
 }
 
@@ -464,10 +505,23 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.opacity_ch = t.opacity_ch;
   m.clearcoat_ch = t.clearcoat_ch;
   m.clearcoat_rough_ch = t.clearcoat_rough_ch;
+  m.rough_tex_scale = t.rough_tex_scale;
+  m.rough_tex_bias = t.rough_tex_bias;
+  m.metal_tex_scale = t.metal_tex_scale;
+  m.metal_tex_bias = t.metal_tex_bias;
+  m.occ_tex_scale = t.occ_tex_scale;
+  m.occ_tex_bias = t.occ_tex_bias;
+  m.opacity_tex_scale = t.opacity_tex_scale;
+  m.opacity_tex_bias = t.opacity_tex_bias;
+  m.clearcoat_tex_scale = t.clearcoat_tex_scale;
+  m.clearcoat_tex_bias = t.clearcoat_tex_bias;
+  m.clearcoat_rough_tex_scale = t.clearcoat_rough_tex_scale;
+  m.clearcoat_rough_tex_bias = t.clearcoat_rough_tex_bias;
   m.specular_color = t.specular_color;
   m.specular_tex_id = t.specular_tex_id;
   m.ior = t.ior;
   m.use_specular_workflow = t.use_specular_workflow;
+  m.openpbr_id = t.openpbr_id;
   return m;
 }
 
@@ -513,11 +567,24 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.occ_ch == b.occ_ch && a.opacity_ch == b.opacity_ch &&
          a.clearcoat_ch == b.clearcoat_ch &&
          a.clearcoat_rough_ch == b.clearcoat_rough_ch &&
+         a.rough_tex_scale == b.rough_tex_scale &&
+         a.rough_tex_bias == b.rough_tex_bias &&
+         a.metal_tex_scale == b.metal_tex_scale &&
+         a.metal_tex_bias == b.metal_tex_bias &&
+         a.occ_tex_scale == b.occ_tex_scale &&
+         a.occ_tex_bias == b.occ_tex_bias &&
+         a.opacity_tex_scale == b.opacity_tex_scale &&
+         a.opacity_tex_bias == b.opacity_tex_bias &&
+         a.clearcoat_tex_scale == b.clearcoat_tex_scale &&
+         a.clearcoat_tex_bias == b.clearcoat_tex_bias &&
+         a.clearcoat_rough_tex_scale == b.clearcoat_rough_tex_scale &&
+         a.clearcoat_rough_tex_bias == b.clearcoat_rough_tex_bias &&
          a.specular_color.x == b.specular_color.x &&
          a.specular_color.y == b.specular_color.y &&
          a.specular_color.z == b.specular_color.z &&
          a.specular_tex_id == b.specular_tex_id && a.ior == b.ior &&
-         a.use_specular_workflow == b.use_specular_workflow;
+         a.use_specular_workflow == b.use_specular_workflow &&
+         a.openpbr_id == b.openpbr_id;
 }
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture
@@ -525,10 +592,9 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
 struct ScalarTex {
   int32_t id{-1};
   uint8_t ch{0};
-  // UsdUVTexture inputs:scale/inputs:bias for the sampled channel (out = raw*scale
-  // + bias). Resolved for all scalar inputs but currently only applied to
-  // displacement (so roughness/metallic/etc. stay byte-identical); displacement
-  // commonly uses bias to center a [0,1] height map (e.g. scale 1, bias -0.5).
+  // UsdUVTexture inputs:scale/inputs:bias for the sampled channel (out =
+  // raw*scale + bias). Displacement applies this at mesh-build time; other
+  // scalar inputs apply it at hit time.
   float scale{1.0f};
   float bias{0.0f};
 };

@@ -89,6 +89,38 @@ bool ResolveConnectedValue(const Stage& stage,
   return false;
 }
 
+UsdPrim ResolveTexturePrimFromConnection(const Stage& stage,
+                                         const std::string& connection_path,
+                                         double time_code,
+                                         std::string* terminal_connection_path,
+                                         int depth = 0) {
+  if (depth > 16) return UsdPrim();
+
+  std::string prim_path;
+  std::string prop_name;
+  if (!SplitConnectionPath(connection_path, &prim_path, &prop_name)) {
+    return UsdPrim();
+  }
+
+  UsdPrim prim = stage.GetPrimAtPath(prim_path);
+  if (!prim.IsValid()) return UsdPrim();
+
+  if (::tinyusdz::next::IsShader(prim)) {
+    if (terminal_connection_path) *terminal_connection_path = connection_path;
+    return prim;
+  }
+
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+  if (eval.HasConnection(prim, prop_name)) {
+    return ResolveTexturePrimFromConnection(
+        stage, eval.GetConnectionPath(prim, prop_name), time_code,
+        terminal_connection_path, depth + 1);
+  }
+
+  return UsdPrim();
+}
+
 RenderTexture::Channel ChannelFromConnection(const std::string& connection_path) {
   size_t pos = connection_path.find(".outputs:");
   if (pos == std::string::npos) {
@@ -338,6 +370,55 @@ std::vector<uint8_t> BuildInstanceVisibility(
   return visible;
 }
 
+void AppendDenseBlendShapeOffsets(const std::vector<float>& src,
+                                  const std::vector<int32_t>& indices,
+                                  size_t point_count,
+                                  FloatChunked* dst) {
+  if (!dst || src.empty()) return;
+  if (!indices.empty()) {
+    std::vector<float> dense(point_count * 3, 0.0f);
+    const size_t n = std::min(indices.size(), src.size() / 3);
+    for (size_t i = 0; i < n; ++i) {
+      const int32_t pi = indices[i];
+      if (pi < 0 || static_cast<size_t>(pi) >= point_count) continue;
+      dense[static_cast<size_t>(pi) * 3 + 0] = src[i * 3 + 0];
+      dense[static_cast<size_t>(pi) * 3 + 1] = src[i * 3 + 1];
+      dense[static_cast<size_t>(pi) * 3 + 2] = src[i * 3 + 2];
+    }
+    dst->append(dense.data(), dense.size());
+    return;
+  }
+
+  dst->append(src.data(), src.size());
+}
+
+void ExtractMeshBlendShapes(const Stage& stage,
+                            const UsdPrim& prim,
+                            RenderMesh* mesh) {
+  if (!mesh || mesh->point_count() == 0) return;
+
+  const std::vector<BlendShapeInfo> bindings = GetBlendShapes(prim);
+  for (const BlendShapeInfo& binding : bindings) {
+    if (binding.path.empty()) continue;
+    UsdPrim shape_prim = stage.GetPrimAtPath(binding.path);
+    ::tinyusdz::next::BlendShapeData data;
+    if (!::tinyusdz::next::GetBlendShapeData(stage, shape_prim, &data)) {
+      continue;
+    }
+    if (data.offsets.empty() && data.normalOffsets.empty()) {
+      continue;
+    }
+
+    RenderMesh::BlendShape shape;
+    shape.name = binding.name.empty() ? shape_prim.GetName() : binding.name;
+    AppendDenseBlendShapeOffsets(data.offsets, data.pointIndices,
+                                 mesh->point_count(), &shape.point_offsets);
+    AppendDenseBlendShapeOffsets(data.normalOffsets, data.pointIndices,
+                                 mesh->point_count(), &shape.normal_offsets);
+    mesh->blend_shapes.push_back(std::move(shape));
+  }
+}
+
 template <typename Chunked>
 void CopyChunkedArray(const Chunked& src, Chunked* dst) {
   if (!dst) return;
@@ -429,6 +510,7 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
   dst->prim_path = src.prim_path + ".pointInstance[" +
                    std::to_string(draw.instance_index) + "]";
   CopyRenderMeshCommon(src, dst);
+  dst->material_id = draw.material_id;
 
   dst->points.reserve(src.points.size());
   for (size_t i = 0; i + 2 < src.points.size(); i += 3) {
@@ -456,6 +538,16 @@ bool CloneMeshForPointInstance(const RenderMesh& src,
     dst->tangents.push_back(t.y);
     dst->tangents.push_back(t.z);
     dst->tangents.push_back(src.tangents[i + 3]);
+  }
+
+  if (draw.has_display_color && dst->point_count() > 0) {
+    dst->colors.clear();
+    dst->colors.reserve(dst->point_count() * 3);
+    for (size_t i = 0; i < dst->point_count(); ++i) {
+      dst->colors.push_back(draw.display_color.x);
+      dst->colors.push_back(draw.display_color.y);
+      dst->colors.push_back(draw.display_color.z);
+    }
   }
 
   if (dst->point_count() > 0) {
@@ -559,6 +651,17 @@ void AppendPointInstanceDraws(int32_t instancer_id,
       draw.mesh_id = mesh_id;
       if (static_cast<size_t>(mesh_id) < scene->meshes.size()) {
         draw.material_id = scene->meshes[static_cast<size_t>(mesh_id)].material_id;
+      }
+      if (instancer->display_colors.size() >= (instance_index + 1) * 3) {
+        draw.has_display_color = true;
+        draw.display_color = Float3(
+            instancer->display_colors[instance_index * 3 + 0],
+            instancer->display_colors[instance_index * 3 + 1],
+            instancer->display_colors[instance_index * 3 + 2]);
+      }
+      if (instancer->display_opacities.size() > instance_index) {
+        draw.has_display_opacity = true;
+        draw.display_opacity = instancer->display_opacities[instance_index];
       }
       Matrix4 instance_transform = Matrix4::Identity();
       if (instance_index < instancer->transforms.size()) {
@@ -768,6 +871,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
       RenderMesh mesh;
       if (ConvertMesh(mesh_prim, &mesh)) {
+        ExtractMeshBlendShapes(stage, mesh_prim, &mesh);
         int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
         result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
         result.scene.meshes.push_back(std::move(mesh));
@@ -834,7 +938,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
 
     AssignMaterialBindings(stage, &result.scene);
-    AssignPointInstanceDrawMaterials(&result.scene);
+    AssignPointInstanceDrawMaterials(stage, &result.scene);
     if (config_.point_instancer.duplicate_meshes) {
       DuplicatePointInstanceMeshes(&result.scene);
     }
@@ -957,9 +1061,27 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
   }
 }
 
-void RenderSceneConverter::AssignPointInstanceDrawMaterials(RenderScene* scene) {
+void RenderSceneConverter::AssignPointInstanceDrawMaterials(const Stage& stage,
+                                                            RenderScene* scene) {
   if (!scene) return;
+  for (RenderPointInstancer& instancer : scene->point_instancers) {
+    instancer.material_id = -1;
+    const std::string material_path =
+        FindInheritedMaterialBinding(stage, instancer.prim_path);
+    if (material_path.empty()) continue;
+    const auto it = scene->material_by_path.find(material_path);
+    if (it != scene->material_by_path.end()) {
+      instancer.material_id = it->second;
+    }
+  }
+
   for (RenderPointInstanceDraw& draw : scene->point_instance_draws) {
+    const RenderPointInstancer* instancer =
+        scene->get_point_instancer(draw.point_instancer_id);
+    if (instancer && instancer->material_id >= 0) {
+      draw.material_id = instancer->material_id;
+      continue;
+    }
     if (draw.mesh_id < 0 ||
         static_cast<size_t>(draw.mesh_id) >= scene->meshes.size()) {
       draw.material_id = -1;
@@ -1168,6 +1290,22 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
   out->ids = std::move(data.ids);
   out->invisible_ids = std::move(data.invisible_ids);
   out->inactive_ids = std::move(data.inactive_ids);
+  const size_t instance_count = out->proto_indices.size();
+  if (data.display_colors.size() == instance_count * 3) {
+    out->display_colors = std::move(data.display_colors);
+  } else if (data.display_colors.size() == 3 && instance_count > 0) {
+    out->display_colors.resize(instance_count * 3);
+    for (size_t i = 0; i < instance_count; ++i) {
+      out->display_colors[i * 3 + 0] = data.display_colors[0];
+      out->display_colors[i * 3 + 1] = data.display_colors[1];
+      out->display_colors[i * 3 + 2] = data.display_colors[2];
+    }
+  }
+  if (data.display_opacities.size() == instance_count) {
+    out->display_opacities = std::move(data.display_opacities);
+  } else if (data.display_opacities.size() == 1 && instance_count > 0) {
+    out->display_opacities.assign(instance_count, data.display_opacities[0]);
+  }
   out->transforms.reserve(data.transforms.size());
   for (const ::tinyusdz::next::PointInstancerTransform& transform :
        data.transforms) {
@@ -1512,8 +1650,16 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
 
   if (eval.HasConnection(shader_prim, attr_name)) {
     const std::string connection_path = eval.GetConnectionPath(shader_prim, attr_name);
-    const std::string texture_prim_path = SourcePrimPathFromConnection(connection_path);
-    UsdPrim texture_prim = stage.GetPrimAtPath(texture_prim_path);
+    std::string texture_connection_path = connection_path;
+    UsdPrim texture_prim = ResolveTexturePrimFromConnection(
+        stage, connection_path, config_.time_code, &texture_connection_path);
+    if (!texture_prim.IsValid()) {
+      const std::string texture_prim_path = SourcePrimPathFromConnection(connection_path);
+      texture_prim = stage.GetPrimAtPath(texture_prim_path);
+    }
+    const std::string texture_prim_path =
+        texture_prim.IsValid() ? texture_prim.GetPath().str()
+                               : SourcePrimPathFromConnection(connection_path);
 
     TextureNodeData tex_data;
     if (scene && ExtractTextureNodeData(stage, texture_prim, config_.time_code, &tex_data)) {
@@ -1563,7 +1709,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       texture.bias = Float4(tex_data.bias[0], tex_data.bias[1],
                             tex_data.bias[2], tex_data.bias[3]);
       texture.image_id = image_id;
-      texture.output_channel = ChannelFromConnection(connection_path);
+      texture.output_channel = ChannelFromConnection(texture_connection_path);
 
       out->texture_id = static_cast<int32_t>(scene->textures.size());
       scene->textures.push_back(std::move(texture));

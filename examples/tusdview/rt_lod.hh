@@ -62,7 +62,9 @@ struct RtLodProto {
   std::uint32_t instanceCount{0};        // 0 => single placement from `world`
   const float* world{nullptr};           // column-major 4x4 (non-instanced)
   const float* instanceColors{nullptr};  // 3 floats/inst, or null
+  const float* instanceOpacities{nullptr};  // 1 float/inst, or null
   const float* flatColor{nullptr};       // 3 floats fallback tint
+  float flatOpacity{1.0f};
   const float* protoAabbMin{nullptr};    // object space
   const float* protoAabbMax{nullptr};
   std::uint32_t meshId{0};               // index into the renderer mesh/desc arrays
@@ -73,6 +75,7 @@ struct RtLodProto {
 struct RtLodInstance {
   float xform[12];          // 3x4 row-major (raw o2w for Full, BoxFit for Proxy)
   float tint[3];
+  float opacity{1.0f};
   std::uint32_t meshId;     // Full: real mesh; Proxy: boxMeshId
   RtLod level;
   bool instanced;          // Full + non-instanced => shader useMaterial=1

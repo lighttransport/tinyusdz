@@ -2821,8 +2821,14 @@ bool RenderSceneConverter::ConvertMesh(
   // Base-face id per refined face when subdivision is applied (used to
   // remap GeomSubset face indices).
   std::vector<uint32_t> subdiv_face_source;
+  int32_t subdivision_level = env.mesh_config.subdivision_level;
+  if (auto sit = env.mesh_config.subdivision_prim_levels.find(
+          abs_prim_path.full_path_name());
+      sit != env.mesh_config.subdivision_prim_levels.end() && sit->second >= 0) {
+    subdivision_level = sit->second;
+  }
   const bool want_subdivision =
-      (env.mesh_config.subdivision_level > 0) &&
+      (subdivision_level > 0) &&
       (mesh.subdivisionScheme.get_value() !=
        GeomMesh::SubdivisionScheme::SubdivisionSchemeNone);
 
@@ -3545,7 +3551,7 @@ bool RenderSceneConverter::ConvertMesh(
       PUSH_ERROR_AND_RETURN("Subdivision primvar channel count exceeds 32-bit index space.");
     }
     if (!tsd::RefineGeomMesh(
-            mesh, env.mesh_config.subdivision_level, control_points,
+            mesh, subdivision_level, control_points,
             dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
             fvar_channels.empty() ? nullptr : fvar_channels.data(),
             subdiv_fvar_count,
@@ -3809,6 +3815,7 @@ bool RenderSceneConverter::ConvertMesh(
     if ((vcolor.elementSize == 1) && (vcolor.vertex_count() == 1) &&
         (vcolor.stride_bytes() == 3 * 4)) {
       memcpy(&dst.displayColor, vcolor.data.data(), vcolor.stride_bytes());
+      dst.has_authored_displayColor = true;  // authored constant, not the default
     } else {
       dst.vertex_colors = vcolor;
     }

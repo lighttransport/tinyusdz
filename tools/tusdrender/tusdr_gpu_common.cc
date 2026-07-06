@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -40,13 +41,49 @@ void ParallelRows(int h, unsigned nthreads, F &&fn) {
 
 }  // namespace
 
-bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
+bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
-                      GpuTriScene *out, bool build_bvh) {
+                      int threads, bool build_cpu_scene, GpuTriScene *out,
+                      lrt_tri_quality quality) {
   // Flatten all meshes into one indexed vertex/index array LightRT can build:
   // flat_verts = unique positions, flat_idx = 3*ntris vertex ids.
-  uint32_t base_idx = 0;
+  size_t total_pos = 0;
+  size_t total_idx = 0;
+  size_t total_vertices = 0;
+  const size_t max_u32 = size_t(std::numeric_limits<uint32_t>::max());
   for (const auto &g : geos) {
+    if ((g.positions.size() % 3u) != 0u) {
+      std::cerr << "Invalid mesh positions: component count is not a multiple of 3.\n";
+      return false;
+    }
+    if ((g.indices.size() % 3u) != 0u) {
+      std::cerr << "Invalid mesh indices: index count is not a multiple of 3.\n";
+      return false;
+    }
+    const size_t nv = g.positions.size() / 3u;
+    if (nv > max_u32 || total_vertices > max_u32 - nv) {
+      std::cerr << "Too many flattened vertices for 32-bit GPU indices.\n";
+      return false;
+    }
+    total_pos += g.positions.size();
+    total_idx += g.indices.size();
+    total_vertices += nv;
+  }
+  const size_t total_tris = total_idx / 3;
+  if (total_tris > max_u32) {
+    std::cerr << "Too many triangles for 32-bit GPU tracing.\n";
+    return false;
+  }
+  out->flat_verts.reserve(total_pos);
+  out->flat_idx.reserve(total_idx);
+  out->normals.reserve(total_tris);
+  out->vn0.reserve(total_tris);
+  out->vn1.reserve(total_tris);
+  out->vn2.reserve(total_tris);
+  out->base_colors.reserve(total_tris);
+  uint32_t base_idx = 0;
+  for (size_t mesh_idx = 0; mesh_idx < geos.size(); ++mesh_idx) {
+    const auto &g = geos[mesh_idx];
     uint32_t nv = uint32_t(g.positions.size() / 3);
     for (uint32_t j = 0; j < nv; ++j) {
       out->flat_verts.push_back(g.positions[j * 3 + 0]);
@@ -54,7 +91,12 @@ bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
       out->flat_verts.push_back(g.positions[j * 3 + 2]);
     }
     for (uint32_t j = 0; j < uint32_t(g.indices.size()); ++j) {
-      out->flat_idx.push_back(g.indices[j] + base_idx);
+      if (g.indices[j] >= nv) {
+        std::cerr << "Invalid mesh index " << g.indices[j] << " for "
+                  << nv << " vertices.\n";
+        return false;
+      }
+      out->flat_idx.push_back(base_idx + g.indices[j]);
     }
     // Only trust per-vertex normals when they are exactly one-per-position
     // (USD faceVarying normals have a different layout, so fall back to flat).
@@ -79,7 +121,7 @@ bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
       out->vn2.push_back(vnorm(i2));
     }
     size_t nm = (base_colors.size() > geos.size()) ? geos.size() : base_colors.size();
-    Vec3 bc = (&g - &geos[0]) < nm ? base_colors[&g - &geos[0]] : Vec3{0.5f, 0.5f, 0.5f};
+    Vec3 bc = mesh_idx < nm ? base_colors[mesh_idx] : Vec3{0.5f, 0.5f, 0.5f};
     for (uint32_t j = 0; j < uint32_t(g.indices.size()) / 3; ++j) {
       out->base_colors.push_back(bc);
     }
@@ -91,16 +133,22 @@ bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
     std::cerr << "No triangles to render.\n";
     return false;
   }
+  if (!build_cpu_scene) return true;
+  return BuildGpuCpuScene(threads, out, quality);
+}
 
-  // The ray-query backends build their AS on the GPU from flat_verts/flat_idx;
-  // only the compute-trace backends traverse this CPU BVH.
-  if (!build_bvh) return true;
+bool BuildGpuCpuScene(int threads, GpuTriScene *out, lrt_tri_quality quality) {
+  if (!out || out->ntris == 0 || out->flat_verts.empty() || out->flat_idx.empty()) {
+    std::cerr << "No flattened triangles for LightRT scene build.\n";
+    return false;
+  }
+  if (out->scene) return true;
 
   lrt_tri_build_options bopts;
   std::memset(&bopts, 0, sizeof(bopts));
-  bopts.quality = opt.quality;
-  bopts.layout = LRT_TRI_LAYOUT_BVH4;  // the trace shader's W=4 SoA layout
-  bopts.num_threads = WorkerThreadCount(opt.threads);
+  bopts.quality = quality;
+  bopts.layout = LRT_TRI_LAYOUT_BVH4;
+  bopts.num_threads = WorkerThreadCount(threads);
 
   lrt_result lrterr = LRT_RESULT_OK;
   out->scene = lrt_tri_scene_build_indexed(out->flat_verts.data(),
@@ -111,6 +159,33 @@ bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
     std::cerr << "Failed to build LightRT scene.\n";
     return false;
   }
+  return true;
+}
+
+bool ValidateGpuFrameSize(int w, int h, int spp, const char *backend,
+                          size_t *nrays) {
+  const char *name = backend ? backend : "GPU";
+  if (w <= 0 || h <= 0 || spp <= 0) {
+    std::cerr << name << " invalid frame size: " << w << "x" << h
+              << " spp=" << spp << "\n";
+    return false;
+  }
+  const size_t sw = size_t(w);
+  const size_t sh = size_t(h);
+  const size_t ss = size_t(spp);
+  const size_t max_rays = size_t(std::numeric_limits<uint32_t>::max());
+  if (sw > max_rays / sh) {
+    std::cerr << name << " frame is too large for 32-bit GPU ray count: "
+              << w << "x" << h << " spp=" << spp << "\n";
+    return false;
+  }
+  const size_t npix = sw * sh;
+  if (npix > max_rays / ss) {
+    std::cerr << name << " sample count is too large for 32-bit GPU ray count: "
+              << w << "x" << h << " spp=" << spp << "\n";
+    return false;
+  }
+  if (nrays) *nrays = npix * ss;
   return true;
 }
 
@@ -136,47 +211,47 @@ bool ShadeAndWriteImageInstanced(const Options &opt, const GpuInstancedScene &s,
   };
 
   ParallelRows(h, WorkerThreadCount(opt.threads), [&](int yBegin, int yEnd) {
-  for (int y = yBegin; y < yEnd; ++y) {
-    for (int x = 0; x < w; ++x) {
-      size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
-      Vec3 color{0, 0, 0};
-      for (int sp = 0; sp < spp; ++sp) {
-        const InstSampleHit &hit = hits[base + size_t(sp)];
-        if (!hit.valid) continue;
-        const uint32_t inst = hit.inst;
-        const uint32_t local = hit.local;
-        if (inst >= s.insts.size()) continue;
-        const GpuInstPlacement &pl = s.insts[inst];
-        if (pl.proto >= s.protos.size()) continue;
-        const GpuInstProto &pr = s.protos[pl.proto];
-        if (local >= pr.ntris) continue;
+    for (int y = yBegin; y < yEnd; ++y) {
+      for (int x = 0; x < w; ++x) {
+        size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
+        Vec3 color{0, 0, 0};
+        for (int sp = 0; sp < spp; ++sp) {
+          const InstSampleHit &hit = hits[base + size_t(sp)];
+          if (!hit.valid) continue;
+          const uint32_t inst = hit.inst;
+          const uint32_t local = hit.local;
+          if (inst >= s.insts.size()) continue;
+          const GpuInstPlacement &pl = s.insts[inst];
+          if (pl.proto >= s.protos.size()) continue;
+          const GpuInstProto &pr = s.protos[pl.proto];
+          if (local >= pr.ntris) continue;
 
-        Vec3 bc = pr.base_color;
-        // Smooth normal in prototype space, then transform to world.
-        Vec3 Nobj = pr.normals[local];
-        const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
-        Vec3 sn = Add(Add(Mul(pr.vn0[local], w0), Mul(pr.vn1[local], w1)),
-                      Mul(pr.vn2[local], w2));
-        if (Length(sn) > 1.0e-8f) Nobj = sn;
-        Vec3 N = xform_n(pl.n2w, Nobj);
-        if (Length(N) > 1.0e-8f) N = Normalize(N);
-        Vec3 V = Vec3{-rays[base + size_t(sp)].dir[0],
-                      -rays[base + size_t(sp)].dir[1],
-                      -rays[base + size_t(sp)].dir[2]};
-        if (Dot(N, V) < 0.0f) N = Mul(N, -1.0f);
-        float key = std::max(0.0f, Dot(N, light));
-        float head = std::max(0.0f, Dot(N, V));
-        float lit = ambient + 0.8f * key + 0.35f * head;
-        color = Add(color, Mul(bc, lit));
+          Vec3 bc = pr.base_color;
+          // Smooth normal in prototype space, then transform to world.
+          Vec3 Nobj = pr.normals[local];
+          const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
+          Vec3 sn = Add(Add(Mul(pr.vn0[local], w0), Mul(pr.vn1[local], w1)),
+                        Mul(pr.vn2[local], w2));
+          if (Length(sn) > 1.0e-8f) Nobj = sn;
+          Vec3 N = xform_n(pl.n2w, Nobj);
+          if (Length(N) > 1.0e-8f) N = Normalize(N);
+          Vec3 V = Vec3{-rays[base + size_t(sp)].dir[0],
+                        -rays[base + size_t(sp)].dir[1],
+                        -rays[base + size_t(sp)].dir[2]};
+          if (Dot(N, V) < 0.0f) N = Mul(N, -1.0f);
+          float key = std::max(0.0f, Dot(N, light));
+          float head = std::max(0.0f, Dot(N, V));
+          float lit = ambient + 0.8f * key + 0.35f * head;
+          color = Add(color, Mul(bc, lit));
+        }
+        color = Mul(color, 1.0f / float(spp));
+        size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
+        img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
+        img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
+        img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
+        img.data[pi + 3] = 255;
       }
-      color = Mul(color, 1.0f / float(spp));
-      size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
-      img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
-      img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
-      img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
-      img.data[pi + 3] = 255;
     }
-  }
   });
 
   tinyusdz::image::WriteOption wopt;
@@ -238,47 +313,48 @@ bool ShadeAndWriteImage(const Options &opt, const GpuTriScene &s,
   img.data.resize(size_t(w) * size_t(h) * 4, 0);
 
   ParallelRows(h, WorkerThreadCount(opt.threads), [&](int yBegin, int yEnd) {
-  for (int y = yBegin; y < yEnd; ++y) {
-    for (int x = 0; x < w; ++x) {
-      size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
-      Vec3 color{0, 0, 0};
-      for (int sp = 0; sp < spp; ++sp) {
-        const lrt_hit &hit = hits[base + size_t(sp)];
-        if (hit.prim_id != 0xFFFFFFFFu && hit.prim_id < s.ntris) {
-          Vec3 bc = hit.prim_id < s.base_colors.size()
-                        ? s.base_colors[hit.prim_id]
-                        : Vec3{0.5f, 0.5f, 0.5f};
-          // Smooth normal: barycentric-interpolate the triangle's vertex normals
-          // (hit.u, hit.v are the v1/v2 weights). Fall back to the flat face
-          // normal when vertex normals are absent/degenerate.
-          Vec3 N = s.normals[hit.prim_id];
-          const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
-          Vec3 sn = Add(Add(Mul(s.vn0[hit.prim_id], w0), Mul(s.vn1[hit.prim_id], w1)),
-                        Mul(s.vn2[hit.prim_id], w2));
-          if (Length(sn) > 1.0e-8f) N = Normalize(sn);
-          // Orient the normal toward the camera so a surface visible to the eye
-          // is never left unlit by a back-facing normal (USD winding/normals are
-          // not guaranteed consistent for a quick preview).
-          Vec3 V = Vec3{-rays[base + size_t(sp)].dir[0],
-                        -rays[base + size_t(sp)].dir[1],
-                        -rays[base + size_t(sp)].dir[2]};
-          if (Dot(N, V) < 0.0f) N = Mul(N, -1.0f);
-          // Fixed key light + a dim camera headlight so the silhouette reads even
-          // when the key grazes the surface; ambient lifts the shadow terminator.
-          float key = std::max(0.0f, Dot(N, light));
-          float head = std::max(0.0f, Dot(N, V));
-          float lit = ambient + 0.8f * key + 0.35f * head;
-          color = Add(color, Mul(bc, lit));
+    for (int y = yBegin; y < yEnd; ++y) {
+      for (int x = 0; x < w; ++x) {
+        size_t base = (size_t(y) * size_t(w) + size_t(x)) * size_t(spp);
+        Vec3 color{0, 0, 0};
+        for (int sp = 0; sp < spp; ++sp) {
+          const lrt_hit &hit = hits[base + size_t(sp)];
+          if (hit.prim_id != 0xFFFFFFFFu && hit.prim_id < s.ntris) {
+            Vec3 bc = hit.prim_id < s.base_colors.size()
+                          ? s.base_colors[hit.prim_id]
+                          : Vec3{0.5f, 0.5f, 0.5f};
+            // Smooth normal: barycentric-interpolate the triangle's vertex normals
+            // (hit.u, hit.v are the v1/v2 weights). Fall back to the flat face
+            // normal when vertex normals are absent/degenerate.
+            Vec3 N = s.normals[hit.prim_id];
+            const float w0 = 1.0f - hit.u - hit.v, w1 = hit.u, w2 = hit.v;
+            Vec3 sn = Add(Add(Mul(s.vn0[hit.prim_id], w0),
+                              Mul(s.vn1[hit.prim_id], w1)),
+                          Mul(s.vn2[hit.prim_id], w2));
+            if (Length(sn) > 1.0e-8f) N = Normalize(sn);
+            // Orient the normal toward the camera so a surface visible to the eye
+            // is never left unlit by a back-facing normal (USD winding/normals are
+            // not guaranteed consistent for a quick preview).
+            Vec3 V = Vec3{-rays[base + size_t(sp)].dir[0],
+                          -rays[base + size_t(sp)].dir[1],
+                          -rays[base + size_t(sp)].dir[2]};
+            if (Dot(N, V) < 0.0f) N = Mul(N, -1.0f);
+            // Fixed key light + a dim camera headlight so the silhouette reads even
+            // when the key grazes the surface; ambient lifts the shadow terminator.
+            float key = std::max(0.0f, Dot(N, light));
+            float head = std::max(0.0f, Dot(N, V));
+            float lit = ambient + 0.8f * key + 0.35f * head;
+            color = Add(color, Mul(bc, lit));
+          }
         }
+        color = Mul(color, 1.0f / float(spp));
+        size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
+        img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
+        img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
+        img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
+        img.data[pi + 3] = 255;
       }
-      color = Mul(color, 1.0f / float(spp));
-      size_t pi = (size_t(y) * size_t(w) + size_t(x)) * 4;
-      img.data[pi + 0] = uint8_t(std::min(255.0f, color.x * 255.0f));
-      img.data[pi + 1] = uint8_t(std::min(255.0f, color.y * 255.0f));
-      img.data[pi + 2] = uint8_t(std::min(255.0f, color.z * 255.0f));
-      img.data[pi + 3] = 255;
     }
-  }
   });
 
   tinyusdz::image::WriteOption wopt;

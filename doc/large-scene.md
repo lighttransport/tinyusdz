@@ -575,7 +575,59 @@ This is a per-frame raster analogue of the RT path's view-dependent LOD
 dither), box proxies are flat-shaded (no materials/textures), and `full-px` is a
 single global threshold rather than a per-prototype importance score.
 
-### 2.6.6 Ray-traced full island (tusdview `--hip`, AMD RX 9070 XT)
+### 2.6.6 Realtime large-scene profiles (`--large-scene-profile`, tusdview)
+
+`tusdview --large-scene-profile off|auto|caldera|island|alab` is a preset layer
+over the existing Vulkan large-scene flags. It is meant for repeatable Caldera,
+Island, and ALab smoke/performance runs without memorizing the full flag list:
+profiles enable `--next`, prefer the Vulkan backend, enable raster/RT LOD, set
+conservative draw/VRAM budgets, and print the resolved settings at startup.
+`auto` only applies a profile when the input path clearly names Caldera, Island
+or Moana, or ALab; otherwise it resolves to `off`.
+
+Explicit CLI flags win. For example, `--large-scene-profile island
+--max-gpu-mem 6 --raster-lod-full-px 32` keeps the Island preset but uses the
+user's GPU budget and LOD threshold. Profiles do **not** enable texture resize or
+BCn/compressed texture paths; those remain controlled only by
+`--texture-max-size`, `--texture-budget-mb`, and `--texture-compress`.
+
+Scene-specific defaults:
+
+- `caldera`: raises the triangle cap to avoid the old 30 M-triangle truncation,
+  uses the named overview camera when no camera is passed, and enables district
+  LOD streaming with host/VRAM budgets.
+- `island`: caps full raster uploads by draw count and VRAM, then relies on
+  per-frame raster LOD to keep the distant island visible as box proxies.
+- `alab`: enables parent-relative composition paths because the public ALab
+  layout uses `../lightingrenderovers/`, then applies the same Vulkan/LOD budget
+  preset pattern.
+
+Optional local harness:
+
+```sh
+TUSDVIEW=./build_ninja/tusdview \
+CALDERA=/path/to/caldera.usda \
+ISLAND=/path/to/island.usda \
+ALAB=/path/to/alab.usda \
+  bash examples/tusdview/tests/run-large-scene-profiles.sh
+
+TUSDRENDER=./build_ninja/tools/tusdrender/tusdrender \
+CALDERA=/path/to/caldera.usda \
+ISLAND=/path/to/island.usda \
+ALAB=/path/to/alab.usda \
+  bash tools/tusdrender/tests/run-large-scene-profiles.sh
+```
+
+The harnesses skip scenes whose environment variables are unset, write one image
+and one log per scene, and check that the resolved profile settings appeared in
+the log. Each writes `summary.tsv` under `OUT_DIR` with profile, asset, exit
+code, elapsed seconds, image bytes, and log path. Use `TUSDVIEW_EXTRA_ARGS` or
+`TUSDRENDER_EXTRA_ARGS` to add per-run flags such as `--rt`, `--mode albedo`,
+`-stats`, or `-gpuShade preview`. `TUSDVIEW_SCENE_TIMEOUT` defaults to `10m` and
+bounds each viewer scene run. They are intentionally not required ctests because
+these large assets are not tracked in the repository.
+
+### 2.6.7 Ray-traced full island (tusdview `--hip`, AMD RX 9070 XT)
 
 §2.6.4 is a *rasterizer* preview: it merges the long tail into a flat box-proxy so
 the per-mesh draw path stays cheap. The **HIP ray tracer** (`--hip`) takes the

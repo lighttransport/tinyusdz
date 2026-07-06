@@ -55,6 +55,8 @@ set(TUSDVIEW_SOURCES
     scene_loader.cc
     next_scene_loader.cc
     mesh_build.cc
+    texture_tools.cc
+    lightrt_mtlx_bridge.cc
     gpu_budget_lod.cc
     rt_lod.cc
     displacement_bake.cc
@@ -89,7 +91,190 @@ set(TUSDVIEW_COMMON_SOURCES
     ${COMMON_DIR}/light3d/material.cpp
     ${COMMON_DIR}/light3d/texture.cpp)
 
-add_executable(${EXAMPLE_TARGET} ${TUSDVIEW_SOURCES} ${TUSDVIEW_COMMON_SOURCES})
+# Compile-check the vendored LightRT MaterialX/OpenPBR evaluator core. The
+# objects are intentionally not linked into tusdview yet because texture loading
+# still needs a single owning stb implementation in tinyusdz. `third_party_impl.c`
+# is compiled here to keep the vendor import portable, but remains unlinked.
+# `material_bind.c` stays vendored but is excluded because it is glTF-specific
+# rather than USD-facing.
+set(TUSDVIEW_LIGHTRT_MTLX_DIR ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+add_library(tusdview_lightrt_mtlx OBJECT
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/env.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/third_party_impl.c)
+target_include_directories(tusdview_lightrt_mtlx PRIVATE
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+    ${PROJECT_SOURCE_DIR}/src/external
+    ${PROJECT_SOURCE_DIR}/src/external/tinyexr/include)
+target_compile_features(tusdview_lightrt_mtlx PRIVATE c_std_11)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(tusdview_lightrt_mtlx PRIVATE -w)
+endif()
+
+add_library(tusdview_lightrt_mtlx_const OBJECT
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+    lightrt_mtlx_texture_stub.c)
+target_include_directories(tusdview_lightrt_mtlx_const PRIVATE
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+    ${PROJECT_SOURCE_DIR}/src/external)
+target_compile_features(tusdview_lightrt_mtlx_const PRIVATE c_std_11)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(tusdview_lightrt_mtlx_const PRIVATE -w)
+endif()
+
+add_executable(${EXAMPLE_TARGET}
+    ${TUSDVIEW_SOURCES}
+    ${TUSDVIEW_COMMON_SOURCES}
+    $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+add_dependencies(${EXAMPLE_TARGET} tusdview_lightrt_mtlx)
+
+if(TINYUSDZ_BUILD_TESTS)
+  add_executable(tusdview_lightrt_bridge_test
+      tests/lightrt_bridge_test.cc
+      lightrt_mtlx_bridge.cc
+      rt_scene_build.cc
+      rt_bvh.cc
+      displacement_bake.cc
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_lightrt_bridge_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_lightrt_bridge_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${COMMON_DIR})
+  if(UNIX AND NOT APPLE)
+    find_package(Threads REQUIRED)
+    target_link_libraries(tusdview_lightrt_bridge_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_openpbr_material_test
+      tests/openpbr_material_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_openpbr_material_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_openpbr_material_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_openpbr_material_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_openpbr_material_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_lighting_test
+      tests/lighting_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      rt_scene_build.cc
+      rt_bvh.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_lighting_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_lighting_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_lighting_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_lighting_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_geometry_primvar_test
+      tests/geometry_primvar_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_geometry_primvar_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_geometry_primvar_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_geometry_primvar_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_geometry_primvar_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_texture_pipeline_test
+      tests/texture_pipeline_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_texture_pipeline_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_texture_pipeline_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_texture_pipeline_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_texture_pipeline_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_lightrt_mtlx_eval_test
+      tests/lightrt_mtlx_eval_test.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/third_party_impl.c)
+  target_compile_features(tusdview_lightrt_mtlx_eval_test PRIVATE c_std_11)
+  target_include_directories(tusdview_lightrt_mtlx_eval_test PRIVATE
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+      ${PROJECT_SOURCE_DIR}/src/external)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_lightrt_mtlx_eval_test PRIVATE m)
+  endif()
+endif()
+
+# Vendored texture tools (tir/texcomp/texpipe/envmap). All calls are routed
+# through texture_tools.cc and guarded by TUSDVIEW_WITH_TEXTOOLS, so the app
+# builds unchanged when TINYUSDZ_WITH_TEXTOOLS=OFF. Applied to every target
+# that compiles mesh_build.cc / texture_tools.cc.
+if(TINYUSDZ_WITH_TEXTOOLS)
+  set(TUSDVIEW_TEXTOOLS_CONSUMERS ${EXAMPLE_TARGET})
+  if(TINYUSDZ_BUILD_TESTS)
+    list(APPEND TUSDVIEW_TEXTOOLS_CONSUMERS
+        tusdview_openpbr_material_test
+        tusdview_lighting_test
+        tusdview_geometry_primvar_test
+        tusdview_texture_pipeline_test)
+  endif()
+  foreach(tt_consumer IN LISTS TUSDVIEW_TEXTOOLS_CONSUMERS)
+    target_link_libraries(${tt_consumer} PRIVATE tinyusdz_textools)
+    target_compile_definitions(${tt_consumer} PRIVATE TUSDVIEW_WITH_TEXTOOLS=1)
+  endforeach()
+endif()
 
 if(COMMAND add_sanitizers)
   add_sanitizers(${EXAMPLE_TARGET})

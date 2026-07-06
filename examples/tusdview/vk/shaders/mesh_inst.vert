@@ -4,14 +4,14 @@
 // Instanced flat-shaded prototype (large-scene --next path). Per-instance 3x4
 // object-to-world (instance-rate, rows = output x/y/z) at locations 3/4/5 -- the
 // unused skin slots, leaving location 8 free for the per-vertex morph CSR --
-// plus per-instance color + per-vertex prototype color. Mirrors the GL
+// plus per-instance color/opacity + per-vertex prototype color. Mirrors the GL
 // kInstancedVS so both rasterizers match.
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 3) in vec4 aRow0;       // o2w row 0 (instance-rate)
 layout(location = 4) in vec4 aRow1;
 layout(location = 5) in vec4 aRow2;
-layout(location = 9) in vec3 aInstColor;  // per-instance color (instance-rate)
+layout(location = 9) in vec4 aInstColor;  // per-instance color/opacity (instance-rate)
 layout(location = 10) in vec3 aVtxColor;  // per-vertex prototype color
 layout(location = 8) in uvec2 aMorphOffsetCount;  // GPU morph (offset,count); 0=none
 
@@ -34,7 +34,12 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 camPos;       // xyz camera, w depthScale
   vec4 sceneMin;
   vec4 sceneExtent;
+  vec4 lightDir;
+  vec4 lightColor;
   ivec4 mode;        // .x renderMode
+  mat4 envRot;        // world -> environment rotation (dome IBL)
+  vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
+  vec4 iblParams;     // .x = prefiltered mip count
 } fr;
 // Per-draw push constant: the base index of this draw in the DrawMeta SSBO. In
 // the per-mesh loop each draw is separate (gl_DrawIDARB == 0) so baseDraw selects
@@ -46,8 +51,9 @@ layout(push_constant) uniform InstPushC { ivec4 draw; } pc;  // .x = baseDraw
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
 layout(location = 2) out vec3 vColor;
-layout(location = 3) flat out int vInstanceId;
-layout(location = 4) flat out int vDrawSlot;
+layout(location = 3) out float vOpacity;
+layout(location = 4) flat out int vInstanceId;
+layout(location = 5) flat out int vDrawSlot;
 
 void main() {
   vInstanceId = gl_InstanceIndex;
@@ -73,6 +79,7 @@ void main() {
                 dot(aNormal, aRow2.xyz));
   vWorldPos = wp;
   vNormal = normalize(n);
-  vColor = aInstColor * aVtxColor;  // per-instance x per-vertex (both default 1)
+  vColor = aInstColor.rgb * aVtxColor;  // per-instance x per-vertex (both default 1)
+  vOpacity = clamp(aInstColor.a, 0.0, 1.0);
   gl_Position = fr.viewProj * vec4(wp, 1.0);
 }

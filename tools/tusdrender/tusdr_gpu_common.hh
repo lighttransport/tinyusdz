@@ -7,6 +7,7 @@
 // hold that common code so the per-backend drivers stay thin.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -29,15 +30,24 @@ struct GpuTriScene {
 };
 
 // Flatten `geos` (with per-mesh `base_colors`) into a single indexed mesh and
-// (when `build_bvh`) build the BVH4 scene honoring opt.quality/opt.threads.
-// Pass build_bvh=false when the caller will trace on a hardware ray-query AS
-// built from flat_verts/flat_idx directly (-vkr): the CPU BVH is unused there
-// and skipping it saves the whole build (many seconds at 10M+ triangles).
-// Returns false (with a stderr diagnostic) when there is no geometry or the
-// BVH build fails; on success `out->scene` is non-null iff build_bvh.
-bool BuildGpuTriScene(const Options &opt, const std::vector<Vec3> &base_colors,
+// optionally build the CPU BVH4 scene. Returns false (with a stderr diagnostic)
+// when there is no geometry or the requested BVH build fails. When
+// build_cpu_scene is false, `out->scene` stays null; this is used by the Vulkan
+// hardware ray-query path, which builds a Vulkan AS directly from flat_verts.
+bool BuildGpuTriScene(const std::vector<Vec3> &base_colors,
                       const std::vector<RTPreviewStats::MeshGeometry> &geos,
-                      GpuTriScene *out, bool build_bvh = true);
+                      int threads, bool build_cpu_scene, GpuTriScene *out,
+                      lrt_tri_quality quality = LRT_TRI_BUILD_DEFAULT);
+
+// Build the CPU LightRT BVH for an already-flattened GpuTriScene. Used by the
+// compute backends and as a fallback when Vulkan ray query is unavailable/fails.
+bool BuildGpuCpuScene(int threads, GpuTriScene *out,
+                      lrt_tri_quality quality = LRT_TRI_BUILD_DEFAULT);
+
+// Validate a GPU trace dispatch dimensions before allocating rays or passing the
+// count to LightRT's GPU APIs, which all take a uint32_t ray count.
+bool ValidateGpuFrameSize(int w, int h, int spp, const char *backend,
+                          size_t *nrays);
 
 // --- True two-level (instanced) GPU scene -----------------------------------
 //

@@ -414,6 +414,7 @@ def Xform "World"
 
     def PointInstancer "Inst"
     {
+        rel material:binding = </World/InstMaterial>
         rel prototypes = [</World/Plane>, </World/ProtoGroup>]
         point3f[] positions = [(0, 0, 0), (4, 0, 0), (8, 0, 0)]
         int[] protoIndices = [0, 1, 1]
@@ -421,8 +422,25 @@ def Xform "World"
         float3[] scales = [(1, 1, 1), (0.5, 0.5, 0.5), (2, 2, 2)]
         float3[] velocities = [(0, 0, 1), (0, 0, 2), (0, 0, 3)]
         float3[] angularVelocities = [(0, 1, 0), (0, 2, 0), (0, 3, 0)]
+        color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+        float[] primvars:displayOpacity = [1, 0.5, 0.25] (
+            interpolation = "vertex"
+        )
         int64[] ids = [20, 21, 22]
         int64[] invisibleIds = [22]
+    }
+
+    def Material "InstMaterial"
+    {
+        def Shader "PreviewSurface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.2, 0.2, 0.8)
+            token outputs:surface
+        }
+        token outputs:surface.connect = </World/InstMaterial/PreviewSurface.outputs:surface>
     }
 
     def Skeleton "Rig"
@@ -543,6 +561,11 @@ def Xform "World"
   assert(instancer.angular_velocities == std::vector<float>({0, 1, 0, 0, 2, 0, 0, 3, 0}));
   assert(instancer.has_velocities());
   assert(instancer.has_angular_velocities());
+  assert(instancer.has_display_colors());
+  assert(instancer.display_colors ==
+         std::vector<float>({1, 0, 0, 0, 1, 0, 0, 0, 1}));
+  assert(instancer.has_display_opacities());
+  assert(instancer.display_opacities == std::vector<float>({1, 0.5f, 0.25f}));
   assert(instancer.ids == std::vector<int64_t>({20, 21, 22}));
   assert(instancer.invisible_ids == std::vector<int64_t>({22}));
   assert(instancer.instance_visible == std::vector<uint8_t>({1, 1, 0}));
@@ -580,6 +603,15 @@ def Xform "World"
   assert(result.scene.get_mesh(result.scene.point_instance_draws[0].mesh_id));
   assert(result.scene.point_instance_draws[0].material_id >= 0);
   assert(result.scene.get_material(result.scene.point_instance_draws[0].material_id));
+  assert(result.scene.material_by_path.count("/World/InstMaterial") == 1);
+  assert(result.scene.point_instance_draws[0].material_id ==
+         result.scene.material_by_path["/World/InstMaterial"]);
+  assert(result.scene.point_instance_draws[0].has_display_color);
+  assert(std::abs(result.scene.point_instance_draws[0].display_color.x - 1.0f) <
+         0.001f);
+  assert(result.scene.point_instance_draws[0].has_display_opacity);
+  assert(std::abs(result.scene.point_instance_draws[0].display_opacity - 1.0f) <
+         0.001f);
   assert(result.scene.point_instance_draws[0].expanded_mesh_id == -1);
   assert(result.scene.point_instance_draws[1].point_instancer_id == 0);
   assert(result.scene.point_instance_draws[1].instance_index == 1);
@@ -588,6 +620,12 @@ def Xform "World"
   assert(result.scene.point_instance_draws[1].material_id >= 0);
   assert(result.scene.point_instance_draws[0].material_id ==
          result.scene.point_instance_draws[1].material_id);
+  assert(result.scene.point_instance_draws[1].has_display_color);
+  assert(std::abs(result.scene.point_instance_draws[1].display_color.y - 1.0f) <
+         0.001f);
+  assert(result.scene.point_instance_draws[1].has_display_opacity);
+  assert(std::abs(result.scene.point_instance_draws[1].display_opacity - 0.5f) <
+         0.001f);
   assert(std::abs(result.scene.point_instance_draws[1].transform.m[12] - 4.5f) < 0.001f);
 
   ConverterConfig duplicate_config = config;
@@ -605,6 +643,10 @@ def Xform "World"
   assert(duplicate_view.expanded_mesh);
   assert(duplicate_view.expanded_mesh->material_id ==
          duplicate_view.draw->material_id);
+  assert(duplicate_view.expanded_mesh->colors.size() ==
+         duplicate_view.expanded_mesh->point_count() * 3);
+  assert(!duplicate_view.expanded_mesh->colors.empty());
+  assert(std::abs(duplicate_view.expanded_mesh->colors[1] - 1.0f) < 0.001f);
   assert(duplicate_view.expanded_mesh->point_count() == duplicate_view.mesh->point_count());
   assert(std::abs(duplicate_view.expanded_mesh->points[0] - 4.5f) < 0.001f);
   assert(std::abs(duplicate_view.expanded_mesh->points[1]) < 0.001f);
@@ -911,6 +953,104 @@ def Xform "World"
   std::cout << "  RenderConverter PointInstancer index visibility: PASSED\n";
 }
 
+void TestRenderConverterMaterialXNodeGraphTexture() {
+  std::cout << "Testing RenderConverter MaterialX NodeGraph texture forwarding...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Scope "Mats"
+    {
+        def Material "Mat"
+        {
+            token outputs:surface.connect = </World/Mats/Mat/Preview.outputs:surface>
+            def Shader "Preview"
+            {
+                uniform token info:id = "ND_UsdPreviewSurface_surfaceshader"
+                color3f inputs:diffuseColor.connect = </World/Mats/Mat/NG.outputs:diff_out>
+                token outputs:surface
+            }
+            def NodeGraph "NG"
+            {
+                color3f outputs:diff_out.connect = </World/Mats/Mat/NG/Image.outputs:out>
+                def Shader "Image"
+                {
+                    uniform token info:id = "ND_image_color3"
+                    asset inputs:file = @tile_<UDIM>.png@
+                    color3f outputs:out
+                }
+            }
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+  UsdPrim mat = lr.stage.GetPrimAtPath("/World/Mats/Mat");
+  assert(mat);
+
+  RenderSceneConverter converter;
+  RenderMaterial rm;
+  RenderScene scene;
+  assert(converter.ConvertMaterial(lr.stage, mat, &rm, &scene));
+  assert(rm.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+  assert(rm.preview_surface);
+  assert(rm.preview_surface->diffuse_color.texture_id == 0);
+  assert(scene.textures.size() == 1);
+  assert(scene.images.size() == 1);
+  assert(scene.textures[0].asset_path == "tile_<UDIM>.png");
+  assert(scene.textures[0].prim_path == "/World/Mats/Mat/NG/Image");
+  assert(scene.images[0].resolved_path == "tile_<UDIM>.png");
+
+  std::cout << "  RenderConverter MaterialX NodeGraph texture forwarding: PASSED\n";
+}
+
+void TestRenderConverterBlendShapeTargets() {
+  std::cout << "Testing RenderConverter blendshape target extraction...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Mesh "Face"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        uniform token[] skel:blendShapes = ["Lift"]
+        rel skel:blendShapeTargets = </World/Face/Lift>
+
+        def BlendShape "Lift"
+        {
+            point3f[] offsets = [(0, 2, 0)]
+            int[] pointIndices = [1]
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  RenderSceneConverter converter;
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.meshes.size() == 1);
+
+  const RenderMesh& mesh = result.scene.meshes[0];
+  assert(mesh.blend_shapes.size() == 1);
+  assert(mesh.blend_shapes[0].name == "Lift");
+  assert(mesh.blend_shapes[0].point_offsets.size() == mesh.point_count() * 3);
+  assert(mesh.blend_shapes[0].point_offsets[0] == 0.0f);
+  assert(mesh.blend_shapes[0].point_offsets[1] == 0.0f);
+  assert(mesh.blend_shapes[0].point_offsets[2] == 0.0f);
+  assert(mesh.blend_shapes[0].point_offsets[3] == 0.0f);
+  assert(mesh.blend_shapes[0].point_offsets[4] == 2.0f);
+  assert(mesh.blend_shapes[0].point_offsets[5] == 0.0f);
+
+  std::cout << "  RenderConverter blendshape target extraction: PASSED\n";
+}
+
 void TestMaterialXUtilities() {
   std::cout << "Testing MaterialX utilities...\n";
 
@@ -1043,6 +1183,8 @@ int main() {
   TestRenderConverterMaterials();
   TestRenderConverterPointInstancerWarnings();
   TestRenderConverterPointInstancerIndexVisibility();
+  TestRenderConverterMaterialXNodeGraphTexture();
+  TestRenderConverterBlendShapeTargets();
   TestMaterialXUtilities();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

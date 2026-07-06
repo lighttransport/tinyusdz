@@ -396,6 +396,18 @@ static void RemapMaterialTextureIds(RenderMaterial &mat,
 
 }  // namespace
 
+// Copy authored displayColor / displayOpacity primvars from an analytic Gprim
+// (Cube/Sphere/Cone/Cylinder/Capsule) onto the tessellated temp GeomMesh so
+// ConvertMesh applies them. Without this, analytic primitives always render
+// with the default material even when the prim authors primvars:displayColor.
+static void CopyDisplayPrimvarsToTempMesh(const GPrim &src, GeomMesh *dst) {
+  if (!dst) return;
+  GeomPrimvar pv;
+  if (src.get_primvar("displayColor", &pv)) dst->set_primvar(pv);
+  GeomPrimvar po;
+  if (src.get_primvar("displayOpacity", &po)) dst->set_primvar(po);
+}
+
 //
 // Convert GeomCube to RenderMesh by generating tessellated geometry
 //
@@ -463,6 +475,7 @@ bool RenderSceneConverter::ConvertCube(
   }
 
   // Forward to ConvertMesh
+  CopyDisplayPrimvarsToTempMesh(cube, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -541,6 +554,7 @@ bool RenderSceneConverter::ConvertSphere(
   }
 
   // Forward to ConvertMesh
+  CopyDisplayPrimvarsToTempMesh(sphere, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -592,12 +606,12 @@ bool RenderSceneConverter::ConvertCylinder(
       normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
     }
     temp_mesh.normals.set_value(normal3f_data);
-    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
   {
     GeomPrimvar primvar;
     primvar.set_name("st");
-    primvar.set_interpolation(Interpolation::FaceVarying);
+    primvar.set_interpolation(Interpolation::Vertex);
     std::vector<value::texcoord2f> uv_data;
     for (const auto &uv : uvs_f2) {
       uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
@@ -606,6 +620,7 @@ bool RenderSceneConverter::ConvertCylinder(
     temp_mesh.set_primvar(primvar);
   }
 
+  CopyDisplayPrimvarsToTempMesh(cylinder, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -656,12 +671,12 @@ bool RenderSceneConverter::ConvertCone(
       normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
     }
     temp_mesh.normals.set_value(normal3f_data);
-    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
   {
     GeomPrimvar primvar;
     primvar.set_name("st");
-    primvar.set_interpolation(Interpolation::FaceVarying);
+    primvar.set_interpolation(Interpolation::Vertex);
     std::vector<value::texcoord2f> uv_data;
     for (const auto &uv : uvs_f2) {
       uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
@@ -670,6 +685,7 @@ bool RenderSceneConverter::ConvertCone(
     temp_mesh.set_primvar(primvar);
   }
 
+  CopyDisplayPrimvarsToTempMesh(cone, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -721,12 +737,12 @@ bool RenderSceneConverter::ConvertCapsule(
       normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
     }
     temp_mesh.normals.set_value(normal3f_data);
-    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
+    temp_mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
   {
     GeomPrimvar primvar;
     primvar.set_name("st");
-    primvar.set_interpolation(Interpolation::FaceVarying);
+    primvar.set_interpolation(Interpolation::Vertex);
     std::vector<value::texcoord2f> uv_data;
     for (const auto &uv : uvs_f2) {
       uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
@@ -735,6 +751,7 @@ bool RenderSceneConverter::ConvertCapsule(
     temp_mesh.set_primvar(primvar);
   }
 
+  CopyDisplayPrimvarsToTempMesh(capsule, &temp_mesh);
   return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
                      subset_material_path_map, rmaterial_map,
                      material_subsets, blendshapes, dstMesh);
@@ -2505,6 +2522,12 @@ bool DefaultTextureImageLoaderFunction(
   texImage.channels = result.value().image.channels;
   texImage.width = result.value().image.width;
   texImage.height = result.value().image.height;
+
+  // `imageData` receives the decoder output as-is, so the buffer's texel type
+  // equals the asset's texel type (HDR/EXR = Float32, 16-bit PNG = UInt16,
+  // ...). Without this, float buffers were tagged UInt8 and every consumer
+  // read the raw float bytes as 8-bit texels (garbage for HDR envmaps).
+  texImage.texelComponentType = texImage.assetTexelComponentType;
 
   (*texImageOut) = texImage;
 

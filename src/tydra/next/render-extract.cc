@@ -177,6 +177,10 @@ bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
   out->ids = pi.GetIds(time_code);
   out->invisible_ids = pi.GetInvisibleIds(time_code);
   out->inactive_ids = pi.GetInactiveIds();
+  out->display_colors =
+      ReadFloatArrayCopy(prim, "primvars:displayColor", time_code);
+  out->display_opacities =
+      ReadFloatArrayCopy(prim, "primvars:displayOpacity", time_code);
   out->transforms = pi.ComputeInstanceTransforms(time_code);
   out->valid = pi.HasValidInstanceArrays(time_code, &out->validation_error);
   return true;

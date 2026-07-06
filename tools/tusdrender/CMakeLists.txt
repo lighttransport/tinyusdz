@@ -10,6 +10,8 @@ add_library(lightrt_c STATIC
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c.h
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.c
   ${PROJECT_SOURCE_DIR}/src/external/lightrt/lightrt_c_tri.h
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/bsdf.c
+  ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender/bsdf.h
 )
 
 set_target_properties(lightrt_c PROPERTIES
@@ -77,6 +79,12 @@ target_link_libraries(tusdrender
   ${TINYUSDZ_TARGET_STATIC}
   lightrt_c
 )
+
+# Vendored texture tools: the opt-in `-ibl envmap` DomeLight IBL backend.
+if(TINYUSDZ_WITH_TEXTOOLS)
+  target_link_libraries(tusdrender tinyusdz_textools)
+  target_compile_definitions(tusdrender PRIVATE TUSDR_WITH_TEXTOOLS)
+endif()
 
 # tusdrender uses the experimental `next` lazy loader (fast, low-memory USDC
 # parse) as the default for the RT preview path, plus tydra_next for bit-exact

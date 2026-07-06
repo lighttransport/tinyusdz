@@ -53,12 +53,15 @@ HipRayTracer::~HipRayTracer() {
 
 void HipRayTracer::freeScene() {
   auto F = [](uintptr_t& p) { if (p) { hipFree(reinterpret_cast<void*>(p)); p = 0; } };
-  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_); F(dMatTex_);
+  F(dTris_); F(dNrms_); F(dCols_); F(dGeo_); F(dEmask_); F(dMat_); F(dMatPbr_);
+  F(dMatLightRt_); F(dMatTex_);
+  F(dMatTexParam_); F(dLightParams_);
   F(dTexels_); F(dTextures_); F(dUV_); F(dUV1_); F(dInfl_); F(dFace_); F(dDomW_); F(dDomJoint_);
   F(dBlasNodes_); F(dTlasNodes_); F(dInstances_); F(dOut_); F(dAccum_);
   F(dVolDens_); F(dVolParams_);
   numVols_ = 0;
   numMats_ = 0;
+  numLights_ = 0;
   numTextures_ = 0;
   outCap_ = 0; accumCap_ = 0; triCount_ = 0; nodeCount_ = 0;
   instCount_ = 0; blasNodeCount_ = 0; tlasNodeCount_ = 0;
@@ -144,6 +147,7 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   tlasNodeCount_ = hs.tlasNodeCount;
   nodeCount_ = blasNodeCount_ + tlasNodeCount_;
   numMats_ = hs.numMats;
+  numLights_ = hs.numLights;
   numTextures_ = hs.numTextures;
   numVols_ = hs.numVols;
 
@@ -172,6 +176,8 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
   if (!up(hs.tlas.data(), hs.tlas.size() * sizeof(Node), &dTlasNodes_)) return false;
   if (!up(hs.instances.data(), hs.instances.size() * sizeof(Inst), &dInstances_)) return false;
   if (!up(hs.matTex.data(), hs.matTex.size() * sizeof(int), &dMatTex_)) return false;
+  if (!up(hs.matTexParam.data(), hs.matTexParam.size() * sizeof(float),
+          &dMatTexParam_)) return false;
   if (!up(hs.texels.data(), hs.texels.size(), &dTexels_)) return false;
   if (!up(hs.textures.data(), hs.textures.size() * sizeof(HostTextureDesc), &dTextures_)) return false;
   if (hs.numVols > 0) {
@@ -180,6 +186,10 @@ bool HipRayTracer::build(const DrawScene& scene, size_t maxTris,
       return false;
   }
   if (!up(hs.matPbr.data(), hs.matPbr.size() * sizeof(float), &dMatPbr_)) return false;
+  if (!up(hs.matLightRt.data(), hs.matLightRt.size() * sizeof(float),
+          &dMatLightRt_)) return false;
+  if (!up(hs.lightParams.data(), hs.lightParams.size() * sizeof(float),
+          &dLightParams_)) return false;
   if (progress) progress->phase = 4;  // done
   return true;
 }
@@ -223,7 +233,10 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   void* dT = reinterpret_cast<void*>(dTris_), *dN = reinterpret_cast<void*>(dNrms_),
         *dC = reinterpret_cast<void*>(dCols_), *dG = reinterpret_cast<void*>(dGeo_),
         *dM = reinterpret_cast<void*>(dMat_), *dMP = reinterpret_cast<void*>(dMatPbr_),
+        *dML = reinterpret_cast<void*>(dMatLightRt_),
+        *dLP = reinterpret_cast<void*>(dLightParams_),
         *dMT = reinterpret_cast<void*>(dMatTex_), *dTx = reinterpret_cast<void*>(dTexels_),
+        *dMTP = reinterpret_cast<void*>(dMatTexParam_),
         *dTD = reinterpret_cast<void*>(dTextures_),
         *dU = reinterpret_cast<void*>(dUV_), *dU1 = reinterpret_cast<void*>(dUV1_),
         *dIn = reinterpret_cast<void*>(dInfl_), *dF = reinterpret_cast<void*>(dFace_),
@@ -233,18 +246,21 @@ bool HipRayTracer::trace(const float invViewProj[16], const float viewProj[16],
   void* dVD = reinterpret_cast<void*>(dVolDens_), *dVP = reinterpret_cast<void*>(dVolParams_);
   void* dEm = reinterpret_cast<void*>(dEmask_);
   int numMats = numMats_;
+  int numLights = numLights_;
   int numTextures = numTextures_;
   int numVols = numVols_;
   const int samples = spp < 1 ? 1 : spp;
   void* dAcc = (samples > 1) ? reinterpret_cast<void*>(dAccum_) : nullptr;
   int sampleIdx = 0;
   int numSamples = samples;
-  // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,numMats,
-  // matTex,texels,textures,numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
+  // ORDER MUST MATCH the kernel signature: tris,nrms,cols,geo,mats,matPbr,
+  // matLightRt,numMats,lightParams,numLights,matTex,matTexParam,texels,textures,
+  // numTextures,uvs,uvs1,infls,faces,domw,domj,blas,tlas,insts,out,W,H,cam,
   // volDens,volParams,numVols,emask,accum,sampleIdx,numSamples.
-  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &numMats, &dMT, &dTx,
-                  &dTD, &numTextures, &dU, &dU1, &dIn, &dF,  &dDw, &dDj,
-                  &dBl, &dTl, &dI, &dO, &w, &h, &cam,
+  void* args[] = {&dT,  &dN,  &dC, &dG, &dM, &dMP, &dML, &numMats, &dLP,
+                  &numLights, &dMT, &dMTP, &dTx, &dTD, &numTextures, &dU, &dU1,
+                  &dIn, &dF,  &dDw,
+                  &dDj, &dBl, &dTl, &dI, &dO, &w, &h, &cam,
                   &dVD, &dVP, &numVols, &dEm, &dAcc, &sampleIdx, &numSamples};
   unsigned gx = (w + 7) / 8, gy = (h + 7) / 8;
   rgba->resize(bytes);

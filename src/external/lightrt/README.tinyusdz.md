@@ -52,6 +52,24 @@ tinyusdz-only files (no upstream counterpart — never overwrite):
 The committed `*.spv.h` are regenerated from the `*.comp` with
 `vk/shaders/compile_shaders.sh` (needs a `GL_EXT_ray_query`-capable glslang).
 
+## MaterialX / OpenPBR snapshot
+
+The `mtlxrender/` subtree and CUDA C entry files were copied from local LightRT
+commit `13ec9814f2da84846d64828b0dd96daa33df3582`. The existing root-level
+CPU/Vulkan/HIP files remain the tinyusdz-maintained fork described above.
+
+- `mtlxrender/` contains the C11 MaterialX document parser, node evaluator,
+  texture cache, environment light helpers, and OpenPBR BSDF support from
+  `examples/mtlxrender`.
+- `lightrt_c_cuda.{cu,h}` contains the upstream CUDA C entry point for the later
+  tusdview CUDA RT material path.
+
+The first tusdview integration uses these files as the reference layout and
+bridges USD/Tydra material parameters into a LightRT/OpenPBR-compatible CPU
+block. The vendored C sources are not linked into tusdview yet; GL/Vulkan raster
+currently consume the existing preview material subset, and VK/CUDA RT can be
+extended to sample the full LightRT/OpenPBR block.
+
 ## License
 
 The top-level `LICENSE` is MIT. Some copied C sources carry

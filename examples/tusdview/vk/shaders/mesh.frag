@@ -21,6 +21,10 @@ layout(set = 17, binding = 0) uniform sampler2DArray uNormalUdimTex;
 layout(set = 18, binding = 0) uniform sampler1D uNormalUdimLut;
 layout(set = 19, binding = 0) uniform sampler2DArray uEmissiveUdimTex;
 layout(set = 20, binding = 0) uniform sampler1D uEmissiveUdimLut;
+// DomeLight split-sum IBL (1x1 black fallbacks when no dome is baked).
+layout(set = 21, binding = 0) uniform samplerCube uIrradianceMap;
+layout(set = 22, binding = 0) uniform samplerCube uPrefilteredMap;
+layout(set = 23, binding = 0) uniform sampler2D uBrdfLut;
 // Per-triangle source USD face id (source-face-id AOV). Indexed by the submesh's
 // first triangle (flags bits 8-31) + gl_PrimitiveID (submesh-local).
 layout(set = 3, binding = 0, std430) readonly buffer Faces { uint faceId[]; };
@@ -33,13 +37,32 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 camPos;        // .xyz camera, .w depth normalizer
   vec4 sceneMin;      // .xyz
   vec4 sceneExtent;   // .xyz
+  vec4 lightDir;      // .xyz preview key light direction toward the light
+  vec4 lightColor;    // .rgb preview key light color/intensity
   ivec4 mode;         // .x = renderMode
+  mat4 envRot;        // world -> environment rotation (dome IBL)
+  vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
+  vec4 iblParams;     // .x = prefiltered mip count
 } fr;
+
+struct MaterialTexParam {
+  vec4 baseUv0; vec4 baseUv1;
+  vec4 mrUv0; vec4 mrUv1;
+  vec4 normalUv0; vec4 normalUv1;
+  vec4 emissiveUv0; vec4 emissiveUv1;
+  vec4 dispUv0; vec4 dispUv1;
+  vec4 baseScale; vec4 baseBias;
+  vec4 normalScale; vec4 normalBias;
+  vec4 emissiveScale; vec4 emissiveBias;
+  vec4 scalar0;  // metallicChannel, roughnessChannel, metallicScale, metallicBias
+  vec4 scalar1;  // roughnessScale, roughnessBias, displacementScale, displacementBias
+};
+layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
 layout(push_constant) uniform PushConstants {
   mat4 model;
   vec4 baseColor;   // rgb + .w opacity
-  vec4 matAux;      // .x metallic, .y roughness (AOVs)
+  vec4 matAux;      // .x metallic, .y roughness, .z alphaMode, .w alphaCutoff
   vec4 emissive;    // .xyz emissive (AOV)
   ivec4 ids;        // .x matId, .y flags, .z meshId
 } pc;
@@ -76,28 +99,55 @@ vec4 sampleUdim(sampler2DArray tex, sampler1D lut, vec2 uv) {
   return texture(tex, vec3(fract(uv), float(layer)));
 }
 
+MaterialTexParam matTexParam() {
+  return mtp.p[max(pc.ids.x, 0)];
+}
+
+vec2 xformUv(vec2 uv, vec4 row0, vec4 row1) {
+  return vec2(dot(vec3(uv, 1.0), row0.xyz), dot(vec3(uv, 1.0), row1.xyz));
+}
+
+float channelOf(vec4 c, float chf) {
+  int ch = int(chf + 0.5);
+  if (ch == 1) return c.g;
+  if (ch == 2) return c.b;
+  if (ch == 3) return c.a;
+  return c.r;
+}
+
 vec4 sampleBaseColor(vec2 uv) {
-  return ((pc.ids.w & 1) != 0)
-      ? sampleUdim(uBaseColorUdimTex, uBaseColorUdimLut, uv)
-      : texture(uBaseColorTex, uv);
+  MaterialTexParam m = matTexParam();
+  vec2 tuv = xformUv(uv, m.baseUv0, m.baseUv1);
+  vec4 c = ((pc.ids.w & 1) != 0)
+      ? sampleUdim(uBaseColorUdimTex, uBaseColorUdimLut, tuv)
+      : texture(uBaseColorTex, tuv);
+  return c * m.baseScale + m.baseBias;
 }
 
 vec4 sampleMetalRough(vec2 uv) {
+  MaterialTexParam m = matTexParam();
+  vec2 tuv = xformUv(uv, m.mrUv0, m.mrUv1);
   return ((pc.ids.w & 2) != 0)
-      ? sampleUdim(uMetalRoughUdimTex, uMetalRoughUdimLut, uv)
-      : texture(uMetalRoughTex, uv);
+      ? sampleUdim(uMetalRoughUdimTex, uMetalRoughUdimLut, tuv)
+      : texture(uMetalRoughTex, tuv);
 }
 
 vec4 sampleNormal(vec2 uv) {
-  return ((pc.ids.w & 4) != 0)
-      ? sampleUdim(uNormalUdimTex, uNormalUdimLut, uv)
-      : texture(uNormalTex, uv);
+  MaterialTexParam m = matTexParam();
+  vec2 tuv = xformUv(uv, m.normalUv0, m.normalUv1);
+  vec4 c = ((pc.ids.w & 4) != 0)
+      ? sampleUdim(uNormalUdimTex, uNormalUdimLut, tuv)
+      : texture(uNormalTex, tuv);
+  return c * m.normalScale + m.normalBias;
 }
 
 vec4 sampleEmissive(vec2 uv) {
-  return ((pc.ids.w & 8) != 0)
-      ? sampleUdim(uEmissiveUdimTex, uEmissiveUdimLut, uv)
-      : texture(uEmissiveTex, uv);
+  MaterialTexParam m = matTexParam();
+  vec2 tuv = xformUv(uv, m.emissiveUv0, m.emissiveUv1);
+  vec4 c = ((pc.ids.w & 8) != 0)
+      ? sampleUdim(uEmissiveUdimTex, uEmissiveUdimLut, tuv)
+      : texture(uEmissiveTex, tuv);
+  return c * m.emissiveScale + m.emissiveBias;
 }
 
 vec3 applyNormalMap(vec3 n) {
@@ -114,7 +164,7 @@ vec3 applyNormalMap(vec3 n) {
   t = (abs(r) > 1e-8) ? t / r : dp1;
   t = normalize(t - n * dot(n, t));
   vec3 b = normalize(cross(n, t)) * (r < 0.0 ? -1.0 : 1.0);
-  vec3 nm = sampleNormal(vUV).xyz * 2.0 - 1.0;
+  vec3 nm = sampleNormal(vUV).xyz;
   return normalize(mat3(t, b, n) * nm);
 }
 
@@ -141,17 +191,28 @@ void main() {
       return;
     }
     if (fr.mode.x == 9) {
-      outColor = vec4(vec3(pc.matAux.y * sampleMetalRough(vUV).g), 1.0);
+      MaterialTexParam m = matTexParam();
+      vec4 mr = sampleMetalRough(vUV);
+      outColor = vec4(vec3(pc.matAux.y * (channelOf(mr, m.scalar0.y) * m.scalar1.x + m.scalar1.y)), 1.0);
       return;
     }
     if (fr.mode.x == 10) {
-      outColor = vec4(vec3(pc.matAux.x * sampleMetalRough(vUV).b), 1.0);
+      MaterialTexParam m = matTexParam();
+      vec4 mr = sampleMetalRough(vUV);
+      outColor = vec4(vec3(pc.matAux.x * (channelOf(mr, m.scalar0.x) * m.scalar0.z + m.scalar0.w)), 1.0);
       return;
     }
     if (fr.mode.x == 11) {                                                            // emissive
       outColor = vec4(pc.emissive.xyz * sampleEmissive(vUV).rgb, 1.0); return;
     }
-    if (fr.mode.x == 12) { outColor = vec4(vec3(pc.baseColor.a), 1.0); return; }  // opacity
+    if (fr.mode.x == 12) {
+      float opacity = clamp(pc.baseColor.a * sampleBaseColor(vUV).a, 0.0, 1.0);
+      if (pc.matAux.z > 0.5 && pc.matAux.z < 1.5) {
+        opacity = (opacity >= pc.matAux.w) ? 1.0 : 0.0;
+      }
+      outColor = vec4(vec3(opacity), 1.0);
+      return;
+    }
     if (fr.mode.x == 13) {  // world position
       outColor = vec4(clamp((vWorldPos - fr.sceneMin.xyz) / fr.sceneExtent.xyz, 0.0, 1.0), 1.0);
       return;
@@ -230,19 +291,50 @@ void main() {
     }
     if (fr.mode.x == 26) { outColor = vec4(idColor(-1), 1.0); return; }  // instance id: raster non-instanced -> gray
   }
-  vec3 base = pc.baseColor.rgb * sampleBaseColor(vUV).rgb;
+  vec4 baseSample = sampleBaseColor(vUV);
+  float opacity = clamp(pc.baseColor.a * baseSample.a, 0.0, 1.0);
+  if (pc.matAux.z > 0.5 && pc.matAux.z < 1.5) {
+    if (opacity < pc.matAux.w) discard;
+    opacity = 1.0;
+  }
+  vec3 base = pc.baseColor.rgb * baseSample.rgb;
+  MaterialTexParam m = matTexParam();
   vec4 mr = sampleMetalRough(vUV);
-  float metallic = pc.matAux.x * mr.b;
-  float roughness = pc.matAux.y * mr.g;
+  float metallic = pc.matAux.x * (channelOf(mr, m.scalar0.x) * m.scalar0.z + m.scalar0.w);
+  float roughness = pc.matAux.y * (channelOf(mr, m.scalar0.y) * m.scalar1.x + m.scalar1.y);
   vec3 emissive = pc.emissive.xyz * sampleEmissive(vUV).rgb;
   N = applyNormalMap(N);
-  // Headlight-ish fixed directional light + ambient (matches the GL look roughly).
-  vec3 L = normalize(vec3(0.5, 0.8, 0.6));
+  vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
+               ? normalize(fr.lightDir.xyz)
+               : normalize(vec3(0.5, 0.8, 0.6));
+  vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
+                        ? fr.lightColor.rgb
+                        : vec3(1.0);
   float diff = max(dot(N, L), 0.0);
   vec3 V = normalize(fr.camPos.xyz - vWorldPos);
   vec3 H = normalize(L + V);
   float spec = pow(max(dot(N, H), 0.0), mix(96.0, 8.0, clamp(roughness, 0.0, 1.0)));
-  vec3 c = base * (0.25 + 0.85 * diff) +
-           vec3(spec) * mix(0.04, 0.35, clamp(metallic, 0.0, 1.0)) + emissive;
-  outColor = vec4(c, pc.baseColor.a);
+  // Ambient: DomeLight split-sum IBL when baked, else the constant floor
+  // (matches the GL raster path in light3d/material.cpp).
+  vec3 ambient;
+  if (fr.iblColor.w > 0.5) {
+    float rgh = clamp(roughness, 0.0, 1.0);
+    vec3 Ne = normalize(mat3(fr.envRot) * N);
+    vec3 Re = normalize(mat3(fr.envRot) * reflect(-V, N));
+    vec3 irr = texture(uIrradianceMap, Ne).rgb;
+    vec3 pref = textureLod(uPrefilteredMap, Re, rgh * (fr.iblParams.x - 1.0)).rgb;
+    vec2 dfg = texture(uBrdfLut, vec2(max(dot(N, V), 0.0), rgh)).rg;
+    vec3 F0 = mix(vec3(0.04), base, clamp(metallic, 0.0, 1.0));
+    ambient = (base * (1.0 - clamp(metallic, 0.0, 1.0)) * irr +
+               pref * (F0 * dfg.x + dfg.y)) * fr.iblColor.rgb;
+  } else {
+    ambient = base * 0.25;
+  }
+  vec3 c = ambient + base * lightColor * (0.85 * diff) +
+           lightColor * vec3(spec) * mix(0.04, 0.35, clamp(metallic, 0.0, 1.0)) +
+           emissive;
+  if (pc.matAux.z > 1.5 && opacity < 1.0) {
+    c *= opacity;  // pipeline uses premultiplied alpha blending
+  }
+  outColor = vec4(c, opacity);
 }

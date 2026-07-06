@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
 # Run test: tusdrender's GPU compute/raytrace backends must render a non-blank
-# frame AND agree with each other within a small tolerance. -vk (Vulkan compute),
-# -vkr (Vulkan hardware ray query) and -hip (HIP/ROCm compute) all traverse the
-# SAME LightRT BVH with the same shading, so a correct render matches across
-# whichever backends are available -- up to sub-ULP FP differences at supersampled
-# silhouette edges (compute vs hardware ray query), which show up as a few boundary
-# pixels. This is the cross-backend correctness guard for the GPU paths (the smoke
-# test only exercises the CPU -rtPreview path).
+# frame AND agree with each other within a small tolerance. -vk (Vulkan compute)
+# and -hip (HIP/ROCm compute) traverse the CPU-built LightRT BVH; -vkr (Vulkan
+# hardware ray query) builds an indexed Vulkan acceleration structure directly
+# from the same flattened mesh. The hit/shading inputs are equivalent, so a
+# correct render matches across whichever backends are available -- up to sub-ULP
+# FP differences at supersampled silhouette edges (compute vs hardware ray
+# query), which show up as a few boundary pixels. This is the cross-backend
+# correctness guard for the GPU paths (the smoke test only exercises the CPU
+# -rtPreview path).
 #
 # Each backend is runtime-loaded and degrades gracefully: a backend that cannot
 # create its device/engine prints a diagnostic and never emits the success line
@@ -26,6 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TUSDRENDER="${1:-${TUSDRENDER:-$REPO_ROOT/build/tools/tusdrender/tusdrender}}"
 ASSET="${2:-${ASSET:-$REPO_ROOT/models/suzanne-pbr.usda}}"
+GPU_RENDER_TIMEOUT="${GPU_RENDER_TIMEOUT:-30s}"
 
 if [ ! -x "$TUSDRENDER" ]; then
   echo "SKIP: tusdrender binary not found at $TUSDRENDER"
@@ -39,6 +42,14 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+run_tusdrender() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s "$GPU_RENDER_TIMEOUT" "$TUSDRENDER" "$@"
+  else
+    "$TUSDRENDER" "$@"
+  fi
+}
+
 # Render one backend. Returns 0 and sets REPLY to the output path when the
 # backend rendered successfully (printed the "backend: LightRT" success line and
 # wrote a non-trivial file); returns 1 when the backend is unavailable.
@@ -46,11 +57,19 @@ render() {
   local flag="$1" name="$2"
   local out="$TMP/gpu_${name}.png"
   local log
-  log="$("$TUSDRENDER" "$ASSET" "$out" "$flag" -w 200 -height 150 -autoframe \
+  log="$(run_tusdrender "$ASSET" "$out" "$flag" -w 200 -height 150 -autoframe \
         -samples 2 2>&1)"
   if ! echo "$log" | grep -q "backend: LightRT"; then
     echo "  $name: unavailable (skipped)"
     return 1
+  fi
+  if [ "$name" = "vkr" ] &&
+     ! echo "$log" | grep -q "ray_query, indexed Vulkan AS, CPU BVH skipped" &&
+     ! echo "$log" | grep -q "compute trace, ray_query fallback"; then
+    echo "FAIL: vkr did not report the direct indexed Vulkan AS path or explicit fallback"
+    echo "$log"
+    REPLY="FAIL"
+    return 0
   fi
   if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 2000 ]; then
     echo "FAIL: $name produced a blank/trivial image"
@@ -59,6 +78,96 @@ render() {
   fi
   echo "  $name: rendered $(wc -c < "$out") bytes"
   REPLY="$out"
+  return 0
+}
+
+render_profile() {
+  local out="$TMP/gpu_profile_island.png"
+  local log
+  log="$(run_tusdrender "$ASSET" "$out" -largeSceneProfile island \
+        -w 200 -height 150 -autoframe -samples 2 2>&1)"
+  if ! echo "$log" | grep -q "largeSceneProfile island resolved"; then
+    echo "FAIL: largeSceneProfile island did not log resolved settings"
+    echo "$log"
+    return 1
+  fi
+  for expected in "backend=vkr+vkInstanced" "rtLod=on" "maxVram=10"; do
+    if ! echo "$log" | grep -q "$expected"; then
+      echo "FAIL: largeSceneProfile island did not apply expected default: $expected"
+      echo "$log"
+      return 1
+    fi
+  done
+  if ! echo "$log" | grep -q "backend: LightRT"; then
+    echo "  largeSceneProfile island: Vulkan unavailable (skipped)"
+    return 0
+  fi
+  if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 2000 ]; then
+    echo "FAIL: largeSceneProfile island produced a blank/trivial image"
+    return 1
+  fi
+  echo "  largeSceneProfile island: rendered $(wc -c < "$out") bytes"
+  return 0
+}
+
+render_gpu_shade_preview() {
+  local out="$TMP/gpu_shade_preview.png"
+  local log
+  log="$(run_tusdrender "$ASSET" "$out" -vkr -gpuShade preview \
+        -w 200 -height 150 -autoframe -samples 2 2>&1)"
+  if ! echo "$log" | grep -q -- "-gpuShade preview: GPU preview shading is not enabled yet"; then
+    echo "FAIL: -gpuShade preview did not report its CPU shade fallback"
+    echo "$log"
+    return 1
+  fi
+  if ! echo "$log" | grep -q "backend: LightRT"; then
+    echo "  -gpuShade preview: Vulkan unavailable (fallback message covered)"
+    return 0
+  fi
+  if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 2000 ]; then
+    echo "FAIL: -gpuShade preview produced a blank/trivial image"
+    return 1
+  fi
+  echo "  -gpuShade preview: rendered $(wc -c < "$out") bytes"
+  return 0
+}
+
+render_vkr_forced_fallback() {
+  local out="$TMP/gpu_vkr_forced_fallback.png"
+  local log
+  log="$(TUSDR_FORCE_VKR_FALLBACK=1 run_tusdrender "$ASSET" "$out" -vkr \
+        -w 200 -height 150 -autoframe -samples 2 2>&1)"
+  if ! echo "$log" | grep -q "backend: LightRT"; then
+    echo "  -vkr forced fallback: Vulkan unavailable (skipped)"
+    return 0
+  fi
+  if ! echo "$log" | grep -q "compute trace, ray_query fallback"; then
+    echo "FAIL: -vkr forced fallback did not report compute fallback"
+    echo "$log"
+    return 1
+  fi
+  if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 2000 ]; then
+    echo "FAIL: -vkr forced fallback produced a blank/trivial image"
+    return 1
+  fi
+  echo "  -vkr forced fallback: rendered $(wc -c < "$out") bytes"
+  return 0
+}
+
+render_explicit_threads() {
+  local out="$TMP/gpu_vk_threads2.png"
+  local log
+  log="$(run_tusdrender "$ASSET" "$out" -vk -threads 2 \
+        -w 200 -height 150 -autoframe -samples 2 2>&1)"
+  if ! echo "$log" | grep -q "backend: LightRT"; then
+    echo "  -vk -threads 2: Vulkan unavailable (skipped)"
+    return 0
+  fi
+  if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 2000 ]; then
+    echo "FAIL: -vk -threads 2 produced a blank/trivial image"
+    return 1
+  fi
+  echo "  -vk -threads 2: rendered $(wc -c < "$out") bytes"
   return 0
 }
 
@@ -126,6 +235,10 @@ if [ "$ok" -eq 0 ]; then
   echo "SKIP: no GPU backend available in this environment"
   exit $SKIP
 fi
+render_profile || exit 1
+render_gpu_shade_preview || exit 1
+render_vkr_forced_fallback || exit 1
+render_explicit_threads || exit 1
 
 if [ -n "$IM_COMPARE" ]; then
   echo "PASS: $ok GPU backend(s) render non-blank and agree within tolerance"

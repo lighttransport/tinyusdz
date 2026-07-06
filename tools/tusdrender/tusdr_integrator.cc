@@ -5,11 +5,17 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <thread>
 #include <vector>
 
 #include "image-writer.hh"
 #include "tusdr_context.hh"
+
+extern "C" {
+#include "mtlxrender/bsdf.h"
+}
 
 namespace tusdr {
 
@@ -116,6 +122,191 @@ bool OccludedTLAS(const lrt_tlas *tlas, const Vec3 &p, const Vec3 &n,
   ray.dir[2] = l.z;
   ray.tmax = max_t;
   return lrt_tlas_occluded1(tlas, &ray, 0xffffffffu) != 0;
+}
+
+v3 ToMtlxV3(const Vec3 &v) {
+  return v3_make(v.x, v.y, v.z);
+}
+
+Vec3 FromMtlxV3(v3 v) {
+  return Vec3{v.x, v.y, v.z};
+}
+
+OpenPBRParams OpenPBRParamsFromTri(const TriInfo &tri, const Vec3 &normal) {
+  OpenPBRParams p{};
+  p.base_weight = 1.0f;
+  p.base_color = ToMtlxV3(tri.base_color);
+  p.diffuse_roughness = tri.roughness;
+  p.metalness = tri.metallic;
+  p.specular_weight = 1.0f;
+  p.specular_color = tri.use_specular_workflow
+                         ? ToMtlxV3(tri.specular_color)
+                         : v3_splat(1.0f);
+  p.specular_roughness = tri.roughness;
+  p.specular_ior = tri.ior > 0.0f ? tri.ior : 1.5f;
+  p.transmission_color = v3_splat(1.0f);
+  p.subsurface_color = v3_splat(0.8f);
+  p.subsurface_radius = v3_splat(1.0f);
+  p.subsurface_scale = 1.0f;
+  p.coat_weight = tri.clearcoat;
+  p.coat_color = v3_splat(1.0f);
+  p.coat_roughness = tri.clearcoat_roughness;
+  p.coat_ior = 1.5f;
+  p.sheen_color = v3_splat(1.0f);
+  p.sheen_roughness = 0.3f;
+  p.thin_film_ior = 1.5f;
+  p.emission_color = ToMtlxV3(tri.emission);
+  p.emission = (tri.emission.x > 0.0f || tri.emission.y > 0.0f ||
+                tri.emission.z > 0.0f)
+                   ? 1.0f
+                   : 0.0f;
+  p.normal = ToMtlxV3(normal);
+  p.opacity = tri.opacity;
+  return p;
+}
+
+OpenPBRParams OpenPBRParamsFromLightRt(
+    const tinyusdz::tydra::LightRtOpenPBRParams &src, const Vec3 &normal) {
+  OpenPBRParams p{};
+  p.base_weight = src.baseWeight;
+  p.base_color = v3_make(src.baseColor[0], src.baseColor[1], src.baseColor[2]);
+  p.diffuse_roughness = src.diffuseRoughness;
+  p.metalness = src.metalness;
+  p.specular_weight = src.specularWeight;
+  p.specular_color =
+      v3_make(src.specularColor[0], src.specularColor[1], src.specularColor[2]);
+  p.specular_roughness = src.specularRoughness;
+  p.specular_ior = src.specularIor;
+  p.transmission = src.transmission;
+  p.transmission_color = v3_make(src.transmissionColor[0],
+                                 src.transmissionColor[1],
+                                 src.transmissionColor[2]);
+  p.transmission_depth = src.transmissionDepth;
+  p.transmission_scatter = v3_make(src.transmissionScatter[0],
+                                   src.transmissionScatter[1],
+                                   src.transmissionScatter[2]);
+  p.transmission_scatter_anisotropy = src.transmissionScatterAnisotropy;
+  p.subsurface = src.subsurface;
+  p.subsurface_color =
+      v3_make(src.subsurfaceColor[0], src.subsurfaceColor[1],
+              src.subsurfaceColor[2]);
+  p.subsurface_radius =
+      v3_make(src.subsurfaceRadius[0], src.subsurfaceRadius[1],
+              src.subsurfaceRadius[2]);
+  p.subsurface_scale = src.subsurfaceScale;
+  p.coat_weight = src.coatWeight;
+  p.coat_color = v3_make(src.coatColor[0], src.coatColor[1], src.coatColor[2]);
+  p.coat_roughness = src.coatRoughness;
+  p.coat_ior = src.coatIor;
+  p.sheen_weight = src.sheenWeight;
+  p.sheen_color =
+      v3_make(src.sheenColor[0], src.sheenColor[1], src.sheenColor[2]);
+  p.sheen_roughness = src.sheenRoughness;
+  p.thin_film_weight = src.thinFilmWeight;
+  p.thin_film_thickness = src.thinFilmThicknessNm;
+  p.thin_film_ior = src.thinFilmIor;
+  p.emission = src.emission;
+  p.emission_color =
+      v3_make(src.emissionColor[0], src.emissionColor[1], src.emissionColor[2]);
+  p.normal = ToMtlxV3(normal);
+  p.opacity = src.opacity;
+  return p;
+}
+
+OpenPBRParams OpenPBRParamsForMaterial(
+    const TriInfo &tri, const Vec3 &normal,
+    const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
+  return openpbr ? OpenPBRParamsFromLightRt(*openpbr, normal)
+                 : OpenPBRParamsFromTri(tri, normal);
+}
+
+uint32_t FloatBits(float v) {
+  uint32_t u = 0;
+  std::memcpy(&u, &v, sizeof(u));
+  return u;
+}
+
+uint64_t Mix64(uint64_t x) {
+  x ^= x >> 30;
+  x *= 0xbf58476d1ce4e5b9ULL;
+  x ^= x >> 27;
+  x *= 0x94d049bb133111ebULL;
+  x ^= x >> 31;
+  return x;
+}
+
+pcg32 MakeBsdfRng(const Vec3 &org, const Vec3 &dir, int depth) {
+  uint64_t seed = 0x9e3779b97f4a7c15ULL;
+  auto mix = [&](uint32_t v) {
+    seed = Mix64(seed ^ uint64_t(v) ^ 0x9e3779b97f4a7c15ULL);
+  };
+  mix(FloatBits(org.x));
+  mix(FloatBits(org.y));
+  mix(FloatBits(org.z));
+  mix(FloatBits(dir.x));
+  mix(FloatBits(dir.y));
+  mix(FloatBits(dir.z));
+  mix(uint32_t(depth));
+  pcg32 rng;
+  pcg32_seed(&rng, seed, Mix64(seed ^ 0xd1b54a32d192ed03ULL));
+  return rng;
+}
+
+bool FiniteColor(const Vec3 &v) {
+  return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+
+Vec3 EvalMaterialDirect(const TriInfo &tri, const Vec3 &normal,
+                        const Vec3 &wo, const Vec3 &wi,
+                        const Vec3 &radiance, const Options &opt,
+                        const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
+  const float ndotl = std::max(0.0f, Dot(normal, wi));
+  if (ndotl <= 0.0f) return Vec3{0.0f, 0.0f, 0.0f};
+  if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
+    return Mul(Mul(tri.base_color, radiance), ndotl);
+  }
+  OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
+  float pdf = 0.0f;
+  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &pdf);
+  Vec3 brdf = FromMtlxV3(f);
+  return Vec3{brdf.x * radiance.x * ndotl,
+              brdf.y * radiance.y * ndotl,
+              brdf.z * radiance.z * ndotl};
+}
+
+Vec3 EvalMaterialIblDiffuse(
+    const TriInfo &tri, const Vec3 &normal, const Vec3 &wo,
+    const Vec3 &diffuse_irradiance, const Options &opt,
+    const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
+  if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
+    return Vec3{0.0f, 0.0f, 0.0f};
+  }
+  OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
+  float pdf = 0.0f;
+  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(normal), &pdf);
+  Vec3 brdf = FromMtlxV3(f);
+  const float scale = MTLX_PI * tri.occlusion;
+  return Vec3{brdf.x * diffuse_irradiance.x * scale,
+              brdf.y * diffuse_irradiance.y * scale,
+              brdf.z * diffuse_irradiance.z * scale};
+}
+
+Vec3 EvalMaterialIblSpecular(
+    const TriInfo &tri, const Vec3 &normal, const Vec3 &wo, const Vec3 &wi,
+    const Vec3 &prefiltered_radiance, const Options &opt,
+    const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
+  if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
+    return Vec3{0.0f, 0.0f, 0.0f};
+  }
+  const float ndotl = std::max(0.0f, Dot(normal, wi));
+  if (ndotl <= 0.0f) return Vec3{0.0f, 0.0f, 0.0f};
+  OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
+  float pdf = 0.0f;
+  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &pdf);
+  Vec3 brdf = FromMtlxV3(f);
+  return Vec3{brdf.x * prefiltered_radiance.x * ndotl,
+              brdf.y * prefiltered_radiance.y * ndotl,
+              brdf.z * prefiltered_radiance.z * ndotl};
 }
 
 bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
@@ -238,9 +429,10 @@ inline Vec3 EnvDir(const IblCache &ibl, const Vec3 &d) {
 // Reads the channel directly (incl. alpha, ch=3), so an opacity/scalar input
 // connected to a UsdUVTexture's outputs:a reads alpha rather than red.
 inline float SampleScalarTex(const std::vector<Texture> &textures, int32_t id,
-                             uint8_t ch, float u, float v, float lod) {
+                             uint8_t ch, float u, float v, float lod,
+                             float scale = 1.0f, float bias = 0.0f) {
   if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
-  return textures[size_t(id)].sample_channel(u, v, lod, int(ch));
+  return textures[size_t(id)].sample_channel(u, v, lod, int(ch)) * scale + bias;
 }
 
 // Anisotropic scalar sample: when a ray-differential footprint is available, the
@@ -251,12 +443,14 @@ inline float SampleScalarTex(const std::vector<Texture> &textures, int32_t id,
 inline float SampleScalarTexAniso(const std::vector<Texture> &textures,
                                   int32_t id, uint8_t ch, float u, float v,
                                   bool have_fp, float dudx, float dvdx,
-                                  float dudy, float dvdy, int max_aniso) {
+                                  float dudy, float dvdy, int max_aniso,
+                                  float scale = 1.0f, float bias = 0.0f) {
   if (id < 0 || size_t(id) >= textures.size()) return -1.0f;
   const Texture &tx = textures[size_t(id)];
-  return have_fp ? tx.sample_channel_aniso(u, v, dudx, dvdx, dudy, dvdy,
-                                           max_aniso, int(ch))
-                 : tx.sample_channel(u, v, 0.0f, int(ch));
+  const float raw = have_fp ? tx.sample_channel_aniso(u, v, dudx, dvdx, dudy,
+                                                      dvdy, max_aniso, int(ch))
+                            : tx.sample_channel(u, v, 0.0f, int(ch));
+  return raw * scale + bias;
 }
 
 // Anisotropic tangent-space normal sample (footprint-filtered raw RGB, then the
@@ -339,7 +533,9 @@ bool ComputeUVFootprint(const Vec3 &org, const Vec3 &dir, const RayDiff &rd,
 bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
-                    const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out) {
+                    const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
+                    const tinyusdz::tydra::LightRtOpenPBRParams **out_openpbr) {
+  if (out_openpbr) *out_openpbr = nullptr;
   if (size_t(th.inst_id) >= instances.size()) return false;
   const InstanceRT &inst = instances[size_t(th.inst_id)];
   if (size_t(inst.blas_id) >= blas.size()) return false;
@@ -361,6 +557,12 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
     Vec3 wp2 = TransformPointO2W(inst.o2w, p2);
     const uint32_t mid = b.curve_seg_mat[si];
     *out = CombineTriMat(mid < b.mat_table.size() ? b.mat_table[mid] : TriMat{});
+    if (out_openpbr && mid < b.mat_table.size()) {
+      const TriMat &mat = b.mat_table[mid];
+      if (mat.openpbr_id < b.openpbr_table.size()) {
+        *out_openpbr = &b.openpbr_table[mat.openpbr_id];
+      }
+    }
     out->p0 = wp0;
     out->p1 = wp1;
     out->p2 = wp2;
@@ -372,6 +574,12 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
   TriInfo lt = CombineTriMat(size_t(ts.mat_id) < b.mat_table.size()
                                  ? b.mat_table[size_t(ts.mat_id)]
                                  : TriMat{});
+  if (out_openpbr && size_t(ts.mat_id) < b.mat_table.size()) {
+    const TriMat &mat = b.mat_table[size_t(ts.mat_id)];
+    if (mat.openpbr_id < b.openpbr_table.size()) {
+      *out_openpbr = &b.openpbr_table[mat.openpbr_id];
+    }
+  }
   // Per-corner displayColor/displayOpacity (RGBA), barycentrically interpolated.
   // Phase 5: when colors were reordered into leaf-slot order (TUSD_COHCOLOR), the
   // hit indexes by the leaf slot (cache-coherent) instead of prim_id; otherwise
@@ -452,14 +660,16 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
       if (lt.rough_tex_id >= 0) {
         float r = SampleScalarTexAniso(*textures, lt.rough_tex_id, lt.rough_ch, u,
                                        v, have_fp, dudx, dvdx, dudy, dvdy,
-                                       kMaxAniso);
-        if (r >= 0.0f) out->roughness = r;
+                                       kMaxAniso, lt.rough_tex_scale,
+                                       lt.rough_tex_bias);
+        if (r >= 0.0f) out->roughness = ClampFloat(r, 0.0f, 1.0f);
       }
       if (lt.metal_tex_id >= 0) {
         float m = SampleScalarTexAniso(*textures, lt.metal_tex_id, lt.metal_ch, u,
                                        v, have_fp, dudx, dvdx, dudy, dvdy,
-                                       kMaxAniso);
-        if (m >= 0.0f) out->metallic = m;
+                                       kMaxAniso, lt.metal_tex_scale,
+                                       lt.metal_tex_bias);
+        if (m >= 0.0f) out->metallic = ClampFloat(m, 0.0f, 1.0f);
       }
       if (lt.emission_tex_id >= 0 &&
           size_t(lt.emission_tex_id) < textures->size()) {
@@ -480,26 +690,34 @@ bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
       }
       if (lt.occ_tex_id >= 0) {
         float o = SampleScalarTexAniso(*textures, lt.occ_tex_id, lt.occ_ch, u, v,
-                                       have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso);
-        if (o >= 0.0f) out->occlusion = o;
+                                       have_fp, dudx, dvdx, dudy, dvdy,
+                                       kMaxAniso, lt.occ_tex_scale,
+                                       lt.occ_tex_bias);
+        if (o >= 0.0f) out->occlusion = ClampFloat(o, 0.0f, 1.0f);
       }
       if (lt.opacity_tex_id >= 0) {
         float a = SampleScalarTexAniso(*textures, lt.opacity_tex_id,
                                        lt.opacity_ch, u, v, have_fp, dudx, dvdx,
-                                       dudy, dvdy, kMaxAniso);
-        if (a >= 0.0f) out->opacity *= a;
+                                       dudy, dvdy, kMaxAniso,
+                                       lt.opacity_tex_scale,
+                                       lt.opacity_tex_bias);
+        if (a >= 0.0f) out->opacity *= ClampFloat(a, 0.0f, 1.0f);
       }
       if (lt.clearcoat_tex_id >= 0) {
         float cc = SampleScalarTexAniso(*textures, lt.clearcoat_tex_id,
                                         lt.clearcoat_ch, u, v, have_fp, dudx, dvdx,
-                                        dudy, dvdy, kMaxAniso);
-        if (cc >= 0.0f) out->clearcoat = cc;
+                                        dudy, dvdy, kMaxAniso,
+                                        lt.clearcoat_tex_scale,
+                                        lt.clearcoat_tex_bias);
+        if (cc >= 0.0f) out->clearcoat = ClampFloat(cc, 0.0f, 1.0f);
       }
       if (lt.clearcoat_rough_tex_id >= 0) {
         float cr = SampleScalarTexAniso(*textures, lt.clearcoat_rough_tex_id,
                                         lt.clearcoat_rough_ch, u, v, have_fp,
-                                        dudx, dvdx, dudy, dvdy, kMaxAniso);
-        if (cr >= 0.0f) out->clearcoat_roughness = cr;
+                                        dudx, dvdx, dudy, dvdy, kMaxAniso,
+                                        lt.clearcoat_rough_tex_scale,
+                                        lt.clearcoat_rough_tex_bias);
+        if (cr >= 0.0f) out->clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
       }
       if (lt.normal_tex_id >= 0 &&
           size_t(lt.normal_tex_id) < textures->size()) {
@@ -531,7 +749,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<InstanceRT> *instances,
            const RayDiff &rd, int depth,
            const ByteVec *tri_colors,
-           const std::vector<float> *tri_normals) {
+           const std::vector<float> *tri_normals,
+           const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+               *openpbr_mats) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -546,11 +766,12 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   bool tri_hit = false;
   float tri_t = camera.zfar;
   TriInfo hit_tri;
+  const tinyusdz::tydra::LightRtOpenPBRParams *hit_openpbr = nullptr;
   if (tlas) {
     lrt_tlas_hit th;
     if (lrt_tlas_intersect1(tlas, &ray, 0xffffffffu, &th) && blas && instances &&
         ResolveTLASHit(th, *blas, *instances, textures, ray_org, ray_dir, rd,
-                       &hit_tri)) {
+                       &hit_tri, &hit_openpbr)) {
       tri_t = th.t;
       tri_hit = true;
     }
@@ -562,8 +783,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       // its material table entry, exactly the record the flat path stored inline
       // before the material was hoisted into flat_mats.
       const FlatTri &ft = tris[size_t(hit.prim_id)];
-      hit_tri = (size_t(ft.mat_id) < mats.size()) ? CombineTriMat(mats[ft.mat_id])
-                                                  : TriInfo{};
+      if (size_t(ft.mat_id) < mats.size()) {
+        const TriMat &mat = mats[ft.mat_id];
+        hit_tri = CombineTriMat(mat);
+        if (openpbr_mats && mat.openpbr_id < openpbr_mats->size()) {
+          hit_openpbr = &(*openpbr_mats)[mat.openpbr_id];
+        }
+      } else {
+        hit_tri = TriInfo{};
+      }
       hit_tri.p0 = ft.p0;
       hit_tri.p1 = ft.p1;
       hit_tri.p2 = ft.p2;
@@ -622,14 +850,16 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
           if (hit_tri.rough_tex_id >= 0) {
             float r = SampleScalarTexAniso(
                 *textures, hit_tri.rough_tex_id, hit_tri.rough_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso);
-            if (r >= 0.0f) hit_tri.roughness = r;
+                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.rough_tex_scale,
+                hit_tri.rough_tex_bias);
+            if (r >= 0.0f) hit_tri.roughness = ClampFloat(r, 0.0f, 1.0f);
           }
           if (hit_tri.metal_tex_id >= 0) {
             float m = SampleScalarTexAniso(
                 *textures, hit_tri.metal_tex_id, hit_tri.metal_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso);
-            if (m >= 0.0f) hit_tri.metallic = m;
+                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.metal_tex_scale,
+                hit_tri.metal_tex_bias);
+            if (m >= 0.0f) hit_tri.metallic = ClampFloat(m, 0.0f, 1.0f);
           }
           if (hit_tri.emission_tex_id >= 0 &&
               size_t(hit_tri.emission_tex_id) < textures->size()) {
@@ -654,27 +884,32 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
           if (hit_tri.occ_tex_id >= 0) {
             float o = SampleScalarTexAniso(
                 *textures, hit_tri.occ_tex_id, hit_tri.occ_ch, u, v, have_fp,
-                dudx, dvdx, dudy, dvdy, kMaxAniso);
-            if (o >= 0.0f) hit_tri.occlusion = o;
+                dudx, dvdx, dudy, dvdy, kMaxAniso, hit_tri.occ_tex_scale,
+                hit_tri.occ_tex_bias);
+            if (o >= 0.0f) hit_tri.occlusion = ClampFloat(o, 0.0f, 1.0f);
           }
           if (hit_tri.opacity_tex_id >= 0) {
             float a = SampleScalarTexAniso(
                 *textures, hit_tri.opacity_tex_id, hit_tri.opacity_ch, u, v,
-                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso);
-            if (a >= 0.0f) hit_tri.opacity *= a;
+                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso,
+                hit_tri.opacity_tex_scale, hit_tri.opacity_tex_bias);
+            if (a >= 0.0f) hit_tri.opacity *= ClampFloat(a, 0.0f, 1.0f);
           }
           if (hit_tri.clearcoat_tex_id >= 0) {
             float cc = SampleScalarTexAniso(
                 *textures, hit_tri.clearcoat_tex_id, hit_tri.clearcoat_ch, u, v,
-                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso);
-            if (cc >= 0.0f) hit_tri.clearcoat = cc;
+                have_fp, dudx, dvdx, dudy, dvdy, kMaxAniso,
+                hit_tri.clearcoat_tex_scale, hit_tri.clearcoat_tex_bias);
+            if (cc >= 0.0f) hit_tri.clearcoat = ClampFloat(cc, 0.0f, 1.0f);
           }
           if (hit_tri.clearcoat_rough_tex_id >= 0) {
             float cr = SampleScalarTexAniso(
                 *textures, hit_tri.clearcoat_rough_tex_id,
                 hit_tri.clearcoat_rough_ch, u, v, have_fp, dudx, dvdx, dudy,
-                dvdy, kMaxAniso);
-            if (cr >= 0.0f) hit_tri.clearcoat_roughness = cr;
+                dvdy, kMaxAniso, hit_tri.clearcoat_rough_tex_scale,
+                hit_tri.clearcoat_rough_tex_bias);
+            if (cr >= 0.0f)
+              hit_tri.clearcoat_roughness = ClampFloat(cr, 0.0f, 1.0f);
           }
           if (hit_tri.normal_tex_id >= 0 &&
               size_t(hit_tri.normal_tex_id) < textures->size()) {
@@ -705,6 +940,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     return lights.has_dome ? Add(opt.bg, lights.env_color) : opt.bg;
   }
   TriInfo tri;
+  const tinyusdz::tydra::LightRtOpenPBRParams *tri_openpbr = nullptr;
   float hit_t = best_t;
   if (direct_hit.hit) {
     hit_t = direct_hit.t;
@@ -713,6 +949,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     tri.emission = direct_hit.emission;
   } else {
     tri = hit_tri;
+    tri_openpbr = hit_openpbr;
   }
   // Occlusion against whichever acceleration structure is active.
   auto occluded = [&](const Vec3 &op, const Vec3 &on, const Vec3 &ol,
@@ -726,10 +963,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   if (Dot(n, ray_dir) > 0.0f) {
     n = Mul(n, -1.0f);
   }
+  Vec3 view = Normalize(Mul(ray_dir, -1.0f));
   // Occlusion (AO) modulates the indirect/ambient response, not self-emission.
   Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), tri.emission);
   if (ibl && ibl->valid) {
-    Vec3 view = Normalize(Mul(ray_dir, -1.0f));
     Vec3 diffuse = SampleEnv(ibl->diffuse, EnvDir(*ibl, n));
     float ndotv = std::max(0.0f, Dot(n, view));
     // F0 (normal-incidence reflectance): specular workflow uses specularColor
@@ -758,15 +995,24 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     float brdf_a = 1.0f;
     float brdf_b = 0.0f;
     SampleBrdfLut(*ibl, ndotv, tri.roughness, &brdf_a, &brdf_b);
-    Vec3 spec = Mul(spec_env, Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
+    Vec3 spec =
+        opt.material_shading == Options::MaterialShading::LightRtBsdf
+            ? EvalMaterialIblSpecular(tri, n, view, refl, spec_env, opt,
+                                      tri_openpbr)
+            : Mul(spec_env,
+                  Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},
                   1.0f - kd_metal);
-    Vec3 diff = Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
+    Vec3 diff =
+        opt.material_shading == Options::MaterialShading::LightRtBsdf
+            ? EvalMaterialIblDiffuse(tri, n, view, diffuse, opt, tri_openpbr)
+            : Mul(Mul(Mul(tri.base_color, diffuse), kd), tri.occlusion);
     c = Add(c, Add(diff, spec));
     // Clearcoat: a thin dielectric coat (F0=0.04) reflecting the environment with
     // its own (usually low) roughness, layered on top and weighted by the coat
     // amount. Skipped entirely when clearcoat==0 (byte-identical default).
-    if (tri.clearcoat > 0.0f) {
+    if (opt.material_shading != Options::MaterialShading::LightRtBsdf &&
+        tri.clearcoat > 0.0f) {
       Vec3 cc_env =
           SampleIblMip(ibl->prefiltered, env_refl, tri.clearcoat_roughness);
       float cc_a = 1.0f, cc_b = 0.0f;
@@ -783,22 +1029,60 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   auto apply_opacity = [&](const Vec3 &col) -> Vec3 {
     if (tri.opacity >= 0.999f || depth >= 4) return col;
     const float a = std::max(0.0f, tri.opacity);
-    const Vec3 behind_org = Add(ray_org, Mul(ray_dir, hit_t + 0.01f));
+    const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
+                               std::fabs(p.z));
+    const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
+    const Vec3 behind_org = Add(p, Mul(ray_dir, eps));
+    CameraFrame behind_camera = camera;
+    behind_camera.znear = eps;
     const Vec3 behind =
-        Shade(scene, direct, tris, mats, lights, ibl, camera, opt, behind_org,
+        Shade(scene, direct, tris, mats, lights, ibl, behind_camera, opt, behind_org,
               ray_dir, textures, tri_uvs, tlas, blas, instances, rd, depth + 1,
-              tri_colors, tri_normals);
+              tri_colors, tri_normals, openpbr_mats);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
+  };
+  auto sample_bsdf_bounce = [&]() -> Vec3 {
+    if (opt.material_shading != Options::MaterialShading::LightRtBsdf ||
+        depth >= 2 || tri.opacity < 0.999f) {
+      return Vec3{0.0f, 0.0f, 0.0f};
+    }
+    OpenPBRParams params = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+    pcg32 rng = MakeBsdfRng(ray_org, ray_dir, depth);
+    BsdfSample sample{};
+    if (!bsdf_sample(&params, ToMtlxV3(n), ToMtlxV3(view), &rng, &sample) ||
+        sample.pdf <= 0.0f || !v3_is_finite(sample.throughput)) {
+      return Vec3{0.0f, 0.0f, 0.0f};
+    }
+    Vec3 wi = Normalize(FromMtlxV3(sample.wi));
+    Vec3 throughput = FromMtlxV3(sample.throughput);
+    if (Length(wi) <= 0.0f || !FiniteColor(throughput)) {
+      return Vec3{0.0f, 0.0f, 0.0f};
+    }
+    const float mag = std::max(std::max(std::fabs(p.x), std::fabs(p.y)),
+                               std::fabs(p.z));
+    const float eps = std::max(1.0e-4f, mag * 3.0e-6f);
+    const Vec3 bounce_org = Add(p, Mul(wi, eps));
+    CameraFrame bounce_camera = camera;
+    bounce_camera.znear = eps;
+    RayDiff bounce_rd;
+    bounce_rd.valid = false;
+    Vec3 bounce = Shade(scene, direct, tris, mats, lights, ibl, bounce_camera,
+                        opt, bounce_org, wi, textures, tri_uvs, tlas, blas,
+                        instances, bounce_rd, depth + 1, tri_colors,
+                        tri_normals, openpbr_mats);
+    return FiniteColor(bounce) ? Mul(bounce, throughput)
+                               : Vec3{0.0f, 0.0f, 0.0f};
   };
   if (lights.finite.empty() && lights.mesh.empty()) {
     Vec3 l = Normalize(Sub(camera.origin, p));
-    float ndotl = std::max(0.0f, Dot(n, l));
-    if (ndotl > 0.0f &&
+    if (Dot(n, l) > 0.0f &&
         (!opt.shadows ||
          !occluded(p, n, l,
                    std::max(0.0f, Length(Sub(camera.origin, p)) - 1.0e-3f)))) {
-      c = Add(c, Mul(tri.base_color, ndotl));
+      c = Add(c, EvalMaterialDirect(tri, n, view, l, Vec3{1.0f, 1.0f, 1.0f},
+                                    opt, tri_openpbr));
     }
+    c = Add(c, sample_bsdf_bounce());
     return apply_opacity(c);
   }
   auto eval_light = [&](const PreviewLight &light) {
@@ -823,12 +1107,12 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
       }
       radiance = Mul(radiance, 1.0f / std::max(1.0e-4f, dist * dist));
     }
-    float ndotl = std::max(0.0f, Dot(n, l));
-    if (ndotl <= 0.0f) return;
+    if (Dot(n, l) <= 0.0f) return;
     if (opt.shadows && occluded(p, n, l, max_t)) {
       return;
     }
-    c = Add(c, Mul(Mul(tri.base_color, radiance), ndotl));
+    c = Add(c, EvalMaterialDirect(tri, n, view, l, radiance, opt,
+                                  tri_openpbr));
   };
   for (const PreviewLight &light : lights.finite) {
     eval_light(light);
@@ -836,6 +1120,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   for (const PreviewLight &light : lights.mesh) {
     eval_light(light);
   }
+  c = Add(c, sample_bsdf_bounce());
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
   // lies behind it (continuation ray), bounded recursion. Opaque hits (the
   // default opacity 1.0) skip this entirely, so opaque renders are unchanged.
@@ -1035,7 +1320,9 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<InstanceRT> *instances,
                             const ByteVec *tri_colors,
                             const std::vector<float> *tri_normals,
-                            const std::vector<VolumeData> *volumes) {
+                            const std::vector<VolumeData> *volumes,
+                            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+                                *openpbr_mats) {
   tinyusdz::Image img;
   img.width = opt.width;
   img.height = height;
@@ -1075,7 +1362,7 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
           rd.valid = true;
           Vec3 surf = Shade(scene, direct, tris, mats, lights, ibl, camera, opt,
                             org, dir, textures, tri_uvs, tlas, blas, instances,
-                            rd, 0, tri_colors, tri_normals);
+                            rd, 0, tri_colors, tri_normals, openpbr_mats);
           if (volumes && !volumes->empty()) {
             surf = CompositeVolumes(*volumes, org, dir, surf);
           }

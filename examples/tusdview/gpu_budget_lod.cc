@@ -22,6 +22,7 @@ std::size_t MeshVramBytes(const DrawMeshCPU& m) {
   if (ninst) {
     b += ninst * 12 * sizeof(float);  // instanceXforms (3x4 o2w)
     b += m.instanceColors.size() * sizeof(float);
+    b += m.instanceOpacities.size() * sizeof(float);
   }
   b += m.vertexColors.size() * sizeof(float);
   return b;
