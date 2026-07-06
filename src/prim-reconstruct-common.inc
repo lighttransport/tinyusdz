@@ -86,6 +86,110 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
   return nonstd::nullopt;
 }
 
+// ---------------------------------------------------------------------------
+// Move-out helpers for reconstruction.
+//
+// Reconstruction owns the decoded PropertyMap (it is discarded after
+// ReconstructPrim), so large attribute values can be MOVED into the typed
+// schema members instead of deep-copied — get_value<T>() copies every array
+// out of the boxed value::Value, which was a measurable slice of USDC load.
+// Acceptance matches Value::get_value<T>(): exact type id, or same
+// underlying layout for role types, with the same vector-size sanity bound.
+// ---------------------------------------------------------------------------
+
+template <typename Tv>
+static bool ReasonableMoveVectorSize(const std::vector<Tv> &v) {
+  return value::IsReasonableValueVectorSize(v.size());
+}
+
+template <typename Tv>
+static bool ReasonableMoveVectorSize(const Tv &) {
+  return true;  // non-vector type
+}
+
+// Returns a mutable pointer to the PrimVar's default value when it can be
+// (re)interpreted as T; nullptr otherwise (caller falls back to the copying
+// get_value<T>() path).
+template <typename T>
+static T *GetDefaultValueMovePtr(primvar::PrimVar &var) {
+  if (var.is_blocked() || !var.has_default()) {
+    return nullptr;
+  }
+  T *pv = var.value_raw().as<T>();
+  if (!pv) {
+    return nullptr;
+  }
+  if (!ReasonableMoveVectorSize(*pv)) {
+    return nullptr;
+  }
+  return pv;
+}
+
+// Move-enabled variant of ConvertToAnimatable: the whole TimeSamples
+// container is moved into the Animatable when its element type matches
+// (preserving read-side sample dedup and skipping the per-sample re-boxing
+// that get_samples() + add_sample incur); the default value is moved out of
+// the boxed value. Falls back to the copying paths on any mismatch, so the
+// accepted input set is a superset-equal of ConvertToAnimatable.
+template<typename T>
+static nonstd::optional<Animatable<T>> ConvertToAnimatableMove(primvar::PrimVar &var)
+{
+  Animatable<T> dst;
+
+  if (!var.has_value() && !var.has_timesamples()) {
+    DCOUT("PrimVar has neither value nor timesamples");
+    return nonstd::nullopt;
+  }
+
+  bool ok = false;
+
+  if (var.has_value()) {
+    if (T *mv = GetDefaultValueMovePtr<T>(var)) {
+      dst.set_default(std::move(*mv));
+      ok = true;
+    } else if (auto pv = var.get_value<T>()) {
+      dst.set_default(std::move(pv.value()));
+      ok = true;
+    }
+  }
+
+  if (var.has_timesamples()) {
+    value::TimeSamples &ts = var.ts_raw();
+    const uint32_t want_utid = value::TypeTraits<T>::underlying_type_id();
+    const uint32_t ts_utid = value::GetUnderlyingTypeId(ts.type_id());
+    if ((ts.type_id() != 0) && (ts_utid == want_utid)) {
+      // Whole-container move: same element layout, blocked samples carried
+      // along unchanged.
+      dst.set_timesamples(std::move(ts));
+      ok = true;
+    } else {
+      // Mixed/exotic sample types (or all-blocked with no type id): the
+      // legacy per-sample validation path.
+      const auto &samples = ts.get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        const value::TimeSamples::Sample &s = samples[i];
+        if (s.blocked || s.value.is_none()) {
+          dst.add_blocked_sample(s.t);
+        } else if (auto pv = s.value.get_value<T>()) {
+          dst.add_sample(s.t, pv.value());
+        } else {
+          DCOUT(i << "/" << ts.size() << " type mismatch. expected "
+                << value::TypeTraits<T>::type_name() << ", but got "
+                << s.value.type_name());
+          return nonstd::nullopt;
+        }
+      }
+      ok = true;
+    }
+  }
+
+  if (ok) {
+    return std::move(dst);
+  }
+
+  return nonstd::nullopt;
+}
+
 // Require special treatment for Extent(float3[2])
 template<>
 nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar &var)
@@ -344,7 +448,13 @@ static ParseResult ParseTypedAttributeUnified(
               return ret;
             }
 
-            if (auto pv = attr.get_var().get_value<T>()) {
+            if (T *mv = GetDefaultValueMovePtr<T>(attr.get_var())) {
+              target.set_value(std::move(*mv));
+              target.metas() = std::move(prop.attribute().metas());
+              table.insert(name);
+              ret.code = ParseResult::ResultCode::Success;
+              return ret;
+            } else if (auto pv = attr.get_var().get_value<T>()) {
               target.set_value(std::move(pv.value()));
               target.metas() = std::move(prop.attribute().metas());
               table.insert(name);
@@ -358,25 +468,25 @@ static ParseResult ParseTypedAttributeUnified(
           }
         }
 
-        // Parse timeSamples
-        if (attr.get_var().has_timesamples()) {
-          if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
+        // Parse timeSamples + default. The move variant transfers the whole
+        // TimeSamples container and the default value out of the (discarded
+        // afterwards) Property instead of copying them.
+        const bool var_has_ts = attr.get_var().has_timesamples();
+        const bool var_has_default = attr.get_var().has_default();
+        if (var_has_ts || var_has_default) {
+          // NOTE: query has_default BEFORE the move (ConvertToAnimatableMove
+          // consumes the PrimVar's timesamples and default).
+          if (auto av = ConvertToAnimatableMove<T>(attr.get_var())) {
             animatable_value = std::move(av.value());
-            has_timesamples = true;
-          } else {
+            has_timesamples = var_has_ts;
+            has_default = var_has_default && animatable_value.has_default();
+          } else if (var_has_ts) {
             ret.code = ParseResult::ResultCode::InternalError;
             ret.err = fmt::format("Converting timeSamples failed for `{}`. TimeSamples may have values with different type (expected `{}`).",
                                   prop_name, value::TypeTraits<T>::type_name());
             return ret;
           }
-        }
-
-        // Parse default value (move to avoid copying large arrays)
-        if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_var().get_value<T>()) {
-            animatable_value.set(std::move(pv.value()));
-            has_default = true;
-          } else {
+          if (var_has_default && !has_default) {
             ret.code = ParseResult::ResultCode::TypeMismatch;
             ret.err = fmt::format("take_value<{}> failed. Attribute has type {}",
                                   value::TypeTraits<T>::type_name(), attr.get_var().type_name());
@@ -394,7 +504,10 @@ static ParseResult ParseTypedAttributeUnified(
       } else {
         // Uniform: only default value (move to avoid copying large arrays)
         if (attr.get_var().has_default()) {
-          if (auto pv = attr.get_var().get_value<T>()) {
+          if (T *mv = GetDefaultValueMovePtr<T>(attr.get_var())) {
+            target.set_value(std::move(*mv));
+            has_default = true;
+          } else if (auto pv = attr.get_var().get_value<T>()) {
             target.set_value(std::move(pv.value()));
             has_default = true;
           } else {

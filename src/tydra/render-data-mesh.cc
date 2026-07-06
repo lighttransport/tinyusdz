@@ -470,7 +470,9 @@ static bool TryConvertFacevaryingToVertex(
       const __ty &a = vdst[vidx];                                            \
       const __ty &b = vsrc[i];                                               \
       if (seen[vidx]) {                                                      \
-        if (!(__cmp_expr)) {                                                 \
+        /* bitwise-equal fast path: identical bytes always satisfy the */    \
+        /* eps compare, and most revisits are exact duplicates */            \
+        if ((memcmp(&a, &b, sizeof(__ty)) != 0) && !(__cmp_expr)) {          \
           dst->data.clear();                                                 \
           return false;                                                      \
         }                                                                    \
@@ -746,12 +748,132 @@ static bool TryReadMMapArrayWithIndices(
 //
 // name does not include "primvars:" prefix.
 //
+//
+// Zero-copy borrow helpers for the common attribute-read shapes in
+// ConvertMesh. Both return nullptr when the fast path does not apply and the
+// caller falls back to the legacy (copying/evaluating) read, so acceptance
+// semantics are unchanged.
+//
+
+// Borrow the default value of a non-animated, non-connected typed member
+// (e.g. GeomMesh::normals).
+template <typename T>
+static const T *TryBorrowTypedMemberDefault(
+    const TypedAttribute<Animatable<T>> &tattr) {
+  if (!tattr.authored() || tattr.is_connection()) {
+    return nullptr;
+  }
+  if (!tattr.get_connections().empty()) {
+    return nullptr;  // connection + value: let the evaluator resolve
+  }
+  const auto &opt = tattr.get_value_ref();
+  if (!opt) {
+    return nullptr;
+  }
+  const Animatable<T> &anim = opt.value();
+  if (anim.is_blocked() || anim.has_timesamples() || !anim.has_default()) {
+    return nullptr;
+  }
+  return &anim.default_value_ref();
+}
+
+// Borrow a non-animated, non-indexed, non-connected array primvar value from
+// the schema props map (bypasses the whole-Attribute copy GetGeomPrimvar
+// makes). `interp_out` mirrors GeomPrimvar::get_interpolation() (Constant
+// when unauthored).
+template <typename T>
+static const std::vector<T> *TryBorrowPrimvarArray(const GPrim &gprim,
+                                                   const std::string &varname,
+                                                   Interpolation *interp_out) {
+  const std::string primvar_name = "primvars:" + varname;
+  const auto it = gprim.props.find(primvar_name);
+  if (it == gprim.props.end()) {
+    return nullptr;
+  }
+  if (!it->second.is_attribute()) {
+    return nullptr;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (attr.has_connections() || attr.is_blocked() || attr.has_timesamples() ||
+      !attr.has_value()) {
+    return nullptr;
+  }
+  if (attr.metas().has_elementSize() && (attr.metas().get_elementSize() != 1)) {
+    return nullptr;  // elementSize > 1 needs the generic path
+  }
+  if (gprim.props.count(primvar_name + ":indices")) {
+    return nullptr;  // indexed primvar: needs flatten
+  }
+
+  const std::vector<T> *pv =
+      attr.get_var().value_raw().as<std::vector<T>>();
+  if (!pv) {
+    return nullptr;
+  }
+  if (!value::IsReasonableValueVectorSize(pv->size())) {
+    return nullptr;
+  }
+
+  if (interp_out) {
+    *interp_out = attr.metas().has_interpolation()
+                      ? attr.metas().get_interpolation_enum()
+                      : Interpolation::Constant;
+  }
+  return pv;
+}
+
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     const Stage &stage, const GeomMesh &mesh, const std::string &name,
     const double t, const value::TimeSampleInterpolationType tinterp,
     const std::string &prim_path = std::string(),
     std::string *warn = nullptr) {
   VertexAttribute vattr;
+
+  // Zero-copy fast path: plain (non-animated, non-indexed, non-connected)
+  // texcoord2f[]/float2[] primvar — memcpy straight into the VertexAttribute.
+  {
+    Interpolation interp = Interpolation::Constant;
+    const std::vector<value::texcoord2f> *uvref =
+        TryBorrowPrimvarArray<value::texcoord2f>(mesh, name, &interp);
+    if (uvref) {
+      switch (interp) {
+        case Interpolation::Varying:
+          vattr.variability = VertexVariability::Varying;
+          break;
+        case Interpolation::Constant:
+          vattr.variability = VertexVariability::Constant;
+          break;
+        case Interpolation::Uniform:
+          vattr.variability = VertexVariability::Uniform;
+          break;
+        case Interpolation::Vertex:
+          vattr.variability = VertexVariability::Vertex;
+          break;
+        case Interpolation::FaceVarying:
+          vattr.variability = VertexVariability::FaceVarying;
+          break;
+        default:
+          uvref = nullptr;  // unexpected: fall back
+          break;
+      }
+      if (uvref) {
+        vattr.format = VertexAttributeFormat::Vec2;
+        size_t nbytes;
+        if (!safe::n_to_size<value::texcoord2f>(uvref->size(), &nbytes)) {
+          return nonstd::make_unexpected("Too large texcoord array.\n");
+        }
+        vattr.data.resize(nbytes);
+        if (nbytes) {
+          std::memcpy(vattr.data.data(), uvref->data(), nbytes);
+        }
+        // Match the legacy tail exactly: format/data/indices/name only
+        // (elementSize and stride keep their defaults).
+        vattr.indices.clear();
+        vattr.name = name;
+        return std::move(vattr);
+      }
+    }
+  }
 
   std::string err;
   GeomPrimvar primvar;
@@ -3870,6 +3992,9 @@ bool RenderSceneConverter::ConvertMesh(
   if (!subdivision_applied) {
     Interpolation interp = mesh.get_normalsInterpolation();
     std::vector<value::normal3f> normals;
+    // When non-null, normals are borrowed from the stage (zero-copy) and
+    // `normals` stays empty.
+    const std::vector<value::normal3f> *normals_borrow = nullptr;
 
     if (mesh.has_primvar("normals")) {  // primvars:normals
       GeomPrimvar pvar;
@@ -3910,37 +4035,44 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
     } else if (mesh.normals.authored()) {  // look 'normals'
-      // Try mmap zero-copy for direct normals attribute
-      bool got_normals = TryReadMMapArray<value::normal3f>(
-          env.stage, prim_path_str, "normals", &normals);
-      if (!got_normals) {
-        if (!EvaluateTypedAnimatableAttribute(env.stage, mesh.normals, "normals",
-                                              &normals, &_mesh_diag_err, env.timecode,
-                                              env.tinterp)) {
+      // Zero-copy borrow for the common shape: non-animated, non-connected
+      // `normals` — memcpy'd once into dst.normals below.
+      normals_borrow = TryBorrowTypedMemberDefault(mesh.normals);
+      if (!normals_borrow) {
+        // Try mmap zero-copy for direct normals attribute
+        bool got_normals = TryReadMMapArray<value::normal3f>(
+            env.stage, prim_path_str, "normals", &normals);
+        if (!got_normals) {
+          if (!EvaluateTypedAnimatableAttribute(env.stage, mesh.normals, "normals",
+                                                &normals, &_mesh_diag_err, env.timecode,
+                                                env.tinterp)) {
+          }
         }
-      }
-      // V2 safety: deferred array but both mmap and Stage reads produced empty
-      if (normals.empty() && env.stage.has_mmap_zero_copy()) {
-        const MMapArrayRef *ref = env.stage.mmap_table()->find(
-            prim_path_str, "normals");
-        if (ref && ref->element_count > 0) {
-          PUSH_ERROR_AND_RETURN(fmt::format(
-              "mmap deferred 'normals' for {} ({} elements) could not be read. "
-              "mmap buffer may be invalid.", abs_prim_path, ref->element_count));
+        // V2 safety: deferred array but both mmap and Stage reads produced empty
+        if (normals.empty() && env.stage.has_mmap_zero_copy()) {
+          const MMapArrayRef *ref = env.stage.mmap_table()->find(
+              prim_path_str, "normals");
+          if (ref && ref->element_count > 0) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "mmap deferred 'normals' for {} ({} elements) could not be read. "
+                "mmap buffer may be invalid.", abs_prim_path, ref->element_count));
+          }
         }
       }
     }
 
+    const std::vector<value::normal3f> &normals_src =
+        normals_borrow ? *normals_borrow : normals;
     size_t resize_size;
-    if (!safe::n_to_size<value::normal3f>(normals.size(), &resize_size)) {
+    if (!safe::n_to_size<value::normal3f>(normals_src.size(), &resize_size)) {
       return false;
     }
     dst.normals.get_data().resize(resize_size);
     size_t memcpy_size;
-    if (!safe::n_to_size<value::normal3f>(normals.size(), &memcpy_size)) {
+    if (!safe::n_to_size<value::normal3f>(normals_src.size(), &memcpy_size)) {
       return false;
     }
-    memcpy(dst.normals.get_data().data(), normals.data(), memcpy_size);
+    memcpy(dst.normals.get_data().data(), normals_src.data(), memcpy_size);
     dst.normals.elementSize = 1;
     dst.normals.stride = sizeof(value::normal3f);
     dst.normals.format = VertexAttributeFormat::Vec3;
