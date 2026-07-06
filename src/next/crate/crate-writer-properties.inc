@@ -181,8 +181,10 @@
     uint64_t times_rep_raw =
         ValueRep::Make(CrateTypeId::Double, times_block_idx, true, false).raw();
     std::memcpy(header_data.data() + 8, &times_rep_raw, 8);
-    uint64_t header_idx = value_data_.size();
-    value_data_.push_back({TypeId::Invalid, std::move(header_data)});
+    // Header embeds the times rep + per-sample reps built above: buffered
+    // indices get relocated by _PatchTimeSamplesBlock; streaming already wrote
+    // those blocks and embedded their absolute offsets, so no patch is needed.
+    uint64_t header_idx = PushValueBlock({TypeId::Invalid, std::move(header_data)});
 
     CrateField ts_field;
     ts_field.token_index.value = CommonToken(common_.timeSamples, "timeSamples");

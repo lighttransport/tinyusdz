@@ -22,9 +22,22 @@ namespace next {
 struct CrateWriteSink {
   bool (*fn)(const uint8_t* data, size_t size, void* user) = nullptr;
   void* user = nullptr;
+  // Optional seek-write: overwrite `size` bytes at absolute output position
+  // `pos` (bytes already emitted via fn()). When present, the writer can stream
+  // the VALUE section straight to the sink as blocks are built and backfill the
+  // bootstrap header afterwards, so the value blocks never accumulate in memory
+  // (the low-peak streaming-write path). Null => append-only sink; the writer
+  // stages value blocks and emits them at the end instead. Declared after
+  // `user` so existing positional `{fn, user}` initializers stay valid.
+  bool (*patch_fn)(uint64_t pos, const uint8_t* data, size_t size,
+                   void* user) = nullptr;
   explicit operator bool() const { return fn != nullptr; }
   bool operator()(const uint8_t* data, size_t size) const {
     return fn(data, size, user);
+  }
+  bool seekable() const { return patch_fn != nullptr; }
+  bool patch(uint64_t pos, const uint8_t* data, size_t size) const {
+    return patch_fn(pos, data, size, user);
   }
 };
 

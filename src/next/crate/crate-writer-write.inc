@@ -82,6 +82,33 @@
       block_dedup_.reserve(nprop + nprim + 16);
     }
 
+    // Streaming-value mode: with a seekable sink, stream each VALUE block to the
+    // sink as it is built (below, via InternBlock/PushValueBlock) and free it,
+    // instead of staging every block in value_data_. The value section is the
+    // multi-hundred-MB peak for animation-dense scenes; streaming keeps only the
+    // small structural tables + a hash->offset dedup index in memory. Emit a
+    // 64-byte placeholder bootstrap first (patched with the real header at the
+    // end), then the value bytes stream right after it — matching the file
+    // layout [bootstrap][VALUE][structural][TOC]. Block building is serial, so
+    // no threading concerns. Append-only sinks fall back to the staged path.
+    stream_values_ = (sink && sink->seekable()) &&
+                     (std::getenv("NEXT_NO_STREAM_WRITE") == nullptr);
+    if (stream_values_) {
+      value_sink_ = sink;
+      // The VALUE section starts at offset 64 (the buffered path reserves 64
+      // bytes for the bootstrap before it and emits/patches exactly 64), so the
+      // placeholder + value stream position must both be 64 — NOT the 88-byte
+      // full bootstrap struct size.
+      value_start_offset_ = 64;
+      value_stream_pos_ = 64;
+      value_stream_error_ = false;
+      static const uint8_t kBootstrapPlaceholder[64] = {0};
+      if (!(*sink)(kBootstrapPlaceholder, 64)) {
+        result_.error = "sink aborted (bootstrap placeholder)";
+        return result_;
+      }
+    }
+
     // Build tables from layer
     auto t0 = Clock::now();
     BuildTables(layer);
@@ -153,9 +180,21 @@
     buffer_.resize(64, 0);
     value_start_offset_ = 64;
 
-    // Compute the VALUE section layout and patch field offsets (always needed).
+    // Compute the VALUE section layout and patch field offsets.
     t0 = Clock::now();
-    const uint64_t value_section_size = ComputeValueLayoutAndPatch();
+    uint64_t value_section_size;
+    if (stream_values_) {
+      // Blocks were already streamed with final absolute offsets baked into
+      // every ValueRep during the build, so there is nothing to lay out or
+      // patch — the section size is just how many bytes we streamed.
+      if (value_stream_error_) {
+        result_.error = "sink aborted (value section)";
+        return result_;
+      }
+      value_section_size = value_stream_pos_ - value_start_offset_;
+    } else {
+      value_section_size = ComputeValueLayoutAndPatch();
+    }
     timing_.value_layout_ms = MsSince(t0);
 
     // Streaming mode keeps the VALUE bytes OUT of buffer_ (they are streamed
@@ -326,7 +365,22 @@
     // structural sections + TOC (the only part staged in buffer_). buffer_ holds
     // [bootstrap(64)][TOKENS..SPECS][TOC] with the VALUE section logically spliced
     // in after the bootstrap; stream the three parts in file order.
-    if (sink) {
+    if (sink && stream_values_) {
+      // The placeholder bootstrap + the whole VALUE section are already in the
+      // sink (streamed during the build). Append the structural sections + TOC,
+      // then backfill the real bootstrap over the placeholder at offset 0.
+      t0 = Clock::now();
+      if (buffer_.size() > 64 &&
+          !(*sink)(buffer_.data() + 64, buffer_.size() - 64)) {
+        result_.error = "sink aborted (structural sections)";
+        return result_;
+      }
+      if (!sink->patch(0, buffer_.data(), 64)) {
+        result_.error = "sink aborted (bootstrap backfill)";
+        return result_;
+      }
+      timing_.stream_ms = MsSince(t0);
+    } else if (sink) {
       t0 = Clock::now();
       if (!(*sink)(buffer_.data(), 64)) {
         result_.error = "sink aborted (bootstrap)";

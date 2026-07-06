@@ -81,6 +81,18 @@ class BufferedFileSink {
     return ofs_->good();
   }
 
+  // Seek-write `size` bytes at absolute file position `pos` (used to backfill the
+  // bootstrap header after the streamed value section). Flush the append buffer
+  // first, then restore the append position at end-of-file.
+  bool Patch(uint64_t pos, const uint8_t* data, size_t size) {
+    if (!Flush()) return false;
+    ofs_->seekp(static_cast<std::streamoff>(pos), std::ios::beg);
+    ofs_->write(reinterpret_cast<const char*>(data),
+                static_cast<std::streamsize>(size));
+    ofs_->seekp(0, std::ios::end);
+    return ofs_->good();
+  }
+
   size_t bytes_written() const { return bytes_written_; }
 
  private:
@@ -146,7 +158,14 @@ CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer
                         return static_cast<BufferedFileSink*>(user)->Write(data,
                                                                            size);
                       },
-                      &file_sink};
+                      &file_sink,
+                      // Seekable: enables the low-memory streaming-value write
+                      // (bootstrap backfilled after the streamed value section).
+                      [](uint64_t pos, const uint8_t* data, size_t size,
+                         void* user) -> bool {
+                        return static_cast<BufferedFileSink*>(user)->Patch(
+                            pos, data, size);
+                      }};
   CrateWriteResult result = WriteLayerToSink(sink, layer);
   auto t1 = std::chrono::steady_clock::now();
   if (!result.success) return result;

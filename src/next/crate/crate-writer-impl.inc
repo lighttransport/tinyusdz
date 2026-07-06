@@ -536,6 +536,53 @@ private:
   uint64_t value_start_offset_ = 0; // absolute file offset of VALUE section start
   std::vector<uint64_t> value_offsets_; // offset in VALUE section for each data block
 
+  // Streaming-value mode: when a seekable sink is provided, each VALUE block is
+  // written straight to the sink as it is built (8-byte aligned) and freed,
+  // instead of being staged in value_data_. InternBlock() then returns the
+  // block's ABSOLUTE file offset (not a value_data_ index), which becomes the
+  // ValueRep payload directly, so ComputeValueLayoutAndPatch/StreamValueBytes
+  // are skipped. Dedup is by content hash -> offset (no bytes retained). This
+  // removes the multi-hundred-MB value_data_ peak on animation-dense scenes.
+  bool stream_values_ = false;
+  const CrateWriteSink* value_sink_ = nullptr;
+  uint64_t value_stream_pos_ = 0;  // running absolute sink position of VALUE bytes
+  bool value_stream_error_ = false;
+  // hash -> absolute offset of the first block with that hash (content-address).
+  // Keyed by (content hash, byte size) — the buffered dedup also requires
+  // matching size before its memcmp, so folding size into the key rejects the
+  // different-size hash collisions that hash-alone would wrongly share. (A
+  // same-size, same-hash, different-bytes collision is astronomically unlikely
+  // and would already perturb the buffered path's determinism.)
+  struct StreamDedup {
+    static constexpr uint32_t kInvalid = ~0u;
+    struct Entry { uint64_t hash; uint64_t hash2; uint64_t size; uint64_t offset; uint32_t next; };
+    std::vector<uint32_t> buckets;
+    std::vector<Entry> entries;
+    uint64_t* find(uint64_t h, uint64_t h2, uint64_t sz) {
+      if (buckets.empty()) return nullptr;
+      const uint32_t mask = static_cast<uint32_t>(buckets.size() - 1);
+      for (uint32_t e = buckets[h & mask]; e != kInvalid; e = entries[e].next)
+        if (entries[e].hash == h && entries[e].hash2 == h2 && entries[e].size == sz)
+          return &entries[e].offset;
+      return nullptr;
+    }
+    void insert(uint64_t h, uint64_t h2, uint64_t sz, uint64_t off) {
+      if (buckets.empty() || (entries.size() + 1) * 2 >= buckets.size()) {
+        const size_t nc = buckets.empty() ? 1024 : buckets.size() * 2;
+        buckets.assign(nc, kInvalid);
+        const uint32_t mask = static_cast<uint32_t>(nc - 1);
+        for (uint32_t i = 0; i < entries.size(); ++i) {
+          const uint32_t s = static_cast<uint32_t>(entries[i].hash & mask);
+          entries[i].next = buckets[s]; buckets[s] = i;
+        }
+      }
+      const uint32_t mask = static_cast<uint32_t>(buckets.size() - 1);
+      const uint32_t s = static_cast<uint32_t>(h & mask);
+      entries.push_back({h, h2, sz, off, buckets[s]});
+      buckets[s] = static_cast<uint32_t>(entries.size() - 1);
+    }
+  } stream_dedup_;
+
   using Clock = std::chrono::steady_clock;
   struct TimingState {
     bool enabled = false;
@@ -842,8 +889,62 @@ private:
   // returns the (shared or new) block index. Must NOT be used for blocks that
   // are patched in place after creation (the TimeSamples indirection header):
   // sharing one would apply the index->offset patch twice.
+  // Stream a value block's bytes to the seekable sink at the next 8-byte-aligned
+  // position and return its ABSOLUTE file offset. Padding + per-block alignment
+  // exactly mirror the buffered layout (ComputeValueLayoutAndPatch + Stream
+  // ValueBytes) so the on-disk value section is byte-identical.
+  uint64_t StreamRawBlock(const uint8_t* bytes, size_t n) {
+    static const uint8_t kZeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    const uint64_t pad = (8 - (value_stream_pos_ % 8)) % 8;
+    if (pad) {
+      if (!(*value_sink_)(kZeros, static_cast<size_t>(pad))) value_stream_error_ = true;
+      value_stream_pos_ += pad;
+    }
+    const uint64_t off = value_stream_pos_;
+    if (n) {
+      if (!(*value_sink_)(bytes, n)) value_stream_error_ = true;
+      value_stream_pos_ += n;
+    }
+    return off;
+  }
+
+  // Append a value block WITHOUT content dedup (matches the direct
+  // value_data_.push_back sites: the TimeSamples indirection header and
+  // Dictionary blocks, which are patched in place and never shared). Returns the
+  // block's value_data_ index (buffered) or absolute file offset (streaming).
+  uint64_t PushValueBlock(DataBlock&& block) {
+    if (stream_values_) {
+      if (block.size() == 0) return 0;
+      return StreamRawBlock(block.bytes(), block.size());
+    }
+    uint64_t idx = value_data_.size();
+    value_data_.push_back(std::move(block));
+    return idx;
+  }
+
   uint64_t InternBlock(DataBlock&& block) {
     const size_t n = block.size();
+    if (stream_values_) {
+      // Empty block => payload 0 (the reserved empty-array marker).
+      if (n == 0) return 0;
+      const uint8_t* p = block.bytes();
+      // Content-address by a FULL-content 128-bit hash (two independent 64-bit
+      // digests) + size. block.hash / HashBlockBytes only SAMPLES large blocks
+      // (first/middle/last 256 B) — safe for the buffered path because it
+      // memcmp-verifies a hash hit, but here there are no retained bytes to
+      // compare, so a sampled hash would falsely share two large blocks that
+      // share their sampled regions. A full 128-bit digest makes a false share
+      // astronomically impossible.
+      const uint64_t h = XXH3_64bits(p, n);
+      const uint64_t h2 = XXH3_64bits_withSeed(p, n, 0x9E3779B97F4A7C15ull);
+      if (uint64_t* off = stream_dedup_.find(h, h2, n)) {
+        ++blocks_deduped_;
+        return *off;
+      }
+      const uint64_t off = StreamRawBlock(p, n);
+      stream_dedup_.insert(h, h2, n, off);
+      return off;
+    }
     if (n == 0) {
       // Never share the empty block: payload 0 is the reserved empty-array
       // marker and a zero-length block at a nonzero offset has no meaning.
