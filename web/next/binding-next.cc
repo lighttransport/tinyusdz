@@ -7,22 +7,38 @@
 // three.js loader (web/js/src/tinyusdz/{TinyUSDZLoader,TinyUSDZLoaderUtils,
 // TinyUSDZWorker}.js) drives this module unchanged.
 //
-// Increment 1 (core three.js path): lifecycle, loadFromBinary, scene-graph node
-// tree (world transforms), mesh geometry (getMeshPtr zero-copy + getMeshCopy
-// owned), material JSON, texture/image metadata. NOTE: tydra_next is being
-// refactored elsewhere — this binding consumes it read-only and adds nothing to
-// it. Feature gaps vs legacy (full material-JSON schema, instancing, skinning,
-// image decode) are deliberately follow-up increments.
+// Covered so far:
+//  - lifecycle, loadFromBinary (USDA/USDC/USDZ), scene-graph node tree with
+//    world transforms
+//  - mesh geometry: getMeshPtr (zero-copy heap descriptors) + getMeshCopy
+//    (owned typed arrays) — points, triangulated indices, normals, uv0
+//  - materials: getMaterial/getMaterialWithFormat("json") in the SAME JSON
+//    schema as legacy tydra::serializeMaterial — flat UsdPreviewSurface
+//    (surfaceShader + *TextureId) AND nested OpenPBR (openPBR.<layer>.<param>)
+//  - textures: getTexture full metadata (uv transform, bias/scale, wrap,
+//    channel, image id); getImageCopy exposes each image's RAW ENCODED bytes
+//    (png/jpg/...) pulled straight from the USDZ archive (encoded=true +
+//    mimeType) — the JS/app decodes them (this lean module carries no image
+//    codec). getImagePtr/image DECODE, instancing, skinning, and external-ref
+//    composition remain follow-up increments.
+//
+// tydra_next is being refactored elsewhere — this binding consumes it
+// read-only and adds nothing to it.
 
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "next/tinyusdz-next.hh"  // LoadUSDFromMemory (USDA/USDC/USDZ auto-detect)
+#include "next/reader/usdz-reader.hh"  // USDZReader (raw archive entry access)
 #include "next/stage/stage.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-data.hh"
@@ -90,6 +106,48 @@ std::string jnum(float v) {
   return buf;
 }
 
+// Normalize a USD asset path for archive lookup: drop a leading "./" or "/".
+std::string norm_asset(const std::string& s) {
+  size_t b = 0;
+  if (s.size() >= 2 && s[0] == '.' && s[1] == '/') b = 2;
+  else if (!s.empty() && s[0] == '/') b = 1;
+  return s.substr(b);
+}
+
+// Find the archive entry for an asset path: exact match, else the entry whose
+// name equals the asset's normalized form or shares its basename.
+int findZipEntry(const tinyusdz::next::USDZReader& zip, const std::string& asset) {
+  const std::string want = norm_asset(asset);
+  const size_t slash = want.find_last_of('/');
+  const std::string base = (slash == std::string::npos) ? want : want.substr(slash + 1);
+  int base_match = -1;
+  for (size_t i = 0; i < zip.NumEntries(); ++i) {
+    const std::string& e = zip.EntryName(i);
+    if (e == want || norm_asset(e) == want) return static_cast<int>(i);
+    const size_t es = e.find_last_of('/');
+    const std::string eb = (es == std::string::npos) ? e : e.substr(es + 1);
+    if (eb == base && base_match < 0) base_match = static_cast<int>(i);
+  }
+  return base_match;
+}
+
+const char* mime_from_path(const std::string& s) {
+  auto ends = [&](const char* ext) {
+    const size_t n = std::strlen(ext);
+    return s.size() >= n &&
+           std::equal(ext, ext + n, s.end() - n,
+                      [](char a, char b) { return std::tolower(a) == std::tolower(b); });
+  };
+  if (ends(".png")) return "image/png";
+  if (ends(".jpg") || ends(".jpeg")) return "image/jpeg";
+  if (ends(".exr")) return "image/x-exr";
+  if (ends(".hdr")) return "image/vnd.radiance";
+  if (ends(".ktx") || ends(".ktx2")) return "image/ktx2";
+  if (ends(".tga")) return "image/x-tga";
+  if (ends(".bmp")) return "image/bmp";
+  return "application/octet-stream";
+}
+
 }  // namespace
 
 // One loaded stage's composed RenderScene + zero-copy heap caches.
@@ -118,7 +176,29 @@ class TinyUSDZLoaderNative {
       warn_ = w;
       return false;
     }
-    td::RenderSceneConverter conv;
+    // For a USDZ, hand the converter a texture loader that pulls each image's
+    // RAW ENCODED bytes (png/jpg/...) straight from the archive (no filesystem,
+    // no in-wasm image decode). getImageCopy exposes them with encoded=true +
+    // mimeType so the JS/app decodes via the browser (createImageBitmap).
+    td::ConverterConfig cfg;
+    tn::USDZReader zip;
+    const bool is_usdz = binary.size() >= 4 && p[0] == 'P' && p[1] == 'K' &&
+                         p[2] == 0x03 && p[3] == 0x04;
+    if (is_usdz && zip.Open(p, binary.size())) {
+      cfg.material.custom_texture_loader =
+          [&zip](const std::string& asset, td::TextureImage* out) -> bool {
+            const int idx = findZipEntry(zip, asset);
+            if (idx < 0) return false;
+            const uint8_t* d = zip.EntryData(static_cast<size_t>(idx));
+            const size_t n = zip.EntrySize(static_cast<size_t>(idx));
+            if (!d || n == 0) return false;
+            out->data.append(d, n);       // encoded bytes (not decoded pixels)
+            out->resolved_path = asset;
+            out->width = 0; out->height = 0;  // unknown until the JS decodes
+            return true;
+          };
+    }
+    td::RenderSceneConverter conv(cfg);
     td::ConvertResult res = conv.Convert(stage);
     warn_ = w;
     for (const auto& cw : res.warnings) { warn_ += cw; warn_ += '\n'; }
@@ -225,9 +305,31 @@ class TinyUSDZLoaderNative {
     const td::RenderTexture& t = scene_.textures[tex_id];
     val o = val::object();
     o.set("textureImageId", val(t.image_id));
+    o.set("assetPath", val(t.asset_path));
     o.set("wrapS", val(std::string(wrap_str(t.wrap_s))));
     o.set("wrapT", val(std::string(wrap_str(t.wrap_t))));
     o.set("isUDIM", val(false));
+    // UV transform (UsdUVTexture) — three.js applies these to the texture matrix.
+    val off = val::array(); off.set(0, val(t.offset.x)); off.set(1, val(t.offset.y));
+    o.set("offset", off);
+    val scl = val::array(); scl.set(0, val(t.scale.x)); scl.set(1, val(t.scale.y));
+    o.set("scale", scl);
+    o.set("rotation", val(t.rotation));
+    // Per-channel value bias/scale (normal-map remap, etc.).
+    val bias = val::array(), sval = val::array();
+    for (int i = 0; i < 4; ++i) { bias.set(i, val((&t.bias.x)[i])); sval.set(i, val((&t.scale_value.x)[i])); }
+    o.set("bias", bias);
+    o.set("scaleValue", sval);
+    const char* ch = "rgba";
+    switch (t.output_channel) {
+      case td::RenderTexture::Channel::R: ch = "r"; break;
+      case td::RenderTexture::Channel::G: ch = "g"; break;
+      case td::RenderTexture::Channel::B: ch = "b"; break;
+      case td::RenderTexture::Channel::A: ch = "a"; break;
+      case td::RenderTexture::Channel::RGB: ch = "rgb"; break;
+      default: ch = "rgba"; break;
+    }
+    o.set("channel", val(std::string(ch)));
     return o;
   }
   int numImages() const { return static_cast<int>(scene_.images.size()); }
@@ -239,7 +341,13 @@ class TinyUSDZLoaderNative {
     o.set("height", val(static_cast<int>(im.height)));
     o.set("channels", val(static_cast<int>(im.channels)));
     o.set("uri", val(im.resolved_path));
-    o.set("decoded", val(im.is_loaded()));
+    // `data` holds RAW ENCODED bytes (png/jpg/exr/...) pulled from the USDZ
+    // archive — NOT decoded pixels (this lean module has no image codec). The
+    // JS/app decodes them (encoded=true + mimeType); width/height are 0 until
+    // then. `decoded` stays false to signal "needs decode".
+    o.set("decoded", val(false));
+    o.set("encoded", val(im.is_loaded()));
+    o.set("mimeType", val(std::string(mime_from_path(im.resolved_path))));
     if (im.is_loaded()) {
       std::vector<uint8_t> d = im.data.flatten();
       val a = val::global("Uint8Array").new_(d.size());
@@ -328,6 +436,15 @@ class TinyUSDZLoaderNative {
     return o;
   }
 
+  // Serialize a material to the SAME JSON schema the legacy
+  // tydra::serializeMaterial produces (src/tydra/material-serializer.cc), so the
+  // three.js material code parses it unchanged:
+  //   { hasUsdPreviewSurface, hasOpenPBR,
+  //     surfaceShader: { diffuseColor:[..], metallic, ..., *TextureId },
+  //     openPBR: { base:{param}, specular:{..}, ..., geometry:{..} } }
+  // where each openPBR param is {name,type:"value",value} or
+  // {name,type:"texture",textureId}. Fields tydra_next does not carry are simply
+  // omitted (the JS falls back to DEFAULT_OPENPBR_PARAMS via `?? default`).
   val materialJSON(int mat_id, const std::string& fmt) const {
     val o = val::object();
     if (mat_id < 0 || mat_id >= numMaterials()) {
@@ -335,45 +452,114 @@ class TinyUSDZLoaderNative {
       return o;
     }
     const td::RenderMaterial& m = scene_.materials[mat_id];
-    const bool has_ps = (m.shader_type == td::RenderMaterial::ShaderType::PreviewSurface) &&
-                        m.preview_surface;
-    const bool has_pbr = (m.shader_type == td::RenderMaterial::ShaderType::OpenPBR) &&
-                         m.openpbr;
+    const bool has_ps = static_cast<bool>(m.preview_surface);
+    const bool has_pbr = static_cast<bool>(m.openpbr);
     std::string j = "{";
     j += "\"name\":\"" + jesc(m.name) + "\",";
     j += "\"absPath\":\"" + jesc(m.prim_path) + "\",";
+    j += "\"doubleSided\":" + std::string(m.double_sided ? "true" : "false") + ",";
     j += "\"hasUsdPreviewSurface\":" + std::string(has_ps ? "true" : "false") + ",";
-    j += "\"hasOpenPBR\":" + std::string(has_pbr ? "true" : "false") + ",";
-    j += "\"doubleSided\":" + std::string(m.double_sided ? "true" : "false");
-    // comps==1 -> scalar (e.g. metallic), comps>1 -> [r,g,b]/[x,y,z] array;
-    // matches the legacy getMaterial field shapes the three.js setup reads.
-    auto param = [&](const char* key, const td::ShaderParam& p, int comps) {
-      const float* v = &p.value.x;
-      j += ",\"" + std::string(key) + "\":";
-      if (comps == 1) {
-        j += jnum(v[0]);
-      } else {
-        j += "[";
-        for (int i = 0; i < comps; ++i) { if (i) j += ","; j += jnum(v[i]); }
-        j += "]";
-      }
-      j += ",\"" + std::string(key) + "TextureId\":" + std::to_string(p.texture_id);
-    };
-    if (has_ps) {
-      const td::PreviewSurfaceShader& s = *m.preview_surface;
-      param("diffuseColor", s.diffuse_color, 3);
-      param("emissiveColor", s.emissive_color, 3);
-      param("metallic", s.metallic, 1);
-      param("roughness", s.roughness, 1);
-      param("opacity", s.opacity, 1);
-      param("ior", s.ior, 1);
-      param("occlusion", s.occlusion, 1);
-      param("normal", s.normal, 3);
-    }
+    j += "\"hasOpenPBR\":" + std::string(has_pbr ? "true" : "false");
+    if (has_ps) { j += ",\"surfaceShader\":"; appendPreviewSurface(j, *m.preview_surface); }
+    if (has_pbr) { j += ",\"openPBR\":"; appendOpenPBR(j, *m.openpbr); }
     j += "}";
     o.set("data", val(j));
     o.set("format", val(fmt.empty() ? std::string("json") : fmt));
     return o;
+  }
+
+  static void appendVec3(std::string& j, const td::ShaderParam& p) {
+    j += "[" + jnum(p.value.x) + "," + jnum(p.value.y) + "," + jnum(p.value.z) + "]";
+  }
+  // openPBR layer param: {"name":X,"type":"value","value":V|[r,g,b]} or
+  // {"name":X,"type":"texture","textureId":N}.
+  static void oparam(std::string& j, const char* name, const td::ShaderParam& p,
+                     bool vec3) {
+    j += "\"" + std::string(name) + "\":{\"name\":\"" + name + "\",";
+    if (p.texture_id >= 0) {
+      j += "\"type\":\"texture\",\"textureId\":" + std::to_string(p.texture_id) + "}";
+    } else {
+      j += "\"type\":\"value\",\"value\":";
+      if (vec3) appendVec3(j, p); else j += jnum(p.value.x);
+      j += "}";
+    }
+  }
+
+  static void appendPreviewSurface(std::string& j, const td::PreviewSurfaceShader& s) {
+    j += "{\"type\":\"PreviewSurfaceShader\",";
+    j += "\"useSpecularWorkflow\":" + std::string(s.use_specular_workflow ? "true" : "false") + ",";
+    j += "\"diffuseColor\":"; appendVec3(j, s.diffuse_color); j += ",";
+    j += "\"emissiveColor\":"; appendVec3(j, s.emissive_color); j += ",";
+    j += "\"specularColor\":"; appendVec3(j, s.specular_color); j += ",";
+    j += "\"metallic\":" + jnum(s.metallic.value.x) + ",";
+    j += "\"roughness\":" + jnum(s.roughness.value.x) + ",";
+    j += "\"clearcoat\":" + jnum(s.clearcoat.value.x) + ",";
+    j += "\"clearcoatRoughness\":" + jnum(s.clearcoat_roughness.value.x) + ",";
+    j += "\"opacity\":" + jnum(s.opacity.value.x) + ",";
+    j += "\"opacityThreshold\":" + jnum(s.opacity_threshold.value.x) + ",";
+    j += "\"ior\":" + jnum(s.ior.value.x) + ",";
+    j += "\"normal\":"; appendVec3(j, s.normal); j += ",";
+    j += "\"displacement\":" + jnum(s.displacement.value.x) + ",";
+    j += "\"occlusion\":" + jnum(s.occlusion.value.x);
+    auto texid = [&](const char* key, const td::ShaderParam& p) {
+      if (p.texture_id >= 0)
+        j += ",\"" + std::string(key) + "TextureId\":" + std::to_string(p.texture_id);
+    };
+    texid("diffuseColor", s.diffuse_color);
+    texid("emissiveColor", s.emissive_color);
+    texid("specularColor", s.specular_color);
+    texid("metallic", s.metallic);
+    texid("roughness", s.roughness);
+    texid("clearcoat", s.clearcoat);
+    texid("clearcoatRoughness", s.clearcoat_roughness);
+    texid("opacity", s.opacity);
+    texid("ior", s.ior);
+    texid("normal", s.normal);
+    texid("displacement", s.displacement);
+    texid("occlusion", s.occlusion);
+    j += "}";
+  }
+
+  static void appendOpenPBR(std::string& j, const td::OpenPBRSurfaceShader& s) {
+    j += "{";
+    j += "\"base\":{";
+    oparam(j, "base_weight", s.base_weight, false); j += ",";
+    oparam(j, "base_color", s.base_color, true); j += ",";
+    oparam(j, "base_roughness", s.base_roughness, false); j += ",";
+    oparam(j, "base_metalness", s.base_metalness, false);
+    j += "},\"specular\":{";
+    oparam(j, "specular_weight", s.specular_weight, false); j += ",";
+    oparam(j, "specular_color", s.specular_color, true); j += ",";
+    oparam(j, "specular_roughness", s.specular_roughness, false); j += ",";
+    oparam(j, "specular_ior", s.specular_ior, false); j += ",";
+    oparam(j, "specular_anisotropy", s.specular_anisotropy, false); j += ",";
+    oparam(j, "specular_rotation", s.specular_rotation, false);
+    j += "},\"transmission\":{";
+    oparam(j, "transmission_weight", s.transmission_weight, false); j += ",";
+    oparam(j, "transmission_color", s.transmission_color, true); j += ",";
+    oparam(j, "transmission_depth", s.transmission_depth, false);
+    j += "},\"subsurface\":{";
+    oparam(j, "subsurface_weight", s.subsurface_weight, false); j += ",";
+    oparam(j, "subsurface_color", s.subsurface_color, true); j += ",";
+    oparam(j, "subsurface_radius", s.subsurface_radius, true);
+    j += "},\"sheen\":{";
+    oparam(j, "sheen_weight", s.sheen_weight, false); j += ",";
+    oparam(j, "sheen_color", s.sheen_color, true); j += ",";
+    oparam(j, "sheen_roughness", s.sheen_roughness, false);
+    j += "},\"coat\":{";
+    oparam(j, "coat_weight", s.coat_weight, false); j += ",";
+    oparam(j, "coat_color", s.coat_color, true); j += ",";
+    oparam(j, "coat_roughness", s.coat_roughness, false); j += ",";
+    oparam(j, "coat_ior", s.coat_ior, false);
+    j += "},\"emission\":{";
+    oparam(j, "emission_luminance", s.emission_luminance, false); j += ",";
+    oparam(j, "emission_color", s.emission_color, true);
+    j += "},\"geometry\":{";
+    oparam(j, "opacity", s.opacity, false); j += ",";
+    oparam(j, "geometry_opacity", s.opacity, false); j += ",";
+    oparam(j, "normal", s.normal, true); j += ",";
+    oparam(j, "tangent", s.tangent, true);
+    j += "}}";
   }
 
   bool loaded_ = false;
