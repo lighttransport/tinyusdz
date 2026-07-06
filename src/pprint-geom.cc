@@ -274,7 +274,7 @@ std::string to_string(const Scope &scope, const uint32_t indent,
   return ss.str();
 }
 
-// UsdVol / UsdRender placeholder prim types: emit `<spec> <TypeName> "name"`
+// UsdRender / UsdProc placeholder prim types: emit `<spec> <TypeName> "name"`
 // with generic props (no typed schema fields yet).
 #define DEFINE_PLACEHOLDER_PRIM_TO_STRING(__cls, __tyname)                 \
   std::string to_string(const __cls &p, const uint32_t indent,            \

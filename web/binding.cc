@@ -1833,6 +1833,15 @@ bool AddFallbackAttr(json &props, const std::string &name,
 }
 
 bool AddFallbackAttr(json &props, const std::string &name,
+                     const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::vector3f> &attr) {
+  if (!attr.authored()) {
+    return false;
+  }
+  props[name] = Vec3Json(attr.get_value());
+  return true;
+}
+
+bool AddFallbackAttr(json &props, const std::string &name,
                      const tinyusdz::TypedAttributeWithFallback<tinyusdz::value::quatf> &attr) {
   if (!attr.authored()) {
     return false;
@@ -2019,10 +2028,20 @@ void AddJointBaseJson(json &props, json &rels,
     AddFallbackAttr(props, "mjc:springref", joint.mjcJoint.value().springref);
     AddFallbackAttr(props, "mjc:ref", joint.mjcJoint.value().ref);
     AddFallbackAttr(props, "mjc:margin", joint.mjcJoint.value().margin);
+    AddTypedAttr(props, "mjc:solreflimit",
+                 joint.mjcJoint.value().solreflimit);
+    AddTypedAttr(props, "mjc:solimplimit",
+                 joint.mjcJoint.value().solimplimit);
+    AddTypedAttr(props, "mjc:solreffriction",
+                 joint.mjcJoint.value().solreffriction);
+    AddTypedAttr(props, "mjc:solimpfriction",
+                 joint.mjcJoint.value().solimpfriction);
     AddFallbackAttr(props, "mjc:actuatorfrcrange:min",
                     joint.mjcJoint.value().actuatorfrcrange_min);
     AddFallbackAttr(props, "mjc:actuatorfrcrange:max",
                     joint.mjcJoint.value().actuatorfrcrange_max);
+    AddFallbackAttr(props, "mjc:actuatorfrclimited",
+                    joint.mjcJoint.value().actuatorfrclimited);
     AddFallbackAttr(props, "mjc:actuatorgravcomp",
                     joint.mjcJoint.value().actuatorgravcomp);
   }
@@ -2042,10 +2061,11 @@ void AddSceneJson(json &props, const tinyusdz::PhysicsScene &scene) {
   AddTypedAttr(props, "physics:gravityDirection", scene.gravityDirection);
   AddTypedAttr(props, "physics:gravityMagnitude", scene.gravityMagnitude);
   if (scene.mjcScene) {
-    AddFallbackAttr(props, "mjc:timestep", scene.mjcScene.value().timestep);
-    AddFallbackAttr(props, "mjc:iterations",
+    AddFallbackAttr(props, "mjc:option:timestep",
+                    scene.mjcScene.value().timestep);
+    AddFallbackAttr(props, "mjc:option:iterations",
                     scene.mjcScene.value().iterations);
-    AddFallbackAttr(props, "mjc:integrator",
+    AddFallbackAttr(props, "mjc:option:integrator",
                     scene.mjcScene.value().integrator);
   }
   if (scene.newtonScene) {
@@ -2244,6 +2264,11 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
     AddPropertyMap(props, rels, joint->props);
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsFixedJoint>()) {
     AddJointBaseJson(props, rels, *joint);
+    AddPropertyMap(props, rels, joint->props);
+  } else if (const auto *joint = prim.as<tinyusdz::PhysicsDistanceJoint>()) {
+    AddJointBaseJson(props, rels, *joint);
+    AddTypedAttr(props, "physics:minDistance", joint->minDistance);
+    AddTypedAttr(props, "physics:maxDistance", joint->maxDistance);
     AddPropertyMap(props, rels, joint->props);
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsJoint>()) {
     AddJointBaseJson(props, rels, *joint);
@@ -2580,16 +2605,36 @@ class TinyUSDZLoaderNative {
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
     options.mmap_zero_copy = mmap_zero_copy_;
 
-    tinyusdz::Stage stage;
-    loaded_ = tinyusdz::LoadUSDFromMemory(
+    tinyusdz::Layer layer;
+    loaded_ = tinyusdz::LoadLayerFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
-        filename, &stage, &warn_, &error_, options);
+        filename, &layer, &warn_, &error_, options);
 
     if (!loaded_) {
       ReportTinyUSDZDebugEvent(
           "loadFromBinary.parseFailed", error_, binary.size(), is_usdz);
       return false;
     }
+
+    if (tinyusdz::HasVariants(layer)) {
+      tinyusdz::Layer composited_layer;
+      if (!tinyusdz::CompositeVariant(layer, &composited_layer, &warn_, &error_)) {
+        ReportTinyUSDZDebugEvent(
+            "loadFromBinary.variantComposeFailed", error_, binary.size(), is_usdz);
+        loaded_ = false;
+        return false;
+      }
+      layer = std::move(composited_layer);
+    }
+
+    tinyusdz::Stage stage;
+    if (!tinyusdz::LayerToStage(std::move(layer), &stage, &warn_, &error_)) {
+      ReportTinyUSDZDebugEvent(
+          "loadFromBinary.layerToStageFailed", error_, binary.size(), is_usdz);
+      loaded_ = false;
+      return false;
+    }
+
     ReportTinyUSDZDebugEvent(
         "loadFromBinary.parsed",
         "warnBytes=" + std::to_string(warn_.size()) +
@@ -6010,6 +6055,49 @@ class TinyUSDZLoaderNative {
     return tinyusdz::HasVariants(composited_ ? composed_layer_ : layer_ );
   }
 
+  emscripten::val extractVariants() {
+    emscripten::val arr = emscripten::val::array();
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    for (const auto &root : curr.primspecs()) {
+      appendVariantInfoRec(arr, "", root.second);
+    }
+    return arr;
+  }
+
+  bool applyVariantSelection(const std::string &prim_path,
+                             const std::string &variant_set_name,
+                             const std::string &variant_name) {
+    if (!loaded_as_layer_) {
+      error_ = "No Layer is loaded. Use loadAsLayerFromBinary first.";
+      return false;
+    }
+    if (prim_path.empty() || variant_set_name.empty() || variant_name.empty()) {
+      error_ = "prim path, variant set name, and variant name are required.";
+      return false;
+    }
+
+    if (composited_) {
+      layer_ = std::move(composed_layer_);
+      composited_ = false;
+    }
+
+    tinyusdz::VariantSelectorMap vsmap;
+    tinyusdz::VariantSelector selector;
+    selector.selection = variant_name;
+    selector.vsmap[variant_set_name] = variant_name;
+    vsmap[tinyusdz::Path(prim_path, "")] = selector;
+
+    tinyusdz::Layer selected_layer;
+    if (!tinyusdz::ApplyVariantSelector(layer_, vsmap, &selected_layer, &warn_, &error_)) {
+      std::cerr << "Failed to apply variant selection: \n";
+      return false;
+    }
+
+    composed_layer_ = std::move(selected_layer);
+    composited_ = true;
+    return true;
+  }
+
   bool composeVariants() {
 
     if (composited_) {
@@ -8569,6 +8657,68 @@ class TinyUSDZLoaderNative {
 
  private:
 
+  void appendVariantInfoRec(emscripten::val &arr, const std::string &root_path,
+                            const tinyusdz::PrimSpec &ps) const {
+    const std::string prim_path = root_path + "/" + ps.name();
+    std::vector<std::string> set_names;
+
+    auto add_set_name = [&](const std::string &name) {
+      if (name.empty()) return;
+      if (std::find(set_names.begin(), set_names.end(), name) == set_names.end()) {
+        set_names.push_back(name);
+      }
+    };
+
+    if (ps.metas().variantSets) {
+      for (const auto &op : ps.metas().variantSets.value()) {
+        for (const auto &name : op.second) {
+          add_set_name(name);
+        }
+      }
+    }
+    for (const auto &item : ps.variantSets()) {
+      add_set_name(item.first);
+    }
+
+    if (!set_names.empty()) {
+      emscripten::val prim_info = emscripten::val::object();
+      emscripten::val sets = emscripten::val::array();
+      prim_info.set("primPath", prim_path);
+
+      for (const std::string &set_name : set_names) {
+        emscripten::val set_info = emscripten::val::object();
+        emscripten::val options = emscripten::val::array();
+        set_info.set("name", set_name);
+
+        std::string selection;
+        if (ps.metas().variants) {
+          const auto &variants = ps.metas().variants.value();
+          auto it = variants.find(set_name);
+          if (it != variants.end()) {
+            selection = it->second;
+          }
+        }
+        set_info.set("selection", selection);
+
+        auto vs_it = ps.variantSets().find(set_name);
+        if (vs_it != ps.variantSets().end()) {
+          for (const auto &variant : vs_it->second.variantSet) {
+            options.call<void>("push", variant.first);
+          }
+        }
+        set_info.set("options", options);
+        sets.call<void>("push", set_info);
+      }
+
+      prim_info.set("variantSets", sets);
+      arr.call<void>("push", prim_info);
+    }
+
+    for (const auto &child : ps.children()) {
+      appendVariantInfoRec(arr, prim_path, child);
+    }
+  }
+
 
   // Simple glTF-like Node
   emscripten::val buildNodeRec(const tinyusdz::tydra::Node &rnode) {
@@ -10318,6 +10468,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       // TODO: nested variants
       .function("hasVariants",
                 &TinyUSDZLoaderNative::hasVariants)
+
+      .function("extractVariants",
+                &TinyUSDZLoaderNative::extractVariants)
+
+      .function("applyVariantSelection",
+                &TinyUSDZLoaderNative::applyVariantSelection)
 
       .function("composeVariants",
                 &TinyUSDZLoaderNative::composeVariants)
