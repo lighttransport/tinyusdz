@@ -100,6 +100,10 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   // - primChildrenNames()
 
 
+/* The PrimSpec is consumed (callers hand LayerToStage an rvalue Layer), so
+   metas are moved out and the typed prim is moved into the boxed Value —
+   this path previously copied the fully-built typed prim twice (into the
+   Value, then into the Prim). */
 #define RECONSTRUCT_PRIM(__primty)                                       \
   if (primspec.typeName() == value::TypeTraits<__primty>::type_name()) { \
     __primty typed_prim;                                                 \
@@ -109,13 +113,12 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
                  << " elementName: " << primspec.name());                \
       return nonstd::nullopt;                                            \
     }                                                                    \
-    typed_prim.meta = primspec.metas();                                  \
+    typed_prim.meta = std::move(primspec.metas());                       \
     typed_prim.name = primspec.name();                                   \
     typed_prim.spec = primspec.specifier();                              \
     /*typed_prim.propertyNames() = properties; */                        \
     /*typed_prim.primChildrenNames() = primChildren;*/                   \
-    value::Value primdata = typed_prim;                                  \
-    Prim prim(primspec.name(), primdata);                                \
+    Prim prim(primspec.name(), value::Value(std::move(typed_prim)));     \
     prim.prim_type_name() = primspec.typeName();                         \
     /* also add primChildren to Prim */                                  \
     /* prim.metas().primChildren = primChildren; */                      \
@@ -130,14 +133,13 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
       PUSH_ERROR("Failed to reconstruct Model");
       return nonstd::nullopt;
     }
-    typed_prim.meta = primspec.metas();
+    typed_prim.meta = std::move(primspec.metas());
     typed_prim.name = primspec.name();
     typed_prim.prim_type_name = primspec.typeName();
     typed_prim.spec = primspec.specifier();
     // typed_prim.propertyNames() = properties;
     // typed_prim.primChildrenNames() = primChildren;
-    value::Value primdata = typed_prim;
-    Prim prim(primspec.name(), primdata);
+    Prim prim(primspec.name(), value::Value(std::move(typed_prim)));
     prim.prim_type_name() = primspec.typeName();
     /* also add primChildren to Prim */
     // prim.metas().primChildren = primChildren;
@@ -240,7 +242,7 @@ bool LayerToStage(Layer &&layer, Stage *stage_out, std::string *warn,
     }
   }
 
-  (*stage_out) = stage;
+  (*stage_out) = std::move(stage);
 
   return true;
 }
