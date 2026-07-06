@@ -85,6 +85,41 @@ function crc32(bytes) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
+// crc32Combine(crc1, crc2, len2): the CRC-32 of A++B given crc32(A), crc32(B),
+// and B's length — the zlib GF(2) matrix algorithm. Used to fix a streamed
+// entry's CRC after its first bytes are backfilled (the crate bootstrap is
+// streamed as a placeholder, then patched once the TOC offset is known).
+function crc32Combine(crc1, crc2, len2) {
+  const gf2MatrixTimes = (mat, vec) => {
+    let sum = 0, i = 0;
+    while (vec) { if (vec & 1) sum ^= mat[i]; vec >>>= 1; i++; }
+    return sum >>> 0;
+  };
+  const gf2MatrixSquare = (square, mat) => {
+    for (let n = 0; n < 32; n++) square[n] = gf2MatrixTimes(mat, mat[n]);
+  };
+  let len = len2 >>> 0;
+  if (len === 0) return crc1 >>> 0;
+  const even = new Uint32Array(32);
+  const odd = new Uint32Array(32);
+  odd[0] = 0xedb88320;              // CRC-32 polynomial (reflected)
+  let row = 1;
+  for (let n = 1; n < 32; n++) { odd[n] = row; row <<= 1; }
+  gf2MatrixSquare(even, odd);
+  gf2MatrixSquare(odd, even);
+  let c1 = crc1 >>> 0;
+  do {
+    gf2MatrixSquare(even, odd);
+    if (len & 1) c1 = gf2MatrixTimes(even, c1);
+    len >>>= 1;
+    if (len === 0) break;
+    gf2MatrixSquare(odd, even);
+    if (len & 1) c1 = gf2MatrixTimes(odd, c1);
+    len >>>= 1;
+  } while (len !== 0);
+  return (c1 ^ (crc2 >>> 0)) >>> 0;
+}
+
 function zipPaddingForDataOffset(offset, nameLength) {
   const headerSize = ZIP_LOCAL_HEADER_SIZE + nameLength;
   const remainder = (offset + headerSize) % USDZ_ALIGNMENT;
@@ -408,30 +443,51 @@ export class ZipStreamWriter {
     dv.setUint16(28, padding, true);
     head.set(nameBytes, ZIP_LOCAL_HEADER_SIZE);
     this._emit(head);
+    const dataStart = this.offset;  // absolute file offset of this entry's data
 
+    // The producer may backfill its first bytes after streaming (the crate
+    // bootstrap header, patched once the TOC offset is known). Capture the first
+    // 64 bytes (whatever version streamed) and CRC only the bytes past them, then
+    // combine crc32(final first 64) with that tail CRC — so a later patch of the
+    // prefix yields the correct whole-entry CRC without re-reading the stream.
     const table = crc32Table();
-    let crc = 0xffffffff;
+    const PREFIX = 64;
+    const first = new Uint8Array(PREFIX);
+    let crcRest = 0xffffffff;
     let size = 0;
-    streamFn((chunk) => {
+    const emit = (chunk) => {
       const c = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
       for (let i = 0; i < c.length; i++) {
-        crc = table[(crc ^ c[i]) & 0xff] ^ (crc >>> 8);
+        if (size < PREFIX) first[size] = c[i];
+        else crcRest = table[(crcRest ^ c[i]) & 0xff] ^ (crcRest >>> 8);
+        size++;
       }
-      size += c.length;
       this._emit(c);  // copies synchronously (fs write / append)
-    });
-    crc = (crc ^ 0xffffffff) >>> 0;
+    };
+    const patch = (pos, bytes) => {
+      const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      this._patch(dataStart + pos, b);
+      for (let i = 0; i < b.length; i++) {
+        const p = pos + i;
+        if (p < PREFIX) first[p] = b[i];
+      }
+    };
+    streamFn(emit, patch);
+    crcRest = (crcRest ^ 0xffffffff) >>> 0;
+    const crc = size <= PREFIX
+      ? crc32(first.subarray(0, size))
+      : crc32Combine(crc32(first), crcRest, size - PREFIX);
     assertZip32Size(name, size);
     if (this.offset > 0xffffffff) {
       throw new Error('USDZ archive exceeds ZIP32 size limit.');
     }
     // Patch CRC32 (+14), compressed size (+18), uncompressed size (+22).
-    const patch = new Uint8Array(12);
-    const pdv = new DataView(patch.buffer);
+    const hdrPatch = new Uint8Array(12);
+    const pdv = new DataView(hdrPatch.buffer);
     pdv.setUint32(0, crc, true);
     pdv.setUint32(4, size >>> 0, true);
     pdv.setUint32(8, size >>> 0, true);
-    this._patch(localHeaderOffset + 14, patch);
+    this._patch(localHeaderOffset + 14, hdrPatch);
 
     this.entries.push({ nameBytes, crc32: crc, size, localHeaderOffset });
   }
@@ -1156,10 +1212,14 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
       const uuid = nextAllocAndFill(native, usd, rootEntry.data, maxBufferBytes, log);
       if (uuid === null) return null;  // declined -> caller falls back to legacy
       r = repackUSDZEntries(native, 'root.usdc',
-        { stream: (emit) => {
+        { stream: (emit, patch) => {
+            const emitCb = (view) => { emit(view); return true; };
+            // Seek-write callback: stream the VALUE section through and backfill
+            // the bootstrap, so value blocks never stage in the wasm heap.
+            const patchCb = (pos, view) => { patch(pos, view); return true; };
             const s = hasRemap && typeof usd.nextFlattenBufferToSinkRemap === 'function'
-              ? usd.nextFlattenBufferToSinkRemap(uuid, lazy, (view) => { emit(view); return true; }, remap)
-              : usd.nextFlattenBufferToSink(uuid, lazy, (view) => { emit(view); return true; });
+              ? usd.nextFlattenBufferToSinkRemap(uuid, lazy, emitCb, remap, patchCb)
+              : usd.nextFlattenBufferToSink(uuid, lazy, emitCb, patchCb);
             if (!s || !s.success) {
               throw new Error('next stream flatten failed: ' + (s && s.error));
             }
@@ -1950,8 +2010,12 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       if (canStreamWrite) {
         // Once streaming starts a failure corrupts the archive, so errors
         // throw rather than fall back (same contract as the single-usdz path).
-        zw.addEntryStreaming(rootName, (emit) => {
+        zw.addEntryStreaming(rootName, (emit, patch) => {
           const emitCb = (view) => { emit(view); return true; };
+          // Seek-write callback: lets the wasm crate writer stream the VALUE
+          // section straight through and backfill the bootstrap at the end, so
+          // it never stages the value blocks in the wasm heap.
+          const patchCb = (pos, view) => { patch(pos, view); return true; };
           if (asyncSession) {
             s = usd.nextFlattenAsyncStep(asyncSession, emitCb);
             usd.nextFlattenAsyncEnd(asyncSession);
@@ -1965,18 +2029,18 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
             };
             if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
               s = usd.nextFlattenMultiBufferToSinkFetchRemap(
-                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer, remap);
+                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer, remap, patchCb);
             } else {
               s = usd.nextFlattenMultiBufferToSinkFetch(
-                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer);
+                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer, patchCb);
             }
           } else {
             if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
               s = usd.nextFlattenMultiBufferToSinkFetchRemap(
-                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, undefined, undefined, remap);
+                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, undefined, undefined, remap, patchCb);
             } else {
               s = usd.nextFlattenMultiBufferToSink(
-                nextRoot.uuid, nextRoot.anchor, lazy, emitCb);
+                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, patchCb);
             }
           }
           if (!s || !s.success || (s.status && s.status !== 'done')) {

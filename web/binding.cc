@@ -92,6 +92,7 @@ namespace {
 // CrateWriteSink is a plain function-pointer + void* context.
 struct JsChunkSinkCtx {
   emscripten::val *chunkCb;
+  emscripten::val *patchCb;  // optional seek-write; enables streaming-value write
   bool *aborted;
 };
 inline bool JsChunkSink(const uint8_t *data, size_t size, void *user) {
@@ -103,6 +104,31 @@ inline bool JsChunkSink(const uint8_t *data, size_t size, void *user) {
     return false;
   }
   return true;
+}
+// Seek-write bridge: patchCb(pos, view) overwrites `size` bytes at absolute
+// output position `pos`. Used to backfill the crate bootstrap after the streamed
+// value section. Present only when the JS caller supplies a patch callback.
+inline bool JsChunkSinkPatch(uint64_t pos, const uint8_t *data, size_t size,
+                             void *user) {
+  JsChunkSinkCtx *c = static_cast<JsChunkSinkCtx *>(user);
+  if (!c->patchCb || c->patchCb->isUndefined() || c->patchCb->isNull())
+    return false;
+  emscripten::val view(emscripten::typed_memory_view(size, data));
+  emscripten::val r = (*c->patchCb)(emscripten::val(static_cast<double>(pos)), view);
+  if (r.isFalse()) {
+    *c->aborted = true;
+    return false;
+  }
+  return true;
+}
+// Build a CrateWriteSink over chunk + optional patch JS callbacks. When patchCb
+// is a real function the sink is seekable, so the writer streams the value
+// section straight through and never stages it in the wasm heap.
+inline tinyusdz::next::CrateWriteSink MakeJsSink(JsChunkSinkCtx *ctx,
+                                                 emscripten::val &patchCb) {
+  tinyusdz::next::CrateWriteSink sink{&JsChunkSink, ctx};
+  if (!patchCb.isUndefined() && !patchCb.isNull()) sink.patch_fn = &JsChunkSinkPatch;
+  return sink;
 }
 
 // When binding.cc is compiled with -fno-rtti, embind emits canonical local
@@ -6836,15 +6862,19 @@ class TinyUSDZLoaderNative {
   /// synchronously and must not retain it (a later wasm growth can detach it).
   /// chunkCb may return false to abort. Returns stats only (no `data`).
   emscripten::val nextFlattenBufferToSink(const std::string &uuid, bool lazyArrays,
-                                          emscripten::val chunkCb) {
+                                          emscripten::val chunkCb,
+                                          emscripten::val patchCb =
+                                              emscripten::val::undefined()) {
     return nextFlattenBufferToSinkRemap(
-        uuid, lazyArrays, chunkCb, emscripten::val::undefined());
+        uuid, lazyArrays, chunkCb, emscripten::val::undefined(), patchCb);
   }
 
   emscripten::val nextFlattenBufferToSinkRemap(const std::string &uuid,
                                                bool lazyArrays,
                                                emscripten::val chunkCb,
-                                               emscripten::val remap) {
+                                               emscripten::val remap,
+                                               emscripten::val patchCb =
+                                                   emscripten::val::undefined()) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -6863,8 +6893,8 @@ class TinyUSDZLoaderNative {
     tinyusdz::next::pipeline::FlattenStats stats;
     std::string err;
     bool aborted = false;
-    JsChunkSinkCtx sinkCtx{&chunkCb, &aborted};
-    tinyusdz::next::CrateWriteSink sink{&JsChunkSink, &sinkCtx};
+    JsChunkSinkCtx sinkCtx{&chunkCb, &patchCb, &aborted};
+    tinyusdz::next::CrateWriteSink sink = MakeJsSink(&sinkCtx, patchCb);
     bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
         std::move(input), sink, opts, &stats, &err);
     result.set("success", ok);
@@ -6901,25 +6931,29 @@ class TinyUSDZLoaderNative {
   emscripten::val nextFlattenMultiBufferToSink(const std::string &uuid,
                                                const std::string &rootName,
                                                bool lazyArrays,
-                                               emscripten::val chunkCb) {
+                                               emscripten::val chunkCb,
+                                               emscripten::val patchCb =
+                                                   emscripten::val::undefined()) {
     return nextFlattenMultiBufferToSinkFetch(
         uuid, rootName, lazyArrays, chunkCb, emscripten::val::undefined(),
-        emscripten::val::undefined());
+        emscripten::val::undefined(), patchCb);
   }
 
   emscripten::val nextFlattenMultiBufferToSinkFetch(
       const std::string &uuid, const std::string &rootName, bool lazyArrays,
       emscripten::val chunkCb, emscripten::val layerExistsCb,
-      emscripten::val layerFetchCb) {
+      emscripten::val layerFetchCb,
+      emscripten::val patchCb = emscripten::val::undefined()) {
     return nextFlattenMultiBufferToSinkFetchRemap(
         uuid, rootName, lazyArrays, chunkCb, layerExistsCb, layerFetchCb,
-        emscripten::val::undefined());
+        emscripten::val::undefined(), patchCb);
   }
 
   emscripten::val nextFlattenMultiBufferToSinkFetchRemap(
       const std::string &uuid, const std::string &rootName, bool lazyArrays,
       emscripten::val chunkCb, emscripten::val layerExistsCb,
-      emscripten::val layerFetchCb, emscripten::val remap) {
+      emscripten::val layerFetchCb, emscripten::val remap,
+      emscripten::val patchCb = emscripten::val::undefined()) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -7061,8 +7095,8 @@ class TinyUSDZLoaderNative {
           std::move(input), out, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
-      JsChunkSinkCtx sinkCtx{&chunkCb, &aborted};
-      tinyusdz::next::CrateWriteSink sink{&JsChunkSink, &sinkCtx};
+      JsChunkSinkCtx sinkCtx{&chunkCb, &patchCb, &aborted};
+      tinyusdz::next::CrateWriteSink sink = MakeJsSink(&sinkCtx, patchCb);
       ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
           std::move(input), sink, opts, &stats, &err);
     }
@@ -7307,7 +7341,7 @@ class TinyUSDZLoaderNative {
           root_data, root_size, out, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
-      JsChunkSinkCtx sinkCtx{&chunkCb, &aborted};
+      JsChunkSinkCtx sinkCtx{&chunkCb, nullptr, &aborted};  // async: append-only
       tinyusdz::next::CrateWriteSink sink{&JsChunkSink, &sinkCtx};
       ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCToSink(
           root_data, root_size, sink, opts, &stats, &err);
