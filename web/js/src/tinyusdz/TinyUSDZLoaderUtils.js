@@ -141,7 +141,7 @@ class TextureLoadingManager {
             const { material, mapProperty, textureId, usdScene, options: taskOptions } = task;
 
             try {
-                const cacheKey = String(textureId);
+                const cacheKey = TinyUSDZLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty);
                 let promise = this.promiseCache.get(cacheKey);
                 if (!promise) {
                     promise = TinyUSDZLoaderUtils.getTextureFromUSD(usdScene, textureId);
@@ -150,6 +150,7 @@ class TextureLoadingManager {
                 const texture = await promise;
 
                 if (texture && !this.aborted) {
+                    TinyUSDZLoaderUtils.applyTextureMapDefaults(texture, mapProperty);
                     material[mapProperty] = texture;
 
                     // Apply special options (e.g., normal map scale)
@@ -429,13 +430,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             if (lowerUri.endsWith('.exr')) {
                 // EXR: Use EXRLoader
-                return new EXRLoader().loadAsync(uri);
+                return new EXRLoader().loadAsync(uri)
+                    .then((texture) => this.applyTextureSampler(texture, tex));
             } else if (lowerUri.endsWith('.hdr')) {
                 // HDR: Use HDRLoader
-                return new HDRLoader().loadAsync(uri);
+                return new HDRLoader().loadAsync(uri)
+                    .then((texture) => this.applyTextureSampler(texture, tex));
             } else {
                 // Standard image
-                return new THREE.TextureLoader().loadAsync(uri);
+                return new THREE.TextureLoader().loadAsync(uri)
+                    .then((texture) => this.applyTextureSampler(texture, tex));
             }
 
         } else if (texImage.bufferId >= 0 && texImage.data) {
@@ -459,7 +463,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 texture.flipY = true;
                 texture.needsUpdate = true;
 
-                return Promise.resolve(texture);
+                return Promise.resolve(this.applyTextureSampler(texture, tex));
 
             } else {
                 // Case 2: Embedded but not decoded - check format
@@ -472,12 +476,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                         const texture = this.decodeEXRFromBuffer(texImage.data, 'float16');
                         if (texture) {
                             texture.flipY = true;
-                            return Promise.resolve(texture);
+                            return Promise.resolve(this.applyTextureSampler(texture, tex));
                         }
                         // Fallback to Three.js EXRLoader with blob URL
                         const blob = new Blob([texImage.data], { type: mimeType });
                         const blobUrl = URL.createObjectURL(blob);
-                        return new EXRLoader().loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                        return new EXRLoader().loadAsync(blobUrl)
+                            .then((texture) => this.applyTextureSampler(texture, tex))
+                            .finally(() => URL.revokeObjectURL(blobUrl));
                     } else if (mimeType === 'image/vnd.radiance') {
                         // HDR: Use TinyUSDZ decoder (faster)
                         const tinyusdz = TinyUSDZLoaderUtils._tinyusdz;
@@ -498,19 +504,23 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                                 texture.magFilter = THREE.LinearFilter;
                                 texture.flipY = true;
                                 texture.needsUpdate = true;
-                                return Promise.resolve(texture);
+                                return Promise.resolve(this.applyTextureSampler(texture, tex));
                             }
                         }
                         // Fallback to Three.js HDRLoader
                         const blob = new Blob([texImage.data], { type: mimeType });
                         const blobUrl = URL.createObjectURL(blob);
-                        return new HDRLoader().loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                        return new HDRLoader().loadAsync(blobUrl)
+                            .then((texture) => this.applyTextureSampler(texture, tex))
+                            .finally(() => URL.revokeObjectURL(blobUrl));
                     } else {
                         // Standard image format
                         const blob = new Blob([texImage.data], { type: mimeType });
                         const blobUrl = URL.createObjectURL(blob);
                         const loader = new THREE.TextureLoader();
-                        return loader.loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                        return loader.loadAsync(blobUrl)
+                            .then((texture) => this.applyTextureSampler(texture, tex))
+                            .finally(() => URL.revokeObjectURL(blobUrl));
                     }
                 } catch (error) {
                     console.error("Failed to decode texture data:", error);
@@ -521,6 +531,75 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         } else {
             return Promise.reject(new Error("Invalid USD texture info"));
         }
+    }
+
+    static textureColorRole(mapProperty) {
+        switch (mapProperty) {
+            case 'map':
+            case 'emissiveMap':
+            case 'specularColorMap':
+            case 'sheenColorMap':
+            case 'attenuationColorMap':
+                return 'color';
+            default:
+                return 'data';
+        }
+    }
+
+    static threeWrapMode(wrap) {
+        switch (String(wrap || '').toLowerCase()) {
+            case 'repeat':
+            case 'tile':
+            case 'tileforever':
+                return THREE.RepeatWrapping;
+            case 'mirror':
+            case 'mirroredrepeat':
+                return THREE.MirroredRepeatWrapping;
+            case 'clamp_to_edge':
+            case 'clamp':
+            case 'black':
+            case 'clamp_to_border':
+            default:
+                return THREE.ClampToEdgeWrapping;
+        }
+    }
+
+    static applyTextureSampler(texture, texData = null) {
+        if (!texture || !texData) return texture;
+
+        texture.wrapS = this.threeWrapMode(texData.wrapS);
+        texture.wrapT = this.threeWrapMode(texData.wrapT);
+
+        if (texData.hasTransform2d) {
+            const scaleU = Number.isFinite(texData.txScaleU) ? texData.txScaleU : 1;
+            const scaleV = Number.isFinite(texData.txScaleV) ? texData.txScaleV : 1;
+            const translateU = Number.isFinite(texData.txTranslationU) ? texData.txTranslationU : 0;
+            const translateV = Number.isFinite(texData.txTranslationV) ? texData.txTranslationV : 0;
+            const rotation = Number.isFinite(texData.txRotation) ? texData.txRotation : 0;
+            texture.repeat.set(scaleU, scaleV);
+            texture.offset.set(translateU, translateV);
+            texture.rotation = rotation;
+            texture.center.set(0, 0);
+            texture.matrixAutoUpdate = true;
+        }
+
+        texture.needsUpdate = true;
+        return texture;
+    }
+
+    static textureCacheKey(textureId, usdScene, mapProperty = '') {
+        const role = this.textureColorRole(mapProperty);
+        const signature = this.textureSignature(textureId, usdScene);
+        return `${role}:${JSON.stringify(signature)}`;
+    }
+
+    static applyTextureMapDefaults(texture, mapProperty) {
+        if (!texture) return texture;
+        texture.colorSpace = this.textureColorRole(mapProperty) === 'color'
+            ? THREE.SRGBColorSpace
+            : THREE.NoColorSpace;
+        texture.needsUpdate = true;
+        return texture;
     }
 
     static createDefaultMaterial() {
@@ -551,6 +630,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     imageId: texture.textureImageId,
                     wrapS: texture.wrapS,
                     wrapT: texture.wrapT,
+                    hasTransform2d: !!texture.hasTransform2d,
+                    txRotation: texture.txRotation,
+                    txScaleU: texture.txScaleU,
+                    txScaleV: texture.txScaleV,
+                    txTranslationU: texture.txTranslationU,
+                    txTranslationV: texture.txTranslationV,
                     isUDIM: !!texture.isUDIM,
                     udimTextureId: texture.udimTextureId,
                     udimUvScaleU: texture.udimUvScaleU,
@@ -767,6 +852,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     textureInfo.materialName = materialName;
                 }
                 this.getTextureFromUSD(usdScene, textureId).then((texture) => {
+                    this.applyTextureMapDefaults(texture, mapProperty);
                     material[mapProperty] = texture;
                     material.needsUpdate = true;
                 }).catch((err) => {
@@ -809,6 +895,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'diffuseColorTextureId')) {
+            material.color = new THREE.Color(1, 1, 1);
             loadOrQueueTexture('map', usdMaterial.diffuseColorTextureId);
         }
 

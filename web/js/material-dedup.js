@@ -65,6 +65,112 @@ let jsPostStats = null;
 let textureManager = null;
 
 const textureCache = new Map();
+const frameState = {
+	lastFpsUpdateMs: performance.now(),
+	frameCount: 0
+};
+
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
+		const value = params.get(key);
+		if (value) return value;
+	}
+	return null;
+}
+
+function getDisplayNameFromURI(uri) {
+	try {
+		const parsed = new URL(uri, window.location.href);
+		return parsed.pathname.split('/').filter(Boolean).pop() || uri;
+	} catch {
+		return uri.split('/').pop() || uri;
+	}
+}
+
+function formatDurationMs(ms) {
+	if (!Number.isFinite(ms)) return 'n/a';
+	return ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+	if (!Number.isFinite(bytes)) return 'n/a';
+	const sign = bytes < 0 ? '-' : '';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	let value = Math.abs(bytes);
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${sign}${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+	const jsHeap = performance.memory?.usedJSHeapSize;
+	const wasmHeap = loader?.native?.HEAPU8?.buffer?.byteLength ||
+		loader?.native_?.HEAPU8?.buffer?.byteLength;
+	return {
+		jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+		wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+	};
+}
+
+function formatMemoryUse(before, after, key) {
+	const current = after?.[key];
+	if (!Number.isFinite(current)) return 'n/a';
+	const previous = before?.[key];
+	if (!Number.isFinite(previous)) return formatBytes(current);
+	const delta = current - previous;
+	return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
+}
+
+function beginLoadStats(fileSize = null) {
+	const stats = {
+		startTime: performance.now(),
+		fileSize,
+		fetchMs: null,
+		parseMs: null,
+		processMs: null,
+		totalMs: null,
+		memoryBefore: captureMemorySnapshot(),
+		memoryAfter: null
+	};
+	updateLoadStatsPanel(stats, 'Loading...');
+	return stats;
+}
+
+function updateLoadStatsPanel(stats, overrideText = null) {
+	const el = document.getElementById('loadStats');
+	if (!el) return;
+	el.style.display = 'block';
+	if (overrideText) {
+		el.textContent = overrideText;
+		return;
+	}
+	el.textContent = [
+		`File: ${formatBytes(stats.fileSize)}`,
+		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
+		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Total: ${formatDurationMs(stats.totalMs)}`,
+		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+	].join('\n');
+}
+
+function finishLoadStats(stats) {
+	if (!stats) return;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats);
+}
+
+function failLoadStats(stats) {
+	if (!stats) return;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats, 'Failed');
+}
 
 // Optimization + scene-transform parameters (driven by lil-gui).
 const params = {
@@ -260,6 +366,15 @@ function onResize() {
 
 function animate() {
 	requestAnimationFrame(animate);
+	frameState.frameCount++;
+	const now = performance.now();
+	if (now - frameState.lastFpsUpdateMs >= 500) {
+		const fps = frameState.frameCount * 1000 / (now - frameState.lastFpsUpdateMs);
+		const fpsEl = document.getElementById('fpsValue');
+		if (fpsEl) fpsEl.textContent = fps.toFixed(1);
+		frameState.frameCount = 0;
+		frameState.lastFpsUpdateMs = now;
+	}
 	controls.update();
 	renderer.render(scene, camera);
 }
@@ -382,6 +497,49 @@ function frameCameraToScene() {
 	controls.update();
 }
 
+function collectMaterialTextures(material, textures) {
+	if (!material) return;
+	for (const key of Object.keys(material)) {
+		const value = material[key];
+		if (value && value.isTexture) {
+			textures.add(value);
+		}
+	}
+	if (material.uniforms) {
+		for (const uniform of Object.values(material.uniforms)) {
+			const value = uniform?.value;
+			if (value && value.isTexture) {
+				textures.add(value);
+			}
+		}
+	}
+}
+
+function disposeMaterial(material) {
+	if (!material) return;
+	const textures = new Set();
+	collectMaterialTextures(material, textures);
+	for (const texture of textures) {
+		if (texture.image && typeof texture.image.close === 'function') {
+			try { texture.image.close(); } catch (e) { /* ignore */ }
+		}
+		texture.dispose();
+	}
+	material.dispose();
+}
+
+function disposeTextureCache() {
+	for (const value of textureCache.values()) {
+		if (value && value.isTexture) {
+			if (value.image && typeof value.image.close === 'function') {
+				try { value.image.close(); } catch (e) { /* ignore */ }
+			}
+			value.dispose();
+		}
+	}
+	textureCache.clear();
+}
+
 function disposeSceneRoot() {
 	for (let i = usdSceneRoot.children.length - 1; i >= 0; i--) {
 		const child = usdSceneRoot.children[i];
@@ -392,7 +550,7 @@ function disposeSceneRoot() {
 			if (o.geometry) o.geometry.dispose();
 			if (o.material) {
 				const mats = Array.isArray(o.material) ? o.material : [o.material];
-				mats.forEach((m) => m && m.dispose());
+				mats.forEach(disposeMaterial);
 			}
 		});
 	}
@@ -401,6 +559,19 @@ function disposeSceneRoot() {
 function freeUsd(usd) {
 	if (usd && typeof usd.delete === 'function') {
 		try { usd.delete(); } catch (e) { /* ignore */ }
+	}
+}
+
+function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
+	abortTextureManager();
+	disposeSceneRoot();
+	disposeTextureCache();
+	freeUsd(currentUsd);
+	currentUsd = null;
+	currentCounts = null;
+	jsPostStats = null;
+	if (clearRawBytes) {
+		rawBytes = null;
 	}
 }
 
@@ -453,13 +624,12 @@ async function mountScene(usd,
 		{ skipTextures = true, postProcess = false, lazyTextures = false } = {}) {
 	abortTextureManager();
 	disposeSceneRoot();
+	disposeTextureCache();
 
 	const usdRootNode = usd.getDefaultRootNode();
 	const defaultMtl = new THREE.MeshStandardMaterial({
 		color: 0x888888, roughness: 0.6, metalness: 0.0
 	});
-	textureCache.clear();
-
 	// Lazy texture mode: queue textures instead of loading them inline, so the
 	// scene appears immediately and textures stream in afterwards.
 	const manager = (lazyTextures && !skipTextures) ? new TextureLoadingManager() : null;
@@ -486,12 +656,14 @@ async function mountScene(usd,
 	applySceneTransform();
 	applyDoubleSided();
 	textureManager = manager;
+	updateDebugHandle();
 }
 
 function abortTextureManager() {
 	if (textureManager) {
 		try { textureManager.abort(); textureManager.reset(); } catch (e) { /* ignore */ }
 		textureManager = null;
+		updateDebugHandle();
 	}
 }
 
@@ -501,6 +673,7 @@ function abortTextureManager() {
 function startLazyTextureLoading() {
 	if (!textureManager || textureManager.total <= 0) return;
 	const mgr = textureManager;
+	updateDebugHandle();
 	mgr.startLoading({
 		concurrency: 4,
 		yieldInterval: 16,
@@ -543,20 +716,28 @@ function measureSceneInfo() {
 
 // Full (re)load of a model: capture the all-optimizations-OFF baseline, then
 // build the scene with the currently selected options.
-async function loadModel(bytes, name) {
+async function loadModel(bytes, name, stats = null) {
+	window.renderComplete = false;
+	window.renderError = null;
+	updateDebugHandle();
+	releaseCurrentUSDResources({ clearRawBytes: true });
+	baseline = null;
 	rawBytes = bytes;
 	currentName = name;
 	document.getElementById('currentFile').textContent = name;
 	setStatus('Converting baseline (no optimizations)…');
 
+	let baseResult = null;
 	try {
 		// Baseline: everything off (bake-transform is irrelevant when not merging).
-		const baseResult = await convertScene(bytes, name, {
+		const parseStart = performance.now();
+		baseResult = await convertScene(bytes, name, {
 			materialDedup: false,
 			mergeMeshes: false,
 			mergeMeshesBakeTransform: false,
 			flattenRenderTree: false
 		});
+		if (stats) stats.parseMs = performance.now() - parseStart;
 		sceneMeta = readSceneMeta(baseResult.usd);
 		// Baseline is for counts only; never decode/apply its (undeduplicated)
 		// texture set — it can be enormous and is immediately replaced below.
@@ -570,13 +751,26 @@ async function loadModel(bytes, name) {
 			triangles: baseInfo.triangles
 		};
 		freeUsd(baseResult.usd);
+		baseResult = null;
 
 		// Now the current selection, then frame the camera once for this model.
+		const processStart = performance.now();
 		await rebuild();
+		if (stats) stats.processMs = performance.now() - processStart;
 		frameCameraToScene();
+		finishLoadStats(stats);
+		window.renderComplete = true;
+		updateDebugHandle();
 	} catch (err) {
 		console.error(err);
+		failLoadStats(stats);
+		window.renderError = err && err.message ? err.message : String(err);
+		updateDebugHandle();
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		if (baseResult) {
+			freeUsd(baseResult.usd);
+		}
+		releaseCurrentUSDResources({ clearRawBytes: true });
 	}
 }
 
@@ -584,25 +778,36 @@ async function loadModel(bytes, name) {
 async function rebuild() {
 	if (!rawBytes) return;
 	setStatus('Converting with current options…');
-	// Stop any in-flight lazy texture loads bound to the old native scene before
-	// we free it below.
-	abortTextureManager();
+	// Stop texture loads, dispose Three.js/GPU objects, and free the previous
+	// native scene before parsing the next variant. This keeps repeated reloads
+	// and optimization toggles from retaining multiple large USD scenes at once.
+	releaseCurrentUSDResources();
+	let result = null;
 	try {
-		const result = await convertScene(rawBytes, currentName, params);
-		sceneMeta = readSceneMeta(result.usd);
-		freeUsd(currentUsd);
-		currentUsd = result.usd;
-		currentCounts = result.counts;
-		await mountScene(result.usd, {
+		result = await convertScene(rawBytes, currentName, params);
+		const usd = result.usd;
+		const counts = result.counts;
+		sceneMeta = readSceneMeta(usd);
+		currentUsd = usd;
+		result = null;
+		currentCounts = counts;
+		updateDebugHandle();
+		await mountScene(usd, {
 			skipTextures: !params.loadTextures, postProcess: true,
 			lazyTextures: params.loadTextures });
 		const info = measureSceneInfo();
-		updateStatsUI(result.counts, info);
+		updateStatsUI(counts, info);
 		setStatus(describeOptions());
 		startLazyTextureLoading();
+		updateDebugHandle();
 	} catch (err) {
+		if (result) {
+			freeUsd(result.usd);
+		}
+		releaseCurrentUSDResources();
 		console.error(err);
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		updateDebugHandle();
 	}
 }
 
@@ -655,6 +860,18 @@ function describeOptions() {
 
 function setStatus(msg) {
 	document.getElementById('status').textContent = msg;
+}
+
+function updateDebugHandle() {
+	window.__materialDedupDebug = {
+		scene,
+		root: usdSceneRoot,
+		textureManager,
+		textureCache,
+		currentUsd,
+		currentCounts,
+		params
+	};
 }
 
 function deltaText(base, cur) {
@@ -742,25 +959,42 @@ function buildGui() {
 async function loadSampleScene() {
 	const usda = buildSampleUSDA(Math.max(2, Math.round(params.sampleGrid)));
 	const bytes = new TextEncoder().encode(usda);
-	await loadModel(bytes, `sample ${params.sampleGrid}×${params.sampleGrid} grid`);
+	const stats = beginLoadStats(bytes.byteLength);
+	stats.fetchMs = 0;
+	await loadModel(bytes, `sample ${params.sampleGrid}×${params.sampleGrid} grid`, stats);
 }
 
-// Load a USD asset served over HTTP (e.g. ?url=assets/foo.usdc).
-async function loadModelFromURL(url) {
+// Load a USD asset served over HTTP.
+async function loadModelFromURL(url, stats = null) {
 	setStatus('Fetching ' + url + ' …');
+	const localStats = stats || beginLoadStats();
+	const fetchStart = performance.now();
 	const resp = await fetch(url);
 	if (!resp.ok) throw new Error(`fetch ${url}: ${resp.status}`);
 	const buf = await resp.arrayBuffer();
-	const name = url.split('/').pop() || url;
-	await loadModel(new Uint8Array(buf), name);
+	localStats.fetchMs = performance.now() - fetchStart;
+	localStats.fileSize = buf.byteLength;
+	await loadModel(new Uint8Array(buf), getDisplayNameFromURI(url), localStats);
 }
 
 function setupFileInput() {
 	document.getElementById('fileInput').addEventListener('change', async (event) => {
 		const file = event.target.files[0];
 		if (!file) return;
-		const buf = await file.arrayBuffer();
-		await loadModel(new Uint8Array(buf), file.name);
+		const stats = beginLoadStats();
+		try {
+			const readStart = performance.now();
+			const buf = await file.arrayBuffer();
+			stats.fetchMs = performance.now() - readStart;
+			stats.fileSize = buf.byteLength;
+			await loadModel(new Uint8Array(buf), file.name, stats);
+		} catch (err) {
+			console.error(err);
+			failLoadStats(stats);
+			setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		} finally {
+			event.target.value = '';
+		}
 	});
 
 	document.getElementById('loadSampleBtn').addEventListener('click', loadSampleScene);
@@ -778,6 +1012,40 @@ function setupFileInput() {
 	});
 }
 
+function setupDragAndDrop() {
+	document.body.addEventListener('dragover', (event) => {
+		event.preventDefault();
+		document.body.classList.add('drag-over');
+	});
+	document.body.addEventListener('dragleave', (event) => {
+		if (!event.relatedTarget || !document.body.contains(event.relatedTarget)) {
+			document.body.classList.remove('drag-over');
+		}
+	});
+	document.body.addEventListener('drop', async (event) => {
+		event.preventDefault();
+		document.body.classList.remove('drag-over');
+		const file = event.dataTransfer?.files?.[0];
+		if (!file) return;
+		if (!/\.(usd|usda|usdc|usdz)$/i.test(file.name)) {
+			setStatus('Please drop a USD file (.usd, .usda, .usdc, .usdz)');
+			return;
+		}
+		const stats = beginLoadStats();
+		try {
+			const readStart = performance.now();
+			const buf = await file.arrayBuffer();
+			stats.fetchMs = performance.now() - readStart;
+			stats.fileSize = buf.byteLength;
+			await loadModel(new Uint8Array(buf), file.name, stats);
+		} catch (err) {
+			console.error(err);
+			failLoadStats(stats);
+			setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		}
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
@@ -786,8 +1054,10 @@ async function main() {
 	initThree();
 	buildGui();
 	setupFileInput();
+	setupDragAndDrop();
 
-	// Allow ?url=<served-usd> to load an asset directly (handy for testing
+	// Allow ?uri= / ?url= / ?src= / ?model= / ?usd= to load an asset directly
+	// (handy for testing
 	// large external models without the file picker). Optional flags configure
 	// the initial state (avoids extra re-conversions when scripting tests):
 	//   textures=1  dedup=0/1  merge=0/1  bake=0/1  flatten=0/1  js=1
@@ -806,14 +1076,14 @@ async function main() {
 		params.jsBatchByMaterial = true;
 	}
 	refreshGuiControllers();
-	const urlParam = search.get('url');
+	const urlParam = getStartupUSDModelURI(search);
 	if (urlParam) {
 		try {
 			await loadModelFromURL(urlParam);
 			return;
 		} catch (err) {
 			console.error(err);
-			setStatus('Error loading ?url: ' + (err && err.message ? err.message : String(err)));
+			setStatus('Error loading URL: ' + (err && err.message ? err.message : String(err)));
 		}
 	}
 	await loadSampleScene();
