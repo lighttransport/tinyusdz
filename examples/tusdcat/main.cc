@@ -1007,9 +1007,21 @@ void print_help() {
   std::cout << "  Combined with --memstat: per-file memory report\n";
 }
 
+// Address/thread sanitizers reserve tens of TB of virtual address space at
+// startup; an RLIMIT_AS cap makes the sanitizer runtime abort with cryptic
+// "out of memory: failed to allocate ... InternalMmapVector" errors before
+// main() even runs. Skip the cap in sanitized builds. See doc/tsan.md.
+#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__)
+#define TUSDCAT_NO_AS_LIMIT 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
+#define TUSDCAT_NO_AS_LIMIT 1
+#endif
+#endif
+
 int main(int argc, char **argv) {
   // Set 32GB virtual memory limit to prevent OOM / memory thrashing
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(TUSDCAT_NO_AS_LIMIT)
   {
     struct rlimit mem_limit;
     mem_limit.rlim_cur = static_cast<rlim_t>(32) * 1024 * 1024 * 1024;  // 32 GB
