@@ -52,8 +52,10 @@
       uint64_t vr_raw = vr.raw();
       std::memcpy(blk.data() + off + 12, &vr_raw, 8);
     }
-    uint64_t idx = value_data_.size();
-    value_data_.push_back({TypeId::Dictionary, std::move(blk)});
+    // Nested value reps embedded above are already final: buffered indices get
+    // patched by _PatchDictBlock; streaming returns absolute offsets from the
+    // recursive EncodeValue calls, so no patch is needed there.
+    uint64_t idx = PushValueBlock({TypeId::Dictionary, std::move(blk)});
     return ValueRep::Make(CrateTypeId::Dictionary, idx, false, false);
   }
 
