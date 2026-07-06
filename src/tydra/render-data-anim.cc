@@ -2194,31 +2194,31 @@ bool RenderSceneConverter::ExtractPrimPropertyAnimation(
                          light.shapingIesNormalize);
   };
 
-  if (const auto *light = prim.as<SphereLight>()) {
-    append_light_api(*light);
-    append_fallback_anim("inputs:radius", light->radius);
-  } else if (const auto *light = prim.as<CylinderLight>()) {
-    append_light_api(*light);
-    append_fallback_anim("inputs:length", light->length);
-    append_fallback_anim("inputs:radius", light->radius);
-  } else if (const auto *light = prim.as<RectLight>()) {
-    append_light_api(*light);
-    append_fallback_anim("inputs:height", light->height);
-    append_fallback_anim("inputs:width", light->width);
-  } else if (const auto *light = prim.as<DiskLight>()) {
-    append_light_api(*light);
-    append_fallback_anim("inputs:radius", light->radius);
-  } else if (const auto *light = prim.as<DistantLight>()) {
-    append_light_api(*light);
-    append_fallback_anim("inputs:angle", light->angle);
-  } else if (const auto *light = prim.as<DomeLight>()) {
-    append_light_api(*light);
-  } else if (const auto *light = prim.as<DomeLight_1>()) {
-    append_light_api(*light);
-  } else if (const auto *light = prim.as<GeometryLight>()) {
-    append_light_api(*light);
-  } else if (const auto *light = prim.as<PortalLight>()) {
-    append_light_api(*light);
+  if (const auto *sphere_light = prim.as<SphereLight>()) {
+    append_light_api(*sphere_light);
+    append_fallback_anim("inputs:radius", sphere_light->radius);
+  } else if (const auto *cylinder_light = prim.as<CylinderLight>()) {
+    append_light_api(*cylinder_light);
+    append_fallback_anim("inputs:length", cylinder_light->length);
+    append_fallback_anim("inputs:radius", cylinder_light->radius);
+  } else if (const auto *rect_light = prim.as<RectLight>()) {
+    append_light_api(*rect_light);
+    append_fallback_anim("inputs:height", rect_light->height);
+    append_fallback_anim("inputs:width", rect_light->width);
+  } else if (const auto *disk_light = prim.as<DiskLight>()) {
+    append_light_api(*disk_light);
+    append_fallback_anim("inputs:radius", disk_light->radius);
+  } else if (const auto *distant_light = prim.as<DistantLight>()) {
+    append_light_api(*distant_light);
+    append_fallback_anim("inputs:angle", distant_light->angle);
+  } else if (const auto *dome_light = prim.as<DomeLight>()) {
+    append_light_api(*dome_light);
+  } else if (const auto *dome_light_1 = prim.as<DomeLight_1>()) {
+    append_light_api(*dome_light_1);
+  } else if (const auto *geometry_light = prim.as<GeometryLight>()) {
+    append_light_api(*geometry_light);
+  } else if (const auto *portal_light = prim.as<PortalLight>()) {
+    append_light_api(*portal_light);
   }
 
   auto is_xform_attribute = [](const std::string &name) {
