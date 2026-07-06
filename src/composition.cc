@@ -4,7 +4,13 @@
 #include "composition.hh"
 
 #include <algorithm>
+#include <chrono>
+#include <iostream>
 #include <mutex>
+#include <atomic>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <thread>
+#endif
 #include <set>
 #include <stack>
 #include <unordered_map>
@@ -2154,6 +2160,204 @@ std::vector<std::string> ExtractReferencesAssetPaths(const Layer &layer) {
 namespace {
 
 // Internal implementation that accepts a shared visited set for cross-arc cycle detection.
+#if defined(TINYUSDZ_ENABLE_THREAD)
+// ---------------------------------------------------------------------------
+// Parallel layer-cache pre-warm.
+//
+// Reference/payload composition is serial (LIVRPS merge order matters), but
+// most of its wall time on asset-heavy scenes is parsing the referenced
+// files. When a layer_cache is provided, warm it up front: collect every
+// authored (assetPath, resolution context) arc in the layer's primspec
+// trees, LoadAsset them on worker threads (per-worker resolver copies and
+// per-worker caches, merged into the shared cache after each wave), and
+// repeat over the newly loaded layers so nested arcs are warmed too
+// (bounded BFS). The subsequent serial composition then runs on cache hits.
+//
+// Correctness notes:
+// - Arcs inside variant statements are NOT collected; they simply stay cache
+//   misses and load serially during composition (unchanged behavior). Same
+//   for arcs that only appear after variant selection.
+// - Warming never fails composition: per-arc errors are discarded — a failed
+//   asset is not cached, so composition reaches it serially and produces the
+//   same error it always did. Warnings emitted while warming (e.g. the
+//   suffix-fallback warn_once, whose process-wide dedup would otherwise
+//   swallow them) are merged into `warn` in deterministic arc order.
+// - Duplicate cache keys across workers hold identical parsed layers (same
+//   file, same context), so merge pick order does not matter.
+// - Runs once per cache: a marker entry (key "\x01warmed" — can never
+//   collide with a resolved path) suppresses re-warming on the later
+//   composition passes of the fixed-point flatten loop; arcs introduced by
+//   those later passes load serially into the same cache as before.
+struct WarmArc {
+  value::AssetPath asset_path;
+  Path prim_path;
+  std::string cwp;
+  std::vector<std::string> search_paths;
+};
+
+void CollectWarmArcsRec(const PrimSpec &ps, uint32_t depth,
+                        std::vector<WarmArc> *out) {
+  if (depth > 1024) {
+    return;
+  }
+  const auto add_arcs = [&](const auto &listops) {
+    for (const auto &qual_and_vec : listops) {
+      // Deleted arcs are collected too — worst case we parse a file the
+      // composition then skips; the parse is shared via the cache anyway.
+      for (const auto &arc : qual_and_vec.second) {
+        if (arc.asset_path.GetAssetPath().empty()) {
+          continue;  // internal arc — no file to load
+        }
+        WarmArc w;
+        w.asset_path = arc.asset_path;
+        w.prim_path = arc.prim_path;
+        w.cwp = ps.get_current_working_path();
+        w.search_paths = ps.get_asset_search_paths();
+        out->push_back(std::move(w));
+      }
+    }
+  };
+  if (ps.metas().references) {
+    add_arcs(ps.metas().references.value());
+  }
+  if (ps.metas().payload) {
+    add_arcs(ps.metas().payload.value());
+  }
+  for (const auto &child : ps.children()) {
+    CollectWarmArcsRec(child, depth + 1, out);
+  }
+}
+
+void WarmLayerCacheParallel(
+    const AssetResolutionResolver &base_resolver, const Layer &in_layer,
+    const tinyusdz::HashMap<std::string, FileFormatHandler> &fileformats,
+    bool allow_parent_relative_paths, size_t max_asset_bytes,
+    std::map<std::string, Layer> *layer_cache, std::string *warn) {
+  if (!layer_cache) {
+    return;
+  }
+  if (std::thread::hardware_concurrency() <= 1) {
+    return;
+  }
+  static const char *kWarmedMarkerKey = "\x01warmed";
+  if (layer_cache->count(kWarmedMarkerKey)) {
+    return;
+  }
+
+  std::vector<WarmArc> wave;
+  for (const auto &item : in_layer.primspecs()) {
+    CollectWarmArcsRec(item.second, 0, &wave);
+  }
+  if (wave.size() < 4) {
+    return;  // not worth spinning up workers
+  }
+  (*layer_cache)[kWarmedMarkerKey] = Layer();
+  const bool warm_verbose = []() {
+    const char *e = ::getenv("TINYUSDZ_FLATTEN_TIMING");
+    return e && e[0] == '1';
+  }();
+  auto warm_t0 = std::chrono::steady_clock::now();
+
+  // (authored asset path + context) tuples already warmed this call — bounds
+  // the BFS even with circular references.
+  std::set<std::string> done;
+  auto tuple_key = [](const WarmArc &w) {
+    std::string k = w.asset_path.GetAssetPath();
+    k += '\x01';
+    k += w.cwp;
+    for (const auto &sp : w.search_paths) {
+      k += '\x01';
+      k += sp;
+    }
+    return k;
+  };
+
+  constexpr uint32_t kMaxWaves = 16;
+  for (uint32_t wave_idx = 0; wave_idx < kMaxWaves && !wave.empty();
+       wave_idx++) {
+    std::vector<WarmArc> todo;
+    todo.reserve(wave.size());
+    for (auto &w : wave) {
+      if (done.insert(tuple_key(w)).second) {
+        todo.push_back(std::move(w));
+      }
+    }
+    wave.clear();
+    if (todo.empty()) {
+      break;
+    }
+
+    struct ArcResult {
+      std::map<std::string, Layer> local_cache;
+      std::string local_warn;
+    };
+    std::vector<ArcResult> results(todo.size());
+
+    {
+      const uint32_t hw = std::thread::hardware_concurrency();
+      const uint32_t nworkers =
+          static_cast<uint32_t>((std::min)(size_t(hw), todo.size()));
+      std::atomic<size_t> next{0};
+      auto work = [&]() {
+        // Per-worker resolver: LoadAsset mutates resolver state (working
+        // path, search paths).
+        AssetResolutionResolver res = base_resolver;
+        for (;;) {
+          const size_t i = next.fetch_add(1);
+          if (i >= todo.size()) break;
+          const WarmArc &w = todo[i];
+          Layer discard_layer;
+          const PrimSpec *discard_root = nullptr;
+          std::string arc_err;  // discarded — composition re-reports serially
+          ArcResult &r = results[i];
+          (void)LoadAsset(res, w.cwp, w.search_paths, fileformats,
+                          w.asset_path, w.prim_path, &discard_layer,
+                          &discard_root,
+                          /* error_when_no_prims_found */ false,
+                          /* error_when_asset_not_found */ false,
+                          /* error_when_unsupported_fileformat */ false,
+                          allow_parent_relative_paths, max_asset_bytes,
+                          &r.local_warn, &arc_err, &r.local_cache);
+        }
+      };
+      std::vector<std::thread> workers;
+      workers.reserve(nworkers);
+      for (uint32_t t = 1; t < nworkers; t++) {
+        workers.emplace_back(work);
+      }
+      work();
+      for (auto &th : workers) th.join();
+    }
+
+    // Merge: warnings in deterministic arc order; layers new to the shared
+    // cache feed the next wave (their primspecs carry the stamped resolution
+    // context the nested arcs need).
+    if (warm_verbose) {
+      std::cerr << "[tinyusdz] layer-cache warm wave " << wave_idx << ": "
+                << todo.size() << " arcs, "
+                << std::chrono::duration<double>(
+                       std::chrono::steady_clock::now() - warm_t0)
+                       .count()
+                << " s elapsed\n";
+    }
+    for (auto &r : results) {
+      if (warn && !r.local_warn.empty()) {
+        (*warn) += r.local_warn;
+      }
+      for (auto &kv : r.local_cache) {
+        auto ins = layer_cache->emplace(kv.first, Layer());
+        if (ins.second) {
+          ins.first->second = std::move(kv.second);
+          for (const auto &pitem : ins.first->second.primspecs()) {
+            CollectWarmArcsRec(pitem.second, 0, &wave);
+          }
+        }
+      }
+    }
+  }
+}
+#endif  // TINYUSDZ_ENABLE_THREAD
+
 bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
                              const Layer &in_layer, Layer *composited_layer,
                              std::string *warn, std::string *err,
@@ -2164,6 +2368,14 @@ bool CompositeReferencesImpl(AssetResolutionResolver &resolver,
   }
 
   std::vector<std::string> search_paths = in_layer.get_asset_search_paths();
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (options.layer_cache) {
+    WarmLayerCacheParallel(resolver, in_layer, options.fileformats,
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, options.layer_cache, warn);
+  }
+#endif
 
   Layer dst = in_layer;  // deep copy
 
@@ -2253,6 +2465,14 @@ bool CompositeReferencesInPlace(AssetResolutionResolver &resolver,
   }
 
   ArcVisitedSet visited;
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (options.layer_cache) {
+    WarmLayerCacheParallel(resolver, *layer, options.fileformats,
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, options.layer_cache, warn);
+  }
+#endif
 
   // Internal references need pristine-layer lookups: keep the input alive and
   // use the copying path.
@@ -2357,6 +2577,14 @@ bool CompositePayloadImpl(AssetResolutionResolver &resolver, const Layer &in_lay
     return false;
   }
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (options.layer_cache) {
+    WarmLayerCacheParallel(resolver, in_layer, options.fileformats,
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, options.layer_cache, warn);
+  }
+#endif
+
   Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
@@ -2395,6 +2623,14 @@ bool CompositePayloadInPlace(AssetResolutionResolver &resolver,
   }
 
   ArcVisitedSet visited;
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (options.layer_cache) {
+    WarmLayerCacheParallel(resolver, *layer, options.fileformats,
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, options.layer_cache, warn);
+  }
+#endif
 
   // Internal payload arcs need pristine-layer lookups: copying path.
   if (LayerHasInternalArcs(*layer, /* references */ false, /* payload */ true)) {
