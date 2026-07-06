@@ -63,6 +63,7 @@ let jsPostStats = null;
 
 // Background lazy texture loader for the currently displayed scene.
 let textureManager = null;
+let activeLoadStats = null;
 
 const textureCache = new Map();
 const frameState = {
@@ -73,6 +74,7 @@ const frameState = {
 class NextTextureLoadingManager {
 	constructor() {
 		this.tasks = [];
+		this.taskMap = new Map();
 		this.promiseCache = new Map();
 		this.total = 0;
 		this.loaded = 0;
@@ -82,12 +84,21 @@ class NextTextureLoadingManager {
 
 	queueTexture(material, mapProperty, adapter, assetPath, colorRole = 'data') {
 		if (!assetPath) return;
-		this.tasks.push({ material, mapProperty, adapter, assetPath, colorRole });
+		const role = colorRole === 'color' ? 'color' : 'data';
+		const key = `${role}:${assetPath}`;
+		let task = this.taskMap.get(key);
+		if (!task) {
+			task = { adapter, assetPath, colorRole: role, bindings: [] };
+			this.taskMap.set(key, task);
+			this.tasks.push(task);
+		}
+		task.bindings.push({ material, mapProperty });
 		this.total = this.tasks.length;
 	}
 
 	reset() {
 		this.tasks = [];
+		this.taskMap.clear();
 		this.promiseCache.clear();
 		this.total = 0;
 		this.loaded = 0;
@@ -108,16 +119,18 @@ class NextTextureLoadingManager {
 				try {
 					const texture = await this.loadTexture(task);
 					if (texture && !this.aborted) {
-						task.material[task.mapProperty] = texture;
-						task.material.needsUpdate = true;
-						if (onTextureLoaded) onTextureLoaded(task.material, texture, task);
+						for (const binding of task.bindings) {
+							binding.material[binding.mapProperty] = texture;
+							binding.material.needsUpdate = true;
+							if (onTextureLoaded) onTextureLoaded(binding.material, texture, task);
+						}
 					}
 					this.loaded++;
 				} catch (error) {
 					this.failed++;
 					console.warn('[material-dedup] next texture load failed', {
 						assetPath: task.assetPath,
-						mapProperty: task.mapProperty,
+						mapProperty: task.bindings?.map((b) => b.mapProperty).join(',') || '',
 						error: error?.message || String(error)
 					});
 				}
@@ -201,10 +214,16 @@ function beginLoadStats(fileSize = null) {
 		fetchMs: null,
 		parseMs: null,
 		processMs: null,
+		textureMs: null,
+		textureLoaded: 0,
+		textureFailed: 0,
+		textureTotal: 0,
+		textureComplete: false,
 		totalMs: null,
 		memoryBefore: captureMemorySnapshot(),
 		memoryAfter: null
 	};
+	activeLoadStats = stats;
 	updateLoadStatsPanel(stats, 'Loading...');
 	return stats;
 }
@@ -222,10 +241,23 @@ function updateLoadStatsPanel(stats, overrideText = null) {
 		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
 		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
 		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Textures: ${formatTextureStats(stats)}`,
 		`Total: ${formatDurationMs(stats.totalMs)}`,
 		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
 		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
 	].join('\n');
+}
+
+function formatTextureStats(stats) {
+	if (!stats || !Number.isFinite(stats.textureTotal) || stats.textureTotal <= 0) {
+		return params.loadTextures ? 'queued 0' : 'disabled';
+	}
+	const countText = `${stats.textureLoaded}/${stats.textureTotal}` +
+		(stats.textureFailed ? ` (${stats.textureFailed} failed)` : '');
+	if (stats.textureComplete && Number.isFinite(stats.textureMs)) {
+		return `${countText}, ${formatDurationMs(stats.textureMs)}`;
+	}
+	return `${countText}, loading`;
 }
 
 function finishLoadStats(stats) {
@@ -240,6 +272,20 @@ function failLoadStats(stats) {
 	stats.totalMs = performance.now() - stats.startTime;
 	stats.memoryAfter = captureMemorySnapshot();
 	updateLoadStatsPanel(stats, 'Failed');
+}
+
+function updateTextureLoadStats(info = {}) {
+	const stats = activeLoadStats;
+	if (!stats) return;
+	stats.textureLoaded = Number.isFinite(info.loaded) ? info.loaded : stats.textureLoaded;
+	stats.textureFailed = Number.isFinite(info.failed) ? info.failed : stats.textureFailed;
+	stats.textureTotal = Number.isFinite(info.total) ? info.total : stats.textureTotal;
+	if (info.complete && Number.isFinite(info.ms)) {
+		stats.textureMs = info.ms;
+		stats.textureComplete = true;
+		stats.memoryAfter = captureMemorySnapshot();
+	}
+	updateLoadStatsPanel(stats);
 }
 
 // Optimization + scene-transform parameters (driven by lil-gui).
@@ -469,10 +515,12 @@ function parseWithOptions(bytes, name, options) {
 }
 
 function countsFromUsd(usd) {
+	const stats = usd && typeof usd.getStats === 'function' ? usd.getStats() : null;
 	return {
 		meshes: usd.numMeshes ? usd.numMeshes() : 0,
 		materials: usd.numMaterials ? usd.numMaterials() : 0,
-		textures: usd.numTextures ? usd.numTextures() : 0
+		textures: usd.numTextures ? usd.numTextures() : 0,
+		stats
 	};
 }
 
@@ -534,10 +582,28 @@ function createNextMaterial(mesh, adapter, textureManager, skipTextures) {
 	return material;
 }
 
+function nextMaterialCacheKey(entry) {
+	if (Number.isFinite(entry?.materialId) && entry.materialId >= 0) {
+		return `id:${entry.materialId}`;
+	}
+	if (entry?.materialKey) return `key:${entry.materialKey}`;
+	return `fallback:${JSON.stringify(entry?.material || {})}:${JSON.stringify(entry?.texturePaths || {})}`;
+}
+
 function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures = false } = {}) {
 	const group = new THREE.Group();
 	group.name = adapter.filename || 'next-scene';
 	const manager = (lazyTextures && !skipTextures) ? new NextTextureLoadingManager() : null;
+	const materialCache = new Map();
+	const getMaterial = (entry) => {
+		const key = nextMaterialCacheKey(entry);
+		let material = materialCache.get(key);
+		if (!material) {
+			material = createNextMaterial(entry, adapter, manager, skipTextures);
+			materialCache.set(key, material);
+		}
+		return material;
+	};
 	const applyUsdRowMajorMatrix = (object, matrix) => {
 		if (!Array.isArray(matrix) || matrix.length !== 16) return;
 		object.matrix.set(
@@ -566,20 +632,22 @@ function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures = false
 			geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
 		}
 		geometry.computeBoundingSphere();
-		let material = createNextMaterial(mesh, adapter, manager, skipTextures);
+		let material = getMaterial(mesh);
 		if (Array.isArray(mesh.materials) && mesh.materials.length && Array.isArray(mesh.submeshes) && mesh.submeshes.length) {
 			const materialEntries = mesh.materials.map((entry) => ({
 				material: entry.material || mesh.material,
 				texturePaths: entry.texturePaths || {},
+				materialId: Number.isFinite(entry.materialId) ? entry.materialId : -1,
 				materialKey: entry.materialKey || mesh.materialKey
 			}));
 			materialEntries.push({
 				material: mesh.material,
 				texturePaths: mesh.texturePaths,
+				materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : -1,
 				materialKey: mesh.materialKey
 			});
 			const fallbackIndex = materialEntries.length - 1;
-			material = materialEntries.map((entry) => createNextMaterial(entry, adapter, manager, skipTextures));
+			material = materialEntries.map((entry) => getMaterial(entry));
 			const covered = [];
 			for (const group of mesh.submeshes) {
 				const start = Math.max(0, group.start | 0);
@@ -893,16 +961,36 @@ function abortTextureManager() {
 function startLazyTextureLoading() {
 	if (!textureManager || textureManager.total <= 0) return;
 	const mgr = textureManager;
+	const textureStart = performance.now();
+	updateTextureLoadStats({
+		loaded: mgr.loaded || 0,
+		failed: mgr.failed || 0,
+		total: mgr.total || 0
+	});
 	updateDebugHandle();
 	mgr.startLoading({
 		concurrency: 4,
 		yieldInterval: 16,
 		onTextureLoaded: (material) => { material.needsUpdate = true; },
 		onProgress: (info) => {
+			updateTextureLoadStats(info);
 			setStatus(`${describeOptions()} · textures ${info.loaded}/${info.total}` +
 				(info.failed ? ` (${info.failed} failed)` : ''));
 		}
-	}).then(() => setStatus(describeOptions()))
+	}).then(() => {
+		const elapsed = performance.now() - textureStart;
+		updateTextureLoadStats({
+			loaded: mgr.loaded || 0,
+			failed: mgr.failed || 0,
+			total: mgr.total || 0,
+			complete: true,
+			ms: elapsed
+		});
+		setStatus(`${describeOptions()} · textures complete ${mgr.loaded}/${mgr.total}` +
+			(mgr.failed ? ` (${mgr.failed} failed)` : '') +
+			` in ${formatDurationMs(elapsed)}`);
+		updateDebugHandle();
+	})
 		.catch((err) => console.warn('[material-dedup] texture loading:', err));
 }
 
@@ -1072,9 +1160,15 @@ function describeOptions() {
 		js.push(`batched ${b.batchedMeshCount} meshes → ${b.batchCount} BatchedMesh`);
 	}
 	const jsNote = js.length ? ` · three.js: ${js.join(', ')}` : '';
+	const nativeStats = currentCounts?.stats;
+	const nativeNote = nativeStats && backend === 'next'
+		? ` · native ${nativeStats.sourceMeshes ?? '?'}→${nativeStats.optimizedMeshes ?? '?'} meshes, ` +
+			`${nativeStats.sourceMaterials ?? '?'}→${nativeStats.optimizedMaterials ?? '?'} mats, ` +
+			`${nativeStats.sourceTextures ?? '?'}→${nativeStats.optimizedTextures ?? '?'} tex`
+		: '';
 
 	return `${backendNote} · ` + (on.length ? on.join(', ') : 'no optimizations') +
-		` · upAxis ${sceneMeta.upAxis}${scaleNote}${jsNote}`;
+		` · upAxis ${sceneMeta.upAxis}${scaleNote}${nativeNote}${jsNote}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1093,6 +1187,8 @@ function updateDebugHandle() {
 		textureCache,
 		currentUsd,
 		currentCounts,
+		nativeStats: currentCounts?.stats || null,
+		loadStats: activeLoadStats,
 		params
 	};
 }

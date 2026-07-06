@@ -158,6 +158,7 @@ class NextRenderSceneAdapter {
         this.filename = options.filename || '';
         this.archiveEntries = options.archiveEntries || new Map();
         this.meshes = options.meshes || [];
+        this.stats = options.stats || {};
         this.materialKeys = new Set();
         this.textureKeys = new Set();
         this.sceneMetadata = {
@@ -171,6 +172,12 @@ class NextRenderSceneAdapter {
             for (const path of Object.values(mesh.texturePaths || {})) {
                 if (path) this.textureKeys.add(this._normTexPath(path));
             }
+            for (const material of mesh.materials || []) {
+                if (material.materialKey) this.materialKeys.add(material.materialKey);
+                for (const path of Object.values(material.texturePaths || {})) {
+                    if (path) this.textureKeys.add(this._normTexPath(path));
+                }
+            }
         }
     }
 
@@ -183,7 +190,7 @@ class NextRenderSceneAdapter {
             entries.find((entry) => this._isUsdName(entry.name));
     }
 
-    static async create(native, bytes, filename = 'scene.usdz') {
+    static async create(native, bytes, filename = 'scene.usdz', options = {}) {
         if (!native || typeof native.RenderStream !== 'function') {
             throw new Error('TinyUSDZ next backend is unavailable in this WASM module.');
         }
@@ -211,6 +218,22 @@ class NextRenderSceneAdapter {
         const renderStream = new native.RenderStream();
         let beginResult;
         try {
+            if (options.materialDedup !== undefined &&
+                typeof renderStream.setMaterialDedup === 'function') {
+                renderStream.setMaterialDedup(!!options.materialDedup);
+            }
+            if (options.mergeMeshes !== undefined &&
+                typeof renderStream.setMeshMerge === 'function') {
+                renderStream.setMeshMerge(!!options.mergeMeshes);
+            }
+            if (options.mergeMeshesBakeTransform !== undefined &&
+                typeof renderStream.setMeshMergeBakeTransform === 'function') {
+                renderStream.setMeshMergeBakeTransform(!!options.mergeMeshesBakeTransform);
+            }
+            if (options.flattenRenderTree !== undefined &&
+                typeof renderStream.setFlattenRenderTree === 'function') {
+                renderStream.setFlattenRenderTree(!!options.flattenRenderTree);
+            }
             beginResult = renderStream.begin(crate);
             if (!beginResult || !beginResult.success) {
                 const error = beginResult?.error || renderStream.error?.() || 'RenderStream begin failed';
@@ -229,12 +252,16 @@ class NextRenderSceneAdapter {
                 }
                 meshes.push(this._copyMesh(native, mesh, i));
             }
+            const stats = typeof renderStream.getStats === 'function'
+                ? renderStream.getStats()
+                : {};
             try { renderStream.end(); } catch (_) {}
             try { renderStream.delete(); } catch (_) {}
             return new NextRenderSceneAdapter(native, null, {
                 filename,
                 archiveEntries,
                 meshes,
+                stats,
                 upAxis: metadata.upAxis || 'Y',
                 metersPerUnit: (typeof metadata.metersPerUnit === 'number' && metadata.metersPerUnit > 0)
                     ? metadata.metersPerUnit
@@ -261,6 +288,9 @@ class NextRenderSceneAdapter {
             };
             return {
                 material: {
+                    id: Number.isFinite(material.id) ? material.id : -1,
+                    key: material.key || '',
+                    primPath: material.primPath || '',
                     baseColor: Array.isArray(material.baseColor) ? material.baseColor : [0.8, 0.8, 0.8],
                     metallic: typeof material.metallic === 'number' ? material.metallic : 0,
                     roughness: typeof material.roughness === 'number' ? material.roughness : 0.5,
@@ -270,7 +300,8 @@ class NextRenderSceneAdapter {
                     opacityThreshold: typeof material.opacityThreshold === 'number' ? material.opacityThreshold : -1
                 },
                 texturePaths,
-                materialKey: JSON.stringify({ material, texturePaths })
+                materialId: Number.isFinite(material.id) ? material.id : -1,
+                materialKey: material.key || JSON.stringify({ material, texturePaths })
             };
         };
         const primary = normalizeMaterial(mesh.material);
@@ -298,6 +329,7 @@ class NextRenderSceneAdapter {
             worldMatrix: Array.isArray(mesh.worldMatrix) ? mesh.worldMatrix.slice(0, 16) : null,
             material: primary.material,
             texturePaths: primary.texturePaths,
+            materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : primary.materialId,
             materialKey: primary.materialKey,
             materials: subsetMaterials,
             submeshes
@@ -332,11 +364,15 @@ class NextRenderSceneAdapter {
     }
 
     numMaterials() {
-        return this.materialKeys.size || this.meshes.length;
+        return this.stats?.optimizedMaterials ?? this.materialKeys.size ?? this.meshes.length;
     }
 
     numTextures() {
-        return this.textureKeys.size;
+        return this.stats?.optimizedTextures ?? this.textureKeys.size;
+    }
+
+    getStats() {
+        return this.stats || {};
     }
 
     delete() {
@@ -1038,7 +1074,7 @@ class TinyUSDZLoader extends Loader {
 
         const backend = options.backend || 'legacy';
         if (backend === 'next' || backend === 'auto') {
-            NextRenderSceneAdapter.create(this.native_, binary, filePath)
+            NextRenderSceneAdapter.create(this.native_, binary, filePath, options)
                 .then(onLoad)
                 .catch((error) => {
                     if (backend === 'auto') {
