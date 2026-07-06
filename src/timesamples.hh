@@ -66,10 +66,10 @@ struct TimeSamples {
   }
 
   size_t size() const {
-    if (_dirty) {
-      update();
-    }
-    // Prefer unified storage, fallback to legacy
+    // No update() here: sorting/finalizing does not change the sample count,
+    // and size() is called per-append on hot reader paths (a dirty-triggered
+    // update() per append turns loading an N-sample attribute into O(N^2)
+    // sortedness scans).
     return !_times.empty() ? _times.size() : _samples.size();
   }
 
