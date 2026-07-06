@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "../compiler-features.hh"
+
 // Disable weak-vtables warning for interface classes
 // These are header-only interfaces, vtable duplication is acceptable
 #if defined(__clang__)
@@ -98,8 +100,12 @@ public:
   }
 
   // Direct accessors for SimplePath
-  const std::string& prim_part() const { return prim_part_; }
-  const std::string& prop_part() const { return prop_part_; }
+  const std::string& prim_part() const TINYUSDZ_LIFETIMEBOUND {
+    return prim_part_;
+  }
+  const std::string& prop_part() const TINYUSDZ_LIFETIMEBOUND {
+    return prop_part_;
+  }
 
 private:
   std::string prim_part_;

@@ -40,10 +40,10 @@ class MetadataBase {
   //
 
   /// Get the underlying dictionary (const)
-  const Dictionary& data() const { return _data; }
+  const Dictionary& data() const TINYUSDZ_LIFETIMEBOUND { return _data; }
 
   /// Get the underlying dictionary (mutable)
-  Dictionary& data() { return _data; }
+  Dictionary& data() TINYUSDZ_LIFETIMEBOUND { return _data; }
 
   /// Check if any metadata is authored
   bool authored() const { return !_data.empty(); }

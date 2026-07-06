@@ -19,6 +19,8 @@
 //
 // Material and texture conversion routines split from render-data.cc
 //
+#include <cmath>
+#include <limits>
 #include <numeric>
 #include <set>
 
@@ -663,7 +665,10 @@ static nonstd::expected<MtlxConstVal, std::string> EvaluateMtlxConstant(
     bool cond;
     if (nt.find("ND_ifgreatereq_") == 0) cond = (a >= b);
     else if (nt.find("ND_ifgreater_") == 0) cond = (a > b);
-    else cond = (a == b);  // ifequal
+    else {
+      const float scale = (std::max)((std::max)(std::fabs(a), std::fabs(b)), 1.0f);
+      cond = std::fabs(a - b) <= std::numeric_limits<float>::epsilon() * scale;
+    }
     return cond ? *in1 : *in2;
   }
 

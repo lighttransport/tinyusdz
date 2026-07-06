@@ -129,10 +129,12 @@ class MetaVariable {
   }
 
   void set_name(const std::string &name) { _name = name; }
-  const std::string &get_name() const { return _name; }
+  const std::string &get_name() const TINYUSDZ_LIFETIMEBOUND { return _name; }
 
-  const value::Value &get_raw_value() const { return _value; }
-  value::Value &get_raw_value() { return _value; }
+  const value::Value &get_raw_value() const TINYUSDZ_LIFETIMEBOUND {
+    return _value;
+  }
+  value::Value &get_raw_value() TINYUSDZ_LIFETIMEBOUND { return _value; }
 
   // No set_type_name()
   const std::string type_name() const { return TypeName(*this); }

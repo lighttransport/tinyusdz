@@ -44,9 +44,9 @@ class Asset {
  public:
   size_t size() const { return buf_.size(); }
 
-  const uint8_t *data() const { return buf_.data(); }
+  const uint8_t *data() const TINYUSDZ_LIFETIMEBOUND { return buf_.data(); }
 
-  uint8_t *data() { return buf_.data(); }
+  uint8_t *data() TINYUSDZ_LIFETIMEBOUND { return buf_.data(); }
 
   void resize(size_t sz) { buf_.resize(sz); }
 
@@ -72,11 +72,11 @@ class Asset {
     resolved_name_ = name;
   }
 
-  const std::string &name() const {
+  const std::string &name() const TINYUSDZ_LIFETIMEBOUND {
     return name_;
   }
 
-  const std::string &resolved_name() const {
+  const std::string &resolved_name() const TINYUSDZ_LIFETIMEBOUND {
     return resolved_name_;
   }
 
@@ -84,7 +84,7 @@ class Asset {
     version_ = version;
   }
 
-  const std::string &version() const {
+  const std::string &version() const TINYUSDZ_LIFETIMEBOUND {
     return version_;
   }
 
@@ -231,11 +231,13 @@ class AssetResolutionResolver {
     clear_resolution_cache();
   }
 
-  const std::string &current_working_path() const {
+  const std::string &current_working_path() const TINYUSDZ_LIFETIMEBOUND {
     return _current_working_path;
   }
 
-  const std::vector<std::string> &search_paths() const { return _search_paths; }
+  const std::vector<std::string> &search_paths() const TINYUSDZ_LIFETIMEBOUND {
+    return _search_paths;
+  }
 
   std::string search_paths_str() const;
 

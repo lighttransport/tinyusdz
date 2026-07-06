@@ -163,13 +163,13 @@ class BoundableLight : public Xformable, public Collection, public LightAPI {
   std::map<std::string, Property> props;
   PrimMeta meta; // TODO: move to private
 
-  const PrimMeta &metas() const { return meta; }
-  PrimMeta &metas() { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
 
@@ -197,13 +197,13 @@ class NonboundableLight : public Xformable, public Collection, public LightAPI {
   std::map<std::string, Property> props;
   PrimMeta meta; // TODO: move to private
 
-  const PrimMeta &metas() const { return meta; }
-  PrimMeta &metas() { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
 
@@ -326,13 +326,13 @@ struct LightFilter : public Xformable {
   std::map<std::string, Property> props;
   PrimMeta meta;
 
-  const PrimMeta &metas() const { return meta; }
-  PrimMeta &metas() { return meta; }
+  const PrimMeta &metas() const TINYUSDZ_LIFETIMEBOUND { return meta; }
+  PrimMeta &metas() TINYUSDZ_LIFETIMEBOUND { return meta; }
 
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
+  const std::vector<value::token> &primChildrenNames() const TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const TINYUSDZ_LIFETIMEBOUND { return _properties; }
+  std::vector<value::token> &primChildrenNames() TINYUSDZ_LIFETIMEBOUND { return _primChildren; }
+  std::vector<value::token> &propertyNames() TINYUSDZ_LIFETIMEBOUND { return _properties; }
 
  private:
   std::vector<value::token> _primChildren;

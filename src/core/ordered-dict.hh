@@ -10,6 +10,8 @@
 #include <vector>
 #include <cstddef>
 
+#include "compiler-features.hh"
+
 namespace tinyusdz {
 
 ///
@@ -65,7 +67,7 @@ class ordered_dict {
     _m[key] = value;
   }
 
-  T &get_or_add(const std::string &key) {
+  T &get_or_add(const std::string &key) TINYUSDZ_LIFETIMEBOUND {
     if (!_m.count(key)) {
       _keys.push_back(key);
     }
@@ -144,7 +146,7 @@ class ordered_dict {
     return true;
   }
 
-  const std::vector<std::string> &keys() const {
+  const std::vector<std::string> &keys() const TINYUSDZ_LIFETIMEBOUND {
     return _keys;
   }
 

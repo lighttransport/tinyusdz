@@ -1057,7 +1057,7 @@ if(TINYUSDZ_WITH_TEXTOOLS)
         PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
     endif()
   endif()
-  if(UNIX)
+  if(UNIX AND TINYUSDZ_ENABLE_THREAD AND NOT EMSCRIPTEN)
     target_compile_definitions(tinyusdz_textools PRIVATE
       TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
     find_package(Threads REQUIRED)
@@ -1349,9 +1349,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # is promoted to an error via -Wunknown-warning-option. Probe the positive form
   # (`-Wno-<unknown>` is accepted leniently, so it would not detect the gap).
   include(CheckCXXCompilerFlag)
-  check_cxx_compiler_flag("-Wnrvo" TINYUSDZ_HAS_WNRVO)
-  if (TINYUSDZ_HAS_WNRVO)
+  if (EMSCRIPTEN)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo")
+  else()
+    check_cxx_compiler_flag("-Wnrvo" TINYUSDZ_HAS_WNRVO)
+    if (TINYUSDZ_HAS_WNRVO)
+      set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo")
+    endif()
   endif()
 
   # clang 21+ (e.g. llvm-mingw clang 22) also tightens
@@ -1360,6 +1364,51 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   check_cxx_compiler_flag("-Wthread-safety-negative" TINYUSDZ_HAS_WTHREAD_SAFETY_NEGATIVE)
   if (TINYUSDZ_HAS_WTHREAD_SAFETY_NEGATIVE)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-thread-safety-negative")
+  endif()
+
+  # Clang 21+ exposes experimental lifetime-safety diagnostics through
+  # -Weverything. The actionable return-stack cases are fixed in code; the
+  # remaining diagnostics are annotation suggestions that currently fire across
+  # public APIs, vendored headers, and generated-style schema accessors. Keep the
+  # signal from concrete warnings while suppressing the noisy suggestion classes.
+  if (EMSCRIPTEN)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-lifetime-safety-intra-tu-suggestions")
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-lifetime-safety-cross-tu-suggestions")
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-lifetime-safety-permissive")
+  else()
+    set(_TINYUSDZ_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -Werror=unknown-warning-option")
+
+    check_cxx_compiler_flag("-Wno-lifetime-safety-intra-tu-suggestions" TINYUSDZ_HAS_WNO_LIFETIME_INTRA_TU)
+    if (TINYUSDZ_HAS_WNO_LIFETIME_INTRA_TU)
+      set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-lifetime-safety-intra-tu-suggestions")
+    endif()
+
+    check_cxx_compiler_flag("-Wno-lifetime-safety-cross-tu-suggestions" TINYUSDZ_HAS_WNO_LIFETIME_CROSS_TU)
+    if (TINYUSDZ_HAS_WNO_LIFETIME_CROSS_TU)
+      set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-lifetime-safety-cross-tu-suggestions")
+    endif()
+
+    check_cxx_compiler_flag("-Wno-lifetime-safety-permissive" TINYUSDZ_HAS_WNO_LIFETIME_PERMISSIVE)
+    if (TINYUSDZ_HAS_WNO_LIFETIME_PERMISSIVE)
+      set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-lifetime-safety-permissive")
+    endif()
+
+    set(CMAKE_REQUIRED_FLAGS "${_TINYUSDZ_SAVED_REQUIRED_FLAGS}")
+    unset(_TINYUSDZ_SAVED_REQUIRED_FLAGS)
+  endif()
+
+  # Parser template definitions are deliberately centralized in implementation
+  # files and explicitly instantiated to keep parser compile time under control.
+  # Missing instantiations still fail at link; suppress the front-end warning for
+  # this split-template pattern when the compiler supports it.
+  if (EMSCRIPTEN)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-undefined-func-template")
+  else()
+    check_cxx_compiler_flag("-Wundefined-func-template" TINYUSDZ_HAS_WUNDEFINED_FUNC_TEMPLATE)
+    if (TINYUSDZ_HAS_WUNDEFINED_FUNC_TEMPLATE)
+      set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-undefined-func-template")
+    endif()
   endif()
 
   if(TINYUSDZ_COMPILE_TIME_TRACE)
@@ -3186,23 +3235,25 @@ if(TINYUSDZ_BUILD_TESTS)
     add_test(NAME feat-tusdr-rt-lod COMMAND feat-tusdr-rt-lod
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
-    # tusdrender GPU flattening must reject malformed/oversized geometry before
-    # handing indexed buffers to LightRT/Vulkan. This protects the large-scene
-    # render paths from uint32 wrap and invalid mesh indices.
-    add_executable(feat-tusdr-gpu-common
-                   tools/tusdrender/tests/test_gpu_common.cc
-                   tools/tusdrender/tusdr_gpu_common.cc)
-    add_sanitizers(feat-tusdr-gpu-common)
-    target_link_libraries(feat-tusdr-gpu-common PRIVATE
-                          ${TINYUSDZ_TARGET_STATIC}
-                          lightrt_c)
-    target_include_directories(feat-tusdr-gpu-common PRIVATE
-                               ${PROJECT_SOURCE_DIR}/src
-                               ${PROJECT_SOURCE_DIR}
-                               ${PROJECT_SOURCE_DIR}/tools/tusdrender
-                               ${PROJECT_SOURCE_DIR}/src/external/lightrt)
-    add_test(NAME feat-tusdr-gpu-common COMMAND feat-tusdr-gpu-common
-             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    if(TARGET lightrt_c)
+      # tusdrender GPU flattening must reject malformed/oversized geometry
+      # before handing indexed buffers to LightRT/Vulkan. This protects the
+      # large-scene render paths from uint32 wrap and invalid mesh indices.
+      add_executable(feat-tusdr-gpu-common
+                     tools/tusdrender/tests/test_gpu_common.cc
+                     tools/tusdrender/tusdr_gpu_common.cc)
+      add_sanitizers(feat-tusdr-gpu-common)
+      target_link_libraries(feat-tusdr-gpu-common PRIVATE
+                            ${TINYUSDZ_TARGET_STATIC}
+                            lightrt_c)
+      target_include_directories(feat-tusdr-gpu-common PRIVATE
+                                 ${PROJECT_SOURCE_DIR}/src
+                                 ${PROJECT_SOURCE_DIR}
+                                 ${PROJECT_SOURCE_DIR}/tools/tusdrender
+                                 ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+      add_test(NAME feat-tusdr-gpu-common COMMAND feat-tusdr-gpu-common
+               WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    endif()
 
     # USDC reader must carry the authored specifier (def/over/class) into the
     # Layer/PrimSpec reconstruction; without it an `over` loaded from USDC was
