@@ -8,6 +8,7 @@
 #include <cstring>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <unordered_map>
 
 // XXH3 hash (header-only mode, namespaced to avoid collision with zstd's copy)
@@ -392,6 +393,80 @@ std::string BuildCratePathSortKey(const tinyusdz::Path& path) {
   return key;
 }
 
+// Round-13: byte-identical parallel sort of a Schwartzian `order` index array
+// by precomputed `keys`, tiebreaking on original index. Total order (the
+// tiebreak makes every pair strictly comparable), so any correct sort yields
+// the exact same result as the serial std::sort it replaces. P sorted chunks
+// (parallel) + pairwise double-buffered merge rounds. Falls back to std::sort
+// when threads are unavailable or n is small.
+inline void SortOrderByKeys(std::vector<uint32_t>& order,
+                            const std::vector<std::string>& keys,
+                            size_t nthreads) {
+  auto less = [&keys](uint32_t a, uint32_t b) {
+    const int c = keys[a].compare(keys[b]);
+    return c != 0 ? c < 0 : a < b;
+  };
+  const size_t n = order.size();
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // Round P down to a power of two so the pairwise tree merge consumes runs
+  // cleanly; need enough work per chunk to pay for the threads.
+  size_t P = 1;
+  while (P * 2 <= nthreads && P * 2 <= (n / 8192 + 1)) P *= 2;
+  if (P >= 2) {
+    std::vector<size_t> bnd(P + 1);
+    const size_t chunk = (n + P - 1) / P;
+    for (size_t t = 0; t <= P; t++) bnd[t] = std::min(n, t * chunk);
+    // Parallel per-chunk sort.
+    {
+      std::vector<std::thread> ths;
+      ths.reserve(P - 1);
+      auto sort_chunk = [&](size_t t) {
+        std::sort(order.begin() + std::ptrdiff_t(bnd[t]),
+                  order.begin() + std::ptrdiff_t(bnd[t + 1]), less);
+      };
+      for (size_t t = 1; t < P; t++) ths.emplace_back(sort_chunk, t);
+      sort_chunk(0);
+      for (auto& th : ths) th.join();
+    }
+    // Pairwise tree merge with double buffering. `bnd` holds current run
+    // boundaries; each round halves the run count.
+    std::vector<uint32_t> scratch(n);
+    uint32_t* src = order.data();
+    uint32_t* dst = scratch.data();
+    size_t runs = P;
+    while (runs > 1) {
+      const size_t pairs = runs / 2;
+      std::vector<std::thread> ths;
+      ths.reserve(pairs - 1);
+      auto merge_pair = [&](size_t p) {
+        const size_t lo = bnd[2 * p], mid = bnd[2 * p + 1], hi = bnd[2 * p + 2];
+        std::merge(src + lo, src + mid, src + mid, src + hi, dst + lo, less);
+      };
+      for (size_t p = 1; p < pairs; p++) ths.emplace_back(merge_pair, p);
+      if (pairs > 0) merge_pair(0);
+      for (auto& th : ths) th.join();
+      // Odd trailing run: copy straight through.
+      if (runs & 1) {
+        const size_t lo = bnd[runs - 1], hi = bnd[runs];
+        std::copy(src + lo, src + hi, dst + lo);
+      }
+      std::vector<size_t> nb(pairs + (runs & 1) + 1);
+      for (size_t p = 0; p <= pairs; p++) nb[p] = bnd[2 * p];
+      if (runs & 1) nb[pairs] = bnd[runs - 1];
+      nb.back() = n;
+      bnd = std::move(nb);
+      runs = bnd.size() - 1;
+      std::swap(src, dst);
+    }
+    if (src != order.data()) std::copy(src, src + n, order.data());
+    return;
+  }
+#endif
+  (void)nthreads;
+  (void)n;
+  std::sort(order.begin(), order.end(), less);
+}
+
 }  // namespace
 
 bool CrateWriter::Finalize(std::string* err) {
@@ -436,9 +511,40 @@ bool CrateWriter::Finalize(std::string* err) {
   // pathlib::CompareParsedPaths exactly, without re-parsing per comparison.
   {
     const size_t n = spec_data_.size();
+    // Thread budget for the parallel key-build + merge sort (round 13). The
+    // serial path is byte-identical (same total order); both fall back to
+    // serial when nthreads==1 or n is small.
+    size_t nthreads = 1;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    {
+      const unsigned hw = std::thread::hardware_concurrency();
+      nthreads = (std::max<size_t>)(1, (std::min<size_t>)(hw ? hw : 1, 16));
+    }
+#endif
     std::vector<std::string> keys(n);
-    for (size_t i = 0; i < n; i++) {
-      keys[i] = BuildCratePathSortKey(spec_data_[i].path);
+    // Parallel Schwartzian key build (BuildCratePathSortKey is pure; keys[i]
+    // slots are written disjointly).
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (nthreads > 1 && n >= 8192) {
+      const size_t chunk = (n + nthreads - 1) / nthreads;
+      std::vector<std::thread> ths;
+      ths.reserve(nthreads - 1);
+      auto build = [&](size_t b, size_t e) {
+        for (size_t i = b; i < e; i++)
+          keys[i] = BuildCratePathSortKey(spec_data_[i].path);
+      };
+      for (size_t t = 1; t < nthreads; t++) {
+        const size_t b = t * chunk, e = (std::min)(b + chunk, n);
+        if (b >= e) break;
+        ths.emplace_back(build, b, e);
+      }
+      build(0, (std::min)(chunk, n));
+      for (auto& th : ths) th.join();
+    } else
+#endif
+    {
+      for (size_t i = 0; i < n; i++)
+        keys[i] = BuildCratePathSortKey(spec_data_[i].path);
     }
     std::vector<uint32_t> order(n);
     for (size_t i = 0; i < n; i++) {
@@ -448,11 +554,8 @@ bool CrateWriter::Finalize(std::string* err) {
     // duplicate handling exact (dedup happens in the rebuild below) and
     // makes the order among equal-key paths (e.g. variant-bearing specs,
     // whose key ignores the variant part) deterministic and stable.
-    std::sort(order.begin(), order.end(), [&keys](uint32_t a, uint32_t b) {
-      const int c = keys[a].compare(keys[b]);
-      if (c != 0) return c < 0;
-      return a < b;
-    });
+    // Byte-identical parallel merge sort (serial std::sort fallback inside).
+    SortOrderByKeys(order, keys, nthreads);
     std::vector<SpecData> sorted_specs;
     sorted_specs.reserve(n);
     for (size_t i = 0; i < n; i++) {
