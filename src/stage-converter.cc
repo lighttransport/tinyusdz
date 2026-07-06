@@ -523,7 +523,7 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     }
   }
 
-  if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {
+  if (!AddSpec(root_path, SpecType::PseudoRoot, std::move(root_fields), err)) {
     if (err) *err = "Failed to add root spec: " + *err;
     return false;
   }
@@ -808,7 +808,7 @@ bool CrateWriter::ConvertSinglePrim(
   }
 
   // Add spec for this prim (prim-level fields only; "properties" added later)
-  if (!AddSpec(prim_path, SpecType::Prim, prim_fields, err)) {
+  if (!AddSpec(prim_path, SpecType::Prim, std::move(prim_fields), err)) {
     if (err) *err = "Failed to add spec for: " + abs_path_str + ": " + *err;
     return false;
   }
@@ -906,7 +906,7 @@ bool CrateWriter::ConvertSinglePrim(
     }
 
     if (!attr_fields.empty()) {
-      if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
+      if (!AddSpec(attr_path, SpecType::Attribute, std::move(attr_fields), err)) {
         DCOUT("WARNING: Failed to add attribute spec for: " << pe.name);
       }
     }
@@ -3188,7 +3188,7 @@ bool CrateWriter::ConvertAttributeToFields(
   }
 
   // Create the attribute spec
-  if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
+  if (!AddSpec(attr_path, SpecType::Attribute, std::move(attr_fields), err)) {
     if (err) *err = "Failed to add attribute spec: " + attr_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3363,7 +3363,7 @@ bool CrateWriter::ConvertRelationshipToFields(
   }
 
   // Create the relationship spec
-  if (!AddSpec(rel_path, SpecType::Relationship, rel_fields, err)) {
+  if (!AddSpec(rel_path, SpecType::Relationship, std::move(rel_fields), err)) {
     if (err) *err = "Failed to add relationship spec: " + rel_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3425,7 +3425,7 @@ bool CrateWriter::ConvertConnectionToFields(
   }
 
   // 3. Create the connection spec
-  if (!AddSpec(conn_path, SpecType::Connection, conn_fields, err)) {
+  if (!AddSpec(conn_path, SpecType::Connection, std::move(conn_fields), err)) {
     if (err) *err = "Failed to add connection spec: " + conn_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3468,7 +3468,7 @@ bool CrateWriter::ConvertVariantSetToFields(
   variant_children_value.Set(variant_tokens);
   vs_fields.push_back({"variantChildren", variant_children_value});
 
-  if (!AddSpec(vs_path, SpecType::VariantSet, vs_fields, err)) {
+  if (!AddSpec(vs_path, SpecType::VariantSet, std::move(vs_fields), err)) {
     if (err) *err = "Failed to add VariantSet spec: " + vs_path.full_path_name() + ": " + *err;
     return false;
   }
@@ -3562,7 +3562,7 @@ bool CrateWriter::ConvertVariantToFields(
 
   // IMPORTANT: Create the variant spec BEFORE adding child prims
   // The parent spec must exist before children in the spec list
-  if (!AddSpec(v_path, SpecType::Variant, v_fields, err)) {
+  if (!AddSpec(v_path, SpecType::Variant, std::move(v_fields), err)) {
     if (err) *err = "Failed to add Variant spec: " + v_path.full_path_name() + ": " + *err;
     return false;
   }

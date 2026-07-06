@@ -861,4 +861,17 @@ bool VariantSelectPrimSpec(
   return true;
 }
 
+bool VariantSelectPrimSpec(
+    PrimSpec &dst, PrimSpec &&src,
+    const std::map<std::string, std::string> &variant_selection,
+    std::string *warn, std::string *err) {
+  // Copy-fallback for the move-in overload: this branch's variant selection
+  // was rewritten for LIVRPS correctness (local opinions kept separate from
+  // variant opinions, nested variantSets promoted) and does not implement the
+  // per-prim move-donation fast path — bind to the copying overload. The big
+  // move win (whole-layer) lives in CompositeVariantInPlace.
+  const PrimSpec &csrc = src;
+  return VariantSelectPrimSpec(dst, csrc, variant_selection, warn, err);
+}
+
 }  // namespace tinyusdz
