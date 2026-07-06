@@ -275,6 +275,24 @@ class TinyUSDZLoaderNative {
     o.set("vertexCount", val(static_cast<int>(h.points.size() / 3)));
     o.set("triangulated", val(true));
     o.set("submeshes", submeshes(m));
+    // Skinning (UsdSkel): 4 joint influences per vertex. jointIndices as an
+    // Int32Array (legacy shape), jointWeights as Float32Array.
+    if (m.has_skin()) {
+      const td::RenderMesh::SkinBinding& sk = *m.skin;
+      std::vector<uint16_t> ji = sk.joint_indices.flatten();
+      val jia = val::global("Int32Array").new_(ji.size());
+      if (!ji.empty()) {
+        std::vector<int32_t> j32(ji.begin(), ji.end());
+        jia.call<void>("set", val(typed_memory_view(j32.size(), j32.data())));
+      }
+      std::vector<float> jw = sk.joint_weights.flatten();
+      o.set("jointIndices", jia);
+      o.set("jointWeights", f32_owned(jw.data(), jw.size()));
+      o.set("elementSize", val(4));
+      o.set("skel_id", val(sk.skeleton_id));
+      o.set("geomBindTransform", mat16(sk.geom_bind_transform));
+      o.set("hasGeomBindTransform", val(true));
+    }
     return o;
   }
 
@@ -342,6 +360,24 @@ class TinyUSDZLoaderNative {
         arr.set(k++, val(static_cast<int>(i)));
     }
     return arr;
+  }
+
+  // ---- skeletons (UsdSkel) ------------------------------------------------
+  int numSkeletons() const { return static_cast<int>(scene_.skeletons.size()); }
+  val getSkeleton(int skel_id) const {
+    val result = val::object();
+    if (skel_id < 0 || skel_id >= numSkeletons()) {
+      result.set("error", val(std::string("Invalid skeleton ID")));
+      return result;
+    }
+    const td::Skeleton& s = scene_.skeletons[skel_id];
+    result.set("id", val(skel_id));
+    result.set("prim_name", val(s.name));
+    result.set("display_name", val(s.name));
+    result.set("abs_path", val(s.prim_path));
+    result.set("anim_id", val(s.animation_id));
+    result.set("root_node", buildSkelNode(s, s.root_joint));
+    return result;
   }
 
   // ---- materials ----------------------------------------------------------
@@ -503,6 +539,25 @@ class TinyUSDZLoaderNative {
       arr.set(i++, e);
     }
     return arr;
+  }
+
+  // Nested SkelNode tree (joint_id/joint_name/joint_path/bind_transform/
+  // rest_transform/children) matching the legacy getSkeleton().root_node that
+  // USDSkeletalHelper.js walks to build the THREE.Skeleton bone hierarchy.
+  val buildSkelNode(const td::Skeleton& s, int joint_idx) const {
+    val o = val::object();
+    if (joint_idx < 0 || joint_idx >= static_cast<int>(s.joints.size())) return o;
+    const td::SkeletonJoint& j = s.joints[joint_idx];
+    o.set("joint_id", val(joint_idx));
+    o.set("joint_name", val(j.name));
+    o.set("joint_path", val(j.path));
+    o.set("bind_transform", mat16(j.bind_transform));
+    o.set("rest_transform", mat16(j.rest_transform));
+    val ch = val::array();
+    int i = 0;
+    for (int32_t c : j.children) ch.set(i++, buildSkelNode(s, c));
+    o.set("children", ch);
+    return o;
   }
 
   val buildNode(int node_id) const {
@@ -802,6 +857,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next) {
       .function("numInstances", &TinyUSDZLoaderNative::numInstances)
       .function("getInstance", &TinyUSDZLoaderNative::getInstance)
       .function("getInstancesForMesh", &TinyUSDZLoaderNative::getInstancesForMesh)
+      .function("numSkeletons", &TinyUSDZLoaderNative::numSkeletons)
+      .function("getSkeleton", &TinyUSDZLoaderNative::getSkeleton)
       .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
       .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
       .function("getMaterialWithFormat", &TinyUSDZLoaderNative::getMaterialWithFormat)
