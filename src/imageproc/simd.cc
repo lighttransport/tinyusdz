@@ -12,10 +12,22 @@
 #define __has_attribute(x) 0
 #endif
 
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
+// ThreadSanitizer intercepts run after ELF ifunc resolvers execute, so
+// target_clones dispatch crashes at load time under TSan. Fall back to the
+// single-version build there.
+#if defined(__SANITIZE_THREAD__) || __has_feature(thread_sanitizer)
+#define IMAGEPROC_NO_MULTIVERSION_TSAN 1
+#endif
+
 // Native runtime multi-versioning via GCC/Clang target_clones + ELF ifunc
 // (Linux). The build defines TINYUSDZ_IMAGEPROC_MULTIVERSION when this is wanted
 // and the toolchain/target support it.
 #if defined(TINYUSDZ_IMAGEPROC_MULTIVERSION) && !defined(__wasm__) &&         \
+    !defined(IMAGEPROC_NO_MULTIVERSION_TSAN) &&                              \
     (defined(__i386__) || defined(__x86_64__)) &&                            \
     (defined(__GNUC__) || defined(__clang__)) && defined(__ELF__) &&          \
     __has_attribute(target_clones)

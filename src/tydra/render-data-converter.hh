@@ -17,6 +17,7 @@
 #include <atomic>
 #include <map>
 
+#include "spin-mutex.hh"
 #include "render-data.hh"
 #include "image-types.hh"
 
@@ -29,28 +30,11 @@ namespace tydra {
 // consumer TU compiled without the define would otherwise see a different
 // RenderSceneConverter size). Contention is rare (diagnostics and cold cache
 // paths only), so a spinlock is appropriate — and it compiles unchanged in
-// single-threaded WASM/WASI builds.
-struct DiagMutex {
-  void lock() {
-    while (_flag.test_and_set(std::memory_order_acquire)) {
-    }
-  }
-  void unlock() { _flag.clear(std::memory_order_release); }
+// single-threaded WASM/WASI builds. (Shared implementation: spin-mutex.hh.)
+using DiagMutex = SpinMutex;
 
- private:
-  std::atomic_flag _flag = ATOMIC_FLAG_INIT;
-};
-
-// Minimal scoped lock (avoids requiring <mutex> in no-thread builds).
 template <typename M>
-struct DiagLockGuard {
-  explicit DiagLockGuard(M &m) : _m(m) { _m.lock(); }
-  ~DiagLockGuard() { _m.unlock(); }
-  DiagLockGuard(const DiagLockGuard &) = delete;
-  DiagLockGuard &operator=(const DiagLockGuard &) = delete;
- private:
-  M &_m;
-};
+using DiagLockGuard = ScopedSpinLock<M>;
 
 ///
 /// Texture image loader callback

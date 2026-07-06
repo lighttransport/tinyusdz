@@ -69,9 +69,22 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 
     crate::FieldValuePairVector decoded_fvs;
     const crate::FieldValuePairVector *child_fvs = nullptr;
-    if (!ResolveFieldValuePairs(spec, &child_fvs, &decoded_fvs)) {
+    uint64_t scratch_reserved = 0;
+    if (!ResolveFieldValuePairs(spec, &child_fvs, &decoded_fvs,
+                                &scratch_reserved)) {
       return false;
     }
+    // decoded_fvs is per-iteration; release its budget reservation when this
+    // iteration's property has been built.
+    struct ScratchBudgetRelease {
+      crate::CrateReader *cr;
+      uint64_t bytes;
+      ~ScratchBudgetRelease() {
+        if (cr && bytes) {
+          cr->ReleaseMemoryBudget(bytes);
+        }
+      }
+    } _scratch_release{crate_reader, scratch_reserved};
 
     {
       std::string prop_name = path.value().prop_part();
