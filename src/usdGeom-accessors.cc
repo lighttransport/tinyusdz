@@ -765,42 +765,72 @@ bool GeomSubset::ValidateSubsets(
     }
   }
 
-  std::set<int32_t> indicesInFamily;
+  // Hash set (with reserve) instead of std::set: per-index node allocation
+  // and ordered insertion dominated mesh conversion on subset-heavy scenes.
+  // min/max are tracked inline (the set is no longer ordered).
+  std::unordered_set<int32_t> indicesInFamily;
 
   bool valid = true;
   std::stringstream ss;
 
+  bool have_minmax = false;
+  int64_t running_min = 0;
+  int64_t running_max = 0;
+
   // Note: Currently validates default-value indices only.
   // TimeSampled indices would need per-frame validation at the application level.
   for (const auto psubset : subsets) {
-    Animatable<std::vector<int32_t>> indices;
-    if (!psubset->indices.get_value(&indices)) {
-      ss << fmt::format("GeomSubset {}'s indices is not value Attribute. Connection or ValueBlock?\n",
-          psubset->name);
+    // Borrow the indices array for the common shape (plain non-animated
+    // value); abnormal shapes take the original copying path so diagnostics
+    // stay identical.
+    const std::vector<int32_t> *subsetIndicesPtr = nullptr;
+    std::vector<int32_t> subsetIndicesCopy;
 
-      valid = false;
+    const auto &aopt = psubset->indices.get_value_ref();
+    if (aopt && !aopt.value().is_blocked() && !aopt.value().is_timesamples() &&
+        aopt.value().has_value()) {
+      subsetIndicesPtr = &aopt.value().default_value_ref();
+    } else {
+      Animatable<std::vector<int32_t>> indices;
+      if (!psubset->indices.get_value(&indices)) {
+        ss << fmt::format("GeomSubset {}'s indices is not value Attribute. Connection or ValueBlock?\n",
+            psubset->name);
+
+        valid = false;
+      }
+
+      if (indices.is_blocked()) {
+        ss << fmt::format("GeomSubset {}'s indices is Value Blocked.\n", psubset->name);
+        valid = false;
+      }
+
+      if (indices.is_timesamples() || !indices.has_value()) {
+        ss << fmt::format("ValidateSubsets: TimeSampled GeomSubset.indices is not yet supported.\n");
+        valid = false;
+      }
+
+      if (!indices.get_scalar(&subsetIndicesCopy)) {
+        ss << fmt::format("ValidateSubsets: Internal error. Failed to get GeomSubset.indices.\n");
+        valid = false;
+      }
+      subsetIndicesPtr = &subsetIndicesCopy;
     }
 
-    if (indices.is_blocked()) {
-      ss << fmt::format("GeomSubset {}'s indices is Value Blocked.\n", psubset->name);
-      valid = false;
-    }
-
-    if (indices.is_timesamples() || !indices.has_value()) {
-      ss << fmt::format("ValidateSubsets: TimeSampled GeomSubset.indices is not yet supported.\n");
-      valid = false;
-    }
-
-    std::vector<int32_t> subsetIndices;
-    if (!indices.get_scalar(&subsetIndices)) {
-      ss << fmt::format("ValidateSubsets: Internal error. Failed to get GeomSubset.indices.\n");
-      valid = false;
-    }
+    const std::vector<int32_t> &subsetIndices = *subsetIndicesPtr;
+    indicesInFamily.reserve(indicesInFamily.size() + subsetIndices.size());
 
     for (const int32_t index : subsetIndices) {
       if (!indicesInFamily.insert(index).second && (familyType != FamilyType::Unrestricted)) {
         ss << fmt::format("Found overlapping index {} in GeomSubset `{}`\n", index, psubset->name);
         valid = false;
+      }
+      if (!have_minmax) {
+        running_min = index;
+        running_max = index;
+        have_minmax = true;
+      } else {
+        running_min = (std::min)(running_min, int64_t(index));
+        running_max = (std::max)(running_max, int64_t(index));
       }
     }
   }
@@ -813,8 +843,8 @@ bool GeomSubset::ValidateSubsets(
   }
 
   // Ensure that the indices are in the range [0, faceCount)
-  size_t maxIndex = static_cast<size_t>(*indicesInFamily.rbegin());
-  int minIndex = *indicesInFamily.begin();
+  size_t maxIndex = size_t(running_max);
+  int minIndex = int(running_min);
 
   if (maxIndex >= elementCount) {
     ss << fmt::format("ValidateSubsets: All indices must be in range [0, elementSize {}), but one or more indices are greater than elementSize. Maximum = {}\n", elementCount, maxIndex);

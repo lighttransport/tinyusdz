@@ -212,6 +212,10 @@ struct Animatable {
     return has_value();
   }
 
+  /// Borrow the default (scalar) value without copying.
+  /// Only meaningful when has_default() is true.
+  const T &default_value_ref() const { return _value; }
+
   bool has_timesamples() const {
     return _ts && (_ts->size() > 0);
   }
