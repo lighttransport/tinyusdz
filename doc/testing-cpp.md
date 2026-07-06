@@ -68,7 +68,12 @@ cd build
 ctest --output-on-failure
 cd ..
 
-# 2. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
+# 2. Run the stable next module tests. Keep this Debug: tests use assert().
+cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-next -j16
+ctest --test-dir build-next --output-on-failure
+
+# 3. Run the Node.js roundtrip/comparison suite against OpenUSD v26.05.
 #    Build it once with: scripts/build-openusd-usdcat.sh
 #    For headless environments lacking PySide, `--full` will retry with a reduced
 #    full-core profile unless OPENUSD_RETRY_NO_PYSIDE=0 is set.

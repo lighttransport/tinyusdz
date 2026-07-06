@@ -759,8 +759,10 @@ bool CrateReader::IsThreadSafeInlinedValueRep(const crate::ValueRep &rep) const 
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK:
       return true;
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN:
       return d < _tokens.size();
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
@@ -793,15 +795,13 @@ bool CrateReader::IsThreadSafeInlinedValueRep(const crate::ValueRep &rep) const 
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK:
       return false;
   }
 
@@ -3706,8 +3706,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       value->Set(std::move(sd));
       return true;
     }
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
-    {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP: {
       PUSH_ERROR(
           "Invalid data type(or maybe not supported in TinyUSDZ yet) for "
           "Uninlined value: " +

@@ -1804,6 +1804,23 @@ class RenderScene {
 };
 
 ///
+/// Resolve UsdLux light linking for every light in `scene`.
+///
+/// For each RenderLight, looks up its prim in `stage` and resolves the
+/// `collection:lightLink` / `collection:shadowLink` collections (CollectionAPI
+/// applied by LightAPI) against the scene's meshes. When a link collection is
+/// authored, the light's `light_links_all` / `shadow_links_all` is cleared and
+/// the corresponding `*_link_mesh_indices` is filled with the affected mesh
+/// indices; otherwise the light affects all geometry (the default).
+///
+/// Both relationship-mode (includes/excludes) and expression-mode
+/// (membershipExpression) collections are supported.
+///
+/// @return number of lights whose linking was resolved (had an authored
+///         lightLink/shadowLink collection).
+///
+size_t ResolveLightLinking(const Stage &stage, RenderScene *scene);
+
 /// Phase tag delivered alongside streamed elements during progressive
 /// (streaming) conversion, so a consumer knows what arrives when.
 /// See `RenderSceneSink` and `RenderSceneConverter::ConvertToRenderSceneStreaming`.
@@ -1880,23 +1897,6 @@ struct RenderSceneSink {
 
   void *userdata{nullptr};
 };
-
-/// Resolve UsdLux light linking for every light in `scene`.
-///
-/// For each RenderLight, looks up its prim in `stage` and resolves the
-/// `collection:lightLink` / `collection:shadowLink` collections (CollectionAPI
-/// applied by LightAPI) against the scene's meshes. When a link collection is
-/// authored, the light's `light_links_all` / `shadow_links_all` is cleared and
-/// the corresponding `*_link_mesh_indices` is filled with the affected mesh
-/// indices; otherwise the light affects all geometry (the default).
-///
-/// Both relationship-mode (includes/excludes) and expression-mode
-/// (membershipExpression) collections are supported.
-///
-/// @return number of lights whose linking was resolved (had an authored
-///         lightLink/shadowLink collection).
-///
-size_t ResolveLightLinking(const Stage &stage, RenderScene *scene);
 
 ///
 

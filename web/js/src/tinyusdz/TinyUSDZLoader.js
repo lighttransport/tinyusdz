@@ -789,6 +789,8 @@ class TinyUSDZLoader extends Loader {
      * @param {number} options.maxMemoryLimitMB - Override memory limit for this parse
      * @param {boolean} options.debugMemory - Print native heap debug events for this parse
      * @param {Function} options.onTinyUSDZDebug - Per-parse native debug callback
+     * @param {Object} options.variantSelection - Optional variant override {primPath, variantSet, variantName}
+     * @param {Function} options.onVariants - Optional callback receiving discovered variant info
      */
     parse(binary /* ArrayBuffer */, filePath /* optional */, onLoad, onError, options = {}) {
 
@@ -846,9 +848,39 @@ class TinyUSDZLoader extends Loader {
 
         let ok;
         try {
-            this._logNativeMemory(usd, 'before-loadFromBinary', debugMemory);
-            ok = usd.loadFromBinary(binary, filePath);
-            this._logNativeMemory(usd, 'after-loadFromBinary', debugMemory);
+            const useVariantLayerPath = !!options.variantSelection ||
+                typeof options.onVariants === 'function';
+
+            if (useVariantLayerPath) {
+                this._logNativeMemory(usd, 'before-loadAsLayerFromBinary', debugMemory);
+                ok = usd.loadAsLayerFromBinary(binary, filePath);
+                this._logNativeMemory(usd, 'after-loadAsLayerFromBinary', debugMemory);
+
+                if (ok && typeof options.onVariants === 'function' &&
+                    typeof usd.extractVariants === 'function') {
+                    options.onVariants(usd.extractVariants());
+                }
+
+                if (ok && options.variantSelection) {
+                    const selection = options.variantSelection;
+                    ok = usd.applyVariantSelection(
+                        selection.primPath,
+                        selection.variantSet,
+                        selection.variantName
+                    );
+                } else if (ok && usd.hasVariants && usd.hasVariants()) {
+                    ok = usd.composeVariants();
+                }
+
+                if (ok) {
+                    ok = usd.layerToRenderScene();
+                }
+                this._logNativeMemory(usd, 'after-layerToRenderScene', debugMemory);
+            } else {
+                this._logNativeMemory(usd, 'before-loadFromBinary', debugMemory);
+                ok = usd.loadFromBinary(binary, filePath);
+                this._logNativeMemory(usd, 'after-loadFromBinary', debugMemory);
+            }
         } catch (e) {
             // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
             this._logNativeMemory(usd, 'loadFromBinary-trap', debugMemory);

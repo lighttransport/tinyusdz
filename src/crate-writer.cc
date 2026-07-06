@@ -1327,13 +1327,6 @@ bool CrateWriter::WriteBootStrap(std::string* /* err */) {
 crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::string* err) {
   crate::ValueRep rep;
 
-  if (value.as<Reference>()) {
-    if (err) {
-      *err = "Standalone Reference values are not representable in Crate; use ReferenceListOp.";
-    }
-    return rep;
-  }
-
   // VtArrayEdit (crate >= 0.14.0): a ValueRep with the IsArrayEdit bit set, the
   // array element type in the type byte, and a payload referencing the
   // (valuesRep, indexesRep, isDense) tuple (payload 0 == identity edit).
@@ -1360,6 +1353,13 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
                                              : ae->element_type_id);
     aerep.SetPayload(static_cast<uint64_t>(offset));
     return aerep;
+  }
+
+  if (value.as<Reference>()) {
+    if (err) {
+      *err = "Standalone Reference values are not representable in Crate; use ReferenceListOp.";
+    }
+    return rep;
   }
 
   // Try to inline the value

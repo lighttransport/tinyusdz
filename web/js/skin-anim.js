@@ -5,7 +5,6 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
 	createConfiguredTinyUSDZLoader,
-	loadUSDSceneFromURL,
 	parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
 import { buildJointHierarchyHTML } from 'tinyusdz/JointHierarchyUtils.js';
@@ -238,6 +237,7 @@ let _mixerAccumDelta = 0; // Accumulated delta for throttled updates
 
 // Store the current file's timeCodesPerSecond (default 24)
 let currentTimeCodesPerSecond = 24;
+let currentMetersPerUnit = 1.0;
 
 // Debug visualization
 let jointSpheres = [];
@@ -253,6 +253,9 @@ let allSceneMeshes = []; // Track all meshes in characterGroup
 let meshVisibility = new Map(); // Per-mesh visibility state: Map<THREE.Mesh, boolean>
 let selectedMeshObj = null; // Currently selected mesh
 let bboxHelper = null; // Bounding box visualization helper
+let currentUSDSource = null;
+let currentVariantSelection = null;
+let availableVariantSelections = [];
 
 // =====================================================================
 // Sub-frame Bone Interpolation
@@ -504,6 +507,19 @@ function applySkeletonHelperOptions() {
 			});
 		}
 		helper.visible = animationParams.showSkeleton;
+	}
+}
+
+function applyMetersPerUnitScale({ refit = false } = {}) {
+	const scale = animationParams?.ignoreMetersPerUnit ? 1.0 : currentMetersPerUnit;
+	const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1.0;
+	characterGroup.scale.setScalar(safeScale);
+	characterGroup.updateMatrixWorld(true);
+	usdSceneRoot.updateMatrixWorld(true);
+	console.log(`metersPerUnit scale: ${safeScale} (${animationParams?.ignoreMetersPerUnit ? 'ignored' : 'applied'})`);
+
+	if (refit) {
+		fitCameraToScene();
 	}
 }
 
@@ -884,6 +900,95 @@ async function createConfiguredLoader() {
 	});
 }
 
+function normalizeVariantInfos(variantInfos) {
+	const selections = [];
+	if (!Array.isArray(variantInfos)) return selections;
+
+	for (const primInfo of variantInfos) {
+		const primPath = primInfo?.primPath;
+		const variantSets = Array.isArray(primInfo?.variantSets) ? primInfo.variantSets : [];
+		if (!primPath) continue;
+
+		for (const variantSet of variantSets) {
+			const variantSetName = variantSet?.name;
+			const options = Array.isArray(variantSet?.options) ? variantSet.options : [];
+			if (!variantSetName || options.length === 0) continue;
+
+			for (const variantName of options) {
+				selections.push({
+					primPath,
+					variantSet: variantSetName,
+					variantName,
+					authoredSelection: variantSet.selection || ''
+				});
+			}
+		}
+	}
+
+	return selections;
+}
+
+function updateVariantControls(variantInfos, activeSelection = null) {
+	availableVariantSelections = normalizeVariantInfos(variantInfos);
+
+	const controlsEl = document.getElementById('variant-controls');
+	const selectEl = document.getElementById('variantSelect');
+	const statusEl = document.getElementById('variantStatus');
+	if (!controlsEl || !selectEl || !statusEl) return;
+
+	selectEl.innerHTML = '';
+	if (availableVariantSelections.length === 0) {
+		controlsEl.style.display = 'none';
+		statusEl.textContent = '';
+		return;
+	}
+
+	controlsEl.style.display = 'flex';
+	for (const selection of availableVariantSelections) {
+		const option = document.createElement('option');
+		option.value = JSON.stringify({
+			primPath: selection.primPath,
+			variantSet: selection.variantSet,
+			variantName: selection.variantName
+		});
+		const defaultSuffix = selection.authoredSelection === selection.variantName ? ' (authored)' : '';
+		option.textContent = `${selection.primPath} ${selection.variantSet}=${selection.variantName}${defaultSuffix}`;
+		selectEl.appendChild(option);
+	}
+
+	const selectionToUse = activeSelection || currentVariantSelection;
+	if (selectionToUse) {
+		const encoded = JSON.stringify(selectionToUse);
+		if ([...selectEl.options].some(option => option.value === encoded)) {
+			selectEl.value = encoded;
+		}
+	} else {
+		const authored = availableVariantSelections.find(
+			selection => selection.authoredSelection === selection.variantName
+		);
+		if (authored) {
+			selectEl.value = JSON.stringify({
+				primPath: authored.primPath,
+				variantSet: authored.variantSet,
+				variantName: authored.variantName
+			});
+		}
+	}
+
+	statusEl.textContent = `${availableVariantSelections.length} variant option${availableVariantSelections.length === 1 ? '' : 's'}`;
+}
+
+async function parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, variantSelection = null) {
+	let variantInfos = [];
+	const usdScene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, {
+		variantSelection,
+		onVariants: (infos) => {
+			variantInfos = infos;
+		}
+	});
+	return { usdScene, variantInfos };
+}
+
 /**
  * Generate joint hierarchy text with clickable elements
  * @param {Array<THREE.Bone>} bones - Array of bones
@@ -924,8 +1029,21 @@ async function loadUSDModel() {
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
-	// Load USD scene using Promise-based API
-	const usd_scene = await loadUSDSceneFromURL(loader, usd_filename);
+	const response = await fetch(usd_filename);
+	if (!response.ok) {
+		throw new Error(`Failed to fetch: ${response.statusText}`);
+	}
+	const arrayBuffer = await response.arrayBuffer();
+	currentUSDSource = {
+		type: 'url',
+		url: usd_filename,
+		filename: usd_filename,
+		arrayBuffer: arrayBuffer.slice(0)
+	};
+
+	const { usdScene: usd_scene, variantInfos } =
+		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, usd_filename, currentVariantSelection);
+	updateVariantControls(variantInfos, currentVariantSelection);
 
 	console.log('USD scene loaded:', usd_scene);
 
@@ -943,13 +1061,30 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
-	// Parse USD directly from array buffer
-	const usd_scene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename);
+	currentUSDSource = {
+		type: 'file',
+		filename,
+		arrayBuffer: arrayBuffer.slice(0)
+	};
+
+	const { usdScene: usd_scene, variantInfos } =
+		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, currentVariantSelection);
+	updateVariantControls(variantInfos, currentVariantSelection);
 
 	console.log('USD scene loaded:', usd_scene);
 
 	// Process the loaded scene
 	await processUSDScene(usd_scene, filename);
+}
+
+async function reloadCurrentUSDWithVariant(variantSelection) {
+	if (!currentUSDSource?.arrayBuffer) {
+		console.warn('No USD source is loaded; cannot reload variant.');
+		return;
+	}
+
+	currentVariantSelection = variantSelection;
+	await loadUSDFromArrayBuffer(currentUSDSource.arrayBuffer.slice(0), currentUSDSource.filename);
 }
 
 /**
@@ -1089,6 +1224,10 @@ async function processUSDScene(usd_scene, filename) {
 	console.log(`metersPerUnit: ${sceneMetadata.metersPerUnit || 1.0}`);
 	console.log(`timeCodesPerSecond: ${timeCodesPerSecond}`);
 	console.log(`startTimeCode: ${startTimeCode}, endTimeCode: ${endTimeCode}`);
+	currentMetersPerUnit = Number.isFinite(Number(sceneMetadata.metersPerUnit))
+		? Number(sceneMetadata.metersPerUnit)
+		: 1.0;
+	applyMetersPerUnitScale();
 
 	const {
 		hasSkinnedMeshData,
@@ -1398,6 +1537,7 @@ window.addEventListener('loadUSDFile', async (event) => {
 	if (!file) return;
 
 	try {
+		currentVariantSelection = null;
 		const arrayBuffer = await file.arrayBuffer();
 		await loadUSDFromArrayBuffer(arrayBuffer, file.name);
 		console.log('USD file loaded successfully:', file.name);
@@ -1415,6 +1555,35 @@ window.addEventListener('loadDefaultModel', async () => {
 		console.error('Failed to reload default model:', error);
 	}
 });
+
+const reloadVariantButton = document.getElementById('reloadVariantButton');
+if (reloadVariantButton) {
+	reloadVariantButton.addEventListener('click', async () => {
+		const selectEl = document.getElementById('variantSelect');
+		if (!selectEl?.value) return;
+
+		try {
+			const selection = JSON.parse(selectEl.value);
+			await reloadCurrentUSDWithVariant(selection);
+			console.log(
+				`Reloaded variant: ${selection.primPath} ${selection.variantSet}=${selection.variantName}`
+			);
+		} catch (error) {
+			console.error('Failed to reload selected variant:', error);
+		}
+	});
+}
+
+const variantSelect = document.getElementById('variantSelect');
+if (variantSelect) {
+	variantSelect.addEventListener('change', () => {
+		if (!variantSelect.value) {
+			currentVariantSelection = null;
+			return;
+		}
+		currentVariantSelection = JSON.parse(variantSelect.value);
+	});
+}
 
 // Load USD model on startup
 loadUSDModel().catch((error) => {
@@ -1813,6 +1982,11 @@ animationParams = {
 		}
 	},
 
+	ignoreMetersPerUnit: false,
+	toggleMetersPerUnit: function() {
+		applyMetersPerUnitScale({ refit: true });
+	},
+
 	// Extended skinning toggle (texture-based vs 4-bone fallback)
 	useExtendedSkinning: true,
 	toggleExtendedSkinning: function() {
@@ -2038,6 +2212,9 @@ visualFolder.add(animationParams, 'convertZUp')
 	.name('Z-up → Y-up')
 	.onChange(() => animationParams.toggleZUp())
 	.listen();
+visualFolder.add(animationParams, 'ignoreMetersPerUnit')
+	.name('Ignore metersPerUnit')
+	.onChange(() => animationParams.toggleMetersPerUnit());
 visualFolder.add(animationParams, 'fitToScene').name('Fit (Current Frame)');
 visualFolder.add(animationParams, 'fitToAllFrames').name('Fit (All Frames)');
 visualFolder.open();

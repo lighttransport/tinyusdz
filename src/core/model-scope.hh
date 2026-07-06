@@ -71,14 +71,13 @@ struct Model : public Collection, MaterialBinding {
 // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/schema_definitions_for_third-party_digital_content_creation_dcc
 
 // -----------------------------------------------------------------------------
-// Placeholder schema prim types for UsdVol and UsdRender.
+// Placeholder schema prim types for UsdRender and UsdProc.
 //
-// These are recognized prim *types* (so `def Volume "x" {}`,
-// `def RenderSettings "y" {}`, etc. parse into distinct prims and round-trip
-// through USDA/USDC), but their schema attributes are not yet modeled as typed
-// fields -- all authored properties are retained generically in `props`. Full
-// typed accessors live on the consume side (separate branch). Shape mirrors the
-// minimal `Scope` placeholder.
+// These are recognized prim *types* (so `def RenderSettings "x" {}`, etc.
+// parse into distinct prims and round-trip through USDA/USDC), but their schema
+// attributes are not yet modeled as typed fields -- all authored properties are
+// retained generically in `props`. Shape mirrors the minimal `Scope`
+// placeholder.
 // -----------------------------------------------------------------------------
 #define TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(__cls)                              \
   struct __cls {                                                             \
@@ -111,6 +110,9 @@ TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(RenderVar);
 TINYUSDZ_DEFINE_PLACEHOLDER_PRIM(GenerativeProcedural);
 
 #undef TINYUSDZ_DEFINE_PLACEHOLDER_PRIM
+
+// NOTE: The UsdVol schema prims (Volume, FieldAsset, OpenVDBAsset,
+// Field3DAsset) are GPrim-derived and defined in usdGeom.hh.
 
 // MagicaVoxel Vox (used by the usdVox .vox import path).
 struct VoxAsset {
@@ -162,7 +164,7 @@ namespace value {
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);
 
-// UsdRender placeholder prim types.
+// UsdRender / UsdProc placeholder prim types.
 DEFINE_TYPE_TRAIT(RenderSettings, "RenderSettings", TYPE_ID_RENDER_SETTINGS, 1);
 DEFINE_TYPE_TRAIT(RenderProduct, "RenderProduct", TYPE_ID_RENDER_PRODUCT, 1);
 DEFINE_TYPE_TRAIT(RenderVar, "RenderVar", TYPE_ID_RENDER_VAR, 1);
