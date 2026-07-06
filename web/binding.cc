@@ -4170,7 +4170,20 @@ class TinyUSDZLoaderNative {
     tex.set("textureImageId", int(t.texture_image_id));
     tex.set("wrapS", to_string(t.wrapS));
     tex.set("wrapT", to_string(t.wrapT));
-    //  TOOD: bias, scale, rot/scale/trans, etc
+    tex.set("hasTransform2d", bool(t.has_transform2d));
+    tex.set("txRotation", float(t.tx_rotation));
+    tex.set("txScaleU", float(t.tx_scale[0]));
+    tex.set("txScaleV", float(t.tx_scale[1]));
+    tex.set("txTranslationU", float(t.tx_translation[0]));
+    tex.set("txTranslationV", float(t.tx_translation[1]));
+    emscripten::val bias = emscripten::val::array();
+    emscripten::val scale = emscripten::val::array();
+    for (int i = 0; i < 4; i++) {
+      bias.set(i, float(t.bias[static_cast<size_t>(i)]));
+      scale.set(i, float(t.scale[static_cast<size_t>(i)]));
+    }
+    tex.set("bias", bias);
+    tex.set("scale", scale);
 
     // UDIM: expose remap (combined atlas) or sparse-tile linkage.
     tex.set("isUDIM", bool(t.is_udim));

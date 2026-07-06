@@ -197,6 +197,7 @@ let crossfadeDuration = 0.5;
 let isPlaying = true;
 let playbackSpeed = 1.0;
 let sceneTimeCodesPerSecond = 24; // USD timeCodesPerSecond (tracks store frame numbers)
+let showSkeletonVisualization = true;
 
 const characterGroup = new THREE.Group();
 characterGroup.name = 'characterGroup';
@@ -790,6 +791,10 @@ function renderClipPanel() {
 	html += `<input type="range" min="0.1" max="3.0" step="0.1" value="${playbackSpeed}" id="speed-slider" oninput="window._setSpeed(this.value)">`;
 	html += `<span style="font-size:10px;color:#aaa;font-family:monospace;" id="speed-val">${playbackSpeed.toFixed(1)}x</span>`;
 	html += '</div>';
+	html += '<label class="vis-toggle">';
+	html += `<input type="checkbox" ${showSkeletonVisualization ? 'checked' : ''} onchange="window._toggleSkeletonVisualization(this.checked)">`;
+	html += '<span>Show Skeleton</span>';
+	html += '</label>';
 
 	content.innerHTML = html;
 
@@ -921,6 +926,16 @@ window._setSpeed = function(value) {
 	if (valEl) valEl.textContent = playbackSpeed.toFixed(1) + 'x';
 };
 
+window._toggleSkeletonVisualization = function(visible) {
+	showSkeletonVisualization = !!visible;
+	for (const helper of skeletonHelpers) {
+		helper.visible = showSkeletonVisualization;
+		if (helper.visible && typeof helper.update === 'function') {
+			helper.update();
+		}
+	}
+};
+
 // =====================================================
 // Animation Loop
 // =====================================================
@@ -942,6 +957,11 @@ function animate() {
 	lastFrameTimeMs = currentFrameTimeMs;
 	if (mixer) {
 		mixer.update(delta);
+	}
+	for (const helper of skeletonHelpers) {
+		if (helper.visible && typeof helper.update === 'function') {
+			helper.update();
+		}
 	}
 
 	updateSelectionHighlight();

@@ -400,6 +400,62 @@ function warnUnsupportedTexture(textureId, uri, reason = '') {
     });
 }
 
+function threeWrapMode(wrap) {
+    switch (String(wrap || '').toLowerCase()) {
+        case 'repeat':
+        case 'tile':
+        case 'tileforever':
+            return THREE.RepeatWrapping;
+        case 'mirror':
+        case 'mirroredrepeat':
+            return THREE.MirroredRepeatWrapping;
+        case 'clamp_to_edge':
+        case 'clamp':
+        case 'black':
+        case 'clamp_to_border':
+        default:
+            return THREE.ClampToEdgeWrapping;
+    }
+}
+
+function applyTextureSampler(texture, texData = null) {
+    if (!texture || !texData) return texture;
+
+    texture.wrapS = threeWrapMode(texData.wrapS);
+    texture.wrapT = threeWrapMode(texData.wrapT);
+
+    if (texData.hasTransform2d) {
+        const scaleU = Number.isFinite(texData.txScaleU) ? texData.txScaleU : 1;
+        const scaleV = Number.isFinite(texData.txScaleV) ? texData.txScaleV : 1;
+        const translateU = Number.isFinite(texData.txTranslationU) ? texData.txTranslationU : 0;
+        const translateV = Number.isFinite(texData.txTranslationV) ? texData.txTranslationV : 0;
+        const rotation = Number.isFinite(texData.txRotation) ? texData.txRotation : 0;
+        texture.repeat.set(scaleU, scaleV);
+        texture.offset.set(translateU, translateV);
+        texture.rotation = rotation;
+        texture.center.set(0, 0);
+        texture.matrixAutoUpdate = true;
+    }
+
+    texture.needsUpdate = true;
+    return texture;
+}
+
+function textureCacheKey(textureId, texData = null) {
+    return JSON.stringify({
+        textureId,
+        imageId: texData?.textureImageId,
+        wrapS: texData?.wrapS,
+        wrapT: texData?.wrapT,
+        hasTransform2d: !!texData?.hasTransform2d,
+        txRotation: texData?.txRotation,
+        txScaleU: texData?.txScaleU,
+        txScaleV: texData?.txScaleV,
+        txTranslationU: texData?.txTranslationU,
+        txTranslationV: texData?.txTranslationV
+    });
+}
+
 /**
  * Load texture from USD scene
  * @param {Object} usdScene - USD scene object with getTexture/getImage methods
@@ -410,16 +466,16 @@ function warnUnsupportedTexture(textureId, uri, reason = '') {
 async function loadTextureFromUSD(usdScene, textureId, cache = null) {
     if (textureId === undefined || textureId < 0) return null;
 
-    // Check cache
-    if (cache && cache.has(textureId)) {
-        return cache.get(textureId);
-    }
-
     try {
         const texData = usdScene.getTexture(textureId);
         if (!texData || texData.textureImageId === undefined || texData.textureImageId < 0) {
             console.warn(`Texture ${textureId} has no valid image data`);
             return null;
+        }
+
+        const cacheKey = textureCacheKey(textureId, texData);
+        if (cache && cache.has(cacheKey)) {
+            return cache.get(cacheKey);
         }
 
         const imgData = usdScene.getImageCopy(texData.textureImageId);
@@ -529,8 +585,10 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             }
         }
 
+        texture = applyTextureSampler(texture, texData);
+
         if (texture && cache) {
-            cache.set(textureId, texture);
+            cache.set(cacheKey, texture);
         }
 
         return texture;
@@ -615,6 +673,9 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
                 const textureId = getTextureId(paramValue);
+                if (texMapName === 'map') {
+                    material.color = new THREE.Color(1, 1, 1);
+                }
 
                 // If textureLoadingManager is provided, queue texture for later loading
                 if (textureManager) {
@@ -917,6 +978,9 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
         if (usdScene && hasTexture(paramValue)) {
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
+                if (texMapName === 'map') {
+                    material.color = new THREE.Color(1, 1, 1);
+                }
                 loadTextureFromUSD(usdScene, getTextureId(paramValue), textureCache).then((texture) => {
                     if (texture) {
                         material[texMapName] = texture;

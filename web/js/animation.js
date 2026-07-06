@@ -577,6 +577,12 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 				// Use UUID-based targeting for reliability (same as channel-based animations)
 				// Format: "<uuid>.<property>" (PropertyBinding checks uuid === nodeName)
 				switch (track.path) {
+					case 'CustomProperty':
+						if (debugAnimationTracking) {
+							console.debug(`Skipping USD custom property animation: ${track.propertyName || '(unnamed)'}`);
+						}
+						continue;
+
 					case 'translation':
 					case 'Translation':
 						keyframeTrack = new THREE.VectorKeyframeTrack(
@@ -680,6 +686,12 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 			// Using UUID is more reliable for hierarchical animations
 			// Format: "<uuid>.<property>" (PropertyBinding checks uuid === nodeName)
 			switch (channel.path) {
+				case 'CustomProperty':
+					if (debugAnimationTracking) {
+						console.debug(`Skipping USD custom property animation: ${channel.propertyName || '(unnamed)'}`);
+					}
+					continue;
+
 				case 'Translation':
 					keyframeTrack = new THREE.VectorKeyframeTrack(
 						`${targetUUID}.position`,
