@@ -1206,6 +1206,22 @@ class UsdaParser {
         const bodyPos = this.pos;
         const token = this.peek();
 
+        // Variant bodies use prim-like syntax inside `variantSet "name" = { ... }`.
+        // This comparison parser does not model variants, so skip the balanced
+        // block explicitly instead of letting the generic attribute parser consume
+        // braces and accidentally pop the parent prim scope.
+        if (token.type === TokenType.IDENTIFIER && token.value === 'variantSet') {
+          this.advance(); // variantSet
+          if (this.peek().type === TokenType.STRING || this.peek().type === TokenType.IDENTIFIER) {
+            this.advance(); // variant set name
+          }
+          this.match(TokenType.EQUALS);
+          if (this.peek().type === TokenType.LBRACE) {
+            this.skipBalancedBlock(TokenType.LBRACE, TokenType.RBRACE);
+          }
+          continue;
+        }
+
         // Child prim
         if (token.type === TokenType.IDENTIFIER &&
             (token.value === 'def' || token.value === 'over' || token.value === 'class')) {
@@ -1286,6 +1302,21 @@ class UsdaParser {
     }
 
     return prim;
+  }
+
+  skipBalancedBlock(openType, closeType) {
+    this.expect(openType);
+    let depth = 1;
+
+    while (depth > 0 && this.peek().type !== TokenType.EOF) {
+      this.checkIterations();
+      const token = this.advance();
+      if (token.type === openType) {
+        depth++;
+      } else if (token.type === closeType) {
+        depth--;
+      }
+    }
   }
 
   parseRelationshipName() {
