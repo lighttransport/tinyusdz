@@ -162,7 +162,7 @@ class TinyUSDZLoaderNative {
   void setMaxMemoryLimitMB(int mb) { max_mem_mb_ = mb; }  // reserved; no-op here
   void reset() {
     loaded_ = false; error_.clear(); warn_.clear();
-    scene_ = td::RenderScene(); mesh_heap_.clear();
+    scene_ = td::RenderScene(); mesh_heap_.clear(); image_bytes_.clear();
   }
 
   // ---- load ---------------------------------------------------------------
@@ -333,26 +333,51 @@ class TinyUSDZLoaderNative {
     return o;
   }
   int numImages() const { return static_cast<int>(scene_.images.size()); }
-  val getImageCopy(int img_id) const {
+  val getImageCopy(int img_id) {
     if (img_id < 0 || img_id >= numImages()) return val::null();
     const td::TextureImage& im = scene_.images[img_id];
+    const ImageBytes& ib = ensureImageBytes(img_id);
     val o = val::object();
     o.set("width", val(static_cast<int>(im.width)));
     o.set("height", val(static_cast<int>(im.height)));
     o.set("channels", val(static_cast<int>(im.channels)));
     o.set("uri", val(im.resolved_path));
     // `data` holds RAW ENCODED bytes (png/jpg/exr/...) pulled from the USDZ
-    // archive — NOT decoded pixels (this lean module has no image codec). The
-    // JS/app decodes them (encoded=true + mimeType); width/height are 0 until
-    // then. `decoded` stays false to signal "needs decode".
+    // archive — NOT decoded pixels (this lean module has no image codec).
+    // `bufferId >= 0` + `decoded:false` is the exact shape the three.js loader
+    // (TinyUSDZLoaderUtils.getTextureFromUSD / TinyUSDZMaterialX.loadTextureFromUSD
+    // "Case 2") already handles: it wraps the bytes in a Blob and decodes them
+    // via THREE.TextureLoader (PNG/JPEG) or EXRLoader/HDRLoader (no wasm codec).
+    // When there are no bytes, bufferId=-1 signals "URI only".
+    o.set("bufferId", val(ib.bytes.empty() ? -1 : img_id));
     o.set("decoded", val(false));
-    o.set("encoded", val(im.is_loaded()));
+    o.set("encoded", val(!ib.bytes.empty()));
     o.set("mimeType", val(std::string(mime_from_path(im.resolved_path))));
-    if (im.is_loaded()) {
-      std::vector<uint8_t> d = im.data.flatten();
-      val a = val::global("Uint8Array").new_(d.size());
-      if (!d.empty()) a.call<void>("set", val(typed_memory_view(d.size(), d.data())));
+    if (!ib.bytes.empty()) {
+      val a = val::global("Uint8Array").new_(ib.bytes.size());
+      a.call<void>("set", val(typed_memory_view(ib.bytes.size(), ib.bytes.data())));
       o.set("data", a);
+    }
+    return o;
+  }
+
+  // Zero-copy variant: encoded bytes as a heap descriptor (retained cache).
+  val getImagePtr(int img_id) {
+    if (img_id < 0 || img_id >= numImages()) return val::null();
+    const td::TextureImage& im = scene_.images[img_id];
+    const ImageBytes& ib = ensureImageBytes(img_id);
+    val o = val::object();
+    o.set("width", val(static_cast<int>(im.width)));
+    o.set("height", val(static_cast<int>(im.height)));
+    o.set("channels", val(static_cast<int>(im.channels)));
+    o.set("uri", val(im.resolved_path));
+    o.set("bufferId", val(ib.bytes.empty() ? -1 : img_id));
+    o.set("decoded", val(false));
+    o.set("encoded", val(!ib.bytes.empty()));
+    o.set("mimeType", val(std::string(mime_from_path(im.resolved_path))));
+    if (!ib.bytes.empty()) {
+      o.set("ptr", val(static_cast<double>(reinterpret_cast<uintptr_t>(ib.bytes.data()))));
+      o.set("byteLength", val(static_cast<double>(ib.bytes.size())));
     }
     return o;
   }
@@ -362,6 +387,18 @@ class TinyUSDZLoaderNative {
     std::vector<float> points, normals, uv0;
     std::vector<uint32_t> indices, fvc;
   };
+  // Flattened encoded image bytes, retained so getImagePtr's heap view stays
+  // valid and repeated getImageCopy calls don't re-flatten.
+  struct ImageBytes { std::vector<uint8_t> bytes; };
+
+  const ImageBytes& ensureImageBytes(int img_id) {
+    auto it = image_bytes_.find(img_id);
+    if (it != image_bytes_.end()) return it->second;
+    ImageBytes ib;
+    const td::TextureImage& im = scene_.images[img_id];
+    if (im.is_loaded()) ib.bytes = im.data.flatten();
+    return image_bytes_.emplace(img_id, std::move(ib)).first->second;
+  }
 
   const MeshHeap& ensureMeshHeap(int mesh_id) {
     auto it = mesh_heap_.find(mesh_id);
@@ -567,6 +604,7 @@ class TinyUSDZLoaderNative {
   std::string error_, warn_;
   td::RenderScene scene_;
   std::unordered_map<int, MeshHeap> mesh_heap_;
+  std::unordered_map<int, ImageBytes> image_bytes_;
 };
 
 EMSCRIPTEN_BINDINGS(tinyusdz_next) {
@@ -593,5 +631,6 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next) {
       .function("numTextures", &TinyUSDZLoaderNative::numTextures)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("numImages", &TinyUSDZLoaderNative::numImages)
-      .function("getImageCopy", &TinyUSDZLoaderNative::getImageCopy);
+      .function("getImageCopy", &TinyUSDZLoaderNative::getImageCopy)
+      .function("getImagePtr", &TinyUSDZLoaderNative::getImagePtr);
 }
