@@ -12,6 +12,11 @@
 #endif
 #endif
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <thread>
+#endif
+
 #include "usdc-reader-impl.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
@@ -179,9 +184,21 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
   crate::FieldValuePairVector decoded_fvs;
   const crate::FieldValuePairVector *fvs_ptr = nullptr;
-  if (!ResolveFieldValuePairs(spec, &fvs_ptr, &decoded_fvs)) {
+  uint64_t scratch_reserved = 0;
+  if (!ResolveFieldValuePairs(spec, &fvs_ptr, &decoded_fvs,
+                              &scratch_reserved)) {
     return false;
   }
+  // Release the scratch decode budget when this node is done with the values.
+  struct ScratchBudgetRelease {
+    crate::CrateReader *cr;
+    uint64_t bytes;
+    ~ScratchBudgetRelease() {
+      if (cr && bytes) {
+        cr->ReleaseMemoryBudget(bytes);
+      }
+    }
+  } _scratch_release{crate_reader, scratch_reserved};
   const crate::FieldValuePairVector &fvs = (*fvs_ptr);
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {
@@ -527,9 +544,21 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
   crate::FieldValuePairVector decoded_fvs;
   const crate::FieldValuePairVector *fvs_ptr = nullptr;
-  if (!ResolveFieldValuePairs(spec, &fvs_ptr, &decoded_fvs)) {
+  uint64_t scratch_reserved = 0;
+  if (!ResolveFieldValuePairs(spec, &fvs_ptr, &decoded_fvs,
+                              &scratch_reserved)) {
     return false;
   }
+  // Release the scratch decode budget when this node is done with the values.
+  struct ScratchBudgetRelease {
+    crate::CrateReader *cr;
+    uint64_t bytes;
+    ~ScratchBudgetRelease() {
+      if (cr && bytes) {
+        cr->ReleaseMemoryBudget(bytes);
+      }
+    }
+  } _scratch_release{crate_reader, scratch_reserved};
   const crate::FieldValuePairVector &fvs = (*fvs_ptr);
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {
@@ -831,7 +860,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 //
 bool USDCReader::Impl::ReconstructPrimRecursively(
     int parent, int current, Prim *parentPrim, int level,
-    const PathIndexToSpecIndexMap &psmap, Stage *stage) {
+    const PathIndexToSpecIndexMap &psmap, Stage *stage,
+    std::unique_ptr<Prim> *out_root_prim) {
 
   (void)parentPrim;
 
@@ -1049,7 +1079,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         }
       }
 
-      if (entry.parent_id == 0) {  // root prim
+      if (out_root_prim && (stack.size() == 1)) {
+        // Subtree job: hand the reconstructed subtree root back to the
+        // caller instead of attaching it (parallel reconstruction).
+        (*out_root_prim) = std::move(entry.prim);
+      } else if (entry.parent_id == 0) {  // root prim
         if (entry.prim) {
           auto &prims = stage->root_prims();
           prims.resize(prims.size() + 1);
@@ -1087,10 +1121,14 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
 //
 // Original recursive implementation
+// NOTE: does not support `out_root_prim` (parallel subtree jobs use the
+// iterative implementation).
 //
 bool USDCReader::Impl::ReconstructPrimRecursively(
     int parent, int current, /* input */Prim *parentPrimPtr, int level,
-    const PathIndexToSpecIndexMap &psmap, Stage *stage) {
+    const PathIndexToSpecIndexMap &psmap, Stage *stage,
+    std::unique_ptr<Prim> *out_root_prim) {
+  (void)out_root_prim;
   if (level > int32_t(_config.kMaxPrimNestLevel)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Prim hierarchy is too deep.");
   }
@@ -1399,6 +1437,288 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
   return true;
 }
+
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+
+//
+// Parallel prim reconstruction.
+//
+// The crate node tree is partitioned into:
+//  - "shells": interior nodes on the split spine. Their own Prim is
+//    reconstructed serially (in pre-order) and their children are assembled
+//    serially afterwards, so ids/order match the serial walk exactly.
+//  - subtree jobs: whole subtrees reconstructed independently. Jobs whose
+//    subtree contains no variant nodes run on worker threads (the crate
+//    reader switches to per-thread stream/scratch state); variant-containing
+//    jobs run on the calling thread after the workers join, because the
+//    variant bookkeeping maps are not synchronized.
+//
+// A node may only become a shell when none of its direct children are
+// variant elements: a variant node's owner prim is resolved through the
+// walker's local ancestor stack, so a variant must never be a job root.
+//
+bool USDCReader::Impl::ReconstructPrimHierarchyParallel(
+    const PathIndexToSpecIndexMap &psmap, Stage *stage) {
+  const size_t num_nodes = _nodes->size();
+  if (num_nodes == 0) {
+    return true;
+  }
+
+  //
+  // Pass 1: per-node variant flag + subtree size/has-variant (iterative
+  // post-order accumulation).
+  //
+  std::vector<uint8_t> is_variant_node(num_nodes, 0);
+  for (size_t i = 0; i < num_nodes; i++) {
+    if (auto ep = GetElemPath(crate::Index(uint32_t(i)))) {
+      const std::string &s = ep.value().full_path_name();
+      if (s.find('{') != std::string::npos) {
+        is_variant_node[i] = 1;
+      }
+    }
+  }
+
+  std::vector<uint64_t> subtree_size(num_nodes, 1);
+  std::vector<uint8_t> subtree_has_variant = is_variant_node;
+  {
+    // children-first order via explicit stack
+    struct SEntry {
+      uint32_t node;
+      uint32_t child_idx;
+    };
+    std::vector<SEntry> st;
+    st.push_back({0u, 0u});
+    std::vector<uint8_t> visited(num_nodes, 0);
+    visited[0] = 1;
+    while (!st.empty()) {
+      SEntry &e = st.back();
+      const auto &children = (*_nodes)[e.node].GetChildren();
+      if (e.child_idx < children.size()) {
+        const uint32_t c = uint32_t(children[e.child_idx++]);
+        if (c < num_nodes && !visited[c]) {
+          visited[c] = 1;
+          st.push_back({c, 0u});
+        }
+      } else {
+        // finalize e.node into its parent
+        const uint32_t n = e.node;
+        st.pop_back();
+        if (!st.empty()) {
+          subtree_size[st.back().node] += subtree_size[n];
+          subtree_has_variant[st.back().node] =
+              uint8_t(subtree_has_variant[st.back().node] |
+                      subtree_has_variant[n]);
+        }
+      }
+    }
+  }
+
+  //
+  // Pass 2: build the plan (pre-order).
+  //
+  struct ShellNode {
+    int node_id;
+    int parent_id;
+    int level;
+    std::unique_ptr<Prim> prim;
+    // (is_shell, index into shells/jobs), in child order
+    std::vector<std::pair<bool, size_t>> children;
+  };
+  struct SubtreeJob {
+    int node_id;
+    int parent_id;
+    int level;
+    bool has_variant;
+    std::unique_ptr<Prim> prim;
+  };
+  std::vector<ShellNode> shells;
+  std::vector<SubtreeJob> jobs;
+
+  uint32_t nthreads = std::max(1u, std::thread::hardware_concurrency());
+  if (_config.numThreads > 0) {
+    nthreads = std::min(nthreads, uint32_t(_config.numThreads));
+  }
+  const uint64_t job_grain =
+      std::max<uint64_t>(64, subtree_size[0] / (uint64_t(nthreads) * 8u));
+  const int kMaxShellDepth = 16;
+
+  {
+    struct PEntry {
+      uint32_t node;
+      int parent;
+      int level;
+      size_t shell_idx;  // shell created for this node
+      uint32_t child_idx;
+    };
+    std::vector<PEntry> st;
+
+    auto want_shell = [&](uint32_t node, int level) -> bool {
+      if (level >= kMaxShellDepth) {
+        return false;
+      }
+      if (subtree_size[node] <= job_grain) {
+        return false;
+      }
+      const auto &children = (*_nodes)[node].GetChildren();
+      if (children.empty()) {
+        return false;
+      }
+      for (const auto &c : children) {
+        if ((size_t(c) < num_nodes) && is_variant_node[size_t(c)]) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    // node 0 (pseudo-root "/") is always a shell (it also carries StageMeta).
+    shells.push_back(ShellNode{0, -1, 0, nullptr, {}});
+    st.push_back({0u, -1, 0, 0, 0u});
+
+    while (!st.empty()) {
+      PEntry &e = st.back();
+      const auto &children = (*_nodes)[e.node].GetChildren();
+      if (e.child_idx >= children.size()) {
+        st.pop_back();
+        continue;
+      }
+      const uint32_t c = uint32_t(children[e.child_idx++]);
+      if (size_t(c) >= num_nodes) {
+        continue;
+      }
+      const size_t parent_shell = e.shell_idx;
+      const int child_level = st.back().level + 1;
+      if (want_shell(c, child_level)) {
+        const size_t si = shells.size();
+        shells.push_back(
+            ShellNode{int(c), int(e.node), child_level, nullptr, {}});
+        shells[parent_shell].children.push_back({true, si});
+        st.push_back({c, int(e.node), child_level, si, 0u});
+      } else {
+        jobs.push_back(SubtreeJob{int(c), int(e.node), child_level,
+                                  subtree_has_variant[c] != 0, nullptr});
+        shells[parent_shell].children.push_back({false, jobs.size() - 1});
+      }
+    }
+  }
+
+  //
+  // Pass 3: reconstruct shell prims serially, in pre-order (marks
+  // _prim_table so job-root property children early-out like the serial
+  // walk).
+  //
+  for (size_t si = 0; si < shells.size(); si++) {
+    ShellNode &sh = shells[si];
+    std::unique_ptr<Prim> prim;
+    if (!ReconstructPrimNode(sh.parent_id, sh.node_id, sh.level,
+                             /* is_parent_variant */ false, psmap, stage,
+                             &prim)) {
+      return false;
+    }
+    sh.prim = std::move(prim);
+  }
+
+  //
+  // Pass 4: non-variant subtree jobs on worker threads.
+  //
+  {
+    std::atomic<size_t> next_job{0};
+    std::atomic<bool> failed{false};
+
+    crate_reader->set_parallel_io_active(true);
+
+    const uint32_t nworkers =
+        uint32_t(std::min<size_t>(nthreads, jobs.size()));
+    std::vector<std::thread> workers;
+    workers.reserve(nworkers);
+    for (uint32_t t = 0; t < nworkers; t++) {
+      workers.emplace_back([&]() {
+        while (true) {
+          const size_t i = next_job.fetch_add(1);
+          if (i >= jobs.size()) {
+            break;
+          }
+          if (jobs[i].has_variant ||
+              failed.load(std::memory_order_relaxed)) {
+            continue;
+          }
+          std::unique_ptr<Prim> root;
+          if (!ReconstructPrimRecursively(jobs[i].parent_id, jobs[i].node_id,
+                                          nullptr, jobs[i].level, psmap,
+                                          stage, &root)) {
+            failed.store(true, std::memory_order_relaxed);
+          } else {
+            jobs[i].prim = std::move(root);
+          }
+        }
+      });
+    }
+    for (auto &w : workers) {
+      w.join();
+    }
+
+    crate_reader->set_parallel_io_active(false);
+
+    if (failed.load()) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Failed to reconstruct Prim hierarchy (parallel subtree).");
+    }
+  }
+
+  //
+  // Pass 5: variant-containing subtree jobs, serially (variant bookkeeping
+  // maps are unsynchronized by design).
+  //
+  for (auto &job : jobs) {
+    if (!job.has_variant) {
+      continue;
+    }
+    std::unique_ptr<Prim> root;
+    if (!ReconstructPrimRecursively(job.parent_id, job.node_id, nullptr,
+                                    job.level, psmap, stage, &root)) {
+      return false;
+    }
+    job.prim = std::move(root);
+  }
+
+  //
+  // Pass 6: assemble bottom-up. Reverse pre-order visits every shell after
+  // all of its descendant shells, so children lists are final before the
+  // shell prim itself is attached to its parent.
+  //
+  for (size_t ri = shells.size(); ri > 0; ri--) {
+    ShellNode &sh = shells[ri - 1];
+    const bool is_root = (sh.node_id == 0);
+    if (!is_root && !sh.prim) {
+      // Serial parity: children of a prim-less (non-root) parent are
+      // dropped.
+      continue;
+    }
+    for (const auto &child : sh.children) {
+      std::unique_ptr<Prim> *cp =
+          child.first ? &shells[child.second].prim : &jobs[child.second].prim;
+      if (!cp->get()) {
+        continue;
+      }
+      if (is_root) {
+        auto &prims = stage->root_prims();
+        prims.resize(prims.size() + 1);
+        prims.back() = std::move(*cp->get());
+      } else {
+        auto &children_vec = sh.prim->children();
+        children_vec.resize(children_vec.size() + 1);
+        children_vec.back() = std::move(*cp->get());
+      }
+      cp->reset();
+    }
+  }
+
+  return true;
+}
+
+#endif  // TINYUSDZ_ENABLE_THREAD
+
 
 }  // namespace usdc
 }  // namespace tinyusdz

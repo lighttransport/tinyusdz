@@ -388,12 +388,18 @@ static void ConvertScalarsToFloat(FloatBakeScalarKind kind, const uint8_t *src,
   }
 }
 
-// Cheap content-equality for generic-storage sample values. Only the types
-// that both (a) use generic TimeSamples storage and (b) are float-bakeable
-// need this — i.e. bool and bool[]. Returns false (no collapse) for anything
-// else.
-static bool CheapGenericSampleEqual(const value::Value &a,
-                                    const value::Value &b) {
+// Cheap equality for generic-storage samples. Shared value_group ids (set by
+// the reader's sample dedup) answer in O(1); otherwise fall back to content
+// compare for the types that both (a) use generic TimeSamples storage and
+// (b) are float-bakeable — i.e. bool and bool[]. Returns false (no collapse)
+// for anything else.
+static bool CheapGenericSampleEqual(const value::TimeSamples::Sample &sa,
+                                    const value::TimeSamples::Sample &sb) {
+  if (sa.value_group && (sa.value_group == sb.value_group)) {
+    return true;
+  }
+  const value::Value &a = sa.value;
+  const value::Value &b = sb.value;
   if (a.type_id() != b.type_id()) {
     return false;
   }
@@ -2498,8 +2504,7 @@ bool RenderSceneConverter::ExtractPrimPropertyAnimation(
       std::vector<uint8_t> eq_next(n ? (n - 1) : 0, 0);
       for (size_t i = 0; i + 1 < n; i++) {
         eq_next[i] = (!samples[i].blocked && !samples[i + 1].blocked &&
-                      CheapGenericSampleEqual(samples[i].value,
-                                              samples[i + 1].value))
+                      CheapGenericSampleEqual(samples[i], samples[i + 1]))
                          ? 1
                          : 0;
       }

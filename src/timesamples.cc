@@ -500,6 +500,7 @@ namespace value {
 // Move constructor
 TimeSamples::TimeSamples(TimeSamples&& other) noexcept
     : _samples(std::move(other._samples)),
+      _value_group_counter(other._value_group_counter),
       _times(std::move(other._times)),
       _blocked(std::move(other._blocked)),
       _data(std::move(other._data)),
@@ -510,6 +511,7 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
       _dirty(other._dirty),
       _is_array(other._is_array),
       _samples_ready(other._samples_ready.load()) {
+  other._value_group_counter = 0;
   other._type_id = 0;
   other._element_size = 0;
   other._dirty = false;
@@ -530,8 +532,10 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     _element_size = other._element_size;
     _dirty = other._dirty;
     _is_array = other._is_array;
+    _value_group_counter = other._value_group_counter;
     _samples_ready.store(other._samples_ready.load());
 
+    other._value_group_counter = 0;
     other._type_id = 0;
     other._element_size = 0;
     other._dirty = false;
@@ -544,6 +548,7 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
 // Copy constructor
 TimeSamples::TimeSamples(const TimeSamples& other)
     : _samples(other._samples),
+      _value_group_counter(other._value_group_counter),
       _times(other._times),
       _blocked(other._blocked),
       _data(other._data),
@@ -569,6 +574,7 @@ TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
     _element_size = other._element_size;
     _dirty = other._dirty;
     _is_array = other._is_array;
+    _value_group_counter = other._value_group_counter;
     _samples_ready.store(other._samples_ready.load());
   }
   return *this;
@@ -587,6 +593,7 @@ void TimeSamples::clear() {
   _element_size = 0;
   _dirty = true;
   _is_array = false;
+  _value_group_counter = 0;
 }
 
 

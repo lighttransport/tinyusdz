@@ -55,6 +55,14 @@ struct TimeSamples {
     double t;
     value::Value value;
     bool blocked{false};
+
+    // Value-identity group for generic (boxed) storage: samples added via
+    // duplicate_sample() share the group id of their source, so consumers
+    // can detect read-side-deduplicated duplicates in O(1) instead of
+    // comparing contents (the analog of shared _data_offsets in binary
+    // storage). 0 = unknown (content compare required). Ids are only
+    // comparable within one TimeSamples object.
+    uint64_t value_group{0};
   };
 
   // Sentinel value for blocked samples in _data_offsets
@@ -126,6 +134,12 @@ struct TimeSamples {
       s.t = new_time;
       s.value = _samples[src_idx].value;
       s.blocked = _samples[src_idx].blocked;
+      // Share the source's value-identity group (assign one if the source
+      // doesn't have any yet) so consumers can detect the duplicate in O(1).
+      if (_samples[src_idx].value_group == 0) {
+        _samples[src_idx].value_group = ++_value_group_counter;
+      }
+      s.value_group = _samples[src_idx].value_group;
       _samples.push_back(std::move(s));
       _dirty = true;
       return true;
@@ -987,6 +1001,9 @@ struct TimeSamples {
 
   // Generic path storage (for non-binary Value types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
+
+  // Monotonic source for Sample::value_group ids (generic storage only).
+  mutable uint64_t _value_group_counter{0};
 
   // Flat binary storage (for trivially-copyable POD types)
   mutable std::vector<double> _times;
