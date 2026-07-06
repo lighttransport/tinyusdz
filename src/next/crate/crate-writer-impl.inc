@@ -556,30 +556,46 @@ private:
   struct StreamDedup {
     static constexpr uint32_t kInvalid = ~0u;
     struct Entry { uint64_t hash; uint64_t hash2; uint64_t size; uint64_t offset; uint32_t next; };
+    // Entries live in fixed 64K-element segments instead of one doubling
+    // vector: animation-dense scenes intern millions of tiny scalar blocks,
+    // and a doubling vector re-copies the table and holds old+new buffers
+    // live across each realloc (~1.5x transient on the largest write-phase
+    // term). Segments keep entry indices stable, so bucket 'next' chains are
+    // unaffected, and freeing is exact.
+    static constexpr uint32_t kSegShift = 16;
+    static constexpr uint32_t kSegSize = 1u << kSegShift;
+    static constexpr uint32_t kSegMask = kSegSize - 1;
     std::vector<uint32_t> buckets;
-    std::vector<Entry> entries;
+    std::vector<std::unique_ptr<Entry[]>> segments;
+    uint32_t entry_count = 0;
+    Entry& entry(uint32_t i) { return segments[i >> kSegShift][i & kSegMask]; }
     uint64_t* find(uint64_t h, uint64_t h2, uint64_t sz) {
       if (buckets.empty()) return nullptr;
       const uint32_t mask = static_cast<uint32_t>(buckets.size() - 1);
-      for (uint32_t e = buckets[h & mask]; e != kInvalid; e = entries[e].next)
-        if (entries[e].hash == h && entries[e].hash2 == h2 && entries[e].size == sz)
-          return &entries[e].offset;
+      for (uint32_t e = buckets[h & mask]; e != kInvalid; e = entry(e).next)
+        if (entry(e).hash == h && entry(e).hash2 == h2 && entry(e).size == sz)
+          return &entry(e).offset;
       return nullptr;
     }
     void insert(uint64_t h, uint64_t h2, uint64_t sz, uint64_t off) {
-      if (buckets.empty() || (entries.size() + 1) * 2 >= buckets.size()) {
+      if (buckets.empty() || (entry_count + 1) * 2 >= buckets.size()) {
         const size_t nc = buckets.empty() ? 1024 : buckets.size() * 2;
         buckets.assign(nc, kInvalid);
         const uint32_t mask = static_cast<uint32_t>(nc - 1);
-        for (uint32_t i = 0; i < entries.size(); ++i) {
-          const uint32_t s = static_cast<uint32_t>(entries[i].hash & mask);
-          entries[i].next = buckets[s]; buckets[s] = i;
+        for (uint32_t i = 0; i < entry_count; ++i) {
+          Entry& en = entry(i);
+          const uint32_t s = static_cast<uint32_t>(en.hash & mask);
+          en.next = buckets[s]; buckets[s] = i;
         }
+      }
+      if ((entry_count & kSegMask) == 0) {
+        segments.emplace_back(new Entry[kSegSize]);
       }
       const uint32_t mask = static_cast<uint32_t>(buckets.size() - 1);
       const uint32_t s = static_cast<uint32_t>(h & mask);
-      entries.push_back({h, h2, sz, off, buckets[s]});
-      buckets[s] = static_cast<uint32_t>(entries.size() - 1);
+      const uint32_t i = entry_count++;
+      entry(i) = Entry{h, h2, sz, off, buckets[s]};
+      buckets[s] = i;
     }
   } stream_dedup_;
 
