@@ -888,13 +888,19 @@ private:
   tinyusdz::HashMap<std::string, crate::StringIndex> string_to_index_;
   std::vector<std::string> strings_;  // Index -> string
 
-  tinyusdz::HashMap<Path, crate::PathIndex, crate::PathHasher, crate::PathKeyEqual> path_to_index_;
+  // Open-addressed index over paths_: slot = (hash32, index into paths_ + 1;
+  // 0 = empty). Replaces a Path -> PathIndex hash map whose per-insert Path
+  // copy + node allocation was a top profile entry on spec-dense scenes.
+  // The cached hash makes growth rehash-free and lets lookups skip the
+  // expensive Path equality for non-matching slots.
+  std::vector<std::pair<uint32_t, uint32_t>> path_slots_;
+  size_t path_slots_used_ = 0;
+  // Returns index into paths_, or -1 if absent.
+  int64_t FindPathSlot(const Path& path, uint32_t hash) const;
+  void InsertPathSlot(uint32_t hash, uint32_t path_index);
+  void GrowPathSlots(size_t want);
   std::vector<Path> paths_;  // Index -> path
 
-  // Set of paths that already have a spec, for O(1) duplicate-spec detection in
-  // AddSpec (avoids an O(n^2) linear scan over spec_data_). Keyed like
-  // path_to_index_ but distinct because that map also holds ancestor paths.
-  tinyusdz::HashMap<Path, uint32_t, crate::PathHasher, crate::PathKeyEqual> spec_path_set_;
 
   tinyusdz::HashMap<crate::Field, crate::FieldIndex, crate::FieldHasher, crate::FieldKeyEqual> field_to_index_;
   std::vector<crate::Field> fields_;  // Index -> field
