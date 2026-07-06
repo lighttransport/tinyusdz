@@ -9,6 +9,20 @@
 				overflow: hidden;
 				font-family: Arial, sans-serif;
 			}
+			body.drag-over::after {
+				content: 'Drop USD file here';
+				position: fixed;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: rgba(33, 150, 243, 0.18);
+				color: #6bb6ff;
+				font-size: 24px;
+				font-weight: 600;
+				pointer-events: none;
+				z-index: 1000;
+			}
 			canvas {
 				display: block;
 			}
@@ -94,6 +108,8 @@
 				<strong>Current file:</strong> <span id="currentFile"></span>
 				<span id="loadingIndicator">⏳ Loading...</span>
 			</p>
+			<p><strong>FPS:</strong> <span id="fpsValue">-</span></p>
+			<div id="loadStats" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.2); font-size:11px; white-space:pre-line; color:#bbb;"></div>
 			<div id="file-controls">
 				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
 				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File(w.i.p)</button>

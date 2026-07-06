@@ -29,6 +29,108 @@ import {
 import { raycastSkinnedMeshes, expandBoxByMeshBones } from 'tinyusdz/SkinnedMeshUtils.js';
 import { attachSceneHelpers } from 'tinyusdz/SceneHelpers.js';
 
+const MAX_RENDER_PIXEL_RATIO = 2.0;
+
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
+		const value = params.get(key);
+		if (value) return value;
+	}
+	return null;
+}
+
+function getDisplayNameFromURI(uri) {
+	try {
+		const parsed = new URL(uri, window.location.href);
+		return parsed.pathname.split('/').filter(Boolean).pop() || uri;
+	} catch {
+		return uri.split('/').pop() || uri;
+	}
+}
+
+function formatDurationMs(ms) {
+	if (!Number.isFinite(ms)) return 'n/a';
+	return ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+	if (!Number.isFinite(bytes)) return 'n/a';
+	const sign = bytes < 0 ? '-' : '';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	let value = Math.abs(bytes);
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${sign}${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+	const jsHeap = performance.memory?.usedJSHeapSize;
+	const wasmHeap = loader?.native_?.HEAPU8?.buffer?.byteLength;
+	return {
+		jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+		wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+	};
+}
+
+function formatMemoryUse(before, after, key) {
+	const current = after?.[key];
+	if (!Number.isFinite(current)) return 'n/a';
+	const previous = before?.[key];
+	if (!Number.isFinite(previous)) return formatBytes(current);
+	const delta = current - previous;
+	return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
+}
+
+function beginLoadStats(fileSize = null) {
+	const stats = {
+		startTime: performance.now(),
+		fileSize,
+		fetchMs: null,
+		parseMs: null,
+		processMs: null,
+		totalMs: null,
+		memoryBefore: captureMemorySnapshot(),
+		memoryAfter: null
+	};
+	updateLoadStatsPanel(stats, 'Loading...');
+	return stats;
+}
+
+function updateLoadStatsPanel(stats, overrideText = null) {
+	const el = document.getElementById('loadStats');
+	if (!el) return;
+	el.style.display = 'block';
+	if (overrideText) {
+		el.textContent = overrideText;
+		return;
+	}
+	el.textContent = [
+		`File: ${formatBytes(stats.fileSize)}`,
+		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
+		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Total: ${formatDurationMs(stats.totalMs)}`,
+		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+	].join('\n');
+}
+
+function finishLoadStats(stats) {
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats);
+}
+
+function failLoadStats(stats) {
+	if (!stats) return;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats, 'Failed');
+}
+
 // =====================================================
 // Three.js Scene Setup
 // =====================================================
@@ -41,7 +143,7 @@ camera.position.set(0, 2, 5);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
@@ -116,17 +218,22 @@ let filterMode = 'all'; // 'all' | 'selected'
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let _mouseDownPos = { x: 0, y: 0 };
+const frameState = {
+	lastFpsUpdateMs: performance.now(),
+	frameCount: 0
+};
 
 // Selection highlight
 let selectionHelper = null;
 
-const clock = new THREE.Clock();
+let lastFrameTimeMs = performance.now();
 
 // =====================================================
 // Process USD Scene
 // =====================================================
 
-async function processUSDScene(usdScene, filename) {
+async function processUSDScene(usdScene, filename, stats = null) {
+	const processStart = performance.now();
 	const displayName = filename.split('/').pop();
 	const currentFileEl = document.getElementById('currentFile');
 	if (currentFileEl) currentFileEl.textContent = displayName;
@@ -304,6 +411,11 @@ async function processUSDScene(usdScene, filename) {
 
 	// Fit camera to scene
 	fitCamera();
+
+	if (stats) {
+		stats.processMs = performance.now() - processStart;
+		finishLoadStats(stats);
+	}
 }
 
 // =====================================================
@@ -815,8 +927,19 @@ window._setSpeed = function(value) {
 
 function animate() {
 	requestAnimationFrame(animate);
+	frameState.frameCount++;
+	const now = performance.now();
+	if (now - frameState.lastFpsUpdateMs >= 500) {
+		const fps = frameState.frameCount * 1000 / (now - frameState.lastFpsUpdateMs);
+		const fpsEl = document.getElementById('fpsValue');
+		if (fpsEl) fpsEl.textContent = fps.toFixed(1);
+		frameState.frameCount = 0;
+		frameState.lastFpsUpdateMs = now;
+	}
 
-	const delta = clock.getDelta();
+	const currentFrameTimeMs = performance.now();
+	const delta = (currentFrameTimeMs - lastFrameTimeMs) / 1000;
+	lastFrameTimeMs = currentFrameTimeMs;
 	if (mixer) {
 		mixer.update(delta);
 	}
@@ -839,10 +962,36 @@ async function initLoader() {
 
 async function loadFromURL(url) {
 	if (!loader) await initLoader();
+	const stats = beginLoadStats();
 	try {
-		const usdScene = await loadUSDSceneFromURL(loader, url);
-		await processUSDScene(usdScene, url);
+		const fetchStart = performance.now();
+		const response = await fetch(url);
+		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		const arrayBuffer = await response.arrayBuffer();
+		stats.fetchMs = performance.now() - fetchStart;
+		stats.fileSize = arrayBuffer.byteLength;
+		const parseStart = performance.now();
+		const usdScene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, getDisplayNameFromURI(url));
+		stats.parseMs = performance.now() - parseStart;
+		await processUSDScene(usdScene, url, stats);
 	} catch (err) {
+		failLoadStats(stats);
+		console.error('Failed to load USD file from URL:', err);
+		const currentFileEl = document.getElementById('currentFile');
+		if (currentFileEl) currentFileEl.textContent = 'Error: ' + err.message;
+	}
+}
+
+async function loadFromURLViaLoader(url) {
+	if (!loader) await initLoader();
+	const stats = beginLoadStats();
+	try {
+		const parseStart = performance.now();
+		const usdScene = await loadUSDSceneFromURL(loader, url);
+		stats.parseMs = performance.now() - parseStart;
+		await processUSDScene(usdScene, url, stats);
+	} catch (err) {
+		failLoadStats(stats);
 		console.error('Failed to load USD file from URL:', err);
 		const currentFileEl = document.getElementById('currentFile');
 		if (currentFileEl) currentFileEl.textContent = 'Error: ' + err.message;
@@ -851,10 +1000,14 @@ async function loadFromURL(url) {
 
 async function loadFromArrayBuffer(buffer, filename) {
 	if (!loader) await initLoader();
+	const stats = beginLoadStats(buffer.byteLength);
 	try {
+		const parseStart = performance.now();
 		const usdScene = await parseUSDSceneFromArrayBuffer(loader, buffer, filename);
-		await processUSDScene(usdScene, filename);
+		stats.parseMs = performance.now() - parseStart;
+		await processUSDScene(usdScene, filename, stats);
 	} catch (err) {
+		failLoadStats(stats);
 		console.error('Failed to parse USD file:', err);
 		const currentFileEl = document.getElementById('currentFile');
 		if (currentFileEl) currentFileEl.textContent = 'Error: ' + err.message;
@@ -866,15 +1019,55 @@ window.addEventListener('loadUSDFile', async (event) => {
 	const file = event.detail.file;
 	if (!file) return;
 
+	const stats = beginLoadStats();
+	const readStart = performance.now();
 	const buffer = await file.arrayBuffer();
-	await loadFromArrayBuffer(buffer, file.name);
+	stats.fetchMs = performance.now() - readStart;
+	stats.fileSize = buffer.byteLength;
+	if (!loader) await initLoader();
+	try {
+		const parseStart = performance.now();
+		const usdScene = await parseUSDSceneFromArrayBuffer(loader, buffer, file.name);
+		stats.parseMs = performance.now() - parseStart;
+		await processUSDScene(usdScene, file.name, stats);
+	} catch (err) {
+		failLoadStats(stats);
+		console.error('Failed to parse USD file:', err);
+		const currentFileEl = document.getElementById('currentFile');
+		if (currentFileEl) currentFileEl.textContent = 'Error: ' + err.message;
+	}
 });
 
 // Handle window resize
 window.addEventListener('resize', () => {
 	camera.aspect = window.innerWidth / window.innerHeight;
 	camera.updateProjectionMatrix();
+	renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO));
 	renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+document.body.addEventListener('dragover', (event) => {
+	event.preventDefault();
+	document.body.classList.add('drag-over');
+});
+
+document.body.addEventListener('dragleave', (event) => {
+	if (!event.relatedTarget || !document.body.contains(event.relatedTarget)) {
+		document.body.classList.remove('drag-over');
+	}
+});
+
+document.body.addEventListener('drop', (event) => {
+	event.preventDefault();
+	document.body.classList.remove('drag-over');
+	const file = event.dataTransfer?.files?.[0];
+	if (!file) return;
+	if (!/\.(usd|usda|usdc|usdz)$/i.test(file.name)) {
+		const currentFileEl = document.getElementById('currentFile');
+		if (currentFileEl) currentFileEl.textContent = 'Please drop a USD file (.usd, .usda, .usdc, .usdz)';
+		return;
+	}
+	window.dispatchEvent(new CustomEvent('loadUSDFile', { detail: { file } }));
 });
 
 // =====================================================
@@ -885,7 +1078,7 @@ animate();
 
 // Load default test asset
 (async () => {
-	const USD_URL = './assets/multi-clip-skeleton.usda';
+	const USD_URL = getStartupUSDModelURI() || './assets/multi-clip-skeleton.usda';
 	//const USD_URL = './assets/anim-clips.usdc';
 	await loadFromURL(USD_URL);
 })();

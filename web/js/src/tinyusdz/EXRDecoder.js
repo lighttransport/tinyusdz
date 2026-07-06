@@ -9,6 +9,22 @@
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { HalfFloatType, FloatType } from 'three';
 
+function withToHalfFloatRangeWarningSuppressed(fn) {
+  const originalWarn = console.warn;
+  console.warn = (...args) => {
+    if (typeof args[0] === 'string' &&
+        args[0].startsWith('THREE.DataUtils.toHalfFloat(): Value out of range.')) {
+      return;
+    }
+    originalWarn.apply(console, args);
+  };
+  try {
+    return fn();
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 /**
  * EXR decode result
  * @typedef {Object} EXRDecodeResult
@@ -111,7 +127,9 @@ function decodeWithThreeJS(buffer, outputFormat) {
   loader.setDataType(outputFormat === 'float32' ? FloatType : HalfFloatType);
 
   try {
-    const texture = loader.parse(buffer);
+    const texture = outputFormat === 'float32'
+      ? loader.parse(buffer)
+      : withToHalfFloatRangeWarningSuppressed(() => loader.parse(buffer));
 
     if (!texture || !texture.data) {
       return {

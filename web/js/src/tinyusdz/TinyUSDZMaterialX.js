@@ -377,6 +377,29 @@ function decodeHDRTexture(data, mimeType) {
 // Texture Loading
 // ============================================================================
 
+const UNSUPPORTED_BROWSER_TEXTURE_EXTENSIONS = new Set([
+    'psd', 'psb', 'tif', 'tiff', 'tx', 'tex', 'ies'
+]);
+
+function getTextureExtension(uri = '') {
+    const clean = String(uri).split(/[?#]/, 1)[0].replace(/@$/, '');
+    const match = /\.([A-Za-z0-9]+)$/.exec(clean);
+    return match ? match[1].toLowerCase() : '';
+}
+
+function isUnsupportedBrowserTextureURI(uri = '') {
+    return UNSUPPORTED_BROWSER_TEXTURE_EXTENSIONS.has(getTextureExtension(uri));
+}
+
+function warnUnsupportedTexture(textureId, uri, reason = '') {
+    console.warn(`Unsupported texture format for texture ${textureId}; skipping texture load`, {
+        textureId,
+        uri: uri || '',
+        extension: getTextureExtension(uri),
+        reason
+    });
+}
+
 /**
  * Load texture from USD scene
  * @param {Object} usdScene - USD scene object with getTexture/getImage methods
@@ -404,6 +427,11 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             console.warn(`Image ${texData.textureImageId} not found`);
             return null;
         }
+        const imageURI = imgData.uri || '';
+        if (isUnsupportedBrowserTextureURI(imageURI)) {
+            warnUnsupportedTexture(textureId, imageURI, 'browser TextureLoader cannot decode this source format');
+            return null;
+        }
 
         let texture = null;
 
@@ -411,7 +439,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
         if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
             // TinyUSDZ may create duplicate image entries: one with URI reference (bufferId=-1)
             // and one with embedded data (bufferId>=0). Try to find the embedded version.
-            const filename = imgData.uri.replace(/^\.\//, ''); // Remove leading ./
+            const filename = imageURI.replace(/^\.\//, ''); // Remove leading ./
             let foundEmbedded = false;
 
             if (typeof usdScene.numImages === 'function') {
@@ -419,6 +447,10 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                 for (let i = 0; i < numImages; i++) {
                     const altImg = usdScene.getImageCopy(i);
                     if (altImg.bufferId >= 0 && altImg.uri === filename) {
+                        if (isUnsupportedBrowserTextureURI(altImg.uri || filename)) {
+                            warnUnsupportedTexture(textureId, altImg.uri || filename, 'embedded image keeps an unsupported source format');
+                            return null;
+                        }
                         // Found embedded version - use it instead
                         const altImgData = altImg;
                         if (altImgData.data) {
@@ -438,9 +470,12 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                                 } else {
                                     const blob = new Blob([altImgData.data], { type: mimeType });
                                     const blobUrl = URL.createObjectURL(blob);
-                                    const loader = new THREE.TextureLoader();
-                                    texture = await loader.loadAsync(blobUrl);
-                                    URL.revokeObjectURL(blobUrl);
+                                    try {
+                                        const loader = new THREE.TextureLoader();
+                                        texture = await loader.loadAsync(blobUrl);
+                                    } finally {
+                                        URL.revokeObjectURL(blobUrl);
+                                    }
                                 }
                             }
                             foundEmbedded = true;
@@ -453,7 +488,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             // Fall back to loading from URI if no embedded version found
             if (!foundEmbedded) {
                 const loader = new THREE.TextureLoader();
-                texture = await loader.loadAsync(imgData.uri);
+                texture = await loader.loadAsync(imageURI);
             }
         }
         // Case 2 & 3: Embedded texture
@@ -467,7 +502,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                 else if (imgData.channels === 2) texture.format = THREE.RGFormat;
                 else if (imgData.channels === 4) texture.format = THREE.RGBAFormat;
                 else {
-                    console.error(`Unsupported channel count: ${imgData.channels}`);
+                    console.warn(`Unsupported channel count for texture ${textureId}: ${imgData.channels}`);
                     return null;
                 }
 
@@ -484,9 +519,12 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                     // Standard image - use Blob and TextureLoader
                     const blob = new Blob([imgData.data], { type: mimeType });
                     const blobUrl = URL.createObjectURL(blob);
-                    const loader = new THREE.TextureLoader();
-                    texture = await loader.loadAsync(blobUrl);
-                    URL.revokeObjectURL(blobUrl);
+                    try {
+                        const loader = new THREE.TextureLoader();
+                        texture = await loader.loadAsync(blobUrl);
+                    } finally {
+                        URL.revokeObjectURL(blobUrl);
+                    }
                 }
             }
         }
@@ -498,7 +536,11 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
         return texture;
 
     } catch (error) {
-        console.error(`Failed to load texture ${textureId}:`, error);
+        console.warn(`Failed to load texture ${textureId}; skipping texture`, {
+            textureId,
+            error,
+            expectedForUnsupportedFormats: true
+        });
         return null;
     }
 }
