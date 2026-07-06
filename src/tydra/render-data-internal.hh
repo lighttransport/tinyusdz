@@ -198,9 +198,29 @@ class SkelRootSkeletonResolver {
 // Scene traversal visitor for mesh and material conversion.
 // Defined in render-data-material.cc, used in render-data.cc.
 // -----------------------------------------------------------------------
+// A GeomMesh whose geometry conversion is deferred to the (possibly
+// parallel) post-traversal phase. Materials/skeletons/lookup caches were
+// already resolved serially during traversal, so ConvertMesh for a job only
+// reads shared converter state. `mesh_slot` is the pre-assigned index into
+// RenderSceneConverter::meshes (ids match the serial traversal order).
+struct DeferredMeshJob {
+  Path abs_path{};
+  const GeomMesh *mesh{nullptr};
+  MaterialPath material_path;
+  std::map<std::string, MaterialPath> subset_material_path_map;
+  std::vector<const GeomSubset *> material_subsets;
+  std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
+  size_t mesh_slot{0};
+};
+
 struct MeshVisitorEnv {
   RenderSceneConverter *converter{nullptr};
   const RenderSceneConverterEnv *env{nullptr};
+
+  // When non-null, GeomMesh geometry conversion is deferred: the visitor
+  // resolves materials/skeletons/caches, pre-assigns the mesh id and pushes
+  // a job here instead of calling ConvertMesh inline.
+  std::vector<DeferredMeshJob> *deferred_mesh_jobs{nullptr};
 
   // Progress tracking for detailed progress reporting
   size_t meshes_processed{0};

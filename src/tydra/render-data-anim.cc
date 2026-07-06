@@ -215,6 +215,399 @@ static void AppendMatrixToFloatArray(const Scalar (&m)[N][N],
   }
 }
 
+//
+// Zero-copy fast path for baking TimeSamples into KeyframeSampler float
+// arrays.
+//
+// TimeSamples with binary (unified) storage keep every sample as a byte range
+// inside one flat `_data` buffer, and read-side value dedup (e.g. the USDC
+// reader authoring the same array at every frame) makes many samples share the
+// same byte offset. The legacy path (`get_samples()` + AppendValueToFloatArray)
+// re-materializes every sample as a boxed value::Value — expanding shared
+// samples into N independent array copies — and then appends float-by-float
+// with no reservation. On scenes with a large primvar authored at 1000+ frames
+// this is tens of GB of allocation churn.
+//
+// The fast path instead:
+//   - resolves the (scalar kind, scalars-per-element) layout once from type_id
+//   - walks times/offsets/blocked flags directly (no boxing, no sample cache)
+//   - collapses runs of consecutive samples that share the same data offset,
+//     keeping the first and last sample of each run. Interior samples of a
+//     run lie exactly on the line between two equal endpoints, so dropping
+//     them is lossless under the Linear interpolation these samplers declare.
+//   - reserves the exact output size and bulk-converts scalars.
+//
+
+enum class FloatBakeScalarKind {
+  Half, Float, Double, Char, UChar, Short, UShort, Int, UInt, Int64, UInt64
+};
+
+struct FloatBakeLayout {
+  FloatBakeScalarKind kind{FloatBakeScalarKind::Float};
+  size_t elem_scalars{0};   // scalars per element (e.g. float3 = 3, matrix4d = 16)
+  size_t scalar_size{0};    // sizeof one source scalar
+  bool is_array{false};
+  bool valid{false};
+};
+
+// Mirrors the accept set of AppendValueToFloatArray below: scalar numeric
+// types, vec2/3/4 of half/float/double, quats and matrices as scalar samples;
+// arrays of numeric scalars and of vec2/3/4 half/float/double. Role types
+// (color3f, texcoord2f, point3f, ...) resolve through GetUnderlyingTypeId.
+// Anything else (e.g. int2, quat arrays, matrix arrays) reports invalid so the
+// caller rejects the attribute exactly like the legacy path does.
+static FloatBakeLayout ResolveFloatBakeLayout(uint32_t type_id) {
+  FloatBakeLayout layout;
+  const uint32_t utid = value::GetUnderlyingTypeId(type_id);
+  layout.is_array = (utid & value::TYPE_ID_1D_ARRAY_BIT) != 0;
+  const uint32_t base = utid & (~value::TYPE_ID_1D_ARRAY_BIT);
+
+  using K = FloatBakeScalarKind;
+  auto set = [&layout](K k, size_t comps, size_t ssize) {
+    layout.kind = k;
+    layout.elem_scalars = comps;
+    layout.scalar_size = ssize;
+    layout.valid = true;
+  };
+
+  switch (base) {
+    case value::TYPE_ID_CHAR: set(K::Char, 1, 1); break;
+    case value::TYPE_ID_UCHAR: set(K::UChar, 1, 1); break;
+    case value::TYPE_ID_SHORT: set(K::Short, 1, 2); break;
+    case value::TYPE_ID_USHORT: set(K::UShort, 1, 2); break;
+    case value::TYPE_ID_INT32: set(K::Int, 1, 4); break;
+    case value::TYPE_ID_UINT32: set(K::UInt, 1, 4); break;
+    case value::TYPE_ID_INT64: set(K::Int64, 1, 8); break;
+    case value::TYPE_ID_UINT64: set(K::UInt64, 1, 8); break;
+    case value::TYPE_ID_HALF: set(K::Half, 1, 2); break;
+    case value::TYPE_ID_FLOAT: set(K::Float, 1, 4); break;
+    case value::TYPE_ID_DOUBLE: set(K::Double, 1, 8); break;
+    case value::TYPE_ID_HALF2: set(K::Half, 2, 2); break;
+    case value::TYPE_ID_HALF3: set(K::Half, 3, 2); break;
+    case value::TYPE_ID_HALF4: set(K::Half, 4, 2); break;
+    case value::TYPE_ID_FLOAT2: set(K::Float, 2, 4); break;
+    case value::TYPE_ID_FLOAT3: set(K::Float, 3, 4); break;
+    case value::TYPE_ID_FLOAT4: set(K::Float, 4, 4); break;
+    case value::TYPE_ID_DOUBLE2: set(K::Double, 2, 8); break;
+    case value::TYPE_ID_DOUBLE3: set(K::Double, 3, 8); break;
+    case value::TYPE_ID_DOUBLE4: set(K::Double, 4, 8); break;
+    // quath/quatf/quatd memory layout is imag[3] then real, which is the
+    // order the legacy AppendQuatToFloatArray emits.
+    case value::TYPE_ID_QUATH: set(K::Half, 4, 2); break;
+    case value::TYPE_ID_QUATF: set(K::Float, 4, 4); break;
+    case value::TYPE_ID_QUATD: set(K::Double, 4, 8); break;
+    case value::TYPE_ID_MATRIX2F: set(K::Float, 4, 4); break;
+    case value::TYPE_ID_MATRIX3F: set(K::Float, 9, 4); break;
+    case value::TYPE_ID_MATRIX4F: set(K::Float, 16, 4); break;
+    case value::TYPE_ID_MATRIX2D: set(K::Double, 4, 8); break;
+    case value::TYPE_ID_MATRIX3D: set(K::Double, 9, 8); break;
+    case value::TYPE_ID_MATRIX4D: set(K::Double, 16, 8); break;
+    default: break;
+  }
+
+  if (layout.valid && layout.is_array) {
+    // Arrays: legacy path only accepts numeric scalars and half/float/double
+    // vec2/3/4 element types (via std::vector<T> probes). Quat/matrix arrays
+    // stay unsupported.
+    switch (base) {
+      case value::TYPE_ID_QUATH:
+      case value::TYPE_ID_QUATF:
+      case value::TYPE_ID_QUATD:
+      case value::TYPE_ID_MATRIX2F:
+      case value::TYPE_ID_MATRIX3F:
+      case value::TYPE_ID_MATRIX4F:
+      case value::TYPE_ID_MATRIX2D:
+      case value::TYPE_ID_MATRIX3D:
+      case value::TYPE_ID_MATRIX4D:
+        layout.valid = false;
+        break;
+      default:
+        break;
+    }
+  }
+
+  return layout;
+}
+
+static void ConvertScalarsToFloat(FloatBakeScalarKind kind, const uint8_t *src,
+                                  size_t n, float *dst) {
+  using K = FloatBakeScalarKind;
+  switch (kind) {
+    case K::Float:
+      memcpy(dst, src, n * sizeof(float));
+      break;
+    case K::Double: {
+      const double *s = reinterpret_cast<const double *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(s[i]);
+      break;
+    }
+    case K::Half: {
+      const value::half *s = reinterpret_cast<const value::half *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = value::half_to_float(s[i]);
+      break;
+    }
+    case K::Char: {
+      const char *s = reinterpret_cast<const char *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(s[i]);
+      break;
+    }
+    case K::UChar: {
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(src[i]);
+      break;
+    }
+    case K::Short: {
+      const int16_t *s = reinterpret_cast<const int16_t *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(s[i]);
+      break;
+    }
+    case K::UShort: {
+      const uint16_t *s = reinterpret_cast<const uint16_t *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(s[i]);
+      break;
+    }
+    case K::Int: {
+      const int32_t *s = reinterpret_cast<const int32_t *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(s[i]);
+      break;
+    }
+    case K::UInt: {
+      const uint32_t *s = reinterpret_cast<const uint32_t *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(s[i]);
+      break;
+    }
+    case K::Int64: {
+      const int64_t *s = reinterpret_cast<const int64_t *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(s[i]);
+      break;
+    }
+    case K::UInt64: {
+      const uint64_t *s = reinterpret_cast<const uint64_t *>(src);
+      for (size_t i = 0; i < n; i++) dst[i] = static_cast<float>(s[i]);
+      break;
+    }
+  }
+}
+
+// Cheap content-equality for generic-storage sample values. Only the types
+// that both (a) use generic TimeSamples storage and (b) are float-bakeable
+// need this — i.e. bool and bool[]. Returns false (no collapse) for anything
+// else.
+static bool CheapGenericSampleEqual(const value::Value &a,
+                                    const value::Value &b) {
+  if (a.type_id() != b.type_id()) {
+    return false;
+  }
+  if (const auto *ab = a.as<bool>()) {
+    const auto *bb = b.as<bool>();
+    return bb && (*ab == *bb);
+  }
+  if (const auto *av = a.as<std::vector<bool>>()) {
+    const auto *bv = b.as<std::vector<bool>>();
+    return bv && (*av == *bv);
+  }
+  return false;
+}
+
+enum class BinaryBakeResult {
+  Ok,            // baked into times/values
+  Unsupported,   // type layout the float baker does not accept
+  NotBinary,     // TimeSamples does not use binary storage (caller falls back)
+};
+
+static BinaryBakeResult BakeBinaryTimeSamplesToFloats(
+    const value::TimeSamples &ts, std::vector<float> *times_out,
+    std::vector<float> *values_out, size_t *component_count_out) {
+  if (!ts.is_using_binary_storage()) {
+    return BinaryBakeResult::NotBinary;
+  }
+
+  const FloatBakeLayout layout = ResolveFloatBakeLayout(ts.type_id());
+  if (!layout.valid) {
+    return BinaryBakeResult::Unsupported;
+  }
+
+  const std::vector<double> &times = ts.get_times();      // sorted by update()
+  const std::vector<size_t> &offsets = ts.get_data_offsets();
+  const auto &blocked = ts.get_blocked();
+  const std::vector<uint32_t> &counts = ts.get_array_counts();
+  const std::vector<uint8_t> &data = ts.get_data();
+
+  const size_t n = times.size();
+  if (offsets.size() != n || blocked.size() != n ||
+      (layout.is_array && counts.size() != n)) {
+    // Parallel arrays out of sync; let the generic path deal with it.
+    return BinaryBakeResult::NotBinary;
+  }
+
+  auto is_blocked = [&](size_t i) {
+    return (blocked[i] != 0) ||
+           (offsets[i] == value::TimeSamples::BLOCKED_OFFSET);
+  };
+
+  // Collect non-blocked sample indices, verifying the per-sample component
+  // count is uniform (mismatch = unsupported, matching legacy behavior).
+  size_t component_count = 0;
+  std::vector<uint32_t> kept;  // indices into times/offsets
+  kept.reserve(n);
+  for (size_t i = 0; i < n; i++) {
+    if (is_blocked(i)) {
+      continue;
+    }
+    const size_t comps =
+        layout.is_array ? size_t(counts[i]) * layout.elem_scalars
+                        : layout.elem_scalars;
+    if (comps == 0) {
+      continue;
+    }
+    if (component_count == 0) {
+      component_count = comps;
+    } else if (component_count != comps) {
+      return BinaryBakeResult::Unsupported;
+    }
+    if (offsets[i] + comps * layout.scalar_size > data.size()) {
+      return BinaryBakeResult::NotBinary;  // corrupt; generic path re-validates
+    }
+    kept.push_back(uint32_t(i));
+  }
+
+  if (kept.empty() || component_count == 0) {
+    times_out->clear();
+    values_out->clear();
+    *component_count_out = component_count;
+    return BinaryBakeResult::Ok;
+  }
+
+  // Run-collapse: keep a sample only if it starts or ends a run of identical
+  // data offsets. (First/last sample of the sequence always qualify.)
+  std::vector<uint32_t> emit;
+  emit.reserve(kept.size());
+  for (size_t k = 0; k < kept.size(); k++) {
+    const bool first_of_run =
+        (k == 0) || (offsets[kept[k]] != offsets[kept[k - 1]]);
+    const bool last_of_run =
+        (k + 1 == kept.size()) || (offsets[kept[k]] != offsets[kept[k + 1]]);
+    if (first_of_run || last_of_run) {
+      emit.push_back(kept[k]);
+    }
+  }
+
+  times_out->clear();
+  values_out->clear();
+  times_out->reserve(emit.size());
+  values_out->resize(emit.size() * component_count);
+
+  float *dst = values_out->data();
+  for (size_t k = 0; k < emit.size(); k++) {
+    const size_t i = emit[k];
+    times_out->push_back(float(times[i]));
+    ConvertScalarsToFloat(layout.kind, data.data() + offsets[i],
+                          component_count, dst + k * component_count);
+  }
+
+  *component_count_out = component_count;
+  return BinaryBakeResult::Ok;
+}
+
+//
+// Zero-copy TimeSamples lookup for property-animation extraction.
+//
+// The legacy flow (GetAttributeNames + GetProperty per name) deep-copies every
+// Property just to test has_timesamples() — for a mesh with per-frame points
+// that clones the entire multi-hundred-MB sample blob once per attribute.
+// This helper resolves the TimeSamples by const reference for the cases that
+// matter (custom/primvar properties stored in the schema `props` map, and the
+// heavyweight GeomMesh typed members). Everything else reports "not handled"
+// and the caller falls back to the legacy copy path, preserving behavior.
+//
+enum class TsLookup {
+  NotHandled,   // caller must fall back to GetProperty
+  NoTimeSamples,
+  Found,        // *ts_out valid
+};
+
+static TsLookup FindAttributeTimeSamplesRef(const Prim &prim,
+                                            const std::string &attr_name,
+                                            const value::TimeSamples **ts_out) {
+  *ts_out = nullptr;
+
+  // Heavy animatable typed members of GeomMesh (vertex-cache animation).
+  if (const auto *mesh = prim.as<GeomMesh>()) {
+    auto typed_ts = [ts_out](const auto &tattr) -> TsLookup {
+      const auto &opt = tattr.get_value_ref();
+      if (!opt) {
+        return TsLookup::NoTimeSamples;
+      }
+      if (!opt.value().has_timesamples()) {
+        return TsLookup::NoTimeSamples;
+      }
+      *ts_out = opt.value().get_timesamples_ptr();
+      return (*ts_out) ? TsLookup::Found : TsLookup::NoTimeSamples;
+    };
+    if (attr_name == "points") return typed_ts(mesh->points);
+    if (attr_name == "normals") return typed_ts(mesh->normals);
+    if (attr_name == "velocities") return typed_ts(mesh->velocities);
+    if (attr_name == "faceVertexCounts") return typed_ts(mesh->faceVertexCounts);
+    if (attr_name == "faceVertexIndices") return typed_ts(mesh->faceVertexIndices);
+    if (attr_name == "cornerIndices") return typed_ts(mesh->cornerIndices);
+    if (attr_name == "cornerSharpnesses") return typed_ts(mesh->cornerSharpnesses);
+    if (attr_name == "creaseIndices") return typed_ts(mesh->creaseIndices);
+    if (attr_name == "creaseSharpnesses") return typed_ts(mesh->creaseSharpnesses);
+    if (attr_name == "holeIndices") return typed_ts(mesh->holeIndices);
+  }
+
+  // Custom/primvar properties live in the schema's `props` map. Only handle
+  // prim types GetProperty also supports so unsupported types keep warning
+  // through the legacy path.
+  const std::map<std::string, Property> *props = nullptr;
+#define TYDRA_PROPS_OF(__ty)                          \
+  else if (const auto *p = prim.as<__ty>()) {         \
+    props = &p->props;                                \
+  }
+  if (false) {
+  }
+  TYDRA_PROPS_OF(Model)
+  TYDRA_PROPS_OF(Xform)
+  TYDRA_PROPS_OF(Scope)
+  TYDRA_PROPS_OF(GeomMesh)
+  TYDRA_PROPS_OF(GeomCamera)
+  TYDRA_PROPS_OF(GeomSubset)
+  TYDRA_PROPS_OF(SphereLight)
+  TYDRA_PROPS_OF(CylinderLight)
+  TYDRA_PROPS_OF(RectLight)
+  TYDRA_PROPS_OF(DiskLight)
+  TYDRA_PROPS_OF(DistantLight)
+  TYDRA_PROPS_OF(DomeLight)
+  TYDRA_PROPS_OF(DomeLight_1)
+  TYDRA_PROPS_OF(GeometryLight)
+  TYDRA_PROPS_OF(PortalLight)
+  TYDRA_PROPS_OF(Material)
+  TYDRA_PROPS_OF(SkelRoot)
+  TYDRA_PROPS_OF(BlendShape)
+  TYDRA_PROPS_OF(Skeleton)
+#undef TYDRA_PROPS_OF
+
+  if (!props) {
+    return TsLookup::NotHandled;
+  }
+
+  const auto it = props->find(attr_name);
+  if (it == props->end()) {
+    // Could be a typed schema member (e.g. camera focalLength): legacy path.
+    return TsLookup::NotHandled;
+  }
+
+  const Property &prop = it->second;
+  if (!prop.is_attribute()) {
+    return TsLookup::NoTimeSamples;
+  }
+  const Attribute &attr = prop.get_attribute();
+  if (!attr.has_timesamples()) {
+    return TsLookup::NoTimeSamples;
+  }
+  *ts_out = &attr.get_var().ts_raw();
+  return TsLookup::Found;
+}
+
 static bool AppendValueToFloatArray(const TerminalAttributeValue &value,
                                   std::vector<float> *dst,
                                   size_t *component_count) {
@@ -2078,28 +2471,63 @@ bool RenderSceneConverter::ExtractPrimPropertyAnimation(
 
     KeyframeSampler sampler;
     sampler.interpolation = AnimationInterpolation::Linear;
-    sampler.times.reserve(ts.size());
 
     size_t component_count = 0;
     bool supported = true;
-    FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
-      if (sample_blocked) {
-        continue;
+
+    // Zero-copy binary-storage fast path (also collapses duplicate samples).
+    const BinaryBakeResult bake = BakeBinaryTimeSamplesToFloats(
+        ts, &sampler.times, &sampler.values, &component_count);
+    if (bake == BinaryBakeResult::Ok) {
+      for (const float t : sampler.times) {
+        if (t > anim_out->duration) {
+          anim_out->duration = t;
+        }
       }
-      const size_t prev_values = sampler.values.size();
-      size_t expected_count = component_count;
-      if (!AppendValueToFloatArray(sample_value, &sampler.values,
-                                   &expected_count)) {
-        sampler.values.resize(prev_values);
-        supported = false;
-        break;
+    } else if (bake == BinaryBakeResult::Unsupported) {
+      supported = false;
+    } else {
+      // Generic value storage (bool, odd types): per-sample path, with
+      // run-collapse of consecutive equal samples (lossless under Linear
+      // interpolation) for the cheaply-comparable types.
+      const auto &samples = ts.get_samples();
+      const size_t n = samples.size();
+      sampler.times.reserve(n);
+      // Adjacent-pair equality, computed once per pair (the content compare
+      // for bool[] is O(elements), so don't evaluate it twice per sample).
+      std::vector<uint8_t> eq_next(n ? (n - 1) : 0, 0);
+      for (size_t i = 0; i + 1 < n; i++) {
+        eq_next[i] = (!samples[i].blocked && !samples[i + 1].blocked &&
+                      CheapGenericSampleEqual(samples[i].value,
+                                              samples[i + 1].value))
+                         ? 1
+                         : 0;
       }
-      sampler.times.push_back(float(sample_t));
-      component_count = expected_count;
-      if (float(sample_t) > anim_out->duration) {
-        anim_out->duration = float(sample_t);
+      for (size_t i = 0; i < n; i++) {
+        const auto &s = samples[i];
+        if (s.blocked) {
+          continue;
+        }
+        const bool first_of_run = (i == 0) || !eq_next[i - 1];
+        const bool last_of_run = (i + 1 >= n) || !eq_next[i];
+        if (!first_of_run && !last_of_run) {
+          continue;  // interior of a constant run
+        }
+        const size_t prev_values = sampler.values.size();
+        size_t expected_count = component_count;
+        if (!AppendValueToFloatArray(s.value, &sampler.values,
+                                     &expected_count)) {
+          sampler.values.resize(prev_values);
+          supported = false;
+          break;
+        }
+        sampler.times.push_back(float(s.t));
+        component_count = expected_count;
+        if (float(s.t) > anim_out->duration) {
+          anim_out->duration = float(s.t);
+        }
       }
-    FOREACH_TIMESAMPLES_END()
+    }
 
     if (!supported) {
       PUSH_WARN(fmt::format(
@@ -2236,6 +2664,18 @@ bool RenderSceneConverter::ExtractPrimPropertyAnimation(
       continue;
     }
     if (appended_property_names.count(attr_name)) {
+      continue;
+    }
+
+    // Zero-copy lookup first; only fall back to the (deep-copying)
+    // GetProperty for prim/attribute kinds it does not cover.
+    const value::TimeSamples *ts_ref = nullptr;
+    const TsLookup lookup = FindAttributeTimeSamplesRef(prim, attr_name, &ts_ref);
+    if (lookup == TsLookup::Found) {
+      append_time_samples(attr_name, *ts_ref);
+      continue;
+    }
+    if (lookup == TsLookup::NoTimeSamples) {
       continue;
     }
 

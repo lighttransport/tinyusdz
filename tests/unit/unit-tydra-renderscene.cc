@@ -474,3 +474,134 @@ void tydra_renderscene_streaming_cancel_test(void) {
   TEST_MSG("expected exactly 1 mesh delivered before cancel, got %zu",
            meshes_seen);
 }
+
+// ---------------------------------------------------------------------------
+// j. Property-animation baking: animated custom attributes become
+//    CustomProperty channels; sample values survive the zero-copy bake
+//    (including double->float conversion), and runs of identical bool[]
+//    samples collapse to their run boundaries (lossless under Linear
+//    interpolation).
+// ---------------------------------------------------------------------------
+void tydra_renderscene_property_anim_bake_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "Root" {
+  def Mesh "M" {
+    point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0,1,2]
+    custom float myval
+    float myval.timeSamples = { 1: 1.5, 2: 2.5, 3: 3.5 }
+    custom double3 dval
+    double3 dval.timeSamples = { 1: (1,2,3), 2: (4,5,6) }
+    custom bool[] flags
+    bool[] flags.timeSamples = { 1: [0,1], 2: [0,1], 3: [0,1], 4: [0,1], 5: [1,1] }
+  }
+}
+)";
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "test.usda", &stage, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+
+  ok = converter.ConvertToRenderScene(env, &scene);
+  TEST_CHECK(ok);
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  const tydra::AnimationClip *prop_clip = nullptr;
+  for (const auto &anim : scene.animations) {
+    if (anim.name.find("_properties") != std::string::npos) {
+      prop_clip = &anim;
+      break;
+    }
+  }
+  TEST_CHECK(prop_clip != nullptr);
+  TEST_MSG("expected a *_properties AnimationClip");
+  if (!prop_clip) {
+    return;
+  }
+
+  auto find_channel = [&](const char *prop_name)
+      -> const tydra::AnimationChannel * {
+    for (const auto &ch : prop_clip->channels) {
+      if (ch.property_name == prop_name) {
+        return &ch;
+      }
+    }
+    return nullptr;
+  };
+
+  // float scalar channel: 3 keyframes, values preserved.
+  {
+    const tydra::AnimationChannel *ch = find_channel("myval");
+    TEST_CHECK(ch != nullptr);
+    TEST_MSG("missing channel for 'myval'");
+    if (ch && ch->sampler >= 0 &&
+        size_t(ch->sampler) < prop_clip->samplers.size()) {
+      const auto &s = prop_clip->samplers[size_t(ch->sampler)];
+      TEST_CHECK(s.times.size() == 3);
+      TEST_MSG("myval: expected 3 keyframes, got %zu", s.times.size());
+      TEST_CHECK(s.values.size() == 3);
+      if (s.values.size() == 3) {
+        TEST_CHECK(s.values[0] == 1.5f && s.values[1] == 2.5f &&
+                   s.values[2] == 3.5f);
+        TEST_MSG("myval: baked values mismatch");
+      }
+    }
+  }
+
+  // double3 channel: converted to float, 2 keyframes x 3 components.
+  {
+    const tydra::AnimationChannel *ch = find_channel("dval");
+    TEST_CHECK(ch != nullptr);
+    TEST_MSG("missing channel for 'dval'");
+    if (ch && ch->sampler >= 0 &&
+        size_t(ch->sampler) < prop_clip->samplers.size()) {
+      const auto &s = prop_clip->samplers[size_t(ch->sampler)];
+      TEST_CHECK(s.times.size() == 2);
+      TEST_MSG("dval: expected 2 keyframes, got %zu", s.times.size());
+      TEST_CHECK(s.values.size() == 6);
+      if (s.values.size() == 6) {
+        TEST_CHECK(s.values[0] == 1.0f && s.values[1] == 2.0f &&
+                   s.values[2] == 3.0f && s.values[3] == 4.0f &&
+                   s.values[4] == 5.0f && s.values[5] == 6.0f);
+        TEST_MSG("dval: baked values mismatch");
+      }
+    }
+  }
+
+  // bool[] channel: samples at t=1..4 are identical, so the interior
+  // (t=2, t=3) collapses; kept keyframes are t=1, t=4 (run boundaries) and
+  // t=5 (new value).
+  {
+    const tydra::AnimationChannel *ch = find_channel("flags");
+    TEST_CHECK(ch != nullptr);
+    TEST_MSG("missing channel for 'flags'");
+    if (ch && ch->sampler >= 0 &&
+        size_t(ch->sampler) < prop_clip->samplers.size()) {
+      const auto &s = prop_clip->samplers[size_t(ch->sampler)];
+      TEST_CHECK(s.times.size() == 3);
+      TEST_MSG("flags: expected 3 keyframes after run-collapse, got %zu",
+               s.times.size());
+      if (s.times.size() == 3) {
+        TEST_CHECK(s.times[0] == 1.0f && s.times[1] == 4.0f &&
+                   s.times[2] == 5.0f);
+        TEST_MSG("flags: kept keyframe times mismatch");
+      }
+      TEST_CHECK(s.values.size() == 6);
+      if (s.values.size() == 6) {
+        TEST_CHECK(s.values[0] == 0.0f && s.values[1] == 1.0f &&
+                   s.values[2] == 0.0f && s.values[3] == 1.0f &&
+                   s.values[4] == 1.0f && s.values[5] == 1.0f);
+        TEST_MSG("flags: baked values mismatch");
+      }
+    }
+  }
+}
