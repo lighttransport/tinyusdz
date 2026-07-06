@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "scene_loader.hh"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -269,8 +270,13 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
   }
 
   if (!LayerHasCompositionArcs(root)) {
-    return tinyusdz::LayerToStage(std::move(root), &out->stage, &out->warn,
-                                  &out->err);
+    // For files without arcs, keep the direct parser path. LayerToStage currently
+    // drops some less-common concrete schemas (e.g. NurbsPatch), while direct
+    // Stage loading preserves the full hierarchy and also retains zero-copy USDC
+    // storage through out->mmap.
+    out->warn.clear();
+    out->err.clear();
+    return LoadStageDirect(path, out);
   }
 
   out->comp.searchPaths = {DirName(path)};
@@ -307,6 +313,8 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
                              const std::shared_ptr<tinyusdz::io::MMapFileHandle>& mmap,
                              double timecode, bool rtPath, bool loadTextures,
                              const TextureRuntimeOptions& textureOptions,
+                             int subdivisionLevel,
+                             const std::map<std::string, int>& subdivisionPrimLevels,
                              tinyusdz::tydra::RenderScene* render, DrawScene* draw,
                              std::string* warn, std::string* err,
                              LoadControl* ctrl) {
@@ -353,18 +361,27 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // BLAS, so skip the rasterization-only single-index dedup on the RT path.
   mc.build_vertex_indices = !rtPath;
   mc.compute_normals = true;
-  // Keep normals as plain float3 (native default) and skip tangents: the simple
-  // light3d shaders don't read tangents, and the native tangent default is a
-  // packed fp16 format we don't want to decode.
+  // Keep normals/tangents as plain float3. Current shaders only consume normals,
+  // but tangents/binormals are preserved in DrawMeshCPU for the later material
+  // evaluator (normal maps, anisotropy, MaterialX tangent inputs).
   mc.normal_storage =
       tinyusdz::tydra::MeshConverterConfig::NormalStorageFormat::Float3;
-  mc.compute_tangents_and_binormals = false;
+  mc.tangent_storage =
+      tinyusdz::tydra::MeshConverterConfig::TangentStorageFormat::Float3;
+  mc.compute_tangents_and_binormals = true;
+  mc.compute_tangents_only_with_normal_map = true;
   // Expose secondary UV sets (e.g. primvars:st1) for the multi-UV debug AOV even
   // when no material shader references them.
   mc.extract_all_texcoords = true;
   // Keep per-face triangle counts so each triangle can be mapped back to its
   // source USD face (SourceFaceId debug AOV).
   mc.keep_triangulation_intermediates = true;
+  mc.subdivision_level = std::max(0, subdivisionLevel);
+  for (const auto& kv : subdivisionPrimLevels) {
+    if (!kv.first.empty()) {
+      mc.subdivision_prim_levels[kv.first] = std::max(0, kv.second);
+    }
+  }
 
   // Keep texels 8-bit (avoids float-image conversion). Sparse UDIM is the
   // default for large scenes; atlas mode remains available for older backends.
@@ -379,6 +396,13 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   // Graceful skip for missing/failed textures (these are already defaults).
   matc.allow_texture_load_failure = true;
   matc.allow_missing_asset = true;
+  // Renderer-parity policy: a material that fails to convert (unknown shader,
+  // unresolvable network) should NOT sink the whole load. Substitute the default
+  // material so the geometry still renders; tydra records a "using default
+  // material" warning that the app's load summary reports as a degraded_material,
+  // which the smoke harness fails on. Keeps degraded scenes loadable while still
+  // flagging the regression.
+  matc.assign_default_material = true;
 
   // RenderSceneConverter is non-copyable / non-movable: keep it local.
   tinyusdz::tydra::RenderSceneConverter converter;
@@ -441,6 +465,8 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
 // out->mmap, out->render, out->warn/err are the load targets).
 bool ConvertStageToScene(const std::string& path, double timecode,
                          const TextureRuntimeOptions& textureOptions,
+                         int subdivisionLevel,
+                         const std::map<std::string, int>& subdivisionPrimLevels,
                          LoadedScene* out, DrawScene* draw, bool rtPath,
                          LoadControl* ctrl) {
   // When loading at a concrete time code (e.g. --time for a headless screenshot
@@ -450,7 +476,9 @@ bool ConvertStageToScene(const std::string& path, double timecode,
   // via RenderSceneAtTime).
   if (draw && std::isfinite(timecode)) {
     if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
-                                 /*loadTextures=*/true, textureOptions, &out->render,
+                                 /*loadTextures=*/true, textureOptions,
+                                 subdivisionLevel, subdivisionPrimLevels,
+                                 &out->render,
                                  /*draw=*/nullptr, &out->warn, &out->err,
                                  ctrl)) {
       return false;
@@ -463,6 +491,7 @@ bool ConvertStageToScene(const std::string& path, double timecode,
   }
   if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
                                /*loadTextures=*/true, textureOptions,
+                               subdivisionLevel, subdivisionPrimLevels,
                                &out->render, draw,
                                &out->warn, &out->err, ctrl)) {
     return false;
@@ -501,8 +530,11 @@ bool LoadUSD(const std::string& path, const LoadOptions& opts, LoadedScene* out,
     return false;
   }
 
-  return ConvertStageToScene(path, opts.timecode, opts.textureOptions, out,
-                             draw, rtPath, ctrl);
+  out->subdivisionLevel = std::max(0, opts.subdivisionLevel);
+  out->subdivisionPrimLevels = opts.subdivisionPrimLevels;
+  return ConvertStageToScene(path, opts.timecode, opts.textureOptions,
+                             out->subdivisionLevel, out->subdivisionPrimLevels,
+                             out, draw, rtPath, ctrl);
 }
 
 bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
@@ -531,8 +563,11 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
     return false;
   }
 
-  return ConvertStageToScene(path, opts.timecode, opts.textureOptions, out,
-                             draw, rtPath, ctrl);
+  out->subdivisionLevel = std::max(0, opts.subdivisionLevel);
+  out->subdivisionPrimLevels = opts.subdivisionPrimLevels;
+  return ConvertStageToScene(path, opts.timecode, opts.textureOptions,
+                             out->subdivisionLevel, out->subdivisionPrimLevels,
+                             out, draw, rtPath, ctrl);
 }
 
 bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
@@ -559,7 +594,8 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
   } else {
     if (!ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
                                  rtPath, /*loadTextures=*/false,
-                                 TextureRuntimeOptions{}, &scratch,
+                                 TextureRuntimeOptions{}, src.subdivisionLevel,
+                                 src.subdivisionPrimLevels, &scratch,
                                  /*draw=*/nullptr, warn, err, ctrl)) {
       return false;
     }

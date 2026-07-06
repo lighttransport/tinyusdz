@@ -28,16 +28,32 @@ layout(set = 5, binding = 0) uniform Frame {
   vec4 camPos;        // .xyz camera, .w depth normalizer
   vec4 sceneMin;      // .xyz
   vec4 sceneExtent;   // .xyz
+  vec4 lightDir;
+  vec4 lightColor;
   ivec4 mode;         // .x = renderMode
+  mat4 envRot;        // world -> environment rotation (dome IBL)
+  vec4 iblColor;      // .rgb dome effectiveColor, .w = hasIbl (0/1)
+  vec4 iblParams;     // .x = prefiltered mip count
 } fr;
-// Per-material displacement texture scale/bias (height = texel*scale + bias).
-layout(set = 6, binding = 0, std430) readonly buffer DispMat { vec2 sb[]; } dm;
+struct MaterialTexParam {
+  vec4 baseUv0; vec4 baseUv1;
+  vec4 mrUv0; vec4 mrUv1;
+  vec4 normalUv0; vec4 normalUv1;
+  vec4 emissiveUv0; vec4 emissiveUv1;
+  vec4 dispUv0; vec4 dispUv1;
+  vec4 baseScale; vec4 baseBias;
+  vec4 normalScale; vec4 normalBias;
+  vec4 emissiveScale; vec4 emissiveBias;
+  vec4 scalar0;  // metallicChannel, roughnessChannel, metallicScale, metallicBias
+  vec4 scalar1;  // roughnessScale, roughnessBias, displacementScale, displacementBias
+};
+layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
 // 128-byte per-draw push constant block (matches struct PushC in vk_renderer.cc).
 layout(push_constant) uniform PushConstants {
   mat4 model;
   vec4 baseColor;   // rgb + .w opacity
-  vec4 matAux;      // .x metallic, .y roughness (AOVs)
+  vec4 matAux;      // .x metallic, .y roughness, .z alphaMode, .w alphaCutoff
   vec4 emissive;    // .xyz emissive (AOV)
   ivec4 ids;        // .x matId, .y flags, .z meshId
 } pc;
@@ -59,8 +75,11 @@ void main() {
   // red channel (no derivatives in the vertex stage -> textureLod 0). Black map =>
   // no offset. Geometric normals (flags bit0, set by the renderer) keep shading
   // consistent with the deformed surface.
-  vec2 dsb = pc.ids.x >= 0 ? dm.sb[pc.ids.x] : vec2(1.0, 0.0);
-  float disp = textureLod(uDisplacementTex, aUV, 0.0).r * dsb.x + dsb.y;
+  int mid = max(pc.ids.x, 0);
+  vec2 duv = vec2(dot(vec3(aUV, 1.0), mtp.p[mid].dispUv0.xyz),
+                  dot(vec3(aUV, 1.0), mtp.p[mid].dispUv1.xyz));
+  vec2 dsb = pc.ids.x >= 0 ? mtp.p[mid].scalar1.zw : vec2(1.0, 0.0);
+  float disp = textureLod(uDisplacementTex, duv, 0.0).r * dsb.x + dsb.y;
   // Guard normalize(): geometric-normal meshes (e.g. the --next flat preview)
   // store a zero normal, and normalize(vec3(0)) is NaN. With no displacement that
   // NaN still propagates (NaN * 0 == NaN) into pos -> gl_Position, clipping the

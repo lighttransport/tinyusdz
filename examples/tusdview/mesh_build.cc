@@ -2,11 +2,16 @@
 #include "mesh_build.hh"
 
 #include "displacement_bake.hh"
+#include "lightrt_mtlx_bridge.hh"
+#include "texture_tools.hh"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <unordered_map>
@@ -14,6 +19,7 @@
 #include "light3d/math.h"
 #include "skinning.hh"  // InbetweenSamples, CollectBlendShapeInbetweens
 #include "stage.hh"
+#include "core/prim.hh"
 #include "usdGeom.hh"
 #include "tydra/render-data-converter.hh"
 #include "tydra/render-data-shader.hh"
@@ -108,24 +114,163 @@ void MatToColMajor(const matrix4d& M, float out[16]) {
   }
 }
 
-// Read up to `n` floats of vertex item `item` from a float-typed VertexAttribute.
+float HalfToFloat(uint16_t h);
+
+size_t VertexAttributeComponentCount(tydra::VertexAttributeFormat format) {
+  switch (format) {
+    case tydra::VertexAttributeFormat::Bool:
+    case tydra::VertexAttributeFormat::Char:
+    case tydra::VertexAttributeFormat::Byte:
+    case tydra::VertexAttributeFormat::Short:
+    case tydra::VertexAttributeFormat::Ushort:
+    case tydra::VertexAttributeFormat::Half:
+    case tydra::VertexAttributeFormat::Float:
+    case tydra::VertexAttributeFormat::Int:
+    case tydra::VertexAttributeFormat::Uint:
+    case tydra::VertexAttributeFormat::Double:
+      return 1;
+    case tydra::VertexAttributeFormat::Char2:
+    case tydra::VertexAttributeFormat::Byte2:
+    case tydra::VertexAttributeFormat::Short2:
+    case tydra::VertexAttributeFormat::Ushort2:
+    case tydra::VertexAttributeFormat::Half2:
+    case tydra::VertexAttributeFormat::Vec2:
+    case tydra::VertexAttributeFormat::Ivec2:
+    case tydra::VertexAttributeFormat::Uvec2:
+    case tydra::VertexAttributeFormat::Dvec2:
+      return 2;
+    case tydra::VertexAttributeFormat::Char3:
+    case tydra::VertexAttributeFormat::Byte3:
+    case tydra::VertexAttributeFormat::Short3:
+    case tydra::VertexAttributeFormat::Ushort3:
+    case tydra::VertexAttributeFormat::Half3:
+    case tydra::VertexAttributeFormat::Vec3:
+    case tydra::VertexAttributeFormat::Ivec3:
+    case tydra::VertexAttributeFormat::Uvec3:
+    case tydra::VertexAttributeFormat::Dvec3:
+      return 3;
+    case tydra::VertexAttributeFormat::Char4:
+    case tydra::VertexAttributeFormat::Byte4:
+    case tydra::VertexAttributeFormat::Short4:
+    case tydra::VertexAttributeFormat::Ushort4:
+    case tydra::VertexAttributeFormat::Half4:
+    case tydra::VertexAttributeFormat::Vec4:
+    case tydra::VertexAttributeFormat::Ivec4:
+    case tydra::VertexAttributeFormat::Uvec4:
+    case tydra::VertexAttributeFormat::Dvec4:
+    case tydra::VertexAttributeFormat::Mat2:
+    case tydra::VertexAttributeFormat::Dmat2:
+      return 4;
+    case tydra::VertexAttributeFormat::Mat3:
+    case tydra::VertexAttributeFormat::Dmat3:
+      return 9;
+    case tydra::VertexAttributeFormat::Mat4:
+    case tydra::VertexAttributeFormat::Dmat4:
+      return 16;
+    default:
+      return 0;
+  }
+}
+
+// Read up to `n` numeric components of vertex item `item` as floats.
 // Missing/out-of-range components are zero.
 void ReadFloats(const tydra::VertexAttribute& a, size_t item, int n, float* out) {
   for (int k = 0; k < n; ++k) out[k] = 0.0f;
   if (a.empty()) return;
-  size_t comps = a.format_size() / sizeof(float);
+  const size_t comps = VertexAttributeComponentCount(a.format);
   if (comps == 0) return;
   if (item >= a.vertex_count()) return;
-  const float* f = reinterpret_cast<const float*>(a.buffer());
-  if (!f) return;
-  for (int k = 0; k < n && static_cast<size_t>(k) < comps; ++k) {
-    out[k] = f[item * comps + static_cast<size_t>(k)];
+  const uint8_t* raw = reinterpret_cast<const uint8_t*>(a.buffer());
+  if (!raw) return;
+  const size_t base = item * comps;
+  const int m = std::min<int>(n, static_cast<int>(comps));
+  for (int k = 0; k < m; ++k) {
+    const size_t idx = base + static_cast<size_t>(k);
+    switch (a.format) {
+      case tydra::VertexAttributeFormat::Bool:
+        out[k] = raw[idx] ? 1.0f : 0.0f;
+        break;
+      case tydra::VertexAttributeFormat::Char:
+      case tydra::VertexAttributeFormat::Char2:
+      case tydra::VertexAttributeFormat::Char3:
+      case tydra::VertexAttributeFormat::Char4:
+        out[k] = static_cast<float>(reinterpret_cast<const int8_t*>(raw)[idx]);
+        break;
+      case tydra::VertexAttributeFormat::Byte:
+      case tydra::VertexAttributeFormat::Byte2:
+      case tydra::VertexAttributeFormat::Byte3:
+      case tydra::VertexAttributeFormat::Byte4:
+        out[k] = static_cast<float>(reinterpret_cast<const uint8_t*>(raw)[idx]);
+        break;
+      case tydra::VertexAttributeFormat::Short:
+      case tydra::VertexAttributeFormat::Short2:
+      case tydra::VertexAttributeFormat::Short3:
+      case tydra::VertexAttributeFormat::Short4:
+        out[k] = static_cast<float>(reinterpret_cast<const int16_t*>(raw)[idx]);
+        break;
+      case tydra::VertexAttributeFormat::Ushort:
+      case tydra::VertexAttributeFormat::Ushort2:
+      case tydra::VertexAttributeFormat::Ushort3:
+      case tydra::VertexAttributeFormat::Ushort4:
+        out[k] = static_cast<float>(reinterpret_cast<const uint16_t*>(raw)[idx]);
+        break;
+      case tydra::VertexAttributeFormat::Half:
+      case tydra::VertexAttributeFormat::Half2:
+      case tydra::VertexAttributeFormat::Half3:
+      case tydra::VertexAttributeFormat::Half4:
+        out[k] = HalfToFloat(reinterpret_cast<const uint16_t*>(raw)[idx]);
+        break;
+      case tydra::VertexAttributeFormat::Float:
+      case tydra::VertexAttributeFormat::Vec2:
+      case tydra::VertexAttributeFormat::Vec3:
+      case tydra::VertexAttributeFormat::Vec4:
+      case tydra::VertexAttributeFormat::Mat2:
+      case tydra::VertexAttributeFormat::Mat3:
+      case tydra::VertexAttributeFormat::Mat4:
+        out[k] = reinterpret_cast<const float*>(raw)[idx];
+        break;
+      case tydra::VertexAttributeFormat::Int:
+      case tydra::VertexAttributeFormat::Ivec2:
+      case tydra::VertexAttributeFormat::Ivec3:
+      case tydra::VertexAttributeFormat::Ivec4:
+        out[k] = static_cast<float>(reinterpret_cast<const int32_t*>(raw)[idx]);
+        break;
+      case tydra::VertexAttributeFormat::Uint:
+      case tydra::VertexAttributeFormat::Uvec2:
+      case tydra::VertexAttributeFormat::Uvec3:
+      case tydra::VertexAttributeFormat::Uvec4:
+        out[k] = static_cast<float>(reinterpret_cast<const uint32_t*>(raw)[idx]);
+        break;
+      case tydra::VertexAttributeFormat::Double:
+      case tydra::VertexAttributeFormat::Dvec2:
+      case tydra::VertexAttributeFormat::Dvec3:
+      case tydra::VertexAttributeFormat::Dvec4:
+      case tydra::VertexAttributeFormat::Dmat2:
+      case tydra::VertexAttributeFormat::Dmat3:
+      case tydra::VertexAttributeFormat::Dmat4:
+        out[k] = static_cast<float>(reinterpret_cast<const double*>(raw)[idx]);
+        break;
+      default:
+        return;
+    }
   }
 }
 
 bool AttrUsableAsVertex(const tydra::VertexAttribute& a, size_t vertexCount) {
   return !a.empty() && a.is_vertex() && a.vertex_count() == vertexCount &&
-         (a.format_size() % sizeof(float)) == 0;
+         VertexAttributeComponentCount(a.format) > 0;
+}
+
+void WriteFloat3Attr(const tydra::VertexAttribute& a, size_t srcItem,
+                     size_t dstItem, std::vector<float>* out) {
+  if (!out || out->empty()) return;
+  const size_t dst = dstItem * 3;
+  if (dst + 2 >= out->size()) return;
+  float v[3] = {0.0f, 0.0f, 0.0f};
+  ReadFloats(a, srcItem, 3, v);
+  (*out)[dst + 0] = v[0];
+  (*out)[dst + 1] = v[1];
+  (*out)[dst + 2] = v[2];
 }
 
 // Collect mesh_id -> world matrix from the node hierarchy (first occurrence).
@@ -151,6 +296,54 @@ int MapWrap(tydra::UVTexture::WrapMode w) {
     default:
       return static_cast<int>(WrapMode::ClampToEdge);
   }
+}
+
+int TextureChannelIndex(tydra::UVTexture::Channel ch, int fallback) {
+  switch (ch) {
+    case tydra::UVTexture::Channel::R: return 0;
+    case tydra::UVTexture::Channel::G: return 1;
+    case tydra::UVTexture::Channel::B: return 2;
+    case tydra::UVTexture::Channel::A: return 3;
+    case tydra::UVTexture::Channel::RGB:
+    case tydra::UVTexture::Channel::RGBA:
+    default: return fallback;
+  }
+}
+
+DrawUvXformCPU MapUvXform(const tydra::UVTexture& uv) {
+  DrawUvXformCPU out;
+  if (!uv.has_transform2d) return out;
+  // Tydra stores UsdTransform2d as a 3x3 transform. Keep the affine portion and
+  // use it consistently in the preview shaders and CPU RT sampler.
+  out.m00 = uv.transform.m[0][0];
+  out.m01 = uv.transform.m[0][1];
+  out.m10 = uv.transform.m[1][0];
+  out.m11 = uv.transform.m[1][1];
+  out.tx = uv.transform.m[2][0];
+  out.ty = uv.transform.m[2][1];
+  return out;
+}
+
+void CopyTexSample(const tydra::UVTexture& uv, DrawTexSampleCPU* out) {
+  if (!out) return;
+  out->uv = MapUvXform(uv);
+  for (int i = 0; i < 4; ++i) {
+    out->scale[i] = uv.scale[i];
+    out->bias[i] = uv.bias[i];
+  }
+}
+
+void CopyTexSample(const tydra::RenderScene& rs, int texId,
+                   DrawTexSampleCPU* out) {
+  if (texId < 0 || static_cast<size_t>(texId) >= rs.textures.size()) return;
+  CopyTexSample(rs.textures[static_cast<size_t>(texId)], out);
+}
+
+DrawUvXformCPU MapUvXform(const tydra::RenderScene& rs, int texId) {
+  if (texId < 0 || static_cast<size_t>(texId) >= rs.textures.size()) {
+    return DrawUvXformCPU{};
+  }
+  return MapUvXform(rs.textures[static_cast<size_t>(texId)]);
 }
 
 bool IsSrgb(tydra::ColorSpace cs) {
@@ -259,6 +452,34 @@ void FinalizeInfluenceTexture(DrawMeshCPU* dm) {
   dm->influenceTexels.resize(padded, 0.0f);
 }
 
+// IEEE 754 binary16 -> float32 (EXR half texel buffers).
+float HalfToFloat(uint16_t h) {
+  const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+  uint32_t exp = (h >> 10) & 0x1Fu;
+  uint32_t man = h & 0x3FFu;
+  uint32_t bits;
+  if (exp == 0) {
+    if (man == 0) {
+      bits = sign;  // +-0
+    } else {
+      exp = 127 - 15 + 1;
+      while (!(man & 0x400u)) {
+        man <<= 1;
+        --exp;
+      }
+      man &= 0x3FFu;
+      bits = sign | (exp << 23) | (man << 13);
+    }
+  } else if (exp == 31) {
+    bits = sign | 0x7F800000u | (man << 13);  // inf/nan
+  } else {
+    bits = sign | ((exp - 15 + 127) << 23) | (man << 13);
+  }
+  float f;
+  std::memcpy(&f, &bits, sizeof(f));
+  return f;
+}
+
 // Decode a TextureImage's buffer into an RGBA8 light3d::Image. Returns false if
 // the image cannot be decoded (caller skips it).
 bool DecodeToRGBA8(const tydra::RenderScene& rs, const tydra::TextureImage& img,
@@ -307,6 +528,22 @@ bool DecodeToRGBA8(const tydra::RenderScene& rs, const tydra::TextureImage& img,
     }
     return true;
   }
+  if (img.texelComponentType == tydra::ComponentType::UInt16) {
+    const size_t need = npix * ch * sizeof(uint16_t);
+    if (buf.data.size() < need) return false;
+    const uint16_t* p = reinterpret_cast<const uint16_t*>(buf.data.data());
+    constexpr float kScale = 255.0f / 65535.0f;
+    for (size_t i = 0; i < npix; ++i) {
+      float c0 = float(p[i * ch + 0]) * kScale;
+      float c1 = ch > 1 ? float(p[i * ch + 1]) * kScale : c0;
+      float c2 = ch > 2 ? float(p[i * ch + 2]) * kScale : c0;
+      float c3 = ch > 3 ? float(p[i * ch + 3]) * kScale : 255.0f;
+      if (ch == 1) { c1 = c0; c2 = c0; c3 = 255.0f; }
+      else if (ch == 2) { c2 = c0; c1 = c0; c3 = float(p[i * ch + 1]) * kScale; }
+      store(i, c0, c1, c2, c3);
+    }
+    return true;
+  }
   if (img.texelComponentType == tydra::ComponentType::Float) {
     const size_t need = npix * ch * sizeof(float);
     if (buf.data.size() < need) return false;
@@ -322,7 +559,110 @@ bool DecodeToRGBA8(const tydra::RenderScene& rs, const tydra::TextureImage& img,
     }
     return true;
   }
+  if (img.texelComponentType == tydra::ComponentType::Half) {
+    const size_t need = npix * ch * sizeof(uint16_t);
+    if (buf.data.size() < need) return false;
+    const uint16_t* p = reinterpret_cast<const uint16_t*>(buf.data.data());
+    for (size_t i = 0; i < npix; ++i) {
+      float c0 = HalfToFloat(p[i * ch + 0]) * 255.0f;
+      float c1 = ch > 1 ? HalfToFloat(p[i * ch + 1]) * 255.0f : c0;
+      float c2 = ch > 2 ? HalfToFloat(p[i * ch + 2]) * 255.0f : c0;
+      float c3 = ch > 3 ? HalfToFloat(p[i * ch + 3]) * 255.0f : 255.0f;
+      if (ch == 1) { c1 = c0; c2 = c0; c3 = 255.0f; }
+      else if (ch == 2) { c2 = c0; c1 = c0; c3 = HalfToFloat(p[i * ch + 1]) * 255.0f; }
+      store(i, c0, c1, c2, c3);
+    }
+    return true;
+  }
   return false;  // unsupported texel type
+}
+
+// Decode a TextureImage to float RGB (interleaved, top-down) WITHOUT the 8-bit
+// clamp of DecodeToRGBA8 — HDR texels pass through. u8 sources are sRGB-decoded
+// when tagged sRGB. Used for the DomeLight IBL bake.
+bool DecodeToFloatRGB(const tydra::RenderScene& rs,
+                      const tydra::TextureImage& img, int* outW, int* outH,
+                      std::vector<float>* out) {
+  if (!out || img.buffer_id < 0 ||
+      static_cast<size_t>(img.buffer_id) >= rs.buffers.size()) {
+    return false;
+  }
+  if (!img.decoded || img.width <= 0 || img.height <= 0 || img.channels <= 0) {
+    return false;
+  }
+  const tydra::BufferData& buf = rs.buffers[static_cast<size_t>(img.buffer_id)];
+  const size_t w = static_cast<size_t>(img.width);
+  const size_t h = static_cast<size_t>(img.height);
+  const size_t ch = static_cast<size_t>(img.channels);
+  const size_t npix = w * h;
+  out->resize(npix * 3);
+
+  if (img.texelComponentType == tydra::ComponentType::Float) {
+    if (buf.data.size() < npix * ch * sizeof(float)) return false;
+    const float* p = reinterpret_cast<const float*>(buf.data.data());
+    for (size_t i = 0; i < npix; ++i) {
+      const float c0 = p[i * ch + 0];
+      (*out)[i * 3 + 0] = c0;
+      (*out)[i * 3 + 1] = ch > 1 ? p[i * ch + 1] : c0;
+      (*out)[i * 3 + 2] = ch > 2 ? p[i * ch + 2] : c0;
+      if (ch == 2) { (*out)[i * 3 + 1] = c0; (*out)[i * 3 + 2] = c0; }
+    }
+  } else if (img.texelComponentType == tydra::ComponentType::Half) {
+    if (buf.data.size() < npix * ch * sizeof(uint16_t)) return false;
+    const uint16_t* p = reinterpret_cast<const uint16_t*>(buf.data.data());
+    for (size_t i = 0; i < npix; ++i) {
+      const float c0 = HalfToFloat(p[i * ch + 0]);
+      (*out)[i * 3 + 0] = c0;
+      (*out)[i * 3 + 1] = ch > 1 ? HalfToFloat(p[i * ch + 1]) : c0;
+      (*out)[i * 3 + 2] = ch > 2 ? HalfToFloat(p[i * ch + 2]) : c0;
+      if (ch == 2) { (*out)[i * 3 + 1] = c0; (*out)[i * 3 + 2] = c0; }
+    }
+  } else if (img.texelComponentType == tydra::ComponentType::UInt8) {
+    if (buf.data.size() < npix * ch) return false;
+    const bool srgb = IsSrgb(img.colorSpace);
+    float lut[256];
+    for (int v = 0; v < 256; ++v) {
+      const float f = static_cast<float>(v) / 255.0f;
+      lut[v] = srgb ? (f <= 0.04045f ? f / 12.92f
+                                     : std::pow((f + 0.055f) / 1.055f, 2.4f))
+                    : f;
+    }
+    const uint8_t* p = buf.data.data();
+    for (size_t i = 0; i < npix; ++i) {
+      const float c0 = lut[p[i * ch + 0]];
+      (*out)[i * 3 + 0] = c0;
+      (*out)[i * 3 + 1] = ch > 1 ? lut[p[i * ch + 1]] : c0;
+      (*out)[i * 3 + 2] = ch > 2 ? lut[p[i * ch + 2]] : c0;
+      if (ch == 2) { (*out)[i * 3 + 1] = c0; (*out)[i * 3 + 2] = c0; }
+    }
+  } else {
+    return false;
+  }
+  if (outW) *outW = img.width;
+  if (outH) *outH = img.height;
+  return true;
+}
+
+bool AddImageTexture(const tydra::RenderScene& rs, int imageId, int wrapS,
+                     int wrapT, DrawScene* out, int* drawTexId) {
+  if (drawTexId) *drawTexId = -1;
+  if (!out || imageId < 0 || static_cast<size_t>(imageId) >= rs.images.size()) {
+    return false;
+  }
+  const tydra::TextureImage& img = rs.images[static_cast<size_t>(imageId)];
+  DrawTextureCPU tex;
+  if (!DecodeToRGBA8(rs, img, &tex.image)) {
+    return false;
+  }
+  tex.assetIdentifier = img.asset_identifier;
+  tex.renderImageId = imageId;
+  tex.srgb = IsSrgb(img.colorSpace);
+  tex.wrapS = wrapS;
+  tex.wrapT = wrapT;
+  const int id = static_cast<int>(out->textures.size());
+  out->textures.push_back(std::move(tex));
+  if (drawTexId) *drawTexId = id;
+  return true;
 }
 
 size_t TextureBytes(const light3d::Image& img) {
@@ -348,6 +688,12 @@ bool ResizeDrawImage(light3d::Image* img, int dstW, int dstH, bool srgb,
     return false;
   }
   if (img->width == dstW && img->height == dstH) return true;
+  // Prefer the vendored tir resizer (sRGB-aware, premultiplied-alpha,
+  // higher-quality filters); fall back to the Tydra stb-based resize when
+  // built without textools or on failure.
+  if (TexToolsAvailable() && TexToolsResizeRGBA8(img, dstW, dstH, srgb, err)) {
+    return true;
+  }
   tinyusdz::Image src;
   src.width = img->width;
   src.height = img->height;
@@ -400,6 +746,9 @@ void NormalizeUdimTiles(DrawTextureCPU* tex, bool srgb, DrawScene* out) {
   InitUdimLookup(tex);
 }
 
+#if !defined(TUSDVIEW_WITH_TEXTOOLS)
+// Minimal fallback BC1/BC3 encoders, used only when tusdview is built without
+// the vendored texcomp library.
 uint16_t PackRGB565(uint8_t r, uint8_t g, uint8_t b) {
   return uint16_t(((uint16_t(r) >> 3) << 11) | ((uint16_t(g) >> 2) << 5) |
                   (uint16_t(b) >> 3));
@@ -496,8 +845,10 @@ void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
   }
   for (int i = 0; i < 6; ++i) out[2 + i] = uint8_t((bits >> (8 * i)) & 255);
 }
+#endif  // !TUSDVIEW_WITH_TEXTOOLS
 
-bool EncodeBCn(const light3d::Image& img, DrawCompressedImageCPU* out) {
+bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
+               DrawCompressedImageCPU* out) {
   if (!out || img.width <= 0 || img.height <= 0 || img.channels != 4 ||
       img.data.empty()) {
     return false;
@@ -509,6 +860,15 @@ bool EncodeBCn(const light3d::Image& img, DrawCompressedImageCPU* out) {
       break;
     }
   }
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+  const DrawCompressedFormat format =
+      preferBc7 ? DrawCompressedFormat::BC7
+                : (opaque ? DrawCompressedFormat::BC1
+                          : DrawCompressedFormat::BC3);
+  return TexToolsCompress(img, srgb, format, out);
+#else
+  (void)srgb;
+  (void)preferBc7;  // BC7 needs the vendored texcomp encoder.
   out->format = opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
   out->width = img.width;
   out->height = img.height;
@@ -541,16 +901,17 @@ bool EncodeBCn(const light3d::Image& img, DrawCompressedImageCPU* out) {
     }
   }
   return true;
+#endif  // TUSDVIEW_WITH_TEXTOOLS
 }
 
-void CompressTexture(DrawTextureCPU* tex) {
+void CompressTexture(DrawTextureCPU* tex, bool preferBc7) {
   if (!tex) return;
   if (tex->isUdim) {
     for (DrawUdimTileCPU& tile : tex->udimTiles) {
-      EncodeBCn(tile.image, &tile.compressed);
+      EncodeBCn(tile.image, tex->srgb, preferBc7, &tile.compressed);
     }
   }
-  EncodeBCn(tex->image, &tex->compressed);
+  EncodeBCn(tex->image, tex->srgb, preferBc7, &tex->compressed);
 }
 
 void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out) {
@@ -609,10 +970,109 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
     }
   }
 
-  if (opt.compression == TextureCompressionMode::BCn) {
+  if (opt.compression != TextureCompressionMode::Off) {
+    const bool preferBc7 = opt.compression == TextureCompressionMode::BC7;
     for (DrawTextureCPU& tex : out->textures) {
       tex.requestedCompressed = true;
-      CompressTexture(&tex);
+      CompressTexture(&tex, preferBc7);
+    }
+  }
+}
+
+// Classify texture usage from the built materials, then (with --texture-mips)
+// build content-aware CPU mip chains and per-level compressed payloads. Must
+// run after BuildDrawMaterials on every load path (one-shot and streaming) so
+// both produce identical DrawScenes; texture usage (normal map / ORM packing /
+// alpha-tested) is only known once materials exist.
+void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
+  if (!out) return;
+  auto texAt = [&](int idx) -> DrawTextureCPU* {
+    if (idx < 0 || static_cast<size_t>(idx) >= out->textures.size()) {
+      return nullptr;
+    }
+    return &out->textures[static_cast<size_t>(idx)];
+  };
+  for (const DrawMaterialCPU& m : out->materials) {
+    if (DrawTextureCPU* t = texAt(m.normalTex)) t->isNormalMap = true;
+    if (DrawTextureCPU* t = texAt(m.coatNormalTex)) t->isNormalMap = true;
+    if (DrawTextureCPU* t = texAt(m.metalRoughTex)) {
+      // Packed ORM map: the roughness channel minifies variance-aware (reduces
+      // specular aliasing); other channels keep the filtered average.
+      if (m.roughnessChannel >= 0 && m.roughnessChannel < 4) {
+        t->channelOp[m.roughnessChannel] = 2;  // TP_CH_ROUGHNESS
+      }
+    }
+    if (m.alphaMode == static_cast<int>(AlphaMode::Mask)) {
+      if (DrawTextureCPU* t = texAt(m.baseColorTex)) {
+        t->isAlphaTested = true;
+        t->alphaCutoff = m.alphaCutoff;
+      }
+    }
+  }
+  if (!opt.generateMips || !TexToolsAvailable()) return;
+  // Build the content-aware chain for one RGBA8 base image + its compressed
+  // per-level payloads (same block format as the base level).
+  auto buildOne = [&](const light3d::Image& base, const TexUsage& usage,
+                      bool srgb, std::vector<light3d::Image>* mips,
+                      DrawCompressedImageCPU* compressed,
+                      bool requestedCompressed) -> bool {
+    mips->clear();
+    if (!TexToolsBuildMips(base, usage, mips)) return false;
+    if (requestedCompressed && compressed &&
+        compressed->format != DrawCompressedFormat::None) {
+      compressed->mips.clear();
+      compressed->mips.reserve(mips->size());
+      bool ok = true;
+      for (const light3d::Image& mip : *mips) {
+        DrawCompressedImageCPU c;
+        if (!TexToolsCompress(mip, srgb, compressed->format, &c)) {
+          ok = false;
+          break;
+        }
+        DrawCompressedMipCPU lvl;
+        lvl.width = c.width;
+        lvl.height = c.height;
+        lvl.data = std::move(c.data);
+        compressed->mips.push_back(std::move(lvl));
+      }
+      if (!ok) compressed->mips.clear();  // base-only upload fallback
+    }
+    return true;
+  };
+  for (DrawTextureCPU& tex : out->textures) {
+    TexUsage usage;
+    usage.srgb = tex.srgb;
+    usage.normalMap = tex.isNormalMap;
+    usage.alphaTested = tex.isAlphaTested;
+    usage.alphaCutoff = tex.alphaCutoff;
+    usage.wrapS = tex.wrapS;
+    usage.wrapT = tex.wrapT;
+    for (int c = 0; c < 4; ++c) usage.channelOp[c] = tex.channelOp[c];
+    if (tex.isUdim) {
+      // Per-tile chains (tile dims were equalized by NormalizeUdimTiles, so
+      // every tile carries the same level count for the GL/VK array upload).
+      bool ok = true;
+      for (DrawUdimTileCPU& tile : tex.udimTiles) {
+        if (!buildOne(tile.image, usage, tex.srgb, &tile.mipImages,
+                      &tile.compressed, tex.requestedCompressed)) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) {
+        for (DrawUdimTileCPU& tile : tex.udimTiles) {
+          tile.mipImages.clear();
+          tile.compressed.mips.clear();
+        }
+        out->skipped.push_back("UDIM mip build failed: " +
+                               tex.assetIdentifier);
+      }
+    }
+    if (!buildOne(tex.image, usage, tex.srgb, &tex.mipImages, &tex.compressed,
+                  tex.requestedCompressed)) {
+      out->skipped.push_back("texture mip build failed: " +
+                             tex.assetIdentifier);
+      continue;
     }
   }
 }
@@ -626,13 +1086,18 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
                        std::vector<int>* drawTexMap,
                        const TextureRuntimeOptions& textureOptions) {
   drawTexMap->assign(rs.textures.size(), -1);
-  std::unordered_map<int64_t, int> imgToDrawTex;
-  std::unordered_map<int64_t, int> udimToDrawTex;
+  std::unordered_map<std::string, int> imgToDrawTex;
+  std::unordered_map<std::string, int> udimToDrawTex;
   for (size_t uvIdx = 0; uvIdx < rs.textures.size(); ++uvIdx) {
     const tydra::UVTexture& uv = rs.textures[uvIdx];
+    const int wrapS = MapWrap(uv.wrapS);
+    const int wrapT = MapWrap(uv.wrapT);
     if (uv.is_udim && uv.udim_texture_id >= 0 &&
         static_cast<size_t>(uv.udim_texture_id) < rs.udim_textures.size()) {
-      auto found = udimToDrawTex.find(uv.udim_texture_id);
+      const std::string key = std::to_string(uv.udim_texture_id) + "|" +
+                              std::to_string(wrapS) + "," +
+                              std::to_string(wrapT);
+      auto found = udimToDrawTex.find(key);
       if (found != udimToDrawTex.end()) {
         (*drawTexMap)[uvIdx] = found->second;
         continue;
@@ -647,9 +1112,11 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
 
       DrawTextureCPU tex;
       tex.isUdim = true;
+      tex.assetIdentifier = udim.asset_identifier;
+      tex.renderUdimId = static_cast<int>(uv.udim_texture_id);
       tex.srgb = true;
-      tex.wrapS = MapWrap(uv.wrapS);
-      tex.wrapT = MapWrap(uv.wrapT);
+      tex.wrapS = wrapS;
+      tex.wrapT = wrapT;
       for (const auto& kv : tileIds) {
         const uint32_t udimId = kv.first;
         const int32_t imgIndex = kv.second;
@@ -662,11 +1129,16 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
         tile.udim = udimId;
         tile.u = (udimId - 1001u) % 10u;
         tile.v = (udimId - 1001u) / 10u;
+        tile.assetIdentifier = img.asset_identifier;
+        tile.renderImageId = static_cast<int>(imgIndex);
         if (!DecodeToRGBA8(rs, img, &tile.image)) {
           out->skipped.push_back("UDIM tile " + std::to_string(udimId) +
                                  " for texture '" + uv.prim_name +
                                  "': undecoded/unsupported image");
           continue;
+        }
+        if (tex.assetIdentifier.empty()) {
+          tex.assetIdentifier = img.asset_identifier;
         }
         tex.srgb = IsSrgb(img.colorSpace);
         tex.udimTiles.push_back(std::move(tile));
@@ -679,7 +1151,7 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
       NormalizeUdimTiles(&tex, tex.srgb, out);
       int drawIdx = static_cast<int>(out->textures.size());
       out->textures.push_back(std::move(tex));
-      udimToDrawTex[uv.udim_texture_id] = drawIdx;
+      udimToDrawTex[key] = drawIdx;
       (*drawTexMap)[uvIdx] = drawIdx;
       continue;
     }
@@ -690,7 +1162,9 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
                              "': no image (possibly UDIM/unresolved)");
       continue;
     }
-    auto found = imgToDrawTex.find(imgId);
+    const std::string key = std::to_string(imgId) + "|" + std::to_string(wrapS) +
+                            "," + std::to_string(wrapT);
+    auto found = imgToDrawTex.find(key);
     if (found != imgToDrawTex.end()) {
       (*drawTexMap)[uvIdx] = found->second;
       continue;
@@ -702,12 +1176,14 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
                              "': undecoded/unsupported image");
       continue;
     }
+    tex.assetIdentifier = img.asset_identifier;
+    tex.renderImageId = static_cast<int>(imgId);
     tex.srgb = IsSrgb(img.colorSpace);
-    tex.wrapS = MapWrap(uv.wrapS);
-    tex.wrapT = MapWrap(uv.wrapT);
+    tex.wrapS = wrapS;
+    tex.wrapT = wrapT;
     int drawIdx = static_cast<int>(out->textures.size());
     out->textures.push_back(std::move(tex));
-    imgToDrawTex[imgId] = drawIdx;
+    imgToDrawTex[key] = drawIdx;
     (*drawTexMap)[uvIdx] = drawIdx;
   }
   ApplyTextureRuntimeOptions(textureOptions, out);
@@ -721,13 +1197,73 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
     if (texId < 0 || static_cast<size_t>(texId) >= drawTexMap.size()) return -1;
     return drawTexMap[static_cast<size_t>(texId)];
   };
+  auto channelFor = [&](int texId, int fallback) -> int {
+    if (texId < 0 || static_cast<size_t>(texId) >= rs.textures.size()) return -1;
+    return TextureChannelIndex(rs.textures[static_cast<size_t>(texId)].connectedOutputChannel,
+                               fallback);
+  };
+  auto addFloatParam = [&](DrawMaterialCPU* dm, const char* shader,
+                           const char* name, const tydra::ShaderParam<float>& p,
+                           int fallbackChannel = 0) {
+    if (!dm) return;
+    DrawMaterialParamCPU param;
+    param.shader = shader;
+    param.name = name;
+    param.type = DrawMaterialParamType::Float;
+    param.value[0] = p.value;
+    param.texture = mapTex(p.texture_id);
+    param.renderTexture = p.texture_id;
+    param.channel = channelFor(p.texture_id, fallbackChannel);
+    CopyTexSample(rs, p.texture_id, &param.sample);
+    dm->params.push_back(std::move(param));
+  };
+  auto addVec3Param = [&](DrawMaterialCPU* dm, const char* shader,
+                          const char* name, const tydra::ShaderParam<tydra::vec3>& p) {
+    if (!dm) return;
+    DrawMaterialParamCPU param;
+    param.shader = shader;
+    param.name = name;
+    param.type = DrawMaterialParamType::Vec3;
+    param.value[0] = p.value[0];
+    param.value[1] = p.value[1];
+    param.value[2] = p.value[2];
+    param.value[3] = 1.0f;
+    param.texture = mapTex(p.texture_id);
+    param.renderTexture = p.texture_id;
+    param.channel = channelFor(p.texture_id, -1);
+    CopyTexSample(rs, p.texture_id, &param.sample);
+    dm->params.push_back(std::move(param));
+  };
 
   out->materials.reserve(rs.materials.size());
   for (const auto& mat : rs.materials) {
     DrawMaterialCPU dm;
     dm.name = mat.name;
+    dm.absPath = mat.abs_path;
+    dm.displayName = mat.display_name;
+    dm.hasUsdPreviewSurface = mat.surfaceShader.has_value();
+    dm.hasOpenPBRSurface = mat.openPBRShader.has_value();
+    dm.hasDisplacementOutput = mat.has_displacement;
+    dm.hasVolumeOutput = mat.has_volume;
+    dm.displacementShaderPath = mat.displacement_shader_path;
+    dm.volumeShaderPath = mat.volume_shader_path;
     if (mat.surfaceShader.has_value()) {
       const tydra::PreviewSurfaceShader& s = *mat.surfaceShader;
+      addVec3Param(&dm, "UsdPreviewSurface", "diffuseColor", s.diffuseColor);
+      addVec3Param(&dm, "UsdPreviewSurface", "emissiveColor", s.emissiveColor);
+      addVec3Param(&dm, "UsdPreviewSurface", "specularColor", s.specularColor);
+      addFloatParam(&dm, "UsdPreviewSurface", "metallic", s.metallic, 2);
+      addFloatParam(&dm, "UsdPreviewSurface", "roughness", s.roughness, 1);
+      addFloatParam(&dm, "UsdPreviewSurface", "clearcoat", s.clearcoat, 0);
+      addFloatParam(&dm, "UsdPreviewSurface", "clearcoatRoughness",
+                    s.clearcoatRoughness, 0);
+      addFloatParam(&dm, "UsdPreviewSurface", "opacity", s.opacity, 3);
+      addFloatParam(&dm, "UsdPreviewSurface", "opacityThreshold",
+                    s.opacityThreshold, 0);
+      addFloatParam(&dm, "UsdPreviewSurface", "ior", s.ior, 0);
+      addVec3Param(&dm, "UsdPreviewSurface", "normal", s.normal);
+      addFloatParam(&dm, "UsdPreviewSurface", "displacement", s.displacement, 0);
+      addFloatParam(&dm, "UsdPreviewSurface", "occlusion", s.occlusion, 0);
       dm.baseColorTex = mapTex(s.diffuseColor.texture_id);
       dm.emissiveTex = mapTex(s.emissiveColor.texture_id);
       dm.normalTex = mapTex(s.normal.texture_id);
@@ -735,6 +1271,44 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       if (mrTex < 0) mrTex = mapTex(s.roughness.texture_id);
       dm.metalRoughTex = mrTex;
       dm.displacementTex = mapTex(s.displacement.texture_id);
+      CopyTexSample(rs, s.diffuseColor.texture_id, &dm.baseColorSample);
+      CopyTexSample(rs, s.emissiveColor.texture_id, &dm.emissiveSample);
+      CopyTexSample(rs, s.normal.texture_id, &dm.normalSample);
+      if (s.metallic.texture_id >= 0) {
+        CopyTexSample(rs, s.metallic.texture_id, &dm.metalRoughSample);
+      } else {
+        CopyTexSample(rs, s.roughness.texture_id, &dm.metalRoughSample);
+      }
+      if (s.normal.texture_id >= 0) {
+        for (int i = 0; i < 3; ++i) {
+          // UsdPreviewSurface normal maps default to unpacking [0,1] -> [-1,1].
+          // If authored, Tydra's scale/bias above overwrites these values.
+          if (dm.normalSample.scale[i] == 1.0f && dm.normalSample.bias[i] == 0.0f) {
+            dm.normalSample.scale[i] = 2.0f;
+            dm.normalSample.bias[i] = -1.0f;
+          }
+        }
+      }
+      if (s.metallic.texture_id >= 0 &&
+          static_cast<size_t>(s.metallic.texture_id) < rs.textures.size()) {
+        const tydra::UVTexture& mt =
+            rs.textures[static_cast<size_t>(s.metallic.texture_id)];
+        dm.metallicChannel = TextureChannelIndex(mt.connectedOutputChannel, 2);
+        dm.metallicTexScale = mt.scale[dm.metallicChannel];
+        dm.metallicTexBias = mt.bias[dm.metallicChannel];
+      }
+      if (s.roughness.texture_id >= 0 &&
+          static_cast<size_t>(s.roughness.texture_id) < rs.textures.size()) {
+        const tydra::UVTexture& rt =
+            rs.textures[static_cast<size_t>(s.roughness.texture_id)];
+        dm.roughnessChannel = TextureChannelIndex(rt.connectedOutputChannel, 1);
+        dm.roughnessTexScale = rt.scale[dm.roughnessChannel];
+        dm.roughnessTexBias = rt.bias[dm.roughnessChannel];
+        if (s.metallic.texture_id < 0) {
+          CopyTexSample(rt, &dm.metalRoughSample);
+        }
+      }
+      dm.displacementUv = MapUvXform(rs, s.displacement.texture_id);
       dm.displacementConst = s.displacement.value;
       // Displacement maps connect outputs:r (channel 0); honor that channel's
       // UVTexture scale/bias so the viewer centers the height like tusdrender.
@@ -772,22 +1346,400 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
       }
     } else if (mat.openPBRShader.has_value()) {
       const tydra::OpenPBRSurfaceShader& s = *mat.openPBRShader;
-      dm.baseColor[0] = s.base_color.value[0];
-      dm.baseColor[1] = s.base_color.value[1];
-      dm.baseColor[2] = s.base_color.value[2];
-      dm.metallic = s.base_metalness.value;
-      dm.roughness = s.base_roughness.value;
-      dm.emissive[0] = s.emission_color.value[0];
-      dm.emissive[1] = s.emission_color.value[1];
-      dm.emissive[2] = s.emission_color.value[2];
-      dm.alpha = s.opacity.value;
+      dm.materialXNodeGraphJson = s.nodeGraphJson;
+      addFloatParam(&dm, "OpenPBRSurface", "base_weight", s.base_weight, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "base_color", s.base_color);
+      addFloatParam(&dm, "OpenPBRSurface", "base_roughness", s.base_roughness, 1);
+      addFloatParam(&dm, "OpenPBRSurface", "base_metalness", s.base_metalness, 2);
+      addFloatParam(&dm, "OpenPBRSurface", "base_diffuse_roughness",
+                    s.base_diffuse_roughness, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "specular_weight", s.specular_weight, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "specular_color", s.specular_color);
+      addFloatParam(&dm, "OpenPBRSurface", "specular_roughness",
+                    s.specular_roughness, 1);
+      addFloatParam(&dm, "OpenPBRSurface", "specular_ior", s.specular_ior, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "specular_ior_level",
+                    s.specular_ior_level, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "specular_anisotropy",
+                    s.specular_anisotropy, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "specular_rotation",
+                    s.specular_rotation, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "specular_roughness_anisotropy",
+                    s.specular_roughness_anisotropy, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "transmission_weight",
+                    s.transmission_weight, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "transmission_color",
+                   s.transmission_color);
+      addFloatParam(&dm, "OpenPBRSurface", "transmission_depth",
+                    s.transmission_depth, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "transmission_scatter",
+                   s.transmission_scatter);
+      addFloatParam(&dm, "OpenPBRSurface", "transmission_scatter_anisotropy",
+                    s.transmission_scatter_anisotropy, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "transmission_dispersion",
+                    s.transmission_dispersion, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "transmission_dispersion_abbe_number",
+                    s.transmission_dispersion_abbe_number, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "transmission_dispersion_scale",
+                    s.transmission_dispersion_scale, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "subsurface_weight",
+                    s.subsurface_weight, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "subsurface_color",
+                   s.subsurface_color);
+      addFloatParam(&dm, "OpenPBRSurface", "subsurface_radius",
+                    s.subsurface_radius, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "subsurface_radius_scale",
+                   s.subsurface_radius_scale);
+      addFloatParam(&dm, "OpenPBRSurface", "subsurface_scale",
+                    s.subsurface_scale, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "subsurface_anisotropy",
+                    s.subsurface_anisotropy, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "subsurface_scatter_anisotropy",
+                    s.subsurface_scatter_anisotropy, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "sheen_weight", s.sheen_weight, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "sheen_color", s.sheen_color);
+      addFloatParam(&dm, "OpenPBRSurface", "sheen_roughness",
+                    s.sheen_roughness, 1);
+      addFloatParam(&dm, "OpenPBRSurface", "fuzz_weight", s.fuzz_weight, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "fuzz_color", s.fuzz_color);
+      addFloatParam(&dm, "OpenPBRSurface", "fuzz_roughness", s.fuzz_roughness, 1);
+      addFloatParam(&dm, "OpenPBRSurface", "thin_film_weight",
+                    s.thin_film_weight, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "thin_film_thickness",
+                    s.thin_film_thickness, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "thin_film_ior", s.thin_film_ior, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_weight", s.coat_weight, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "coat_color", s.coat_color);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_roughness", s.coat_roughness, 1);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_anisotropy",
+                    s.coat_anisotropy, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_rotation", s.coat_rotation, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_ior", s.coat_ior, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_affect_color",
+                    s.coat_affect_color, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_affect_roughness",
+                    s.coat_affect_roughness, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_roughness_anisotropy",
+                    s.coat_roughness_anisotropy, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "coat_darkening", s.coat_darkening, 0);
+      addFloatParam(&dm, "OpenPBRSurface", "emission_luminance",
+                    s.emission_luminance, 0);
+      addVec3Param(&dm, "OpenPBRSurface", "emission_color", s.emission_color);
+      addFloatParam(&dm, "OpenPBRSurface", "opacity", s.opacity, 3);
+      addVec3Param(&dm, "OpenPBRSurface", "normal", s.normal);
+      addVec3Param(&dm, "OpenPBRSurface", "tangent", s.tangent);
+      addVec3Param(&dm, "OpenPBRSurface", "coat_normal", s.coat_normal);
+      addVec3Param(&dm, "OpenPBRSurface", "coat_tangent", s.coat_tangent);
       dm.baseColorTex = mapTex(s.base_color.texture_id);
+      dm.emissiveTex = mapTex(s.emission_color.texture_id);
+      dm.normalTex = mapTex(s.normal.texture_id);
+      dm.coatNormalTex = mapTex(s.coat_normal.texture_id);
+      int mrTex = mapTex(s.base_metalness.texture_id);
+      if (mrTex < 0) mrTex = mapTex(s.base_roughness.texture_id);
+      dm.metalRoughTex = mrTex;
+      CopyTexSample(rs, s.base_color.texture_id, &dm.baseColorSample);
+      CopyTexSample(rs, s.emission_color.texture_id, &dm.emissiveSample);
+      CopyTexSample(rs, s.normal.texture_id, &dm.normalSample);
+      CopyTexSample(rs, s.coat_normal.texture_id, &dm.coatNormalSample);
+      if (s.base_metalness.texture_id >= 0) {
+        CopyTexSample(rs, s.base_metalness.texture_id, &dm.metalRoughSample);
+      } else {
+        CopyTexSample(rs, s.base_roughness.texture_id, &dm.metalRoughSample);
+      }
+      if (s.normal.texture_id >= 0) {
+        for (int i = 0; i < 3; ++i) {
+          if (dm.normalSample.scale[i] == 1.0f && dm.normalSample.bias[i] == 0.0f) {
+            dm.normalSample.scale[i] = 2.0f;
+            dm.normalSample.bias[i] = -1.0f;
+          }
+        }
+      }
+      if (s.coat_normal.texture_id >= 0) {
+        for (int i = 0; i < 3; ++i) {
+          if (dm.coatNormalSample.scale[i] == 1.0f &&
+              dm.coatNormalSample.bias[i] == 0.0f) {
+            dm.coatNormalSample.scale[i] = 2.0f;
+            dm.coatNormalSample.bias[i] = -1.0f;
+          }
+        }
+      }
+      if (s.base_metalness.texture_id >= 0 &&
+          static_cast<size_t>(s.base_metalness.texture_id) < rs.textures.size()) {
+        const tydra::UVTexture& mt =
+            rs.textures[static_cast<size_t>(s.base_metalness.texture_id)];
+        dm.metallicChannel = TextureChannelIndex(mt.connectedOutputChannel, 2);
+        dm.metallicTexScale = mt.scale[dm.metallicChannel];
+        dm.metallicTexBias = mt.bias[dm.metallicChannel];
+      }
+      if (s.base_roughness.texture_id >= 0 &&
+          static_cast<size_t>(s.base_roughness.texture_id) < rs.textures.size()) {
+        const tydra::UVTexture& rt =
+            rs.textures[static_cast<size_t>(s.base_roughness.texture_id)];
+        dm.roughnessChannel = TextureChannelIndex(rt.connectedOutputChannel, 1);
+        dm.roughnessTexScale = rt.scale[dm.roughnessChannel];
+        dm.roughnessTexBias = rt.bias[dm.roughnessChannel];
+        if (s.base_metalness.texture_id < 0) {
+          CopyTexSample(rt, &dm.metalRoughSample);
+        }
+      }
+      // Raster and current RT preview shaders multiply sampled textures by these
+      // factors. Use neutral factors when texture-driven, and keep OpenPBR's
+      // emission_luminance as the emissive intensity multiplier.
+      dm.baseColor[0] = dm.baseColorTex >= 0 ? 1.0f : s.base_color.value[0];
+      dm.baseColor[1] = dm.baseColorTex >= 0 ? 1.0f : s.base_color.value[1];
+      dm.baseColor[2] = dm.baseColorTex >= 0 ? 1.0f : s.base_color.value[2];
+      dm.metallic = (s.base_metalness.texture_id >= 0) ? 1.0f : s.base_metalness.value;
+      dm.roughness = (s.base_roughness.texture_id >= 0) ? 1.0f : s.base_roughness.value;
+      const float emissionScale = s.emission_luminance.value;
+      dm.emissive[0] =
+          (dm.emissiveTex >= 0 ? 1.0f : s.emission_color.value[0]) * emissionScale;
+      dm.emissive[1] =
+          (dm.emissiveTex >= 0 ? 1.0f : s.emission_color.value[1]) * emissionScale;
+      dm.emissive[2] =
+          (dm.emissiveTex >= 0 ? 1.0f : s.emission_color.value[2]) * emissionScale;
+      dm.alpha = s.opacity.value;
       dm.alphaMode = (mat.materialTag == tydra::MaterialTag::Translucent)
                          ? static_cast<int>(AlphaMode::Blend)
                          : static_cast<int>(AlphaMode::Opaque);
     }
     // else: leave default gray.
+    BakeLightRtOpenPBR(&dm);
     out->materials.push_back(std::move(dm));
+  }
+}
+
+DrawLightCPU::Type MapLightType(tydra::RenderLight::Type t) {
+  switch (t) {
+    case tydra::RenderLight::Type::Sphere: return DrawLightCPU::Type::Sphere;
+    case tydra::RenderLight::Type::Disk: return DrawLightCPU::Type::Disk;
+    case tydra::RenderLight::Type::Rect: return DrawLightCPU::Type::Rect;
+    case tydra::RenderLight::Type::Cylinder: return DrawLightCPU::Type::Cylinder;
+    case tydra::RenderLight::Type::Distant: return DrawLightCPU::Type::Distant;
+    case tydra::RenderLight::Type::Dome: return DrawLightCPU::Type::Dome;
+    case tydra::RenderLight::Type::Geometry: return DrawLightCPU::Type::Geometry;
+    case tydra::RenderLight::Type::Portal: return DrawLightCPU::Type::Portal;
+    case tydra::RenderLight::Type::Point:
+    default: return DrawLightCPU::Type::Point;
+  }
+}
+
+DrawLightCPU::DomeTextureFormat MapDomeTextureFormat(
+    tydra::RenderLight::DomeTextureFormat f) {
+  switch (f) {
+    case tydra::RenderLight::DomeTextureFormat::Latlong:
+      return DrawLightCPU::DomeTextureFormat::Latlong;
+    case tydra::RenderLight::DomeTextureFormat::MirroredBall:
+      return DrawLightCPU::DomeTextureFormat::MirroredBall;
+    case tydra::RenderLight::DomeTextureFormat::Angular:
+      return DrawLightCPU::DomeTextureFormat::Angular;
+    case tydra::RenderLight::DomeTextureFormat::Automatic:
+    default:
+      return DrawLightCPU::DomeTextureFormat::Automatic;
+  }
+}
+
+void Mat4fToColMajor(const tydra::mat4& M, float out[16]) {
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      out[i * 4 + j] = M.m[i][j];
+    }
+  }
+}
+
+float ClampLightTemperature(float kelvin) {
+  return std::max(1000.0f, std::min(40000.0f, kelvin));
+}
+
+void TemperatureRgb(float kelvin, float out[3]) {
+  const float temp = ClampLightTemperature(kelvin) / 100.0f;
+  if (temp <= 66.0f) {
+    out[0] = 1.0f;
+  } else {
+    const float r = 329.698727446f * std::pow(temp - 60.0f, -0.1332047592f);
+    out[0] = std::max(0.0f, std::min(1.0f, r / 255.0f));
+  }
+  if (temp <= 66.0f) {
+    const float g = 99.4708025861f * std::log(temp) - 161.1195681661f;
+    out[1] = std::max(0.0f, std::min(1.0f, g / 255.0f));
+  } else {
+    const float g = 288.1221695283f * std::pow(temp - 60.0f, -0.0755148492f);
+    out[1] = std::max(0.0f, std::min(1.0f, g / 255.0f));
+  }
+  if (temp >= 66.0f) {
+    out[2] = 1.0f;
+  } else if (temp <= 19.0f) {
+    out[2] = 0.0f;
+  } else {
+    const float b = 138.5177312231f * std::log(temp - 10.0f) - 305.0447927307f;
+    out[2] = std::max(0.0f, std::min(1.0f, b / 255.0f));
+  }
+}
+
+float LightShapeArea(const DrawLightCPU& light) {
+  constexpr float kPi = 3.14159265358979323846f;
+  switch (light.type) {
+    case DrawLightCPU::Type::Sphere:
+    case DrawLightCPU::Type::Point:
+      return 4.0f * kPi * light.radius * light.radius;
+    case DrawLightCPU::Type::Disk:
+      return kPi * light.radius * light.radius;
+    case DrawLightCPU::Type::Rect:
+      return light.width * light.height;
+    case DrawLightCPU::Type::Cylinder:
+      return 2.0f * kPi * light.radius * light.length;
+    default:
+      return 0.0f;
+  }
+}
+
+void BakeLightDerivedParams(DrawLightCPU* light) {
+  if (!light) return;
+  float c[3]{light->color[0], light->color[1], light->color[2]};
+  if (light->enableColorTemperature) {
+    float tc[3];
+    TemperatureRgb(light->colorTemperature, tc);
+    c[0] *= tc[0];
+    c[1] *= tc[1];
+    c[2] *= tc[2];
+  }
+  light->effectiveIntensity = light->intensity * std::pow(2.0f, light->exposure);
+  for (int i = 0; i < 3; ++i) {
+    light->effectiveColor[i] = c[i] * light->effectiveIntensity;
+    light->normalizedColor[i] = light->effectiveColor[i];
+  }
+  light->area = std::max(0.0f, LightShapeArea(*light));
+  light->invArea = (light->area > 0.0f) ? 1.0f / light->area : 0.0f;
+  if (light->normalize && light->invArea > 0.0f) {
+    for (int i = 0; i < 3; ++i) {
+      light->normalizedColor[i] = light->effectiveColor[i] * light->invArea;
+    }
+  }
+  light->hasShaping = light->shapingConeAngle < 90.0f ||
+                      !light->shapingIesFile.empty() ||
+                      light->shapingFocus != 0.0f ||
+                      light->shapingFocusTint[0] != 0.0f ||
+                      light->shapingFocusTint[1] != 0.0f ||
+                      light->shapingFocusTint[2] != 0.0f;
+}
+
+void BuildDrawLights(const tydra::RenderScene& rs, DrawScene* out,
+                     const TextureRuntimeOptions& textureOptions = {}) {
+  if (!out) return;
+  out->lights.reserve(rs.lights.size());
+  for (const tydra::RenderLight& src : rs.lights) {
+    DrawLightCPU dst;
+    dst.name = src.name;
+    dst.absPath = src.abs_path;
+    dst.displayName = src.display_name;
+    dst.type = MapLightType(src.type);
+    dst.color[0] = src.color[0];
+    dst.color[1] = src.color[1];
+    dst.color[2] = src.color[2];
+    dst.intensity = src.intensity;
+    dst.exposure = src.exposure;
+    dst.diffuse = src.diffuse;
+    dst.specular = src.specular;
+    dst.normalize = src.normalize;
+    dst.enableColorTemperature = src.enableColorTemperature;
+    dst.colorTemperature = src.colorTemperature;
+    Mat4fToColMajor(src.transform, dst.transform);
+    dst.position[0] = src.position[0];
+    dst.position[1] = src.position[1];
+    dst.position[2] = src.position[2];
+    dst.direction[0] = src.direction[0];
+    dst.direction[1] = src.direction[1];
+    dst.direction[2] = src.direction[2];
+    dst.radius = src.radius;
+    dst.width = src.width;
+    dst.height = src.height;
+    dst.length = src.length;
+    dst.angle = src.angle;
+    dst.textureFile = src.textureFile;
+    dst.renderEnvmapImage = src.envmap_texture_id;
+    if (src.type == tydra::RenderLight::Type::Dome && src.envmap_texture_id >= 0) {
+      int texId = -1;
+      if (AddImageTexture(rs, src.envmap_texture_id,
+                          static_cast<int>(WrapMode::Repeat),
+                          static_cast<int>(WrapMode::ClampToEdge), out,
+                          &texId)) {
+        dst.envmapTexture = texId;
+      } else {
+        out->skipped.push_back("dome light '" + src.name +
+                               "': undecoded/unsupported envmap image");
+      }
+    }
+    dst.domeTextureFormat = MapDomeTextureFormat(src.domeTextureFormat);
+    // Split-sum IBL bake (HDR-correct: decodes the source image to float,
+    // bypassing the 8-bit envmapTexture clamp). MirroredBall/Angular probes
+    // are resampled to an equirect first.
+    if (src.type == tydra::RenderLight::Type::Dome &&
+        src.envmap_texture_id >= 0 && textureOptions.domeIbl > 0 &&
+        TexToolsAvailable() &&
+        static_cast<size_t>(src.envmap_texture_id) < rs.images.size()) {
+      std::vector<float> rgb;
+      int ew = 0, eh = 0;
+      const auto t0 = std::chrono::steady_clock::now();
+      bool decoded = DecodeToFloatRGB(
+          rs, rs.images[static_cast<size_t>(src.envmap_texture_id)], &ew, &eh,
+          &rgb);
+      if (decoded &&
+          (dst.domeTextureFormat ==
+               DrawLightCPU::DomeTextureFormat::MirroredBall ||
+           dst.domeTextureFormat == DrawLightCPU::DomeTextureFormat::Angular)) {
+        std::vector<float> eq;
+        int eqH = 0;
+        const int eqW = std::min(2048, std::max(256, 2 * ew));
+        if (TexToolsProbeToEquirect(
+                rgb.data(), ew, eh, static_cast<int>(dst.domeTextureFormat),
+                eqW, &eq, &eqH)) {
+          rgb = std::move(eq);
+          ew = eqW;
+          eh = eqH;
+        } else {
+          decoded = false;
+        }
+      }
+      if (decoded &&
+          TexToolsBuildDomeIbl(rgb.data(), ew, eh,
+                               textureOptions.domeIbl >= 2, &dst.ibl)) {
+        const double ms =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0)
+                .count();
+        fprintf(stderr, "[tusdview] dome IBL bake '%s': %dx%d -> spec %d/irr %d in %.0f ms\n",
+                src.name.c_str(), ew, eh, dst.ibl.specFaceSize,
+                dst.ibl.irrFaceSize, ms);
+      } else {
+        out->skipped.push_back("dome light '" + src.name +
+                               "': IBL bake failed (constant ambient)");
+      }
+    }
+    dst.guideRadius = src.guideRadius;
+    dst.shapingConeAngle = src.shapingConeAngle;
+    dst.shapingConeSoftness = src.shapingConeSoftness;
+    dst.shapingFocus = src.shapingFocus;
+    dst.shapingFocusTint[0] = src.shapingFocusTint[0];
+    dst.shapingFocusTint[1] = src.shapingFocusTint[1];
+    dst.shapingFocusTint[2] = src.shapingFocusTint[2];
+    dst.shapingIesFile = src.shapingIesFile;
+    dst.shapingIesAngleScale = src.shapingIesAngleScale;
+    dst.shapingIesNormalize = src.shapingIesNormalize;
+    dst.shadowEnable = src.shadowEnable;
+    dst.shadowColor[0] = src.shadowColor[0];
+    dst.shadowColor[1] = src.shadowColor[1];
+    dst.shadowColor[2] = src.shadowColor[2];
+    dst.shadowDistance = src.shadowDistance;
+    dst.shadowFalloff = src.shadowFalloff;
+    dst.shadowFalloffGamma = src.shadowFalloffGamma;
+    dst.geometryMesh = src.geometry_mesh_id;
+    dst.materialSyncMode = src.material_sync_mode;
+    dst.lightLinksAll = src.light_links_all;
+    dst.lightLinkMeshIndices = src.light_link_mesh_indices;
+    dst.shadowLinksAll = src.shadow_links_all;
+    dst.shadowLinkMeshIndices = src.shadow_link_mesh_indices;
+    dst.hasSpectralEmission = src.hasSpectralEmission();
+    BakeLightDerivedParams(&dst);
+    out->lights.push_back(std::move(dst));
   }
 }
 
@@ -797,6 +1749,7 @@ void BuildDrawMaterials(const tydra::RenderScene& rs, DrawScene* out,
 bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
   const size_t nPoints = mesh.points.size();
   const std::vector<uint32_t>& srcIndices = mesh.faceVertexIndices();
+  const std::vector<uint32_t>& faceCounts = mesh.faceVertexCounts();
   if (nPoints == 0 || srcIndices.empty()) {
     return false;
   }
@@ -805,6 +1758,7 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
   dm.name = mesh.prim_name;
   dm.absPath = mesh.abs_path;
   dm.doubleSided = mesh.doubleSided;
+  dm.normalSign = mesh.is_rightHanded ? 1.0f : -1.0f;
   SetIdentity4(dm.skinGeomBind);
   dm.skelId = mesh.skel_id;
   if (MeshHasSkinData(mesh, nPoints)) {
@@ -837,11 +1791,25 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
   const bool uvPerVertex = uvAttr && AttrUsableAsVertex(*uvAttr, nPoints);
   const bool uv1PerVertex = uv1Attr && AttrUsableAsVertex(*uv1Attr, nPoints);
   const bool uv1FV = uv1Attr && !uv1Attr->empty() && uv1Attr->is_facevarying();
+  const bool colorPerVertex = AttrUsableAsVertex(mesh.vertex_colors, nPoints);
+  const bool colorFV =
+      !mesh.vertex_colors.empty() && mesh.vertex_colors.is_facevarying();
+  const bool colorUniform = !mesh.vertex_colors.empty() &&
+                            mesh.vertex_colors.is_uniform() &&
+                            mesh.vertex_colors.vertex_count() ==
+                                faceCounts.size();
+  const bool tangentPerVertex = AttrUsableAsVertex(mesh.tangents, nPoints);
+  const bool binormalPerVertex = AttrUsableAsVertex(mesh.binormals, nPoints);
+  const bool tangentFV = !mesh.tangents.empty() && mesh.tangents.is_facevarying();
+  const bool binormalFV = !mesh.binormals.empty() && mesh.binormals.is_facevarying();
   bool gotNormals = false;
 
-  if (mesh.is_single_indexable) {
+  if (mesh.is_single_indexable && !colorUniform) {
     // Indexed path: one DrawVertex per point; indices reference points.
     dm.vertices.resize(nPoints);
+    if (colorPerVertex) dm.vertexColors.resize(nPoints * 3);
+    if (tangentPerVertex) dm.tangents.resize(nPoints * 3);
+    if (binormalPerVertex) dm.binormals.resize(nPoints * 3);
     for (size_t i = 0; i < nPoints; ++i) {
       DrawVertex& v = dm.vertices[i];
       v.px = mesh.points[i][0];
@@ -861,6 +1829,15 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
         dm.uv1.push_back(t[0]);
         dm.uv1.push_back(1.0f - t[1]);
       }
+      if (colorPerVertex) {
+        float c[3] = {1, 1, 1};
+        ReadFloats(mesh.vertex_colors, i, 3, c);
+        dm.vertexColors[i * 3 + 0] = c[0];
+        dm.vertexColors[i * 3 + 1] = c[1];
+        dm.vertexColors[i * 3 + 2] = c[2];
+      }
+      if (tangentPerVertex) WriteFloat3Attr(mesh.tangents, i, i, &dm.tangents);
+      if (binormalPerVertex) WriteFloat3Attr(mesh.binormals, i, i, &dm.binormals);
       WriteSkinVertex(mesh, i, i, &dm);
       WriteSkinInfluenceVertex(mesh, i, i, &dm);
     }
@@ -875,10 +1852,24 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       dm.influenceOffsetCount.assign(srcIndices.size() * 2, 0u);
     }
     dm.indices.resize(srcIndices.size());
+    if (colorFV || colorPerVertex || colorUniform) {
+      dm.vertexColors.resize(srcIndices.size() * 3);
+    }
+    if (tangentFV || tangentPerVertex) dm.tangents.resize(srcIndices.size() * 3);
+    if (binormalFV || binormalPerVertex) {
+      dm.binormals.resize(srcIndices.size() * 3);
+    }
     const bool normalsFV = !mesh.normals.empty() && mesh.normals.is_facevarying();
     const bool uvFV = uvAttr && !uvAttr->empty() && uvAttr->is_facevarying();
     gotNormals = normalsFV || normalsPerVertex;
+    size_t faceIdx = 0;
+    size_t nextFaceStart = faceCounts.empty() ? srcIndices.size()
+                                              : size_t(faceCounts[0]);
     for (size_t k = 0; k < srcIndices.size(); ++k) {
+      while (k >= nextFaceStart && faceIdx + 1 < faceCounts.size()) {
+        ++faceIdx;
+        nextFaceStart += size_t(faceCounts[faceIdx]);
+      }
       const uint32_t pidx = srcIndices[k];
       DrawVertex& v = dm.vertices[k];
       if (pidx < nPoints) {
@@ -890,20 +1881,44 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
       }
       float nrm[3] = {0, 0, 0};
       if (normalsFV) ReadFloats(mesh.normals, k, 3, nrm);
-      else if (normalsPerVertex && pidx < nPoints) ReadFloats(mesh.normals, pidx, 3, nrm);
+      else if (normalsPerVertex && pidx < nPoints)
+        ReadFloats(mesh.normals, pidx, 3, nrm);
       v.nx = nrm[0]; v.ny = nrm[1]; v.nz = nrm[2];
       float uv[2] = {0, 0};
       if (uvFV) ReadFloats(*uvAttr, k, 2, uv);
-      else if (uvPerVertex && pidx < nPoints) ReadFloats(*uvAttr, pidx, 2, uv);
+      else if (uvPerVertex && pidx < nPoints)
+        ReadFloats(*uvAttr, pidx, 2, uv);
       // Flip V: USD `st` has v=0 at the image bottom, but decoded images are
       // top-row-first and uploaded so v=0 samples the top, so invert here.
       v.u = uv[0]; v.v = 1.0f - uv[1];
       if (uv1Attr) {
         float t[2] = {0, 0};
         if (uv1FV) ReadFloats(*uv1Attr, k, 2, t);
-        else if (uv1PerVertex && pidx < nPoints) ReadFloats(*uv1Attr, pidx, 2, t);
+        else if (uv1PerVertex && pidx < nPoints)
+          ReadFloats(*uv1Attr, pidx, 2, t);
         dm.uv1.push_back(t[0]);
         dm.uv1.push_back(1.0f - t[1]);
+      }
+      if (!dm.vertexColors.empty()) {
+        float c[3] = {1, 1, 1};
+        if (colorFV) ReadFloats(mesh.vertex_colors, k, 3, c);
+        else if (colorPerVertex && pidx < nPoints)
+          ReadFloats(mesh.vertex_colors, pidx, 3, c);
+        else if (colorUniform)
+          ReadFloats(mesh.vertex_colors, faceIdx, 3, c);
+        dm.vertexColors[k * 3 + 0] = c[0];
+        dm.vertexColors[k * 3 + 1] = c[1];
+        dm.vertexColors[k * 3 + 2] = c[2];
+      }
+      if (!dm.tangents.empty()) {
+        if (tangentFV) WriteFloat3Attr(mesh.tangents, k, k, &dm.tangents);
+        else if (tangentPerVertex && pidx < nPoints)
+          WriteFloat3Attr(mesh.tangents, pidx, k, &dm.tangents);
+      }
+      if (!dm.binormals.empty()) {
+        if (binormalFV) WriteFloat3Attr(mesh.binormals, k, k, &dm.binormals);
+        else if (binormalPerVertex && pidx < nPoints)
+          WriteFloat3Attr(mesh.binormals, pidx, k, &dm.binormals);
       }
       if (pidx < nPoints) WriteSkinVertex(mesh, pidx, k, &dm);
       if (pidx < nPoints) WriteSkinInfluenceVertex(mesh, pidx, k, &dm);
@@ -1182,6 +2197,23 @@ bool MakeDrawMesh(const tydra::RenderMesh& mesh, DrawMeshCPU* dmOut) {
     dm.sourceFaceId = std::move(groupedFace);
   }
 
+  // Authored constant primvars:displayColor (single element) is captured by
+  // Tydra in RenderMesh::displayColor, not vertex_colors. Replicate it into the
+  // per-vertex color stream (which the shaders multiply into the base color, as
+  // they already do for per-vertex displayColor) so simple colored prims and
+  // analytic primitives show their authored color instead of the default gray.
+  if (mesh.has_authored_displayColor && dm.vertexColors.empty() &&
+      !dm.vertices.empty()) {
+    const float dc[3] = {mesh.displayColor.r, mesh.displayColor.g,
+                         mesh.displayColor.b};
+    dm.vertexColors.resize(dm.vertices.size() * 3);
+    for (size_t i = 0; i < dm.vertices.size(); ++i) {
+      dm.vertexColors[i * 3 + 0] = dc[0];
+      dm.vertexColors[i * 3 + 1] = dc[1];
+      dm.vertexColors[i * 3 + 2] = dc[2];
+    }
+  }
+
   // World left as identity; PlaceDrawMesh applies the node transform.
   light3d::Mat4 ident = light3d::Mat4::identity();
   std::memcpy(dm.world, ident.m, sizeof(ident.m));
@@ -1237,6 +2269,8 @@ void ComputeSceneBounds(DrawScene* out) {
     }
   };
   for (const auto& dm : out->meshes) {
+    // Instanced prototypes carry world-space bounds in aabbMin/aabbMax (set by
+    // BuildDrawInstances), so the plain min/max below is already correct.
     extend(dm.aabbMin);
     extend(dm.aabbMax);
   }
@@ -1258,6 +2292,19 @@ void ComputeSceneBounds(DrawScene* out) {
   }
   out->hasBounds = !first;
 }
+
+bool Normalize3(float v[3]) {
+  const float len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+  if (len2 <= 1.0e-12f) return false;
+  const float inv = 1.0f / std::sqrt(len2);
+  v[0] *= inv;
+  v[1] *= inv;
+  v[2] *= inv;
+  return true;
+}
+
+// (definition moved below the anonymous namespace so the `next` loader can
+// derive the preview key light from its own lights too; see UpdatePreviewLight)
 
 void FinalizeSkinningLayout(const tydra::RenderScene& rs, DrawScene* out) {
   if (!out) return;
@@ -1338,6 +2385,113 @@ bool OverBudget(const DrawScene& out, size_t cumulativeVertexBytes,
 
 }  // namespace
 
+// Derive the raster preview key light from the scene lights: the first Distant
+// light's (reversed) direction, else the first finite light's direction from
+// the scene center, else a fixed fallback. Public so the `next` loader (which
+// builds its own DrawScene) can apply the same derivation.
+LoadDiagnostics CategorizeLoadWarnings(
+    const std::string& warn_blob, const std::vector<std::string>& skipped) {
+  LoadDiagnostics d;
+  auto contains = [](const std::string& hay, const char* needle) {
+    return hay.find(needle) != std::string::npos;
+  };
+  size_t start = 0;
+  while (start <= warn_blob.size()) {
+    size_t nl = warn_blob.find('\n', start);
+    const std::string line = warn_blob.substr(
+        start, nl == std::string::npos ? std::string::npos : nl - start);
+    start = (nl == std::string::npos) ? warn_blob.size() + 1 : nl + 1;
+    // Trim trailing whitespace/CR; skip blank lines.
+    size_t end = line.find_last_not_of(" \t\r");
+    if (end == std::string::npos) continue;
+    const std::string l = line.substr(0, end + 1);
+
+    // Order matters: a full fallback ("using default material") is the most
+    // severe and is checked first; unsupported-mtlx before the generic
+    // missing-texture bucket since its message also mentions resolution.
+    int* bucket = nullptr;
+    if (contains(l, "using default material") ||
+        contains(l, "Material conversion failed")) {
+      bucket = &d.degraded_material;
+    } else if (contains(l, "Unsupported node type")) {
+      bucket = &d.unsupported_mtlx;
+    } else if (contains(l, "failed to load texture") ||
+               contains(l, "Failed to load texture") ||
+               contains(l, "Failed to load image") ||
+               contains(l, "could not be resolved to a UsdUVTexture") ||
+               contains(l, "could not be resolved to a texture") ||
+               contains(l, "Failed to find MaterialX texture") ||
+               contains(l, "Failed to convert MaterialX texture")) {
+      bucket = &d.missing_texture;
+    } else {
+      bucket = &d.other;
+    }
+    (*bucket)++;
+    if (d.examples.size() < 6 && bucket != &d.other) d.examples.push_back(l);
+  }
+
+  d.skipped = static_cast<int>(skipped.size());
+  for (const std::string& s : skipped) {
+    if (d.examples.size() >= 6) break;
+    d.examples.push_back("skipped: " + s);
+  }
+  return d;
+}
+
+void UpdatePreviewLight(DrawScene* draw) {
+  if (!draw) return;
+  float fallback[3]{0.5f, 0.8f, 0.6f};
+  Normalize3(fallback);
+  for (int i = 0; i < 3; ++i) {
+    draw->previewLightDir[i] = fallback[i];
+    draw->previewLightColor[i] = 1.0f;
+  }
+  draw->hasPreviewLight = false;
+
+  const DrawLightCPU* chosen = nullptr;
+  for (const DrawLightCPU& light : draw->lights) {
+    if (light.type == DrawLightCPU::Type::Distant) {
+      chosen = &light;
+      break;
+    }
+    if (!chosen && light.type != DrawLightCPU::Type::Dome &&
+        light.type != DrawLightCPU::Type::Portal) {
+      chosen = &light;
+    }
+  }
+  if (!chosen) return;
+
+  float dir[3]{fallback[0], fallback[1], fallback[2]};
+  if (chosen->type == DrawLightCPU::Type::Distant) {
+    // DrawLightCPU::direction is the light emission direction; preview shaders
+    // use L as the vector from the shaded point toward the light.
+    dir[0] = -chosen->direction[0];
+    dir[1] = -chosen->direction[1];
+    dir[2] = -chosen->direction[2];
+  } else {
+    float center[3]{0.0f, 0.0f, 0.0f};
+    if (draw->hasBounds) {
+      for (int i = 0; i < 3; ++i) {
+        center[i] = 0.5f * (draw->aabbMin[i] + draw->aabbMax[i]);
+      }
+    }
+    for (int i = 0; i < 3; ++i) {
+      dir[i] = chosen->position[i] - center[i];
+    }
+  }
+  if (!Normalize3(dir)) {
+    dir[0] = fallback[0];
+    dir[1] = fallback[1];
+    dir[2] = fallback[2];
+  }
+
+  for (int i = 0; i < 3; ++i) {
+    draw->previewLightDir[i] = dir[i];
+    draw->previewLightColor[i] = chosen->normalizedColor[i];
+  }
+  draw->hasPreviewLight = true;
+}
+
 void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw) {
   if (!draw) return;
   for (DrawMeshCPU& mesh : draw->meshes) {
@@ -1380,11 +2534,505 @@ void BuildDrawVolumes(const tydra::RenderScene& rs, DrawScene* out) {
   }
 }
 
+struct F3 {
+  float x{0}, y{0}, z{0};
+};
+
+F3 Add(F3 a, F3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+F3 Sub(F3 a, F3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+F3 Mul(F3 a, float s) { return {a.x * s, a.y * s, a.z * s}; }
+float Dot(F3 a, F3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+F3 Cross(F3 a, F3 b) {
+  return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+          a.x * b.y - a.y * b.x};
+}
+float Length(F3 a) { return std::sqrt(Dot(a, a)); }
+F3 Normalize(F3 a, F3 fallback = {0, 1, 0}) {
+  const float l = Length(a);
+  return l > 1.0e-12f ? Mul(a, 1.0f / l) : fallback;
+}
+
+F3 ToF3(const tinyusdz::value::point3f& p) { return {p[0], p[1], p[2]}; }
+void AppendGeneratedMaterial(DrawScene* out, const float color[3],
+                             const std::string& name, int* materialId) {
+  if (!out || !materialId) return;
+  DrawMaterialCPU mat;
+  mat.name = name;
+  mat.baseColor[0] = color[0];
+  mat.baseColor[1] = color[1];
+  mat.baseColor[2] = color[2];
+  mat.roughness = 0.75f;
+  *materialId = static_cast<int>(out->materials.size());
+  out->materials.push_back(std::move(mat));
+}
+
+void FinalizeGeneratedMesh(DrawMeshCPU* dm) {
+  if (!dm || dm->vertices.empty()) return;
+  dm->sourceFaceId.resize(dm->indices.size() / 3);
+  for (size_t i = 0; i < dm->sourceFaceId.size(); ++i) {
+    dm->sourceFaceId[i] = static_cast<uint32_t>(i);
+  }
+  dm->wireframeIndices.clear();
+  for (size_t i = 0; i + 2 < dm->indices.size(); i += 3) {
+    const uint32_t a = dm->indices[i + 0];
+    const uint32_t b = dm->indices[i + 1];
+    const uint32_t c = dm->indices[i + 2];
+    dm->wireframeIndices.push_back(a);
+    dm->wireframeIndices.push_back(b);
+    dm->wireframeIndices.push_back(b);
+    dm->wireframeIndices.push_back(c);
+    dm->wireframeIndices.push_back(c);
+    dm->wireframeIndices.push_back(a);
+  }
+}
+
+void AddQuad(DrawMeshCPU* dm, const DrawVertex& a, const DrawVertex& b,
+             const DrawVertex& c, const DrawVertex& d) {
+  const uint32_t base = static_cast<uint32_t>(dm->vertices.size());
+  dm->vertices.push_back(a);
+  dm->vertices.push_back(b);
+  dm->vertices.push_back(c);
+  dm->vertices.push_back(d);
+  dm->indices.insert(dm->indices.end(),
+                     {base + 0, base + 1, base + 2, base + 0, base + 2,
+                      base + 3});
+}
+
+float CurveWidthAt(const std::vector<float>& widths, size_t pointIndex,
+                   size_t curveIndex, size_t pointCount) {
+  if (widths.empty()) return 0.04f;
+  if (widths.size() == 1) return widths[0];
+  if (pointIndex < widths.size()) return widths[pointIndex];
+  if (curveIndex < widths.size()) return widths[curveIndex];
+  if (pointCount > 0 && widths.size() >= pointCount) {
+    return widths[std::min(pointIndex, widths.size() - 1)];
+  }
+  return widths.back();
+}
+
+bool BuildBasisCurveRibbonMesh(const tinyusdz::GeomBasisCurves& curves,
+                               const std::string& absPath,
+                               const tinyusdz::value::matrix4d& world,
+                               int materialId, DrawMeshCPU* dm) {
+  if (!dm) return false;
+  const std::vector<tinyusdz::value::point3f> pts = curves.get_points();
+  const std::vector<int> counts = curves.get_curveVertexCounts();
+  const std::vector<float> widths = curves.get_widths();
+  if (pts.empty() || counts.empty()) return false;
+
+  const size_t curveSlash = absPath.find_last_of('/');
+  dm->name = curveSlash == std::string::npos ? absPath : absPath.substr(curveSlash + 1);
+  dm->absPath = absPath;
+  MatToColMajor(world, dm->world);
+  dm->doubleSided = true;
+  dm->geometricNormal = true;
+  dm->purpose = PurposeName(curves.purpose.get_value());
+  dm->submeshes.push_back({0, 0, materialId});
+
+  size_t cursor = 0;
+  for (size_t ci = 0; ci < counts.size(); ++ci) {
+    const int count = counts[ci];
+    if (count < 2 || cursor + static_cast<size_t>(count) > pts.size()) {
+      cursor += count > 0 ? static_cast<size_t>(count) : 0;
+      continue;
+    }
+    for (int j = 0; j + 1 < count; ++j) {
+      const size_t i0 = cursor + static_cast<size_t>(j);
+      const size_t i1 = cursor + static_cast<size_t>(j + 1);
+      const F3 p0 = ToF3(pts[i0]);
+      const F3 p1 = ToF3(pts[i1]);
+      const F3 dir = Normalize(Sub(p1, p0), {1, 0, 0});
+      F3 side = Cross(dir, {0, 0, 1});
+      if (Length(side) < 1.0e-6f) side = Cross(dir, {0, 1, 0});
+      side = Normalize(side);
+      const float w0 = std::max(0.001f, CurveWidthAt(widths, i0, ci, pts.size()));
+      const float w1 = std::max(0.001f, CurveWidthAt(widths, i1, ci, pts.size()));
+      const F3 n = Normalize(Cross(side, dir), {0, 0, 1});
+      DrawVertex v0{p0.x - side.x * w0 * 0.5f, p0.y - side.y * w0 * 0.5f,
+                    p0.z - side.z * w0 * 0.5f, n.x, n.y, n.z, 0.0f, 0.0f};
+      DrawVertex v1{p1.x - side.x * w1 * 0.5f, p1.y - side.y * w1 * 0.5f,
+                    p1.z - side.z * w1 * 0.5f, n.x, n.y, n.z, 1.0f, 0.0f};
+      DrawVertex v2{p1.x + side.x * w1 * 0.5f, p1.y + side.y * w1 * 0.5f,
+                    p1.z + side.z * w1 * 0.5f, n.x, n.y, n.z, 1.0f, 1.0f};
+      DrawVertex v3{p0.x + side.x * w0 * 0.5f, p0.y + side.y * w0 * 0.5f,
+                    p0.z + side.z * w0 * 0.5f, n.x, n.y, n.z, 0.0f, 1.0f};
+      AddQuad(dm, v0, v1, v2, v3);
+    }
+    cursor += static_cast<size_t>(count);
+  }
+  dm->submeshes[0].indexCount = static_cast<uint32_t>(dm->indices.size());
+  FinalizeGeneratedMesh(dm);
+  return !dm->indices.empty();
+}
+
+double BsplineBasis(int i, int degree, double u, const std::vector<double>& knots) {
+  if (degree == 0) {
+    const bool last = !knots.empty() && (i + 1 < static_cast<int>(knots.size())) &&
+                      std::abs(u - knots.back()) < 1.0e-12 &&
+                      std::abs(knots[i + 1] - knots.back()) < 1.0e-12 &&
+                      knots[i] < knots[i + 1];
+    return (knots[i] <= u && u < knots[i + 1]) || last ? 1.0 : 0.0;
+  }
+  double v = 0.0;
+  const double d0 = knots[i + degree] - knots[i];
+  if (std::abs(d0) > 1.0e-12) {
+    v += (u - knots[i]) / d0 * BsplineBasis(i, degree - 1, u, knots);
+  }
+  const double d1 = knots[i + degree + 1] - knots[i + 1];
+  if (std::abs(d1) > 1.0e-12) {
+    v += (knots[i + degree + 1] - u) / d1 *
+         BsplineBasis(i + 1, degree - 1, u, knots);
+  }
+  return v;
+}
+
+F3 EvalNurbsPatch(const std::vector<tinyusdz::value::point3f>& pts,
+                  const std::vector<double>& weights, int uCount, int vCount,
+                  int uOrder, int vOrder, const std::vector<double>& uKnots,
+                  const std::vector<double>& vKnots, double u, double v) {
+  F3 sum{0, 0, 0};
+  double wsum = 0.0;
+  const int uDeg = std::max(0, uOrder - 1);
+  const int vDeg = std::max(0, vOrder - 1);
+  for (int j = 0; j < vCount; ++j) {
+    const double bv = BsplineBasis(j, vDeg, v, vKnots);
+    if (bv == 0.0) continue;
+    for (int i = 0; i < uCount; ++i) {
+      const size_t idx = static_cast<size_t>(j * uCount + i);
+      if (idx >= pts.size()) continue;
+      const double bu = BsplineBasis(i, uDeg, u, uKnots);
+      const double wt = idx < weights.size() ? weights[idx] : 1.0;
+      const double b = bu * bv * wt;
+      const F3 p = ToF3(pts[idx]);
+      sum = Add(sum, Mul(p, static_cast<float>(b)));
+      wsum += b;
+    }
+  }
+  if (std::abs(wsum) > 1.0e-12) sum = Mul(sum, static_cast<float>(1.0 / wsum));
+  return sum;
+}
+
+bool BuildNurbsPatchMesh(const tinyusdz::GeomNurbsPatch& patch,
+                         const std::string& absPath,
+                         const tinyusdz::value::matrix4d& world,
+                         int materialId, DrawMeshCPU* dm) {
+  if (!dm) return false;
+  auto ptsOpt = patch.points.get_value();
+  auto uCountOpt = patch.uVertexCount.get_value();
+  auto vCountOpt = patch.vVertexCount.get_value();
+  auto uOrderOpt = patch.uOrder.get_value();
+  auto vOrderOpt = patch.vOrder.get_value();
+  auto uKnotsOpt = patch.uKnots.get_value();
+  auto vKnotsOpt = patch.vKnots.get_value();
+  if (!ptsOpt || !uCountOpt || !vCountOpt || !uOrderOpt || !vOrderOpt ||
+      !uKnotsOpt || !vKnotsOpt) {
+    return false;
+  }
+  const auto& ptsAnim = ptsOpt.value();
+  const auto& uCountAnim = uCountOpt.value();
+  const auto& vCountAnim = vCountOpt.value();
+  const auto& uOrderAnim = uOrderOpt.value();
+  const auto& vOrderAnim = vOrderOpt.value();
+  const auto& uKnotsAnim = uKnotsOpt.value();
+  const auto& vKnotsAnim = vKnotsOpt.value();
+  std::vector<tinyusdz::value::point3f> pts;
+  std::vector<double> uKnots, vKnots, weights;
+  int uCount = 0, vCount = 0, uOrder = 0, vOrder = 0;
+  if (!ptsAnim.get_scalar(&pts) || !uCountAnim.get_scalar(&uCount) ||
+      !vCountAnim.get_scalar(&vCount) || !uOrderAnim.get_scalar(&uOrder) ||
+      !vOrderAnim.get_scalar(&vOrder) || !uKnotsAnim.get_scalar(&uKnots) ||
+      !vKnotsAnim.get_scalar(&vKnots)) {
+    return false;
+  }
+  if (uCount < 2 || vCount < 2 || uOrder < 1 || vOrder < 1 ||
+      pts.size() < static_cast<size_t>(uCount * vCount) ||
+      uKnots.size() < static_cast<size_t>(uCount + uOrder) ||
+      vKnots.size() < static_cast<size_t>(vCount + vOrder)) {
+    return false;
+  }
+  if (auto weightsOpt = patch.pointWeights.get_value()) {
+    weightsOpt.value().get_scalar(&weights);
+  }
+  double u0 = uKnots[static_cast<size_t>(uOrder - 1)];
+  double u1 = uKnots[static_cast<size_t>(uCount)];
+  double v0 = vKnots[static_cast<size_t>(vOrder - 1)];
+  double v1 = vKnots[static_cast<size_t>(vCount)];
+  if (auto r = patch.uRange.get_value()) {
+    tinyusdz::value::double2 rr;
+    if (r.value().get_scalar(&rr)) { u0 = rr[0]; u1 = rr[1]; }
+  }
+  if (auto r = patch.vRange.get_value()) {
+    tinyusdz::value::double2 rr;
+    if (r.value().get_scalar(&rr)) { v0 = rr[0]; v1 = rr[1]; }
+  }
+
+  const size_t patchSlash = absPath.find_last_of('/');
+  dm->name = patchSlash == std::string::npos ? absPath : absPath.substr(patchSlash + 1);
+  dm->absPath = absPath;
+  MatToColMajor(world, dm->world);
+  dm->doubleSided = true;
+  dm->purpose = PurposeName(patch.purpose.get_value());
+  dm->submeshes.push_back({0, 0, materialId});
+  constexpr int kUSeg = 16;
+  constexpr int kVSeg = 16;
+  std::vector<F3> grid(static_cast<size_t>(kUSeg + 1) *
+                       static_cast<size_t>(kVSeg + 1));
+  for (int y = 0; y <= kVSeg; ++y) {
+    const double tv = static_cast<double>(y) / static_cast<double>(kVSeg);
+    const double vv = v0 + (v1 - v0) * tv;
+    for (int x = 0; x <= kUSeg; ++x) {
+      const double tu = static_cast<double>(x) / static_cast<double>(kUSeg);
+      const double uu = u0 + (u1 - u0) * tu;
+      grid[static_cast<size_t>(y * (kUSeg + 1) + x)] =
+          EvalNurbsPatch(pts, weights, uCount, vCount, uOrder, vOrder, uKnots,
+                         vKnots, uu, vv);
+    }
+  }
+  for (int y = 0; y <= kVSeg; ++y) {
+    for (int x = 0; x <= kUSeg; ++x) {
+      const F3 p = grid[static_cast<size_t>(y * (kUSeg + 1) + x)];
+      const F3 px0 = grid[static_cast<size_t>(y * (kUSeg + 1) + std::max(0, x - 1))];
+      const F3 px1 = grid[static_cast<size_t>(y * (kUSeg + 1) + std::min(kUSeg, x + 1))];
+      const F3 py0 = grid[static_cast<size_t>(std::max(0, y - 1) * (kUSeg + 1) + x)];
+      const F3 py1 = grid[static_cast<size_t>(std::min(kVSeg, y + 1) * (kUSeg + 1) + x)];
+      const F3 n = Normalize(Cross(Sub(px1, px0), Sub(py1, py0)), {0, 0, 1});
+      dm->vertices.push_back({p.x, p.y, p.z, n.x, n.y, n.z,
+                              static_cast<float>(x) / kUSeg,
+                              static_cast<float>(y) / kVSeg});
+    }
+  }
+  for (int y = 0; y < kVSeg; ++y) {
+    for (int x = 0; x < kUSeg; ++x) {
+      const uint32_t a = static_cast<uint32_t>(y * (kUSeg + 1) + x);
+      const uint32_t b = a + 1;
+      const uint32_t d = static_cast<uint32_t>((y + 1) * (kUSeg + 1) + x);
+      const uint32_t c = d + 1;
+      dm->indices.insert(dm->indices.end(), {a, b, c, a, c, d});
+    }
+  }
+  dm->submeshes[0].indexCount = static_cast<uint32_t>(dm->indices.size());
+  FinalizeGeneratedMesh(dm);
+  return !dm->indices.empty();
+}
+
+std::string ChildPath(const std::string& parent, const tinyusdz::Prim& prim) {
+  const std::string name = prim.element_name();
+  if (parent.empty() || parent == "/") return "/" + name;
+  return parent + "/" + name;
+}
+
+void AppendCurveAndPatchMeshesRec(const tinyusdz::Prim& prim,
+                                  const std::string& absPath,
+                                  const tinyusdz::value::matrix4d& parentWorld,
+                                  int* curveMat, int* patchMat, DrawScene* out) {
+  if (!out || !curveMat || !patchMat) return;
+  bool reset = false;
+  tinyusdz::value::matrix4d local =
+      tinyusdz::GetLocalTransform(prim, &reset, tinyusdz::value::TimeCode::Default(),
+                                  tinyusdz::value::TimeSampleInterpolationType::Linear);
+  tinyusdz::value::matrix4d world =
+      reset ? local : (local * parentWorld);  // row-major local-first convention
+  if (const auto* curves = prim.as<tinyusdz::GeomBasisCurves>()) {
+    if (*curveMat < 0) {
+      const float curveColor[3] = {0.95f, 0.55f, 0.12f};
+      AppendGeneratedMaterial(out, curveColor, "__tusdview_basis_curve_ribbon",
+                              curveMat);
+    }
+    DrawMeshCPU dm;
+    if (BuildBasisCurveRibbonMesh(*curves, absPath, world, *curveMat, &dm)) {
+      out->triangleCount += dm.indices.size() / 3;
+      out->meshes.push_back(std::move(dm));
+    } else {
+      out->skipped.push_back("BasisCurves '" + absPath + "': unsupported/empty");
+    }
+  } else if (const auto* patch = prim.as<tinyusdz::GeomNurbsPatch>()) {
+    if (*patchMat < 0) {
+      const float patchColor[3] = {0.18f, 0.52f, 0.95f};
+      AppendGeneratedMaterial(out, patchColor, "__tusdview_nurbs_patch",
+                              patchMat);
+    }
+    DrawMeshCPU dm;
+    if (BuildNurbsPatchMesh(*patch, absPath, world, *patchMat, &dm)) {
+      out->triangleCount += dm.indices.size() / 3;
+      out->meshes.push_back(std::move(dm));
+    } else {
+      out->skipped.push_back("NurbsPatch '" + absPath + "': unsupported/empty");
+    }
+  }
+  for (const tinyusdz::Prim& child : prim.children()) {
+    AppendCurveAndPatchMeshesRec(child, ChildPath(absPath, child), world,
+                                 curveMat, patchMat, out);
+  }
+}
+
+void AppendCurveAndPatchMeshes(const tinyusdz::Stage& stage, DrawScene* out) {
+  if (!out) return;
+  int curveMat = -1, patchMat = -1;
+  const tinyusdz::value::matrix4d ident = tinyusdz::value::matrix4d::identity();
+  for (const tinyusdz::Prim& root : stage.root_prims()) {
+    AppendCurveAndPatchMeshesRec(root, ChildPath("", root), ident, &curveMat,
+                                 &patchMat, out);
+  }
+}
+
+// Attach USD instances (PointInstancer expansion + scenegraph instancing;
+// tydra RenderScene::instances) to their prototype DrawMeshCPU. Each prototype
+// mesh referenced by >=1 instance is rendered via the GPU-instanced path
+// (DrawMeshCPU::instanceXforms), which ignores its `world` and draws one copy
+// per instance transform. Prototypes with no instances render normally.
+void BuildDrawInstances(const tydra::RenderScene& rs,
+                        const std::vector<int>& rsMeshToDraw, DrawScene* out) {
+  if (rs.instances.empty() || !out) return;
+  // Local (proto-space) AABB of each draw mesh, captured before we start
+  // attaching instances so we can re-derive world bounds afterward.
+  std::vector<std::array<float, 6>> localBox(out->meshes.size());
+  std::vector<size_t> sourceDraw(out->meshes.size());
+  std::vector<uint8_t> touched(out->meshes.size(), 0);
+  std::vector<uint8_t> suppressStatic(out->meshes.size(), 0);
+  std::unordered_map<uint64_t, size_t> overrideDraw;
+  auto appendInstanceColor = [](DrawMeshCPU& dm, const tydra::RenderInstance& inst) {
+    const size_t instance_count = dm.instanceXforms.size() / 12;
+    const size_t previous_count = instance_count ? instance_count - 1 : 0;
+    if (inst.has_display_color) {
+      while (dm.instanceColors.size() / 3 < previous_count) {
+        dm.instanceColors.push_back(dm.flatColor[0]);
+        dm.instanceColors.push_back(dm.flatColor[1]);
+        dm.instanceColors.push_back(dm.flatColor[2]);
+      }
+      dm.instanceColors.push_back(inst.display_color[0]);
+      dm.instanceColors.push_back(inst.display_color[1]);
+      dm.instanceColors.push_back(inst.display_color[2]);
+    } else if (!dm.instanceColors.empty()) {
+      dm.instanceColors.push_back(dm.flatColor[0]);
+      dm.instanceColors.push_back(dm.flatColor[1]);
+      dm.instanceColors.push_back(dm.flatColor[2]);
+    }
+  };
+  auto appendInstanceOpacity = [](DrawMeshCPU& dm, const tydra::RenderInstance& inst) {
+    const size_t instance_count = dm.instanceXforms.size() / 12;
+    const size_t previous_count = instance_count ? instance_count - 1 : 0;
+    if (inst.has_display_opacity) {
+      while (dm.instanceOpacities.size() < previous_count) {
+        dm.instanceOpacities.push_back(dm.flatOpacity);
+      }
+      dm.instanceOpacities.push_back(
+          std::max(0.0f, std::min(1.0f, inst.display_opacity)));
+    } else if (!dm.instanceOpacities.empty()) {
+      dm.instanceOpacities.push_back(dm.flatOpacity);
+    }
+  };
+  for (size_t i = 0; i < rs.instances.size(); ++i) {
+    const tydra::RenderInstance& inst = rs.instances[i];
+    if (!inst.visible) continue;
+    if (inst.mesh_id < 0 ||
+        static_cast<size_t>(inst.mesh_id) >= rsMeshToDraw.size()) {
+      continue;
+    }
+    const int di = rsMeshToDraw[static_cast<size_t>(inst.mesh_id)];
+    if (di < 0 || static_cast<size_t>(di) >= out->meshes.size()) continue;
+    const size_t baseDi = static_cast<size_t>(di);
+    if (!touched[baseDi]) {
+      const DrawMeshCPU& base = out->meshes[baseDi];
+      localBox[baseDi] = {base.aabbMin[0], base.aabbMin[1],
+                          base.aabbMin[2], base.aabbMax[0],
+                          base.aabbMax[1], base.aabbMax[2]};
+      sourceDraw[baseDi] = baseDi;
+      touched[baseDi] = 1;
+    }
+
+    size_t targetDi = baseDi;
+    if (inst.material_id >= 0) {
+      suppressStatic[baseDi] = 1;
+      const uint64_t key = (uint64_t(baseDi) << 32) |
+                           uint32_t(inst.material_id);
+      auto it = overrideDraw.find(key);
+      if (it == overrideDraw.end()) {
+        DrawMeshCPU clone = out->meshes[baseDi];
+        clone.name += "_instMaterial_" + std::to_string(inst.material_id);
+        clone.instanceXforms.clear();
+        clone.instanceColors.clear();
+        clone.instanceOpacities.clear();
+        for (DrawSubmesh& sub : clone.submeshes) {
+          sub.materialId = inst.material_id;
+        }
+        targetDi = out->meshes.size();
+        out->meshes.push_back(std::move(clone));
+        sourceDraw.push_back(baseDi);
+        localBox.push_back(localBox[baseDi]);
+        touched.push_back(1);
+        suppressStatic.push_back(0);
+        overrideDraw.emplace(key, targetDi);
+      } else {
+        targetDi = it->second;
+      }
+    }
+
+    DrawMeshCPU& dm = out->meshes[targetDi];
+    if (!touched[targetDi]) {
+      localBox[targetDi] = localBox[baseDi];
+      sourceDraw[targetDi] = baseDi;
+      touched[targetDi] = 1;
+    }
+    // Pack the instance world matrix (row-vector matrix4d) into the 12-float
+    // o2w the instanced shader expects: 3 rows, each a column of the matrix
+    // (matches next_scene_loader.cc Mat4dToO2W).
+    const matrix4d& mm = inst.global_matrix;
+    float o2w[12];
+    for (int k = 0; k < 3; ++k) {
+      o2w[k * 4 + 0] = static_cast<float>(mm.m[0][k]);
+      o2w[k * 4 + 1] = static_cast<float>(mm.m[1][k]);
+      o2w[k * 4 + 2] = static_cast<float>(mm.m[2][k]);
+      o2w[k * 4 + 3] = static_cast<float>(mm.m[3][k]);
+    }
+    dm.instanceXforms.insert(dm.instanceXforms.end(), o2w, o2w + 12);
+    appendInstanceColor(dm, inst);
+    appendInstanceOpacity(dm, inst);
+  }
+  for (size_t di = 0; di < suppressStatic.size(); ++di) {
+    if (suppressStatic[di] && out->meshes[di].instanceXforms.empty()) {
+      out->meshes[di].indices.clear();
+      out->meshes[di].submeshes.clear();
+    }
+  }
+  // For every prototype that received instances, replace its local AABB with the
+  // world extent over all instance placements. This matches the next loader's
+  // convention (next_scene_loader.cc), so scene-bounds and camera-fit consume
+  // instanced meshes' bounds directly without any per-instance expansion.
+  for (size_t di = 0; di < out->meshes.size(); ++di) {
+    if (!touched[di]) continue;
+    DrawMeshCPU& dm = out->meshes[di];
+    const std::array<float, 6>& lb = localBox[sourceDraw[di]];
+    bool first = true;
+    const size_t ni = dm.instanceCount();
+    for (size_t ii = 0; ii < ni; ++ii) {
+      const float* o2w = &dm.instanceXforms[ii * 12];
+      for (int corner = 0; corner < 8; ++corner) {
+        const float o[3] = {(corner & 1) ? lb[3] : lb[0],
+                            (corner & 2) ? lb[4] : lb[1],
+                            (corner & 4) ? lb[5] : lb[2]};
+        float w[3];
+        for (int c = 0; c < 3; ++c) {
+          w[c] = o2w[c * 4 + 0] * o[0] + o2w[c * 4 + 1] * o[1] +
+                 o2w[c * 4 + 2] * o[2] + o2w[c * 4 + 3];
+        }
+        if (first) {
+          for (int c = 0; c < 3; ++c) { dm.aabbMin[c] = w[c]; dm.aabbMax[c] = w[c]; }
+          first = false;
+        } else {
+          for (int c = 0; c < 3; ++c) {
+            dm.aabbMin[c] = std::min(dm.aabbMin[c], w[c]);
+            dm.aabbMax[c] = std::max(dm.aabbMax[c], w[c]);
+          }
+        }
+      }
+    }
+  }
+}
+
 void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
                     LoadControl* ctrl, const tinyusdz::Stage* stage,
                     const TextureRuntimeOptions& textureOptions) {
   *out = DrawScene{};
-  (void)stage;  // in-betweens now carried by tydra (RenderMesh::targets)
 
   // Mesh world transforms from the node hierarchy.
   std::unordered_map<int, matrix4d> meshXform;
@@ -1395,8 +3043,13 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
   std::vector<int> drawTexMap;
   BuildDrawTextures(rs, out, &drawTexMap, textureOptions);
   BuildDrawMaterials(rs, out, drawTexMap);
+  FinalizeDrawTextures(textureOptions, out);
+  BuildDrawLights(rs, out, textureOptions);
 
   size_t cumulativeVertexBytes = 0;
+  // rs.meshes index -> out->meshes index (meshes may be skipped when empty).
+  // Used to attach PointInstancer / scenegraph instances to their prototype.
+  std::vector<int> rsMeshToDraw(rs.meshes.size(), -1);
   for (size_t m = 0; m < rs.meshes.size(); ++m) {
     const tydra::RenderMesh& mesh = rs.meshes[m];
     DrawMeshCPU dm;
@@ -1437,13 +3090,20 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
         dm.influenceTexels.size() * sizeof(float) +
         dm.indices.size() * sizeof(uint32_t);
     out->triangleCount += dm.indices.size() / 3;
+    rsMeshToDraw[m] = static_cast<int>(out->meshes.size());
     out->meshes.push_back(std::move(dm));
+  }
+  BuildDrawInstances(rs, rsMeshToDraw, out);
+
+  if (stage) {
+    AppendCurveAndPatchMeshes(*stage, out);
   }
 
   BuildDrawVolumes(rs, out);
 
   FinalizeSkinningLayout(rs, out);
   ComputeSceneBounds(out);
+  UpdatePreviewLight(out);
   BakeRTDisplacement(out);  // displaced geometry for the ray-tracing backends
 }
 
@@ -1514,15 +3174,20 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
     std::vector<int> drawTexMap;
     BuildDrawTextures(scene, out, &drawTexMap, textureOptions);
     BuildDrawMaterials(scene, out, drawTexMap);
+    FinalizeDrawTextures(textureOptions, out);
+    BuildDrawLights(scene, out, textureOptions);
     // Any mesh not referenced by a node keeps identity placement (matches
     // BuildDrawScene, which uses identity when no transform is found).
     const matrix4d ident = matrix4d::identity();
     for (size_t i = 0; i < out->meshes.size(); ++i) {
       if (!placed[i]) PlaceDrawMesh(&out->meshes[i], ident);
     }
+    AppendCurveAndPatchMeshes(env.stage, out);
     BuildDrawVolumes(scene, out);
     FinalizeSkinningLayout(scene, out);
+    BuildDrawInstances(scene, rsMeshToDraw, out);
     ComputeSceneBounds(out);
+    UpdatePreviewLight(out);
     BakeRTDisplacement(out);  // displaced geometry for the ray-tracing backends
     return true;
   };

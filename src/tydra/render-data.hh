@@ -1105,6 +1105,10 @@ struct RenderInstance {
   int32_t prototype_index{-1}; ///< Index to prototype group
   int32_t mesh_id{-1};         ///< Index to RenderScene::meshes (shared)
   int32_t material_id{-1};     ///< Material index (-1 = use mesh default)
+  bool has_display_color{false};
+  std::array<float, 3> display_color{{1.0f, 1.0f, 1.0f}};
+  bool has_display_opacity{false};
+  float display_opacity{1.0f};
 
   value::matrix4d local_matrix;   ///< Instance local transform
   value::matrix4d global_matrix;  ///< Instance world transform
@@ -1313,6 +1317,10 @@ struct RenderMesh {
       0.18f, 0.18f,
       0.18f};  // displayColor primvar(The number of array elements = 1) in USD.
                // default is set to the same in UsdPreviewSurface::diffuseColor
+  // True when a constant (single-element) primvars:displayColor was authored on
+  // the prim and stored in `displayColor` above (vs the 0.18 default). Lets a
+  // consumer distinguish an authored constant color from the fallback.
+  bool has_authored_displayColor{false};
   float displayOpacity{
       1.0};  // displayOpacity primvar(The number of array elements = 1) in USD
   bool is_rightHanded{true};  // orientation attribute in USD.

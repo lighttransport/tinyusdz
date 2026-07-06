@@ -13,6 +13,7 @@
 #include <unordered_set>
 
 #include "displacement_bake.hh"  // SampleTextureRed
+#include "lightrt_mtlx_bridge.hh"
 
 namespace tusdview {
 
@@ -89,7 +90,7 @@ struct MeshBuild {
   std::vector<Node> blas;  // local node/leaf refs (rebased during assembly)
   float lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
   std::vector<float> instO2W;   // 12 floats/placement (1 for non-instanced)
-  std::vector<float> instTint;  // 3 floats/placement
+  std::vector<float> instTint;  // 4 floats/placement (rgba)
 };
 
 // Flatten one mesh into local-space leaf-order triangle SoA + per-prototype BLAS.
@@ -275,25 +276,118 @@ MeshBuild BuildOneMesh(const DrawScene& scene, const DrawMeshCPU& m,
   if (instanced) {
     const size_t ninst = m.instanceCount();
     const bool perColor = m.instanceColors.size() == ninst * 3;
+    const bool perOpacity = m.instanceOpacities.size() == ninst;
     mb.instO2W.reserve(ninst * 12);
-    mb.instTint.reserve(ninst * 3);
+    mb.instTint.reserve(ninst * 4);
     for (size_t k = 0; k < ninst; ++k) {
       mb.instO2W.insert(mb.instO2W.end(), &m.instanceXforms[k * 12], &m.instanceXforms[k * 12] + 12);
       mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 0] : m.flatColor[0]);
       mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 1] : m.flatColor[1]);
       mb.instTint.push_back(perColor ? m.instanceColors[k * 3 + 2] : m.flatColor[2]);
+      const float opacity = perOpacity ? m.instanceOpacities[k] : m.flatOpacity;
+      mb.instTint.push_back(std::max(0.0f, std::min(1.0f, opacity)));
     }
   } else {
     float o2w[12];
     Mat4ToO2W(m.world, o2w);
     mb.instO2W.insert(mb.instO2W.end(), o2w, o2w + 12);
-    mb.instTint.push_back(1.0f); mb.instTint.push_back(1.0f); mb.instTint.push_back(1.0f);
+    mb.instTint.push_back(1.0f); mb.instTint.push_back(1.0f);
+    mb.instTint.push_back(1.0f); mb.instTint.push_back(1.0f);
   }
   mb.valid = true;
   return mb;
 }
 
 }  // namespace
+
+void PackRtLightParams(const DrawLightCPU& light, int mappedEnvmapTexture,
+                       float* p) {
+  if (!p) return;
+  std::fill(p, p + kRtLightParamFloats, 0.0f);
+  int flags = 0;
+  if (light.normalize) flags |= 1 << 0;
+  if (light.shadowEnable) flags |= 1 << 1;
+  if (light.hasShaping) flags |= 1 << 2;
+  if (light.hasSpectralEmission) flags |= 1 << 3;
+  if (mappedEnvmapTexture >= 0) flags |= 1 << 4;
+  if (light.ibl.valid) flags |= 1 << 7;  // baked IBL env cube (VK RT miss)
+  if (light.lightLinksAll) flags |= 1 << 5;
+  if (light.shadowLinksAll) flags |= 1 << 6;
+
+  p[0] = static_cast<float>(light.type);
+  p[1] = static_cast<float>(flags);
+  p[2] = static_cast<float>(mappedEnvmapTexture);
+  p[3] = static_cast<float>(light.geometryMesh);
+
+  p[4] = light.position[0];
+  p[5] = light.position[1];
+  p[6] = light.position[2];
+  p[7] = light.radius;
+
+  p[8] = light.direction[0];
+  p[9] = light.direction[1];
+  p[10] = light.direction[2];
+  p[11] = light.angle;
+
+  p[12] = light.normalizedColor[0];
+  p[13] = light.normalizedColor[1];
+  p[14] = light.normalizedColor[2];
+  p[15] = light.effectiveIntensity;
+
+  p[16] = light.effectiveColor[0];
+  p[17] = light.effectiveColor[1];
+  p[18] = light.effectiveColor[2];
+  p[19] = light.invArea;
+
+  p[20] = light.width;
+  p[21] = light.height;
+  p[22] = light.length;
+  p[23] = light.area;
+
+  p[24] = light.shapingConeAngle;
+  p[25] = light.shapingConeSoftness;
+  p[26] = light.shapingFocus;
+  p[27] = light.shapingIesAngleScale;
+
+  p[28] = light.shadowEnable ? 1.0f : 0.0f;
+  p[29] = light.diffuse;
+  p[30] = light.specular;
+  p[31] = light.exposure;
+
+  p[32] = light.shadowColor[0];
+  p[33] = light.shadowColor[1];
+  p[34] = light.shadowColor[2];
+  p[35] = light.shadowDistance;
+
+  p[36] = light.shadowFalloff;
+  p[37] = light.shadowFalloffGamma;
+  p[38] = light.shapingIesNormalize ? 1.0f : 0.0f;
+  p[39] = static_cast<float>(light.domeTextureFormat);
+
+  // Rows 10-12: world -> environment rotation (row r = normalized column r of
+  // the light transform; for a rigid transform that is R^T). Used by the RT
+  // miss shaders to orient dome env sampling; identity when degenerate.
+  p[40] = 1.0f; p[45] = 1.0f; p[50] = 1.0f;
+  for (int r = 0; r < 3; ++r) {
+    const float cx = light.transform[r * 4 + 0];
+    const float cy = light.transform[r * 4 + 1];
+    const float cz = light.transform[r * 4 + 2];
+    const float len = std::sqrt(cx * cx + cy * cy + cz * cz);
+    if (len > 1e-12f) {
+      const float inv = 1.0f / len;
+      p[40 + r * 4 + 0] = cx * inv;
+      p[40 + r * 4 + 1] = cy * inv;
+      p[40 + r * 4 + 2] = cz * inv;
+    }
+  }
+
+  // Rows 13-19: order-2 SH irradiance (27 floats; zeros when no IBL bake).
+  if (light.ibl.valid && light.ibl.shIrradiance.size() >= 27) {
+    for (int i = 0; i < 27; ++i) {
+      p[52 + i] = light.ibl.shIrradiance[static_cast<size_t>(i)];
+    }
+  }
+}
 
 bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
                     float displacementScale, HostScene* out, std::string* err,
@@ -327,7 +421,7 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
   // it dominates on massively-instanced scenes (e.g. Moana Island).
   struct InstSrc {
     const float* o2w;   // points into mbs (kept alive until after B2)
-    float tint[3];
+    float tint[4];
     int blasRoot;
     int proto;          // index into protoBox
   };
@@ -361,13 +455,14 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     }
     const int proto = static_cast<int>(protoBox.size());
     protoBox.push_back({mb.lo[0], mb.lo[1], mb.lo[2], mb.hi[0], mb.hi[1], mb.hi[2]});
-    const size_t np = mb.instTint.size() / 3;
+    const size_t np = mb.instTint.size() / 4;
     for (size_t k = 0; k < np && isrc.size() < instCap; ++k) {
       InstSrc s;
       s.o2w = &mb.instO2W[k * 12];
-      s.tint[0] = mb.instTint[k * 3 + 0];
-      s.tint[1] = mb.instTint[k * 3 + 1];
-      s.tint[2] = mb.instTint[k * 3 + 2];
+      s.tint[0] = mb.instTint[k * 4 + 0];
+      s.tint[1] = mb.instTint[k * 4 + 1];
+      s.tint[2] = mb.instTint[k * 4 + 2];
+      s.tint[3] = mb.instTint[k * 4 + 3];
       s.blasRoot = blasRoot;
       s.proto = proto;
       isrc.push_back(s);
@@ -384,7 +479,8 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     Inst& I = out->instances[i];
     for (int j = 0; j < 12; ++j) I.o2w[j] = s.o2w[j];
     Affine3x4Inverse(s.o2w, I.w2o);
-    I.tint[0] = s.tint[0]; I.tint[1] = s.tint[1]; I.tint[2] = s.tint[2];
+    I.tint[0] = s.tint[0]; I.tint[1] = s.tint[1];
+    I.tint[2] = s.tint[2]; I.tint[3] = s.tint[3];
     I.blasRoot = s.blasRoot;
     I.instId = static_cast<int>(i);
     const auto& box = protoBox[s.proto];
@@ -453,7 +549,13 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
 
   out->numMats = static_cast<int>(scene.materials.size());
   out->matPbr.assign(std::max<size_t>(scene.materials.size(), 1) * 6, 0.0f);
+  out->matLightRt.assign(std::max<size_t>(scene.materials.size(), 1) *
+                             kLightRtOpenPBRFloats,
+                         0.0f);
   out->matTex.assign(std::max<size_t>(scene.materials.size(), 1) * 4, -1);
+  out->matTexParam.assign(std::max<size_t>(scene.materials.size(), 1) *
+                              kRtMaterialTextureParamFloats,
+                          0.0f);
   out->textures.clear();
   out->texels.clear();
   std::vector<int> rtTexMap(scene.textures.size(), -1);
@@ -475,6 +577,11 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     }
   }
   out->numTextures = static_cast<int>(out->textures.size());
+  auto mapTex = [&](int t) -> int {
+    return (t >= 0 && static_cast<size_t>(t) < rtTexMap.size())
+               ? rtTexMap[static_cast<size_t>(t)]
+               : -1;
+  };
   for (size_t i = 0; i < scene.materials.size(); ++i) {
     const DrawMaterialCPU& dm = scene.materials[i];
     out->matPbr[i * 6 + 0] = dm.metallic;
@@ -483,15 +590,23 @@ bool BuildHostScene(const DrawScene& scene, size_t maxTris, size_t maxInstances,
     out->matPbr[i * 6 + 3] = dm.emissive[1];
     out->matPbr[i * 6 + 4] = dm.emissive[2];
     out->matPbr[i * 6 + 5] = dm.alpha;
-    auto mapTex = [&](int t) -> int {
-      return (t >= 0 && static_cast<size_t>(t) < rtTexMap.size())
-                 ? rtTexMap[static_cast<size_t>(t)]
-                 : -1;
-    };
+    PackLightRtOpenPBR(dm, &out->matLightRt[i * kLightRtOpenPBRFloats]);
     out->matTex[i * 4 + 0] = mapTex(dm.baseColorTex);
     out->matTex[i * 4 + 1] = mapTex(dm.metalRoughTex);
     out->matTex[i * 4 + 2] = mapTex(dm.normalTex);
     out->matTex[i * 4 + 3] = mapTex(dm.emissiveTex);
+    PackRtMaterialTextureParams(
+        dm, &out->matTexParam[i * kRtMaterialTextureParamFloats]);
+  }
+
+  out->numLights = static_cast<int>(scene.lights.size());
+  out->lightParams.assign(std::max<size_t>(scene.lights.size(), 1) *
+                              kRtLightParamFloats,
+                          0.0f);
+  for (size_t i = 0; i < scene.lights.size(); ++i) {
+    const DrawLightCPU& light = scene.lights[i];
+    PackRtLightParams(light, mapTex(light.envmapTexture),
+                      &out->lightParams[i * kRtLightParamFloats]);
   }
   return true;
 }

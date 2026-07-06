@@ -38,6 +38,28 @@
 namespace tinyusdz {
 namespace tydra {
 
+namespace {
+
+std::vector<float> ReadFloatPrimvarArray(const GPrim &prim,
+                                         const std::string &name,
+                                         double time) {
+  GeomPrimvar pv;
+  if (!prim.get_primvar(name, &pv)) return {};
+  value::Value value;
+  std::string err;
+  if (!pv.flatten_with_indices(time, &value,
+                               value::TimeSampleInterpolationType::Linear,
+                               &err)) {
+    return {};
+  }
+  if (const auto *floats = value.as<std::vector<float>>()) {
+    return *floats;
+  }
+  return {};
+}
+
+}  // namespace
+
 bool RenderSceneConverter::ExpandPointInstancer(
     const RenderSceneConverterEnv &env, const std::string &instancer_abs_path,
     const GeomPointInstancer &pi, const value::matrix4d &instancer_world,
@@ -133,6 +155,26 @@ bool RenderSceneConverter::ExpandPointInstancer(
 
   const std::vector<int32_t> protoIndices = pi.get_protoIndices(env.timecode);
   const size_t n = inst_xforms.size();
+  const std::vector<value::color3f> display_colors =
+      pi.get_displayColors(env.timecode);
+  const std::vector<float> display_opacities =
+      ReadFloatPrimvarArray(pi, "displayOpacity", env.timecode);
+
+  int instancer_material_id = -1;
+  {
+    Path bound_material_path;
+    const Material *bound_material{nullptr};
+    std::string material_err;
+    if (GetBoundMaterialCached(env.stage, Path(instancer_abs_path, ""),
+                               /* purpose */ "", &bound_material_path,
+                               &bound_material, &material_err)) {
+      const std::string material_path = bound_material_path.full_path_name();
+      if (auto mat_it = materialMap.find(material_path);
+          mat_it != materialMap.s_end()) {
+        instancer_material_id = int(mat_it->second);
+      }
+    }
+  }
 
   // Instancer prim name (basename) for labeling.
   std::string instancer_name = instancer_abs_path;
@@ -164,7 +206,23 @@ bool RenderSceneConverter::ExpandPointInstancer(
       rinst.abs_path = instancer_abs_path + "/instance_" + std::to_string(i);
       rinst.prototype_index = pidx;
       rinst.mesh_id = pm.mesh_id;
-      rinst.material_id = -1;  // inherit prototype mesh's default material
+      rinst.material_id = instancer_material_id;  // -1: inherit prototype mesh material
+      if (display_colors.size() == n) {
+        rinst.has_display_color = true;
+        rinst.display_color = {{display_colors[i][0], display_colors[i][1],
+                                display_colors[i][2]}};
+      } else if (display_colors.size() == 1) {
+        rinst.has_display_color = true;
+        rinst.display_color = {{display_colors[0][0], display_colors[0][1],
+                                display_colors[0][2]}};
+      }
+      if (display_opacities.size() == n) {
+        rinst.has_display_opacity = true;
+        rinst.display_opacity = display_opacities[i];
+      } else if (display_opacities.size() == 1) {
+        rinst.has_display_opacity = true;
+        rinst.display_opacity = display_opacities[0];
+      }
 
       // instance-space local = proto_rel * instance_SRT  (row-vector: local-first)
       const value::matrix4d local = value::Mult(pm.proto_rel, inst_xforms[i]);

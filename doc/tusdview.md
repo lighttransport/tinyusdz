@@ -63,6 +63,9 @@ cd build && ctest -R tusdview-vk-render --output-on-failure
 examples/tusdview/tests/run-vk-render.sh
 ```
 
+Set `TUSDVIEW_RENDER_TIMEOUT` (default `30s`) to bound each tiny headless render
+in the Vulkan test harness when debugging flaky driver paths.
+
 **Verified working — NVIDIA GeForce RTX 5060 Ti (Linux, driver `610.43.02`,
 Vulkan 1.4), 2026-06-28.** Both rasterization and hardware ray query render the
 full scene correctly (raster vs ray-query agree to <1 LSB mean), at the default
@@ -138,6 +141,45 @@ cost clustering on the silhouette. `--mode depth` gives a correct near→far ram
 UV gradient, and `--mode material-id` is a single uniform color (suzanne is one
 material, so one id) — all correct.
 
+## Subdivision surfaces
+
+tusdview can request Tydra's conversion-time subdivision surface refinement for
+UsdGeomMesh prims whose `subdivisionScheme` is not `none`. This is CPU
+refinement before draw-scene upload, so it works consistently with Vulkan
+raster, Vulkan ray query, CUDA RT, HIP RT, screenshots, animation re-evaluation,
+and AOV/debug modes.
+
+```sh
+# Scene-wide fallback level.
+./build_ninja/tusdview --subdivision-level 1 model.usda
+
+# Per-prim override. Repeat the flag for more prims.
+./build_ninja/tusdview --subdivision-prim /World/Body=2 model.usda
+
+# Auto-fit based per-prim levels from projected screen coverage.
+./build_ninja/tusdview --subdivision-auto --subdivision-auto-max-level 3 model.usda
+```
+
+The scene-wide level is the fallback; `--subdivision-prim /Prim/Path=N` overrides
+one mesh prim. `--subdivision-auto` first loads the base scene, estimates each
+mesh's projected radius in pixels from the auto-fit camera and viewport height,
+then re-converts once with per-prim overrides up to
+`--subdivision-auto-max-level` (default 3, hard cap 10). Explicit per-prim
+overrides win over auto levels.
+
+The same options can be placed in the startup config:
+
+```json
+{
+  "subdivision_level": 0,
+  "subdivision_auto": true,
+  "subdivision_auto_max_level": 3,
+  "subdivision_prim_levels": {
+    "/World/Body": 2
+  }
+}
+```
+
 ### Windows (llvm-mingw)
 
 tusdview cross/host-builds with [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)
@@ -168,12 +210,50 @@ cmake --build build-llvm-mingw -j16 --target tusdview
 - Look for `tusdview: Vulkan backend ENABLED (runtime-loaded via volk; embedded
   SPIR-V, ray query ON)` in the configure log to confirm the Vulkan + RT path.
 
+## Texture pipeline + DomeLight IBL (vendored textools)
+
+With `TINYUSDZ_WITH_TEXTOOLS=ON` (default; see
+`src/external/textools/README.tinyusdz.md`) tusdview uses the vendored
+tir/texcomp/texpipe/envmap libraries:
+
+- Texture resize (`--texture-max-size`, `--texture-budget-mb`) runs through
+  `tir` (sRGB-aware, premultiplied-alpha filtering) instead of stb.
+- `--texture-compress off|bc|bc7` uses the `texcomp` encoders (`bc` picks
+  BC1/BC3 by alpha; `bc7` needs BPTC support — GL 4.2 ext / VK BC feature).
+- `--texture-mips on` builds content-aware CPU mip chains via `texpipe`
+  (sRGB-correct filtering, alpha-coverage preservation for Mask materials,
+  normal-map renormalization, variance-aware roughness-channel minification,
+  wrap-mode-aware filter edges). GL uploads the precomputed levels instead of
+  `glGenerateMipmap`; Vulkan gains real mip chains (it previously sampled only
+  level 0).
+- `--dome-ibl off|low|high` (default high) bakes DomeLight split-sum IBL at
+  load via the `envmap` library from the HDR float envmap (EXR half/float and
+  Radiance HDR decode correctly now): GGX-prefiltered specular cube chain,
+  diffuse irradiance cube, and BRDF LUT. GL and Vulkan raster shade the
+  ambient term with it; the VK ray-query and CUDA/HIP RT paths sample the dome
+  environment on ray miss. The bake logs its wall time
+  (`[tusdview] dome IBL bake ...`), typically ~0.3-0.5 s.
+
+`tusdrender -ibl envmap` opts the offline renderer into the same envmap-library
+precompute (default stays the built-in reference; measured parity on a dome
+test scene: mean |diff| 0.16/255, 0.06% of channels >32/255).
+
 ## Headless screenshots (CI / no display)
 
 ```sh
 # Vulkan, no X server at all (renders into an offscreen image + reads it back):
 ./build_ninja/tusdview --headless --frames 8 --screenshot out.png model.usdz
 ./build_ninja/tusdview --headless --rt --frames 8 --screenshot rt.png model.usdz
+
+# Large-scene realtime presets: resolves existing Vulkan/LOD/budget flags for
+# Caldera, Island, or ALab. Profiles do not enable texture resize or compression.
+./build_ninja/tusdview --headless --large-scene-profile island \
+  --frames 8 --screenshot island.ppm /path/to/island.usda
+
+# Optional local harness. Set any scene path env var that exists on the machine.
+CALDERA=/path/to/caldera.usda ISLAND=/path/to/island.usda ALAB=/path/to/alab.usda \
+  bash examples/tusdview/tests/run-large-scene-profiles.sh
+# Use TUSDVIEW_SCENE_TIMEOUT=10m (default) to bound each large-scene run.
 
 # OpenGL (needs a window/context) on a headless host — wrap in a virtual X server
 # with a 24-bit visual:
@@ -184,6 +264,11 @@ xvfb-run -a -s "-screen 0 1280x800x24" \
 `.png` and `.ppm` outputs are both supported; `--frames N` loads synchronously so
 screenshots are deterministic. Pixel-compare two screenshots (e.g. backend or
 threaded-vs-single parity) with PIL/numpy:
+
+The Vulkan RT shaded mode uses the material base color, alpha, roughness,
+metallic, and emissive constants in the RT material buffer. Texture sampling in
+RT remains a separate follow-up; this branch does not change texture resize or
+compressed-texture behavior.
 
 ```sh
 python3 -c "from PIL import Image; import numpy as np; \
@@ -244,6 +329,99 @@ Stop the temporary Xvfb server after the run and confirm it is gone:
 
 ```sh
 pgrep -a Xvfb || true
+```
+
+### Vulkan on NVIDIA PRIME/offload under Xvfb
+
+On hybrid/offload systems, the default Vulkan device visible inside a headless
+or sandboxed session may be Mesa/llvmpipe even when an NVIDIA GPU is installed.
+Wrap the viewer in Xvfb and pass the NVIDIA GLVND offload environment, then
+select the NVIDIA Vulkan device explicitly:
+
+```sh
+xvfb-run -a env \
+  __NV_PRIME_RENDER_OFFLOAD=1 \
+  __GLX_VENDOR_LIBRARY_NAME=nvidia \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+  TUSDVIEW_RT_DEBUG=1 \
+  ./build_ninja/tusdview --backend vk --vk-device nvidia --rt \
+  --frames 1 --size 64x64 tests/usda/anytype-001.usda
+```
+
+A successful run prints the selected hardware device and ray-query support, for
+example:
+
+```text
+[tusdview] Vulkan device[0]: NVIDIA GeForce RTX 3070 (discrete, driver NVIDIA, rt yes)
+[tusdview] Vulkan ray tracing (ray query) enabled.
+```
+
+If `--vk-device nvidia` fails and the candidate list only shows `llvmpipe`,
+the offload environment did not reach the Vulkan loader/driver. Verify that the
+NVIDIA GLVND vendor file exists and that the command is running under Xvfb (or
+a real X session) with the offload variables above.
+
+### External usd-assets smoke rendering
+
+`examples/tusdview/tests/run-usd-assets-render-smoke.sh` enumerates USD-family
+files under an externally supplied asset root and renders each file through the
+selected tusdview/tusdrender modes:
+
+- Vulkan raster: `--headless --backend vk`
+- Vulkan ray query: `--headless --backend vk --rt`
+- CUDA RT: `--headless --cuda`
+- tusdrender CPU preview: `-rtPreview`
+- tusdrender Vulkan preview: `-vk`
+- tusdrender Vulkan ray query: `-vkr`
+
+The harness writes a TSV result table and classifies each pass as `rendered`,
+`rendered_with_warnings`, `no_renderable`, `load_error`, `timeout`,
+`backend_unavailable`, or `backend_error`. It is registered as
+`tusdview-usd-assets-render-smoke`, but skips unless `USD_ASSETS_ROOT` is set.
+The tusdrender modes use `-autoframe` and the renderer's existing scene-light /
+headlight fallback. This is basic load-and-render coverage, not a detailed
+lighting match or perceptual golden-image test.
+
+```sh
+USD_ASSETS_ROOT=/path/to/usd-assets \
+  TUSDVIEW=./build_ninja/tusdview \
+  examples/tusdview/tests/run-usd-assets-render-smoke.sh
+```
+
+On an NVIDIA PRIME/offload host where Vulkan otherwise sees only llvmpipe, use
+the same offload/Xvfb path as the single-scene command above:
+
+```sh
+USD_ASSETS_ROOT=/path/to/usd-assets \
+  TUSDVIEW=./build_ninja/tusdview \
+  TUSDVIEW_NVIDIA_OFFLOAD=1 \
+  TUSDVIEW_XVFB=1 \
+  TUSDVIEW_VK_DEVICE=nvidia \
+  examples/tusdview/tests/run-usd-assets-render-smoke.sh
+```
+
+If `xvfb-run` itself cannot create a usable local Unix socket because
+`/tmp/.X11-unix` is not root-owned in the sandbox view, start Xvfb externally as
+described in [OpenGL from a Codex sandbox](#opengl-from-a-codex-sandbox), then
+run the harness against that display:
+
+```sh
+DISPLAY=localhost:88 \
+  USD_ASSETS_ROOT=/path/to/usd-assets \
+  TUSDVIEW=./build_ninja/tusdview \
+  TUSDVIEW_NVIDIA_OFFLOAD=1 \
+  TUSDVIEW_XVFB=external \
+  TUSDVIEW_VK_DEVICE=nvidia \
+  examples/tusdview/tests/run-usd-assets-render-smoke.sh
+```
+
+Limit the run while iterating:
+
+```sh
+USD_ASSETS_ROOT=/path/to/usd-assets \
+  TUSDVIEW_USD_ASSETS_LIMIT=8 \
+  TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,cuda-rt,tusdr-cpu,tusdr-vk,tusdr-vkr \
+  examples/tusdview/tests/run-usd-assets-render-smoke.sh
 ```
 
 ## Headless HW-accelerated GL (NVIDIA) + GPU profiling

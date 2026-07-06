@@ -160,12 +160,11 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("blendShapes");
     if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->blendShapes = *toks;
+      } else if (const std::string* s = val->as_string()) {
         out->blendShapes.push_back(*s);
-      }
-      const std::string* tok = val->as_token();
-      if (tok) {
+      } else if (const std::string* tok = val->as_token()) {
         out->blendShapes.push_back(*tok);
       }
     }
@@ -187,12 +186,11 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("joints");
     if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->joints = *toks;
+      } else if (const std::string* s = val->as_string()) {
         out->joints.push_back(*s);
-      }
-      const std::string* tok = val->as_token();
-      if (tok) {
+      } else if (const std::string* tok = val->as_token()) {
         out->joints.push_back(*tok);
       }
     }

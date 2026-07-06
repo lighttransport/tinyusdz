@@ -315,6 +315,11 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
 # ---------
 
+# -- textools (vendored tir/texcomp/texpipe/envmap texture tools) --
+option(TINYUSDZ_WITH_TEXTOOLS
+       "Build the vendored pure-C11 texture tools (tir resize, texcomp block compression, texpipe mip pipeline, envmap IBL) used by tusdview/tusdrender" ON)
+# ---------
+
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
@@ -1018,6 +1023,49 @@ if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
     find_package(zstd REQUIRED)
   endif()
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
+endif()
+
+# -- textools (vendored tir/texcomp/texpipe/envmap; src/external/textools/) --
+if(TINYUSDZ_WITH_TEXTOOLS)
+  # Pure-C11 texture tool stack from tinyexr's tools/ subtree (see
+  # src/external/textools/README.tinyusdz.md for provenance). Built as a
+  # standalone static lib consumed by tusdview/tusdrender — core libtinyusdz
+  # does not depend on it. x86 SIMD is runtime-dispatched inside the TUs; only
+  # the SVE kernel TU needs an arch flag (runtime HWCAP-gated).
+  set(TEXTOOLS_DIR ${PROJECT_SOURCE_DIR}/src/external/textools)
+  file(GLOB TEXTOOLS_SOURCES
+       ${TEXTOOLS_DIR}/resize/src/*.c
+       ${TEXTOOLS_DIR}/texcomp/src/*.c
+       ${TEXTOOLS_DIR}/texpipe/src/*.c
+       ${TEXTOOLS_DIR}/envmap/src/*.c)
+  add_library(tinyusdz_textools STATIC ${TEXTOOLS_SOURCES})
+  target_include_directories(tinyusdz_textools PUBLIC
+      ${TEXTOOLS_DIR}/resize/include
+      ${TEXTOOLS_DIR}/texcomp/include
+      ${TEXTOOLS_DIR}/texpipe/include
+      ${TEXTOOLS_DIR}/envmap/include)
+  target_compile_features(tinyusdz_textools PRIVATE c_std_11)
+  if(NOT MSVC)
+    # Third-party code: exempt from -Weverything/-Werror.
+    target_compile_options(tinyusdz_textools PRIVATE -w)
+  endif()
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64" AND NOT MSVC)
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag("-march=armv8-a+sve" TEXTOOLS_HAS_SVE)
+    if(TEXTOOLS_HAS_SVE)
+      set_source_files_properties(${TEXTOOLS_DIR}/resize/src/tir_kernels_sve.c
+        PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
+    endif()
+  endif()
+  if(UNIX)
+    target_compile_definitions(tinyusdz_textools PRIVATE
+      TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
+    find_package(Threads REQUIRED)
+    target_link_libraries(tinyusdz_textools PUBLIC Threads::Threads)
+  endif()
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tinyusdz_textools PUBLIC m)
+  endif()
 endif()
 
 # -- nanoimage --
@@ -2115,6 +2163,39 @@ if(TINYUSDZ_BUILD_TESTS)
   enable_testing()
 
   #
+  # textools (vendored tir/texcomp/texpipe/envmap) upstream self-tests.
+  # Plain-C main() programs, no GPU/display needed.
+  #
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    set(TEXTOOLS_TEST_PROGRAMS
+      "textools_tir_test|${TEXTOOLS_DIR}/resize/tests/tir_test.c|textools-tir"
+      "textools_tir_f16_test|${TEXTOOLS_DIR}/resize/tests/tir_f16_test.c|textools-tir-f16"
+      "textools_texcomp_test|${TEXTOOLS_DIR}/texcomp/test/test_texcomp.c|textools-texcomp"
+      "textools_texpipe_test|${TEXTOOLS_DIR}/texpipe/test/test_texpipe.c|textools-texpipe"
+      "textools_envmap_test|${TEXTOOLS_DIR}/envmap/test/test_envmap.c|textools-envmap"
+      "textools_pbr_test|${TEXTOOLS_DIR}/envmap/test/test_pbr.c|textools-pbr")
+    foreach(entry IN LISTS TEXTOOLS_TEST_PROGRAMS)
+      string(REPLACE "|" ";" entry "${entry}")
+      list(GET entry 0 tt_target)
+      list(GET entry 1 tt_source)
+      list(GET entry 2 tt_name)
+      add_executable(${tt_target} ${tt_source})
+      target_link_libraries(${tt_target} PRIVATE tinyusdz_textools)
+      # Some tests poke library internals (tir_internal.h / texcomp_internal.h).
+      target_include_directories(${tt_target} PRIVATE
+        ${TEXTOOLS_DIR}/resize/src ${TEXTOOLS_DIR}/texcomp/src)
+      target_compile_features(${tt_target} PRIVATE c_std_11)
+      if(NOT MSVC)
+        target_compile_options(${tt_target} PRIVATE -w)
+      endif()
+      add_test(NAME ${tt_name} COMMAND ${tt_target})
+      set_tests_properties(${tt_name} PROPERTIES LABELS "textools")
+    endforeach()
+    # ASTC encode coverage is slow in debug builds.
+    set_tests_properties(textools-texcomp PROPERTIES TIMEOUT 600)
+  endif()
+
+  #
   # Standalone tester
   #
   set(TINYUSDZ_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/test-main.cc)
@@ -2171,6 +2252,13 @@ if(TINYUSDZ_BUILD_TESTS)
   # GPU CI stays green.
   if(TARGET tusdrender)
     add_test(
+      NAME tool-tusdrender-instancer-invisible-ids
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-instancer-invisible-ids.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+
+    add_test(
       NAME tool-tusdrender-gpu-render
       COMMAND bash
               ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-gpu-render.sh
@@ -2179,6 +2267,112 @@ if(TINYUSDZ_BUILD_TESTS)
     )
     set_tests_properties(tool-tusdrender-gpu-render PROPERTIES
       SKIP_RETURN_CODE 77)
+
+    add_test(
+      NAME tool-tusdrender-large-scene-profiles
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-large-scene-profiles.sh
+    )
+    set_tests_properties(tool-tusdrender-large-scene-profiles PROPERTIES
+      ENVIRONMENT "TUSDRENDER=$<TARGET_FILE:tusdrender>"
+      SKIP_RETURN_CODE 77
+      LABELS "large-scene")
+
+    add_test(
+      NAME tool-tusdrender-material-resolver
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-material-resolver.sh
+    )
+    set_tests_properties(tool-tusdrender-material-resolver PROPERTIES
+      ENVIRONMENT
+        "TUSDRENDER=$<TARGET_FILE:tusdrender>;TUSDR_MATERIAL_RESOLVER_GATE=TUSDR_RUN_MATERIAL_RESOLVER"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 900
+      LABELS "external-assets")
+
+    add_test(
+      NAME tool-tusdrender-material-resolver-strict
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-material-resolver.sh
+              --fail-on-diff
+    )
+    set_tests_properties(tool-tusdrender-material-resolver-strict PROPERTIES
+      ENVIRONMENT
+        "TUSDRENDER=$<TARGET_FILE:tusdrender>;TUSDR_MATERIAL_RESOLVER_GATE=TUSDR_RUN_MATERIAL_RESOLVER_STRICT"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 900
+      LABELS "external-assets")
+
+    add_test(
+      NAME tool-tusdrender-transparency
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-transparency.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-transparency PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-opacity-texture-alpha
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-opacity-texture-alpha.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-opacity-texture-alpha PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-material-shading-bsdf-sample
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-material-shading-bsdf-sample.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-material-shading-bsdf-sample PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-alpha-blend-sort-external
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-alpha-blend-sort-external.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-alpha-blend-sort-external PROPERTIES
+      SKIP_RETURN_CODE 77
+      TIMEOUT 120
+      LABELS "tusdrender;external-assets")
+
+    add_test(
+      NAME tool-tusdrender-subdivision-schemes
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-subdivision-schemes.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-subdivision-schemes PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-purpose-filtering
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-purpose-filtering.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-purpose-filtering PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-camera-modes
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-camera-modes.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-camera-modes PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tusdrender")
   endif()
 
   #
@@ -2187,6 +2381,69 @@ if(TINYUSDZ_BUILD_TESTS)
   # renderer is available, so it is harmless on headless CI without a GPU.
   #
   if(TARGET tusdview)
+    if(TARGET tusdview_lightrt_bridge_test)
+      add_test(
+        NAME tusdview-lightrt-bridge
+        COMMAND tusdview_lightrt_bridge_test
+      )
+      set_tests_properties(tusdview-lightrt-bridge PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_lightrt_mtlx_eval_test)
+      add_test(
+        NAME tusdview-lightrt-mtlx-eval
+        COMMAND tusdview_lightrt_mtlx_eval_test
+      )
+      set_tests_properties(tusdview-lightrt-mtlx-eval PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_openpbr_material_test)
+      add_test(
+        NAME tusdview-openpbr-material
+        COMMAND tusdview_openpbr_material_test
+      )
+      set_tests_properties(tusdview-openpbr-material PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_lighting_test)
+      add_test(
+        NAME tusdview-lighting
+        COMMAND tusdview_lighting_test
+      )
+      set_tests_properties(tusdview-lighting PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_geometry_primvar_test)
+      add_test(
+        NAME tusdview-geometry-primvar
+        COMMAND tusdview_geometry_primvar_test
+      )
+      set_tests_properties(tusdview-geometry-primvar PROPERTIES
+        LABELS "viewer")
+    endif()
+    if(TARGET tusdview_texture_pipeline_test)
+      add_test(
+        NAME tusdview-texture-pipeline
+        COMMAND tusdview_texture_pipeline_test
+      )
+      set_tests_properties(tusdview-texture-pipeline PROPERTIES
+        LABELS "viewer")
+    endif()
+
+    # tusdview: raster alpha-blending regression. Renders overlapping opaque +
+    # 50%-opacity planes on GL and Vulkan and asserts the overlap is blended
+    # (not the opaque-blue a non-blending forward renderer produced). SKIPs
+    # (return 77) without a GPU, so harmless on headless CI.
+    add_test(
+      NAME tusdview-transparency
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-transparency.sh
+    )
+    set_tests_properties(tusdview-transparency PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
     add_test(
       NAME tusdview-inst-morph-cull
       COMMAND bash
@@ -2195,6 +2452,154 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-inst-morph-cull PROPERTIES
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    add_test(
+      NAME tusdview-instancer-invisible-ids
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-instancer-invisible-ids.sh
+    )
+    set_tests_properties(tusdview-instancer-invisible-ids PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    # tusdview: the DEFAULT (tydra) load path renders PointInstancer instances
+    # (RenderScene::instances -> DrawMeshCPU::instanceXforms). Guards against a
+    # regression to the pre-BuildDrawInstances behavior where only --next placed
+    # instances and the tydra path showed "instances 0/0". Also covers a
+    # referenced (composed) prototype and the instance-aware camera framing.
+    add_test(
+      NAME tusdview-tydra-pointinstancer
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-tydra-pointinstancer.sh
+    )
+    set_tests_properties(tusdview-tydra-pointinstancer PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    # tusdview: renderer-parity degraded-material policy. A material that fails to
+    # convert (unknown shader) must render with the substituted default material
+    # (loadable) AND be reported in the structured load summary as a
+    # degraded_material, which the usd-assets smoke harness fails on.
+    add_test(
+      NAME tusdview-degraded-material
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-degraded-material.sh
+    )
+    set_tests_properties(tusdview-degraded-material PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    add_test(
+      NAME tool-tusdrender-degraded-material
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-degraded-material.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-degraded-material PROPERTIES
+      LABELS "tool;tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-usdz-texture-equivalence
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-usdz-texture-equivalence.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-usdz-texture-equivalence PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tool;tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-mtlx-usdz-texture-equivalence
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-mtlx-usdz-texture-equivalence.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-mtlx-usdz-texture-equivalence PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tool;tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-mtlx-usdz-udim-equivalence
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-mtlx-usdz-udim-equivalence.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-mtlx-usdz-udim-equivalence PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tool;tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-cmyk-jpeg-texture
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-cmyk-jpeg-texture.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-cmyk-jpeg-texture PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tool;tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-timecode-transform-animation
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-timecode-transform-animation.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-timecode-transform-animation PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tool;tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-timecode-points-animation
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-timecode-points-animation.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-timecode-points-animation PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tool;tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-timecode-normals-animation
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-timecode-normals-animation.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-timecode-normals-animation PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tool;tusdrender")
+
+    add_test(
+      NAME tool-tusdrender-timecode-blendshape-animation
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-timecode-blendshape-animation.sh
+              $<TARGET_FILE:tusdrender>
+    )
+    set_tests_properties(tool-tusdrender-timecode-blendshape-animation PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "tool;tusdrender")
+
+    # tusdview: cross-backend renderer parity (§9). Renders the curated models in
+    # Vulkan raster, Vulkan ray query, and CUDA RT and asserts they draw the same
+    # triangle count -- a shading-independent geometry invariant that catches a
+    # backend silently dropping geometry (pixel comparison is unreliable across
+    # backends due to legitimate lighting/tone differences, which are reported
+    # informationally via silhouette coverage). Deterministic + portable (counts
+    # match regardless of GPU); SKIPs when fewer than two backends are available,
+    # so it is a no-op on GPU-less CI.
+    add_test(
+      NAME tusdview-backend-parity
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-backend-parity.sh
+    )
+    set_tests_properties(tusdview-backend-parity PROPERTIES
+      ENVIRONMENT
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDVIEW_PARITY_FILES=skintest.usda texture-cat-plane.usdz tusdview-analytic-prims.usda tusdview-transparency.usda blendshape.usda tusdview-nurbs-patch.usda tri-torus-shared-normal.usda mtlx-normalmap-cube.usda"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 600
       LABELS "viewer")
 
     #
@@ -2213,6 +2618,16 @@ if(TINYUSDZ_BUILD_TESTS)
       SKIP_RETURN_CODE 77
       LABELS "viewer")
 
+    add_test(
+      NAME tusdview-large-scene-profiles
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-large-scene-profiles.sh
+    )
+    set_tests_properties(tusdview-large-scene-profiles PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer;large-scene")
+
     #
     # tusdview: CUDA ray-tracing backend run test. Renders headless via --cuda
     # (CUDA driver API + NVRTC loaded at runtime through cuew; no link-time CUDA
@@ -2228,6 +2643,108 @@ if(TINYUSDZ_BUILD_TESTS)
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
+
+    # tusdview: CUDA AOV-mode smoke. Exercises the shared CUDA/HIP ray tracer
+    # through NVRTC across representative debug AOV branches. SKIPs (77) when
+    # CUDA is unavailable.
+    add_test(
+      NAME tusdview-cuda-aov
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-cuda-aov.sh
+    )
+    set_tests_properties(tusdview-cuda-aov PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    # tusdview: external usd-assets smoke harness. This enumerates USD-family
+    # files under USD_ASSETS_ROOT and renders them through Vulkan raster, Vulkan
+    # ray query, and CUDA RT. It SKIPs unless USD_ASSETS_ROOT is set in the ctest
+    # environment, so normal CI does not depend on a local asset checkout.
+    add_test(
+      NAME tusdview-usd-assets-render-smoke
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
+    )
+    set_tests_properties(tusdview-usd-assets-render-smoke PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer;external-assets")
+
+    if(TARGET tusdrender)
+      # tusdview: the usd-assets smoke harness must preserve intentional
+      # "loaded, but nothing renderable" scenes as no_renderable instead of
+      # backend_error/rendered. Uses tusdrender CPU mode so this is GPU-free.
+      add_test(
+        NAME tusdview-no-renderable-tracking
+        COMMAND bash
+                ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-no-renderable-tracking.sh
+      )
+      set_tests_properties(tusdview-no-renderable-tracking PROPERTIES
+        ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>"
+        SKIP_RETURN_CODE 77
+        LABELS "viewer")
+    endif()
+
+    # tusdview: checked-in smoke render of a curated subset of the repo's own
+    # models/ across Vulkan raster, Vulkan ray query, and CUDA RT (no external
+    # asset checkout needed). Covers textured / skinned / blendshape / normal-map
+    # / NURBS / plain-geometry paths. Fails on load_error/timeout/backend_error
+    # (regressions loading or rendering the models), but treats backend_unavailable
+    # as a pass so it is a no-op on GPU-less CI. This is the guard that caught the
+    # CUDA rest-pose skinning regression.
+    add_test(
+      NAME tusdview-models-render-smoke
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
+    )
+    set_tests_properties(tusdview-models-render-smoke PROPERTIES
+      ENVIRONMENT
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;USD_ASSETS_ROOT=${PROJECT_SOURCE_DIR}/models;TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,cuda-rt;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=45s;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,no_renderable,degraded_material;TUSDVIEW_USD_ASSETS_FILES=texture-cat-plane.usdz uv-quad-textured.usda skintest.usda blendshape.usda mtlx-normalmap-cube.usda tusdview-nurbs-patch.usda tri-torus-shared-normal.usda tusdview-analytic-prims.usda tusdview-transparency.usda"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 600
+      LABELS "viewer")
+
+    # tusdview: golden-fingerprint regression check for the same curated models
+    # subset (vk-raster, the most reproducible path). Compares a coarse 12x12x3
+    # quantized fingerprint of each render against the checked-in baseline
+    # (examples/tusdview/tests/models-render-goldens.tsv) and fails on
+    # golden_mismatch, catching gross visual regressions (blank/wrong-color/lost
+    # geometry) that the non-blank smoke cannot. Fingerprints are a PER-MACHINE
+    # baseline (GPU/driver dependent), so this is OPT-IN: it SKIPs unless
+    # TUSDVIEW_RUN_GOLDEN is set in the environment. Regenerate the baseline with
+    #   TUSDVIEW=<bin> USD_ASSETS_ROOT=models TUSDVIEW_USD_ASSETS_MODES=vk-raster \
+    #   TUSDVIEW_XVFB=1 TUSDVIEW_USD_ASSETS_FILES="..." \
+    #   TUSDVIEW_USD_ASSETS_GOLDEN=examples/tusdview/tests/models-render-goldens.tsv \
+    #   TUSDVIEW_USD_ASSETS_GOLDEN_UPDATE=1 bash .../run-usd-assets-render-smoke.sh
+    add_test(
+      NAME tusdview-models-golden
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
+    )
+    set_tests_properties(tusdview-models-golden PROPERTIES
+      ENVIRONMENT
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;USD_ASSETS_ROOT=${PROJECT_SOURCE_DIR}/models;TUSDVIEW_USD_ASSETS_MODES=vk-raster;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=45s;TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_GOLDEN;TUSDVIEW_USD_ASSETS_GOLDEN=${PROJECT_SOURCE_DIR}/examples/tusdview/tests/models-render-goldens.tsv;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,no_renderable,golden_mismatch;TUSDVIEW_USD_ASSETS_FILES=texture-cat-plane.usdz uv-quad-textured.usda skintest.usda blendshape.usda mtlx-normalmap-cube.usda tusdview-nurbs-patch.usda tri-torus-shared-normal.usda tusdview-analytic-prims.usda tusdview-transparency.usda"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 600
+      LABELS "viewer")
+
+    # tusdview/tusdrender: opt-in external usd-assets coverage golden. The
+    # coverage fingerprint is a silhouette bitfield, so it is less sensitive to
+    # backend/GPU lighting differences than the strict color hash. It includes
+    # tusdrender CPU/Vulkan modes as well as tusdview GPU modes. Users provide a
+    # per-machine baseline path through TUSDVIEW_USD_ASSETS_GOLDEN.
+    add_test(
+      NAME tusdview-usd-assets-coverage-golden
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
+    )
+    set_tests_properties(tusdview-usd-assets-coverage-golden PROPERTIES
+      ENVIRONMENT
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>;TUSDVIEW_USD_ASSETS_PROFILE=usd-assets-curated;TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,cuda-rt,tusdr-cpu,tusdr-vk,tusdr-vkr;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=60s;TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_GOLDEN;TUSDVIEW_USD_ASSETS_GOLDEN_KIND=coverage;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,golden_mismatch"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 1200
+      LABELS "viewer;external-assets")
 
     # tusdview: HIP/ROCm ray-tracing backend run test. Renders headless via --hip
     # (HIP runtime + hiprtc loaded at runtime through hipew; no link-time ROCm
@@ -2255,6 +2772,18 @@ if(TINYUSDZ_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-hip-aov.sh
     )
     set_tests_properties(tusdview-hip-aov PROPERTIES
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
+
+    # tusdview: Vulkan ray-query AOV smoke. Requires an RT-capable Vulkan device;
+    # SKIPs (77) if --rt falls back to raster.
+    add_test(
+      NAME tusdview-vk-rt-aov
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-vk-rt-aov.sh
+    )
+    set_tests_properties(tusdview-vk-rt-aov PROPERTIES
       ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>"
       SKIP_RETURN_CODE 77
       LABELS "viewer")
@@ -2390,6 +2919,27 @@ if(TINYUSDZ_BUILD_TESTS)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
+
+    add_test(
+      NAME tusdview-vk-rt-skinning-screenshot-diff
+      COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/tusdview/compare-skinning-screenshots.py
+              --app "$<TARGET_FILE:tusdview>"
+              --model "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+              --out-dir "${CMAKE_BINARY_DIR}/Testing/tusdview-vk-rt-skinning"
+              --backend vk
+              --rt
+              --mode position
+              --headless
+              --skip-unavailable
+              --frames 4
+              --time 12
+              --max-mean 4.0
+              --max-pixel 180
+              --max-changed-ratio 0.35
+      )
+    set_tests_properties(tusdview-vk-rt-skinning-screenshot-diff PROPERTIES
+      SKIP_RETURN_CODE 77
+      LABELS "viewer")
   endif()
 
   #
@@ -2634,6 +3184,24 @@ if(TINYUSDZ_BUILD_TESTS)
                                ${PROJECT_SOURCE_DIR}/tools/tusdrender
                                ${PROJECT_SOURCE_DIR}/src/external/lightrt)
     add_test(NAME feat-tusdr-rt-lod COMMAND feat-tusdr-rt-lod
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+    # tusdrender GPU flattening must reject malformed/oversized geometry before
+    # handing indexed buffers to LightRT/Vulkan. This protects the large-scene
+    # render paths from uint32 wrap and invalid mesh indices.
+    add_executable(feat-tusdr-gpu-common
+                   tools/tusdrender/tests/test_gpu_common.cc
+                   tools/tusdrender/tusdr_gpu_common.cc)
+    add_sanitizers(feat-tusdr-gpu-common)
+    target_link_libraries(feat-tusdr-gpu-common PRIVATE
+                          ${TINYUSDZ_TARGET_STATIC}
+                          lightrt_c)
+    target_include_directories(feat-tusdr-gpu-common PRIVATE
+                               ${PROJECT_SOURCE_DIR}/src
+                               ${PROJECT_SOURCE_DIR}
+                               ${PROJECT_SOURCE_DIR}/tools/tusdrender
+                               ${PROJECT_SOURCE_DIR}/src/external/lightrt)
+    add_test(NAME feat-tusdr-gpu-common COMMAND feat-tusdr-gpu-common
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
     # USDC reader must carry the authored specifier (def/over/class) into the

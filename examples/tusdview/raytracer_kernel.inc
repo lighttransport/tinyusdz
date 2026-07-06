@@ -11,11 +11,13 @@ struct Cam { float invVP[16]; float camPos[4]; float lightDir[4]; float clear[4]
 // the prototype's object space (kept un-normalized so object t == world t). o2w
 // reconstructs world-space verts for area/normal AOVs. blasRoot = global node
 // index of this prototype's BLAS subtree root.
-struct Inst { float w2o[12]; float o2w[12]; float tint[3]; int blasRoot; int instId; };
+struct Inst { float w2o[12]; float o2w[12]; float tint[4]; int blasRoot; int instId; };
 struct TexDesc { int offset; int width; int height; int wrapS; int wrapT; };
 
 typedef struct { float x, y, z; } F3;
+typedef struct { float x, y, z, w; } F4;
 __device__ F3 mk(float x, float y, float z){ F3 r; r.x=x; r.y=y; r.z=z; return r; }
+__device__ F4 mk4(float x, float y, float z, float w){ F4 r; r.x=x; r.y=y; r.z=z; r.w=w; return r; }
 __device__ F3 sub(F3 a, F3 b){ return mk(a.x-b.x, a.y-b.y, a.z-b.z); }
 __device__ F3 add(F3 a, F3 b){ return mk(a.x+b.x, a.y+b.y, a.z+b.z); }
 __device__ F3 scale(F3 a, float s){ return mk(a.x*s, a.y*s, a.z*s); }
@@ -33,11 +35,11 @@ __device__ float wrapCoord(float x, int mode){
   if (mode==2){ float t=floorf(x); float f=x-t; return ((int)t&1)?(1.f-f):f; } // mirror
   return x-floorf(x);                                            // repeat
 }
-__device__ F3 sampleTexRGB(const unsigned char* texels, const TexDesc* tex,
-                           int numTex, int id, float u, float v){
-  if (!texels || !tex || id<0 || id>=numTex) return mk(1.f,1.f,1.f);
+__device__ F4 sampleTexRGBA(const unsigned char* texels, const TexDesc* tex,
+                            int numTex, int id, float u, float v){
+  if (!texels || !tex || id<0 || id>=numTex) return mk4(1.f,1.f,1.f,1.f);
   TexDesc td=tex[id];
-  if (td.width<=0 || td.height<=0) return mk(1.f,1.f,1.f);
+  if (td.width<=0 || td.height<=0) return mk4(1.f,1.f,1.f,1.f);
   float su=wrapCoord(u,td.wrapS)*(td.width-1);
   float sv=wrapCoord(v,td.wrapT)*(td.height-1);
   int x0=(int)floorf(su), y0=(int)floorf(sv);
@@ -48,13 +50,29 @@ __device__ F3 sampleTexRGB(const unsigned char* texels, const TexDesc* tex,
   const unsigned char* p10=texels+td.offset+(y0*td.width+x1)*4;
   const unsigned char* p01=texels+td.offset+(y1*td.width+x0)*4;
   const unsigned char* p11=texels+td.offset+(y1*td.width+x1)*4;
-  F3 c00=mk(p00[0]*(1.f/255.f),p00[1]*(1.f/255.f),p00[2]*(1.f/255.f));
-  F3 c10=mk(p10[0]*(1.f/255.f),p10[1]*(1.f/255.f),p10[2]*(1.f/255.f));
-  F3 c01=mk(p01[0]*(1.f/255.f),p01[1]*(1.f/255.f),p01[2]*(1.f/255.f));
-  F3 c11=mk(p11[0]*(1.f/255.f),p11[1]*(1.f/255.f),p11[2]*(1.f/255.f));
-  F3 a=add(scale(c00,1.f-tx),scale(c10,tx));
-  F3 b=add(scale(c01,1.f-tx),scale(c11,tx));
-  return add(scale(a,1.f-ty),scale(b,ty));
+  F4 c00=mk4(p00[0]*(1.f/255.f),p00[1]*(1.f/255.f),p00[2]*(1.f/255.f),p00[3]*(1.f/255.f));
+  F4 c10=mk4(p10[0]*(1.f/255.f),p10[1]*(1.f/255.f),p10[2]*(1.f/255.f),p10[3]*(1.f/255.f));
+  F4 c01=mk4(p01[0]*(1.f/255.f),p01[1]*(1.f/255.f),p01[2]*(1.f/255.f),p01[3]*(1.f/255.f));
+  F4 c11=mk4(p11[0]*(1.f/255.f),p11[1]*(1.f/255.f),p11[2]*(1.f/255.f),p11[3]*(1.f/255.f));
+  F4 a=mk4(c00.x+(c10.x-c00.x)*tx,c00.y+(c10.y-c00.y)*tx,c00.z+(c10.z-c00.z)*tx,c00.w+(c10.w-c00.w)*tx);
+  F4 b=mk4(c01.x+(c11.x-c01.x)*tx,c01.y+(c11.y-c01.y)*tx,c01.z+(c11.z-c01.z)*tx,c01.w+(c11.w-c01.w)*tx);
+  return mk4(a.x+(b.x-a.x)*ty,a.y+(b.y-a.y)*ty,a.z+(b.z-a.z)*ty,a.w+(b.w-a.w)*ty);
+}
+__device__ F3 sampleTexRGB(const unsigned char* texels, const TexDesc* tex,
+                           int numTex, int id, float u, float v){
+  F4 c=sampleTexRGBA(texels,tex,numTex,id,u,v);
+  return mk(c.x,c.y,c.z);
+}
+__device__ float channel4(F4 c, int ch){
+  if (ch==1) return c.y;
+  if (ch==2) return c.z;
+  if (ch==3) return c.w;
+  return c.x;
+}
+__device__ void xformUv(const float* p, int off, float u, float v, float* ou, float* ov){
+  const float* x=p+off;
+  *ou=x[0]*u+x[1]*v+x[2];
+  *ov=x[3]*u+x[4]*v+x[5];
 }
 
 // Hash RNG + cosine-weighted hemisphere sampler for ambient occlusion.
@@ -312,8 +330,11 @@ R"CUDA(  float t0=fmaxf(tmin,0.f);
 
 extern "C" __global__ void trace(const float* tris, const float* nrms,
                                  const float* cols, const unsigned char* geo,
-                                 const int* mats, const float* matPbr, int numMats,
-                                 const int* matTex, const unsigned char* texels,
+                                 const int* mats, const float* matPbr,
+                                 const float* matLightRt, int numMats,
+                                 const float* lightParams, int numLights,
+                                 const int* matTex, const float* matTexParam,
+                                 const unsigned char* texels,
                                  const TexDesc* textures, int numTextures,
                                  const float* uvs, const float* uvs1,
                                  const float* infls, const int* faces,
@@ -338,6 +359,27 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
   int ht, hitInst; float bu,bv;
   float t=traverseTLAS(tlas,insts,blas,tris,o,d,1e30f,&ht,&bu,&bv,&hitInst,false);
   int rmodePre=(int)(cam.clear[3]+0.5f);
+  // Dome env background on miss (shaded mode only): sample the dome's latlong
+  // envmap scaled by its effectiveColor. Packed light record: [0]=type,
+  // [1]=flags (bit 4 = envmap mapped), [2]=texture id, [16..18]=effectiveColor.
+  if (ht<0 && rmodePre==0 && lightParams && numLights>0 && texels && textures){
+    for (int li=0; li<numLights; ++li){
+      const float* lp=&lightParams[li*80];
+      if ((int)(lp[0]+0.5f)!=6) continue;         // DomeLight
+      int lflags=(int)(lp[1]+0.5f);
+      if (!(lflags&(1<<4))) continue;             // has mapped envmap
+      int envTex=(int)(lp[2]+0.5f);
+      // Rows 10-12: world -> environment rotation (dome orientation).
+      F3 de=mk(lp[40]*d.x+lp[41]*d.y+lp[42]*d.z,
+               lp[44]*d.x+lp[45]*d.y+lp[46]*d.z,
+               lp[48]*d.x+lp[49]*d.y+lp[50]*d.z);
+      float eu=atan2f(de.x,-de.z)*0.15915494f+0.5f; // latlong u
+      float ev=acosf(fminf(fmaxf(de.y,-1.f),1.f))*0.31830989f;
+      F3 env=sampleTexRGB(texels,textures,numTextures,envTex,eu,ev);
+      outc=mk(env.x*lp[16],env.y*lp[17],env.z*lp[18]);
+      break;
+    }
+  }
   if (rmodePre==27){  // BVH traversal-cost heatmap (per primary ray, all pixels)
     int steps=traverseSteps(tlas,insts,blas,tris,o,d,1e30f);
     float c=fminf(steps/256.0f,1.0f);  // 2-level visits more nodes than single BVH
@@ -368,35 +410,168 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
     float vv2=uvh[1]*w0+uvh[3]*bu+uvh[5]*bv;
     int mid=mats[ht];
     int baseTex=-1, mrTex=-1, normalTex=-1, emissiveTex=-1;
+    const float* tp = 0;
     if (matTex && mid>=0 && mid<numMats){
       baseTex=matTex[mid*4+0]; mrTex=matTex[mid*4+1];
       normalTex=matTex[mid*4+2]; emissiveTex=matTex[mid*4+3];
+      if (matTexParam) tp=&matTexParam[mid*56];
     }
-    (void)normalTex;
-    F3 bt=sampleTexRGB(texels,textures,numTextures,baseTex,uu,vv2);
+    const float* lrt = (matLightRt && mid>=0 && mid<numMats &&
+                        matLightRt[mid*56+51] > 0.5f) ? &matLightRt[mid*56] : 0;
+    float buu=uu,bvv=vv2,muu=uu,mvv=vv2,nuu=uu,nvv=vv2,euu=uu,evv=vv2;
+    if (tp) {
+      xformUv(tp,0,uu,vv2,&buu,&bvv);
+      xformUv(tp,6,uu,vv2,&muu,&mvv);
+      xformUv(tp,12,uu,vv2,&nuu,&nvv);
+      xformUv(tp,18,uu,vv2,&euu,&evv);
+    }
+    F4 bt4=sampleTexRGBA(texels,textures,numTextures,baseTex,buu,bvv);
+    if (tp) bt4=mk4(bt4.x*tp[24]+tp[28],bt4.y*tp[25]+tp[29],bt4.z*tp[26]+tp[30],bt4.w*tp[27]+tp[31]);
+    F3 bt=mk(bt4.x,bt4.y,bt4.z);
     base=mk(base.x*bt.x,base.y*bt.y,base.z*bt.z);
+    float metallic=(mid>=0&&mid<numMats)?matPbr[mid*6+0]:0.f;
+    float roughness=(mid>=0&&mid<numMats)?matPbr[mid*6+1]:0.5f;
+    float opacity=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f;
+    float alphaMode=(mid>=0&&mid<numMats&&lrt)?lrt[54]:0.f;
+    float alphaCutoff=(mid>=0&&mid<numMats&&lrt)?lrt[55]:0.5f;
+    float specWeight=1.f, coatWeight=0.f, coatRoughness=0.1f;
+    F3 emissionConst=(mid>=0&&mid<numMats)?mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]):mk(0.f,0.f,0.f);
+    if (lrt) {
+      metallic=lrt[40];
+      roughness=lrt[42];
+      opacity=lrt[39];
+      specWeight=lrt[7];
+      coatWeight=lrt[27];
+      coatRoughness=lrt[44];
+      emissionConst=mk(lrt[32]*lrt[35], lrt[33]*lrt[35], lrt[34]*lrt[35]);
+    }
+    F4 mrt=sampleTexRGBA(texels,textures,numTextures,mrTex,muu,mvv);
+    int roughCh=tp?(int)(tp[49]+0.5f):1;
+    int metalCh=tp?(int)(tp[48]+0.5f):2;
+    float roughS=tp?tp[52]:1.f, roughB=tp?tp[53]:0.f;
+    float metalS=tp?tp[50]:1.f, metalB=tp?tp[51]:0.f;
+    roughness=fminf(fmaxf(roughness*(channel4(mrt,roughCh)*roughS+roughB),0.f),1.f);
+    metallic=fminf(fmaxf(metallic*(channel4(mrt,metalCh)*metalS+metalB),0.f),1.f);
+    opacity=fminf(fmaxf(opacity*bt4.w,0.f),1.f);
+    float materialOpacity=opacity;
+    if (alphaMode > 0.5f && alphaMode < 1.5f) {
+      materialOpacity=(opacity >= alphaCutoff) ? 1.f : 0.f;
+    }
+    materialOpacity=fminf(fmaxf(materialOpacity*I->tint[3],0.f),1.f);
+    if (I->tint[3] < 1.f && materialOpacity > 0.f) alphaMode=2.f;
+    if (normalTex>=0) {
+      F4 nt=sampleTexRGBA(texels,textures,numTextures,normalTex,nuu,nvv);
+      if (tp) nt=mk4(nt.x*tp[32]+tp[36],nt.y*tp[33]+tp[37],nt.z*tp[34]+tp[38],nt.w*tp[35]+tp[39]);
+      else nt=mk4(nt.x*2.f-1.f,nt.y*2.f-1.f,nt.z*2.f-1.f,nt.w);
+      N=norm3(add(N,scale(mk(nt.x,nt.y,nt.z),0.1f)));
+    }
 
-    // Default shaded view: match the tusdrender -vk/-vkr preview exactly so the
-    // two GPU ray-traced previews agree (tools/tusdrender/tusdr_vulkan.cc). Orient
-    // the shading normal toward the eye (USD winding/normals are not guaranteed
-    // consistent), then key light + a dim camera headlight + ambient (0.05). No
-    // cast shadows here: -vkr has none, and parity is the goal for this view.
+    // Default shaded view: limited LightRT/OpenPBR preview. This is not the full
+    // BSDF, but it consumes the baked OpenPBR constants for roughness, metalness,
+    // specular, coat, emission and opacity while preserving the existing texture
+    // sampling and debug-AOV behavior.
     F3 V=norm3(scale(d,-1.f));               // toward the eye
     F3 Ns=(dot3(N,V)<0.f)?scale(N,-1.f):N;   // forward-facing shading normal
     F3 L=norm3(mk(cam.lightDir[0],cam.lightDir[1],cam.lightDir[2]));
+    F3 lightColor=mk(1.f,1.f,1.f);
+    if (lightParams && numLights > 0 && lightParams[1] > 0.5f) {
+      F3 packedL=mk(lightParams[8],lightParams[9],lightParams[10]);
+      if (dot3(packedL,packedL) > 1e-10f) L=norm3(packedL);
+      lightColor=mk(lightParams[12],lightParams[13],lightParams[14]);
+      if (dot3(lightColor,lightColor) <= 1e-10f) lightColor=mk(1.f,1.f,1.f);
+    }
     float key=fmaxf(dot3(Ns,L),0.f);
     float head=fmaxf(dot3(Ns,V),0.f);
-    float k=0.05f+0.8f*key+0.35f*head;
+    // Ambient: dome SH irradiance when baked (rows 13-19; matches raster IBL),
+    // else the constant headlight floor.
+    float ambS=0.05f+0.35f*head;
+    F3 amb3=mk(ambS,ambS,ambS);
+    F3 specIBL3=mk(0.f,0.f,0.f);
+    if (lightParams && numLights>0){
+      for (int li=0; li<numLights; ++li){
+        const float* lp=&lightParams[li*80];
+        if ((int)(lp[0]+0.5f)!=6) continue;            // DomeLight
+        if (!(((int)(lp[1]+0.5f))&(1<<7))) continue;   // baked IBL present
+        F3 Ne=norm3(mk(lp[40]*Ns.x+lp[41]*Ns.y+lp[42]*Ns.z,
+                       lp[44]*Ns.x+lp[45]*Ns.y+lp[46]*Ns.z,
+                       lp[48]*Ns.x+lp[49]*Ns.y+lp[50]*Ns.z));
+        float b[9];
+        b[0]=0.282095f;
+        b[1]=0.488603f*Ne.y; b[2]=0.488603f*Ne.z; b[3]=0.488603f*Ne.x;
+        b[4]=1.092548f*Ne.x*Ne.y; b[5]=1.092548f*Ne.y*Ne.z;
+        b[6]=0.315392f*(3.f*Ne.z*Ne.z-1.f);
+        b[7]=1.092548f*Ne.x*Ne.z; b[8]=0.546274f*(Ne.x*Ne.x-Ne.y*Ne.y);
+        F3 e=mk(0.f,0.f,0.f);
+        const float* sh=&lp[52];
+        for (int k=0;k<9;++k){
+          e.x+=b[k]*sh[k*3+0]; e.y+=b[k]*sh[k*3+1]; e.z+=b[k]*sh[k*3+2];
+        }
+        amb3=mk(fmaxf(e.x,0.f)*lp[16], fmaxf(e.y,0.f)*lp[17],
+                fmaxf(e.z,0.f)*lp[18]);
+        // Specular IBL: the CUDA path has no prefiltered cube, so sample the
+        // 8-bit latlong env (when mapped, bit 4) along the reflection vector,
+        // blurred toward the normal by roughness (cheap prefilter proxy), and
+        // weight by an analytic split-sum DFG (Karis' mobile approximation).
+        int envTexS=(int)(lp[2]+0.5f);
+        if ((((int)(lp[1]+0.5f))&(1<<4)) && envTexS>=0){
+          float NoV=fmaxf(dot3(Ns,V),0.f);
+          F3 R=add(scale(V,-1.f), scale(Ns, 2.f*dot3(V,Ns)));
+          float tb=roughness*roughness;
+          F3 Rb=norm3(add(scale(R,1.f-tb), scale(Ns,tb)));
+          F3 Re=norm3(mk(lp[40]*Rb.x+lp[41]*Rb.y+lp[42]*Rb.z,
+                         lp[44]*Rb.x+lp[45]*Rb.y+lp[46]*Rb.z,
+                         lp[48]*Rb.x+lp[49]*Rb.y+lp[50]*Rb.z));
+          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
+          float sv=acosf(fminf(fmaxf(Re.y,-1.f),1.f))*0.31830989f;
+          F3 envc=sampleTexRGB(texels,textures,numTextures,envTexS,su,sv);
+          float rx=roughness*-1.f+1.f, ry=roughness*-0.0275f+0.0425f;
+          float rz=roughness*-0.572f+1.04f, rw=roughness*0.022f-0.04f;
+          float a004=fminf(rx*rx, exp2f(-9.28f*NoV))*rx+ry;
+          float dfgx=-1.04f*a004+rz, dfgy=1.04f*a004+rw;
+          F3 F0=mk(0.04f+(base.x-0.04f)*metallic,
+                   0.04f+(base.y-0.04f)*metallic,
+                   0.04f+(base.z-0.04f)*metallic);
+          float sw=fmaxf(specWeight,0.f);
+          specIBL3=mk(envc.x*(F0.x*dfgx+dfgy)*lp[16]*sw,
+                      envc.y*(F0.y*dfgx+dfgy)*lp[17]*sw,
+                      envc.z*(F0.z*dfgx+dfgy)*lp[18]*sw);
+        }
+        break;
+      }
+    }
     F3 em=mk(0.f,0.f,0.f);
     if (mid>=0&&mid<numMats) {
-      em=mk(matPbr[mid*6+2],matPbr[mid*6+3],matPbr[mid*6+4]);
-      F3 et=sampleTexRGB(texels,textures,numTextures,emissiveTex,uu,vv2);
+      em=emissionConst;
+      F4 et4=sampleTexRGBA(texels,textures,numTextures,emissiveTex,euu,evv);
+      if (tp) et4=mk4(et4.x*tp[40]+tp[44],et4.y*tp[41]+tp[45],et4.z*tp[42]+tp[46],et4.w*tp[43]+tp[47]);
+      F3 et=mk(et4.x,et4.y,et4.z);
       em=mk(em.x*et.x,em.y*et.y,em.z*et.z);
     }
-    outc=add(mk(base.x*k,base.y*k,base.z*k),em);
+    F3 Hv=norm3(add(L,V));
+    float specPow=96.f+(8.f-96.f)*roughness;
+    float spec=powf(fmaxf(dot3(Ns,Hv),0.f), specPow) * (0.04f+0.31f*metallic) *
+               fmaxf(specWeight,0.f);
+    float coatPow=128.f+(12.f-128.f)*fminf(fmaxf(coatRoughness,0.f),1.f);
+    float coat=powf(fmaxf(dot3(Ns,Hv),0.f), coatPow) * fminf(fmaxf(coatWeight,0.f),1.f) * 0.25f;
+    F3 lit=mk(base.x*(amb3.x+0.8f*key*lightColor.x),
+              base.y*(amb3.y+0.8f*key*lightColor.y),
+              base.z*(amb3.z+0.8f*key*lightColor.z));
+    F3 sp=mk((spec+coat)*lightColor.x,(spec+coat)*lightColor.y,
+             (spec+coat)*lightColor.z);
+    outc=add(add(add(lit,sp),specIBL3),em);
     // Render mode (clear[3]): 1=wireframe, 2=shading normal, 3=material-id,
     // 4=geometric normal, 5=uv set 0, 6=depth (t/depthScale in lightDir[3]).
     int rmode=(int)(cam.clear[3]+0.5f);
+    if (rmode==0) {
+      F3 bg=mk(cam.clear[0],cam.clear[1],cam.clear[2]);
+      if (alphaMode > 0.5f && alphaMode < 1.5f && materialOpacity <= 0.f) {
+        outc=bg;
+      } else if (alphaMode > 1.5f && materialOpacity < 1.f) {
+        outc=mk(bg.x+(outc.x-bg.x)*materialOpacity,
+                bg.y+(outc.y-bg.y)*materialOpacity,
+                bg.z+(outc.z-bg.z)*materialOpacity);
+      }
+    }
     if (rmode==1){
       // Original-polygon wireframe with screen-space analytic AA (usdview look):
       // project the triangle's world verts to pixels and measure the sample's
@@ -435,16 +610,14 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
       outc=base;  // albedo (pre-lighting)
     } else if (rmode==8){  // facing
       outc=(dot3(cross3(sub(wp1,wp0),sub(wp2,wp0)),d)<0.f)?mk(0.1f,0.7f,0.1f):mk(0.7f,0.1f,0.1f);
-    } else if (rmode==9){  // roughness (matPbr layout: metal,rough,emitR,emitG,emitB,alpha)
-      F3 mt=sampleTexRGB(texels,textures,numTextures,mrTex,uu,vv2);
-      float r=(mid>=0&&mid<numMats)?matPbr[mid*6+1]*mt.y:0.5f; outc=mk(r,r,r);
+    } else if (rmode==9){  // roughness
+      outc=mk(roughness,roughness,roughness);
     } else if (rmode==10){  // metallic
-      F3 mrt=sampleTexRGB(texels,textures,numTextures,mrTex,uu,vv2);
-      float mt=(mid>=0&&mid<numMats)?matPbr[mid*6+0]*mrt.z:0.f; outc=mk(mt,mt,mt);
+      outc=mk(metallic,metallic,metallic);
     } else if (rmode==11){  // emissive
       outc=em;
     } else if (rmode==12){  // opacity
-      float a=(mid>=0&&mid<numMats)?matPbr[mid*6+5]:1.f; outc=mk(a,a,a);
+      outc=mk(materialOpacity,materialOpacity,materialOpacity);
     } else if (rmode==13){  // world position
       outc=mk(fminf(fmaxf((hit.x-cam.sceneMin[0])/fmaxf(cam.sceneExtent[0],1e-4f),0.f),1.f),
               fminf(fmaxf((hit.y-cam.sceneMin[1])/fmaxf(cam.sceneExtent[1],1e-4f),0.f),1.f),

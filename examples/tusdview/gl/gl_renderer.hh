@@ -22,13 +22,15 @@ class GLRenderer final : public Renderer {
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
+  void setLights(const std::vector<DrawLightCPU>& lights) override;
   void uploadSkinningFrame(const SkinningFrameCPU& skin) override;
   void updateMeshVertices(int meshIndex,
                           const std::vector<DrawVertex>& verts) override;
   void updateMorphWeights(int meshIndex,
                           const std::vector<float>& coeffs) override;
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
-                                const float* colors, uint32_t count) override;
+                                const float* colors, const float* opacities,
+                                uint32_t count) override;
   bool supportsProxyDraw() const override { return true; }
   void updateProxyInstances(const float* xforms, const float* tints,
                             uint32_t count) override;
@@ -74,8 +76,12 @@ class GLRenderer final : public Renderer {
     int instanceCount{0};    // >0 => drawn with glDrawElementsInstanced
     int drawInstanceCount{0};  // visible subset drawn this frame (per-instance cull)
     GLuint instanceColorVbo{0};      // per-instance displayColor; 0 = none
+    GLuint instanceOpacityVbo{0};    // per-instance displayOpacity; 0 = none
     bool hasInstanceColors{false};   // true => attrib 9 is array-backed
+    bool hasInstanceOpacities{false};  // true => attrib 11 is array-backed
+    bool hasTranslucentInstances{false};
     float flatColor[3]{0.8f, 0.8f, 0.8f};  // per-draw color when no per-instance
+    float flatOpacity{1.0f};
     GLuint vertexColorVbo{0};        // per-vertex displayColor (non-instanced); 0 = none
     GLuint uv1Vbo{0};                // 2nd texcoord set (attrib 6, non-instanced); 0 = none
     GLuint morphInflVbo{0};          // blendshape influence (attrib 7, non-instanced); 0 = none
@@ -102,16 +108,35 @@ class GLRenderer final : public Renderer {
     bool extendedSkinned{false};
     int influenceTexWidth{0};
     size_t vertexCount{0};  // for per-frame morph vertex re-upload guard
+    float localCentroid[3]{0, 0, 0};  // mesh-space bbox center (translucency sort)
   };
+
+  // Which alpha class to draw in a drawMeshes() pass. Translucent materials
+  // (alphaMode == Blend) render in a separate depth-write-off blended pass,
+  // sorted back-to-front by world centroid, after the opaque pass.
+  enum class AlphaPass { All, Opaque, Translucent };
   struct GLMaterial {
     float baseColor[3]{0.8f, 0.8f, 0.8f};
     float metallic{0.0f}, roughness{0.5f};
     float emissive[3]{0, 0, 0};
     float alpha{1.0f};
+    int alphaMode{0};
+    float alphaCutoff{0.5f};
     // Texture slot indices into textures_ (-1 = none). Resolved at draw time so
     // lazily-uploaded textures appear without re-touching materials.
     int baseColorTex{-1}, metalRoughTex{-1}, normalTex{-1}, emissiveTex{-1};
+    DrawTexSampleCPU baseColorSample;
+    DrawTexSampleCPU metalRoughSample;
+    DrawTexSampleCPU normalSample;
+    DrawTexSampleCPU emissiveSample;
+    int metallicChannel{2};
+    int roughnessChannel{1};
+    float metallicTexScale{1.0f};
+    float metallicTexBias{0.0f};
+    float roughnessTexScale{1.0f};
+    float roughnessTexBias{0.0f};
     int displacementTex{-1};
+    DrawUvXformCPU displacementUv;
     float displacementConst{0.0f};
     float displacementTexScale{1.0f};
     float displacementTexBias{0.0f};
@@ -122,7 +147,8 @@ class GLRenderer final : public Renderer {
   void buildTessProgram();  // GL>=4.0 tessellation displacement program (best-effort)
   void ensureFbo(int w, int h);
   void drawMeshes(const RenderFrameParams& params, bool wireframe,
-                  const float* overrideEmissive);
+                  const float* overrideEmissive,
+                  AlphaPass alphaPass = AlphaPass::All);
   // Draw each mesh's original-polygon edge set (wireEbo) as GL_LINES, both the
   // non-instanced and instanced prototypes, in a flat color with a small NDC depth
   // bias so the lines sit just in front of the surface.
@@ -138,7 +164,8 @@ class GLRenderer final : public Renderer {
 
   GLuint program_{0};
   // uniform locations
-  GLint uMVP_{-1}, uModel_{-1}, uNormalMat_{-1}, uCameraPos_{-1}, uGeometricNormal_{-1};
+  GLint uMVP_{-1}, uModel_{-1}, uNormalMat_{-1}, uCameraPos_{-1};
+  GLint uLightDir_{-1}, uLightColor_{-1}, uGeometricNormal_{-1};
   GLint uRenderMode_{-1}, uMatId_{-1}, uDepthScale_{-1};  // AOV visualizations
   GLint uSceneMin_{-1}, uSceneExtent_{-1};                // position AOV bounds
   GLint uMeshId_{-1}, uDoubleSided_{-1};                  // mesh-id / double-sided AOV
@@ -146,9 +173,20 @@ class GLRenderer final : public Renderer {
   GLint uKind_{-1};                                       // kind AOV (per-draw)
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
+  GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uBaseColorTexIsUdim_{-1}, uMetalRoughTexIsUdim_{-1};
   GLint uNormalTexIsUdim_{-1}, uEmissiveTexIsUdim_{-1};
+  GLint uBaseColorUv0_{-1}, uBaseColorUv1_{-1};
+  GLint uMetalRoughUv0_{-1}, uMetalRoughUv1_{-1};
+  GLint uNormalUv0_{-1}, uNormalUv1_{-1};
+  GLint uEmissiveUv0_{-1}, uEmissiveUv1_{-1};
+  GLint uBaseColorTexScale_{-1}, uBaseColorTexBias_{-1};
+  GLint uNormalTexScale_{-1}, uNormalTexBias_{-1};
+  GLint uEmissiveTexScale_{-1}, uEmissiveTexBias_{-1};
+  GLint uMetallicChannel_{-1}, uRoughnessChannel_{-1};
+  GLint uMetallicTexScale_{-1}, uMetallicTexBias_{-1};
+  GLint uRoughnessTexScale_{-1}, uRoughnessTexBias_{-1};
   GLint uHasDisplacement_{-1}, uHasDisplacementTex_{-1};  // displacement (coarse)
   GLint uDisplacementConst_{-1}, uDisplacementScale_{-1};
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
@@ -163,6 +201,8 @@ class GLRenderer final : public Renderer {
   bool tessAvailable_{false};
   GLuint tessProgram_{0};
   GLint tMVP_{-1}, tModel_{-1}, tNormalMat_{-1}, tCameraPos_{-1};
+  GLint tLightDir_{-1}, tLightColor_{-1};
+  GLint tHasIbl_{-1}, tIblColor_{-1}, tEnvRotation_{-1};  // dome IBL (diffuse)
   GLint tBaseColor_{-1}, tHasBaseColorTex_{-1};
   GLint tHasDisplacementTex_{-1}, tDisplacementConst_{-1}, tDisplacementScale_{-1};
   GLint tDisplacementTexScale_{-1}, tDisplacementTexBias_{-1};
@@ -180,7 +220,9 @@ class GLRenderer final : public Renderer {
   // camera uniforms. The fragment shader is a self-contained flat shader using
   // the per-instance vColor (no material uniforms).
   GLuint instProgram_{0};
-  GLint iUViewProj_{-1}, iCameraPos_{-1}, iEmissive_{-1};
+  GLint iUViewProj_{-1}, iCameraPos_{-1};
+  GLint iLightDir_{-1}, iLightColor_{-1}, iEmissive_{-1};
+  GLint iHasIbl_{-1}, iIblColor_{-1}, iEnvRotation_{-1};  // dome IBL (diffuse)
   // Instanced-program debug-AOV uniforms (mirror the non-instanced material shader).
   GLint iRenderMode_{-1}, iDepthScale_{-1}, iSceneMin_{-1}, iSceneExtent_{-1};
   GLint iMeshId_{-1}, iGeometricNormal_{-1}, iDoubleSided_{-1}, iPurpose_{-1}, iKind_{-1};
@@ -193,6 +235,16 @@ class GLRenderer final : public Renderer {
   GLint wMVP_{-1}, wWireColor_{-1}, wDepthBias_{-1}, wViewport_{-1}, wHalfWidth_{-1};
   GLuint wireInstProgram_{0};
   GLint wiViewProj_{-1}, wiWireColor_{-1}, wiDepthBias_{-1}, wiViewport_{-1}, wiHalfWidth_{-1};
+
+  // DomeLight split-sum IBL (uploaded from DomeIblCPU by setLights; sampled by
+  // the material shader's ambient term on units 19/20/21).
+  GLuint iblIrrTex_{0}, iblSpecTex_{0}, iblLutTex_{0};
+  int iblSpecLods_{0};
+  bool iblActive_{false};
+  float iblColor_[3]{1.0f, 1.0f, 1.0f};
+  float iblRotation_[9]{1, 0, 0, 0, 1, 0, 0, 0, 1};  // world->env, column-major
+  GLint uHasIbl_{-1}, uIblColor_{-1}, uEnvRotation_{-1}, uPrefilteredLods_{-1};
+  void destroyIblTextures();
 
   GLuint whiteTex_{0}, boneTex_{0};
   int boneTexWidth_{0}, boneTexHeight_{0}, boneMatrixCount_{0};

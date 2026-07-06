@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <thread>
 #include <unordered_map>
@@ -13,9 +14,13 @@
 
 #include "image-loader.hh"
 #include "image-writer.hh"
+#include "next/schema/usd-skel.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
+#include "tydra/next/openpbr-params-converter.hh"
+#include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
+#include "tydra/openpbr-params.hh"
 #include "tydra/texture-util.hh"
 #include "usdVol.hh"
 #include "tusdr_context.hh"
@@ -50,11 +55,107 @@ std::vector<int64_t> ReadInt64ArrayLazy(const tinyusdz::next::UsdPrim &prim,
   return tinyusdz::tydra::next::ReadInt64ArrayCopy(prim, name, time);
 }
 
+bool PointInstanceHidden(size_t index, size_t instance_count,
+                         const std::vector<int64_t> &ids,
+                         const std::unordered_set<int64_t> &hidden) {
+  if (hidden.empty()) return false;
+  if (ids.size() == instance_count) return hidden.count(ids[index]) != 0;
+  if (index > static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+    return false;
+  }
+  return hidden.count(static_cast<int64_t>(index)) != 0;
+}
+
+std::vector<std::string> ReadTokenArrayNext(
+    const tinyusdz::next::UsdPrim &prim, const char *name) {
+  const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+  if (!v) return {};
+  if (const std::vector<std::string> *arr = v->as_token_array()) return *arr;
+  if (const std::string *tok = v->as_token()) return {*tok};
+  if (const std::string *str = v->as_string()) return {*str};
+  return {};
+}
+
+std::unordered_map<std::string, float> GatherBlendShapeWeightsNext(
+    const tinyusdz::next::Stage &stage, double time) {
+  std::unordered_map<std::string, float> weights;
+  stage.Traverse([&](const tinyusdz::next::UsdPrim &prim) {
+    if (!tinyusdz::next::IsSkelAnimation(prim)) return true;
+    const std::vector<std::string> names =
+        ReadTokenArrayNext(prim, "blendShapes");
+    if (names.empty()) return true;
+    tinyusdz::next::AttributeEval eval(&stage);
+    eval.SetTime(time);
+    tinyusdz::next::EvalResult result = eval.Eval(prim, "blendShapeWeights");
+    if (!result.success || !result.value.is_array()) return true;
+    const std::vector<float> *arr = result.value.as_float_array();
+    if (!arr) return true;
+    const size_t n = std::min(names.size(), arr->size());
+    for (size_t i = 0; i < n; ++i) weights[names[i]] = (*arr)[i];
+    return true;
+  });
+  return weights;
+}
+
+std::vector<Vec3> ComputeBlendShapeOffsetsNext(
+    const tinyusdz::next::Stage *stage, const tinyusdz::next::UsdPrim &mesh,
+    const std::unordered_map<std::string, float> &weights, size_t npts) {
+  if (!stage || npts == 0) return {};
+  const std::vector<tinyusdz::next::Path> *targets =
+      mesh.GetRelationship("skel:blendShapeTargets");
+  if (!targets || targets->empty()) return {};
+
+  const std::vector<std::string> names =
+      ReadTokenArrayNext(mesh, "skel:blendShapes");
+  if (weights.empty()) return {};
+
+  std::vector<Vec3> offsets(npts, Vec3{0.0f, 0.0f, 0.0f});
+  bool any = false;
+  for (size_t ti = 0; ti < targets->size(); ++ti) {
+    tinyusdz::next::UsdPrim shape_prim = stage->GetPrimAtPath((*targets)[ti]);
+    if (!shape_prim.IsValid()) continue;
+    const std::string shape_name =
+        (ti < names.size() && !names[ti].empty()) ? names[ti] : shape_prim.GetName();
+    auto wit = weights.find(shape_name);
+    if (wit == weights.end() || wit->second == 0.0f) continue;
+
+    tinyusdz::next::BlendShapeData data;
+    if (!tinyusdz::next::GetBlendShapeData(*stage, shape_prim, &data)) continue;
+    const size_t n = data.offsets.size() / 3;
+    if (data.hasPointIndices && !data.pointIndices.empty()) {
+      const size_t m = std::min(n, data.pointIndices.size());
+      for (size_t i = 0; i < m; ++i) {
+        const int32_t pi = data.pointIndices[i];
+        if (pi < 0 || static_cast<size_t>(pi) >= npts) continue;
+        offsets[static_cast<size_t>(pi)] =
+            Add(offsets[static_cast<size_t>(pi)],
+                Mul(Vec3{data.offsets[i * 3 + 0], data.offsets[i * 3 + 1],
+                         data.offsets[i * 3 + 2]},
+                    wit->second));
+        any = true;
+      }
+    } else {
+      const size_t m = std::min(n, npts);
+      for (size_t i = 0; i < m; ++i) {
+        offsets[i] = Add(offsets[i],
+                         Mul(Vec3{data.offsets[i * 3 + 0],
+                                  data.offsets[i * 3 + 1],
+                                  data.offsets[i * 3 + 2]},
+                             wit->second));
+        any = true;
+      }
+    }
+  }
+  return any ? offsets : std::vector<Vec3>();
+}
+
 // Templated on the output buffer type so the flat path can stream into plain
 // std::vector (ctx.tris) while the instanced path streams into the budget-tracked
 // Blas FloatVec/TriVec (so the big instanced geometry is capped/pooled).
 template <class FVec, class TVec>
 void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
+                          const tinyusdz::next::Stage *stage,
+                          const std::unordered_map<std::string, float> *blend_weights,
                           const matrix4d &world, tinyusdz::Purpose purpose,
                           uint32_t purpose_mask, double time,
                           const Vec3 &base_color, int32_t tex_id,
@@ -118,6 +219,18 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
     out_job_mat->opacity_ch = opacity_tex.ch;
     out_job_mat->clearcoat_ch = clearcoat_tex.ch;
     out_job_mat->clearcoat_rough_ch = clearcoat_rough_tex.ch;
+    out_job_mat->rough_tex_scale = rough_tex.scale;
+    out_job_mat->rough_tex_bias = rough_tex.bias;
+    out_job_mat->metal_tex_scale = metal_tex.scale;
+    out_job_mat->metal_tex_bias = metal_tex.bias;
+    out_job_mat->occ_tex_scale = occ_tex.scale;
+    out_job_mat->occ_tex_bias = occ_tex.bias;
+    out_job_mat->opacity_tex_scale = opacity_tex.scale;
+    out_job_mat->opacity_tex_bias = opacity_tex.bias;
+    out_job_mat->clearcoat_tex_scale = clearcoat_tex.scale;
+    out_job_mat->clearcoat_tex_bias = clearcoat_tex.bias;
+    out_job_mat->clearcoat_rough_tex_scale = clearcoat_rough_tex.scale;
+    out_job_mat->clearcoat_rough_tex_bias = clearcoat_rough_tex.bias;
     out_job_mat->specular_color = specular_color;
     out_job_mat->specular_tex_id = specular_tex_id;
     out_job_mat->ior = ior;
@@ -144,9 +257,14 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   // the emitted soup / normals are byte-identical. (Phase 2b hands this array
   // straight to the indexed build instead of re-expanding it into a soup.)
   std::vector<Vec3> wpts(npts);
+  const std::vector<Vec3> blend_offsets =
+      blend_weights ? ComputeBlendShapeOffsetsNext(stage, prim, *blend_weights,
+                                                   npts)
+                    : std::vector<Vec3>();
   for (size_t i = 0; i < npts; i++) {
-    wpts[i] = TransformPoint(
-        world, Vec3{points[3 * i], points[3 * i + 1], points[3 * i + 2]});
+    Vec3 p{points[3 * i], points[3 * i + 1], points[3 * i + 2]};
+    if (!blend_offsets.empty()) p = Add(p, blend_offsets[i]);
+    wpts[i] = TransformPoint(world, p);
   }
 
   // UV (primvars:st) for the diffuse texture. Stored flat [u0,v0,u1,v1,...].
@@ -373,23 +491,35 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   tmpl.metallic = metallic;
   tmpl.rough_tex_id = rough_tex.id;
   tmpl.rough_ch = rough_tex.ch;
+  tmpl.rough_tex_scale = rough_tex.scale;
+  tmpl.rough_tex_bias = rough_tex.bias;
   tmpl.metal_tex_id = metal_tex.id;
   tmpl.metal_ch = metal_tex.ch;
+  tmpl.metal_tex_scale = metal_tex.scale;
+  tmpl.metal_tex_bias = metal_tex.bias;
   tmpl.emission = emission;
   tmpl.emission_tex_id = emission_tex_id;
   tmpl.occlusion = occlusion;
   tmpl.occ_tex_id = occ_tex.id;
   tmpl.occ_ch = occ_tex.ch;
+  tmpl.occ_tex_scale = occ_tex.scale;
+  tmpl.occ_tex_bias = occ_tex.bias;
   tmpl.opacity = opacity;
   tmpl.opacity_tex_id = opacity_tex.id;
   tmpl.opacity_ch = opacity_tex.ch;
+  tmpl.opacity_tex_scale = opacity_tex.scale;
+  tmpl.opacity_tex_bias = opacity_tex.bias;
   tmpl.opacity_threshold = opacity_threshold;
   tmpl.clearcoat = clearcoat;
   tmpl.clearcoat_roughness = clearcoat_roughness;
   tmpl.clearcoat_tex_id = clearcoat_tex.id;
   tmpl.clearcoat_ch = clearcoat_tex.ch;
+  tmpl.clearcoat_tex_scale = clearcoat_tex.scale;
+  tmpl.clearcoat_tex_bias = clearcoat_tex.bias;
   tmpl.clearcoat_rough_tex_id = clearcoat_rough_tex.id;
   tmpl.clearcoat_rough_ch = clearcoat_rough_tex.ch;
+  tmpl.clearcoat_rough_tex_scale = clearcoat_rough_tex.scale;
+  tmpl.clearcoat_rough_tex_bias = clearcoat_rough_tex.bias;
   tmpl.specular_color = specular_color;
   tmpl.specular_tex_id = specular_tex_id;
   tmpl.ior = ior;
@@ -606,10 +736,26 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
   auto make_texture = [&](const tinyusdz::Image &img, const std::string &label,
                           Texture *out) -> bool {
     if (!out) return false;
-    if (img.width <= 0 || img.height <= 0 || img.bpp != 8 || img.data.empty()) {
+    if (img.width <= 0 || img.height <= 0 || img.data.empty()) {
       return false;
     }
     tinyusdz::Image use = img;
+    if (use.format == tinyusdz::Image::PixelFormat::UInt && use.bpp == 16) {
+      const size_t pixels = size_t(use.width) * size_t(use.height) *
+                            size_t(use.channels);
+      if (use.data.size() < pixels * sizeof(uint16_t)) return false;
+      std::vector<uint8_t> u8(pixels);
+      for (size_t i = 0; i < pixels; ++i) {
+        uint16_t v = 0;
+        std::memcpy(&v, use.data.data() + i * sizeof(uint16_t), sizeof(v));
+        u8[i] = static_cast<uint8_t>((uint32_t(v) + 128u) / 257u);
+      }
+      use.data = std::move(u8);
+      use.bpp = 8;
+    }
+    if (use.bpp != 8 || use.format != tinyusdz::Image::PixelFormat::UInt) {
+      return false;
+    }
     if (tc.options && tc.options->texture_max_size > 0) {
       const int longest = std::max(use.width, use.height);
       if (longest > tc.options->texture_max_size) {
@@ -716,7 +862,10 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
       id = adopt(img, asset_path);
     }
   }
-  if (id < 0) std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
+  if (id < 0) {
+    if (tc.missing_textures) (*tc.missing_textures)++;
+    std::cerr << "WARN: failed to load texture: " << asset_path << "\n";
+  }
   tc.by_key[key] = id;
   return id;
 }
@@ -733,11 +882,36 @@ tinyusdz::next::UsdPrim ConnectedPrimNext(const tinyusdz::next::Stage &stage,
   return stage.GetPrimAtPath((*c)[0].prim_path());
 }
 
+bool HasConnectionNext(const tinyusdz::next::UsdPrim &prim,
+                       const std::string &prop) {
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  if (!spec) return false;
+  const std::vector<tinyusdz::next::Path> *c = spec->connection(prop);
+  return c && !c->empty();
+}
+
 WrapMode ParseWrapMode(const std::string &s) {
   if (s == "clamp") return WrapMode::Clamp;
   if (s == "mirror") return WrapMode::Mirror;
   if (s == "black") return WrapMode::Black;
   return WrapMode::Repeat;  // "repeat"/"useMetadata"/default
+}
+
+bool ReadVec3Value(const tinyusdz::next::Value &value, Vec3 *out) {
+  if (!out) return false;
+  if (const float *f = value.as_float3()) {
+    *out = Vec3{f[0], f[1], f[2]};
+    return true;
+  }
+  if (const float *f = value.as_float4()) {
+    *out = Vec3{f[0], f[1], f[2]};
+    return true;
+  }
+  if (const float *f = value.as_float()) {
+    *out = Vec3{*f, *f, *f};
+    return true;
+  }
+  return false;
 }
 
 // Resolve a scalar PBR input (inputs:roughness / inputs:metallic) that connects
@@ -866,6 +1040,10 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
     surf = ConnectedPrimNext(stage, mat, "outputs:mtlx:surface");
   }
   if (!surf.IsValid()) return;
+  if (base_color) {
+    *base_color = Vec3{0.18f, 0.18f, 0.18f};  // UsdPreviewSurface default.
+  }
+  if (roughness) *roughness = 0.5f;  // UsdPreviewSurface shader default.
 
   // Scalar PBR params (UsdPreviewSurface inputs:roughness / inputs:metallic).
   if (const tinyusdz::next::Value *r = surf.GetPropertyValue("inputs:roughness")) {
@@ -903,9 +1081,11 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
   // any displayOpacity) + optional channel-aware texture (commonly the diffuse
   // map's alpha, outputs:a). inputs:opacityThreshold > 0 turns it into an alpha
   // cutout (mask) instead of translucent blending.
+  const bool opacity_connected = HasConnectionNext(surf, "inputs:opacity");
   if (const tinyusdz::next::Value *o = surf.GetPropertyValue("inputs:opacity"))
     if (const float *f = o->as_float())
-      if (opacity) *opacity *= std::min(1.0f, std::max(0.0f, *f));
+      if (opacity && !opacity_connected)
+        *opacity *= std::min(1.0f, std::max(0.0f, *f));
   if (opacity_tex)
     ResolveScalarTextureNext(stage, surf, "inputs:opacity", tc, opacity_tex);
   if (const tinyusdz::next::Value *ot =
@@ -1031,10 +1211,12 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
         }
         // inputs:scale/bias tint the sampled color (default identity).
         Vec3 sc{1.0f, 1.0f, 1.0f}, bi{0.0f, 0.0f, 0.0f};
-        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:scale"))
-          if (const float *f = v->as_float3()) sc = Vec3{f[0], f[1], f[2]};
-        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias"))
-          if (const float *f = v->as_float3()) bi = Vec3{f[0], f[1], f[2]};
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:scale")) {
+          ReadVec3Value(*v, &sc);
+        }
+        if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
+          ReadVec3Value(*v, &bi);
+        }
         int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb, sc, bi);
         if (id >= 0) {
           *tex_id = id;
@@ -1062,10 +1244,12 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
         if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:wrapT"))
           if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
         Vec3 scale{2.0f, 2.0f, 2.0f}, bias{-1.0f, -1.0f, -1.0f};
-        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:scale"))
-          if (const float *f = v->as_float3()) scale = Vec3{f[0], f[1], f[2]};
-        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:bias"))
-          if (const float *f = v->as_float3()) bias = Vec3{f[0], f[1], f[2]};
+        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:scale")) {
+          ReadVec3Value(*v, &scale);
+        }
+        if (const tinyusdz::next::Value *v = ntex.GetPropertyValue("inputs:bias")) {
+          ReadVec3Value(*v, &bias);
+        }
         int32_t id =
             LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/false, scale, bias);
         if (id >= 0) {
@@ -1076,6 +1260,429 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
       }
     }
   }
+}
+
+void ApplyDisplayPrimvarsNext(const tinyusdz::next::UsdPrim &mesh,
+                              MeshJobNext *job) {
+  if (!job) return;
+  constexpr double kDefaultTime = std::numeric_limits<double>::quiet_NaN();
+  tinyusdz::tydra::next::ValueArrayRead<float> dc;
+  if (tinyusdz::tydra::next::ReadFloatArray(
+          mesh, "primvars:displayColor", kDefaultTime, &dc)) {
+    if (dc.size() >= 3) job->base_color = Vec3{dc[0], dc[1], dc[2]};
+    if (dc.size() > 3) job->vertex_color = true;
+  }
+  tinyusdz::tydra::next::ValueArrayRead<float> od;
+  if (tinyusdz::tydra::next::ReadFloatArray(
+          mesh, "primvars:displayOpacity", kDefaultTime, &od)) {
+    if (!od.empty()) job->opacity = std::min(1.0f, std::max(0.0f, od[0]));
+    if (od.size() > 1) job->vertex_color = true;
+  }
+}
+
+void AssignResolvedToJob(const ResolvedMat &r, MeshJobNext *job) {
+  if (!job) return;
+  job->base_color = r.base_color;
+  job->tex_id = r.tex_id;
+  job->roughness = r.roughness;
+  job->metallic = r.metallic;
+  job->normal_tex_id = r.normal_tex_id;
+  job->uv_xform = r.uv_xform;
+  job->rough_tex = r.rough_tex;
+  job->metal_tex = r.metal_tex;
+  job->emission = r.emission;
+  job->emission_tex_id = r.emission_tex_id;
+  job->occlusion = r.occlusion;
+  job->occ_tex = r.occ_tex;
+  job->opacity = r.opacity;
+  job->opacity_tex = r.opacity_tex;
+  job->opacity_threshold = r.opacity_threshold;
+  job->clearcoat = r.clearcoat;
+  job->clearcoat_roughness = r.clearcoat_roughness;
+  job->clearcoat_tex = r.clearcoat_tex;
+  job->clearcoat_rough_tex = r.clearcoat_rough_tex;
+  job->specular_color = r.specular_color;
+  job->specular_tex_id = r.specular_tex_id;
+  job->ior = r.ior;
+  job->use_specular_workflow = r.use_specular_workflow;
+  job->vertex_color = r.vertex_color;
+  job->displacement = r.displacement;
+  job->displacement_tex = r.displacement_tex;
+  job->has_openpbr = r.has_openpbr;
+  job->openpbr = r.openpbr;
+}
+
+ResolvedMat CaptureResolvedFromJob(const MeshJobNext &job) {
+  ResolvedMat r;
+  r.base_color = job.base_color;
+  r.tex_id = job.tex_id;
+  r.roughness = job.roughness;
+  r.metallic = job.metallic;
+  r.normal_tex_id = job.normal_tex_id;
+  r.uv_xform = job.uv_xform;
+  r.rough_tex = job.rough_tex;
+  r.metal_tex = job.metal_tex;
+  r.emission = job.emission;
+  r.emission_tex_id = job.emission_tex_id;
+  r.occlusion = job.occlusion;
+  r.occ_tex = job.occ_tex;
+  r.opacity = job.opacity;
+  r.opacity_tex = job.opacity_tex;
+  r.opacity_threshold = job.opacity_threshold;
+  r.clearcoat = job.clearcoat;
+  r.clearcoat_roughness = job.clearcoat_roughness;
+  r.clearcoat_tex = job.clearcoat_tex;
+  r.clearcoat_rough_tex = job.clearcoat_rough_tex;
+  r.specular_color = job.specular_color;
+  r.specular_tex_id = job.specular_tex_id;
+  r.ior = job.ior;
+  r.use_specular_workflow = job.use_specular_workflow;
+  r.vertex_color = job.vertex_color;
+  r.displacement = job.displacement;
+  r.displacement_tex = job.displacement_tex;
+  r.has_openpbr = job.has_openpbr;
+  r.openpbr = job.openpbr;
+  return r;
+}
+
+WrapMode ToTusdrWrap(tinyusdz::tydra::next::WrapMode w) {
+  using NextWrap = tinyusdz::tydra::next::WrapMode;
+  switch (w) {
+    case NextWrap::Clamp: return WrapMode::Clamp;
+    case NextWrap::Mirror: return WrapMode::Mirror;
+    case NextWrap::Black: return WrapMode::Black;
+    case NextWrap::Repeat:
+    default: return WrapMode::Repeat;
+  }
+}
+
+uint8_t ToScalarChannel(tinyusdz::tydra::next::RenderTexture::Channel ch) {
+  using Channel = tinyusdz::tydra::next::RenderTexture::Channel;
+  switch (ch) {
+    case Channel::G: return 1;
+    case Channel::B: return 2;
+    case Channel::A: return 3;
+    case Channel::R:
+    case Channel::RGB:
+    case Channel::RGBA:
+    default: return 0;
+  }
+}
+
+bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
+                       int32_t texture_id, TextureCache &tc, bool srgb,
+                       const Vec3 *fallback_scale, const Vec3 *fallback_bias,
+                       int32_t *out) {
+  if (!out || texture_id < 0 ||
+      size_t(texture_id) >= scene.textures.size()) {
+    return false;
+  }
+  const tinyusdz::tydra::next::RenderTexture &tex =
+      scene.textures[size_t(texture_id)];
+  std::string asset = tex.asset_path;
+  if (asset.empty() && tex.image_id >= 0 &&
+      size_t(tex.image_id) < scene.images.size()) {
+    asset = scene.images[size_t(tex.image_id)].resolved_path;
+  }
+  if (asset.empty()) return false;
+  Vec3 scale{tex.scale_value.x, tex.scale_value.y, tex.scale_value.z};
+  Vec3 bias{tex.bias.x, tex.bias.y, tex.bias.z};
+  if (fallback_scale && fallback_bias &&
+      scale.x == 1.0f && scale.y == 1.0f && scale.z == 1.0f &&
+      bias.x == 0.0f && bias.y == 0.0f && bias.z == 0.0f) {
+    scale = *fallback_scale;
+    bias = *fallback_bias;
+  }
+  const int32_t id = LoadTextureCached(tc, asset, ToTusdrWrap(tex.wrap_s),
+                                       ToTusdrWrap(tex.wrap_t), srgb, scale, bias);
+  if (id < 0) return false;
+  *out = id;
+  return true;
+}
+
+bool LoadRenderScalarTexture(const tinyusdz::tydra::next::RenderScene &scene,
+                             const tinyusdz::tydra::next::ShaderParam &param,
+                             TextureCache &tc, bool srgb, ScalarTex *out) {
+  if (!out || param.texture_id < 0 ||
+      size_t(param.texture_id) >= scene.textures.size()) {
+    return false;
+  }
+  const tinyusdz::tydra::next::RenderTexture &tex =
+      scene.textures[size_t(param.texture_id)];
+  const uint8_t ch = ToScalarChannel(tex.output_channel);
+  int32_t id = -1;
+  if (!LoadRenderTexture(scene, param.texture_id, tc, srgb, nullptr, nullptr, &id)) {
+    return false;
+  }
+  const float scale_values[4] = {tex.scale_value.x, tex.scale_value.y,
+                                 tex.scale_value.z, tex.scale_value.w};
+  const float bias_values[4] = {tex.bias.x, tex.bias.y, tex.bias.z, tex.bias.w};
+  out->id = id;
+  out->ch = ch;
+  out->scale = scale_values[std::min<int>(ch, 3)];
+  out->bias = bias_values[std::min<int>(ch, 3)];
+  return true;
+}
+
+void ApplyRenderTextureUvXform(const tinyusdz::next::Stage &stage,
+                               const tinyusdz::tydra::next::RenderScene &scene,
+                               int32_t texture_id, bool only_if_identity,
+                               UvXform *out) {
+  if (!out || texture_id < 0 || size_t(texture_id) >= scene.textures.size()) {
+    return;
+  }
+  if (only_if_identity && !out->identity) return;
+  const std::string &prim_path = scene.textures[size_t(texture_id)].prim_path;
+  if (prim_path.empty()) return;
+  tinyusdz::next::UsdPrim tex = stage.GetPrimAtPath(prim_path);
+  if (!tex.IsValid()) return;
+  *out = ResolveUvXform(stage, tex);
+}
+
+void ApplyLightRtOpenPBRParamsToJob(
+    const tinyusdz::tydra::LightRtOpenPBRParams &p,
+    MeshJobNext *job) {
+  if (!job) return;
+  job->base_color = Vec3{p.baseColor[0], p.baseColor[1], p.baseColor[2]};
+  job->roughness = std::min(1.0f, std::max(0.0f, p.specularRoughness));
+  job->metallic = std::min(1.0f, std::max(0.0f, p.metalness));
+  job->emission = Vec3{p.emissionColor[0] * p.emission,
+                       p.emissionColor[1] * p.emission,
+                       p.emissionColor[2] * p.emission};
+  job->opacity *= std::min(1.0f, std::max(0.0f, p.opacity));
+  job->clearcoat = std::min(1.0f, std::max(0.0f, p.coatWeight));
+  job->clearcoat_roughness = std::max(0.0f, p.coatRoughness);
+  job->specular_color = Vec3{p.specularColor[0], p.specularColor[1],
+                             p.specularColor[2]};
+  job->ior = p.specularIor > 0.0f ? p.specularIor : 1.5f;
+}
+
+bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
+                                  const tinyusdz::next::UsdPrim &mesh,
+                                  TextureCache &tc, MeshJobNext *job,
+                                  std::string *err) {
+  if (!job) return false;
+  MeshJobNext resolved = *job;
+  ApplyDisplayPrimvarsNext(mesh, &resolved);
+
+  const std::vector<tinyusdz::next::Path> *bind =
+      mesh.GetRelationship("material:binding");
+  if (!bind || bind->empty()) {
+    *job = resolved;
+    return true;
+  }
+  tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+  if (!mat.IsValid()) {
+    *job = resolved;
+    return true;
+  }
+
+  tinyusdz::tydra::next::ConverterConfig config;
+  config.material.load_textures = false;
+  config.material.allow_missing_textures = true;
+  if (tc.options) config.time_code = tc.options->timecode;
+  tinyusdz::tydra::next::RenderSceneConverter converter(config);
+  tinyusdz::tydra::next::RenderScene scratch;
+  tinyusdz::tydra::next::RenderMaterial rm;
+  if (!converter.ConvertMaterial(stage, mat, &rm, &scratch)) {
+    if (err) *err = converter.GetLastError();
+    return false;
+  }
+
+  using NextMat = tinyusdz::tydra::next::RenderMaterial;
+  if (rm.shader_type == NextMat::ShaderType::PreviewSurface &&
+      rm.preview_surface) {
+    const auto &s = *rm.preview_surface;
+    tinyusdz::tydra::LightRtOpenPBRParams p;
+    if (tinyusdz::tydra::next::BuildLightRtOpenPBRParams(rm, &p)) {
+      ApplyLightRtOpenPBRParamsToJob(p, &resolved);
+      resolved.has_openpbr = true;
+      resolved.openpbr = p;
+    }
+    resolved.occlusion = std::min(1.0f, std::max(0.0f, s.occlusion.value.x));
+    resolved.opacity_threshold = std::max(0.0f, s.opacity_threshold.value.x);
+    resolved.use_specular_workflow = s.use_specular_workflow ? 1 : 0;
+    resolved.displacement = s.displacement.value.x;
+    if (LoadRenderTexture(scratch, s.diffuse_color.texture_id, tc, true,
+                          nullptr, nullptr, &resolved.tex_id)) {
+      resolved.base_color = Vec3{1.0f, 1.0f, 1.0f};
+      ApplyRenderTextureUvXform(stage, scratch, s.diffuse_color.texture_id,
+                                false, &resolved.uv_xform);
+    }
+    LoadRenderTexture(scratch, s.emissive_color.texture_id, tc, true,
+                      nullptr, nullptr,
+                      &resolved.emission_tex_id);
+    const Vec3 normal_scale{2.0f, 2.0f, 2.0f};
+    const Vec3 normal_bias{-1.0f, -1.0f, -1.0f};
+    LoadRenderTexture(scratch, s.normal.texture_id, tc, false,
+                      &normal_scale, &normal_bias,
+                      &resolved.normal_tex_id);
+    ApplyRenderTextureUvXform(stage, scratch, s.normal.texture_id,
+                              true, &resolved.uv_xform);
+    LoadRenderTexture(scratch, s.specular_color.texture_id, tc, true,
+                      nullptr, nullptr,
+                      &resolved.specular_tex_id);
+    LoadRenderScalarTexture(scratch, s.roughness, tc, false, &resolved.rough_tex);
+    LoadRenderScalarTexture(scratch, s.metallic, tc, false, &resolved.metal_tex);
+    LoadRenderScalarTexture(scratch, s.occlusion, tc, false, &resolved.occ_tex);
+    LoadRenderScalarTexture(scratch, s.opacity, tc, false, &resolved.opacity_tex);
+    LoadRenderScalarTexture(scratch, s.clearcoat, tc, false,
+                            &resolved.clearcoat_tex);
+    LoadRenderScalarTexture(scratch, s.clearcoat_roughness, tc, false,
+                            &resolved.clearcoat_rough_tex);
+    LoadRenderScalarTexture(scratch, s.displacement, tc, false,
+                            &resolved.displacement_tex);
+  } else if (rm.shader_type == NextMat::ShaderType::OpenPBR && rm.openpbr) {
+    const auto &s = *rm.openpbr;
+    tinyusdz::tydra::LightRtOpenPBRParams p;
+    if (tinyusdz::tydra::next::BuildLightRtOpenPBRParams(rm, &p)) {
+      ApplyLightRtOpenPBRParamsToJob(p, &resolved);
+      resolved.has_openpbr = true;
+      resolved.openpbr = p;
+    }
+    if (LoadRenderTexture(scratch, s.base_color.texture_id, tc, true,
+                          nullptr, nullptr,
+                          &resolved.tex_id)) {
+      resolved.base_color = Vec3{1.0f, 1.0f, 1.0f};
+      ApplyRenderTextureUvXform(stage, scratch, s.base_color.texture_id,
+                                false, &resolved.uv_xform);
+    }
+    LoadRenderTexture(scratch, s.emission_color.texture_id, tc, true,
+                      nullptr, nullptr,
+                      &resolved.emission_tex_id);
+    const Vec3 normal_scale{2.0f, 2.0f, 2.0f};
+    const Vec3 normal_bias{-1.0f, -1.0f, -1.0f};
+    LoadRenderTexture(scratch, s.normal.texture_id, tc, false,
+                      &normal_scale, &normal_bias,
+                      &resolved.normal_tex_id);
+    ApplyRenderTextureUvXform(stage, scratch, s.normal.texture_id,
+                              true, &resolved.uv_xform);
+    LoadRenderScalarTexture(scratch, s.base_roughness, tc, false,
+                            &resolved.rough_tex);
+    LoadRenderScalarTexture(scratch, s.base_metalness, tc, false,
+                            &resolved.metal_tex);
+    LoadRenderScalarTexture(scratch, s.opacity, tc, false,
+                            &resolved.opacity_tex);
+    LoadRenderScalarTexture(scratch, s.coat_weight, tc, false,
+                            &resolved.clearcoat_tex);
+    LoadRenderScalarTexture(scratch, s.coat_roughness, tc, false,
+                            &resolved.clearcoat_rough_tex);
+  }
+
+  *job = resolved;
+  return true;
+}
+
+bool MatNear(float a, float b, float eps = 1.0e-4f) {
+  return std::fabs(a - b) <= eps;
+}
+
+bool MatNear(const Vec3 &a, const Vec3 &b, float eps = 1.0e-4f) {
+  return MatNear(a.x, b.x, eps) && MatNear(a.y, b.y, eps) &&
+         MatNear(a.z, b.z, eps);
+}
+
+bool TextureNear(int32_t a, int32_t b, const TextureCache &tc) {
+  if (a == b) return true;
+  if (a < 0 || b < 0 || !tc.textures ||
+      size_t(a) >= tc.textures->size() ||
+      size_t(b) >= tc.textures->size()) {
+    return false;
+  }
+  const Texture &ta = (*tc.textures)[size_t(a)];
+  const Texture &tb = (*tc.textures)[size_t(b)];
+  if (ta.width != tb.width || ta.height != tb.height ||
+      ta.channels != tb.channels || ta.is_udim != tb.is_udim ||
+      ta.wrap_s != tb.wrap_s || ta.wrap_t != tb.wrap_t ||
+      ta.srgb != tb.srgb || !MatNear(ta.scale, tb.scale) ||
+      !MatNear(ta.bias, tb.bias)) {
+    return false;
+  }
+  if (ta.is_udim) {
+    if (ta.udim_tiles.size() != tb.udim_tiles.size()) return false;
+    for (size_t i = 0; i < ta.udim_tiles.size(); ++i) {
+      const Texture::UdimTile &ua = ta.udim_tiles[i];
+      const Texture::UdimTile &ub = tb.udim_tiles[i];
+      if (ua.udim != ub.udim || ua.width != ub.width ||
+          ua.height != ub.height || ua.channels != ub.channels ||
+          ua.pixels != ub.pixels) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return ta.pixels == tb.pixels;
+}
+
+bool ScalarTextureNear(const ScalarTex &a, const ScalarTex &b,
+                       const TextureCache &tc) {
+  return a.ch == b.ch && MatNear(a.scale, b.scale) &&
+         MatNear(a.bias, b.bias) && TextureNear(a.id, b.id, tc);
+}
+
+void ReportMaterialResolverDiff(const std::string &key,
+                                const MeshJobNext &legacy,
+                                const MeshJobNext &tydra,
+                                const TextureCache &tc) {
+  std::vector<std::string> diffs;
+  if (legacy.tex_id < 0 && tydra.tex_id < 0 &&
+      !MatNear(legacy.base_color, tydra.base_color)) {
+    diffs.push_back("baseColor");
+  }
+  if (legacy.rough_tex.id < 0 && tydra.rough_tex.id < 0 &&
+      !MatNear(legacy.roughness, tydra.roughness)) {
+    diffs.push_back("roughness");
+  }
+  if (legacy.metal_tex.id < 0 && tydra.metal_tex.id < 0 &&
+      !MatNear(legacy.metallic, tydra.metallic)) {
+    diffs.push_back("metallic");
+  }
+  if (legacy.opacity_tex.id < 0 && tydra.opacity_tex.id < 0 &&
+      !MatNear(legacy.opacity, tydra.opacity)) {
+    diffs.push_back("opacity");
+  }
+  if (!MatNear(legacy.opacity_threshold, tydra.opacity_threshold)) {
+    diffs.push_back("opacityThreshold");
+  }
+  if (legacy.emission_tex_id < 0 && tydra.emission_tex_id < 0 &&
+      !MatNear(legacy.emission, tydra.emission)) {
+    diffs.push_back("emission");
+  }
+  if (legacy.clearcoat_tex.id < 0 && tydra.clearcoat_tex.id < 0 &&
+      !MatNear(legacy.clearcoat, tydra.clearcoat)) {
+    diffs.push_back("clearcoat");
+  }
+  if (legacy.clearcoat_rough_tex.id < 0 && tydra.clearcoat_rough_tex.id < 0 &&
+      !MatNear(legacy.clearcoat_roughness, tydra.clearcoat_roughness)) {
+    diffs.push_back("clearcoatRoughness");
+  }
+  if ((legacy.use_specular_workflow || tydra.use_specular_workflow ||
+       legacy.specular_tex_id >= 0 || tydra.specular_tex_id >= 0) &&
+      !MatNear(legacy.specular_color, tydra.specular_color)) {
+    diffs.push_back("specularColor");
+  }
+  if (!MatNear(legacy.ior, tydra.ior)) diffs.push_back("ior");
+  if (!TextureNear(legacy.tex_id, tydra.tex_id, tc)) diffs.push_back("baseTexture");
+  if (!TextureNear(legacy.normal_tex_id, tydra.normal_tex_id, tc)) {
+    diffs.push_back("normalTexture");
+  }
+  if (!ScalarTextureNear(legacy.rough_tex, tydra.rough_tex, tc)) {
+    diffs.push_back("roughTexture");
+  }
+  if (!ScalarTextureNear(legacy.metal_tex, tydra.metal_tex, tc)) {
+    diffs.push_back("metalTexture");
+  }
+  if (!ScalarTextureNear(legacy.opacity_tex, tydra.opacity_tex, tc)) {
+    diffs.push_back("opacityTexture");
+  }
+  if (legacy.uv_xform.identity != tydra.uv_xform.identity) {
+    diffs.push_back("uvTransform");
+  }
+  if (diffs.empty()) return;
+  std::cerr << "materialResolver compare: " << (key.empty() ? "<unbound>" : key)
+            << " differs:";
+  for (const std::string &d : diffs) std::cerr << " " << d;
+  std::cerr << "\n";
 }
 
 // The full resolved-material result for one bound material (everything
@@ -1098,76 +1705,59 @@ void ResolveMeshMaterialCached(
   if (!key.empty()) {
     auto it = cache.find(key);
     if (it != cache.end()) {
-      const ResolvedMat &r = it->second;
-      job->base_color = r.base_color;
-      job->tex_id = r.tex_id;
-      job->roughness = r.roughness;
-      job->metallic = r.metallic;
-      job->normal_tex_id = r.normal_tex_id;
-      job->uv_xform = r.uv_xform;
-      job->rough_tex = r.rough_tex;
-      job->metal_tex = r.metal_tex;
-      job->emission = r.emission;
-      job->emission_tex_id = r.emission_tex_id;
-      job->occlusion = r.occlusion;
-      job->occ_tex = r.occ_tex;
-      job->opacity = r.opacity;
-      job->opacity_tex = r.opacity_tex;
-      job->opacity_threshold = r.opacity_threshold;
-      job->clearcoat = r.clearcoat;
-      job->clearcoat_roughness = r.clearcoat_roughness;
-      job->clearcoat_tex = r.clearcoat_tex;
-      job->clearcoat_rough_tex = r.clearcoat_rough_tex;
-      job->specular_color = r.specular_color;
-      job->specular_tex_id = r.specular_tex_id;
-      job->ior = r.ior;
-      job->use_specular_workflow = r.use_specular_workflow;
-      job->vertex_color = r.vertex_color;
-      job->displacement = r.displacement;
-      job->displacement_tex = r.displacement_tex;
+      AssignResolvedToJob(it->second, job);
       return;
     }
   }
-  ResolveMeshMaterialNext(stage, mesh, tc, &job->base_color, &job->tex_id,
-                          &job->roughness, &job->metallic, &job->normal_tex_id,
-                          &job->uv_xform, &job->rough_tex, &job->metal_tex,
-                          &job->emission, &job->emission_tex_id, &job->occlusion,
-                          &job->occ_tex, &job->opacity, &job->opacity_tex,
-                          &job->opacity_threshold, &job->clearcoat,
-                          &job->clearcoat_roughness, &job->clearcoat_tex,
-                          &job->clearcoat_rough_tex, &job->specular_color,
-                          &job->specular_tex_id, &job->ior,
-                          &job->use_specular_workflow, &job->vertex_color,
-                          &job->displacement, &job->displacement_tex);
+
+  const MeshJobNext input_job = *job;
+  auto resolve_legacy = [&]() {
+    ResolveMeshMaterialNext(stage, mesh, tc, &job->base_color, &job->tex_id,
+                            &job->roughness, &job->metallic, &job->normal_tex_id,
+                            &job->uv_xform, &job->rough_tex, &job->metal_tex,
+                            &job->emission, &job->emission_tex_id, &job->occlusion,
+                            &job->occ_tex, &job->opacity, &job->opacity_tex,
+                            &job->opacity_threshold, &job->clearcoat,
+                            &job->clearcoat_roughness, &job->clearcoat_tex,
+                            &job->clearcoat_rough_tex, &job->specular_color,
+                            &job->specular_tex_id, &job->ior,
+                            &job->use_specular_workflow, &job->vertex_color,
+                            &job->displacement, &job->displacement_tex);
+  };
+
+  const Options::MaterialResolver mode =
+      tc.options ? tc.options->material_resolver
+                 : Options::MaterialResolver::Legacy;
+  if (mode == Options::MaterialResolver::TydraNext) {
+    std::string err;
+    if (!ResolveMeshMaterialTydraNext(stage, mesh, tc, job, &err)) {
+      if (tc.degraded_materials) (*tc.degraded_materials)++;
+      if (!err.empty()) {
+        std::cerr << "materialResolver tydra-next failed for "
+                  << (key.empty() ? "<unbound>" : key) << ": " << err
+                  << "; using legacy resolver.\n";
+      }
+      resolve_legacy();
+    }
+  } else if (mode == Options::MaterialResolver::Compare) {
+    resolve_legacy();
+    MeshJobNext legacy = *job;
+    MeshJobNext tydra = input_job;
+    std::string err;
+    if (ResolveMeshMaterialTydraNext(stage, mesh, tc, &tydra, &err)) {
+      ReportMaterialResolverDiff(key, legacy, tydra, tc);
+    } else if (!err.empty()) {
+      std::cerr << "materialResolver compare: "
+                << (key.empty() ? "<unbound>" : key)
+                << " tydra-next failed: " << err << "\n";
+    }
+    *job = legacy;
+  } else {
+    resolve_legacy();
+  }
+
   if (!key.empty()) {
-    ResolvedMat r;
-    r.base_color = job->base_color;
-    r.tex_id = job->tex_id;
-    r.roughness = job->roughness;
-    r.metallic = job->metallic;
-    r.normal_tex_id = job->normal_tex_id;
-    r.uv_xform = job->uv_xform;
-    r.rough_tex = job->rough_tex;
-    r.metal_tex = job->metal_tex;
-    r.emission = job->emission;
-    r.emission_tex_id = job->emission_tex_id;
-    r.occlusion = job->occlusion;
-    r.occ_tex = job->occ_tex;
-    r.opacity = job->opacity;
-    r.opacity_tex = job->opacity_tex;
-    r.opacity_threshold = job->opacity_threshold;
-    r.clearcoat = job->clearcoat;
-    r.clearcoat_roughness = job->clearcoat_roughness;
-    r.clearcoat_tex = job->clearcoat_tex;
-    r.clearcoat_rough_tex = job->clearcoat_rough_tex;
-    r.specular_color = job->specular_color;
-    r.specular_tex_id = job->specular_tex_id;
-    r.ior = job->ior;
-    r.use_specular_workflow = job->use_specular_workflow;
-    r.vertex_color = job->vertex_color;
-    r.displacement = job->displacement;
-    r.displacement_tex = job->displacement_tex;
-    cache.emplace(key, r);
+    cache.emplace(key, CaptureResolvedFromJob(*job));
   }
 }
 
@@ -1202,11 +1792,18 @@ bool PrimHasAnimatedXform(const tinyusdz::next::UsdPrim &prim) {
   return false;
 }
 
-// True if the mesh's own geometry (points/topology) is time-sampled.
+// True if the mesh's renderable per-frame data is time-sampled. Points/topology
+// affect the BVH directly; authored normals affect the parallel smooth-shading
+// buffer, which is rebuilt alongside geometry when `-smooth` is active.
 bool MeshHasAnimatedGeom(const tinyusdz::next::UsdPrim &prim) {
+  const std::vector<tinyusdz::next::Path> *blend_targets =
+      prim.GetRelationship("skel:blendShapeTargets");
   return prim.HasTimeSamples("points") ||
          prim.HasTimeSamples("faceVertexIndices") ||
-         prim.HasTimeSamples("faceVertexCounts");
+         prim.HasTimeSamples("faceVertexCounts") ||
+         prim.HasTimeSamples("normals") ||
+         prim.HasTimeSamples("primvars:normals") ||
+         (blend_targets && !blend_targets->empty());
 }
 
 // True if the subtree contains a rendered (masked) Mesh whose world-space
@@ -1401,10 +1998,11 @@ size_t CollectRTInstancePlacementsNext(const tinyusdz::next::Stage &stage,
 // Expand a UsdGeomPointInstancer into world-space MeshJobNext placements for the
 // GPU flatten path. Mirrors CollectPointInstancer's instance iteration (same
 // prototype resolution by child name -> stage path, same InstanceTRS *
-// instancer_world transform, same invisibleIds skip), but instead of reserving a
-// shared BLAS + emitting an InstanceRT it bakes each prototype's mesh jobs to
-// world space per instance. Each prototype's local mesh jobs are collected once
-// (with nested instancers expanded recursively) and re-placed per instance.
+// instancer_world transform, same invisibleIds/inactiveIds skip), but instead of
+// reserving a shared BLAS + emitting an InstanceRT it bakes each prototype's
+// mesh jobs to world space per instance. Each prototype's local mesh jobs are
+// collected once (with nested instancers expanded recursively) and re-placed per
+// instance.
 static void ExpandPointInstancerJobsNext(
     const tinyusdz::next::Stage &stage,
     const tinyusdz::next::UsdPrim &instancer, const matrix4d &instancer_world,
@@ -1456,15 +2054,18 @@ static void ExpandPointInstancerJobsNext(
   const std::vector<float> scales = ReadFloatArrayLazy(instancer, "scales", time);
   const std::vector<int64_t> invisible =
       ReadInt64ArrayLazy(instancer, "invisibleIds", time);
-  const std::unordered_set<int64_t> invisible_set(invisible.begin(),
-                                                  invisible.end());
+  const std::vector<int64_t> inactive =
+      ReadInt64ArrayLazy(instancer, "inactiveIds", time);
+  const std::vector<int64_t> ids = ReadInt64ArrayLazy(instancer, "ids", time);
+  std::unordered_set<int64_t> hidden_set(invisible.begin(), invisible.end());
+  hidden_set.insert(inactive.begin(), inactive.end());
 
   static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   for (size_t i = 0; i < n; ++i) {
     if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
       break;  // instance budget reached
-    if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
+    if (PointInstanceHidden(i, n, ids, hidden_set)) continue;
     const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
     if (pidx < 0 || size_t(pidx) >= targets->size()) continue;
     const std::vector<MeshJobNext> &pjobs = get_proto_jobs(size_t(pidx));
@@ -1993,9 +2594,10 @@ int32_t ReserveCurveProto(const tinyusdz::next::Stage &stage,
 // relationship; they are normally descendants of the instancer, so we resolve
 // each target by leaf name among the instancer's children first (robust to
 // whether composition re-rooted the authored target paths) and fall back to an
-// absolute stage lookup. `invisibleIds` are skipped. The instancer's children
-// are the prototypes, so the caller must NOT descend into it. Curve prototypes
-// are deduped into a curve BLAS and instanced through the same TLAS as meshes.
+// absolute stage lookup. `invisibleIds`/`inactiveIds` are skipped. The
+// instancer's children are the prototypes, so the caller must NOT descend into
+// it. Curve prototypes are deduped into a curve BLAS and instanced through the
+// same TLAS as meshes.
 void CollectPointInstancer(const tinyusdz::next::Stage &stage,
                            const tinyusdz::next::UsdPrim &instancer,
                            const matrix4d &instancer_world,
@@ -2061,14 +2663,17 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
   const std::vector<float> scales = ReadFloatArrayLazy(instancer, "scales", time);
   const std::vector<int64_t> invisible =
       ReadInt64ArrayLazy(instancer, "invisibleIds", time);
-  const std::unordered_set<int64_t> invisible_set(invisible.begin(),
-                                                  invisible.end());
+  const std::vector<int64_t> inactive =
+      ReadInt64ArrayLazy(instancer, "inactiveIds", time);
+  const std::vector<int64_t> ids = ReadInt64ArrayLazy(instancer, "ids", time);
+  std::unordered_set<int64_t> hidden_set(invisible.begin(), invisible.end());
+  hidden_set.insert(inactive.begin(), inactive.end());
 
   static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   size_t emitted = 0;
   for (size_t i = 0; i < n; ++i) {
-    if (!invisible_set.empty() && invisible_set.count(int64_t(i))) continue;
+    if (PointInstanceHidden(i, n, ids, hidden_set)) continue;
     const int32_t pidx = (i < proto_indices.size()) ? proto_indices[i] : 0;
     if (pidx < 0 || size_t(pidx) >= proto_blas.size()) continue;
     const int32_t blas_id = proto_blas[size_t(pidx)];
@@ -2554,10 +3159,13 @@ inline size_t EstimateTrisForJob(const tinyusdz::next::UsdPrim &prim,
 // instead of letting the process get OOM-killed.
 template <class FVec, class TVec>
 bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
-                    double time, bool want_uvs, bool purpose_cull, int threads,
+                    const tinyusdz::next::Stage *stage, double time,
+                    bool want_uvs, bool purpose_cull, int threads,
                     FVec *out_vertices, TVec *out_tris, FVec *out_tri_uvs,
                     Bounds *out_bounds, RTPreviewStats *out_stats,
                     std::vector<TriMat> *out_mat_table = nullptr,
+                    std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+                        *out_openpbr_table = nullptr,
                     bool want_colors = false, ByteVec *out_tri_colors = nullptr,
                     bool want_normals = false, FVec *out_tri_normals = nullptr,
                     // Indexed geometry (Phase 2b): when both non-null, emit unique
@@ -2581,6 +3189,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
     Bounds b;
     RTPreviewStats s;
     TriMat mat;  // this job's single material (slim TriStore path only)
+    bool has_openpbr{false};
+    tinyusdz::tydra::LightRtOpenPBRParams openpbr;
   };
   const unsigned nthreads =
       std::min<unsigned>(WorkerThreadCount(threads),
@@ -2617,6 +3227,9 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
   std::atomic<bool> oom{false};
   const size_t njobs = jobs.size();
   const size_t chunk = std::max<size_t>(size_t(nthreads) * 2u, 1u);
+  const std::unordered_map<std::string, float> blend_weights =
+      stage ? GatherBlendShapeWeightsNext(*stage, time)
+            : std::unordered_map<std::string, float>();
   try {
     for (size_t cstart = 0;
          cstart < njobs && !oom.load(std::memory_order_relaxed);
@@ -2634,7 +3247,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
             R &r = results[i];
             uint32_t jvb = 0;  // job-local vertex base (indices rebased at concat)
             AddRTPreviewMeshNext(
-                job.prim, job.world, job.purpose, purpose_mask, time,
+                job.prim, stage, &blend_weights, job.world, job.purpose,
+                purpose_mask, time,
                 job.base_color, job.tex_id, job.normal_tex_id, job.roughness,
                 job.metallic, job.rough_tex, job.metal_tex, job.emission,
                 job.emission_tex_id, job.occlusion, job.occ_tex,
@@ -2650,6 +3264,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 job.displacement_tex.id, job.displacement_tex.ch, tex_pool,
                 disp_scale, job.displacement_tex.scale,
                 job.displacement_tex.bias);
+            r.has_openpbr = job.has_openpbr;
+            r.openpbr = job.openpbr;
           }
         } catch (const std::bad_alloc &) {
           oom.store(true, std::memory_order_relaxed);
@@ -2687,6 +3303,10 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
         if constexpr (std::is_same<typename TVec::value_type, TriStore>::value ||
                       std::is_same<typename TVec::value_type, FlatTri>::value) {
           if (out_mat_table) {
+            if (out_openpbr_table && r.has_openpbr) {
+              r.mat.openpbr_id = uint32_t(out_openpbr_table->size());
+              out_openpbr_table->push_back(r.openpbr);
+            }
             const uint32_t mid = uint32_t(out_mat_table->size());
             out_mat_table->push_back(r.mat);
             for (auto &ts : r.t) ts.mat_id = mid;
@@ -2752,6 +3372,7 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.vertices.clear();
   ctx.tris.clear();
   ctx.flat_mats.clear();
+  ctx.flat_openpbr_mats.clear();
   ctx.textures.clear();
   ctx.tri_uvs.clear();
   ctx.tri_colors.clear();
@@ -2761,6 +3382,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   ctx.use_tlas = false;
   ctx.bounds = Bounds();
   ctx.stats = RTPreviewStats();
+  const bool want_openpbr =
+      opt.material_shading == Options::MaterialShading::LightRtBsdf;
 
   const auto stream_t0 = std::chrono::steady_clock::now();
   std::vector<MeshJobNext> base_jobs;
@@ -2818,6 +3441,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       tc.base_dir = DirName(opt.input);
       tc.usdz = usdz_ptr;
       tc.options = &opt;
+      tc.degraded_materials = &ctx.stats.degraded_materials;
+      tc.missing_textures = &ctx.stats.missing_textures;
       std::unordered_map<std::string, ResolvedMat> mat_cache;
       for (MeshJobNext &job : base_jobs) {
         ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
@@ -2828,10 +3453,12 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     for (const MeshJobNext &j : base_jobs)
       if (j.vertex_color) { want_colors = true; break; }
     const float disp_scale = opt.displace ? opt.displace_scale : 0.0f;
-    if (!StreamMeshJobs(base_jobs, opt.purpose_mask, time, want_uvs,
+    if (!StreamMeshJobs(base_jobs, opt.purpose_mask, &ctx.stage, time, want_uvs,
                         /*purpose_cull=*/false, opt.threads, &ctx.vertices,
                         &ctx.tris, &ctx.tri_uvs, &ctx.bounds, &ctx.stats,
-                        /*out_mat_table=*/&ctx.flat_mats, want_colors,
+                        /*out_mat_table=*/&ctx.flat_mats,
+                        want_openpbr ? &ctx.flat_openpbr_mats : nullptr,
+                        want_colors,
                         &ctx.tri_colors, opt.smooth, &ctx.tri_normals,
                         /*out_uverts=*/static_cast<std::vector<float> *>(nullptr),
                         /*out_indices=*/static_cast<IdxVec *>(nullptr),
@@ -2914,6 +3541,8 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     tc.base_dir = DirName(opt.input);
     tc.usdz = usdz_ptr;
     tc.options = &opt;
+    tc.degraded_materials = &ctx.stats.degraded_materials;
+    tc.missing_textures = &ctx.stats.missing_textures;
     std::unordered_map<std::string, ResolvedMat> mat_cache;
     for (MeshJobNext &job : base_jobs) {
       ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
@@ -2991,10 +3620,13 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       gjobs.reserve(base_group_idx[g].size());
       for (size_t ji : base_group_idx[g]) gjobs.push_back(base_jobs[ji]);
       if (!StreamMeshJobs(
-              gjobs, opt.purpose_mask, time, want_uvs, /*purpose_cull=*/true,
+              gjobs, opt.purpose_mask, &ctx.stage, time, want_uvs,
+              /*purpose_cull=*/true,
               /*threads=*/1, &ctx.blas[b].vertices, &ctx.blas[b].tris,
               &ctx.blas[b].tri_uvs, &local_bounds[b], &gstats[g],
-              &ctx.blas[b].mat_table, jobs_have_color(gjobs),
+              &ctx.blas[b].mat_table,
+              want_openpbr ? &ctx.blas[b].openpbr_table : nullptr,
+              jobs_have_color(gjobs),
               &ctx.blas[b].tri_colors, opt.smooth, &ctx.blas[b].tri_normals,
               /*indexed:*/ &ctx.blas[b].uverts, &ctx.blas[b].indices,
               &ctx.textures, opt.displace ? opt.displace_scale : 0.0f))
@@ -3017,11 +3649,14 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
   for (size_t i = 0; stream_ok && i < protos.size(); ++i) {
     const uint32_t b = protos[i].blas_id;
     RTPreviewStats discard;
-    stream_ok = StreamMeshJobs(proto_jobs[i], opt.purpose_mask, time, want_uvs,
-                               /*purpose_cull=*/true, opt.threads,
+    stream_ok = StreamMeshJobs(proto_jobs[i], opt.purpose_mask, &ctx.stage,
+                               time, want_uvs, /*purpose_cull=*/true, opt.threads,
                                &ctx.blas[b].vertices, &ctx.blas[b].tris,
                                &ctx.blas[b].tri_uvs, &local_bounds[b], &discard,
-                               &ctx.blas[b].mat_table, jobs_have_color(proto_jobs[i]),
+                               &ctx.blas[b].mat_table,
+                               want_openpbr ? &ctx.blas[b].openpbr_table
+                                            : nullptr,
+                               jobs_have_color(proto_jobs[i]),
                                &ctx.blas[b].tri_colors, opt.smooth,
                                &ctx.blas[b].tri_normals,
                                /*out_uverts=*/static_cast<FloatVec *>(nullptr),
@@ -3851,7 +4486,8 @@ double RenderFrameTo(RenderContext &ctx, const std::string &path) {
       ctx.use_tlas ? &ctx.instances : nullptr,
       ctx.tri_colors.empty() ? nullptr : &ctx.tri_colors,
       ctx.tri_normals.empty() ? nullptr : &ctx.tri_normals,
-      ctx.volumes.empty() ? nullptr : &ctx.volumes);
+      ctx.volumes.empty() ? nullptr : &ctx.volumes,
+      ctx.flat_openpbr_mats.empty() ? nullptr : &ctx.flat_openpbr_mats);
   const auto t1 = std::chrono::steady_clock::now();
   tinyusdz::image::WriteOption wopt;
   wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
@@ -3868,8 +4504,13 @@ void PrintRTStats(const RenderContext &ctx) {
   std::cerr << "rt loader: next\n";
   std::cerr << "rt meshes: " << ctx.stats.meshes << "\n";
   std::cerr << "rt skipped meshes: " << ctx.stats.skipped_meshes << "\n";
+  std::cerr << "rt missing textures: " << ctx.stats.missing_textures << "\n";
   std::cerr << "rt purpose default triangles: "
             << ctx.stats.purpose_default_triangles << "\n";
+  std::cerr << "rt purpose render triangles: "
+            << ctx.stats.purpose_render_triangles << "\n";
+  std::cerr << "rt purpose proxy triangles: "
+            << ctx.stats.purpose_proxy_triangles << "\n";
   std::cerr << "rt purpose guide triangles: "
             << ctx.stats.purpose_guide_triangles << "\n";
   if (ctx.stats.curve_strands > 0)
@@ -3970,9 +4611,26 @@ std::string SubstituteFrame(const std::string &path, long frame) {
   return path.substr(0, dot) + buf + path.substr(dot);
 }
 
+// Structured, greppable end-of-load diagnostic summary, mirroring tusdview's
+// `load summary:` line so both tools feed the usd-assets smoke harness the same
+// way. Printed unconditionally (independent of -stats) when there is something
+// actionable to report. unsupported_mtlx is not tracked by the next loader yet;
+// degraded_materials tracks shared-resolver failures that fell back to legacy
+// material resolution, and missing_textures / skipped are real counts.
+static void PrintLoadSummaryNext(const RenderContext &ctx) {
+  const size_t degraded = ctx.stats.degraded_materials;
+  const size_t missing = ctx.stats.missing_textures;
+  const size_t skipped = ctx.stats.skipped_meshes;
+  if (degraded + missing + skipped == 0) return;
+  std::cerr << "load summary: degraded_materials=" << degraded
+            << " missing_textures=" << missing
+            << " unsupported_mtlx=0 skipped=" << skipped << " other=0\n";
+}
+
 int RunRTPreviewNext(const Options &opt) {
   RenderContext ctx;
   if (!BuildRenderContext(opt, ctx)) return EXIT_FAILURE;
+  PrintLoadSummaryNext(ctx);
   if (opt.stats) PrintRTStats(ctx);
 
   // Animation: -frames renders one image per time code, re-evaluating geometry,

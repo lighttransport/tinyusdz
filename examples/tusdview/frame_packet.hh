@@ -22,6 +22,8 @@ struct FramePacket {
   float cameraPos[3]{0, 0, 0};
   RenderMode mode{RenderMode::Shaded};
   float clearColor[4]{0.12f, 0.12f, 0.13f, 1.0f};
+  float lightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
+  float lightColor[3]{1.0f, 1.0f, 1.0f};
   float depthScale{1.0f};
   float sceneMin[3]{0, 0, 0};
   float sceneExtent[3]{1, 1, 1};
@@ -50,6 +52,10 @@ struct FramePacket {
     p.cameraPos[2] = cameraPos[2];
     p.mode = mode;
     for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor[i];
+    for (int i = 0; i < 3; ++i) {
+      p.lightDir[i] = lightDir[i];
+      p.lightColor[i] = lightColor[i];
+    }
     p.depthScale = depthScale;
     for (int i = 0; i < 3; ++i) { p.sceneMin[i] = sceneMin[i]; p.sceneExtent[i] = sceneExtent[i]; }
     p.highlightMeshIndex = highlightMeshIndex;

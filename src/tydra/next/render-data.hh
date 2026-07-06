@@ -290,6 +290,7 @@ struct RenderMesh {
 struct RenderPointInstancer {
   std::string name;
   std::string prim_path;
+  int32_t material_id = -1;  // Optional material binding on the instancer.
 
   std::vector<std::string> prototype_paths;
   std::vector<int32_t> prototype_node_ids;     // One entry per prototype path.
@@ -306,6 +307,8 @@ struct RenderPointInstancer {
   std::vector<int64_t> invisible_ids;
   std::vector<int64_t> inactive_ids;
   std::vector<Matrix4> transforms;
+  std::vector<float> display_colors;    // rgb, size = instance_count * 3
+  std::vector<float> display_opacities; // alpha, size = instance_count
   std::vector<uint8_t> instance_visible;  // 1 = visible/active, 0 = hidden
   uint32_t draw_start = 0;
   uint32_t draw_count = 0;
@@ -321,6 +324,8 @@ struct RenderPointInstancer {
   bool has_velocities() const { return !velocities.empty(); }
   bool has_angular_velocities() const { return !angular_velocities.empty(); }
   bool has_ids() const { return !ids.empty(); }
+  bool has_display_colors() const { return !display_colors.empty(); }
+  bool has_display_opacities() const { return !display_opacities.empty(); }
   size_t prototype_count() const { return prototype_paths.size(); }
   size_t prototype_mesh_count(size_t prototype_index) const;
   bool has_valid_prototype_mesh_bindings() const;
@@ -337,6 +342,10 @@ struct RenderPointInstanceDraw {
   int32_t mesh_id = -1;
   int32_t material_id = -1;
   int32_t expanded_mesh_id = -1;  // Optional duplicated mesh generated from this draw.
+  bool has_display_color = false;
+  Float3 display_color = {1.0f, 1.0f, 1.0f};
+  bool has_display_opacity = false;
+  float display_opacity = 1.0f;
   Matrix4 transform;
 };
 

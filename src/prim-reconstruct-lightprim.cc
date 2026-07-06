@@ -91,6 +91,29 @@ bool ReconstructShader(
 
 #include "prim-reconstruct-geom-detail.inc"
 
+// inputs:texture:format ("automatic"/"latlong"/"mirroredBall"/"angular") for
+// DomeLight / DomeLight_1. Not covered by DOME_LIGHT_TYPED_ATTRS (enum-token
+// attrs need an enum handler); without this the attribute fell through to the
+// generic props and DomeLight::textureFormat stayed unauthored.
+[[maybe_unused]] static nonstd::expected<DomeLight::TextureFormat, std::string>
+DomeLightTextureFormatEnumHandler(const std::string &tok) {
+  DomeLight::TextureFormat fmt;
+  if (DomeLight_TextureFormat_from_string(tok, &fmt)) {
+    return fmt;
+  }
+  return nonstd::make_unexpected("Invalid inputs:texture:format token: " + tok);
+}
+
+[[maybe_unused]] static nonstd::expected<DomeLight_1::TextureFormat, std::string>
+DomeLight1TextureFormatEnumHandler(const std::string &tok) {
+  DomeLight::TextureFormat fmt;
+  if (DomeLight_TextureFormat_from_string(tok, &fmt)) {
+    // Same enumerator set/order as DomeLight::TextureFormat.
+    return static_cast<DomeLight_1::TextureFormat>(fmt);
+  }
+  return nonstd::make_unexpected("Invalid inputs:texture:format token: " + tok);
+}
+
 #define RECONSTRUCT_LIGHT_PRIM_BODY(LightClass, light_ptr, TYPED_ATTRS, COMMON_ATTRS, EXTENT_HANDLING, SPECIAL_HANDLING) \
   (void)references; \
   \
@@ -319,7 +342,9 @@ bool ReconstructPrim<DomeLight>(
   DCOUT("Implement DomeLight");
   RECONSTRUCT_LIGHT_PRIM_BODY(DomeLight, light, DOME_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
                               /* no extent */,
-                              /* no special handling */)
+                              PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:texture:format",
+                                  DomeLight::TextureFormat, DomeLightTextureFormatEnumHandler,
+                                  DomeLight, light->textureFormat, options.strict_allowedToken_check))
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
 }
@@ -344,7 +369,10 @@ bool ReconstructPrim<DomeLight_1>(
 #endif
   RECONSTRUCT_LIGHT_PRIM_BODY(DomeLight_1, light, DOME_LIGHT_TYPED_ATTRS, LIGHT_COMMON_ATTRS_NO_SHAPING,
                               /* no extent */,
-                              PARSE_TYPED_ATTRIBUTE(table, prop, "poleAxis", DomeLight_1, light->poleAxis))
+                              PARSE_TYPED_ATTRIBUTE(table, prop, "poleAxis", DomeLight_1, light->poleAxis)
+                              PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:texture:format",
+                                  DomeLight_1::TextureFormat, DomeLight1TextureFormatEnumHandler,
+                                  DomeLight_1, light->textureFormat, options.strict_allowedToken_check))
 #undef PRIM_CLASS_
 #undef PRIM_PTR_
 }

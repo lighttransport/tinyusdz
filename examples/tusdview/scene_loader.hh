@@ -3,6 +3,7 @@
 #pragma once
 
 #include <limits>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -46,6 +47,14 @@ struct LoadOptions {
   // screenshot at a specific frame); interactive playback re-evaluates via
   // RenderSceneAtTime().
   double timecode{std::numeric_limits<double>::quiet_NaN()};
+  // Conversion-time subdivision surface refinement. subdivisionLevel is the
+  // scene-wide fallback; subdivisionPrimLevels overrides individual mesh prims.
+  // subdivisionAuto is handled by tusdview before conversion by filling
+  // subdivisionPrimLevels from projected mesh screen coverage.
+  int subdivisionLevel{0};
+  bool subdivisionAuto{false};
+  int subdivisionAutoMaxLevel{3};
+  std::map<std::string, int> subdivisionPrimLevels;
   // Variant selection overrides: key = prim full path, value = map of
   // variantSet name -> variant name. Applied before composition so variant
   // arcs resolve with the user's choices instead of the layer defaults.
@@ -87,6 +96,8 @@ struct LoadedScene {
   std::string warn;
   std::string err;
   bool ok{false};
+  int subdivisionLevel{0};
+  std::map<std::string, int> subdivisionPrimLevels;
   // Memory-mapped file handle kept alive for the Stage's lifetime (zero-copy
   // USDC arrays reference this mapping). Unmapped when this LoadedScene dies.
   // Null on the composition path (composition copies specs, so zero-copy

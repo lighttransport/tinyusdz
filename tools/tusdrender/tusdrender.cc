@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -88,6 +89,129 @@ extern "C" {
 // The Vulkan backend and main() below live in the global namespace; pull in the
 // tusdr names they use (Vec3, Options, RTPreviewStats, qjs::*, ...).
 using namespace tusdr;
+
+namespace {
+
+uint8_t FloatToByte(float v) {
+  if (!std::isfinite(v)) return 0;
+  v = std::max(0.0f, std::min(1.0f, v));
+  return static_cast<uint8_t>(std::round(v * 255.0f));
+}
+
+tinyusdz::Image MakeBlankImage(const Options &opt, int height) {
+  tinyusdz::Image img;
+  img.width = std::max(1, opt.width);
+  img.height = std::max(1, height);
+  img.channels = 4;
+  img.bpp = 8;
+  img.format = tinyusdz::Image::PixelFormat::UInt;
+  img.data.resize(size_t(img.width) * size_t(img.height) * 4);
+  const uint8_t r = FloatToByte(opt.bg.x);
+  const uint8_t g = FloatToByte(opt.bg.y);
+  const uint8_t b = FloatToByte(opt.bg.z);
+  for (size_t i = 0; i + 3 < img.data.size(); i += 4) {
+    img.data[i + 0] = r;
+    img.data[i + 1] = g;
+    img.data[i + 2] = b;
+    img.data[i + 3] = 255;
+  }
+  return img;
+}
+
+bool WriteBlankImage(const Options &opt, int height) {
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::Autodetect;
+  auto ret = tinyusdz::image::WriteImageToFile(
+      opt.output, MakeBlankImage(opt, height), wopt);
+  if (!ret) {
+    std::cerr << "Failed to write image: " << ret.error() << "\n";
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+static const char *LargeSceneProfileName(Options::LargeSceneProfile p) {
+  switch (p) {
+    case Options::LargeSceneProfile::Off: return "off";
+    case Options::LargeSceneProfile::Auto: return "auto";
+    case Options::LargeSceneProfile::Caldera: return "caldera";
+    case Options::LargeSceneProfile::Island: return "island";
+    case Options::LargeSceneProfile::ALab: return "alab";
+  }
+  return "off";
+}
+
+static std::string LowerAscii(std::string s) {
+  for (char &c : s) {
+    c = char(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return s;
+}
+
+static Options::LargeSceneProfile DetectLargeSceneProfile(const std::string &path) {
+  const std::string p = LowerAscii(path);
+  if (p.find("caldera") != std::string::npos) return Options::LargeSceneProfile::Caldera;
+  if (p.find("island") != std::string::npos ||
+      p.find("moana") != std::string::npos) return Options::LargeSceneProfile::Island;
+  if (p.find("alab") != std::string::npos ||
+      p.find("animal_logic") != std::string::npos ||
+      p.find("animal-logic") != std::string::npos) {
+    return Options::LargeSceneProfile::ALab;
+  }
+  return Options::LargeSceneProfile::Off;
+}
+
+static void ApplyLargeSceneProfile(Options *opt) {
+  if (!opt) return;
+  Options::LargeSceneProfile p = opt->large_scene_profile;
+  if (p == Options::LargeSceneProfile::Auto) {
+    p = DetectLargeSceneProfile(opt->input);
+  }
+  if (p == Options::LargeSceneProfile::Off) return;
+
+  if (!opt->backend_explicit) {
+    opt->vulkan = true;
+    opt->vulkan_rt = true;
+    opt->vulkan_instanced = true;
+  }
+  if (!opt->rt_lod_explicit) opt->rt_lod = true;
+  if (!opt->rt_lod_full_px_explicit) opt->rt_lod_full_px = 64.0f;
+  if (!opt->rt_lod_cull_px_explicit) opt->rt_lod_cull_px = 2.0f;
+
+  if (p == Options::LargeSceneProfile::Caldera) {
+    if (!opt->camera_explicit && opt->camera.empty()) {
+      opt->camera = "phospate_mine_overview";
+    }
+    if (!opt->lod_stream_explicit) opt->lod_stream = true;
+    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = 8.0;
+  } else if (p == Options::LargeSceneProfile::Island) {
+    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = 10.0;
+  } else if (p == Options::LargeSceneProfile::ALab) {
+    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = 10.0;
+  }
+
+  std::cerr << "largeSceneProfile " << LargeSceneProfileName(p)
+            << " resolved: backend="
+            << (opt->vulkan_instanced ? "vkr+vkInstanced"
+                : opt->vulkan_rt ? "vkr"
+                : opt->vulkan ? "vk"
+                : opt->hip ? "hip"
+                : opt->use_d3d ? "d3d"
+                : opt->rt_preview ? "rtPreview" : "default")
+            << " rtLod=" << (opt->rt_lod ? "on" : "off")
+            << " fullPx=" << opt->rt_lod_full_px
+            << " cullPx=" << opt->rt_lod_cull_px
+            << " lodStream=" << (opt->lod_stream ? "on" : "off")
+            << " maxMem=" << opt->max_mem_gib
+            << " maxVram=" << opt->max_vram_gib;
+  if (!opt->camera.empty()) std::cerr << " camera=" << opt->camera;
+  std::cerr << "\n";
+}
 
 // ---------------------------------------------------------------------------
 // LightRT Vulkan backend: uses the LightRT C API (lightrt_c_vk.h) for GPU
@@ -622,6 +746,8 @@ int main(int argc, char **argv) {
   if (!ParseArgs(argc, argv, &opt)) {
     return EXIT_FAILURE;
   }
+  SetIblBackendEnvmap(opt.ibl_envmap);
+  ApplyLargeSceneProfile(&opt);
 
   // Configure the process memory budget: -maxMem <GiB>, else auto
   // min(32 GiB, 0.5 * system MemAvailable). Keeps tusdrender from being
@@ -685,6 +811,10 @@ int main(int argc, char **argv) {
   // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `next`
   // lazy loader, build the geometry once, then trace on the selected GPU backend.
   if (opt.vulkan || opt.use_d3d || opt.hip) {
+    if (opt.gpu_shade == Options::GpuShadeMode::Preview) {
+      std::cerr << "-gpuShade preview: GPU preview shading is not enabled yet; "
+                   "using cpu shade-after-hit path.\n";
+    }
     // Load through next loader.
     tinyusdz::next::Stage stage;
     std::string warn, err;
@@ -913,8 +1043,10 @@ int main(int argc, char **argv) {
     }
 
     if (geos.empty()) {
-      std::cerr << "No renderable geometry found.\n";
-      return EXIT_FAILURE;
+      std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
+      return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
+                 ? EXIT_SUCCESS
+                 : EXIT_FAILURE;
     }
 
     // Resolve camera.
@@ -1159,6 +1291,12 @@ int main(int argc, char **argv) {
       std::cerr << rt_err << "\n";
       return EXIT_FAILURE;
     }
+    if (tris.empty()) {
+      std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
+      return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
+                 ? EXIT_SUCCESS
+                 : EXIT_FAILURE;
+    }
 
     lrt_tri_build_options build_opts;
     std::memset(&build_opts, 0, sizeof(build_opts));
@@ -1309,8 +1447,10 @@ int main(int argc, char **argv) {
   ExpandBoundsByVolume(volumes, &bounds);
 
   if (tris.empty() && !has_direct && volumes.empty()) {
-    std::cerr << "No renderable geometry found.\n";
-    return EXIT_FAILURE;
+    std::cerr << "WARN: No renderable geometry found; writing blank image.\n";
+    return WriteBlankImage(opt, opt.height > 0 ? opt.height : 540)
+               ? EXIT_SUCCESS
+               : EXIT_FAILURE;
   }
 
   lrt_tri_build_options build_opts;

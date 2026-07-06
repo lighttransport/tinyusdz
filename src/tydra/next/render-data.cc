@@ -80,6 +80,8 @@ size_t RenderPointInstancer::memory_usage() const {
   total += VectorBytes(invisible_ids);
   total += VectorBytes(inactive_ids);
   total += VectorBytes(transforms);
+  total += VectorBytes(display_colors);
+  total += VectorBytes(display_opacities);
   total += VectorBytes(instance_visible);
   total += name.capacity();
   total += prim_path.capacity();

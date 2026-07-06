@@ -18,6 +18,7 @@ struct RenderContext {
   std::vector<float> vertices;  // packed triangle positions (flat-path BVH input)
   std::vector<FlatTri> tris;    // slim per-triangle: geometry + purpose + mat_id
   std::vector<TriMat> flat_mats;  // flat-path material table (one per mesh-job)
+  std::vector<tinyusdz::tydra::LightRtOpenPBRParams> flat_openpbr_mats;
   std::vector<Texture> textures;  // diffuse textures referenced by flat_mats[].tex_id
   std::vector<float> tri_uvs;  // 6 floats/tri (parallel to tris); empty if none
   ByteVec tri_colors;  // 12 bytes/tri (per-corner RGBA8); empty if none
@@ -113,6 +114,9 @@ float GeometrySmith(float ndotv, float ndotl, float roughness);
 void BuildBrdfLut(int size, IblCache *ibl);
 
 bool BuildIblFromEnv(EnvImage &&env, IblCache *ibl);
+// -ibl envmap: switch BuildIblFromEnv to the vendored envmap-library backend
+// (opt-in; no-op when built without TUSDR_WITH_TEXTOOLS).
+void SetIblBackendEnvmap(bool enabled);
 
 bool BuildIblCache(const RenderScene &scene, const LightCache &lights,
                    IblCache *ibl);
@@ -225,7 +229,9 @@ bool ComputeUVFootprint(const Vec3 &org, const Vec3 &dir, const RayDiff &rd,
 bool ResolveTLASHit(const lrt_tlas_hit &th, const std::vector<Blas> &blas,
                     const std::vector<InstanceRT> &instances,
                     const std::vector<Texture> *textures, const Vec3 &ray_org,
-                    const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out);
+                    const Vec3 &ray_dir, const RayDiff &rd, TriInfo *out,
+                    const tinyusdz::tydra::LightRtOpenPBRParams **out_openpbr =
+                        nullptr);
 
 Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<FlatTri> &tris, const std::vector<TriMat> &mats,
@@ -239,7 +245,9 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const std::vector<InstanceRT> *instances = nullptr,
            const RayDiff &rd = RayDiff{}, int depth = 0,
            const ByteVec *tri_colors = nullptr,
-           const std::vector<float> *tri_normals = nullptr);
+           const std::vector<float> *tri_normals = nullptr,
+           const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+               *openpbr_mats = nullptr);
 
 uint8_t ToSRGB8(float linear);
 
@@ -269,7 +277,9 @@ tinyusdz::Image RenderImage(lrt_tri_scene *scene, const DirectScene *direct,
                             const std::vector<InstanceRT> *instances = nullptr,
                             const ByteVec *tri_colors = nullptr,
                             const std::vector<float> *tri_normals = nullptr,
-                            const std::vector<VolumeData> *volumes = nullptr);
+                            const std::vector<VolumeData> *volumes = nullptr,
+                            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
+                                *openpbr_mats = nullptr);
 
 bool LoadProgress(float progress, void *);
 

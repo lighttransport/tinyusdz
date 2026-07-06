@@ -10,9 +10,13 @@
 // ImGui docking layout with a prim hierarchy browser, a property inspector and a
 // 3D viewport with Maya-style navigation (Alt+LMB orbit / Alt+MMB pan /
 // Alt+RMB+wheel dolly, 'F' to frame the scene).
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
+#include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -22,6 +26,90 @@
 #include "config.hh"
 #include "log.hh"
 #include "renderer.hh"
+
+namespace {
+
+enum class LargeSceneProfile { Off, Auto, Caldera, Island, ALab };
+
+const char* ProfileName(LargeSceneProfile p) {
+  switch (p) {
+    case LargeSceneProfile::Off: return "off";
+    case LargeSceneProfile::Auto: return "auto";
+    case LargeSceneProfile::Caldera: return "caldera";
+    case LargeSceneProfile::Island: return "island";
+    case LargeSceneProfile::ALab: return "alab";
+  }
+  return "off";
+}
+
+std::string LowerCopy(const std::string& s) {
+  std::string out = s;
+  for (char& c : out) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return out;
+}
+
+bool ParseProfile(const char* s, LargeSceneProfile* out) {
+  if (!s || !out) return false;
+  const std::string v = LowerCopy(s);
+  if (v == "off") *out = LargeSceneProfile::Off;
+  else if (v == "auto") *out = LargeSceneProfile::Auto;
+  else if (v == "caldera") *out = LargeSceneProfile::Caldera;
+  else if (v == "island") *out = LargeSceneProfile::Island;
+  else if (v == "alab") *out = LargeSceneProfile::ALab;
+  else return false;
+  return true;
+}
+
+LargeSceneProfile DetectProfileFromPath(const std::string& path) {
+  const std::string p = LowerCopy(path);
+  if (p.find("caldera") != std::string::npos) return LargeSceneProfile::Caldera;
+  if (p.find("island") != std::string::npos ||
+      p.find("moana") != std::string::npos) return LargeSceneProfile::Island;
+  if (p.find("alab") != std::string::npos ||
+      p.find("animal_logic") != std::string::npos ||
+      p.find("animal-logic") != std::string::npos) {
+    return LargeSceneProfile::ALab;
+  }
+  return LargeSceneProfile::Off;
+}
+
+std::uint64_t ParseByteCount(const std::string& text) {
+  std::string v = text;
+  std::uint64_t mul = 1;
+  if (!v.empty()) {
+    char s = v.back();
+    if (s == 'k' || s == 'K') { mul = 1024ull; v.pop_back(); }
+    else if (s == 'm' || s == 'M') { mul = 1024ull * 1024ull; v.pop_back(); }
+    else if (s == 'g' || s == 'G') {
+      mul = 1024ull * 1024ull * 1024ull;
+      v.pop_back();
+    }
+  }
+  return static_cast<std::uint64_t>(std::strtoull(v.c_str(), nullptr, 10)) * mul;
+}
+
+bool ParsePrimLevel(const std::string& text, std::string* prim, int* level) {
+  const size_t eq = text.rfind('=');
+  const size_t colon = text.rfind(':');
+  size_t sep = std::string::npos;
+  if (eq != std::string::npos && colon != std::string::npos) {
+    sep = std::max(eq, colon);
+  } else {
+    sep = (eq != std::string::npos) ? eq : colon;
+  }
+  if (sep == std::string::npos || sep == 0 || sep + 1 >= text.size()) return false;
+  std::string value = text.substr(sep + 1);
+  char* end = nullptr;
+  long v = std::strtol(value.c_str(), &end, 10);
+  if (!end || *end != '\0' || v < 0 || v > 16) return false;
+  *prim = text.substr(0, sep);
+  *level = static_cast<int>(v);
+  return !prim->empty();
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
 #if defined(HAVE_VULKAN)
@@ -46,9 +134,29 @@ int main(int argc, char** argv) {
   bool rasterLod = false;       // --raster-lod: view-dependent raster instance LOD
   float rasterLodFullPx = 0.0f; // 0 => keep App default
   float rasterLodCullPx = -1.0f;// <0 => keep App default
+  LargeSceneProfile largeSceneProfile = LargeSceneProfile::Off;
+  bool maxTrisExplicit = false;
+  bool maxGpuMemExplicit = false;
+  bool maxDrawMeshesExplicit = false;
+  bool rtLodExplicit = false;
+  bool rtLodFullExplicit = false;
+  bool rtLodCullExplicit = false;
+  bool rtLodBandExplicit = false;
+  bool rasterLodExplicit = false;
+  bool rasterLodFullExplicit = false;
+  bool rasterLodCullExplicit = false;
+  bool useNextExplicit = false;
+  bool lodStreamExplicit = false;
+  bool lodMaxMemExplicit = false;
+  bool lodMaxVramExplicit = false;
+  bool allowParentPathsExplicit = false;
+  bool maxAssetBytesExplicit = false;
+  std::uint64_t maxAssetReadBytes = 0;
   double timeBudget = 0.0;    // 0 = unlimited
   std::optional<float> uiScale;  // Explicit CLI override for font/widget/window scale.
   bool wantRt = false;        // request Vulkan ray tracing (if supported)
+  tusdview::RendererDevicePreference devicePreference;
+  bool vkDeviceExplicit = false;
   bool wantCuda = false;      // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   bool wantHip = false;       // --hip: HIP/ROCm BVH ray-traced screenshot (hipew runtime)
   int rtSamples = 1;          // --rt-samples: AA supersamples for the CUDA/HIP path
@@ -80,6 +188,12 @@ int main(int argc, char** argv) {
   bool allowParentPaths = false;          // --allow-parent-paths: permit '..' in
                                           // composition asset paths (e.g. ALab)
   tusdview::TextureRuntimeOptions textureOptions;
+  std::optional<int> subdivisionLevel;
+  bool subdivisionAuto = false;
+  bool subdivisionAutoExplicit = false;
+  int subdivisionAutoMaxLevel = 3;
+  bool subdivisionAutoMaxExplicit = false;
+  std::map<std::string, int> subdivisionPrimLevels;
   std::optional<double> timeCode;         // --time T: evaluate the scene at this
                                           // time code (animated screenshots)
   tusdview::SkinningMode skinningMode = tusdview::SkinningMode::Auto;
@@ -105,45 +219,67 @@ int main(int argc, char** argv) {
         return 1;
       }
       backendExplicit = true;
+    } else if (std::strcmp(argv[i], "--vk-device") == 0 && (i + 1) < argc) {
+      devicePreference.vulkanDevice = argv[++i];
+      vkDeviceExplicit = true;
+      backend = tusdview::Backend::Vulkan;
+      backendExplicit = true;
+    } else if (std::strncmp(argv[i], "--vk-device=", 12) == 0) {
+      devicePreference.vulkanDevice = argv[i] + 12;
+      vkDeviceExplicit = true;
+      backend = tusdview::Backend::Vulkan;
+      backendExplicit = true;
     } else if (std::strcmp(argv[i], "--frames") == 0 && (i + 1) < argc) {
       maxFrames = std::atoi(argv[++i]);
     } else if (std::strcmp(argv[i], "--screenshot") == 0 && (i + 1) < argc) {
       screenshot = argv[++i];
     } else if (std::strcmp(argv[i], "--max-tris") == 0 && (i + 1) < argc) {
       maxTris = std::atoll(argv[++i]);
+      maxTrisExplicit = true;
     } else if (std::strcmp(argv[i], "--max-asset-bytes") == 0 && (i + 1) < argc) {
       // Override per-asset composition/resolver read cap (default 512MB).
       // Accepts a byte count with optional K/M/G suffix, e.g. 2G.
-      std::string v = argv[++i];
-      size_t mul = 1;
-      if (!v.empty()) {
-        char s = v.back();
-        if (s == 'k' || s == 'K') { mul = 1024ull; v.pop_back(); }
-        else if (s == 'm' || s == 'M') { mul = 1024ull * 1024; v.pop_back(); }
-        else if (s == 'g' || s == 'G') { mul = 1024ull * 1024 * 1024; v.pop_back(); }
-      }
-      tinyusdz::security_policy::SetMaxAssetReadBytes(
-          static_cast<size_t>(std::strtoull(v.c_str(), nullptr, 10)) * mul);
+      maxAssetReadBytes = ParseByteCount(argv[++i]);
+      maxAssetBytesExplicit = true;
     } else if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
       maxGpuMemGiB = std::atof(argv[++i]);
+      maxGpuMemExplicit = true;
     } else if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
       maxDrawMeshes = std::atoll(argv[++i]);
+      maxDrawMeshesExplicit = true;
     } else if (std::strcmp(argv[i], "--no-robust-frame") == 0) {
       robustFrame = false;
     } else if (std::strcmp(argv[i], "--rt-lod") == 0) {
       rtLod = true;
+      rtLodExplicit = true;
     } else if (std::strcmp(argv[i], "--rt-lod-full-px") == 0 && (i + 1) < argc) {
       rtLodFullPx = static_cast<float>(std::atof(argv[++i]));
+      rtLodFullExplicit = true;
     } else if (std::strcmp(argv[i], "--rt-lod-cull-px") == 0 && (i + 1) < argc) {
       rtLodCullPx = static_cast<float>(std::atof(argv[++i]));
+      rtLodCullExplicit = true;
     } else if (std::strcmp(argv[i], "--rt-lod-band") == 0 && (i + 1) < argc) {
       rtLodBand = static_cast<float>(std::atof(argv[++i]));
+      rtLodBandExplicit = true;
     } else if (std::strcmp(argv[i], "--raster-lod") == 0) {
       rasterLod = true;
+      rasterLodExplicit = true;
     } else if (std::strcmp(argv[i], "--raster-lod-full-px") == 0 && (i + 1) < argc) {
       rasterLodFullPx = static_cast<float>(std::atof(argv[++i]));
+      rasterLodFullExplicit = true;
     } else if (std::strcmp(argv[i], "--raster-lod-cull-px") == 0 && (i + 1) < argc) {
       rasterLodCullPx = static_cast<float>(std::atof(argv[++i]));
+      rasterLodCullExplicit = true;
+    } else if (std::strcmp(argv[i], "--large-scene-profile") == 0 && (i + 1) < argc) {
+      if (!ParseProfile(argv[++i], &largeSceneProfile)) {
+        LOGE("--large-scene-profile must be off, auto, caldera, island, or alab");
+        return 1;
+      }
+    } else if (std::strncmp(argv[i], "--large-scene-profile=", 22) == 0) {
+      if (!ParseProfile(argv[i] + 22, &largeSceneProfile)) {
+        LOGE("--large-scene-profile must be off, auto, caldera, island, or alab");
+        return 1;
+      }
     } else if (std::strcmp(argv[i], "--time-budget") == 0 && (i + 1) < argc) {
       timeBudget = std::atof(argv[++i]);
     } else if (std::strcmp(argv[i], "--ui-scale") == 0 && (i + 1) < argc) {
@@ -156,6 +292,7 @@ int main(int argc, char** argv) {
       threaded = true;
     } else if (std::strcmp(argv[i], "--next") == 0) {
       useNextLoader = true;
+      useNextExplicit = true;
     } else if (std::strcmp(argv[i], "--no-cull") == 0) {
       noCull = true;
     } else if (std::strcmp(argv[i], "--cam-dolly") == 0 && (i + 1) < argc) {
@@ -172,6 +309,7 @@ int main(int argc, char** argv) {
       deferReferences = true;
     } else if (std::strcmp(argv[i], "--allow-parent-paths") == 0) {
       allowParentPaths = true;
+      allowParentPathsExplicit = true;
     } else if (std::strcmp(argv[i], "--texture-max-size") == 0 && (i + 1) < argc) {
       textureOptions.maxTextureSize = std::atoi(argv[++i]);
       if (textureOptions.maxTextureSize < 0) {
@@ -182,14 +320,70 @@ int main(int argc, char** argv) {
       if (textureOptions.textureBudgetMB < 0) {
         textureOptions.textureBudgetMB = 0;
       }
+    } else if (std::strcmp(argv[i], "--subdivision-level") == 0 && (i + 1) < argc) {
+      subdivisionLevel = std::max(0, std::atoi(argv[++i]));
+    } else if (std::strncmp(argv[i], "--subdivision-level=", 20) == 0) {
+      subdivisionLevel = std::max(0, std::atoi(argv[i] + 20));
+    } else if (std::strcmp(argv[i], "--subdivision-auto") == 0) {
+      subdivisionAuto = true;
+      subdivisionAutoExplicit = true;
+    } else if (std::strcmp(argv[i], "--no-subdivision-auto") == 0) {
+      subdivisionAuto = false;
+      subdivisionAutoExplicit = true;
+    } else if (std::strcmp(argv[i], "--subdivision-auto-max-level") == 0 && (i + 1) < argc) {
+      subdivisionAutoMaxLevel = std::max(0, std::atoi(argv[++i]));
+      subdivisionAutoMaxExplicit = true;
+    } else if (std::strncmp(argv[i], "--subdivision-auto-max-level=", 29) == 0) {
+      subdivisionAutoMaxLevel = std::max(0, std::atoi(argv[i] + 29));
+      subdivisionAutoMaxExplicit = true;
+    } else if (std::strcmp(argv[i], "--subdivision-prim") == 0 && (i + 1) < argc) {
+      std::string prim;
+      int level = 0;
+      if (!ParsePrimLevel(argv[++i], &prim, &level)) {
+        LOGE("--subdivision-prim expects /Prim/Path=N");
+        return 1;
+      }
+      subdivisionPrimLevels[prim] = level;
+    } else if (std::strncmp(argv[i], "--subdivision-prim=", 19) == 0) {
+      std::string prim;
+      int level = 0;
+      if (!ParsePrimLevel(argv[i] + 19, &prim, &level)) {
+        LOGE("--subdivision-prim expects /Prim/Path=N");
+        return 1;
+      }
+      subdivisionPrimLevels[prim] = level;
     } else if (std::strcmp(argv[i], "--texture-compress") == 0 && (i + 1) < argc) {
       const char* mode = argv[++i];
       if (std::strcmp(mode, "off") == 0) {
         textureOptions.compression = tusdview::TextureCompressionMode::Off;
       } else if (std::strcmp(mode, "bc") == 0) {
         textureOptions.compression = tusdview::TextureCompressionMode::BCn;
+      } else if (std::strcmp(mode, "bc7") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::BC7;
       } else {
-        LOGE("--texture-compress must be off or bc");
+        LOGE("--texture-compress must be off, bc or bc7");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--texture-mips") == 0 && (i + 1) < argc) {
+      const char* mode = argv[++i];
+      if (std::strcmp(mode, "off") == 0) {
+        textureOptions.generateMips = false;
+      } else if (std::strcmp(mode, "on") == 0) {
+        textureOptions.generateMips = true;
+      } else {
+        LOGE("--texture-mips must be on or off");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--dome-ibl") == 0 && (i + 1) < argc) {
+      const char* mode = argv[++i];
+      if (std::strcmp(mode, "off") == 0) {
+        textureOptions.domeIbl = 0;
+      } else if (std::strcmp(mode, "low") == 0) {
+        textureOptions.domeIbl = 1;
+      } else if (std::strcmp(mode, "high") == 0) {
+        textureOptions.domeIbl = 2;
+      } else {
+        LOGE("--dome-ibl must be off, low or high");
         return 1;
       }
     } else if (std::strcmp(argv[i], "--udim") == 0 && (i + 1) < argc) {
@@ -229,10 +423,13 @@ int main(int argc, char** argv) {
       if (rtSamples < 1) rtSamples = 1;
     } else if (std::strcmp(argv[i], "--lod-stream") == 0) {
       lodStream = true;
+      lodStreamExplicit = true;
     } else if (std::strcmp(argv[i], "--max-mem") == 0 && i + 1 < argc) {
       lodMaxMem = std::atof(argv[++i]);
+      lodMaxMemExplicit = true;
     } else if (std::strcmp(argv[i], "--max-vram") == 0 && i + 1 < argc) {
       lodMaxVram = std::atof(argv[++i]);
+      lodMaxVramExplicit = true;
     } else if (std::strcmp(argv[i], "--max-instances") == 0 && i + 1 < argc) {
       rtMaxInstances = std::atoll(argv[++i]);
       if (rtMaxInstances < 0) rtMaxInstances = 0;
@@ -333,6 +530,9 @@ int main(int argc, char** argv) {
           "default config path).\n"
           "  --backend gl|vk Select renderer backend (default: Vulkan when built "
           "and available, otherwise OpenGL).\n"
+          "  --vk-device INDEX|NAME  Select a Vulkan physical device by index or "
+          "case-insensitive device/driver substring (e.g. 0, nvidia, rtx, llvmpipe). "
+          "Also available in config as vulkan_device.\n"
           "  --rt          Use Vulkan ray tracing (ray query) when supported "
           "(implies --backend vk).\n"
           "  --cuda        Ray-trace the screenshot on CUDA (driver API + NVRTC "
@@ -350,6 +550,10 @@ int main(int argc, char** argv) {
           "(0 = auto, 50%%).\n"
           "  --camera NAME Frame a named USD Camera (--next path) instead of "
           "auto-fitting the whole scene (needed for vast scenes, e.g. Caldera).\n"
+          "  --large-scene-profile off|auto|caldera|island|alab  Resolve a "
+          "Vulkan realtime preset for public large scenes. Profiles set existing "
+          "large-scene knobs only; explicit CLI flags win. No texture resize or "
+          "compression behavior is changed.\n"
           "  --max-asset-bytes N  Override the per-asset composition read cap "
           "(default 512M; accepts K/M/G suffix, e.g. 2G) for scenes with large "
           "single crates (e.g. Moore Lane's 896MB subLayer).\n"
@@ -381,6 +585,16 @@ int main(int argc, char** argv) {
           "exceeds N texels (0 = keep source size).\n"
           "  --texture-budget-mb N  Best-effort decoded texture memory budget "
           "for viewer uploads (0 = unlimited).\n"
+          "  --subdivision-level N  Scene-wide conversion-time subdivision "
+          "surface refinement level (0 = off). Applies only to meshes whose USD "
+          "subdivisionScheme is not none.\n"
+          "  --subdivision-prim /Prim/Path=N  Override subdivision level for one "
+          "mesh prim. Repeatable; ':' is also accepted as the separator.\n"
+          "  --subdivision-auto  Estimate per-prim subdivision levels from the "
+          "auto-fit camera screen coverage and re-convert once. Explicit "
+          "--subdivision-prim overrides win.\n"
+          "  --subdivision-auto-max-level N  Clamp --subdivision-auto levels "
+          "(default 3, hard cap 10).\n"
           "  --texture-compress off|bc  Request BCn texture compression. Backends "
           "without BCn upload support warn and fall back to resized RGBA8.\n"
           "  --udim sparse|atlas  UDIM handling mode (default sparse; atlas rebakes "
@@ -408,6 +622,58 @@ int main(int argc, char** argv) {
     }
   }
 
+  LargeSceneProfile effectiveProfile = largeSceneProfile;
+  if (effectiveProfile == LargeSceneProfile::Auto) {
+    effectiveProfile = DetectProfileFromPath(file);
+  }
+  if (effectiveProfile != LargeSceneProfile::Off) {
+    if (!useNextExplicit) useNextLoader = true;
+    if (!backendExplicit) {
+      backend = tusdview::Backend::Vulkan;
+      backendExplicit = true;
+    }
+    if (!rasterLodExplicit) rasterLod = true;
+    if (!rtLodExplicit) rtLod = true;
+    if (!rtLodFullExplicit) rtLodFullPx = 64.0f;
+    if (!rtLodCullExplicit) rtLodCullPx = 2.0f;
+    if (!rtLodBandExplicit) rtLodBand = 0.25f;
+    if (!maxAssetBytesExplicit) maxAssetReadBytes = 2ull * 1024ull * 1024ull * 1024ull;
+
+    if (effectiveProfile == LargeSceneProfile::Caldera) {
+      if (!maxTrisExplicit) maxTris = 40000000;
+      if (!maxGpuMemExplicit) maxGpuMemGiB = 12.0;
+      if (!maxDrawMeshesExplicit) maxDrawMeshes = 80000;
+      if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
+      if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
+      if (cameraName.empty()) cameraName = "phospate_mine_overview";
+    } else if (effectiveProfile == LargeSceneProfile::Island) {
+      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxDrawMeshesExplicit) maxDrawMeshes = 20000;
+      if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
+      if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
+    } else if (effectiveProfile == LargeSceneProfile::ALab) {
+      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxDrawMeshesExplicit) maxDrawMeshes = 50000;
+      if (!rasterLodFullExplicit) rasterLodFullPx = 36.0f;
+      if (!rasterLodCullExplicit) rasterLodCullPx = 1.0f;
+      if (!allowParentPathsExplicit) allowParentPaths = true;
+    } else {
+      if (!maxGpuMemExplicit) maxGpuMemGiB = 10.0;
+      if (!maxDrawMeshesExplicit) maxDrawMeshes = 40000;
+      if (!rasterLodFullExplicit) rasterLodFullPx = 48.0f;
+      if (!rasterLodCullExplicit) rasterLodCullPx = 1.5f;
+    }
+    if (effectiveProfile == LargeSceneProfile::Caldera && !lodStreamExplicit) {
+      lodStream = true;
+      if (!lodMaxMemExplicit) lodMaxMem = 32.0;
+      if (!lodMaxVramExplicit) lodMaxVram = 8.0;
+    }
+  }
+  if (maxAssetReadBytes > 0) {
+    tinyusdz::security_policy::SetMaxAssetReadBytes(
+        static_cast<size_t>(maxAssetReadBytes));
+  }
+
   // Ray tracing is a Vulkan technique, so --rt implies the Vulkan backend.
   if (wantRt) {
     backend = tusdview::Backend::Vulkan;
@@ -431,6 +697,26 @@ int main(int argc, char** argv) {
     wantRt = false;
   }
 #endif
+
+  if (effectiveProfile != LargeSceneProfile::Off) {
+    LOGI("large-scene-profile %s resolved: backend=%s --next=%s "
+         "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
+         "--max-gpu-mem=%.1f --max-draw-meshes=%lld --max-tris=%lld",
+         ProfileName(effectiveProfile),
+         backend == tusdview::Backend::Vulkan ? "vk" : "gl",
+         useNextLoader ? "on" : "off",
+         rasterLod ? "on" : "off", rasterLodFullPx, rasterLodCullPx,
+         rtLod ? "on" : "off", rtLodFullPx, rtLodCullPx,
+         maxGpuMemGiB, maxDrawMeshes, maxTris);
+    if (effectiveProfile == LargeSceneProfile::ALab && allowParentPaths) {
+      LOGI("large-scene-profile alab: parent-relative composition paths allowed");
+    }
+    if (maxAssetReadBytes > 0) {
+      LOGI("large-scene-profile %s: max asset read bytes=%llu",
+           ProfileName(effectiveProfile),
+           static_cast<unsigned long long>(maxAssetReadBytes));
+    }
+  }
 
   const tusdview::ConfigLoadResult config = tusdview::LoadStartupConfig(configPath);
   if (config.status == tusdview::ConfigLoadStatus::Error) {
@@ -464,10 +750,28 @@ int main(int argc, char** argv) {
     if (config.config.dollySensitivity) {
       app.setDollySensitivity(*config.config.dollySensitivity);
     }
+    if (config.config.invertYaw) {
+      app.setInvertYaw(*config.config.invertYaw);
+    }
     if (config.config.invertDolly) {
       app.setInvertDolly(*config.config.invertDolly);
     }
     app.setRecentScenes(config.config.recentScenes);
+    if (config.config.vulkanDevice && !vkDeviceExplicit) {
+      devicePreference.vulkanDevice = *config.config.vulkanDevice;
+    }
+    if (config.config.subdivisionLevel && !subdivisionLevel.has_value()) {
+      subdivisionLevel = *config.config.subdivisionLevel;
+    }
+    if (config.config.subdivisionAuto && !subdivisionAutoExplicit) {
+      subdivisionAuto = *config.config.subdivisionAuto;
+    }
+    if (config.config.subdivisionAutoMaxLevel && !subdivisionAutoMaxExplicit) {
+      subdivisionAutoMaxLevel = *config.config.subdivisionAutoMaxLevel;
+    }
+    for (const auto& kv : config.config.subdivisionPrimLevels) {
+      subdivisionPrimLevels.emplace(kv.first, kv.second);
+    }
   }
   // Persist the recent-scenes list back to the resolved config path (the default
   // platform path when none was given), so File > Open Recent survives restarts.
@@ -494,6 +798,15 @@ int main(int argc, char** argv) {
     lo.deferReferences = deferReferences;
     lo.allowParentRelativePaths = allowParentPaths;
     lo.textureOptions = textureOptions;
+    lo.subdivisionLevel = std::max(0, subdivisionLevel.value_or(0));
+    lo.subdivisionAuto = subdivisionAuto;
+    lo.subdivisionAutoMaxLevel =
+        std::max(0, std::min(10, subdivisionAutoMaxLevel));
+    for (const auto& kv : subdivisionPrimLevels) {
+      if (!kv.first.empty()) {
+        lo.subdivisionPrimLevels[kv.first] = std::max(0, kv.second);
+      }
+    }
     if (timeCode.has_value()) lo.timecode = *timeCode;
     app.setLoadOptions(lo);
   }
@@ -519,6 +832,7 @@ int main(int argc, char** argv) {
   app.setCamDolly(camDolly);
   app.setWindowShot(windowShot);
   app.setRequestRayTracing(wantRt);
+  app.setDevicePreference(devicePreference);
   app.setAllowBackendFallback(!backendExplicit && backend == tusdview::Backend::Vulkan);
   app.setSkinningMode(skinningMode);
   app.setMcpStdio(mcpStdio);

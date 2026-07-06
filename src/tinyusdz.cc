@@ -438,13 +438,16 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
 
     offset += extra_field_len;
 
-    // In usdz, data must be aligned at 64bytes boundary.
+    // In strict USDZ, data must be aligned at a 64-byte boundary. Keep
+    // ValidateUSDZ() strict, but allow the loader to read unaligned stored ZIP
+    // packages in the wild; byte ranges into the mmapped/archive buffer do not
+    // require alignment for parsing.
     if ((offset % 64) != 0) {
-      if (err) {
-        (*err) += "Data offset must be mulitple of 64bytes for USDZ, but got " +
-                  std::to_string(offset) + ".\n";
+      if (warn) {
+        (*warn) += "USDZ entry '" + varname +
+                   "' data offset is not 64-byte aligned: " +
+                   std::to_string(offset) + ".\n";
       }
-      return false;
     }
 
     uint16_t compr_method;

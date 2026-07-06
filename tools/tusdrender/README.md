@@ -16,13 +16,17 @@ Common flags:
 |------|---------|
 | `-rtPreview` | ray-traced preview (the `next` loader; default for USDC) |
 | `-vk` / `-vkr` / `-d3d` | GPU backends — Vulkan compute / Vulkan ray query / Direct3D 11 compute — see [`doc/tusdrender.md`](../../doc/tusdrender.md) for status + testing |
+| `-largeSceneProfile caldera\|island\|alab` | Vulkan large-scene preset over backend/LOD/memory knobs; explicit flags win |
 | `-w N -height N` | image size (`-height` omitted → from camera aspect) |
 | `-autoframe` | usdrecord-style auto camera framing |
 | `-camera <path>` | render through a named `UsdGeomCamera` |
 | `-mask <prim,...>` | restrict to these prim subtrees |
 | `-complexity low\|med\|high\|veryhigh` | subdivision preset |
 | `-smooth` | interpolate authored normals (smooth shading) |
+| `-threads N` | cap build and CPU shade-after-hit worker threads (`0` = auto) |
 | `-displaceScale <f>` | `UsdPreviewSurface` displacement multiplier (default 1.0; `-noDisplace` disables) |
+| `-materialResolver legacy\|tydra-next\|compare` | next-loader material resolver. `legacy` is the default hand-rolled path; `tydra-next` routes through `RenderMaterial` + the shared OpenPBR block; `compare` renders legacy and reports resolver field differences. |
+| `-materialShading legacy\|lightrt-bsdf` | CPU shading path. `lightrt-bsdf` is experimental and evaluates direct-light/headlight response through the shared LightRT OpenPBR BSDF; `legacy` remains the default. |
 | `-maxMem <GiB>` | memory cap override (default `min(32, 0.5·MemAvailable)`) |
 | `-stats` | print mesh/triangle/memory/timing stats |
 
@@ -64,6 +68,19 @@ Common flags:
   glass. UsdGeomBasisCurves/NurbsCurves render as LightRT hair. `-smooth`
   interpolates authored `normals` for smooth shading (default is per-face
   geometric normals, which keeps the lean 4 B/triangle instanced footprint).
+  The experimental `-materialResolver tydra-next` path is a migration aid for the
+  shared material-eval layer; measure coverage on usd-assets with:
+  `USD_ASSETS_ROOT=/path/to/usd-assets TUSDR_RUN_MATERIAL_RESOLVER=1 ctest --test-dir build -R tool-tusdrender-material-resolver --output-on-failure`.
+  Add `TUSDR_MATERIAL_SHADING=lightrt-bsdf` to smoke the experimental BSDF
+  shading mode through the same curated loop.
+  `-materialShading lightrt-bsdf` is the next experimental step: with
+  `-materialResolver tydra-next`, tusdrender carries the shared OpenPBR block in
+  per-material side tables, then evaluates direct-light and headlight response
+  through LightRT's OpenPBR BSDF. The diffuse irradiance and prefiltered
+  reflection IBL terms also use `bsdf_eval` in this mode, and opaque hits trace
+  a bounded `bsdf_sample` continuation bounce for indirect reflection/
+  transmission. Legacy material resolution still falls back to the slim material
+  fields.
 * **Displacement** — `UsdPreviewSurface inputs:displacement` (constant or a
   height texture, honoring the `UsdUVTexture` `scale`/`bias`) offsets each vertex
   along its normal before the BVH build — coarse (no extra geometry), so it works

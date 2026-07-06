@@ -129,6 +129,7 @@ class App
   void setOrbitSensitivity(float s) { camera_.setOrbitSensitivity(s); }
   void setPanSensitivity(float s) { camera_.setPanSensitivity(s); }
   void setDollySensitivity(float s) { camera_.setDollySensitivity(s); }
+  void setInvertYaw(bool on) { camera_.setInvertYaw(on); }
   void setInvertDolly(bool on) { camera_.setInvertDolly(on); }
 
   // USD composition behavior for subsequent loads (set from CLI/config before
@@ -153,6 +154,9 @@ class App
   // device supports it; otherwise the viewer stays on rasterization).
   void setRequestRayTracing(bool on) { rtRequested_ = on; }
   void setAllowBackendFallback(bool on) { allowBackendFallback_ = on; }
+  void setDevicePreference(const RendererDevicePreference& preference) {
+    devicePreference_ = preference;
+  }
   void setSkinningMode(SkinningMode mode) { skinningRequested_ = mode; }
 
   // Write a PPM of the full composited window after the last frame (QA).
@@ -311,6 +315,7 @@ class App
 
   Backend backend_;
   bool allowBackendFallback_{false};
+  RendererDevicePreference devicePreference_;
   GLFWwindow* window_{nullptr};
   std::unique_ptr<Renderer> renderer_;
 
@@ -345,6 +350,7 @@ class App
   bool cudaRt_{false};    // --cuda: CUDA BVH ray-traced screenshot (cuew runtime)
   std::string cameraName_;  // --camera: named USD camera to frame (--next path)
   std::filesystem::path configPath_;        // where to persist recent scenes
+  std::string imguiIniPath_;                // storage backing ImGuiIO::IniFilename
   std::vector<std::string> recentScenes_;   // newest first; File > Open Recent
   CudaRayTracer cudaTracer_;
   size_t cudaMaxTris_{32000000};  // flattened-triangle cap (instances expanded)

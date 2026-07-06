@@ -326,7 +326,7 @@ class Gui {
   bool showPurposeRender_{true};
   bool showPurposeProxy_{true};
   bool showPurposeGuide_{false};
-  bool showNavHelp_{true};
+  bool showNavHelp_{false};
   bool showAbout_{false};
   bool cullEnabled_{true};  // per-mesh + per-instance frustum culling (View menu)
   // Per-frame render stats (computed in buildViewVisibilityMask + the per-instance
@@ -363,8 +363,10 @@ class Gui {
     size_t meshIndex{0};
     std::vector<float> xforms;   // 12 floats/visible-instance
     std::vector<float> colors;   // 3 floats/visible-instance (empty when none)
+    std::vector<float> opacities;  // 1 float/visible-instance (empty when none)
     uint32_t count{0};
     bool hasColors{false};
+    bool hasOpacities{false};
   };
   // Frustum-test + compact one instanced mesh's visible instances into `out`
   // (shared by the sync + worker paths). cullEnabled=false -> the full set. When

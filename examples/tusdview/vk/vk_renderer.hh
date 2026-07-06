@@ -27,6 +27,9 @@ class VulkanRenderer final : public Renderer {
   VulkanRenderer() = default;
   ~VulkanRenderer() override;
 
+  void setDevicePreference(const RendererDevicePreference& preference) override {
+    devicePreference_ = preference;
+  }
   bool init(GLFWwindow* window, std::string* err) override;
   void setHeadlessSize(int w, int h) override {
     if (w > 0) headlessW_ = w;
@@ -41,6 +44,7 @@ class VulkanRenderer final : public Renderer {
   bool resizeHeadless(int w, int h) override;
   bool initImGui(std::string* err) override;
   void beginScene(const std::vector<DrawMaterialCPU>& materials, int textureCount) override;
+  void setLights(const std::vector<DrawLightCPU>& lights) override;
   void appendMesh(const DrawMeshCPU& mesh) override;
   void appendVolume(const DrawVolumeCPU& vol) override;
   void uploadTexture(int slot, const DrawTextureCPU& tex) override;
@@ -50,7 +54,8 @@ class VulkanRenderer final : public Renderer {
   void updateMorphWeights(int meshIndex,
                           const std::vector<float>& coeffs) override;
   void updateInstanceVisibility(size_t meshIndex, const float* xforms,
-                                const float* colors, uint32_t count) override;
+                                const float* colors, const float* opacities,
+                                uint32_t count) override;
   // Raster LOD box proxies (optimization B): the VK raster path collapses distant
   // instances to a shared unit cube (box-fit per instance) instead of dropping them.
   bool supportsProxyDraw() const override { return true; }
@@ -91,10 +96,9 @@ class VulkanRenderer final : public Renderer {
   struct VkMeshGPU {
     VkBuffer vbo{VK_NULL_HANDLE};
     VkDeviceMemory vboMem{VK_NULL_HANDLE};
-    // Optional displacement-baked vertex buffer for the ray-tracing path: the BLAS
-    // + ray-query hit read this (via vboAddr) so RT shows displacement, while the
-    // raster path keeps using `vbo` (shader displacement). Null when the mesh has
-    // no displacement.
+    // Optional ray-tracing vertex buffer: the BLAS + ray-query hit read this
+    // (via vboAddr) for displacement-baked or dynamically-skinned RT geometry,
+    // while the raster path keeps using `vbo` as rest geometry.
     VkBuffer vboDisp{VK_NULL_HANDLE};
     VkDeviceMemory vboDispMem{VK_NULL_HANDLE};
     VkBuffer jointVbo{VK_NULL_HANDLE};
@@ -131,6 +135,7 @@ class VulkanRenderer final : public Renderer {
     VkDeviceMemory eboMem{VK_NULL_HANDLE};
     std::vector<DrawSubmesh> submeshes;
     float world[16];
+    float localCentroid[3]{0, 0, 0};  // mesh-space bbox center (translucency sort)
     // Ray tracing (built when RT is supported): a BLAS over this mesh's
     // triangles plus device addresses + counts for the shader.
     VkAccelerationStructureKHR blas{VK_NULL_HANDLE};
@@ -162,18 +167,22 @@ class VulkanRenderer final : public Renderer {
     int purposeId{0};                       // purpose AOV: 0=default/1=render/2=proxy/3=guide
     int kindId{0};                          // kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
     float flatColor[3]{0.8f, 0.8f, 0.8f};   // per-draw constant tint (instanced path)
+    float flatOpacity{1.0f};
     // Prototype object-space AABB (for RT view-dependent LOD: per-instance
     // projected size + the box-fit proxy transform). Captured from DrawMeshCPU.
     float protoAabbMin[3]{0, 0, 0};
     float protoAabbMax[3]{0, 0, 0};
     // GPU instancing: one TLAS instance per 3x4 o2w in instanceXforms (12 floats
-    // each); instanceColors is 3 floats/instance (empty -> use flatColor). Held on
+    // each); instanceColors is 3 floats/instance (empty -> use flatColor), and
+    // instanceOpacities is 1 float/instance (empty -> use flatOpacity). Held on
     // the CPU and consumed in rebuildTlas (the TLAS instance array is the GPU copy).
     std::vector<float> instanceXforms;
     std::vector<float> instanceColors;
+    std::vector<float> instanceOpacities;
+    bool hasTranslucentInstances{false};
     // Raster GPU instancing (flat --next path): per-instance 3x4 o2w (instVbo,
     // 48B/inst, host-visible so per-instance culling can re-map the visible subset)
-    // + per-instance color (instColorBuf) + per-vertex prototype color
+    // + per-instance RGBA color/opacity (instColorBuf) + per-vertex prototype color
     // (instVtxColorBuf, white when absent). drawInstanceCount is the count actually
     // drawn (== instanceCount unless per-instance culling shrank it this frame).
     VkBuffer instVbo{VK_NULL_HANDLE};
@@ -253,6 +262,7 @@ class VulkanRenderer final : public Renderer {
   // it in VRAM instead of host-visible memory fetched over PCIe per draw.
   bool createDeviceLocalBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                                const void* data, VkBuffer* buf, VkDeviceMemory* mem);
+  void destroyBlas(VkMeshGPU& m);
   void buildBlas(VkMeshGPU& m);
   void buildBoxBlas();                  // shared unit-cube BLAS for LOD box proxies
   void initBoxProxyRaster();            // static box geometry for raster LOD proxies
@@ -304,7 +314,8 @@ class VulkanRenderer final : public Renderer {
                     void** outMapped);
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
-                          VkDeviceMemory* outMem, VkImageView* outView);
+                          VkDeviceMemory* outMem, VkImageView* outView,
+                          const std::vector<light3d::Image>* mips = nullptr);
   bool createCompressedTextureImage(const DrawCompressedImageCPU& img, bool srgb,
                                     VkImage* outImg, VkDeviceMemory* outMem,
                                     VkImageView* outView);
@@ -313,6 +324,14 @@ class VulkanRenderer final : public Renderer {
                                    VkImageView* outView);
   bool createUdimLookupImage(const DrawTextureCPU& tex, VkImage* outImg,
                              VkDeviceMemory* outMem, VkImageView* outView);
+  // DomeLight split-sum IBL (sets 21-23; 1x1 black cube/2D fallbacks).
+  // `levels` are face-major float RGB cube levels (DomeIblCPU layout).
+  bool createIblCubeImage(const std::vector<std::vector<float>>& levels,
+                          int faceSize, VkImage* outImg, VkDeviceMemory* outMem,
+                          VkImageView* outView);
+  bool createIblLutImage(const std::vector<float>& rg, int size, VkImage* outImg,
+                         VkDeviceMemory* outMem, VkImageView* outView);
+  void destroyIblImages();
   bool createRgba32fTextureImage(int width, int height, const float* data,
                                  VkImage* outImg, VkDeviceMemory* outMem,
                                  VkImageView* outView);
@@ -341,6 +360,7 @@ class VulkanRenderer final : public Renderer {
   VkInstance instance_{VK_NULL_HANDLE};
   VkSurfaceKHR surface_{VK_NULL_HANDLE};
   VkPhysicalDevice phys_{VK_NULL_HANDLE};
+  RendererDevicePreference devicePreference_;
   VkDevice device_{VK_NULL_HANDLE};
   uint32_t queueFamily_{0};
   VkQueue queue_{VK_NULL_HANDLE};
@@ -382,11 +402,15 @@ class VulkanRenderer final : public Renderer {
   // present -> the instanced raster pass can draw via vkCmdDrawIndexedIndirect
   // batches (per-draw meshId/flags come from a gl_DrawIDARB-indexed SSBO).
   bool mdiSupported_{false};
+  // Translucent (Blend-material) variant of the main mesh pipeline: premultiplied
+  // "over" blend + depth-write-off. Drawn back-to-front after the opaque pass.
+  VkPipeline translucentPipeline_{VK_NULL_HANDLE};
   VkPipeline tessPipeline_{VK_NULL_HANDLE};
   VkShaderStageFlags pushStages_{VK_SHADER_STAGE_VERTEX_BIT |
                                  VK_SHADER_STAGE_FRAGMENT_BIT};
   VkPipelineLayout instPipelineLayout_{VK_NULL_HANDLE};
   VkPipeline instPipeline_{VK_NULL_HANDLE};
+  VkPipeline instTranslucentPipeline_{VK_NULL_HANDLE};
 
   // Unlit line pipeline for debug helpers (grid/axes/bbox). Per-frame host
   // buffers (grow on demand) so a frame never writes a buffer still in flight.
@@ -488,7 +512,7 @@ class VulkanRenderer final : public Renderer {
   // All MDI-eligible (non-morph) instanced prototypes are drawn as a handful of
   // vkCmdDrawIndexedIndirect batches over shared buffers instead of ~83k per-mesh
   // bind+draw calls. Geometry (positions/normals, per-vertex color, morph-zero,
-  // indices) is concatenated once; per-instance o2w + color live in ONE global
+  // indices) is concatenated once; per-instance o2w + RGBA color live in ONE global
   // buffer whose slices the meshes' instVboMapped point into (so cull fills it).
   // The indirect command list is patched each frame with per-mesh drawInstanceCount.
   VkBuffer mdiVbo_{VK_NULL_HANDLE};        VkDeviceMemory mdiVboMem_{VK_NULL_HANDLE};
@@ -501,7 +525,7 @@ class VulkanRenderer final : public Renderer {
   void* mdiInstColMapped_{nullptr};
   VkBuffer mdiIndirectBuf_{VK_NULL_HANDLE}; VkDeviceMemory mdiIndirectMem_{VK_NULL_HANDLE};
   void* mdiIndirectMapped_{nullptr};
-  // Optional DEVICE-LOCAL mirror of the per-instance o2w + color buffers (island's
+  // Optional DEVICE-LOCAL mirror of the per-instance o2w + RGBA color buffers (island's
   // MDI frame time is instance-fetch bound: ~2 GB of host-visible transforms are
   // refetched over PCIe every frame). Cull writes still land in the host-visible
   // buffers; each rewritten mesh slice is queued here and vkCmdCopyBuffer'd into
@@ -518,7 +542,7 @@ class VulkanRenderer final : public Renderer {
   std::vector<MdiCmd> mdiCmds_;
   // CPU staging accumulated during appendMesh, uploaded + freed by buildInstMdi().
   std::vector<float> mdiInstXfStage_;      // 12 floats / instance (o2w rows)
-  std::vector<float> mdiInstColStage_;     // 3 floats / instance
+  std::vector<float> mdiInstColStage_;     // 4 floats / instance (rgba)
   std::vector<float> mdiVtxStage_;         // DrawVertex floats (positions+normals+...)
   std::vector<float> mdiVtxColStage_;      // 3 floats / vertex (per-vertex proto color)
   std::vector<uint32_t> mdiMorphStage_;    // 2 uint / vertex (morph offset,count = 0)
@@ -551,6 +575,32 @@ class VulkanRenderer final : public Renderer {
   VkDeviceMemory dummyFaceMem_{VK_NULL_HANDLE};
   VkDescriptorSet dummyFaceDesc_{VK_NULL_HANDLE};
   VkDescriptorSet allocFaceDescriptor(VkBuffer buffer, VkDeviceSize size);
+  // DomeLight split-sum IBL resources (scene-lifetime; setLights owns).
+  VkImage iblIrrImg_{VK_NULL_HANDLE};
+  VkDeviceMemory iblIrrMem_{VK_NULL_HANDLE};
+  VkImageView iblIrrView_{VK_NULL_HANDLE};
+  VkImage iblSpecImg_{VK_NULL_HANDLE};
+  VkDeviceMemory iblSpecMem_{VK_NULL_HANDLE};
+  VkImageView iblSpecView_{VK_NULL_HANDLE};
+  VkImage iblLutImg_{VK_NULL_HANDLE};
+  VkDeviceMemory iblLutMem_{VK_NULL_HANDLE};
+  VkImageView iblLutView_{VK_NULL_HANDLE};
+  // Full-resolution env cube (RT miss background; unclamped radiance).
+  VkImage iblEnvImg_{VK_NULL_HANDLE};
+  VkDeviceMemory iblEnvMem_{VK_NULL_HANDLE};
+  VkImageView iblEnvView_{VK_NULL_HANDLE};
+  VkDescriptorSet iblIrrDesc_{VK_NULL_HANDLE};
+  VkDescriptorSet iblSpecDesc_{VK_NULL_HANDLE};
+  VkDescriptorSet iblLutDesc_{VK_NULL_HANDLE};
+  // 1x1 black cube fallback (init-lifetime, like whiteImg_).
+  VkImage blackCubeImg_{VK_NULL_HANDLE};
+  VkDeviceMemory blackCubeMem_{VK_NULL_HANDLE};
+  VkImageView blackCubeView_{VK_NULL_HANDLE};
+  VkDescriptorSet blackCubeDesc_{VK_NULL_HANDLE};
+  bool iblActive_{false};
+  int iblLods_{0};
+  float iblColor_[3]{1.0f, 1.0f, 1.0f};
+  float iblRotation_[16]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   VkImage whiteImg_{VK_NULL_HANDLE};
   VkDeviceMemory whiteMem_{VK_NULL_HANDLE};
   VkImageView whiteView_{VK_NULL_HANDLE};
@@ -607,13 +657,17 @@ class VulkanRenderer final : public Renderer {
 
   // Scene
   std::vector<VkMeshGPU> meshes_;
-  std::vector<float> matColor_;  // 4 floats (rgb+alpha) per material
+  std::vector<float> matColor_;    // 3 vec4 per material: preview subset
+  std::vector<float> matLightRt_;  // 14 vec4 per material: LightRT/OpenPBR block
+  std::vector<float> lightParams_;  // packed DrawLightCPU params
 
   // Last frame parameters (copied; caller's pointers are transient)
   bool hasParams_{false};
   float view_[16];
   float proj_[16];
   float cameraPos_[3]{0, 0, 0};
+  float lightDir_[3]{0.40160966f, 0.64257544f, 0.48193160f};
+  float lightColor_[3]{1.0f, 1.0f, 1.0f};
   float clear_[4]{0.12f, 0.12f, 0.13f, 1.0f};
 
   // --- Ray tracing (ray query) state ---
@@ -656,6 +710,10 @@ class VulkanRenderer final : public Renderer {
   VkDeviceSize meshDescCap_{0};
   VkBuffer rtMatBuf_{VK_NULL_HANDLE};       // vec4 baseColor[]
   VkDeviceMemory rtMatMem_{VK_NULL_HANDLE};
+  VkBuffer rtMatLightRtBuf_{VK_NULL_HANDLE};  // LightRT/OpenPBR material block
+  VkDeviceMemory rtMatLightRtMem_{VK_NULL_HANDLE};
+  VkBuffer rtLightBuf_{VK_NULL_HANDLE};        // packed DrawLightCPU params
+  VkDeviceMemory rtLightMem_{VK_NULL_HANDLE};
   VkDeviceSize rtMatCap_{0};
   VkBuffer instInfoBuf_{VK_NULL_HANDLE};    // per-TLAS-instance {meshId, tint} (binding 4)
   VkDeviceMemory instInfoMem_{VK_NULL_HANDLE};
@@ -695,7 +753,7 @@ class VulkanRenderer final : public Renderer {
   VkMeshGPU boxMesh_;
 
   // Raster LOD box proxies (optimization B, VK raster path). Static unit-cube
-  // geometry drawn with instPipeline_; per-instance box-fit o2w (binding 1) + tint
+  // geometry drawn with instPipeline_; per-instance box-fit o2w (binding 1) + rgba tint
   // (binding 2) are uploaded each frame from boxProxyXforms_/boxProxyTints_ (filled
   // by updateProxyInstances on the cull/upload path). bindings 3/4 carry constant
   // white per-vertex color + zero morph so the box reuses the prototype pipeline.
@@ -710,12 +768,12 @@ class VulkanRenderer final : public Renderer {
   VkBuffer boxRasterInstBuf_{VK_NULL_HANDLE};    // per-instance o2w (binding 1)
   VkDeviceMemory boxRasterInstMem_{VK_NULL_HANDLE};
   VkDeviceSize boxRasterInstCap_{0};             // allocated bytes
-  VkBuffer boxRasterTintBuf_{VK_NULL_HANDLE};    // per-instance tint (binding 2)
+  VkBuffer boxRasterTintBuf_{VK_NULL_HANDLE};    // per-instance rgba tint (binding 2)
   VkDeviceMemory boxRasterTintMem_{VK_NULL_HANDLE};
   VkDeviceSize boxRasterTintCap_{0};             // allocated bytes
   uint32_t boxRasterCount_{0};                   // proxies to draw this frame
   std::vector<float> boxProxyXforms_;            // 12 floats/proxy (CPU staging)
-  std::vector<float> boxProxyTints_;             // 3 floats/proxy (CPU staging)
+  std::vector<float> boxProxyTints_;             // 4 floats/proxy rgba (CPU staging)
 
   VkDescriptorSetLayout rtSetLayout_{VK_NULL_HANDLE};
   VkDescriptorPool rtPool_{VK_NULL_HANDLE};
