@@ -158,6 +158,7 @@ list(
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
   ${TINYUSDZ_NEXT_DIR}/reader/usdc-reader.cc
   ${TINYUSDZ_NEXT_DIR}/schema/geom-mesh.cc
+  ${TINYUSDZ_NEXT_DIR}/schema/geom-xform.cc
   ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
   ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
 )
