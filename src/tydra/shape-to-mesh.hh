@@ -358,7 +358,8 @@ inline void GenerateCylinderMesh(
     std::vector<value::float2> &uvs) {
 
   const float r = float(radius);
-  const float h = float(height) * 0.5f;
+  const float heightf = float(height);
+  const float h = heightf * 0.5f;
   const int rs = std::max(radialSegments, 3);
   const int hs = std::max(heightSegments, 1);
 
@@ -371,7 +372,7 @@ inline void GenerateCylinderMesh(
   // Generate side vertices: (hs+1) rings x (rs+1) columns
   for (int j = 0; j <= hs; ++j) {
     float v = float(j) / float(hs);
-    float y = -h + v * float(height);
+    float y = -h + v * heightf;
     for (int i = 0; i <= rs; ++i) {
       float u = float(i) / float(rs);
       float angle = u * 2.0f * float(kPI);
@@ -556,7 +557,8 @@ inline void GenerateCapsuleMesh(
     std::vector<value::float2> &uvs) {
 
   const float r = float(radius);
-  const float halfCyl = float(height) * 0.5f;
+  const float heightf = float(height);
+  const float halfCyl = heightf * 0.5f;
   const int rs = std::max(radialSegments, 3);
   const int hs = std::max(heightSegments, 1);
   const int halfSegs = std::max(rs / 2, 2);
@@ -590,7 +592,7 @@ inline void GenerateCapsuleMesh(
   // Cylinder section
   for (int j = 0; j <= hs; ++j) {
     float vFrac = float(j) / float(hs);
-    float y = halfCyl - vFrac * float(height);
+    float y = halfCyl - vFrac * heightf;
     float v = 0.5f - 0.5f * vFrac;
     for (int i = 0; i <= rs; ++i) {
       float u = float(i) / float(rs);
@@ -660,8 +662,10 @@ inline void GeneratePlaneMesh(
     std::vector<value::float3> &normals,
     std::vector<value::float2> &uvs) {
 
-  const float w = float(width) * 0.5f;
-  const float l = float(length) * 0.5f;
+  const float widthf = float(width);
+  const float lengthf = float(length);
+  const float w = widthf * 0.5f;
+  const float l = lengthf * 0.5f;
   const int ws = std::max(widthSegments, 1);
   const int ls = std::max(lengthSegments, 1);
 
@@ -674,10 +678,10 @@ inline void GeneratePlaneMesh(
   // Generate vertices: (ls+1) rows x (ws+1) columns
   for (int j = 0; j <= ls; ++j) {
     float v = float(j) / float(ls);
-    float z = -l + v * float(length);
+    float z = -l + v * lengthf;
     for (int i = 0; i <= ws; ++i) {
       float u = float(i) / float(ws);
-      float x = -w + u * float(width);
+      float x = -w + u * widthf;
       points.push_back({x, 0.0f, z});
       normals.push_back({0.0f, 1.0f, 0.0f});
       uvs.push_back({u, v});

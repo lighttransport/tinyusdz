@@ -409,8 +409,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
           rel.set_listedit_qual(qual);
         }
 
-      } else if (auto path_vec = fv.second.get_value<std::vector<Path>>()) {
-        auto &items = path_vec.value();
+      } else if (auto path_values = fv.second.get_value<std::vector<Path>>()) {
+        auto &items = path_values.value();
         if (spec_type == SpecType::Connection) {
           attr.set_connections(items);
         } else {
