@@ -1574,7 +1574,9 @@ void CrateWriter::ExtractPrimMeta(
     }
   }
 
-  const std::unordered_set<std::string> emitted_prim_meta_names = {
+  // static: built from literals once, not per call (this sits on the
+  // per-prim hot path of ConvertStageToSpecs).
+  static const std::unordered_set<std::string> emitted_prim_meta_names = {
       "active",
       "apiSchemas",
       "assetInfo",
@@ -3135,7 +3137,8 @@ bool CrateWriter::ConvertAttributeToFields(
     attr_fields.push_back({"unauthoredValuesIndex", v});
   }
 
-  const std::unordered_set<std::string> emitted_meta_names = {
+  // static: built from literals once, not per call (per-attribute hot path).
+  static const std::unordered_set<std::string> emitted_meta_names = {
       "allowedTokens",
       "bindMaterialAs",
       "colorSpace",
