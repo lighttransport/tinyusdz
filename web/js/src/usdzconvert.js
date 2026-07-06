@@ -2136,7 +2136,33 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       stats.unreferencedTexturesSkipped = plans.length - texturePlans.length;
       log(`streaming: skipped ${plans.length - texturePlans.length} unreferenced texture asset(s)`);
     }
+    // Chunked passthrough: when a texture needs no processing and the source
+    // supports ranged reads into a caller buffer, stream it archive->zip in
+    // fixed-size chunks through one reused buffer. Whole-entry Buffers
+    // otherwise accumulate awaiting GC (node frees external allocations
+    // lazily), which added ~a-full-copy-of-all-textures to peak RSS.
+    const canChunkStream = typeof source.readInto === 'function' &&
+      typeof source.entrySize === 'function' && zw.canStream();
+    const chunkBuf = canChunkStream ? Buffer.allocUnsafe(4 * 1024 * 1024) : null;
+    const streamEntryChunked = (archiveName, path) => {
+      const total = source.entrySize(path);
+      zw.addEntryStreaming(archiveName, (emit) => {
+        let off = 0;
+        while (off < total) {
+          const len = Math.min(chunkBuf.length, total - off);
+          const got = source.readInto(path, off, chunkBuf, 0, len);
+          if (got !== len) throw new Error(`short read streaming '${path}'`);
+          emit(chunkBuf.subarray(0, len));
+          off += len;
+        }
+      });
+      return total;
+    };
+
     const processOne = async (plan) => {
+      if (canChunkStream && !opts.textureProcessor && !wantWork(plan.format)) {
+        return { chunked: true };
+      }
       let bytes;
       try {
         bytes = await source.fetch(plan.path);
@@ -2214,8 +2240,15 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
         // to sentinels (they never reject), so abandoning them here is safe.
         throw new Error(`streaming: failed to fetch texture '${plan.path}': ${r.error && r.error.message ? r.error.message : r.error}`);
       }
-      const { outBytes, resized, reencoded } = r;
       const archiveName = referencedArchiveNameFor(plan.outName);
+      if (r.chunked) {
+        const n = streamEntryChunked(archiveName, plan.path);
+        stats.textures++;
+        log(`  ${archiveName}: ${n} bytes [passthrough, chunked]`);
+        pump();
+        continue;
+      }
+      const { outBytes, resized, reencoded } = r;
       zw.addEntry(archiveName, outBytes);
       stats.textures++;
       if (resized) stats.resized++;
@@ -2228,9 +2261,13 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
     for (const key of keys) {
       if (key === rootPath || isUsdName(key) || isImageName(key)) continue;
       if (referencedAssetNames && !isReferencedArchiveName(assetNameFor(key))) continue;
-      // eslint-disable-next-line no-await-in-loop
-      const bytes = await source.fetch(key);
-      zw.addEntry(assetNameFor(key), bytes);
+      if (canChunkStream) {
+        streamEntryChunked(assetNameFor(key), key);
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        const bytes = await source.fetch(key);
+        zw.addEntry(assetNameFor(key), bytes);
+      }
       if (isAudioName(key)) stats.audio++; else stats.otherAssets++;
     }
 

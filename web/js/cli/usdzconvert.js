@@ -436,6 +436,14 @@ async function runStreamingConvert(native, o, prebuiltSource) {
       log,
     });
     if (streamFd !== null) fs.closeSync(streamFd);
+    if (process.env.TINYUSDZ_HEAP_REPORT) {
+      // Wasm memory only grows, so its final size is the module-heap high-water.
+      const mb = (n) => (n / (1024 * 1024)).toFixed(1);
+      const rss = process.memoryUsage();
+      console.error(`[heap] wasm memory: ${mb(native.HEAPU8.length)} MB, ` +
+        `node rss: ${mb(rss.rss)} MB, external: ${mb(rss.external)} MB, ` +
+        `jsHeapUsed: ${mb(rss.heapUsed)} MB`);
+    }
     console.log(`Wrote ${o.output} (${streamBytes} bytes, streamed) — root: ${stats.rootPath}, ` +
       `textures: ${stats.textures}, resized: ${stats.resized}, reencoded: ${stats.reencoded}, ` +
       `audio: ${stats.audio}, other assets: ${stats.otherAssets}`);
@@ -693,6 +701,14 @@ async function main() {
     });
   } finally {
     if (texturePool) texturePool.destroy();
+  }
+  if (process.env.TINYUSDZ_HEAP_REPORT) {
+    // Wasm memory only grows, so its final size is the module-heap high-water.
+    const mb = (n) => (n / (1024 * 1024)).toFixed(1);
+    const rss = process.memoryUsage();
+    console.error(`[heap] wasm memory: ${mb(native.HEAPU8.length)} MB, ` +
+      `node rss: ${mb(rss.rss)} MB, external: ${mb(rss.external)} MB, ` +
+      `jsHeapUsed: ${mb(rss.heapUsed)} MB`);
   }
   const { usdz, streamedToSink, stats } = convertResult;
 
