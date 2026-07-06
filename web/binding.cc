@@ -2369,17 +2369,25 @@ class TinyUSDZLoaderNative {
     if (is_usdz) {
       // TODO: Support USDZ + Composition
       // Setup AssetResolutionResolver to read a asset(file) from memory.
-      bool asset_on_memory =
-          false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
+      if (!binary.empty()) {
+        bool asset_on_memory =
+            false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
 
-      ReportTinyUSDZDebugEvent(
-          "usdzAssetInfo.begin",
-          "asset_on_memory=false filename=" + filename_, binary.size(),
-          is_usdz);
-      if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
-              reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
-              asset_on_memory, &usdz_asset_, &warn_, &error_)) {
-        std::cerr << "Failed to read USDZ assetInfo. \n";
+        ReportTinyUSDZDebugEvent(
+            "usdzAssetInfo.begin",
+            "asset_on_memory=false filename=" + filename_, binary.size(),
+            is_usdz);
+        if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
+                reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+                asset_on_memory, &usdz_asset_, &warn_, &error_)) {
+          std::cerr << "Failed to read USDZ assetInfo. \n";
+          ReportTinyUSDZDebugEvent(
+              "usdzAssetInfo.failed", error_, binary.size(), is_usdz);
+          loaded_ = false;
+          return false;
+        }
+      } else if (usdz_asset_.asset_map.empty()) {
+        error_ += "USDZ asset info is not available for RenderScene conversion.\n";
         ReportTinyUSDZDebugEvent(
             "usdzAssetInfo.failed", error_, binary.size(), is_usdz);
         loaded_ = false;
@@ -2569,6 +2577,24 @@ class TinyUSDZLoaderNative {
   }
 
   bool loadAsLayerFromBinary(const std::string &binary, const std::string &filename) {
+
+    const bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+    loaded_layer_is_usdz_ = is_usdz;
+    usdz_asset_ = tinyusdz::USDZAsset();
+
+    if (is_usdz) {
+      bool asset_on_memory =
+          false;  // duplicate asset data from USDZ(binary) to USDZAsset struct.
+      if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
+              reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+              asset_on_memory, &usdz_asset_, &warn_, &error_)) {
+        std::cerr << "Failed to read USDZ assetInfo. \n";
+        loaded_ = false;
+        loaded_layer_is_usdz_ = false;
+        return false;
+      }
+    }
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
@@ -6139,7 +6165,7 @@ class TinyUSDZLoaderNative {
     }
 
     std::string empty;
-    return stageToRenderScene(stage, /* TODO: is_usdz*/false, empty);
+    return stageToRenderScene(stage, loaded_layer_is_usdz_, empty);
 
   }
 
@@ -6231,6 +6257,7 @@ class TinyUSDZLoaderNative {
     // Clear loaded flag
     loaded_ = false;
     loaded_as_layer_ = false;
+    loaded_layer_is_usdz_ = false;
     composited_ = false;
 
     // Clear strings
@@ -8765,6 +8792,7 @@ class TinyUSDZLoaderNative {
 
   bool loaded_{false};
   bool loaded_as_layer_{false};
+  bool loaded_layer_is_usdz_{false};
   bool enableComposition_{false};
   bool loadTextureInNative_{false}; // true: Let JavaScript to decode texture image.
 

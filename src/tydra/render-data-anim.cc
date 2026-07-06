@@ -2194,9 +2194,9 @@ bool RenderSceneConverter::ExtractPrimPropertyAnimation(
                          light.shapingIesNormalize);
   };
 
-  if (const auto *light = prim.as<SphereLight>()) {
-    append_light_api(*light);
-    append_fallback_anim("inputs:radius", light->radius);
+  if (const auto *sphere_light = prim.as<SphereLight>()) {
+    append_light_api(*sphere_light);
+    append_fallback_anim("inputs:radius", sphere_light->radius);
   } else if (const auto *cylinder_light = prim.as<CylinderLight>()) {
     append_light_api(*cylinder_light);
     append_fallback_anim("inputs:length", cylinder_light->length);
