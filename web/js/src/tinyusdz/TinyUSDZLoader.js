@@ -192,6 +192,12 @@ class TinyUSDZLoader extends Loader {
         this.onTinyUSDZDebug_ = options.onTinyUSDZDebug || null;
         this.debugMemory_ = !!options.debugMemory;
         this.suppressNativeInfoLogs_ = !!options.suppressNativeInfoLogs;
+
+        // Opt-in to the lean next-core module (tinyusdz_next.js: next_core +
+        // tydra_next, ~0.34 MB, load + three.js render-data path). DEFAULT is
+        // the full legacy module (tinyusdz.js). Gated purely by this flag so
+        // existing callers are unaffected.
+        this.useNextModule_ = !!(options.useNextModule || options.next);
     }
 
     _getBinarySize(binary) {
@@ -370,10 +376,18 @@ class TinyUSDZLoader extends Loader {
 
             let initTinyUSDZNative = null;
 
+            // Lean next-core module (opt-in): built from web/next; provides the
+            // load + three.js render-data path (no legacy core). It shares the
+            // module-init flow below (print filters etc.); memory64 and
+            // zstd-compressed variants are legacy-module only.
             // Use dynamic import based on memory64 parameter.
             // Build the 64-bit module path via URL so Vite's static import
             // analysis does not fail when tinyusdz_64.js is absent.
-            if (use_memory64) {
+            if (this.useNextModule_) {
+                const nextUrl = new URL('./tinyusdz_next.js', import.meta.url).href;
+                const module = await import(/* @vite-ignore */ nextUrl);
+                initTinyUSDZNative = module.default;
+            } else if (use_memory64) {
                 try {
                     const wasm64Url = new URL('./tinyusdz_64.js', import.meta.url).href;
                     const module = await import(/* @vite-ignore */ wasm64Url);
