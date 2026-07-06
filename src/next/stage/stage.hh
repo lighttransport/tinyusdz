@@ -89,8 +89,13 @@ public:
   /// Get all time sample times for a property
   std::vector<double> GetTimeSampleTimes(const std::string& name) const;
 
-  /// Get value at specific time (returns closest sample, no interpolation)
-  const Value* GetValueAtTime(const std::string& name, double time) const;
+  /// Get value at specific time (returns closest sample, no interpolation).
+  /// `scratch` provides storage for lazily-backed (crate-deferred) scalar
+  /// samples: the returned pointer is either a stable pointer into the prim's
+  /// storage or `scratch` itself, so it is only guaranteed valid while
+  /// `scratch` is alive and unmodified.
+  const Value* GetValueAtTime(const std::string& name, double time,
+                              Value* scratch) const;
 
   /// Get interpolated value at time (linear interpolation for numeric types)
   Value GetInterpolatedValue(const std::string& name, double time) const;

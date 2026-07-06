@@ -157,10 +157,15 @@
     std::memcpy(header_data.data() + 16, &fwd2, 8);
     std::memcpy(header_data.data() + 24, &num_samples, 8);
     if (samples) {
+      // One scratch reused across the loop: lazily-backed samples decode into
+      // it transiently (and are freed by the next iteration's decode), so the
+      // whole run is encoded without ever holding more than one materialized
+      // sample value.
+      Value ts_scratch;
       for (const auto& kv : *samples) {
         double t = kv.first;
         std::memcpy(times_data.data() + 8 + rep_i * 8, &t, 8);
-        const Value* ts_val = prim.time_sample_value(kv.second);
+        const Value* ts_val = prim.time_sample_value(kv.second, &ts_scratch);
         uint64_t vr = ts_val
                            ? EncodeValue(*ts_val).raw()
                            : ValueRep::Make(CrateTypeId::ValueBlock, 0, false, true)
@@ -357,8 +362,9 @@
       }
       SmallFieldList flds;
       const Value* sv = nullptr;
+      Value sv_scratch;
       if (auto* s = prim.time_samples(prop_id))
-        if (!s->empty()) sv = prim.time_sample_value((*s)[0].second);
+        if (!s->empty()) sv = prim.time_sample_value((*s)[0].second, &sv_scratch);
       CrateField tf;
       tf.token_index.value = CommonToken(common_.typeName, "typeName");
       tf.value_rep =

@@ -13,8 +13,9 @@ namespace tinyusdz {
 namespace next {
 namespace {
 
-const Value* ValueAtOrDefault(const UsdPrim& prim, const char* name, double time) {
-  const Value* v = prim.GetValueAtTime(name, time);
+const Value* ValueAtOrDefault(const UsdPrim& prim, const char* name, double time,
+                              Value* scratch) {
+  const Value* v = prim.GetValueAtTime(name, time, scratch);
   return v ? v : prim.GetPropertyValue(name);
 }
 
@@ -26,19 +27,22 @@ std::vector<T> CopyView(const ArrayView<T>& view) {
 
 bool ReadFloatView(const UsdPrim& prim, const char* name, double time,
                    ArrayScratch<float>* scratch, ArrayView<float>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time);
+  Value vscratch;
+  const Value* v = ValueAtOrDefault(prim, name, time, &vscratch);
   return v && GetFloatArrayView(*v, scratch, view);
 }
 
 bool ReadIntView(const UsdPrim& prim, const char* name, double time,
                  ArrayScratch<int32_t>* scratch, ArrayView<int32_t>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time);
+  Value vscratch;
+  const Value* v = ValueAtOrDefault(prim, name, time, &vscratch);
   return v && GetIntArrayView(*v, scratch, view);
 }
 
 bool ReadInt64View(const UsdPrim& prim, const char* name, double time,
                    ArrayScratch<int64_t>* scratch, ArrayView<int64_t>* view) {
-  const Value* v = ValueAtOrDefault(prim, name, time);
+  Value vscratch;
+  const Value* v = ValueAtOrDefault(prim, name, time, &vscratch);
   return v && GetInt64ArrayView(*v, scratch, view);
 }
 

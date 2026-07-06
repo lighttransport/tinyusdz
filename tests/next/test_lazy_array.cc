@@ -127,8 +127,9 @@ int main() {
   NEXT_CHECK(velocity_times.size() == 2);
   NEXT_CHECK(velocity_times[0] == 0.0);
   NEXT_CHECK(velocity_times[1] == 1.0);
-  const Value* v0 = mesh.GetValueAtTime("velocities", 0.0);
-  const Value* v1 = mesh.GetValueAtTime("velocities", 1.0);
+  Value s0, s1;
+  const Value* v0 = mesh.GetValueAtTime("velocities", 0.0, &s0);
+  const Value* v1 = mesh.GetValueAtTime("velocities", 1.0, &s1);
   NEXT_CHECK(v0 && v1);
   NEXT_CHECK(v0->is_array() && v1->is_array());
   NEXT_CHECK(v0->is_lazy() && v1->is_lazy());
@@ -369,8 +370,9 @@ int main() {
     const std::vector<double>* xm =
         ps4->property_value("xforms")->as_double_array();
     NEXT_CHECK(xm && *xm == matrices);
-    const Value* rv0 = mesh4.GetValueAtTime("velocities", 0.0);
-    const Value* rv1 = mesh4.GetValueAtTime("velocities", 1.0);
+    Value rs0, rs1;
+    const Value* rv0 = mesh4.GetValueAtTime("velocities", 0.0, &rs0);
+    const Value* rv1 = mesh4.GetValueAtTime("velocities", 1.0, &rs1);
     NEXT_CHECK(rv0 && rv1 && rv0->is_lazy() && rv1->is_lazy());
     const std::vector<float>* rv0a = rv0->as_float_array();
     const std::vector<float>* rv1a = rv1->as_float_array();
@@ -417,8 +419,9 @@ int main() {
     const std::vector<double>* fma =
         ps5->property_value("xforms")->as_double_array();
     NEXT_CHECK(fma && *fma == matrices);
-    const Value* fv0 = mesh5.GetValueAtTime("velocities", 0.0);
-    const Value* fv1 = mesh5.GetValueAtTime("velocities", 1.0);
+    Value fs0, fs1;
+    const Value* fv0 = mesh5.GetValueAtTime("velocities", 0.0, &fs0);
+    const Value* fv1 = mesh5.GetValueAtTime("velocities", 1.0, &fs1);
     NEXT_CHECK(fv0 && fv1);
     const std::vector<float>* fv0a = fv0->as_float_array();
     const std::vector<float>* fv1a = fv1->as_float_array();

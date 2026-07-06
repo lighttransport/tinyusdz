@@ -546,6 +546,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_lazy_array PRIVATE tinyusdz_next)
 
+    add_executable(test_lazy_timesamples
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_lazy_timesamples.cc
+    )
+    target_link_libraries(test_lazy_timesamples PRIVATE tinyusdz_next)
+
     add_executable(bench_lazy_mem
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/bench_lazy_mem.cc
     )
@@ -806,6 +811,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_lazy_array COMMAND test_lazy_array
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_lazy_timesamples COMMAND test_lazy_timesamples
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_schemas COMMAND test_schemas
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_schemas_ext COMMAND test_schemas_ext
@@ -846,6 +853,7 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_crate_dict
         next_test_crate_alloc_guard
         next_test_lazy_array
+        next_test_lazy_timesamples
         next_test_schemas
         next_test_schemas_ext
         next_test_usdcat_roundtrip

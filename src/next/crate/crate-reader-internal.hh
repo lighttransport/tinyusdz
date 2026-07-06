@@ -8,6 +8,7 @@
 #include "crate-reader.hh"
 
 #include "crate-data-source.hh"
+#include "lazy-array.hh"
 #include "stream-reader.hh"
 
 #include <memory>
@@ -288,8 +289,17 @@ class CrateReader::Impl {
   bool UnpackSpecifier(ValueRep rep, Value& out);
   bool UnpackVariability(ValueRep rep, Value& out);
   bool UnpackTimeSamples(ValueRep rep, Value& out);
-  bool DecodeTimeSamples(ValueRep rep,
-                         std::vector<std::pair<double, Value>>* out);
+  // Decoded per-property `timeSamples` field. Exactly one of the two value
+  // forms is populated: `lazy` (count > 0, with `times` carrying the eagerly
+  // decoded time keys) when every sample rep passed the lazy-eligibility
+  // gate, else `eager` (times embedded per pair, values fully unpacked).
+  struct DecodedTimeSamples {
+    std::vector<double> times;                    // lazy form only
+    LazyTimeSamplesRef lazy;
+    std::vector<std::pair<double, Value>> eager;  // fallback form
+    bool empty() const { return lazy.count == 0 && eager.empty(); }
+  };
+  bool DecodeTimeSamples(ValueRep rep, DecodedTimeSamples* out);
   bool UnpackTokenOrStringVector(ValueRep rep, CrateTypeId type_id, Value& out);
   bool UnpackDoubleVector(ValueRep rep, Value& out);
   bool UnpackVec2i(ValueRep rep, Value& out);

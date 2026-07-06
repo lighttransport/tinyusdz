@@ -333,9 +333,10 @@ void test_time_samples() {
   NEXT_CHECK(stats.dedup_count == 3 && "should have 3 deduplicated values");
 
   // Verify we can access the values
-  const Value* val0 = prim.time_sample_value((*samples)[0].second);
-  const Value* val1 = prim.time_sample_value((*samples)[1].second);
-  const Value* val3 = prim.time_sample_value((*samples)[3].second);
+  Value s0, s1, s3;
+  const Value* val0 = prim.time_sample_value((*samples)[0].second, &s0);
+  const Value* val1 = prim.time_sample_value((*samples)[1].second, &s1);
+  const Value* val3 = prim.time_sample_value((*samples)[3].second, &s3);
 
   NEXT_CHECK(val0 != nullptr && "should get value at t=0");
   NEXT_CHECK(val1 != nullptr && "should get value at t=1");

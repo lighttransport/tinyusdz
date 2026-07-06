@@ -194,7 +194,8 @@ std::vector<float> UsdGeomMesh::GetPointsAtTime(double time) const {
   std::vector<float> result;
   if (!IsValid()) return result;
 
-  const Value* val = prim_.GetValueAtTime("points", time);
+  Value scratch;
+  const Value* val = prim_.GetValueAtTime("points", time, &scratch);
   if (!val) return result;
 
   const std::vector<float>* arr = val->as_float_array();

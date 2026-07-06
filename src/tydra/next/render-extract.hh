@@ -99,6 +99,9 @@ void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
 template <typename T>
 struct ValueArrayRead {
   ::tinyusdz::next::ArrayScratch<T> scratch;
+  // Storage for a lazily-backed (crate-deferred) time-sample value: the view
+  // may reference it, so it lives here to match the view's lifetime.
+  ::tinyusdz::next::Value value_scratch;
   ::tinyusdz::next::ArrayView<T> view;
 
   bool empty() const { return view.empty(); }

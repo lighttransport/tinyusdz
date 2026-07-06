@@ -700,8 +700,9 @@ tinyusdz_next_result_t tinyusdz_next_prim_eval_float(
     const TinyUSDZNextPrim* prim, const char* prop_name,
     double time, float* out) {
   if (!prim || !prim->prim || !prop_name || !out) return 0;
+  tinyusdz::next::Value scratch;
   const tinyusdz::next::Value* val =
-      prim->prim->GetValueAtTime(prop_name, time);
+      prim->prim->GetValueAtTime(prop_name, time, &scratch);
   if (!val) return 0;
   const float* f = val->as_float();
   if (!f) return 0;
@@ -713,8 +714,9 @@ tinyusdz_next_result_t tinyusdz_next_prim_eval_float3(
     const TinyUSDZNextPrim* prim, const char* prop_name,
     double time, float out[3]) {
   if (!prim || !prim->prim || !prop_name || !out) return 0;
+  tinyusdz::next::Value scratch;
   const tinyusdz::next::Value* val =
-      prim->prim->GetValueAtTime(prop_name, time);
+      prim->prim->GetValueAtTime(prop_name, time, &scratch);
   if (!val) return 0;
   const float* f = val->as_float3();
   if (!f) return 0;
@@ -726,8 +728,9 @@ size_t tinyusdz_next_prim_eval_float_array(
     const TinyUSDZNextPrim* prim, const char* prop_name,
     double time, const float** out_ptr) {
   if (!prim || !prim->prim || !prop_name || !out_ptr) return 0;
+  tinyusdz::next::Value scratch;
   const tinyusdz::next::Value* val =
-      prim->prim->GetValueAtTime(prop_name, time);
+      prim->prim->GetValueAtTime(prop_name, time, &scratch);
   if (!val) return 0;
   const std::vector<float>* arr = val->as_float_array();
   if (!arr) return 0;

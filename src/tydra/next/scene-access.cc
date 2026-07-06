@@ -141,9 +141,10 @@ const Value* GetAttribute(const UsdPrim& prim, const std::string& name) {
   return prim.GetPropertyValue(name);
 }
 
-const Value* GetAttributeAtTime(const UsdPrim& prim, const std::string& name, double time) {
+const Value* GetAttributeAtTime(const UsdPrim& prim, const std::string& name,
+                                double time, Value* scratch) {
   if (!prim.IsValid()) return nullptr;
-  return prim.GetValueAtTime(name, time);
+  return prim.GetValueAtTime(name, time, scratch);
 }
 
 bool GetFloat(const UsdPrim& prim, const std::string& name, float* out) {
@@ -527,16 +528,17 @@ void MatMulD(double* dst, const double* a, const double* b) {
 // time sample. A NaN time keeps the exact default-value path (byte-identical to
 // the previous, time-unaware behaviour).
 const Value* PropAtTime(const UsdPrim& prim, const std::string& name,
-                        double time) {
+                        double time, Value* scratch) {
   if (std::isnan(time)) return prim.GetPropertyValue(name);
-  return prim.GetValueAtTime(name, time);
+  return prim.GetValueAtTime(name, time, scratch);
 }
 
 // Read a 3-component op value (translate/scale/rotate) as double, trying
 // float3 then double3 (matches the legacy evaluator's exact-type promotion).
 bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3],
                double time) {
-  const Value* val = PropAtTime(prim, name, time);
+  Value scratch;
+  const Value* val = PropAtTime(prim, name, time, &scratch);
   if (!val) return false;
   if (const float* f = val->as_float3()) {
     v[0] = double(f[0]); v[1] = double(f[1]); v[2] = double(f[2]);
@@ -551,7 +553,8 @@ bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3],
 
 bool ReadFloat1D(const UsdPrim& prim, const std::string& name, double* out,
                  double time) {
-  const Value* val = PropAtTime(prim, name, time);
+  Value scratch;
+  const Value* val = PropAtTime(prim, name, time, &scratch);
   if (!val) return false;
   if (const float* f = val->as_float()) { *out = double(*f); return true; }
   if (const double* d = val->as_double()) { *out = *d; return true; }
@@ -656,7 +659,8 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
     if (op == "transform") {
       double mm[16];
       bool got = false;
-      if (const Value* val = PropAtTime(prim, tok, time)) {
+      Value scratch;
+      if (const Value* val = PropAtTime(prim, tok, time, &scratch)) {
         if (const double* md = val->as_matrix4d()) {
           std::memcpy(mm, md, 16 * sizeof(double));
           got = true;
@@ -680,7 +684,8 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
       if (inverted) { v[0] = 1.0 / v[0]; v[1] = 1.0 / v[1]; v[2] = 1.0 / v[2]; }
       MakeScaleD(m, v[0], v[1], v[2]);
     } else if (op == "orient") {
-      const Value* val = PropAtTime(prim, tok, time);
+      Value scratch;
+      const Value* val = PropAtTime(prim, tok, time, &scratch);
       double q[4] = {1, 0, 0, 0};  // w,x,y,z
       if (val) {
         if (const float* f = val->as_float4()) {

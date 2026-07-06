@@ -267,7 +267,7 @@ bool CrateReader::Impl::BuildStage() {
   // while Variant/VariantSet are represented by path-bracketed prim-like specs.
   struct AttrInfoCold {
     std::vector<Path> connection_targets;
-    std::vector<std::pair<double, Value>> time_samples;
+    DecodedTimeSamples time_samples;
     Value custom_data;  // dictionary
   };
   struct AttrInfo {
@@ -1552,7 +1552,7 @@ bool CrateReader::Impl::BuildStage() {
         if (ai.custom) flags |= PropSlot::kFlagCustom;
         if (ai.is_connection) flags |= PropSlot::kFlagConnection;
         // The writer gates timeSamples emission on the slot flag, so mark a
-        // time-sampled attribute (the value lives in add_time_sample below).
+        // time-sampled attribute (the values are attached below).
         const bool has_time_samples =
             ai.cold && !ai.cold->time_samples.empty();
         if (has_time_samples) flags |= PropSlot::kFlagTimeSampled;
@@ -1576,10 +1576,29 @@ bool CrateReader::Impl::BuildStage() {
           ps->add_property_slot(prop_name_id, tid, flags);
         }
         // Time samples (an attribute may have timeSamples with or without a
-        // default).
+        // default). A lazy-decoded property attaches as one undecoded run;
+        // if the storage can't take it (offset-space exhaustion — practically
+        // unreachable), decode each sample here and fall back to the eager
+        // per-pair path so no samples are ever dropped.
         if (has_time_samples) {
-          for (auto& ts : ai.cold->time_samples) {
-            ps->add_time_sample(prop_name_id, ts.first, std::move(ts.second));
+          DecodedTimeSamples& dts = ai.cold->time_samples;
+          if (dts.lazy.count > 0) {
+            if (!ps->add_lazy_time_samples(prop_name_id, std::move(dts.times),
+                                           LazyTimeSamplesRef(dts.lazy))) {
+              for (uint64_t si = 0; si < dts.lazy.count; ++si) {
+                ValueRep sr;
+                Value sv;
+                if (ReadLazyTimeSampleRep(dts.lazy, si, &sr) &&
+                    DecodeCrateScalarValue(*dts.lazy.source, sr, &sv)) {
+                  ps->add_time_sample(prop_name_id, dts.times[si],
+                                      std::move(sv));
+                }
+              }
+            }
+          } else {
+            for (auto& ts : dts.eager) {
+              ps->add_time_sample(prop_name_id, ts.first, std::move(ts.second));
+            }
           }
         }
         if (!ai.type_name.empty()) {
@@ -2090,7 +2109,7 @@ bool CrateReader::Impl::BuildStage() {
         if (ai.custom) flags |= PropSlot::kFlagCustom;
         if (ai.is_connection) flags |= PropSlot::kFlagConnection;
         // The writer gates timeSamples emission on the slot flag, so mark a
-        // time-sampled attribute (the value lives in add_time_sample below).
+        // time-sampled attribute (the values are attached below).
         const bool has_time_samples =
             ai.cold && !ai.cold->time_samples.empty();
         if (has_time_samples) flags |= PropSlot::kFlagTimeSampled;
@@ -2114,10 +2133,29 @@ bool CrateReader::Impl::BuildStage() {
           ps->add_property_slot(prop_name_id, tid, flags);
         }
         // Time samples (an attribute may have timeSamples with or without a
-        // default).
+        // default). A lazy-decoded property attaches as one undecoded run;
+        // if the storage can't take it (offset-space exhaustion — practically
+        // unreachable), decode each sample here and fall back to the eager
+        // per-pair path so no samples are ever dropped.
         if (has_time_samples) {
-          for (auto& ts : ai.cold->time_samples) {
-            ps->add_time_sample(prop_name_id, ts.first, std::move(ts.second));
+          DecodedTimeSamples& dts = ai.cold->time_samples;
+          if (dts.lazy.count > 0) {
+            if (!ps->add_lazy_time_samples(prop_name_id, std::move(dts.times),
+                                           LazyTimeSamplesRef(dts.lazy))) {
+              for (uint64_t si = 0; si < dts.lazy.count; ++si) {
+                ValueRep sr;
+                Value sv;
+                if (ReadLazyTimeSampleRep(dts.lazy, si, &sr) &&
+                    DecodeCrateScalarValue(*dts.lazy.source, sr, &sv)) {
+                  ps->add_time_sample(prop_name_id, dts.times[si],
+                                      std::move(sv));
+                }
+              }
+            }
+          } else {
+            for (auto& ts : dts.eager) {
+              ps->add_time_sample(prop_name_id, ts.first, std::move(ts.second));
+            }
           }
         }
         if (!ai.type_name.empty()) {

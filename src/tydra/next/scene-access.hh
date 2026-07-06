@@ -77,8 +77,11 @@ std::vector<UsdPrim> FindPrims(const Stage& stage, PrimPredicate pred);
 // Returns nullptr if attribute doesn't exist or wrong type
 const Value* GetAttribute(const UsdPrim& prim, const std::string& name);
 
-// Get attribute with time sample support
-const Value* GetAttributeAtTime(const UsdPrim& prim, const std::string& name, double time);
+// Get attribute with time sample support. `scratch` backs lazily-stored
+// (crate-deferred) scalar samples; the returned pointer is valid only while
+// `scratch` is alive and unmodified (see UsdPrim::GetValueAtTime).
+const Value* GetAttributeAtTime(const UsdPrim& prim, const std::string& name,
+                                double time, Value* scratch);
 
 // Type-safe attribute getters (return false if not found or wrong type)
 bool GetFloat(const UsdPrim& prim, const std::string& name, float* out);

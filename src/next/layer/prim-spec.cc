@@ -401,13 +401,51 @@ uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value val
   return offset;
 }
 
+bool TimeSampleStorage::add_lazy_run(PropNameId name_id,
+                                     const std::vector<double>& times,
+                                     LazyTimeSamplesRef ref) {
+  const uint64_t count = ref.count;
+  if (!ref.source || count == 0 || times.size() < count) return false;
+  if (lazy_sample_count_ + count > (kLazyOffsetBit - 1)) {
+    return false;  // 31-bit lazy linear-index space exhausted
+  }
+  auto& pairs = samples_[name_id.id];
+  pairs.reserve(pairs.size() + static_cast<size_t>(count));
+  const uint64_t base = lazy_sample_count_;
+  for (uint64_t i = 0; i < count; ++i) {
+    pairs.emplace_back(times[static_cast<size_t>(i)],
+                       kLazyOffsetBit | static_cast<uint32_t>(base + i));
+  }
+  lazy_runs_.push_back(LazyRun{base, std::move(ref)});
+  lazy_sample_count_ = base + count;
+  return true;
+}
+
 const std::vector<std::pair<double, uint32_t>>* TimeSampleStorage::get(PropNameId name_id) const {
   auto it = samples_.find(name_id.id);
   if (it == samples_.end()) return nullptr;
   return &it->second;
 }
 
-const Value* TimeSampleStorage::value(uint32_t offset) const {
+bool TimeSampleStorage::materialize_lazy(uint32_t offset, Value* scratch) const {
+  const uint32_t linear = offset & ~kLazyOffsetBit;
+  // Runs are ordered by start; find the last run with start <= linear.
+  auto it = std::upper_bound(
+      lazy_runs_.begin(), lazy_runs_.end(), static_cast<uint64_t>(linear),
+      [](uint64_t v, const LazyRun& r) { return v < r.start; });
+  if (it == lazy_runs_.begin()) return false;
+  --it;
+  const uint64_t index = linear - it->start;
+  ValueRep rep;
+  if (!ReadLazyTimeSampleRep(it->ref, index, &rep)) return false;
+  return DecodeCrateScalarValue(*it->ref.source, rep, scratch);
+}
+
+const Value* TimeSampleStorage::value(uint32_t offset, Value* scratch) const {
+  if (is_lazy_offset(offset)) {
+    if (!scratch || !materialize_lazy(offset, scratch)) return nullptr;
+    return scratch;
+  }
   if (offset >= values_.size()) return nullptr;
   return &values_[offset];
 }
@@ -438,10 +476,17 @@ SampleResult TimeSampleStorage::interpolate(PropNameId name_id, double time,
     return SampleResult{};
   }
 
-  // Use the template method with a lambda to get values
+  // Use the template method with a lambda to get values. Lazy samples
+  // materialize into a two-slot ring: the interpolator holds at most two
+  // sample pointers live at once (the bracketing pair), so alternating slots
+  // keeps both valid without allocating per sample.
+  Value scratch[2];
+  int scratch_idx = 0;
   return TimeInterpolator::InterpolateWithOffsets(
       *samples,
-      [this](uint32_t offset) -> const Value* { return value(offset); },
+      [this, &scratch, &scratch_idx](uint32_t offset) -> const Value* {
+        return value(offset, &scratch[(scratch_idx++) & 1]);
+      },
       time,
       mode);
 }
@@ -472,6 +517,9 @@ size_t TimeSampleStorage::memory_usage() const {
     size += kv.second.capacity() * sizeof(std::pair<double, uint32_t>);
   }
 
+  // Lazy runs (per lazily-attached property)
+  size += lazy_runs_.capacity() * sizeof(LazyRun);
+
   // Dedup index
   size += dedup_.memory_bytes();
 
@@ -481,6 +529,8 @@ size_t TimeSampleStorage::memory_usage() const {
 void TimeSampleStorage::clear() {
   samples_.clear();
   values_.clear();
+  lazy_runs_.clear();
+  lazy_sample_count_ = 0;
   dedup_.reset();
   dedup_count_ = 0;
 }
@@ -815,6 +865,12 @@ bool PrimSpec::share_time_samples_from(const PrimSpec& source) {
   return true;
 }
 
+bool PrimSpec::add_lazy_time_samples(PropNameId name_id,
+                                     const std::vector<double>& times,
+                                     LazyTimeSamplesRef ref) {
+  return cow_time_samples().add_lazy_run(name_id, times, std::move(ref));
+}
+
 void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value,
                                bool dedup) {
   // Use deduplicated storage for array values (common case for animation).
@@ -839,9 +895,9 @@ bool PrimSpec::has_time_samples(PropNameId name_id) const {
   return time_samples_->has(name_id);
 }
 
-const Value* PrimSpec::time_sample_value(uint32_t offset) const {
+const Value* PrimSpec::time_sample_value(uint32_t offset, Value* scratch) const {
   if (!time_samples_) return nullptr;
-  return time_samples_->value(offset);
+  return time_samples_->value(offset, scratch);
 }
 
 std::vector<PropNameId> PrimSpec::time_sampled_properties() const {

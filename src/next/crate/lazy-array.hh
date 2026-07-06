@@ -42,5 +42,41 @@ struct LazyArrayRef {
 bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep rep,
                      size_t max_elements, LazyArrayRef* out);
 
+class Value;  // types/value.hh
+
+/// Lightweight descriptor for one property's time-sample VALUES still living
+/// as undecoded ValueReps in a retained crate buffer. The on-disk layout at
+/// `vals_pos` is `[u64 N][ValueRep vals[N]]` (see DecodeTimeSamples's layout
+/// comment); sample i's rep is the u64 at `vals_pos + 8 + i*8`. Only reps that
+/// pass IsLazyEligibleTimeSampleRep() may back a ref, which guarantees a later
+/// DecodeCrateScalarValue() cannot fail.
+struct LazyTimeSamplesRef {
+  std::shared_ptr<CrateDataSource> source;  // keeps the backing buffer alive
+  uint64_t vals_pos = 0;  // absolute offset of the values block
+  uint64_t count = 0;     // sample reps referenced (== times used)
+};
+
+/// Read sample `index`'s on-disk ValueRep out of a lazy time-samples run.
+/// Bounds-checked against the source buffer; returns false when out of range.
+bool ReadLazyTimeSampleRep(const LazyTimeSamplesRef& ref, uint64_t index,
+                           ValueRep* out);
+
+/// True when `rep` is a scalar rep whose deferred decode is guaranteed to
+/// succeed and to produce exactly the Value the crate reader's eager
+/// UnpackValue would have produced: inlined or fixed-size POD scalars
+/// (bounds-checked here). Index-table types (Token/String/AssetPath),
+/// arrays, dictionaries, list-ops etc. are NOT eligible — those must stay on
+/// the eager path (AssetPath in particular must stay materialized so
+/// remap_asset_paths sees it).
+bool IsLazyEligibleTimeSampleRep(const CrateDataSource& source, ValueRep rep);
+
+/// Decode a scalar ValueRep straight from a retained crate buffer, mirroring
+/// CrateReader::Impl::UnpackValue's scalar branches (incl. pxr's
+/// inlined-double-as-float and int8-component inlined vector/matrix forms).
+/// Supports exactly the IsLazyEligibleTimeSampleRep() set; returns false for
+/// anything else or on a malformed/out-of-bounds payload.
+bool DecodeCrateScalarValue(const CrateDataSource& source, ValueRep rep,
+                            Value* out);
+
 }  // namespace next
 }  // namespace tinyusdz

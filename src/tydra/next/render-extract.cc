@@ -132,9 +132,10 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
 }
 
 const ::tinyusdz::next::Value* ValueAtOrDefault(
-    const ::tinyusdz::next::UsdPrim& prim, const char* name, double time) {
+    const ::tinyusdz::next::UsdPrim& prim, const char* name, double time,
+    ::tinyusdz::next::Value* scratch) {
   const ::tinyusdz::next::Value* v =
-      std::isnan(time) ? nullptr : prim.GetValueAtTime(name, time);
+      std::isnan(time) ? nullptr : prim.GetValueAtTime(name, time, scratch);
   return v ? v : prim.GetPropertyValue(name);
 }
 
@@ -206,7 +207,7 @@ void CollectPrototypePaths(const ::tinyusdz::next::Stage& stage,
 bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<float>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->value_scratch);
   if (!v) return false;
   return ::tinyusdz::next::GetFloatArrayView(*v, &out->scratch, &out->view);
 }
@@ -214,7 +215,7 @@ bool ReadFloatArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                   double time, ValueArrayRead<int32_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->value_scratch);
   if (!v) return false;
   return ::tinyusdz::next::GetIntArrayView(*v, &out->scratch, &out->view);
 }
@@ -222,7 +223,7 @@ bool ReadIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                     double time, ValueArrayRead<int64_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->value_scratch);
   if (!v) return false;
   return ::tinyusdz::next::GetInt64ArrayView(*v, &out->scratch, &out->view);
 }
@@ -230,7 +231,7 @@ bool ReadInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                    double time, ValueArrayRead<uint32_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->value_scratch);
   if (!v) return false;
   return ::tinyusdz::next::GetUIntArrayView(*v, &out->scratch, &out->view);
 }
@@ -238,7 +239,7 @@ bool ReadUIntArray(const ::tinyusdz::next::UsdPrim& prim, const char* name,
 bool ReadUInt64Array(const ::tinyusdz::next::UsdPrim& prim, const char* name,
                      double time, ValueArrayRead<uint64_t>* out) {
   if (!out) return false;
-  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time);
+  const ::tinyusdz::next::Value* v = ValueAtOrDefault(prim, name, time, &out->value_scratch);
   if (!v) return false;
   return ::tinyusdz::next::GetUInt64ArrayView(*v, &out->scratch, &out->view);
 }

@@ -101,7 +101,8 @@ std::vector<double> UsdPrim::GetTimeSampleTimes(const std::string& name) const {
   return times;
 }
 
-const Value* UsdPrim::GetValueAtTime(const std::string& name, double time) const {
+const Value* UsdPrim::GetValueAtTime(const std::string& name, double time,
+                                     Value* scratch) const {
   if (!spec_) return nullptr;
 
   PropNameId name_id = GetPropNameTable().find(name);
@@ -121,21 +122,21 @@ const Value* UsdPrim::GetValueAtTime(const std::string& name, double time) const
 
   if (it == samples->end()) {
     // Time is past all samples, use last
-    return spec_->time_sample_value(samples->back().second);
+    return spec_->time_sample_value(samples->back().second, scratch);
   }
   if (it == samples->begin()) {
     // Time is before all samples, use first
-    return spec_->time_sample_value(it->second);
+    return spec_->time_sample_value(it->second, scratch);
   }
 
   // Check if exact match or use previous
   if (it->first == time) {
-    return spec_->time_sample_value(it->second);
+    return spec_->time_sample_value(it->second, scratch);
   }
 
   // Return the previous sample (held interpolation)
   --it;
-  return spec_->time_sample_value(it->second);
+  return spec_->time_sample_value(it->second, scratch);
 }
 
 Value UsdPrim::GetInterpolatedValue(const std::string& name, double time) const {
@@ -155,21 +156,23 @@ Value UsdPrim::GetInterpolatedValue(const std::string& name, double time) const 
                                return p.first < t;
                              });
 
+  Value scratch_a, scratch_b;
   if (it == samples->end()) {
-    const Value* v = spec_->time_sample_value(samples->back().second);
+    const Value* v = spec_->time_sample_value(samples->back().second, &scratch_a);
     return v ? *v : Value();
   }
   if (it == samples->begin() || it->first == time) {
-    const Value* v = spec_->time_sample_value(it->second);
+    const Value* v = spec_->time_sample_value(it->second, &scratch_a);
     return v ? *v : Value();
   }
 
   // Linearly interpolate between the bracketing samples (held for
-  // non-interpolatable types, handled by LerpValue).
+  // non-interpolatable types, handled by LerpValue). Two scratches: both
+  // bracket values must be alive at once.
   auto prev = it;
   --prev;
-  const Value* va = spec_->time_sample_value(prev->second);
-  const Value* vb = spec_->time_sample_value(it->second);
+  const Value* va = spec_->time_sample_value(prev->second, &scratch_a);
+  const Value* vb = spec_->time_sample_value(it->second, &scratch_b);
   if (!va || !vb) return va ? *va : Value();
   const double t0 = prev->first;
   const double t1 = it->first;

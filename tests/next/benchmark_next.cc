@@ -259,7 +259,8 @@ void benchmark_time_samples(int num_samples) {
   timer.start();
   for (int i = 0; i < iterations; ++i) {
     double t = static_cast<double>(i % num_samples);
-    const Value* v = prim.GetValueAtTime("xformOp:translate", t);
+    Value scratch;
+    const Value* v = prim.GetValueAtTime("xformOp:translate", t, &scratch);
     (void)v;
   }
   printf("GetValueAtTime: %.2f us/iter (%.0f ops/sec)\n",

@@ -517,20 +517,23 @@ void test_time_samples() {
   NEXT_CHECK(times[2] == 100.0);
 
   // Test GetValueAtTime
-  const Value* val_at_0 = prim.GetValueAtTime("xformOp:translate", 0.0);
+  Value s_at_0;
+  const Value* val_at_0 = prim.GetValueAtTime("xformOp:translate", 0.0, &s_at_0);
   NEXT_CHECK(val_at_0 != nullptr);
   const float* v0 = val_at_0->as_float3();
   NEXT_CHECK(v0 != nullptr);
   NEXT_CHECK(v0[0] == 0.0f && v0[1] == 0.0f && v0[2] == 0.0f);
 
-  const Value* val_at_50 = prim.GetValueAtTime("xformOp:translate", 50.0);
+  Value s_at_50;
+  const Value* val_at_50 = prim.GetValueAtTime("xformOp:translate", 50.0, &s_at_50);
   NEXT_CHECK(val_at_50 != nullptr);
   const float* v50 = val_at_50->as_float3();
   NEXT_CHECK(v50 != nullptr);
   NEXT_CHECK(v50[0] == 10.0f && v50[1] == 5.0f && v50[2] == 0.0f);
 
   // Test interpolation (held - should return previous sample)
-  const Value* val_at_25 = prim.GetValueAtTime("xformOp:translate", 25.0);
+  Value s_at_25;
+  const Value* val_at_25 = prim.GetValueAtTime("xformOp:translate", 25.0, &s_at_25);
   NEXT_CHECK(val_at_25 != nullptr);
   const float* v25 = val_at_25->as_float3();
   NEXT_CHECK(v25 != nullptr);

@@ -1167,8 +1167,9 @@ static void test_layer_offset_timesamples() {
   UsdPrim r = stage.GetPrimAtPath("/World/R");
   NEXT_CHECK(r.IsValid());
   // Original sample times 0 and 10 map to 100 and 120 (= 100 + 2*10).
-  const Value *at100 = r.GetValueAtTime("size", 100.0);
-  const Value *at120 = r.GetValueAtTime("size", 120.0);
+  Value s100, s120;
+  const Value *at100 = r.GetValueAtTime("size", 100.0, &s100);
+  const Value *at120 = r.GetValueAtTime("size", 120.0, &s120);
   NEXT_CHECK(at100 && at100->as_float3() && at100->as_float3()[0] == 0.0f &&
          "sample at t=0 not remapped to t=100");
   NEXT_CHECK(at120 && at120->as_float3() && at120->as_float3()[0] == 10.0f &&

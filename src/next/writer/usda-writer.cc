@@ -347,7 +347,9 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
   if (const std::string* decl = spec.property_type_name(name)) {
     os << *decl;
   } else {
-    const Value* first_val = spec.time_sample_value(samples->front().second);
+    Value first_scratch;
+    const Value* first_val =
+        spec.time_sample_value(samples->front().second, &first_scratch);
     if (first_val) {
       const char* tn = GetTypeName(first_val->type_id());
       os << (tn ? tn : "token");
@@ -363,12 +365,15 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
   print_opts.max_array_elements = opts.max_elements_per_line;
   print_opts.compact = opts.compact;
 
+  // Reused across samples: lazy crate-backed scalars decode into it
+  // transiently, one live sample value at a time.
+  Value ts_scratch;
   for (size_t i = 0; i < samples->size(); ++i) {
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
     os << format_g(sample.first, opts.double_precision) << ": ";
 
-    const Value* val = spec.time_sample_value(sample.second);
+    const Value* val = spec.time_sample_value(sample.second, &ts_scratch);
     if (val && val->is_block()) {
       os << "None";  // a blocked sample (`123: None`)
     } else if (val) {

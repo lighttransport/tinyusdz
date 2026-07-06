@@ -12,6 +12,7 @@
 #include "../types/token.hh"
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
+#include "../crate/lazy-array.hh"  // LazyTimeSamplesRef (lazy time-sample runs)
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -533,12 +534,33 @@ public:
   /// If an identical value exists, reuses its offset
   uint32_t add_dedup(PropNameId name_id, double time, Value value);
 
+  /// Attach one property's samples as an undecoded lazy run: (time, offset)
+  /// pairs are appended for `ref.count` samples, but the sample VALUES stay
+  /// as raw ValueReps in the retained crate buffer and materialize on demand
+  /// through value(offset, scratch). `times` must carry at least `ref.count`
+  /// entries. Returns false — consuming nothing — when the ref is empty or
+  /// the tagged-offset space is exhausted (2^31 lazy samples per storage);
+  /// the caller must then fall back to eager add()s.
+  bool add_lazy_run(PropNameId name_id, const std::vector<double>& times,
+                    LazyTimeSamplesRef ref);
+
   /// Get time samples for a property
   /// Returns vector of (time, value_offset) pairs, sorted by time
   const std::vector<std::pair<double, uint32_t>>* get(PropNameId name_id) const;
 
-  /// Get value at offset
-  const Value* value(uint32_t offset) const;
+  /// Get value at offset. Offsets with the lazy tag bit decode their sample
+  /// from the retained crate buffer into `*scratch` (returning scratch);
+  /// eager offsets return a stable pointer into the storage and leave
+  /// `scratch` untouched. Returns nullptr for an out-of-range offset, or a
+  /// lazy offset with no scratch supplied. Materialization is pure (no
+  /// caching/mutation), so concurrent lookups are thread-safe.
+  const Value* value(uint32_t offset, Value* scratch) const;
+
+  /// Whether `offset` refers to a lazily-backed sample (materializes through
+  /// scratch) rather than a stored eager value.
+  static bool is_lazy_offset(uint32_t offset) {
+    return (offset & kLazyOffsetBit) != 0;
+  }
 
   /// Rewrite scalar asset path sample values.
   size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
@@ -589,12 +611,31 @@ public:
   };
   Stats stats() const;
 
+public:
+  // High bit of a sample's value offset marks a lazily-backed sample; the
+  // remaining 31 bits are a linear index into the concatenated lazy runs.
+  static constexpr uint32_t kLazyOffsetBit = 0x80000000u;
+
 private:
   // Property -> vector of (time, value_offset)
   std::unordered_map<uint32_t, std::vector<std::pair<double, uint32_t>>> samples_;
 
   // Value storage
   std::vector<Value> values_;
+
+  // Lazy (crate-backed) sample runs, ordered by `start` (a run's first lazy
+  // linear index). One entry per lazily-attached PROPERTY — per-sample cost
+  // stays the 16-byte (time, offset) pair above. Copying shares the source
+  // buffer via shared_ptr, so COW clones stay cheap.
+  struct LazyRun {
+    uint64_t start;
+    LazyTimeSamplesRef ref;
+  };
+  std::vector<LazyRun> lazy_runs_;
+  uint64_t lazy_sample_count_ = 0;
+
+  // Decode the sample behind a lazy-tagged offset into *scratch.
+  bool materialize_lazy(uint32_t offset, Value* scratch) const;
 
   // Value-dedup index: hash -> chain of value offsets, as two flat contiguous
   // vectors (open-addressed buckets + index-chained entries) instead of an
@@ -740,11 +781,21 @@ public:
   void add_time_sample(PropNameId name_id, double time, Value value,
                        bool dedup = true);
 
+  /// Attach one property's samples as an undecoded lazy run (see
+  /// TimeSampleStorage::add_lazy_run). Returns false — consuming nothing —
+  /// when the run can't be attached; the caller falls back to eager
+  /// add_time_sample()s.
+  bool add_lazy_time_samples(PropNameId name_id,
+                             const std::vector<double>& times,
+                             LazyTimeSamplesRef ref);
+
   /// Get time samples for a property (returns vector of (time, value_offset))
   const std::vector<std::pair<double, uint32_t>>* time_samples(PropNameId name_id) const;
 
-  /// Get value at a specific time sample offset
-  const Value* time_sample_value(uint32_t offset) const;
+  /// Get value at a specific time sample offset. Lazily-backed samples decode
+  /// into `*scratch` and return scratch; eager samples return a stable
+  /// pointer (see TimeSampleStorage::value).
+  const Value* time_sample_value(uint32_t offset, Value* scratch) const;
 
   /// Rewrite scalar asset paths stored in defaults and time samples.
   size_t remap_asset_paths(const std::map<std::string, std::string>& remap);

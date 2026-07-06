@@ -576,7 +576,8 @@ void test_roundtrip_time_samples() {
   bool found_50 = false;
   for (const auto& kv : *tr_samples) {
     if (std::abs(kv.first - 50.0) < 1e-9) {
-      const Value* v = anim->time_sample_value(kv.second);
+      Value vs;
+      const Value* v = anim->time_sample_value(kv.second, &vs);
       NEXT_CHECK(v && v->is_array() == false);
       const float* f3 = v->as_float3();
       NEXT_CHECK(f3 && f3[0] == 10.0f && f3[1] == 5.0f && f3[2] == 0.0f);
@@ -1284,7 +1285,8 @@ void test_comprehensive_usdc_fixture() {
   bool found_t2 = false;
   for (const auto& sample : *position_samples) {
     if (std::abs(sample.first - 2.0) < 1e-9) {
-      const Value* value = instancer->time_sample_value(sample.second);
+      Value vscratch;
+      const Value* value = instancer->time_sample_value(sample.second, &vscratch);
       CheckFloatArray(value, TypeId::Float3, positions_t2);
       found_t2 = true;
     }

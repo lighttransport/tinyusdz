@@ -469,9 +469,13 @@ void Compositor::CopyLocalOpinions(
       bool target_has_ts = target.has_time_samples(ts_prop_id);
       if (!target_has_ts) {
         // Copy time samples from source to target, remapping the sample time by
-        // the layer offset (t -> time_offset + time_scale*t).
+        // the layer offset (t -> time_offset + time_scale*t). Lazily-backed
+        // source samples materialize into the scratch (and so become eager in
+        // the target) — acceptable: this remap path is rare, and the target's
+        // samples must own their values independently of the source layer.
+        Value ts_scratch;
         for (const auto& [time, val_offset] : *samples) {
-          const Value* val = source.time_sample_value(val_offset);
+          const Value* val = source.time_sample_value(val_offset, &ts_scratch);
           if (val) {
             target.add_time_sample(ts_prop_id, time_offset + time_scale * time,
                                    *val);
