@@ -395,6 +395,14 @@ bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                      std::string *err);
 
+///
+/// Move-in variant: identical result, but `src` is consumed (valid-but-
+/// unspecified afterwards). Removes one PrimSpec-subtree deep copy when the
+/// caller passes a discardable prepared arc source.
+///
+bool InheritPrimSpec(PrimSpec &dst, PrimSpec &&src, std::string *warn,
+                     std::string *err);
+
 
 ///
 /// Apply `layerRelocates` to the composed layer.
