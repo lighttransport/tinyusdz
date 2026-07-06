@@ -303,6 +303,47 @@ class TinyUSDZLoaderNative {
     return o;
   }
 
+  // ---- point-instancer instances -----------------------------------------
+  // tydra_next flattens each visible PointInstancer instance-mesh into one
+  // RenderPointInstanceDraw (prototype mesh id + world transform). Exposed with
+  // the legacy getInstance shape for InstancedMesh / worker consumers.
+  int numInstances() const {
+    return static_cast<int>(scene_.point_instance_draws.size());
+  }
+  val getInstance(int id) const {
+    if (id < 0 || id >= numInstances()) return val::null();
+    const td::RenderPointInstanceDraw& d = scene_.point_instance_draws[id];
+    val o = val::object();
+    const char* pn = "";
+    const char* ap = "";
+    if (d.point_instancer_id >= 0 &&
+        d.point_instancer_id < static_cast<int>(scene_.point_instancers.size())) {
+      const auto& pi = scene_.point_instancers[d.point_instancer_id];
+      pn = pi.name.c_str();
+      ap = pi.prim_path.c_str();
+    }
+    o.set("primName", val(std::string(pn)));
+    o.set("displayName", val(std::string(pn)));
+    o.set("absPath", val(std::string(ap)));
+    o.set("prototypeIndex", val(static_cast<int>(d.prototype_index)));
+    o.set("instanceId", val(static_cast<int>(d.instance_index)));
+    o.set("meshId", val(d.mesh_id));
+    o.set("materialId", val(d.material_id));
+    o.set("localMatrix", mat16(d.transform));
+    o.set("globalMatrix", mat16(d.transform));
+    o.set("visible", val(true));
+    return o;
+  }
+  val getInstancesForMesh(int mesh_id) const {
+    val arr = val::array();
+    int k = 0;
+    for (size_t i = 0; i < scene_.point_instance_draws.size(); ++i) {
+      if (scene_.point_instance_draws[i].mesh_id == mesh_id)
+        arr.set(k++, val(static_cast<int>(i)));
+    }
+    return arr;
+  }
+
   // ---- materials ----------------------------------------------------------
   int numMaterials() const { return static_cast<int>(scene_.materials.size()); }
   val getMaterial(int mat_id) const { return materialJSON(mat_id, "json"); }
@@ -758,6 +799,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next) {
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
       .function("getMeshCopy", &TinyUSDZLoaderNative::getMeshCopy)
       .function("getMeshPtr", &TinyUSDZLoaderNative::getMeshPtr)
+      .function("numInstances", &TinyUSDZLoaderNative::numInstances)
+      .function("getInstance", &TinyUSDZLoaderNative::getInstance)
+      .function("getInstancesForMesh", &TinyUSDZLoaderNative::getInstancesForMesh)
       .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
       .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
       .function("getMaterialWithFormat", &TinyUSDZLoaderNative::getMaterialWithFormat)
