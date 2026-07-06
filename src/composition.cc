@@ -535,6 +535,14 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   std::string layer_cache_key;
   bool layer_from_cache = false;
   Layer cached_layer_local;
+  // When the caller asks for a primspec root (reference/payload arcs), a
+  // cache hit is BORROWED: src_ps points into the cache-resident layer (a
+  // std::map entry — stable address for the cache's lifetime, which the
+  // caller owns across the whole composition), and no per-arc Layer copy is
+  // made at all. The resolution context was stamped into the cached prims
+  // once at insert (it is a function of the cache key: resolved dir +
+  // search paths), so a hit does not even mutate the entry.
+  Layer *borrowed_cache_layer = nullptr;
   if (layer_cache) {
     layer_cache_key = resolved_path;
     for (const auto &sp : resolver.search_paths()) {
@@ -543,7 +551,11 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     }
     auto it = layer_cache->find(layer_cache_key);
     if (it != layer_cache->end()) {
-      cached_layer_local = it->second;  // COW copy
+      if (dst_primspec_root) {
+        borrowed_cache_layer = &it->second;  // no copy
+      } else {
+        cached_layer_local = it->second;  // COW copy
+      }
       layer_from_cache = true;
     }
   }
@@ -706,10 +718,38 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   if (layer_cache && !layer_from_cache) {
-    // Cache the parsed (and sublayer-composited) layer; later arcs to the
-    // same file take a COW copy instead of re-parsing.
-    (*layer_cache)[layer_cache_key] = layer;
+    if (dst_primspec_root) {
+      // Cache the parsed (and sublayer-composited) layer by MOVE and stamp
+      // the resolution context into every prim once here — later arcs to
+      // the same file borrow the entry directly (see above).
+      Layer &slot = (*layer_cache)[layer_cache_key];
+      slot = std::move(layer);
+      for (auto &ps_item : slot.primspecs()) {
+        // only_if_unset: preserve the per-prim cwp that variant-nested prims
+        // were stamped with at load (Bug 2 sub-case) — the cache entry must
+        // not flatten those to the layer-level context.
+        if (!PropagateAssetResolverState(ps_item.second,
+                                         resolver.current_working_path(),
+                                         resolver.search_paths(),
+                                         /* only_if_unset */ true)) {
+          PUSH_ERROR_AND_RETURN(
+              "Store AssetResolver state to each PrimSpec failed.\n");
+        }
+      }
+      slot.set_asset_resolution_state(resolver.current_working_path(),
+                                      resolver.search_paths(),
+                                      resolver.get_userdata());
+      borrowed_cache_layer = &slot;
+    } else {
+      // Cache the parsed (and sublayer-composited) layer; later arcs to the
+      // same file take a COW copy instead of re-parsing.
+      (*layer_cache)[layer_cache_key] = layer;
+    }
   }
+
+  // The layer all reads below operate on: the cache-resident one when
+  // borrowing, the local otherwise.
+  Layer &live_layer = borrowed_cache_layer ? *borrowed_cache_layer : layer;
 
   if (_warn.size()) {
     if (warn) {
@@ -717,7 +757,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     }
   }
 
-  if (layer.primspecs().empty()) {
+  if (live_layer.primspecs().empty()) {
     if (error_when_no_prims_found) {
       PUSH_ERROR_AND_RETURN(fmt::format("No prims in layer `{}`", asset_path));
     }
@@ -740,18 +780,19 @@ bool LoadAsset(AssetResolutionResolver &resolver,
       DCOUT("primPath = " << default_prim);
     } else {
       // Use `defaultPrim` metadatum
-      if (layer.metas().defaultPrim.valid()) {
-        default_prim = "/" + layer.metas().defaultPrim.str();
+      if (live_layer.metas().defaultPrim.valid()) {
+        default_prim = "/" + live_layer.metas().defaultPrim.str();
         DCOUT("layer.meta.defaultPrim = " << default_prim);
       } else {
         // Use the first Prim in the layer.
-        default_prim = "/" + layer.primspecs().begin()->first;
+        default_prim = "/" + live_layer.primspecs().begin()->first;
         DCOUT("layer.primspecs[0].name = " << default_prim);
       }
     }
 
     std::string find_err;
-    if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, &find_err) ||
+    if (!live_layer.find_primspec_at(Path(default_prim, ""), &src_ps,
+                                     &find_err) ||
         !src_ps) {
       if (primPath.is_valid()) {
         // A reference/payload that targets a SPECIFIC prim which does not exist
@@ -771,26 +812,37 @@ bool LoadAsset(AssetResolutionResolver &resolver,
           default_prim, asset_path, resolved_path));
     }
 
-    if (!PropagateAssetResolverState(*const_cast<PrimSpec *>(src_ps),
-                                     resolver.current_working_path(),
-                                     resolver.search_paths(),
-                                     /* only_if_unset */ true)) {
-      PUSH_ERROR_AND_RETURN(
-          "Store AssetResolver state to each PrimSpec failed.\n");
+    if (!borrowed_cache_layer) {
+      // Non-cached load: stamp the resolution context into the returned
+      // subtree (cached layers were stamped whole at insert).
+      // only_if_unset: variant-nested prims were already stamped with their
+      // own cwp at load (Bug 2 sub-case) — never overwrite those.
+      if (!PropagateAssetResolverState(*const_cast<PrimSpec *>(src_ps),
+                                       resolver.current_working_path(),
+                                       resolver.search_paths(),
+                                       /* only_if_unset */ true)) {
+        PUSH_ERROR_AND_RETURN(
+            "Store AssetResolver state to each PrimSpec failed.\n");
+      }
     }
 
     (*dst_primspec_root) = src_ps;
   }
 
-  // FIXME: This may be redundant, since assetresulution state is stored in
-  // each PrimSpec.
-  // TODO: Remove layer-level assetresulution state store?
-  //
-  // save assetresolution state for nested composition.
-  layer.set_asset_resolution_state(resolver.current_working_path(),
-                                   resolver.search_paths(),
-                                   resolver.get_userdata());
+  if (!borrowed_cache_layer) {
+    // FIXME: This may be redundant, since assetresulution state is stored in
+    // each PrimSpec.
+    // TODO: Remove layer-level assetresulution state store?
+    //
+    // save assetresolution state for nested composition.
+    layer.set_asset_resolution_state(resolver.current_working_path(),
+                                     resolver.search_paths(),
+                                     resolver.get_userdata());
+  }
 
+  // When borrowing (src_ps points into the cache), the local `layer` is empty
+  // and dst_layer receives it as-is — arc callers that pass a layer_cache use
+  // only dst_primspec_root.
   (*dst_layer) = std::move(layer);
 
   return true;
