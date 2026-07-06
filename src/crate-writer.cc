@@ -294,15 +294,13 @@ bool CrateWriter::AddSpec(const Path& path,
     return false;
   }
 
-  // Check for duplicate specs with same path (USD Crate requires each path to
-  // appear only once). O(1) via spec_path_set_ — a prior implementation did an
-  // O(n^2) linear scan of spec_data_, each step allocating two full_path_name()
-  // strings, which dominated write time for spec-dense scenes. Single
-  // emplace (one Path hash) doubles as the membership test; rolled back on
-  // the rare memory-limit failure below.
-  if (!spec_path_set_.emplace(path, 1u).second) {
-    return true;  // Silently skip duplicate (not an error)
-  }
+  // NOTE: duplicate-spec-path detection (USD Crate requires each path to
+  // appear only once; first AddSpec wins, silently) happens in Finalize's
+  // sorted rebuild: the spec sort tiebreaks equal paths on insertion order,
+  // making duplicates adjacent with the first-added spec first, so dedup is
+  // a free adjacent compare there. A prior implementation kept a
+  // Path-keyed hash set here — one Path hash + equality per AddSpec, which
+  // was a top-5 profile entry on spec-dense scenes.
 
   // Estimate memory usage for this spec
   // Path + field names + approximate field value sizes
@@ -316,7 +314,6 @@ bool CrateWriter::AddSpec(const Path& path,
 
   // Check memory limit
   if (WouldExceedMemoryLimit(estimated_memory)) {
-    spec_path_set_.erase(path);  // roll back the membership insert above
     if (err) {
       *err = "Adding spec would exceed memory limit of " +
              std::to_string(options_.max_memory_bytes / (1024*1024)) + " MB. " +
@@ -438,8 +435,14 @@ bool CrateWriter::Finalize(std::string* err) {
     for (size_t i = 0; i < n; i++) {
       order[i] = uint32_t(i);
     }
+    // Tiebreak equal keys on insertion order: keeps first-AddSpec-wins
+    // duplicate handling exact (dedup happens in the rebuild below) and
+    // makes the order among equal-key paths (e.g. variant-bearing specs,
+    // whose key ignores the variant part) deterministic and stable.
     std::sort(order.begin(), order.end(), [&keys](uint32_t a, uint32_t b) {
-      return keys[a] < keys[b];
+      const int c = keys[a].compare(keys[b]);
+      if (c != 0) return c < 0;
+      return a < b;
     });
     std::vector<SpecData> sorted_specs;
     sorted_specs.reserve(n);
@@ -471,16 +474,29 @@ bool CrateWriter::Finalize(std::string* err) {
   // comparing with the previous path and assign each spec's path index here
   // (one hash-map insert per unique path; the old flow did a find+insert per
   // spec plus a separate GetOrCreatePath lookup per spec below).
-  path_to_index_.clear();
+  path_slots_.clear();
+  path_slots_used_ = 0;
+  GrowPathSlots(spec_data_.size() + 16);
   paths_.clear();
-  for (auto& spec_data : spec_data_) {
-    if (paths_.empty() || !(paths_.back() == spec_data.path)) {
-      crate::PathIndex idx;
-      idx.value = static_cast<uint32_t>(paths_.size());
-      path_to_index_[spec_data.path] = idx;
+  {
+    const crate::PathHasher hasher;
+    size_t w = 0;
+    for (size_t r = 0; r < spec_data_.size(); r++) {
+      SpecData& spec_data = spec_data_[r];
+      if (!paths_.empty() && paths_.back() == spec_data.path) {
+        // Duplicate spec path: keep the first-added spec (the sort above
+        // tiebreaks on insertion order), silently drop this one — same
+        // behavior as the old AddSpec-time hash-set dedup.
+        continue;
+      }
+      const uint32_t idx = static_cast<uint32_t>(paths_.size());
       paths_.push_back(spec_data.path);
+      InsertPathSlot(static_cast<uint32_t>(hasher(spec_data.path)), idx);
+      spec_data.spec.path_index.value = idx;
+      if (w != r) spec_data_[w] = std::move(spec_data);
+      w++;
     }
-    spec_data.spec.path_index.value = static_cast<uint32_t>(paths_.size() - 1);
+    spec_data_.resize(w);
   }
 
   // Build field and fieldset tables
@@ -956,73 +972,139 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   //
   // See: pxr/usd/sdf/crateFile.cpp _WriteCompressedPathData()
 
-  // Build sorted paths with pre-assigned PathIndex values.
-  // This matches OpenUSD's approach: each path has a pre-assigned index into
-  // the _paths vector. The tree encoding references these indices directly.
-  std::vector<std::pair<Path, crate::PathIndex>> sorted_paths;
-  for (const auto& kv : path_to_index_) {
-    const Path& path = kv.first;
+  // Gather encodable paths in paths_ order — the vector position IS the
+  // pre-assigned PathIndex (Finalize's rebuild and GetOrCreatePath both keep
+  // that invariant), so no hash-map iteration and no Path copies here.
+  //
+  // "Simple" paths (valid + absolute, no variant part, and every name char
+  // sorting after the separators '.' 0x2E and '/' 0x2F — true for all valid
+  // USD identifiers/namespaced names: alnum, '_', ':') get a fast tree build:
+  // for them, USD path order equals plain byte order of the full path names,
+  // subtrees are contiguous byte-order ranges, and parent/child tests reduce
+  // to prefix-length compares. Anything exotic falls back to the legacy
+  // Path-based ordering and probing.
+  std::vector<uint32_t> ids;
+  ids.reserve(paths_.size());
+  bool all_simple = true;
+  for (size_t i = 0; i < paths_.size(); i++) {
+    const Path& p = paths_[i];
     // Skip empty/invalid paths
-    if (path.prim_part().empty() && path.prop_part().empty()) continue;
-    sorted_paths.emplace_back(path, kv.second);
-  }
-
-  // Sort using Path::operator< (lexicographic USD path comparison).
-  // Path::LessThan builds both full path names per comparison; for the
-  // valid+absolute paths the writer produces, its ordering equals a plain
-  // byte comparison of the full path names — so precompute those once and
-  // sort by them. Any invalid/relative path (never produced by the spec
-  // converters) falls back to the original comparator.
-  {
-    bool all_simple = true;
-    for (const auto& sp : sorted_paths) {
-      if (!sp.first.is_valid() || !sp.first.is_absolute_path()) {
-        all_simple = false;
-        break;
-      }
-    }
+    if (p.prim_part().empty() && p.prop_part().empty()) continue;
+    ids.push_back(static_cast<uint32_t>(i));
     if (all_simple) {
-      const size_t n = sorted_paths.size();
-      std::vector<std::string> fulls(n);
-      for (size_t i = 0; i < n; i++) {
-        fulls[i] = sorted_paths[i].first.full_path_name();
+      if (!p.is_valid() || !p.is_absolute_path() ||
+          !p.variant_part_raw().empty() ||
+          !p.variant_selection_raw().empty()) {
+        all_simple = false;
+      } else {
+        const tinyusdz::tstring_view prim = p.prim_part();
+        const char* pd = prim.c_str();
+        for (size_t ci = 0; ci < prim.size(); ci++) {
+          const char c = pd[ci];
+          if (c != '/' && static_cast<unsigned char>(c) <= '/') {
+            all_simple = false;
+            break;
+          }
+        }
+        if (all_simple) {
+          const tinyusdz::tstring_view prop = p.prop_part();
+          const char* qd = prop.c_str();
+          for (size_t ci = 0; ci < prop.size(); ci++) {
+            if (static_cast<unsigned char>(qd[ci]) <= '/') {
+              all_simple = false;
+              break;
+            }
+          }
+        }
       }
-      std::vector<uint32_t> order(n);
-      for (size_t i = 0; i < n; i++) order[i] = uint32_t(i);
-      std::sort(order.begin(), order.end(), [&fulls](uint32_t a, uint32_t b) {
-        return fulls[a] < fulls[b];
-      });
-      std::vector<std::pair<Path, crate::PathIndex>> sorted2;
-      sorted2.reserve(n);
-      for (size_t i = 0; i < n; i++) {
-        sorted2.push_back(std::move(sorted_paths[order[i]]));
-      }
-      sorted_paths = std::move(sorted2);
-    } else {
-      std::sort(sorted_paths.begin(), sorted_paths.end(),
-        [](const std::pair<Path, crate::PathIndex>& a,
-           const std::pair<Path, crate::PathIndex>& b) {
-          return a.first < b.first;
-        });
     }
   }
 
-  size_t num_encoded_paths = sorted_paths.size();
+  const size_t num_encoded_paths = ids.size();
   if (num_encoded_paths == 0) {
     if (err) *err = "No paths to encode";
     return false;
   }
 
-  // Precompute per-entry strings the tree builder consults repeatedly:
-  // get_parent_path().full_path_name() allocated a Path plus a string per
-  // check (2-3x per node) — now one parent string per node.
-  std::vector<std::string> parent_fulls(num_encoded_paths);
-  for (size_t i = 0; i < num_encoded_paths; i++) {
-    parent_fulls[i] = sorted_paths[i].first.get_parent_path().full_path_name();
+  // Full path names in ids order (both modes need them).
+  std::vector<std::string> fulls(num_encoded_paths);
+  for (size_t k = 0; k < num_encoded_paths; k++) {
+    fulls[k] = paths_[ids[k]].full_path_name();
   }
-  std::vector<std::string> node_fulls(num_encoded_paths);
-  for (size_t i = 0; i < num_encoded_paths; i++) {
-    node_fulls[i] = sorted_paths[i].first.full_path_name();
+
+  if (all_simple) {
+    // Tree encoding needs sorted USD path order == byte order of full names.
+    // Finalize() already built paths_ in that order (specs sorted by the
+    // flattened crate sort key, whose ordering matches byte order of the
+    // full names; only value-data paths GetOrCreatePath()d during packing
+    // can break it) — verify in O(N) and skip the N-log-N string sort in
+    // the common case.
+    bool presorted = true;
+    for (size_t k = 1; k < num_encoded_paths; k++) {
+      if (!(fulls[k - 1] < fulls[k])) {
+        presorted = false;
+        break;
+      }
+    }
+    if (!presorted) {
+      std::vector<uint32_t> order(num_encoded_paths);
+      for (size_t k = 0; k < num_encoded_paths; k++) order[k] = static_cast<uint32_t>(k);
+      std::sort(order.begin(), order.end(), [&fulls](uint32_t a, uint32_t b) {
+        return fulls[a] < fulls[b];
+      });
+      std::vector<uint32_t> ids2(num_encoded_paths);
+      std::vector<std::string> fulls2(num_encoded_paths);
+      for (size_t k = 0; k < num_encoded_paths; k++) {
+        ids2[k] = ids[order[k]];
+        fulls2[k] = std::move(fulls[order[k]]);
+      }
+      ids = std::move(ids2);
+      fulls = std::move(fulls2);
+    }
+  } else {
+    // Legacy ordering: Path::operator< (USD path comparison).
+    std::vector<uint32_t> order(num_encoded_paths);
+    for (size_t k = 0; k < num_encoded_paths; k++) order[k] = static_cast<uint32_t>(k);
+    std::sort(order.begin(), order.end(), [this, &ids](uint32_t a, uint32_t b) {
+      return paths_[ids[a]] < paths_[ids[b]];
+    });
+    std::vector<uint32_t> ids2(num_encoded_paths);
+    std::vector<std::string> fulls2(num_encoded_paths);
+    for (size_t k = 0; k < num_encoded_paths; k++) {
+      ids2[k] = ids[order[k]];
+      fulls2[k] = std::move(fulls[order[k]]);
+    }
+    ids = std::move(ids2);
+    fulls = std::move(fulls2);
+  }
+
+  // Per-node parent info.
+  // Fast mode: parent full name == fulls[k].substr(0, parent_len[k]) — no
+  // string allocation (0 marks the root node itself).
+  // Legacy mode: materialized parent full-name strings via get_parent_path()
+  // (variant-aware), as before.
+  std::vector<uint32_t> parent_len;
+  std::vector<std::string> parent_fulls;
+  if (all_simple) {
+    parent_len.resize(num_encoded_paths);
+    for (size_t k = 0; k < num_encoded_paths; k++) {
+      const Path& p = paths_[ids[k]];
+      if (!p.prop_part().empty()) {
+        // "/A/B.prop" -> "/A/B"
+        parent_len[k] =
+            static_cast<uint32_t>(fulls[k].size() - p.prop_part().size() - 1);
+      } else if (fulls[k].size() == 1) {
+        parent_len[k] = 0;  // root "/"
+      } else {
+        const size_t pos = fulls[k].find_last_of('/');
+        parent_len[k] = static_cast<uint32_t>(pos == 0 ? 1 : pos);
+      }
+    }
+  } else {
+    parent_fulls.resize(num_encoded_paths);
+    for (size_t k = 0; k < num_encoded_paths; k++) {
+      parent_fulls[k] = paths_[ids[k]].get_parent_path().full_path_name();
+    }
   }
 
   // Build the three compressed arrays directly from sorted paths
@@ -1034,17 +1116,69 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Fill with invalid sentinel
   for (auto& idx : encoded_path_indices) idx = crate::PathIndex().value;
 
-  // Recursive tree builder (matches OpenUSD's algorithm)
-  // Build path tree recursively with depth guard.
-  // Matches OpenUSD's _BuildCompressedPathDataRecursive algorithm.
-  auto getNextSubtree = [&](uint32_t sidx, uint32_t eidx) -> uint32_t {
-    if (sidx >= eidx) return eidx;
-    for (uint32_t i = sidx; i < eidx; i++) {
-      if (!sorted_paths[i].first.has_prefix(sorted_paths[sidx].first))
-        return i;
-    }
-    return eidx;
-  };
+  // Mode-specific tree probes. All take positions into ids/fulls.
+  std::function<bool(uint32_t)> isRootNode;
+  // End (exclusive) of the subtree rooted at sidx, scanning within
+  // [sidx, eidx).
+  std::function<uint32_t(uint32_t, uint32_t)> getNextSubtree;
+  // Is node c a DIRECT child of node p?
+  std::function<bool(uint32_t, uint32_t)> isDirectChildOf;
+  // Do nodes a and b share the same parent?
+  std::function<bool(uint32_t, uint32_t)> haveSameParent;
+
+  if (all_simple) {
+    isRootNode = [&parent_len](uint32_t k) { return parent_len[k] == 0; };
+    // Byte-sorted simple paths make every subtree a contiguous range whose
+    // members extend the root's full name with '.' or '/' (the two smallest
+    // chars that can follow, given the name-char restriction checked above),
+    // so the end is found by binary search instead of a linear has_prefix
+    // scan per node.
+    getNextSubtree = [&fulls](uint32_t sidx, uint32_t eidx) -> uint32_t {
+      if (sidx >= eidx) return eidx;
+      const std::string& p = fulls[sidx];
+      if (p.size() == 1) return eidx;  // root: everything below is in-tree
+      uint32_t lo = sidx + 1, hi = eidx;
+      while (lo < hi) {
+        const uint32_t mid = lo + (hi - lo) / 2;
+        const std::string& c = fulls[mid];
+        const bool in_subtree =
+            c.size() > p.size() &&
+            memcmp(c.data(), p.data(), p.size()) == 0 &&
+            (c[p.size()] == '/' || c[p.size()] == '.');
+        if (in_subtree) {
+          lo = mid + 1;
+        } else {
+          hi = mid;
+        }
+      }
+      return lo;
+    };
+    isDirectChildOf = [&fulls, &parent_len](uint32_t c, uint32_t p) {
+      return parent_len[c] == fulls[p].size() &&
+             memcmp(fulls[c].data(), fulls[p].data(), parent_len[c]) == 0;
+    };
+    haveSameParent = [&fulls, &parent_len](uint32_t a, uint32_t b) {
+      return parent_len[a] == parent_len[b] &&
+             memcmp(fulls[a].data(), fulls[b].data(), parent_len[a]) == 0;
+    };
+  } else {
+    isRootNode = [this, &ids](uint32_t k) {
+      return paths_[ids[k]].is_root_path();
+    };
+    getNextSubtree = [this, &ids](uint32_t sidx, uint32_t eidx) -> uint32_t {
+      if (sidx >= eidx) return eidx;
+      for (uint32_t i = sidx; i < eidx; i++) {
+        if (!paths_[ids[i]].has_prefix(paths_[ids[sidx]])) return i;
+      }
+      return eidx;
+    };
+    isDirectChildOf = [&fulls, &parent_fulls](uint32_t c, uint32_t p) {
+      return parent_fulls[c] == fulls[p];
+    };
+    haveSameParent = [&parent_fulls](uint32_t a, uint32_t b) {
+      return parent_fulls[a] == parent_fulls[b];
+    };
+  }
 
   // Stack-overflow backstop for the recursive builder. ConvertPrimIterative is
   // the authoritative depth gate (rejects prim nesting > kMaxPrimNestingDepth
@@ -1070,27 +1204,26 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       bool has_sibling = false;
 
       if (nextIdx != nextSubtreeIdx && nextIdx < num_encoded_paths) {
-        if (sorted_paths[pIdx].first.is_root_path()) {
+        if (isRootNode(pIdx)) {
           has_child = true;
-        } else if (parent_fulls[nextIdx] == node_fulls[pIdx]) {
+        } else if (isDirectChildOf(nextIdx, pIdx)) {
           has_child = true;
         }
       }
 
       if (nextSubtreeIdx != endIdx && nextSubtreeIdx < num_encoded_paths) {
-        if (!sorted_paths[pIdx].first.is_root_path() &&
-            parent_fulls[nextSubtreeIdx] == parent_fulls[pIdx]) {
+        if (!isRootNode(pIdx) && haveSameParent(nextSubtreeIdx, pIdx)) {
           has_sibling = true;
         }
       }
 
-      const auto& p = sorted_paths[pIdx];
-      bool is_prop = p.first.is_prim_property_path();
-      std::string elem = is_prop ? p.first.prop_part() : p.first.element_name();
+      const Path& p = paths_[ids[pIdx]];
+      bool is_prop = p.is_prim_property_path();
+      std::string elem = is_prop ? p.prop_part() : p.element_name();
       if (elem == "/") elem.clear();
 
       uint32_t thisIdx = currentIdx++;
-      encoded_path_indices[thisIdx] = p.second.value;
+      encoded_path_indices[thisIdx] = ids[pIdx];
       element_token_indices[thisIdx] =
           static_cast<int32_t>(GetOrCreateToken(elem).value);
       if (is_prop) {
@@ -1138,9 +1271,9 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     if (encoded_path_indices[i] == crate::PathIndex().value) {
       // Dump sorted paths for debugging
       std::string dbg = "path index " + std::to_string(i) + " not filled. Sorted paths:\n";
-      for (size_t j = 0; j < sorted_paths.size(); j++) {
-        dbg += "  [" + std::to_string(j) + "] " + sorted_paths[j].first.full_path_name()
-             + " idx=" + std::to_string(sorted_paths[j].second.value)
+      for (size_t j = 0; j < num_encoded_paths; j++) {
+        dbg += "  [" + std::to_string(j) + "] " + fulls[j]
+             + " idx=" + std::to_string(ids[j])
              + (j == i ? " <-- UNFILLED" : "") + "\n";
       }
       if (err) *err = "Internal error: " + dbg;
@@ -1699,10 +1832,51 @@ crate::StringIndex CrateWriter::GetOrCreateString(const std::string& str) {
   return idx;
 }
 
+int64_t CrateWriter::FindPathSlot(const Path& path, uint32_t hash) const {
+  if (path_slots_.empty()) return -1;
+  const size_t mask = path_slots_.size() - 1;
+  const crate::PathKeyEqual eq;
+  for (size_t i = hash & mask;; i = (i + 1) & mask) {
+    const auto& slot = path_slots_[i];
+    if (slot.second == 0) return -1;
+    if (slot.first == hash && eq(paths_[slot.second - 1], path)) {
+      return int64_t(slot.second - 1);
+    }
+  }
+}
+
+void CrateWriter::InsertPathSlot(uint32_t hash, uint32_t path_index) {
+  if ((path_slots_used_ + 1) * 2 >= path_slots_.size()) {
+    GrowPathSlots(path_slots_.size() * 2 + 16);
+  }
+  const size_t mask = path_slots_.size() - 1;
+  size_t i = hash & mask;
+  while (path_slots_[i].second != 0) i = (i + 1) & mask;
+  path_slots_[i] = {hash, path_index + 1};
+  path_slots_used_++;
+}
+
+void CrateWriter::GrowPathSlots(size_t want) {
+  size_t cap = 32;
+  while (cap < want * 2) cap <<= 1;
+  std::vector<std::pair<uint32_t, uint32_t>> old = std::move(path_slots_);
+  path_slots_.assign(cap, {0u, 0u});
+  const size_t mask = cap - 1;
+  for (const auto& slot : old) {
+    if (slot.second == 0) continue;
+    size_t i = slot.first & mask;
+    while (path_slots_[i].second != 0) i = (i + 1) & mask;
+    path_slots_[i] = slot;
+  }
+}
+
 crate::PathIndex CrateWriter::GetOrCreatePath(const Path& path) {
-  auto it = path_to_index_.find(path);
-  if (it != path_to_index_.end()) {
-    return it->second;
+  const uint32_t hash = static_cast<uint32_t>(crate::PathHasher()(path));
+  {
+    const int64_t found = FindPathSlot(path, hash);
+    if (found >= 0) {
+      return crate::PathIndex(static_cast<uint32_t>(found));
+    }
   }
 
   // IMPORTANT: Ensure all parent paths exist first
@@ -1736,7 +1910,7 @@ crate::PathIndex CrateWriter::GetOrCreatePath(const Path& path) {
   // Create new path
   crate::PathIndex idx(static_cast<uint32_t>(paths_.size()));
   paths_.push_back(path);
-  path_to_index_[path] = idx;
+  InsertPathSlot(hash, idx.value);
 
   // Also register path tokens
   if (!path.prim_part().empty()) {
