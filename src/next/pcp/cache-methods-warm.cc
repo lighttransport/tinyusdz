@@ -112,6 +112,14 @@ namespace pcp {
                   "ms finalize=" + FormatMilliseconds(fin_ms) + "ms");
     }
     out->meta() = root->meta();
+    // A flattened layer has no sublayers: their opinions were composed into
+    // `out` above, so it must not also advertise `subLayers`. The root layer's
+    // meta (copied verbatim) carries the list; clearing it keeps the flattened
+    // output from both containing the inlined content AND referencing the
+    // (now-inlined) files. It also drops the `subLayers` crate field, which pxr
+    // OpenUSD and the tinyusdz legacy reader require to be string[] (next emits
+    // token[]) — leaving it makes those readers reject the layer.
+    out->meta().subLayers.clear();
     stage->SetRootLayer(std::move(*out));
     return true;
   }

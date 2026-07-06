@@ -243,7 +243,14 @@ bool AsciiParser::Impl::ParseAttribute() {
         AddError("Failed to skip value for unknown attribute type: " + type_name);
         return false;
       }
-      builder_->add_property(attr_name, Value(), flags);
+      // Unknown/unparseable value: register a value-less typed slot rather than
+      // storing an empty Value (which the crate writer would emit as a bogus
+      // `default` with an Invalid ValueRep — rejected by pxr and the legacy
+      // reader). typeName was already recorded above.
+      if (is_array) flags |= PropSlot::kFlagArray;
+      if (cur && attr_name_id.is_valid() && !cur->property(attr_name_id)) {
+        cur->add_property_slot(attr_name_id, type_id, flags);
+      }
     } else {
       ParseResult result;
       if (is_array) {
@@ -323,7 +330,17 @@ bool AsciiParser::Impl::ParseAttribute() {
       lexer_->consume();
     }
   } else {
-    builder_->add_property(attr_name, Value(), flags);
+    // Bare declaration with no value (`float shaping:focus`,
+    // `token outputs:surface`): a value-less typed slot, NOT an empty Value.
+    // Storing an empty Value makes the crate writer emit a `default` field
+    // with an Invalid ValueRep (type enum 0), which pxr OpenUSD and the
+    // tinyusdz legacy reader both reject. A value-less slot writes typeName
+    // only (matching pxr and the USDC reader's own value-less handling).
+    // typeName was already recorded above (set_property_type_name).
+    if (is_array) flags |= PropSlot::kFlagArray;
+    if (cur && attr_name_id.is_valid() && !cur->property(attr_name_id)) {
+      cur->add_property_slot(attr_name_id, type_id, flags);
+    }
   }
 
   if (options_.profile) {

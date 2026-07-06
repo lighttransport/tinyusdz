@@ -283,7 +283,14 @@
         flds.push_back(cf);
       }
 
-      if (val) {
+      // Emit a `default` field only for a genuinely authored value. A
+      // value-less (declared-only) attribute — e.g. `token outputs:surface`,
+      // `float shaping:focus` — carries an EMPTY Value here; encoding it would
+      // produce a `default` with an Invalid ValueRep (type enum 0), which pxr
+      // OpenUSD and the tinyusdz legacy reader both reject ("unsupported type
+      // enum value 0"). pxr emits only typeName for such attributes, so skip
+      // the field. A `= None` block is NOT empty (is_block()) and still emits.
+      if (val && !val->is_empty()) {
         CrateField df;
         df.token_index.value = CommonToken(common_.default_value, "default");
         df.value_rep = EncodeValue(*val);

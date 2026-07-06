@@ -285,6 +285,15 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   // end, so restore hierarchical order first.
   result->sort_prims_by_path();
 
+  // A flattened layer has no sublayers: their opinions were merged in by
+  // ComposeSublayers above (weakest-first), so the result must not also
+  // advertise `subLayers`. `result->meta()` was copied verbatim from the root
+  // layer (which carries the list), so clear it here — otherwise the output
+  // both contains the inlined content AND references the (now-inlined) files,
+  // and the `subLayers` crate field (which pxr/legacy require to be string[])
+  // makes those readers reject the layer.
+  result->meta().subLayers.clear();
+
   // Finalize the composed layer
   result->finalize();
 
