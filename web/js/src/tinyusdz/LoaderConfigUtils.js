@@ -1,5 +1,24 @@
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 
+export function getBackendFromURL(params = new URLSearchParams(window.location.search), fallback = 'legacy') {
+  const backend = params.get('backend');
+  return (backend === 'next' || backend === 'auto' || backend === 'legacy')
+    ? backend
+    : fallback;
+}
+
+export function makeStaticNextParseOptions(options = {}) {
+  const backend = options.backend || 'legacy';
+  return {
+    ...options,
+    backend,
+    materialDedup: false,
+    mergeMeshes: false,
+    mergeMeshesBakeTransform: false,
+    flattenRenderTree: false
+  };
+}
+
 /**
  * Apply skinning-related load options to a TinyUSDZLoader instance.
  */
