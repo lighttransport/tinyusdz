@@ -280,7 +280,6 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
   }
 
   out->comp.searchPaths = {DirName(path)};
-  out->comp.allowParentRelativePaths = opts.allowParentRelativePaths;
 
   tinyusdz::AssetResolutionResolver resolver;
   resolver.set_search_paths(out->comp.searchPaths);
@@ -537,6 +536,10 @@ bool LoadUSD(const std::string& path, const LoadOptions& opts, LoadedScene* out,
     return false;
   }
 
+  // Retain the '..' policy for the RenderScene conversion (texture/light asset
+  // resolution). Set here so BOTH the composed and direct (single-file, .usdz)
+  // load branches carry it — not just files that happen to have composition arcs.
+  out->comp.allowParentRelativePaths = opts.allowParentRelativePaths;
   out->subdivisionLevel = std::max(0, opts.subdivisionLevel);
   out->subdivisionPrimLevels = opts.subdivisionPrimLevels;
   return ConvertStageToScene(path, opts.timecode, opts.textureOptions,
@@ -565,6 +568,7 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 
   out->comp.rootLayer = prev.rootLayer;
   out->comp.searchPaths = prev.searchPaths;
+  out->comp.allowParentRelativePaths = opts.allowParentRelativePaths;
 
   if (!ComposeStage(opts, out, ctrl)) {
     return false;
