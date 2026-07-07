@@ -2795,6 +2795,29 @@ if(TINYUSDZ_BUILD_TESTS)
       TIMEOUT 1200
       LABELS "viewer;external-assets")
 
+    # tusdview/tusdrender: batch render sweep of a local usd-wg/assets checkout
+    # at /mnt/disk1/work/usd-assets across BOTH tools (tusdview Vulkan raster +
+    # ray query, tusdrender CPU preview + Vulkan). Enumerates every USD-family
+    # file under the root and classifies each render (rendered / load_error /
+    # no_renderable / timeout / backend_error). Opt-in and machine-specific: it
+    # SKIPs (77) unless TUSDVIEW_USD_ASSETS_DISK1 is set AND the asset root
+    # exists, so it never runs in normal CI. Fails only on timeout/backend_error
+    # (crashes, hangs, backend breakage) — a broad external suite legitimately
+    # contains assets the loader does not yet fully support, which are reported
+    # in results.tsv but do not fail the batch. Run with:
+    #   TUSDVIEW_USD_ASSETS_DISK1=1 ctest -R tusdview-usd-assets-disk1 --output-on-failure
+    add_test(
+      NAME tusdview-usd-assets-disk1-smoke
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
+    )
+    set_tests_properties(tusdview-usd-assets-disk1-smoke PROPERTIES
+      ENVIRONMENT
+        "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>;USD_ASSETS_ROOT=/mnt/disk1/work/usd-assets;TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_USD_ASSETS_DISK1;TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,tusdr-cpu,tusdr-vk;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=60s;TUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error"
+      SKIP_RETURN_CODE 77
+      TIMEOUT 3600
+      LABELS "viewer;external-assets")
+
     # tusdview: HIP/ROCm ray-tracing backend run test. Renders headless via --hip
     # (HIP runtime + hiprtc loaded at runtime through hipew; no link-time ROCm
     # toolkit) and asserts a non-blank frame. Needs a real AMD/ROCm device; SKIPs
