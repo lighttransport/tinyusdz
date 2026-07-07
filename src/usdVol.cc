@@ -19,6 +19,12 @@
 #endif
 #if defined(__clang__)
 #pragma clang diagnostic ignored "-Wunused-private-field"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#pragma clang diagnostic ignored "-Wsuggest-override"
+#pragma clang diagnostic ignored "-Wsuggest-destructor-override"
+#pragma clang diagnostic ignored "-Wreserved-identifier"
+#pragma clang diagnostic ignored "-Wdocumentation-unknown-command"
 #endif
 #define TINYVDBIO_IMPLEMENTATION
 // Point tinyvdb at this repo's vendored miniz / LZ4 / zstd copies.

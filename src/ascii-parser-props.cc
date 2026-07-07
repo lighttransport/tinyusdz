@@ -199,7 +199,37 @@ extern template bool AsciiParser::ParseBasicTypeArray(
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<bool> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<char> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<uint8_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<int16_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<uint16_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort4> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<int32_t> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
