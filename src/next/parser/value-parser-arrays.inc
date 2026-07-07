@@ -556,6 +556,13 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 1));
   }
+  if (element_type == TypeId::TimeCode) {
+    std::vector<double> values;
+    if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, lexer.num_threads, &values, parse_double)) {
+      return ParseResult::Error("Failed to parse timecode array");
+    }
+    return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 1));
+  }
   if (element_type == TypeId::Bool) {
     std::vector<bool> values;
     auto parse_bool = [](SliceParser* s, bool* v) { return s->parse_bool(v); };
@@ -625,7 +632,51 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
                                            : static_cast<ParseStringFn>(parse_string))) {
       return ParseResult::Error("Failed to parse string/token array");
     }
-    return ParseResult::Ok(Value::MakeTokenArray(std::move(values)));
+    return ParseResult::Ok(Value::MakeStringLikeArray(std::move(values), element_type));
+  }
+  if (element_type == TypeId::AssetPath) {
+    // Asset path array: @path@ literals.
+    auto parse_asset = [](SliceParser* s, std::string* v) {
+      s->skip_ws();
+      if (s->p >= s->end || *s->p != '@') return false;
+      ++s->p;
+      v->clear();
+      while (s->p < s->end && *s->p != '@') v->push_back(*s->p++);
+      if (s->p >= s->end) return false;
+      ++s->p;  // closing '@'
+      return true;
+    };
+    std::vector<std::string> values;
+    if (!ParseScalarArray<std::string>(&sp, &values, parse_asset)) {
+      return ParseResult::Error("Failed to parse asset array");
+    }
+    return ParseResult::Ok(Value::MakeStringLikeArray(std::move(values), element_type));
+  }
+
+  // Int-vector tuple arrays (int2[]/int3[]/int4[]): flat int32 buffer.
+  if (element_type == TypeId::Int2 || element_type == TypeId::Int3 ||
+      element_type == TypeId::Int4) {
+    auto parse_i32 = [](SliceParser* s, int32_t* v) {
+      int64_t tmp = 0;
+      if (!s->parse_i64(&tmp) || tmp < std::numeric_limits<int32_t>::min() ||
+          tmp > std::numeric_limits<int32_t>::max()) return false;
+      *v = static_cast<int32_t>(tmp);
+      return true;
+    };
+    std::vector<int32_t> values;
+    bool ok = false;
+    if (element_type == TypeId::Int2) {
+      ok = ParseTupleArrayMaybeParallel<int32_t, 2>(data, len, simple, lexer.num_threads, &values, parse_i32);
+    } else if (element_type == TypeId::Int3) {
+      ok = ParseTupleArrayMaybeParallel<int32_t, 3>(data, len, simple, lexer.num_threads, &values, parse_i32);
+    } else {
+      ok = ParseTupleArrayMaybeParallel<int32_t, 4>(data, len, simple, lexer.num_threads, &values, parse_i32);
+    }
+    if (!ok) return ParseResult::Error("Failed to parse int-vector array");
+    const uint32_t comps = (element_type == TypeId::Int2)   ? 2u
+                           : (element_type == TypeId::Int3) ? 3u
+                                                            : 4u;
+    return ParseResult::Ok(Value::MakeIntCompArray(std::move(values), element_type, comps));
   }
 
   if (IsFloat2Like(element_type)) {
@@ -737,6 +788,10 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
     case TypeId::Half2:
     case TypeId::Half3:
     case TypeId::Half4:
+    case TypeId::Int2:
+    case TypeId::Int3:
+    case TypeId::Int4:
+    case TypeId::TimeCode:
     case TypeId::Float2:
     case TypeId::Float3:
     case TypeId::Float4:
@@ -778,6 +833,7 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
     // token array (see ParseArrayValueOptimized).
     case TypeId::Token:
     case TypeId::String:
+    case TypeId::AssetPath:
       return ParseArrayValueOptimized(lexer, element_type);
     default:
       break;
@@ -796,8 +852,17 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
       return ParseResult::Ok(Value::MakeFloatArray(std::vector<float>{}));
     } else if (element_type == TypeId::Int) {
       return ParseResult::Ok(Value::MakeIntArray(std::vector<int32_t>{}));
-    } else if (element_type == TypeId::Token || element_type == TypeId::String) {
-      return ParseResult::Ok(Value::MakeTokenArray(std::vector<std::string>{}));
+    } else if (element_type == TypeId::Int2 || element_type == TypeId::Int3 ||
+               element_type == TypeId::Int4) {
+      const uint32_t comps = (element_type == TypeId::Int2)   ? 2u
+                             : (element_type == TypeId::Int3) ? 3u
+                                                              : 4u;
+      return ParseResult::Ok(
+          Value::MakeIntCompArray(std::vector<int32_t>{}, element_type, comps));
+    } else if (element_type == TypeId::Token || element_type == TypeId::String ||
+               element_type == TypeId::AssetPath) {
+      return ParseResult::Ok(
+          Value::MakeStringLikeArray(std::vector<std::string>{}, element_type));
     }
     return ParseResult::Ok(Value::MakeFloatArray(std::vector<float>{}));
   }
@@ -878,7 +943,8 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
   } else if (IsFloat2Like(element_type) || IsFloat4Like(element_type)) {
     return ParseResult::Ok(Value::MakeFloatArray(std::move(float_data)));
   } else if (element_type == TypeId::Token || element_type == TypeId::String) {
-    return ParseResult::Ok(Value::MakeTokenArray(std::move(string_data)));
+    return ParseResult::Ok(
+        Value::MakeStringLikeArray(std::move(string_data), element_type));
   }
 
   // Default: try to return float array

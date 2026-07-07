@@ -1242,10 +1242,11 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.colorManagementSystem = stage_meta.colorManagementSystem;
   meta.doc = stage_meta.doc;
   meta.comment = stage_meta.comment;
-  // Dictionary-valued stage metadata is not mirrored on StageMeta; take it from
-  // the composed root layer directly.
+  // Dictionary-valued stage metadata and sublayer paths are not mirrored on
+  // StageMeta; take them from the composed root layer directly.
   meta.customLayerData = root_layer->meta().customLayerData;
   meta.expressionVariables = root_layer->meta().expressionVariables;
+  meta.subLayers = root_layer->meta().subLayers;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);

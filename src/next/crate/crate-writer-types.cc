@@ -43,8 +43,24 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Point3d:
     case TypeId::Vector3d:
     case TypeId::Normal3d:
+    case TypeId::Color3d:
       return CrateTypeId::Vec3d;
-    case TypeId::Double4: return CrateTypeId::Vec4d;
+    case TypeId::Double4:
+    case TypeId::Color4d:
+      return CrateTypeId::Vec4d;
+    case TypeId::Texcoord2f: return CrateTypeId::Vec2f;
+    case TypeId::Texcoord2d: return CrateTypeId::Vec2d;
+    case TypeId::Texcoord2h: return CrateTypeId::Vec2h;
+    case TypeId::Texcoord3f: return CrateTypeId::Vec3f;
+    case TypeId::Texcoord3d: return CrateTypeId::Vec3d;
+    case TypeId::Texcoord3h: return CrateTypeId::Vec3h;
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+      return CrateTypeId::Vec3h;
+    case TypeId::Color4h: return CrateTypeId::Vec4h;
+    case TypeId::TimeCode: return CrateTypeId::TimeCode;
     case TypeId::Quatf: return CrateTypeId::Quatf;
     case TypeId::Quatd: return CrateTypeId::Quatd;
     case TypeId::Matrix2d: return CrateTypeId::Matrix2d;
@@ -60,26 +76,49 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
 uint32_t ArrayComps(TypeId type_id) {
   switch (type_id) {
     case TypeId::Half:
+    case TypeId::TimeCode:
       return 1;
     case TypeId::Float2:
     case TypeId::Double2:
     case TypeId::Texcoord2f:
+    case TypeId::Texcoord2d:
+    case TypeId::Texcoord2h:
+    case TypeId::Int2:
+    case TypeId::UInt2:
     case TypeId::Half2:
       return 2;
     case TypeId::Float3:
     case TypeId::Double3:
+    case TypeId::Point3f:
+    case TypeId::Vector3f:
+    case TypeId::Normal3f:
+    case TypeId::Color3f:
+    case TypeId::Color3h:
+    case TypeId::Color3d:
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
     case TypeId::Point3d:
     case TypeId::Vector3d:
     case TypeId::Normal3d:
+    case TypeId::Texcoord3f:
+    case TypeId::Texcoord3d:
+    case TypeId::Texcoord3h:
+    case TypeId::Int3:
+    case TypeId::UInt3:
     case TypeId::Half3:
       return 3;
     case TypeId::Float4:
     case TypeId::Double4:
     case TypeId::Color4f:
+    case TypeId::Color4h:
+    case TypeId::Color4d:
     case TypeId::Quatf:
     case TypeId::Quatd:
     case TypeId::Matrix2f:
     case TypeId::Matrix2d:
+    case TypeId::Int4:
+    case TypeId::UInt4:
     case TypeId::Half4:
     case TypeId::Quath:
       return 4;
@@ -97,27 +136,29 @@ uint32_t ArrayComps(TypeId type_id) {
 size_t CrateValueSize(CrateTypeId type, bool is_array) {
   if (is_array) return 0;
   switch (type) {
-    case CrateTypeId::Bool: return 1;
+    case CrateTypeId::Bool:
+    case CrateTypeId::UChar: return 1;
     case CrateTypeId::Int:
     case CrateTypeId::UInt:
     case CrateTypeId::Float: return 4;
     case CrateTypeId::Half: return 2;
+    case CrateTypeId::Vec2h: return 4;
+    case CrateTypeId::Vec3h: return 6;
     case CrateTypeId::Int64:
     case CrateTypeId::UInt64:
     case CrateTypeId::Double:
-    case CrateTypeId::TimeCode: return 8;
+    case CrateTypeId::TimeCode:
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Quath: return 8;
     case CrateTypeId::Vec2f:
-    case CrateTypeId::Vec2d:
-    case CrateTypeId::Vec2h:
     case CrateTypeId::Vec2i: return 8;
     case CrateTypeId::Vec3f:
-    case CrateTypeId::Vec3h:
     case CrateTypeId::Vec3i: return 12;
-    case CrateTypeId::Vec3d: return 24;
+    case CrateTypeId::Vec2d:
     case CrateTypeId::Vec4f:
-    case CrateTypeId::Vec4h:
     case CrateTypeId::Vec4i:
     case CrateTypeId::Quatf: return 16;
+    case CrateTypeId::Vec3d: return 24;
     case CrateTypeId::Vec4d:
     case CrateTypeId::Quatd: return 32;
     case CrateTypeId::Matrix2d: return 32;

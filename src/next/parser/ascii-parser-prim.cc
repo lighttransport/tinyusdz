@@ -225,7 +225,13 @@ bool AsciiParser::Impl::ParseAttribute() {
         AddError("Failed to skip value for unknown attribute type: " + type_name);
         return false;
       }
-      builder_->add_property(attr_name, Value(), flags);
+      // Declared-only slot: storing an Invalid-typed Value here would surface
+      // as a `default` field with type enum 0 in the crate writer (pxr hard
+      // error). The declared type name is preserved separately.
+      if (PrimSpec* cur = builder_->current()) {
+        const PropNameId nid = GetPropNameTable().intern(attr_name);
+        if (!cur->property(nid)) cur->add_property_slot(nid, type_id, flags);
+      }
     } else {
       ParseResult result;
       if (is_array) {
@@ -239,7 +245,13 @@ bool AsciiParser::Impl::ParseAttribute() {
         return false;
       }
 
-      builder_->add_property(attr_name, std::move(result.value), flags);
+      // Upsert: `attr.timeSamples = {...}` authored before `attr = v` already
+      // created a slot; a second slot with the same name would emit two
+      // Attribute specs with the same path (pxr: "invalid specs: spec
+      // repeated" — the whole layer fails to open).
+      if (PrimSpec* cur = builder_->current()) {
+        cur->upsert_property(attr_name, std::move(result.value), flags);
+      }
     }
     ParsePropertyMetadata(attr_name);
 
@@ -298,7 +310,12 @@ bool AsciiParser::Impl::ParseAttribute() {
       lexer_->next();
     }
   } else {
-    builder_->add_property(attr_name, Value(), flags);
+    // Bare declaration (`token outputs:out`): declared-only slot with no
+    // value; an Invalid-typed Value would emit a type-enum-0 `default` field.
+    if (PrimSpec* cur = builder_->current()) {
+      const PropNameId nid = GetPropNameTable().intern(attr_name);
+      if (!cur->property(nid)) cur->add_property_slot(nid, type_id, flags);
+    }
   }
 
   return true;

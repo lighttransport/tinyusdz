@@ -59,6 +59,13 @@
                : ValueRep::Make(CrateTypeId::Dictionary, 0, false, false);
     }
 
+    // Authored value block (`= None`): a real opinion with no data. Must map
+    // to the crate's ValueBlock type (an Invalid rep would make pxr reject the
+    // whole layer with "unsupported type enum value 0").
+    if (val.is_block()) {
+      return ValueRep::Make(CrateTypeId::ValueBlock, 0, false, true);
+    }
+
     TypeId type_id = val.type_id();
     CrateTypeId crate_type = ToCrateTypeId(type_id);
     bool is_array = val.is_array();
@@ -119,119 +126,118 @@
       }
     }
 
-    // String / AssetPath via string index (not inline)
-    if (type_id == TypeId::String) {
-      const std::string* s = val.as_string();
-      if (s) {
-        uint32_t str_idx = InternString(*s);
+    // Half-family scalars that fit 4 bytes (half, half2/texcoord2h). pxr
+    // treats these as ALWAYS-inlined (sizeof <= 4): its reader unpacks the
+    // payload directly and never consults the offset path, so they must be
+    // inlined regardless of options_.inline_small_values. Payload = raw
+    // little-endian half bit lanes (matches UnpackHalf / UnpackVec2h).
+    if (!is_array &&
+        (type_id == TypeId::Half || type_id == TypeId::Half2 ||
+         type_id == TypeId::Texcoord2h)) {
+      size_t nbytes = 0;
+      const uint8_t* bytes = val.raw_bytes(&nbytes);
+      if (bytes && nbytes <= 4) {
+        uint32_t payload32 = 0;
+        std::memcpy(&payload32, bytes, nbytes);
+        return ValueRep::Make(crate_type, payload32, false, true);
+      }
+      return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+    }
+
+    // String / AssetPath via string index (not inline; scalars only --
+    // string-family ARRAYS are handled in the array section below).
+    if (!is_array && type_id == TypeId::String) {
+      const std::string* str = val.as_string();
+      if (str) {
+        uint32_t str_idx = InternString(*str);
         return ValueRep::Make(crate_type, str_idx, false, true);
       }
     }
-    if (type_id == TypeId::AssetPath) {
-      const std::string* s = val.as_asset_path();
-      if (s) {
+    if (!is_array && type_id == TypeId::AssetPath) {
+      const std::string* str = val.as_asset_path();
+      if (str) {
         // AssetPath: type stays AssetPath; payload is a token index (the path
         // string interned as a token), matching the reader's UnpackAssetPath.
-        uint32_t tok_idx = InternToken(*s);
+        uint32_t tok_idx = InternToken(*str);
         return ValueRep::Make(CrateTypeId::AssetPath, tok_idx, false, true);
       }
     }
-    if (type_id == TypeId::Token) {
-      const std::string* s = val.as_token();
-      if (s) {
-        uint32_t tok_idx = InternToken(*s);
+    if (!is_array && type_id == TypeId::Token) {
+      const std::string* str = val.as_token();
+      if (str) {
+        uint32_t tok_idx = InternToken(*str);
         return ValueRep::Make(CrateTypeId::Token, tok_idx, false, true);
       }
     }
 
-    // Double (always stored in VALUE section, not inlined)
-    if (type_id == TypeId::Double) {
-      const double* v = val.as_double();
-      if (v) {
-        uint64_t data_idx = StoreValueData(v, sizeof(double), type_id);
-        return ValueRep::Make(crate_type, data_idx, false, false);
-      }
-      return ValueRep::Make(crate_type, 0, false, false);
-    }
-
-    // Non-inline scalars: store in data section
+    // Non-inline scalars: store in the VALUE data section.
     if (!is_array) {
-      size_t elem_size = CrateValueSize(crate_type, false);
-      if (elem_size > 0 && elem_size <= 128) {
-        uint8_t tmp[128];
-        uint64_t data_idx = value_data_.size(); // placeholder
-        switch (type_id) {
-          case TypeId::Int64: {
-            const int64_t* v = val.as_int64();
-            if (v) { std::memcpy(tmp, v, 8); data_idx = StoreValueData(tmp, 8, type_id); }
-            break;
-          }
-          case TypeId::UInt64: {
-            const uint64_t* v = val.as_uint64();
-            if (v) { std::memcpy(tmp, v, 8); data_idx = StoreValueData(tmp, 8, type_id); }
-            break;
-          }
-          case TypeId::Float2: {
-            const float* v = val.as_float2();
-            if (v) { std::memcpy(tmp, v, 8); data_idx = StoreValueData(tmp, 8, type_id); }
-            break;
-          }
-          case TypeId::Float3:
-          case TypeId::Point3f:
-          case TypeId::Vector3f:
-          case TypeId::Normal3f:
-          case TypeId::Color3f: {
-            const float* v = val.as_float3();
-            if (v) { std::memcpy(tmp, v, 12); data_idx = StoreValueData(tmp, 12, type_id); }
-            break;
-          }
-          case TypeId::Float4:
-          case TypeId::Color4f:
-          case TypeId::Quatf: {
-            const float* v = val.as_float4();
-            if (v) { std::memcpy(tmp, v, 16); data_idx = StoreValueData(tmp, 16, type_id); }
-            break;
-          }
-          case TypeId::Double2: {
-            const double* v = val.as_double2();
-            if (v) { std::memcpy(tmp, v, 16); data_idx = StoreValueData(tmp, 16, type_id); }
-            break;
-          }
-          case TypeId::Double3:
-          case TypeId::Point3d:
-          case TypeId::Vector3d:
-          case TypeId::Normal3d: {
-            const double* v = val.as_double3();
-            if (v) { std::memcpy(tmp, v, 24); data_idx = StoreValueData(tmp, 24, type_id); }
-            break;
-          }
-          case TypeId::Double4:
-          case TypeId::Quatd: {
-            const double* v = val.as_double4();
-            if (v) { std::memcpy(tmp, v, 32); data_idx = StoreValueData(tmp, 32, type_id); }
-            break;
-          }
-          case TypeId::Matrix4d: {
-            const double* v = val.as_matrix4d();
-            if (v) { std::memcpy(tmp, v, 128); data_idx = StoreValueData(tmp, 128, type_id); }
-            break;
-          }
-          case TypeId::Matrix4f: {
-            const float* v = val.as_matrix4f();
-            if (v) {
-              double d[16];
-              for (size_t i = 0; i < 16; ++i) d[i] = static_cast<double>(v[i]);
-              std::memcpy(tmp, d, 128);
-              data_idx = StoreValueData(tmp, 128, type_id);
-            }
-            break;
-          }
-          default:
-            break;
+      // Quaternions: crate / GfQuat memory layout is imaginary-first
+      // (x, y, z, w); the internal layout (usda text order) is real-first
+      // (w, x, y, z). Swizzle on write; the reader swizzles back.
+      if (type_id == TypeId::Quatf) {
+        const float* v = val.as_float4();
+        if (v) {
+          const float d[4] = {v[1], v[2], v[3], v[0]};
+          uint64_t data_idx = StoreValueData(d, 16, type_id);
+          return ValueRep::Make(crate_type, data_idx, false, false);
         }
-        return ValueRep::Make(crate_type, data_idx, false, false);
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
       }
-      return ValueRep::Make(crate_type, 0, false, false);
+      if (type_id == TypeId::Quatd) {
+        const double* v = val.as_double4();
+        if (v) {
+          const double d[4] = {v[1], v[2], v[3], v[0]};
+          uint64_t data_idx = StoreValueData(d, 32, type_id);
+          return ValueRep::Make(crate_type, data_idx, false, false);
+        }
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+      }
+      if (type_id == TypeId::Quath) {
+        // SBO holds 4 half-bit lanes, real-first; swizzle in the half domain.
+        size_t nbytes = 0;
+        const uint8_t* b = val.raw_bytes(&nbytes);
+        if (b && nbytes == 8) {
+          uint16_t h[4];
+          std::memcpy(h, b, 8);
+          const uint16_t d[4] = {h[1], h[2], h[3], h[0]};
+          uint64_t data_idx = StoreValueData(d, 8, type_id);
+          return ValueRep::Make(crate_type, data_idx, false, false);
+        }
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+      }
+      // Float matrices widen to the crate's double matrix types.
+      if (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix3f ||
+          type_id == TypeId::Matrix4f) {
+        const float* v = (type_id == TypeId::Matrix2f)   ? val.as_matrix2f()
+                         : (type_id == TypeId::Matrix3f) ? val.as_matrix3f()
+                                                         : val.as_matrix4f();
+        const size_t comps = (type_id == TypeId::Matrix2f)   ? 4
+                             : (type_id == TypeId::Matrix3f) ? 9
+                                                             : 16;
+        if (v) {
+          double d[16];
+          for (size_t k = 0; k < comps; ++k) d[k] = static_cast<double>(v[k]);
+          uint64_t data_idx = StoreValueData(d, comps * sizeof(double), type_id);
+          return ValueRep::Make(crate_type, data_idx, false, false);
+        }
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+      }
+      // Generic POD scalar: for every remaining type (bool/ints/uints,
+      // float/double/half and their vector, matrix and role forms, timecode)
+      // the SBO layout matches the crate layout byte-for-byte.
+      {
+        const size_t elem_size = CrateValueSize(crate_type, false);
+        size_t nbytes = 0;
+        const uint8_t* bytes = val.raw_bytes(&nbytes);
+        if (bytes && elem_size > 0 && nbytes == elem_size) {
+          uint64_t data_idx = StoreValueData(bytes, elem_size, type_id);
+          return ValueRep::Make(crate_type, data_idx, false, false);
+        }
+      }
+      // Unencodable scalar: return Invalid so callers skip the field instead
+      // of emitting a rep whose payload points at unrelated bytes.
+      return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
     }
 
     // Array types: store count + elements in data section
@@ -414,13 +420,81 @@
           }
           break;
         }
+        case TypeId::String: {
+          // String arrays: uint32 indices into the STRINGS section.
+          const std::vector<std::string>* arr = val.as_token_array();
+          if (arr) {
+            count = arr->size();
+            if (!resize_counted_payload(count, sizeof(uint32_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            for (size_t k = 0; k < count; ++k) {
+              uint32_t idx = InternString((*arr)[k]);
+              std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
+            }
+          }
+          break;
+        }
+        case TypeId::AssetPath: {
+          // Asset arrays: uint32 STRING indices (unlike the scalar form, which
+          // uses a token index) — matches pxr's VtArray<SdfAssetPath> layout.
+          const std::vector<std::string>* arr = val.as_token_array();
+          if (arr) {
+            count = arr->size();
+            if (!resize_counted_payload(count, sizeof(uint32_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            for (size_t k = 0; k < count; ++k) {
+              uint32_t idx = InternString((*arr)[k]);
+              std::memcpy(arr_data.data() + 8 + k * 4, &idx, 4);
+            }
+          }
+          break;
+        }
+        case TypeId::Int2:
+        case TypeId::Int3:
+        case TypeId::Int4: {
+          // Int-vector arrays: flat int32 buffer, raw (pxr stores Vec*i arrays
+          // uncompressed).
+          const std::vector<int32_t>* arr = val.as_int_array();
+          const uint32_t comps = ArrayComps(type_id);
+          if (arr && comps && arr->size() % comps == 0) {
+            count = arr->size() / comps;
+            if (!copy_counted_payload(arr->size(), arr->data(),
+                                      sizeof(int32_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            std::memcpy(arr_data.data(), &count, 8);
+          }
+          break;
+        }
         // Vector / quat / matrix arrays: flat float or double buffer. comps =
         // scalars per element (Vec2f=2, Vec4f/Quatf=4, Matrix4d=16, ...).
+        case TypeId::Quatf: {
+          // Internal flat buffer is real-first per element; crate stores
+          // imaginary-first. Swizzle each element on write.
+          const std::vector<float>* arr = val.as_float_array();
+          if (arr && arr->size() % 4 == 0) {
+            count = arr->size() / 4;
+            if (!resize_counted_payload(arr->size(), sizeof(float))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            std::memcpy(arr_data.data(), &count, 8);
+            float* dst = reinterpret_cast<float*>(arr_data.data() + 8);
+            for (size_t e = 0; e < count; ++e) {
+              const float* q = arr->data() + e * 4;
+              dst[e * 4 + 0] = q[1];
+              dst[e * 4 + 1] = q[2];
+              dst[e * 4 + 2] = q[3];
+              dst[e * 4 + 3] = q[0];
+            }
+          }
+          break;
+        }
         case TypeId::Float2:
         case TypeId::Float4:
         case TypeId::Color4f:
-        case TypeId::Texcoord2f:
-        case TypeId::Quatf: {
+        case TypeId::Texcoord2f: {
           const std::vector<float>* arr = val.as_float_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {
@@ -452,13 +526,32 @@
           }
           break;
         }
+        case TypeId::Quatd: {
+          const std::vector<double>* arr = val.as_double_array();
+          if (arr && arr->size() % 4 == 0) {
+            count = arr->size() / 4;
+            if (!resize_counted_payload(arr->size(), sizeof(double))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            std::memcpy(arr_data.data(), &count, 8);
+            double* dst = reinterpret_cast<double*>(arr_data.data() + 8);
+            for (size_t e = 0; e < count; ++e) {
+              const double* q = arr->data() + e * 4;
+              dst[e * 4 + 0] = q[1];
+              dst[e * 4 + 1] = q[2];
+              dst[e * 4 + 2] = q[3];
+              dst[e * 4 + 3] = q[0];
+            }
+          }
+          break;
+        }
+        case TypeId::TimeCode:
         case TypeId::Double2:
         case TypeId::Double3:
         case TypeId::Double4:
         case TypeId::Point3d:
         case TypeId::Vector3d:
         case TypeId::Normal3d:
-        case TypeId::Quatd:
         case TypeId::Matrix2d:
         case TypeId::Matrix3d:
         case TypeId::Matrix4d: {
@@ -477,11 +570,28 @@
         // Half arrays materialize as a float buffer; narrow back to uint16 half
         // for the crate (only reached when the array is materialized, not on the
         // lazy byte-passthrough path).
+        case TypeId::Quath: {
+          const std::vector<float>* arr = val.as_float_array();
+          if (arr && arr->size() % 4 == 0) {
+            count = arr->size() / 4;
+            if (!resize_counted_payload(arr->size(), sizeof(uint16_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            std::memcpy(arr_data.data(), &count, 8);
+            uint8_t* dst = arr_data.data() + 8;
+            for (size_t e = 0; e < count; ++e) {
+              const float* q = arr->data() + e * 4;
+              const uint16_t h[4] = {FloatToHalf(q[1]), FloatToHalf(q[2]),
+                                     FloatToHalf(q[3]), FloatToHalf(q[0])};
+              std::memcpy(dst + e * 8, h, 8);
+            }
+          }
+          break;
+        }
         case TypeId::Half:
         case TypeId::Half2:
         case TypeId::Half3:
-        case TypeId::Half4:
-        case TypeId::Quath: {
+        case TypeId::Half4: {
           const std::vector<float>* arr = val.as_float_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {

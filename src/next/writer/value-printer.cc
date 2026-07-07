@@ -334,6 +334,14 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
                       [&](float v) { out.append_float(v); });
         return true;
       }
+      if (component == TypeId::Int) {  // Int2/Int3/Int4 arrays
+        ArrayScratch<int32_t> scratch;
+        ArrayView<int32_t> view;
+        if (!GetIntArrayView(value, &scratch, &view)) return false;
+        EmitCompArray(out, view.data, view.size, type_id, maxN,
+                      [&](int32_t v) { out.append_int(v); });
+        return true;
+      }
       return false;
     }
   }
@@ -487,6 +495,24 @@ void PrintValueInto(std::string& out, const Value& value,
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
             for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; emit_elem_double(a->data() + i * comp_count); }
+            if (limit < n) out += ", ...";
+          }
+        } else if (GetComponentType(type_id) == TypeId::Int) {
+          // Int2/Int3/Int4 arrays (flat int32 buffer)
+          if (const auto* a = value.as_int_array()) {
+            size_t n = a->size() / comp_count;
+            size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+            ReserveArrayHeadroom(out, limit * comp_count * 12);
+            for (size_t i = 0; i < limit; ++i) {
+              if (i) out += ", ";
+              const int32_t* d = a->data() + i * comp_count;
+              out += "(";
+              for (size_t c = 0; c < comp_count; ++c) {
+                if (c) out += ", ";
+                AppendInt(out, d[c]);
+              }
+              out += ")";
+            }
             if (limit < n) out += ", ...";
           }
         } else {

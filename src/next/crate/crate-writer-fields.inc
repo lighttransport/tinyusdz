@@ -106,11 +106,11 @@
         fields_.push_back(f);
       }
 
-      // apiSchemas — a flattened (explicit) TokenListOp. The on-disk layout the
-      // reader (DecodeTokenListOp) and pxrUSD expect is
-      //   [u8 ListOpHeader=0x02 explicit][u64 count][u32 token_idx]*count
-      // (the earlier code omitted the header byte, so the count's low byte was
-      // misread as the header -> apiSchemas did not round-trip).
+      // apiSchemas — a TokenListOp with one PREPENDED run:
+      //   [u8 ListOpHeader=0x20 prepended][u64 count][u32 token_idx]*count
+      // pxr itself authors applied API schemas as `prepend apiSchemas`, so
+      // this both satisfies its schema type and round-trips the qualifier
+      // (next flattens list-op sublists on read, so any form reads back).
       if (!prim.meta().apiSchemas().empty()) {
         size_t count = prim.meta().apiSchemas().size();
         size_t items_bytes = 0;
@@ -121,7 +121,7 @@
           return;
         }
         std::vector<uint8_t> api_data(api_data_size);
-        api_data[0] = 0x02;  // kHasExplicit
+        api_data[0] = 0x20;  // kHasPrepended
         uint64_t cnt = count;
         std::memcpy(api_data.data() + 1, &cnt, 8);
         for (size_t i = 0; i < count; ++i) {
@@ -168,39 +168,49 @@
         fields_.push_back(f);
       };
 
-      // Composition arcs + list metadata as token[] fields (full round-trip).
-      // The token[] carries the within-spec effective (composed) list.
-      add_token_array_field("references", prim.meta().references);
-      add_token_array_field("payload", prim.meta().payloads);
-      add_token_array_field("inherits", prim.meta().inherits);
-      add_token_array_field("specializes", prim.meta().specializes);
-
-      // Phase 7 S5: when an arc field carries a non-bare list-op qualifier,
-      // also emit a companion `<arc>_listOp` token[] preserving the authored
-      // prepend/append/delete/order sublists (marker-delimited). Absent =>
-      // the token[] above is an explicit (bare) list. Next-private fields;
-      // unknown fields are ignored by other readers.
-      const ArcListOpEdits* edits = prim.meta().arc_edits();
-      auto add_arc_listop = [&](const char* base, const ArcEdit* e) {
-        if (!e || !e->authored || e->is_explicit) return;
-        std::vector<std::string> enc;
-        auto section = [&](const char* marker,
-                           const std::vector<std::string>& items) {
-          if (items.empty()) return;
-          enc.push_back(marker);
-          enc.insert(enc.end(), items.begin(), items.end());
-        };
-        section("\x01P", e->prepended);
-        section("\x01A", e->appended);
-        section("\x01D", e->deleted);
-        section("\x01O", e->ordered);
-        if (enc.empty()) enc.push_back("\x01N");  // non-explicit, no items
-        add_token_array_field(std::string(base) + "_listOp", enc);
+      // Composition arcs in pxr-native encodings (pxr rejects the whole layer
+      // when a known field like `references` holds a token[] instead of its
+      // schema type). The effective (composed) list is written explicitly;
+      // authored list-op sublists additionally round-trip via the next-private
+      // `<arc>_listOp` companion fields below.
+      const ArcListOpEdits* arc_edits = prim.meta().arc_edits();
+      auto add_ref_listop_field = [&](const char* name,
+                                      const std::vector<std::string>& arcs,
+                                      bool is_payload, const ArcEdit* e) {
+        if (arcs.empty() && !(e && e->authored)) return;
+        uint64_t blk = StoreReferenceListOp(arcs, is_payload, e);
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = ValueRep::Make(is_payload ? CrateTypeId::PayloadListOp
+                                                : CrateTypeId::ReferenceListOp,
+                                     blk, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
       };
-      add_arc_listop("references", edits ? &edits->references : nullptr);
-      add_arc_listop("payload", edits ? &edits->payloads : nullptr);
-      add_arc_listop("inherits", edits ? &edits->inherits : nullptr);
-      add_arc_listop("specializes", edits ? &edits->specializes : nullptr);
+      auto add_path_listop_field = [&](const char* name,
+                                       const std::vector<std::string>& arcs,
+                                       const ArcEdit* e) {
+        if (arcs.empty() && !(e && e->authored)) return;
+        uint64_t blk = StorePathArcListOp(arcs, e);
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep =
+            ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+      add_ref_listop_field("references", prim.meta().references, false,
+                           arc_edits ? &arc_edits->references : nullptr);
+      add_ref_listop_field("payload", prim.meta().payloads, true,
+                           arc_edits ? &arc_edits->payloads : nullptr);
+      // pxr's field name for inherits is "inheritPaths".
+      add_path_listop_field("inheritPaths", prim.meta().inherits,
+                            arc_edits ? &arc_edits->inherits : nullptr);
+      add_path_listop_field("specializes", prim.meta().specializes,
+                            arc_edits ? &arc_edits->specializes : nullptr);
+
+      // Authored list-op sublists round-trip natively inside the pxr listop
+      // encodings above (no next-private companion fields).
       if (!prim.meta().comment().empty()) {
         add_string_field("comment", prim.meta().comment());
       }
@@ -295,6 +305,11 @@
           for (const auto& kv : oit->second) set_names.push_back(kv.first);
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
           fields_.push_back(MakeTokenVectorField("variantSetChildren", set_names));
+          // variantSetNames (StringListOp): required by pxr's Pcp to create
+          // the variant arcs — without it usdcat opens the layer but a
+          // flatten/compose drops all variant content.
+          fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(MakeStringListOpField("variantSetNames", set_names));
         }
       }
 
@@ -360,8 +375,12 @@
         fields_.push_back(f);
       }
 
+      // Stage metadata below is gated on the same "differs from fallback"
+      // heuristics the usda writer uses, so an unauthored default does not
+      // round-trip into a spuriously authored opinion (authored-at-default
+      // values are collapsed, matching the usda writer).
       // upAxis
-      {
+      if (layer.meta().upAxis != "Y") {
         CrateField f;
         f.token_index.value = InternToken("upAxis");
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
@@ -372,7 +391,7 @@
       }
 
       // metersPerUnit
-      {
+      if (layer.meta().metersPerUnit != 0.01) {
         CrateField f;
         f.token_index.value = InternToken("metersPerUnit");
         double v = layer.meta().metersPerUnit;
@@ -383,7 +402,7 @@
       }
 
       // timeCodesPerSecond
-      {
+      if (layer.meta().timeCodesPerSecond != 24.0) {
         CrateField f;
         f.token_index.value = InternToken("timeCodesPerSecond");
         double v = layer.meta().timeCodesPerSecond;
@@ -394,7 +413,8 @@
       }
 
       // startTimeCode
-      {
+      if (layer.meta().startTimeCode != 0.0 ||
+          layer.meta().endTimeCode != 0.0) {
         CrateField f;
         f.token_index.value = InternToken("startTimeCode");
         double v = layer.meta().startTimeCode;
@@ -406,7 +426,8 @@
       }
 
       // endTimeCode
-      {
+      if (layer.meta().startTimeCode != 0.0 ||
+          layer.meta().endTimeCode != 0.0) {
         CrateField f;
         f.token_index.value = InternToken("endTimeCode");
         double v = layer.meta().endTimeCode;
@@ -472,13 +493,31 @@
         fields_.push_back(f);
       }
 
-      // subLayers (token[] — all entries round-trip; the reader reads them back)
+      // subLayers (StringVector — pxr's schema type; a token[] here reads back
+      // in pxr as an empty sublayer list)
       if (!layer.meta().subLayers.empty()) {
-        CrateField f;
-        f.token_index.value = InternToken("subLayers");
-        f.value_rep = EncodeValue(Value::MakeTokenArray(layer.meta().subLayers));
+        CrateField f = MakeStringVectorField("subLayers", layer.meta().subLayers);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
+        // subLayerOffsets must accompany subLayers (one identity offset per
+        // entry) — pxr errors with "Invalid sublayer index" without it.
+        // Layout: [u64 count][f64 offset, f64 scale] per entry.
+        const size_t n = layer.meta().subLayers.size();
+        std::vector<uint8_t> raw(8 + n * 16);
+        uint64_t cnt = n;
+        std::memcpy(raw.data(), &cnt, 8);
+        for (size_t i = 0; i < n; ++i) {
+          const double offset = 0.0, scale = 1.0;
+          std::memcpy(raw.data() + 8 + i * 16, &offset, 8);
+          std::memcpy(raw.data() + 8 + i * 16 + 8, &scale, 8);
+        }
+        uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+        CrateField fo;
+        fo.token_index.value = InternToken("subLayerOffsets");
+        fo.value_rep = ValueRep::Make(CrateTypeId::LayerOffsetVector, data_idx,
+                                      false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(fo);
       }
 
       uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());

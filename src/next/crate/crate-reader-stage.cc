@@ -372,6 +372,18 @@ bool CrateReader::Impl::BuildStage() {
         }
       }
     }
+    // Role types (texCoord2f, point3f, color3h, ...) exist in the crate only
+    // via the declared typeName — the value itself is stored as its base type
+    // (Vec2f, Vec3f, ...). Re-tag so the in-memory Value matches what the
+    // usda parser produces for the same authoring.
+    if (ai.has_default && !ai.type_name.empty()) {
+      std::string base = ai.type_name;
+      if (base.size() >= 2 && base.compare(base.size() - 2, 2, "[]") == 0) {
+        base.resize(base.size() - 2);
+      }
+      TypeId declared = GetTypeIdFromName(base.c_str());
+      if (declared != TypeId::Invalid) ai.default_value.retag_role(declared);
+    }
     attr_map[prim_path].push_back(std::move(ai));
   }
 
@@ -430,11 +442,15 @@ bool CrateReader::Impl::BuildStage() {
       e.is_explicit = false;
       std::vector<std::string>* cur = nullptr;
       for (const std::string& s : *arr) {
-        if (s == "\x01P") cur = &e.prepended;
-        else if (s == "\x01A") cur = &e.appended;
-        else if (s == "\x01D") cur = &e.deleted;
-        else if (s == "\x01O") cur = &e.ordered;
-        else if (s == "\x01N") cur = nullptr;
+        // Both marker spellings are accepted: the correct two-byte form
+        // ("\x01" "A") and the legacy single-byte form (in C++, "\x01A"
+        // parses as the one char 0x1A because 'A' is a hex digit) written by
+        // older next crates.
+        if (s == "\x01" "P" || s == "\x01P") cur = &e.prepended;
+        else if (s == "\x01" "A" || s == "\x1A") cur = &e.appended;
+        else if (s == "\x01" "D" || s == "\x1D") cur = &e.deleted;
+        else if (s == "\x01" "O" || s == "\x01O") cur = &e.ordered;
+        else if (s == "\x01" "N" || s == "\x01N") cur = nullptr;
         else if (cur) cur->push_back(s);
       }
     };
@@ -485,20 +501,54 @@ bool CrateReader::Impl::BuildStage() {
           append_token_list(field.second, ps->meta().apiSchemas(), "apiSchemas");
           continue;
         }
+        // Composition arc lists. A marker-delimited token array (first entry
+        // "\x01?") is a non-explicit list-op decoded from the native crate
+        // encoding: reconstruct the authored edits and derive the effective
+        // (within-spec) list; otherwise it is a plain explicit list.
+        auto is_marker_list = [](const Value& v) {
+          const std::vector<std::string>* arr = v.as_token_array();
+          return arr && !arr->empty() && !(*arr)[0].empty() &&
+                 (*arr)[0][0] == '\x01';
+        };
+        auto apply_arc_field = [&](const Value& v,
+                                   std::vector<std::string>& target,
+                                   ArcEdit& (*sel)(ArcListOpEdits&),
+                                   const char* what) {
+          if (is_marker_list(v)) {
+            ArcEdit& e = sel(ps->meta().ensure_arc_edits());
+            decode_arc_listop(v, e);
+            // Effective list within a single spec: prepended then appended
+            // (delete/reorder operate on weaker opinions, not this list).
+            target = e.prepended;
+            target.insert(target.end(), e.appended.begin(), e.appended.end());
+          } else {
+            append_token_list(v, target, what);
+          }
+        };
         if (field.first == "references") {
-          append_token_list(field.second, ps->meta().references, "references");
+          apply_arc_field(field.second, ps->meta().references,
+                          [](ArcListOpEdits& a) -> ArcEdit& { return a.references; },
+                          "references");
           continue;
         }
         if (field.first == "payload") {
-          append_token_list(field.second, ps->meta().payloads, "payload");
+          apply_arc_field(field.second, ps->meta().payloads,
+                          [](ArcListOpEdits& a) -> ArcEdit& { return a.payloads; },
+                          "payload");
           continue;
         }
-        if (field.first == "inherits") {
-          append_token_list(field.second, ps->meta().inherits, "inherits");
+        if (field.first == "inherits" || field.first == "inheritPaths") {
+          // pxr's crate field name is "inheritPaths"; next's own writer used
+          // "inherits". Accept both.
+          apply_arc_field(field.second, ps->meta().inherits,
+                          [](ArcListOpEdits& a) -> ArcEdit& { return a.inherits; },
+                          "inherits");
           continue;
         }
         if (field.first == "specializes") {
-          append_token_list(field.second, ps->meta().specializes, "specializes");
+          apply_arc_field(field.second, ps->meta().specializes,
+                          [](ArcListOpEdits& a) -> ArcEdit& { return a.specializes; },
+                          "specializes");
           continue;
         }
         if (field.first == "references_listOp") {
