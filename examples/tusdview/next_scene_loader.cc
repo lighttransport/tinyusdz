@@ -23,6 +23,8 @@
 // `next` + tydra-next (built on demand; see CMakeLists.txt).
 #include "next/tinyusdz-next.hh"
 #include "next/reader/usdz-reader.hh"  // USDZReader (embedded --next textures)
+#include "next/schema/usd-skel.hh"     // GetSkeletonData / GetSkelAnimationData
+#include "tydra/scene-access.hh"       // SkinPointsLBS / ConcatJointTransforms
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
@@ -496,6 +498,256 @@ void BakeBlendShapes(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
       v.nx *= inv; v.ny *= inv; v.nz *= inv;
     }
   }
+}
+
+// Recompute area-weighted smooth vertex normals from positions (mirrors the
+// BakeBlendShapes tail). Geometric-shaded meshes re-derive normals in the
+// shader, so skip them.
+void RecomputeSmoothNormalsNext(DrawMeshCPU* dm) {
+  if (dm->geometricNormal) return;
+  const size_t np = dm->vertices.size();
+  for (size_t i = 0; i < np; ++i)
+    dm->vertices[i].nx = dm->vertices[i].ny = dm->vertices[i].nz = 0.0f;
+  for (size_t t = 0; t + 2 < dm->indices.size(); t += 3) {
+    const uint32_t a = dm->indices[t], b = dm->indices[t + 1], c = dm->indices[t + 2];
+    if (a >= np || b >= np || c >= np) continue;
+    const DrawVertex& va = dm->vertices[a];
+    const DrawVertex& vb = dm->vertices[b];
+    const DrawVertex& vc = dm->vertices[c];
+    const float e1x = vb.px - va.px, e1y = vb.py - va.py, e1z = vb.pz - va.pz;
+    const float e2x = vc.px - va.px, e2y = vc.py - va.py, e2z = vc.pz - va.pz;
+    const float fnx = e1y * e2z - e1z * e2y, fny = e1z * e2x - e1x * e2z,
+                fnz = e1x * e2y - e1y * e2x;
+    for (uint32_t v : {a, b, c}) {
+      dm->vertices[v].nx += fnx; dm->vertices[v].ny += fny; dm->vertices[v].nz += fnz;
+    }
+  }
+  for (size_t i = 0; i < np; ++i) {
+    DrawVertex& v = dm->vertices[i];
+    const float len = std::sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+    if (len > 1e-12f) { const float inv = 1.0f / len; v.nx *= inv; v.ny *= inv; v.nz *= inv; }
+  }
+}
+
+tnext::UsdPrim FindSkeletonInSubtree(const tnext::UsdPrim& root) {
+  if (tinyusdz::next::IsSkeleton(root)) return root;
+  for (const tnext::UsdPrim& c : root.GetChildren()) {
+    tnext::UsdPrim r = FindSkeletonInSubtree(c);
+    if (r.IsValid()) return r;
+  }
+  return tnext::UsdPrim();
+}
+
+// Find the Skeleton bound to a skinned mesh: explicit skel:skeleton rel, else
+// the Skeleton under the enclosing SkelRoot ancestor.
+tnext::UsdPrim FindBoundSkeletonNext(const tnext::Stage& stage,
+                                     const tnext::UsdPrim& meshPrim) {
+  if (const std::vector<tnext::Path>* rel = meshPrim.GetRelationship("skel:skeleton")) {
+    if (!rel->empty()) {
+      tnext::UsdPrim s = stage.GetPrimAtPath((*rel)[0]);
+      if (s.IsValid() && tinyusdz::next::IsSkeleton(s)) return s;
+    }
+  }
+  tnext::UsdPrim p = meshPrim.GetParent();
+  while (p.IsValid()) {
+    if (p.GetTypeName() == "SkelRoot") {
+      if (const std::vector<tnext::Path>* rel = p.GetRelationship("skel:skeleton")) {
+        if (!rel->empty()) {
+          tnext::UsdPrim s = stage.GetPrimAtPath((*rel)[0]);
+          if (s.IsValid() && tinyusdz::next::IsSkeleton(s)) return s;
+        }
+      }
+      tnext::UsdPrim found = FindSkeletonInSubtree(p);
+      if (found.IsValid()) return found;
+    }
+    p = p.GetParent();
+  }
+  return tnext::UsdPrim();
+}
+
+// Find the SkelAnimation driving a skeleton: its animationSource, else a
+// skel:animationSource rel on the mesh's ancestors.
+tnext::UsdPrim FindSkelAnimationNext(const tnext::Stage& stage,
+                                     const tnext::UsdPrim& meshPrim,
+                                     const tinyusdz::next::SkeletonData& skel) {
+  if (skel.hasAnimationSource && !skel.animationSource.empty()) {
+    tnext::UsdPrim a = stage.GetPrimAtPath(skel.animationSource);
+    if (a.IsValid() && tinyusdz::next::IsSkelAnimation(a)) return a;
+  }
+  tnext::UsdPrim p = meshPrim;
+  while (p.IsValid()) {
+    if (const std::vector<tnext::Path>* rel = p.GetRelationship("skel:animationSource")) {
+      if (!rel->empty()) {
+        tnext::UsdPrim a = stage.GetPrimAtPath((*rel)[0]);
+        if (a.IsValid() && tinyusdz::next::IsSkelAnimation(a)) return a;
+      }
+    }
+    p = p.GetParent();
+  }
+  return tnext::UsdPrim();
+}
+
+// Joint-local transform from TRS (row-vector; matches skinning.cc MakeLocal).
+matrix4d SkinMakeLocal(const float t[3], const ::tinyusdz::value::quatf& r,
+                       const float s[3]) {
+  matrix4d m = ::tinyusdz::to_matrix(r);
+  m.m[0][0] *= s[0]; m.m[0][1] *= s[0]; m.m[0][2] *= s[0];
+  m.m[1][0] *= s[1]; m.m[1][1] *= s[1]; m.m[1][2] *= s[1];
+  m.m[2][0] *= s[2]; m.m[2][1] *= s[2]; m.m[2][2] *= s[2];
+  m.m[3][0] = t[0]; m.m[3][1] = t[1]; m.m[3][2] = t[2];
+  return m;
+}
+
+// Load-time skeletal skinning bake: pose the bound skeleton at `time` and LBS-
+// deform dm->vertices (rest, point-indexed) in place, then recompute normals.
+// Consistent with the --next static-preview design (blendshapes are likewise
+// baked at load; per-frame GPU skinning is the legacy path's job). No-op --
+// leaves the rest pose -- on any missing/mismatched skin/skeleton data.
+void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
+                  double time, DrawMeshCPU* dm) {
+  if (!dm || dm->vertices.empty()) return;
+  std::vector<int32_t> ji = ReadInts(meshPrim, "primvars:skel:jointIndices", time);
+  std::vector<float> jw = ReadFloats(meshPrim, "primvars:skel:jointWeights", time);
+  if (ji.empty() || ji.size() != jw.size()) return;
+  const size_t np = dm->vertices.size();
+  if (np == 0 || ji.size() % np != 0) return;  // needs vertex==point layout
+  const int numInfl = static_cast<int>(ji.size() / np);
+  if (numInfl <= 0) return;
+
+  tnext::UsdPrim skelPrim = FindBoundSkeletonNext(stage, meshPrim);
+  if (!skelPrim.IsValid()) return;
+  tinyusdz::next::SkeletonData skel;
+  if (!tinyusdz::next::GetSkeletonData(stage, skelPrim, &skel)) return;
+  const size_t nj = skel.joints.size();
+  if (nj == 0) return;
+
+  std::vector<int> topo;
+  std::string terr;
+  if (!tinyusdz::next::BuildSkelTopology(skel.joints, topo, &terr) ||
+      topo.size() != nj) {
+    return;
+  }
+
+  const bool haveRest = skel.restTransforms.size() == nj * 16;
+  const bool haveBind = skel.bindTransforms.size() == nj * 16;
+  std::vector<matrix4d> restLocal(nj), bindWorld(nj);
+  for (size_t j = 0; j < nj; ++j) {
+    restLocal[j] = haveRest ? Mat4dFromArray(&skel.restTransforms[j * 16])
+                            : matrix4d::identity();
+    bindWorld[j] = haveBind ? Mat4dFromArray(&skel.bindTransforms[j * 16])
+                            : matrix4d::identity();
+  }
+
+  // Animated local transforms: default each joint's TRS from its rest local (so
+  // a partial animation keeps rest offsets), override with the SkelAnimation.
+  std::vector<matrix4d> local = restLocal;
+  tnext::UsdPrim animPrim = FindSkelAnimationNext(stage, meshPrim, skel);
+  if (animPrim.IsValid()) {
+    tinyusdz::next::SkelAnimationData anim;
+    if (tinyusdz::next::GetSkelAnimationData(stage, animPrim, &anim, time) &&
+        !anim.joints.empty()) {
+      std::unordered_map<std::string, int> skelIdx;
+      for (size_t j = 0; j < nj; ++j) skelIdx[skel.joints[j]] = static_cast<int>(j);
+      for (size_t a = 0; a < anim.joints.size(); ++a) {
+        auto it = skelIdx.find(anim.joints[a]);
+        if (it == skelIdx.end()) continue;
+        const int j = it->second;
+        float t3[3] = {0, 0, 0}, s3[3] = {1, 1, 1};
+        ::tinyusdz::value::quatf q;
+        q.imag[0] = q.imag[1] = q.imag[2] = 0.0f; q.real = 1.0f;
+        ::tinyusdz::value::double3 dt, ds;
+        ::tinyusdz::value::quatd dq;
+        if (::tinyusdz::decompose(restLocal[j], &dt, &dq, &ds)) {
+          t3[0] = float(dt[0]); t3[1] = float(dt[1]); t3[2] = float(dt[2]);
+          s3[0] = float(ds[0]); s3[1] = float(ds[1]); s3[2] = float(ds[2]);
+          q.imag[0] = float(dq.imag[0]); q.imag[1] = float(dq.imag[1]);
+          q.imag[2] = float(dq.imag[2]); q.real = float(dq.real);
+        }
+        if (anim.hasTranslations && (a + 1) * 3 <= anim.translations.size()) {
+          t3[0] = anim.translations[a * 3 + 0];
+          t3[1] = anim.translations[a * 3 + 1];
+          t3[2] = anim.translations[a * 3 + 2];
+        }
+        if (anim.hasRotations && (a + 1) * 4 <= anim.rotations.size()) {
+          q.imag[0] = anim.rotations[a * 4 + 0];
+          q.imag[1] = anim.rotations[a * 4 + 1];
+          q.imag[2] = anim.rotations[a * 4 + 2];
+          q.real = anim.rotations[a * 4 + 3];
+        }
+        if (anim.hasScales && (a + 1) * 3 <= anim.scales.size()) {
+          s3[0] = anim.scales[a * 3 + 0];
+          s3[1] = anim.scales[a * 3 + 1];
+          s3[2] = anim.scales[a * 3 + 2];
+        }
+        local[j] = SkinMakeLocal(t3, q, s3);
+      }
+    }
+  }
+
+  std::vector<matrix4d> world;
+  if (!tinyusdz::tydra::ConcatJointTransforms(topo, local, &world) ||
+      world.size() != nj) {
+    return;
+  }
+  // Synthesize the bind pose from the rest world transform when bind is absent.
+  if (!haveBind) {
+    std::vector<matrix4d> restWorld;
+    if (tinyusdz::tydra::ConcatJointTransforms(topo, restLocal, &restWorld) &&
+        restWorld.size() == nj) {
+      bindWorld = std::move(restWorld);
+    }
+  }
+  std::vector<matrix4d> skinMat(nj);
+  for (size_t j = 0; j < nj; ++j)
+    skinMat[j] = ::tinyusdz::inverse(bindWorld[j]) * world[j];
+
+  // Remap mesh-authored joint order into skeleton order (when authored).
+  std::vector<int> idx(ji.begin(), ji.end());
+  std::vector<std::string> meshJoints = ReadTokens(meshPrim, "primvars:skel:joints", time);
+  if (!meshJoints.empty()) {
+    std::unordered_map<std::string, int> skelIdx;
+    for (size_t j = 0; j < nj; ++j) skelIdx[skel.joints[j]] = static_cast<int>(j);
+    std::vector<int> remap(meshJoints.size(), -1);
+    for (size_t i = 0; i < meshJoints.size(); ++i) {
+      auto it = skelIdx.find(meshJoints[i]);
+      if (it != skelIdx.end()) remap[i] = it->second;
+    }
+    for (int& v : idx) {
+      v = (v >= 0 && v < static_cast<int>(remap.size())) ? remap[v] : -1;
+      if (v < 0) return;  // unresolved joint -> leave rest pose (safe)
+    }
+  }
+  for (int& v : idx)
+    if (v < 0 || v >= static_cast<int>(nj)) v = 0;  // clamp stray indices
+
+  // geomBindTransform (single matrix4d; identity when absent).
+  matrix4d geomBind = matrix4d::identity();
+  if (const tnext::Value* gv =
+          meshPrim.GetPropertyValue("primvars:skel:geomBindTransform")) {
+    tnext::Value tmp;
+    const tnext::Value* v = gv;
+    if (gv->is_lazy()) { tmp = gv->materialized_copy(); v = &tmp; }
+    if (const double* d = v->as_matrix4d()) geomBind = Mat4dFromArray(d);
+  }
+
+  std::vector<::tinyusdz::value::point3f> rest(np), skinned;
+  for (size_t i = 0; i < np; ++i) {
+    rest[i].x = dm->vertices[i].px;
+    rest[i].y = dm->vertices[i].py;
+    rest[i].z = dm->vertices[i].pz;
+  }
+  std::string lerr;
+  if (!tinyusdz::tydra::SkinPointsLBS(rest, geomBind, skinMat, idx, jw, numInfl,
+                                      &skinned, &lerr) ||
+      skinned.size() != np) {
+    return;
+  }
+  for (size_t i = 0; i < np; ++i) {
+    dm->vertices[i].px = skinned[i].x;
+    dm->vertices[i].py = skinned[i].y;
+    dm->vertices[i].pz = skinned[i].z;
+  }
+  RecomputeSmoothNormalsNext(dm);
 }
 
 // Build GPU-morph CSR channels for a prototype mesh, so the instanced raster
@@ -1847,6 +2099,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (!conv.ConvertMesh(mp, &m)) continue;
     DrawMeshCPU loc;
     if (!FillFlatGeometry(m, &loc)) continue;
+    // Load-time skeletal skinning bake (static pose at `time`), before the
+    // vertices are world-baked into the batch. No-op for unskinned meshes.
+    BakeSkinning(stage, mp, time, &loc);
     const std::string purpose = ResolveNextPurpose(stage, mp.GetPath().str());
     const int matId = resolveMeshMaterial(mp);
     double mw16[16];
