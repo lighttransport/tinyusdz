@@ -460,7 +460,13 @@ async function loadUSDFromData(data, filename, backend = 'legacy') {
         sendProgress('building', 80, 'Building next static scene...');
         const built = buildNextThreeNode(usd, {
             skipTextures: false,
-            lazyTextures: true
+            lazyTextures: true,
+            onProgress: (info) => {
+                const pct = 80 + Math.min(1, Math.max(0, info.percentage / 100)) * 14;
+                sendProgress('building', pct, info.message ||
+                    `Building next scene (${info.builtMeshes}/${info.totalMeshes})...`);
+            },
+            progressInterval: 20
         });
         sceneState.root = built.node;
         sceneState.textureLoadingManager = built.textureManager;
@@ -487,14 +493,12 @@ async function loadUSDFromData(data, filename, backend = 'legacy') {
             texManager.startLoading({
                 onProgress: (info) => sendTextureProgress(info),
                 onTextureLoaded: (material) => { material.needsUpdate = true; },
-                concurrency: 2,
+                concurrency: 16,
                 yieldInterval: 16
             }).then(status => {
                 sceneState.textureCount = status.loaded;
                 sendTextureProgress({
-                    loaded: status.loaded,
-                    total: status.total,
-                    failed: status.failed,
+                    ...status,
                     percentage: 100,
                     isComplete: true
                 });

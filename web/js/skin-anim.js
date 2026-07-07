@@ -243,6 +243,45 @@ let timelineBaseEnd = 30;
 let selectAnimationController = null;
 let _lastMixerUpdateTime = 0; // For mixer update throttling
 let _mixerAccumDelta = 0; // Accumulated delta for throttled updates
+let _enableBoneInterpolation = true;
+let _totalLoadedBones = 0;
+let _shadowsAutoDisabled = false;
+const BONE_INTERPOLATION_MAX_BONES = 512;
+const SHADOWS_MAX_BONES = 512;
+
+function currentMixerUpdateInterval() {
+	if (_totalLoadedBones > BONE_INTERPOLATION_MAX_BONES) {
+		const authoredFps = Number.isFinite(currentTimeCodesPerSecond)
+			? currentTimeCodesPerSecond
+			: 24;
+		return 1 / Math.max(1, Math.min(24, authoredFps));
+	}
+	return 1 / 30;
+}
+
+function setMeshShadowFlags(mesh, visible = mesh.visible) {
+	const shadowsEnabled = animationParams?.enableShadows === true;
+	mesh.castShadow = shadowsEnabled && visible;
+	mesh.receiveShadow = shadowsEnabled;
+}
+
+function applyShadowSettings() {
+	const enabled = animationParams?.enableShadows === true;
+	renderer.shadowMap.enabled = enabled;
+	directionalLight.castShadow = enabled;
+	ground.receiveShadow = enabled;
+	for (const mesh of allSceneMeshes) {
+		const visible = meshVisibility.get(mesh) !== false && animationParams.showMesh;
+		setMeshShadowFlags(mesh, visible);
+		if (mesh.material) {
+			if (Array.isArray(mesh.material)) {
+				mesh.material.forEach((mat) => { if (mat) mat.needsUpdate = true; });
+			} else {
+				mesh.material.needsUpdate = true;
+			}
+		}
+	}
+}
 
 
 // Store the current file's timeCodesPerSecond (default 24)
@@ -273,8 +312,8 @@ let availableVariantSelections = [];
 // mixer.update() at 60fps causes ~67MB/s of transient allocations from
 // Three.js interpolants, ballooning the JS heap to ~2.5GB before GC.
 // Keeping the mixer at 30fps halves the allocation rate, but makes
-// animation visibly choppy (every other rendered frame shows the same
-// skeletal pose).
+	// animation visibly choppy (every other rendered frame shows the same
+	// skeletal pose).
 //
 // Solution: run the mixer at 30fps and on intermediate frames lerp/slerp
 // bone local transforms between the two most recent mixer snapshots.
@@ -1102,6 +1141,7 @@ function updateLoadStatsPanel(stats) {
 }
 
 function beginLoadStats(fileSize = null) {
+	window.renderComplete = false;
 	const stats = {
 		status: 'loading',
 		startTime: performance.now(),
@@ -1133,6 +1173,7 @@ async function parseAndProcessUSD(loader, arrayBuffer, filename, stats) {
 	stats.memoryAfter = captureMemorySnapshot();
 	stats.status = 'done';
 	updateLoadStatsPanel(stats);
+	window.renderComplete = true;
 }
 
 /**
@@ -1417,8 +1458,7 @@ async function processUSDScene(usd_scene, filename) {
 		allSceneMeshes = [];
 		built.node.traverse((obj) => {
 			if (obj.isMesh) {
-				obj.castShadow = true;
-				obj.receiveShadow = true;
+				setMeshShadowFlags(obj, obj.visible);
 				allSceneMeshes.push(obj);
 			}
 		});
@@ -1497,6 +1537,17 @@ async function processUSDScene(usd_scene, filename) {
 	const skeletonDataArray = skeletonBuild.skeletonDataArray;
 	let bones = skeletonBuild.firstBones;
 	boneMaps = skeletonBuild.boneMaps;
+	_totalLoadedBones = skeletonDataArray.reduce((sum, skel) => {
+		const count = skel?.bones?.length ?? skel?.joints?.length ?? 0;
+		return sum + count;
+	}, 0);
+	_enableBoneInterpolation = _totalLoadedBones <= BONE_INTERPOLATION_MAX_BONES;
+	if (!_enableBoneInterpolation) {
+		_clearBoneInterpData();
+		console.log(
+			`Sub-frame bone interpolation disabled for large rig (${_totalLoadedBones} bones > ${BONE_INTERPOLATION_MAX_BONES})`
+		);
+	}
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -1559,6 +1610,15 @@ async function processUSDScene(usd_scene, filename) {
 	skeletonHelpers = skinningResult.skeletonHelpers;
 	allSceneMeshes = skinningResult.allSceneMeshes;
 	meshVisibility = skinningResult.meshVisibility;
+	if (_totalLoadedBones > SHADOWS_MAX_BONES && animationParams.enableShadows) {
+		animationParams.enableShadows = false;
+		_shadowsAutoDisabled = true;
+		console.log(`Shadows disabled for large rig (${_totalLoadedBones} bones > ${SHADOWS_MAX_BONES}); re-enable in GUI if needed`);
+	} else if (_totalLoadedBones <= SHADOWS_MAX_BONES && _shadowsAutoDisabled) {
+		animationParams.enableShadows = true;
+		_shadowsAutoDisabled = false;
+	}
+	applyShadowSettings();
 
 	skinnedMesh = skinningResult.primaryMesh || null;
 	originalMaterial = skinnedMesh ? skinnedMesh.material : null;
@@ -2058,7 +2118,7 @@ animationParams = {
 		for (const mesh of allSceneMeshes) {
 			const perMesh = meshVisibility.get(mesh) !== false;
 			mesh.visible = perMesh && this.showMesh;
-			mesh.castShadow = mesh.visible;
+			setMeshShadowFlags(mesh, mesh.visible);
 		}
 	},
 
@@ -2238,14 +2298,8 @@ animationParams = {
 	// Shadows
 	enableShadows: true,
 	toggleShadows: function() {
-		renderer.shadowMap.enabled = this.enableShadows;
-		directionalLight.castShadow = this.enableShadows;
-		// Need to update materials and re-render
-		scene.traverse((child) => {
-			if (child.isMesh) {
-				child.material.needsUpdate = true;
-			}
-		});
+		_shadowsAutoDisabled = false;
+		applyShadowSettings();
 		console.log(`Shadows ${this.enableShadows ? 'enabled' : 'disabled'}`);
 	},
 
@@ -2269,7 +2323,7 @@ animationParams = {
 		const newState = !current;
 		meshVisibility.set(mesh, newState);
 		mesh.visible = newState && this.showMesh;
-		mesh.castShadow = mesh.visible;
+		setMeshShadowFlags(mesh, mesh.visible);
 		updateMeshListGUI();
 	},
 	deselectMesh: function() {
@@ -2762,7 +2816,7 @@ function animate() {
 	// timeline display), mixer evaluates at throttled rate to limit Three.js
 	// interpolant allocations, bone interpolation fills intermediate frames.
 	if (mixer && animationParams.isPlaying) {
-		const mixerInterval = 1 / 30;
+		const mixerInterval = currentMixerUpdateInterval();
 		_mixerAccumDelta += deltaTime;
 
 		// Advance timeline by real time every frame
@@ -2792,11 +2846,15 @@ function animate() {
 				syncPlaybackState(animationPlayback.setTime(animationParams.time, true));
 			}
 
-			// Snapshot bone transforms after mixer evaluation
-			for (const [skelId, skel] of skeletons) {
-				_snapshotBones(skelId, skel.bones);
+			// Snapshot bone transforms after mixer evaluation only when
+			// interpolation is enabled. Very large rigs spend more time
+			// interpolating every rendered frame than they save in smoothness.
+			if (_enableBoneInterpolation) {
+				for (const [skelId, skel] of skeletons) {
+					_snapshotBones(skelId, skel.bones);
+				}
 			}
-		} else if (skeletons.size > 0) {
+		} else if (_enableBoneInterpolation && skeletons.size > 0) {
 			// Intermediate frame: lerp/slerp between prev and curr snapshots
 			const alpha = _mixerAccumDelta / mixerInterval;
 			for (const [skelId, skel] of skeletons) {
@@ -2844,8 +2902,7 @@ function animate() {
 				const debugMat = mesh.material.clone();
 				const debugMesh = new THREE.Mesh(debugGeo, debugMat);
 				debugMesh.name = mesh.name + '_cpuSkin';
-				debugMesh.castShadow = true;
-				debugMesh.receiveShadow = true;
+				setMeshShadowFlags(debugMesh, animationParams.showMesh);
 				// Place at mesh's world transform
 				debugMesh.matrixAutoUpdate = false;
 				mesh._cpuDebugMesh = debugMesh;
@@ -2932,8 +2989,7 @@ function animate() {
 				const debugMat = mesh.material.clone();
 				const debugMesh = new THREE.Mesh(debugGeo, debugMat);
 				debugMesh.name = mesh.name + '_rawMesh';
-				debugMesh.castShadow = true;
-				debugMesh.receiveShadow = true;
+				setMeshShadowFlags(debugMesh, animationParams.showMesh);
 				debugMesh.matrixAutoUpdate = false;
 				mesh._rawDebugMesh = debugMesh;
 				scene.add(debugMesh);

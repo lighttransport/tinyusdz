@@ -127,6 +127,7 @@ const state = {
     loader: null,
     usdData: null,
     currentModel: null,
+    textureLoadingManager: null,
 
     // Materials
     materials: [],
@@ -179,6 +180,7 @@ const state = {
     // Demand rendering: only call renderer.render() when this is true
     // or when OrbitControls is still damping (controls.update() returns true).
     renderNeeded: true,
+    shaderCompileHandle: null,
 
     // Undo/redo history for node graph edits
     undoStack: [],              // array of JSON-serialized graph snapshots (pre-change)
@@ -2502,11 +2504,14 @@ async function initLoader() {
 }
 
 async function loadUSDFile(file) {
+    window.renderComplete = false;
     showLoading(true);
     updateStatus(`Loading ${file.name}...`);
     const stats = beginLoadStats(null, file.name);
 
     try {
+        clearCurrentUSDScene();
+
         const readStart = performance.now();
         const arrayBuffer = await file.arrayBuffer();
         stats.fetchMs = performance.now() - readStart;
@@ -2521,13 +2526,6 @@ async function loadUSDFile(file) {
 
         if (!state.usdData) {
             throw new Error('Failed to parse USD file');
-        }
-
-        // Clear existing
-        clearSelection();
-        if (state.currentModel) {
-            state.scene.remove(state.currentModel);
-            disposeObject(state.currentModel);
         }
 
         // Build scene (material loading consolidated inside buildScene)
@@ -2545,6 +2543,7 @@ async function loadUSDFile(file) {
 
         showToast(`Loaded ${file.name}`);
         finishLoadStats(stats);
+        window.renderComplete = true;
 
     } catch (error) {
         failLoadStats(stats);
@@ -2558,11 +2557,14 @@ async function loadUSDFile(file) {
 
 async function loadUSDFromURI(uri) {
     const displayName = getDisplayNameFromURI(uri);
+    window.renderComplete = false;
     showLoading(true);
     updateStatus(`Loading ${displayName}...`);
     const stats = beginLoadStats(null, displayName);
 
     try {
+        clearCurrentUSDScene();
+
         const fetchStart = performance.now();
         const response = await fetch(uri);
         if (!response.ok) {
@@ -2586,12 +2588,6 @@ async function loadUSDFromURI(uri) {
             throw new Error('Failed to parse USD file');
         }
 
-        clearSelection();
-        if (state.currentModel) {
-            state.scene.remove(state.currentModel);
-            disposeObject(state.currentModel);
-        }
-
         const processStart = performance.now();
         await buildScene();
         stats.processMs = performance.now() - processStart;
@@ -2603,6 +2599,7 @@ async function loadUSDFromURI(uri) {
 
         showToast(`Loaded ${displayName}`);
         finishLoadStats(stats);
+        window.renderComplete = true;
     } catch (error) {
         failLoadStats(stats);
         console.error(`Load error (${uri}):`, error);
@@ -2850,7 +2847,7 @@ function isLinearColorspace(cs) {
  * Modifies the texture's image data in-place.
  */
 function bakeTextureOps(texture, ops) {
-    if (!ops || ops.length === 0) return;
+    if (!textureOpsNeedBake(ops)) return;
 
     // Get image data from the texture
     const image = texture.image;
@@ -2948,9 +2945,224 @@ function bakeTextureOps(texture, ops) {
     texture.needsUpdate = true;
 }
 
-async function loadMaterialTextures(openPBR, nativeLoader) {
+async function loadCachedUSDTexture(nativeLoader, textureId, cache) {
+    if (!cache.usdTextures.has(textureId)) {
+        cache.usdTextures.set(textureId, TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, textureId));
+    }
+    return cache.usdTextures.get(textureId);
+}
+
+async function loadCachedExternalTexture(url, cache) {
+    if (!cache.externalTextures.has(url)) {
+        cache.externalTextures.set(url, new Promise((resolve, reject) => {
+            new THREE.TextureLoader().load(url, resolve, undefined, reject);
+        }));
+    }
+    return cache.externalTextures.get(url);
+}
+
+function textureOpsNeedBake(ops) {
+    if (!ops || ops.length === 0) return false;
+    const hasCombine = ops.some(op => (op.category || '').startsWith('combine'));
+    for (const op of ops) {
+        const cat = op.category;
+        if (cat === 'power' || cat === 'multiply' || cat === 'add' || cat === 'invert') {
+            return true;
+        }
+        if (cat === 'extract' && !hasCombine) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function materialTextureInstance(texture, colorSpace, ops = null, cache = null) {
+    if (!texture) return texture;
+    const needsBake = textureOpsNeedBake(ops);
+    const instanceKey = cache ?
+        `${texture.uuid || texture.id}|${colorSpace}|${needsBake ? JSON.stringify(ops) : ''}` :
+        null;
+    if (instanceKey && cache.textureInstances?.has(instanceKey)) {
+        return cache.textureInstances.get(instanceKey);
+    }
+
+    const needsClone = needsBake || (texture.colorSpace && texture.colorSpace !== colorSpace);
+    const out = needsClone ? texture.clone() : texture;
+    out.colorSpace = colorSpace;
+    if (needsBake) {
+        bakeTextureOps(out, ops);
+    } else {
+        out.needsUpdate = true;
+    }
+    if (instanceKey && cache.textureInstances) {
+        cache.textureInstances.set(instanceKey, out);
+    }
+    return out;
+}
+
+const OPENPBR_TEXTURE_PROPS = {
+    base_color: 'map',
+    specular_roughness: 'roughnessMap',
+    base_metalness: 'metalnessMap',
+    emission_color: 'emissiveMap',
+    geometry_opacity: 'alphaMap',
+    normal: 'normalMap',
+    coat_weight: 'clearcoatMap',
+    coat_roughness: 'clearcoatRoughnessMap',
+};
+
+function addLazyTextureSpec(lazyByKey, spec) {
+    const mapProperty = OPENPBR_TEXTURE_PROPS[spec.texKey];
+    if (!mapProperty) return;
+    const existing = lazyByKey.get(spec.texKey);
+    lazyByKey.set(spec.texKey, {
+        ...existing,
+        ...spec,
+        mapProperty,
+        ops: spec.ops || existing?.ops || null
+    });
+}
+
+class OpenPBRTextureLoadingManager {
+    constructor(cache) {
+        this.cache = cache;
+        this.queue = [];
+        this.loaded = 0;
+        this.failed = 0;
+        this.total = 0;
+        this.isLoading = false;
+        this.aborted = false;
+    }
+
+    addMaterialTextures(material, specs) {
+        if (!material || !Array.isArray(specs)) return;
+        for (const spec of specs) {
+            if (!spec.mapProperty || typeof spec.load !== 'function') continue;
+            this.queue.push({ ...spec, material });
+        }
+        this.total = this.queue.length;
+    }
+
+    getStatus() {
+        return {
+            total: this.total,
+            loaded: this.loaded,
+            failed: this.failed,
+            pending: this.total - this.loaded - this.failed,
+            percentage: this.total > 0 ? (this.loaded / this.total) * 100 : 0,
+            isLoading: this.isLoading,
+            isComplete: this.loaded + this.failed >= this.total && !this.isLoading
+        };
+    }
+
+    abort() {
+        this.aborted = true;
+    }
+
+    reset() {
+        this.queue = [];
+        if (this.cache) {
+            this.cache.usdTextures?.clear();
+            this.cache.externalTextures?.clear();
+            this.cache.resolvedTextureIds?.clear();
+            this.cache.filenameTextureIds?.clear();
+            this.cache.textureInstances?.clear();
+        }
+        this.loaded = 0;
+        this.failed = 0;
+        this.total = 0;
+        this.isLoading = false;
+        this.aborted = false;
+    }
+
+    async startLoading(options = {}) {
+        const {
+            concurrency = 4,
+            yieldInterval = 16,
+            onTextureLoaded = null,
+            onProgress = null
+        } = options;
+        if (this.isLoading) return this.getStatus();
+        this.isLoading = true;
+        this.aborted = false;
+        let lastYieldTime = performance.now();
+        if (onProgress) {
+            onProgress({ loaded: 0, failed: 0, total: this.total, percentage: 0 });
+        }
+        await new Promise(r => requestAnimationFrame(r));
+
+        const pending = [...this.queue];
+        const active = new Set();
+        const runTask = async (task) => {
+            if (this.aborted) return;
+            try {
+                const baseTexture = await task.load();
+                if (baseTexture && !this.aborted) {
+                    const texture = materialTextureInstance(baseTexture, task.colorSpace, task.ops, this.cache);
+                    task.material[task.mapProperty] = texture;
+                    if (task.mapProperty === 'alphaMap') {
+                        task.material.transparent = true;
+                    }
+                    task.material.needsUpdate = true;
+                    if (onTextureLoaded) onTextureLoaded(task.material, task.mapProperty, texture);
+                    this.loaded++;
+                }
+            } catch (err) {
+                console.warn(`Failed to load OpenPBR texture for ${task.texKey}:`, err);
+                this.failed++;
+            }
+            if (onProgress && !this.aborted) {
+                onProgress({
+                    loaded: this.loaded,
+                    failed: this.failed,
+                    total: this.total,
+                    percentage: this.total > 0 ? (this.loaded / this.total) * 100 : 100
+                });
+            }
+            const now = performance.now();
+            if (now - lastYieldTime >= yieldInterval) {
+                lastYieldTime = now;
+                await new Promise(r => requestAnimationFrame(r));
+            }
+        };
+
+        while (!this.aborted && (pending.length > 0 || active.size > 0)) {
+            while (pending.length > 0 && active.size < concurrency) {
+                const task = pending.shift();
+                const promise = runTask(task).then(() => active.delete(promise));
+                active.add(promise);
+            }
+            if (active.size > 0) {
+                await Promise.race(active);
+            }
+        }
+        this.isLoading = false;
+        if (onProgress) {
+            onProgress({
+                loaded: this.loaded,
+                failed: this.failed,
+                total: this.total,
+                percentage: 100,
+                isComplete: true
+            });
+        }
+        return this.getStatus();
+    }
+}
+
+async function loadMaterialTextures(openPBR, nativeLoader, cache = null, options = {}) {
     const textures = {};
-    if (!nativeLoader) return textures;
+    const lazy = [];
+    if (!nativeLoader) return { textures, lazy };
+    cache = cache || {
+        usdTextures: new Map(),
+        externalTextures: new Map(),
+        resolvedTextureIds: new Map(),
+        filenameTextureIds: new Map(),
+        textureInstances: new Map()
+    };
+    const lazyMode = options.lazy === true;
+    const lazyByKey = new Map();
 
     const textureParams = [
         ['base_color', 'base_color'],
@@ -2971,12 +3183,25 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
         const param = openPBR[openPBRKey];
         if (hasOpenPBRTexture(param)) {
             try {
-                const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(param));
-                const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
-                if (texture) {
-                    texture.colorSpace = linearParams.has(openPBRKey)
-                        ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
-                    textures[texKey] = texture;
+                const sourceTexId = getOpenPBRTextureId(param);
+                let texId = cache.resolvedTextureIds.get(sourceTexId);
+                if (texId === undefined) {
+                    texId = resolveTextureId(nativeLoader, sourceTexId);
+                    cache.resolvedTextureIds.set(sourceTexId, texId);
+                }
+                const colorSpace = linearParams.has(openPBRKey)
+                    ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
+                if (lazyMode) {
+                    addLazyTextureSpec(lazyByKey, {
+                        texKey,
+                        colorSpace,
+                        load: () => loadCachedUSDTexture(nativeLoader, texId, cache)
+                    });
+                } else {
+                    const texture = await loadCachedUSDTexture(nativeLoader, texId, cache);
+                    if (texture) {
+                    textures[texKey] = materialTextureInstance(texture, colorSpace, null, cache);
+                    }
                 }
             } catch (err) {
                 console.warn(`Failed to load ${openPBRKey} texture:`, err);
@@ -2989,11 +3214,23 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
     const normalParam = geometrySection.normal || openPBR.normal || openPBR.geometry_normal;
     if (hasOpenPBRTexture(normalParam)) {
         try {
-            const texId = resolveTextureId(nativeLoader, getOpenPBRTextureId(normalParam));
-            const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
-            if (texture) {
-                texture.colorSpace = THREE.LinearSRGBColorSpace;
-                textures['normal'] = texture;
+            const sourceTexId = getOpenPBRTextureId(normalParam);
+            let texId = cache.resolvedTextureIds.get(sourceTexId);
+            if (texId === undefined) {
+                texId = resolveTextureId(nativeLoader, sourceTexId);
+                cache.resolvedTextureIds.set(sourceTexId, texId);
+            }
+            if (lazyMode) {
+                addLazyTextureSpec(lazyByKey, {
+                    texKey: 'normal',
+                    colorSpace: THREE.LinearSRGBColorSpace,
+                    load: () => loadCachedUSDTexture(nativeLoader, texId, cache)
+                });
+            } else {
+                const texture = await loadCachedUSDTexture(nativeLoader, texId, cache);
+                if (texture) {
+                    textures['normal'] = materialTextureInstance(texture, THREE.LinearSRGBColorSpace, null, cache);
+                }
             }
         } catch (err) {
             console.warn('Failed to load normal map texture:', err);
@@ -3051,30 +3288,51 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
                 }
                 continue;
             }
+            if (lazyByKey.has(texKey)) {
+                addLazyTextureSpec(lazyByKey, {
+                    ...lazyByKey.get(texKey),
+                    texKey,
+                    colorSpace: threeColorSpace,
+                    ops
+                });
+                continue;
+            }
 
             try {
-                const texId = findTextureIdByFilename(nativeLoader, filename);
+                const cleanName = filename ? filename.replace(/^[@.]\//, '').replace(/@$/, '') : '';
+                let texId = cache.filenameTextureIds.get(cleanName);
+                if (texId === undefined) {
+                    texId = findTextureIdByFilename(nativeLoader, filename);
+                    cache.filenameTextureIds.set(cleanName, texId);
+                }
                 if (texId >= 0) {
-                    const texture = await TinyUSDZLoaderUtils.getTextureFromUSD(nativeLoader, texId);
-                    if (texture) {
-                        texture.colorSpace = threeColorSpace;
-                        if (ops && ops.length > 0) {
-                            bakeTextureOps(texture, ops);
+                    if (lazyMode) {
+                        addLazyTextureSpec(lazyByKey, {
+                            texKey,
+                            colorSpace: threeColorSpace,
+                            ops,
+                            load: () => loadCachedUSDTexture(nativeLoader, texId, cache)
+                        });
+                    } else {
+                        const texture = await loadCachedUSDTexture(nativeLoader, texId, cache);
+                        if (texture) {
+                            textures[texKey] = materialTextureInstance(texture, threeColorSpace, ops, cache);
                         }
-                        textures[texKey] = texture;
                     }
                 } else if (state.assetBaseUrl && filename) {
                     // Fallback: load external texture relative to the USDA file
-                    const cleanName = filename.replace(/^[@.]\//, '').replace(/@$/, '');
                     const texUrl = state.assetBaseUrl + cleanName;
-                    const texture = await new Promise((resolve, reject) => {
-                        new THREE.TextureLoader().load(texUrl, resolve, undefined, reject);
-                    });
-                    texture.colorSpace = threeColorSpace;
-                    if (ops && ops.length > 0) {
-                        bakeTextureOps(texture, ops);
+                    if (lazyMode) {
+                        addLazyTextureSpec(lazyByKey, {
+                            texKey,
+                            colorSpace: threeColorSpace,
+                            ops,
+                            load: () => loadCachedExternalTexture(texUrl, cache)
+                        });
+                    } else {
+                        const texture = await loadCachedExternalTexture(texUrl, cache);
+                        textures[texKey] = materialTextureInstance(texture, threeColorSpace, ops, cache);
                     }
-                    textures[texKey] = texture;
                 }
             } catch (err) {
                 console.warn(`Failed to load node graph texture for ${paramName}:`, err);
@@ -3082,7 +3340,8 @@ async function loadMaterialTextures(openPBR, nativeLoader) {
         }
     }
 
-    return textures;
+    lazy.push(...lazyByKey.values());
+    return { textures, lazy };
 }
 
 async function buildScene() {
@@ -3111,13 +3370,7 @@ async function buildScene() {
         state.currentModel = root;
         state.scene.add(root);
         if (built.textureManager) {
-            built.textureManager.startLoading({
-                concurrency: 4,
-                yieldInterval: 16,
-                onTextureLoaded: (material) => { material.needsUpdate = true; }
-            }).catch((err) => {
-                console.warn('[openpbr] Next texture loading failed:', err);
-            });
+            startTrackedTextureLoading(built.textureManager, state.loadStats, 'nextTextureQueue');
         }
         fitCameraToObject(root);
         state.envPreset = 'studio';
@@ -3130,6 +3383,9 @@ async function buildScene() {
         document.getElementById('material-count').textContent = materialCount;
         updateStatus(`Loaded: ${meshCount} meshes (backend: next static)`);
         console.log('[openpbr] next backend renders static geometry/materials only; OpenPBR node graph editing is legacy-only.');
+        if (typeof usd.releaseBuildData === 'function') {
+            usd.releaseBuildData();
+        }
         window.renderComplete = true;
         return;
     }
@@ -3142,8 +3398,17 @@ async function buildScene() {
         }
     }
 
+    const textureLoadCache = {
+        usdTextures: new Map(),
+        externalTextures: new Map(),
+        resolvedTextureIds: new Map(),
+        filenameTextureIds: new Map(),
+        textureInstances: new Map()
+    };
+    const textureManager = new OpenPBRTextureLoadingManager(textureLoadCache);
+
     // Create OpenPBR materials from material data
-    for (const matData of state.materialData) {
+    state.materials = await Promise.all(state.materialData.map(async (matData, materialIndex) => {
         const openPBR = flattenOpenPBR(matData.openPBR || {});
         let nodeGraph = openPBR.nodeGraph;
 
@@ -3186,21 +3451,28 @@ async function buildScene() {
             }
         }
 
-        // Load textures from USDZ
-        const textures = await loadMaterialTextures(openPBR, state.usdData);
+        const { textures, lazy } = await loadMaterialTextures(openPBR, state.usdData, textureLoadCache, {
+            lazy: true
+        });
         const material = createOpenPBRMaterial(params, textures);
-        material.name = matData.name || `Material_${state.materials.length}`;
-        state.materials.push(material);
-    }
+        material.name = matData.name || `Material_${materialIndex}`;
+        textureManager.addMaterialTextures(material, lazy);
+        return material;
+    }));
 
     // Build scene hierarchy using TinyUSDZLoaderUtils
     const rootNode = usd.getDefaultRootNode();
     let root;
 
     if (rootNode) {
-        // Build with proper transforms and submeshes
+        // Build with proper transforms and submeshes. Materials are replaced by
+        // OpenPBR materials below, so skip the generic material conversion when
+        // mesh metadata can still identify the source material ids.
         const defaultMtl = new THREE.MeshStandardMaterial({ color: 0x888888 });
-        root = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMtl, usd, {});
+        const canResolveMaterialIds = typeof usd.getMeshPtr === 'function';
+        root = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMtl, usd, {
+            overrideMaterial: canResolveMaterialIds
+        });
 
         // Replace materials with our OpenPBR materials
         // Build name→index map for fast lookup
@@ -3217,6 +3489,24 @@ async function buildScene() {
             const doubleSided = obj.geometry?.userData?.doubleSided;
 
             if (Array.isArray(obj.material)) {
+                const submeshes = obj.geometry?.userData?.submeshes;
+                if (Array.isArray(submeshes) && canResolveMaterialIds) {
+                    const materialIdToIndex = new Map();
+                    for (const sub of submeshes) {
+                        if (!materialIdToIndex.has(sub.materialId)) {
+                            materialIdToIndex.set(sub.materialId, materialIdToIndex.size);
+                        }
+                    }
+                    for (const [materialId, materialIndex] of materialIdToIndex.entries()) {
+                        const openPBRMat = state.materials[materialId];
+                        if (openPBRMat) {
+                            if (doubleSided) openPBRMat.side = THREE.DoubleSide;
+                            obj.material[materialIndex] = openPBRMat;
+                        }
+                    }
+                    return;
+                }
+
                 // Multi-material (GeomSubset) - replace each
                 obj.material = obj.material.map(mat => {
                     const rawData = mat.userData?.rawData;
@@ -3230,6 +3520,13 @@ async function buildScene() {
                     return mat;
                 });
             } else {
+                const materialId = obj.userData?.materialId;
+                if (materialId !== undefined && state.materials[materialId]) {
+                    obj.material = state.materials[materialId];
+                    if (doubleSided) obj.material.side = THREE.DoubleSide;
+                    return;
+                }
+
                 const rawData = obj.material.userData?.rawData;
                 const name = rawData?.name;
                 const idx = name !== undefined ? matNameToIndex.get(name) : undefined;
@@ -3333,11 +3630,13 @@ async function buildScene() {
         }
     });
 
-    // Pre-compile all WebGL shader programs upfront so the first rendered
-    // frame doesn't stall on shader compilation.
-    state.renderer.compile(state.scene, state.camera);
-
     requestRender();
+    scheduleDeferredShaderCompile();
+    if (textureManager.total > 0) {
+        startTrackedTextureLoading(textureManager, state.loadStats, 'openpbrTextureQueue');
+    } else {
+        updateTextureStats(state.loadStats, { loaded: 0, failed: 0, total: 0, complete: true, ms: 0 });
+    }
 }
 
 function fitCameraToObject(object) {
@@ -3367,6 +3666,56 @@ function disposeObject(obj) {
             }
         }
     });
+}
+
+function scheduleDeferredShaderCompile() {
+    if (!state.renderer || !state.scene || !state.camera) return;
+    if (state.shaderCompileHandle !== null) {
+        clearTimeout(state.shaderCompileHandle);
+    }
+    state.shaderCompileHandle = setTimeout(() => {
+        state.shaderCompileHandle = null;
+        const start = performance.now();
+        try {
+            state.renderer.compile(state.scene, state.camera);
+            console.log(`[openpbr] deferred shader compile ${formatDurationMs(performance.now() - start)}`);
+        } catch (err) {
+            console.warn('[openpbr] Deferred shader compile failed:', err);
+        }
+        requestRender();
+    }, 100);
+}
+
+function clearCurrentUSDScene() {
+    if (state.shaderCompileHandle !== null) {
+        clearTimeout(state.shaderCompileHandle);
+        state.shaderCompileHandle = null;
+    }
+    if (state.textureLoadingManager) {
+        try {
+            state.textureLoadingManager.abort();
+            if (typeof state.textureLoadingManager.reset === 'function') {
+                state.textureLoadingManager.reset();
+            }
+        } catch (_) {
+            // Ignore stale texture queue cleanup errors.
+        }
+        state.textureLoadingManager = null;
+    }
+    clearSelection();
+    if (state.currentModel) {
+        state.scene.remove(state.currentModel);
+        disposeObject(state.currentModel);
+        state.currentModel = null;
+    }
+    if (state.usdData && typeof state.usdData.delete === 'function') {
+        try {
+            state.usdData.delete();
+        } catch (err) {
+            console.warn('[openpbr] Failed to delete USD scene:', err);
+        }
+    }
+    state.usdData = null;
 }
 
 // ============================================================================
@@ -3437,12 +3786,7 @@ function selectMaterial(index) {
 // ============================================================================
 
 function createSampleScene() {
-    // Clear existing
-    clearSelection();
-    if (state.currentModel) {
-        state.scene.remove(state.currentModel);
-        disposeObject(state.currentModel);
-    }
+    clearCurrentUSDScene();
 
     state.materials = [];
     state.materialData = [];
@@ -3563,6 +3907,17 @@ function formatMemoryUse(before, after, key) {
     return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
 }
 
+function formatTextureStats(stats) {
+    if (!stats || !Number.isFinite(stats.textureTotal) || stats.textureTotal <= 0) {
+        return 'queued 0';
+    }
+    const countText = `${stats.textureLoaded}/${stats.textureTotal}` +
+        (stats.textureFailed ? ` (${stats.textureFailed} failed)` : '');
+    return stats.textureComplete && Number.isFinite(stats.textureMs) ?
+        `${countText}, ${formatDurationMs(stats.textureMs)}` :
+        `${countText}, loading`;
+}
+
 function beginLoadStats(fileSize = null, filename = '-') {
     state.loadStats = {
         startTime: performance.now(),
@@ -3570,6 +3925,11 @@ function beginLoadStats(fileSize = null, filename = '-') {
         fetchMs: null,
         parseMs: null,
         processMs: null,
+        textureMs: null,
+        textureLoaded: 0,
+        textureFailed: 0,
+        textureTotal: 0,
+        textureComplete: false,
         totalMs: null,
         memoryBefore: captureMemorySnapshot(),
         memoryAfter: null
@@ -3594,10 +3954,70 @@ function updateLoadStatsPanel(overrideText = null) {
         `Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
         `Parse/load: ${formatDurationMs(stats.parseMs)}`,
         `Process/build: ${formatDurationMs(stats.processMs)}`,
+        `Textures: ${formatTextureStats(stats)}`,
         `Total: ${formatDurationMs(stats.totalMs)}`,
         `JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
         `WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
     ].join('\n');
+}
+
+function updateTextureStats(stats, info = {}) {
+    if (!stats) return;
+    stats.textureLoaded = Number.isFinite(info.loaded) ? info.loaded : stats.textureLoaded;
+    stats.textureFailed = Number.isFinite(info.failed) ? info.failed : stats.textureFailed;
+    stats.textureTotal = Number.isFinite(info.total) ? info.total : stats.textureTotal;
+    if (info.complete && Number.isFinite(info.ms)) {
+        stats.textureMs = info.ms;
+        stats.textureComplete = true;
+        stats.memoryAfter = captureMemorySnapshot();
+    }
+    updateLoadStatsPanel();
+}
+
+function startTrackedTextureLoading(manager, stats, label = 'textureQueue') {
+    if (!manager || !Number.isFinite(manager.total) || manager.total <= 0) {
+        updateTextureStats(stats, { loaded: 0, failed: 0, total: 0, complete: true, ms: 0 });
+        return null;
+    }
+    state.textureLoadingManager = manager;
+    const start = performance.now();
+    updateTextureStats(stats, {
+        loaded: manager.loaded || 0,
+        failed: manager.failed || 0,
+        total: manager.total || 0
+    });
+    return manager.startLoading({
+        concurrency: 16,
+        yieldInterval: 16,
+        onTextureLoaded: (material) => {
+            material.needsUpdate = true;
+            requestRender();
+        },
+        onProgress: (info) => updateTextureStats(stats, info)
+    }).then((status) => {
+        const elapsed = performance.now() - start;
+        const loaded = status.loaded || 0;
+        const failed = status.failed || 0;
+        const total = status.total || 0;
+        if (state.textureLoadingManager === manager) state.textureLoadingManager = null;
+        if (typeof manager.reset === 'function') manager.reset();
+        updateTextureStats(stats, { loaded, failed, total, complete: true, ms: elapsed });
+        console.log(`[openpbr] ${label}:done ${loaded}/${total} failed=${failed} ${formatDurationMs(elapsed)}`);
+        requestRender();
+        return status;
+    }).catch((err) => {
+        console.warn(`[openpbr] ${label} failed:`, err);
+        const elapsed = performance.now() - start;
+        const status = manager.getStatus ? manager.getStatus() : null;
+        const loaded = status?.loaded || manager.loaded || 0;
+        const failed = status?.failed || manager.failed || 0;
+        const total = status?.total || manager.total || 0;
+        if (state.textureLoadingManager === manager) state.textureLoadingManager = null;
+        if (typeof manager.reset === 'function') manager.reset();
+        updateTextureStats(stats, { loaded, failed, total, complete: true, ms: elapsed });
+        requestRender();
+        return status;
+    });
 }
 
 function finishLoadStats(stats = state.loadStats) {
@@ -3687,6 +4107,8 @@ window.loadBlenderSample = async function() {
     const stats = beginLoadStats(null, filename);
 
     try {
+        clearCurrentUSDScene();
+
         const fetchStart = performance.now();
         const response = await fetch(assetPath);
         if (!response.ok) {
@@ -3708,13 +4130,6 @@ window.loadBlenderSample = async function() {
             throw new Error('Failed to parse USD file');
         }
 
-        // Clear existing
-        clearSelection();
-        if (state.currentModel) {
-            state.scene.remove(state.currentModel);
-            disposeObject(state.currentModel);
-        }
-
         // Build scene (material loading consolidated inside buildScene)
         const processStart = performance.now();
         await buildScene();
@@ -3732,6 +4147,7 @@ window.loadBlenderSample = async function() {
         console.log(`Found ${numMaterials} materials`);
         showToast(`Loaded ${filename} (${numMaterials} materials)`);
         finishLoadStats(stats);
+        window.renderComplete = true;
 
     } catch (error) {
         failLoadStats(stats);
@@ -4484,6 +4900,7 @@ async function handleBridgeScene(sceneData) {
 
     try {
         const { binaryData, scene, metadata } = sceneData;
+        clearCurrentUSDScene();
 
         // Parse with TinyUSDZ
         state.usdData = await new Promise((resolve, reject) => {
@@ -4492,13 +4909,6 @@ async function handleBridgeScene(sceneData) {
 
         if (!state.usdData) {
             throw new Error('Failed to parse USD');
-        }
-
-        // Clear existing
-        clearSelection();
-        if (state.currentModel) {
-            state.scene.remove(state.currentModel);
-            disposeObject(state.currentModel);
         }
 
         // Build scene (material loading consolidated inside buildScene)
@@ -4516,6 +4926,7 @@ async function handleBridgeScene(sceneData) {
         const blenderVer = metadata?.blenderVersion || 'unknown';
         showToast(`Loaded ${sceneName} from Blender ${blenderVer}`);
         updateStatus(`Loaded: ${sceneName}`);
+        window.renderComplete = true;
 
     } catch (error) {
         console.error('Handle bridge scene error:', error);
