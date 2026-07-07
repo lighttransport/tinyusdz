@@ -1334,11 +1334,23 @@ int LoadNextUdimTexture(NextTexCache& tc, DrawScene* draw,
     h = std::max(h, t.image.height);
   }
   if (w <= 0 || h <= 0) return -1;
-  for (DrawUdimTileCPU& t : dt.udimTiles) {
-    if (t.image.width != w || t.image.height != h) {
-      NextResizeImage(&t.image, w, h, srgb);
+  // Resize every tile to the common (w,h); DROP any that fail — the renderer
+  // uploads udimTiles as a sampler2DArray requiring all layers to be exactly
+  // udimTileWidth/Height, so a leftover wrong-sized tile would render as a
+  // white/garbage layer instead of the intended "missing" (magenta) sentinel.
+  {
+    std::vector<DrawUdimTileCPU> sized;
+    sized.reserve(dt.udimTiles.size());
+    for (DrawUdimTileCPU& t : dt.udimTiles) {
+      if ((t.image.width != w || t.image.height != h) &&
+          !NextResizeImage(&t.image, w, h, srgb)) {
+        continue;  // drop; its UDIM id stays unmapped (-1) in the LUT
+      }
+      sized.push_back(std::move(t));
     }
+    dt.udimTiles = std::move(sized);
   }
+  if (dt.udimTiles.empty()) return -1;
   dt.udimTileWidth = w;
   dt.udimTileHeight = h;
   dt.image = dt.udimTiles.front().image;  // representative fallback
