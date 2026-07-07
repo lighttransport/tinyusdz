@@ -469,3 +469,4 @@ priv/
 resume.md
 gpu-task.md
 python/tinyusdz.egg-info/
+python/tinyusdz/_core.*.so

@@ -1265,6 +1265,79 @@ void test_comprehensive_usdc_fixture() {
             << wr.bytes_written << " bytes)\n\n";
 }
 
+// Inline-authored variants must round-trip through crate: the writer
+// materializes bracketed holder prims from VariantSetData, and the reader
+// reconstructs set/option names + selection from them.
+void test_roundtrip_variants() {
+  std::cout << "Testing variant round-trip...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "root" (
+    variants = { string lod = "high" }
+    prepend variantSets = ["lod"]
+)
+{
+    variantSet "lod" = {
+        "high" { float a = 1
+                 def Mesh "Extra" { float b = 2 } }
+        "low" { float a = 0 }
+    }
+}
+)";
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  std::vector<uint8_t> buf;
+  USDCWriteResult wr = WriteUSDCToMemory(buf, lr.stage);
+  assert(wr.success);
+
+  USDCLoadResult rr = LoadUSDCFromMemory(buf.data(), buf.size());
+  assert(rr.success);
+
+  const Layer* layer = rr.stage.GetRootLayer();
+  assert(layer);
+
+  // Option names + selection reconstructed on the owning prim.
+  const PrimSpec* root = layer->prim_at_path("/root");
+  assert(root);
+  assert(root->meta().variantSets().size() == 1);
+  const VariantSetData& vs = root->meta().variantSets()[0];
+  assert(vs.name == "lod");
+  assert(vs.selected == "high");
+  assert(vs.variants.size() == 2);
+  bool has_high = false, has_low = false;
+  for (const VariantData& vd : vs.variants) {
+    if (vd.name == "high") has_high = true;
+    if (vd.name == "low") has_low = true;
+  }
+  assert(has_high && has_low);
+
+  // Holder prims carry the variant CONTENT (inline property + child prim).
+  const PrimSpec* high = layer->prim_at_path("/root/{lod=high}");
+  assert(high);
+  const Value* a = high->property_value("a");
+  assert(a && a->as_float() && *a->as_float() == 1.0f);
+  const PrimSpec* extra = layer->prim_at_path("/root/{lod=high}/Extra");
+  assert(extra && extra->type_name() == "Mesh");
+  const Value* b = extra->property_value("b");
+  assert(b && b->as_float() && *b->as_float() == 2.0f);
+  const PrimSpec* low = layer->prim_at_path("/root/{lod=low}");
+  assert(low);
+
+  // Second generation: crate -> crate must be stable (no duplicate holders).
+  std::vector<uint8_t> buf2;
+  USDCWriteResult wr2 = WriteUSDCToMemory(buf2, rr.stage);
+  assert(wr2.success);
+  USDCLoadResult rr2 = LoadUSDCFromMemory(buf2.data(), buf2.size());
+  assert(rr2.success);
+  const PrimSpec* root2 = rr2.stage.GetRootLayer()->prim_at_path("/root");
+  assert(root2 && root2->meta().variantSets().size() == 1);
+  assert(root2->meta().variantSets()[0].variants.size() == 2);
+  assert(rr2.stage.GetRootLayer()->prim_at_path("/root/{lod=high}/Extra"));
+
+  std::cout << "  variant round-trip passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
@@ -1282,6 +1355,7 @@ int main() {
     test_high_level_memory_caps();
     test_roundtrip_half_arrays();
     test_write_usdc_from_stage_api();
+    test_roundtrip_variants();
 
     std::cout << "=== All USDC roundtrip tests passed! ===\n";
     return 0;

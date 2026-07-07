@@ -53,6 +53,7 @@ set(TINYUSDZ_NEXT_SOURCES
     crate/crate-reader-vectors.cc
     crate/crate-writer-types.cc
     crate/crate-writer.cc
+    crate/variant-holders.cc
 
     # High-level readers
     reader/usda-reader.cc

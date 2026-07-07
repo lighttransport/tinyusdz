@@ -127,6 +127,11 @@ bool CrateReader::Impl::BuildStage() {
   // We only need to know, per owning prim, which sets are selected.
   //   owning prim path -> { variantSet -> selected variant } (all selections).
   std::unordered_map<std::string, std::map<std::string, std::string>> variant_sel;
+  // Variant OPTION names per owning prim/set, recovered from the holder specs
+  // ("/Prim/{set=var}"): lets the model expose the full option list (not just
+  // the selection) after a crate load.
+  std::unordered_map<std::string, std::map<std::string, std::vector<std::string>>>
+      variant_opts;
 
   std::vector<PrimEntry> prim_entries;
   std::vector<std::pair<std::string, ValueRep>> raw_field_scratch;
@@ -149,6 +154,22 @@ bool CrateReader::Impl::BuildStage() {
     const bool bracketed = full_path.find('{') != std::string::npos;
     // Only real (non-bracketed) Prim specs carry a variantSelection.
     if (is_variant && !bracketed) continue;  // defensive
+
+    // Record option names from top-level holder specs "/Prim/{set=var}"
+    // (bracketed component last, non-empty variant name).
+    if (bracketed && full_path.back() == '}') {
+      size_t lb = full_path.rfind("/{");
+      if (lb != std::string::npos &&
+          full_path.find('{') == lb + 1) {  // single bracketed component
+        const std::string nm = full_path.substr(lb + 2,
+                                                full_path.size() - lb - 3);
+        size_t eq = nm.find('=');
+        if (eq != std::string::npos && eq + 1 < nm.size()) {
+          variant_opts[full_path.substr(0, lb)][nm.substr(0, eq)]
+              .push_back(nm.substr(eq + 1));
+        }
+      }
+    }
 
     // Decode the prim's variantSelection (a VariantSelectionMap that
     // UnpackValue/ResolveFieldset cannot represent). Captures every selection
@@ -672,20 +693,38 @@ bool CrateReader::Impl::BuildStage() {
       }
     }
 
-    // Variant sets: attach a VariantSetData{name, selected} per selected set.
-    // The variant CONTENT (properties + child prims) lives in the layer's
-    // bracketed holder prims, which the compositor reads on selection and the
-    // writer re-emits; the model only carries the selection here.
+    // Variant sets: attach a VariantSetData per set, carrying the selection
+    // and the option NAMES (as empty VariantData entries — the compositor
+    // ignores option entries without content/properties and grafts the
+    // bracketed holder prims instead, which hold the variant CONTENT).
     auto sel = variant_sel.find(entry.full_path);
-    if (ps && sel != variant_sel.end()) {
-      for (const auto& kv : sel->second) {
-        VariantSetData vsd;
-        vsd.name = kv.first;
-        vsd.selected = kv.second;
-        ps->meta().variantSets().push_back(std::move(vsd));
+    auto opt = variant_opts.find(entry.full_path);
+    if (ps && (sel != variant_sel.end() || opt != variant_opts.end())) {
+      // Union of set names from selections and holder specs.
+      std::map<std::string, VariantSetData> sets;
+      if (opt != variant_opts.end()) {
+        for (const auto& kv : opt->second) {
+          VariantSetData& vsd = sets[kv.first];
+          vsd.name = kv.first;
+          for (const std::string& var : kv.second) {
+            VariantData vd;
+            vd.name = var;
+            vsd.variants.push_back(std::move(vd));
+          }
+        }
+      }
+      if (sel != variant_sel.end()) {
+        for (const auto& kv : sel->second) {
+          VariantSetData& vsd = sets[kv.first];
+          vsd.name = kv.first;
+          vsd.selected = kv.second;
+        }
+      }
+      for (auto& kv : sets) {
+        ps->meta().variantSets().push_back(std::move(kv.second));
       }
       // Keep the first selection in the legacy single-string field too.
-      if (!sel->second.empty()) {
+      if (sel != variant_sel.end() && !sel->second.empty()) {
         const auto& first = *sel->second.begin();
         ps->meta().variantSelection = first.first + "=" + first.second;
       }

@@ -353,7 +353,15 @@
     std::vector<Src> main;
     std::vector<Src> spec;  // specialize-derived: globally weakest
     // Variant selections accumulated across the prim's sources (cross-source).
+    // Seed with the caller's variant overrides BEFORE expansion: selection
+    // recording uses first-wins emplace, so pre-seeding makes an override
+    // beat every authored selection during grafting. (It was previously
+    // applied after ExpandArcs, so the prim's own variant graft still used
+    // the authored selection and only descendant expansion saw the override.)
     std::map<std::string, std::string> sels;
+    for (const auto &ov : options.variant_overrides) {
+      sels[ov.first] = ov.second;
+    }
     for (const Src &s : base) {
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
@@ -361,12 +369,6 @@
       std::vector<uint32_t> chain{s.stack_idx};
       const ExpansionFrame seed{s.stack_idx, &s.site, nullptr, 0};
       ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
-    }
-    // Apply variant overrides (stronger than any authored selection) so the
-    // caller can force a specific variant (e.g. --variant districtLod=full)
-    // without modifying the layer files.
-    for (const auto &ov : options.variant_overrides) {
-      sels[ov.first] = ov.second;
     }
     main.insert(main.end(), spec.begin(), spec.end());
     return main;
