@@ -13,6 +13,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -29,6 +30,7 @@
 #include "io-util.hh"                  // io::GetBaseDir
 #include "image-loader.hh"             // DomeLight envmap decode (IBL bake)
 #include "mesh_build.hh"               // UpdatePreviewLight
+#include "lightrt_mtlx_bridge.hh"      // BakeLightRtOpenPBR (next material bake)
 #include "texture_tools.hh"            // TexToolsBuildDomeIbl / ProbeToEquirect
 #include "usdVol.hh"                   // OpenVDB (.vdb) loader
 
@@ -922,6 +924,60 @@ bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
   return false;
 }
 
+// Convert a bound material prim into a DrawMaterialCPU appended to `draw`, and
+// return its index (>=1). Phase 1: baked PBR CONSTANTS only (base color,
+// metallic, roughness, emissive, alpha) -- textures/GeomSubset are follow-ups.
+// We reuse tusdview's own BakeLightRtOpenPBR so the --next path shades materials
+// through the same path the legacy loader uses. Returns -1 if the prim has no
+// usable surface shader (caller then keeps the default gray material, index 0).
+int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
+                      const tnext::UsdPrim& matPrim, DrawScene* draw) {
+  tydn::RenderScene scratch;  // holds any texture metadata we don't consume yet
+  tydn::RenderMaterial rm;
+  if (!conv.ConvertMaterial(stage, matPrim, &rm, &scratch)) return -1;
+
+  auto setRGB = [](float* dst, const tydn::Float4& v, float w) {
+    dst[0] = v.x * w; dst[1] = v.y * w; dst[2] = v.z * w;
+  };
+
+  DrawMaterialCPU dm;
+  dm.name = rm.name;
+  dm.absPath = rm.prim_path;
+  dm.displayName = rm.name;
+
+  if (rm.shader_type == tydn::RenderMaterial::ShaderType::PreviewSurface &&
+      rm.preview_surface) {
+    const tydn::PreviewSurfaceShader& s = *rm.preview_surface;
+    dm.hasUsdPreviewSurface = true;
+    setRGB(dm.baseColor, s.diffuse_color.value, 1.0f);
+    dm.metallic = s.metallic.value.x;
+    dm.roughness = s.roughness.value.x;
+    setRGB(dm.emissive, s.emissive_color.value, 1.0f);
+    dm.alpha = s.opacity.value.x;
+  } else if (rm.shader_type == tydn::RenderMaterial::ShaderType::OpenPBR &&
+             rm.openpbr) {
+    const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
+    dm.hasOpenPBRSurface = true;
+    dm.materialXNodeGraphJson = s.nodegraph_json;
+    setRGB(dm.baseColor, s.base_color.value, s.base_weight.value.x);
+    dm.metallic = s.base_metalness.value.x;
+    dm.roughness = s.specular_roughness.value.x;
+    setRGB(dm.emissive, s.emission_color.value, s.emission_luminance.value.x);
+    dm.alpha = s.opacity.value.x;
+  } else {
+    return -1;  // no PreviewSurface/OpenPBR -- fall back to default material
+  }
+
+  // AlphaMode enums line up 1:1 (Opaque=0, Mask=1, Blend=2).
+  dm.alphaMode = static_cast<int>(rm.alpha_mode);
+  dm.alphaCutoff = rm.alpha_cutoff;
+
+  BakeLightRtOpenPBR(&dm);  // derive lightRtOpenPBR from the baked constants
+
+  draw->materials.push_back(std::move(dm));
+  return static_cast<int>(draw->materials.size() - 1);
+}
+
 }  // namespace
 
 bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
@@ -1324,6 +1380,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   cfg.mesh.triangulation_method = tydn::MeshConfig::TriangulationMethod::Fan;
   cfg.mesh.compute_normals = true;
   cfg.mesh.build_vertex_indices = true;
+  // Phase 1 --next materials are constants-only: don't let the converter try to
+  // load texture pixels (it has no custom loader here anyway).
+  cfg.material.load_textures = false;
+  cfg.material.allow_missing_textures = true;
   cfg.time_code = time;
   tydn::RenderSceneConverter conv(cfg);
   draw->upAxis = (stage.GetUpAxis() == "Z" || stage.GetUpAxis() == "z") ? "Z" : "Y";
@@ -1480,8 +1540,27 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   //         (one VAO/VBO/EBO per batch) instead of 33k -- far less draw-call + GL
   //         object overhead. Purpose stays per-batch so the GUI toggles still
   //         work; per-mesh pick/hide is not a goal of the flat large-scene path.
-  struct Batch { DrawMeshCPU dm; bool anyColor = false; };
-  std::map<std::pair<std::string, bool>, Batch> open;  // key -> current batch
+  struct Batch { DrawMeshCPU dm; bool anyColor = false; int matId = 0; };
+  // key = (purpose, geometricNormal, materialId) -> current batch. Keying by
+  // material keeps per-material draws distinct so each batch can reference its
+  // own DrawMaterialCPU instead of the single default gray material.
+  std::map<std::tuple<std::string, bool, int>, Batch> open;
+
+  // Resolve a mesh's bound material to a DrawScene material index (cached by
+  // material prim path). Unbound / unconvertible -> 0 (default gray material).
+  std::unordered_map<std::string, int> matIndexByPath;
+  auto resolveMeshMaterial = [&](const tnext::UsdPrim& mp) -> int {
+    const std::vector<tnext::Path>* bind = mp.GetRelationship("material:binding");
+    if (!bind || bind->empty()) return 0;
+    const std::string mpath = (*bind)[0].str();
+    auto it = matIndexByPath.find(mpath);
+    if (it != matIndexByPath.end()) return it->second;
+    tnext::UsdPrim matPrim = stage.GetPrimAtPath((*bind)[0]);
+    int idx = matPrim.IsValid() ? BuildNextMaterial(stage, conv, matPrim, draw) : -1;
+    if (idx < 0) idx = 0;
+    matIndexByPath[mpath] = idx;
+    return idx;
+  };
   const size_t kBatchVtxCap = size_t(8) << 20;  // 8M verts/batch (indices stay 32-bit)
 
   auto flushBatch = [&](Batch& b) {
@@ -1492,7 +1571,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.aabbMin[k] = bounds.mn[k]; b.dm.aabbMax[k] = bounds.mx[k];
       }
     b.dm.submeshes.push_back(
-        DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), 0});
+        DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId});
     std::memset(b.dm.world, 0, sizeof(b.dm.world));
     b.dm.world[0] = b.dm.world[5] = b.dm.world[10] = b.dm.world[15] = 1.0f;
     draw->triangleCount += b.dm.indices.size() / 3;
@@ -1525,13 +1604,15 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     DrawMeshCPU loc;
     if (!FillFlatGeometry(m, &loc)) continue;
     const std::string purpose = ResolveNextPurpose(stage, mp.GetPath().str());
+    const int matId = resolveMeshMaterial(mp);
     double mw16[16];
     tydn::ComputeWorldTransform(stage, mp, mw16, time);
     float Mf[16];
     for (int k = 0; k < 16; ++k) Mf[k] = static_cast<float>(mw16[k]);
     const float* M = Mf;  // row-major, p*M (same as the converter's node xform)
 
-    Batch& b = open[{purpose, loc.geometricNormal}];
+    Batch& b = open[{purpose, loc.geometricNormal, matId}];
+    b.matId = matId;
     if (!b.dm.vertices.empty() &&
         b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
       flushBatch(b);  // resets b in the map slot
@@ -1626,9 +1707,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     else if (dm.purpose == "render") ++nRender;
   }
   LOGI("next: '%s' -> %zu draws (%zu guide, %zu proxy, %zu render), %lld instances, "
-       "%zu unique tris (%lld effective), instXform VRAM ~%.2f GB, up=%s%s",
+       "%zu unique tris (%lld effective), %zu materials, instXform VRAM ~%.2f GB, up=%s%s",
        path.c_str(), draw->meshes.size(), nGuide, nProxy, nRender, instTotal,
-       draw->triangleCount, effectiveTris, double(instTotal) * 48.0 / 1e9,
+       draw->triangleCount, effectiveTris, draw->materials.size(),
+       double(instTotal) * 48.0 / 1e9,
        draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
 
   if (draw->meshes.empty() && draw->volumes.empty()) {
