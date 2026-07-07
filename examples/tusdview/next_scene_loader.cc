@@ -13,6 +13,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -2040,22 +2041,73 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     texCache.usdz = &usdzArchive;
   }
 
-  // Resolve a mesh's bound material to a DrawScene material index (cached by
-  // material prim path). Unbound / unconvertible -> 0 (default gray material).
+  // Resolve a material prim path to a DrawScene material index (cached by path).
+  // Unbound / unconvertible -> 0 (default gray material).
   std::unordered_map<std::string, int> matIndexByPath;
-  auto resolveMeshMaterial = [&](const tnext::UsdPrim& mp) -> int {
-    const std::vector<tnext::Path>* bind = mp.GetRelationship("material:binding");
-    if (!bind || bind->empty()) return 0;
-    const std::string mpath = (*bind)[0].str();
+  auto resolveMaterialPath = [&](const std::string& mpath) -> int {
+    if (mpath.empty()) return 0;
     auto it = matIndexByPath.find(mpath);
     if (it != matIndexByPath.end()) return it->second;
-    tnext::UsdPrim matPrim = stage.GetPrimAtPath((*bind)[0]);
+    tnext::UsdPrim matPrim = stage.GetPrimAtPath(mpath);
     int idx = matPrim.IsValid()
                   ? BuildNextMaterial(stage, conv, matPrim, draw, texCache)
                   : -1;
     if (idx < 0) idx = 0;
     matIndexByPath[mpath] = idx;
     return idx;
+  };
+  auto resolveMeshMaterial = [&](const tnext::UsdPrim& mp) -> int {
+    const std::vector<tnext::Path>* bind = mp.GetRelationship("material:binding");
+    if (!bind || bind->empty()) return 0;
+    return resolveMaterialPath((*bind)[0].str());
+  };
+
+  // GeomSubset per-face materials: when a mesh has `face` GeomSubset children
+  // bound to materials, produce a per-triangle material id (else leave *triMat
+  // empty -> the caller uses the whole-mesh material). tydra-next's Convert()
+  // never fills material_subsets, so we read the GeomSubsets off the stage and
+  // reconstruct the triangle->face mapping from the original face vertex counts
+  // (fan/earcut both emit c-2 triangles per face, in face order).
+  auto buildTriMaterials = [&](const tnext::UsdPrim& mp, const tydn::RenderMesh& m,
+                               size_t numTris, int wholeMat,
+                               std::vector<int>* triMat) {
+    triMat->clear();
+    struct Sub { std::vector<int32_t> faces; int mat; };
+    std::vector<Sub> subs;
+    for (const tnext::UsdPrim& c : mp.GetChildren()) {
+      if (c.GetTypeName() != "GeomSubset") continue;
+      bool isFace = true;  // elementType defaults to "face"
+      if (const tnext::Value* et = c.GetPropertyValue("elementType"))
+        if (const std::string* t = et->as_token())
+          isFace = t->empty() || *t == "face";
+      if (!isFace) continue;
+      const std::vector<tnext::Path>* bind = c.GetRelationship("material:binding");
+      if (!bind || bind->empty()) continue;
+      std::vector<int32_t> faces = ReadInts(c, "indices", time);
+      if (faces.empty()) continue;
+      subs.push_back({std::move(faces), resolveMaterialPath((*bind)[0].str())});
+    }
+    if (subs.empty()) return;
+
+    const std::vector<uint32_t> fvc = m.face_vertex_counts.flatten();
+    std::vector<int> triFace;
+    triFace.reserve(numTris);
+    for (size_t f = 0; f < fvc.size(); ++f)
+      for (uint32_t k = 2; k < fvc[f]; ++k) triFace.push_back(static_cast<int>(f));
+    if (triFace.size() != numTris) return;  // triangulation mismatch -> whole-mesh
+
+    std::vector<int> faceMat(fvc.size(), wholeMat);
+    for (const Sub& s : subs)
+      for (int32_t f : s.faces)
+        if (f >= 0 && static_cast<size_t>(f) < faceMat.size()) faceMat[f] = s.mat;
+
+    std::vector<int> tm(numTris);
+    bool split = false;
+    for (size_t t = 0; t < numTris; ++t) {
+      tm[t] = faceMat[triFace[t]];
+      if (tm[t] != wholeMat) split = true;
+    }
+    if (split) *triMat = std::move(tm);  // uniform -> leave empty
   };
   const size_t kBatchVtxCap = size_t(8) << 20;  // 8M verts/batch (indices stay 32-bit)
 
@@ -2092,6 +2144,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   }
 
   bool capped = false;
+  long long totalTris = 0;
   for (const tnext::UsdPrim& mp : meshPrims) {
     if (ctrl && ctrl->cancel.load()) break;
     if (capped) break;
@@ -2103,35 +2156,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // vertices are world-baked into the batch. No-op for unskinned meshes.
     BakeSkinning(stage, mp, time, &loc);
     const std::string purpose = ResolveNextPurpose(stage, mp.GetPath().str());
-    const int matId = resolveMeshMaterial(mp);
+    const int wholeMat = resolveMeshMaterial(mp);
     double mw16[16];
     tydn::ComputeWorldTransform(stage, mp, mw16, time);
     float Mf[16];
     for (int k = 0; k < 16; ++k) Mf[k] = static_cast<float>(mw16[k]);
     const float* M = Mf;  // row-major, p*M (same as the converter's node xform)
 
-    Batch& b = open[{purpose, loc.geometricNormal, matId}];
-    b.matId = matId;
-    if (!b.dm.vertices.empty() &&
-        b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
-      flushBatch(b);  // resets b in the map slot
-    }
-    b.dm.purpose = purpose;
-    b.dm.geometricNormal = loc.geometricNormal;
-    const bool hasC = !loc.vertexColors.empty();
-    // Allocate the batch color buffer only once a mesh actually contributes a
-    // color: back-fill white for the vertices already in the batch. No-color
-    // batches (e.g. the hotel) then never allocate a 12 B/vertex white buffer.
-    if (hasC && !b.anyColor) {
-      b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
-      b.anyColor = true;
-    }
-
-    // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
-    // reserve(size()+n) per mesh would reallocate the whole batch every mesh (O(N^2)).
-    const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
-    for (size_t i = 0; i < loc.vertices.size(); ++i) {
-      DrawVertex v = loc.vertices[i];
+    // World-transform vertices in place (positions + normals), so both the
+    // single- and multi-material append paths just copy the vertex.
+    for (DrawVertex& v : loc.vertices) {
       float wp[3], wn[3];
       for (int c = 0; c < 3; ++c) {
         wp[c] = v.px * M[0 * 4 + c] + v.py * M[1 * 4 + c] + v.pz * M[2 * 4 + c] +
@@ -2142,27 +2176,104 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const float nl = std::sqrt(wn[0] * wn[0] + wn[1] * wn[1] + wn[2] * wn[2]);
       if (nl > 1e-12f) { v.nx = wn[0] / nl; v.ny = wn[1] / nl; v.nz = wn[2] / nl; }
       else { v.nx = 0; v.ny = 0; v.nz = 0; }
-      b.dm.vertices.push_back(v);
-      // Only emit per-vertex color once the batch has any (back-filled above);
-      // white for this mesh when it has none, to stay aligned.
-      if (b.anyColor) {
-        if (hasC) {
-          b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 0]);
-          b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 1]);
-          b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 2]);
-        } else {
-          b.dm.vertexColors.push_back(1.0f);
-          b.dm.vertexColors.push_back(1.0f);
-          b.dm.vertexColors.push_back(1.0f);
+    }
+    const bool hasC = !loc.vertexColors.empty();
+
+    // Per-triangle materials from face GeomSubsets (empty => uniform wholeMat).
+    std::vector<int> triMat;
+    buildTriMaterials(mp, m, loc.indices.size() / 3, wholeMat, &triMat);
+
+    if (triMat.empty()) {
+      // --- Single-material fast path: append the whole mesh to one batch. ---
+      Batch& b = open[{purpose, loc.geometricNormal, wholeMat}];
+      b.matId = wholeMat;
+      if (!b.dm.vertices.empty() &&
+          b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
+        flushBatch(b);  // resets b in the map slot
+      }
+      b.dm.purpose = purpose;
+      b.dm.geometricNormal = loc.geometricNormal;
+      // Allocate the batch color buffer only once a mesh actually contributes a
+      // color: back-fill white for the vertices already in the batch. No-color
+      // batches (e.g. the hotel) then never allocate a 12 B/vertex white buffer.
+      if (hasC && !b.anyColor) {
+        b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
+        b.anyColor = true;
+      }
+      // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
+      // reserve(size()+n) per mesh would reallocate the whole batch (O(N^2)).
+      const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
+      for (size_t i = 0; i < loc.vertices.size(); ++i) {
+        b.dm.vertices.push_back(loc.vertices[i]);
+        if (b.anyColor) {
+          if (hasC) {
+            b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 0]);
+            b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 1]);
+            b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 2]);
+          } else {
+            b.dm.vertexColors.push_back(1.0f);
+            b.dm.vertexColors.push_back(1.0f);
+            b.dm.vertexColors.push_back(1.0f);
+          }
+        }
+      }
+      for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
+      for (uint32_t widx : loc.wireframeIndices)
+        b.dm.wireframeIndices.push_back(vbase + widx);
+    } else {
+      // --- Multi-material (GeomSubset) path: route each triangle to its
+      //     material's batch, appending only the vertices that batch references
+      //     (compacted per group so batches don't carry unused vertices). ---
+      std::set<int> groups(triMat.begin(), triMat.end());
+      const size_t numTris = loc.indices.size() / 3;
+      bool firstGroup = true;
+      for (int gm : groups) {
+        Batch& b = open[{purpose, loc.geometricNormal, gm}];
+        b.matId = gm;
+        if (!b.dm.vertices.empty() &&
+            b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
+          flushBatch(b);
+        }
+        b.dm.purpose = purpose;
+        b.dm.geometricNormal = loc.geometricNormal;
+        if (hasC && !b.anyColor) {
+          b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
+          b.anyColor = true;
+        }
+        std::vector<int> remap(loc.vertices.size(), -1);
+        auto vtx = [&](uint32_t vi) -> uint32_t {
+          if (remap[vi] < 0) {
+            remap[vi] = static_cast<int>(b.dm.vertices.size());
+            b.dm.vertices.push_back(loc.vertices[vi]);
+            if (b.anyColor) {
+              if (hasC) {
+                b.dm.vertexColors.push_back(loc.vertexColors[3 * vi + 0]);
+                b.dm.vertexColors.push_back(loc.vertexColors[3 * vi + 1]);
+                b.dm.vertexColors.push_back(loc.vertexColors[3 * vi + 2]);
+              } else {
+                b.dm.vertexColors.push_back(1.0f);
+                b.dm.vertexColors.push_back(1.0f);
+                b.dm.vertexColors.push_back(1.0f);
+              }
+            }
+          }
+          return static_cast<uint32_t>(remap[vi]);
+        };
+        for (size_t t = 0; t < numTris; ++t) {
+          if (triMat[t] != gm) continue;
+          b.dm.indices.push_back(vtx(loc.indices[3 * t + 0]));
+          b.dm.indices.push_back(vtx(loc.indices[3 * t + 1]));
+          b.dm.indices.push_back(vtx(loc.indices[3 * t + 2]));
+        }
+        // Attach the mesh's wireframe once (to the first group's batch, mapped
+        // through vtx so its vertices exist there) -- avoids cross-batch dupes.
+        if (firstGroup) {
+          for (uint32_t widx : loc.wireframeIndices)
+            b.dm.wireframeIndices.push_back(vtx(widx));
+          firstGroup = false;
         }
       }
     }
-    for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
-    // Carry the original-polygon wireframe edges into the batch (offset to the
-    // batch's vertex range). Indices from different source meshes occupy disjoint
-    // ranges, so no cross-mesh dedup is needed.
-    for (uint32_t widx : loc.wireframeIndices)
-      b.dm.wireframeIndices.push_back(vbase + widx);
 
     // World-space AABB from the 8 local-bbox corners (scene bounds for framing).
     const tydn::Float3& lo = m.bbox_min;
@@ -2176,7 +2287,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 lp[2] * M[2 * 4 + c] + M[3 * 4 + c];
       bounds.add(wp);
     }
-    if (draw->triangleCount + b.dm.indices.size() / 3 > triCap) {
+    totalTris += static_cast<long long>(loc.indices.size() / 3);
+    if (static_cast<std::size_t>(totalTris) > triCap) {
       draw->truncated = true;
       capped = true;
     }
