@@ -44,6 +44,9 @@ class OrbitCamera {
   void orbit(float dxPix, float dyPix);
   void pan(float dxPix, float dyPix);
   void dolly(float amount);  // mouse wheel notches or RMB horizontal pixels
+  // Scene-radius-clamped reference distance used to scale pan speed (keeps the
+  // feel usable across the zoom range; see camera_nav.cc).
+  float moveRefDistance() const;
   void setPreset(CameraViewPreset preset);
   void setOrbitSensitivity(float s) {
     if (s > 0.0f) orbitSensitivity_ = s;
@@ -54,6 +57,7 @@ class OrbitCamera {
   void setDollySensitivity(float s) {
     if (s > 0.0f) dollySensitivity_ = s;
   }
+  void setInvertYaw(bool on) { invertYaw_ = on; }
   void setInvertDolly(bool on) { invertDolly_ = on; }
 
   // Frame the given world-space AABB.
@@ -77,6 +81,7 @@ class OrbitCamera {
   float orbitSensitivity() const { return orbitSensitivity_; }
   float panSensitivity() const { return panSensitivity_; }
   float dollySensitivity() const { return dollySensitivity_; }
+  bool invertYaw() const { return invertYaw_; }
   bool invertDolly() const { return invertDolly_; }
 
   // Absolute camera placement (e.g. driven by the MCP viewport tool). Pitch is
@@ -101,6 +106,7 @@ class OrbitCamera {
   float orbitSensitivity_{1.0f};
   float panSensitivity_{1.0f};
   float dollySensitivity_{1.0f};
+  bool invertYaw_{true};
   bool invertDolly_{false};
 };
 

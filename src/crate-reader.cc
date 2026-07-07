@@ -4,9 +4,6 @@
 //
 // Crate(binary format) reader
 //
-//
-// - [] Unify BuildDecompressedPathsImpl and BuildNodeHierarchy
-
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -15,11 +12,11 @@
 
 #include "crate-reader.hh"
 
-#ifdef __wasi__
-#else
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
 #include <thread>
 #endif
 
+#include <atomic>
 #include <algorithm>
 #include <unordered_set>
 #include <stack>
@@ -92,16 +89,17 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config)
     : _sr(sr), owned_memory_manager_(config.maxMemoryBudget), memory_manager_(&owned_memory_manager_), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
-#if defined(__wasi__)
-#else
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
     _config.numThreads = (std::max)(1, int(std::thread::hardware_concurrency()));
     PUSH_WARN("# of thread to use: " << std::to_string(_config.numThreads));
+#else
+    _config.numThreads = 1;
 #endif
   }
 
 
-#if defined(__wasi__)
-  PUSH_WARN("Threading is disabled for WASI build.");
+#if !defined(TINYUSDZ_ENABLE_THREAD) || defined(__wasi__) || defined(__EMSCRIPTEN__)
+  PUSH_WARN("Threading is disabled for this build.");
   _config.numThreads = 1;
 #else
 
@@ -358,7 +356,6 @@ bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
 
   d->resize(length);
 
-  // TODO(syoyo): Zero-copy
   if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
                  reinterpret_cast<uint8_t *>(d->data()))) {
     _err += "Failed to read double vector data.\n";
@@ -1361,36 +1358,19 @@ bool CrateReader::ReadTokens() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed data size exceeds `TOKENS` section size.");
   }
 
-  // To combat with heap-buffer flow in lz4 cuased by corrupted lz4 compressed data,
-  // We allocate same size of uncompressedSize(or larger one),
-  // And further, extra 128 bytes for safety(LZ4_FAST_DEC_LOOP does 16 bytes stride memcpy)
-
-  uint64_t bufSize = (std::max)(compressedSize, uncompressedSize);
-  if (bufSize > (std::numeric_limits<uint64_t>::max)() - 128) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "bufSize overflow in addition.");
+  auto token_chars_budget = memory_manager_->ReserveScoped(uncompressedSize);
+  if (!token_chars_budget.IsReserved()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for TOKENS decode buffer.");
   }
-  CHECK_MEMORY_USAGE(bufSize+128);
-  CHECK_MEMORY_USAGE(uncompressedSize);
 
-
-  // dst. std::vector<char>(n) value-initializes all elements to 0, so no
-  // explicit memset is needed (the decompress below overwrites it anyway, and
-  // the +128 padding on `compressed` is already zeroed by the ctor).
+  // Destination token bytes. The compressed input is decompressed directly from
+  // the StreamReader backing buffer, avoiding an intermediate compressed copy.
   std::vector<char> chars(static_cast<size_t>(uncompressedSize));
 
-  std::vector<char> compressed(static_cast<size_t>(bufSize + 128));
-
-  if (compressedSize !=
-      _sr->read(size_t(compressedSize), size_t(compressedSize),
-                reinterpret_cast<uint8_t *>(compressed.data()))) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressed data at `TOKENS` section.");
-    return false;
-  }
-
   if (uncompressedSize !=
-      LZ4Compression::DecompressFromBuffer(compressed.data(), chars.data(),
-                                           size_t(compressedSize),
-                                           size_t(uncompressedSize), &_err)) {
+      LZ4Compression::DecompressFromStreamReader(
+          *_sr, chars.data(), size_t(compressedSize),
+          size_t(uncompressedSize), &_err)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to decompress data of Tokens.");
   }
 
@@ -1420,8 +1400,6 @@ bool CrateReader::ReadTokens() {
   // enforces the real memory budget.
   _tokens.reserve(static_cast<size_t>((std::min)(num_tokens, uint64_t(1) << 20)));
 
-  // TODO(syoyo): Check if input string has exactly `n` tokens(`n` null
-  // characters)
   for (size_t i = 0; i < num_tokens; i++) {
     DCOUT("n_remain = " << nbytes_remain);
 
@@ -1465,6 +1443,9 @@ bool CrateReader::ReadTokens() {
 
   if (_tokens.size() != num_tokens) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("The number of tokens parsed {} does not match the requested one {}", _tokens.size(), num_tokens));
+  }
+  if (nbytes_remain != 0) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("TOKENS section has {} trailing byte(s) after {} token(s).", nbytes_remain, num_tokens));
   }
 
   return true;
@@ -1614,27 +1595,21 @@ bool CrateReader::ReadFields() {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed Value reps size exceeds USDC data.");
     }
 
-    CHECK_MEMORY_USAGE(size_t(reps_size));
-
-    // TODO: Decompress from _sr directly.
-    std::vector<char> comp_buffer(static_cast<size_t>(reps_size));
-
-    if (reps_size !=
-        _sr->read(size_t(reps_size), size_t(reps_size),
-                  reinterpret_cast<uint8_t *>(comp_buffer.data()))) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read reps data at `FIELDS` section.");
+    size_t uncompressed_size = 0;
+    if (!safe::n_to_size<uint64_t>(num_fields, &uncompressed_size)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in ValueRep buffer size computation.");
     }
-
-    // reps datasize = LZ4 compressed. uncompressed size = num_fields * 8 bytes
-    size_t uncompressed_size = size_t(num_fields) * sizeof(uint64_t);
-    CHECK_MEMORY_USAGE(uncompressed_size);
+    auto reps_budget = memory_manager_->ReserveScoped(uncompressed_size);
+    if (!reps_budget.IsReserved()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for Fields ValueRep decode buffer.");
+    }
 
     std::vector<uint64_t> reps_data;
     reps_data.resize(static_cast<size_t>(num_fields));
 
 
-    if (uncompressed_size != LZ4Compression::DecompressFromBuffer(
-                                 comp_buffer.data(),
+    if (uncompressed_size != LZ4Compression::DecompressFromStreamReader(
+                                 *_sr,
                                  reinterpret_cast<char *>(reps_data.data()),
                                  size_t(reps_size), uncompressed_size, &_err)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Fields ValueRep data.");
@@ -1643,9 +1618,6 @@ bool CrateReader::ReadFields() {
     for (size_t i = 0; i < num_fields; i++) {
       _fields[i].value_rep = crate::ValueRep(reps_data[i]);
     }
-
-    REDUCE_MEMORY_USAGE(uncompressed_size);
-    REDUCE_MEMORY_USAGE(size_t(reps_size)); // comp_buffer
   }
 
   DCOUT("num_fields = " << num_fields);
@@ -1716,14 +1688,13 @@ bool CrateReader::ReadFieldSets() {
   size_t compBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(
       static_cast<size_t>(num_fieldsets));
 
-  CHECK_MEMORY_USAGE(compBufferSize);
-
-  {
-    size_t byte_count;
-    if (!safe::mul(sizeof(uint32_t), size_t(num_fieldsets), &byte_count)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
-    }
-    CHECK_MEMORY_USAGE(byte_count);
+  size_t tmp_byte_count{0};
+  if (!safe::mul(sizeof(uint32_t), size_t(num_fieldsets), &tmp_byte_count)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+  }
+  auto tmp_budget = memory_manager_->ReserveScoped(tmp_byte_count);
+  if (!tmp_budget.IsReserved()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for FIELDSETS decode buffer.");
   }
   std::vector<uint32_t> tmp;
   tmp.resize(static_cast<size_t>(num_fieldsets));
@@ -1731,14 +1702,8 @@ bool CrateReader::ReadFieldSets() {
   size_t workBufferSize = Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
           static_cast<size_t>(num_fieldsets));
 
-  CHECK_MEMORY_USAGE(workBufferSize);
-
-  // Optimized implementation: reuse buffers across calls
-  if (_decomp_comp_buffer.size() < compBufferSize) {
-    _decomp_comp_buffer.resize(compBufferSize);
-  }
-  if (_decomp_working_buffer.size() < workBufferSize) {
-    _decomp_working_buffer.resize(workBufferSize);
+  if (!ReserveDecompressionBuffers(compBufferSize, workBufferSize)) {
+    return false;
   }
   std::vector<char> &comp_buffer = _decomp_comp_buffer;
   std::vector<char> &working_space = _decomp_working_buffer;
@@ -1779,9 +1744,6 @@ bool CrateReader::ReadFieldSets() {
     DCOUT("fieldset_index[" << i << "] = " << tmp[i]);
     _fieldset_indices[i].value = tmp[i];
   }
-
-  REDUCE_MEMORY_USAGE(workBufferSize);
-  REDUCE_MEMORY_USAGE(compBufferSize);
 
   if (!BuildFieldSetBoundaryIndex()) {
     return false;
@@ -1847,7 +1809,12 @@ bool CrateReader::BuildLiveFieldSets() {
   _live_fieldsets.clear();
   _live_fieldsets.reserve(_fieldset_start_indices.size());
 
-  for (uint32_t start_idx : _fieldset_start_indices) {
+  std::vector<uint8_t> thread_safe_fieldsets(_fieldset_start_indices.size(), 0);
+  std::vector<size_t> thread_safe_positions;
+  thread_safe_positions.reserve(_fieldset_start_indices.size());
+
+  for (size_t fs_pos = 0; fs_pos < _fieldset_start_indices.size(); fs_pos++) {
+    const uint32_t start_idx = _fieldset_start_indices[fs_pos];
     if (start_idx >= _fieldset_end_indices.size()) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Fieldset start_idx {} out of range (end_indices.size = {}).", start_idx, _fieldset_end_indices.size()));
     }
@@ -1857,38 +1824,110 @@ bool CrateReader::BuildLiveFieldSets() {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid fieldset: end_idx {} < start_idx {}.", end_idx, start_idx));
     }
 
-    auto emplaced =
-        _live_fieldsets.emplace(crate::Index(start_idx), FieldValuePairVector{});
-    auto &pairs = emplaced.first->second;
-
     size_t range_size = static_cast<size_t>(end_idx - start_idx);
     if (range_size > _fields.size()) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Fieldset range {} exceeds total fields count {}.", range_size, _fields.size()));
     }
-    pairs.resize(range_size);
-    DCOUT("range size = " << range_size);
-    // TODO(syoyo): Parallelize.
-    for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {
+
+    // Thread-safety audit: UnpackValueRep() is not generally parallel-safe
+    // because non-inlined values seek/read the shared StreamReader and append to
+    // shared error state. Only prevalidated inlined ValueReps are decoded on
+    // workers; all stream-backed values stay on the serial DecodeFieldSetRange.
+    bool thread_safe = true;
+    for (uint32_t idx = start_idx; idx < end_idx; ++idx) {
       if (_fieldset_indices[idx].value >= _fields.size()) {
         PUSH_ERROR("Invalid live field set data.");
         return false;
       }
-
-      DCOUT("fieldIndex = " << (_fieldset_indices[idx].value));
       auto const &field = _fields[_fieldset_indices[idx].value];
-      if (auto tokv = GetToken(field.token_index)) {
-        pairs[i].first = tokv.value().str();
-
-        if (!UnpackValueRep(field.value_rep, &pairs[i].second)) {
-          PUSH_ERROR("BuildLiveFieldSets: Failed to unpack ValueRep : "
-                     << field.value_rep.GetStringRepr());
-          return false;
-        }
-      } else {
+      if (field.token_index.value >= _tokens.size()) {
         PUSH_ERROR("Invalid token index.");
+        return false;
+      }
+      if (!IsThreadSafeInlinedValueRep(field.value_rep)) {
+        thread_safe = false;
+      }
+    }
+
+    if (thread_safe) {
+      thread_safe_fieldsets[fs_pos] = 1;
+      thread_safe_positions.push_back(fs_pos);
+    }
+  }
+
+#if defined(__wasi__)
+  const bool use_parallel_fieldsets = false;
+#else
+  const bool use_parallel_fieldsets =
+      (_config.numThreads > 1) && (thread_safe_positions.size() >= 64);
+#endif
+
+  if (!use_parallel_fieldsets) {
+    for (uint32_t start_idx : _fieldset_start_indices) {
+      const uint32_t end_idx = _fieldset_end_indices[start_idx];
+      auto emplaced =
+          _live_fieldsets.emplace(crate::Index(start_idx), FieldValuePairVector{});
+      if (!DecodeFieldSetRange(start_idx, end_idx, &emplaced.first->second)) {
+        return false;
       }
     }
   }
+#if defined(TINYUSDZ_ENABLE_THREAD) && !defined(__wasi__) && !defined(__EMSCRIPTEN__)
+  else {
+    std::vector<FieldValuePairVector> decoded(_fieldset_start_indices.size());
+    std::atomic<size_t> next_position{0};
+    std::atomic<bool> worker_failed{false};
+
+    const size_t nthreads = (std::min)(
+        thread_safe_positions.size(), size_t((std::max)(1, _config.numThreads)));
+    std::vector<std::thread> workers;
+    workers.reserve(nthreads);
+
+    auto decode_thread_safe_fieldsets = [&]() {
+      for (;;) {
+        const size_t task_pos = next_position.fetch_add(1);
+        if (task_pos >= thread_safe_positions.size()) {
+          break;
+        }
+        const size_t fs_pos = thread_safe_positions[task_pos];
+        const uint32_t start_idx = _fieldset_start_indices[fs_pos];
+        const uint32_t end_idx = _fieldset_end_indices[start_idx];
+        FieldValuePairVector &pairs = decoded[fs_pos];
+        pairs.resize(static_cast<size_t>(end_idx - start_idx));
+        for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {
+          const auto &field = _fields[_fieldset_indices[idx].value];
+          pairs[i].first = _tokens[field.token_index.value].str();
+          if (!UnpackInlinedValueRep(field.value_rep, &pairs[i].second)) {
+            worker_failed.store(true);
+            return;
+          }
+        }
+      }
+    };
+
+    for (size_t i = 0; i < nthreads; i++) {
+      workers.emplace_back(decode_thread_safe_fieldsets);
+    }
+    for (std::thread &worker : workers) {
+      worker.join();
+    }
+    if (worker_failed.load()) {
+      PUSH_ERROR("Parallel inlined fieldset decode failed unexpectedly.");
+      return false;
+    }
+
+    for (size_t fs_pos = 0; fs_pos < _fieldset_start_indices.size(); fs_pos++) {
+      const uint32_t start_idx = _fieldset_start_indices[fs_pos];
+      if (!thread_safe_fieldsets[fs_pos]) {
+        const uint32_t end_idx = _fieldset_end_indices[start_idx];
+        if (!DecodeFieldSetRange(start_idx, end_idx, &decoded[fs_pos])) {
+          return false;
+        }
+      }
+      _live_fieldsets.emplace(crate::Index(start_idx), std::move(decoded[fs_pos]));
+    }
+  }
+#endif
 
   DCOUT("# of live fieldsets = " << _live_fieldsets.size());
 
@@ -1905,6 +1944,47 @@ bool CrateReader::BuildLiveFieldSets() {
   }
   DCOUT("Total fields used = " << sum);
 #endif
+
+  return true;
+}
+
+bool CrateReader::DecodeFieldSetRange(uint32_t start_idx, uint32_t end_idx,
+                                      FieldValuePairVector *pairs) {
+  if (!pairs) {
+    PUSH_ERROR("`pairs` argument is nullptr.");
+    return false;
+  }
+
+  if (end_idx < start_idx) {
+    PUSH_ERROR("Corrupted fieldset boundary.");
+    return false;
+  }
+
+  size_t fs_range_size = static_cast<size_t>(end_idx - start_idx);
+  if (fs_range_size > _fields.size()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("FieldSet range {} exceeds total fields count {}.", fs_range_size, _fields.size()));
+  }
+  pairs->resize(fs_range_size);
+
+  for (uint32_t idx = start_idx, i = 0; idx < end_idx; ++idx, ++i) {
+    if (_fieldset_indices[idx].value >= _fields.size()) {
+      PUSH_ERROR("Invalid field index in fieldset.");
+      return false;
+    }
+
+    const auto &field = _fields[_fieldset_indices[idx].value];
+    if (auto tokv = GetToken(field.token_index)) {
+      (*pairs)[i].first = tokv.value().str();
+      if (!UnpackValueRep(field.value_rep, &(*pairs)[i].second)) {
+        PUSH_ERROR("DecodeFieldSetRange: Failed to unpack field '" << tokv.value().str()
+                   << "' ValueRep : " << field.value_rep.GetStringRepr());
+        return false;
+      }
+    } else {
+      PUSH_ERROR("Invalid token index.");
+      return false;
+    }
+  }
 
   return true;
 }
@@ -1943,30 +2023,27 @@ bool CrateReader::DecodeFieldSet(crate::Index fieldset_index,
     return false;
   }
 
-  size_t fs_range_size = static_cast<size_t>(fs_end - fieldset_index.value);
-  if (fs_range_size > _fields.size()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("FieldSet range {} exceeds total fields count {}.", fs_range_size, _fields.size()));
+  return DecodeFieldSetRange(fieldset_index.value, fs_end, pairs);
+}
+
+bool CrateReader::ReserveDecompressionBuffers(
+    const size_t comp_buffer_size, const size_t working_buffer_size) const {
+  if (comp_buffer_size > _decomp_comp_buffer_budget) {
+    const size_t delta = comp_buffer_size - _decomp_comp_buffer_budget;
+    CHECK_MEMORY_USAGE(delta);
+    _decomp_comp_buffer_budget = comp_buffer_size;
   }
-  pairs->resize(fs_range_size);
+  if (_decomp_comp_buffer.size() < comp_buffer_size) {
+    _decomp_comp_buffer.resize(comp_buffer_size);
+  }
 
-  for (uint32_t idx = fieldset_index.value, i = 0; idx < fs_end; ++idx, ++i) {
-    if (_fieldset_indices[idx].value >= _fields.size()) {
-      PUSH_ERROR("Invalid field index in fieldset.");
-      return false;
-    }
-
-    const auto &field = _fields[_fieldset_indices[idx].value];
-    if (auto tokv = GetToken(field.token_index)) {
-      (*pairs)[i].first = tokv.value().str();
-      if (!UnpackValueRep(field.value_rep, &(*pairs)[i].second)) {
-        PUSH_ERROR("DecodeFieldSet: Failed to unpack field '" << tokv.value().str()
-                   << "' ValueRep : " << field.value_rep.GetStringRepr());
-        return false;
-      }
-    } else {
-      PUSH_ERROR("Invalid token index.");
-      return false;
-    }
+  if (working_buffer_size > _decomp_working_buffer_budget) {
+    const size_t delta = working_buffer_size - _decomp_working_buffer_budget;
+    CHECK_MEMORY_USAGE(delta);
+    _decomp_working_buffer_budget = working_buffer_size;
+  }
+  if (_decomp_working_buffer.size() < working_buffer_size) {
+    _decomp_working_buffer.resize(working_buffer_size);
   }
 
   return true;
@@ -2027,19 +2104,17 @@ bool CrateReader::ReadSpecs() {
 
   _specs.resize(static_cast<size_t>(num_specs));
 
-  // TODO: Memory size check
-
   // Create temporary space for decompressing.
   size_t compBufferSize= Usd_IntegerCompression::GetCompressedBufferSize(
       static_cast<size_t>(num_specs));
 
-  CHECK_MEMORY_USAGE(compBufferSize);
-  {
-    size_t byte_count;
-    if (!safe::n_to_size<uint32_t>(num_specs, &byte_count)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
-    }
-    CHECK_MEMORY_USAGE(byte_count);
+  size_t tmp_byte_count{0};
+  if (!safe::n_to_size<uint32_t>(num_specs, &tmp_byte_count)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in array size computation");
+  }
+  auto tmp_budget = memory_manager_->ReserveScoped(tmp_byte_count);
+  if (!tmp_budget.IsReserved()) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for SPECS decode buffer.");
   }
 
   std::vector<uint32_t> tmp(static_cast<size_t>(num_specs));
@@ -2047,14 +2122,8 @@ bool CrateReader::ReadSpecs() {
   size_t workBufferSize= Usd_IntegerCompression::GetDecompressionWorkingSpaceSize(
           static_cast<size_t>(num_specs));
 
-  CHECK_MEMORY_USAGE(workBufferSize);
-
-  // Optimized implementation: reuse buffers across calls
-  if (_decomp_comp_buffer.size() < compBufferSize) {
-    _decomp_comp_buffer.resize(compBufferSize);
-  }
-  if (_decomp_working_buffer.size() < workBufferSize) {
-    _decomp_working_buffer.resize(workBufferSize);
+  if (!ReserveDecompressionBuffers(compBufferSize, workBufferSize)) {
+    return false;
   }
   std::vector<char> &comp_buffer = _decomp_comp_buffer;
   std::vector<char> &working_space = _decomp_working_buffer;
@@ -2172,10 +2241,6 @@ bool CrateReader::ReadSpecs() {
     }
   }
 #endif
-
-  REDUCE_MEMORY_USAGE(compBufferSize);
-  REDUCE_MEMORY_USAGE(workBufferSize);
-  REDUCE_MEMORY_USAGE(size_t(num_specs) * sizeof(uint32_t)); // tmp
 
   return true;
 }
@@ -2295,12 +2360,11 @@ bool CrateReader::ReadBootStrap() {
     return false;
   }
 
-  // AOUSD Core Spec 16.3: Current crate version is 0.13.0
-  // Support versions 0.4.0 through 0.13.x
-  if ((version[0] == 0) && (version[1] <= 13)) {
+  // Current crate version is 0.14.0 (ArrayEdits). Support 0.4.0 through 0.14.x.
+  if ((version[0] == 0) && (version[1] <= 14)) {
     // ok
   } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Unsupported crate version {}.{}.{}. TinyUSDZ supports version 0.4.0 through 0.13.x",
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Unsupported crate version {}.{}.{}. TinyUSDZ supports version 0.4.0 through 0.14.x",
       _version[0], _version[1], _version[2]));
   }
 

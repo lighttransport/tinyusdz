@@ -350,7 +350,31 @@ public:
 
   void SetOptions(const Options& opts) { options_ = opts; }
 
+  /// Raise the minimum emitted crate header version. Called when a value that
+  /// requires a newer crate version is written (e.g. SdfPathExpression needs
+  /// 0.10.0, TsSpline needs 0.12.0). The boot header emits
+  /// max(options_ version, requested version). Mirrors OpenUSD's
+  /// RequestWriteVersionUpgrade.
+  void RequestCrateVersionUpgrade(uint8_t maj, uint8_t min, uint8_t patch) {
+    const bool higher =
+        (maj > required_version_major_) ||
+        (maj == required_version_major_ && min > required_version_minor_) ||
+        (maj == required_version_major_ && min == required_version_minor_ &&
+         patch > required_version_patch_);
+    if (higher) {
+      required_version_major_ = maj;
+      required_version_minor_ = min;
+      required_version_patch_ = patch;
+    }
+  }
+
 private:
+  // Minimum crate version required by values written so far (0.0.0 = no extra
+  // requirement beyond options_). See RequestCrateVersionUpgrade().
+  uint8_t required_version_major_{0};
+  uint8_t required_version_minor_{0};
+  uint8_t required_version_patch_{0};
+
   // ======================================================================
   // Internal structures
   // ======================================================================
@@ -423,6 +447,15 @@ private:
 
   /// Extract Mesh-specific properties (points, normals, etc.)
   bool ExtractMeshProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// UsdVol: extract Volume `field:*` relationships
+  bool ExtractVolumeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract FieldAsset attributes (filePath, fieldName, ...)
+  bool ExtractFieldAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract OpenVDBAsset attributes
+  bool ExtractOpenVDBAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  /// UsdVol: extract Field3DAsset attributes
+  bool ExtractField3DAssetProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Cube-specific properties (size, extent)
   bool ExtractCubeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
@@ -708,6 +741,14 @@ private:
   /// Returns the ValueRep and may write out-of-line data to file
   crate::ValueRep PackValue(const crate::CrateValue& value, std::string* err);
 
+  /// Pack a TokenVector metadata value into ValueRep.
+  crate::ValueRep PackTokenVectorValue(const std::vector<value::token>& tokens,
+                                       std::string* err);
+
+  /// Pack a metadata dictionary value into a Crate ValueRep.
+  bool PackMetaVariable(const std::string& key, const MetaVariable& meta,
+                        crate::ValueRep* value_rep, std::string* err);
+
   /// Write a value to the value data section
   /// Returns the file offset where the value was written
   int64_t WriteValueData(const crate::CrateValue& value, bool* is_compressed,
@@ -868,6 +909,12 @@ private:
   // Value data offset tracking
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
+
+  // Element crate type id of the most recently packed VtArrayEdit's literals
+  // array (set by WriteValueData, read by PackValue). Lets the array-edit
+  // ValueRep adopt the element type from the packed literals rather than a
+  // separately-tracked id (robust even for ref-only edits with empty literals).
+  int32_t last_array_edit_elem_type_ = 0;
 
   // Phase 5: Value deduplication with NaN-aware hashing.
   // Follows OpenUSD TfHash pattern: +0.0 and -0.0 hash identically;

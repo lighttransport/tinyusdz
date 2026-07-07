@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <mutex>
 
@@ -33,6 +34,15 @@ uint64_t FileSizeBytes(const std::string &path) {
   if (!ifs) return 0;
   const std::streamoff pos = ifs.tellg();
   return (pos > 0) ? static_cast<uint64_t>(pos) : 0;
+}
+
+uint64_t BudgetMiBToBytes(size_t mib) {
+  constexpr uint64_t kBytesPerMiB = 1024ull * 1024ull;
+  const uint64_t maxMiB =
+      (std::numeric_limits<uint64_t>::max)() / kBytesPerMiB;
+  return (static_cast<uint64_t>(mib) > maxMiB)
+             ? (std::numeric_limits<uint64_t>::max)()
+             : static_cast<uint64_t>(mib) * kBytesPerMiB;
 }
 
 }  // namespace
@@ -62,7 +72,7 @@ std::function<bool(const Path &, const Payload &)> MakePayloadPolicy(
       return [](const Path &, const Payload &) { return false; };
     case LargeSceneLoadOptions::PayloadMode::Budget: {
       auto st = std::make_shared<BudgetPolicyState>();
-      st->budget_bytes = opts.payload_budget_mb * 1024ull * 1024ull;
+      st->budget_bytes = BudgetMiBToBytes(opts.payload_budget_mb);
       st->resolver = resolver;
       return [st](const Path &, const Payload &pl) -> bool {
         const std::string ap = pl.asset_path.GetAssetPath();
@@ -72,8 +82,11 @@ std::function<bool(const Path &, const Payload &)> MakePayloadPolicy(
           const std::string rp = st->resolver->resolve(ap);
           sz = FileSizeBytes(rp);
         }
+        if (sz == 0) {
+          return false;
+        }
         const uint64_t prev = st->loaded_bytes.fetch_add(sz);
-        if (prev + sz > st->budget_bytes) {
+        if (prev > st->budget_bytes || sz > st->budget_bytes - prev) {
           st->loaded_bytes.fetch_sub(sz);
           return false;  // over budget => defer
         }
@@ -264,7 +277,7 @@ MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
       return [](const next::Path &, const std::string &) { return false; };
     case LargeSceneLoadOptions::PayloadMode::Budget: {
       auto st = std::make_shared<NextBudgetPolicyState>();
-      st->budget_bytes = opts.payload_budget_mb * 1024ull * 1024ull;
+      st->budget_bytes = BudgetMiBToBytes(opts.payload_budget_mb);
       st->resolver = resolver;
       return [st](const next::Path &, const std::string &ap) -> bool {
         uint64_t sz = 0;
@@ -273,8 +286,11 @@ MakeNextPayloadPolicy(const LargeSceneLoadOptions &opts,
           const std::string rp = st->resolver->ResolvePath(ap);
           sz = FileSizeBytes(rp);
         }
+        if (sz == 0) {
+          return false;
+        }
         const uint64_t prev = st->loaded_bytes.fetch_add(sz);
-        if (prev + sz > st->budget_bytes) {
+        if (prev > st->budget_bytes || sz > st->budget_bytes - prev) {
           st->loaded_bytes.fetch_sub(sz);
           return false;
         }

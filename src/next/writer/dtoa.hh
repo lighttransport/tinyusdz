@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace tinyusdz {
@@ -27,6 +28,13 @@ std::string dtos(double v);
 /// to dtos().
 void dtos_append(std::string& out, float v);
 void dtos_append(std::string& out, double v);
+
+/// Same as dtos(), but formats into a caller-provided buffer and returns the
+/// byte count (no std::string at all). `dst` capacity must be >= 24 (float) /
+/// >= 32 (double). Byte-identical to dtos(); used by the value printer to format
+/// a scalar and append it to the chunk buffer in a single copy.
+size_t dtos_to(char* dst, float v);
+size_t dtos_to(char* dst, double v);
 
 /// Freestanding `printf("%.*g", precision, v)` formatter (no libc / no locale):
 /// round to `precision` significant digits, choose fixed vs scientific by the %g

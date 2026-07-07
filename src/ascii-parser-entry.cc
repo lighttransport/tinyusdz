@@ -561,6 +561,14 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("Points");
   d.insert("GeomSubset");
   d.insert("Scope");
+  // UsdVol / UsdRender placeholder prim types.
+  d.insert("Volume");
+  d.insert("OpenVDBAsset");
+  d.insert("Field3DAsset");
+  d.insert("RenderSettings");
+  d.insert("RenderProduct");
+  d.insert("RenderVar");
+  d.insert("GenerativeProcedural");
   d.insert("Material");
   d.insert("NodeGraph");
   d.insert("Shader");
@@ -577,6 +585,12 @@ static void RegisterPrimTypes(std::unordered_set<std::string> &d) {
   d.insert("Skeleton");
   d.insert("SkelAnimation");
   d.insert("BlendShape");
+
+  // UsdVol
+  d.insert("Volume");
+  d.insert("FieldAsset");
+  d.insert("OpenVDBAsset");
+  d.insert("Field3DAsset");
 
   d.insert("GPrim");
 }
@@ -1634,9 +1648,28 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
   value::Value dst;
 
   switch (typeId.value()) {
+    PARSE_BASE_TYPE(char)
+    PARSE_BASE_TYPE(value::char2)
+    PARSE_BASE_TYPE(value::char3)
+    PARSE_BASE_TYPE(value::char4)
+    PARSE_BASE_TYPE(uint8_t)
+    PARSE_BASE_TYPE(value::uchar2)
+    PARSE_BASE_TYPE(value::uchar3)
+    PARSE_BASE_TYPE(value::uchar4)
+    PARSE_BASE_TYPE(int16_t)
+    PARSE_BASE_TYPE(value::short2)
+    PARSE_BASE_TYPE(value::short3)
+    PARSE_BASE_TYPE(value::short4)
+    PARSE_BASE_TYPE(uint16_t)
+    PARSE_BASE_TYPE(value::ushort2)
+    PARSE_BASE_TYPE(value::ushort3)
+    PARSE_BASE_TYPE(value::ushort4)
     PARSE_BASE_TYPE(value::uint2)
     PARSE_BASE_TYPE(value::uint3)
     PARSE_BASE_TYPE(value::uint4)
+    PARSE_BASE_TYPE(value::matrix2f)
+    PARSE_BASE_TYPE(value::matrix3f)
+    PARSE_BASE_TYPE(value::matrix4f)
     default: {
       if (err) {
         (*err) =

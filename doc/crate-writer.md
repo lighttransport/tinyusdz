@@ -2,12 +2,26 @@
 
 The TinyUSDZ USDC Crate Writer writes USD Stage data to binary USDC (Crate) format version 0.8.0. Status: experimental but functional with comprehensive test coverage.
 
+> **Two crate writers in the current codebase.** This document primarily covers
+> the **classic** writer (`src/crate-writer*.cc`, driven by `Stage` via
+> `stage-converter.cc`, exposed by `tusdcat`). The refactored **`next`** engine
+> ships a second, independent crate writer under `src/next/crate/` (used by the
+> `next` pipeline — `next_usdcat -f -o out.usdc`, the wasm `--pipeline stream-next`
+> USDZ path, etc.). The two share the on-disk format and the dedup principles
+> below, but are separate implementations. The dedup/format reference sections
+> apply to both; the [`next` crate writer performance](#next-crate-writer-performance--remaining-opportunities)
+> section at the end is specific to `src/next/crate/`.
+
 ## Integration Points
 
+**Classic writer:**
 - Core writer: `src/crate-writer.cc` (sections/TOC/compression), `src/crate-writer-values.cc` (value-data encoding + dedup), `src/crate-writer-inline.cc` (`TryInlineValue`), `src/crate-writer.hh`
 - Stage converter: `src/stage-converter.cc` (Stage/Prim/property → crate spec+field model)
 - CLI: `examples/tusdcat` with `-o/--output` option
-- Unit tests: `tests/unit/unit-crate-writer.cc` (69 test functions)
+- Unit tests: `tests/unit/unit-crate-writer.cc`
+
+**`next` writer (`src/next/crate/`):** a single `crate-writer.cc` translation unit
+that `#include`s the `Impl` body split across `crate-writer-{impl,write,tables,passthrough,values,properties,fields,sections}.inc` (+ `crate-writer-types.{hh,cc}`, `crate-writer.hh`). Public API in `src/next/writer/usdc-writer.{hh,cc}` (`WriteUSDCToFile`/`WriteUSDCToMemory`/`WriteLayerToUSDC*`); built directly from a composed `next::Layer` (no `stage-converter` step). Tests: `tests/next/test_usdc_{writer,roundtrip,reader,malformed}.cc`. A lazy-array **pass-through** (`crate-writer-passthrough.inc`, `TryPassThrough`) copies a POD array block verbatim from the memory-mapped source crate when the type/version are compatible, so a read→write of an unchanged array never re-encodes.
 
 ## Usage
 
@@ -283,9 +297,108 @@ Zero collisions for both at 1M unique random inputs.
 - Use standard defaults (0, identity) that dedup well — +0.0 and -0.0 now dedup automatically
 - Share time arrays across attributes when possible
 
-## Enhancement Roadmap
+## Enhancement Roadmap (classic writer)
 
 Separate attribute/connection/relationship specs and Variant/VariantSet authoring are now implemented (see Implemented Features). Remaining:
 
 - Performance optimizations (incremental writing, parallelism).
 - Broader binary-compatibility verification against OpenUSD-written files.
+
+---
+
+# `next` Crate Writer Performance & Remaining Opportunities
+
+Specific to `src/next/crate/`. Profiled on the public large scenes via
+`TINYUSDZ_NEXT_TIMING=1 build-next-release/next_usdcat -f -o out.usdc <root>`
+(`--write-threads N` or default auto), write to a **seekable file**, not `/dev/null`
+— the crate writer seek-patches headers). `CrateWriteOptions::num_threads`
+(auto-capped in the library; `next_usdcat` now takes thread count from CLI `--write-threads`)
+controls the parallel paths; output is byte-identical across thread counts.
+
+## What the write phase is bound by
+
+On geometry-heavy scenes the write phase is dominated by the **serial per-spec
+structural build** (`BuildFieldsAndSpecs` in `crate-writer-fields.inc`), NOT value
+encoding. On Moana Island (4.2M specs) the original 49 s breakdown was roughly:
+path-tree sort ~21%, malloc/free churn ~18%, token/string interning ~10%,
+`InternBlock` value dedup ~6%, with `EncodeDeltaU32` (the only real array encode)
+only ~2.6% — encoding the 2.44 GB of arrays is just ~3–5 s. Integer arrays use
+delta+LZ4 (`compress_arrays`, ≥16 elems); float/double/vec/quat/matrix arrays are
+stored raw; lazy uncompressed arrays pass through verbatim (no re-encode).
+
+## Landed optimizations (all byte-identical, verified by `cmp` + Pixar `usdcat`)
+
+Island USDC write **49 s → 29.8 s (−39%)**, Caldera ~7.6 → ~6 s, peak RSS reduced:
+
+1. **Path-section sort** (`crate-writer-sections.inc`, `WritePathsSection`): sort
+   `uint32` path INDICES (not `{string, uint32}` copies), then **parallel** sort
+   (`ParallelSortIndices` in `crate-writer-impl.inc`: sort P chunks, pairwise-merge
+   runs) — the sort was ~21% / ~10 s of write.
+2. **Ancestor-synthesis set** keyed on `string_view` into the stable `paths_`
+   (+ a deque for synthesized ancestors) instead of copying all 4.2M path strings.
+3. **Reserve table/map capacity** up front (`paths_`/`specs_`/`fields_`/`value_data_`
+   + the `path_to_index_`/`block_dedup_` maps) from a cheap prim+property count.
+4. **Parallel value-byte assembly** (`EmitValueBytesToBuffer`): place each block at
+   its precomputed 8-byte-aligned offset into one pre-sized, zero-filled buffer
+   (disjoint sub-ranges → parallel, byte-balanced) instead of an `align()`+append
+   loop; plus `WriteToMemory`/`WriteLayerToMemory` **move** the finished buffer out
+   (`take_buffer()`) instead of copying the multi-GB crate.
+
+## Measured DEAD END — do not retry: per-spec build map-reduce
+
+The obvious next step — parallelize the per-prim `BuildFieldsAndSpecs` across
+workers — was implemented end-to-end in **two** variants and **both were slower**
+than the 29.8 s serial-build baseline on Island, with a multi-GB RSS blow-up:
+
+- **freeze-tokens-and-paths**: serial pre-pass interns all tokens/strings/paths;
+  workers do read-only lookups → 37.5 s, 15.9 GiB.
+- **merge-time path resolution**: workers intern unique spec paths locally (parallel
+  string construction), serial merge re-interns globally + rewrites the local path
+  indices embedded in `PathListOp` (relationship/connection) blocks → 38.7 s, 17.5 GiB.
+
+Root cause: the build is dominated by **serial GLOBAL dedup interning** — the path
+table (4.2M unique paths forming a *tree* namespace) and the content-addressed
+value-block `InternBlock`. That work is inherently un-parallelizable (global
+uniqueness), and a map-reduce does not remove it — it **doubles** it (worker-local
+interning + serial merge re-interning) and adds the worker-data memory blow-up. The
+parallelizable part (field construction/encode) is too small a fraction to offset
+that. (The inert `BuildOnePrim` factor-out + `frozen_tok_/frozen_str_` scaffolding
+were kept as committed groundwork; `crate-writer-tables.inc`.) The
+`PathListOp`/`StoreVariantSelectionMap` blocks embed path/string indices, and
+`TimeSamples`/dict blocks embed BLOCK indices, which is what makes a deterministic
+merge intricate — another reason the payoff did not justify it.
+
+## Remaining opportunities (do NOT touch the serial global-dedup floor)
+
+Each is byte-identical-safe and worth at most a few percent — they shave the tail
+and the dedup constants, not the O(specs) global-interning floor:
+
+1. **Precompute block hashes in parallel / faster `InternBlock`.** `InternBlock`
+   (`crate-writer-impl.inc`) recomputes an FNV-1a hash over each block's head/mid/tail
+   on the serial path. Compute hashes during value encoding (or in a parallel pre-pass
+   over `value_data_`) and pass them in, so the serial dedup is just the multimap
+   insert + a memcmp on true collisions. ~the 6% `InternBlock` slice.
+2. **Parallel section LZ4.** TOKENS / FIELDS / FIELDSETS / SPECS each LZ4-compress
+   independently in `Write*Section` (`crate-writer-sections.inc`); compress them on
+   the worker pool and write in order. (PATHS already has the parallel sort.)
+3. **Parallel value ENCODE for non-lazy arrays.** Island's ASCII source means arrays
+   are non-lazy and fully re-encoded (delta+LZ4 / raw memcpy); that is the one
+   embarrassingly-parallel chunk of the build (independent per block). It is only
+   ~3–5%, but unlike the structural build it is safe to parallelize: pre-produce the
+   block bytes + hash per array in parallel keyed by the source `Value`, then the
+   serial walk consumes them (byte-identical, like the USDA writer's chunked path).
+4. **Tagged float/double array compression** (port the classic writer's `'i'`/`'t'`
+   encoding; see above) as an opt-in — smaller output, not faster.
+5. **The only way past the floor** is to parallelize the global dedup ITSELF — a
+   concurrent/sharded path + block hashmap, or eliminating the local↔global double
+   interning. High risk, uncertain payoff, and it breaks deterministic-across-threads
+   output; treat ~29.8 s (−39%) as the practical ceiling unless this is attempted.
+
+## Verification expectations
+
+`num_threads=1` `cmp`-equals `num_threads=8/16` (deterministic). USDC tests:
+`ctest --test-dir build-next -R usdc` (THREADS OFF) + the threaded build. For
+stream-next/wasm (single-threaded → serial path), the produced root `.usdc` is
+byte-identical to the pre-change writer — confirmed on a large UE-export scene by
+building both and comparing (root crate md5-identical; mesh count matches OpenUSD;
+Pixar `usdcat` valid).

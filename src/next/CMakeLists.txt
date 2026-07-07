@@ -12,6 +12,7 @@ set(TINYUSDZ_NEXT_SOURCES
     # Type system
     types/type-info.cc
     types/value.cc
+    types/value-view.cc
     types/interpolation.cc
 
     # Prim types
@@ -30,13 +31,27 @@ set(TINYUSDZ_NEXT_SOURCES
     # ASCII parser
     parser/lexer.cc
     parser/value-parser.cc
+    parser/value-parser-types.cc
     parser/ascii-parser.cc
+    parser/ascii-parser-metadata.cc
+    parser/ascii-parser-prim.cc
+    parser/ascii-parser-timesamples.cc
+    parser/ascii-parser-utils.cc
+    parser/ascii-parser-variants.cc
     parser/simd-scan.cc
 
     # Crate (binary) reader/writer
     crate/crate-format.cc
     crate/crate-data-source.cc
+    crate/crate-reader-arrays.cc
+    crate/crate-reader-decode.cc
+    crate/crate-reader-api.cc
     crate/crate-reader.cc
+    crate/crate-reader-sections.cc
+    crate/crate-reader-stage.cc
+    crate/crate-reader-unpack.cc
+    crate/crate-reader-vectors.cc
+    crate/crate-writer-types.cc
     crate/crate-writer.cc
 
     # High-level readers
@@ -54,6 +69,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Schema convenience APIs
     schema/geom-mesh.cc
+    schema/geom-point-instancer.cc
     schema/geom-xform.cc
     schema/usd-lux.cc
     schema/usd-geom-camera.cc
@@ -95,6 +111,7 @@ set(TINYUSDZ_NEXT_HEADERS
     types/type-id.hh
     types/type-info.hh
     types/value.hh
+    types/value-view.hh
     types/interpolation.hh
 
     # Prim types
@@ -113,13 +130,27 @@ set(TINYUSDZ_NEXT_HEADERS
     # ASCII parser
     parser/lexer.hh
     parser/value-parser.hh
+    parser/value-parser-arrays.inc
+    parser/value-parser-dict.inc
+    parser/value-parser-numeric.hh
+    parser/value-parser-scalars.inc
+    parser/ascii-parser-internal.hh
     parser/ascii-parser.hh
 
     # Crate (binary) reader/writer
     crate/crate-format.hh
+    crate/crate-reader-internal.hh
     crate/crate-reader.hh
+    crate/crate-writer-fields.inc
+    crate/crate-writer-impl.inc
+    crate/crate-writer-sections.inc
+    crate/crate-writer-tables.inc
+    crate/crate-writer-values.inc
+    crate/crate-writer-write.inc
+    crate/crate-writer-types.hh
     crate/crate-writer.hh
     crate/stream-reader.hh
+    crate/stream-writer.hh
 
     # High-level readers
     reader/usda-reader.hh
@@ -134,6 +165,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Schema convenience APIs
     schema/geom-mesh.hh
+    schema/geom-point-instancer.hh
     schema/geom-xform.hh
     schema/usd-lux.hh
     schema/usd-geom-camera.hh
@@ -162,7 +194,16 @@ set(TINYUSDZ_NEXT_HEADERS
     pcp/namespace-mapping.hh
     pcp/prim-index.hh
     pcp/layer-registry.hh
+    pcp/cache-arc-expansion.inc
     pcp/cache.hh
+    pcp/cache-compose.inc
+    pcp/cache-invalidation.inc
+    pcp/cache-layer-stack.inc
+    pcp/cache-lock.hh
+    pcp/cache-parallel-warm.inc
+    pcp/cache-specs-instances.inc
+    pcp/cache-stage-build.inc
+    pcp/cache-utils.hh
 
     # High-level API
     tinyusdz-next.hh
@@ -190,8 +231,10 @@ add_library(tinyusdz_next STATIC
 # vendored dragonbox dtoa (writer/dtoa.cc).
 target_compile_features(tinyusdz_next PUBLIC cxx_std_17)
 
-# Optional threading: enables the parallel layer-prefetch path in next::pcp.
-option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next" OFF)
+# Optional threading: enables std::thread parallel paths in next. Keep this OFF
+# for WASM/browser builds so they do not require Emscripten pthreads /
+# SharedArrayBuffer.
+option(TINYUSDZ_NEXT_ENABLE_THREAD "Enable std::thread parallel paths in next (default OFF; not for default WASM)" OFF)
 if(TINYUSDZ_NEXT_ENABLE_THREAD)
     find_package(Threads REQUIRED)
     target_compile_definitions(tinyusdz_next PUBLIC TINYUSDZ_ENABLE_THREAD)
@@ -218,16 +261,32 @@ else()
     set_source_files_properties(${LZ4_SOURCES} PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
 endif()
 
-# Optional: Create test executable
+# tinyusdz_next uses no C++ RTTI and no C++ exceptions; disable both (C++ sources
+# only so the vendored C code does not warn). TINYUSDZ_CXX_RTTI / _EXCEPTIONS are
+# inherited from the parent project when built as a subdirectory, and undefined
+# (-> disabled) when built standalone.
+if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+    else()
+        target_compile_options(tinyusdz_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
+endif()
+
+# Optional: Create test executables.
 #
-# EXPERIMENTAL / under-construction module. `next` is a standalone CMake project
-# (not added by the top-level CMakeLists) and its tests are OFF by default, so it
-# is intentionally excluded from the main native regression suite (`build/` ctest)
-# and from the Pixar comparison runner. Its tests may be unstable and use bare
-# assert() (no-ops under NDEBUG). Build/run them on demand only — see
-# doc/testing-cpp.md ("Experimental `next` library tests"). Do NOT add `next` to
-# the full regression gate without first hardening the suite.
-option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for TinyUSDZ Next (experimental; excluded from main regression)" OFF)
+# `next` is a stable standalone CMake project. It is not added to the top-level
+# build by default, so full regression runs must build this project separately
+# and run its ctests. Keep the tests in a Debug build: many test programs use
+# assert(), which is compiled out under NDEBUG.
+option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for stable TinyUSDZ Next" OFF)
 
 if(TINYUSDZ_NEXT_BUILD_TESTS)
     # The next tests validate behavior with assert(); a Release build (-DNDEBUG)
@@ -365,6 +424,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     target_link_libraries(test_crash_regressions PRIVATE tinyusdz_next)
     target_compile_definitions(test_crash_regressions PRIVATE
         CRASH_REGRESSION_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/crash_regressions")
+
+    add_executable(test_usdc_malformed
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_usdc_malformed.cc
+    )
+    target_link_libraries(test_usdc_malformed PRIVATE tinyusdz_next)
 endif()
 
 # ============================================================
@@ -396,16 +460,24 @@ endif()
 set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.cc
 )
 
 set(TYDRA_NEXT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/chunked-array.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-data.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.hh
 )
 
 add_library(tydra_next STATIC
@@ -425,6 +497,24 @@ if(MSVC)
     target_compile_options(tydra_next PRIVATE /W4)
 else()
     target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# tydra_next uses no C++ RTTI and no C++ exceptions; disable both (this is the
+# tydra_next definition actually used when src/next is built; the standalone
+# src/tydra/next/CMakeLists.txt carries the same flags).
+if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+    else()
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
 endif()
 
 # Tydra Next test
@@ -483,10 +573,43 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_crash_regressions COMMAND test_crash_regressions
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_usdc_malformed COMMAND test_usdc_malformed
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_tydra COMMAND test_tydra_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+    set(TINYUSDZ_NEXT_SMOKE_TESTS
+        next_test_tinyusdz
+        next_test_layer
+        next_test_stage
+        next_test_pcp
+        next_test_pcp_parallel
+        next_test_writer
+        next_test_usdc_writer
+        next_test_usdc_reader
+        next_test_usdc_roundtrip
+        next_test_complex_usda
+        next_test_roundtrip_fidelity
+        next_test_crate_dict
+        next_test_crate_alloc_guard
+        next_test_lazy_array
+        next_test_schemas
+        next_test_schemas_ext
+        next_test_usdcat_roundtrip
+        next_test_usdz_writer
+        next_test_composition
+        next_test_crash_regressions
+        next_test_usdc_malformed
+        next_test_load_rules
+        next_test_tydra)
+    set_tests_properties(${TINYUSDZ_NEXT_SMOKE_TESTS}
+        PROPERTIES LABELS "next")
+    set_tests_properties(next_benchmark
+        PROPERTIES LABELS "next;benchmark")
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when
@@ -514,6 +637,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
                     # raising it requires justification.
                     --max-fail 3
         )
+        set_tests_properties(next_corpus_parse
+            PROPERTIES LABELS "next;corpus")
     endif()
 endif()
 

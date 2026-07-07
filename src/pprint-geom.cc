@@ -57,6 +57,16 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
   return s;
 }
 
+std::string to_string(tinyusdz::GeomMesh::TriangleSubdivisionRule v) {
+  switch (v) {
+    case tinyusdz::GeomMesh::TriangleSubdivisionRule::CatmullClark:
+      return "catmullClark";
+    case tinyusdz::GeomMesh::TriangleSubdivisionRule::Smooth:
+      return "smooth";
+  }
+  return "catmullClark";
+}
+
 std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
   std::string s;
 
@@ -264,6 +274,34 @@ std::string to_string(const Scope &scope, const uint32_t indent,
   return ss.str();
 }
 
+// UsdRender / UsdProc placeholder prim types: emit `<spec> <TypeName> "name"`
+// with generic props (no typed schema fields yet).
+#define DEFINE_PLACEHOLDER_PRIM_TO_STRING(__cls, __tyname)                 \
+  std::string to_string(const __cls &p, const uint32_t indent,            \
+                        bool closing_brace) {                             \
+    std::stringstream ss;                                                 \
+    ss << pprint::Indent(indent) << to_string(p.spec) << " " __tyname     \
+       << " \"" << p.name << "\"\n";                                      \
+    if (p.meta.authored()) {                                              \
+      ss << pprint::Indent(indent) << "(\n";                              \
+      ss << print_prim_metas(p.meta, indent + 1);                         \
+      ss << pprint::Indent(indent) << ")\n";                              \
+    }                                                                     \
+    ss << pprint::Indent(indent) << "{\n";                                \
+    std::set<std::string> tokset;                                         \
+    ss << print_props(p.props, tokset, p.propertyNames(), indent + 1);    \
+    if (closing_brace) {                                                  \
+      ss << pprint::Indent(indent) << "}\n";                              \
+    }                                                                     \
+    return ss.str();                                                     \
+  }
+
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderSettings, "RenderSettings")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderProduct, "RenderProduct")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(RenderVar, "RenderVar")
+DEFINE_PLACEHOLDER_PRIM_TO_STRING(GenerativeProcedural, "GenerativeProcedural")
+#undef DEFINE_PLACEHOLDER_PRIM_TO_STRING
+
 std::string to_string(const GPrim &gprim, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
@@ -382,6 +420,108 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent,
   return ss.str();
 }
 
+// --- UsdVol ---
+
+// Shared printer for FieldAsset-derived field-asset attributes.
+static void print_field_asset_attrs(std::stringstream &ss,
+                                    const FieldAsset &field,
+                                    const uint32_t indent) {
+  ss << print_typed_attr(field.filePath, "filePath", indent);
+  ss << print_typed_attr(field.fieldName, "fieldName", indent);
+  ss << print_typed_attr(field.fieldDataType, "fieldDataType", indent);
+  ss << print_typed_attr(field.fieldIndex, "fieldIndex", indent);
+}
+
+std::string to_string(const FieldAsset &field, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(field.spec) << " FieldAsset \""
+     << field.name << "\"\n";
+  if (field.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(field.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  print_field_asset_attrs(ss, field, indent + 1);
+  ss << print_gprim_predefined(field, indent + 1);
+  ss << print_props(field.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const OpenVDBAsset &asset, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(asset.spec) << " OpenVDBAsset \""
+     << asset.name << "\"\n";
+  if (asset.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(asset.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  print_field_asset_attrs(ss, asset, indent + 1);
+  ss << print_typed_attr(asset.fieldClass, "fieldClass", indent + 1);
+  ss << print_gprim_predefined(asset, indent + 1);
+  ss << print_props(asset.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const Field3DAsset &asset, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(asset.spec) << " Field3DAsset \""
+     << asset.name << "\"\n";
+  if (asset.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(asset.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+  print_field_asset_attrs(ss, asset, indent + 1);
+  ss << print_typed_attr(asset.fieldPurpose, "fieldPurpose", indent + 1);
+  ss << print_gprim_predefined(asset, indent + 1);
+  ss << print_props(asset.props, indent + 1);
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
+std::string to_string(const Volume &volume, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+  ss << pprint::Indent(indent) << to_string(volume.spec) << " Volume \""
+     << volume.name << "\"\n";
+  if (volume.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(volume.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // `field:<name>` relationships -> field-asset prim paths.
+  for (const auto &item : volume.fieldRelationships) {
+    ss << print_relationship(item.second, item.second.get_listedit_qual(),
+                             /* custom */ false, "field:" + item.first,
+                             indent + 1);
+  }
+
+  ss << print_gprim_predefined(volume, indent + 1);
+  ss << print_props(volume.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+  return ss.str();
+}
+
 std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
@@ -439,6 +579,8 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                                indent + 1);
   ss << print_typed_token_attr(mesh.faceVaryingLinearInterpolation,
                                "faceVaryingLinearInterpolation", indent + 1);
+  ss << print_typed_token_attr(mesh.triangleSubdivisionRule,
+                               "triangleSubdivisionRule", indent + 1);
 
   ss << print_gprim_predefined(mesh, indent + 1);
 

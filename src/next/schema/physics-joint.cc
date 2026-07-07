@@ -18,7 +18,16 @@ static bool IsJointType(const UsdPrim& prim, const std::string& type) {
 }
 
 bool IsPhysicsJoint(const UsdPrim& prim) {
-  return prim.IsValid() && (prim.GetTypeName().find("Physics") != std::string::npos);
+  if (!prim.IsValid()) return false;
+  const std::string& type = prim.GetTypeName();
+  return type == "PhysicsJoint" ||
+         type == "PhysicsPrismaticJoint" ||
+         type == "PhysicsRevoluteJoint" ||
+         type == "PhysicsSphericalJoint" ||
+         type == "PhysicsFixedJoint" ||
+         type == "PhysicsDistanceJoint" ||
+         type == "PhysicsSliderJoint" ||
+         type == "PhysicsBallJoint";
 }
 
 bool IsPhysicsPrismaticJoint(const UsdPrim& prim) {
@@ -267,25 +276,53 @@ bool GetPhysicsSphericalJointData(const Stage& stage, const UsdPrim& prim,
 
   if (!GetPhysicsJointData(stage, prim, out, time)) return false;
 
-  // coneAngleLimit
+  // coneAngle0Limit
+  {
+    const Value* val = prim.GetPropertyValue("physics:coneAngle0Limit");
+    if (val) {
+      const float* f = val->as_float();
+      if (f) {
+        out->coneAngle0Limit = *f;
+        out->coneAngleLimit = *f;
+      }
+    }
+  }
+
+  // coneAngle1Limit
+  {
+    const Value* val = prim.GetPropertyValue("physics:coneAngle1Limit");
+    if (val) {
+      const float* f = val->as_float();
+      if (f) {
+        out->coneAngle1Limit = *f;
+        out->coneAngleLimitY = *f;
+      }
+    }
+  }
+
+  // Legacy non-schema aliases kept for older test fixtures and consumers.
   {
     const Value* val = prim.GetPropertyValue("physics:coneAngleLimit");
     if (val) {
       const float* f = val->as_float();
-      if (f) out->coneAngleLimit = *f;
+      if (f) {
+        out->coneAngleLimit = *f;
+        out->coneAngle0Limit = *f;
+      }
     }
   }
 
-  // coneAngleLimitY
   {
     const Value* val = prim.GetPropertyValue("physics:coneAngleLimitY");
     if (val) {
       const float* f = val->as_float();
-      if (f) out->coneAngleLimitY = *f;
+      if (f) {
+        out->coneAngleLimitY = *f;
+        out->coneAngle1Limit = *f;
+      }
     }
   }
 
-  // coneAngleLimitZ
   {
     const Value* val = prim.GetPropertyValue("physics:coneAngleLimitZ");
     if (val) {

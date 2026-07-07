@@ -44,6 +44,11 @@ const state = {
   muscleObjects: [],
   usdMuscleObjects: [],
   muscleLineData: null,
+  sensorObjects: [],
+  usdSensorObjects: [],
+  sensorVisualData: null,
+  sensorPreviewCameras: [],
+  sensorPreviewIndex: 0,
   settings: {
     upAxis: 'Z',
     showVisuals: true,
@@ -65,6 +70,9 @@ const state = {
     jointsCollapsed: false,
     applyHomePose: false,
     showMuscles: true,
+    showTendons: true,
+    showSensors: true,
+    renderSensorView: true,
     // Per-MuJoCo-geom-group visibility for the source view (groups 0-5), mirroring
     // the MuJoCo viewer's group toggles. Default: 0-2 shown, 3-5 hidden (the usual
     // visual/auxiliary split). Geoms with no group fall back to showVisuals/
@@ -108,8 +116,30 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
+
+const sensorPreviewPanel = document.createElement('div');
+sensorPreviewPanel.style.cssText = [
+  'position:fixed', 'right:12px', 'bottom:12px', 'z-index:8',
+  'background:rgba(18,20,24,0.86)', 'border:1px solid rgba(255,255,255,0.16)',
+  'border-radius:6px', 'padding:8px', 'color:#e7e9ee',
+  'font:12px system-ui,sans-serif', 'display:none',
+  'box-shadow:0 8px 24px rgba(0,0,0,0.28)'
+].join(';');
+const sensorPreviewLabel = document.createElement('div');
+sensorPreviewLabel.style.cssText = 'margin-bottom:6px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+const sensorPreviewCanvas = document.createElement('canvas');
+sensorPreviewCanvas.width = 256;
+sensorPreviewCanvas.height = 160;
+sensorPreviewCanvas.style.cssText = 'display:block;width:256px;height:160px;background:#111;border-radius:4px;cursor:pointer';
+sensorPreviewPanel.append(sensorPreviewLabel, sensorPreviewCanvas);
+document.body.appendChild(sensorPreviewPanel);
+sensorPreviewPanel.addEventListener('click', () => {
+  if (state.sensorPreviewCameras.length < 2) return;
+  state.sensorPreviewIndex = (state.sensorPreviewIndex + 1) % state.sensorPreviewCameras.length;
+  updateSensorPreviewPanel();
+});
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.6, 0);
@@ -269,6 +299,12 @@ function clearRobot() {
   for (const obj of state.muscleObjects) clearObjectFromGroup(robotGroup, obj);
   state.muscleObjects = [];
   state.muscleLineData = null;
+  for (const obj of state.sensorObjects) clearObjectFromGroup(robotGroup, obj);
+  state.sensorObjects = [];
+  state.sensorVisualData = null;
+  state.sensorPreviewCameras = [];
+  state.sensorPreviewIndex = 0;
+  updateSensorPreviewPanel();
   jointControlsEl.innerHTML = '';
   updateButtonStates();
   clearGhosts();
@@ -284,6 +320,8 @@ function clearUSD() {
   }
   for (const obj of state.usdMuscleObjects) clearObjectFromGroup(usdGroup, obj);
   state.usdMuscleObjects = [];
+  for (const obj of state.usdSensorObjects) clearObjectFromGroup(usdGroup, obj);
+  state.usdSensorObjects = [];
   state.usdObject = null;
   state.usdRestObject = null;
   state.usdArticulation = null;
@@ -2161,23 +2199,6 @@ function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   applyMatrixToObject(object, matrix);
 }
 
-// MuJoCo features with no UsdPhysics analog in this converter. We don't model
-// them, but they should be visible rather than silently dropped.
-function warnUnsupportedMujocoElements(root) {
-  const unsupported = [
-    ['tendon', 'tendons (cable/spatial constraints)'],
-    ['equality', 'equality constraints'],
-    ['contact', 'explicit contact pairs/exclusions']
-  ];
-  for (const [tag, label] of unsupported) {
-    const count = root.querySelectorAll(tag).length;
-    if (count) {
-      console.warn(`MJCF: ${count} <${tag}> element(s) — ${label} are not converted to USD.`);
-      setStatus(`Note: MJCF ${label} are not converted.`);
-    }
-  }
-}
-
 function buildMujocoActuators(root) {
   const actuators = [];
   for (const actuatorRoot of childElements(root, 'actuator')) {
@@ -2186,6 +2207,10 @@ function buildMujocoActuators(root) {
       const joint = attrs.joint || '';
       const name = attrs.name || `${actNode.localName || 'actuator'}_${joint || actuators.length}`;
       if (!joint) {
+        if (attrs.tendon || attrs.site || attrs.body || ['muscle', 'general', 'adhesion',
+            'cylinder', 'intvelocity', 'damper', 'plugin'].includes(actNode.localName)) {
+          continue;
+        }
         console.warn(`MJCF actuator "${name}" has no joint target; it is not converted to USD.`);
         setStatus('Note: MJCF non-joint actuators are not converted.');
         continue;
@@ -2221,17 +2246,149 @@ function buildMujocoActuators(root) {
   return actuators;
 }
 
-// Compute merged line-segment data for MuJoCo spatial tendons (muscles, e.g.
-// ms_human_700 / iit_softfoot): each <tendon><spatial> routes through an
-// ordered sequence of <site>s (and optional wrap <geom sidesite=...>), so we
-// emit a polyline through the resolved site world positions, colored by the
-// tendon's rgba (resolved from <default><tendon rgba=...>). All segments merge
-// into one buffer (one draw call) so thousands of muscles stay cheap.
-// `sitesByName` maps site name -> { pos: THREE.Vector3 (model-space) }.
+function parseMujocoTendons(root) {
+  const tendonRoot = firstChildElement(root, 'tendon');
+  if (!tendonRoot) return [];
+  const out = [];
+  for (const node of childElements(tendonRoot)) {
+    if (node.localName !== 'fixed' && node.localName !== 'spatial') continue;
+    const range = parseNumbers(node.getAttribute('range'), []);
+    const frcRange = parseNumbers(node.getAttribute('actuatorfrcrange'), []);
+    const tendon = {
+      name: node.getAttribute('name') || `tendon_${out.length}`,
+      type: node.localName
+    };
+    if (node.localName === 'fixed') {
+      const joints = [];
+      for (const j of childElements(node, 'joint')) {
+        const joint = j.getAttribute('joint');
+        if (!joint) continue;
+        joints.push({ joint, coef: numberAttr(j, 'coef', 1) });
+      }
+      if (!joints.length) continue;
+      tendon.joints = joints;
+    } else {
+      const path = [];
+      const sideSites = [];
+      for (const w of childElements(node)) {
+        if (w.localName === 'site' && w.getAttribute('site')) {
+          path.push({ site: w.getAttribute('site') });
+        } else if (w.localName === 'geom') {
+          const wp = { geom: w.getAttribute('geom') || '' };
+          if (w.getAttribute('sidesite')) {
+            wp.sidesite = w.getAttribute('sidesite');
+            sideSites.push({ site: w.getAttribute('sidesite') });
+          }
+          path.push(wp);
+        } else if (w.localName === 'pulley') {
+          const divisor = numberAttr(w, 'divisor');
+          if (Number.isFinite(divisor)) {
+            if (!tendon.routeDivisors) tendon.routeDivisors = [];
+            tendon.routeDivisors.push(divisor);
+          }
+        }
+      }
+      if (!path.length) continue;
+      tendon.path = path;
+      if (sideSites.length) tendon.sideSites = sideSites;
+    }
+
+    const setNum = (attr, key = attr) => {
+      const value = numberAttr(node, attr);
+      if (Number.isFinite(value)) tendon[key] = value;
+    };
+    setNum('stiffness');
+    setNum('damping');
+    setNum('armature');
+    setNum('frictionloss');
+    setNum('margin');
+    setNum('width');
+    if (node.getAttribute('group') !== null) tendon.group = Math.round(numberAttr(node, 'group'));
+    if (node.getAttribute('limited') !== null) tendon.limited = node.getAttribute('limited');
+    if (node.getAttribute('actuatorfrclimited') !== null) tendon.actuatorfrclimited = node.getAttribute('actuatorfrclimited');
+    if (range.length >= 2) tendon.range = [range[0], range[1]];
+    if (frcRange.length >= 2) tendon.actuatorfrcrange = [frcRange[0], frcRange[1]];
+    const rgba = parseNumbers(node.getAttribute('rgba'), []);
+    if (rgba.length >= 4) tendon.rgba = rgba.slice(0, 4);
+    for (const key of ['springlength', 'solreflimit', 'solimplimit', 'solreffriction', 'solimpfriction']) {
+      const values = parseNumbers(node.getAttribute(key), []);
+      if (values.length) tendon[key] = values;
+    }
+    out.push(tendon);
+  }
+  return out;
+}
+
+function parseMujocoMJCActuators(root) {
+  const actRoot = firstChildElement(root, 'actuator');
+  if (!actRoot) return [];
+  const out = [];
+  for (const node of childElements(actRoot)) {
+    const type = node.localName;
+    const tendon = node.getAttribute('tendon') || '';
+    const site = node.getAttribute('site') || '';
+    const joint = node.getAttribute('joint') || '';
+    const body = node.getAttribute('body') || '';
+    const isMjc = type === 'muscle' || type === 'general' || type === 'adhesion'
+      || type === 'cylinder' || type === 'intvelocity' || type === 'damper'
+      || type === 'plugin' || tendon || site || body;
+    if (!isMjc) continue;
+    const a = {
+      name: node.getAttribute('name') || `${type}_${joint || tendon || site || body}`,
+      actuatorType: type
+    };
+    if (joint) a.targetJoint = joint;
+    if (tendon) a.targetTendon = tendon;
+    if (site) a.targetSite = site;
+    if (body) a.targetBody = body;
+    for (const [attr, key] of [
+      ['gainprm', 'gainPrm'], ['biasprm', 'biasPrm'],
+      ['dynprm', 'dynPrm'], ['gear', 'gear']
+    ]) {
+      const values = parseNumbers(node.getAttribute(attr), []);
+      if (values.length) a[key] = values;
+    }
+    if (!a.gainPrm && node.getAttribute('gain') !== null) a.gainPrm = [numberAttr(node, 'gain')];
+    for (const [attr, key] of [
+      ['lengthrange', 'lengthRange'], ['ctrlrange', 'ctrlRange'],
+      ['forcerange', 'forceRange'], ['actrange', 'actRange']
+    ]) {
+      const values = parseNumbers(node.getAttribute(attr), []);
+      if (values.length >= 2) a[key] = [values[0], values[1]];
+    }
+    for (const [attr, key] of [
+      ['gaintype', 'gainType'], ['biastype', 'biasType'], ['dyntype', 'dynType'],
+      ['ctrllimited', 'ctrlLimited'], ['forcelimited', 'forceLimited'],
+      ['actlimited', 'actLimited'], ['plugin', 'plugin'], ['instance', 'instance']
+    ]) {
+      if (node.getAttribute(attr) !== null) a[key] = node.getAttribute(attr);
+    }
+    for (const [attr, key] of [
+      ['group', 'group'], ['actdim', 'actDim'], ['cranklength', 'crankLength'],
+      ['inheritrange', 'inheritRange']
+    ]) {
+      const value = numberAttr(node, attr);
+      if (Number.isFinite(value)) a[key] = value;
+    }
+    for (const [attr, key] of [['jointinparent', 'jointInParent'], ['actearly', 'actEarly']]) {
+      if (node.getAttribute(attr) !== null) a[key] = mjcBoolAttr(node.getAttribute(attr));
+    }
+    if (node.getAttribute('refsite') !== null) a.refSite = node.getAttribute('refsite');
+    if (node.getAttribute('slidersite') !== null) a.sliderSite = node.getAttribute('slidersite');
+    out.push(a);
+  }
+  return out;
+}
+
+// Compute merged line-segment data for MuJoCo tendon primitives. Spatial
+// tendons route through <site>s / geom sidesites; fixed tendons route through
+// their referenced joint positions. All segments merge into one buffer so large
+// muscle models stay cheap.
+// `sitesByName` maps site name -> { pos, matrix } in model space.
 // Returns { positions, colors, tendonCount } (model-space) or null. The data is
-// reused to draw the muscles on BOTH the MJCF source and the converted-USD
+// reused to draw tendons on BOTH the MJCF source and the converted-USD
 // view, which share the same model coordinate space.
-function computeMuscleLineData(root, sitesByName) {
+function computeMuscleLineData(root, sitesByName, jointPositionsByName = new Map()) {
   // Tendon default rgba/width from <default><tendon ...> (collectMujocoDefaults
   // only tracks geom/joint, so read the tendon default directly here). MuJoCo's
   // tendon `width` is the rendered tube RADIUS.
@@ -2251,6 +2408,16 @@ function computeMuscleLineData(root, sitesByName) {
   const rgba = [];
   const radii = [];
   let tendonCount = 0;
+  const pushSegments = (pts, col, width) => {
+    if (pts.length < 2) return false;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      positions.push(pts[i].x, pts[i].y, pts[i].z,
+                     pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
+      rgba.push(col[0], col[1], col[2], col[3] ?? 1);
+      radii.push(width);
+    }
+    return true;
+  };
   for (const tendonRoot of childElements(root, 'tendon')) {
     for (const spatial of childElements(tendonRoot, 'spatial')) {
       const col = spatial.getAttribute('rgba')
@@ -2268,14 +2435,23 @@ function computeMuscleLineData(root, sitesByName) {
         const site = sitesByName.get(ref);
         if (site) pts.push(site.pos);
       }
-      if (pts.length < 2) continue;
-      for (let i = 0; i + 1 < pts.length; i++) {
-        positions.push(pts[i].x, pts[i].y, pts[i].z,
-                       pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
-        rgba.push(col[0], col[1], col[2], col[3] ?? 1);
-        radii.push(width);
+      if (pushSegments(pts, col, width)) tendonCount++;
+    }
+    for (const fixed of childElements(tendonRoot, 'fixed')) {
+      const col = fixed.getAttribute('rgba')
+        ? parseNumbers(fixed.getAttribute('rgba'), defRgba) : [0.25, 0.85, 1.0, 1];
+      const width = fixed.getAttribute('width')
+        ? (Number(fixed.getAttribute('width')) || defWidth) : defWidth;
+      const pts = [];
+      for (const child of childElements(fixed, 'joint')) {
+        const ref = child.getAttribute('joint');
+        const pos = ref ? jointPositionsByName.get(ref) : null;
+        if (pos) pts.push(pos);
       }
-      tendonCount++;
+      if (pts.length === 1) {
+        pts.push(pts[0].clone().add(new THREE.Vector3(0, 0, Math.max(width * 8, 0.04))));
+      }
+      if (pushSegments(pts, col, width)) tendonCount++;
     }
   }
   if (!positions.length) return null;
@@ -2334,12 +2510,134 @@ function makeMuscleGroup(data) {
     depthWrite: !anyTransparent
   });
   const mesh = new THREE.Mesh(merged, material);
-  mesh.name = 'mjcf_muscles';
+  mesh.name = 'mjcf_tendons';
   const muscleGroup = new THREE.Group();
-  muscleGroup.name = 'muscles';
+  muscleGroup.name = 'tendons';
   muscleGroup.add(mesh);
   muscleGroup.userData.tendonCount = data.tendonCount;
   return muscleGroup;
+}
+
+function makeSensorVisualData(sensors, sitesByName, bodiesByName, cameras) {
+  const cameraByName = new Map((cameras || []).map((cam) => [cam.name, {
+    matrix: matrixFromUSDArray(cam.matrix),
+    fovy: Number.isFinite(cam.fovy) ? cam.fovy : 45
+  }]));
+  const resolveFrame = (type, name) => {
+    if (!name) return null;
+    if (type === 'camera' && cameraByName.has(name)) return cameraByName.get(name);
+    if (type === 'site' && sitesByName.has(name)) return { matrix: sitesByName.get(name).matrix, fovy: 45 };
+    if ((type === 'body' || type === 'xbody') && bodiesByName.has(name)) return { matrix: bodiesByName.get(name), fovy: 45 };
+    return null;
+  };
+
+  const entries = [];
+  for (const sensor of sensors || []) {
+    const frame = resolveFrame(sensor.objtype, sensor.objname);
+    if (!frame) continue;
+    const canRender = ['camera', 'site', 'body', 'xbody'].includes(sensor.objtype)
+      && ['rangefinder', 'camprojection', 'framepos', 'framequat', 'framexaxis',
+          'frameyaxis', 'framezaxis', 'user'].includes(sensor.type);
+    entries.push({
+      name: sensor.name || `${sensor.type}_${entries.length}`,
+      type: sensor.type || 'sensor',
+      objtype: sensor.objtype || '',
+      objname: sensor.objname || '',
+      matrix: frame.matrix.clone(),
+      fovy: frame.fovy || 45,
+      canRender
+    });
+  }
+  return entries.length ? entries : null;
+}
+
+function makeSensorHelperGroup(sensorData, { makePreviewCameras = false } = {}) {
+  if (!sensorData?.length) return null;
+  const group = new THREE.Group();
+  group.name = 'mjc_sensors';
+  const markerGeo = new THREE.SphereGeometry(0.018, 12, 8);
+  const markerMat = new THREE.MeshStandardMaterial({
+    color: 0x4ade80,
+    emissive: 0x082a14,
+    roughness: 0.45,
+    depthTest: false
+  });
+  const rayMat = new THREE.LineBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.9, depthTest: false });
+  for (const entry of sensorData) {
+    const marker = new THREE.Mesh(markerGeo, markerMat);
+    marker.name = `sensor_${entry.name}`;
+    applyMatrixToObject(marker, entry.matrix);
+    marker.renderOrder = 40;
+    group.add(marker);
+
+    const localRay = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, -0.25)
+    ]);
+    const ray = new THREE.Line(localRay, rayMat);
+    ray.name = `sensor_ray_${entry.name}`;
+    applyMatrixToObject(ray, entry.matrix);
+    ray.renderOrder = 40;
+    group.add(ray);
+
+    if (entry.canRender) {
+      const cam = new THREE.PerspectiveCamera(entry.fovy, 1, 0.01, 50);
+      cam.name = `sensor_camera_${entry.name}`;
+      applyMatrixToObject(cam, entry.matrix);
+      group.add(cam);
+      const helper = new THREE.CameraHelper(cam);
+      helper.name = `sensor_frustum_${entry.name}`;
+      helper.visible = state.settings.showSensors;
+      group.add(helper);
+      if (makePreviewCameras) {
+        state.sensorPreviewCameras.push({ name: entry.name, type: entry.type, camera: cam });
+      }
+    }
+  }
+  group.traverse((obj) => { obj.visible = state.settings.showSensors; });
+  return group;
+}
+
+let sensorRenderTarget = null;
+function updateSensorPreviewPanel() {
+  const active = state.sensorPreviewCameras[state.sensorPreviewIndex] || state.sensorPreviewCameras[0] || null;
+  const visible = Boolean(active && state.settings.showSensors && state.settings.renderSensorView);
+  sensorPreviewPanel.style.display = visible ? 'block' : 'none';
+  if (active) {
+    const suffix = state.sensorPreviewCameras.length > 1
+      ? ` (${state.sensorPreviewIndex + 1}/${state.sensorPreviewCameras.length})`
+      : '';
+    sensorPreviewLabel.textContent = `${active.type}: ${active.name}${suffix}`;
+  }
+}
+
+function renderSensorPreview() {
+  const active = state.sensorPreviewCameras[state.sensorPreviewIndex] || state.sensorPreviewCameras[0] || null;
+  if (!active || !state.settings.showSensors || !state.settings.renderSensorView) return;
+  const w = sensorPreviewCanvas.width;
+  const h = sensorPreviewCanvas.height;
+  if (!sensorRenderTarget || sensorRenderTarget.width !== w || sensorRenderTarget.height !== h) {
+    sensorRenderTarget?.dispose();
+    sensorRenderTarget = new THREE.WebGLRenderTarget(w, h);
+  }
+  active.camera.aspect = w / h;
+  active.camera.updateProjectionMatrix();
+  sourceView.scene.updateMatrixWorld(true);
+  renderer.setRenderTarget(sensorRenderTarget);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, w, h);
+  renderer.render(sourceView.scene, active.camera);
+  const pixels = new Uint8Array(w * h * 4);
+  renderer.readRenderTargetPixels(sensorRenderTarget, 0, 0, w, h, pixels);
+  renderer.setRenderTarget(null);
+  const ctx = sensorPreviewCanvas.getContext('2d');
+  const image = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const src = (h - 1 - y) * w * 4;
+    const dst = y * w * 4;
+    image.data.set(pixels.subarray(src, src + w * 4), dst);
+  }
+  ctx.putImageData(image, 0, 0);
 }
 
 // MuJoCo boolean/flag attr: <flag x="enable|disable">, <compiler x="true|false">.
@@ -2458,8 +2756,6 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   // Dissolve <frame> grouping transforms (needs the angle ctx above).
   for (const worldbody of childElements(root, 'worldbody')) flattenMujocoFrames(worldbody);
 
-  warnUnsupportedMujocoElements(root);
-
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
   // <asset><material name rgba emission>: name -> {rgba, emission}, to color
@@ -2565,8 +2861,11 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const joints = [];
   let visualCount = 0;
   let collisionCount = 0;
-  // site name -> { pos: THREE.Vector3 in model space } for muscle/tendon routing.
+  // Site/body/joint maps in model space for tendon routing and sensor frames.
   const sitesByName = new Map();
+  const bodiesByName = new Map();
+  const jointPositionsByName = new Map();
+  const sitesPayload = [];
   state.muscleObjects = [];
 
   // Bake one <geom> into a link's THREE object + its payload. Shared by the
@@ -2660,6 +2959,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     const bodyLocalMatrix = matrixFromPoseAttrs(bodyAttrs);
     const bodyWorldMatrix = new THREE.Matrix4().copy(parentWorldMatrix).multiply(bodyLocalMatrix);
     const linkName = bodyAttrs.name || `body_${links.length}`;
+    bodiesByName.set(linkName, bodyWorldMatrix.clone());
     // <freejoint>/<joint type="free"> -> 6-DOF floating base (not joined to its
     // parent); marked so the converter emits a free articulation root.
     const hasFree = !!firstChildElement(bodyNode, 'freejoint')
@@ -2717,6 +3017,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const jointPos = parseNumbers(jointAttrs.pos, [0, 0, 0]);
       const localPos0 = transformPointArray(bodyLocalMatrix, jointPos);
       const localPos1 = jointPos;
+      const jointWorldPos = vectorFromArray(jointPos).applyMatrix4(bodyWorldMatrix);
+      jointPositionsByName.set(jointName, jointWorldPos);
       const localRot0 = quaternionToUSDArray(bodyPose.quaternion);
       const localRot1 = [1, 0, 0, 0];
       const jointInfo = {
@@ -2781,8 +3083,14 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const siteLocal = matrixFromPoseAttrs(siteAttrs);
       const siteWorld = new THREE.Matrix4().copy(bodyWorldMatrix).multiply(siteLocal);
       sitesByName.set(siteName, {
-        pos: new THREE.Vector3().setFromMatrixPosition(siteWorld)
+        pos: new THREE.Vector3().setFromMatrixPosition(siteWorld),
+        matrix: siteWorld.clone()
       });
+      const sitePayload = { name: siteName, matrix: matrixToUSDArray(siteWorld) };
+      if (siteAttrs.group !== undefined) sitePayload.group = parseInt(siteAttrs.group, 10) || 0;
+      const size = parseNumbers(siteAttrs.size, []);
+      if (size.length) sitePayload.size = size[0];
+      sitesPayload.push(sitePayload);
     }
 
     for (const childBody of childElements(bodyNode, 'body')) {
@@ -2818,11 +3126,11 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   // line data is stashed in state so the converted-USD view can draw the same
   // muscles (it shares the model coordinate space).
   let muscleTendonCount = 0;
-  const muscleData = computeMuscleLineData(root, sitesByName);
+  const muscleData = computeMuscleLineData(root, sitesByName, jointPositionsByName);
   state.muscleLineData = muscleData;
   const muscleGroup = makeMuscleGroup(muscleData);
   if (muscleGroup) {
-    muscleGroup.visible = state.settings.showMuscles;
+    muscleGroup.visible = state.settings.showMuscles && state.settings.showTendons;
     group.add(muscleGroup);
     state.muscleObjects.push(muscleGroup);
     muscleTendonCount = muscleGroup.userData.tendonCount || 0;
@@ -2849,6 +3157,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   }
 
   const mjcSceneOptions = parseMujocoSceneOptions(root);
+  const tendonsPayload = parseMujocoTendons(root);
+  const mjcActuatorsPayload = parseMujocoMJCActuators(root);
   // <texture name file=...> -> file path, so a material's texture becomes a
   // UsdUVTexture in the converted USD (builtin/file-less textures skipped).
   const texFiles = new Map();
@@ -2877,18 +3187,41 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const type = node.localName;
       if (!type) continue;
       const s = { type, name: node.getAttribute('name') || `${type}_${sensorsPayload.length}` };
+      const targetAliases = ['site', 'joint', 'actuator', 'tendon', 'body', 'xbody',
+        'geom', 'camera', 'light', 'sensor', 'numeric', 'text', 'tuple', 'key',
+        'plugin'];
       if (node.getAttribute('objtype') !== null) {
         s.objtype = node.getAttribute('objtype');
         if (node.getAttribute('objname') !== null) s.objname = node.getAttribute('objname');
       } else {
-        for (const k of ['site', 'joint', 'actuator', 'tendon', 'body', 'geom']) {
+        for (const k of targetAliases) {
           if (node.getAttribute(k) !== null) { s.objtype = k; s.objname = node.getAttribute(k); break; }
         }
       }
-      if (node.getAttribute('reftype') !== null) s.reftype = node.getAttribute('reftype');
-      if (node.getAttribute('refname') !== null) s.refname = node.getAttribute('refname');
+      if (node.getAttribute('reftype') !== null) {
+        s.reftype = node.getAttribute('reftype');
+        if (node.getAttribute('refname') !== null) s.refname = node.getAttribute('refname');
+      } else {
+        for (const k of targetAliases) {
+          const refKey = `ref${k}`;
+          const camelRefKey = `ref${k[0].toUpperCase()}${k.slice(1)}`;
+          if (node.getAttribute(refKey) !== null) {
+            s.reftype = k;
+            s.refname = node.getAttribute(refKey);
+            break;
+          }
+          if (node.getAttribute(camelRefKey) !== null) {
+            s.reftype = k;
+            s.refname = node.getAttribute(camelRefKey);
+            break;
+          }
+        }
+      }
+      if (node.getAttribute('group') !== null) s.group = Math.round(Number(node.getAttribute('group')));
       if (node.getAttribute('cutoff') !== null) s.cutoff = Number(node.getAttribute('cutoff'));
       if (node.getAttribute('noise') !== null) s.noise = Number(node.getAttribute('noise'));
+      const user = parseNumbers(node.getAttribute('user'), []);
+      if (user.length) s.user = user;
       sensorsPayload.push(s);
     }
   }
@@ -2955,6 +3288,16 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     lightsPayload.push(...lc.lights);
     camerasPayload.push(...lc.cameras);
   }
+  state.sensorPreviewCameras = [];
+  const sensorVisualData = makeSensorVisualData(sensorsPayload, sitesByName, bodiesByName, camerasPayload);
+  state.sensorVisualData = sensorVisualData;
+  const sensorHelpers = makeSensorHelperGroup(sensorVisualData, { makePreviewCameras: true });
+  if (sensorHelpers) {
+    sensorHelpers.visible = state.settings.showSensors;
+    group.add(sensorHelpers);
+    state.sensorObjects.push(sensorHelpers);
+  }
+  updateSensorPreviewPanel();
   // All <keyframe><key> -> payload keyframes (-> MjcKeyframe prims). Separate
   // from group.homeKeyframe above, which is only used to pose the source view.
   const keyframesPayload = [];
@@ -2975,6 +3318,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     joints,
     actuators,
     ...(Object.keys(mjcSceneOptions).length ? { mjcScene: mjcSceneOptions } : {}),
+    ...(sitesPayload.length ? { sites: sitesPayload } : {}),
+    ...(tendonsPayload.length ? { tendons: tendonsPayload } : {}),
+    ...(mjcActuatorsPayload.length ? { mjcActuators: mjcActuatorsPayload } : {}),
     ...(keyframesPayload.length ? { keyframes: keyframesPayload } : {}),
     ...(lightsPayload.length ? { lights: lightsPayload } : {}),
     ...(camerasPayload.length ? { cameras: camerasPayload } : {}),
@@ -3112,8 +3458,12 @@ function applyVisibility() {
 }
 
 function applyMuscleVisibility() {
-  for (const obj of state.muscleObjects) obj.visible = state.settings.showMuscles;
-  for (const obj of state.usdMuscleObjects) obj.visible = state.settings.showMuscles;
+  const tendonVisible = state.settings.showMuscles && state.settings.showTendons;
+  for (const obj of state.muscleObjects) obj.visible = tendonVisible;
+  for (const obj of state.usdMuscleObjects) obj.visible = tendonVisible;
+  for (const obj of state.sensorObjects) obj.visible = state.settings.showSensors;
+  for (const obj of state.usdSensorObjects) obj.visible = state.settings.showSensors;
+  updateSensorPreviewPanel();
 }
 
 function currentFitObjects() {
@@ -3202,6 +3552,9 @@ function buildGUI() {
   gui.add(state.settings, 'showVisuals').name('Visual meshes').onChange(applyVisibility);
   gui.add(state.settings, 'showCollisions').name('Collision meshes').onChange(applyVisibility);
   gui.add(state.settings, 'showMuscles').name('Muscles').onChange(applyMuscleVisibility);
+  gui.add(state.settings, 'showTendons').name('Tendons').onChange(applyMuscleVisibility);
+  gui.add(state.settings, 'showSensors').name('Sensors').onChange(applyMuscleVisibility);
+  gui.add(state.settings, 'renderSensorView').name('Sensor view').onChange(updateSensorPreviewPanel);
   // Per-MuJoCo-geom-group visibility (mirrors the MuJoCo viewer's group toggles).
   // Applies to MJCF source geoms tagged with a group; e.g. enable Group 4 to see
   // iit_softfoot's virtual-pulley tubes. Spatial tendons (the yellow streamlines)
@@ -4511,9 +4864,17 @@ async function convertSourceToUSD(format = 'usdc') {
   if (state.muscleLineData) {
     const usdMuscle = makeMuscleGroup(state.muscleLineData);
     if (usdMuscle) {
-      usdMuscle.visible = state.settings.showMuscles;
+      usdMuscle.visible = state.settings.showMuscles && state.settings.showTendons;
       usdGroup.add(usdMuscle);
       state.usdMuscleObjects.push(usdMuscle);
+    }
+  }
+  if (state.sensorVisualData) {
+    const usdSensors = makeSensorHelperGroup(state.sensorVisualData);
+    if (usdSensors) {
+      usdSensors.visible = state.settings.showSensors;
+      usdGroup.add(usdSensors);
+      state.usdSensorObjects.push(usdSensors);
     }
   }
   state.usdIsConverted = true;
@@ -4654,7 +5015,14 @@ window.__viewerStats = () => {
   return {
     links: Object.keys(state.robot?.links || state.usdArticulation?.links || {}).length,
     sourceVisibleMeshes: countVisible(robotGroup),
-    usdVisibleMeshes: countVisible(usdGroup)
+    usdVisibleMeshes: countVisible(usdGroup),
+    tendonSegments: state.muscleLineData?.radii?.length || 0,
+    sensors: state.sensorVisualData?.length || 0,
+    sensorPreviewCameras: state.sensorPreviewCameras.length,
+    payloadSites: state.exportPayload?.sites?.length || 0,
+    payloadTendons: state.exportPayload?.tendons?.length || 0,
+    payloadMjcActuators: state.exportPayload?.mjcActuators?.length || 0,
+    payloadSensors: state.exportPayload?.sensors?.length || 0
   };
 };
 
@@ -4693,6 +5061,7 @@ function renderSplitView() {
   renderer.render(usdView.scene, camera);
 
   renderer.setScissorTest(false);
+  renderSensorPreview();
 }
 
 function animate() {

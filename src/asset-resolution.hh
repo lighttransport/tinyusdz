@@ -44,9 +44,9 @@ class Asset {
  public:
   size_t size() const { return buf_.size(); }
 
-  const uint8_t *data() const { return buf_.data(); }
+  const uint8_t *data() const TINYUSDZ_LIFETIMEBOUND { return buf_.data(); }
 
-  uint8_t *data() { return buf_.data(); }
+  uint8_t *data() TINYUSDZ_LIFETIMEBOUND { return buf_.data(); }
 
   void resize(size_t sz) { buf_.resize(sz); }
 
@@ -72,11 +72,11 @@ class Asset {
     resolved_name_ = name;
   }
 
-  const std::string &name() const {
+  const std::string &name() const TINYUSDZ_LIFETIMEBOUND {
     return name_;
   }
 
-  const std::string &resolved_name() const {
+  const std::string &resolved_name() const TINYUSDZ_LIFETIMEBOUND {
     return resolved_name_;
   }
 
@@ -84,7 +84,7 @@ class Asset {
     version_ = version;
   }
 
-  const std::string &version() const {
+  const std::string &version() const TINYUSDZ_LIFETIMEBOUND {
     return version_;
   }
 
@@ -175,6 +175,7 @@ class AssetResolutionResolver {
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
       _enable_suffix_fallback = rhs._enable_suffix_fallback;
+      _cached_resolved_paths.clear();
     }
   }
 
@@ -188,6 +189,7 @@ class AssetResolutionResolver {
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
       _enable_suffix_fallback = rhs._enable_suffix_fallback;
+      _cached_resolved_paths.clear();
     }
     return (*this);
   }
@@ -202,6 +204,7 @@ class AssetResolutionResolver {
       _max_asset_bytes_in_mb = rhs._max_asset_bytes_in_mb;
       _max_file_descriptors = rhs._max_file_descriptors;
       _enable_suffix_fallback = rhs._enable_suffix_fallback;
+      _cached_resolved_paths.clear();
     }
     return (*this);
   }
@@ -212,10 +215,12 @@ class AssetResolutionResolver {
   void set_search_paths(const std::vector<std::string> &paths) {
     // TODO: Validate input paths.
     _search_paths = paths;
+    clear_resolution_cache();
   }
 
   void add_search_path(const std::string &path) {
     _search_paths.push_back(path);
+    clear_resolution_cache();
   }
 
   //
@@ -223,13 +228,16 @@ class AssetResolutionResolver {
   // 
   void set_current_working_path(const std::string &cwp) {
     _current_working_path = cwp;
+    clear_resolution_cache();
   }
 
-  const std::string &current_working_path() const {
+  const std::string &current_working_path() const TINYUSDZ_LIFETIMEBOUND {
     return _current_working_path;
   }
 
-  const std::vector<std::string> &search_paths() const { return _search_paths; }
+  const std::vector<std::string> &search_paths() const TINYUSDZ_LIFETIMEBOUND {
+    return _search_paths;
+  }
 
   std::string search_paths_str() const;
 
@@ -243,15 +251,18 @@ class AssetResolutionResolver {
       return;
     }
     _asset_resolution_handlers[ext_name] = handler;
+    clear_resolution_cache();
   }
 
   void register_wildcard_asset_resolution_handler(AssetResolutionHandler handler) {
     _asset_resolution_handlers["*"] = handler;
+    clear_resolution_cache();
   }
 
   bool unregister_asset_resolution_handler(const std::string &ext_name) {
     if (_asset_resolution_handlers.count(ext_name)) {
       _asset_resolution_handlers.erase(ext_name);
+      clear_resolution_cache();
       return true;
     }
     return false;
@@ -260,6 +271,7 @@ class AssetResolutionResolver {
   bool unregister_wildcard_asset_resolution_handler() {
     if (_asset_resolution_handlers.count("*")) {
       _asset_resolution_handlers.erase("*");
+      clear_resolution_cache();
       return true;
     }
     return false;
@@ -315,6 +327,7 @@ class AssetResolutionResolver {
   ///
   void set_enable_suffix_fallback(bool enable) {
     _enable_suffix_fallback = enable;
+    clear_resolution_cache();
   }
 
   bool get_enable_suffix_fallback() const { return _enable_suffix_fallback; }
@@ -322,6 +335,7 @@ class AssetResolutionResolver {
  private:
   // resolve() without the suffix fallback(literally-authored path only).
   std::string resolve_literal(const std::string &assetPath) const;
+  void clear_resolution_cache() const { _cached_resolved_paths.clear(); }
 
  public:
 
@@ -382,9 +396,7 @@ class AssetResolutionResolver {
 
   std::map<std::string, AssetResolutionHandler> _asset_resolution_handlers;
 
-  // TODO: Cache resolution result
-  // mutable _dirty{true};
-  // mutable std::map<std::string, std::string> _cached_resolved_paths;
+  mutable std::map<std::string, std::string> _cached_resolved_paths;
 };
 
 // forward decl

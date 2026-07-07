@@ -4,11 +4,12 @@
 // TinyUSDZ Next - Value Printer Implementation
 
 #include "value-printer.hh"
+#include "stream-writer.hh"
+#include "../types/value-view.hh"
 #include "../types/type-id.hh"
+#include "../strfmt.hh"
 #include "dtoa.hh"
 #include <algorithm>
-#include <sstream>
-#include <iomanip>
 #include <cmath>
 
 namespace tinyusdz {
@@ -22,21 +23,8 @@ namespace {
 inline void AppendFloat(std::string& o, float v) { dtos_append(o, v); }
 inline void AppendDouble(std::string& o, double v) { dtos_append(o, v); }
 
-inline void AppendU64(std::string& o, uint64_t v) {
-  char buf[20];
-  char* p = buf + sizeof(buf);
-  do { *--p = static_cast<char>('0' + (v % 10)); v /= 10; } while (v);
-  o.append(p, static_cast<size_t>(buf + sizeof(buf) - p));
-}
-inline void AppendI64(std::string& o, int64_t v) {
-  if (v < 0) {
-    o += '-';
-    // Negate in unsigned space so INT64_MIN is handled without UB.
-    AppendU64(o, ~static_cast<uint64_t>(v) + 1u);
-  } else {
-    AppendU64(o, static_cast<uint64_t>(v));
-  }
-}
+// Integer append helpers live in ../strfmt.hh (AppendInt/AppendUInt), shared with
+// the USDA writer.
 
 // Reserve headroom for an array, but cap the up-front growth so a single huge
 // array doesn't trigger a giant mmap. Beyond the cap, std::string's geometric
@@ -70,6 +58,286 @@ std::string EscapeString(const std::string& s) {
 // Forward decl: recursive dictionary printer (defined after PrintValue).
 std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
                                     int base_depth);
+
+class ChunkedStream {
+ public:
+  explicit ChunkedStream(StreamWriter& out) : out_(out) {
+    buf_.reserve(kFlushAt + 256);
+  }
+
+  ~ChunkedStream() { flush(); }
+
+  void append(const char* s) {
+    while (*s) append(*s++);
+  }
+  void append(const char* s, size_t n) {
+    if (n >= kFlushAt) {
+      flush();
+      out_.write(s, n);
+      return;
+    }
+    if (buf_.size() + n > kFlushAt) flush();
+    buf_.append(s, n);
+  }
+  void append(const std::string& s) { append(s.data(), s.size()); }
+  void append(char c) {
+    if (buf_.size() == kFlushAt) flush();
+    buf_.push_back(c);
+  }
+  // Number formatters write into a small stack buffer and append it to the chunk
+  // buffer in a single copy -- no intermediate std::string per scalar (this is
+  // the per-element hot path for large numeric arrays). The formatters never emit
+  // more than `sizeof(t)` bytes; clamping the length is a no-op at runtime but
+  // lets the optimizer prove the append cannot take the oversized path (which
+  // would otherwise trip -Warray-bounds on the stack buffer).
+  void append_int(int64_t v) {
+    char t[32];
+    size_t n = IntTo(t, v);
+    append(t, n < sizeof(t) ? n : sizeof(t));
+  }
+  void append_uint(uint64_t v) {
+    char t[32];
+    size_t n = UIntTo(t, v);
+    append(t, n < sizeof(t) ? n : sizeof(t));
+  }
+  void append_float(float v) {
+    char t[32];
+    size_t n = dtos_to(t, v);
+    append(t, n < sizeof(t) ? n : sizeof(t));
+  }
+  void append_double(double v) {
+    char t[32];
+    size_t n = dtos_to(t, v);
+    append(t, n < sizeof(t) ? n : sizeof(t));
+  }
+  void flush() {
+    if (!buf_.empty()) {
+      out_.write(buf_.data(), buf_.size());
+      buf_.clear();
+    }
+  }
+
+ private:
+  static constexpr size_t kFlushAt = 64u << 10;
+  StreamWriter& out_;
+  std::string buf_;
+};
+
+template <typename T, typename Emit>
+void EmitScalarArray(ChunkedStream& out, const T* data, size_t n,
+                     size_t maxN, Emit emit) {
+  out.append('[');
+  size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+  for (size_t i = 0; i < limit; ++i) {
+    if (i) out.append(", ");
+    emit(data[i]);
+  }
+  if (limit < n) out.append(", ...");
+  out.append(']');
+}
+
+// Component shape of a vector/matrix/scalar element type: number of scalars per
+// USD element, and (for matrices) the square dimension. Shared so the full and
+// ranged array printers decompose elements identically.
+struct CompShape {
+  bool is_matrix;
+  size_t mat_dim;
+  size_t comp_count;
+};
+inline CompShape GetCompShape(TypeId type_id) {
+  CompShape s;
+  s.is_matrix =
+      (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix2d ||
+       type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d ||
+       type_id == TypeId::Matrix4f || type_id == TypeId::Matrix4d);
+  s.mat_dim =
+      (type_id == TypeId::Matrix2f || type_id == TypeId::Matrix2d) ? 2 :
+      (type_id == TypeId::Matrix3f || type_id == TypeId::Matrix3d) ? 3 : 4;
+  s.comp_count = GetComponentCount(type_id);
+  if (s.comp_count < 1) s.comp_count = 1;
+  return s;
+}
+
+// Emit a single composite element `(x, y, z)` / `((m00, ...), ...)` / scalar.
+template <typename T, typename Emit>
+inline void EmitCompElem(ChunkedStream& out, const T* d, const CompShape& s,
+                         Emit emit) {
+  if (s.is_matrix) {
+    out.append('(');
+    for (size_t r = 0; r < s.mat_dim; ++r) {
+      if (r) out.append(", ");
+      out.append('(');
+      for (size_t c = 0; c < s.mat_dim; ++c) {
+        if (c) out.append(", ");
+        emit(d[r * s.mat_dim + c]);
+      }
+      out.append(')');
+    }
+    out.append(')');
+  } else if (s.comp_count > 1) {
+    out.append('(');
+    for (size_t c = 0; c < s.comp_count; ++c) {
+      if (c) out.append(", ");
+      emit(d[c]);
+    }
+    out.append(')');
+  } else {
+    emit(d[0]);
+  }
+}
+
+template <typename T, typename Emit>
+void EmitCompArray(ChunkedStream& out, const T* data, size_t flat_count,
+                   TypeId type_id, size_t maxN, Emit emit) {
+  const CompShape s = GetCompShape(type_id);
+  const size_t n = flat_count / s.comp_count;
+  const size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+  out.append('[');
+  for (size_t i = 0; i < limit; ++i) {
+    if (i) out.append(", ");
+    EmitCompElem(out, data + i * s.comp_count, s, emit);
+  }
+  if (limit < n) out.append(", ...");
+  out.append(']');
+}
+
+// Range variants: emit USD elements [lo, hi) only, controlling the enclosing
+// brackets. The separator before element i uses the GLOBAL index i (so element 0
+// has no leading ", " and a chunk starting mid-array prefixes ", " correctly),
+// making concatenated ranges byte-identical to the full array print.
+template <typename T, typename Emit>
+void EmitScalarRange(ChunkedStream& out, const T* data, size_t lo, size_t hi,
+                     bool open, bool close, Emit emit) {
+  if (open) out.append('[');
+  for (size_t i = lo; i < hi; ++i) {
+    if (i) out.append(", ");
+    emit(data[i]);
+  }
+  if (close) out.append(']');
+}
+
+template <typename T, typename Emit>
+void EmitCompRange(ChunkedStream& out, const T* data, TypeId type_id, size_t lo,
+                   size_t hi, bool open, bool close, Emit emit) {
+  const CompShape s = GetCompShape(type_id);
+  if (open) out.append('[');
+  for (size_t i = lo; i < hi; ++i) {
+    if (i) out.append(", ");
+    EmitCompElem(out, data + i * s.comp_count, s, emit);
+  }
+  if (close) out.append(']');
+}
+
+bool PrintArrayToStream(StreamWriter& os, const Value& value,
+                        const PrintOptions& opts) {
+  if (!value.is_array()) return false;
+  ChunkedStream out(os);
+  const size_t maxN = opts.max_array_elements;
+  const TypeId type_id = value.type_id();
+
+  switch (type_id) {
+    case TypeId::Int: {
+      ArrayScratch<int32_t> scratch;
+      ArrayView<int32_t> view;
+      if (!GetIntArrayView(value, &scratch, &view)) return false;
+      EmitScalarArray(out, view.data, view.size, maxN,
+                      [&](int32_t v) { out.append_int(v); });
+      return true;
+    }
+    case TypeId::UInt: {
+      ArrayScratch<uint32_t> scratch;
+      ArrayView<uint32_t> view;
+      if (!GetUIntArrayView(value, &scratch, &view)) return false;
+      EmitScalarArray(out, view.data, view.size, maxN,
+                      [&](uint32_t v) { out.append_uint(v); });
+      return true;
+    }
+    case TypeId::Int64: {
+      ArrayScratch<int64_t> scratch;
+      ArrayView<int64_t> view;
+      if (!GetInt64ArrayView(value, &scratch, &view)) return false;
+      EmitScalarArray(out, view.data, view.size, maxN,
+                      [&](int64_t v) { out.append_int(v); });
+      return true;
+    }
+    case TypeId::UInt64: {
+      ArrayScratch<uint64_t> scratch;
+      ArrayView<uint64_t> view;
+      if (!GetUInt64ArrayView(value, &scratch, &view)) return false;
+      EmitScalarArray(out, view.data, view.size, maxN,
+                      [&](uint64_t v) { out.append_uint(v); });
+      return true;
+    }
+    case TypeId::Bool: {
+      Value tmp;
+      const Value* src = &value;
+      if (value.is_lazy()) {
+        tmp = value.materialized_copy();
+        src = &tmp;
+      }
+      const std::vector<uint8_t>* a = src->as_bool_array();
+      if (!a) return false;
+      out.append('[');
+      size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+      for (size_t i = 0; i < limit; ++i) {
+        if (i) out.append(", ");
+        out.append((*a)[i] ? "true" : "false");
+      }
+      if (limit < a->size()) out.append(", ...");
+      out.append(']');
+      return true;
+    }
+    case TypeId::Token:
+    case TypeId::String:
+    case TypeId::AssetPath: {
+      Value tmp;
+      const Value* src = &value;
+      if (value.is_lazy()) {
+        tmp = value.materialized_copy();
+        src = &tmp;
+      }
+      const std::vector<std::string>* a = src->as_token_array();
+      if (!a) return false;
+      out.append('[');
+      size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
+      for (size_t i = 0; i < limit; ++i) {
+        if (i) out.append(", ");
+        if (type_id == TypeId::AssetPath) {
+          out.append('@');
+          out.append((*a)[i]);
+          out.append('@');
+        } else {
+          out.append(EscapeString((*a)[i]));
+        }
+      }
+      if (limit < a->size()) out.append(", ...");
+      out.append(']');
+      return true;
+    }
+    default: {
+      const TypeId component = GetComponentType(type_id);
+      const bool dbl = (component == TypeId::Double) || type_id == TypeId::Double;
+      const bool flt = (component == TypeId::Float) || type_id == TypeId::Float;
+      if (dbl) {
+        ArrayScratch<double> scratch;
+        ArrayView<double> view;
+        if (!GetDoubleArrayView(value, &scratch, &view)) return false;
+        EmitCompArray(out, view.data, view.size, type_id, maxN,
+                      [&](double v) { out.append_double(v); });
+        return true;
+      }
+      if (flt) {
+        ArrayScratch<float> scratch;
+        ArrayView<float> view;
+        if (!GetFloatArrayView(value, &scratch, &view)) return false;
+        EmitCompArray(out, view.data, view.size, type_id, maxN,
+                      [&](float v) { out.append_float(v); });
+        return true;
+      }
+      return false;
+    }
+  }
+}
 
 }  // anonymous namespace
 
@@ -155,7 +423,7 @@ void PrintValueInto(std::string& out, const Value& value,
         if (const auto* a = value.as_int_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendI64(out, (*a)[i]); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendInt(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -164,7 +432,7 @@ void PrintValueInto(std::string& out, const Value& value,
         if (const auto* a = value.as_uint_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendU64(out, (*a)[i]); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendUInt(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -173,7 +441,7 @@ void PrintValueInto(std::string& out, const Value& value,
         if (const auto* a = value.as_int64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 10);
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendI64(out, (*a)[i]); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendInt(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -182,7 +450,7 @@ void PrintValueInto(std::string& out, const Value& value,
         if (const auto* a = value.as_uint64_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 10);
-          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendU64(out, (*a)[i]); }
+          for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; AppendUInt(out, (*a)[i]); }
           if (limit < a->size()) out += ", ...";
         }
         break;
@@ -248,25 +516,25 @@ void PrintValueInto(std::string& out, const Value& value,
 
     case TypeId::Int: {
       const int32_t* v = value.as_int();
-      if (v) AppendI64(out, *v); else out += "None";
+      if (v) AppendInt(out, *v); else out += "None";
       return;
     }
 
     case TypeId::UInt: {
       const uint32_t* v = value.as_uint();
-      if (v) AppendU64(out, *v); else out += "None";
+      if (v) AppendUInt(out, *v); else out += "None";
       return;
     }
 
     case TypeId::Int64: {
       const int64_t* v = value.as_int64();
-      if (v) AppendI64(out, *v); else out += "None";
+      if (v) AppendInt(out, *v); else out += "None";
       return;
     }
 
     case TypeId::UInt64: {
       const uint64_t* v = value.as_uint64();
-      if (v) AppendU64(out, *v); else out += "None";
+      if (v) AppendUInt(out, *v); else out += "None";
       return;
     }
 
@@ -303,23 +571,23 @@ void PrintValueInto(std::string& out, const Value& value,
     case TypeId::Int2: {
       const int32_t* v = value.as_int2();
       if (!v) { out += "None"; return; }
-      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]); out += ')';
+      out += '('; AppendInt(out, v[0]); out += ", "; AppendInt(out, v[1]); out += ')';
       return;
     }
 
     case TypeId::Int3: {
       const int32_t* v = value.as_int3();
       if (!v) { out += "None"; return; }
-      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]);
-      out += ", "; AppendI64(out, v[2]); out += ')';
+      out += '('; AppendInt(out, v[0]); out += ", "; AppendInt(out, v[1]);
+      out += ", "; AppendInt(out, v[2]); out += ')';
       return;
     }
 
     case TypeId::Int4: {
       const int32_t* v = value.as_int4();
       if (!v) { out += "None"; return; }
-      out += '('; AppendI64(out, v[0]); out += ", "; AppendI64(out, v[1]);
-      out += ", "; AppendI64(out, v[2]); out += ", "; AppendI64(out, v[3]); out += ')';
+      out += '('; AppendInt(out, v[0]); out += ", "; AppendInt(out, v[1]);
+      out += ", "; AppendInt(out, v[2]); out += ", "; AppendInt(out, v[3]); out += ')';
       return;
     }
 
@@ -477,7 +745,7 @@ void PrintValueInto(std::string& out, const Value& value,
 
     default:
       out += "<unsupported type ";
-      AppendI64(out, static_cast<int>(type_id));
+      AppendInt(out, static_cast<int>(type_id));
       out += ">";
       return;
   }
@@ -487,6 +755,142 @@ std::string PrintValue(const Value& value, const PrintOptions& opts) {
   std::string out;
   PrintValueInto(out, value, opts);
   return out;
+}
+
+void PrintValue(StreamWriter& out, const Value& value, const PrintOptions& opts) {
+  if (value.is_array() && PrintArrayToStream(out, value, opts)) {
+    return;
+  }
+  std::string tmp;
+  PrintValueInto(tmp, value, opts);
+  out.write(tmp);
+}
+
+size_t ArrayElementCount(const Value& value) {
+  return value.is_array() ? value.array_size() : 0;
+}
+
+bool IsChunkableType(const Value& value, const PrintOptions& opts) {
+  if (!value.is_array()) return false;
+  const size_t n = value.array_size();
+  if (n == 0) return false;
+  if (opts.max_array_elements > 0 && n > opts.max_array_elements) return false;
+  const TypeId type_id = value.type_id();
+  switch (type_id) {
+    case TypeId::Int:
+    case TypeId::UInt:
+    case TypeId::Int64:
+    case TypeId::UInt64:
+      return true;
+    default: {
+      const TypeId comp = GetComponentType(type_id);
+      const bool dbl = (comp == TypeId::Double) || type_id == TypeId::Double;
+      // Half-backed types (half / half3 / quath / ...) are widened to float by
+      // as_float_array, so the float range printer handles them identically.
+      const bool flt = (comp == TypeId::Float) || type_id == TypeId::Float ||
+                       (comp == TypeId::Half) || type_id == TypeId::Half;
+      return dbl || flt;
+    }
+  }
+}
+
+bool IsChunkableArray(const Value& value, const PrintOptions& opts) {
+  if (!value.is_array()) return false;
+  // Lazy arrays are chunkable only when their bytes can be aliased zero-copy
+  // (uncompressed/aligned): then each chunk borrows the same source mapping with
+  // no decode, so concurrent range formatting is safe and allocation-free. A
+  // compressed/unborrowable lazy array would re-decode per chunk, so exclude it.
+  if (value.is_lazy() && !CanBorrowLazyFlat(value)) return false;
+  const size_t n = value.array_size();
+  if (n == 0) return false;
+  // A truncated array prints only a few elements + ", ..." -> never worth
+  // chunking, and the range printer does not reproduce the truncation marker.
+  if (opts.max_array_elements > 0 && n > opts.max_array_elements) return false;
+  const TypeId type_id = value.type_id();
+  switch (type_id) {
+    case TypeId::Int:
+    case TypeId::UInt:
+    case TypeId::Int64:
+    case TypeId::UInt64:
+      return true;
+    default: {
+      const TypeId comp = GetComponentType(type_id);
+      const bool dbl = (comp == TypeId::Double) || type_id == TypeId::Double;
+      const bool flt = (comp == TypeId::Float) || type_id == TypeId::Float ||
+                       (comp == TypeId::Half) || type_id == TypeId::Half;
+      return dbl || flt;
+    }
+  }
+}
+
+bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
+                             const PrintOptions& opts, size_t elem_lo,
+                             size_t elem_hi, bool open, bool close) {
+  // Array element formatting uses shortest round-trip (dtoa), matching the full
+  // array printer; `opts` precision applies only to scalar values, so it is
+  // unused here but kept for signature symmetry with the full printer.
+  (void)opts;
+  if (!value.is_array()) return false;
+  ChunkedStream out(os);
+  const TypeId type_id = value.type_id();
+  switch (type_id) {
+    case TypeId::Int: {
+      ArrayScratch<int32_t> scratch;
+      ArrayView<int32_t> view;
+      if (!GetIntArrayView(value, &scratch, &view)) return false;
+      EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
+                      [&](int32_t v) { out.append_int(v); });
+      return true;
+    }
+    case TypeId::UInt: {
+      ArrayScratch<uint32_t> scratch;
+      ArrayView<uint32_t> view;
+      if (!GetUIntArrayView(value, &scratch, &view)) return false;
+      EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
+                      [&](uint32_t v) { out.append_uint(v); });
+      return true;
+    }
+    case TypeId::Int64: {
+      ArrayScratch<int64_t> scratch;
+      ArrayView<int64_t> view;
+      if (!GetInt64ArrayView(value, &scratch, &view)) return false;
+      EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
+                      [&](int64_t v) { out.append_int(v); });
+      return true;
+    }
+    case TypeId::UInt64: {
+      ArrayScratch<uint64_t> scratch;
+      ArrayView<uint64_t> view;
+      if (!GetUInt64ArrayView(value, &scratch, &view)) return false;
+      EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
+                      [&](uint64_t v) { out.append_uint(v); });
+      return true;
+    }
+    default: {
+      const TypeId component = GetComponentType(type_id);
+      const bool dbl = (component == TypeId::Double) || type_id == TypeId::Double;
+      // Half-backed types widen to float via as_float_array (see IsChunkableType).
+      const bool flt = (component == TypeId::Float) || type_id == TypeId::Float ||
+                       (component == TypeId::Half) || type_id == TypeId::Half;
+      if (dbl) {
+        ArrayScratch<double> scratch;
+        ArrayView<double> view;
+        if (!GetDoubleArrayView(value, &scratch, &view)) return false;
+        EmitCompRange(out, view.data, type_id, elem_lo, elem_hi, open, close,
+                      [&](double v) { out.append_double(v); });
+        return true;
+      }
+      if (flt) {
+        ArrayScratch<float> scratch;
+        ArrayView<float> view;
+        if (!GetFloatArrayView(value, &scratch, &view)) return false;
+        EmitCompRange(out, view.data, type_id, elem_lo, elem_hi, open, close,
+                      [&](float v) { out.append_float(v); });
+        return true;
+      }
+      return false;
+    }
+  }
 }
 
 namespace {

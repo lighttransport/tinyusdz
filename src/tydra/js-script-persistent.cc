@@ -29,6 +29,13 @@
 #pragma GCC diagnostic pop
 #endif
 
+// QuickJS's JS_UNDEFINED/JS_NULL (-> JS_MKVAL(...)) macros trip clang's
+// -Wdisabled-macro-expansion at every use site in the body below. Ignore just
+// that diagnostic for the rest of this TU (clang-only warning).
+#if defined(__clang__)
+#pragma clang diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
+
 #include <sstream>
 #include <functional>
 #include <cstdio>

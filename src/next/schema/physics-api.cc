@@ -37,6 +37,15 @@ bool GetPhysicsRigidBodyData(const Stage& stage, const UsdPrim& prim,
 
   out->rigidBodyEnabled =
       eval.EvalOr(prim, "physics:rigidBodyEnabled", true);
+  out->kinematicEnabled =
+      eval.EvalOr(prim, "physics:kinematicEnabled", false);
+  {
+    const std::vector<Path>* targets =
+        prim.GetRelationship("physics:simulationOwner");
+    if (targets && !targets->empty()) {
+      out->simulationOwner = (*targets)[0].str();
+    }
+  }
   // UsdPhysics authors velocity/angularVelocity as single vector3f attributes
   // (not per-component); the previous physics:velocityX/Y/Z names do not exist in
   // the schema, so authored values were silently dropped. EvalFloat3 leaves the

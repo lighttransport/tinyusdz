@@ -7,6 +7,7 @@
 
 #include "../stage/stage.hh"
 #include "../eval/attribute-eval.hh"
+#include <limits>
 #include <string>
 
 namespace tinyusdz {
@@ -53,15 +54,15 @@ struct PhysicsJointData {
   bool hasLocalRot1 = false;
 
   // Break force/torque
-  float breakForce = 1e10f;
-  float breakTorque = 1e10f;
+  float breakForce = std::numeric_limits<float>::infinity();
+  float breakTorque = std::numeric_limits<float>::infinity();
 
   // Collision enabled
-  bool collisionEnabled = true;
+  bool collisionEnabled = false;
 
   bool enableMotor = false;
   float motorTargetVelocity = 0.0f;
-  float motorMaxForce = 1e10f;
+  float motorMaxForce = std::numeric_limits<float>::infinity();
 };
 
 /// Get common joint data for any PhysicsJoint type
@@ -74,9 +75,9 @@ bool GetPhysicsJointData(const Stage& stage, const UsdPrim& prim,
 
 struct PhysicsPrismaticJointData : public PhysicsJointData {
   float axis[3] = {1.0f, 0.0f, 0.0f};
-  float lowerLimit = -1e10f;
-  float upperLimit = 1e10f;
-  float maxForce = 1e10f;
+  float lowerLimit = -std::numeric_limits<float>::infinity();
+  float upperLimit = std::numeric_limits<float>::infinity();
+  float maxForce = std::numeric_limits<float>::infinity();
 };
 
 bool GetPhysicsPrismaticJointData(const Stage& stage, const UsdPrim& prim,
@@ -89,9 +90,9 @@ bool GetPhysicsPrismaticJointData(const Stage& stage, const UsdPrim& prim,
 
 struct PhysicsRevoluteJointData : public PhysicsJointData {
   float axis[3] = {1.0f, 0.0f, 0.0f};
-  float lowerLimit = -1e10f;
-  float upperLimit = 1e10f;
-  float maxTorque = 1e10f;
+  float lowerLimit = -std::numeric_limits<float>::infinity();
+  float upperLimit = std::numeric_limits<float>::infinity();
+  float maxTorque = std::numeric_limits<float>::infinity();
 };
 
 bool GetPhysicsRevoluteJointData(const Stage& stage, const UsdPrim& prim,
@@ -103,10 +104,13 @@ bool GetPhysicsRevoluteJointData(const Stage& stage, const UsdPrim& prim,
 // ============================================================
 
 struct PhysicsSphericalJointData : public PhysicsJointData {
-  float coneAngleLimit = 180.0f;
-  float coneAngleLimitY = 180.0f;
-  float coneAngleLimitZ = 180.0f;
-  float maxTorque = 1e10f;
+  float coneAngle0Limit = -1.0f;
+  float coneAngle1Limit = -1.0f;
+  // Backward-compatible aliases for older next consumers.
+  float coneAngleLimit = -1.0f;
+  float coneAngleLimitY = -1.0f;
+  float coneAngleLimitZ = -1.0f;
+  float maxTorque = std::numeric_limits<float>::infinity();
 };
 
 bool GetPhysicsSphericalJointData(const Stage& stage, const UsdPrim& prim,
@@ -130,8 +134,8 @@ bool GetPhysicsFixedJointData(const Stage& stage, const UsdPrim& prim,
 // ============================================================
 
 struct PhysicsDistanceJointData : public PhysicsJointData {
-  float minDistance = 0.0f;
-  float maxDistance = 1e10f;
+  float minDistance = -1.0f;
+  float maxDistance = -1.0f;
 };
 
 bool GetPhysicsDistanceJointData(const Stage& stage, const UsdPrim& prim,

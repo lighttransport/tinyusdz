@@ -1,0 +1,73 @@
+#version 460
+//
+// build_morton.comp — Path B (GPU build) front end for LightRT LBVH.
+//
+// Two passes selected by push constant `pass`, one invocation per triangle:
+//
+//   pass 0  centroids : centroid[i] = 0.5*(min(v0,v1,v2) + max(v0,v1,v2)) per
+//                       axis, byte-identical to tri_precompute (c->cen).
+//   pass 1  morton    : quantize centroid[i] to a 1024^3 grid over the centroid
+//                       AABB (base/scale from the CPU reduction) and emit the
+//                       30-bit Z-order code, byte-identical to tri_morton_encode
+//                       + tri_morton_expand10. The host then radix-sorts and
+//                       finishes the LBVH on the CPU.
+//
+// Integer Morton math => exact parity with the CPU FAST build given identical
+// centroids and base/scale.
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly  buffer Verts     { float verts[]; };     // 9 floats / tri
+layout(std430, binding = 1)          buffer Centroids { float centroids[]; }; // 3 floats / tri
+layout(std430, binding = 2) writeonly buffer Morton    { uint  morton[]; };    // 1 uint  / tri
+
+layout(push_constant) uniform PC {
+    uint pass;
+    uint ntris;
+    float base0, base1, base2;
+    float scale0, scale1, scale2;
+} pc;
+
+// Spread the low 10 bits of v so each lands at every 3rd bit (tri_morton_expand10).
+uint expand10(uint v) {
+    v &= 0x3FFu;
+    v = (v | (v << 16)) & 0x030000FFu;
+    v = (v | (v << 8))  & 0x0300F00Fu;
+    v = (v | (v << 4))  & 0x030C30C3u;
+    v = (v | (v << 2))  & 0x09249249u;
+    return v;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.ntris) return;
+
+    if (pc.pass == 0u) {
+        uint vb = i * 9u;
+        for (uint a = 0u; a < 3u; a++) {
+            float v0 = verts[vb + 0u + a];
+            float v1 = verts[vb + 3u + a];
+            float v2 = verts[vb + 6u + a];
+            float lo = min(v0, min(v1, v2));
+            float hi = max(v0, max(v1, v2));
+            centroids[i * 3u + a] = 0.5 * (lo + hi);
+        }
+        return;
+    }
+
+    // pass 1: Morton code.
+    vec3 base  = vec3(pc.base0, pc.base1, pc.base2);
+    vec3 scale = vec3(pc.scale0, pc.scale1, pc.scale2);
+    uint q[3];
+    for (uint a = 0u; a < 3u; a++) {
+        float c = centroids[i * 3u + a];
+        float fv = (c - base[a]) * scale[a];
+        int qi = int(fv);          // truncation toward zero, matches (int32_t)v
+        if (qi < 0) qi = 0;
+        if (qi > 1023) qi = 1023;
+        q[a] = uint(qi);
+    }
+    morton[i] = (expand10(q[0]) << 2) | (expand10(q[1]) << 1) | expand10(q[2]);
+}

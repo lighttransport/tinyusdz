@@ -10,10 +10,10 @@
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
 #include "layer.hh"
+#include "io-util.hh"
 #include "tinyusdz.hh"
 
 #include <fstream>
-#include <filesystem>
 
 using namespace tinyusdz;
 
@@ -515,19 +515,11 @@ void comp_variant_nested_children_test(void) {
 // "Asset not found" warning.
 // ---------------------------------------------------------------------------
 void comp_reference_suffix_fallback_test(void) {
-  namespace fs = std::filesystem;
-
-  std::error_code ec;
-  fs::path dir =
-      fs::temp_directory_path(ec) / "tinyusdz_comp_reference_suffix_fallback";
-  TEST_CHECK(!ec);
-  if (ec) {
-    return;
-  }
-
-  fs::create_directories(dir / "Assets", ec);
-  TEST_CHECK(!ec);
-  if (ec) {
+  const std::string dir = tinyusdz::io::JoinPath(
+      tinyusdz::io::GetTempDir(), "tinyusdz_comp_reference_suffix_fallback");
+  const std::string assets = tinyusdz::io::JoinPath(dir, "Assets");
+  TEST_CHECK(tinyusdz::io::CreateDirectories(assets));
+  if (!tinyusdz::io::IsDirectory(assets)) {
     return;
   }
 
@@ -543,44 +535,44 @@ def Xform "Leaf"
 )";
 
   TEST_CHECK(WriteTextFileForCompositionTest(
-      (dir / "Assets" / "sfb_leaf.usda").string(), leaf_usda));
+      tinyusdz::io::JoinPath(assets, "leaf.usda"), leaf_usda));
   TEST_CHECK(WriteTextFileForCompositionTest(
-      (dir / "Assets" / "sfb_leaf2.usda").string(), leaf_usda));
+      tinyusdz::io::JoinPath(assets, "leaf2.usda"), leaf_usda));
 
   const std::string root_usda = R"(#usda 1.0
 
 def Xform "RefEscape" (
-    prepend references = @../../../../../USD_Exports/SfbScene/Assets/sfb_leaf.usda@
+    prepend references = @../../../../../USD_Exports/SampleScene/Assets/leaf.usda@
 )
 {
 }
 
 def Xform "RefDrive" (
-    prepend references = @F:/USD_Exports/SfbScene/Assets/sfb_leaf2.usda@
+    prepend references = @F:/USD_Exports/SampleScene/Assets/leaf2.usda@
 )
 {
 }
 
 def Xform "RefMissing" (
-    prepend references = @../../sfb_no_such_dir/sfb_nothing.usda@
+    prepend references = @../../missing_dir/missing.usda@
 )
 {
 }
 )";
 
-  const fs::path root_path = dir / "root.usda";
-  TEST_CHECK(WriteTextFileForCompositionTest(root_path.string(), root_usda));
+  const std::string root_path = tinyusdz::io::JoinPath(dir, "root.usda");
+  TEST_CHECK(WriteTextFileForCompositionTest(root_path, root_usda));
 
   Layer root_layer;
   std::string warn, err;
-  TEST_CHECK(LoadLayerFromFile(root_path.string(), &root_layer, &warn, &err));
+  TEST_CHECK(LoadLayerFromFile(root_path, &root_layer, &warn, &err));
   if (!err.empty()) {
     TEST_MSG("LoadLayerFromFile error: %s", err.c_str());
   }
 
   AssetResolutionResolver resolver;
-  resolver.set_current_working_path(dir.string());
-  resolver.set_search_paths({dir.string()});
+  resolver.set_current_working_path(dir);
+  resolver.set_search_paths({dir});
 
   ReferencesCompositionOptions options;
   options.allow_parent_relative_paths = true;
@@ -594,14 +586,14 @@ def Xform "RefMissing" (
     TEST_MSG("CompositeReferences error: %s", err.c_str());
   }
 
-  // Escaping '../' reference rebased onto <dir>/Assets/sfb_leaf.usda.
+  // Escaping '../' reference rebased onto <dir>/Assets/leaf.usda.
   auto escape_it = composited.primspecs().find("RefEscape");
   TEST_CHECK(escape_it != composited.primspecs().end());
   if (escape_it != composited.primspecs().end()) {
     TEST_CHECK(escape_it->second.props().count("marker") == 1);
   }
 
-  // Drive-prefixed reference rebased onto <dir>/Assets/sfb_leaf2.usda.
+  // Drive-prefixed reference rebased onto <dir>/Assets/leaf2.usda.
   auto drive_it = composited.primspecs().find("RefDrive");
   TEST_CHECK(drive_it != composited.primspecs().end());
   if (drive_it != composited.primspecs().end()) {
@@ -631,24 +623,15 @@ def Xform "RefMissing" (
 // selected variants are applied.
 // ---------------------------------------------------------------------------
 void comp_sublayer_variant_sets_merge_test(void) {
-  namespace fs = std::filesystem;
-
-  std::error_code ec;
-  fs::path dir = fs::temp_directory_path(ec) /
-                 "tinyusdz_comp_sublayer_variant_sets_merge";
-  TEST_CHECK(!ec);
-  if (ec) {
+  const std::string dir = tinyusdz::io::JoinPath(
+      tinyusdz::io::GetTempDir(), "tinyusdz_comp_sublayer_variant_sets_merge");
+  TEST_CHECK(tinyusdz::io::CreateDirectories(dir));
+  if (!tinyusdz::io::IsDirectory(dir)) {
     return;
   }
 
-  fs::create_directories(dir, ec);
-  TEST_CHECK(!ec);
-  if (ec) {
-    return;
-  }
-
-  const fs::path weak_path = dir / "weak.usda";
-  const fs::path root_path = dir / "root.usda";
+  const std::string weak_path = tinyusdz::io::JoinPath(dir, "weak.usda");
+  const std::string root_path = tinyusdz::io::JoinPath(dir, "root.usda");
 
   const std::string weak_usda = R"(#usda 1.0
 
@@ -698,12 +681,12 @@ def Xform "Root" (
 }
 )";
 
-  TEST_CHECK(WriteTextFileForCompositionTest(weak_path.string(), weak_usda));
-  TEST_CHECK(WriteTextFileForCompositionTest(root_path.string(), root_usda));
+  TEST_CHECK(WriteTextFileForCompositionTest(weak_path, weak_usda));
+  TEST_CHECK(WriteTextFileForCompositionTest(root_path, root_usda));
 
   Layer root_layer;
   std::string warn, err;
-  TEST_CHECK(LoadLayerFromFile(root_path.string(), &root_layer, &warn, &err));
+  TEST_CHECK(LoadLayerFromFile(root_path, &root_layer, &warn, &err));
   if (!err.empty()) {
     TEST_MSG("LoadLayerFromFile error: %s", err.c_str());
   }
@@ -767,9 +750,9 @@ def Xform "Root" (
   TEST_CHECK(geom_it->props().count("shapeMarker") == 1);
   TEST_CHECK(geom_it->props().count("lookMarker") == 1);
 
-  fs::remove(root_path, ec);
-  fs::remove(weak_path, ec);
-  fs::remove(dir, ec);
+  tinyusdz::io::RemoveFile(root_path);
+  tinyusdz::io::RemoveFile(weak_path);
+  tinyusdz::io::RemoveAll(dir);
 }
 
 // ---------------------------------------------------------------------------

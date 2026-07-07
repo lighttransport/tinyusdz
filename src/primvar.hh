@@ -290,7 +290,7 @@ struct PrimVar {
     return 0;
   }
 
-  const value::TimeSamples &ts_raw() const {
+  const value::TimeSamples &ts_raw() const TINYUSDZ_LIFETIMEBOUND {
     if (_extras) {
       return _extras->ts;
     }
@@ -298,16 +298,16 @@ struct PrimVar {
     return s_empty_ts;
   }
 
-  value::Value &value_raw() {
+  value::Value &value_raw() TINYUSDZ_LIFETIMEBOUND {
     return _value;
   }
 
-  const value::Value &value_raw() const {
+  const value::Value &value_raw() const TINYUSDZ_LIFETIMEBOUND {
     return _value;
   }
 
   // Mutable access lazily allocates the extension block.
-  value::TimeSamples &ts_raw() {
+  value::TimeSamples &ts_raw() TINYUSDZ_LIFETIMEBOUND {
     return extras().ts;
   }
 
@@ -348,6 +348,11 @@ struct PrimVar {
     double postTangentSlope{0.0};
     double postTangentWidth{0.0};
     int interpolationMode{3};  // 0=none, 1=held, 2=linear, 3=curve
+    // Tangent algorithm (OpenUSD TsTangentAlgorithm): 0=None, 1=Custom,
+    // 2=AutoEase. A non-None algorithm requires spline binary version 2, which
+    // in turn requires crate version 0.13.0 on write.
+    int preTangentAlgorithm{0};
+    int postTangentAlgorithm{0};
   };
 
   struct SplineData {
@@ -357,11 +362,19 @@ struct PrimVar {
     int postExtrapolation{1};  // SplineExtrapolationMode::Held
     double preExtrapolationSlope{0.0};
     double postExtrapolationSlope{0.0};
+
+    // Inner-loop parameters (AOUSD Core Spec 7.4.2.4.5). Active when hasLoop.
+    bool hasLoop{false};
+    double loopProtoStart{0.0};
+    double loopProtoEnd{0.0};
+    int loopNumPreLoops{0};
+    int loopNumPostLoops{0};
+    double loopValueOffset{0.0};
   };
 
   bool has_spline() const { return _extras && !_extras->spline.knots.empty(); }
 
-  const SplineData &spline_data() const {
+  const SplineData &spline_data() const TINYUSDZ_LIFETIMEBOUND {
     if (_extras) {
       return _extras->spline;
     }
@@ -369,7 +382,7 @@ struct PrimVar {
     return s_empty_spline;
   }
   // Mutable access lazily allocates the extension block.
-  SplineData &spline_data() { return extras().spline; }
+  SplineData &spline_data() TINYUSDZ_LIFETIMEBOUND { return extras().spline; }
 
   void set_spline(const SplineData &spline) { extras().spline = spline; }
   void set_spline(SplineData &&spline) { extras().spline = std::move(spline); }
@@ -381,7 +394,7 @@ struct PrimVar {
   };
 
  private:
-  ExtrasBlock &extras() {
+  ExtrasBlock &extras() TINYUSDZ_LIFETIMEBOUND {
     if (!_extras) {
       _extras.reset(new ExtrasBlock());
     }
@@ -400,4 +413,18 @@ struct PrimVar {
 
 
 } // namespace primvar
+
+namespace value {
+
+// SplineData carrier so a spline can be stored in a value::Value (used to flow
+// a Crate type-59 value through to the attribute, like value::TimeSamples).
+// Defined here because it needs the complete primvar::PrimVar::SplineData type.
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(primvar::PrimVar::SplineData, "Spline", TYPE_ID_SPLINE_DATA, 1);
+
+#undef DEFINE_TYPE_TRAIT
+#undef DEFINE_ROLE_TYPE_TRAIT
+
+} // namespace value
 } // namespace tinyusdz

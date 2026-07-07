@@ -126,6 +126,9 @@ struct MeshConverterConfig {
   // Subdivision surface tessellation level. When > 0, meshes with authored
   // subdivisionScheme are tessellated before downstream Tydra mesh conversion.
   int32_t subdivision_level{0};
+  // Per-mesh subdivision overrides keyed by absolute prim path. Values < 0 are
+  // ignored; values >= 0 override subdivision_level for that mesh only.
+  std::map<std::string, int32_t> subdivision_prim_levels;
 
   // Triangulation method for polygons with 5+ vertices
   enum class TriangulationMethod {
@@ -151,6 +154,18 @@ struct MeshConverterConfig {
   std::string default_texcoords_primvar_name{"st"};
   std::string default_texcoords1_primvar_name{
       "st1"};  // for multi texture(available from iOS 16/macOS 13)
+
+  // When true, additionally extract EVERY authored `texCoord2f[]` primvar into a
+  // RenderMesh.texcoords slot, not just the material-referenced ones. Lets tools
+  // expose secondary UV sets (multi-UV) even when no shader reads them. Off by
+  // default so the standard render path's slot assignment is unchanged.
+  bool extract_all_texcoords{false};
+
+  // When true, retain RenderMesh.triangulatedFaceCounts (per original face, the
+  // number of triangles it produced) instead of freeing it after triangulation.
+  // Lets tools map each output triangle back to its source USD face. Off by
+  // default (the data is freed as before).
+  bool keep_triangulation_intermediates{false};
   std::string default_tangents_primvar_name{"tangents"};
   std::string default_binormals_primvar_name{"binormals"};
 
@@ -329,6 +344,16 @@ struct MaterialConverterConfig {
   // https://github.com/syoyo/tinyusdz/issues/120
   std::string default_backface_material_purpose_name{"back"};
 
+  // Assign a generated RenderMaterial to meshes that have no authored material
+  // binding. Disabled by default to preserve legacy `material_id == -1`
+  // behavior for callers that distinguish unbound geometry.
+  bool assign_default_material{false};
+  std::string default_material_name{"defaultMaterial"};
+  vec3 default_material_diffuse_color{0.18f, 0.18f, 0.18f};
+  float default_material_roughness{0.5f};
+  float default_material_metallic{0.0f};
+  float default_material_opacity{1.0f};
+
   // DefaultTextureImageLoader will be used when nullptr;
   TextureImageLoaderFunction texture_image_loader_function{nullptr};
   void *texture_image_loader_function_userdata{nullptr};
@@ -448,6 +473,17 @@ struct RenderSceneConverterConfig {
   bool merge_meshes{false};
 
   //
+  // Deduplicate RenderScene materials by full shader parameters before mesh
+  // merging. Texture parameters are compared by their resolved image/wrap/UDIM
+  // identity rather than transient texture object ids.
+  //
+  // Only effective for RenderScene conversion. Intended to make raw converted
+  // scenes with many duplicated materials mergeable without changing the
+  // source USD layer.
+  //
+  bool dedup_materials_by_texture_identity{false};
+
+  //
   // When merging meshes, bake global transforms into vertex data.
   // This allows merging meshes with different transforms by transforming
   // their vertices into world space.
@@ -455,6 +491,11 @@ struct RenderSceneConverterConfig {
   // Only effective when merge_meshes is true.
   //
   bool merge_meshes_bake_transform{true};
+
+  // Replace the authored node hierarchy with a compact render-only tree after
+  // native optimization. This breaks prim-tree fidelity and is intended for
+  // realtime viewers that only need renderable objects, lights, and cameras.
+  bool flatten_optimized_render_tree{false};
 
   // Bake USD value clip animations into animation clips.
   bool enable_value_clips{true};
@@ -860,6 +901,9 @@ class RenderSceneConverter {
   const std::string &GetInfo() const { return _info; }
   const std::string &GetWarning() const { return _warn; }
   const std::string &GetError() const { return _err; }
+  const std::string &GetTimingInfo() const { return _timing_info; }
+  void AddWarning(const std::string &msg) { _warn += msg + "\n"; }
+  void ClearError() { _err.clear(); }
 
   // Prim path <-> index for corresponding array
   // e.g. meshMap: primPath/index to `meshes`.
@@ -874,6 +918,7 @@ class RenderSceneConverter {
   StringAndIdMap imageMap;
   StringAndIdMap bufferMap;
   StringAndIdMap animationMap;
+  StringAndIdMap volumeMap;  ///< UsdVol Volume prim path -> volumes index
 
   // UDIM info cache, keyed by the (un-resolved) `<UDIM>` asset path. Used to
   // restore UDIM remap / sparse-texture linkage when a UDIM texture image is
@@ -901,6 +946,7 @@ class RenderSceneConverter {
   ChunkedVectorArray<SkelHierarchy> skeletons;
   ChunkedVectorArray<AnimationClip> animations;
   ChunkedVectorArray<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  ChunkedVectorArray<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
@@ -914,6 +960,7 @@ class RenderSceneConverter {
   std::vector<SkelHierarchy> skeletons;
   std::vector<AnimationClip> animations;
   std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  std::vector<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #endif
 
   // Pre-discovered skeleton/animation prims for ancestor-based discovery
@@ -1082,6 +1129,16 @@ class RenderSceneConverter {
       RenderMesh *dst);
 
   ///
+  /// Convert a UsdVol Volume prim into a RenderVolume: resolve each `field:*`
+  /// relationship to its field-asset prim, read that prim's `filePath` via the
+  /// env asset resolver, decode the referenced `.vdb` grid (usdVol loader) into
+  /// a dense float buffer (appended to `buffers`), and fill the RenderVolume.
+  ///
+  bool ConvertVolume(
+      const RenderSceneConverterEnv &env, const std::string &volume_abs_path,
+      const tinyusdz::Volume &volume, RenderVolume *dst);
+
+  ///
   /// Compute tangents/binormals for a RenderMesh that had deferred tangent
   /// computation (tangent_computation_deferred == true).
   /// Call this on demand, e.g. from WASM getTangents() binding.
@@ -1189,6 +1246,15 @@ class RenderSceneConverter {
                         int32_t target_node_index,
                         AnimationClip *anim_out);
 
+  /// Extract numeric non-xform attribute time samples from any render node prim
+  /// into CustomProperty channels. This covers camera, light, material/shader,
+  /// and schema-specific parameter animation when a node exists for the prim.
+  bool ExtractPrimPropertyAnimation(const RenderSceneConverterEnv &env,
+                        const Prim &prim,
+                        const Path &abs_path,
+                        int32_t target_node_index,
+                        AnimationClip *anim_out);
+
   ///
   /// Bake USD value-clip animation into AnimationClip by loading clip layers,
   /// resolving active clip selection at sampled stage times,
@@ -1286,6 +1352,40 @@ class RenderSceneConverter {
   ///
   bool MergeMeshesImpl(const RenderSceneConverterEnv &env);
 
+  ///
+  /// Deduplicate RenderMaterial entries and remap mesh/subset/instance material
+  /// ids to the canonical material. Returns the number of removed materials.
+  ///
+  size_t DeduplicateMaterialsByTextureIdentityImpl();
+
+  ///
+  /// Deduplicate UVTexture entries by resolved image/wrap/UDIM identity and
+  /// remap all material shader texture references. Returns removed textures.
+  ///
+  size_t DeduplicateTexturesByIdentityImpl();
+
+  ///
+  /// Replace root_nodes with a synthetic render-only root containing renderable
+  /// nodes in world space. Intended for viewer optimization only.
+  ///
+  size_t FlattenOptimizedRenderTreeImpl();
+
+  ///
+  /// Build a cheap source-graph signature for duplicate material detection
+  /// before full RenderMaterial conversion.
+  ///
+  bool BuildMaterialSourceSignature(const RenderSceneConverterEnv &env,
+                                    const Path &mat_abs_path,
+                                    const Material &material,
+                                    std::string *signature);
+
+  bool FindMaterialSourceSignature(const std::string &signature,
+                                   int64_t *material_id) const;
+  void RememberMaterialSourceSignature(const std::string &signature,
+                                       int64_t material_id);
+  bool GetOrCreateDefaultMaterial(const RenderSceneConverterEnv &env,
+                                  int *material_id);
+
   // Wrapper around GetBoundMaterial with caching.
   // Avoids repeated ancestor walks for sibling prims.
   bool GetBoundMaterialCached(
@@ -1357,6 +1457,10 @@ class RenderSceneConverter {
   // Supports multiple animations per skeleton by processing all discovered SkelAnimation prims
   // and finding which Skeleton(s) reference each via their skel:animationSource relationship.
   bool ConvertAllSkelAnimations(const RenderSceneConverterEnv &env);
+
+  // Resolve SkelAnimation blendShapeWeights channels to mesh nodes after the
+  // render node hierarchy has stable node indices.
+  bool ResolveBlendShapeAnimationTargets();
 
   /// Process a single XformNode's data into a Node (no children).
   bool BuildSingleNode(
@@ -1459,6 +1563,11 @@ class RenderSceneConverter {
     std::string error;
   };
   std::unordered_map<std::string, MaterialBindingCacheEntry> _materialBindingCache;
+
+  std::unordered_map<std::string, int64_t, FNV1StringHash>
+      _materialSourceSignatureCache;
+
+  std::string _timing_info;
 
   // Cache frequently-referenced value clip assets/stages while converting.
   std::unordered_map<std::string, std::shared_ptr<Layer>> _value_clip_layer_cache;

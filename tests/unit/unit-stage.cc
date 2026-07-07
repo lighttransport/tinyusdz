@@ -164,6 +164,58 @@ void stage_get_prim_at_path_test(void) {
   }
 }
 
+void stage_get_prim_from_relative_path_test(void) {
+  Stage stage = build_test_stage();
+  TEST_CHECK(stage.compute_absolute_prim_path_and_assign_prim_id(true));
+
+  auto root_result = stage.GetPrimAtPath(Path("/Root", ""));
+  TEST_CHECK(root_result.has_value());
+  if (!root_result) return;
+
+  auto child1_result = stage.GetPrimAtPath(Path("/Root/Child1", ""));
+  TEST_CHECK(child1_result.has_value());
+  if (!child1_result) return;
+
+  {
+    auto result =
+        stage.GetPrimFromRelativePath(*root_result.value(), Path("Child1", ""));
+    TEST_CHECK(result.has_value());
+    if (result) {
+      TEST_CHECK(result.value()->element_name() == "Child1");
+    }
+  }
+
+  {
+    auto result = stage.GetPrimFromRelativePath(*root_result.value(),
+                                                Path("Child1/GrandChild2", ""));
+    TEST_CHECK(result.has_value());
+    if (result) {
+      TEST_CHECK(result.value()->element_name() == "GrandChild2");
+    }
+  }
+
+  {
+    auto result = stage.GetPrimFromRelativePath(
+        *child1_result.value(), Path("../Child2/GrandChild3", ""));
+    TEST_CHECK(result.has_value());
+    if (result) {
+      TEST_CHECK(result.value()->element_name() == "GrandChild3");
+    }
+  }
+
+  {
+    auto result =
+        stage.GetPrimFromRelativePath(*root_result.value(), Path("Missing", ""));
+    TEST_CHECK(!result.has_value());
+  }
+
+  {
+    auto result = stage.GetPrimFromRelativePath(*root_result.value(),
+                                                Path("Child1", "visibility"));
+    TEST_CHECK(!result.has_value());
+  }
+}
+
 void stage_find_prim_by_id_test(void) {
   Stage stage = build_test_stage();
 

@@ -119,6 +119,11 @@ PrimSpec* Layer::prim_at_path_mutable(const std::string& path) {
   return prim(it->second);
 }
 
+uint32_t Layer::index_at_path(const std::string& path) const {
+  auto it = path_to_index_.find(path);
+  return it == path_to_index_.end() ? UINT32_MAX : it->second;
+}
+
 PrimSpec* Layer::prim_mutable(uint32_t index) {
   if (index >= prims_.size()) return nullptr;
   return &prims_[index];
@@ -189,25 +194,43 @@ Layer::Stats Layer::stats() const {
 LayerBuilder::LayerBuilder(Layer& layer)
     : layer_(layer) {}
 
-uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& type_name,
+uint32_t LayerBuilder::begin_prim(std::string_view name, std::string_view type_name,
                                    PrimSpecifier specifier) {
+  return begin_prim(name, type_name, specifier, std::string_view{});
+}
+
+uint32_t LayerBuilder::begin_prim(std::string_view name, std::string_view type_name,
+                                 PrimSpecifier specifier,
+                                 std::string_view full_path) {
   PrimSpec spec(name, type_name);
   spec.set_specifier(specifier);
 
-  // Build path based on parent stack
-  std::string path_str;
-  if (prim_stack_.empty()) {
-    path_str = "/" + name;
-  } else {
-    // Get parent path
-    const PrimSpec* parent = layer_.prim(prim_stack_.back());
-    if (parent) {
-      path_str = parent->path().str() + "/" + name;
+  if (full_path.empty()) {
+    // Build path based on parent stack.
+    std::string path_str;
+    if (prim_stack_.empty()) {
+      path_str.reserve(name.size() + 1);
+      path_str.push_back('/');
+      path_str.append(name);
     } else {
-      path_str = "/" + name;
+      // Get parent path
+      const PrimSpec* parent = layer_.prim(prim_stack_.back());
+      if (parent) {
+        const std::string& parent_path = parent->path().str();
+        path_str.reserve(parent_path.size() + 1 + name.size());
+        path_str = parent_path;
+        path_str.push_back('/');
+        path_str.append(name);
+      } else {
+        path_str.reserve(name.size() + 1);
+        path_str.push_back('/');
+        path_str.append(name);
+      }
     }
+    spec.set_path(Path(path_str));
+  } else {
+    spec.set_path(Path(std::string(full_path)));
   }
-  spec.set_path(Path(path_str));
 
   current_index_ = layer_.add_prim(std::move(spec));
 
@@ -236,13 +259,14 @@ PrimSpec* LayerBuilder::current() {
   return layer_.prim(current_index_);
 }
 
-void LayerBuilder::add_property(const std::string& name, Value value, uint16_t flags) {
+void LayerBuilder::add_property(std::string_view name, Value value,
+                               uint16_t flags) {
   if (PrimSpec* p = current()) {
     p->add_property(name, std::move(value), flags);
   }
 }
 
-void LayerBuilder::add_time_sample(const std::string& prop_name, double time, Value value) {
+void LayerBuilder::add_time_sample(std::string_view prop_name, double time, Value value) {
   if (PrimSpec* p = current()) {
     PropNameId name_id = GetPropNameTable().intern(prop_name);
 
@@ -270,7 +294,7 @@ void LayerBuilder::add_time_sample(const std::string& prop_name, double time, Va
   }
 }
 
-void LayerBuilder::add_relationship(const std::string& name, const Path& target) {
+void LayerBuilder::add_relationship(std::string_view name, const Path& target) {
   if (PrimSpec* p = current()) {
     p->add_relationship(name, target);
   }

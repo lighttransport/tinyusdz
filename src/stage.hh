@@ -144,7 +144,9 @@ class Stage {
   ///
   /// @return Const array of Root Prims.
   ///
-  const std::vector<Prim> &root_prims() const { return _root_nodes; }
+  const std::vector<Prim> &root_prims() const TINYUSDZ_LIFETIMEBOUND {
+    return _root_nodes;
+  }
 
   ///
   /// @brief Reference to Root Prims array
@@ -152,7 +154,9 @@ class Stage {
   /// @return Array of Root Prims.
   /// TODO: Deprecate non-const `root_prims()` API and use `add_root_prim()` instead.
   ///
-  std::vector<Prim> &root_prims() { return _root_nodes; }
+  std::vector<Prim> &root_prims() TINYUSDZ_LIFETIMEBOUND {
+    return _root_nodes;
+  }
 
   ///
   /// Add Prim to root.
@@ -177,13 +181,42 @@ class Stage {
   bool replace_root_prim(const std::string &prim_name, Prim &&prim);
 
   ///
+  /// Namespace editing (mechanical, layer-level -- mirrors OpenUSD's
+  /// SdfBatchNamespaceEdit semantics). These mutate the prim tree in place:
+  /// the element name and prim-tree position are authoritative (absolute paths
+  /// are derived positionally), so descendants move with their parent. The
+  /// `primChildren` ordering metadata (when authored) and the lookup cache are
+  /// updated. NOTE: relationship-target / attribute-connection paths that
+  /// referenced the affected prim(s) are NOT rewritten (that stage-level fixup,
+  /// like UsdNamespaceEditor, is a follow-on); such targets may become dangling.
+  ///
+
+  /// Rename the prim at `path` to `new_name`. Fails if `path` is the root, does
+  /// not exist, or a sibling already uses `new_name`.
+  bool RenamePrim(const Path &path, const std::string &new_name,
+                  std::string *err = nullptr);
+
+  /// Remove the prim at `path` (and its subtree). Fails if `path` is the root
+  /// or does not exist.
+  bool RemovePrim(const Path &path, std::string *err = nullptr);
+
+  /// Move the prim at `path` to be a child of `new_parent_path` (which must
+  /// exist and must not be the prim itself or one of its descendants). Fails on
+  /// a name clash in the destination. Use `new_name` (non-empty) to rename
+  /// during the move.
+  bool ReparentPrim(const Path &path, const Path &new_parent_path,
+                    const std::string &new_name = "", std::string *err = nullptr);
+
+  ///
   /// @brief Get Stage metadatum
   ///
   /// @return Stage metadatum struct.
   ///
-  const StageMetas &metas() const { return stage_metas; }
+  const StageMetas &metas() const TINYUSDZ_LIFETIMEBOUND {
+    return stage_metas;
+  }
 
-  StageMetas &metas() { return stage_metas; }
+  StageMetas &metas() TINYUSDZ_LIFETIMEBOUND { return stage_metas; }
 
   ///
   /// @brief Assign unique Prim id inside this Stage.
@@ -258,11 +291,11 @@ class Stage {
   ///
   bool compose(bool addSourceFileComment = true) const;
 
-  const std::string &get_warning() const {
+  const std::string &get_warning() const TINYUSDZ_LIFETIMEBOUND {
     return _warn;
   }
 
-  const std::string &get_error() const {
+  const std::string &get_error() const TINYUSDZ_LIFETIMEBOUND {
     return _err;
   }
 
@@ -435,8 +468,12 @@ class Stage {
   bool adopt_mmap_file(io::MMapFileHandle &&handle);
   bool adopt_mmap_buffer(std::vector<uint8_t> &&buffer);
   void clear_mmap_data();
-  const MMapArrayTable *mmap_table() const { return _mmap_table.get(); }
-  const MMapDataSource *mmap_source() const { return _mmap_source.get(); }
+  const MMapArrayTable *mmap_table() const TINYUSDZ_LIFETIMEBOUND {
+    return _mmap_table.get();
+  }
+  const MMapDataSource *mmap_source() const TINYUSDZ_LIFETIMEBOUND {
+    return _mmap_source.get();
+  }
   bool has_mmap_zero_copy() const;
 };
 

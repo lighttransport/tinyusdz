@@ -12,6 +12,16 @@ build/
 build_ninja/
 build-tinysubdiv/
 build-*/
+build_*/
+large-scene-tasks.md
+tests/asset-parse-results/
+tests/asset-parse-results-flatten/
+ref/openusd/
+ref/openusd-build/
+ref/openusd-build*/
+ref/openusd-venv/
+ref/dist/
+ref/dist*/
 web/demo/dist/
 web/site/dist/
 web/build_ninja/
@@ -378,6 +388,7 @@ CMakeUserPresets.json
 # But keep test fixtures
 !tests/usda/*.usda
 !tests/usda/spec/*.usda
+!tests/unit/fixtures/*.usda
 !tests/usda/validation/valid/*.usda
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).
@@ -385,6 +396,9 @@ CMakeUserPresets.json
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda
+!models/tusdview-curves-ribbons.usda
+!models/tusdview-nurbs-patch.usda
+!models/tusdview-transparency.usda
 !tests/usdc/dedup-global-001.usdc
 !aousd/validation_*.usda
 # Test-generated runtime artifacts (roundtrip/runtime tests)
@@ -450,3 +464,8 @@ python/tinyusdz/_version.py
 # Local AI assistant scratch files
 .codex
 .claude/
+
+# Private notes / scratch docs (may reference proprietary asset names) — never commit
+priv/
+resume.md
+gpu-task.md

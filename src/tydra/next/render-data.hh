@@ -91,6 +91,7 @@ enum class Interpolation : uint8_t {
 enum class NodeType : uint8_t {
   Xform = 0,
   Mesh,
+  PointInstancer,
   Camera,
   PointLight,
   DirectionalLight,
@@ -281,6 +282,91 @@ struct RenderMesh {
   bool has_blend_shapes() const { return !blend_shapes.empty(); }
 
   size_t memory_usage() const;
+};
+
+//
+// RenderPointInstancer - render-ready instance arrays for UsdGeomPointInstancer
+//
+struct RenderPointInstancer {
+  std::string name;
+  std::string prim_path;
+  int32_t material_id = -1;  // Optional material binding on the instancer.
+
+  std::vector<std::string> prototype_paths;
+  std::vector<int32_t> prototype_node_ids;     // One entry per prototype path.
+  std::vector<uint32_t> prototype_mesh_offsets; // CSR offsets into prototype_mesh_ids.
+  std::vector<int32_t> prototype_mesh_ids;     // Flattened mesh ids per prototype.
+  std::vector<Matrix4> prototype_mesh_transforms; // Prototype-root-relative mesh transforms.
+  std::vector<int32_t> proto_indices;
+  std::vector<float> positions;       // xyz, size = instance_count * 3
+  std::vector<float> orientations;    // quatf real,imaginary xyz, size = instance_count * 4
+  std::vector<float> scales;          // xyz, size = instance_count * 3
+  std::vector<float> velocities;      // xyz, size = instance_count * 3
+  std::vector<float> angular_velocities; // xyz, size = instance_count * 3
+  std::vector<int64_t> ids;
+  std::vector<int64_t> invisible_ids;
+  std::vector<int64_t> inactive_ids;
+  std::vector<Matrix4> transforms;
+  std::vector<float> display_colors;    // rgb, size = instance_count * 3
+  std::vector<float> display_opacities; // alpha, size = instance_count
+  std::vector<uint8_t> instance_visible;  // 1 = visible/active, 0 = hidden
+  uint32_t draw_start = 0;
+  uint32_t draw_count = 0;
+
+  bool valid = false;
+  std::string validation_error;
+
+  size_t instance_count() const { return proto_indices.size(); }
+  size_t visible_instance_count() const;
+  bool has_valid_draw_range(size_t total_draw_count) const;
+  bool has_orientations() const { return !orientations.empty(); }
+  bool has_scales() const { return !scales.empty(); }
+  bool has_velocities() const { return !velocities.empty(); }
+  bool has_angular_velocities() const { return !angular_velocities.empty(); }
+  bool has_ids() const { return !ids.empty(); }
+  bool has_display_colors() const { return !display_colors.empty(); }
+  bool has_display_opacities() const { return !display_opacities.empty(); }
+  size_t prototype_count() const { return prototype_paths.size(); }
+  size_t prototype_mesh_count(size_t prototype_index) const;
+  bool has_valid_prototype_mesh_bindings() const;
+  size_t memory_usage() const;
+};
+
+//
+// RenderPointInstanceDraw - one visible PointInstancer instance mesh draw.
+//
+struct RenderPointInstanceDraw {
+  int32_t point_instancer_id = -1;
+  uint32_t instance_index = 0;
+  uint32_t prototype_index = 0;
+  int32_t mesh_id = -1;
+  int32_t material_id = -1;
+  int32_t expanded_mesh_id = -1;  // Optional duplicated mesh generated from this draw.
+  bool has_display_color = false;
+  Float3 display_color = {1.0f, 1.0f, 1.0f};
+  bool has_display_opacity = false;
+  float display_opacity = 1.0f;
+  Matrix4 transform;
+};
+
+struct RenderPointInstanceDrawView {
+  const RenderPointInstanceDraw* draw = nullptr;
+  const RenderPointInstancer* instancer = nullptr;
+  const RenderMesh* mesh = nullptr;
+  const RenderMesh* expanded_mesh = nullptr;
+  const RenderMaterial* material = nullptr;
+
+  bool valid() const { return draw && instancer && mesh; }
+};
+
+struct RenderPointInstanceDrawRange {
+  const RenderPointInstanceDraw* data = nullptr;
+  size_t size = 0;
+
+  bool empty() const { return size == 0; }
+  const RenderPointInstanceDraw* begin() const { return data; }
+  const RenderPointInstanceDraw* end() const { return data ? data + size : nullptr; }
+  const RenderPointInstanceDraw& operator[](size_t i) const { return data[i]; }
 };
 
 //
@@ -559,11 +645,14 @@ struct AnimationChannel {
     Translation = 0,
     Rotation,
     Scale,
-    Weights  // Blend shape weights
+    Weights,  // Blend shape weights
+    CustomProperty
   };
 
   TargetPath target_path = TargetPath::Translation;
   int32_t target_node = -1;
+  std::string target_prim_path;
+  std::string property_name;
 
   // Keyframes (sorted by time)
   std::vector<Keyframe> keyframes;
@@ -646,6 +735,8 @@ class RenderScene {
   // Scene data
   std::vector<SceneNode> nodes;
   std::vector<RenderMesh> meshes;
+  std::vector<RenderPointInstancer> point_instancers;
+  std::vector<RenderPointInstanceDraw> point_instance_draws;
   std::vector<RenderMaterial> materials;
   std::vector<RenderTexture> textures;
   std::vector<TextureImage> images;
@@ -660,15 +751,30 @@ class RenderScene {
   // Lookup by path
   std::unordered_map<std::string, int32_t> node_by_path;
   std::unordered_map<std::string, int32_t> mesh_by_path;
+  std::unordered_map<std::string, int32_t> point_instancer_by_path;
   std::unordered_map<std::string, int32_t> material_by_path;
 
   // Memory usage
   size_t memory_usage() const;
 
+  // Bounds-checked accessors
+  const RenderMesh* get_mesh(int32_t mesh_id) const;
+  const RenderMaterial* get_material(int32_t material_id) const;
+  const RenderPointInstancer* get_point_instancer(int32_t instancer_id) const;
+  const RenderPointInstanceDraw* get_point_instance_draw(size_t draw_id) const;
+  RenderPointInstanceDrawView get_point_instance_draw_view(size_t draw_id) const;
+  RenderPointInstanceDrawRange get_point_instancer_draws(int32_t instancer_id) const;
+  const SceneNode* get_node(int32_t node_id) const;
+  bool has_valid_point_instance_draw_ranges() const;
+
   // Stats
   struct Stats {
     size_t node_count;
     size_t mesh_count;
+    size_t point_instancer_count;
+    size_t point_instance_count;
+    size_t visible_point_instance_count;
+    size_t point_instance_draw_count;
     size_t material_count;
     size_t texture_count;
     size_t image_count;

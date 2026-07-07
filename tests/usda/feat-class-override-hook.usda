@@ -1,0 +1,19 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+)
+# The `</__class__/...>` override-hook idiom (every Animal Logic ALab entity root):
+# inherits/specializes a class that is intentionally NOT defined in this layer.
+# Composition must treat both as a no-op (USD-legal) AND emit no warning.
+def Xform "root" (
+    prepend inherits = </__class__/root>
+    prepend specializes = </_root_type>
+)
+{
+    def Mesh "M"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}

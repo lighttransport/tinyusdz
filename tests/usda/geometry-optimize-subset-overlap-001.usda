@@ -1,0 +1,65 @@
+#usda 1.0
+(
+    doc = "Mesh merge fixture with overlapping material subsets; optimizer must skip."
+)
+
+def Xform "Root"
+{
+    def Material "MatA"
+    {
+    }
+
+    def Material "MatB"
+    {
+    }
+
+    def Xform "A"
+    {
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/MatA>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+
+            def GeomSubset "SubsetA"
+            {
+                uniform token elementType = "face"
+                int[] indices = [0]
+                rel material:binding = </Root/MatA>
+            }
+
+            def GeomSubset "SubsetB"
+            {
+                uniform token elementType = "face"
+                int[] indices = [0]
+                rel material:binding = </Root/MatB>
+            }
+        }
+    }
+
+    def Xform "B"
+    {
+        def Mesh "Mesh"
+        {
+            rel material:binding = </Root/MatA>
+            point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+
+            def GeomSubset "SubsetA"
+            {
+                uniform token elementType = "face"
+                int[] indices = [0]
+                rel material:binding = </Root/MatA>
+            }
+
+            def GeomSubset "SubsetB"
+            {
+                uniform token elementType = "face"
+                int[] indices = [0]
+                rel material:binding = </Root/MatB>
+            }
+        }
+    }
+}

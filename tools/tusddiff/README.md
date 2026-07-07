@@ -101,6 +101,53 @@ tusddiff --json old_model.usda new_model.usda > changes.json
 tusddiff models/Kitchen_set/Kitchen_set.usd models/Kitchen_set/Kitchen_set_instanced.usd
 ```
 
+### Cross-implementation comparison: normalizing package-anchored asset paths
+
+When validating a TinyUSDZ-produced `.usdz` against OpenUSD (pxr), a common
+workflow is to flatten the same package with both `usdcat -f` (pxr) and
+`tusdcat -f` (native) and diff the results. `tusdcat` cannot flatten a `.usdz`
+directly (`--flatten is ignored for USDZ`), so unpack the archive first and
+flatten its root layer:
+
+```bash
+unzip -q scene.usdz -d unpack
+pxr/bin/usdcat -f scene.usdz       -o pxr-flat.usdc      # pxr loads the package directly
+build/tusdcat -f unpack/root.usdc  -o tusd-flat.usdc     # native flattens the unpacked root
+build/tusddiff --low-mem pxr-flat.usdc tusd-flat.usdc
+```
+
+**Gotcha — spurious `inputs:file` diffs.** pxr rewrites every texture
+reference to the *package-anchored* absolute form, while a flatten of the
+unpacked root keeps the *package-relative* form. Both resolve to the same
+texture inside the package, but `tusddiff` reports each as a modified value:
+
+```
+~ /Root/.../diffuseTexture.inputs:file (Property modified: value)
+  - @/abs/path/scene.usdz[Assets/.../BaseColor.png]@   # pxr: anchored to the package
+  + @Assets/.../BaseColor.png@                          # native: package-relative
+```
+
+On a large package this can be the *entire* diff (thousands of such entries),
+drowning out any real differences. To confirm the targets are equivalent,
+strip the package-anchor prefix from both sides and compare the normalized
+path multisets — an empty diff means every texture target matches 1:1:
+
+```bash
+# pxr form:  @<abs>.usdz[Assets/....png]@  ->  Assets/....png
+build/tusdcat pxr-flat.usdc  | grep -oE 'inputs:file = @[^@]*@' \
+  | sed -E 's/.*\.usdz\[//; s/\].*//; s/inputs:file = @//; s/@$//' | sort > pxr_norm.txt
+# native form: @Assets/....png@           ->  Assets/....png
+build/tusdcat tusd-flat.usdc | grep -oE 'inputs:file = @[^@]*@' \
+  | sed -E 's/inputs:file = @//; s/@$//' | sort > tusd_norm.txt
+diff pxr_norm.txt tusd_norm.txt && echo "IDENTICAL: all texture targets match 1:1"
+```
+
+Note `tusddiff`'s text output truncates long values with `…`, so the pxr
+anchored paths cannot be compared by basename straight from the diff — extract
+and normalize from the flattened layers as above. After normalization, any
+remaining diff entries (e.g. the stage `documentation` provenance string pxr
+injects on flatten) are the genuine, non-asset-path differences.
+
 ## Building
 
 The `tusddiff` tool is built when tools are enabled:

@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <ostream>  // operator<<(std::ostream&, const Path&) below; MSVC's
+                    // <string> does not complete std::basic_ostream
 #include <string>
 #include <vector>
 

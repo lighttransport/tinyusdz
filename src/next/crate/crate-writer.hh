@@ -12,8 +12,6 @@
 #include <functional>
 #include <string>
 #include <vector>
-#include <unordered_map>
-#include <ostream>
 
 namespace tinyusdz {
 namespace next {
@@ -46,6 +44,15 @@ struct CrateWriteOptions {
   /// the (large) VALUE section is streamed block-by-block straight from the
   /// retained source buffer. Used by WriteLayerToSink(); see that method.
   bool streaming = false;
+
+  /// Worker count for parallel build/sort paths (1 = serial; <=0 = auto, capped).
+  /// Only effective in a TINYUSDZ_ENABLE_THREAD build. Output is a valid
+  /// round-trippable crate at any thread count and is byte-identical across thread
+  /// counts (the parallel build merges per-prim results in deterministic order).
+  int num_threads = 1;
+
+  /// Enable writer timing counters and print timing summary after write.
+  bool enable_timing = false;
 };
 
 /// Result of crate write operation
@@ -84,12 +91,16 @@ public:
 
   /// Write Stage to memory buffer
   CrateWriteResult WriteToMemory(std::vector<uint8_t>& buffer, const Stage& stage);
+  /// Write Stage to string buffer
+  CrateWriteResult WriteToString(std::string& buffer, const Stage& stage);
 
   /// Write Layer to a file (for individual layer export)
   CrateWriteResult WriteLayerToFile(const char* filename, const Layer& layer);
 
   /// Write Layer to memory buffer
   CrateWriteResult WriteLayerToMemory(std::vector<uint8_t>& buffer, const Layer& layer);
+  /// Write Layer to string buffer
+  CrateWriteResult WriteLayerToString(std::string& buffer, const Layer& layer);
 
   /// Write Layer to a streaming sink. The crate is emitted in file order
   /// (bootstrap, VALUE section, structural sections, TOC) without ever holding

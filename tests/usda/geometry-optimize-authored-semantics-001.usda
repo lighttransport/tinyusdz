@@ -1,0 +1,68 @@
+#usda 1.0
+(
+    doc = "Mesh merge fixture with authored semantics that aggregate meshes cannot preserve."
+)
+
+def Xform "Root"
+{
+    def Material "Mat"
+    {
+    }
+
+    def Xform "HiddenGroup"
+    {
+        token visibility = "invisible"
+
+        def Mesh "A"
+        {
+            rel material:binding = </Root/Mat>
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+
+        def Mesh "B"
+        {
+            rel material:binding = </Root/Mat>
+            point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+    }
+
+    def Mesh "GuideA"
+    {
+        uniform token purpose = "guide"
+        rel material:binding = </Root/Mat>
+        point3f[] points = [(0, 2, 0), (1, 2, 0), (0, 3, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+    }
+
+    def Mesh "GuideB"
+    {
+        uniform token purpose = "guide"
+        rel material:binding = </Root/Mat>
+        point3f[] points = [(2, 2, 0), (3, 2, 0), (2, 3, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+    }
+
+    def Mesh "SubdivA"
+    {
+        uniform token subdivisionScheme = "catmullClark"
+        rel material:binding = </Root/Mat>
+        point3f[] points = [(0, 4, 0), (1, 4, 0), (0, 5, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+    }
+
+    def Mesh "SubdivB"
+    {
+        uniform token subdivisionScheme = "catmullClark"
+        rel material:binding = </Root/Mat>
+        point3f[] points = [(2, 4, 0), (3, 4, 0), (2, 5, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+    }
+}

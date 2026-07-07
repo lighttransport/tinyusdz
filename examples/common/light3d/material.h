@@ -105,11 +105,15 @@ TriangleMaterialIdData buildTriangleMaterialIds(const MeshGeometry& geometry);
 const char* getMaterialVertexShaderGL330();
 const char* getMaterialFragmentShaderGL330();
 
-// Bindless shaders (GL430): materials SSBO + face material ID SSBO + gl_PrimitiveID
+// Bindless shaders (GL430): materials SSBO + face material ID SSBO + gl_PrimitiveID.
+// UNUSED + STALE scaffold for a future GL 4.3 path -- predate GPU morph/skin/
+// displacement; re-derive from GL330 before use. See material.cpp.
 const char* getMaterialVertexShaderGL430();
 const char* getMaterialFragmentShaderGL430();
 
-// Vulkan 450: same SSBO approach with push constants
+// Vulkan 450: same SSBO approach with push constants. UNUSED -- the VK backend
+// compiles vk/shaders/*.vert|frag to SPIR-V instead; these strings are a stale
+// GLSL reference (predate morph/skin/displacement).
 const char* getMaterialVertexShaderVK450();
 const char* getMaterialFragmentShaderVK450();
 

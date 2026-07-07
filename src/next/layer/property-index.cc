@@ -6,6 +6,10 @@
 #include "property-index.hh"
 #include <algorithm>
 #include <cstring>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#include <shared_mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -14,37 +18,112 @@ namespace next {
 // PropNameTable
 // ============================================================
 
-PropNameTable::PropNameTable() {
-  // Reserve space for common names
-  names_.reserve(256);
-}
+PropNameTable::PropNameTable() = default;
 
 PropNameTable::~PropNameTable() = default;
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+void PropNameTable::freeze() { frozen_.store(true, std::memory_order_release); }
+void PropNameTable::unfreeze() { frozen_.store(false, std::memory_order_release); }
+#else
+void PropNameTable::freeze() {}
+void PropNameTable::unfreeze() {}
+#endif
+
 PropNameId PropNameTable::intern(const std::string& name) {
+  return intern(std::string_view(name));
+}
+
+PropNameId PropNameTable::intern(std::string_view name) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (frozen_.load(std::memory_order_acquire)) {
+    // Frozen fast path: the common compose-time intern is a HIT (every property
+    // name was interned at parse), so resolve it lock-free against the immutable
+    // map and stay frozen. Only a genuinely NEW name mutates the table, which
+    // can't coexist with lock-free readers -- so it unfreezes (back to locking)
+    // before inserting. Callers keep frozen lock-free reads and new interns in
+    // disjoint phases, so no reader is in flight at that transition.
+    auto it = name_to_id_.find(name);
+    if (it != name_to_id_.end()) return PropNameId{it->second};
+    frozen_.store(false, std::memory_order_release);
+  }
+  {
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    auto it = name_to_id_.find(name);
+    if (it != name_to_id_.end()) {
+      return PropNameId{it->second};
+    }
+  }
+  std::unique_lock<std::shared_mutex> wlk(mu_);
+  // Re-check: another thread may have inserted between the locks.
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return PropNameId{it->second};
   }
-
   uint32_t id = static_cast<uint32_t>(names_.size());
-  names_.push_back(name);
-  name_to_id_[name] = id;
+  auto interned_name = std::make_unique<std::string>(name);
+  const std::string_view key(*interned_name);
+  names_.push_back(std::move(interned_name));
+  name_to_id_.emplace(key, id);
   return PropNameId{id};
+#else
+  auto it = name_to_id_.find(name);
+  if (it != name_to_id_.end()) {
+    return PropNameId{it->second};
+  }
+  uint32_t id = static_cast<uint32_t>(names_.size());
+  auto interned_name = std::make_unique<std::string>(name);
+  const std::string_view key(*interned_name);
+  names_.push_back(std::move(interned_name));
+  name_to_id_.emplace(key, id);
+  return PropNameId{id};
+#endif
 }
 
 PropNameId PropNameTable::intern(const char* name) {
   if (!name) return PropNameId{};
-  return intern(std::string(name));
+  return intern(std::string_view(name));
 }
 
 const std::string& PropNameTable::get(PropNameId id) const {
   static const std::string empty;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (!frozen_.load(std::memory_order_acquire)) {
+    // Shared lock: a concurrent intern() on another thread may push_back names_
+    // (parallel composition warms referenced layers on workers). When frozen the
+    // name storage is immutable, so concurrent reads need no lock.
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    if (id.id >= names_.size()) return empty;
+    return *names_[id.id];
+  }
+#endif
   if (id.id >= names_.size()) return empty;
-  return names_[id.id];
+  return *names_[id.id];
 }
 
 PropNameId PropNameTable::find(const std::string& name) const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  return find(std::string_view(name));
+#else
+  auto it = name_to_id_.find(name);
+  if (it != name_to_id_.end()) {
+    return PropNameId{it->second};
+  }
+  return PropNameId{};
+#endif
+}
+
+PropNameId PropNameTable::find(std::string_view name) const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  if (!frozen_.load(std::memory_order_acquire)) {
+    // Shared lock vs. a concurrent intern() rehash of name_to_id_. When frozen
+    // the map is immutable, so concurrent lookups need no lock -- this removes
+    // the rwlock cache-line contention that dominates multi-thread rendering.
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    auto it = name_to_id_.find(name);
+    return it != name_to_id_.end() ? PropNameId{it->second} : PropNameId{};
+  }
+#endif
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return PropNameId{it->second};
@@ -54,7 +133,7 @@ PropNameId PropNameTable::find(const std::string& name) const {
 
 PropNameId PropNameTable::find(const char* name) const {
   if (!name) return PropNameId{};
-  return find(std::string(name));
+  return find(std::string_view(name));
 }
 
 void PropNameTable::register_common_names() {

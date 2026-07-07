@@ -41,9 +41,9 @@ export async function createConfiguredTinyUSDZLoader(options = {}) {
 /**
  * Promise wrapper around TinyUSDZLoader.load().
  */
-export async function loadUSDSceneFromURL(loader, url) {
+export async function loadUSDSceneFromURL(loader, url, options = {}) {
   return new Promise((resolve, reject) => {
-    loader.load(url, resolve, null, reject);
+    loader.load(url, resolve, null, reject, options);
   });
 }
 
@@ -55,4 +55,3 @@ export async function parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename
     loader.parse(new Uint8Array(arrayBuffer), filename, resolve, reject, options);
   });
 }
-

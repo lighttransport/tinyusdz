@@ -438,13 +438,16 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
 
     offset += extra_field_len;
 
-    // In usdz, data must be aligned at 64bytes boundary.
+    // In strict USDZ, data must be aligned at a 64-byte boundary. Keep
+    // ValidateUSDZ() strict, but allow the loader to read unaligned stored ZIP
+    // packages in the wild; byte ranges into the mmapped/archive buffer do not
+    // require alignment for parsing.
     if ((offset % 64) != 0) {
-      if (err) {
-        (*err) += "Data offset must be mulitple of 64bytes for USDZ, but got " +
-                  std::to_string(offset) + ".\n";
+      if (warn) {
+        (*warn) += "USDZ entry '" + varname +
+                   "' data offset is not 64-byte aligned: " +
+                   std::to_string(offset) + ".\n";
       }
-      return false;
     }
 
     uint16_t compr_method;
@@ -1592,7 +1595,25 @@ static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
     }
   }
 
-    return true;
+  // Also stamp prims authored INSIDE variant blocks (and their nested
+  // variantSets). Without this, a prim that only exists in a variant -- e.g.
+  // ALab's `geo_vis` proxy `GEO_PROXY` -- loads with an EMPTY working path; when
+  // that variant is later selected and its payload/reference composed, the empty
+  // cwp falls back to the resolver's stale global working path (the dir of
+  // whatever asset was loaded last, e.g. a sibling `render_high/mesh` payload),
+  // so its relative `@display_high/mesh/...@` payload resolves one dir wrong and
+  // is dropped. Variant content must carry the SAME anchor as the prim that owns
+  // the variantSet.
+  for (auto &variant_set_item : ps.variantSets()) {
+    for (auto &variant_item : variant_set_item.second.variantSet) {
+      if (!PropagateAssetResolverState(depth + 1, variant_item.second, cwp,
+                                       search_paths)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
@@ -1604,31 +1625,16 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
 
   if (IsUSDC(addr, length)) {
     DCOUT("Detected as USDC.");
-#if 1
     ret = LoadUSDCLayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
-#else
-    if (err) {
-      (*err) += "TODO: Load USDC as Layer is not implemented yet.\n";
-    }
-    return false;
-#endif
   } else if (IsUSDA(addr, length)) {
     DCOUT("Detected as USDA.");
     ret = LoadUSDALayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
   } else if (IsUSDZ(addr, length)) {
     DCOUT("Detected as USDZ.");
-#if 1
-    // TODO: asset
     return LoadUSDZLayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
-#else
-    if (err) {
-      (*err) += "TODO: Load USDZ as Layer is not implemented yet.\n";
-    }
-    return false;
-#endif
   } else {
     if (err) {
       (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";

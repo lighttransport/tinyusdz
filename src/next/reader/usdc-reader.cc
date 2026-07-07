@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC Reader implementation
 
 #include "usdc-reader.hh"
+#include "../strfmt.hh"
 
 #include <fstream>
 
@@ -28,10 +29,11 @@ USDCLoadResult ConvertResult(CrateReadResult&& crate_result) {
   result.errors = std::move(crate_result.errors);
   result.warnings = std::move(crate_result.warnings);
   result.version = crate_result.version;
+  result.source_was_mmap = crate_result.source_was_mmap;
 
   if (!result.errors.empty()) {
     const auto& first_err = result.errors[0];
-    result.error_summary = "Offset " + std::to_string(first_err.offset) +
+    result.error_summary = "Offset " + UIntToStr(first_err.offset) +
                            ": " + first_err.message;
   }
 
@@ -74,6 +76,21 @@ USDCLoadResult LoadUSDCFromMemory(const uint8_t* data, size_t size, const USDCLo
 
   CrateReader reader(options.crate_options);
   CrateReadResult crate_result = reader.Read(data, size);
+
+  return ConvertResult(std::move(crate_result));
+}
+
+USDCLoadResult LoadUSDCFromMemoryBorrowed(const uint8_t* data, size_t size,
+                                          const USDCLoadOptions& options) {
+  USDCLoadResult result;
+
+  if (!data || size == 0) {
+    result.error_summary = "Empty data";
+    return result;
+  }
+
+  CrateReader reader(options.crate_options);
+  CrateReadResult crate_result = reader.ReadBorrowed(data, size);
 
   return ConvertResult(std::move(crate_result));
 }

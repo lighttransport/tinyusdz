@@ -204,8 +204,9 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::frame4d> *resu
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::PathExpression> *result);
 
-// 
+//
 // TypedArray template instantiations for memory optimization
 //
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<bool> *result);
@@ -286,6 +287,7 @@ template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::token> *result)
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::StringData> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<std::string> *result);
 template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::AssetPath> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::PathExpression> *result);
 
 }  // namespace ascii
 }  // namespace tinyusdz

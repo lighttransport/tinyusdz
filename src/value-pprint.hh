@@ -125,6 +125,9 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::timecode &v);
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
 
+std::ostream &operator<<(std::ostream &os,
+                         const tinyusdz::value::PathExpression &v);
+
 // NOTE: Implemented in pprinter.cc
 std::ostream &operator<<(std::ostream &os,
                          const tinyusdz::value::StringData &v);

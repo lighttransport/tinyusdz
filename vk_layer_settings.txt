@@ -1,0 +1,17 @@
+# Vulkan validation layer settings for debugging tusdview / tusdrender.
+# Activate with:  $env:VK_LAYER_SETTINGS_PATH = (Resolve-Path .\vk_layer_settings.txt)
+# (plus the VK_LAYER_PATH / VK_LOADER_LAYERS_ENABLE from activate-vulkan-validation.ps1)
+#
+# Plain (CPU-side) validation is on by enabling the layer. The settings below
+# additionally turn on GPU-Assisted Validation (GPU-AV), which instruments the
+# shaders to catch out-of-bounds / unbound-descriptor faults that surface as a
+# corrupt frame or VK_ERROR_DEVICE_LOST. Comment the gpu lines out for plain,
+# faster CPU validation.
+
+khronos_validation.validate_gpu_based = GPU_BASED_GPU_ASSISTED
+khronos_validation.gpuav_descriptor_checks = true
+khronos_validation.gpuav_buffer_oob = true
+
+# Report everything (errors + perf warnings) and include the offending object.
+khronos_validation.report_flags = error,warn,perf
+khronos_validation.enables = VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT

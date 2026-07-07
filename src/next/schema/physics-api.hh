@@ -9,6 +9,7 @@
 
 #include "../stage/stage.hh"
 #include "../eval/attribute-eval.hh"
+#include <limits>
 #include <string>
 #include <vector>
 #include <map>
@@ -22,14 +23,16 @@ namespace next {
 
 struct PhysicsRigidBodyData {
   bool rigidBodyEnabled = true;
+  bool kinematicEnabled = false;
+  std::string simulationOwner; // rel physics:simulationOwner
   float mass = 0.0f;
   float density = 0.0f;
-  float centerOfMass[3] = {0.0f, 0.0f, 0.0f};
+  float centerOfMass[3] = {-std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity()};
   float diagonalInertia[3] = {0.0f, 0.0f, 0.0f};
-  // physics:principalAxes is a quatf in (w, x, y, z) order (USD text order), so
-  // {1, 0, 0, 0} is the identity orientation. Keep this order if a consumer is
-  // added (none reads it today).
-  float principalAxes[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+  // Schema fallback for physics:principalAxes is quatf (0, 0, 0, 0).
+  float principalAxes[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   float velocity[3] = {0.0f, 0.0f, 0.0f};
   float angularVelocity[3] = {0.0f, 0.0f, 0.0f};
   bool startsAsleep = false;
@@ -86,12 +89,12 @@ bool GetPhysicsMeshCollisionData(const UsdPrim& prim,
 struct PhysicsMassData {
   float mass = 0.0f;
   float density = 0.0f;
-  float centerOfMass[3] = {0.0f, 0.0f, 0.0f};
+  float centerOfMass[3] = {-std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity()};
   float diagonalInertia[3] = {0.0f, 0.0f, 0.0f};
-  // physics:principalAxes is a quatf in (w, x, y, z) order (USD text order), so
-  // {1, 0, 0, 0} is the identity orientation. Keep this order if a consumer is
-  // added (none reads it today).
-  float principalAxes[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+  // Schema fallback for physics:principalAxes is quatf (0, 0, 0, 0).
+  float principalAxes[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 bool HasPhysicsMassAPI(const UsdPrim& prim);
@@ -123,7 +126,7 @@ bool HasPhysicsArticulationRootAPI(const UsdPrim& prim);
 struct PhysicsDriveData {
   std::string dof; // "transX", "transY", "transZ", "rotX", "rotY", "rotZ"
   std::string type = "force"; // "force" or "acceleration"
-  float maxForce = 1e10f;
+  float maxForce = std::numeric_limits<float>::infinity();
   float targetPosition = 0.0f;
   float targetVelocity = 0.0f;
   float damping = 0.0f;
@@ -140,8 +143,8 @@ bool GetPhysicsDriveData(const UsdPrim& prim, const std::string& dof,
 
 struct PhysicsLimitData {
   std::string dof;
-  float low = -1e10f;
-  float high = 1e10f;
+  float low = -std::numeric_limits<float>::infinity();
+  float high = std::numeric_limits<float>::infinity();
 };
 
 bool HasPhysicsLimitAPI(const UsdPrim& prim, const std::string& dof);

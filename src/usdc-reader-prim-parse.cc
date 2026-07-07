@@ -323,13 +323,17 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
         PUSH_WARN("Relationship targetPaths field `" << fv.first << "` is not Path vector type (got " << fv.second.type_name() << "). Ignoring.");
       }
     } else {
+      MetaVariable unknown_meta;
+      unknown_meta.set_value(fv.first, fv.second.get_raw());
+      primMeta.data()[fv.first] = std::move(unknown_meta);
+
       if (auto pv = fv.second.as<std::string>()) {
         primMeta.unregisteredMetas[fv.first] = (*pv);
       } else if (auto ptv = fv.second.as<value::token>()) {
         primMeta.unregisteredMetas[fv.first] = quote((*ptv).str());
       } else {
-        DCOUT("PrimProp TODO: " << fv.first);
-        PUSH_WARN("PrimProp TODO: " << fv.first);
+        DCOUT("Preserved unknown prim metadata: " << fv.first);
+        PUSH_WARN("Preserved unknown prim metadata: " << fv.first);
       }
     }
   }

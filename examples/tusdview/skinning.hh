@@ -9,7 +9,10 @@
 // points in place so the existing pack + upload path renders the posed mesh.
 #pragma once
 
+#include <map>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "gpu_scene.hh"
@@ -18,6 +21,19 @@
 #include "value-types.hh"
 
 namespace tusdview {
+
+// In-between blendshape samples for one BlendShape: (weight, offsets) ascending
+// by weight; offsets are parallel to the BlendShape's pointIndices (USD inbetween
+// semantics, same indexing as the primary `offsets`).
+using InbetweenSamples =
+    std::vector<std::pair<float, std::vector<tinyusdz::value::vector3f>>>;
+
+// Collect in-between samples for every BlendShape in the stage, keyed by the
+// BlendShape's prim name (== morph target name == SkelAnimation weight key). The
+// tydra converter does not carry in-betweens, so they are read here from the
+// `inbetweens:*` attributes (vector3f[] value + a `weight` attr-meta).
+std::map<std::string, InbetweenSamples> CollectBlendShapeInbetweens(
+    const tinyusdz::Stage& stage);
 
 // True if any mesh in `render` carries skeletal skinning data or blendshape
 // targets (i.e. would deform over time). Cheap topology check.
@@ -45,17 +61,29 @@ bool BuildSkeletonJointWorlds(const tinyusdz::tydra::RenderScene& render,
 // `draw`; scene bounds stay stable during playback to avoid grid/helper scale
 // wobble.
 //
-// Blendshapes: for each mesh carrying `morphs`, the rest vertices are morphed
-// to their pose at `timecode` (weights read from the Stage's SkelAnimation
-// prims) and returned in `morphedOut` as (meshIndex, morphedVertices) so the
-// caller can re-upload them; the GPU vertex shader then skins the morphed
-// input. Bounds account for the morph. Pass `morphedOut == nullptr` to skip
-// blendshapes (skeletal only).
+// Blendshapes are NOT applied here: the raster path morphs in the GPU vertex
+// shader (see BuildMorphChannelWeights + the renderer's morph buffers), so this
+// builds only the bone matrices + bounds from rest geometry.
 bool BuildGpuSkinningFrame(
-    const tinyusdz::tydra::RenderScene& render, const tinyusdz::Stage& stage,
-    DrawScene* draw, double timecode, SkinningFrameCPU* frame,
+    const tinyusdz::tydra::RenderScene& render, DrawScene* draw, double timecode,
+    SkinningFrameCPU* frame, bool updateSkinnedHelpers);
+
+struct RtSkinnedMeshUpload {
+  int meshIndex{-1};
+  std::vector<DrawVertex> vertices;
+};
+
+// Ray-query RT cannot use the raster vertex shader's morph/skinning path: the
+// BLAS is built from actual vertex buffers. Build per-mesh posed DrawVertex
+// buffers from the retained rest DrawScene so the renderer can update the VBO and
+// rebuild the acceleration structure without re-running Tydra conversion.
+bool BuildRtSkinnedMeshVertices(
+    const tinyusdz::Stage& stage,
+    const tinyusdz::tydra::RenderScene& render, DrawScene* draw,
+    double timecode,
+    const std::unordered_map<std::string, float>* blendOverride,
     bool updateSkinnedHelpers,
-    std::vector<std::pair<int, std::vector<DrawVertex>>>* morphedOut);
+    std::vector<RtSkinnedMeshUpload>* outUploads);
 
 // Update each draw mesh's world transform to its value at `timecode`, evaluated
 // from the Stage's xform hierarchy. For scenes whose node transforms animate
@@ -72,7 +100,24 @@ bool UpdateAnimatedMeshWorlds(const tinyusdz::Stage& stage, DrawScene* draw,
 // `normals` are cleared so the packer regenerates them from the posed geometry.
 // No-op for meshes without skinning/blendshapes. `stage` must be the source of
 // `render`.
-void DeformSkinnedMeshes(const tinyusdz::Stage& stage,
-                         tinyusdz::tydra::RenderScene& render, double timecode);
+//
+// `blendOverride` (optional, by BlendShape name) supplies manual weights from the
+// blend editor that replace the animated weight -- this is the ray-traced /
+// CPU-skinned path's equivalent of BuildGpuSkinningFrame's override. In-between
+// shapes are honored (the baked offset is interpolated through them).
+void DeformSkinnedMeshes(
+    const tinyusdz::Stage& stage, tinyusdz::tydra::RenderScene& render,
+    double timecode,
+    const std::unordered_map<std::string, float>* blendOverride = nullptr);
+
+// Compute per-mesh GPU-morph channel coefficients for every blendshaped mesh at
+// `timecode` (animated weights overlaid by `blendOverride`). Reproduces
+// ApplyMorphTarget's piecewise-lerp exactly. Output: (meshIndex, coeffs) per mesh
+// with morph channels; the renderer uploads `coeffs` via updateMorphWeights so the
+// vertex shader applies the morph (no CPU vertex morph / VBO re-upload).
+void BuildMorphChannelWeights(
+    const tinyusdz::Stage& stage, const DrawScene& draw, double timecode,
+    const std::unordered_map<std::string, float>* blendOverride,
+    std::vector<std::pair<int, std::vector<float>>>* out);
 
 }  // namespace tusdview

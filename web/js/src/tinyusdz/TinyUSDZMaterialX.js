@@ -377,6 +377,85 @@ function decodeHDRTexture(data, mimeType) {
 // Texture Loading
 // ============================================================================
 
+const UNSUPPORTED_BROWSER_TEXTURE_EXTENSIONS = new Set([
+    'psd', 'psb', 'tif', 'tiff', 'tx', 'tex', 'ies'
+]);
+
+function getTextureExtension(uri = '') {
+    const clean = String(uri).split(/[?#]/, 1)[0].replace(/@$/, '');
+    const match = /\.([A-Za-z0-9]+)$/.exec(clean);
+    return match ? match[1].toLowerCase() : '';
+}
+
+function isUnsupportedBrowserTextureURI(uri = '') {
+    return UNSUPPORTED_BROWSER_TEXTURE_EXTENSIONS.has(getTextureExtension(uri));
+}
+
+function warnUnsupportedTexture(textureId, uri, reason = '') {
+    console.warn(`Unsupported texture format for texture ${textureId}; skipping texture load`, {
+        textureId,
+        uri: uri || '',
+        extension: getTextureExtension(uri),
+        reason
+    });
+}
+
+function threeWrapMode(wrap) {
+    switch (String(wrap || '').toLowerCase()) {
+        case 'repeat':
+        case 'tile':
+        case 'tileforever':
+            return THREE.RepeatWrapping;
+        case 'mirror':
+        case 'mirroredrepeat':
+            return THREE.MirroredRepeatWrapping;
+        case 'clamp_to_edge':
+        case 'clamp':
+        case 'black':
+        case 'clamp_to_border':
+        default:
+            return THREE.ClampToEdgeWrapping;
+    }
+}
+
+function applyTextureSampler(texture, texData = null) {
+    if (!texture || !texData) return texture;
+
+    texture.wrapS = threeWrapMode(texData.wrapS);
+    texture.wrapT = threeWrapMode(texData.wrapT);
+
+    if (texData.hasTransform2d) {
+        const scaleU = Number.isFinite(texData.txScaleU) ? texData.txScaleU : 1;
+        const scaleV = Number.isFinite(texData.txScaleV) ? texData.txScaleV : 1;
+        const translateU = Number.isFinite(texData.txTranslationU) ? texData.txTranslationU : 0;
+        const translateV = Number.isFinite(texData.txTranslationV) ? texData.txTranslationV : 0;
+        const rotation = Number.isFinite(texData.txRotation) ? texData.txRotation : 0;
+        texture.repeat.set(scaleU, scaleV);
+        texture.offset.set(translateU, translateV);
+        texture.rotation = rotation;
+        texture.center.set(0, 0);
+        texture.matrixAutoUpdate = true;
+    }
+
+    texture.needsUpdate = true;
+    return texture;
+}
+
+function textureCacheKey(textureId, texData = null) {
+    return JSON.stringify({
+        textureId,
+        imageId: texData?.textureImageId,
+        wrapS: texData?.wrapS,
+        wrapT: texData?.wrapT,
+        hasTransform2d: !!texData?.hasTransform2d,
+        txRotation: texData?.txRotation,
+        txScaleU: texData?.txScaleU,
+        txScaleV: texData?.txScaleV,
+        txTranslationU: texData?.txTranslationU,
+        txTranslationV: texData?.txTranslationV
+    });
+}
+
 /**
  * Load texture from USD scene
  * @param {Object} usdScene - USD scene object with getTexture/getImage methods
@@ -387,11 +466,6 @@ function decodeHDRTexture(data, mimeType) {
 async function loadTextureFromUSD(usdScene, textureId, cache = null) {
     if (textureId === undefined || textureId < 0) return null;
 
-    // Check cache
-    if (cache && cache.has(textureId)) {
-        return cache.get(textureId);
-    }
-
     try {
         const texData = usdScene.getTexture(textureId);
         if (!texData || texData.textureImageId === undefined || texData.textureImageId < 0) {
@@ -399,9 +473,19 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             return null;
         }
 
+        const cacheKey = textureCacheKey(textureId, texData);
+        if (cache && cache.has(cacheKey)) {
+            return cache.get(cacheKey);
+        }
+
         const imgData = usdScene.getImageCopy(texData.textureImageId);
         if (!imgData) {
             console.warn(`Image ${texData.textureImageId} not found`);
+            return null;
+        }
+        const imageURI = imgData.uri || '';
+        if (isUnsupportedBrowserTextureURI(imageURI)) {
+            warnUnsupportedTexture(textureId, imageURI, 'browser TextureLoader cannot decode this source format');
             return null;
         }
 
@@ -411,7 +495,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
         if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
             // TinyUSDZ may create duplicate image entries: one with URI reference (bufferId=-1)
             // and one with embedded data (bufferId>=0). Try to find the embedded version.
-            const filename = imgData.uri.replace(/^\.\//, ''); // Remove leading ./
+            const filename = imageURI.replace(/^\.\//, ''); // Remove leading ./
             let foundEmbedded = false;
 
             if (typeof usdScene.numImages === 'function') {
@@ -419,6 +503,10 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                 for (let i = 0; i < numImages; i++) {
                     const altImg = usdScene.getImageCopy(i);
                     if (altImg.bufferId >= 0 && altImg.uri === filename) {
+                        if (isUnsupportedBrowserTextureURI(altImg.uri || filename)) {
+                            warnUnsupportedTexture(textureId, altImg.uri || filename, 'embedded image keeps an unsupported source format');
+                            return null;
+                        }
                         // Found embedded version - use it instead
                         const altImgData = altImg;
                         if (altImgData.data) {
@@ -438,9 +526,12 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                                 } else {
                                     const blob = new Blob([altImgData.data], { type: mimeType });
                                     const blobUrl = URL.createObjectURL(blob);
-                                    const loader = new THREE.TextureLoader();
-                                    texture = await loader.loadAsync(blobUrl);
-                                    URL.revokeObjectURL(blobUrl);
+                                    try {
+                                        const loader = new THREE.TextureLoader();
+                                        texture = await loader.loadAsync(blobUrl);
+                                    } finally {
+                                        URL.revokeObjectURL(blobUrl);
+                                    }
                                 }
                             }
                             foundEmbedded = true;
@@ -453,7 +544,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             // Fall back to loading from URI if no embedded version found
             if (!foundEmbedded) {
                 const loader = new THREE.TextureLoader();
-                texture = await loader.loadAsync(imgData.uri);
+                texture = await loader.loadAsync(imageURI);
             }
         }
         // Case 2 & 3: Embedded texture
@@ -467,7 +558,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                 else if (imgData.channels === 2) texture.format = THREE.RGFormat;
                 else if (imgData.channels === 4) texture.format = THREE.RGBAFormat;
                 else {
-                    console.error(`Unsupported channel count: ${imgData.channels}`);
+                    console.warn(`Unsupported channel count for texture ${textureId}: ${imgData.channels}`);
                     return null;
                 }
 
@@ -484,21 +575,30 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                     // Standard image - use Blob and TextureLoader
                     const blob = new Blob([imgData.data], { type: mimeType });
                     const blobUrl = URL.createObjectURL(blob);
-                    const loader = new THREE.TextureLoader();
-                    texture = await loader.loadAsync(blobUrl);
-                    URL.revokeObjectURL(blobUrl);
+                    try {
+                        const loader = new THREE.TextureLoader();
+                        texture = await loader.loadAsync(blobUrl);
+                    } finally {
+                        URL.revokeObjectURL(blobUrl);
+                    }
                 }
             }
         }
 
+        texture = applyTextureSampler(texture, texData);
+
         if (texture && cache) {
-            cache.set(textureId, texture);
+            cache.set(cacheKey, texture);
         }
 
         return texture;
 
     } catch (error) {
-        console.error(`Failed to load texture ${textureId}:`, error);
+        console.warn(`Failed to load texture ${textureId}; skipping texture`, {
+            textureId,
+            error,
+            expectedForUnsupportedFormats: true
+        });
         return null;
     }
 }
@@ -573,6 +673,9 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
                 const textureId = getTextureId(paramValue);
+                if (texMapName === 'map') {
+                    material.color = new THREE.Color(1, 1, 1);
+                }
 
                 // If textureLoadingManager is provided, queue texture for later loading
                 if (textureManager) {
@@ -875,6 +978,9 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
         if (usdScene && hasTexture(paramValue)) {
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
+                if (texMapName === 'map') {
+                    material.color = new THREE.Color(1, 1, 1);
+                }
                 loadTextureFromUSD(usdScene, getTextureId(paramValue), textureCache).then((texture) => {
                     if (texture) {
                         material[texMapName] = texture;

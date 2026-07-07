@@ -4,12 +4,18 @@
 // Tydra Next - Scene Access Implementation
 
 #include "scene-access.hh"
+#include "next/layer/prim-spec.hh"
+#include "next/prim/path.hh"
 #include <cstring>
 #include <cmath>
 
 namespace tinyusdz {
 namespace tydra {
 namespace next {
+
+using ::tinyusdz::next::Path;
+using ::tinyusdz::next::PrimSpec;
+using ::tinyusdz::next::PropMeta;
 
 //
 // Prim type checking
@@ -354,10 +360,12 @@ std::vector<std::string> GetRelationshipTargets(const UsdPrim& prim, const std::
   std::vector<std::string> result;
   if (!prim.IsValid()) return result;
 
-  // Check for relationship in prim spec
-  // Relationships are stored in the prim spec directly
-  // TODO: Implement proper relationship access in next::UsdPrim
-
+  if (const std::vector<Path>* targets = prim.GetRelationship(rel_name)) {
+    result.reserve(targets->size());
+    for (const Path& p : *targets) {
+      result.push_back(p.str());
+    }
+  }
   return result;
 }
 
@@ -390,28 +398,9 @@ std::string GetBoundSkeleton(const UsdPrim& prim) {
 
 namespace {
 
-void SetIdentity(float* m) {
-  std::memset(m, 0, 16 * sizeof(float));
-  m[0] = m[5] = m[10] = m[15] = 1.0f;
-}
-
 void SetIdentity(double* m) {
   std::memset(m, 0, 16 * sizeof(double));
   m[0] = m[5] = m[10] = m[15] = 1.0;
-}
-
-void MatrixMultiply(float* result, const float* a, const float* b) {
-  float temp[16];
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < 4; ++j) {
-      temp[i * 4 + j] =
-        a[i * 4 + 0] * b[0 * 4 + j] +
-        a[i * 4 + 1] * b[1 * 4 + j] +
-        a[i * 4 + 2] * b[2 * 4 + j] +
-        a[i * 4 + 3] * b[3 * 4 + j];
-    }
-  }
-  std::memcpy(result, temp, 16 * sizeof(float));
 }
 
 void MatrixMultiply(double* result, const double* a, const double* b) {
@@ -428,209 +417,383 @@ void MatrixMultiply(double* result, const double* a, const double* b) {
   std::memcpy(result, temp, 16 * sizeof(double));
 }
 
-void MakeTranslation(float* m, float x, float y, float z) {
-  SetIdentity(m);
-  m[12] = x; m[13] = y; m[14] = z;
+// --- Bit-exact xform evaluation -------------------------------------------
+//
+// To produce world/local matrices that are byte-identical to the legacy
+// tinyusdz evaluator (Xformable::EvaluateXformOps in src/xform.cc), the helpers
+// below replicate its exact arithmetic: the `sin_pi`/`cos_pi` reduced-argument
+// trig (NOT std::sin/cos(deg * pi/180)), the per-op matrix layouts, and the
+// `cm = op * cm` / `world = local * parent` (row-vector) multiply order.
+
+constexpr double kPi = 3.141592653589793238462643383279502884e+00;
+
+inline bool IsCloseD(double a, double b, double eps) {
+  double d = a - b;
+  if (std::fabs(d) <= eps) return true;
+  return std::fabs(d) <= (eps * std::fmax(std::fabs(a), std::fabs(b)));
 }
 
-void MakeScale(float* m, float x, float y, float z) {
+// cos(pi*x) — verbatim port of tinyusdz::math::cos_pi_imp<double>.
+inline double CosPi(double x) {
+  bool invert = false;
+  if (std::fabs(x) < 0.25) return std::cos(kPi * x);
+  if (x < 0) x = -x;
+  double rem = std::floor(x);
+  {
+    double r = std::trunc(rem);
+    int ival = static_cast<int>(r);
+    if (ival & 1) invert = !invert;
+  }
+  rem = x - rem;
+  if (rem > 0.5) {
+    rem = 1 - rem;
+    invert = !invert;
+  }
+  if (IsCloseD(rem, 0.5, 0.0)) return 0.0;
+  if (rem > 0.25) {
+    rem = 0.5 - rem;
+    rem = std::sin(kPi * rem);
+  } else {
+    rem = std::cos(kPi * rem);
+  }
+  return invert ? -rem : rem;
+}
+
+// sin(pi*x) — verbatim port of tinyusdz::math::sin_pi_imp<double>.
+inline double SinPi(double x) {
+  if (x < 0) return -SinPi(-x);
+  bool invert = false;
+  if (x < 0.5) {
+    if (IsCloseD(x, 0.25, 0.0)) return std::cos(kPi * x);
+    return std::sin(kPi * x);
+  }
+  if (x < 1) {
+    invert = true;
+    x = -x;
+  } else {
+    invert = false;
+  }
+  double rem = std::floor(x);
+  {
+    double r = std::trunc(rem);
+    int ival = static_cast<int>(r);
+    if (ival & 1) invert = !invert;
+  }
+  rem = x - rem;
+  if (rem > 0.5) rem = 1 - rem;
+  if (IsCloseD(rem, 0.5, 0.0)) return invert ? -1.0 : 1.0;
+  if (IsCloseD(rem, 0.25, 0.0)) {
+    rem = std::cos(kPi * rem);
+  } else {
+    rem = std::sin(kPi * rem);
+  }
+  return invert ? -rem : rem;
+}
+
+void MakeTranslationD(double* m, double x, double y, double z) {
+  SetIdentity(m);
+  m[12] = x; m[13] = y; m[14] = z;  // matrix4d.m[3][0..2]
+}
+
+void MakeScaleD(double* m, double x, double y, double z) {
   SetIdentity(m);
   m[0] = x; m[5] = y; m[10] = z;
 }
 
-void MakeRotationX(float* m, float radians) {
+// angle in degrees; layout matches src/xform.cc XformEvaluator::RotateX/Y/Z.
+void MakeRotXD(double* m, double deg) {
   SetIdentity(m);
-  float c = std::cos(radians);
-  float s = std::sin(radians);
-  m[5] = c; m[6] = s;
-  m[9] = -s; m[10] = c;
+  double c = CosPi(deg / 180.0), s = SinPi(deg / 180.0);
+  m[5] = c; m[6] = s; m[9] = -s; m[10] = c;
+}
+void MakeRotYD(double* m, double deg) {
+  SetIdentity(m);
+  double c = CosPi(deg / 180.0), s = SinPi(deg / 180.0);
+  m[0] = c; m[2] = -s; m[8] = s; m[10] = c;
+}
+void MakeRotZD(double* m, double deg) {
+  SetIdentity(m);
+  double c = CosPi(deg / 180.0), s = SinPi(deg / 180.0);
+  m[0] = c; m[1] = s; m[4] = -s; m[5] = c;
 }
 
-void MakeRotationY(float* m, float radians) {
-  SetIdentity(m);
-  float c = std::cos(radians);
-  float s = std::sin(radians);
-  m[0] = c; m[2] = -s;
-  m[8] = s; m[10] = c;
+// dst = a * b (row-vector convention), via the existing bit-compatible multiply.
+void MatMulD(double* dst, const double* a, const double* b) {
+  MatrixMultiply(dst, a, b);
 }
 
-void MakeRotationZ(float* m, float radians) {
-  SetIdentity(m);
-  float c = std::cos(radians);
-  float s = std::sin(radians);
-  m[0] = c; m[1] = s;
-  m[4] = -s; m[5] = c;
+// Read a property either at the default value (NaN time) or held at a specific
+// time sample. A NaN time keeps the exact default-value path (byte-identical to
+// the previous, time-unaware behaviour).
+const Value* PropAtTime(const UsdPrim& prim, const std::string& name,
+                        double time) {
+  if (std::isnan(time)) return prim.GetPropertyValue(name);
+  return prim.GetValueAtTime(name, time);
+}
+
+// Read a 3-component op value (translate/scale/rotate) as double, trying
+// float3 then double3 (matches the legacy evaluator's exact-type promotion).
+bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3],
+               double time) {
+  const Value* val = PropAtTime(prim, name, time);
+  if (!val) return false;
+  if (const float* f = val->as_float3()) {
+    v[0] = double(f[0]); v[1] = double(f[1]); v[2] = double(f[2]);
+    return true;
+  }
+  if (const double* d = val->as_double3()) {
+    v[0] = d[0]; v[1] = d[1]; v[2] = d[2];
+    return true;
+  }
+  return false;
+}
+
+bool ReadFloat1D(const UsdPrim& prim, const std::string& name, double* out,
+                 double time) {
+  const Value* val = PropAtTime(prim, name, time);
+  if (!val) return false;
+  if (const float* f = val->as_float()) { *out = double(*f); return true; }
+  if (const double* d = val->as_double()) { *out = *d; return true; }
+  return false;
 }
 
 }  // namespace
 
-bool ComputeLocalTransform(const UsdPrim& prim, float* matrix16, double time) {
-  if (!prim.IsValid() || !matrix16) return false;
+namespace {
 
-  SetIdentity(matrix16);
+// Build a single-axis rotation (degrees) for axis 'X'/'Y'/'Z'.
+void MakeRotAxisD(double* m, char axis, double deg) {
+  switch (axis) {
+    case 'X': MakeRotXD(m, deg); break;
+    case 'Y': MakeRotYD(m, deg); break;
+    case 'Z': MakeRotZD(m, deg); break;
+    default: SetIdentity(m); break;
+  }
+}
 
-  // Check for xformOp:transform first (full matrix)
-  const Value* xform = prim.GetPropertyValue("xformOp:transform");
-  if (xform) {
-    const float* m = xform->as_matrix4f();
-    if (m) {
-      std::memcpy(matrix16, m, 16 * sizeof(float));
-      return true;
+// Quaternion (w,x,y,z) -> row-vector rotation matrix, matching
+// tinyusdz::to_matrix3x3(quatd) embedded in a 4x4.
+void MakeOrientD(double* m, double w, double x, double y, double z) {
+  SetIdentity(m);
+  m[0] = 1.0 - 2.0 * (y * y + z * z);
+  m[1] = 2.0 * (x * y + z * w);
+  m[2] = 2.0 * (x * z - y * w);
+  m[4] = 2.0 * (x * y - z * w);
+  m[5] = 1.0 - 2.0 * (x * x + z * z);
+  m[6] = 2.0 * (y * z + x * w);
+  m[8] = 2.0 * (x * z + y * w);
+  m[9] = 2.0 * (y * z - x * w);
+  m[10] = 1.0 - 2.0 * (x * x + y * y);
+}
+
+void Invert4x4D(const double* a, double* out) {
+  double inv[16];
+  inv[0] = a[5]*a[10]*a[15] - a[5]*a[11]*a[14] - a[9]*a[6]*a[15] + a[9]*a[7]*a[14] + a[13]*a[6]*a[11] - a[13]*a[7]*a[10];
+  inv[4] = -a[4]*a[10]*a[15] + a[4]*a[11]*a[14] + a[8]*a[6]*a[15] - a[8]*a[7]*a[14] - a[12]*a[6]*a[11] + a[12]*a[7]*a[10];
+  inv[8] = a[4]*a[9]*a[15] - a[4]*a[11]*a[13] - a[8]*a[5]*a[15] + a[8]*a[7]*a[13] + a[12]*a[5]*a[11] - a[12]*a[7]*a[9];
+  inv[12] = -a[4]*a[9]*a[14] + a[4]*a[10]*a[13] + a[8]*a[5]*a[14] - a[8]*a[6]*a[13] - a[12]*a[5]*a[10] + a[12]*a[6]*a[9];
+  inv[1] = -a[1]*a[10]*a[15] + a[1]*a[11]*a[14] + a[9]*a[2]*a[15] - a[9]*a[3]*a[14] - a[13]*a[2]*a[11] + a[13]*a[3]*a[10];
+  inv[5] = a[0]*a[10]*a[15] - a[0]*a[11]*a[14] - a[8]*a[2]*a[15] + a[8]*a[3]*a[14] + a[12]*a[2]*a[11] - a[12]*a[3]*a[10];
+  inv[9] = -a[0]*a[9]*a[15] + a[0]*a[11]*a[13] + a[8]*a[1]*a[15] - a[8]*a[3]*a[13] - a[12]*a[1]*a[11] + a[12]*a[3]*a[9];
+  inv[13] = a[0]*a[9]*a[14] - a[0]*a[10]*a[13] - a[8]*a[1]*a[14] + a[8]*a[2]*a[13] + a[12]*a[1]*a[10] - a[12]*a[2]*a[9];
+  inv[2] = a[1]*a[6]*a[15] - a[1]*a[7]*a[14] - a[5]*a[2]*a[15] + a[5]*a[3]*a[14] + a[13]*a[2]*a[7] - a[13]*a[3]*a[6];
+  inv[6] = -a[0]*a[6]*a[15] + a[0]*a[7]*a[14] + a[4]*a[2]*a[15] - a[4]*a[3]*a[14] - a[12]*a[2]*a[7] + a[12]*a[3]*a[6];
+  inv[10] = a[0]*a[5]*a[15] - a[0]*a[7]*a[13] - a[4]*a[1]*a[15] + a[4]*a[3]*a[13] + a[12]*a[1]*a[7] - a[12]*a[3]*a[5];
+  inv[14] = -a[0]*a[5]*a[14] + a[0]*a[6]*a[13] + a[4]*a[1]*a[14] - a[4]*a[2]*a[13] - a[12]*a[1]*a[6] + a[12]*a[2]*a[5];
+  inv[3] = -a[1]*a[6]*a[11] + a[1]*a[7]*a[10] + a[5]*a[2]*a[11] - a[5]*a[3]*a[10] - a[9]*a[2]*a[7] + a[9]*a[3]*a[6];
+  inv[7] = a[0]*a[6]*a[11] - a[0]*a[7]*a[10] - a[4]*a[2]*a[11] + a[4]*a[3]*a[10] + a[8]*a[2]*a[7] - a[8]*a[3]*a[6];
+  inv[11] = -a[0]*a[5]*a[11] + a[0]*a[7]*a[9] + a[4]*a[1]*a[11] - a[4]*a[3]*a[9] - a[8]*a[1]*a[7] + a[8]*a[3]*a[5];
+  inv[15] = a[0]*a[5]*a[10] - a[0]*a[6]*a[9] - a[4]*a[1]*a[10] + a[4]*a[2]*a[9] + a[8]*a[1]*a[6] - a[8]*a[2]*a[5];
+  double det = a[0]*inv[0] + a[1]*inv[4] + a[2]*inv[8] + a[3]*inv[12];
+  if (det == 0.0) { SetIdentity(out); return; }
+  double idet = 1.0 / det;
+  for (int i = 0; i < 16; ++i) out[i] = inv[i] * idet;
+}
+
+// Strip "xformOp:" prefix and any ":suffix"; returns the bare op name
+// (e.g. "rotateXYZ"). Returns empty for non-xformOp tokens.
+std::string XformOpName(const std::string& tok) {
+  const std::string kPfx = "xformOp:";
+  if (tok.rfind(kPfx, 0) != 0) return std::string();
+  std::string rest = tok.substr(kPfx.size());
+  size_t colon = rest.find(':');
+  if (colon != std::string::npos) rest = rest.substr(0, colon);
+  return rest;
+}
+
+// Bit-exact local matrix from authored xformOpOrder, replicating
+// tinyusdz::Xformable::EvaluateXformOps (row-vector, cm = op * cm). Sets
+// *reset when the op list begins with "!resetXformStack!".
+bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time) {
+  if (reset) *reset = false;
+  SetIdentity(out);
+  if (!prim.IsValid()) return false;
+
+  // xformOpOrder is uniform (not time-sampled) -> default value.
+  const Value* orderv = prim.GetPropertyValue("xformOpOrder");
+  const std::vector<std::string>* order =
+      orderv ? orderv->as_token_array() : nullptr;
+  if (!order || order->empty()) return true;  // no ops -> identity
+
+  for (size_t i = 0; i < order->size(); ++i) {
+    std::string tok = (*order)[i];
+    bool inverted = false;
+    if (tok.rfind("!invert!", 0) == 0) {
+      inverted = true;
+      tok = tok.substr(8);
     }
-    const double* md = xform->as_matrix4d();
-    if (md) {
-      for (int i = 0; i < 16; ++i) {
-        matrix16[i] = static_cast<float>(md[i]);
+    if (tok == "!resetXformStack!") {
+      if (i == 0 && reset) *reset = true;
+      continue;
+    }
+    const std::string op = XformOpName(tok);
+    if (op.empty()) continue;
+
+    double m[16];
+    SetIdentity(m);
+
+    if (op == "transform") {
+      double mm[16];
+      bool got = false;
+      if (const Value* val = PropAtTime(prim, tok, time)) {
+        if (const double* md = val->as_matrix4d()) {
+          std::memcpy(mm, md, 16 * sizeof(double));
+          got = true;
+        } else if (const float* mf = val->as_matrix4f()) {
+          for (int e = 0; e < 16; ++e) mm[e] = double(mf[e]);
+          got = true;
+        }
       }
-      return true;
-    }
-  }
-
-  // Build TRS matrix
-  float temp[16];
-
-  // Translation
-  float tx = 0, ty = 0, tz = 0;
-  const Value* translate = prim.GetPropertyValue("xformOp:translate");
-  if (translate) {
-    const float* t = translate->as_float3();
-    if (t) { tx = t[0]; ty = t[1]; tz = t[2]; }
-    else {
-      const double* td = translate->as_double3();
-      if (td) {
-        tx = static_cast<float>(td[0]);
-        ty = static_cast<float>(td[1]);
-        tz = static_cast<float>(td[2]);
+      if (got) {
+        if (inverted) Invert4x4D(mm, m);
+        else std::memcpy(m, mm, 16 * sizeof(double));
       }
+    } else if (op == "translate") {
+      double v[3] = {0, 0, 0};
+      ReadVec3D(prim, tok, v, time);
+      if (inverted) { v[0] = -v[0]; v[1] = -v[1]; v[2] = -v[2]; }
+      MakeTranslationD(m, v[0], v[1], v[2]);
+    } else if (op == "scale") {
+      double v[3] = {1, 1, 1};
+      ReadVec3D(prim, tok, v, time);
+      if (inverted) { v[0] = 1.0 / v[0]; v[1] = 1.0 / v[1]; v[2] = 1.0 / v[2]; }
+      MakeScaleD(m, v[0], v[1], v[2]);
+    } else if (op == "orient") {
+      const Value* val = PropAtTime(prim, tok, time);
+      double q[4] = {1, 0, 0, 0};  // w,x,y,z
+      if (val) {
+        if (const float* f = val->as_float4()) {
+          q[0] = f[0]; q[1] = f[1]; q[2] = f[2]; q[3] = f[3];
+        } else if (const double* d = val->as_double4()) {
+          q[0] = d[0]; q[1] = d[1]; q[2] = d[2]; q[3] = d[3];
+        }
+      }
+      if (inverted) { q[1] = -q[1]; q[2] = -q[2]; q[3] = -q[3]; }
+      MakeOrientD(m, q[0], q[1], q[2], q[3]);
+    } else if (op == "rotateX" || op == "rotateY" || op == "rotateZ") {
+      double a = 0;
+      ReadFloat1D(prim, tok, &a, time);
+      if (inverted) a = -a;
+      MakeRotAxisD(m, op[6], a);  // 'X'/'Y'/'Z'
+    } else if (op.size() == 9 && op.rfind("rotate", 0) == 0) {
+      // rotateXYZ / rotateZYX / ... : product of single-axis rotations in the
+      // letter order (m = m * R_axis), exactly as XformEvaluator does.
+      double v[3] = {0, 0, 0};
+      ReadVec3D(prim, tok, v, time);
+      const char ax[3] = {op[6], op[7], op[8]};
+      // map axis letter -> angle component (X->v[0], Y->v[1], Z->v[2]).
+      auto angleFor = [&](char c) -> double {
+        return c == 'X' ? v[0] : (c == 'Y' ? v[1] : v[2]);
+      };
+      SetIdentity(m);
+      if (!inverted) {
+        for (int k = 0; k < 3; ++k) {
+          double r[16], tmp[16];
+          MakeRotAxisD(r, ax[k], angleFor(ax[k]));
+          MatMulD(tmp, m, r);
+          std::memcpy(m, tmp, 16 * sizeof(double));
+        }
+      } else {
+        for (int k = 2; k >= 0; --k) {
+          double r[16], tmp[16];
+          MakeRotAxisD(r, ax[k], -angleFor(ax[k]));
+          MatMulD(tmp, m, r);
+          std::memcpy(m, tmp, 16 * sizeof(double));
+        }
+      }
+    } else {
+      continue;  // unknown op -> identity contribution
     }
+
+    // cm = op * cm
+    double tmp[16];
+    MatMulD(tmp, m, out);
+    std::memcpy(out, tmp, 16 * sizeof(double));
   }
-
-  // Scale
-  float sx = 1, sy = 1, sz = 1;
-  const Value* scale = prim.GetPropertyValue("xformOp:scale");
-  if (scale) {
-    const float* s = scale->as_float3();
-    if (s) { sx = s[0]; sy = s[1]; sz = s[2]; }
-  }
-
-  // Rotation (check various forms)
-  float rx = 0, ry = 0, rz = 0;
-
-  const Value* rotXYZ = prim.GetPropertyValue("xformOp:rotateXYZ");
-  if (rotXYZ) {
-    const float* r = rotXYZ->as_float3();
-    if (r) { rx = r[0]; ry = r[1]; rz = r[2]; }
-  } else {
-    // Check individual rotations
-    const Value* rotX = prim.GetPropertyValue("xformOp:rotateX");
-    if (rotX) {
-      const float* r = rotX->as_float();
-      if (r) rx = *r;
-    }
-    const Value* rotY = prim.GetPropertyValue("xformOp:rotateY");
-    if (rotY) {
-      const float* r = rotY->as_float();
-      if (r) ry = *r;
-    }
-    const Value* rotZ = prim.GetPropertyValue("xformOp:rotateZ");
-    if (rotZ) {
-      const float* r = rotZ->as_float();
-      if (r) rz = *r;
-    }
-  }
-
-  // Convert degrees to radians
-  const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
-  rx *= DEG_TO_RAD;
-  ry *= DEG_TO_RAD;
-  rz *= DEG_TO_RAD;
-
-  // Build matrix: T * R * S
-  float matT[16], matRx[16], matRy[16], matRz[16], matS[16];
-
-  MakeTranslation(matT, tx, ty, tz);
-  MakeRotationX(matRx, rx);
-  MakeRotationY(matRy, ry);
-  MakeRotationZ(matRz, rz);
-  MakeScale(matS, sx, sy, sz);
-
-  // Combine: T * Rz * Ry * Rx * S (typical order)
-  MatrixMultiply(temp, matRy, matRx);
-  MatrixMultiply(matrix16, matRz, temp);
-  MatrixMultiply(temp, matrix16, matS);
-  MatrixMultiply(matrix16, matT, temp);
-
   return true;
 }
 
-bool ComputeLocalTransform(const UsdPrim& prim, double* matrix16, double time) {
-  float fmatrix[16];
-  if (!ComputeLocalTransform(prim, fmatrix, time)) return false;
+}  // namespace
 
-  for (int i = 0; i < 16; ++i) {
-    matrix16[i] = fmatrix[i];
+bool ComputeLocalTransform(const UsdPrim& prim, double* matrix16, double time) {
+  if (!prim.IsValid() || !matrix16) return false;
+  bool reset = false;
+  return EvalLocalXformD(prim, matrix16, &reset, time);
+}
+
+bool ComputeLocalTransform(const UsdPrim& prim, float* matrix16, double time) {
+  if (!matrix16) return false;
+  double dmat[16];
+  if (!ComputeLocalTransform(prim, dmat, time)) return false;
+  for (int i = 0; i < 16; ++i) matrix16[i] = static_cast<float>(dmat[i]);
+  return true;
+}
+
+bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, double* matrix16, double time) {
+  if (!prim.IsValid() || !matrix16) return false;
+  SetIdentity(matrix16);
+
+  // Collect this prim and its ancestors (leaf -> root).
+  std::vector<UsdPrim> chain;
+  std::string path = prim.GetPath().str();
+  while (!path.empty() && path != "/") {
+    UsdPrim p = stage.GetPrimAtPath(path);
+    if (p.IsValid()) chain.push_back(p);
+    size_t last_slash = path.rfind('/');
+    if (last_slash == 0) path = "/";
+    else if (last_slash != std::string::npos) path = path.substr(0, last_slash);
+    else break;
+  }
+
+  // world = L_leaf * L_parent * ... * L_root  (row-vector: world = local *
+  // parent_world). resetXformStack on a prim ignores its ancestors' stack.
+  for (auto it = chain.begin(); it != chain.end(); ++it) {
+    double local[16];
+    bool reset = false;
+    EvalLocalXformD(*it, local, &reset, time);
+    double tmp[16];
+    MatMulD(tmp, matrix16, local);
+    std::memcpy(matrix16, tmp, 16 * sizeof(double));
+    if (reset) break;  // this prim resets the parent stack
   }
   return true;
 }
 
 bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, float* matrix16, double time) {
-  if (!prim.IsValid() || !matrix16) return false;
-
-  SetIdentity(matrix16);
-
-  // Build path from root to this prim
-  std::vector<UsdPrim> ancestors;
-  std::string path = prim.GetPath().str();
-
-  // Walk up the hierarchy
-  while (!path.empty() && path != "/") {
-    UsdPrim p = stage.GetPrimAtPath(path);
-    if (p.IsValid()) {
-      ancestors.push_back(p);
-    }
-
-    // Get parent path
-    size_t last_slash = path.rfind('/');
-    if (last_slash == 0) {
-      path = "/";
-    } else if (last_slash != std::string::npos) {
-      path = path.substr(0, last_slash);
-    } else {
-      break;
-    }
-  }
-
-  // Apply transforms from root to leaf
-  float local[16];
-  for (auto it = ancestors.rbegin(); it != ancestors.rend(); ++it) {
-    if (HasResetXformStack(*it)) {
-      SetIdentity(matrix16);
-    }
-
-    if (ComputeLocalTransform(*it, local, time)) {
-      float temp[16];
-      MatrixMultiply(temp, matrix16, local);
-      std::memcpy(matrix16, temp, 16 * sizeof(float));
-    }
-  }
-
-  return true;
-}
-
-bool ComputeWorldTransform(const Stage& stage, const UsdPrim& prim, double* matrix16, double time) {
-  float fmatrix[16];
-  if (!ComputeWorldTransform(stage, prim, fmatrix, time)) return false;
-
-  for (int i = 0; i < 16; ++i) {
-    matrix16[i] = fmatrix[i];
-  }
+  if (!matrix16) return false;
+  double dmat[16];
+  if (!ComputeWorldTransform(stage, prim, dmat, time)) return false;
+  for (int i = 0; i < 16; ++i) matrix16[i] = static_cast<float>(dmat[i]);
   return true;
 }
 
 bool HasResetXformStack(const UsdPrim& prim) {
-  // Check for xformOpOrder containing "!resetXformStack!"
-  // For now, check for the property directly
-  return prim.HasProperty("!resetXformStack!");
+  if (!prim.IsValid()) return false;
+  const Value* orderv = prim.GetPropertyValue("xformOpOrder");
+  const std::vector<std::string>* order =
+      orderv ? orderv->as_token_array() : nullptr;
+  if (!order || order->empty()) return false;
+  return (*order)[0] == "!resetXformStack!";
 }
 
 //
@@ -781,9 +944,55 @@ Primvar GetPrimvar(const UsdPrim& prim, const std::string& name) {
 // Blend shape access
 //
 
+namespace {
+
+std::vector<std::string> ReadTokenArray(const UsdPrim& prim,
+                                        const std::string& name) {
+  std::vector<std::string> out;
+  if (const Value* v = prim.GetPropertyValue(name)) {
+    if (const std::vector<std::string>* toks = v->as_token_array()) out = *toks;
+  }
+  return out;
+}
+
+// Read a matrix4d[] / double[] array as flat doubles (16 per matrix).
+std::vector<double> ReadDoubleArray(const UsdPrim& prim,
+                                    const std::string& name) {
+  const Value* v = prim.GetPropertyValue(name);
+  if (!v) return {};
+  if (const std::vector<double>* a = v->as_double_array()) return *a;
+  // Fall back to a float-backed array (some encoders store as float).
+  if (const std::vector<float>* f = v->as_float_array()) {
+    return std::vector<double>(f->begin(), f->end());
+  }
+  return {};
+}
+
+void FillIdentity(float* m16) {
+  for (int i = 0; i < 16; ++i) m16[i] = (i % 5 == 0) ? 1.0f : 0.0f;
+}
+
+}  // namespace
+
 std::vector<BlendShapeInfo> GetBlendShapes(const UsdPrim& mesh_prim) {
   std::vector<BlendShapeInfo> result;
-  // TODO: Implement blend shape extraction from SkelBindingAPI
+  if (!mesh_prim.IsValid()) return result;
+
+  // skel:blendShapes (token[]) names paired with skel:blendShapeTargets
+  // (relationship) paths. The per-shape point/normal offsets live in the
+  // referenced BlendShape prims; resolving those requires a Stage, so callers
+  // fetch them via the core GetBlendShapeData(stage, prim) using `path`.
+  const std::vector<std::string> names =
+      ReadTokenArray(mesh_prim, "skel:blendShapes");
+  const std::vector<std::string> targets =
+      GetRelationshipTargets(mesh_prim, "skel:blendShapeTargets");
+
+  const size_t n = std::max(names.size(), targets.size());
+  result.resize(n);
+  for (size_t i = 0; i < n; ++i) {
+    if (i < names.size()) result[i].name = names[i];
+    if (i < targets.size()) result[i].path = targets[i];
+  }
   return result;
 }
 
@@ -799,8 +1008,43 @@ bool GetSkeletonInfo(const UsdPrim& skel_prim, SkeletonInfo* out) {
   out->name = skel_prim.GetName();
   out->path = skel_prim.GetPath().str();
 
-  // TODO: Implement full skeleton extraction
-  // joints, jointOrder, bindTransforms, restTransforms
+  const std::vector<std::string> joints = ReadTokenArray(skel_prim, "joints");
+  out->joint_order = joints;
+
+  const std::vector<double> bind = ReadDoubleArray(skel_prim, "bindTransforms");
+  const std::vector<double> rest = ReadDoubleArray(skel_prim, "restTransforms");
+
+  out->joints.resize(joints.size());
+  for (size_t i = 0; i < joints.size(); ++i) {
+    JointInfo& j = out->joints[i];
+    j.path = joints[i];
+
+    // Joint paths are slash-separated (e.g. "Shoulder/Elbow/Hand"); the leaf
+    // token is the name and the prefix identifies the parent joint.
+    const size_t slash = joints[i].rfind('/');
+    j.name = (slash == std::string::npos) ? joints[i] : joints[i].substr(slash + 1);
+    j.parent_index = -1;
+    if (slash != std::string::npos) {
+      const std::string parent_path = joints[i].substr(0, slash);
+      for (size_t k = 0; k < joints.size(); ++k) {
+        if (joints[k] == parent_path) {
+          j.parent_index = static_cast<int32_t>(k);
+          break;
+        }
+      }
+    }
+
+    if (i * 16 + 16 <= bind.size()) {
+      for (int e = 0; e < 16; ++e) j.bind_transform[e] = float(bind[i * 16 + e]);
+    } else {
+      FillIdentity(j.bind_transform);
+    }
+    if (i * 16 + 16 <= rest.size()) {
+      for (int e = 0; e < 16; ++e) j.rest_transform[e] = float(rest[i * 16 + e]);
+    } else {
+      FillIdentity(j.rest_transform);
+    }
+  }
 
   return true;
 }
@@ -812,11 +1056,37 @@ bool GetSkeletonInfo(const UsdPrim& skel_prim, SkeletonInfo* out) {
 bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
   if (!out || !mesh_prim.IsValid()) return false;
 
-  // TODO: Implement skin binding extraction
-  // primvars:skel:jointIndices, primvars:skel:jointWeights
-  // skel:skeleton relationship
+  bool any = false;
 
-  return false;
+  const std::vector<std::string> skels =
+      GetRelationshipTargets(mesh_prim, "skel:skeleton");
+  if (!skels.empty()) {
+    out->skeleton_path = skels[0];
+    any = true;
+  }
+
+  out->joint_indices = GetIntArray(mesh_prim, "primvars:skel:jointIndices");
+  out->joint_weights = GetFloatArray(mesh_prim, "primvars:skel:jointWeights");
+  if (!out->joint_indices.empty() || !out->joint_weights.empty()) any = true;
+
+  // Influences per vertex = the jointIndices primvar's elementSize.
+  out->influences_per_vertex = 0;
+  if (const PrimSpec* spec = mesh_prim.GetPrimSpec()) {
+    if (const PropMeta* pm =
+            spec->property_meta("primvars:skel:jointIndices")) {
+      out->influences_per_vertex = pm->elementSize;
+    }
+  }
+
+  double gm[16];
+  if (GetMatrix4d(mesh_prim, "primvars:skel:geomBindTransform", gm)) {
+    for (int i = 0; i < 16; ++i) out->geom_bind_transform[i] = float(gm[i]);
+    any = true;
+  } else {
+    FillIdentity(out->geom_bind_transform);
+  }
+
+  return any;
 }
 
 //
@@ -826,30 +1096,46 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
 const Value* ResolveConnection(const Stage& stage, const UsdPrim& prim, const std::string& attr_name) {
   if (!prim.IsValid()) return nullptr;
 
-  // First check if there's a direct value
-  const Value* val = GetAttribute(prim, attr_name);
-  if (val) {
+  // A directly-authored value wins over a connection.
+  if (const Value* val = GetAttribute(prim, attr_name)) {
     return val;
   }
 
-  // TODO: Follow connection chain
-  // This requires parsing the connection target path and resolving it
+  // Follow the connection chain: attr.connect -> target attribute, which may
+  // itself hold a value or connect onward (e.g. shader input -> shader output
+  // -> ...). Bounded depth guards against cycles.
+  UsdPrim cur = prim;
+  std::string attr = attr_name;
+  for (int depth = 0; depth < 64; ++depth) {
+    const PrimSpec* spec = cur.GetPrimSpec();
+    if (!spec) break;
+    const std::vector<Path>* conns = spec->connection(attr);
+    if (!conns || conns->empty()) break;
 
-  (void)stage;  // Suppress unused warning
+    const Path& target = (*conns)[0];
+    const std::string prop = target.property_name();
+    if (prop.empty()) break;
+    UsdPrim next = stage.GetPrimAtPath(target.prim_path());
+    if (!next.IsValid()) break;
+
+    // A value on the target ends the chain.
+    if (const Value* v = next.GetPropertyValue(prop)) {
+      return v;
+    }
+    cur = next;
+    attr = prop;
+  }
   return nullptr;
 }
 
 std::string GetConnectionPath(const UsdPrim& prim, const std::string& attr_name) {
   if (!prim.IsValid()) return "";
 
-  // Check for connection attribute (name.connect)
-  std::string connect_name = attr_name + ".connect";
-  const Value* val = GetAttribute(prim, connect_name);
-  if (val) {
-    const std::string* path = val->as_string();
-    if (path) return *path;
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (!spec) return "";
+  if (const std::vector<Path>* conns = spec->connection(attr_name)) {
+    if (!conns->empty()) return (*conns)[0].str();
   }
-
   return "";
 }
 

@@ -14,6 +14,7 @@
 
 #include "pprinter.hh"
 #include "core/prim.hh"
+#include "core/model-scope.hh"  // Model/Scope + UsdVol/UsdRender placeholders
 #include "str-util.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -46,6 +47,10 @@ namespace value {
   __FUNC(GeomHermiteCurves)     \
   __FUNC(GeomCamera)            \
   __FUNC(GeomPointInstancer)        \
+  __FUNC(Volume)                \
+  __FUNC(FieldAsset)            \
+  __FUNC(OpenVDBAsset)          \
+  __FUNC(Field3DAsset)          \
   __FUNC(SphereLight)           \
   __FUNC(DomeLight)             \
   __FUNC(DiskLight)             \
@@ -64,6 +69,10 @@ namespace value {
   __FUNC(Material)              \
   __FUNC(Shader)                \
   __FUNC(NodeGraph)             \
+  __FUNC(RenderSettings)        \
+  __FUNC(RenderProduct)         \
+  __FUNC(RenderVar)             \
+  __FUNC(GenerativeProcedural)  \
   __FUNC(PhysicsJoint)           \
   __FUNC(PhysicsScene)          \
   __FUNC(PhysicsRevoluteJoint)  \

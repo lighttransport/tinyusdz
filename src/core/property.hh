@@ -225,13 +225,13 @@ class Property {
 
   // get_attribute: Returns const reference to stored Attribute
   // Throws std::bad_variant_access if not an attribute
-  const Attribute &get_attribute() const {
+  const Attribute &get_attribute() const TINYUSDZ_LIFETIMEBOUND {
     return std::get<Attribute>(_data);
   }
 
   // attribute: Returns mutable reference to stored Attribute
   // Creates empty Attribute if not currently storing one
-  Attribute &attribute() {
+  Attribute &attribute() TINYUSDZ_LIFETIMEBOUND {
     if (!is_attribute()) {
       _data = Attribute();
     }
@@ -239,11 +239,11 @@ class Property {
   }
 
   // Safe accessor - returns nullptr if not an attribute
-  const Attribute* get_attribute_or_null() const {
+  const Attribute* get_attribute_or_null() const TINYUSDZ_LIFETIMEBOUND {
     return std::get_if<Attribute>(&_data);
   }
 
-  Attribute* get_attribute_or_null() {
+  Attribute* get_attribute_or_null() TINYUSDZ_LIFETIMEBOUND {
     return std::get_if<Attribute>(&_data);
   }
 
@@ -253,13 +253,13 @@ class Property {
 
   // get_relationship: Returns const reference to stored Relationship
   // Throws std::bad_variant_access if not a relationship
-  const Relationship &get_relationship() const {
+  const Relationship &get_relationship() const TINYUSDZ_LIFETIMEBOUND {
     return std::get<Relationship>(_data);
   }
 
   // relationship: Returns mutable reference to stored Relationship
   // Creates empty Relationship if not currently storing one
-  Relationship &relationship() {
+  Relationship &relationship() TINYUSDZ_LIFETIMEBOUND {
     if (!is_relationship()) {
       _data = Relationship();
     }
@@ -267,11 +267,11 @@ class Property {
   }
 
   // Safe accessor - returns nullptr if not a relationship
-  const Relationship* get_relationship_or_null() const {
+  const Relationship* get_relationship_or_null() const TINYUSDZ_LIFETIMEBOUND {
     return std::get_if<Relationship>(&_data);
   }
 
-  Relationship* get_relationship_or_null() {
+  Relationship* get_relationship_or_null() TINYUSDZ_LIFETIMEBOUND {
     return std::get_if<Relationship>(&_data);
   }
 

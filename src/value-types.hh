@@ -24,6 +24,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "compiler-features.hh"
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -84,6 +86,7 @@ constexpr auto kPath =
 constexpr auto kAssetPath = "asset";  // `asset` in USDA
 constexpr auto kDictionary = "dictionary";
 constexpr auto kTimeCode = "timecode";
+constexpr auto kPathExpression = "pathExpression";  // `pathExpression` in USDA (SdfPathExpression)
 
 constexpr auto kBool = "bool";
 constexpr auto kChar = "char";
@@ -233,9 +236,13 @@ class AssetPath {
     return false;
   }
 
-  const std::string &GetAssetPath() const { return asset_path_; }
+  const std::string &GetAssetPath() const TINYUSDZ_LIFETIMEBOUND {
+    return asset_path_;
+  }
 
-  const std::string &GetResolvedPath() const { return resolved_path_; }
+  const std::string &GetResolvedPath() const TINYUSDZ_LIFETIMEBOUND {
+    return resolved_path_;
+  }
 
  private:
   std::string asset_path_;
@@ -277,6 +284,32 @@ class TimeCode {
 
 static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
 
+// SdfPathExpression value type.
+//
+// Stores the expression as its canonical text form (matching OpenUSD's
+// `SdfPathExpression::GetText()`), which is also how it is serialized in Crate
+// (a plain UTF-8 string). Parsing into a matchable representation and the
+// membership evaluation live in `core/path-expression.{hh,cc}` so that this
+// foundational header stays light. Storing the verbatim text gives loss-free
+// round-trip.
+class PathExpression {
+ public:
+  PathExpression() = default;
+  explicit PathExpression(const std::string &text) : text_(text) {}
+  explicit PathExpression(std::string &&text) : text_(std::move(text)) {}
+
+  const std::string &GetText() const TINYUSDZ_LIFETIMEBOUND { return text_; }
+  void SetText(const std::string &text) { text_ = text; }
+
+  bool empty() const { return text_.empty(); }
+
+  bool operator==(const PathExpression &rhs) const { return text_ == rhs.text_; }
+  bool operator!=(const PathExpression &rhs) const { return !(*this == rhs); }
+
+ private:
+  std::string text_;
+};
+
 //
 // Type ID for TypeTraits<T>::type_id.
 //
@@ -298,6 +331,7 @@ enum TypeId {
   TYPE_ID_VOID,
   TYPE_ID_MONOSTATE,
   TYPE_ID_VALUEBLOCK,  // Value block. `None` in ascii.
+  TYPE_ID_ANIMATION_BLOCK,  // Animation block. `AnimationBlock` in ascii (Crate type 60).
 
   // -- begin value type
   TYPE_ID_VALUE_BEGIN,
@@ -408,6 +442,8 @@ enum TypeId {
   // TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
 
+  TYPE_ID_PATH_EXPRESSION,  // SdfPathExpression
+
   TYPE_ID_DICT,        // Generic dict type. TODO: remove?
   TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
                        // to use. for metadatum(e.g. `customData` in Prim Meta)
@@ -436,12 +472,15 @@ enum TypeId {
 
   TYPE_ID_PATH,
   TYPE_ID_PATH_VECTOR,
+  TYPE_ID_RELOCATES,  // SdfRelocates: std::vector<std::pair<Path, Path>> (Crate type 58)
   TYPE_ID_TOKEN_VECTOR,
   TYPE_ID_RELATIONSHIP,
 
   // -- end of base type for Property.
 
   TYPE_ID_TIMESAMPLES,
+  TYPE_ID_SPLINE_DATA,  // primvar::PrimVar::SplineData carrier (Crate type 59)
+  TYPE_ID_ARRAY_EDIT,  // value::ArrayEdit carrier (VtArrayEdit, crate >= 0.14.0)
   TYPE_ID_VARIANT_SELECION_MAP,
 
 
@@ -534,7 +573,23 @@ enum TypeId {
 
   // Types for usdVol
   TYPE_ID_VOL_BEGIN = 1 << 12,
+  TYPE_ID_VOLUME,
+  TYPE_ID_FIELD_ASSET,
+  TYPE_ID_OPENVDB_ASSET,
+  TYPE_ID_FIELD3D_ASSET,
   TYPE_ID_VOL_END,
+
+  // Types for usdRender
+  TYPE_ID_RENDER_BEGIN = (1 << 12) + 16,
+  TYPE_ID_RENDER_SETTINGS,
+  TYPE_ID_RENDER_PRODUCT,
+  TYPE_ID_RENDER_VAR,
+  TYPE_ID_RENDER_END,
+
+  // Types for usdProc
+  TYPE_ID_PROC_BEGIN = (1 << 12) + 32,
+  TYPE_ID_GENERATIVE_PROCEDURAL,
+  TYPE_ID_PROC_END,
 
   // Types for usdSkel
   TYPE_ID_SKEL_BEGIN = 1 << 13,
@@ -1184,6 +1239,10 @@ struct texcoord3d {
 // Attribute value Block(`None`)
 struct ValueBlock {};
 
+// Attribute animation Block(`AnimationBlock`). Blocks spline/timeSamples on
+// weaker layers while letting the default value resolve (SdfAnimationBlock).
+struct AnimationBlock {};
+
 using double2 = std::array<double, 2>;
 using double3 = std::array<double, 3>;
 using double4 = std::array<double, 4>;
@@ -1253,6 +1312,7 @@ struct TypeTraits<const char*> {
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
 // DEFINE_TYPE_TRAIT(void, "void", TYPE_ID_VOID, 1);
 DEFINE_TYPE_TRAIT(ValueBlock, "None", TYPE_ID_VALUEBLOCK, 1);
+DEFINE_TYPE_TRAIT(AnimationBlock, "AnimationBlock", TYPE_ID_ANIMATION_BLOCK, 1);
 
 DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
@@ -1362,6 +1422,7 @@ DEFINE_TYPE_TRAIT(StringData, kString, TYPE_ID_STRING_DATA, 1);
 DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 
 DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
+DEFINE_TYPE_TRAIT(PathExpression, kPathExpression, TYPE_ID_PATH_EXPRESSION, 1);
 
 //
 // Other types(e.g. TYPE_ID_REFERENCE) are defined in corresponding header
@@ -1944,7 +2005,6 @@ class Value {
 
   template <class T>
   Value(const T &v) : v_(v) {
-    //TUSDZ_LOG_I("Value templated constructor called with type: " << typeid(T).name());
   }
 
   // Perfect-forwarding constructor. Use std::forward (NOT std::move): since
@@ -1954,7 +2014,6 @@ class Value {
   // (Callers that intend a move pass `Value(std::move(x))`.)
   template <class T>
   Value(T &&v) noexcept : v_(std::forward<T>(v)) {
-    //TUSDZ_LOG_I("Value templated move constructor called with type: " << typeid(T).name());
   }
 
   // template <class T>
@@ -2184,14 +2243,13 @@ class Value {
 
   template <class T>
   Value &operator=(const T &v) {
-    //TUSDZ_LOG_I("Value templated assignment operator called with type: " << typeid(T).name());
     v_ = v;
     return (*this);
   }
 
 
-  const any_value &get_raw() const { return v_; }
-  any_value &get_raw_mutable() { return v_; }
+  const any_value &get_raw() const TINYUSDZ_LIFETIMEBOUND { return v_; }
+  any_value &get_raw_mutable() TINYUSDZ_LIFETIMEBOUND { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
 
@@ -2801,6 +2859,26 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
 
   d.insert(kBool);
 
+  d.insert(kChar);
+  d.insert(kChar2);
+  d.insert(kChar3);
+  d.insert(kChar4);
+
+  d.insert(kUChar);
+  d.insert(kUChar2);
+  d.insert(kUChar3);
+  d.insert(kUChar4);
+
+  d.insert(kShort);
+  d.insert(kShort2);
+  d.insert(kShort3);
+  d.insert(kShort4);
+
+  d.insert(kUShort);
+  d.insert(kUShort2);
+  d.insert(kUShort3);
+  d.insert(kUShort4);
+
   d.insert(kInt64);
 
   d.insert(kInt);
@@ -2834,8 +2912,7 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
   d.insert(kQuatf);
   d.insert(kQuatd);
 
-  // AOUSD Core Spec 6.2: uchar and timecode scalar types
-  d.insert(kUChar);
+  // AOUSD Core Spec 6.2: timecode scalar type
   d.insert(kTimeCode);
 
   // AOUSD Core Spec 6.5: All semantic aliases (role types)
@@ -2886,6 +2963,7 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
 
   d.insert(kRelationship);
   d.insert(kAssetPath);
+  d.insert(kPathExpression);
 
   d.insert(kDictionary);
 

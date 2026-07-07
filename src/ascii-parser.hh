@@ -204,25 +204,21 @@ class AsciiParser {
     }
 
     const StoredCursor *FindLayerMeta(const std::string &meta_name) const {
-      auto it = layer_metas.find(meta_name);
-      return (it != layer_metas.end()) ? &it->second : nullptr;
+      return layer_metas.find_value_ptr(meta_name);
     }
 
     const StoredCursor *FindPrim(const std::string &prim_path) const {
-      auto it = prims.find(prim_path);
-      return (it != prims.end()) ? &it->second : nullptr;
+      return prims.find_value_ptr(prim_path);
     }
 
     const StoredCursor *FindPrimAttr(const std::string &prim_path,
                                      const std::string &property_name) const {
-      auto it = prim_attrs.find(MakePropertyKey(prim_path, property_name));
-      return (it != prim_attrs.end()) ? &it->second : nullptr;
+      return prim_attrs.find_value_ptr(MakePropertyKey(prim_path, property_name));
     }
 
     const StoredCursor *FindProperty(const std::string &prim_path,
                                      const std::string &property_name) const {
-      auto it = properties.find(MakePropertyKey(prim_path, property_name));
-      return (it != properties.end()) ? &it->second : nullptr;
+      return properties.find_value_ptr(MakePropertyKey(prim_path, property_name));
     }
   };
 
@@ -689,6 +685,7 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::token> *value);
   bool ReadBasicType(nonstd::optional<Path> *value);
   bool ReadBasicType(nonstd::optional<value::AssetPath> *value);
+  bool ReadBasicType(nonstd::optional<value::PathExpression> *value);
   bool ReadBasicType(nonstd::optional<Reference> *value);
   bool ReadBasicType(nonstd::optional<Payload> *value);
   bool ReadBasicType(nonstd::optional<Identifier> *value);
@@ -776,6 +773,7 @@ class AsciiParser {
   bool ReadBasicType(value::token *value);
   bool ReadBasicType(Path *value);
   bool ReadBasicType(value::AssetPath *value);
+  bool ReadBasicType(value::PathExpression *value);
   bool ReadBasicType(Reference *value);
   bool ReadBasicType(Payload *value);
   bool ReadBasicType(Identifier *value);
@@ -952,6 +950,15 @@ class AsciiParser {
                                value::TimeSamples *ts);
 
   ///
+  /// Parse a `.spline` value block (AOUSD Core Spec 7.4.2.4) and store it to the
+  /// type-erased primvar::PrimVar::SplineData. `type_name` is the (scalar)
+  /// attribute value type ("double"/"float"/"half"); knot values are stored as
+  /// value::Value of that type.
+  ///
+  bool ParseSplineValue(const std::string &type_name,
+                        primvar::PrimVar::SplineData *out);
+
+  ///
   /// `variants` in Prim meta.
   ///
   bool ParseVariantsElement(std::string *out_key, std::string *out_var);
@@ -1047,6 +1054,7 @@ class AsciiParser {
   }
 
   bool MaybeNone();
+  bool MaybeAnimationBlock();
   bool MaybeCustom();
 
   template <typename T>
@@ -1184,6 +1192,15 @@ class AsciiParser {
   template <typename T>
   bool ParseBasicPrimAttr(bool array_qual, const std::string &primattr_name,
                           Attribute *out_attr);
+
+  // Parse the body of an `edit [ <op>; ... ]` array-edit value (the `edit`
+  // keyword is consumed by the caller). Element literals are read as type T;
+  // builds the literal array and the Vt_ArrayEditOps `_ins` instruction stream.
+  template <typename T>
+  bool ParseArrayEditValue(std::vector<T> *literals, std::vector<int64_t> *ops);
+
+  // Consume the upcoming `edit` keyword iff present (array-edit value).
+  bool MaybeArrayEdit();
 
   bool ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out);
 

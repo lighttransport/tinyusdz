@@ -17,9 +17,11 @@
 #include "namespace-mapping.hh"
 #include "../layer/layer.hh"
 #include "../prim/path.hh"
+#include "../strfmt.hh"
 
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -118,11 +120,28 @@ struct CompositionOptions {
   bool apply_list_ops = true;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
 
+  // Per-layer file/input memory cap for layers loaded by the compositor
+  // (sublayers, references, payloads). 0 = no limit.
+  size_t max_layer_memory = 0;
+
+  // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
+  // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env
+  // read so the composition core takes no implicit process-environment input;
+  // the CLI sets this from its own flag/env.
+  bool enable_timing = false;
+
   /// Per-payload load policy. Invoked with (prim path that authors the payload,
   /// payload asset path); return true to load, false to defer. When null, the
   /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)
   /// Must be thread-safe when PrewarmPrimIndices runs with num_threads != 1.
   std::function<bool(const Path &, const std::string &)> payload_policy;
+
+  /// Variant selection overrides: map of variantSet -> variantName. Overrides
+  /// any authored variantSelection on the same set (stronger than authored).
+  /// Empty by default (use authored selections as-is). Example:
+  ///   {{"districtLod", "full"}} selects the "full" variant on every prim that
+  ///   defines a "districtLod" variantSet.
+  std::map<std::string, std::string> variant_overrides;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the
@@ -163,11 +182,11 @@ class PrimIndex {
 
   std::string DumpToString() const {
     std::string s = "PrimIndex<" + prim_path_.str() + "> nodes=" +
-                    std::to_string(nodes_.size()) + "\n";
+                    UIntToStr(nodes_.size()) + "\n";
     for (uint16_t oi : strength_order_) {
       const CompNode &n = nodes_[oi];
-      s += "  [" + std::to_string(oi) + "] " + ArcTypeName(n.arc_type) +
-           " stack=" + std::to_string(n.layer_stack_idx) + " site=" +
+      s += "  [" + UIntToStr(oi) + "] " + ArcTypeName(n.arc_type) +
+           " stack=" + UIntToStr(n.layer_stack_idx) + " site=" +
            SitePath(n) + (n.has_specs() ? " (specs)" : "") + "\n";
     }
     return s;

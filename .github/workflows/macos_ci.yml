@@ -13,6 +13,30 @@ on:
 
 jobs:
 
+  # Build with the experimental `next` (pcp large-scene) backend enabled.
+  # src/next/ is gated behind TINYUSDZ_USE_NEXT_PCP_LARGE_SCENE and is not built
+  # by the default macOS job, so this variant keeps it from bit-rotting.
+  build-next-macos:
+
+    runs-on: macos-latest
+    name: Build for macOS (next backend)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: CmakeAndBuild
+        run: |
+            cmake -B build_next -S . \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DTINYUSDZ_USE_NEXT_PCP_LARGE_SCENE=On \
+              -DTINYUSDZ_WITH_TYDRA=On \
+              -DTINYUSDZ_BUILD_TOOLS=On \
+              -DTINYUSDZ_BUILD_EXAMPLES=On \
+              -DTINYUSDZ_BUILD_TESTS=On
+            cmake --build build_next
+      - name: Ctest
+        run: cd build_next && ctest --output-on-failure
+
   build-macos:
 
     runs-on: macos-latest

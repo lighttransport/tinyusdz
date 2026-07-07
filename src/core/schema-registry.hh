@@ -42,19 +42,13 @@ class SchemaRegistry {
                                   const std::string &prop_name) const {
     // Try exact (prim_type, prop_name) first
     std::string key = prim_type + ":" + prop_name;
-    auto it = _registry.find(key);
-    if (it != _registry.end()) {
-      return &it->second;
+    if (const SchemaPropertyInfo *info = _registry.find_value_ptr(key)) {
+      return info;
     }
 
     // Fall back to wildcard ("*", prop_name) for properties common to all types
     key = "*:" + prop_name;
-    it = _registry.find(key);
-    if (it != _registry.end()) {
-      return &it->second;
-    }
-
-    return nullptr;
+    return _registry.find_value_ptr(key);
   }
 
   /// Register a schema property.

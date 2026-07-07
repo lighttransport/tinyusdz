@@ -46,6 +46,11 @@ if (TINYUSDZ_WASM_SIMD)
     message(STATUS "TinyUSDZ WASM: Relaxed SIMD enabled (-mrelaxed-simd)")
     set(TINYUSDZ_SIMD_FLAGS "${TINYUSDZ_SIMD_FLAGS} -mrelaxed-simd")
   endif()
+else()
+  # No wasm SIMD: also force the next parser's scanner onto its scalar path so
+  # Backend() honestly reports "scalar" (the SSE2/NEON gates are inert on wasm
+  # anyway, but keep one SIMD knob coherent across the build).
+  add_compile_definitions(TINYUSDZ_DISABLE_SIMD)
 endif()
 
 set(TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "")
@@ -105,6 +110,11 @@ if (TINYUSDZ_WASM_DEMODEV)
   message(STATUS "demodev build")
 endif()
 
+# WASM/browser builds intentionally keep C++ threading disabled by default. Do
+# not pull in Emscripten pthreads/SharedArrayBuffer unless a future explicit
+# browser-threading build option opts into it.
+set(TINYUSDZ_ENABLE_THREAD OFF CACHE BOOL "Disable std::thread paths for default WASM builds" FORCE)
+
 # [tinyusdz]
 add_subdirectory(../  tinyusdz)
 
@@ -128,16 +138,27 @@ list(
   ${TINYUSDZ_NEXT_DIR}/stage/stage.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-format.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-data-source.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-arrays.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-decode.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-api.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-sections.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-stage.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-unpack.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-vectors.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/crate-writer-types.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/value-parser-types.cc
   ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/simd-scan.cc
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
   ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
   ${TINYUSDZ_NEXT_DIR}/reader/usdc-reader.cc
   ${TINYUSDZ_NEXT_DIR}/schema/geom-mesh.cc
+  ${TINYUSDZ_NEXT_DIR}/schema/geom-xform.cc
   ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
   ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
 )
@@ -154,6 +175,13 @@ add_executable(${BUILD_TARGET} ${SOURCES})
 add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
+target_compile_options(${BUILD_TARGET}
+                       PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+target_compile_definitions(${BUILD_TARGET}
+                           PRIVATE JSON_NOEXCEPTION=1
+                                   TINYUSDZ_CXX_EXCEPTIONS=0
+                                   TINYUSDZ_CXX_RTTI=1
+                                   EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
 if (TINYUSDZ_WASM64)
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()
@@ -216,8 +244,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
      -sINVOKE_RUN=0 --bind \
-     -sDISABLE_EXCEPTION_CATCHING=0 \
-     -sNO_DISABLE_EXCEPTION_CATCHING \
      --source-map-base http://localhost:5173/ ")
   else()
     # Standard debug mode
@@ -230,8 +256,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
      -sWASM_BIGINT=1 \
      -sMODULARIZE=1 -sEXPORT_ES6 \
      -sINVOKE_RUN=0 --bind \
-     -sDISABLE_EXCEPTION_CATCHING=0 \
-     -sNO_DISABLE_EXCEPTION_CATCHING \
      --source-map-base http://localhost:5173/ ")
   endif()
 else()
@@ -260,7 +284,7 @@ if (TINYUSDZ_WASM64)
   # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2
   # MAXIMUM_MEMORY=16GB: only reserves address space (ALLOW_MEMORY_GROWTH grows
   # on demand); the in-heap folder flatten of a multi-GB UE-export scene (e.g.
-  # SceneB, 2.5 GB source) needs ~10 GB.
+  # a 2.5 GB source folder) needs ~10 GB.
   # MALLOC=dlmalloc: emmalloc asserts (debug_region_is_consistent in
   # emmalloc_free) once the wasm64 heap grows past ~8 GB; dlmalloc handles the
   # large-heap case. (The later -sMALLOC overrides the emmalloc set in the
@@ -270,8 +294,9 @@ else()
   string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
 endif()
 
-# Export HEAPU8 for zero-copy streaming transfer from JS to WASM
-string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8']")
+# Export heap views for zero-copy streaming and typed pointer descriptors used
+# by the web loader fast path.
+string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAP8','HEAP16','HEAPU32','HEAPF32']")
 
 message(STATUS ${TINYUSDZ_EMCC_LINK_FLAGS})
 

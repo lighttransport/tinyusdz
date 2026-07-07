@@ -6,7 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
@@ -45,9 +44,6 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
-#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
-#include "subdiv.hh"
-#endif
 #include "safe-arithmetic.hh"
 
 #ifdef __clang__

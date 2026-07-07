@@ -6,7 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
@@ -24,6 +23,7 @@
 #include <numeric>
 #include <set>
 #include <limits>
+#include <unordered_map>
 
 #include "common-utils.hh"
 #include "common-types.hh"
@@ -96,6 +96,86 @@ static bool SetOrCheckComponentCount(size_t *out_count, size_t this_count) {
   return *out_count == this_count;
 }
 
+static bool KeyframeSamplerEqual(const KeyframeSampler &a,
+                                 const KeyframeSampler &b) {
+  return a.interpolation == b.interpolation && a.times == b.times &&
+         a.values == b.values;
+}
+
+static size_t HashCombine(size_t seed, const size_t value) {
+  return seed ^ (value + size_t(0x9e3779b97f4a7c15ull) + (seed << 6) +
+                 (seed >> 2));
+}
+
+static size_t HashFloatArray(const std::vector<float> &values) {
+  size_t h = values.size();
+  for (const float v : values) {
+    h = HashCombine(h, std::hash<float>{}(v));
+  }
+  return h;
+}
+
+static size_t HashKeyframeSampler(const KeyframeSampler &sampler) {
+  size_t h = std::hash<int>{}(int(sampler.interpolation));
+  h = HashCombine(h, HashFloatArray(sampler.times));
+  h = HashCombine(h, HashFloatArray(sampler.values));
+  return h;
+}
+
+static bool CompactNewSamplers(AnimationClip *clip, const size_t first_sampler,
+                               const size_t first_channel) {
+  if (!clip || first_sampler >= clip->samplers.size()) {
+    return true;
+  }
+
+  std::vector<KeyframeSampler> compacted;
+  compacted.reserve(clip->samplers.size());
+  std::vector<int32_t> remap(clip->samplers.size(), -1);
+  std::unordered_map<size_t, std::vector<size_t>> hash_buckets;
+
+  for (size_t i = 0; i < first_sampler; ++i) {
+    remap[i] = static_cast<int32_t>(i);
+    compacted.push_back(std::move(clip->samplers[i]));
+    hash_buckets[HashKeyframeSampler(compacted.back())].push_back(i);
+  }
+
+  for (size_t i = first_sampler; i < clip->samplers.size(); ++i) {
+    int32_t mapped = -1;
+    const size_t sampler_hash = HashKeyframeSampler(clip->samplers[i]);
+    if (auto it = hash_buckets.find(sampler_hash); it != hash_buckets.end()) {
+      for (const size_t candidate_idx : it->second) {
+        if (KeyframeSamplerEqual(compacted[candidate_idx],
+                                 clip->samplers[i])) {
+          mapped = static_cast<int32_t>(candidate_idx);
+          break;
+        }
+      }
+    }
+
+    if (mapped < 0) {
+      if (compacted.size() >
+          size_t(std::numeric_limits<int32_t>::max())) {
+        return false;
+      }
+      mapped = static_cast<int32_t>(compacted.size());
+      compacted.push_back(std::move(clip->samplers[i]));
+      hash_buckets[sampler_hash].push_back(size_t(mapped));
+    }
+    remap[i] = mapped;
+  }
+
+  for (size_t i = first_channel; i < clip->channels.size(); ++i) {
+    const int32_t old_sampler = clip->channels[i].sampler;
+    if (old_sampler >= 0 && size_t(old_sampler) < remap.size() &&
+        remap[size_t(old_sampler)] >= 0) {
+      clip->channels[i].sampler = remap[size_t(old_sampler)];
+    }
+  }
+
+  clip->samplers = std::move(compacted);
+  return true;
+}
+
 template <typename T>
 static void AppendNumericToFloatArray(std::vector<float> *dst, const T v) {
   dst->push_back(static_cast<float>(v));
@@ -109,6 +189,32 @@ static void AppendVectorLikeToFloatArray(const Vec &value,
   }
 }
 
+template <typename Quat>
+static void AppendQuatToFloatArray(const Quat &value, std::vector<float> *dst) {
+  dst->push_back(static_cast<float>(value.imag[0]));
+  dst->push_back(static_cast<float>(value.imag[1]));
+  dst->push_back(static_cast<float>(value.imag[2]));
+  dst->push_back(static_cast<float>(value.real));
+}
+
+static void AppendQuatToFloatArray(const value::quath &value,
+                                   std::vector<float> *dst) {
+  dst->push_back(value::half_to_float(value.imag[0]));
+  dst->push_back(value::half_to_float(value.imag[1]));
+  dst->push_back(value::half_to_float(value.imag[2]));
+  dst->push_back(value::half_to_float(value.real));
+}
+
+template <typename Scalar, size_t N>
+static void AppendMatrixToFloatArray(const Scalar (&m)[N][N],
+                                     std::vector<float> *dst) {
+  for (size_t row = 0; row < N; ++row) {
+    for (size_t col = 0; col < N; ++col) {
+      dst->push_back(static_cast<float>(m[row][col]));
+    }
+  }
+}
+
 static bool AppendValueToFloatArray(const TerminalAttributeValue &value,
                                   std::vector<float> *dst,
                                   size_t *component_count) {
@@ -118,6 +224,34 @@ static bool AppendValueToFloatArray(const TerminalAttributeValue &value,
     this_count = 1;
     if (!SetOrCheckComponentCount(component_count, this_count)) return false;
     AppendNumericToFloatArray(dst, *v ? 1.0f : 0.0f);
+    return true;
+  }
+
+  if (auto *v = value.as<char>()) {
+    this_count = 1;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendNumericToFloatArray(dst, *v);
+    return true;
+  }
+
+  if (auto *v = value.as<uint8_t>()) {
+    this_count = 1;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendNumericToFloatArray(dst, *v);
+    return true;
+  }
+
+  if (auto *v = value.as<int16_t>()) {
+    this_count = 1;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendNumericToFloatArray(dst, *v);
+    return true;
+  }
+
+  if (auto *v = value.as<uint16_t>()) {
+    this_count = 1;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendNumericToFloatArray(dst, *v);
     return true;
   }
 
@@ -233,6 +367,62 @@ static bool AppendValueToFloatArray(const TerminalAttributeValue &value,
     return true;
   }
 
+  if (auto *v = value.as<value::quath>()) {
+    this_count = 4;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendQuatToFloatArray(*v, dst);
+    return true;
+  }
+  if (auto *v = value.as<value::quatf>()) {
+    this_count = 4;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendQuatToFloatArray(*v, dst);
+    return true;
+  }
+  if (auto *v = value.as<value::quatd>()) {
+    this_count = 4;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendQuatToFloatArray(*v, dst);
+    return true;
+  }
+
+  if (auto *v = value.as<value::matrix2f>()) {
+    this_count = 4;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendMatrixToFloatArray(v->m, dst);
+    return true;
+  }
+  if (auto *v = value.as<value::matrix3f>()) {
+    this_count = 9;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendMatrixToFloatArray(v->m, dst);
+    return true;
+  }
+  if (auto *v = value.as<value::matrix4f>()) {
+    this_count = 16;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendMatrixToFloatArray(v->m, dst);
+    return true;
+  }
+  if (auto *v = value.as<value::matrix2d>()) {
+    this_count = 4;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendMatrixToFloatArray(v->m, dst);
+    return true;
+  }
+  if (auto *v = value.as<value::matrix3d>()) {
+    this_count = 9;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendMatrixToFloatArray(v->m, dst);
+    return true;
+  }
+  if (auto *v = value.as<value::matrix4d>()) {
+    this_count = 16;
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    AppendMatrixToFloatArray(v->m, dst);
+    return true;
+  }
+
   if (auto *v = value.as<std::vector<float>>()) {
     this_count = v->size();
     if (!SetOrCheckComponentCount(component_count, this_count)) return false;
@@ -254,6 +444,38 @@ static bool AppendValueToFloatArray(const TerminalAttributeValue &value,
     if (!SetOrCheckComponentCount(component_count, this_count)) return false;
     for (const auto &e : *v) {
       dst->push_back(value::half_to_float(e));
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<char>>()) {
+    this_count = v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      dst->push_back(static_cast<float>(e));
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<uint8_t>>()) {
+    this_count = v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      dst->push_back(static_cast<float>(e));
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<int16_t>>()) {
+    this_count = v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      dst->push_back(static_cast<float>(e));
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<uint16_t>>()) {
+    this_count = v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      dst->push_back(static_cast<float>(e));
     }
     return true;
   }
@@ -375,6 +597,80 @@ static bool AppendValueToFloatArray(const TerminalAttributeValue &value,
       dst->push_back(value::half_to_float(e[1]));
       dst->push_back(value::half_to_float(e[2]));
       dst->push_back(value::half_to_float(e[3]));
+    }
+    return true;
+  }
+
+  if (auto *v = value.as<std::vector<value::quath>>()) {
+    this_count = 4 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendQuatToFloatArray(e, dst);
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<value::quatf>>()) {
+    this_count = 4 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendQuatToFloatArray(e, dst);
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<value::quatd>>()) {
+    this_count = 4 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendQuatToFloatArray(e, dst);
+    }
+    return true;
+  }
+
+  if (auto *v = value.as<std::vector<value::matrix2f>>()) {
+    this_count = 4 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendMatrixToFloatArray(e.m, dst);
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<value::matrix3f>>()) {
+    this_count = 9 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendMatrixToFloatArray(e.m, dst);
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<value::matrix4f>>()) {
+    this_count = 16 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendMatrixToFloatArray(e.m, dst);
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<value::matrix2d>>()) {
+    this_count = 4 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendMatrixToFloatArray(e.m, dst);
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<value::matrix3d>>()) {
+    this_count = 9 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendMatrixToFloatArray(e.m, dst);
+    }
+    return true;
+  }
+  if (auto *v = value.as<std::vector<value::matrix4d>>()) {
+    this_count = 16 * v->size();
+    if (!SetOrCheckComponentCount(component_count, this_count)) return false;
+    for (const auto &e : *v) {
+      AppendMatrixToFloatArray(e.m, dst);
     }
     return true;
   }
@@ -511,7 +807,6 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
   }
 
-  // TODO: inbetweens BlendShape
   std::vector<value::token> blendShapes;
   if (skelAnim.blendShapes.authored()) {
     std::string blendShapeErr;
@@ -900,16 +1195,105 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         pi++;
       }
     }
+
+    if (!CompactNewSamplers(anim_out, baseSamplerIdx, baseChannelIdx)) {
+      PUSH_ERROR_AND_RETURN(
+          "Too many animation samplers after SkelAnimation deduplication");
+    }
   }
 
-  // BlendShape animations currently need mesh-node target resolution.
-  // The current conversion stage does not have stable node indices yet, so
-  // emitting Weights channels here would produce invalid target_node values.
   if (blendShapes.size()) {
-    PUSH_WARN(fmt::format(
-        "Skipping blendShapeWeights conversion for SkelAnimation {} "
-        "(mesh target resolution not implemented yet)",
-        abs_path.full_path_name()));
+    Animatable<std::vector<float>> weights;
+    if (!skelAnim.blendShapeWeights.get_value(&weights)) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Failed to get `blendShapeWeights` attribute of SkelAnimation: {}",
+          abs_path));
+    }
+
+    std::vector<std::string> blendshape_names;
+    blendshape_names.reserve(blendShapes.size());
+    for (const value::token &tok : blendShapes) {
+      blendshape_names.push_back(tok.str());
+    }
+
+    KeyframeSampler sampler;
+    sampler.interpolation = AnimationInterpolation::Linear;
+
+    auto appendWeightsFrame = [&](size_t frameIdx, float time,
+                                  const std::vector<float> &frameData) {
+      (void)frameIdx;
+      if (frameData.size() != blendShapes.size()) {
+        _err = fmt::format(
+            "Array length mismatch: blendShapeWeights.size {} != "
+            "blendShapes.size {} at frame {}",
+            frameData.size(), blendShapes.size(), frameIdx);
+        return false;
+      }
+      sampler.times.push_back(time);
+      sampler.values.insert(sampler.values.end(), frameData.begin(),
+                            frameData.end());
+      if (time > anim_out->duration) {
+        anim_out->duration = time;
+      }
+      return true;
+    };
+
+    if (weights.has_timesamples()) {
+      size_t frameIdx = 0;
+      if (const value::TimeSamples *tsp = weights.get_timesamples_ptr()) {
+        sampler.times.reserve(tsp->size());
+        size_t value_count = 0;
+        if (!safe::mul(tsp->size(), blendShapes.size(), &value_count)) {
+          PUSH_ERROR_AND_RETURN(
+              "Integer overflow in blendShapeWeights sampler size.");
+        }
+        sampler.values.reserve(value_count);
+        for (const auto &sample : tsp->get_samples()) {
+          if (sample.blocked) {
+            continue;
+          }
+          const std::vector<float> *pv =
+              sample.value.as<std::vector<float>>();
+          if (!pv) {
+            continue;
+          }
+          if (!appendWeightsFrame(frameIdx, float(sample.t), *pv)) {
+            PUSH_ERROR_AND_RETURN(_err);
+          }
+          frameIdx++;
+        }
+      }
+    } else if (weights.has_value()) {
+      std::vector<float> default_value;
+      if (!weights.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to get default blendShapeWeights: {}", abs_path));
+      }
+      if (!appendWeightsFrame(0, 0.0f, default_value)) {
+        PUSH_ERROR_AND_RETURN(_err);
+      }
+    }
+
+    if (sampler.times.empty()) {
+      PUSH_WARN(fmt::format(
+          "Skipping empty blendShapeWeights animation for SkelAnimation {}",
+          abs_path.full_path_name()));
+    } else {
+      const int32_t sampler_index =
+          static_cast<int32_t>(anim_out->samplers.size());
+      anim_out->samplers.push_back(std::move(sampler));
+
+      AnimationChannel channel;
+      channel.target_type = ChannelTargetType::SceneNode;
+      channel.path = AnimationPath::Weights;
+      channel.target_node = -1;
+      channel.skeleton_id = skeleton_id;
+      channel.sampler = sampler_index;
+      channel.property_name = "blendShapeWeights";
+      channel.target_prim_path.clear();
+      channel.blendshape_target_names = std::move(blendshape_names);
+      anim_out->channels.push_back(std::move(channel));
+    }
   }
 
   return true;
@@ -1616,6 +2000,7 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
       channel.target_type = ChannelTargetType::SceneNode;
       channel.path = AnimationPath::Translation;
       channel.target_node = target_node_index;
+      channel.target_prim_path = abs_path.full_path_name();
       channel.sampler = 0;
       anim_out->channels.push_back(channel);
     }
@@ -1624,6 +2009,7 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
       channel.target_type = ChannelTargetType::SceneNode;
       channel.path = AnimationPath::Rotation;
       channel.target_node = target_node_index;
+      channel.target_prim_path = abs_path.full_path_name();
       channel.sampler = 1;
       anim_out->channels.push_back(channel);
     }
@@ -1632,6 +2018,7 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
       channel.target_type = ChannelTargetType::SceneNode;
       channel.path = AnimationPath::Scale;
       channel.target_node = target_node_index;
+      channel.target_prim_path = abs_path.full_path_name();
       channel.sampler = 2;
       anim_out->channels.push_back(channel);
     }
@@ -1654,11 +2041,232 @@ bool RenderSceneConverter::ConvertValueClipAnimation(
     channel.target_type = ChannelTargetType::SceneNode;
     channel.path = AnimationPath::CustomProperty;
     channel.target_node = target_node_index;
+    channel.target_prim_path = abs_path.full_path_name();
     channel.sampler = sampler_index;
     channel.is_custom_property = true;
     channel.property_name = data.name;
     anim_out->channels.push_back(std::move(channel));
   }
+
+  return true;
+}
+
+bool RenderSceneConverter::ExtractPrimPropertyAnimation(
+    const RenderSceneConverterEnv &env,
+    const Prim &prim,
+    const Path &abs_path,
+    int32_t target_node_index,
+    AnimationClip *anim_out) {
+  (void)env;
+
+  if (!anim_out) {
+    PUSH_ERROR_AND_RETURN("anim_out is nullptr");
+  }
+
+  if (prim.is<SkelAnimation>() || prim.is<Skeleton>() ||
+      prim.is<BlendShape>()) {
+    return false;
+  }
+
+  std::set<std::string> appended_property_names;
+
+  auto append_time_samples = [&](const std::string &attr_name,
+                                 const value::TimeSamples &ts) {
+    if (ts.size() == 0) {
+      return;
+    }
+
+    KeyframeSampler sampler;
+    sampler.interpolation = AnimationInterpolation::Linear;
+    sampler.times.reserve(ts.size());
+
+    size_t component_count = 0;
+    bool supported = true;
+    FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+      if (sample_blocked) {
+        continue;
+      }
+      const size_t prev_values = sampler.values.size();
+      size_t expected_count = component_count;
+      if (!AppendValueToFloatArray(sample_value, &sampler.values,
+                                   &expected_count)) {
+        sampler.values.resize(prev_values);
+        supported = false;
+        break;
+      }
+      sampler.times.push_back(float(sample_t));
+      component_count = expected_count;
+      if (float(sample_t) > anim_out->duration) {
+        anim_out->duration = float(sample_t);
+      }
+    FOREACH_TIMESAMPLES_END()
+
+    if (!supported) {
+      PUSH_WARN(fmt::format(
+          "Skipping animated attribute '{}' for {} due to unsupported or "
+          "inconsistent sample type.",
+          attr_name, abs_path.full_path_name()));
+      return;
+    }
+    if (sampler.times.empty() || component_count == 0) {
+      return;
+    }
+
+    const int32_t sampler_index = int32_t(anim_out->samplers.size());
+    anim_out->samplers.push_back(std::move(sampler));
+
+    AnimationChannel channel;
+    channel.target_type = ChannelTargetType::SceneNode;
+    channel.path = AnimationPath::CustomProperty;
+    channel.target_node = target_node_index;
+    channel.target_prim_path = abs_path.full_path_name();
+    channel.sampler = sampler_index;
+    channel.is_custom_property = true;
+    channel.property_name = attr_name;
+    anim_out->channels.push_back(std::move(channel));
+    appended_property_names.insert(attr_name);
+  };
+
+  auto append_fallback_anim = [&](const std::string &name,
+                                  const auto &attr) {
+    if (!attr.authored()) {
+      return;
+    }
+    const auto &anim = attr.get_value();
+    if (anim.has_timesamples()) {
+      append_time_samples(name, *anim.get_timesamples_ptr());
+    }
+  };
+
+  auto append_optional_anim = [&](const std::string &name,
+                                  const auto &attr) {
+    if (!attr.authored()) {
+      return;
+    }
+    const auto anim = attr.get_value();
+    if (anim && anim.value().has_timesamples()) {
+      append_time_samples(name, *anim.value().get_timesamples_ptr());
+    }
+  };
+
+  if (const auto *camera = prim.as<GeomCamera>()) {
+    append_optional_anim("clippingPlanes", camera->clippingPlanes);
+    append_fallback_anim("clippingRange", camera->clippingRange);
+    append_fallback_anim("exposure", camera->exposure);
+    append_fallback_anim("focalLength", camera->focalLength);
+    append_fallback_anim("focusDistance", camera->focusDistance);
+    append_fallback_anim("horizontalAperture", camera->horizontalAperture);
+    append_fallback_anim("horizontalApertureOffset",
+                         camera->horizontalApertureOffset);
+    append_fallback_anim("verticalAperture", camera->verticalAperture);
+    append_fallback_anim("verticalApertureOffset",
+                         camera->verticalApertureOffset);
+    append_fallback_anim("fStop", camera->fStop);
+    append_fallback_anim("shutterClose", camera->shutterClose);
+    append_fallback_anim("shutterOpen", camera->shutterOpen);
+  }
+
+  auto append_light_api = [&](const LightAPI &light) {
+    append_fallback_anim("inputs:color", light.color);
+    append_fallback_anim("inputs:colorTemperature", light.colorTemperature);
+    append_fallback_anim("inputs:diffuse", light.diffuse);
+    append_fallback_anim("inputs:enableColorTemperature",
+                         light.enableColorTemperature);
+    append_fallback_anim("inputs:exposure", light.exposure);
+    append_fallback_anim("inputs:intensity", light.intensity);
+    append_fallback_anim("inputs:normalize", light.normalize);
+    append_fallback_anim("inputs:specular", light.specular);
+    append_fallback_anim("inputs:shadow:enable", light.shadowEnable);
+    append_fallback_anim("inputs:shadow:color", light.shadowColor);
+    append_fallback_anim("inputs:shadow:distance", light.shadowDistance);
+    append_fallback_anim("inputs:shadow:falloff", light.shadowFalloff);
+    append_fallback_anim("inputs:shadow:falloffGamma",
+                         light.shadowFalloffGamma);
+    append_fallback_anim("inputs:shaping:focus", light.shapingFocus);
+    append_fallback_anim("inputs:shaping:focusTint", light.shapingFocusTint);
+    append_fallback_anim("inputs:shaping:cone:angle",
+                         light.shapingConeAngle);
+    append_fallback_anim("inputs:shaping:cone:softness",
+                         light.shapingConeSoftness);
+    append_fallback_anim("inputs:shaping:ies:angleScale",
+                         light.shapingIesAngleScale);
+    append_fallback_anim("inputs:shaping:ies:normalize",
+                         light.shapingIesNormalize);
+  };
+
+  if (const auto *sphere_light = prim.as<SphereLight>()) {
+    append_light_api(*sphere_light);
+    append_fallback_anim("inputs:radius", sphere_light->radius);
+  } else if (const auto *cylinder_light = prim.as<CylinderLight>()) {
+    append_light_api(*cylinder_light);
+    append_fallback_anim("inputs:length", cylinder_light->length);
+    append_fallback_anim("inputs:radius", cylinder_light->radius);
+  } else if (const auto *rect_light = prim.as<RectLight>()) {
+    append_light_api(*rect_light);
+    append_fallback_anim("inputs:height", rect_light->height);
+    append_fallback_anim("inputs:width", rect_light->width);
+  } else if (const auto *disk_light = prim.as<DiskLight>()) {
+    append_light_api(*disk_light);
+    append_fallback_anim("inputs:radius", disk_light->radius);
+  } else if (const auto *distant_light = prim.as<DistantLight>()) {
+    append_light_api(*distant_light);
+    append_fallback_anim("inputs:angle", distant_light->angle);
+  } else if (const auto *dome_light = prim.as<DomeLight>()) {
+    append_light_api(*dome_light);
+  } else if (const auto *dome_light_1 = prim.as<DomeLight_1>()) {
+    append_light_api(*dome_light_1);
+  } else if (const auto *geometry_light = prim.as<GeometryLight>()) {
+    append_light_api(*geometry_light);
+  } else if (const auto *portal_light = prim.as<PortalLight>()) {
+    append_light_api(*portal_light);
+  }
+
+  auto is_xform_attribute = [](const std::string &name) {
+    return name == "xformOpOrder" || name.rfind("xformOp:", 0) == 0;
+  };
+
+  std::vector<std::string> attr_names;
+  std::string attr_err;
+  if (!GetAttributeNames(prim, &attr_names, &attr_err)) {
+    attr_names.clear();
+  }
+
+  for (const std::string &attr_name : attr_names) {
+    if (is_xform_attribute(attr_name)) {
+      continue;
+    }
+    if (appended_property_names.count(attr_name)) {
+      continue;
+    }
+
+    Property prop;
+    std::string prop_err;
+    if (!GetProperty(prim, attr_name, &prop, &prop_err)) {
+      if (!prop_err.empty()) {
+        PUSH_WARN(fmt::format("Failed to read property '{}' for {}: {}",
+                              attr_name, abs_path.full_path_name(),
+                              prop_err));
+      }
+      continue;
+    }
+
+    const Attribute *attr = prop.get_attribute_or_null();
+    if (!attr || !attr->has_timesamples()) {
+      continue;
+    }
+
+    append_time_samples(attr_name, attr->get_var().ts_raw());
+  }
+
+  if (anim_out->channels.empty()) {
+    return false;
+  }
+
+  anim_out->abs_path = abs_path.full_path_name();
+  anim_out->prim_name = prim.element_name();
+  anim_out->name = prim.element_name() + "_properties";
+  anim_out->source_type = AnimationSourceType::Unknown;
+  anim_out->num_animated_nodes = 1;
 
   return true;
 }
@@ -1836,6 +2444,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
           channel.target_type = ChannelTargetType::SceneNode;
           channel.path = AnimationPath::Translation;
           channel.target_node = target_node_index;
+          channel.target_prim_path = abs_path.full_path_name();
           channel.sampler = sampler_idx;
           anim_out->channels.push_back(channel);
         }
@@ -1862,6 +2471,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
           channel.target_type = ChannelTargetType::SceneNode;
           channel.path = AnimationPath::Rotation;
           channel.target_node = target_node_index;
+          channel.target_prim_path = abs_path.full_path_name();
           channel.sampler = sampler_idx;
           anim_out->channels.push_back(channel);
         }
@@ -1887,6 +2497,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
           channel.target_type = ChannelTargetType::SceneNode;
           channel.path = AnimationPath::Scale;
           channel.target_node = target_node_index;
+          channel.target_prim_path = abs_path.full_path_name();
           channel.sampler = sampler_idx;
           anim_out->channels.push_back(channel);
         }
@@ -2110,6 +2721,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
       channel.target_type = ChannelTargetType::SceneNode;
       channel.path = anim_path;
       channel.target_node = target_node_index;
+      channel.target_prim_path = abs_path.full_path_name();
       channel.sampler = sampler_idx;
       anim_out->channels.push_back(channel);
     }
@@ -2233,6 +2845,16 @@ static bool ExtractCommonLightProperties(
     }
   }
 
+  if (light.spectralEmission.authored() &&
+      !light.spectralEmission.is_blocked()) {
+    std::vector<value::float2> samples;
+    if (light.spectralEmission.get_value(&samples) && !samples.empty()) {
+      SpectralEmission spd;
+      spd.samples = std::move(samples);
+      rlight->spd_emission = std::move(spd);
+    }
+  }
+
   return true;
 }
 
@@ -2270,6 +2892,33 @@ static bool ExtractShapingProperties(
     float val;
     if (light.shapingConeSoftness.get_value().get(env.timecode, &val)) {
       rlight->shapingConeSoftness = val;
+    }
+  }
+
+  if (light.shapingIesFile.authored() && !light.shapingIesFile.is_blocked()) {
+    value::AssetPath asset;
+    std::string eval_err;
+    if (EvaluateTypedAnimatableAttribute(
+            env.stage, light.shapingIesFile,
+            "inputs:shaping:ies:file", &asset, &eval_err, env.timecode,
+            env.tinterp)) {
+      rlight->shapingIesFile = asset.GetAssetPath();
+    }
+  }
+
+  if (light.shapingIesAngleScale.authored() &&
+      !light.shapingIesAngleScale.is_blocked()) {
+    float val;
+    if (light.shapingIesAngleScale.get_value().get(env.timecode, &val)) {
+      rlight->shapingIesAngleScale = val;
+    }
+  }
+
+  if (light.shapingIesNormalize.authored() &&
+      !light.shapingIesNormalize.is_blocked()) {
+    bool val;
+    if (light.shapingIesNormalize.get_value().get(env.timecode, &val)) {
+      rlight->shapingIesNormalize = val;
     }
   }
 
@@ -2333,6 +2982,10 @@ bool RenderSceneConverter::ConvertDistantLight(
     return false;
   }
 
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
   // Extract angle (angular diameter in degrees)
   if (light.angle.authored() && !light.angle.is_blocked()) {
     float val;
@@ -2362,6 +3015,10 @@ bool RenderSceneConverter::ConvertDomeLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -2625,6 +3282,10 @@ bool RenderSceneConverter::ConvertDiskLight(
     return false;
   }
 
+  if (!ExtractShapingProperties(env, light, &rlight)) {
+    return false;
+  }
+
   // Extract radius
   if (light.radius.authored() && !light.radius.is_blocked()) {
     float val;
@@ -2654,6 +3315,10 @@ bool RenderSceneConverter::ConvertCylinderLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -2694,6 +3359,10 @@ bool RenderSceneConverter::ConvertGeometryLight(
 
   // Extract common properties
   if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  if (!ExtractShapingProperties(env, light, &rlight)) {
     return false;
   }
 
@@ -3010,10 +3679,11 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
       AnimationClip anim;
 
       if (!ConvertSkelAnimation(env, animPath, *panimPtr, skeleton_id, &anim)) {
-        PushError(fmt::format(
-            "Failed to convert SkelAnimation: {} for skeleton {}\n",
-            animPathStr, skeleton_id));
-        return false;
+        PushWarn(fmt::format(
+            "Skipping invalid SkelAnimation {} for skeleton {}: {}\n",
+            animPathStr, skeleton_id, GetError()));
+        _err.clear();
+        continue;
       }
 
       DCOUT("Converted SkelAnimation " << animPathStr << " for skeleton " << skeleton_id);
@@ -3040,6 +3710,77 @@ bool RenderSceneConverter::ConvertAllSkelAnimations(const RenderSceneConverterEn
 
   DCOUT("ConvertAllSkelAnimations: converted " << animations.size() << " animation clips");
   return true;
+}
+
+size_t ResolveLightLinking(const Stage &stage, RenderScene *scene) {
+  if (!scene) {
+    return 0;
+  }
+
+  size_t resolved = 0;
+
+  for (size_t li = 0; li < scene->lights.size(); li++) {
+    RenderLight &light = scene->lights[li];
+
+    Path lpath(light.abs_path, "");
+    if (!lpath.is_valid()) {
+      continue;
+    }
+    auto pret = stage.GetPrimAtPath(lpath);
+    if (!pret || !pret.value()) {
+      continue;
+    }
+    const Collection *coll = nullptr;
+    if (!GetCollection(*pret.value(), &coll) || !coll) {
+      continue;  // No collections authored -> links all (defaults).
+    }
+
+    // Resolve one link collection instance ("lightLink" / "shadowLink").
+    auto resolve_link = [&](const std::string &inst_name, bool *links_all,
+                            std::vector<int> *mesh_indices) -> bool {
+      const CollectionInstance *inst = nullptr;
+      if (!coll->get_instance(inst_name, &inst) || !inst) {
+        return false;
+      }
+      const bool authored = inst->has_membershipExpression() ||
+                            inst->includes.authored() ||
+                            inst->excludes.authored();
+      if (!authored) {
+        return false;  // unauthored -> keep default (links all)
+      }
+
+      CollectionMembershipQuery q =
+          BuildCollectionMembershipQuery(stage, *inst, light.abs_path);
+
+      *links_all = false;
+      mesh_indices->clear();
+      for (size_t mi = 0; mi < scene->meshes.size(); mi++) {
+        const std::string &mpath = scene->meshes[mi].abs_path;
+        if (mpath.empty()) {
+          continue;
+        }
+        if (IsPathIncluded(q, stage, Path(mpath, ""))) {
+          mesh_indices->push_back(static_cast<int>(mi));
+        }
+      }
+      return true;
+    };
+
+    bool any = false;
+    if (resolve_link("lightLink", &light.light_links_all,
+                     &light.light_link_mesh_indices)) {
+      any = true;
+    }
+    if (resolve_link("shadowLink", &light.shadow_links_all,
+                     &light.shadow_link_mesh_indices)) {
+      any = true;
+    }
+    if (any) {
+      resolved++;
+    }
+  }
+
+  return resolved;
 }
 
 }  // namespace tydra

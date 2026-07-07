@@ -53,18 +53,32 @@ set(TUSDVIEW_SOURCES
     app.cc
     config.cc
     scene_loader.cc
+    next_scene_loader.cc
     mesh_build.cc
+    texture_tools.cc
+    lightrt_mtlx_bridge.cc
+    gpu_budget_lod.cc
+    rt_lod.cc
+    displacement_bake.cc
     gizmo_build.cc
     parametric_tess.cc
     skinning.cc
     camera_nav.cc
+    frame_packet.cc
     gui.cc
     gui_stringify.cc
     gui_style.cc
     gl/gl_util.cc
-    gl/gl_renderer.cc)
+    gl/gl_renderer.cc
+    rt_bvh.cc
+    rt_scene_build.cc
+    cuda/cuda_raytracer.cc
+    hip/hip_raytracer.cc
+    lod_stream.cc)
 
 set(TUSDVIEW_COMMON_SOURCES
+    ${COMMON_DIR}/cuew/cuew.c
+    ${PROJECT_SOURCE_DIR}/src/external/hipew/hipew.c
     ${COMMON_DIR}/glad/src/glad.c
     ${COMMON_DIR}/imgui/imgui.cpp
     ${COMMON_DIR}/imgui/imgui_draw.cpp
@@ -77,7 +91,190 @@ set(TUSDVIEW_COMMON_SOURCES
     ${COMMON_DIR}/light3d/material.cpp
     ${COMMON_DIR}/light3d/texture.cpp)
 
-add_executable(${EXAMPLE_TARGET} ${TUSDVIEW_SOURCES} ${TUSDVIEW_COMMON_SOURCES})
+# Compile-check the vendored LightRT MaterialX/OpenPBR evaluator core. The
+# objects are intentionally not linked into tusdview yet because texture loading
+# still needs a single owning stb implementation in tinyusdz. `third_party_impl.c`
+# is compiled here to keep the vendor import portable, but remains unlinked.
+# `material_bind.c` stays vendored but is excluded because it is glTF-specific
+# rather than USD-facing.
+set(TUSDVIEW_LIGHTRT_MTLX_DIR ${PROJECT_SOURCE_DIR}/src/external/lightrt/mtlxrender)
+add_library(tusdview_lightrt_mtlx OBJECT
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/bsdf.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/env.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/third_party_impl.c)
+target_include_directories(tusdview_lightrt_mtlx PRIVATE
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+    ${PROJECT_SOURCE_DIR}/src/external
+    ${PROJECT_SOURCE_DIR}/src/external/tinyexr/include)
+target_compile_features(tusdview_lightrt_mtlx PRIVATE c_std_11)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(tusdview_lightrt_mtlx PRIVATE -w)
+endif()
+
+add_library(tusdview_lightrt_mtlx_const OBJECT
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+    lightrt_mtlx_texture_stub.c)
+target_include_directories(tusdview_lightrt_mtlx_const PRIVATE
+    ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+    ${PROJECT_SOURCE_DIR}/src/external)
+target_compile_features(tusdview_lightrt_mtlx_const PRIVATE c_std_11)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(tusdview_lightrt_mtlx_const PRIVATE -w)
+endif()
+
+add_executable(${EXAMPLE_TARGET}
+    ${TUSDVIEW_SOURCES}
+    ${TUSDVIEW_COMMON_SOURCES}
+    $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+add_dependencies(${EXAMPLE_TARGET} tusdview_lightrt_mtlx)
+
+if(TINYUSDZ_BUILD_TESTS)
+  add_executable(tusdview_lightrt_bridge_test
+      tests/lightrt_bridge_test.cc
+      lightrt_mtlx_bridge.cc
+      rt_scene_build.cc
+      rt_bvh.cc
+      displacement_bake.cc
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_lightrt_bridge_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_lightrt_bridge_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${COMMON_DIR})
+  if(UNIX AND NOT APPLE)
+    find_package(Threads REQUIRED)
+    target_link_libraries(tusdview_lightrt_bridge_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_openpbr_material_test
+      tests/openpbr_material_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_openpbr_material_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_openpbr_material_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_openpbr_material_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_openpbr_material_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_lighting_test
+      tests/lighting_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      rt_scene_build.cc
+      rt_bvh.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_lighting_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_lighting_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_lighting_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_lighting_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_geometry_primvar_test
+      tests/geometry_primvar_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_geometry_primvar_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_geometry_primvar_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_geometry_primvar_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_geometry_primvar_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_texture_pipeline_test
+      tests/texture_pipeline_test.cc
+      mesh_build.cc
+      texture_tools.cc
+      lightrt_mtlx_bridge.cc
+      displacement_bake.cc
+      skinning.cc
+      ${COMMON_DIR}/light3d/math.cpp
+      $<TARGET_OBJECTS:tusdview_lightrt_mtlx_const>)
+  target_compile_features(tusdview_texture_pipeline_test PRIVATE cxx_std_17)
+  target_include_directories(tusdview_texture_pipeline_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${PROJECT_SOURCE_DIR}/src
+      ${PROJECT_SOURCE_DIR}/src/external
+      ${COMMON_DIR})
+  target_link_libraries(tusdview_texture_pipeline_test PRIVATE
+      ${TINYUSDZ_TARGET_STATIC})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_texture_pipeline_test PRIVATE Threads::Threads)
+  endif()
+
+  add_executable(tusdview_lightrt_mtlx_eval_test
+      tests/lightrt_mtlx_eval_test.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/color.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_doc.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_eval.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/mtlx_xml.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/texture.c
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}/third_party_impl.c)
+  target_compile_features(tusdview_lightrt_mtlx_eval_test PRIVATE c_std_11)
+  target_include_directories(tusdview_lightrt_mtlx_eval_test PRIVATE
+      ${TUSDVIEW_LIGHTRT_MTLX_DIR}
+      ${PROJECT_SOURCE_DIR}/src/external)
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tusdview_lightrt_mtlx_eval_test PRIVATE m)
+  endif()
+endif()
+
+# Vendored texture tools (tir/texcomp/texpipe/envmap). All calls are routed
+# through texture_tools.cc and guarded by TUSDVIEW_WITH_TEXTOOLS, so the app
+# builds unchanged when TINYUSDZ_WITH_TEXTOOLS=OFF. Applied to every target
+# that compiles mesh_build.cc / texture_tools.cc.
+if(TINYUSDZ_WITH_TEXTOOLS)
+  set(TUSDVIEW_TEXTOOLS_CONSUMERS ${EXAMPLE_TARGET})
+  if(TINYUSDZ_BUILD_TESTS)
+    list(APPEND TUSDVIEW_TEXTOOLS_CONSUMERS
+        tusdview_openpbr_material_test
+        tusdview_lighting_test
+        tusdview_geometry_primvar_test
+        tusdview_texture_pipeline_test)
+  endif()
+  foreach(tt_consumer IN LISTS TUSDVIEW_TEXTOOLS_CONSUMERS)
+    target_link_libraries(${tt_consumer} PRIVATE tinyusdz_textools)
+    target_compile_definitions(${tt_consumer} PRIVATE TUSDVIEW_WITH_TEXTOOLS=1)
+  endforeach()
+endif()
 
 if(COMMAND add_sanitizers)
   add_sanitizers(${EXAMPLE_TARGET})
@@ -85,11 +282,36 @@ endif()
 
 target_compile_features(${EXAMPLE_TARGET} PRIVATE cxx_std_17)
 
+# tusdview uses no C++ RTTI and (outside the optional MCP server) no C++
+# exceptions; disable both to match the tinyusdz library build (TINYUSDZ_CXX_RTTI
+# / _EXCEPTIONS default Off). Scoped to C++ so vendored C sources (glad.c, cuew,
+# civetweb.c, ...) don't warn. The MCP server TUs re-enable exceptions below.
+if(NOT TINYUSDZ_CXX_RTTI)
+  if(MSVC)
+    target_compile_options(${EXAMPLE_TARGET}
+                           PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+  else()
+    target_compile_options(${EXAMPLE_TARGET}
+                           PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+  endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+  if(MSVC)
+    target_compile_options(${EXAMPLE_TARGET}
+                           PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+  else()
+    target_compile_options(${EXAMPLE_TARGET}
+                           PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+  endif()
+endif()
+
 target_include_directories(${EXAMPLE_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/src/external
     ${COMMON_DIR}
+    ${COMMON_DIR}/cuew
+    ${PROJECT_SOURCE_DIR}/src/external/hipew
     ${COMMON_DIR}/glad/include
     ${COMMON_DIR}/imgui)
 
@@ -98,6 +320,21 @@ target_link_libraries(${EXAMPLE_TARGET} PRIVATE
     glfw
     OpenGL::GL
     ${CMAKE_DL_LIBS})
+
+# --- `next` lazy loader + tydra-next converter (large-scene preview path) -----
+# Mirrors tools/tusdrender/CMakeLists.txt: build the next libs on demand (with
+# the std::thread parallel-compose path forced on) and link them. Used by
+# next_scene_loader.cc (the --next OpenGL mesh preview).
+set(TINYUSDZ_NEXT_ENABLE_THREAD ON CACHE BOOL "" FORCE)
+if(NOT TARGET tinyusdz_next)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/next
+                   ${CMAKE_BINARY_DIR}/tusdview_next_build)
+endif()
+if(NOT TARGET tydra_next)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/tydra/next
+                   ${CMAKE_BINARY_DIR}/tusdview_tydra_next_build)
+endif()
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE tinyusdz_next tydra_next)
 
 if(UNIX AND NOT APPLE)
   find_package(X11 REQUIRED)
@@ -150,28 +387,67 @@ endif()
 # Dependencies (nlohmann/json + civetweb) are vendored in tinyusdz/src/external,
 # so this defaults ON (no system packages needed).
 # ---------------------------------------------------------------------------
+# civetweb HTTP/WebSocket server. Shared by the WebSocket image-stream server
+# (always built) and the optional MCP server. Built with websockets ENABLED.
+target_sources(${EXAMPLE_TARGET} PRIVATE
+    stream/stream_server.cc
+    ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
+target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
+    NO_SSL NO_CGI USE_WEBSOCKET=1)  # civetweb: no OpenSSL/CGI; websockets on
+target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
+if(UNIX)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
+elseif(WIN32)
+  target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32)  # civetweb Winsock
+  if(MINGW)
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE winpthread)
+  endif()
+endif()
+# stream_server.cc uses nlohmann/json (needs exceptions when built -fno-exceptions).
+if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+  set_source_files_properties(stream/stream_server.cc
+                              PROPERTIES COMPILE_OPTIONS "-fexceptions")
+elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+  set_source_files_properties(stream/stream_server.cc
+                              PROPERTIES COMPILE_OPTIONS "/EHsc")
+endif()
+
 option(TUSDVIEW_ENABLE_MCP "Build the embedded MCP server (stdio + HTTP)" ON)
 if(TUSDVIEW_ENABLE_MCP)
   target_sources(${EXAMPLE_TARGET} PRIVATE
-      mcp/mcp_server.cc
-      mcp/mcp_http.cc
-      mcp/mcp_stdio.cc
-      mcp/app_mcp.cc
-      ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c)
-  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE
-      TUSDVIEW_HAVE_MCP=1
-      NO_SSL NO_CGI USE_WEBSOCKET=0)  # civetweb: no OpenSSL / CGI / websockets
-  target_link_libraries(${EXAMPLE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
-  if(UNIX)
-    target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
-  elseif(WIN32)
-    # civetweb's HTTP transport uses Winsock (socket/bind/listen/WSAStartup),
-    # and its clock_gettime() comes from winpthread under mingw.
-    target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32 winpthread)
+      mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc)
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_HAVE_MCP=1)
+  # The MCP server uses try/catch around JSON-RPC; it needs C++ exceptions even
+  # when the rest of tusdview is built -fno-exceptions.
+  if(NOT TINYUSDZ_CXX_EXCEPTIONS AND NOT MSVC)
+    set_source_files_properties(
+        mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
+        PROPERTIES COMPILE_OPTIONS "-fexceptions")
+  elseif(NOT TINYUSDZ_CXX_EXCEPTIONS AND MSVC)
+    set_source_files_properties(
+        mcp/mcp_server.cc mcp/mcp_http.cc mcp/mcp_stdio.cc mcp/app_mcp.cc
+        PROPERTIES COMPILE_OPTIONS "/EHsc")
   endif()
   message(STATUS "tusdview: embedded MCP server ENABLED (stdio + HTTP)")
 else()
   message(STATUS "tusdview: embedded MCP server disabled")
+endif()
+
+# ---------------------------------------------------------------------------
+# Experimental multi-threaded rendering (--threaded): a dedicated render thread owns
+# the GL context / Vulkan queue so the UI loop never blocks on the GPU. Covers both
+# the GL and Vulkan (raster + ray-query) backends; verified byte-identical to the
+# single-threaded path. OFF by default — the single-threaded path is unchanged when
+# off. See doc/threading-stage2.md. (Macro name kept GL_THREAD for compat.)
+# ---------------------------------------------------------------------------
+option(TUSDVIEW_ENABLE_GL_THREAD
+       "Build the experimental threaded GL/Vulkan render path (--threaded)" OFF)
+if(TUSDVIEW_ENABLE_GL_THREAD)
+  target_compile_definitions(${EXAMPLE_TARGET} PRIVATE TUSDVIEW_ENABLE_GL_THREAD=1)
+  if(UNIX)
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
+  endif()
+  message(STATUS "tusdview: experimental threaded GL/Vulkan render path ENABLED (--threaded)")
 endif()
 
 set_target_properties(${EXAMPLE_TARGET} PROPERTIES

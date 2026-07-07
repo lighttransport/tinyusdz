@@ -19,7 +19,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -37,7 +36,31 @@
 #define STBI_ONLY_PNG
 #include "stb_image.h"
 
-namespace fs = std::filesystem;
+// Use the vendored ghc::filesystem (a portable std::filesystem replacement, the
+// same one tinyusdz::io uses internally) so this example does not depend on
+// std::filesystem. This file relies on the fs::path value type pervasively, so
+// it keeps the filesystem API rather than the string-based io-util helpers.
+// ghc/filesystem.hpp pulls in <windows.h> on Windows; keep it from defining the
+// min/max macros (which would break std::numeric_limits<>::max() below) and trim
+// the surface area.
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#endif
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+#include "filesystem/include/ghc/filesystem.hpp"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+namespace fs = ghc::filesystem;
 
 namespace {
 
@@ -340,7 +363,8 @@ bool ExpandIncludes(const std::string &xml, const fs::path &base_dir,
     const std::string tag = xml.substr(pos, end - pos + 1);
     const std::string file = AttributeFromTag(tag, "file");
     if (!file.empty()) {
-      const fs::path include_path = fs::weakly_canonical(base_dir / file);
+      std::error_code wc_ec;
+      const fs::path include_path = fs::weakly_canonical(base_dir / file, wc_ec);
       if (seen->count(include_path)) {
         if (err) *err = "Recursive include: " + include_path.string();
         return false;
@@ -1903,8 +1927,8 @@ void AddMujocoMaterialsJson(const pugi::xml_node &root, const fs::path &base_dir
         // instead of carrying a machine-specific absolute path. Keep the
         // absolute source in `texture_abs` (ignored by the converter) so usdz
         // export can embed the bytes into the package.
-        const fs::path abs_tex = fs::absolute(it->second);
         std::error_code ec;
+        const fs::path abs_tex = fs::absolute(it->second, ec);
         const fs::path rel = fs::relative(abs_tex, base_dir, ec);
         const std::string rel_s = rel.generic_string();
         mat["texture"] = (ec || rel_s.empty() || rel_s.rfind("..", 0) == 0)
@@ -2225,7 +2249,8 @@ bool ExpandAttachments(pugi::xml_node root, const fs::path &base_dir,
       const std::string name = m.attribute("name").as_string();
       const std::string file = m.attribute("file").as_string();
       if (!name.empty() && !file.empty()) {
-        models[name] = fs::weakly_canonical(base_dir / file);
+        std::error_code wc_ec;
+        models[name] = fs::weakly_canonical(base_dir / file, wc_ec);
       }
     }
   }
@@ -2282,8 +2307,9 @@ bool ExpandAttachments(pugi::xml_node root, const fs::path &base_dir,
           pugi::xml_attribute f = a.attribute("file");
           if (f && !std::string(f.value()).empty() &&
               fs::path(f.value()).is_relative()) {
-            const fs::path abs =
-                fs::weakly_canonical(child_dir / child_meshdir / f.value());
+            std::error_code wc_ec;
+            const fs::path abs = fs::weakly_canonical(
+                child_dir / child_meshdir / f.value(), wc_ec);
             f.set_value(abs.string().c_str());
           }
         }
@@ -2593,7 +2619,8 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  const fs::path input_path = fs::absolute(opts.input_filename);
+  std::error_code abs_ec;
+  const fs::path input_path = fs::absolute(opts.input_filename, abs_ec);
   std::string xml;
   if (!ReadFile(input_path, &xml, &err)) {
     std::cerr << "urdf-to-usd: " << err << "\n";

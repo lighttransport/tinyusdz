@@ -147,7 +147,7 @@ Coverage of OpenUSD schema domains in tinyusdz.
 | PhysicsLimitAPI | API (multi) | done | |
 
 **Also: MuJoCo extensions** (tinyusdz-specific, not in OpenUSD):
-MjcActuator, MjcTendon, MjcKeyframe (concrete); MjcSceneAPI, MjcJointAPI, MjcCollisionAPI, MjcMeshCollisionAPI, MjcMaterialAPI, MjcSiteAPI, MjcImageableAPI, MjcEqualityAPI and variants (API schemas).
+MjcActuator, MjcTendon, MjcKeyframe, MjcSensor (concrete); MjcSceneAPI, MjcJointAPI, MjcCollisionAPI, MjcMeshCollisionAPI, MjcMaterialAPI, MjcSiteAPI, MjcImageableAPI, MjcEqualityAPI and variants (API schemas).
 
 **Coverage: 8/8 concrete, 9/9 API -- 100%**
 

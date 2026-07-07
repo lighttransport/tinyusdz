@@ -131,9 +131,11 @@ struct XformOp {
     return _var.get_interpolated_value<T>(t, interp, dst);
   }
 
-  const primvar::PrimVar &get_var() const { return _var; }
+  const primvar::PrimVar &get_var() const TINYUSDZ_LIFETIMEBOUND {
+    return _var;
+  }
 
-  primvar::PrimVar &var() { return _var; }
+  primvar::PrimVar &var() TINYUSDZ_LIFETIMEBOUND { return _var; }
 
   // Connection support
   bool has_connections() const { return !_connections.empty(); }
@@ -154,8 +156,12 @@ struct XformOp {
     return nonstd::nullopt;
   }
 
-  const std::vector<Path> &connections() const { return _connections; }
-  std::vector<Path> &connections() { return _connections; }
+  const std::vector<Path> &connections() const TINYUSDZ_LIFETIMEBOUND {
+    return _connections;
+  }
+  std::vector<Path> &connections() TINYUSDZ_LIFETIMEBOUND {
+    return _connections;
+  }
 
   // Check if this xformOp is connection-only (no default value or timeSamples)
   bool is_connection_only() const {

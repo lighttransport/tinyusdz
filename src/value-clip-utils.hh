@@ -311,154 +311,170 @@ struct ClipSetMetadata {
 /// @param[out] err Error message
 /// @return true if at least one clip set was found
 ///
-inline bool ParseClipSetMetadata(
-    const std::map<std::string, MetaVariable> &clips_dict,
-    std::vector<std::string> *assetPaths,
-    std::vector<std::pair<double, double>> *times,
-    std::vector<std::pair<double, int>> *active,
-    std::string *primPath,
-    std::string *err) {
+///
+/// Parse a single clip set Dictionary (one named entry of the `clips` dict)
+/// into a ClipSetMetadata. Handles both template-based and explicit clips, plus
+/// primPath / manifestAssetPath / interpolateMissingClipValues.
+///
+/// @return true if the dictionary yielded a usable clip set (non-empty
+///         assetPaths after template expansion).
+///
+inline bool ParseOneClipSetDict(const Dictionary &d, ClipSetMetadata *result,
+                                std::string *err) {
+  if (!result) return false;
 
-  // Iterate over clip set names (there may be multiple, use the first one)
+  // Helper to extract double from dictionary
+  auto get_double_from = [](const Dictionary &dict, const char *key,
+                            double *out) {
+    auto it = dict.find(key);
+    if (it != dict.end()) {
+      auto v = it->second.get_value<double>();
+      if (v) {
+        *out = v.value();
+      }
+    }
+  };
+
+  // Check for template metadata first
+  auto tmpl_it = d.find("templateAssetPath");
+  if (tmpl_it != d.end()) {
+    // Extract template parameters
+    std::string templateAssetPath;
+    double templateStartTime = 0, templateEndTime = 0, templateStride = 1;
+    double templateActiveOffset = 0;
+
+    if (auto v = tmpl_it->second.get_value<value::AssetPath>()) {
+      templateAssetPath = v.value().GetAssetPath();
+    } else if (auto sv = tmpl_it->second.get_value<std::string>()) {
+      templateAssetPath = sv.value();
+    }
+
+    get_double_from(d, "templateStartTime", &templateStartTime);
+    get_double_from(d, "templateEndTime", &templateEndTime);
+    get_double_from(d, "templateStride", &templateStride);
+    get_double_from(d, "templateActiveOffset", &templateActiveOffset);
+
+    ExpandedClipMetadata expanded;
+    if (ExpandTemplateClipMetadata(templateAssetPath, templateStartTime,
+                                    templateEndTime, templateStride,
+                                    templateActiveOffset, &expanded, err)) {
+      result->assetPaths = expanded.assetPaths;
+      result->times = expanded.times;
+      result->active = expanded.active;
+    }
+  } else {
+    // Explicit metadata
+    auto ap_it = d.find("assetPaths");
+    if (ap_it != d.end()) {
+      auto v = ap_it->second.get_value<std::vector<value::AssetPath>>();
+      if (v) {
+        for (const auto &ap : v.value()) {
+          result->assetPaths.push_back(ap.GetAssetPath());
+        }
+      }
+    }
+
+    auto times_it = d.find("times");
+    if (times_it != d.end()) {
+      auto v = times_it->second.get_value<std::vector<value::double2>>();
+      if (v) {
+        for (const auto &tv : v.value()) {
+          result->times.emplace_back(tv[0], tv[1]);
+        }
+      }
+    }
+
+    auto active_it = d.find("active");
+    if (active_it != d.end()) {
+      auto v = active_it->second.get_value<std::vector<value::double2>>();
+      if (v) {
+        for (const auto &a : v.value()) {
+          result->active.emplace_back(a[0], static_cast<int>(a[1]));
+        }
+      }
+    }
+  }
+
+  // primPath
+  auto pp_it = d.find("primPath");
+  if (pp_it != d.end()) {
+    auto v = pp_it->second.get_value<std::string>();
+    if (v) {
+      result->primPath = v.value();
+    } else {
+      auto sv = pp_it->second.get_value<value::StringData>();
+      if (sv) {
+        result->primPath = sv.value().value;
+      }
+    }
+  }
+
+  // manifestAssetPath
+  auto manifest_it = d.find("manifestAssetPath");
+  if (manifest_it != d.end()) {
+    if (auto v = manifest_it->second.get_value<value::AssetPath>()) {
+      result->manifestAssetPath = v.value().GetAssetPath();
+    }
+  }
+
+  // interpolateMissingClipValues (Spec 12.3.4.6)
+  auto interp_it = d.find("interpolateMissingClipValues");
+  if (interp_it != d.end()) {
+    if (auto v = interp_it->second.get_value<bool>()) {
+      result->interpolateMissingClipValues = v.value();
+    }
+  }
+
+  return !result->assetPaths.empty();
+}
+
+///
+/// Parse ALL named clip sets from the `clips` metadata dictionary (Spec
+/// 12.3.4.1.1 allows multiple clip sets, e.g. `clips = { dict anim = {...},
+/// dict layout = {...} }`). Each named sub-dictionary becomes one
+/// ClipSetMetadata. Sets are returned in the dictionary's (deterministic, name-
+/// sorted) order; tinyusdz does not yet honor an explicit `clipSets` ordering
+/// list-op, so name order approximates clip-set strength.
+///
+/// @return true if at least one usable clip set was found.
+///
+inline bool ParseAllClipSetMetadata(
+    const std::map<std::string, MetaVariable> &clips_dict,
+    std::vector<ClipSetMetadata> *out,
+    std::string *err) {
+  if (!out) return false;
+
   for (const auto &clipset_entry : clips_dict) {
     // Each clip set is a Dictionary stored as MetaVariable
     auto clipset_opt = clipset_entry.second.get_value<Dictionary>();
     if (!clipset_opt) continue;
 
-    const Dictionary &d = clipset_opt.value();
-
-    // Helper to extract double from dictionary
-    auto get_double_from = [](const Dictionary &dict, const char *key, double *out) {
-      auto it = dict.find(key);
-      if (it != dict.end()) {
-        auto v = it->second.get_value<double>();
-        if (v) { *out = v.value(); }
-      }
-    };
-
-    // Check for template metadata first
-    auto tmpl_it = d.find("templateAssetPath");
-    if (tmpl_it != d.end()) {
-      // Extract template parameters
-      std::string templateAssetPath;
-      double templateStartTime = 0, templateEndTime = 0, templateStride = 1;
-      double templateActiveOffset = 0;
-
-      if (auto v = tmpl_it->second.get_value<value::AssetPath>()) {
-        templateAssetPath = v.value().GetAssetPath();
-      } else if (auto sv = tmpl_it->second.get_value<std::string>()) {
-        templateAssetPath = sv.value();
-      }
-
-      get_double_from(d, "templateStartTime", &templateStartTime);
-      get_double_from(d, "templateEndTime", &templateEndTime);
-      get_double_from(d, "templateStride", &templateStride);
-      get_double_from(d, "templateActiveOffset", &templateActiveOffset);
-
-      ExpandedClipMetadata expanded;
-      if (ExpandTemplateClipMetadata(templateAssetPath, templateStartTime,
-                                      templateEndTime, templateStride,
-                                      templateActiveOffset, &expanded, err)) {
-        if (assetPaths) *assetPaths = expanded.assetPaths;
-        if (times) *times = expanded.times;
-        if (active) *active = expanded.active;
-      }
-    } else {
-      // Explicit metadata
-      auto ap_it = d.find("assetPaths");
-      if (ap_it != d.end() && assetPaths) {
-        auto v = ap_it->second.get_value<std::vector<value::AssetPath>>();
-        if (v) {
-          for (const auto &ap : v.value()) {
-            assetPaths->push_back(ap.GetAssetPath());
-          }
-        }
-      }
-
-      auto times_it = d.find("times");
-      if (times_it != d.end() && times) {
-        auto v = times_it->second.get_value<std::vector<value::double2>>();
-        if (v) {
-          for (const auto &tv : v.value()) {
-            times->emplace_back(tv[0], tv[1]);
-          }
-        }
-      }
-
-      auto active_it = d.find("active");
-      if (active_it != d.end() && active) {
-        auto v = active_it->second.get_value<std::vector<value::double2>>();
-        if (v) {
-          for (const auto &a : v.value()) {
-            active->emplace_back(a[0], static_cast<int>(a[1]));
-          }
-        }
-      }
+    ClipSetMetadata meta;
+    if (ParseOneClipSetDict(clipset_opt.value(), &meta, err)) {
+      out->push_back(std::move(meta));
     }
-
-    // primPath
-    auto pp_it = d.find("primPath");
-    if (pp_it != d.end() && primPath) {
-      auto v = pp_it->second.get_value<std::string>();
-      if (v) {
-        *primPath = v.value();
-      } else {
-        auto sv = pp_it->second.get_value<value::StringData>();
-        if (sv) {
-          *primPath = sv.value().value;
-        }
-      }
-    }
-
-    // Use first clip set only
-    return true;
   }
 
-  return false;
+  return !out->empty();
 }
 
 ///
-/// Parse clip set metadata into a ClipSetMetadata struct.
-/// Extracts all fields including manifestAssetPath and interpolateMissingClipValues.
+/// Parse clip set metadata into a single ClipSetMetadata struct (the first
+/// usable clip set). Retained for callers that only need one set; new code that
+/// must honor multiple clip sets should use ParseAllClipSetMetadata.
 ///
 inline bool ParseClipSetMetadataFull(
     const std::map<std::string, MetaVariable> &clips_dict,
     ClipSetMetadata *result,
     std::string *err) {
-
   if (!result) return false;
 
-  if (!ParseClipSetMetadata(clips_dict, &result->assetPaths, &result->times,
-                             &result->active, &result->primPath, err)) {
+  std::vector<ClipSetMetadata> all;
+  if (!ParseAllClipSetMetadata(clips_dict, &all, err)) {
     return false;
   }
 
-  // Extract additional fields from the first clip set
-  for (const auto &clipset_entry : clips_dict) {
-    auto clipset_opt = clipset_entry.second.get_value<Dictionary>();
-    if (!clipset_opt) continue;
-
-    const Dictionary &d = clipset_opt.value();
-
-    // manifestAssetPath
-    auto manifest_it = d.find("manifestAssetPath");
-    if (manifest_it != d.end()) {
-      if (auto v = manifest_it->second.get_value<value::AssetPath>()) {
-        result->manifestAssetPath = v.value().GetAssetPath();
-      }
-    }
-
-    // interpolateMissingClipValues (Spec 12.3.4.6)
-    auto interp_it = d.find("interpolateMissingClipValues");
-    if (interp_it != d.end()) {
-      if (auto v = interp_it->second.get_value<bool>()) {
-        result->interpolateMissingClipValues = v.value();
-      }
-    }
-
-    break;  // first clip set only
-  }
-
+  *result = std::move(all.front());
   return true;
 }
 

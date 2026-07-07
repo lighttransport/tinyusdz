@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <chrono>
+#include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -67,7 +69,45 @@ class Logger {
   bool shouldLog(LogLevel msgLevel) const {
     return static_cast<int>(msgLevel) >= static_cast<int>(_level);
   }
-  
+
+  // Duplicate-message suppression. When enabled (default), a fully-composed log
+  // line that was already emitted is dropped instead of being printed again.
+  // This tames pathological spam such as per-prim/per-texture traces that fire
+  // thousands of times and repeat on every re-conversion. The dedup memory is
+  // bounded; once it fills it is cleared so genuinely new messages keep
+  // flowing.
+  void setDedup(bool enabled) { _dedup_enabled = enabled; }
+  bool getDedup() const { return _dedup_enabled; }
+  void setDedupCapacity(size_t cap) { _dedup_cap = cap ? cap : 1; }
+  void resetDedup() { _dedup_seen.clear(); }
+
+  // Emit a fully-composed message at the given level, honoring the level
+  // threshold and duplicate suppression. The macros below funnel through here.
+  void emit(LogLevel level, const char* file, const char* func, int line,
+            const std::string& msg) {
+    if (!shouldLog(level)) {
+      return;
+    }
+    if (_dedup_enabled) {
+      size_t h = std::hash<std::string>{}(msg);
+      h ^= std::hash<const char*>{}(file) + 0x9e3779b97f4a7c15ULL + (h << 6) +
+           (h >> 2);
+      h ^= static_cast<size_t>(line) + 0x9e3779b97f4a7c15ULL + (h << 6) +
+           (h >> 2);
+      auto it = _dedup_seen.find(h);
+      if (it != _dedup_seen.end()) {
+        it->second++;  // count suppressed repeats (for potential diagnostics)
+        return;
+      }
+      if (_dedup_seen.size() >= _dedup_cap) {
+        _dedup_seen.clear();
+      }
+      _dedup_seen.emplace(h, 1u);
+    }
+    (*_stream) << "[" << getLevelName(level) << "] " << file << ":" << func
+               << ":" << std::to_string(line) << " " << msg << "\n";
+  }
+
   // Helper to get level name
   static const char* getLevelName(LogLevel level) {
     switch (level) {
@@ -78,7 +118,13 @@ class Logger {
       case LogLevel::Critical: return "CRITICAL";
       case LogLevel::Off: return "UNKNOWN";
     }
+    return "UNKNOWN";
   }
+
+ private:
+  bool _dedup_enabled = true;
+  size_t _dedup_cap = 16384;
+  std::unordered_map<size_t, uint32_t> _dedup_seen;
 };
 
 // Trace data structure for storing timing information
@@ -539,11 +585,12 @@ class Trace {
 #else
 #define TUSDZ_LOG_I(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Info)) {                              \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
-          << "[INFO] " << __FILE__ << ":" << __func__ << ":"                   \
-          << std::to_string(__LINE__) << " " << x << "\n";                     \
+    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Info)) {           \
+      std::ostringstream _tusdz_oss;                                            \
+      _tusdz_oss << x;                                                          \
+      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Info, __FILE__,           \
+                         __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
 #endif
@@ -557,41 +604,45 @@ class Trace {
 #else
 #define TUSDZ_LOG_D(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Debug)) {                             \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
-          << "[DEBUG] " << __FILE__ << ":" << __func__ << ":"                  \
-          << std::to_string(__LINE__) << " " << x << "\n";                     \
+    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Debug)) {          \
+      std::ostringstream _tusdz_oss;                                            \
+      _tusdz_oss << x;                                                          \
+      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Debug, __FILE__,          \
+                         __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
 
 #define TUSDZ_LOG_W(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Warn)) {                              \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
-          << "[WARN] " << __FILE__ << ":" << __func__ << ":"                   \
-          << std::to_string(__LINE__) << " " << x << "\n";                     \
+    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Warn)) {           \
+      std::ostringstream _tusdz_oss;                                            \
+      _tusdz_oss << x;                                                          \
+      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Warn, __FILE__,           \
+                         __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
 
 #define TUSDZ_LOG_E(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Error)) {                             \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
-          << "[ERROR] " << __FILE__ << ":" << __func__ << ":"                  \
-          << std::to_string(__LINE__) << " " << x << "\n";                     \
+    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Error)) {          \
+      std::ostringstream _tusdz_oss;                                            \
+      _tusdz_oss << x;                                                          \
+      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Error, __FILE__,          \
+                         __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
 
 #define TUSDZ_LOG_C(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Critical)) {                          \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
-          << "[CRITICAL] " << __FILE__ << ":" << __func__ << ":"               \
-          << std::to_string(__LINE__) << " " << x << "\n";                     \
+    auto &_tusdz_logger = tinyusdz::logging::Logger::getInstance();             \
+    if (_tusdz_logger.shouldLog(tinyusdz::logging::LogLevel::Critical)) {       \
+      std::ostringstream _tusdz_oss;                                            \
+      _tusdz_oss << x;                                                          \
+      _tusdz_logger.emit(tinyusdz::logging::LogLevel::Critical, __FILE__,       \
+                         __func__, __LINE__, _tusdz_oss.str());                 \
     }                                                                           \
   } while (false)
 #endif
