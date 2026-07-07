@@ -539,6 +539,240 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
                    SegmentSink* segsink = nullptr);
 
+// Emit `variantSet "name" = { "opt" (meta) { body } ... }` blocks at `depth`.
+// Bodies merge two representations: inline VariantData (USDA parse /
+// authoring: properties, relationships, arcs, nested sets, content sub-layer)
+// and bracketed holder prims in `layer` (crate representation). When both
+// exist (MergeVariantData pattern), inline opinions win and the holder
+// contributes only what the inline data lacks.
+void WriteVariantSets(StreamWriter& os,
+                      const std::vector<VariantSetData>& sets,
+                      const Layer& layer, const std::string& owner_path,
+                      int depth, const USDAWriteOptions& opts,
+                      SegmentSink* segsink) {
+  for (const VariantSetData& vs : sets) {
+    os << "\n";
+    WriteIndent(os, depth, opts.indent);
+    os << "variantSet " << EscapeString(vs.name) << " = {\n";
+    for (const VariantData& var : vs.variants) {
+      const std::string holder_path =
+          owner_path + "/{" + vs.name + "=" + var.name + "}";
+      const PrimSpec* holder = layer.prim_at_path(holder_path);
+
+      WriteIndent(os, depth + 1, opts.indent);
+      os << EscapeString(var.name);
+
+      // Variant OPTION metadata: composition arcs / active / hidden / doc
+      // authored on the option itself (inline or on the holder prim).
+      const PrimSpecMeta* hmeta = holder ? &holder->meta() : nullptr;
+      auto pick_arcs = [&](const std::vector<std::string>& inline_arcs,
+                           const std::vector<std::string>* holder_arcs)
+          -> const std::vector<std::string>& {
+        static const std::vector<std::string> kEmpty;
+        if (!inline_arcs.empty()) return inline_arcs;
+        return holder_arcs ? *holder_arcs : kEmpty;
+      };
+      const std::vector<std::string>& o_refs =
+          pick_arcs(var.references, hmeta ? &hmeta->references : nullptr);
+      const std::vector<std::string>& o_pls =
+          pick_arcs(var.payloads, hmeta ? &hmeta->payloads : nullptr);
+      const std::vector<std::string>& o_inh =
+          pick_arcs(var.inherits, hmeta ? &hmeta->inherits : nullptr);
+      const std::vector<std::string>& o_spz =
+          pick_arcs(var.specializes, hmeta ? &hmeta->specializes : nullptr);
+      const bool o_inactive = !var.active || (hmeta && !hmeta->active);
+      const bool o_hidden = var.hidden || (hmeta && hmeta->hidden);
+      const std::string& o_doc =
+          !var.doc.empty() ? var.doc : (hmeta ? hmeta->doc() : var.doc);
+      // Nested variant SELECTIONS: authored on the option's own metadata
+      // (`"o1" ( variants = { string inner = "i2" } )`). Gather from the
+      // inline nested sets, or the holder's meta for crate-loaded layers.
+      std::vector<std::pair<std::string, std::string>> o_sels;
+      {
+        const std::vector<VariantSetData>& nsets =
+            !var.variantSets.empty()
+                ? var.variantSets
+                : (hmeta ? hmeta->variantSets() : var.variantSets);
+        for (const VariantSetData& nvs : nsets) {
+          if (!nvs.selected.empty()) o_sels.emplace_back(nvs.name, nvs.selected);
+        }
+        if (hmeta) {
+          for (const auto& kv : hmeta->variantSelections()) {
+            bool have = false;
+            for (auto& e : o_sels) {
+              if (e.first == kv.first) { have = true; break; }
+            }
+            if (!have && !kv.second.empty()) o_sels.push_back(kv);
+          }
+        }
+      }
+      const bool has_opt_meta = !o_refs.empty() || !o_pls.empty() ||
+                                !o_inh.empty() || !o_spz.empty() ||
+                                o_inactive || o_hidden || !o_sels.empty() ||
+                                (!o_doc.empty() && opts.include_comments);
+      if (has_opt_meta) {
+        os << " (\n";
+        auto arc_line = [&](const char* keyword,
+                            const std::vector<std::string>& arcs) {
+          for (const std::string& a : arcs) {
+            WriteIndent(os, depth + 2, opts.indent);
+            os << "prepend " << keyword << " = ";
+            if (!a.empty() && (a[0] == '@' || a[0] == '<'))
+              os << a;
+            else
+              os << "@" << a << "@";
+            os << "\n";
+          }
+        };
+        arc_line("references", o_refs);
+        arc_line("payload", o_pls);
+        arc_line("inherits", o_inh);
+        arc_line("specializes", o_spz);
+        if (o_inactive) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "active = false\n";
+        }
+        if (o_hidden) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "hidden = true\n";
+        }
+        if (!o_doc.empty() && opts.include_comments) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "doc = " << EscapeString(o_doc) << "\n";
+        }
+        if (!o_sels.empty()) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "variants = {\n";
+          for (const auto& kv : o_sels) {
+            WriteIndent(os, depth + 3, opts.indent);
+            os << "string " << kv.first << " = " << EscapeString(kv.second)
+               << "\n";
+          }
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "}\n";
+        }
+        WriteIndent(os, depth + 1, opts.indent);
+        os << ")";
+      }
+      os << " {\n";
+
+      PrintOptions vpopts;
+      vpopts.float_precision = opts.float_precision;
+      vpopts.double_precision = opts.double_precision;
+      for (const VariantProperty& vp : var.properties) {
+        if (vp.value.is_empty()) continue;  // unknown-typed placeholder
+        WriteIndent(os, depth + 2, opts.indent);
+        if (opts.emit_custom && (vp.flags & PropSlot::kFlagCustom)) {
+          os << "custom ";
+        }
+        if (vp.flags & PropSlot::kFlagUniform) os << "uniform ";
+        const char* tn = GetTypeName(vp.value.type_id());
+        os << (tn ? tn : "token");
+        if (vp.value.is_array()) os << "[]";
+        os << " " << vp.name << " = ";
+        PrintValue(os, vp.value, vpopts);
+        os << "\n";
+      }
+      for (const auto& rel : var.relationships) {
+        WriteIndent(os, depth + 2, opts.indent);
+        os << "rel " << rel.first;
+        if (rel.second.size() == 1) {
+          os << " = <" << rel.second[0].str() << ">";
+        } else if (!rel.second.empty()) {
+          os << " = [";
+          for (size_t t = 0; t < rel.second.size(); ++t) {
+            if (t) os << ", ";
+            os << "<" << rel.second[t].str() << ">";
+          }
+          os << "]";
+        }
+        os << "\n";
+      }
+
+      // Nested variant sets authored on this option.
+      if (!var.variantSets.empty()) {
+        WriteVariantSets(os, var.variantSets, layer, holder_path, depth + 2,
+                         opts, segsink);
+      }
+
+      // Variant CHILD prims + holder extras. Inline content sub-layer first
+      // (USDA representation), then holder contributions not already covered
+      // by the inline data (crate representation / merged pattern).
+      if (var.content) {
+        if (const PrimSpec* self = var.content->prim_at_path("/__self__")) {
+          // The content root's OWN opinions (time-sampled attributes routed
+          // here by the parser, connections, ...) belong in the option body
+          // too — only its non-time-sampled defaults are already covered by
+          // the inline VariantProperty list.
+          auto has_inline = [&](const std::string& name) {
+            for (const VariantProperty& vp : var.properties) {
+              if (vp.name == name) return true;
+            }
+            return false;
+          };
+          PropNameTable& stable = GetPropNameTable();
+          for (const PropSlot& sslot : self->properties().slots()) {
+            if (sslot.is_relationship()) continue;
+            if (!sslot.is_time_sampled() &&
+                has_inline(stable.get(sslot.name_id))) {
+              continue;
+            }
+            WriteProperty(os, sslot, *self, depth + 2, opts, segsink);
+          }
+          for (uint32_t ci : self->child_indices()) {
+            const PrimSpec* child = var.content->prim(ci);
+            if (!child) continue;
+            os << "\n";
+            WritePrimSpec(os, *child, *var.content, depth + 2, opts, segsink);
+          }
+        }
+      }
+      if (holder) {
+        auto has_inline_prop = [&](const std::string& name) {
+          for (const VariantProperty& vp : var.properties) {
+            if (vp.name == name) return true;
+          }
+          return false;
+        };
+        PropNameTable& htable = GetPropNameTable();
+        for (const PropSlot& hslot : holder->properties().slots()) {
+          if (hslot.is_relationship()) continue;
+          if (has_inline_prop(htable.get(hslot.name_id))) continue;
+          WriteProperty(os, hslot, *holder, depth + 2, opts, segsink);
+        }
+        for (const std::string& rel_name : holder->relationship_names()) {
+          if (var.relationships.find(rel_name) != var.relationships.end()) {
+            continue;
+          }
+          const std::vector<Path>* targets = holder->relationship(rel_name);
+          if (!targets) continue;
+          WriteRelationship(os, rel_name, *targets, *holder,
+                            htable.find(rel_name), depth + 2, opts);
+        }
+        // Holder-side nested sets (crate representation).
+        if (var.variantSets.empty() && !holder->meta().variantSets().empty()) {
+          WriteVariantSets(os, holder->meta().variantSets(), layer,
+                           holder_path, depth + 2, opts, segsink);
+        }
+        for (uint32_t ci : holder->child_indices()) {
+          const PrimSpec* child = layer.prim(ci);
+          if (!child) continue;
+          const std::string& cn = child->name();
+          if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') {
+            continue;  // nested holder: emitted via variantSets above
+          }
+          os << "\n";
+          WritePrimSpec(os, *child, layer, depth + 2, opts, segsink);
+        }
+      }
+      WriteIndent(os, depth + 1, opts.indent);
+      os << "}\n";
+    }
+    WriteIndent(os, depth, opts.indent);
+    os << "}\n";
+  }
+}
+
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
                    SegmentSink* segsink) {
@@ -655,20 +889,29 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       WriteIndent(os, md, opts.indent);
       os << "}\n";
     };
-    if (!meta.variantSelections().empty()) {
-      write_variants(meta.variantSelections());
-    } else if (!meta.variantSelection.empty()) {
-      auto eq = meta.variantSelection.find('=');
-      if (eq != std::string::npos) {
-        write_variants({{meta.variantSelection.substr(0, eq),
-                         meta.variantSelection.substr(eq + 1)}});
-      }
-    } else if (!meta.variantSets().empty()) {
-      // No explicit selections list, but per-set `selected` fields may be
-      // authored: emit them so selections round-trip.
+    {
+      // Merge every selection source (per-set `selected` is authoritative,
+      // then the plural list, then the legacy single string): a crate-read
+      // multi-set prim may carry only ONE set in the legacy string, and a
+      // USDA-parsed prim carries selections only in the plural list.
       std::vector<std::pair<std::string, std::string>> sels;
-      for (const auto& vs : meta.variantSets()) {
-        if (!vs.selected.empty()) sels.emplace_back(vs.name, vs.selected);
+      auto add_sel = [&sels](const std::string& set, const std::string& v) {
+        if (set.empty() || v.empty()) return;
+        for (auto& kv : sels) {
+          if (kv.first == set) return;  // first writer wins
+        }
+        sels.emplace_back(set, v);
+      };
+      for (const auto& vs : meta.variantSets()) add_sel(vs.name, vs.selected);
+      for (const auto& kv : meta.variantSelections()) {
+        add_sel(kv.first, kv.second);
+      }
+      if (!meta.variantSelection.empty()) {
+        auto eq = meta.variantSelection.find('=');
+        if (eq != std::string::npos) {
+          add_sel(meta.variantSelection.substr(0, eq),
+                  meta.variantSelection.substr(eq + 1));
+        }
       }
       if (!sels.empty()) write_variants(sels);
     }
@@ -726,91 +969,9 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     WriteRelationship(os, rel_name, *targets, spec, rid, content_depth, opts);
   }
 
-  // Write variant set bodies:
-  //   variantSet "lod" = { "high" { ...props... } "low" { } }
-  // Covers option names, per-option properties and relationships (the shapes
-  // the authoring API produces). Option-level composition arcs / nested sets /
-  // content subtrees are not emitted here.
-  for (const VariantSetData& vs : spec.meta().variantSets()) {
-    os << "\n";
-    WriteIndent(os, content_depth, opts.indent);
-    os << "variantSet " << EscapeString(vs.name) << " = {\n";
-    for (const VariantData& var : vs.variants) {
-      WriteIndent(os, content_depth + 1, opts.indent);
-      os << EscapeString(var.name) << " {\n";
-      PrintOptions vpopts;
-      vpopts.float_precision = opts.float_precision;
-      vpopts.double_precision = opts.double_precision;
-      for (const VariantProperty& vp : var.properties) {
-        WriteIndent(os, content_depth + 2, opts.indent);
-        if (vp.flags & PropSlot::kFlagUniform) os << "uniform ";
-        const char* tn = GetTypeName(vp.value.type_id());
-        os << (tn ? tn : "token");
-        if (vp.value.is_array()) os << "[]";
-        os << " " << vp.name << " = ";
-        PrintValue(os, vp.value, vpopts);
-        os << "\n";
-      }
-      for (const auto& rel : var.relationships) {
-        WriteIndent(os, content_depth + 2, opts.indent);
-        os << "rel " << rel.first;
-        if (rel.second.size() == 1) {
-          os << " = <" << rel.second[0].str() << ">";
-        } else if (!rel.second.empty()) {
-          os << " = [";
-          for (size_t t = 0; t < rel.second.size(); ++t) {
-            if (t) os << ", ";
-            os << "<" << rel.second[t].str() << ">";
-          }
-          os << "]";
-        }
-        os << "\n";
-      }
-      // Variant CHILD prims. USDA-parsed variants keep them in the content
-      // sub-layer (root "__self__"); crate-loaded variants keep them under a
-      // bracketed holder prim in THIS layer. Emit whichever exists.
-      if (var.content) {
-        if (const PrimSpec* self = var.content->prim_at_path("/__self__")) {
-          for (uint32_t ci : self->child_indices()) {
-            const PrimSpec* child = var.content->prim(ci);
-            if (!child) continue;
-            os << "\n";
-            WritePrimSpec(os, *child, *var.content, content_depth + 2, opts,
-                          segsink);
-          }
-        }
-      } else if (var.properties.empty()) {
-        const std::string holder_path =
-            spec.path().str() + "/{" + vs.name + "=" + var.name + "}";
-        if (const PrimSpec* holder = layer.prim_at_path(holder_path)) {
-          // Inline the holder's own opinions into the variant body.
-          for (const PropSlot& hslot : holder->properties().slots()) {
-            if (hslot.is_relationship()) continue;
-            WriteProperty(os, hslot, *holder, content_depth + 2, opts,
-                          segsink);
-          }
-          PropNameTable& htable = GetPropNameTable();
-          for (const std::string& rel_name : holder->relationship_names()) {
-            const std::vector<Path>* targets = holder->relationship(rel_name);
-            if (!targets) continue;
-            WriteRelationship(os, rel_name, *targets, *holder,
-                              htable.find(rel_name), content_depth + 2, opts);
-          }
-          for (uint32_t ci : holder->child_indices()) {
-            const PrimSpec* child = layer.prim(ci);
-            if (!child) continue;
-            os << "\n";
-            WritePrimSpec(os, *child, layer, content_depth + 2, opts,
-                          segsink);
-          }
-        }
-      }
-      WriteIndent(os, content_depth + 1, opts.indent);
-      os << "}\n";
-    }
-    WriteIndent(os, content_depth, opts.indent);
-    os << "}\n";
-  }
+  // Write variant set bodies (recursive: options may carry nested sets).
+  WriteVariantSets(os, spec.meta().variantSets(), layer, spec.path().str(),
+                   content_depth, opts, segsink);
 
   // Write children. When `segsink` is active (the parallel build walk), the same
   // sink propagates so each child's large array values are offloaded too.

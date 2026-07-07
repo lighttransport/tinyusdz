@@ -153,11 +153,24 @@
         return true;
       };
       constexpr size_t npos = std::string_view::npos;
+      // Position of the property '.' separator in a path, or npos. A '.'
+      // inside a bracketed variant-selection element ("{set=sel.2}") is part
+      // of the element name, NOT a property separator: when the last element
+      // starts with '{', the property dot can only come after its '}'.
+      auto prop_dot = [](std::string_view p) -> size_t {
+        const size_t slash = p.rfind('/');
+        size_t i = (slash == std::string_view::npos) ? 0 : slash + 1;
+        if (i < p.size() && p[i] == '{') {
+          const size_t close = p.find('}', i);
+          if (close == std::string_view::npos) return std::string_view::npos;
+          i = close + 1;
+        }
+        return p.find('.', i);
+      };
       for (size_t i = 0; i < orig; i++) {
         std::string_view cur(paths_[i]);
-        const size_t dot = cur.rfind('.');
-        const size_t slash = cur.rfind('/');
-        if (dot != npos && (slash == npos || dot > slash)) {
+        const size_t dot = prop_dot(cur);
+        if (dot != npos) {
           cur = cur.substr(0, dot);  // property path: start from its prim part
           if (!cur.empty() && cur != "/") add(cur);
         }
@@ -246,19 +259,30 @@
     std::vector<int32_t> jump_indices(num_paths, -2);  // -2 = leaf (no child, no sibling)
     for (auto& idx : path_indices) idx = 0xFFFFFFFF;
 
-    // A path is a property if it has a '.' after its last '/'. Property paths
-    // are encoded as "<primpath>.<propname>" and are always tree leaves.
-    auto is_property = [](const std::string& p) -> bool {
-      size_t slash = p.rfind('/');
-      size_t dot = p.rfind('.');
-      return dot != std::string::npos &&
-             (slash == std::string::npos || dot > slash);
+    // A path is a property if it has a '.' separator after its last prim
+    // element. Property paths are encoded as "<primpath>.<propname>" and are
+    // always tree leaves. A '.' inside a bracketed variant-selection element
+    // ("{set=sel.2}") belongs to the element name, so when the last element
+    // starts with '{' only a dot after its '}' counts.
+    auto prop_dot_pos = [](const std::string& p) -> size_t {
+      const size_t slash = p.rfind('/');
+      size_t i = (slash == std::string::npos) ? 0 : slash + 1;
+      if (i < p.size() && p[i] == '{') {
+        const size_t close = p.find('}', i);
+        if (close == std::string::npos) return std::string::npos;
+        i = close + 1;
+      }
+      return p.find('.', i);
+    };
+    auto is_property = [&](const std::string& p) -> bool {
+      return prop_dot_pos(p) != std::string::npos;
     };
     // Last path element name ("" for root): part after '.' for a property,
     // part after the last '/' for a prim.
     auto element_name = [&](const std::string& p) -> std::string {
       if (p.empty() || p == "/") return std::string();
-      if (is_property(p)) return p.substr(p.rfind('.') + 1);
+      const size_t dot = prop_dot_pos(p);
+      if (dot != std::string::npos) return p.substr(dot + 1);
       size_t pos = p.rfind('/');
       return (pos == std::string::npos) ? p : p.substr(pos + 1);
     };

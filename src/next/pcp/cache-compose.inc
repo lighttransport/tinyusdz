@@ -24,6 +24,12 @@
       // (properties + relationships) with fill-absent semantics. Variant child
       // prims are not yet modeled (VariantData has no child storage).
       if (s.variant) {
+        // Prim-state opinions from the selected option.
+        if (!s.variant->active) out->meta().active = false;
+        if (s.variant->hidden) out->meta().hidden = true;
+        if (!s.variant->doc.empty() && out->meta().doc().empty()) {
+          out->meta().doc() = s.variant->doc;
+        }
         for (const auto &pr : s.variant->properties) {
           const PropSlot *ts = out->property(pr.name);
           if (!ts) {

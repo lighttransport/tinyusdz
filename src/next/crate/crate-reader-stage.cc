@@ -155,16 +155,17 @@ bool CrateReader::Impl::BuildStage() {
     // Only real (non-bracketed) Prim specs carry a variantSelection.
     if (is_variant && !bracketed) continue;  // defensive
 
-    // Record option names from top-level holder specs "/Prim/{set=var}"
-    // (bracketed component last, non-empty variant name).
+    // Record option names from holder specs "<owner>/{set=var}". The owner
+    // is the path before the LAST bracketed component and may itself be a
+    // holder ("/P/{a=x}/{b=y}" — a nested variant set on option {a=x}).
     if (bracketed && full_path.back() == '}') {
       size_t lb = full_path.rfind("/{");
-      if (lb != std::string::npos &&
-          full_path.find('{') == lb + 1) {  // single bracketed component
+      if (lb != std::string::npos) {
         const std::string nm = full_path.substr(lb + 2,
                                                 full_path.size() - lb - 3);
         size_t eq = nm.find('=');
-        if (eq != std::string::npos && eq + 1 < nm.size()) {
+        if (eq != std::string::npos && eq + 1 < nm.size() &&
+            nm.find('{') == std::string::npos) {
           variant_opts[full_path.substr(0, lb)][nm.substr(0, eq)]
               .push_back(nm.substr(eq + 1));
         }
@@ -173,18 +174,16 @@ bool CrateReader::Impl::BuildStage() {
 
     // Decode the prim's variantSelection (a VariantSelectionMap that
     // UnpackValue/ResolveFieldset cannot represent). Captures every selection
-    // so prims with multiple variant sets compose correctly. (Only for the
-    // owning, non-bracketed prim.)
-    if (!bracketed) {
-      if (ResolveFieldsetRaw(spec.fieldset_index.value, raw_field_scratch)) {
-        for (auto& f : raw_field_scratch) {
-          if (f.first == "variantSelection") {
-            std::vector<std::pair<std::string, std::string>> sels;
-            if (DecodeVariantSelectionMap(f.second, sels)) {
-              for (auto& kv : sels) variant_sel[full_path][kv.first] = kv.second;
-            }
-            break;
+    // so prims with multiple variant sets compose correctly. Holder specs
+    // carry a variantSelection too when they own NESTED variant sets.
+    if (ResolveFieldsetRaw(spec.fieldset_index.value, raw_field_scratch)) {
+      for (auto& f : raw_field_scratch) {
+        if (f.first == "variantSelection") {
+          std::vector<std::pair<std::string, std::string>> sels;
+          if (DecodeVariantSelectionMap(f.second, sels)) {
+            for (auto& kv : sels) variant_sel[full_path][kv.first] = kv.second;
           }
+          break;
         }
       }
     }
@@ -721,10 +720,42 @@ bool CrateReader::Impl::BuildStage() {
         }
       }
       for (auto& kv : sets) {
-        ps->meta().variantSets().push_back(std::move(kv.second));
+        // Merge into a same-named entry when one already exists (older
+        // next-authored crates carry a legacy `variantSets` token field that
+        // pre-pushed name-only entries; pushing a second full entry would
+        // duplicate the set — grafted twice and emitted twice as USDA).
+        VariantSetData* existing = nullptr;
+        for (VariantSetData& evs : ps->meta().variantSets()) {
+          if (evs.name == kv.first) {
+            existing = &evs;
+            break;
+          }
+        }
+        if (existing) {
+          if (existing->selected.empty()) {
+            existing->selected = kv.second.selected;
+          }
+          for (VariantData& vd : kv.second.variants) {
+            bool have = false;
+            for (const VariantData& evd : existing->variants) {
+              if (evd.name == vd.name) {
+                have = true;
+                break;
+              }
+            }
+            if (!have) existing->variants.push_back(std::move(vd));
+          }
+        } else {
+          ps->meta().variantSets().push_back(std::move(kv.second));
+        }
       }
-      // Keep the first selection in the legacy single-string field too.
+      // Record ALL selections in the plural list (the single legacy string
+      // can carry only one set; consumers that read it alone would lose
+      // every selection after the first on a multi-set prim).
       if (sel != variant_sel.end() && !sel->second.empty()) {
+        for (const auto& kv : sel->second) {
+          ps->meta().variantSelections().emplace_back(kv.first, kv.second);
+        }
         const auto& first = *sel->second.begin();
         ps->meta().variantSelection = first.first + "=" + first.second;
       }

@@ -195,10 +195,15 @@
       }
 
       // Variants (weaker than inherits, stronger than references). For each
-      // selected variant, graft its inline opinions and/or its content subtree.
+      // selected variant, graft its inline opinions and/or its content
+      // subtree. `apply_variant` recurses into nested variant sets authored
+      // on the option itself (selection from the accumulated map — which
+      // includes caller overrides — falling back to the nested set's own
+      // `selected`).
       if (!spec->meta().variantSets().empty()) {
-        for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
-          const VariantData *vd = sv.vd;
+        std::function<void(const std::string &, const VariantData *, int)>
+            apply_variant = [&](const std::string &set_name,
+                                const VariantData *vd, int vdepth) {
           // Subtree content: model as a reference-style Variant source into the
           // content layer's "/__self__" root, so child prims compose normally.
           if (vd->content) {
@@ -208,10 +213,10 @@
             // keys), and never matched across two parses of the same asset.
             const std::string vid = "variant:" +
                                     layer_stacks[src.stack_idx].identifier +
-                                    ":" + src.site + ":" + *sv.set_name + ":" +
+                                    ":" + src.site + ":" + set_name + ":" +
                                     vd->name;
             uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
-            if (cstack == kInvalidStack) continue;
+            if (cstack == kInvalidStack) return;
             Src vsrc;
             vsrc.stack_idx = cstack;
             vsrc.site = "/__self__";
@@ -223,8 +228,11 @@
                                         frame ? frame->depth + 1 : 0};
             ExpandArcs(vsrc, &vframe, out, spec_out, sels, chain, warn, err);
           }
-          // Inline opinions (properties/relationships on the host prim itself).
-          if (!vd->properties.empty() || !vd->relationships.empty()) {
+          // Inline opinions (properties/relationships on the host prim
+          // itself), plus prim-state opinions (`active = false` on a variant
+          // option deactivates the host — a common pruning pattern).
+          if (!vd->properties.empty() || !vd->relationships.empty() ||
+              !vd->active || vd->hidden) {
             Src vsrc = src;
             vsrc.arc_kind = ArcType::Variant;
             vsrc.variant = vd;
@@ -261,6 +269,30 @@
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
                        frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
           }
+
+          // Nested variant sets authored on this option (inline / USDA
+          // representation). Crate-representation nesting recurses naturally
+          // through the holder graft below (the holder prim carries the
+          // nested sets in its own meta).
+          if (vdepth < 16) {
+            for (const VariantSetData &nvs : vd->variantSets) {
+              std::string chosen;
+              auto nsit = sels->find(nvs.name);
+              if (nsit != sels->end()) chosen = nsit->second;
+              if (chosen.empty()) chosen = nvs.selected;
+              if (chosen.empty()) continue;
+              for (const VariantData &nvd : nvs.variants) {
+                if (nvd.name == chosen) {
+                  apply_variant(nvs.name, &nvd, vdepth + 1);
+                  break;
+                }
+              }
+            }
+          }
+        };
+
+        for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
+          apply_variant(*sv.set_name, sv.vd, 0);
         }
 
         // Crate representation: pxr-authored crates store variant content as

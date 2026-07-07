@@ -237,3 +237,170 @@ def test_variant_cross_format_chain(tmp_path):
     comp = tinyusdz.load(fn)
     assert comp.prim_at("/root").get("a") == 1.0
     assert comp.prim_at("/root/Extra").get("b") == 2.0
+
+
+NESTED_VARIANT_SRC = '''#usda 1.0
+def Xform "p" (variants = { string outer = "o1" } prepend variantSets = ["outer"]) {
+    variantSet "outer" = {
+        "o1" (variants = { string inner = "i2" }) {
+            float a = 1
+            variantSet "inner" = { "i1" { float b = 2 } "i2" { float b = 3 } }
+        }
+        "o2" { float a = 0 }
+    }
+}
+'''
+
+
+@pytest.mark.parametrize("ext", ["usda", "usdc"])
+def test_nested_variants_compose(tmp_path, ext):
+    st = tinyusdz.loads(NESTED_VARIANT_SRC)
+    fn = tmp_path / f"n.{ext}"
+    st.save(str(fn))
+    comp = tinyusdz.load(fn)
+    assert comp.prim_at("/p").get("a") == 1.0
+    assert comp.prim_at("/p").get("b") == 3.0
+    ov = tinyusdz.load(fn, variants={"inner": "i1"})
+    assert ov.prim_at("/p").get("b") == 2.0
+
+
+@pytest.mark.parametrize("ext", ["usda", "usdc"])
+def test_variant_timesamples_and_connect(tmp_path, ext):
+    st = tinyusdz.loads('''#usda 1.0
+def Material "m" (variants = { string s = "a" } prepend variantSets = ["s"]) {
+    variantSet "s" = {
+        "a" { double h = 0
+              double h.timeSamples = { 0: 1.0, 10: 11.0 }
+              token outputs:surface.connect = </m/sh.outputs:out> }
+        "b" { }
+    }
+    def Shader "sh" { token outputs:out }
+}
+''')
+    fn = tmp_path / f"tc.{ext}"
+    st.save(str(fn))
+    comp = tinyusdz.load(fn)
+    attr = comp.prim_at("/m").attribute("h")
+    assert attr.has_timesamples and len(attr.timesamples) == 2
+    assert abs(attr.get(time=5.0) - 6.0) < 1e-9
+    surf = comp.prim_at("/m").attribute("outputs:surface")
+    assert surf.connections == ("/m/sh.outputs:out",)
+
+
+@pytest.mark.parametrize("ext", ["usda", "usdc"])
+def test_variant_active_false_prunes(tmp_path, ext):
+    st = tinyusdz.loads('''#usda 1.0
+def Xform "p" (variants = { string s = "off" } prepend variantSets = ["s"]) {
+    variantSet "s" = { "on" { float a = 1 } "off" (active = false) { } }
+}
+''')
+    fn = tmp_path / f"act.{ext}"
+    st.save(str(fn))
+    assert tinyusdz.load(fn).prim_at("/p").active is False
+    on = tinyusdz.load(fn, variants={"s": "on"})
+    assert on.prim_at("/p").active is True and on.prim_at("/p").get("a") == 1.0
+
+
+def test_variant_arrays_and_qualified_rel(tmp_path):
+    st = tinyusdz.loads('''#usda 1.0
+def Mesh "p" (variants = { string s = "a" } prepend variantSets = ["s"]) {
+    variantSet "s" = {
+        "a" { point3f[] points = [(0,0,0),(1,1,1)]
+              custom rel myrel = </p>
+              float after = 3 }
+        "b" { }
+    }
+}
+''')
+    for reload in (lambda: tinyusdz.loads(st.export_usda()),
+                   lambda: tinyusdz.load_bytes(st.export_usdc())):
+        st2 = reload()
+        assert set(st2.prim_at("/p").variant_sets["s"].names) == {"a", "b"}
+    fn = tmp_path / "q.usdc"
+    st.save(str(fn))
+    comp = tinyusdz.load(fn)
+    assert len(comp.prim_at("/p")["points"]) == 2
+    assert comp.prim_at("/p").get("after") == 3.0
+    assert list(comp.prim_at("/p").relationship("myrel")) == ["/p"]
+
+
+def test_variant_delete_reference_arc(tmp_path):
+    (tmp_path / "ref.usda").write_text(
+        '#usda 1.0\ndef Sphere "Ball" { double radius = 42 }\n')
+    scene = tmp_path / "s.usda"
+    scene.write_text('''#usda 1.0
+def Xform "p" (variants = { string s = "a" } prepend variantSets = ["s"]) {
+    variantSet "s" = { "a" (delete references = @./ref.usda@</Ball>) { } "b" { } }
+}
+''')
+    comp = tinyusdz.load(scene)
+    assert comp.prim_at("/p").get("radius") is None
+
+
+def test_multi_set_selection_crate_to_usda():
+    st = tinyusdz.loads('''#usda 1.0
+def Xform "p" (
+    variants = { string shape = "a"  string color = "red" }
+    prepend variantSets = ["shape", "color"]
+) {
+    variantSet "shape" = { "a" { float radius = 5 } "b" { } }
+    variantSet "color" = { "red" { float tint = 1 } "blue" { } }
+}
+''')
+    usda2 = tinyusdz.load_bytes(st.export_usdc()).export_usda()
+    assert 'string shape = "a"' in usda2
+    assert 'string color = "red"' in usda2
+
+
+def test_dotted_variant_names_crate():
+    st = tinyusdz.loads('''#usda 1.0
+def Xform "p" (variants = { string lod = "hi_res-2.0" } prepend variantSets = ["lod"]) {
+    variantSet "lod" = { "hi_res-2.0" { float a = 1 } "low.1" { float a = 0 } }
+}
+''')
+    st2 = tinyusdz.load_bytes(st.export_usdc())
+    vs = st2.prim_at("/p").variant_sets["lod"]
+    assert set(vs.names) == {"hi_res-2.0", "low.1"}
+    assert vs.selection == "hi_res-2.0"
+
+
+def test_selection_only_prim_crate(tmp_path):
+    # A prim that references an asset and only SELECTS a variant defined
+    # there (no local variantSet) must keep the selection through USDC.
+    (tmp_path / "asset.usda").write_text('''#usda 1.0
+(
+  defaultPrim = "Chair"
+)
+def Xform "Chair" (prepend variantSets = ["model"] variants = { string model = "A" }) {
+    variantSet "model" = { "A" { float w = 1 } "B" { float w = 2 } }
+}
+''')
+    (tmp_path / "scene.usda").write_text('''#usda 1.0
+def Xform "c" (
+    prepend references = @./asset.usda@</Chair>
+    variants = { string model = "B" }
+) { }
+''')
+    st = tinyusdz.load(tmp_path / "scene.usda", composed=False)
+    fn = tmp_path / "scene.usdc"
+    st.save(str(fn))
+    comp = tinyusdz.load(fn)
+    assert comp.prim_at("/c").get("w") == 2.0
+
+
+def test_multi_set_flatten_pipeline(tmp_path):
+    src = tmp_path / "m.usda"
+    src.write_text('''#usda 1.0
+def Xform "p" (
+    variants = { string a = "x"  string b = "w" }
+    prepend variantSets = ["a", "b"]
+) {
+    variantSet "a" = { "x" { float va = 1 } "y" { float va = 2 } }
+    variantSet "b" = { "z" { float vb = 3 } "w" { float vb = 4 } }
+}
+''')
+    dst = tmp_path / "m.usdc"
+    tinyusdz.flatten_file(str(src), str(dst))
+    flat = tinyusdz.load(dst)
+    assert flat.prim_at("/p").get("va") == 1.0
+    assert flat.prim_at("/p").get("vb") == 4.0
