@@ -19,7 +19,9 @@
 #include <thread>
 #include <utility>
 
+#ifndef _WIN32
 #include <unistd.h>  // sysconf (RSS page size for the post-RT-build free log)
+#endif
 
 #include "cascadia_mono.h"  // CascadiaMono_compressed_data / _size
 #include "config.hh"
@@ -1588,7 +1590,11 @@ bool App::renderHipViewport() {
       long pages = 0, res = 0;
       if (std::fscanf(f, "%ld %ld", &pages, &res) != 2) res = 0;
       std::fclose(f);
+#ifdef _WIN32
+      return size_t(0);  // unreachable: /proc/self/statm doesn't exist on Windows
+#else
       return size_t((static_cast<long long>(res) * sysconf(_SC_PAGESIZE)) / (1024 * 1024));
+#endif
     };
     const size_t before = rssMB();
     for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPUForRT(m);

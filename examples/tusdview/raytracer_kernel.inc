@@ -521,7 +521,10 @@ extern "C" __global__ void trace(const float* tris, const float* nrms,
           F3 Re=norm3(mk(lp[40]*Rb.x+lp[41]*Rb.y+lp[42]*Rb.z,
                          lp[44]*Rb.x+lp[45]*Rb.y+lp[46]*Rb.z,
                          lp[48]*Rb.x+lp[49]*Rb.y+lp[50]*Rb.z));
-          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
+)CUDA"
+// Second split: the tail of the previous piece was still over the 16380-byte
+// cap on its own; see the NOTE above.
+R"CUDA(          float su=atan2f(Re.x,-Re.z)*0.15915494f+0.5f;
           float sv=acosf(fminf(fmaxf(Re.y,-1.f),1.f))*0.31830989f;
           F3 envc=sampleTexRGB(texels,textures,numTextures,envTexS,su,sv);
           float rx=roughness*-1.f+1.f, ry=roughness*-0.0275f+0.0425f;

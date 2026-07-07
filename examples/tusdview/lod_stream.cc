@@ -18,8 +18,13 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <process.h>  // _getpid
+#include <stdlib.h>   // _fullpath, _MAX_PATH
+#else
 #include <climits>   // PATH_MAX
 #include <unistd.h>  // realpath, getpid
+#endif
 
 #include "hipew.h"                     // HIP VRAM query
 #include "next/tinyusdz-next.hh"       // next::Stage, LoadUSDComposed, Value
@@ -135,14 +140,26 @@ void WalkDistricts(const tnext::UsdPrim& prim, const matrix4d& parent_world,
 }
 
 std::string AbsolutePath(const std::string& p) {
+#ifdef _WIN32
+  char buf[_MAX_PATH];
+  if (_fullpath(buf, p.c_str(), _MAX_PATH)) return std::string(buf);
+#else
   char buf[PATH_MAX];
   if (realpath(p.c_str(), buf)) return std::string(buf);
+#endif
   return p;
 }
 std::string TempDir() {
+#ifdef _WIN32
+  const char* t = std::getenv("TEMP");
+  if (!t || !*t) t = std::getenv("TMP");
+  if (t && *t) return std::string(t);
+  return ".";
+#else
   const char* t = std::getenv("TMPDIR");
   if (t && *t) return std::string(t);
   return "/tmp";
+#endif
 }
 size_t ReadMeminfoBytes(const char* path, const char* key) {
   std::ifstream f(path);
@@ -296,8 +313,13 @@ std::string PrepareLodStream(const std::string& input, const LodStreamOptions& o
   }
 
   const std::string abs_input = AbsolutePath(input);
+#ifdef _WIN32
+  const int pid = _getpid();
+#else
+  const int pid = getpid();
+#endif
   const std::string wrapper =
-      TempDir() + "/tusdview_lod_" + std::to_string(getpid()) + ".usda";
+      TempDir() + "/tusdview_lod_" + std::to_string(pid) + ".usda";
   std::ofstream ofs(wrapper);
   if (!ofs) {
     std::cerr << "[lodStream] cannot write wrapper " << wrapper << "\n";
