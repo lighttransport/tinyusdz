@@ -12,7 +12,9 @@
 #include <thread>
 #include <utility>
 
+#ifndef _WIN32
 #include <unistd.h>  // sysconf (RSS page size)
+#endif
 
 #include "core/prim.hh"
 #include "gizmo_build.hh"
@@ -2349,6 +2351,9 @@ void Gui::drawTimeline() {
 
 // Process resident set size (RSS) in MB, from /proc (Linux). 0 if unavailable.
 static size_t ReadProcessRssMB() {
+#ifdef _WIN32
+  return 0;  // /proc/self/statm doesn't exist on Windows
+#else
   FILE* f = std::fopen("/proc/self/statm", "r");
   if (!f) return 0;
   long pages = 0, resident = 0;
@@ -2356,6 +2361,7 @@ static size_t ReadProcessRssMB() {
   std::fclose(f);
   const long pageSz = sysconf(_SC_PAGESIZE);
   return static_cast<size_t>((static_cast<long long>(resident) * pageSz) / (1024 * 1024));
+#endif
 }
 
 // amdgpu VRAM (used,total) in MB via sysfs; fallback when the renderer can't
