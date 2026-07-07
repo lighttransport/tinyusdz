@@ -3946,6 +3946,9 @@ static bool GetMaterialXMtlxSurfaceConnection(const Material &material,
 static const Prim *ResolveSurfaceShaderThroughNodeGraph(const Stage &stage,
                                                         const Prim *startPrim,
                                                         Path *surfacePath) {
+  if (!startPrim) {
+    return nullptr;
+  }
   const Prim *prim = startPrim;
   std::string err;
   constexpr int kMaxNodeGraphDepth = 16;
@@ -4082,12 +4085,20 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     const MtlxOpenPBRSurface *mtlx_openpbr = shader->value.as<MtlxOpenPBRSurface>();
     const MtlxAutodeskStandardSurface *mtlx_standard = shader->value.as<MtlxAutodeskStandardSurface>();
 
-    // prop part must be `outputs:surface` for now.
-    if (surfacePath.prop_part() != "outputs:surface") {
+    // The surface terminal output is `outputs:surface` for USD / UsdPreview /
+    // OpenPBR shaders and `outputs:out` for MaterialX surfaceshader nodes; a
+    // path resolved through a NodeGraph child-Shader scan may carry an empty
+    // prop part. The shader type is validated above (`shader`) and below (the
+    // value casts), and prop_part is not used to select any data, so accept
+    // those cases and reject only a prop that clearly points elsewhere (e.g. a
+    // shader input).
+    const std::string surfaceProp = surfacePath.prop_part();
+    if (!surfaceProp.empty() && surfaceProp != "outputs:surface" &&
+        surfaceProp != "outputs:out") {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("{}'s outputs:surface connection must point to property "
-                      "`outputs:surface`, but got `{}`",
-                      mat_abs_path.full_path_name(), surfacePath.prop_part()));
+          fmt::format("{}'s outputs:surface connection must point to a surface "
+                      "output (`outputs:surface`/`outputs:out`), but got `{}`",
+                      mat_abs_path.full_path_name(), surfaceProp));
     }
 
     if (psurface) {
