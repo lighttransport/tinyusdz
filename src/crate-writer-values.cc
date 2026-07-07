@@ -1522,10 +1522,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
 
     // Dict value packing: any_value_cast dispatch (value::dict uses any_value).
     // Keep this aligned with CustomDataType's Crate-supported value set.
+// NOTE: each invocation is a standalone `if (!value_packed)` rather than an
+// `else if` link in one long chain -- MSVC hits C1061 ("blocks nested too
+// deeply") once an else-if chain built from ~80 macro expansions accumulates
+// that much nesting depth.
 #define TRY_PACK_DICT(Type) \
-      else if (auto* typed = value::any_value_cast<Type>(&kv.second)) { \
+      if (!value_packed) { if (auto* typed = value::any_value_cast<Type>(&kv.second)) { \
         crate::CrateValue cv; cv.Set(*typed); \
-        value_rep = PackValue(cv, err); value_packed = true; }
+        value_rep = PackValue(cv, err); value_packed = true; } }
 
     for (const auto& kv : *dict_val) {
       crate::ValueRep value_rep;
@@ -1613,7 +1617,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       TRY_PACK_DICT(std::vector<value::quatd>)
       TRY_PACK_DICT(value::AssetPath)
       TRY_PACK_DICT(std::vector<value::AssetPath>)
-      else {
+      if (!value_packed) {
         if (err) {
           *err = "Unsupported dictionary value type for key `" + kv.first +
                  "`: " + kv.second.type_name() + " (type_id=" +
