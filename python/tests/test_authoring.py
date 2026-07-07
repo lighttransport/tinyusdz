@@ -177,3 +177,63 @@ def test_refcount_sanity(simple_stage):
     prims = [p for p in simple_stage]
     del prims
     assert abs(sys.getrefcount(simple_stage) - base) <= 1
+
+
+def test_variants_usdc_roundtrip():
+    st = tinyusdz.Stage.create()
+    w = st.define_prim("/World", "Xform")
+    w.add_variant_set("lod")
+    vs = w.variant_sets["lod"]
+    vs.add_variant("high")
+    vs.add_variant("low")
+    vs.selection = "high"
+    st2 = tinyusdz.load_bytes(st.export_usdc())
+    vs2 = st2.prim_at("/World").variant_sets["lod"]
+    assert set(vs2.names) == {"high", "low"}
+    assert vs2.selection == "high"
+    # second generation stays stable
+    st3 = tinyusdz.load_bytes(st2.export_usdc())
+    vs3 = st3.prim_at("/World").variant_sets["lod"]
+    assert set(vs3.names) == {"high", "low"} and vs3.selection == "high"
+
+
+VARIANT_SRC = '''#usda 1.0
+def Xform "root" (
+    variants = { string lod = "high" }
+    prepend variantSets = ["lod"]
+)
+{
+    variantSet "lod" = {
+        "high" { float a = 1
+                 def Mesh "Extra" { float b = 2 } }
+        "low" { float a = 0 }
+    }
+}
+'''
+
+
+@pytest.mark.parametrize("ext", ["usda", "usdc"])
+def test_variant_content_and_override(tmp_path, ext):
+    st = tinyusdz.loads(VARIANT_SRC)
+    fn = tmp_path / f"v.{ext}"
+    st.save(str(fn))
+
+    hi = tinyusdz.load(fn)  # composed with authored selection
+    assert hi.prim_at("/root").get("a") == 1.0
+    assert hi.prim_at("/root/Extra").get("b") == 2.0
+
+    lo = tinyusdz.load(fn, variants={"lod": "low"})
+    assert lo.prim_at("/root").get("a") == 0.0
+    assert lo.get_prim_at("/root/Extra") is None
+
+
+def test_variant_cross_format_chain(tmp_path):
+    # usda -> usdc -> usda: names, selection and content all survive.
+    st = tinyusdz.loads(VARIANT_SRC)
+    mid = tinyusdz.load_bytes(st.export_usdc())
+    final = tinyusdz.loads(mid.export_usda())
+    fn = tmp_path / "chain.usda"
+    final.save(str(fn))
+    comp = tinyusdz.load(fn)
+    assert comp.prim_at("/root").get("a") == 1.0
+    assert comp.prim_at("/root/Extra").get("b") == 2.0

@@ -766,6 +766,45 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         }
         os << "\n";
       }
+      // Variant CHILD prims. USDA-parsed variants keep them in the content
+      // sub-layer (root "__self__"); crate-loaded variants keep them under a
+      // bracketed holder prim in THIS layer. Emit whichever exists.
+      if (var.content) {
+        if (const PrimSpec* self = var.content->prim_at_path("/__self__")) {
+          for (uint32_t ci : self->child_indices()) {
+            const PrimSpec* child = var.content->prim(ci);
+            if (!child) continue;
+            os << "\n";
+            WritePrimSpec(os, *child, *var.content, content_depth + 2, opts,
+                          segsink);
+          }
+        }
+      } else if (var.properties.empty()) {
+        const std::string holder_path =
+            spec.path().str() + "/{" + vs.name + "=" + var.name + "}";
+        if (const PrimSpec* holder = layer.prim_at_path(holder_path)) {
+          // Inline the holder's own opinions into the variant body.
+          for (const PropSlot& hslot : holder->properties().slots()) {
+            if (hslot.is_relationship()) continue;
+            WriteProperty(os, hslot, *holder, content_depth + 2, opts,
+                          segsink);
+          }
+          PropNameTable& htable = GetPropNameTable();
+          for (const std::string& rel_name : holder->relationship_names()) {
+            const std::vector<Path>* targets = holder->relationship(rel_name);
+            if (!targets) continue;
+            WriteRelationship(os, rel_name, *targets, *holder,
+                              htable.find(rel_name), content_depth + 2, opts);
+          }
+          for (uint32_t ci : holder->child_indices()) {
+            const PrimSpec* child = layer.prim(ci);
+            if (!child) continue;
+            os << "\n";
+            WritePrimSpec(os, *child, layer, content_depth + 2, opts,
+                          segsink);
+          }
+        }
+      }
       WriteIndent(os, content_depth + 1, opts.indent);
       os << "}\n";
     }
@@ -775,9 +814,14 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 
   // Write children. When `segsink` is active (the parallel build walk), the same
   // sink propagates so each child's large array values are offloaded too.
+  // Bracketed variant HOLDER prims ("{set=var}", crate representation) are not
+  // real children: their names/selections are emitted via the variantSets
+  // metadata + bodies above, and printing them as defs would be invalid USDA.
   for (uint32_t child_idx : spec.child_indices()) {
     const PrimSpec* child = layer.prim(child_idx);
     if (child) {
+      const std::string& cn = child->name();
+      if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') continue;
       os << "\n";
       WritePrimSpec(os, *child, layer, content_depth, opts, segsink);
     }

@@ -245,9 +245,30 @@
       // bracketed holder/child prims carry the variant CONTENT and are emitted
       // above for unflattened layers.)
       if (!prim.meta().variantSets().empty()) {
+        // Selections can live in three places depending on how the layer was
+        // produced: VariantSetData::selected (crate reader / authoring API),
+        // the plural variantSelections() list (USDA parser), or the legacy
+        // single "set=sel" string. Merge all three (explicit list wins).
         std::vector<std::pair<std::string, std::string>> sels;
+        auto add_sel = [&sels](const std::string& set, const std::string& v) {
+          if (set.empty() || v.empty()) return;
+          for (auto& kv : sels) {
+            if (kv.first == set) return;  // first writer wins
+          }
+          sels.emplace_back(set, v);
+        };
+        for (const auto& kv : prim.meta().variantSelections()) {
+          add_sel(kv.first, kv.second);
+        }
+        if (!prim.meta().variantSelection.empty()) {
+          size_t eq = prim.meta().variantSelection.find('=');
+          if (eq != std::string::npos) {
+            add_sel(prim.meta().variantSelection.substr(0, eq),
+                    prim.meta().variantSelection.substr(eq + 1));
+          }
+        }
         for (const auto& vs : prim.meta().variantSets()) {
-          if (!vs.selected.empty()) sels.emplace_back(vs.name, vs.selected);
+          add_sel(vs.name, vs.selected);
         }
         if (!sels.empty()) {
           uint64_t blk = StoreVariantSelectionMap(sels);
