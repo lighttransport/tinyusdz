@@ -4,7 +4,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
 	buildNextThreeNode,
 	isNextScene,
@@ -70,6 +70,17 @@ function formatMemoryUse(before, after, key) {
 	return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
 }
 
+function formatTextureStats(stats) {
+	if (!stats || !Number.isFinite(stats.textureTotal) || stats.textureTotal <= 0) {
+		return 'queued 0';
+	}
+	const countText = `${stats.textureLoaded}/${stats.textureTotal}` +
+		(stats.textureFailed ? ` (${stats.textureFailed} failed)` : '');
+	return stats.textureComplete && Number.isFinite(stats.textureMs) ?
+		`${countText}, ${formatDurationMs(stats.textureMs)}` :
+		`${countText}, loading`;
+}
+
 function beginLoadStats(fileSize = null) {
 	const stats = {
 		startTime: performance.now(),
@@ -77,6 +88,11 @@ function beginLoadStats(fileSize = null) {
 		fetchMs: null,
 		parseMs: null,
 		processMs: null,
+		textureMs: null,
+		textureLoaded: 0,
+		textureFailed: 0,
+		textureTotal: 0,
+		textureComplete: false,
 		totalMs: null,
 		memoryBefore: captureMemorySnapshot(),
 		memoryAfter: null
@@ -98,6 +114,7 @@ function updateLoadStatsPanel(stats, overrideText = null) {
 		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
 		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
 		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Textures: ${formatTextureStats(stats)}`,
 		`Total: ${formatDurationMs(stats.totalMs)}`,
 		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
 		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
@@ -114,6 +131,73 @@ function failLoadStats(stats) {
 function setCurrentFileName(filename) {
 	const currentFileEl = document.getElementById('currentFile');
 	if (currentFileEl) currentFileEl.textContent = filename || '-';
+}
+
+function updateTextureStats(stats, info = {}) {
+	if (!stats) return;
+	stats.textureLoaded = Number.isFinite(info.loaded) ? info.loaded : stats.textureLoaded;
+	stats.textureFailed = Number.isFinite(info.failed) ? info.failed : stats.textureFailed;
+	stats.textureTotal = Number.isFinite(info.total) ? info.total : stats.textureTotal;
+	if (info.complete && Number.isFinite(info.ms)) {
+		stats.textureMs = info.ms;
+		stats.textureComplete = true;
+		stats.memoryAfter = captureMemorySnapshot();
+	}
+	updateLoadStatsPanel(stats);
+}
+
+function startTrackedTextureLoading(manager, stats, label = 'textureQueue') {
+	if (!manager || !Number.isFinite(manager.total) || manager.total <= 0) {
+		updateTextureStats(stats, { loaded: 0, failed: 0, total: 0, complete: true, ms: 0 });
+		return null;
+	}
+	currentTextureLoadingManager = manager;
+	const start = performance.now();
+	updateTextureStats(stats, {
+		loaded: manager.loaded || 0,
+		failed: manager.failed || 0,
+		total: manager.total || 0
+	});
+	return manager.startLoading({
+		concurrency: 16,
+		yieldInterval: 16,
+		onTextureLoaded: (material) => { material.needsUpdate = true; },
+		onProgress: (info) => updateTextureStats(stats, info)
+	}).then((status) => {
+		const elapsed = performance.now() - start;
+		const loaded = status.loaded || 0;
+		const failed = status.failed || 0;
+		const total = status.total || 0;
+		if (currentTextureLoadingManager === manager) currentTextureLoadingManager = null;
+		if (typeof manager.reset === 'function') manager.reset();
+		updateTextureStats(stats, { loaded, failed, total, complete: true, ms: elapsed });
+		console.log(`[animation] ${label}:done ${loaded}/${total} failed=${failed} ${formatDurationMs(elapsed)}`);
+		return status;
+	}).catch((err) => {
+		console.warn(`[animation] ${label} failed:`, err);
+		const elapsed = performance.now() - start;
+		const status = manager.getStatus ? manager.getStatus() : null;
+		const loaded = status?.loaded || manager.loaded || 0;
+		const failed = status?.failed || manager.failed || 0;
+		const total = status?.total || manager.total || 0;
+		if (currentTextureLoadingManager === manager) currentTextureLoadingManager = null;
+		if (typeof manager.reset === 'function') manager.reset();
+		updateTextureStats(stats, { loaded, failed, total, complete: true, ms: elapsed });
+		return status;
+	});
+}
+
+function cleanupCurrentTextureLoading() {
+	if (!currentTextureLoadingManager) return;
+	try {
+		currentTextureLoadingManager.abort();
+		if (typeof currentTextureLoadingManager.reset === 'function') {
+			currentTextureLoadingManager.reset();
+		}
+	} catch (_) {
+		// Ignore stale texture queue cleanup errors.
+	}
+	currentTextureLoadingManager = null;
 }
 
 // Scene setup
@@ -228,6 +312,7 @@ let textureCache = new Map();
 // TinyUSDZ loader and scene references for cleanup
 let currentLoader = null;
 let currentUSDScene = null;
+let currentTextureLoadingManager = null;
 let usdDomeLightData = null; // Store DomeLight data from USD file
 
 // Environment map presets
@@ -1160,6 +1245,8 @@ async function reloadMaterials() {
 
 // Load USD model asynchronously
 async function loadUSDModel() {
+	cleanupCurrentTextureLoading();
+
 	// Initialize PBR renderer if not already done
 	if (!pmremGenerator) {
 		initializePBRRenderer();
@@ -2831,6 +2918,7 @@ function onMouseClick(event) {
 
 // Function to load a USD file from ArrayBuffer
 async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
+	window.renderComplete = false;
 	stats = stats || beginLoadStats(arrayBuffer.byteLength);
 	if (!Number.isFinite(stats.fileSize)) {
 		stats.fileSize = arrayBuffer.byteLength;
@@ -2843,6 +2931,8 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		// Load default environment
 		await loadEnvironment(materialSettings.envMapPreset);
 	}
+
+	cleanupCurrentTextureLoading();
 
 	// Clear existing USD scene
 	while (usdSceneRoot.children.length > 0) {
@@ -2998,13 +3088,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		usdContentNode = built.node;
 		usdSceneRoot.add(built.node);
 		if (built.textureManager) {
-			built.textureManager.startLoading({
-				concurrency: 4,
-				yieldInterval: 16,
-				onTextureLoaded: (material) => { material.needsUpdate = true; }
-			}).catch((err) => {
-				console.warn('[animation] Next texture loading failed:', err);
-			});
+			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
 		}
 
 		if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
@@ -3019,6 +3103,9 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		});
 		console.log('[animation] next backend renders static geometry/materials only; animation extraction is legacy-only.');
 		buildSceneGraphUI();
+		if (typeof usd_scene.releaseBuildData === 'function') {
+			usd_scene.releaseBuildData();
+		}
 		stats.processMs = performance.now() - processStart;
 		stats.totalMs = performance.now() - stats.startTime;
 		stats.memoryAfter = captureMemorySnapshot();
@@ -3081,11 +3168,15 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		envMapIntensity: materialSettings.envMapIntensity,
 		preferredMaterialType: materialSettings.materialType,
 		textureCache: textureCache,
+		textureLoadingManager: new TextureLoadingManager(),
 		storeMaterialData: true
 	};
 
 	// Build Three.js node from USD with MaterialX/OpenPBR support
 	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	if (options.textureLoadingManager) {
+		startTrackedTextureLoading(options.textureLoadingManager, stats, 'textureQueue');
+	}
 
 	// Store USD scene reference for material reloading
 	threeNode.traverse((child) => {
@@ -3216,6 +3307,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	stats.totalMs = performance.now() - stats.startTime;
 	stats.memoryAfter = captureMemorySnapshot();
 	updateLoadStatsPanel(stats);
+	window.renderComplete = true;
 }
 
 // Listen for file upload events

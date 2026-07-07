@@ -179,15 +179,19 @@ class TextureLoadingManager {
                 }
             } catch (err) {
                 const isUnsupportedUDIM = err?.name === 'UnsupportedUDIMTextureError';
-                console.warn(
-                    isUnsupportedUDIM ?
-                        `Unsupported UDIM texture for ${mapProperty}; skipping texture fetch` :
-                        `Failed to load texture ${textureId} for ${mapProperty}`,
-                    {
+                const isUnsupportedFormat = err?.name === 'UnsupportedTextureFormatError';
+                const detail = {
                     ...TinyUSDZLoaderUtils.textureDebugInfo(
                         textureId, usdScene, mapProperty, taskOptions.sourceFileName || ''),
                     error: TinyUSDZLoaderUtils.textureLoadErrorInfo(err)
-                    }
+                };
+                console.warn(
+                    isUnsupportedUDIM ?
+                        `Unsupported UDIM texture for ${mapProperty}; skipping texture fetch` :
+                        isUnsupportedFormat ?
+                            `Unsupported texture format for ${mapProperty}; skipping texture fetch` :
+                            `Failed to load texture ${textureId} for ${mapProperty}`,
+                    JSON.stringify(detail)
                 );
                 task.status = 'failed';
                 this.failed++;
@@ -373,6 +377,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return mimeTypes[extension.toLowerCase()] || null;
     }
 
+    static isUnsupportedBrowserTextureExtension(extension) {
+        return new Set([
+            'psd',
+            'tga',
+            'dds',
+            'ktx',
+            'ktx2'
+        ]).has(String(extension || '').toLowerCase());
+    }
+
     // Helper method to determine MIME type
     static getMimeType(texImage) {
 
@@ -427,6 +441,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             err.name = 'UnsupportedUDIMTextureError';
             err.textureId = textureId;
             err.textureAssetPath = uri || undefined;
+            return Promise.reject(err);
+        }
+        const extension = this.getFileExtension(uri);
+        if (this.isUnsupportedBrowserTextureExtension(extension)) {
+            const err = new Error(`Texture format ".${extension}" is not supported by this browser demo: ${uri || `texture ${textureId}`}`);
+            err.name = 'UnsupportedTextureFormatError';
+            err.textureId = textureId;
+            err.textureAssetPath = uri || undefined;
+            err.extension = extension;
             return Promise.reject(err);
         }
 

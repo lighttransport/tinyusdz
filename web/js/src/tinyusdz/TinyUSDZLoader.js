@@ -161,6 +161,7 @@ class NextRenderSceneAdapter {
         this.stats = options.stats || {};
         this.materialKeys = new Set();
         this.textureKeys = new Set();
+        this.meshCountValue = this.meshes.length;
         this.sceneMetadata = {
             upAxis: options.upAxis || 'Y',
             metersPerUnit: options.metersPerUnit || 1.0
@@ -179,6 +180,8 @@ class NextRenderSceneAdapter {
                 }
             }
         }
+        this.materialCountValue = this.materialKeys.size || this.meshCountValue;
+        this.textureCountValue = this.textureKeys.size;
     }
 
     static _isUsdName(name) {
@@ -355,20 +358,30 @@ class NextRenderSceneAdapter {
         return null;
     }
 
+    releaseArchiveTextureBytes() {
+        this.archiveEntries.clear();
+    }
+
+    releaseBuildData() {
+        this.meshes = [];
+        this.materialKeys.clear();
+        this.textureKeys.clear();
+    }
+
     getSceneMetadata() {
         return this.sceneMetadata;
     }
 
     numMeshes() {
-        return this.meshes.length;
+        return this.stats?.optimizedMeshes ?? this.meshCountValue;
     }
 
     numMaterials() {
-        return this.stats?.optimizedMaterials ?? this.materialKeys.size ?? this.meshes.length;
+        return this.stats?.optimizedMaterials ?? this.materialCountValue;
     }
 
     numTextures() {
-        return this.stats?.optimizedTextures ?? this.textureKeys.size;
+        return this.stats?.optimizedTextures ?? this.textureCountValue;
     }
 
     getStats() {

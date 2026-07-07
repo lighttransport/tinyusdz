@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
 	createConfiguredTinyUSDZLoader,
 	getBackendFromURL,
@@ -92,6 +92,17 @@ function formatMemoryUse(before, after, key) {
 	return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
 }
 
+function formatTextureStats(stats) {
+	if (!stats || !Number.isFinite(stats.textureTotal) || stats.textureTotal <= 0) {
+		return 'queued 0';
+	}
+	const countText = `${stats.textureLoaded}/${stats.textureTotal}` +
+		(stats.textureFailed ? ` (${stats.textureFailed} failed)` : '');
+	return stats.textureComplete && Number.isFinite(stats.textureMs) ?
+		`${countText}, ${formatDurationMs(stats.textureMs)}` :
+		`${countText}, loading`;
+}
+
 function beginLoadStats(fileSize = null) {
 	const stats = {
 		startTime: performance.now(),
@@ -99,6 +110,11 @@ function beginLoadStats(fileSize = null) {
 		fetchMs: null,
 		parseMs: null,
 		processMs: null,
+		textureMs: null,
+		textureLoaded: 0,
+		textureFailed: 0,
+		textureTotal: 0,
+		textureComplete: false,
 		totalMs: null,
 		memoryBefore: captureMemorySnapshot(),
 		memoryAfter: null
@@ -120,6 +136,7 @@ function updateLoadStatsPanel(stats, overrideText = null) {
 		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
 		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
 		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Textures: ${formatTextureStats(stats)}`,
 		`Total: ${formatDurationMs(stats.totalMs)}`,
 		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
 		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
@@ -137,6 +154,72 @@ function failLoadStats(stats) {
 	stats.totalMs = performance.now() - stats.startTime;
 	stats.memoryAfter = captureMemorySnapshot();
 	updateLoadStatsPanel(stats, 'Failed');
+}
+
+function updateTextureStats(stats, info = {}) {
+	if (!stats) return;
+	stats.textureLoaded = Number.isFinite(info.loaded) ? info.loaded : stats.textureLoaded;
+	stats.textureFailed = Number.isFinite(info.failed) ? info.failed : stats.textureFailed;
+	stats.textureTotal = Number.isFinite(info.total) ? info.total : stats.textureTotal;
+	if (info.complete && Number.isFinite(info.ms)) {
+		stats.textureMs = info.ms;
+		stats.textureComplete = true;
+		stats.memoryAfter = captureMemorySnapshot();
+	}
+	updateLoadStatsPanel(stats);
+}
+
+function deleteUSDScene(sceneToDelete) {
+	if (!sceneToDelete || typeof sceneToDelete.delete !== 'function') return;
+	try {
+		sceneToDelete.delete();
+	} catch (err) {
+		console.warn('[anim-clips] Failed to delete USD scene:', err);
+	}
+}
+
+function startTrackedTextureLoading(manager, stats, label = 'textureQueue', sceneToDelete = null) {
+	if (!manager || !Number.isFinite(manager.total) || manager.total <= 0) {
+		updateTextureStats(stats, { loaded: 0, failed: 0, total: 0, complete: true, ms: 0 });
+		deleteUSDScene(sceneToDelete);
+		return null;
+	}
+	textureLoadingManager = manager;
+	const start = performance.now();
+	updateTextureStats(stats, {
+		loaded: manager.loaded || 0,
+		failed: manager.failed || 0,
+		total: manager.total || 0
+	});
+	return manager.startLoading({
+		concurrency: 16,
+		yieldInterval: 16,
+		onTextureLoaded: (material) => { material.needsUpdate = true; },
+		onProgress: (info) => updateTextureStats(stats, info)
+	}).then((status) => {
+		const elapsed = performance.now() - start;
+		const loaded = status.loaded || 0;
+		const failed = status.failed || 0;
+		const total = status.total || 0;
+		if (textureLoadingManager === manager) textureLoadingManager = null;
+		if (typeof manager.reset === 'function') manager.reset();
+		deleteUSDScene(sceneToDelete);
+		updateTextureStats(stats, { loaded, failed, total, complete: true, ms: elapsed });
+		console.log(`[anim-clips] ${label}:done ${loaded}/${total} failed=${failed} ${formatDurationMs(elapsed)}`);
+		return status;
+	}).catch((err) => {
+		console.warn(`[anim-clips] ${label} failed:`, err);
+		const elapsed = performance.now() - start;
+		const status = manager.getStatus ? manager.getStatus() : null;
+		const loaded = status?.loaded || manager.loaded || 0;
+		const failed = status?.failed || manager.failed || 0;
+		const total = status?.total || manager.total || 0;
+		if (textureLoadingManager === manager) textureLoadingManager = null;
+		if (typeof manager.reset === 'function') manager.reset();
+		deleteUSDScene(sceneToDelete);
+		updateTextureStats(stats, { loaded, failed, total, complete: true, ms: elapsed });
+		return status;
+	});
 }
 
 // =====================================================
@@ -214,6 +297,7 @@ scene.add(characterGroup);
 let allSceneMeshes = [];
 let skeletons = new Map();
 let skeletonHelpers = [];
+let textureLoadingManager = null;
 
 // Animation info from USD (metadata per clip)
 let animationInfos = [];
@@ -229,7 +313,8 @@ const mouse = new THREE.Vector2();
 let _mouseDownPos = { x: 0, y: 0 };
 const frameState = {
 	lastFpsUpdateMs: performance.now(),
-	frameCount: 0
+	frameCount: 0,
+	helperUpdateFrame: 0
 };
 
 // Selection highlight
@@ -237,11 +322,22 @@ let selectionHelper = null;
 
 let lastFrameTimeMs = performance.now();
 
+function hasActiveClipActions() {
+	if (!isPlaying || allActions.length === 0) return false;
+	for (const action of allActions) {
+		if (action && action.enabled && !action.paused && action.getEffectiveWeight() > 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
 // =====================================================
 // Process USD Scene
 // =====================================================
 
 async function processUSDScene(usdScene, filename, stats = null) {
+	window.renderComplete = false;
 	const processStart = performance.now();
 	const displayName = filename.split('/').pop();
 	const currentFileEl = document.getElementById('currentFile');
@@ -261,6 +357,18 @@ async function processUSDScene(usdScene, filename, stats = null) {
 	selectedObjectId = null;
 	filterMode = 'all';
 	removeSelectionHighlight();
+
+	if (textureLoadingManager) {
+		try {
+			textureLoadingManager.abort();
+			if (typeof textureLoadingManager.reset === 'function') {
+				textureLoadingManager.reset();
+			}
+		} catch (_) {
+			// Ignore stale texture queue cleanup errors.
+		}
+		textureLoadingManager = null;
+	}
 
 	for (const mesh of allSceneMeshes) {
 		if (mesh.geometry) mesh.geometry.dispose();
@@ -301,13 +409,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		});
 		characterGroup.add(built.node);
 		if (built.textureManager) {
-			built.textureManager.startLoading({
-				concurrency: 4,
-				yieldInterval: 16,
-				onTextureLoaded: (material) => { material.needsUpdate = true; }
-			}).catch((err) => {
-				console.warn('[anim-clips] Next texture loading failed:', err);
-			});
+			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
 		}
 		if (String(meta.upAxis || 'Y').toUpperCase() === 'Z') {
 			characterGroup.rotation.x = -Math.PI / 2;
@@ -319,6 +421,9 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		console.log('[anim-clips] next backend renders static geometry/materials only; clip extraction is legacy-only.');
 		renderClipPanel();
 		fitCamera();
+		if (typeof usdScene.releaseBuildData === 'function') {
+			usdScene.releaseBuildData();
+		}
 		if (stats) {
 			stats.processMs = performance.now() - processStart;
 			finishLoadStats(stats);
@@ -352,9 +457,16 @@ async function processUSDScene(usdScene, filename, stats = null) {
 	// Build Three.js scene graph
 	const usdRootNode = usdScene.getDefaultRootNode();
 	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+	const buildOptions = {
+		overrideMaterial: false,
+		textureLoadingManager: new TextureLoadingManager()
+	};
 	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
-		usdRootNode, defaultMtl, usdScene, { overrideMaterial: false }
+		usdRootNode, defaultMtl, usdScene, buildOptions
 	);
+	if (buildOptions.textureLoadingManager) {
+		startTrackedTextureLoading(buildOptions.textureLoadingManager, stats, 'textureQueue', usdScene);
+	}
 
 	// Build node index map before skinning pipeline
 	const nodeIndexMap = buildNodeIndexMap(threeNode);
@@ -419,8 +531,9 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		console.error('Animation extraction failed:', err);
 	}
 
-	// Delete WASM scene (data has been copied into JS-owned buffers)
-	usdScene.delete();
+	if (!buildOptions.textureLoadingManager || buildOptions.textureLoadingManager.total <= 0) {
+		deleteUSDScene(usdScene);
+	}
 
 	// Create mixer and prepare actions
 	if (allClips.length > 0) {
@@ -459,6 +572,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		stats.processMs = performance.now() - processStart;
 		finishLoadStats(stats);
 	}
+	window.renderComplete = true;
 }
 
 // =====================================================
@@ -997,12 +1111,16 @@ function animate() {
 	const currentFrameTimeMs = performance.now();
 	const delta = (currentFrameTimeMs - lastFrameTimeMs) / 1000;
 	lastFrameTimeMs = currentFrameTimeMs;
-	if (mixer) {
+	const didUpdateAnimation = mixer && hasActiveClipActions();
+	if (didUpdateAnimation) {
 		mixer.update(delta);
 	}
-	for (const helper of skeletonHelpers) {
-		if (helper.visible && typeof helper.update === 'function') {
-			helper.update();
+	frameState.helperUpdateFrame++;
+	if (didUpdateAnimation || (frameState.helperUpdateFrame % 4) === 0) {
+		for (const helper of skeletonHelpers) {
+			if (helper.visible && typeof helper.update === 'function') {
+				helper.update();
+			}
 		}
 	}
 

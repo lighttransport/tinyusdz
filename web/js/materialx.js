@@ -281,26 +281,45 @@ function startTrackedTextureLoading(manager, stats, traceName) {
         }
     }).then((status) => {
         const elapsed = performance.now() - textureStart;
+        const loaded = status.loaded || 0;
+        const failed = status.failed || 0;
+        const total = status.total || 0;
+        if (sceneState.textureLoadingManager === manager) {
+            sceneState.textureLoadingManager = null;
+        }
+        if (typeof manager.reset === 'function') {
+            manager.reset();
+        }
         updateTextureStats(stats, {
-            loaded: status.loaded || 0,
-            failed: status.failed || 0,
-            total: status.total || 0,
+            loaded,
+            failed,
+            total,
             complete: true,
             ms: elapsed
         });
-        traceLoadPhase(`${traceName}:done`, `${status.loaded}/${status.total} failed=${status.failed || 0} ${formatDurationMs(elapsed)}`);
+        traceLoadPhase(`${traceName}:done`, `${loaded}/${total} failed=${failed} ${formatDurationMs(elapsed)}`);
         return status;
     }).catch((err) => {
         console.warn(`${traceName} failed:`, err);
         const elapsed = performance.now() - textureStart;
+        const status = manager.getStatus ? manager.getStatus() : null;
+        const loaded = status?.loaded || manager.loaded || 0;
+        const failed = status?.failed || manager.failed || 0;
+        const total = status?.total || manager.total || 0;
+        if (sceneState.textureLoadingManager === manager) {
+            sceneState.textureLoadingManager = null;
+        }
+        if (typeof manager.reset === 'function') {
+            manager.reset();
+        }
         updateTextureStats(stats, {
-            loaded: manager.loaded || 0,
-            failed: manager.failed || 0,
-            total: manager.total || 0,
+            loaded,
+            failed,
+            total,
             complete: true,
             ms: elapsed
         });
-        return manager.getStatus ? manager.getStatus() : null;
+        return status;
     });
 }
 
@@ -604,7 +623,7 @@ const settings = {
     fastMaterials: false,
     fastMaterialMode: 'full',
     deferTextures: true,
-    textureConcurrency: 4,
+    textureConcurrency: 16,
     buildYieldMode: 'raf',
     buildYieldIntervalMs: 250,
     useMeshPtr: true,
@@ -2129,6 +2148,9 @@ async function loadUSDFromData(data, filename, stats = null) {
             updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials ` +
                 `(backend: next static · ${describeNativeOptimizations()})${describeNextNativeStats(counts.stats)}`);
             console.log('[materialx] next backend renders static geometry/materials only; MaterialX/OpenPBR graph and dome-light processing are legacy-only.');
+            if (typeof usdScene.releaseBuildData === 'function') {
+                usdScene.releaseBuildData();
+            }
             stats.processMs = performance.now() - processStart;
             stats.totalMs = performance.now() - stats.startTime;
             stats.memoryAfter = captureMemorySnapshot();
@@ -3231,7 +3253,11 @@ function clearScene() {
 function fitCameraToScene() {
     if (!sceneState.root) return;
 
-    const box = new THREE.Box3().setFromObject(sceneState.root);
+    sceneState.root.updateWorldMatrix(true, false);
+    const cachedBox = sceneState.root.userData?.localBoundsBox;
+    const box = cachedBox?.min && cachedBox?.max ?
+        cachedBox.clone().applyMatrix4(sceneState.root.matrixWorld) :
+        new THREE.Box3().setFromObject(sceneState.root);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 

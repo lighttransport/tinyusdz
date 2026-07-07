@@ -26,6 +26,12 @@ export class NextTextureLoadingManager {
   }
 
   reset() {
+    const adapters = new Set();
+    for (const task of this.tasks) {
+      if (task.adapter && typeof task.adapter.releaseArchiveTextureBytes === 'function') {
+        adapters.add(task.adapter);
+      }
+    }
     this.tasks = [];
     this.taskMap.clear();
     this.promiseCache.clear();
@@ -33,6 +39,9 @@ export class NextTextureLoadingManager {
     this.loaded = 0;
     this.failed = 0;
     this.aborted = false;
+    for (const adapter of adapters) {
+      adapter.releaseArchiveTextureBytes();
+    }
   }
 
   abort() {
@@ -55,6 +64,7 @@ export class NextTextureLoadingManager {
   } = {}) {
     this.aborted = false;
     let nextIndex = 0;
+    let lastYieldTime = performance.now();
     const worker = async () => {
       while (!this.aborted && nextIndex < this.tasks.length) {
         const task = this.tasks[nextIndex++];
@@ -70,16 +80,22 @@ export class NextTextureLoadingManager {
           this.loaded++;
         } catch (error) {
           this.failed++;
-          console.warn('[next-render] texture load failed', {
+          const unsupported = error?.name === 'UnsupportedTextureFormatError';
+          console.warn(unsupported ? '[next-render] unsupported texture format' : '[next-render] texture load failed', JSON.stringify({
             assetPath: task.assetPath,
             mapProperty: task.bindings?.map((b) => b.mapProperty).join(',') || '',
-            error: error?.message || String(error)
-          });
+            error: error?.message || String(error),
+            errorName: error?.name || undefined
+          }));
         }
         if (onProgress) {
           onProgress({ loaded: this.loaded, failed: this.failed, total: this.total });
         }
-        await new Promise((resolve) => setTimeout(resolve, yieldInterval));
+        const now = performance.now();
+        if (yieldInterval > 0 && now - lastYieldTime >= yieldInterval) {
+          lastYieldTime = now;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
       }
     };
     await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
@@ -104,12 +120,33 @@ export function textureColorRoleForMap(mapProperty) {
   return (mapProperty === 'map' || mapProperty === 'emissiveMap') ? 'color' : 'data';
 }
 
+function isUnsupportedBrowserTexturePath(assetPath) {
+  return /\.(psd|tga|dds|ktx2?)($|[?#])/i.test(String(assetPath || ''));
+}
+
+function browserTextureMimeType(assetPath) {
+  const path = String(assetPath || '').split('?')[0].split('#')[0].toLowerCase();
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+  if (path.endsWith('.png')) return 'image/png';
+  if (path.endsWith('.webp')) return 'image/webp';
+  if (path.endsWith('.gif')) return 'image/gif';
+  if (path.endsWith('.bmp')) return 'image/bmp';
+  if (path.endsWith('.tif') || path.endsWith('.tiff')) return 'image/tiff';
+  return '';
+}
+
 export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') {
+  if (isUnsupportedBrowserTexturePath(assetPath)) {
+    const error = new Error(`texture format is not supported by this browser demo: ${assetPath}`);
+    error.name = 'UnsupportedTextureFormatError';
+    throw error;
+  }
   const bytes = adapter.getArchiveTextureBytes(assetPath);
   if (!bytes) {
     throw new Error(`texture asset not found in archive: ${assetPath}`);
   }
-  const blob = new Blob([bytes.slice ? bytes.slice() : bytes]);
+  const mimeType = browserTextureMimeType(assetPath);
+  const blob = new Blob([bytes], mimeType ? { type: mimeType } : undefined);
   const blobUrl = URL.createObjectURL(blob);
   try {
     const texture = await new THREE.TextureLoader().loadAsync(blobUrl);
@@ -167,6 +204,7 @@ export function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures 
   group.name = adapter.filename || 'next-scene';
   const textureManager = (lazyTextures && !skipTextures) ? new NextTextureLoadingManager() : null;
   const materialCache = new Map();
+  const sceneBox = new THREE.Box3();
   const getMaterial = (entry) => {
     const key = nextMaterialCacheKey(entry);
     let material = materialCache.get(key);
@@ -203,7 +241,7 @@ export function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures 
     if (mesh.indices && mesh.indices.length) {
       geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
     }
-    geometry.computeBoundingSphere();
+    geometry.computeBoundingBox();
     let material = getMaterial(mesh);
     if (Array.isArray(mesh.materials) && mesh.materials.length &&
         Array.isArray(mesh.submeshes) && mesh.submeshes.length) {
@@ -243,7 +281,14 @@ export function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures 
     const threeMesh = new THREE.Mesh(geometry, material);
     threeMesh.name = mesh.primPath || mesh.primName || `mesh_${mesh.index}`;
     applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);
+    if (geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
+      sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threeMesh.matrix));
+    }
     group.add(threeMesh);
+  }
+
+  if (!sceneBox.isEmpty()) {
+    group.userData.localBoundsBox = sceneBox;
   }
 
   return { node: group, textureManager };
