@@ -3958,27 +3958,28 @@ static const Prim *ResolveSurfaceShaderThroughNodeGraph(const Stage &stage,
       return prim;  // terminal (Shader or other) prim reached.
     }
 
-    // (a) authored + singly-connected output on the NodeGraph.
-    bool advanced = false;
+    // (a) authored + singly-connected output on the NodeGraph -> follow it.
     auto it = ng->props.find(surfacePath->prop_part());
     if (it != ng->props.end() && it->second.is_attribute() &&
         it->second.get_attribute().has_connections()) {
       const auto &conns = it->second.get_attribute().connections();
-      if (conns.size() == 1) {
-        const Prim *next{nullptr};
-        if (stage.find_prim_at_path(Path(conns[0].prim_part(), ""), next, &err) &&
-            next) {
-          *surfacePath = conns[0];
-          prim = next;
-          advanced = true;
-        }
+      const Prim *next{nullptr};
+      if (conns.size() == 1 &&
+          stage.find_prim_at_path(Path(conns[0].prim_part(), ""), next, &err) &&
+          next) {
+        *surfacePath = conns[0];
+        prim = next;
+        continue;
       }
-    }
-    if (advanced) {
-      continue;
+      // The output IS explicitly authored, but its connection is broken
+      // (multiple targets, or a target that fails stage lookup). Do NOT mask it
+      // by heuristically grabbing an unrelated child Shader (style b) — surface
+      // the failure so the caller can degrade/warn.
+      return nullptr;
     }
 
-    // (b) fall back to a direct child Shader with a supported surface info:id.
+    // (b) implicit terminal: the NodeGraph does not author/connect this output,
+    // so fall back to a direct child Shader with a supported surface info:id.
     const Prim *childShader{nullptr};
     for (const auto &child : prim->children()) {
       const Shader *sh = child.as<Shader>();
@@ -4294,13 +4295,22 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         const Shader *mtlxShader =
             mtlxShaderPrim ? mtlxShaderPrim->as<Shader>() : nullptr;
 
-        if (!mtlxShader) {
-          // The material's primary surface (outputs:surface) is converted
-          // separately above, so a MaterialX terminal we cannot resolve to a
-          // Shader is demoted to a warning rather than failing the material.
+        if (!mtlxShader && has_surface_connection) {
+          // A primary outputs:surface shader was already converted above, so a
+          // MaterialX terminal we cannot resolve to a Shader is demoted to a
+          // warning and skipped rather than failing an otherwise-shaded material.
           PUSH_WARN(fmt::format(
               "{}'s outputs:mtlx:surface could not be resolved to a Shader Prim "
               "through its NodeGraph; skipping MaterialX surface.",
+              mat_abs_path.full_path_name()));
+        } else if (!mtlxShader) {
+          // No primary surface was shaded either — this material's ONLY surface
+          // terminal is the unresolved MaterialX one, so fail (the caller
+          // substitutes the default material and records it as degraded) rather
+          // than silently returning an all-default, unshaded material.
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "{}'s outputs:mtlx:surface could not be resolved to a Shader Prim "
+              "through its NodeGraph, and no outputs:surface shader is authored.",
               mat_abs_path.full_path_name()));
         } else {
           // Check if it's an OpenPBR shader
