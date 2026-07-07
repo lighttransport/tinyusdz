@@ -11,6 +11,7 @@ import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoa
 import {
     buildNextThreeNode,
     isNextScene,
+    nextCountsFromScene,
     readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
@@ -78,6 +79,52 @@ function getDisplayNameFromURI(uri) {
     }
 }
 
+function readBooleanParam(params, names, currentValue, { falseOnly = false } = {}) {
+    for (const name of names) {
+        if (!params.has(name)) continue;
+        const value = params.get(name);
+        if (falseOnly) {
+            return value !== 'false' && value !== '0';
+        }
+        return value === 'true' || value === '1';
+    }
+    return currentValue;
+}
+
+function nativeOptimizationOptions() {
+    return {
+        materialDedup: settings.nativeMaterialDedup,
+        mergeMeshes: settings.nativeMeshMerge,
+        mergeMeshesBakeTransform: settings.nativeMeshMergeBakeTransform,
+        flattenRenderTree: settings.nativeFlattenRenderTree
+    };
+}
+
+function describeNativeOptimizations() {
+    const enabled = [];
+    if (settings.nativeMaterialDedup) enabled.push('material-dedup');
+    if (settings.nativeMeshMerge) {
+        enabled.push(settings.nativeMeshMergeBakeTransform ? 'merge-meshes(bake)' : 'merge-meshes');
+    }
+    if (settings.nativeFlattenRenderTree) enabled.push('flatten-tree');
+    return enabled.length ? enabled.join(', ') : 'no native optimizations';
+}
+
+function describeNextNativeStats(stats) {
+    if (!stats) return '';
+    const parts = [];
+    if (Number.isFinite(stats.sourceMeshes) && Number.isFinite(stats.optimizedMeshes)) {
+        parts.push(`${stats.sourceMeshes}->${stats.optimizedMeshes} meshes`);
+    }
+    if (Number.isFinite(stats.sourceMaterials) && Number.isFinite(stats.optimizedMaterials)) {
+        parts.push(`${stats.sourceMaterials}->${stats.optimizedMaterials} mats`);
+    }
+    if (Number.isFinite(stats.sourceTextures) && Number.isFinite(stats.optimizedTextures)) {
+        parts.push(`${stats.sourceTextures}->${stats.optimizedTextures} tex`);
+    }
+    return parts.length ? ` · native ${parts.join(', ')}` : '';
+}
+
 function formatDurationMs(ms) {
     if (!Number.isFinite(ms)) return 'n/a';
     if (ms < 1000) return `${ms.toFixed(0)} ms`;
@@ -106,6 +153,8 @@ function captureMemorySnapshot() {
     };
 }
 
+let activeLoadStats = null;
+
 function formatMemoryUse(before, after, key) {
     const current = after?.[key];
     if (!Number.isFinite(current)) return 'n/a';
@@ -118,6 +167,19 @@ function formatMemoryUse(before, after, key) {
     const delta = current - previous;
     const sign = delta > 0 ? '+' : '';
     return `${formatBytes(current)} (${sign}${formatBytes(delta)})`;
+}
+
+function formatTextureStats(stats) {
+    if (!stats || !Number.isFinite(stats.textureTotal) || stats.textureTotal <= 0) {
+        if (settings.skipTextures) return 'disabled';
+        return stats?.textureMode === 'sync' ? 'synchronous' : 'queued 0';
+    }
+    const countText = `${stats.textureLoaded}/${stats.textureTotal}` +
+        (stats.textureFailed ? ` (${stats.textureFailed} failed)` : '');
+    if (stats.textureComplete && Number.isFinite(stats.textureMs)) {
+        return `${countText}, ${formatDurationMs(stats.textureMs)}`;
+    }
+    return `${countText}, loading`;
 }
 
 function updateLoadStatsPanel(stats) {
@@ -142,6 +204,7 @@ function updateLoadStatsPanel(stats) {
         `Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
         `Parse/load: ${formatDurationMs(stats.parseMs)}`,
         `Process/build: ${formatDurationMs(stats.processMs)}`,
+        `Textures: ${formatTextureStats(stats)}`,
         `Total: ${formatDurationMs(stats.totalMs)}`,
         `JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
         `WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
@@ -156,10 +219,17 @@ function beginLoadStats(fileSize = null) {
         fetchMs: null,
         parseMs: null,
         processMs: null,
+        textureMs: null,
+        textureLoaded: 0,
+        textureFailed: 0,
+        textureTotal: 0,
+        textureComplete: false,
+        textureMode: settings.deferTextures ? 'deferred' : 'sync',
         totalMs: null,
         memoryBefore: captureMemorySnapshot(),
         memoryAfter: null
     };
+    activeLoadStats = stats;
     updateLoadStatsPanel(stats);
     return stats;
 }
@@ -170,6 +240,68 @@ function failLoadStats(stats) {
     stats.totalMs = performance.now() - stats.startTime;
     stats.memoryAfter = captureMemorySnapshot();
     updateLoadStatsPanel(stats);
+}
+
+function updateTextureStats(stats, info = {}) {
+    if (!stats) return;
+    stats.textureLoaded = Number.isFinite(info.loaded) ? info.loaded : stats.textureLoaded;
+    stats.textureFailed = Number.isFinite(info.failed) ? info.failed : stats.textureFailed;
+    stats.textureTotal = Number.isFinite(info.total) ? info.total : stats.textureTotal;
+    if (info.complete && Number.isFinite(info.ms)) {
+        stats.textureMs = info.ms;
+        stats.textureComplete = true;
+        stats.memoryAfter = captureMemorySnapshot();
+    }
+    updateLoadStatsPanel(stats);
+}
+
+function startTrackedTextureLoading(manager, stats, traceName) {
+    if (!manager || !Number.isFinite(manager.total) || manager.total <= 0 || settings.skipTextures) {
+        updateTextureStats(stats, { loaded: 0, failed: 0, total: 0, complete: true, ms: 0 });
+        return null;
+    }
+    sceneState.textureLoadingManager = manager;
+    const textureStart = performance.now();
+    updateTextureStats(stats, {
+        loaded: manager.loaded || 0,
+        failed: manager.failed || 0,
+        total: manager.total || 0
+    });
+    traceLoadPhase(`${traceName}:start`, `${manager.total} textures`);
+    return manager.startLoading({
+        concurrency: settings.textureConcurrency,
+        onTextureLoaded: (material) => {
+            material.needsUpdate = true;
+        },
+        onProgress: (info) => {
+            updateTextureStats(stats, info);
+            if (TRACE_LOAD && (info.loaded + info.failed === info.total || ((info.loaded + info.failed) % 100) === 0)) {
+                traceLoadPhase(`${traceName}:progress`, `${info.loaded}/${info.total} failed=${info.failed || 0}`);
+            }
+        }
+    }).then((status) => {
+        const elapsed = performance.now() - textureStart;
+        updateTextureStats(stats, {
+            loaded: status.loaded || 0,
+            failed: status.failed || 0,
+            total: status.total || 0,
+            complete: true,
+            ms: elapsed
+        });
+        traceLoadPhase(`${traceName}:done`, `${status.loaded}/${status.total} failed=${status.failed || 0} ${formatDurationMs(elapsed)}`);
+        return status;
+    }).catch((err) => {
+        console.warn(`${traceName} failed:`, err);
+        const elapsed = performance.now() - textureStart;
+        updateTextureStats(stats, {
+            loaded: manager.loaded || 0,
+            failed: manager.failed || 0,
+            total: manager.total || 0,
+            complete: true,
+            ms: elapsed
+        });
+        return manager.getStatus ? manager.getStatus() : null;
+    });
 }
 
 // ACES 2.0 Tonemapping Shader
@@ -425,7 +557,8 @@ const sceneState = {
     metadata: null,
     showingNormals: false,
     originalMaterialsMap: new Map(),
-    domeLightData: null
+    domeLightData: null,
+    textureLoadingManager: null
 };
 
 // Picking state
@@ -470,7 +603,7 @@ const settings = {
     materialImplementation: 'physical', // 'physical' | 'openpbr' | 'auto'
     fastMaterials: false,
     fastMaterialMode: 'full',
-    deferTextures: false,
+    deferTextures: true,
     textureConcurrency: 4,
     buildYieldMode: 'raf',
     buildYieldIntervalMs: 250,
@@ -600,7 +733,7 @@ async function init() {
     if (urlParams.has('fastMaterialMode')) {
         settings.fastMaterialMode = urlParams.get('fastMaterialMode') || settings.fastMaterialMode;
     }
-    settings.deferTextures = urlParams.get('deferTextures') === 'true' || settings.fastMaterials;
+    settings.deferTextures = readBooleanParam(urlParams, ['deferTextures'], settings.deferTextures) || settings.fastMaterials;
     if (urlParams.has('textureConcurrency')) {
         const n = Number.parseInt(urlParams.get('textureConcurrency'), 10);
         if (Number.isFinite(n) && n > 0) {
@@ -619,21 +752,16 @@ async function init() {
             settings.buildYieldIntervalMs = n;
         }
     }
-    if (urlParams.has('useMeshPtr')) {
-        settings.useMeshPtr = urlParams.get('useMeshPtr') !== 'false';
-    }
-    if (urlParams.has('nativeMaterialDedup')) {
-        settings.nativeMaterialDedup = urlParams.get('nativeMaterialDedup') === 'true';
-    }
-    if (urlParams.has('nativeMeshMerge')) {
-        settings.nativeMeshMerge = urlParams.get('nativeMeshMerge') === 'true';
-    }
-    if (urlParams.has('nativeMeshMergeBakeTransform')) {
-        settings.nativeMeshMergeBakeTransform = urlParams.get('nativeMeshMergeBakeTransform') !== 'false';
-    }
-    if (urlParams.has('nativeFlattenRenderTree')) {
-        settings.nativeFlattenRenderTree = urlParams.get('nativeFlattenRenderTree') === 'true';
-    }
+    settings.useMeshPtr = readBooleanParam(urlParams, ['useMeshPtr'], settings.useMeshPtr, { falseOnly: true });
+    settings.nativeMaterialDedup = readBooleanParam(
+        urlParams, ['nativeMaterialDedup', 'dedup'], settings.nativeMaterialDedup);
+    settings.nativeMeshMerge = readBooleanParam(
+        urlParams, ['nativeMeshMerge', 'merge'], settings.nativeMeshMerge);
+    settings.nativeMeshMergeBakeTransform = readBooleanParam(
+        urlParams, ['nativeMeshMergeBakeTransform', 'bake'], settings.nativeMeshMergeBakeTransform,
+        { falseOnly: true });
+    settings.nativeFlattenRenderTree = readBooleanParam(
+        urlParams, ['nativeFlattenRenderTree', 'flatten'], settings.nativeFlattenRenderTree);
     if (urlParams.has('meshAggregation')) {
         const mode = urlParams.get('meshAggregation') || 'off';
         settings.meshAggregation = mode === 'true' ? 'material' : mode;
@@ -1964,10 +2092,7 @@ async function loadUSDFromData(data, filename, stats = null) {
         const usdScene = await new Promise((resolve, reject) => {
             loaderState.loader.parse(data, filename, resolve, reject, {
                 backend: LOADER_BACKEND,
-                materialDedup: false,
-                mergeMeshes: false,
-                mergeMeshesBakeTransform: false,
-                flattenRenderTree: false
+                ...nativeOptimizationOptions()
             });
         });
         stats.parseMs = performance.now() - parseStart;
@@ -1988,28 +2113,21 @@ async function loadUSDFromData(data, filename, stats = null) {
             sceneState.root = built.node;
             threeState.scene.add(sceneState.root);
             if (built.textureManager && !settings.skipTextures) {
-                built.textureManager.startLoading({
-                    concurrency: settings.textureConcurrency,
-                    onProgress: (info) => {
-                        if (TRACE_LOAD && (info.loaded + info.failed === info.total || ((info.loaded + info.failed) % 100) === 0)) {
-                            traceLoadPhase('nextTextureQueue:progress', `${info.loaded}/${info.total} failed=${info.failed || 0}`);
-                        }
-                    }
-                }).catch((err) => {
-                    console.warn('Next texture loading failed:', err);
-                });
+                startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
             }
             initUpAxisConversion();
             applyUpAxisConversion();
             fitCameraToScene();
             updateHelpersSize();
-            const meshCount = usdScene.numMeshes ? usdScene.numMeshes() : 0;
-            const materialCount = usdScene.numMaterials ? usdScene.numMaterials() : 0;
+            const counts = nextCountsFromScene(usdScene);
+            const meshCount = counts.meshes;
+            const materialCount = counts.materials;
             document.getElementById('model-info').style.display = 'block';
             document.getElementById('current-file').textContent = loaderState.currentFileName || '-';
             document.getElementById('mesh-count').textContent = meshCount;
             document.getElementById('material-count').textContent = materialCount;
-            updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials (backend: next static)`);
+            updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials ` +
+                `(backend: next static · ${describeNativeOptimizations()})${describeNextNativeStats(counts.stats)}`);
             console.log('[materialx] next backend renders static geometry/materials only; MaterialX/OpenPBR graph and dome-light processing are legacy-only.');
             stats.processMs = performance.now() - processStart;
             stats.totalMs = performance.now() - stats.startTime;
@@ -2208,19 +2326,7 @@ async function buildSceneGraph() {
     );
     traceLoadPhase('buildSceneGraph:buildThreeNode:done');
     if (options.textureLoadingManager) {
-        traceLoadPhase('textureQueue:start', `${options.textureLoadingManager.total} textures`);
-        options.textureLoadingManager.startLoading({
-            concurrency: settings.textureConcurrency,
-            onProgress: (info) => {
-                if (TRACE_LOAD && (info.loaded + info.failed === info.total || ((info.loaded + info.failed) % 100) === 0)) {
-                    traceLoadPhase('textureQueue:progress', `${info.loaded}/${info.total} failed=${info.failed || 0}`);
-                }
-            }
-        }).then((status) => {
-            traceLoadPhase('textureQueue:done', `${status.loaded}/${status.total} failed=${status.failed}`);
-        }).catch((err) => {
-            console.warn('Deferred texture loading failed:', err);
-        });
+        startTrackedTextureLoading(options.textureLoadingManager, activeLoadStats, 'textureQueue');
     }
 
     // Add to scene
@@ -2244,7 +2350,8 @@ async function buildSceneGraph() {
     const meshLabel = renderMeshes === numMeshes ?
         `${numMeshes} meshes` :
         `${renderMeshes} render meshes (${numMeshes} native)`;
-    updateStatus(`Loaded: ${meshLabel}, ${numMaterials} materials (upAxis: ${sceneState.upAxis})`);
+    updateStatus(`Loaded: ${meshLabel}, ${numMaterials} materials ` +
+        `(upAxis: ${sceneState.upAxis} · ${describeNativeOptimizations()})`);
 }
 
 /**
@@ -3022,6 +3129,18 @@ async function reloadMaterials() {
 }
 
 function clearScene() {
+    if (sceneState.textureLoadingManager) {
+        try {
+            sceneState.textureLoadingManager.abort();
+            if (typeof sceneState.textureLoadingManager.reset === 'function') {
+                sceneState.textureLoadingManager.reset();
+            }
+        } catch (_) {
+            // Ignore stale background texture queue cleanup errors.
+        }
+        sceneState.textureLoadingManager = null;
+    }
+
     // Dispose normal visualization materials
     if (sceneState.showingNormals && sceneState.root) {
         sceneState.root.traverse(obj => {

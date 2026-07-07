@@ -28,6 +28,7 @@ import { decodeEXR as decodeEXRWithFallback } from './EXRDecoder.js';
 class TextureLoadingManager {
     constructor() {
         this.queue = [];           // Pending texture tasks
+        this.taskMap = new Map();  // texture key -> task with material bindings
         this.promiseCache = new Map(); // textureId -> in-flight/completed Promise
         this.loaded = 0;           // Number of loaded textures
         this.failed = 0;           // Number of failed textures
@@ -45,14 +46,21 @@ class TextureLoadingManager {
      * @param {Object} options - Additional options (e.g., normalScale)
      */
     queueTexture(material, mapProperty, textureId, usdScene, options = {}) {
-        this.queue.push({
-            material,
-            mapProperty,
-            textureId,
-            usdScene,
-            options,
-            status: 'pending'
-        });
+        const key = `${TinyUSDZLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty)}:${options.sourceFileName || ''}`;
+        let task = this.taskMap.get(key);
+        if (!task) {
+            task = {
+                mapProperty,
+                textureId,
+                usdScene,
+                options,
+                bindings: [],
+                status: 'pending'
+            };
+            this.taskMap.set(key, task);
+            this.queue.push(task);
+        }
+        task.bindings.push({ material, options });
         this.total = this.queue.length;
     }
 
@@ -83,6 +91,7 @@ class TextureLoadingManager {
      */
     reset() {
         this.queue = [];
+        this.taskMap.clear();
         this.promiseCache.clear();
         this.loaded = 0;
         this.failed = 0;
@@ -138,7 +147,7 @@ class TextureLoadingManager {
             if (this.aborted) return;
 
             task.status = 'loading';
-            const { material, mapProperty, textureId, usdScene, options: taskOptions } = task;
+            const { mapProperty, textureId, usdScene, options: taskOptions } = task;
 
             try {
                 const cacheKey = TinyUSDZLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty);
@@ -151,20 +160,22 @@ class TextureLoadingManager {
 
                 if (texture && !this.aborted) {
                     TinyUSDZLoaderUtils.applyTextureMapDefaults(texture, mapProperty);
-                    material[mapProperty] = texture;
+                    for (const binding of task.bindings) {
+                        const { material, options: bindingOptions } = binding;
+                        material[mapProperty] = texture;
 
-                    // Apply special options (e.g., normal map scale)
-                    if (taskOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
-                        material.normalScale.set(taskOptions.normalScale, taskOptions.normalScale);
+                        // Apply special options (e.g., normal map scale)
+                        if (bindingOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
+                            material.normalScale.set(bindingOptions.normalScale, bindingOptions.normalScale);
+                        }
+
+                        material.needsUpdate = true;
+                        if (onTextureLoaded) {
+                            onTextureLoaded(material, mapProperty, texture);
+                        }
                     }
-
-                    material.needsUpdate = true;
                     task.status = 'loaded';
                     this.loaded++;
-
-                    if (onTextureLoaded) {
-                        onTextureLoaded(material, mapProperty, texture);
-                    }
                 }
             } catch (err) {
                 const isUnsupportedUDIM = err?.name === 'UnsupportedUDIMTextureError';
