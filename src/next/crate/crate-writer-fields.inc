@@ -19,7 +19,9 @@
       // variantSets, so these become leftover and are dropped.
       {
         const std::string& pp = prim.path().str();
-        size_t lb = pp.find("/{");
+        // Nearest bracketed component owns this prim (nested variants):
+        // "/P/{a=x}/{b=y}/Geo" is owned by "/P/{a=x}", not "/P".
+        size_t lb = pp.rfind("/{");
         if (lb != std::string::npos) {
           const PrimSpec* owner = layer.prim_at_path(pp.substr(0, lb));
           if (!owner || owner->meta().variantSets().empty()) return;
@@ -61,7 +63,8 @@
       if (is_variant_holder && prim_nm.size() >= 3 &&
           prim_nm[prim_nm.size() - 2] == '=') {  // "{vset=}"
         const std::string& pth = prim.path().str();
-        size_t lb = pth.find("/{");
+        // Owner = path before the LAST bracketed component (nested variants).
+        size_t lb = pth.rfind("/{");
         std::string owning = (lb == std::string::npos) ? std::string()
                                                        : pth.substr(0, lb);
         std::string vset = prim_nm.substr(1, prim_nm.size() - 3);  // "{vset=}"->vset
@@ -244,11 +247,15 @@
       // holder prims, so no separate variantSets token field is emitted. (The
       // bracketed holder/child prims carry the variant CONTENT and are emitted
       // above for unflattened layers.)
-      if (!prim.meta().variantSets().empty()) {
+      // NOTE: not gated on variantSets(): a prim may only SELECT a variant
+      // defined by a referenced asset ("variants = {...}" next to a
+      // reference), in which case it has selections but no local sets.
+      {
         // Selections can live in three places depending on how the layer was
-        // produced: VariantSetData::selected (crate reader / authoring API),
-        // the plural variantSelections() list (USDA parser), or the legacy
-        // single "set=sel" string. Merge all three (explicit list wins).
+        // produced: VariantSetData::selected (crate reader / authoring API,
+        // the authoritative per-set form), the plural variantSelections()
+        // list (USDA parser), or the legacy single "set=sel" string. Merge
+        // all three, per-set `selected` first (matches RecordSelections).
         std::vector<std::pair<std::string, std::string>> sels;
         auto add_sel = [&sels](const std::string& set, const std::string& v) {
           if (set.empty() || v.empty()) return;
@@ -257,6 +264,9 @@
           }
           sels.emplace_back(set, v);
         };
+        for (const auto& vs : prim.meta().variantSets()) {
+          add_sel(vs.name, vs.selected);
+        }
         for (const auto& kv : prim.meta().variantSelections()) {
           add_sel(kv.first, kv.second);
         }
@@ -266,9 +276,6 @@
             add_sel(prim.meta().variantSelection.substr(0, eq),
                     prim.meta().variantSelection.substr(eq + 1));
           }
-        }
-        for (const auto& vs : prim.meta().variantSets()) {
-          add_sel(vs.name, vs.selected);
         }
         if (!sels.empty()) {
           uint64_t blk = StoreVariantSelectionMap(sels);
@@ -499,7 +506,10 @@
       std::string var = nm.substr(eq + 1, nm.size() - eq - 2);  // between = and }
       if (var.empty()) continue;  // "{vset=}" is the VariantSet decl, not a variant
       const std::string& path = p.path().str();
-      size_t lb = path.find("/{");
+      // The holder's own name is the LAST component; its owner is everything
+      // before it. rfind so nested holders ("/P/{a=x}/{b=y}") attribute to
+      // the inner owner ("/P/{a=x}"), not the outermost prim.
+      size_t lb = path.rfind("/{");
       if (lb == std::string::npos) continue;
       variant_names[path.substr(0, lb)][nm.substr(1, eq - 1)].push_back(var);
     }

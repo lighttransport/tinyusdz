@@ -564,7 +564,10 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   // ext; only touch it (the mutable accessor would otherwise allocate an empty
   // ext for every ext-free prim) when an ext already exists.
   if (options_.resolve_variants) {
-    if (prim.meta().has_ext()) prim.meta().variantSets().clear();
+    if (prim.meta().has_ext()) {
+      prim.meta().variantSets().clear();
+      prim.meta().variantSelections().clear();
+    }
     prim.meta().variantSelection.clear();
   }
 }
@@ -725,12 +728,23 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
 
   // Apply EACH variant set's selected variant (a prim may select several sets).
   // Variant opinions are weaker than local opinions already on the prim, so use
-  // the dedup-skip-existing copy. The per-set selection is `vs.selected`; fall
-  // back to the legacy single-string `variantSelection` if that is unset.
+  // the dedup-skip-existing copy. The per-set selection is `vs.selected`,
+  // falling back to the plural variantSelections() list (the USDA parser
+  // stores ALL selections there and only the FIRST in the legacy single
+  // string — consulting just the legacy string dropped every set after the
+  // first when flattening multi-set USDA), then the legacy single string.
   VariantSelection legacy = ParseVariantSelection(prim.meta().variantSelection);
 
   for (const auto& vs : prim.meta().variantSets()) {
     std::string chosen = vs.selected;
+    if (chosen.empty()) {
+      for (const auto& sel : prim.meta().variantSelections()) {
+        if (sel.first == vs.name) {
+          chosen = sel.second;
+          break;
+        }
+      }
+    }
     if (chosen.empty() && vs.name == legacy.variant_set) {
       chosen = legacy.variant_name;
     }
@@ -1021,7 +1035,10 @@ void FlattenLayer(Layer& layer) {
     meta.specializes.clear();
     meta.variantSelection.clear();
     // See note above: avoid allocating an empty ext just to clear variantSets.
-    if (meta.has_ext()) meta.variantSets().clear();
+    if (meta.has_ext()) {
+      meta.variantSets().clear();
+      meta.variantSelections().clear();
+    }
   }
 }
 

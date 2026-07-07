@@ -22,10 +22,22 @@ bool IsBracketedName(const std::string& name) {
   return name.size() >= 2 && name.front() == '{' && name.back() == '}';
 }
 
+// Holder paths embed set/variant names between '{', '=', '}' — names
+// containing those separators (or '/') would corrupt the bracket parsing on
+// read-back. Parser-produced names cannot contain them; guard API-authored
+// ones.
+bool IsValidVariantIdentifier(const std::string& name, bool allow_empty) {
+  if (name.empty()) return allow_empty;
+  for (char c : name) {
+    if (c == '{' || c == '}' || c == '=' || c == '/') return false;
+  }
+  return true;
+}
+
 // Copy the parts of `src` a variant content root ("__self__") contributes to
 // its holder prim: typed properties (defaults + declared type names +
-// per-property metadata), relationships, and connections. Time samples inside
-// variant content are not carried over (rare; unsupported for now).
+// per-property metadata + time samples), relationships, connections, and the
+// commonly-authored prim metadata.
 void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
   PropNameTable& names = GetPropNameTable();
   for (const PropSlot& slot : src.properties().slots()) {
@@ -48,6 +60,21 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
       for (const Path& t : *conns) dst->add_connection(pname, t);
     }
   }
+  // Time samples authored on the variant's own prim.
+  for (PropNameId ts_id : src.time_sampled_properties()) {
+    const auto* samples = src.time_samples(ts_id);
+    if (!samples) continue;
+    for (const auto& tv : *samples) {
+      if (const Value* v = src.time_sample_value(tv.second)) {
+        dst->add_time_sample(ts_id, tv.first, *v);
+      }
+    }
+    dst->mark_property_time_sampled(ts_id);
+    if (!dst->property(ts_id)) {
+      dst->add_property_slot(ts_id, TypeId::Invalid,
+                             PropSlot::kFlagTimeSampled);
+    }
+  }
   for (const std::string& rel : src.relationship_names()) {
     if (const std::vector<Path>* targets = src.relationship(rel)) {
       dst->set_relationship_targets(rel, *targets);
@@ -55,6 +82,13 @@ void MergeContentRootInto(const PrimSpec& src, PrimSpec* dst) {
   }
   if (!src.type_name().empty() && dst->type_name().empty()) {
     dst->set_type_name(src.type_name());
+  }
+  // Prim metadata the option's "__self__" root may carry.
+  const PrimSpecMeta& sm = src.meta();
+  if (!sm.kind().empty()) dst->meta().kind() = sm.kind();
+  if (!sm.apiSchemas().empty()) dst->meta().apiSchemas() = sm.apiSchemas();
+  if (sm.customData().is_dictionary()) {
+    dst->meta().customData() = sm.customData();
   }
 }
 
@@ -126,6 +160,12 @@ bool PrimNeedsHolders(const Layer& layer, const PrimSpec& prim) {
                                          vd.name))) {
         return true;
       }
+      // Holder exists but the inline VariantData carries opinions of its own
+      // (MergeVariantData pattern): materialization must run so those merge
+      // into the existing holder rather than being dropped.
+      if (!vd.properties.empty() || !vd.relationships.empty() || vd.content) {
+        return true;
+      }
     }
   }
   return false;
@@ -160,9 +200,53 @@ Layer MaterializeVariantHolders(const Layer& layer) {
       const std::string decl_path = HolderPath(owner_path, vs.name, "");
       bool needs_decl = false;
 
+      if (!IsValidVariantIdentifier(vs.name, /*allow_empty=*/false)) {
+        continue;  // would corrupt bracket path parsing; refuse to embed
+      }
       for (const VariantData& vd : vs.variants) {
-        if (out.prim_at_path(HolderPath(owner_path, vs.name, vd.name))) {
-          continue;  // crate-read layer: holder already present
+        if (!IsValidVariantIdentifier(vd.name, /*allow_empty=*/false)) {
+          continue;
+        }
+        const std::string hp = HolderPath(owner_path, vs.name, vd.name);
+        if (PrimSpec* existing = out.prim_at_path_mutable(hp)) {
+          // Holder already present (crate-read layer). Inline VariantData may
+          // still carry opinions the holder lacks (MergeVariantData pattern:
+          // declared-empty holder in a stronger layer + content merged in
+          // from a weaker one) — upsert those instead of dropping them.
+          for (const VariantProperty& vp : vd.properties) {
+            if (!existing->property(vp.name)) {
+              existing->add_property(vp.name, vp.value, vp.flags);
+            }
+          }
+          for (const auto& rel : vd.relationships) {
+            if (!existing->relationship(rel.first)) {
+              existing->set_relationship_targets(rel.first, rel.second);
+            }
+          }
+          if (vd.content) {
+            const Layer& content = *vd.content;
+            static const char kSelfPrefix[] = "/__self__/";
+            bool appended = false;
+            for (size_t ci = 0; ci < content.prim_count(); ++ci) {
+              const PrimSpec* cp = content.prim(static_cast<uint32_t>(ci));
+              if (!cp) continue;
+              const std::string& cpath = cp->path().str();
+              if (cpath.compare(0, sizeof(kSelfPrefix) - 1, kSelfPrefix) !=
+                  0) {
+                continue;
+              }
+              const std::string np =
+                  hp + "/" + cpath.substr(sizeof(kSelfPrefix) - 1);
+              if (out.prim_at_path(np)) continue;
+              PrimSpec child = cp->Clone();
+              child.set_path(Path(np));
+              child.clear_child_indices();
+              out.add_prim(std::move(child));
+              appended = true;
+            }
+            if (appended) out.build_path_index();
+          }
+          continue;
         }
         AppendVariantHolder(&out, owner_path, vs.name, vd);
         out.build_path_index();  // keep lookups current for nested/self refs
