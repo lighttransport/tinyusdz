@@ -9,6 +9,13 @@ import { TinyUSDZWorkerLoader } from 'tinyusdz/TinyUSDZWorkerLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
 import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
+import { getBackendFromURL, makeStaticNextParseOptions } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+    buildNextThreeNode,
+    isNextScene,
+    nextCountsFromScene,
+    readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
 
 // ============================================================================
 // Constants
@@ -30,8 +37,7 @@ const threeState = {
     scene: null,
     camera: null,
     renderer: null,
-    controls: null,
-    clock: new THREE.Clock()
+    controls: null
 };
 
 const loaderState = {
@@ -52,7 +58,8 @@ const sceneState = {
 
 // Settings
 const settings = {
-    applyUpAxisConversion: false
+    applyUpAxisConversion: false,
+    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'legacy')
 };
 
 // Progress state for tracking stages
@@ -77,6 +84,13 @@ const memoryState = {
         text: '#888',
         stageLine: 'rgba(255, 152, 0, 0.5)'
     }
+};
+
+const loadStatsState = {
+    current: null,
+    fps: 0,
+    frames: 0,
+    fpsLastTime: 0
 };
 
 // ============================================================================
@@ -129,10 +143,88 @@ function getMemoryUsage() {
  */
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
+    if (!Number.isFinite(bytes)) return '--';
+    const sign = bytes < 0 ? '-' : '';
+    bytes = Math.abs(bytes);
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    return sign + parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function formatMs(ms) {
+    return Number.isFinite(ms) ? `${Math.round(ms)} ms` : '--';
+}
+
+function wasmHeapBytes() {
+    try {
+        return loaderState.loader?.native_?.HEAPU8?.buffer?.byteLength || 0;
+    } catch (_) {
+        return 0;
+    }
+}
+
+function captureStatsMemory() {
+    const mem = getMemoryUsage();
+    return {
+        jsHeap: mem.used,
+        wasmHeap: wasmHeapBytes()
+    };
+}
+
+function sourceName(source, isFile) {
+    if (isFile) return source?.name || 'local.usd';
+    const clean = String(source || '').split(/[?#]/)[0];
+    return decodeURIComponent(clean.slice(clean.lastIndexOf('/') + 1)) || 'scene.usd';
+}
+
+function urlParam(params) {
+    return params.get('uri') || params.get('url') || params.get('src') || params.get('model') || params.get('usd') || '';
+}
+
+function beginLoadStats(source, isFile) {
+    const before = captureStatsMemory();
+    const stats = {
+        filename: sourceName(source, isFile),
+        backend: settings.backend,
+        startTime: performance.now(),
+        fileSize: isFile ? (source?.size || 0) : 0,
+        readMs: NaN,
+        parseMs: NaN,
+        processMs: NaN,
+        totalMs: NaN,
+        memoryBefore: before,
+        memoryAfter: before
+    };
+    loadStatsState.current = stats;
+    updateLoadStatsPanel(stats);
+    return stats;
+}
+
+function finishLoadStats(stats) {
+    stats.totalMs = performance.now() - stats.startTime;
+    stats.memoryAfter = captureStatsMemory();
+    updateLoadStatsPanel(stats);
+}
+
+function updateLoadStatsPanel(stats = loadStatsState.current) {
+    if (!stats) return;
+    const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+    };
+    setText('current-file', stats.filename || '-');
+    setText('backend-name', stats.backend || settings.backend);
+    setText('fps-value', loadStatsState.fps ? String(loadStatsState.fps) : '--');
+    setText('file-size', stats.fileSize ? formatBytes(stats.fileSize) : '--');
+    setText('read-time', formatMs(stats.readMs));
+    setText('parse-time', formatMs(stats.parseMs));
+    setText('process-time', formatMs(stats.processMs));
+    setText('total-time', formatMs(stats.totalMs));
+    const jsDelta = stats.memoryAfter.jsHeap - stats.memoryBefore.jsHeap;
+    const wasmDelta = stats.memoryAfter.wasmHeap - stats.memoryBefore.wasmHeap;
+    setText('js-heap-stat', `${formatBytes(stats.memoryAfter.jsHeap)} (${jsDelta >= 0 ? '+' : ''}${formatBytes(jsDelta)})`);
+    setText('wasm-heap-stat', `${formatBytes(stats.memoryAfter.wasmHeap)} (${wasmDelta >= 0 ? '+' : ''}${formatBytes(wasmDelta)})`);
 }
 
 /**
@@ -843,6 +935,47 @@ function disposeMaterial(material) {
  * then textures load in background with separate progress bar.
  */
 async function buildSceneWithProgress(usd, onProgress) {
+    if (isNextScene(usd)) {
+        sceneState.meshCount = 0;
+        sceneState.textureCount = 0;
+        sceneState.materials = [];
+        onProgress({
+            stage: 'building',
+            percentage: 50,
+            message: 'Building next render scene...'
+        });
+        await new Promise(r => requestAnimationFrame(r));
+        const built = buildNextThreeNode(usd, {
+            skipTextures: false,
+            lazyTextures: true,
+            onProgress: (info) => {
+                const mappedPercentage = 50 + ((info.percentage || 0) * 0.35);
+                onProgress({
+                    stage: 'building',
+                    percentage: Math.min(85, mappedPercentage),
+                    message: info.message || 'Building next render scene...'
+                });
+            }
+        });
+        sceneState.textureLoadingManager = built.textureManager;
+        const counts = nextCountsFromScene(usd);
+        sceneState.meshCount = counts.meshes || 0;
+        sceneState.textureCount = counts.textures || 0;
+        const materialSet = new Set();
+        built.node.traverse((obj) => {
+            if (!obj.isMesh || !obj.material) return;
+            if (Array.isArray(obj.material)) obj.material.forEach((m) => materialSet.add(m));
+            else materialSet.add(obj.material);
+        });
+        sceneState.materials = Array.from(materialSet);
+        onProgress({
+            stage: 'complete',
+            percentage: 100,
+            message: `Complete! ${sceneState.meshCount} meshes, ${sceneState.materials.length} materials, ${sceneState.textureCount} textures`
+        });
+        return built.node;
+    }
+
     const rootNode = usd.getDefaultRootNode();
     if (!rootNode) {
         throw new Error('No root node found in USD');
@@ -975,6 +1108,11 @@ async function buildSceneWithProgress(usd, onProgress) {
  * Load scene metadata including upAxis from USD file
  */
 function loadSceneMetadata() {
+    if (isNextScene(loaderState.nativeLoader)) {
+        const metadata = readNextSceneMeta(loaderState.nativeLoader);
+        sceneState.upAxis = metadata.upAxis || 'Y';
+        return;
+    }
     const metadata = loaderState.nativeLoader.getSceneMetadata ? loaderState.nativeLoader.getSceneMetadata() : {};
     sceneState.upAxis = metadata.upAxis || 'Y';
 }
@@ -1108,7 +1246,7 @@ function updateFitButton() {
 /**
  * Load USD using Web Worker (keeps main thread responsive)
  */
-async function loadWithWorker(source, isFile) {
+async function loadWithWorker(source, isFile, stats) {
     console.log('[Progress Demo] Using Web Worker for responsive loading');
 
     // Initialize worker loader if needed
@@ -1161,15 +1299,22 @@ async function loadWithWorker(source, isFile) {
     }
 
     let usd;
+    const parseStart = performance.now();
     if (isFile) {
         // Load from File object
         updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Reading file...' });
+        const readStart = performance.now();
         const arrayBuffer = await source.arrayBuffer();
+        stats.readMs = performance.now() - readStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        updateLoadStatsPanel(stats);
         usd = await loaderState.workerLoader.parse(new Uint8Array(arrayBuffer), source.name);
     } else {
         // Load from URL - worker handles download progress
         usd = await loaderState.workerLoader.load(source);
     }
+    stats.parseMs = performance.now() - parseStart;
+    updateLoadStatsPanel(stats);
 
     return usd;
 }
@@ -1177,7 +1322,7 @@ async function loadWithWorker(source, isFile) {
 /**
  * Load USD on main thread (legacy mode, may freeze UI during parsing)
  */
-async function loadWithMainThread(source, isFile) {
+async function loadWithMainThread(source, isFile, stats) {
     console.log('[Progress Demo] Using main thread loading (UI may freeze during parsing)');
 
     // Initialize loader if needed
@@ -1211,38 +1356,37 @@ async function loadWithMainThread(source, isFile) {
     }
 
     let usd;
+    const parseOptions = makeStaticNextParseOptions({ backend: settings.backend });
+    const parseStart = performance.now();
     if (isFile) {
         updateProgressUI({ stage: 'downloading', percentage: 0, message: 'Reading file...' });
+        const readStart = performance.now();
         const arrayBuffer = await source.arrayBuffer();
+        stats.readMs = performance.now() - readStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        updateLoadStatsPanel(stats);
         updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD...' });
         usd = await new Promise((resolve, reject) => {
-            loaderState.loader.parse(new Uint8Array(arrayBuffer), source.name, resolve, reject);
+            loaderState.loader.parse(new Uint8Array(arrayBuffer), source.name, resolve, reject, parseOptions);
         });
     } else {
+        updateProgressUI({ stage: 'downloading', percentage: 0, message: `Fetching ${sourceName(source, false)}...` });
+        const fetchStart = performance.now();
+        const response = await fetch(source, { cache: 'no-store' });
+        if (!response.ok && response.status !== 206) {
+            throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        stats.readMs = performance.now() - fetchStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        updateLoadStatsPanel(stats);
+        updateProgressUI({ stage: 'parsing', percentage: 30, message: 'Parsing USD...' });
         usd = await new Promise((resolve, reject) => {
-            loaderState.loader.load(
-                source,
-                resolve,
-                (event) => {
-                    if (event.stage === 'downloading') {
-                        const pct = event.total > 0 ? Math.round((event.loaded / event.total) * 100) : 0;
-                        updateProgressUI({
-                            stage: 'downloading',
-                            percentage: pct * 0.3,
-                            message: `Downloading... ${pct}%`
-                        });
-                    } else if (event.stage === 'parsing') {
-                        updateProgressUI({
-                            stage: 'parsing',
-                            percentage: 30 + event.percentage * 0.2,
-                            message: 'Parsing USD...'
-                        });
-                    }
-                },
-                reject
-            );
+            loaderState.loader.parse(new Uint8Array(arrayBuffer), sourceName(source, false), resolve, reject, parseOptions);
         });
     }
+    stats.parseMs = performance.now() - parseStart;
+    updateLoadStatsPanel(stats);
 
     return usd;
 }
@@ -1258,15 +1402,19 @@ async function loadUSDWithProgress(source, isFile = false) {
 
     // Clean up previous scene to free memory before loading new file
     cleanupScene();
+    const stats = beginLoadStats(source, isFile);
 
     try {
         let usd;
 
         // Use Web Worker for responsive UI during parsing
-        if (loaderState.useWorker) {
-            usd = await loadWithWorker(source, isFile);
+        if (loaderState.useWorker && settings.backend === 'legacy') {
+            usd = await loadWithWorker(source, isFile, stats);
         } else {
-            usd = await loadWithMainThread(source, isFile);
+            if (loaderState.useWorker && settings.backend !== 'legacy') {
+                console.log('[Progress Demo] next backend uses main-thread loader path');
+            }
+            usd = await loadWithMainThread(source, isFile, stats);
         }
 
         loaderState.nativeLoader = usd;
@@ -1275,7 +1423,9 @@ async function loadUSDWithProgress(source, isFile = false) {
         loadSceneMetadata();
 
         // Build scene with progress
+        const processStart = performance.now();
         const threeRoot = await buildSceneWithProgress(usd, updateProgressUI);
+        stats.processMs = performance.now() - processStart;
 
         // Add to scene
         if (sceneState.root) {
@@ -1292,7 +1442,8 @@ async function loadUSDWithProgress(source, isFile = false) {
 
         // Update UI
         updateModelInfo();
-        updateStatus(`Model loaded (upAxis: ${sceneState.upAxis})`);
+        finishLoadStats(stats);
+        updateStatus(`Model loaded (backend: ${isNextScene(usd) ? 'next' : 'legacy'}, upAxis: ${sceneState.upAxis})`);
 
         hideProgress();
 
@@ -1398,6 +1549,15 @@ function onWindowResize() {
 
 function animate() {
     requestAnimationFrame(animate);
+    const now = performance.now();
+    if (!loadStatsState.fpsLastTime) loadStatsState.fpsLastTime = now;
+    loadStatsState.frames++;
+    if (now - loadStatsState.fpsLastTime >= 500) {
+        loadStatsState.fps = Math.round((loadStatsState.frames * 1000) / (now - loadStatsState.fpsLastTime));
+        loadStatsState.frames = 0;
+        loadStatsState.fpsLastTime = now;
+        updateLoadStatsPanel();
+    }
     threeState.controls.update();
     threeState.renderer.render(threeState.scene, threeState.camera);
 }
@@ -1465,6 +1625,8 @@ function updateStatus(message) {
 
 function updateModelInfo() {
     document.getElementById('model-info').style.display = 'block';
+    document.getElementById('current-file').textContent = loadStatsState.current?.filename || '-';
+    document.getElementById('backend-name').textContent = settings.backend;
     document.getElementById('mesh-count').textContent = sceneState.meshCount;
     document.getElementById('material-count').textContent = sceneState.materials.length;
     document.getElementById('texture-count').textContent = sceneState.textureCount;
@@ -1493,6 +1655,7 @@ function handleFileSelect(event) {
     if (file) {
         loadUSDWithProgress(file, true);
     }
+    event.target.value = '';
 }
 
 function loadSampleModel() {
@@ -1543,8 +1706,35 @@ async function init() {
 
     // Setup file input handler
     document.getElementById('file-input').addEventListener('change', handleFileSelect);
+    const backendSelect = document.getElementById('backend-select');
+    if (backendSelect) {
+        backendSelect.value = settings.backend;
+        backendSelect.addEventListener('change', () => {
+            settings.backend = backendSelect.value;
+            updateLoadStatsPanel();
+            updateStatus(`Backend set to ${settings.backend}`);
+        });
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const initialUrl = urlParam(params);
+    if (initialUrl) {
+        loadUSDWithProgress(initialUrl, false);
+        return;
+    }
 
     updateStatus('Ready - Load a USD file to begin');
+    updateLoadStatsPanel({
+        filename: '-',
+        backend: settings.backend,
+        fileSize: NaN,
+        readMs: NaN,
+        parseMs: NaN,
+        processMs: NaN,
+        totalMs: NaN,
+        memoryBefore: captureStatsMemory(),
+        memoryAfter: captureStatsMemory()
+    });
 }
 
 // Export for HTML onclick handlers

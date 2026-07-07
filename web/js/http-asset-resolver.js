@@ -215,6 +215,19 @@ export function detectMaterialX(bytes) {
 }
 
 function isUsdz(name) { return /\.usdz$/i.test(name || ''); }
+function normalizeBackend(value, fallback = 'legacy') {
+  return (value === 'next' || value === 'auto' || value === 'legacy') ? value : fallback;
+}
+
+function preferredUrlParam(params) {
+  return params.get('uri') || params.get('url') || params.get('src') || params.get('model') || '';
+}
+
+function jsHeapBytes() {
+  return (typeof performance !== 'undefined' && performance.memory)
+    ? performance.memory.usedJSHeapSize
+    : 0;
+}
 
 // Build a composed native Layer instance from root bytes, fetching every
 // external arc + texture over HTTP via `resolver`. Returns
@@ -286,6 +299,77 @@ export async function composeOverHttp({ renderer, rootBytes, filename, resolver,
   return { usd: layer, textureBytesById: tex.textureBytesById };
 }
 
+export async function renderHttpUSD({
+  renderer,
+  rootBytes,
+  filename,
+  baseUrl,
+  label,
+  backend = 'legacy',
+  onStatus,
+  preloadedAssets = []
+}) {
+  const requestedBackend = normalizeBackend(backend);
+  const loadStart = performance.now();
+  const jsStart = jsHeapBytes();
+  const inputRootBytes = rootBytes.byteLength || 0;
+  const shadeLabel = detectMaterialX(rootBytes) ? 'MaterialX/tydra' : 'UsdPreviewSurface';
+
+  if (requestedBackend === 'next' || requestedBackend === 'auto') {
+    try {
+      onStatus && onStatus(`Loading ${label} with next backend...`);
+      const result = await renderer.loadBytesIncremental(rootBytes, filename);
+      const isNextResult = !!result?.memory?.summary?.incremental;
+      if (isNextResult) {
+        return {
+          backend: 'next',
+          requestedBackend,
+          result,
+          inputBytes: inputRootBytes,
+          fetchedBytes: 0,
+          fetches: 0,
+          fetchLog: [],
+          shadeLabel: 'next static render scene',
+          loadMs: performance.now() - loadStart,
+          jsHeapDelta: jsHeapBytes() - jsStart,
+          note: 'next backend uses the self-contained root; external HTTP composition is legacy-only'
+        };
+      }
+      if (requestedBackend === 'next') {
+        throw new Error('next backend requires a self-contained USDC root or USDZ with a USDC root');
+      }
+      onStatus && onStatus('next backend not applicable; falling back to legacy HTTP composition...');
+    } catch (e) {
+      if (requestedBackend === 'next') throw e;
+      onStatus && onStatus(`next backend failed; falling back to legacy HTTP composition: ${e.message}`);
+    }
+  }
+
+  const resolver = new HttpAssetResolver({ baseUrl });
+  const { usd, textureBytesById } = await composeOverHttp({
+    renderer,
+    rootBytes,
+    filename,
+    resolver,
+    onStatus,
+    preloadedAssets,
+  });
+  const inputBytes = inputRootBytes + resolver.bytesFetched;
+  const result = await renderer.renderComposedNative(usd, label, { inputBytes, textureBytesById });
+  return {
+    backend: 'legacy',
+    requestedBackend,
+    result,
+    inputBytes,
+    fetchedBytes: resolver.bytesFetched,
+    fetches: resolver.fetchLog.length,
+    fetchLog: resolver.fetchLog,
+    shadeLabel,
+    loadMs: performance.now() - loadStart,
+    jsHeapDelta: jsHeapBytes() - jsStart,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Demo bootstrap.
 // ---------------------------------------------------------------------------
@@ -317,12 +401,27 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
   const urlInput = opts.urlInput || document.getElementById('asset-url');
   const btnLocal = opts.btnLocal || document.getElementById('btn-demo1');
   const btnHttp = opts.btnHttp || document.getElementById('btn-demo2');
+  const fileInput = opts.fileInput || document.getElementById('file-input');
+  const backendSelect = opts.backendSelect || document.getElementById('backend');
   const presetSel = opts.presetSelect || document.getElementById('preset');
 
   const renderer = new StreamingUSDRenderer(canvas);
   await renderer.init();
 
   let busy = false;
+  let fps = 0;
+  let fpsFrames = 0;
+  let fpsLast = performance.now();
+  const updateFps = (now) => {
+    fpsFrames++;
+    if (now - fpsLast >= 500) {
+      fps = Math.round((fpsFrames * 1000) / (now - fpsLast));
+      fpsFrames = 0;
+      fpsLast = now;
+    }
+    requestAnimationFrame(updateFps);
+  };
+  requestAnimationFrame(updateFps);
   const setStatus = (s) => { if (statusEl) statusEl.textContent = s; };
   const appendLog = (s) => {
     if (!logEl) { console.log('[http-asset-resolver]', s); return; }
@@ -341,6 +440,7 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
       ['WASM heap (reserved peak)', fmtMB(m.heapReserved)],
       ['WASM render buffers (live)', fmtMB(m.renderBuffers)],
       ['Heap / input', ratio + '×'],
+      ['FPS', String(fps || '–')],
     ];
     let html = '<table>' + rows.map(([k, v]) =>
       `<tr><td>${k}</td><td style="text-align:right">${v}</td></tr>`).join('') + '</table>';
@@ -357,7 +457,7 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
   renderer.startMemoryPolling(500);
 
   // Shared loader for a root that's already bytes (local file path or remote URL).
-  async function run({ rootBytes, filename, baseUrl, label }) {
+  async function run({ rootBytes, filename, baseUrl, label, backend }) {
     if (busy) return;
     busy = true;
     if (btnLocal) btnLocal.disabled = true;
@@ -365,23 +465,27 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
     if (logEl) logEl.innerHTML = '';
     try {
       const t0 = performance.now();
-      const mtlx = detectMaterialX(rootBytes);
-      const shadeLabel = mtlx ? 'MaterialX shading (simple, via tydra)' : 'UsdPreviewSurface';
-      setStatus(`Composing ${label} over HTTP… (${shadeLabel})`);
-
-      const resolver = new HttpAssetResolver({ baseUrl });
-      const { usd, textureBytesById } = await composeOverHttp({ renderer, rootBytes, filename, resolver, onStatus: appendLog });
-
-      const inputBytes = rootBytes.byteLength + resolver.bytesFetched;
-      const r = await renderer.renderComposedNative(usd, label, { inputBytes, textureBytesById });
+      const selectedBackend = normalizeBackend(backend || backendSelect?.value);
+      const loaded = await renderHttpUSD({
+        renderer,
+        rootBytes,
+        filename,
+        baseUrl,
+        label,
+        backend: selectedBackend,
+        onStatus: appendLog
+      });
+      const r = loaded.result;
       const dt = (performance.now() - t0).toFixed(0);
 
       const s = r.memory.summary;
       setStatus(`${label}: ${r.meshes} meshes, ${r.textures} textures, ${r.materials} materials ` +
-        `in ${dt} ms — ${shadeLabel}; peak WASM heap ${s.peakHeapMB.toFixed(1)} MB ` +
-        `(${s.ratio.toFixed(2)}× of ${fmtMB(inputBytes)} fetched).`);
-      appendLog(`HTTP fetches: ${resolver.fetchLog.length} ` +
-        `(${resolver.fetchLog.filter((f) => f.ok).length} ok), ${fmtMB(resolver.bytesFetched)} total.`);
+        `in ${dt} ms — backend ${loaded.backend} (${loaded.shadeLabel}); peak WASM heap ${s.peakHeapMB.toFixed(1)} MB ` +
+        `(${s.ratio.toFixed(2)}× of ${fmtMB(loaded.inputBytes)} input).`);
+      if (loaded.note) appendLog(loaded.note);
+      appendLog(`HTTP fetches: ${loaded.fetches} ` +
+        `(${loaded.fetchLog.filter((f) => f.ok).length} ok), ${fmtMB(loaded.fetchedBytes)} total.`);
+      appendLog(`JS heap delta: ${fmtMB(Math.max(0, loaded.jsHeapDelta || 0))}`);
     } catch (e) {
       console.error(e);
       setStatus('Error: ' + (e && e.message));
@@ -422,6 +526,16 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
     await run({ rootBytes: bytes, filename, baseUrl, label: filename });
   }
 
+  async function loadLocalFile(file) {
+    if (!file || !/\.(usd|usda|usdc|usdz)$/i.test(file.name)) {
+      setStatus('Drop or select a USD file (.usd, .usda, .usdc, .usdz).');
+      return;
+    }
+    setStatus(`Reading ${file.name}...`);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await run({ rootBytes: bytes, filename: file.name, baseUrl: '', label: file.name });
+  }
+
   // Wire UI.
   if (presetSel) {
     presetSel.innerHTML = DEMO2_PRESETS.map((p, i) =>
@@ -431,16 +545,38 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
   if (urlInput && !urlInput.value) urlInput.value = DEMO2_PRESETS[0].url;
   if (btnLocal) btnLocal.addEventListener('click', () => loadLocalHttpTexture());
   if (btnHttp) btnHttp.addEventListener('click', () => loadOverHttp());
+  if (fileInput) fileInput.addEventListener('change', () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (file) loadLocalFile(file);
+    fileInput.value = '';
+  });
+  if (canvas) {
+    canvas.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      document.body.classList.add('drag-over');
+    });
+    canvas.addEventListener('dragleave', () => document.body.classList.remove('drag-over'));
+    canvas.addEventListener('drop', (e) => {
+      e.preventDefault();
+      document.body.classList.remove('drag-over');
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      loadLocalFile(file);
+    });
+  }
 
   // Optional auto-run via ?demo=1|2&url=…
   if (opts.autoRun !== false && typeof location !== 'undefined') {
     const q = new URLSearchParams(location.search);
+    const backend = normalizeBackend(q.get('backend'), 'legacy');
+    if (backendSelect) backendSelect.value = backend;
+    const url = preferredUrlParam(q);
     if (q.get('demo') === '1') loadLocalHttpTexture();
-    else if (q.get('demo') === '2') loadOverHttp(q.get('url') || undefined);
+    else if (q.get('demo') === '2') loadOverHttp(url || undefined);
+    else if (url) loadOverHttp(url);
     else setStatus('Pick a demo: load the local USDA (HTTP texture), or a USD over HTTP.');
   }
 
-  return { renderer, loadLocalHttpTexture, loadOverHttp };
+  return { renderer, loadLocalHttpTexture, loadOverHttp, loadLocalFile };
 }
 
 export default mountHttpAssetResolverDemo;

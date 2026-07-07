@@ -8,8 +8,15 @@ import URDFLoader from 'urdf-loader';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
   createConfiguredTinyUSDZLoader,
+  getBackendFromURL,
+  makeStaticNextParseOptions,
   parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+  buildNextThreeNode,
+  isNextScene,
+  nextCountsFromScene
+} from 'tinyusdz/NextRenderSceneUtils.js';
 
 const state = {
   robot: null,
@@ -73,6 +80,7 @@ const state = {
     showTendons: true,
     showSensors: true,
     renderSensorView: true,
+    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'legacy'),
     // Per-MuJoCo-geom-group visibility for the source view (groups 0-5), mirroring
     // the MuJoCo viewer's group toggles. Default: 0-2 shown, 3-5 hidden (the usual
     // visual/auxiliary split). Geoms with no group fall back to showVisuals/
@@ -82,6 +90,14 @@ const state = {
 };
 
 const USD_MESH_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
+const SOURCE_EXTENSIONS = new Set(['.urdf', '.xml']);
+
+const loadStats = {
+  current: null,
+  fps: 0,
+  frames: 0,
+  fpsLast: 0
+};
 
 function createViewScene() {
   const scene = new THREE.Scene();
@@ -193,6 +209,7 @@ const sourceExportButton = document.getElementById('exportSource');
 const convertToUSDButton = document.getElementById('convertToUSD');
 const convertToSourceButton = document.getElementById('convertToSource');
 const fitViewButton = document.getElementById('fitView');
+const backendSelect = document.getElementById('backendSelect');
 const exportButtons = [
   document.getElementById('exportUSDA'),
   document.getElementById('exportUSDC'),
@@ -227,6 +244,108 @@ function resolveUSDCExportCapsFromRuntime() {
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '--';
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = Math.abs(bytes);
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${bytes < 0 ? '-' : ''}${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatMs(ms) {
+  return Number.isFinite(ms) ? `${Math.round(ms)} ms` : '--';
+}
+
+function jsHeapBytes() {
+  return performance.memory ? performance.memory.usedJSHeapSize : 0;
+}
+
+function wasmHeapBytes() {
+  try {
+    return state.tinyLoader?.native_?.HEAPU8?.buffer?.byteLength || 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function captureMemoryStats() {
+  return {
+    jsHeap: jsHeapBytes(),
+    wasmHeap: wasmHeapBytes()
+  };
+}
+
+function updateLoadStatsPanel(stats = loadStats.current) {
+  if (!stats) return;
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  const jsDelta = (stats.memoryAfter?.jsHeap || 0) - (stats.memoryBefore?.jsHeap || 0);
+  const wasmDelta = (stats.memoryAfter?.wasmHeap || 0) - (stats.memoryBefore?.wasmHeap || 0);
+  setText('currentFile', stats.filename || '-');
+  setText('backendName', stats.backend || state.settings.backend);
+  setText('fpsValue', loadStats.fps ? String(loadStats.fps) : '--');
+  setText('fileSize', formatBytes(stats.fileSize));
+  setText('readTime', formatMs(stats.readMs));
+  setText('parseTime', formatMs(stats.parseMs));
+  setText('processTime', formatMs(stats.processMs));
+  setText('totalTime', formatMs(stats.totalMs));
+  setText('jsHeapStat', `${formatBytes(stats.memoryAfter?.jsHeap || 0)} (${jsDelta >= 0 ? '+' : ''}${formatBytes(jsDelta)})`);
+  setText('wasmHeapStat', `${formatBytes(stats.memoryAfter?.wasmHeap || 0)} (${wasmDelta >= 0 ? '+' : ''}${formatBytes(wasmDelta)})`);
+}
+
+function beginLoadStats(filename, fileSize = 0) {
+  const memory = captureMemoryStats();
+  const stats = {
+    filename,
+    backend: state.settings.backend,
+    fileSize,
+    startTime: performance.now(),
+    readMs: NaN,
+    parseMs: NaN,
+    processMs: NaN,
+    totalMs: NaN,
+    memoryBefore: memory,
+    memoryAfter: memory
+  };
+  loadStats.current = stats;
+  updateLoadStatsPanel(stats);
+  return stats;
+}
+
+function finishLoadStats(stats) {
+  stats.totalMs = performance.now() - stats.startTime;
+  stats.memoryAfter = captureMemoryStats();
+  updateLoadStatsPanel(stats);
+}
+
+function urlParam(params) {
+  return params.get('uri') || params.get('url') || params.get('src') || params.get('model') || '';
+}
+
+function basenameFromUrl(url) {
+  const clean = String(url || '').split(/[?#]/)[0];
+  return decodeURIComponent(clean.slice(clean.lastIndexOf('/') + 1)) || 'scene.usd';
+}
+
+function isNextSceneObject(object) {
+  return !!object?.userData && Number.isFinite(object.userData.usdMeshCount);
+}
+
+function countMeshes(root) {
+  let count = 0;
+  root?.traverse((obj) => {
+    if (obj.isMesh) count++;
+  });
+  return count;
 }
 
 function updateButtonStates() {
@@ -433,14 +552,36 @@ async function loadUSDMeshFromFile(file) {
 async function loadUSDObjectFromBytes(bytes, filename) {
   const loader = await ensureTinyLoader();
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const parseStart = performance.now();
   const sceneData = await parseUSDSceneFromArrayBuffer(
     loader,
     data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
     filename,
     // Decode in-package textures (e.g. an embedded-texture USDZ) in the native
     // loader so the converted-USD view shows materials instead of a flat color.
-    { loadTextureInNative: true }
+    makeStaticNextParseOptions({
+      backend: state.settings.backend,
+      loadTextureInNative: true
+    })
   );
+  const stats = loadStats.current;
+  if (stats) {
+    stats.parseMs = performance.now() - parseStart;
+    updateLoadStatsPanel(stats);
+  }
+  if (isNextScene(sceneData)) {
+    const built = buildNextThreeNode(sceneData, {
+      skipTextures: false,
+      lazyTextures: false
+    });
+    const object = built.node;
+    object.name = filename.replace(/\.[^.]+$/, '') || 'usd_scene';
+    const counts = nextCountsFromScene(sceneData);
+    object.userData.usdMeshCount = counts.meshes || 0;
+    object.userData.usdMaterialCount = counts.materials || 0;
+    object.userData.usdTextureCount = counts.textures || 0;
+    return object;
+  }
   const rootNode = sceneData.getDefaultRootNode();
   const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
   const object = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, { overrideMaterial: false });
@@ -459,10 +600,22 @@ async function extractUSDPhysicsJSONFromBytes(bytes, filename) {
   return JSON.parse(jsonText);
 }
 
-async function loadUSDFile(file) {
+async function loadUSDFile(file, existingStats = null) {
   clearUSD();
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  const stats = existingStats || beginLoadStats(file.name, file.size || 0);
+  let bytes;
+  if (existingStats?.bytes) {
+    bytes = existingStats.bytes;
+  } else {
+    const readStart = performance.now();
+    bytes = new Uint8Array(await file.arrayBuffer());
+    stats.readMs = performance.now() - readStart;
+  }
+  stats.fileSize = bytes.byteLength;
+  updateLoadStatsPanel(stats);
+  const processStart = performance.now();
   const object = await loadUSDObjectFromBytes(bytes, file.name);
+  stats.processMs = Math.max(0, performance.now() - processStart - (stats.parseMs || 0));
   state.usdObject = object;
   state.usdRestObject = object;
   state.usdName = file.name;
@@ -470,6 +623,7 @@ async function loadUSDFile(file) {
   state.latestUSDFormat = extension(file.name).slice(1) || 'usd';
   usdGroup.add(object);
   applySceneOrientation();
+  let updatedInfoFromPhysics = false;
   try {
     const extracted = await extractUSDPhysicsJSONFromBytes(bytes, file.name);
     annotateUSDRenderableClasses(object, extracted);
@@ -491,16 +645,26 @@ async function loadUSDFile(file) {
         joints: model.joints,
         meshes: (extracted.prims || []).filter((prim) => prim.geometry).length
       });
+      updatedInfoFromPhysics = true;
     }
   } catch (err) {
     console.warn('USD Physics extraction skipped:', err);
+  }
+  if (!updatedInfoFromPhysics) {
+    updateRobotInfo({
+      name: object.name || file.name,
+      links: new Map(),
+      joints: [],
+      meshes: object.userData.usdMeshCount ?? countMeshes(object)
+    });
   }
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
   applyVisibility();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
-  setStatus(`Loaded USD ${file.name}`);
+  finishLoadStats(stats);
+  setStatus(`Loaded USD ${file.name} (${isNextSceneObject(object) ? 'next' : 'legacy'} backend)`);
 }
 
 async function loadOBJMeshFromFile(file) {
@@ -3685,17 +3849,29 @@ function toggleJointPanelFold() {
   updateJointPanelFold();
 }
 
-async function loadRobotFile(file) {
+async function loadRobotFile(file, existingStats = null) {
   clearRobot();
   rememberAssetFile(file);
-  state.inputText = await file.text();
+  const stats = existingStats || beginLoadStats(file.name, file.size || 0);
+  if (existingStats?.text !== undefined) {
+    state.inputText = existingStats.text;
+  } else {
+    const readStart = performance.now();
+    state.inputText = await file.text();
+    stats.readMs = performance.now() - readStart;
+  }
+  stats.fileSize = state.inputText.length;
   state.inputName = file.name;
+  const parseStart = performance.now();
   state.inputFormat = detectInputFormat(state.inputText);
+  stats.parseMs = performance.now() - parseStart;
   setStatus(`Parsing ${state.inputFormat.toUpperCase()} ${file.name}...`);
   const baseDir = dirname(file.webkitRelativePath || file.name);
+  const processStart = performance.now();
   const robot = state.inputFormat === 'mjcf'
     ? await parseMJCFWithMeshes(state.inputText, file.name, baseDir)
     : await parseURDFWithMeshes(state.inputText, file.name);
+  stats.processMs = performance.now() - processStart;
   state.robot = robot;
   robotGroup.add(robot);
   applySceneOrientation();
@@ -3719,6 +3895,7 @@ async function loadRobotFile(file) {
   rebuildGhosts();
   updateLabels();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
+  finishLoadStats(stats);
   setStatus(`Loaded ${state.inputFormat.toUpperCase()} ${file.name}`);
 }
 
@@ -4942,9 +5119,86 @@ async function exportRobot(format) {
   }
 }
 
+async function loadInputFile(file, existingStats = null) {
+  const ext = extension(file?.name || '');
+  if (SOURCE_EXTENSIONS.has(ext)) {
+    await loadRobotFile(file, existingStats);
+  } else if (USD_MESH_EXTENSIONS.has(ext)) {
+    await loadUSDFile(file, existingStats);
+  } else {
+    throw new Error(`Unsupported file extension ${ext || '(none)'}. Expected URDF, XML, or USD.`);
+  }
+}
+
+async function loadURL(url) {
+  const filename = basenameFromUrl(url);
+  const ext = extension(filename);
+  if (!SOURCE_EXTENSIONS.has(ext) && !USD_MESH_EXTENSIONS.has(ext)) {
+    throw new Error(`Unsupported URL extension ${ext || '(none)'}. Expected URDF, XML, or USD.`);
+  }
+  const stats = beginLoadStats(filename, 0);
+  setStatus(`Fetching ${filename}...`);
+  const fetchStart = performance.now();
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok && response.status !== 206) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  stats.readMs = performance.now() - fetchStart;
+  stats.fileSize = bytes.byteLength;
+  updateLoadStatsPanel(stats);
+  const file = new File([bytes], filename, { type: SOURCE_EXTENSIONS.has(ext) ? 'text/xml' : 'application/octet-stream' });
+  if (SOURCE_EXTENSIONS.has(ext)) {
+    stats.text = new TextDecoder().decode(bytes);
+  } else {
+    stats.bytes = bytes;
+  }
+  try {
+    await loadInputFile(file, stats);
+  } finally {
+    delete stats.text;
+    delete stats.bytes;
+  }
+}
+
+function setupDragAndDrop() {
+  const onEnter = (event) => {
+    event.preventDefault();
+    document.body.classList.add('drag-over');
+  };
+  const onLeave = (event) => {
+    event.preventDefault();
+    if (event.target === document.body || event.target === renderer.domElement) {
+      document.body.classList.remove('drag-over');
+    }
+  };
+  window.addEventListener('dragover', onEnter);
+  window.addEventListener('dragleave', onLeave);
+  window.addEventListener('drop', (event) => {
+    event.preventDefault();
+    document.body.classList.remove('drag-over');
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    loadInputFile(file).catch((err) => {
+      console.error(err);
+      setStatus(`Drop load failed: ${err.message}`);
+    });
+  });
+}
+
+function setupURLAutoload() {
+  const params = new URLSearchParams(window.location.search);
+  const url = urlParam(params);
+  if (!url) return;
+  loadURL(url).catch((err) => {
+    console.error(err);
+    setStatus(`URL load failed: ${err.message}`);
+  });
+}
+
 document.getElementById('urdfInput').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
-  if (file) loadRobotFile(file).catch((err) => {
+  if (file) loadInputFile(file).catch((err) => {
     console.error(err);
     setStatus(`Load failed: ${err.message}`);
   });
@@ -4957,7 +5211,7 @@ document.getElementById('assetInput').addEventListener('change', (event) => {
 
 document.getElementById('usdInput').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
-  if (file) loadUSDFile(file).catch((err) => {
+  if (file) loadInputFile(file).catch((err) => {
     console.error(err);
     setStatus(`USD load failed: ${err.message}`);
   });
@@ -5040,7 +5294,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-const clock = new THREE.Clock();
+const animationStartTime = performance.now();
 function renderSplitView() {
   const width = renderer.domElement.clientWidth;
   const height = renderer.domElement.clientHeight;
@@ -5066,7 +5320,16 @@ function renderSplitView() {
 
 function animate() {
   requestAnimationFrame(animate);
-  const elapsed = clock.getElapsedTime();
+  const now = performance.now();
+  if (!loadStats.fpsLast) loadStats.fpsLast = now;
+  loadStats.frames++;
+  if (now - loadStats.fpsLast >= 500) {
+    loadStats.fps = Math.round((loadStats.frames * 1000) / (now - loadStats.fpsLast));
+    loadStats.frames = 0;
+    loadStats.fpsLast = now;
+    updateLoadStatsPanel();
+  }
+  const elapsed = (performance.now() - animationStartTime) / 1000;
   if ((state.robot || state.usdArticulation) && state.settings.animateJoints) {
     for (const [name, joint] of Object.entries(state.joints)) {
       const type = joint.jointType || joint.type || 'fixed';
@@ -5087,7 +5350,19 @@ function animate() {
 }
 
 buildGUI();
+if (backendSelect) {
+  backendSelect.value = state.settings.backend;
+  backendSelect.addEventListener('change', () => {
+    state.settings.backend = backendSelect.value;
+    if (loadStats.current) loadStats.current.backend = state.settings.backend;
+    updateLoadStatsPanel();
+    setStatus(`USD backend set to ${state.settings.backend}.`);
+  });
+}
 updateButtonStates();
 updateLabels();
 updateJointPanelFold();
+updateLoadStatsPanel(beginLoadStats('-', 0));
+setupDragAndDrop();
+setupURLAutoload();
 animate();
