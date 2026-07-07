@@ -74,6 +74,105 @@ Layer Layer::Clone() const {
   return out;
 }
 
+uint32_t Layer::define_prim_at_path(const std::string& path,
+                                    const std::string& type_name,
+                                    PrimSpecifier specifier) {
+  if (path.size() < 2 || path[0] != '/') return UINT32_MAX;
+  // Validate the whole path before creating anything, so an invalid path
+  // (empty component / trailing slash) does not leave partial ancestors.
+  for (size_t i = 1; i < path.size(); ++i) {
+    if (path[i] == '/' && (i + 1 == path.size() || path[i + 1] == '/')) {
+      return UINT32_MAX;
+    }
+  }
+
+  // The incremental updates below rely on the path index being current.
+  if (path_to_index_.empty() && !prims_.empty()) {
+    build_path_index();
+  }
+
+  uint32_t parent_index = UINT32_MAX;
+  uint32_t index = UINT32_MAX;
+  size_t pos = 1;
+  std::string cur_path;
+  cur_path.reserve(path.size());
+
+  while (pos <= path.size()) {
+    size_t next = path.find('/', pos);
+    if (next == std::string::npos) next = path.size();
+    if (next == pos) return UINT32_MAX;  // empty component ("//" or trailing '/')
+    const std::string name = path.substr(pos, next - pos);
+    cur_path += '/';
+    cur_path += name;
+    const bool is_leaf = (next == path.size());
+
+    auto it = path_to_index_.find(cur_path);
+    if (it != path_to_index_.end()) {
+      index = it->second;
+    } else {
+      PrimSpec spec(name);  // typeless def for intermediate ancestors
+      spec.set_path(Path(cur_path));
+      index = add_prim(std::move(spec));  // may reallocate prims_
+      path_to_index_[cur_path] = index;
+      if (parent_index == UINT32_MAX) {
+        add_root(index);
+      } else {
+        set_parent(index, parent_index);
+      }
+    }
+
+    if (is_leaf) {
+      PrimSpec* leaf = prim(index);
+      if (!type_name.empty()) leaf->set_type_name(type_name);
+      leaf->set_specifier(specifier);
+      return index;
+    }
+
+    parent_index = index;
+    pos = next + 1;
+  }
+  return UINT32_MAX;
+}
+
+bool Layer::remove_prim_at_path(const std::string& path) {
+  if (path_to_index_.empty() && !prims_.empty()) {
+    build_path_index();
+  }
+  auto it = path_to_index_.find(path);
+  if (it == path_to_index_.end()) return false;
+  const uint32_t index = it->second;
+
+  // Unlink from parent (or the root list).
+  size_t slash = path.find_last_of('/');
+  if (slash == 0) {
+    auto rit = std::find(root_indices_.begin(), root_indices_.end(), index);
+    if (rit != root_indices_.end()) root_indices_.erase(rit);
+  } else {
+    const std::string parent_path = path.substr(0, slash);
+    auto pit = path_to_index_.find(parent_path);
+    if (pit != path_to_index_.end()) {
+      if (PrimSpec* parent = prim(pit->second)) {
+        parent->remove_child_index(index);
+      }
+    }
+  }
+
+  // Drop the whole subtree from the path index (iterative DFS; the specs stay
+  // allocated but unreachable).
+  std::vector<uint32_t> stack{index};
+  while (!stack.empty()) {
+    uint32_t cur = stack.back();
+    stack.pop_back();
+    const PrimSpec* p = prim(cur);
+    if (!p) continue;
+    path_to_index_.erase(p->path().str());
+    for (uint32_t child : p->child_indices()) {
+      stack.push_back(child);
+    }
+  }
+  return true;
+}
+
 void Layer::finalize() {
   if (finalized_) return;
 

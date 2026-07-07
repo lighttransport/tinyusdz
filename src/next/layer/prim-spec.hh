@@ -13,9 +13,13 @@
 #include "../prim/path.hh"
 #include <string>
 #include <vector>
+#include <deque>
 #include <memory>
 #include <functional>
 #include <map>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <shared_mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -34,6 +38,8 @@ struct TypeNameId {
 };
 
 /// Type name interning table
+/// Thread-safe under TINYUSDZ_ENABLE_THREAD (authoring interns new type names
+/// at runtime, so concurrent readers need protection like PropNameTable).
 class TypeNameTable {
 public:
   TypeNameId intern(const std::string& name);
@@ -65,8 +71,13 @@ public:
   void register_common_types();
 
 private:
-  std::vector<std::string> names_;
+  // deque, not vector: get() returns a `const std::string&` that callers may
+  // hold after the lock is released; deque never relocates on push_back.
+  std::deque<std::string> names_;
   std::unordered_map<std::string, uint16_t> name_to_id_;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  mutable std::shared_mutex mu_;
+#endif
 };
 
 TypeNameTable& GetTypeNameTable();
@@ -475,6 +486,10 @@ public:
   /// Check if property has time samples
   bool has(PropNameId name_id) const;
 
+  /// Remove all time samples for a property. Returns true if any existed.
+  /// (Stored values remain in the value pool; they may be shared.)
+  bool remove(PropNameId name_id);
+
   /// Get interpolated value at a given time
   /// @param name_id Property name ID
   /// @param time Time to sample at
@@ -605,6 +620,20 @@ public:
   /// the slot is absent or has no authored default value.
   bool set_property_value(PropNameId name_id, Value value);
 
+  /// Author a property value regardless of prior state: creates the slot if
+  /// absent, fills a value-less (declared-only) slot, or replaces the existing
+  /// default IN PLACE (no ValueStorage growth on re-authoring). `flags` are
+  /// OR'd onto an existing slot (kFlagArray is recomputed from the value).
+  void upsert_property(PropNameId name_id, Value value, uint16_t flags = 0);
+  void upsert_property(const std::string& name, Value value, uint16_t flags = 0);
+
+  /// Remove a property entirely: slot, connections, declared type name,
+  /// per-property metadata, and time samples. Returns true if anything was
+  /// removed. (The stored default Value stays in ValueStorage as an
+  /// unreferenced entry; storage is append-only.)
+  bool remove_property(PropNameId name_id);
+  bool remove_property(const std::string& name);
+
   /// Get property index (for iteration)
   const PropIndex& properties() const { return props_; }
 
@@ -668,6 +697,15 @@ public:
   /// Add a relationship target
   void add_relationship(const std::string& name, const Path& target);
 
+  /// Replace a relationship's targets wholesale (creates it if absent).
+  /// An empty target list authors an explicit empty relationship.
+  void set_relationship_targets(const std::string& name,
+                                std::vector<Path> targets);
+
+  /// Remove a relationship (both the target list and its property slot, if a
+  /// kFlagRelationship slot was declared). Returns true if removed.
+  bool remove_relationship(const std::string& name);
+
   /// Apply same-spec relationship list-op targets. Used by USDA body syntax
   /// such as `prepend rel prototypes = [...]`.
   void apply_relationship_list_op(const std::string& name,
@@ -730,6 +768,10 @@ public:
 
   /// Add child index
   void add_child_index(uint32_t index);
+
+  /// Remove a single child index link (used by Layer::remove_prim_at_path).
+  /// Returns true if the index was found and removed.
+  bool remove_child_index(uint32_t index);
 
   /// Drop all child links (orphan the subtree). The child prims remain in the
   /// Layer but become unreachable from this prim — used by the extracted-

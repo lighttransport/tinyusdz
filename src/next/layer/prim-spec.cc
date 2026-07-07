@@ -6,6 +6,9 @@
 #include "prim-spec.hh"
 #include <algorithm>
 #include <cstring>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -39,6 +42,16 @@ const std::string* FindAssetPathRemap(
 // ============================================================
 
 TypeNameId TypeNameTable::intern(const std::string& name) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    auto hit = name_to_id_.find(name);
+    if (hit != name_to_id_.end()) {
+      return TypeNameId{hit->second};
+    }
+  }
+  std::unique_lock<std::shared_mutex> wlk(mu_);
+#endif
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return TypeNameId{it->second};
@@ -56,11 +69,19 @@ TypeNameId TypeNameTable::intern(const std::string& name) {
 
 const std::string& TypeNameTable::get(TypeNameId id) const {
   static const std::string empty;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // names_ is a deque: elements never relocate on push_back, so the returned
+  // reference stays valid after the lock is released.
+  std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
   if (!id.is_valid() || id.id >= names_.size()) return empty;
   return names_[id.id];
 }
 
 TypeNameId TypeNameTable::find(const std::string& name) const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return TypeNameId{it->second};
@@ -126,13 +147,14 @@ void TypeNameTable::register_common_types() {
   intern("Component");
 }
 
+// Registration happens inside the (thread-safe) static local initialization,
+// so concurrent first callers cannot observe a half-registered table.
 TypeNameTable& GetTypeNameTable() {
-  static TypeNameTable table;
-  static bool initialized = false;
-  if (!initialized) {
-    table.register_common_types();
-    initialized = true;
-  }
+  static TypeNameTable& table = []() -> TypeNameTable& {
+    static TypeNameTable t;
+    t.register_common_types();
+    return t;
+  }();
   return table;
 }
 
@@ -273,6 +295,10 @@ size_t TimeSampleStorage::remap_asset_paths(
 
 bool TimeSampleStorage::has(PropNameId name_id) const {
   return samples_.find(name_id.id) != samples_.end();
+}
+
+bool TimeSampleStorage::remove(PropNameId name_id) {
+  return samples_.erase(name_id.id) > 0;
 }
 
 SampleResult TimeSampleStorage::interpolate(PropNameId name_id, double time,
@@ -517,6 +543,58 @@ bool PrimSpec::set_property_value(PropNameId name_id, Value value) {
   return true;
 }
 
+void PrimSpec::upsert_property(PropNameId name_id, Value value, uint16_t flags) {
+  PropSlot* slot = props_.find_mutable(name_id);
+  if (!slot) {
+    add_property(name_id, std::move(value), flags);
+    return;
+  }
+
+  bool is_array = value.is_array();
+  TypeId type = value.type_id();
+
+  if (slot->value_offset == UINT32_MAX) {
+    // Declared-only slot: attach a value.
+    if (!values_) values_ = std::make_unique<ValueStorage>();
+    slot->value_offset = values_->store(std::move(value));
+  } else if (Value* dst = values_ ? values_->get(slot->value_offset) : nullptr) {
+    // Replace in place — no ValueStorage growth on re-authoring.
+    *dst = std::move(value);
+  } else {
+    if (!values_) values_ = std::make_unique<ValueStorage>();
+    slot->value_offset = values_->store(std::move(value));
+  }
+
+  if (type != TypeId::Invalid) {
+    slot->value_type = static_cast<uint16_t>(type);
+  }
+  slot->flags |= flags;
+  if (is_array) {
+    slot->flags |= PropSlot::kFlagArray;
+  } else {
+    slot->flags &= static_cast<uint16_t>(~PropSlot::kFlagArray);
+  }
+}
+
+void PrimSpec::upsert_property(const std::string& name, Value value,
+                               uint16_t flags) {
+  upsert_property(GetPropNameTable().intern(name), std::move(value), flags);
+}
+
+bool PrimSpec::remove_property(PropNameId name_id) {
+  if (!name_id.is_valid()) return false;
+  bool removed = props_.remove(name_id);
+  if (connections_.erase(name_id.id) > 0) removed = true;
+  prop_type_names_.erase(name_id.id);
+  prop_metas_.erase(name_id.id);
+  if (time_samples_ && time_samples_->remove(name_id)) removed = true;
+  return removed;
+}
+
+bool PrimSpec::remove_property(const std::string& name) {
+  return remove_property(GetPropNameTable().find(name));
+}
+
 size_t PrimSpec::remap_asset_paths(
     const std::map<std::string, std::string>& remap) {
   if (remap.empty()) return 0;
@@ -638,6 +716,24 @@ void PrimSpec::apply_relationship_list_op(const std::string& name,
   }
 }
 
+void PrimSpec::set_relationship_targets(const std::string& name,
+                                        std::vector<Path> targets) {
+  relationships_[name] = std::move(targets);
+}
+
+bool PrimSpec::remove_relationship(const std::string& name) {
+  bool removed = relationships_.erase(name) > 0;
+  PropNameId id = GetPropNameTable().find(name);
+  if (id.is_valid()) {
+    const PropSlot* slot = props_.find(id);
+    if (slot && slot->is_relationship()) {
+      props_.remove(id);
+      removed = true;
+    }
+  }
+  return removed;
+}
+
 const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
   auto it = relationships_.find(name);
   if (it == relationships_.end()) return nullptr;
@@ -726,6 +822,13 @@ PropMeta& PrimSpec::ensure_property_meta(const std::string& prop_name) {
 
 void PrimSpec::add_child_index(uint32_t index) {
   child_indices_.push_back(index);
+}
+
+bool PrimSpec::remove_child_index(uint32_t index) {
+  auto it = std::find(child_indices_.begin(), child_indices_.end(), index);
+  if (it == child_indices_.end()) return false;
+  child_indices_.erase(it);
+  return true;
 }
 
 size_t PrimSpec::memory_usage() const {

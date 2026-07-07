@@ -572,7 +572,8 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                   !meta.references.empty() || !meta.payloads.empty() ||
                   !meta.inherits.empty() || !meta.specializes.empty() ||
                   !meta.variantSelections().empty() ||
-                  !meta.variantSelection.empty();
+                  !meta.variantSelection.empty() ||
+                  !meta.variantSets().empty();
 
   if (has_meta) {
     const int md = depth + 1;
@@ -662,6 +663,25 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         write_variants({{meta.variantSelection.substr(0, eq),
                          meta.variantSelection.substr(eq + 1)}});
       }
+    } else if (!meta.variantSets().empty()) {
+      // No explicit selections list, but per-set `selected` fields may be
+      // authored: emit them so selections round-trip.
+      std::vector<std::pair<std::string, std::string>> sels;
+      for (const auto& vs : meta.variantSets()) {
+        if (!vs.selected.empty()) sels.emplace_back(vs.name, vs.selected);
+      }
+      if (!sels.empty()) write_variants(sels);
+    }
+
+    // Variant set declaration: `prepend variantSets = ["lod", ...]`.
+    if (!meta.variantSets().empty()) {
+      WriteIndent(os, md, opts.indent);
+      os << "prepend variantSets = [";
+      for (size_t i = 0; i < meta.variantSets().size(); ++i) {
+        if (i) os << ", ";
+        os << EscapeString(meta.variantSets()[i].name);
+      }
+      os << "]\n";
     }
 
     WriteIndent(os, depth, opts.indent);
@@ -704,6 +724,53 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     if (!targets) continue;
     PropNameId rid = name_table.find(rel_name);
     WriteRelationship(os, rel_name, *targets, spec, rid, content_depth, opts);
+  }
+
+  // Write variant set bodies:
+  //   variantSet "lod" = { "high" { ...props... } "low" { } }
+  // Covers option names, per-option properties and relationships (the shapes
+  // the authoring API produces). Option-level composition arcs / nested sets /
+  // content subtrees are not emitted here.
+  for (const VariantSetData& vs : spec.meta().variantSets()) {
+    os << "\n";
+    WriteIndent(os, content_depth, opts.indent);
+    os << "variantSet " << EscapeString(vs.name) << " = {\n";
+    for (const VariantData& var : vs.variants) {
+      WriteIndent(os, content_depth + 1, opts.indent);
+      os << EscapeString(var.name) << " {\n";
+      PrintOptions vpopts;
+      vpopts.float_precision = opts.float_precision;
+      vpopts.double_precision = opts.double_precision;
+      for (const VariantProperty& vp : var.properties) {
+        WriteIndent(os, content_depth + 2, opts.indent);
+        if (vp.flags & PropSlot::kFlagUniform) os << "uniform ";
+        const char* tn = GetTypeName(vp.value.type_id());
+        os << (tn ? tn : "token");
+        if (vp.value.is_array()) os << "[]";
+        os << " " << vp.name << " = ";
+        PrintValue(os, vp.value, vpopts);
+        os << "\n";
+      }
+      for (const auto& rel : var.relationships) {
+        WriteIndent(os, content_depth + 2, opts.indent);
+        os << "rel " << rel.first;
+        if (rel.second.size() == 1) {
+          os << " = <" << rel.second[0].str() << ">";
+        } else if (!rel.second.empty()) {
+          os << " = [";
+          for (size_t t = 0; t < rel.second.size(); ++t) {
+            if (t) os << ", ";
+            os << "<" << rel.second[t].str() << ">";
+          }
+          os << "]";
+        }
+        os << "\n";
+      }
+      WriteIndent(os, content_depth + 1, opts.indent);
+      os << "}\n";
+    }
+    WriteIndent(os, content_depth, opts.indent);
+    os << "}\n";
   }
 
   // Write children. When `segsink` is active (the parallel build walk), the same
