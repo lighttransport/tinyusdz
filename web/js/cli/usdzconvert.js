@@ -95,10 +95,19 @@ Convert options:
                            (-o); falls back to buffering otherwise.
   --no-stream-write        Force the buffered root path (TINYUSDZ_STREAM_WRITE=0).
   --png-encoder <fpnge|fpng|auto>  PNG encoder hint (WASM always uses fpng)
-  --texture-codec <wasm|js>  Texture pipeline: wasm (default, sequential) or
-                           js (PNG via worker_threads pool + pngjs/node zlib,
-                           parallel; non-PNG falls back to wasm)
-  --texture-jobs <N>       Worker threads for --texture-codec js (default: cores-1)
+  --texture-codec <auto|best|wasm|js>
+                           Texture pipeline: auto (default), best, wasm, or js.
+                           auto keeps the low-memory WASM path for small/medium
+                           jobs and uses a small Node worker pool for large PNG
+                           resize-to-PNG jobs. js runs PNG via worker_threads
+                           + pngjs/node zlib in parallel; non-PNG falls back
+                           to wasm. best uses a rough RSS estimate and
+                           --texture-memory-budget to choose wasm/js jobs.
+  --texture-jobs <N|best>  Worker threads for --texture-codec js.
+                           best estimates a safe count from the memory budget.
+  --texture-memory-budget <size>
+                           Best-effort RSS budget for auto/best texture codec
+                           selection (e.g. 1GB, 900MB). 0 = no explicit cap.
   --no-reencode            Copy unmodified textures through unchanged
   --optimize-materials <mode>
                            Material optimization: off, dedupe, preview, atlas.
@@ -151,11 +160,13 @@ function parseArgs() {
     // (or --no-stream-write) disables it.
     streamWrite: process.env.TINYUSDZ_STREAM_WRITE !== '0',
     repack: null, packChannels: 0, pack: { R: null, G: null, B: null, A: null },
-    // 'wasm' (default): textures go through the single-threaded WASM
-    // convertImage. 'js': PNG work runs on a worker_threads pool (pngjs +
-    // node:zlib), in parallel; non-PNG textures still fall back to WASM.
-    textureCodec: process.env.TINYUSDZ_TEXTURE_CODEC || 'wasm',
-    textureJobs: 0,  // 0 = cpu count - 1
+    // 'auto' (default): choose low-memory WASM or a small JS worker pool for
+    // large PNG resize jobs. 'wasm': single-threaded convertImage. 'js': PNG
+    // work runs on a worker_threads pool; non-PNG still falls back to WASM.
+    textureCodec: process.env.TINYUSDZ_TEXTURE_CODEC || 'auto',
+    textureJobs: 0,  // 0 = cpu count - 1; 'best' = estimate from budget
+    textureMemoryBudget: process.env.TINYUSDZ_TEXTURE_MEMORY_BUDGET ?
+      parseByteSize(process.env.TINYUSDZ_TEXTURE_MEMORY_BUDGET) : 0,
     optimizeMaterials: 'off',
     materialAtlasSize: 4096,
     materialAtlasTileSize: 512,
@@ -194,7 +205,11 @@ function parseArgs() {
     else if (a === '--stream-write') o.streamWrite = true;
     else if (a === '--no-stream-write') o.streamWrite = false;
     else if (a === '--texture-codec') o.textureCodec = args[++i];
-    else if (a === '--texture-jobs') o.textureJobs = parseInt(args[++i], 10) || 0;
+    else if (a === '--texture-jobs') {
+      const v = args[++i];
+      o.textureJobs = String(v).toLowerCase() === 'best' ? 'best' : (parseInt(v, 10) || 0);
+    }
+    else if (a === '--texture-memory-budget') o.textureMemoryBudget = parseByteSize(args[++i]);
     else if (a === '--include-unused-textures') o.includeUnusedTextures = true;
     else if (a === '--optimize-materials') o.optimizeMaterials = args[++i];
     else if (a === '--material-atlas-size') o.materialAtlasSize = parseInt(args[++i], 10) || 4096;
@@ -282,6 +297,137 @@ function urlListSource(file) {
   };
 }
 
+function isImagePathForCodec(pathname) {
+  return /\.(png|jpe?g|webp|exr|hdr|tiff?|bmp|gif)$/i.test(String(pathname || ''));
+}
+
+function defaultTextureJobs() {
+  return Math.max(1, ((globalThis.navigator && navigator.hardwareConcurrency) || 4) - 1);
+}
+
+function estimateTextureRssMiB(imageCount, jobs, codec) {
+  const count = Math.max(0, imageCount | 0);
+  // Observed on large 512px PNG resize jobs:
+  //   wasm: ~0.5 GiB, js/2: ~0.8 GiB, js/4: ~1.2 GiB.
+  // The root flatten cost varies per scene, so keep the estimate deliberately
+  // conservative rather than trying to predict exact texture dimensions.
+  const base = 384 + Math.min(192, count * 0.4);
+  if (codec === 'wasm') return base;
+  return base + Math.max(1, jobs | 0) * 175;
+}
+
+function chooseBestTextureJobs(imageCount, budgetBytes) {
+  if (!budgetBytes || budgetBytes <= 0) return 4;
+  const budgetMiB = budgetBytes / 1048576;
+  const candidates = [8, 6, 4, 3, 2, 1];
+  for (const jobs of candidates) {
+    if (estimateTextureRssMiB(imageCount, jobs, 'js') <= budgetMiB) {
+      return jobs;
+    }
+  }
+  return 0;
+}
+
+function chooseTextureCodec(o, keys = []) {
+  const requested = String(o.textureCodec || 'auto').toLowerCase();
+  const textureFormat = String(o.textureFormat || 'keep').toLowerCase();
+  const imageCount = Array.isArray(keys) ? keys.filter(isImagePathForCodec).length : 0;
+  const wantsResizeToPng = textureFormat === 'png' && (o.resize || 0) > 0;
+  const budgetBytes = o.textureMemoryBudget || 0;
+
+  if (requested === 'wasm') {
+    return {
+      codec: 'wasm',
+      jobs: 0,
+      estimatedRssMiB: estimateTextureRssMiB(imageCount, 0, 'wasm'),
+      reason: 'wasm'
+    };
+  }
+  if (requested === 'js') {
+    const explicitJobs = o.textureJobs === 'best'
+      ? chooseBestTextureJobs(imageCount, budgetBytes)
+      : (o.textureJobs || defaultTextureJobs());
+    return {
+      codec: explicitJobs > 0 ? 'js' : 'wasm',
+      jobs: explicitJobs,
+      estimatedRssMiB: explicitJobs > 0
+        ? estimateTextureRssMiB(imageCount, explicitJobs, 'js')
+        : estimateTextureRssMiB(imageCount, 0, 'wasm'),
+      reason: explicitJobs > 0
+        ? `js${o.textureJobs === 'best' ? ' best-guess' : ''}: ${imageCount} image assets`
+        : `budget too small for js; wasm fallback (${imageCount} image assets)`
+    };
+  }
+
+  if (requested === 'best') {
+    if (!wantsResizeToPng || imageCount < 64) {
+      return {
+        codec: 'wasm',
+        jobs: 0,
+        estimatedRssMiB: estimateTextureRssMiB(imageCount, 0, 'wasm'),
+        reason: `best: low-memory wasm (${imageCount} image assets)`
+      };
+    }
+    const jobs = chooseBestTextureJobs(imageCount, budgetBytes || 1024 * 1024 * 1024);
+    if (jobs > 0) {
+      return {
+        codec: 'js',
+        jobs,
+        estimatedRssMiB: estimateTextureRssMiB(imageCount, jobs, 'js'),
+        reason: `best: ${imageCount} image assets, png resize, budget ` +
+          `${Math.round((budgetBytes || 1024 * 1024 * 1024) / 1048576)} MiB`
+      };
+    }
+    return {
+      codec: 'wasm',
+      jobs: 0,
+      estimatedRssMiB: estimateTextureRssMiB(imageCount, 0, 'wasm'),
+      reason: `best: budget favors wasm (${imageCount} image assets)`
+    };
+  }
+
+  if (requested !== 'auto') {
+    return { codec: requested, jobs: 0, reason: requested };
+  }
+
+  if (wantsResizeToPng && imageCount >= 300) {
+    const jobs = o.textureJobs === 'best'
+      ? chooseBestTextureJobs(imageCount, budgetBytes || 1024 * 1024 * 1024)
+      : budgetBytes > 0
+      ? chooseBestTextureJobs(imageCount, budgetBytes)
+      : (o.textureJobs || 4);
+    if (jobs <= 0) {
+      return {
+        codec: 'wasm',
+        jobs: 0,
+        estimatedRssMiB: estimateTextureRssMiB(imageCount, 0, 'wasm'),
+        reason: `auto: budget favors wasm (${imageCount} image assets)`
+      };
+    }
+    return {
+      codec: 'js',
+      jobs,
+      estimatedRssMiB: estimateTextureRssMiB(imageCount, jobs, 'js'),
+      reason: `auto: ${imageCount} image assets, png resize` +
+        (budgetBytes > 0 ? `, budget ${Math.round(budgetBytes / 1048576)} MiB` : '')
+    };
+  }
+
+  return {
+    codec: 'wasm',
+    jobs: 0,
+    estimatedRssMiB: estimateTextureRssMiB(imageCount, 0, 'wasm'),
+    reason: `auto: low-memory wasm (${imageCount} image assets)`
+  };
+}
+
+function validateTextureCodecSelection(o, selected) {
+  if (selected.codec !== 'wasm' && selected.codec !== 'js') {
+    console.error(`--texture-codec must be auto, best, wasm or js (got '${o.textureCodec}')`);
+    process.exit(1);
+  }
+}
+
 async function runStreamingConvert(native, o) {
   const log = o.verbose ? (m) => console.log(m) : () => {};
   const source = o.urlList ? urlListSource(o.urlList) : folderSource(o.input);
@@ -295,9 +441,18 @@ async function runStreamingConvert(native, o) {
   };
 
   let texturePool = null;
-  if (o.textureCodec === 'js') {
+  const selectedTextureCodec = chooseTextureCodec(o, source.keys || []);
+  validateTextureCodecSelection(o, selectedTextureCodec);
+  if (o.verbose && o.textureCodec === 'auto') {
+    log(`texture codec: ${selectedTextureCodec.codec} (${selectedTextureCodec.reason}; ` +
+      `estimated RSS ${Math.round(selectedTextureCodec.estimatedRssMiB || 0)} MiB)`);
+  } else if (o.verbose && o.textureCodec === 'best') {
+    log(`texture codec: ${selectedTextureCodec.codec} (${selectedTextureCodec.reason}; ` +
+      `estimated RSS ${Math.round(selectedTextureCodec.estimatedRssMiB || 0)} MiB)`);
+  }
+  if (selectedTextureCodec.codec === 'js') {
     const { createNodeTextureProcessor } = await import('../src/texture-processor-node.mjs');
-    texturePool = createNodeTextureProcessor({ concurrency: o.textureJobs || 0 });
+    texturePool = createNodeTextureProcessor({ concurrency: selectedTextureCodec.jobs || 0 });
     log(`texture codec: js (${texturePool.concurrency} worker(s))`);
   }
 
@@ -390,6 +545,7 @@ async function main() {
 
   const native = await loadWasm(() => import(wasmGlue));
   if (o.verbose) console.log('WASM module loaded.');
+  o.textureCodec = String(o.textureCodec || 'auto').toLowerCase();
   if (!['keep', 'png', 'jpeg', 'jpg', 'exr'].includes(String(o.textureFormat).toLowerCase())) {
     console.error('Invalid --texture-format. Expected keep, png, jpeg, or exr.');
     process.exit(1);
@@ -523,13 +679,19 @@ async function main() {
   // (pngjs + node:zlib), parallel across textures. Non-PNG inputs fall back
   // to the WASM convertImage path inside convertFolderToUSDZ.
   let texturePool = null;
-  if (o.textureCodec === 'js') {
+  const selectedTextureCodec = chooseTextureCodec(o, assetMap ? [...assetMap.keys()] : []);
+  validateTextureCodecSelection(o, selectedTextureCodec);
+  if (o.verbose && o.textureCodec === 'auto') {
+    log(`texture codec: ${selectedTextureCodec.codec} (${selectedTextureCodec.reason}; ` +
+      `estimated RSS ${Math.round(selectedTextureCodec.estimatedRssMiB || 0)} MiB)`);
+  } else if (o.verbose && o.textureCodec === 'best') {
+    log(`texture codec: ${selectedTextureCodec.codec} (${selectedTextureCodec.reason}; ` +
+      `estimated RSS ${Math.round(selectedTextureCodec.estimatedRssMiB || 0)} MiB)`);
+  }
+  if (selectedTextureCodec.codec === 'js') {
     const { createNodeTextureProcessor } = await import('../src/texture-processor-node.mjs');
-    texturePool = createNodeTextureProcessor({ concurrency: o.textureJobs || 0 });
+    texturePool = createNodeTextureProcessor({ concurrency: selectedTextureCodec.jobs || 0 });
     log(`texture codec: js (${texturePool.concurrency} worker(s))`);
-  } else if (o.textureCodec && o.textureCodec !== 'wasm') {
-    console.error(`--texture-codec must be wasm or js (got '${o.textureCodec}')`);
-    process.exit(1);
   }
 
   let convertResult;
