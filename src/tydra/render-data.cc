@@ -926,7 +926,8 @@ bool RenderSceneConverter::ConvertVolume(
     }
 
     // Resolve + open the .vdb asset.
-    std::string sanitized = utils::SanitizeAssetPath(filePath.GetAssetPath());
+    std::string sanitized = utils::SanitizeAssetPath(
+        filePath.GetAssetPath(), assetResolver.get_allow_parent_relative_paths());
     if (sanitized.empty()) {
       DCOUT("Unsafe vdb asset path: " << filePath.GetAssetPath());
       continue;
@@ -2425,8 +2426,8 @@ bool DefaultTextureImageLoaderFunction(
   (void)userdata;
   (void)warn;
 
-  std::string sanitized_path =
-      utils::SanitizeAssetPath(assetPath.GetAssetPath());
+  std::string sanitized_path = utils::SanitizeAssetPath(
+      assetPath.GetAssetPath(), assetResolver.get_allow_parent_relative_paths());
   if (sanitized_path.empty()) {
     if (err) {
       (*err) += fmt::format("Unsafe asset path: {}\n", assetPath.GetAssetPath());
@@ -2622,7 +2623,8 @@ bool UDIMDecodeImageAsset(const std::string &assetPath,
     return true;
   }
 
-  std::string sanitized = utils::SanitizeAssetPath(assetPath);
+  std::string sanitized = utils::SanitizeAssetPath(
+      assetPath, assetResolver.get_allow_parent_relative_paths());
   if (sanitized.empty()) {
     if (err) (*err) += fmt::format("Unsafe asset path: {}\n", assetPath);
     return false;
@@ -2758,7 +2760,8 @@ bool ExpandUDIMTiles(const std::string &udimAssetPath,
     const std::string tilePath = prefix + std::to_string(id) + suffix;
     bool found = io::FileExists(tilePath);
     if (!found) {
-      const std::string sanitized = utils::SanitizeAssetPath(tilePath);
+      const std::string sanitized = utils::SanitizeAssetPath(
+          tilePath, assetResolver.get_allow_parent_relative_paths());
       if (sanitized.empty()) {
         continue;
       }

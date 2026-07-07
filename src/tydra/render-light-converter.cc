@@ -377,8 +377,9 @@ bool RenderSceneConverter::ConvertDomeLight(
 
           // Try to store the raw asset for later decoding (e.g., in JS layer)
           Asset asset;
-          std::string sanitized_path =
-              utils::SanitizeAssetPath(assetPath.GetAssetPath());
+          std::string sanitized_path = utils::SanitizeAssetPath(
+              assetPath.GetAssetPath(),
+              env.asset_resolver.get_allow_parent_relative_paths());
           if (sanitized_path.empty()) {
             PushWarn(fmt::format("Unsafe envmap asset path: `{}`",
                                  assetPath.GetAssetPath()));
@@ -424,8 +425,9 @@ bool RenderSceneConverter::ConvertDomeLight(
       } else if (!env.scene_config.load_texture_assets) {
         // Store asset path only without decoding
         Asset asset;
-        std::string sanitized_path =
-            utils::SanitizeAssetPath(assetPath.GetAssetPath());
+        std::string sanitized_path = utils::SanitizeAssetPath(
+            assetPath.GetAssetPath(),
+            env.asset_resolver.get_allow_parent_relative_paths());
         if (sanitized_path.empty()) {
           PushWarn(fmt::format("Unsafe envmap asset path: `{}`",
                                assetPath.GetAssetPath()));
