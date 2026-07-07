@@ -2927,9 +2927,15 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           }
 
           if (!found_file) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "MaterialX image node {} has no file input",
-                texPath.prim_part()));
+            // A MaterialX <image> node with no `inputs:file` legitimately
+            // outputs its default/constant value (e.g. an ND_image_vector3 used
+            // as a zero source). Treat it as "no texture" and keep this shader
+            // input's authored fallback rather than failing the whole material.
+            PUSH_WARN(fmt::format(
+                "MaterialX image node {} has no file input; using the shader "
+                "input's default value for `{}`.",
+                texPath.prim_part(), param_name));
+            return true;
           }
 
           // Create a synthetic UsdUVTexture to pass to ConvertUVTexture
@@ -3923,6 +3929,74 @@ static bool GetMaterialXMtlxSurfaceConnection(const Material &material,
   return true;
 }
 
+// Resolve a material surface-terminal connection that lands on a NodeGraph down
+// to the terminal surface Shader Prim. MaterialX-authored materials commonly
+// wrap the surface Shader inside a NodeGraph and connect the material's surface
+// output (outputs:surface / outputs:mtlx:surface) to that NodeGraph, in one of
+// two styles:
+//   (a) the NodeGraph authors the referenced output (e.g. `outputs:surface`)
+//       with a single connection forwarding to the inner Shader -> follow it;
+//   (b) the NodeGraph does not author/connect that output (e.g. a MaterialX
+//       `outputs:out` terminal is implicit) -> scan the NodeGraph's direct
+//       child Shaders for a supported surface `info:id`.
+// On success returns the terminal Shader Prim and rewrites `*surfacePath` to
+// point at it. Returns `startPrim` unchanged when it is already a non-NodeGraph
+// prim (the common direct-Shader case), or nullptr if no Shader was reached
+// within the depth budget.
+static const Prim *ResolveSurfaceShaderThroughNodeGraph(const Stage &stage,
+                                                        const Prim *startPrim,
+                                                        Path *surfacePath) {
+  const Prim *prim = startPrim;
+  std::string err;
+  constexpr int kMaxNodeGraphDepth = 16;
+  for (int depth = 0; depth < kMaxNodeGraphDepth; ++depth) {
+    const NodeGraph *ng = prim->as<NodeGraph>();
+    if (!ng) {
+      return prim;  // terminal (Shader or other) prim reached.
+    }
+
+    // (a) authored + singly-connected output on the NodeGraph.
+    bool advanced = false;
+    auto it = ng->props.find(surfacePath->prop_part());
+    if (it != ng->props.end() && it->second.is_attribute() &&
+        it->second.get_attribute().has_connections()) {
+      const auto &conns = it->second.get_attribute().connections();
+      if (conns.size() == 1) {
+        const Prim *next{nullptr};
+        if (stage.find_prim_at_path(Path(conns[0].prim_part(), ""), next, &err) &&
+            next) {
+          *surfacePath = conns[0];
+          prim = next;
+          advanced = true;
+        }
+      }
+    }
+    if (advanced) {
+      continue;
+    }
+
+    // (b) fall back to a direct child Shader with a supported surface info:id.
+    const Prim *childShader{nullptr};
+    for (const auto &child : prim->children()) {
+      const Shader *sh = child.as<Shader>();
+      if (!sh) continue;
+      if (sh->info_id == kNdOpenPbrSurfaceSurfaceshader ||
+          sh->info_id == kNdUsdPreviewSurfaceSurfaceshader ||
+          sh->info_id == kNdStandardSurfaceSurfaceshader) {
+        childShader = &child;
+        *surfacePath = Path(surfacePath->prim_part(), std::string())
+                           .append_element(child.element_name());
+        break;
+      }
+    }
+    if (!childShader) {
+      return nullptr;
+    }
+    prim = childShader;  // a Shader -> returns on the next iteration.
+  }
+  return nullptr;
+}
+
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                                            const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
@@ -3982,13 +4056,24 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       PUSH_ERROR_AND_RETURN("[InternalError] invalid Shader Prim.\n");
     }
 
-    const Shader *shader = shaderPrim->as<Shader>();
+    // MaterialX-style materials wrap the surface Shader in a NodeGraph and
+    // connect outputs:surface to that NodeGraph's passthrough output (e.g.
+    // material.outputs:surface -> </.../usdpreview.outputs:surface>, where
+    // `usdpreview` is a NodeGraph whose own outputs:surface forwards to the
+    // UsdPreviewSurface Shader defined inside it). Resolve such passthroughs
+    // down to the terminal Shader prim.
+    shaderPrim =
+        ResolveSurfaceShaderThroughNodeGraph(env.stage, shaderPrim, &surfacePath);
+
+    const Shader *shader = shaderPrim ? shaderPrim->as<Shader>() : nullptr;
 
     if (!shader) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("{}'s outputs:surface must be connected to Shader Prim, "
                       "but connected to `{}` Prim.\n",
-                      shaderPrim->prim_type_name()));
+                      mat_abs_path.full_path_name(),
+                      shaderPrim ? shaderPrim->prim_type_name()
+                                 : std::string("<unresolved NodeGraph>")));
     }
 
     // Check for UsdPreviewSurface, OpenPBRSurface, MtlxOpenPBRSurface, or MtlxAutodeskStandardSurface
@@ -4183,23 +4268,30 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         const Prim *mtlxShaderPrim{nullptr};
         if (!env.stage.find_prim_at_path(
                 Path(mtlxSurfacePath.prim_part(), /* prop part */ ""), mtlxShaderPrim,
-                &err)) {
+                &err) ||
+            !mtlxShaderPrim) {
           PUSH_ERROR_AND_RETURN(fmt::format(
               "MaterialX shader path {} not found in stage",
               mtlxSurfacePath.full_path_name()));
-        } else if (!mtlxShaderPrim) {
-          PUSH_ERROR_AND_RETURN(fmt::format(
-              "[InternalError] MaterialX shader path {} resolved to nullptr",
-              mtlxSurfacePath.full_path_name()));
+        }
+
+        // MaterialX materials commonly connect outputs:mtlx:surface to a
+        // NodeGraph (whose authored terminal output, or a child surface Shader,
+        // is the actual shader). Resolve the passthrough to the terminal Shader.
+        mtlxShaderPrim = ResolveSurfaceShaderThroughNodeGraph(
+            env.stage, mtlxShaderPrim, &mtlxSurfacePath);
+        const Shader *mtlxShader =
+            mtlxShaderPrim ? mtlxShaderPrim->as<Shader>() : nullptr;
+
+        if (!mtlxShader) {
+          // The material's primary surface (outputs:surface) is converted
+          // separately above, so a MaterialX terminal we cannot resolve to a
+          // Shader is demoted to a warning rather than failing the material.
+          PUSH_WARN(fmt::format(
+              "{}'s outputs:mtlx:surface could not be resolved to a Shader Prim "
+              "through its NodeGraph; skipping MaterialX surface.",
+              mat_abs_path.full_path_name()));
         } else {
-          const Shader *mtlxShader = mtlxShaderPrim->as<Shader>();
-
-          if (!mtlxShader) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "MaterialX surface path {} must point to a Shader Prim",
-                mtlxSurfacePath.full_path_name()));
-          }
-
           // Check if it's an OpenPBR shader
           const UsdPreviewSurface *mtlx_psurface =
               mtlxShader->value.as<UsdPreviewSurface>();
