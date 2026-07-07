@@ -301,6 +301,15 @@ bool TimeSampleStorage::remove(PropNameId name_id) {
   return samples_.erase(name_id.id) > 0;
 }
 
+void TimeSampleStorage::remap_times(double offset, double scale) {
+  if (offset == 0.0 && scale == 1.0) return;
+  for (auto& kv : samples_) {
+    for (auto& tv : kv.second) {
+      tv.first = offset + scale * tv.first;
+    }
+  }
+}
+
 SampleResult TimeSampleStorage::interpolate(PropNameId name_id, double time,
                                             TimeInterpolation mode) const {
   const auto* samples = get(name_id);
@@ -639,6 +648,10 @@ void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
 const std::vector<std::pair<double, uint32_t>>* PrimSpec::time_samples(PropNameId name_id) const {
   if (!time_samples_) return nullptr;
   return time_samples_->get(name_id);
+}
+
+void PrimSpec::remap_time_sample_times(double offset, double scale) {
+  if (time_samples_) time_samples_->remap_times(offset, scale);
 }
 
 bool PrimSpec::has_time_samples(PropNameId name_id) const {

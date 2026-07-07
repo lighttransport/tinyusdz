@@ -220,10 +220,13 @@ private:
                      const std::string& anchor_path, int depth);
   // Graft the descendant subtree of `src_root` in `src` under `dst_root`.
   void GraftSubtree(const Layer& src, const std::string& src_anchor,
-                    const std::string& src_root,
-                    const std::string& dst_root);
+                    const std::string& src_root, const std::string& dst_root,
+                    double t_offset = 0.0, double t_scale = 1.0);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer,
                      const std::string& anchor_path, int depth);
+  void ApplyOneVariant(PrimSpec& prim, const Layer& layer,
+                       const std::string& anchor_path, int depth,
+                       const VariantData& variant);
 
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,

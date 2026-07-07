@@ -319,11 +319,17 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       ParseResult result = ParseValue(*lexer_, TypeId::Bool);
       if (result.success && result.value.as_bool()) {
         builder_->set_active(*result.value.as_bool());
+        if (PrimSpec* cur = builder_->current()) {
+          cur->meta().active_authored = true;
+        }
       }
     } else if (key == "hidden") {
       ParseResult result = ParseValue(*lexer_, TypeId::Bool);
       if (result.success && result.value.as_bool()) {
         builder_->set_hidden(*result.value.as_bool());
+        if (PrimSpec* cur = builder_->current()) {
+          cur->meta().hidden_authored = true;
+        }
       }
     } else if (key == "doc" || key == "documentation") {
       std::string doc;

@@ -134,15 +134,18 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   auto result = std::make_unique<Layer>();
   result->meta() = root_layer.meta();
 
-  // Pass 1 — merge local opinions (sublayers weakest-first, then the root
-  // layer strongest). Arc-free scenes are fully composed by this pass alone.
+  // Pass 1 — merge local opinions. ComposePrim/CopyLocalOpinions use
+  // fill-absent semantics (an opinion already on the target wins), so the
+  // STRONGEST layer must be merged FIRST: the root layer, then sublayers in
+  // authored order (earlier sublayers are stronger). Arc-free scenes are
+  // fully composed by this pass alone.
+  ComposeLayer(*result, root_layer, anchor_path, 0);
   if (!root_layer.meta().subLayers.empty()) {
     auto sublayer_base = ComposeSublayers(root_layer, anchor_path);
     if (sublayer_base) {
       ComposeLayer(*result, *sublayer_base, anchor_path, 0);
     }
   }
-  ComposeLayer(*result, root_layer, anchor_path, 0);
 
   // Pass 2 — expand composition arcs over the merged layer. Build the path
   // index first so internal-arc / inherit / specialize lookups resolve (the
@@ -190,6 +193,26 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   pending_graft_.clear();
   graft_paths_.clear();
 
+  // The flattened output has all sublayer opinions baked in: keeping the
+  // subLayers list would re-apply (now stale) layers on re-read. Fill stage
+  // metadata gaps from sublayers first (defaultPrim authored only in a
+  // sublayer must survive), then drop the list.
+  if (!result->meta().subLayers.empty()) {
+    if (result->meta().defaultPrim.empty()) {
+      for (const std::string& sl : result->meta().subLayers) {
+        std::string resolved = sl;
+        if (resolver_) resolved = resolver_->ResolvePath(sl, anchor_path);
+        if (const Layer* sub = GetCachedLayer(resolved)) {
+          if (!sub->meta().defaultPrim.empty()) {
+            result->meta().defaultPrim = sub->meta().defaultPrim;
+            break;
+          }
+        }
+      }
+    }
+    result->meta().subLayers.clear();
+  }
+
   // The crate writer's compressed-paths encoding requires ancestors before
   // descendants with contiguous subtrees; grafted prims were appended at the
   // end, so restore hierarchical order first.
@@ -209,9 +232,11 @@ std::unique_ptr<Layer> Compositor::ComposeSublayers(const Layer& root_layer,
   auto result = std::make_unique<Layer>();
   result->meta() = root_layer.meta();
 
-  // Sublayers are ordered strongest-first in the USD spec.
-  // We process from the end (weakest) to the beginning (strongest).
-  for (auto it = sublayer_paths.rbegin(); it != sublayer_paths.rend(); ++it) {
+  // Sublayers are ordered strongest-first in the USD spec, and the merge
+  // below is fill-absent (first opinion wins) — so process in AUTHORED order
+  // (strongest first). The previous weakest-first iteration inverted
+  // sublayer strength.
+  for (auto it = sublayer_paths.begin(); it != sublayer_paths.end(); ++it) {
     const std::string& sublayer_path = *it;
 
     std::string resolved_path = sublayer_path;
@@ -248,7 +273,14 @@ bool Compositor::ComposeLayer(Layer& target, const Layer& source_layer,
     return false;
   }
 
-  // Compose each prim from source_layer into target
+  // The dedup lookup below needs a current path index. Without it every
+  // source prim was cloned AGAIN into the target (one duplicate spec per
+  // contributing layer), and the crate round-trip of a sublayered flatten
+  // produced multiple same-path specs whose values collapsed into husks.
+  target.build_path_index();
+
+  // Compose each prim from source_layer into target.
+  std::vector<uint32_t> added;  // indices of freshly cloned prims
   for (size_t i = 0; i < source_layer.prim_count(); ++i) {
     const PrimSpec* src_prim = source_layer.prim(static_cast<uint32_t>(i));
     if (!src_prim) continue;
@@ -257,13 +289,37 @@ bool Compositor::ComposeLayer(Layer& target, const Layer& source_layer,
     PrimSpec* target_prim = target.prim_at_path_mutable(prim_path);
 
     if (!target_prim) {
-      // Create new prim in target layer via Clone()
+      // Create new prim in target layer via Clone(). The clone's
+      // child_indices reference the SOURCE layer and are meaningless here;
+      // links are re-established from paths below.
       PrimSpec new_prim = src_prim->Clone();
+      new_prim.clear_child_indices();
       uint32_t idx = target.add_prim(std::move(new_prim));
-      target.add_root(idx);
+      added.push_back(idx);
     } else {
       // Existing prim - compose source onto it
       ComposePrim(*target_prim, source_layer, *src_prim, anchor_path, depth);
+    }
+  }
+
+  // Link freshly added prims into the hierarchy: child of an existing (or
+  // just-added) parent, or a root prim. (Previously every clone was added as
+  // a ROOT, so sublayer children leaked to the stage root.) One index rebuild
+  // covers all adds; a well-formed source has no duplicate paths, so the
+  // in-loop lookups never needed the additions.
+  if (!added.empty()) target.build_path_index();
+  for (uint32_t idx : added) {
+    const std::string path = target.prim(idx)->path().str();
+    size_t slash = path.find_last_of('/');
+    if (slash == 0 || slash == std::string::npos) {
+      target.add_root(idx);
+      continue;
+    }
+    uint32_t pidx = target.index_at_path(path.substr(0, slash));
+    if (pidx != UINT32_MAX) {
+      target.set_parent(idx, pidx);
+    } else {
+      target.add_root(idx);  // orphan without a composed parent
     }
   }
 
@@ -276,11 +332,55 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
   (void)source_layer;
   (void)anchor_path;
   if (depth > options_.max_depth) return false;
-  // Pass 1 only merges local opinions across layers (sublayers + root). The
-  // stronger (later) layer's opinions are already in `target`; CopyLocalOpinions
-  // fills in only what `target` lacks. Composition arcs are expanded later in
-  // pass 2 (ResolveArcsForPrim), once the full local-opinion layer exists.
+  // Pass 1 only merges local opinions across layers (root strongest first,
+  // then sublayers). CopyLocalOpinions fills in only what `target` lacks.
+  // Composition arcs are expanded later in pass 2 (ResolveArcsForPrim), once
+  // the full local-opinion layer exists — so the ARCS themselves must merge
+  // here (append weaker after stronger; stronger arcs resolve first and win
+  // under fill-absent), or a sublayer-defined prim's references vanish when
+  // a stronger layer also has a spec for it.
   CopyLocalOpinions(target, source);
+  auto merge_arcs = [](std::vector<std::string>& dst,
+                       const std::vector<std::string>& src) {
+    for (const std::string& a : src) {
+      if (std::find(dst.begin(), dst.end(), a) == dst.end()) {
+        dst.push_back(a);
+      }
+    }
+  };
+  merge_arcs(target.meta().references, source.meta().references);
+  merge_arcs(target.meta().payloads, source.meta().payloads);
+  merge_arcs(target.meta().inherits, source.meta().inherits);
+  merge_arcs(target.meta().specializes, source.meta().specializes);
+  // Variant sets/selections: fill-absent by set name.
+  if (!source.meta().variantSets().empty()) {
+    for (const VariantSetData& svs : source.meta().variantSets()) {
+      bool have = false;
+      for (const VariantSetData& tvs : target.meta().variantSets()) {
+        if (tvs.name == svs.name) {
+          have = true;
+          break;
+        }
+      }
+      if (!have) target.meta().variantSets().push_back(svs);
+    }
+  }
+  if (!source.meta().variantSelections().empty()) {
+    for (const auto& sel : source.meta().variantSelections()) {
+      bool have = false;
+      for (const auto& t : target.meta().variantSelections()) {
+        if (t.first == sel.first) {
+          have = true;
+          break;
+        }
+      }
+      if (!have) target.meta().variantSelections().push_back(sel);
+    }
+  }
+  if (target.meta().variantSelection.empty() &&
+      !source.meta().variantSelection.empty()) {
+    target.meta().variantSelection = source.meta().variantSelection;
+  }
   return true;
 }
 
@@ -288,8 +388,15 @@ void Compositor::CopyLocalOpinions(
     PrimSpec& target, const PrimSpec& source, double time_offset,
     double time_scale,
     const std::function<std::string(const std::string&)>& remap_path) {
+  // Remap a relationship/connection target. An empty remap result means the
+  // target is not expressible in the composed namespace (outside the arc's
+  // scope) and must be DROPPED, not copied verbatim.
   auto map_target = [&](const Path& p) -> Path {
     return remap_path ? Path(remap_path(p.str())) : p;
+  };
+  auto target_mappable = [&](const Path& p) -> bool {
+    if (!remap_path) return true;
+    return p.str().empty() || !remap_path(p.str()).empty();
   };
   // Copy type name if target doesn't have one
   if (target.type_name().empty() && !source.type_name().empty()) {
@@ -326,7 +433,10 @@ void Compositor::CopyLocalOpinions(
       const std::vector<Path>* tconns = target.connection(pname);
       if (!tconns || tconns->empty()) {
         if (const std::vector<Path>* sconns = source.connection(pname)) {
-          for (const auto& c : *sconns) target.add_connection(pname, map_target(c));
+          for (const auto& c : *sconns) {
+            if (!target_mappable(c)) continue;
+            target.add_connection(pname, map_target(c));
+          }
         }
       }
       continue;  // target opinion otherwise wins (incl. time-sampled merge)
@@ -344,7 +454,10 @@ void Compositor::CopyLocalOpinions(
       target.set_property_type_name(pname, *tn);
     }
     if (const std::vector<Path>* conns = source.connection(pname)) {
-      for (const auto& c : *conns) target.add_connection(pname, map_target(c));
+      for (const auto& c : *conns) {
+        if (!target_mappable(c)) continue;
+        target.add_connection(pname, map_target(c));
+      }
     }
     if (const PropMeta* pm = source.property_meta(slot.name_id)) {
       target.ensure_property_meta(pname) = *pm;
@@ -355,7 +468,10 @@ void Compositor::CopyLocalOpinions(
   for (const auto& rel_name : source.relationship_names()) {
     if (target.relationship(rel_name)) continue;
     if (const std::vector<Path>* tgts = source.relationship(rel_name)) {
-      for (const auto& t : *tgts) target.add_relationship(rel_name, map_target(t));
+      for (const auto& t : *tgts) {
+        if (!target_mappable(t)) continue;
+        target.add_relationship(rel_name, map_target(t));
+      }
     }
     if (const PropMeta* pm = source.property_meta(rel_name)) {
       target.ensure_property_meta(rel_name) = *pm;
@@ -387,10 +503,18 @@ void Compositor::CopyLocalOpinions(
   if (!source.meta().doc().empty() && target.meta().doc().empty()) {
     target.meta().doc() = source.meta().doc();
   }
-  if (source.meta().active != target.meta().active) {
+  // active/hidden: fill-absent on AUTHORED opinions only. The previous
+  // "copy on difference" let a weaker spec's DEFAULT (active = true) clobber
+  // a stronger authored `active = false` — the inverse of LIVRPS (pxr prunes
+  // such prims; we un-deactivated them).
+  if (source.meta().active_authored && !target.meta().active_authored) {
     target.meta().active = source.meta().active;
+    target.meta().active_authored = true;
   }
-  if (source.meta().hidden) target.meta().hidden = true;
+  if (source.meta().hidden_authored && !target.meta().hidden_authored) {
+    target.meta().hidden = source.meta().hidden;
+    target.meta().hidden_authored = true;
+  }
   if (source.meta().instanceable) target.meta().instanceable = true;
   if (!source.meta().comment().empty() && target.meta().comment().empty()) {
     target.meta().comment() = source.meta().comment();
@@ -505,8 +629,49 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   // recomposing a prim referenced by several others.
   if (!arc_resolved_.insert(self).second) return;
 
-  // References (strongest arc) then payloads — both bring in a target prim's
-  // opinions plus its descendant subtree.
+  // Opinion merging is fill-absent (an opinion already on the prim wins), so
+  // arcs must be applied in LIVRPS strength order: local (already present) >
+  // inherits > variants > references > payloads > specializes. References
+  // were previously applied FIRST, making them stronger than inherits and
+  // variants — the inverse of USD semantics.
+
+  // Inherits — copy opinions from same-layer class prims (resolve them
+  // first). Arc strings use the canonical "</path>" (or "@asset@</path>")
+  // encoding; decode before the path lookup (raw strings never matched, so
+  // every inherit failed with "class not found").
+  if (options_.resolve_inherits) {
+    for (const auto& inh : prim.meta().inherits) {
+      CompositionArc arc = ParseReference(inh);
+      // Programmatically-built layers store a bare prim path; the USDA
+      // parser stores the canonical "</path>" form. Accept both.
+      if (arc.prim_path.empty() && arc.asset_path.empty() && !inh.empty() &&
+          inh[0] == '/') {
+        arc.prim_path = inh;
+      }
+      if (!arc.is_internal) {
+        AddError("External inherits are not supported by the flatten "
+                 "compositor: " + inh, self, inh, ArcType::Inherits);
+        continue;
+      }
+      PrimSpec* cls = layer.prim_at_path_mutable(arc.prim_path);
+      if (!cls) {
+        AddError("Inherited class not found: " + arc.prim_path, self, inh,
+                 ArcType::Inherits);
+        continue;
+      }
+      ResolveArcsForPrim(layer, *cls, anchor_path, depth + 1);
+      CopyLocalOpinions(prim, *cls);
+      GraftSubtree(layer, anchor_path, arc.prim_path, self);
+    }
+  }
+
+  // Variants (if the reader populated variant content).
+  if (options_.resolve_variants) {
+    ApplyVariants(prim, layer, anchor_path, depth);
+  }
+
+  // References then payloads — both bring in a target prim's opinions plus
+  // its descendant subtree.
   for (const auto& ref_str : prim.meta().references) {
     ResolveRefArc(layer, prim, ParseReference(ref_str), anchor_path, depth);
   }
@@ -516,22 +681,10 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
     }
   }
 
-  // Inherits — copy opinions from same-layer class prims (resolve them first).
-  if (options_.resolve_inherits) {
-    for (const auto& inh : prim.meta().inherits) {
-      PrimSpec* cls = layer.prim_at_path_mutable(inh);
-      if (!cls) {
-        AddError("Inherited class not found: " + inh, self, inh,
-                 ArcType::Inherits);
-        continue;
-      }
-      ResolveArcsForPrim(layer, *cls, anchor_path, depth + 1);
-      CopyLocalOpinions(prim, *cls);
-      GraftSubtree(layer, anchor_path, inh, self);
-    }
-  }
-
-  // Variants (if the reader populated variant content).
+  // Variants again: references/payloads may have merged variant SETS defined
+  // in the referenced asset (host selects a referenced set). Their opinions
+  // compose at reference strength, which fill-absent gives us here; sets
+  // already applied in the first pass are idempotent (fill-absent no-ops).
   if (options_.resolve_variants) {
     ApplyVariants(prim, layer, anchor_path, depth);
   }
@@ -539,15 +692,22 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   // Specializes (weakest) — same-layer, fill only what is still missing.
   if (options_.resolve_specializes) {
     for (const auto& sp : prim.meta().specializes) {
-      PrimSpec* spec = layer.prim_at_path_mutable(sp);
+      CompositionArc sarc = ParseReference(sp);
+      if (sarc.prim_path.empty() && sarc.asset_path.empty() && !sp.empty() &&
+          sp[0] == '/') {
+        sarc.prim_path = sp;
+      }
+      PrimSpec* spec = sarc.is_internal
+                           ? layer.prim_at_path_mutable(sarc.prim_path)
+                           : nullptr;
       if (!spec) {
-        AddError("Specialized prim not found: " + sp, self, sp,
+        AddError("Specialized prim not found: " + sarc.prim_path, self, sp,
                  ArcType::Specializes);
         continue;
       }
       ResolveArcsForPrim(layer, *spec, anchor_path, depth + 1);
       CopyLocalOpinions(prim, *spec);
-      GraftSubtree(layer, anchor_path, sp, self);
+      GraftSubtree(layer, anchor_path, sarc.prim_path, self);
     }
   }
 
@@ -589,7 +749,18 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
     }
     if (tp == self) return;  // self-reference
     ResolveArcsForPrim(layer, *target, anchor_path, depth + 1);
-    CopyLocalOpinions(prim, *target);
+    // Retarget relationship/connection paths from the referenced prim's
+    // namespace into the host's (targets outside the referenced subtree are
+    // unmappable and dropped, matching pxr).
+    auto remap = [&](const std::string& p) -> std::string {
+      if (p == tp) return self;
+      if (p.size() > tp.size() && p.compare(0, tp.size(), tp) == 0 &&
+          (p[tp.size()] == '/' || p[tp.size()] == '.')) {
+        return self + p.substr(tp.size());
+      }
+      return std::string();
+    };
+    CopyLocalOpinions(prim, *target, 0.0, 1.0, remap);
     GraftSubtree(layer, anchor_path, tp, self);
     return;
   }
@@ -634,23 +805,33 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
     PopStack();
     return;
   }
-  CopyLocalOpinions(prim, *target);
-  GraftSubtree(*ext, resolved, tp, self);
-
-  // Layer offset (applied at evaluation time via prim metadata).
+  // Layer offset: BAKE it into the copied/grafted time samples (nothing ever
+  // consumed the previous meta().layer_offset stash, so offsets were a no-op).
+  // Chains accumulate naturally: each hop remaps the already-remapped samples
+  // of its own graft.
+  double t_offset = 0.0, t_scale = 1.0;
   if (!arc.layer_offset.empty()) {
-    double offset = 0.0, scale = 1.0;
-    ParseLayerOffset(arc.layer_offset, offset, scale);
-    if (offset != 0.0 || scale != 1.0) {
-      prim.meta().layer_offset = std::make_pair(offset, scale);
-    }
+    ParseLayerOffset(arc.layer_offset, t_offset, t_scale);
   }
+  // Retarget relationship/connection paths from the referenced namespace into
+  // the host's; out-of-scope targets are dropped (pxr behavior).
+  auto remap = [&](const std::string& p) -> std::string {
+    if (p == tp) return self;
+    if (p.size() > tp.size() && p.compare(0, tp.size(), tp) == 0 &&
+        (p[tp.size()] == '/' || p[tp.size()] == '.')) {
+      return self + p.substr(tp.size());
+    }
+    return std::string();
+  };
+  CopyLocalOpinions(prim, *target, t_offset, t_scale, remap);
+  GraftSubtree(*ext, resolved, tp, self, t_offset, t_scale);
   PopStack();
 }
 
 void Compositor::GraftSubtree(const Layer& src, const std::string& src_anchor,
                               const std::string& src_root,
-                              const std::string& dst_root) {
+                              const std::string& dst_root, double t_offset,
+                              double t_scale) {
   // Copy every descendant of src_root in `src` to the matching path under
   // dst_root, buffered in pending_graft_ (added after pass 2). Local overrides
   // already present in the result win (checked when appending).
@@ -669,6 +850,12 @@ void Compositor::GraftSubtree(const Layer& src, const std::string& src_anchor,
     if (!graft_paths_.insert(new_path).second) return;  // already grafted
     PrimSpec g = d.Clone();
     g.set_path(Path(new_path));
+    // Retarget relationship/connection paths that point inside the grafted
+    // subtree; bake the arc's layer offset into the clone's time samples.
+    g.remap_target_prefix(src_root, dst_root);
+    if (t_offset != 0.0 || t_scale != 1.0) {
+      g.remap_time_sample_times(t_offset, t_scale);
+    }
     pending_graft_.push_back(PendingGraft{std::move(g), src_anchor});
   };
 
@@ -720,10 +907,76 @@ void Compositor::GraftSubtree(const Layer& src, const std::string& src_anchor,
   }
 }
 
+// Apply one SELECTED variant option's opinions onto `prim` (fill-absent):
+// inline properties/relationships/doc/state, the content sub-layer (its
+// "__self__" root merges onto the prim; descendants graft as children),
+// composition arcs authored on the option, and nested variant sets
+// (recursive, selection from the nested set's own `selected`).
+void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
+                                 const std::string& anchor_path, int depth,
+                                 const VariantData& variant) {
+  if (depth > options_.max_depth) return;
+
+  for (const auto& vp : variant.properties) {
+    if (!prim.property_value(vp.name)) {
+      prim.add_property(vp.name, vp.value, vp.flags);
+    }
+  }
+  for (const auto& [rel_name, targets] : variant.relationships) {
+    if (!prim.relationship(rel_name)) {
+      for (const auto& target : targets) prim.add_relationship(rel_name, target);
+    }
+  }
+  if (!variant.doc.empty() && prim.meta().doc().empty()) {
+    prim.meta().doc() = variant.doc;
+  }
+  if (!variant.active) {
+    prim.meta().active = false;
+    prim.meta().active_authored = true;
+  }
+  if (variant.hidden) {
+    prim.meta().hidden = true;
+    prim.meta().hidden_authored = true;
+  }
+
+  // Content sub-layer (USDA representation): "__self__" opinions merge onto
+  // the prim; its descendants become the prim's children.
+  if (variant.content) {
+    const Layer& content = *variant.content;
+    if (const PrimSpec* self_spec = content.prim_at_path("/__self__")) {
+      CopyLocalOpinions(prim, *self_spec);
+    }
+    GraftSubtree(content, anchor_path, "/__self__", prim.path().str());
+  }
+
+  // Composition arcs authored on the option (XGen-style geometry payloads).
+  // Resolve at the variant's strength, anchored like the host's own arcs.
+  for (const auto& r : variant.references) {
+    ResolveRefArc(const_cast<Layer&>(layer), prim, ParseReference(r),
+                  anchor_path, depth + 1);
+  }
+  if (options_.load_payloads) {
+    for (const auto& pl : variant.payloads) {
+      ResolveRefArc(const_cast<Layer&>(layer), prim, ParsePayload(pl),
+                    anchor_path, depth + 1);
+    }
+  }
+
+  // Nested variant sets on this option (selection authored in the option's
+  // metadata is stored in the nested set's `selected`).
+  for (const auto& nvs : variant.variantSets) {
+    if (nvs.selected.empty()) continue;
+    for (const auto& nested : nvs.variants) {
+      if (nested.name == nvs.selected) {
+        ApplyOneVariant(prim, layer, anchor_path, depth + 1, nested);
+        break;
+      }
+    }
+  }
+}
+
 bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
                                const std::string& anchor_path, int depth) {
-  (void)layer;
-  (void)depth;
   if (!options_.resolve_variants) return true;
 
   // Apply EACH variant set's selected variant (a prim may select several sets).
@@ -752,20 +1005,7 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
 
     for (const auto& variant : vs.variants) {
       if (variant.name != chosen) continue;
-
-      for (const auto& vp : variant.properties) {
-        if (!prim.property_value(vp.name)) {
-          prim.add_property(vp.name, vp.value, vp.flags);
-        }
-      }
-      for (const auto& [rel_name, targets] : variant.relationships) {
-        if (!prim.relationship(rel_name)) {
-          for (const auto& target : targets) prim.add_relationship(rel_name, target);
-        }
-      }
-      if (!variant.doc.empty() && prim.meta().doc().empty()) {
-        prim.meta().doc() = variant.doc;
-      }
+      ApplyOneVariant(prim, layer, anchor_path, depth, variant);
       break;
     }
 

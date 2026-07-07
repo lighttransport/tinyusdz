@@ -395,12 +395,8 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
 
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
-    // USDA forbids metadata after a `.timeSamples` block. If the attribute has
-    // authored metadata, emit it on a bare declaration line FIRST (usdcat form):
-    //   <type> <name> ( ...meta... )
-    //   <type> <name>.timeSamples = { ... }
-    const PropMeta* pm = spec.property_meta(slot.name_id);
-    if (pm && !pm->empty()) {
+    // Shared `<qualifiers><type> <name>` prefix for the statements below.
+    auto emit_ts_decl = [&]() {
       WriteIndent(os, depth, opts.indent);
       if (opts.emit_custom && slot.is_custom()) os << "custom ";
       if (slot.is_uniform()) os << "uniform ";
@@ -412,6 +408,30 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
         if (slot.is_array()) os << "[]";
       }
       os << " " << name;
+    };
+    // An authored DEFAULT coexists with time samples as an independent
+    // field (pxr keeps both; dropping it loses the value used outside the
+    // sampled range / by consumers that ignore samples). Emit it first.
+    const Value* def_val = spec.property_value(slot.name_id);
+    const PropMeta* pm = spec.property_meta(slot.name_id);
+    if (def_val && !def_val->is_empty()) {
+      emit_ts_decl();
+      if (def_val->is_block()) {
+        os << " = None";
+      } else {
+        os << " = ";
+        PrintOptions po;
+        po.float_precision = opts.float_precision;
+        po.double_precision = opts.double_precision;
+        po.indent = opts.indent;
+        PrintValue(os, *def_val, po);
+      }
+      WritePropMeta(os, spec, slot.name_id, depth, opts);
+      os << "\n";
+    } else if (pm && !pm->empty()) {
+      // USDA forbids metadata after a `.timeSamples` block: emit authored
+      // metadata on a bare declaration line first (usdcat form).
+      emit_ts_decl();
       WritePropMeta(os, spec, slot.name_id, depth, opts);
       os << "\n";
     }

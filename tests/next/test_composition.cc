@@ -11,10 +11,12 @@
 #include "next/types/value.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/reader/usda-reader.hh"
 
 #include <iostream>
 #include <memory>
 #include <string>
+#include <cstring>
 
 using namespace tinyusdz::next;
 
@@ -675,6 +677,286 @@ static void test_variant_selected_field_over_reference() {
   }
 }
 
+
+// ------------------------------------------------------------------
+// Regression tests from the 2026-07 composition audit.
+// ------------------------------------------------------------------
+
+static std::unique_ptr<Layer> ParseLayer(const char* usda) {
+  LoadResult r = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!r.success || !r.stage.GetRootLayer()) return nullptr;
+  return r.stage.ReleaseRootLayer();
+}
+
+// Sublayer merge: one spec per path, root > s1 > s2 strength, children keep
+// their hierarchy, subLayers cleared, defaultPrim filled from a sublayer.
+static void test_sublayer_merge() {
+  std::cout << "[sublayer merge]\n";
+  auto loader = [&](const std::string& path,
+                    std::string*) -> std::unique_ptr<Layer> {
+    if (path.find("s1") != std::string::npos) {
+      return ParseLayer(
+          "#usda 1.0\n(\n defaultPrim = \"p\"\n)\n"
+          "def Xform \"p\" { float a = 10\n float b = 10\n"
+          "  def Mesh \"kid\" { float k = 1 } }\n");
+    }
+    return ParseLayer(
+        "#usda 1.0\ndef Xform \"p\" { float a = 100\n float b = 100\n"
+        " float c = 100 }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n(\n subLayers = [ @./s1.usda@, @./s2.usda@ ]\n)\n"
+      "def Xform \"p\" { float a = 1 }\n");
+  CHECK(root != nullptr, "root parses");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+
+  size_t p_specs = 0;
+  for (const PrimSpec& pr : out->prims()) {
+    if (pr.path().str() == "/p") ++p_specs;
+  }
+  CHECK(p_specs == 1, "single merged spec per path (no duplicates)");
+  const Value* a = PropOf(*out, "/p", "a");
+  CHECK(a && a->as_float() && *a->as_float() == 1.0f, "root wins (a=1)");
+  const Value* b = PropOf(*out, "/p", "b");
+  CHECK(b && b->as_float() && *b->as_float() == 10.0f,
+        "earlier sublayer beats later (b=10)");
+  const Value* c = PropOf(*out, "/p", "c");
+  CHECK(c && c->as_float() && *c->as_float() == 100.0f,
+        "weakest sublayer fills (c=100)");
+  CHECK(PropOf(*out, "/p/kid", "k") != nullptr, "sublayer child composes");
+  // Sublayer child must be a CHILD, not a stage root.
+  bool kid_is_root = false;
+  for (uint32_t ri : out->root_indices()) {
+    const PrimSpec* rp = out->prim(ri);
+    if (rp && rp->path().str() == "/p/kid") kid_is_root = true;
+  }
+  CHECK(!kid_is_root, "sublayer child not leaked to stage root");
+  CHECK(out->meta().subLayers.empty(), "baked subLayers cleared from output");
+  CHECK(out->meta().defaultPrim == "p", "defaultPrim filled from sublayer");
+}
+
+// LIVRPS strength: inherits > variants > references; specializes weakest.
+// Also: parser-encoded "</class>" inherit/specialize arcs must resolve.
+static void test_livrps_strength() {
+  std::cout << "[LIVRPS strength]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\ndef Xform \"R\" { float x = 3\n float from_var = 30\n"
+        " float shadowed = 3\n float weak = 2\n float from_ref = 3 }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "class \"_c\" { float ib = 8\n float shadowed = 80 }\n"
+      "class \"_s\" { float sv = 9\n float weak = 90 }\n"
+      "def Xform \"p\" (\n"
+      "    prepend inherits = </_c>\n"
+      "    prepend specializes = </_s>\n"
+      "    prepend references = @./r.usda@</R>\n"
+      "    variants = { string v = \"on\" }\n"
+      "    prepend variantSets = [\"v\"]\n"
+      ") {\n"
+      "    float x = 1\n"
+      "    variantSet \"v\" = { \"on\" { float from_var = 2 } }\n"
+      "}\n");
+  CHECK(root != nullptr, "root parses");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  auto fval = [&](const char* n) -> float {
+    const Value* v = PropOf(*out, "/p", n);
+    return (v && v->as_float()) ? *v->as_float() : -999.0f;
+  };
+  CHECK(fval("x") == 1.0f, "local wins (x=1)");
+  CHECK(fval("ib") == 8.0f, "parser-encoded </_c> inherit resolves (ib=8)");
+  CHECK(fval("shadowed") == 80.0f, "inherits beat references (shadowed=80)");
+  CHECK(fval("from_var") == 2.0f, "variants beat references (from_var=2)");
+  CHECK(fval("from_ref") == 3.0f, "references compose (from_ref=3)");
+  CHECK(fval("sv") == 9.0f, "parser-encoded </_s> specialize resolves (sv=9)");
+  CHECK(fval("weak") == 2.0f, "references beat specializes (weak=2)");
+}
+
+// Relationship / connection targets must retarget into the host namespace on
+// graft; targets OUTSIDE the referenced subtree are dropped (pxr behavior).
+static void test_graft_retargeting() {
+  std::cout << "[graft retargeting]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"B\" {\n"
+        "    rel own = </B/geo>\n"
+        "    rel escape = </Outside/thing>\n"
+        "    def Mesh \"geo\" { rel mat = </B/looks/m>\n"
+        "        token outputs:s.connect = </B/looks/m.outputs:x> }\n"
+        "    def Scope \"looks\" { def Material \"m\" { token outputs:x } }\n"
+        "}\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\ndef Xform \"A\" (prepend references = @./b.usda@</B>) { }\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+
+  const PrimSpec* a = out->prim_at_path("/A");
+  const std::vector<Path>* own = a ? a->relationship("own") : nullptr;
+  CHECK(own && own->size() == 1 && (*own)[0].str() == "/A/geo",
+        "host rel retargeted (/B/geo -> /A/geo)");
+  const std::vector<Path>* esc = a ? a->relationship("escape") : nullptr;
+  CHECK(!esc || esc->empty(), "out-of-scope rel target dropped");
+  const PrimSpec* geo = out->prim_at_path("/A/geo");
+  const std::vector<Path>* mat = geo ? geo->relationship("mat") : nullptr;
+  CHECK(mat && mat->size() == 1 && (*mat)[0].str() == "/A/looks/m",
+        "grafted child rel retargeted (/B/... -> /A/...)");
+  const std::vector<Path>* conn = geo ? geo->connection("outputs:s") : nullptr;
+  CHECK(conn && conn->size() == 1 &&
+            (*conn)[0].str() == "/A/looks/m.outputs:x",
+        "grafted child connection retargeted");
+}
+
+// Layer offsets on references must BAKE into copied/grafted time samples,
+// accumulating through chains (offset2 + scale2 * (offset1 + scale1 * t)).
+static void test_layer_offset_baking() {
+  std::cout << "[layer offsets]\n";
+  auto loader = [&](const std::string& path,
+                    std::string*) -> std::unique_ptr<Layer> {
+    if (path.find("mid") != std::string::npos) {
+      return ParseLayer(
+          "#usda 1.0\ndef Xform \"M\" (prepend references = "
+          "@./anim.usda@</A> (offset = 10)) { }\n");
+    }
+    return ParseLayer(
+        "#usda 1.0\ndef Xform \"A\" {\n"
+        "    double t.timeSamples = { 0: 100.0, 5: 200.0 }\n"
+        "    def Mesh \"kid\" { double kt.timeSamples = { 1: 7.0 } }\n"
+        "}\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"p\" (prepend references = @./anim.usda@</A> "
+      "(offset = 10; scale = 2)) { }\n"
+      "def Xform \"q\" (prepend references = @./mid.usda@</M> "
+      "(offset = 100; scale = 2)) { }\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+
+  const PrimSpec* p = out->prim_at_path("/p");
+  PropNameId tid = GetPropNameTable().find("t");
+  const auto* ts = p ? p->time_samples(tid) : nullptr;
+  CHECK(ts && ts->size() == 2 && (*ts)[0].first == 10.0 &&
+            (*ts)[1].first == 20.0,
+        "host samples remapped by (offset=10, scale=2)");
+  const PrimSpec* kid = out->prim_at_path("/p/kid");
+  PropNameId ktid = GetPropNameTable().find("kt");
+  const auto* kts = kid ? kid->time_samples(ktid) : nullptr;
+  CHECK(kts && kts->size() == 1 && (*kts)[0].first == 12.0,
+        "grafted child samples remapped (1 -> 12)");
+  const PrimSpec* q = out->prim_at_path("/q");
+  const auto* qts = q ? q->time_samples(tid) : nullptr;
+  CHECK(qts && qts->size() == 2 && (*qts)[0].first == 120.0 &&
+            (*qts)[1].first == 130.0,
+        "chained offsets accumulate (0 -> 120, 5 -> 130)");
+}
+
+// Variant option content (USDA representation): child prims graft, option
+// metadata arcs resolve, nested variants apply, active=false deactivates.
+static void test_variant_content_legacy() {
+  std::cout << "[variant content/arcs/nested (legacy)]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer("#usda 1.0\ndef Xform \"Base\" { float z = 9 }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"p\" (variants = { string s = \"on\" } "
+      "prepend variantSets = [\"s\"]) {\n"
+      "    variantSet \"s\" = {\n"
+      "        \"on\" (prepend references = @./base.usda@</Base>\n"
+      "                variants = { string inner = \"i2\" }) {\n"
+      "            float a = 1\n"
+      "            def Mesh \"Extra\" { float b = 2 }\n"
+      "            variantSet \"inner\" = { \"i1\" { float n = 1 } "
+      "\"i2\" { float n = 2 } }\n"
+      "        }\n"
+      "        \"off\" (active = false) { }\n"
+      "    }\n"
+      "}\n"
+      "def Xform \"gone\" (variants = { string s = \"off\" } "
+      "prepend variantSets = [\"s\"]) {\n"
+      "    variantSet \"s\" = { \"on\" { } \"off\" (active = false) { } }\n"
+      "}\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const Value* a = PropOf(*out, "/p", "a");
+  CHECK(a && a->as_float() && *a->as_float() == 1.0f, "inline prop (a=1)");
+  CHECK(PropOf(*out, "/p/Extra", "b") != nullptr,
+        "variant child prim grafted (usda content)");
+  const Value* z = PropOf(*out, "/p", "z");
+  CHECK(z && z->as_float() && *z->as_float() == 9.0f,
+        "option-metadata reference arc composed (z=9)");
+  const Value* n = PropOf(*out, "/p", "n");
+  CHECK(n && n->as_float() && *n->as_float() == 2.0f,
+        "nested variant applied (n=2)");
+  const PrimSpec* gone = out->prim_at_path("/gone");
+  CHECK(gone && !gone->meta().active,
+        "variant active=false deactivates host");
+}
+
+// Authored active=false must survive a weaker reference (fill-absent on
+// AUTHORED opinions only; a weaker default used to flip it back).
+static void test_active_authored() {
+  std::cout << "[active authored]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer("#usda 1.0\ndef Xform \"R\" { float x = 1 }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\ndef Xform \"A\" (active = false\n"
+      " prepend references = @./r.usda@</R>) { }\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  const PrimSpec* a = out ? out->prim_at_path("/A") : nullptr;
+  CHECK(a && !a->meta().active,
+        "authored active=false survives weaker reference");
+  CHECK(a && PropOf(*out, "/A", "x") != nullptr, "reference still composes");
+}
+
+// A sublayer-defined prim's reference must survive a stronger layer's `over`
+// for the same prim (arc merge across the layer stack).
+static void test_cross_layer_arc_merge() {
+  std::cout << "[cross-layer arc merge]\n";
+  auto loader = [&](const std::string& path,
+                    std::string*) -> std::unique_ptr<Layer> {
+    if (path.find("weak") != std::string::npos) {
+      return ParseLayer(
+          "#usda 1.0\ndef Xform \"p\" "
+          "(prepend references = @./r.usda@</R>) { }\n");
+    }
+    return ParseLayer("#usda 1.0\ndef Xform \"R\" { float x = 5 }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n(\n subLayers = [ @./weak.usda@ ]\n)\n"
+      "over \"p\" { float o = 1 }\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  const Value* x = out ? PropOf(*out, "/p", "x") : nullptr;
+  CHECK(x && x->as_float() && *x->as_float() == 5.0f,
+        "sublayer reference survives stronger over (x=5)");
+  const Value* o = out ? PropOf(*out, "/p", "o") : nullptr;
+  CHECK(o && o->as_float() && *o->as_float() == 1.0f, "over opinion kept");
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -691,6 +973,13 @@ int main() {
   test_extref_self_contained_subtree();
   test_extref_non_self_contained_fallback();
   test_variant_selected_field_over_reference();
+  test_sublayer_merge();
+  test_livrps_strength();
+  test_graft_retargeting();
+  test_layer_offset_baking();
+  test_variant_content_legacy();
+  test_active_authored();
+  test_cross_layer_arc_merge();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";
