@@ -105,13 +105,39 @@ UsdPrim ResolveTexturePrimFromConnection(const Stage& stage,
   UsdPrim prim = stage.GetPrimAtPath(prim_path);
   if (!prim.IsValid()) return UsdPrim();
 
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+
   if (::tinyusdz::next::IsShader(prim)) {
+    // A texture-carrying shader (UsdUVTexture / ND_image_*) exposes inputs:file.
+    // MaterialX graphs route the image through passthrough utility nodes
+    // (ND_convert_*, ND_normalmap, ...) that have no file input, so walk through
+    // their upstream connection to reach the image node -- otherwise the texture
+    // (e.g. an OpenPBR base_color driven by a nodegraph) never resolves.
+    const bool has_file =
+        eval.EvalAssetPath(prim, "inputs:file").has_value() ||
+        eval.EvalString(prim, "inputs:file").has_value();
+    if (!has_file) {
+      std::string next_conn;
+      if (eval.HasConnection(prim, "inputs:in")) {
+        next_conn = eval.GetConnectionPath(prim, "inputs:in");
+      } else {
+        for (const std::string& pn : prim.GetPropertyNames()) {
+          if (pn.compare(0, 7, "inputs:") == 0 && eval.HasConnection(prim, pn)) {
+            next_conn = eval.GetConnectionPath(prim, pn);
+            break;
+          }
+        }
+      }
+      if (!next_conn.empty()) {
+        return ResolveTexturePrimFromConnection(
+            stage, next_conn, time_code, terminal_connection_path, depth + 1);
+      }
+    }
     if (terminal_connection_path) *terminal_connection_path = connection_path;
     return prim;
   }
 
-  ::tinyusdz::next::AttributeEval eval(&stage);
-  eval.SetTime(time_code);
   if (eval.HasConnection(prim, prop_name)) {
     return ResolveTexturePrimFromConnection(
         stage, eval.GetConnectionPath(prim, prop_name), time_code,
