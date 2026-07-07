@@ -31,7 +31,8 @@
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
 #include "value-types.hh"              // value::matrix4d / quatf / double3
 #include "xform.hh"                    // to_matrix3x3 / to_matrix / inverse
-#include "io-util.hh"                  // io::GetBaseDir
+#include "io-util.hh"                  // io::GetBaseDir / SplitUDIMPath
+#include "tydra/texture-util.hh"       // tydra::ResizeImage (UDIM tile normalize)
 #include "image-loader.hh"             // DomeLight envmap decode (IBL bake)
 #include "mesh_build.hh"               // UpdatePreviewLight
 #include "lightrt_mtlx_bridge.hh"      // BakeLightRtOpenPBR (next material bake)
@@ -1269,6 +1270,88 @@ int NextScalarChannel(tydn::RenderTexture::Channel c) {
   }
 }
 
+// Resize an RGBA8 light3d::Image to (w,h) via tydra::ResizeImage. Mirrors
+// mesh_build's ResizeDrawImage (minus the vendored textools fast path, which is
+// file-local there) so --next UDIM tiles can be normalized to a common size.
+bool NextResizeImage(light3d::Image* img, int w, int h, bool srgb) {
+  if (!img || w <= 0 || h <= 0 || img->width <= 0 || img->height <= 0) return false;
+  if (img->width == w && img->height == h) return true;
+  tinyusdz::Image src;
+  src.width = img->width;
+  src.height = img->height;
+  src.channels = img->channels;
+  src.bpp = 8;
+  src.format = tinyusdz::Image::PixelFormat::UInt;
+  src.data = img->data;
+  tinyusdz::Image dst;
+  const auto filter = srgb ? tinyusdz::tydra::ResizeFilter::SRGB
+                           : tinyusdz::tydra::ResizeFilter::Linear;
+  std::string err;
+  if (!tinyusdz::tydra::ResizeImage(src, w, h, &dst, filter, &err)) return false;
+  img->width = dst.width;
+  img->height = dst.height;
+  img->channels = dst.channels;
+  img->data = std::move(dst.data);
+  return true;
+}
+
+// Enumerate + decode UDIM tiles for a `<UDIM>`-tagged asset path into a UDIM
+// DrawTextureCPU. tydra-next carries the literal `<UDIM>` token through verbatim
+// (no udim handling in the converter), so we expand it ourselves: probe ids
+// 1001..1100, decode each existing tile (base_dir or .usdz), normalize to a
+// common size, and build the udimLayer[100] LUT the sampler2DArray path reads.
+// Returns the DrawScene texture index or -1 if no tile decoded. Mirrors
+// mesh_build's BuildDrawTextures UDIM branch / NormalizeUdimTiles / InitUdimLookup.
+int LoadNextUdimTexture(NextTexCache& tc, DrawScene* draw,
+                        const tydn::RenderTexture& rt, const std::string& asset,
+                        bool srgb) {
+  std::string pre, post;
+  if (!tinyusdz::io::SplitUDIMPath(asset, &pre, &post)) return -1;
+
+  DrawTextureCPU dt;
+  for (uint32_t id = 1001; id <= 1100; ++id) {
+    const std::string tilePath = pre + std::to_string(id) + post;
+    DrawUdimTileCPU tile;
+    if (!DecodeNextImage(tc, tilePath, &tile.image)) continue;  // absent tile
+    tile.udim = id;
+    tile.u = (id - 1001u) % 10u;
+    tile.v = (id - 1001u) / 10u;
+    tile.assetIdentifier = tilePath;
+    dt.udimTiles.push_back(std::move(tile));
+  }
+  if (dt.udimTiles.empty()) return -1;
+
+  dt.isUdim = true;
+  dt.assetIdentifier = asset;
+  dt.srgb = srgb;
+  dt.wrapS = NextWrapToDraw(rt.wrap_s);
+  dt.wrapT = NextWrapToDraw(rt.wrap_t);
+
+  // Normalize all tiles to the max width/height, then LUT: udim-1001 -> layer.
+  int w = 0, h = 0;
+  for (const DrawUdimTileCPU& t : dt.udimTiles) {
+    w = std::max(w, t.image.width);
+    h = std::max(h, t.image.height);
+  }
+  if (w <= 0 || h <= 0) return -1;
+  for (DrawUdimTileCPU& t : dt.udimTiles) {
+    if (t.image.width != w || t.image.height != h) {
+      NextResizeImage(&t.image, w, h, srgb);
+    }
+  }
+  dt.udimTileWidth = w;
+  dt.udimTileHeight = h;
+  dt.image = dt.udimTiles.front().image;  // representative fallback
+  dt.udimLayer.fill(-1);
+  for (size_t i = 0; i < dt.udimTiles.size(); ++i) {
+    const uint32_t u = dt.udimTiles[i].udim;
+    if (u >= 1001 && u <= 1100) dt.udimLayer[u - 1001] = static_cast<int>(i);
+  }
+  const int idx = static_cast<int>(draw->textures.size());
+  draw->textures.push_back(std::move(dt));
+  return idx;
+}
+
 // Decode + register the texture referenced by scratch.textures[texId]. Deduped
 // by (asset, srgb, wrap). Returns the DrawScene texture index or -1.
 int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
@@ -1287,6 +1370,14 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
       std::to_string(static_cast<int>(rt.wrap_t));
   auto it = tc.byKey.find(key);
   if (it != tc.byKey.end()) return it->second;
+
+  // UDIM: tydra-next carries the literal `<UDIM>` token through, so expand +
+  // decode tiles ourselves into a sampler2DArray-backed UDIM texture.
+  if (tinyusdz::io::IsUDIMPath(asset)) {
+    const int uidx = LoadNextUdimTexture(tc, draw, rt, asset, srgb);
+    tc.byKey[key] = uidx;
+    return uidx;
+  }
 
   DrawTextureCPU dt;
   if (!DecodeNextImage(tc, asset, &dt.image)) {
