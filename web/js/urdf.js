@@ -41,6 +41,7 @@ const state = {
   objectUrls: new Map(),
   meshCache: new Map(),
   nativeMeshBuffers: new Map(),
+  generatedTextureAssets: new Map(),
   tinyLoader: null,
   nativeExporter: null,
   joints: {},
@@ -74,6 +75,7 @@ const state = {
     showJointArrows: false,
     showLinkNames: false,
     showJointNames: false,
+    labelScale: 1.0,
     jointsCollapsed: false,
     applyHomePose: false,
     showMuscles: true,
@@ -411,6 +413,7 @@ function clearRobot() {
   state.sourceRestLinkMatrices.clear();
   state.usdLinkBindings = [];
   state.nativeMeshBuffers.clear();
+  state.generatedTextureAssets.clear();
   state.joints = {};
   state.jointValues = {};
   state.collisionMeshes = [];
@@ -728,23 +731,69 @@ function makeCanvas2D(size) {
   return { canvas, ctx: canvas.getContext('2d') };
 }
 
+function drawCheckerTexture(ctx, def, size = 256, repeat = [1, 1]) {
+  ctx.fillStyle = _rgbCss(def.rgb1);
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = _rgbCss(def.rgb2);
+  const repeatX = Math.max(1, Math.round(Number(repeat[0]) || 1));
+  const repeatY = Math.max(1, Math.round(Number(repeat[1]) || 1));
+  const cellsX = repeatX * 2;
+  const cellsY = repeatY * 2;
+  const cellW = size / cellsX;
+  const cellH = size / cellsY;
+  for (let y = 0; y < cellsY; y++) {
+    for (let x = 0; x < cellsX; x++) {
+      if (((x + y) & 1) === 0) ctx.fillRect(x * cellW, y * cellH, cellW + 0.5, cellH + 0.5);
+    }
+  }
+}
+
+function drawGradientTexture(ctx, def, size = 256) {
+  const g = ctx.createLinearGradient(0, 0, 0, size);
+  g.addColorStop(0, _rgbCss(def.rgb1));
+  g.addColorStop(1, _rgbCss(def.rgb2));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+}
+
 // MuJoCo builtin "checker": a 2x2 checkerboard of rgb1/rgb2 (material texrepeat
 // tiles it). Returns a THREE.CanvasTexture.
 function makeCheckerTexture(def) {
   const { canvas, ctx } = makeCanvas2D(256);
-  ctx.fillStyle = _rgbCss(def.rgb1); ctx.fillRect(0, 0, 256, 256);
-  ctx.fillStyle = _rgbCss(def.rgb2);
-  ctx.fillRect(0, 0, 128, 128); ctx.fillRect(128, 128, 128, 128);
+  drawCheckerTexture(ctx, def);
   return new THREE.CanvasTexture(canvas);
 }
 
 // MuJoCo builtin "gradient": vertical rgb1 (top) -> rgb2 (bottom).
 function makeGradientTexture(def) {
   const { canvas, ctx } = makeCanvas2D(256);
-  const g = ctx.createLinearGradient(0, 0, 0, 256);
-  g.addColorStop(0, _rgbCss(def.rgb1)); g.addColorStop(1, _rgbCss(def.rgb2));
-  ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+  drawGradientTexture(ctx, def);
   return new THREE.CanvasTexture(canvas);
+}
+
+async function canvasPNGBytes(canvas) {
+  const blob = canvas.convertToBlob
+    ? await canvas.convertToBlob({ type: 'image/png' })
+    : await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas PNG encode failed'))), 'image/png');
+    });
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function generatedMujocoTextureAsset(textureName, def, texrepeat = [1, 1]) {
+  if (!def || (def.builtin !== 'checker' && def.builtin !== 'gradient')) return '';
+  const safeName = sanitizeUSDIdentifier(textureName || def.builtin, 'texture');
+  const repeatX = Math.max(1, Math.round(Number(texrepeat[0]) || 1));
+  const repeatY = Math.max(1, Math.round(Number(texrepeat[1]) || 1));
+  const path = `textures/mjcf_builtin_${safeName}_${repeatX}x${repeatY}.png`;
+  if (state.generatedTextureAssets.has(path)) return path;
+  const size = 256;
+  const canvas = Object.assign(document.createElement('canvas'), { width: size, height: size });
+  const ctx = canvas.getContext('2d');
+  if (def.builtin === 'checker') drawCheckerTexture(ctx, def, size, texrepeat);
+  else drawGradientTexture(ctx, def, size);
+  state.generatedTextureAssets.set(path, await canvasPNGBytes(canvas));
+  return path;
 }
 
 function makeMissingMesh(path) {
@@ -1124,6 +1173,8 @@ const labelSpriteCache = new Map();
 const LABEL_CACHE_LIMIT = 512;
 const LABEL_MAX_CHARS = 160;
 const LABEL_MAX_CANVAS_WIDTH = 2048;
+const LABEL_HEIGHT_RATIO = 0.035;
+const LABEL_MIN_HEIGHT = 0.024;
 
 function labelTextForSprite(text) {
   const raw = String(text ?? '');
@@ -1187,10 +1238,19 @@ function labelSpriteAssets(text, color) {
   return assets;
 }
 
-function makeTextSprite(text, color) {
+function objectLabelHeight(object) {
+  if (!object) return LABEL_MIN_HEIGHT * state.settings.labelScale;
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) return LABEL_MIN_HEIGHT * state.settings.labelScale;
+  const size = box.getSize(new THREE.Vector3());
+  const diagonal = size.length();
+  const base = Math.max(LABEL_MIN_HEIGHT, diagonal * LABEL_HEIGHT_RATIO);
+  return base * state.settings.labelScale;
+}
+
+function makeTextSprite(text, color, height) {
   const { material, aspect } = labelSpriteAssets(text, color);
   const sprite = new THREE.Sprite(material);
-  const height = 0.018;
   sprite.scale.set(height * aspect, height, 1);
   sprite.renderOrder = 20;
   return sprite;
@@ -1201,11 +1261,14 @@ function disposeLabelSpriteCache() {
   labelSpriteCache.clear();
 }
 
-function addLabel(root, text, position, color, offsetY = 0.035) {
+function addLabel(root, text, position, color, labelHeight, offsetFactor = 1.8) {
   if (!text || !position) return;
-  const label = makeTextSprite(text, color);
+  const height = Number.isFinite(labelHeight) && labelHeight > 0
+    ? labelHeight
+    : LABEL_MIN_HEIGHT * state.settings.labelScale;
+  const label = makeTextSprite(text, color, height);
   label.position.copy(position);
-  label.position.y += offsetY;
+  label.position.y += height * offsetFactor;
   root.add(label);
 }
 
@@ -1264,11 +1327,12 @@ function makeJointArrow(position, direction, material) {
   return arrow;
 }
 
-function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, jointMaterial, labelColor) {
+function buildSkeletonDebug(root, targetObject, linkEntries, joints, lineMaterial, jointMaterial, labelColor) {
   clearDebugRoot(root);
   if (!debugVisualizationEnabled()) return;
 
   const segments = makeLinkSegments(linkEntries, joints);
+  const labelHeight = objectLabelHeight(targetObject);
 
   if (state.settings.showLinkLines) {
     const points = [];
@@ -1285,7 +1349,7 @@ function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, jointMateri
   if (state.settings.showLinkNames) {
     for (const segment of segments) {
       const midpoint = new THREE.Vector3().addVectors(segment.start, segment.end).multiplyScalar(0.5);
-      addLabel(root, segment.linkName, midpoint, labelColor);
+      addLabel(root, segment.linkName, midpoint, labelColor, labelHeight, 1.6);
     }
   }
 
@@ -1302,7 +1366,7 @@ function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, jointMateri
   if (state.settings.showJointNames) {
     for (const joint of joints) {
       const pos = jointPosition(joint, linkEntries);
-      addLabel(root, joint.name || joint.jointName || 'joint', pos, labelColor, 0.055);
+      addLabel(root, joint.name || joint.jointName || 'joint', pos, labelColor, labelHeight, 2.4);
     }
   }
 }
@@ -1313,8 +1377,8 @@ function updateSkeletonDebugVisualizations() {
     return;
   }
   const joints = Object.values(state.joints || {});
-  buildSkeletonDebug(sourceView.debugRoot, sourceLinkDebugEntries(), joints, sourceLinkLineMaterial, sourceJointMaterial, sourceLabelColor);
-  buildSkeletonDebug(usdView.debugRoot, usdLinkDebugEntries(), joints, usdLinkLineMaterial, usdJointMaterial, usdLabelColor);
+  buildSkeletonDebug(sourceView.debugRoot, state.robot, sourceLinkDebugEntries(), joints, sourceLinkLineMaterial, sourceJointMaterial, sourceLabelColor);
+  buildSkeletonDebug(usdView.debugRoot, state.usdObject || state.usdArticulation, usdLinkDebugEntries(), joints, usdLinkLineMaterial, usdJointMaterial, usdLabelColor);
 }
 
 async function parseURDFWithMeshes(urdfText, filename) {
@@ -3323,8 +3387,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const mjcSceneOptions = parseMujocoSceneOptions(root);
   const tendonsPayload = parseMujocoTendons(root);
   const mjcActuatorsPayload = parseMujocoMJCActuators(root);
-  // <texture name file=...> -> file path, so a material's texture becomes a
-  // UsdUVTexture in the converted USD (builtin/file-less textures skipped).
+  // <texture name file=...> -> file path, and built-in checker/gradient textures
+  // -> generated PNG paths. A material's texture then becomes a UsdUVTexture in
+  // the converted USD.
   const texFiles = new Map();
   for (const t of root.querySelectorAll('asset texture')) {
     const tn = t.getAttribute('name'); const tf = t.getAttribute('file');
@@ -3341,7 +3406,12 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       if (v !== null) mat[k] = Number(v);
     }
     const texRef = m.getAttribute('texture');
+    const texrepeat = parseNumbers(m.getAttribute('texrepeat'), [1, 1]);
     if (texRef && texFiles.has(texRef)) mat.texture = texFiles.get(texRef);
+    else if (texRef && textureDefs.has(texRef)) {
+      const generated = await generatedMujocoTextureAsset(texRef, textureDefs.get(texRef), texrepeat);
+      if (generated) mat.texture = generated;
+    }
     materialsPayload.push(mat);
   }
   const sensorsPayload = [];
@@ -3555,9 +3625,17 @@ function applyPosePreset() {
   if (!robot?.joints) return;
   if (state.settings.applyHomePose && robot.homeKeyframe) poseFromKeyframe(robot);
   else poseToRest(robot);
+  syncUSDArticulationToJointValues();
   rebuildJointControls();
   syncConvertedUSDToSourcePose();
   syncGhosts();
+}
+
+function syncUSDArticulationToJointValues() {
+  if (!state.usdArticulation?.setJointValue || state.usdArticulation === state.robot) return;
+  for (const [name, value] of Object.entries(state.jointValues)) {
+    state.usdArticulation.setJointValue(name, value);
+  }
 }
 
 function classifyRobotMeshes(robot) {
@@ -3603,13 +3681,17 @@ function classifyRobotMeshes(robot) {
   applyVisibility();
 }
 
-// A geom mesh's visibility: MuJoCo-tagged source geoms follow their group's
-// toggle; everything else (URDF / converted-USD meshes) follows the coarse
-// visual/collision toggles.
+// A geom mesh's visibility: visual MuJoCo-tagged source geoms follow their
+// group toggle. Collision meshes follow the coarse collision toggle so enabling
+// "Collision meshes" reliably shows colliders even when MuJoCo groups 3-5 are
+// hidden by default.
 function geomMeshVisible(mesh, isVisualList) {
   const g = mesh.userData?.mujocoGroup;
-  if (g !== undefined && g !== null) return state.settings.geomGroups[g] !== false;
-  return isVisualList ? state.settings.showVisuals : state.settings.showCollisions;
+  if (isVisualList) {
+    if (g !== undefined && g !== null && state.settings.geomGroups[g] === false) return false;
+    return state.settings.showVisuals;
+  }
+  return state.settings.showCollisions;
 }
 
 function applyVisibility() {
@@ -3742,6 +3824,7 @@ function buildGUI() {
   gui.add(state.settings, 'showJointArrows').name('Joint arrows').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'showLinkNames').name('Link names').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'showJointNames').name('Joint names').onChange(updateSkeletonDebugVisualizations);
+  gui.add(state.settings, 'labelScale', 0.25, 6.0, 0.05).name('Label scale').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'ghostUSDInSource').name('USD ghost on left').onChange(rebuildGhosts);
   gui.add(state.settings, 'ghostSourceInUSD').name('Source ghost on right').onChange(rebuildGhosts);
   gui.add(state.settings, 'ghostOpacity', 0.05, 0.75, 0.01).name('Ghost opacity').onChange(() => {
@@ -4180,6 +4263,7 @@ function usdPhysicsToSourceModel(extracted) {
       const axisToken = prim.properties?.['physics:axis'] || 'X';
       const lower = prim.properties?.['physics:lowerLimit'];
       const upper = prim.properties?.['physics:upperLimit'];
+      const ref = Number(prim.properties?.['mjc:ref']);
       return {
         name: prim.name || basenameFromPath(prim.path),
         type,
@@ -4194,6 +4278,9 @@ function usdPhysicsToSourceModel(extracted) {
         localPos1: prim.properties?.['physics:localPos1'],
         localRot0: prim.properties?.['physics:localRot0'],
         localRot1: prim.properties?.['physics:localRot1'],
+        refRad: Number.isFinite(ref)
+          ? (type === 'revolute' ? ref * DEG_TO_RAD : ref)
+          : 0,
         limit: lower !== undefined || upper !== undefined
           ? {
             lower: type === 'revolute' ? Number(lower || 0) * DEG_TO_RAD : Number(lower || 0),
@@ -4534,6 +4621,69 @@ function meshRestWorldByLinkPath(sourceObject, linkPaths, collisionPaths) {
   return restByLinkPath;
 }
 
+function articulationModelFromSourcePayload(payload, sourceObject) {
+  const linksScope = findObjectByName(sourceObject, 'Links');
+  const pathByLinkName = new Map();
+  if (linksScope) {
+    for (const child of linksScope.children) {
+      const path = usdPathForObject(child);
+      if (path) pathByLinkName.set(child.name, path);
+    }
+  }
+  const linkPath = (name) => {
+    const usdName = sanitizeUSDIdentifier(name, 'link');
+    return pathByLinkName.get(usdName) || `/World/Links/${usdName}`;
+  };
+  const links = (payload?.links || []).map((link) => ({
+    name: link.name,
+    path: linkPath(link.name),
+    inertial: link.inertial || {}
+  }));
+  const pathByName = new Map(links.map((link) => [link.name, link.path]));
+  const collisionPaths = new Set();
+  for (const link of payload?.links || []) {
+    const base = pathByName.get(link.name);
+    if (!base) continue;
+    for (const collision of link.collisions || []) {
+      collisionPaths.add(`${base}/${sanitizeUSDIdentifier(collision.name, 'collision')}`);
+    }
+  }
+  const joints = (payload?.joints || [])
+    .map((joint) => ({
+      ...joint,
+      type: joint.type || joint.jointType || 'fixed',
+      parentPath: pathByName.get(joint.parent) || '',
+      childPath: pathByName.get(joint.child) || '',
+      axis: joint.axis || [1, 0, 0],
+      origin: joint.origin || joint.localPos0 || [0, 0, 0],
+      localPos0: joint.localPos0,
+      localPos1: joint.localPos1,
+      localRot0: joint.localRot0,
+      localRot1: joint.localRot1,
+      refRad: joint.refRad || 0
+    }))
+    .filter((joint) => joint.parentPath && joint.childPath);
+  return {
+    name: payload?.name || 'ConvertedFromSource',
+    upAxis: payload?.upAxis || state.settings.upAxis || 'Z',
+    links,
+    joints,
+    collisionPaths
+  };
+}
+
+function sourceRestWorldByLinkPath(model) {
+  const rest = new Map();
+  if (!state.robot?.links) return rest;
+  state.robot.updateWorldMatrix(true, true);
+  for (const link of model.links || []) {
+    const sourceLink = state.robot.links[link.name];
+    if (!sourceLink) continue;
+    rest.set(link.path, matrixInSceneRoot(sourceLink, state.robot));
+  }
+  return rest;
+}
+
 function jointHasAuthoredRotations(joint) {
   return Array.isArray(joint?.localRot0) && Array.isArray(joint?.localRot1);
 }
@@ -4590,6 +4740,11 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
     childJointsByParent,
     sourceObject
   );
+  if (options.restWorldByLinkPath instanceof Map) {
+    for (const [path, matrix] of options.restWorldByLinkPath) {
+      restWorldByLinkPath.set(path, matrix.clone());
+    }
+  }
   if (options.inferMissingJointFrames && modelNeedsJointFrameInference(model)) {
     const meshRestFrames = meshRestWorldByLinkPath(sourceObject, linkPaths, model.collisionPaths);
     for (const [path, matrix] of meshRestFrames) {
@@ -4647,17 +4802,17 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
   // Localize each mesh against the SAME rest world used to place its link node
   // (the joint chain above), not the loaded USD's link-Xform world. The link
   // node sits at `restWorldByLinkPath`, so a mesh placed with
-  //   meshLocal = restWorld⁻¹ · meshWorld(loaded)
-  // lands back at meshWorld(loaded) in the rest pose — the rig reproduces the
+  //   meshLocal = inverse(restWorld) * meshWorld(loaded)
+  // lands back at meshWorld(loaded) in the rest pose; the rig reproduces the
   // loaded USD exactly, then articulates from there.
   //
   // This is robust to where the writer parks the body-world transform:
-  //   • baked into the link Xform (link world == restWorld): equivalent to the
+  //   - baked into the link Xform (link world == restWorld): equivalent to the
   //     old loaded-Xform math, and
-  //   • baked into the geoms with the link Xform left at identity (the current
+  //   - baked into the geoms with the link Xform left at identity (the current
   //     tinyusdz URDF/MJCF converter, MuJoCo-style): the old code used the
   //     identity link Xform, so meshLocal == full kinematic world, which the
-  //     joint-positioned link node then double-applied — exploding the rig.
+  //     joint-positioned link node then double-applied, exploding the rig.
   // Falls back to the loaded link world, then identity, when a link has no
   // rest-world entry.
   const linkInverseWorld = new Map();
@@ -4696,13 +4851,14 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
   group.setJointValue = (jointName, value) => {
     const joint = group.joints[jointName];
     if (!joint?.pivot) return;
+    const displacement = value - (joint.refRad || 0);
     if (joint.jointType === 'prismatic') {
-      const offset = axisVector(joint.axis).normalize().applyQuaternion(joint.originQuat).multiplyScalar(value);
+      const offset = axisVector(joint.axis).normalize().applyQuaternion(joint.originQuat).multiplyScalar(displacement);
       joint.pivot.position.copy(joint.origin).add(offset);
     } else if (joint.jointType !== 'fixed' && joint.jointType !== 'spherical') {
       // Spherical (3-DOF) joints can't be driven by a single scalar; leave at rest.
       joint.pivot.quaternion.copy(joint.originQuat)
-        .multiply(new THREE.Quaternion().setFromAxisAngle(axisVector(joint.axis).normalize(), value));
+        .multiply(new THREE.Quaternion().setFromAxisAngle(axisVector(joint.axis).normalize(), displacement));
     }
   };
 
@@ -4945,6 +5101,11 @@ async function registerTextureAssets(native, payload) {
   if (!native.setAsset) return;
   for (const m of payload.materials || []) {
     if (!m.texture) continue;
+    const generated = state.generatedTextureAssets.get(m.texture);
+    if (generated) {
+      native.setAsset(m.texture, generated);
+      continue;
+    }
     const file = resolveAssetEntry(m.texture)?.file;
     if (!file) continue;
     try {
@@ -4999,11 +5160,12 @@ async function convertSourceToUSD(format = 'usdc') {
   const result = await createUSDBytesFromSource(format, { autoEmbedTextures: true });
   clearUSD();
   const object = await loadUSDObjectFromBytes(result.bytes, result.filename);
+  const resultFormat = extension(result.filename).slice(1) || format;
   state.usdObject = object;
   state.usdRestObject = object;
   state.usdName = result.filename;
   state.latestUSDBytes = result.bytes;
-  state.latestUSDFormat = format;
+  state.latestUSDFormat = resultFormat;
   usdGroup.add(object);
   applySceneOrientation();
   // Articulate from the *exported USD's* own physics, exactly like the import
@@ -5012,27 +5174,45 @@ async function convertSourceToUSD(format = 'usdc') {
   // that path dropped links on URDF input (the inverseSourceRest correction was
   // MJCF-only) and stopped following joints once the source and USD views no
   // longer shared a frame. Driving the USD's own joints is robust to both.
+  let didArticulate = false;
   try {
     const extracted = await extractUSDPhysicsJSONFromBytes(result.bytes, result.filename);
     annotateUSDRenderableClasses(object, extracted);
     const model = usdPhysicsToSourceModel(extracted);
     if (model.links.length && model.joints.length) {
-      const articulated = buildArticulatedRobotFromUSD(model, object, {
+      const articulatedObject = buildArticulatedRobotFromUSD(model, object, {
         name: object.name,
         resetMeshLists: false,
         inferMissingJointFrames: true
       });
       usdGroup.remove(object);
-      state.usdObject = articulated;
-      state.usdArticulation = articulated;
-      usdGroup.add(articulated);
+      state.usdObject = articulatedObject;
+      state.usdArticulation = articulatedObject;
+      usdGroup.add(articulatedObject);
       // Match the USD articulation to the source's current joint pose.
       for (const [name, value] of Object.entries(state.jointValues)) {
-        articulated.setJointValue?.(name, value);
+        articulatedObject.setJointValue?.(name, value);
       }
+      didArticulate = true;
     }
   } catch (err) {
     console.warn('USD Physics articulation skipped:', err);
+  }
+  if (!didArticulate && state.exportPayload?.joints?.length) {
+    const model = articulationModelFromSourcePayload(state.exportPayload, object);
+    if (model.links.length && model.joints.length) {
+      const articulatedObject = buildArticulatedRobotFromUSD(model, object, {
+        name: object.name,
+        resetMeshLists: false,
+        inferMissingJointFrames: false,
+        restWorldByLinkPath: sourceRestWorldByLinkPath(model)
+      });
+      usdGroup.remove(object);
+      state.usdObject = articulatedObject;
+      state.usdArticulation = articulatedObject;
+      usdGroup.add(articulatedObject);
+      syncUSDArticulationToJointValues();
+    }
   }
   // Draw the muscle/spatial-tendon polylines on the USD view too. The converted
   // USD carries the muscle topology (MjcTendon + MjcSite prims), but the site
@@ -5060,7 +5240,7 @@ async function convertSourceToUSD(format = 'usdc') {
   updateLabels();
   applyVisibility();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
-  setStatus(`Converted ${state.inputFormat.toUpperCase()} to ${format.toUpperCase()} for comparison.`);
+  setStatus(`Converted ${state.inputFormat.toUpperCase()} to ${resultFormat.toUpperCase()} for comparison.`);
 }
 
 async function convertUSDToSource() {
