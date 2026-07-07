@@ -408,6 +408,14 @@ if (PROJECT_IS_TOP_LEVEL)
   set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
 
+if(MSVC)
+  # nonstd::expected (src/nonstd/expected.hpp) includes <windows.h> when built
+  # without exceptions (our default); without NOMINMAX its min/max macros
+  # clobber std::numeric_limits<T>::max()/min() calls project-wide with
+  # cryptic C2589/C2059 syntax errors.
+  add_compile_definitions(NOMINMAX)
+endif()
+
 # [ccache]
 if(TINYUSDZ_USE_CCACHE)
   if(MSVC)
@@ -1648,6 +1656,16 @@ endif()
 #add_library(${TINYUSDZ_TARGET_STATIC} STATIC $<TARGET_OBJECTS:tinyusdz_object>)
 #add_sanitizers(${TINYUSDZ_TARGET_STATIC})
 
+# Vendored (external/third-party) sources may contain non-ASCII bytes without a
+# BOM. MSVC otherwise interprets them under the system code page and emits C4819.
+# Force UTF-8 decoding for the dependency/external sources only; our own sources
+# (TINYUSDZ_SOURCES) are saved as UTF-8 with BOM and don't need this.
+if(MSVC AND (TINYUSDZ_DEP_SOURCES OR TINYUSDZ_EXT_SOURCES))
+  set_source_files_properties(
+    ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES}
+    PROPERTIES COMPILE_OPTIONS "/utf-8")
+endif()
+
 add_library(${TINYUSDZ_TARGET_STATIC} STATIC ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
 set_target_properties(${TINYUSDZ_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_sanitizers(${TINYUSDZ_TARGET_STATIC})
@@ -2430,6 +2448,14 @@ if(TINYUSDZ_BUILD_TESTS)
   # renderer is available, so it is harmless on headless CI without a GPU.
   #
   if(TARGET tusdview)
+    # tusdrender is only built when TINYUSDZ_BUILD_TOOLS/TINYUSDZ_WITH_TYDRA are
+    # on; guard $<TARGET_FILE:tusdrender> generator expressions below so
+    # configuring tusdview standalone doesn't fail with "No target tusdrender".
+    if(TARGET tusdrender)
+      set(_tusdview_tusdrender_env ";TUSDRENDER=$<TARGET_FILE:tusdrender>")
+    else()
+      set(_tusdview_tusdrender_env "")
+    endif()
     if(TARGET tusdview_lightrt_bridge_test)
       add_test(
         NAME tusdview-lightrt-bridge
@@ -2542,6 +2568,10 @@ if(TINYUSDZ_BUILD_TESTS)
       SKIP_RETURN_CODE 77
       LABELS "viewer")
 
+    # The tool-tusdrender-* tests below need the tusdrender target itself
+    # (TINYUSDZ_BUILD_TOOLS + TINYUSDZ_WITH_TYDRA); guard so configuring
+    # tusdview standalone doesn't fail on $<TARGET_FILE:tusdrender>.
+    if(TARGET tusdrender)
     add_test(
       NAME tool-tusdrender-degraded-material
       COMMAND bash
@@ -2630,6 +2660,7 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tool-tusdrender-timecode-blendshape-animation PROPERTIES
       SKIP_RETURN_CODE 77
       LABELS "tool;tusdrender")
+    endif()
 
     # tusdview: cross-backend renderer parity (§9). Renders the curated models in
     # Vulkan raster, Vulkan ray query, and CUDA RT and asserts they draw the same
@@ -2716,7 +2747,7 @@ if(TINYUSDZ_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-usd-assets-render-smoke.sh
     )
     set_tests_properties(tusdview-usd-assets-render-smoke PROPERTIES
-      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>"
+      ENVIRONMENT "TUSDVIEW=$<TARGET_FILE:tusdview>${_tusdview_tusdrender_env}"
       SKIP_RETURN_CODE 77
       LABELS "viewer;external-assets")
 
@@ -2790,7 +2821,7 @@ if(TINYUSDZ_BUILD_TESTS)
     )
     set_tests_properties(tusdview-usd-assets-coverage-golden PROPERTIES
       ENVIRONMENT
-        "TUSDVIEW=$<TARGET_FILE:tusdview>;TUSDRENDER=$<TARGET_FILE:tusdrender>;TUSDVIEW_USD_ASSETS_PROFILE=usd-assets-curated;TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,cuda-rt,tusdr-cpu,tusdr-vk,tusdr-vkr;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=60s;TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_GOLDEN;TUSDVIEW_USD_ASSETS_GOLDEN_KIND=coverage;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,golden_mismatch"
+        "TUSDVIEW=$<TARGET_FILE:tusdview>${_tusdview_tusdrender_env};TUSDVIEW_USD_ASSETS_PROFILE=usd-assets-curated;TUSDVIEW_USD_ASSETS_MODES=vk-raster,vk-rt,cuda-rt,tusdr-cpu,tusdr-vk,tusdr-vkr;TUSDVIEW_XVFB=1;TUSDVIEW_USD_ASSETS_TIMEOUT=60s;TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_USD_ASSETS_GOLDEN;TUSDVIEW_USD_ASSETS_GOLDEN_KIND=coverage;TUSDVIEW_USD_ASSETS_FAIL_ON=load_error,timeout,backend_error,golden_mismatch"
       SKIP_RETURN_CODE 77
       TIMEOUT 1200
       LABELS "viewer;external-assets")
