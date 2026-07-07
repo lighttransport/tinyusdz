@@ -33,12 +33,10 @@ bool IsLazyArrayType(CrateTypeId t, bool compressed) {
     case CrateTypeId::Vec2f:
     case CrateTypeId::Vec3f:
     case CrateTypeId::Vec4f:
-    case CrateTypeId::Quatf:
     case CrateTypeId::Double:
     case CrateTypeId::Vec2d:
     case CrateTypeId::Vec3d:
     case CrateTypeId::Vec4d:
-    case CrateTypeId::Quatd:
     case CrateTypeId::Matrix2d:
     case CrateTypeId::Matrix3d:
     case CrateTypeId::Matrix4d:
@@ -46,11 +44,17 @@ bool IsLazyArrayType(CrateTypeId t, bool compressed) {
     case CrateTypeId::Vec2h:
     case CrateTypeId::Vec3h:
     case CrateTypeId::Vec4h:
-    case CrateTypeId::Quath:
     case CrateTypeId::Int64:
     case CrateTypeId::UInt64:
     case CrateTypeId::Bool:
       return !compressed;
+    // Quat arrays need a per-element component swizzle (disk is
+    // imaginary-first, internal is real-first), so they must decode eagerly:
+    // a lazy byte view would surface the wrong component order.
+    case CrateTypeId::Quatf:
+    case CrateTypeId::Quatd:
+    case CrateTypeId::Quath:
+      return false;
     default:
       return false;
   }
@@ -360,8 +364,26 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
     // Vector / quaternion / matrix arrays stored as flat float or double
     // buffers (uncompressed in crate). Decoded generically via the element
     // stride so each type doesn't need a near-identical case.
-    case CrateTypeId::Vec4f:
     case CrateTypeId::Quatf: {
+      size_t scalars;
+      if (!safe::mul(static_cast<size_t>(count), size_t(4), &scalars)) return false;
+      std::vector<float> data(scalars);
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), scalars)) return false;
+      } else if (!read_raw(data.data(), 16)) {
+        return false;
+      }
+      // Disk is imaginary-first per element; internal is real-first.
+      for (size_t e = 0; e < count; ++e) {
+        float* q = data.data() + e * 4;
+        const float w = q[3];
+        q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
+      }
+      out = Value::MakeFloatCompArray(std::move(data),
+                                      CrateArrayValueType(type_id), 4);
+      return true;
+    }
+    case CrateTypeId::Vec4f: {
       const uint32_t stride_bytes = CrateArrayElemStride(type_id);  // e.g. 16
       const uint32_t comps = stride_bytes / 4;
       size_t scalars;
@@ -376,10 +398,86 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
                                       CrateArrayValueType(type_id), comps);
       return true;
     }
+    case CrateTypeId::Quatd: {
+      size_t scalars;
+      if (!safe::mul(static_cast<size_t>(count), size_t(4), &scalars)) return false;
+      std::vector<double> data(scalars);
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating_n(data.data(), scalars)) return false;
+      } else if (!read_raw(data.data(), 32)) {
+        return false;
+      }
+      for (size_t e = 0; e < count; ++e) {
+        double* q = data.data() + e * 4;
+        const double w = q[3];
+        q[3] = q[2]; q[2] = q[1]; q[1] = q[0]; q[0] = w;
+      }
+      out = Value::MakeDoubleCompArray(std::move(data),
+                                       CrateArrayValueType(type_id), 4);
+      return true;
+    }
+    case CrateTypeId::TimeCode: {
+      std::vector<double> data(static_cast<size_t>(count));
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_floating(data.data())) return false;
+      } else if (!read_raw(data.data(), sizeof(double))) {
+        return false;
+      }
+      out = Value::MakeDoubleCompArray(std::move(data), TypeId::TimeCode, 1);
+      return true;
+    }
+    case CrateTypeId::Vec2i:
+    case CrateTypeId::Vec3i:
+    case CrateTypeId::Vec4i: {
+      const uint32_t stride_bytes = CrateArrayElemStride(type_id);
+      const uint32_t comps = stride_bytes / 4;
+      size_t scalars;
+      if (!safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;
+      std::vector<int32_t> data(scalars);
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u32_n(reinterpret_cast<uint32_t*>(data.data()),
+                                   scalars)) return false;
+      } else if (!read_raw(data.data(), stride_bytes)) {
+        return false;
+      }
+      out = Value::MakeIntCompArray(std::move(data),
+                                    CrateArrayValueType(type_id), comps);
+      return true;
+    }
+    case CrateTypeId::String: {
+      // uint32 indices into the STRINGS section.
+      std::vector<uint32_t> idxs(static_cast<size_t>(count));
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u32(idxs.data())) return false;
+      } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
+        return false;
+      }
+      std::vector<std::string> data(static_cast<size_t>(count));
+      for (size_t i = 0; i < count; i++) {
+        if (!GetString(idxs[i], data[i])) return false;
+      }
+      out = Value::MakeStringLikeArray(std::move(data), TypeId::String);
+      return true;
+    }
+    case CrateTypeId::AssetPath: {
+      // uint32 STRING indices (unlike the scalar form, which uses a token
+      // index) — matches pxr's VtArray<SdfAssetPath> layout.
+      std::vector<uint32_t> idxs(static_cast<size_t>(count));
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_u32(idxs.data())) return false;
+      } else if (!read_raw(idxs.data(), sizeof(uint32_t))) {
+        return false;
+      }
+      std::vector<std::string> data(static_cast<size_t>(count));
+      for (size_t i = 0; i < count; i++) {
+        if (!GetString(idxs[i], data[i])) return false;
+      }
+      out = Value::MakeStringLikeArray(std::move(data), TypeId::AssetPath);
+      return true;
+    }
     case CrateTypeId::Vec2d:
     case CrateTypeId::Vec3d:
     case CrateTypeId::Vec4d:
-    case CrateTypeId::Quatd:
     case CrateTypeId::Matrix2d:
     case CrateTypeId::Matrix3d:
     case CrateTypeId::Matrix4d: {
@@ -397,11 +495,31 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
                                        CrateArrayValueType(type_id), comps);
       return true;
     }
+    case CrateTypeId::Quath: {
+      size_t scalars;
+      if (!safe::mul(static_cast<size_t>(count), size_t(4), &scalars)) return false;
+      std::vector<uint16_t> halfs(scalars);
+      if (compressed && count >= kMinCompressedArraySize) {
+        if (!read_compressed_half_n(halfs.data(), scalars)) return false;
+      } else if (!read_raw(halfs.data(), 8)) {
+        return false;
+      }
+      std::vector<float> data(scalars);
+      for (size_t e = 0; e < count; ++e) {
+        const uint16_t* q = halfs.data() + e * 4;
+        data[e * 4 + 0] = HalfToFloat(q[3]);
+        data[e * 4 + 1] = HalfToFloat(q[0]);
+        data[e * 4 + 2] = HalfToFloat(q[1]);
+        data[e * 4 + 3] = HalfToFloat(q[2]);
+      }
+      out = Value::MakeFloatCompArray(std::move(data),
+                                      CrateArrayValueType(type_id), 4);
+      return true;
+    }
     case CrateTypeId::Half:
     case CrateTypeId::Vec2h:
     case CrateTypeId::Vec3h:
-    case CrateTypeId::Vec4h:
-    case CrateTypeId::Quath: {
+    case CrateTypeId::Vec4h: {
       const uint32_t comps = CrateArrayElemStride(type_id) / 2;  // 2 bytes/half
       size_t scalars;
       if (comps == 0 || !safe::mul(static_cast<size_t>(count), size_t(comps), &scalars)) return false;

@@ -239,13 +239,16 @@ tusd_status MakeView(const n::Value& v, tusd_value_view* out) {
   } else {
     bytes = v.raw_bytes(&nbytes);
   }
+  tusd_component_type storage = StorageFor(t, v.is_array());
   if (!bytes || nbytes == 0) {
-    // Unsupported storage (e.g. int-vector arrays); the view still reports
-    // type/count so callers can diagnose.
+    // No POD buffer (empty array, or unsupported storage); the view still
+    // reports type/count/storage so callers can build an empty view.
+    out->storage = static_cast<uint8_t>(storage);
+    size_t comps0 = n::GetComponentCount(t);
+    out->components = static_cast<uint8_t>(comps0 > 255 ? 0 : comps0);
     return TUSD_OK;
   }
 
-  tusd_component_type storage = StorageFor(t, v.is_array());
   const size_t csize = CompSize(storage);
   size_t components = n::GetComponentCount(t);
   // Derive components from the actual byte size when the type table disagrees

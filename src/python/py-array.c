@@ -417,7 +417,7 @@ PyObject* tusd_view_to_python(tusd_state* st, PyObject* owner,
     return st->ValueBlock;
   }
   if (view->is_array) {
-    if (!view->data) {
+    if (!view->data && view->count > 0) {
       if (owned) tusd_value_destroy(owned);
       PyErr_Format(st->UsdError, "array value of type '%s' is not viewable",
                    tusd_type_name(view->type));
@@ -566,7 +566,8 @@ PyObject* tusd_attr_value_to_python(tusd_state* st, PyObject* stage_obj,
   }
 
   if (view.is_array && (view.type == TUSD_TYPE_TOKEN ||
-                        view.type == TUSD_TYPE_STRING)) {
+                        view.type == TUSD_TYPE_STRING ||
+                        view.type == TUSD_TYPE_ASSET_PATH)) {
     tusd_strlist* tokens = NULL;
     status = tusd_attr_get_token_array(prim, name, &tokens);
     if (status != TUSD_OK) return tusd_raise(st, status, name);

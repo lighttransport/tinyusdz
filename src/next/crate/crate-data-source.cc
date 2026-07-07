@@ -115,6 +115,7 @@ uint32_t CrateArrayElemStride(CrateTypeId id) {
     case CrateTypeId::Int64:
     case CrateTypeId::UInt64:
     case CrateTypeId::Double:
+    case CrateTypeId::TimeCode:
     case CrateTypeId::Vec2f:
     case CrateTypeId::Vec2i:
     case CrateTypeId::Vec4h:
@@ -166,6 +167,8 @@ TypeId CrateArrayValueType(CrateTypeId id) {
       return TypeId::Float;
     case CrateTypeId::Double:
       return TypeId::Double;
+    case CrateTypeId::TimeCode:
+      return TypeId::TimeCode;
     case CrateTypeId::String:
       return TypeId::String;
     case CrateTypeId::Token:

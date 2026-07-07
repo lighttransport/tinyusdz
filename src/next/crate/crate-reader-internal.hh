@@ -148,6 +148,8 @@ class CrateReader::Impl {
   bool ResolveFieldsetRaw(uint32_t fieldset_index,
                           std::vector<std::pair<std::string, ValueRep>>& out);
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out);
+  bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out,
+                         bool with_markers);
   bool DecodeReferenceListOp(ValueRep rep, bool is_payload,
                              std::vector<std::string>& out);
   bool DecodeVariantSelectionMap(
