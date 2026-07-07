@@ -164,6 +164,10 @@ class ChunkedArray {
   size_t chunk_count() const { return chunks_.size(); }
   size_t capacity() const { return chunks_.size() * kElementsPerChunk; }
 
+  // True when the data already lives in one contiguous block (0 or 1 chunk),
+  // i.e. chunk_data(0) can be handed out directly without flattening.
+  bool is_contiguous() const { return chunks_.size() <= 1; }
+
   // Memory usage in bytes
   size_t memory_usage() const {
     return chunks_.size() * ChunkBytes + sizeof(*this);

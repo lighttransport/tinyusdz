@@ -99,6 +99,27 @@ public:
   Layer Clone() const;
 
   // ============================================================
+  // Path-addressed authoring (post-load editing)
+  // ============================================================
+
+  /// Define (or fetch) a prim at an absolute path, creating missing ancestors
+  /// as typeless `def`s (pxr DefinePrim semantics). If the prim already exists,
+  /// a non-empty `type_name` overwrites its type and `specifier` is applied.
+  /// Keeps the path index and root/child links up to date incrementally.
+  /// Returns the prim's index, or UINT32_MAX for an invalid path (empty,
+  /// relative, or containing empty components).
+  uint32_t define_prim_at_path(const std::string& path,
+                               const std::string& type_name = "",
+                               PrimSpecifier specifier = PrimSpecifier::Def);
+
+  /// Remove the prim at `path` (and its whole subtree) from the hierarchy:
+  /// unlinks it from its parent / the root list and drops all subtree entries
+  /// from the path index. The PrimSpec storage itself is append-only, so the
+  /// removed specs stay allocated but unreachable (writers traverse from
+  /// root_indices). Returns false if no prim exists at `path`.
+  bool remove_prim_at_path(const std::string& path);
+
+  // ============================================================
   // Access
   // ============================================================
 

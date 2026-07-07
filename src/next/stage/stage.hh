@@ -118,6 +118,11 @@ public:
   /// Get child count
   size_t GetChildCount() const;
 
+  /// Get child by position (no allocation, unlike GetChildren). Returns an
+  /// invalid prim when out of range. Follows instance prototypes like
+  /// GetChildren.
+  UsdPrim GetChildAt(size_t index) const;
+
   /// Get child by name
   UsdPrim GetChild(const std::string& name) const;
 
@@ -128,8 +133,19 @@ public:
   /// Get prim metadata
   const PrimSpecMeta& GetMeta() const;
 
+  /// Get a property's metadata block (interpolation / customData / ...),
+  /// or nullptr when none authored. Never allocates.
+  const PropMeta* GetPropertyMeta(const std::string& name) const {
+    return spec_ ? spec_->property_meta(name) : nullptr;
+  }
+
   /// Get underlying PrimSpec (for advanced use)
   const PrimSpec* GetPrimSpec() const { return spec_; }
+
+  /// Get the owning layer / prim index (for handle round-tripping in
+  /// bindings; pairs with the (spec, layer, index) constructor).
+  const Layer* GetLayer() const { return layer_; }
+  uint32_t GetIndex() const { return index_; }
 
 private:
   // Resolves to the prototype's spec when this prim is an instance proxy

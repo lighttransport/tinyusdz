@@ -1,8 +1,8 @@
 # TinyUSDZ Python Binding
 
-TinyUSDZ ships a CPython extension package named `tinyusdz`. The package is a
-thin Python facade over `src/python/module.c`, backed by the C API and Tydra
-scene-access helpers.
+TinyUSDZ ships a CPython extension package named `tinyusdz`, built on the
+**next core** (`src/next/` + `src/tydra/next/`) through the C API
+(`src/c-api/`). The legacy tinyusdz core is not part of the wheel.
 
 End-user package documentation lives in [../python/README.md](../python/README.md).
 This page is for source builds and maintainer notes.
@@ -10,110 +10,56 @@ This page is for source builds and maintainer notes.
 ## Package Status
 
 - Package name: `tinyusdz`
-- Python support: CPython 3.11+
-- Wheel ABI: abi3, built from the CPython 3.11 stable ABI floor
-- Runtime dependency on NumPy: none
-- Optional test dependency: NumPy, used to validate buffer-protocol interop
+- Python support: CPython 3.10+ (stable ABI) and free-threaded CPython 3.14
+- Wheels: `cp310-abi3` (one wheel covers 3.10+) and `cp314t` (free-threaded,
+  `Py_mod_gil = Py_MOD_GIL_NOT_USED`)
+- Runtime dependency on NumPy: none (zero-copy interop when present, via
+  `__array_interface__` on the abi3 build and the buffer protocol on cp314t)
 - Version source: git tags through `setuptools_scm`
 
-The Python API exposes:
+## Architecture
 
-- `tinyusdz.load(path, format=None)`, `loads(usda_text)`, and
-  `load_bytes(data, format=None)`
-- `Stage`, `Prim`, `Attribute`, and `Value`
-- stage authoring and `Stage.save(...)`
-- composition arc, variant, metadata, relationship, connection, and time-sample
-  authoring helpers
-- `tinyusdz.traverse(stage)` and `rewrite_asset_paths(...)`
-- `tinyusdz.tydra.convert_to_render_scene(stage)` with zero-copy render buffers
-
-The exact public signatures are tracked in
-[../python/tinyusdz/_core.pyi](../python/tinyusdz/_core.pyi).
-
-## Install From PyPI
-
-```sh
-python -m pip install tinyusdz
+```
+python/tinyusdz/__init__.py   pure-python facade (pathlib, value normalizer)
+python/tinyusdz/tydra.py      render-scene shim
+src/python/py-*.c             raw CPython C-API extension (tinyusdz._core)
+src/c-api/tinyusdz-c.*        core C API (tusd_*): stage/prim/attr/authoring
+src/c-api/tinyusdz-render-c.* tydra render C API (buffers, materials, nodes)
+src/next/                     next core (parser, crate, composition, writers)
+src/tydra/next/               render-scene converter
 ```
 
-## Editable Source Build
+Single extension source, two build configurations:
 
-From the repository root:
+- **abi3** (default): `Py_LIMITED_API=0x030A0000`. The buffer protocol is not
+  in the limited API before 3.11, so zero-copy numpy interop goes through
+  `__array_interface__` / `Array.memoryview()`.
+- **free-threaded** (`Py_GIL_DISABLED` interpreters): non-limited build with
+  real buffer-protocol slots. All extension state lives in module state
+  (multi-phase init, no static globals); stage reads are thread-safe (lazy
+  crate-array materialization is serialized inside the C API), authoring must
+  not race reads of the same stage.
 
-```sh
-python -m pip install -e . --no-build-isolation
+## Building from source
+
+```bash
+pip install -e .          # drives CMake on src/next, then builds the extension
+pytest python/tests -q
 ```
 
-The build is driven by [../setup.py](../setup.py):
+Environment overrides: `TINYUSDZ_PY_LIMITED_API=0` (force a non-abi3 dev
+build), `TINYUSDZ_CMAKE_ARGS` (extra CMake args),
+`TINYUSDZ_TEST_ASSETS` (pytest asset dir).
 
-1. Configure CMake under `build_py_ext/`.
-2. Build the static C++ library and C API library.
-3. Compile `src/python/module.c` as an abi3 CPython extension.
-4. Install the Python package from `python/tinyusdz`.
+Wheels are built by `.github/workflows/wheels.yml` with cibuildwheel (v3.x,
+`enable = ["cpython-freethreading"]`); configuration lives in
+`[tool.cibuildwheel]` in `pyproject.toml`. Publishing uses PyPI Trusted
+Publishing (OIDC), unchanged.
 
-Rebuild after touching `src/python/module.c`, `src/c-tinyusd-helpers.*`, the C
-API headers, or any transitively included C++ headers used by the extension.
+## C API notes
 
-## Wheel Build
-
-The project uses `pyproject.toml`, `setuptools`, `setuptools_scm`, and `wheel`.
-
-```sh
-python -m pip install build
-python -m build
-```
-
-CI wheels are built with cibuildwheel. The wheel version is derived from the git
-tag; do not edit a Python version file by hand for a release.
-
-## Tests
-
-```sh
-python -m pip install -e ".[test]" --no-build-isolation
-python -m pytest python/tests -q
-```
-
-The tests cover loading, authoring, USDA/USDC/USDZ save paths, typed values,
-buffer protocol behavior, Tydra render-scene extraction, variants, composition
-arcs, relationships, metadata, and error handling.
-
-## Minimal Usage
-
-```python
-import tinyusdz
-
-stage = tinyusdz.load("scene.usdz")
-for prim in tinyusdz.traverse(stage):
-    print(prim.type_name, prim.name)
-
-mesh = stage.get_prim_at_path("/World/Mesh")
-if mesh is not None:
-    points = mesh.get_attribute("points").value
-    print(points.to_string())
-
-stage.save("out.usda")
-```
-
-Render-scene conversion:
-
-```python
-import tinyusdz
-
-stage = tinyusdz.load("scene.usda")
-scene = tinyusdz.tydra.convert_to_render_scene(stage)
-
-for mesh in scene.meshes():
-    print(mesh.name, mesh.points)
-```
-
-NumPy can consume `Value` and `BufferView` objects through the buffer protocol,
-but NumPy is optional:
-
-```python
-import numpy as np
-import tinyusdz
-
-stage = tinyusdz.load("scene.usda")
-scene = tinyusdz.tydra.convert_to_render_scene(stage)
-points = np.asarray(scene.meshes()[0].points)
-```
+`src/c-api/tinyusdz-c.h` is a standalone C11 FFI surface usable from any
+language (Rust/C#/Deno/...): opaque owning handles + by-value `tusd_prim`
+handles, thread-local `tusd_last_error()`, zero-copy `tusd_value_view` /
+`tusd_buffer_view` views, batched authoring calls. Smoke-tested from pure C
+by `tests/c-api/test_tinyusdz_c.c` (ctest: `next_test_c_api`).

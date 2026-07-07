@@ -296,12 +296,23 @@ TypeId GetTypeIdFromName(const char* name) {
   if (!name) {
     return TypeId::Invalid;
   }
+  // Several storage variants share one USD name (Matrix4f and Matrix4d are
+  // both "matrix4d" -- USD only has double matrices). Prefer the canonical
+  // entry, i.e. the one whose C++ name also matches the USD name, falling
+  // back to the first USD-name match.
+  TypeId first = TypeId::Invalid;
   for (size_t i = 1; i < kTypeCount; ++i) {
     if (g_type_info[i].name && std::strcmp(g_type_info[i].name, name) == 0) {
-      return static_cast<TypeId>(i);
+      if (g_type_info[i].cpp_name &&
+          std::strcmp(g_type_info[i].cpp_name, name) == 0) {
+        return static_cast<TypeId>(i);
+      }
+      if (first == TypeId::Invalid) {
+        first = static_cast<TypeId>(i);
+      }
     }
   }
-  return TypeId::Invalid;
+  return first;
 }
 
 size_t GetTypeSize(TypeId id) {

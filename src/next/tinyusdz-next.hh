@@ -138,6 +138,16 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
                      std::string* warn = nullptr, std::string* err = nullptr,
                      const pcp::CompositionOptions* comp_opts = nullptr);
 
+/// Load USD from an in-memory buffer (auto-detects USDA / USDC / USDZ from the
+/// content). Single-layer load only: composition arcs are not resolved (there
+/// is no anchor directory for external assets).
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       std::string* warn = nullptr, std::string* err = nullptr);
+
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       const LoadUSDOptions& options,
+                       std::string* warn = nullptr, std::string* err = nullptr);
+
 /// Load USDA (ASCII) file
 bool LoadUSDA(const std::string& filename, Stage* stage,
               std::string* warn = nullptr, std::string* err = nullptr);
