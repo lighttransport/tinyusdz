@@ -280,6 +280,7 @@ bool LoadStageComposed(const std::string& path, const LoadOptions& opts,
   }
 
   out->comp.searchPaths = {DirName(path)};
+  out->comp.allowParentRelativePaths = opts.allowParentRelativePaths;
 
   tinyusdz::AssetResolutionResolver resolver;
   resolver.set_search_paths(out->comp.searchPaths);
@@ -315,12 +316,16 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
                              const TextureRuntimeOptions& textureOptions,
                              int subdivisionLevel,
                              const std::map<std::string, int>& subdivisionPrimLevels,
+                             bool allowParentRelativePaths,
                              tinyusdz::tydra::RenderScene* render, DrawScene* draw,
                              std::string* warn, std::string* err,
                              LoadControl* ctrl) {
   tinyusdz::tydra::RenderSceneConverterEnv env(stage);
   env.usd_filename = path;
   env.set_search_paths({DirName(path)});
+  // Honor the caller's parent-relative-path policy for texture/light asset
+  // resolution (the tydra asset resolver rejects '..' paths by default).
+  env.asset_resolver.set_allow_parent_relative_paths(allowParentRelativePaths);
   env.timecode = timecode;
   env.scene_config.load_texture_assets = loadTextures;
 
@@ -478,6 +483,7 @@ bool ConvertStageToScene(const std::string& path, double timecode,
     if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
                                  /*loadTextures=*/true, textureOptions,
                                  subdivisionLevel, subdivisionPrimLevels,
+                                 out->comp.allowParentRelativePaths,
                                  &out->render,
                                  /*draw=*/nullptr, &out->warn, &out->err,
                                  ctrl)) {
@@ -492,6 +498,7 @@ bool ConvertStageToScene(const std::string& path, double timecode,
   if (!ConvertStageToSceneImpl(out->stage, path, out->mmap, timecode, rtPath,
                                /*loadTextures=*/true, textureOptions,
                                subdivisionLevel, subdivisionPrimLevels,
+                               out->comp.allowParentRelativePaths,
                                &out->render, draw,
                                &out->warn, &out->err, ctrl)) {
     return false;
@@ -595,7 +602,8 @@ bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
     if (!ConvertStageToSceneImpl(src.stage, src.filepath, src.mmap, timecode,
                                  rtPath, /*loadTextures=*/false,
                                  TextureRuntimeOptions{}, src.subdivisionLevel,
-                                 src.subdivisionPrimLevels, &scratch,
+                                 src.subdivisionPrimLevels,
+                                 src.comp.allowParentRelativePaths, &scratch,
                                  /*draw=*/nullptr, warn, err, ctrl)) {
       return false;
     }

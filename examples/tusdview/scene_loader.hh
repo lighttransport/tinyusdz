@@ -83,6 +83,11 @@ struct CompositionInfo {
   bool composed{false};
   std::shared_ptr<const tinyusdz::Layer> rootLayer;
   std::vector<std::string> searchPaths;
+  // Mirror of SceneLoaderOptions::allowParentRelativePaths, retained so the
+  // RenderScene conversion applies the same '..' policy to texture/light asset
+  // resolution that composition used (the tydra asset resolver defaults to
+  // rejecting parent-relative paths).
+  bool allowParentRelativePaths{false};
   std::vector<DeferredArc> deferred;         // still-unloaded payload/reference arcs
   std::set<std::string> loadedPayloads;      // whitelist accumulated so far
 };

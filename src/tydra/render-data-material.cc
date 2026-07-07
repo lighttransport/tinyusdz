@@ -294,8 +294,8 @@ bool RawAssetRead(
   (void)userdata;
   (void)warn;
 
-  std::string sanitized_path =
-      utils::SanitizeAssetPath(assetPath.GetAssetPath());
+  std::string sanitized_path = utils::SanitizeAssetPath(
+      assetPath.GetAssetPath(), assetResolver.get_allow_parent_relative_paths());
   if (sanitized_path.empty()) {
     if (err) {
       (*err) += fmt::format("Unsafe asset path: {}\n", assetPath.GetAssetPath());
