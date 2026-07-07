@@ -222,8 +222,13 @@ if(TUSDVIEW_ENABLE_MCP)
     target_link_libraries(${EXAMPLE_TARGET} PRIVATE Threads::Threads)
   elseif(WIN32)
     # civetweb's HTTP transport uses Winsock (socket/bind/listen/WSAStartup),
-    # and its clock_gettime() comes from winpthread under mingw.
-    target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32 winpthread)
+    # and its clock_gettime() comes from winpthread under mingw. winpthread is
+    # a MinGW-only import lib; MSVC has neither the library nor the need for
+    # it (no clock_gettime() call in this build).
+    target_link_libraries(${EXAMPLE_TARGET} PRIVATE ws2_32)
+    if(MINGW)
+      target_link_libraries(${EXAMPLE_TARGET} PRIVATE winpthread)
+    endif()
   endif()
   message(STATUS "tusdview: embedded MCP server ENABLED (stdio + HTTP)")
 else()
