@@ -22,6 +22,7 @@
 
 // `next` + tydra-next (built on demand; see CMakeLists.txt).
 #include "next/tinyusdz-next.hh"
+#include "next/reader/usdz-reader.hh"  // USDZReader (embedded --next textures)
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/scene-access.hh"  // ComputeWorldTransform
@@ -924,26 +925,225 @@ bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
   return false;
 }
 
+// --- Phase 2 --next texture loading -----------------------------------------
+// The tydra-next converter records texture *metadata* (RenderTexture: asset
+// path, wrap, value scale/bias, channel) into a scratch RenderScene even with
+// load_textures=false, but never decodes pixels. We decode them ourselves here,
+// mirroring tusdrender's next texture path (tusdr_next.cc): resolve the asset
+// against the source dir / .usdz archive, load via tinyusdz::image, and store a
+// deduped RGBA8 DrawTextureCPU. Returns the DrawScene texture index or -1.
+
+struct NextTexCache {
+  std::unordered_map<std::string, int> byKey;  // key -> draw->textures index (-1 miss)
+  std::string baseDir;
+  const tinyusdz::next::USDZReader* usdz = nullptr;
+};
+
+// tinyusdz::Image (8-bit RGB/RGBA) -> RGBA8 light3d::Image.
+bool NextImageToRGBA8(const tinyusdz::Image& src, light3d::Image* out) {
+  if (src.width <= 0 || src.height <= 0 || src.bpp != 8 ||
+      (src.channels != 3 && src.channels != 4)) {
+    return false;
+  }
+  const size_t npix = static_cast<size_t>(src.width) * static_cast<size_t>(src.height);
+  const size_t ch = static_cast<size_t>(src.channels);
+  if (src.data.size() < npix * ch) return false;
+  out->width = src.width;
+  out->height = src.height;
+  out->channels = 4;
+  out->data.assign(npix * 4, 255);
+  for (size_t i = 0; i < npix; ++i) {
+    out->data[i * 4 + 0] = src.data[i * ch + 0];
+    out->data[i * 4 + 1] = src.data[i * ch + 1];
+    out->data[i * 4 + 2] = src.data[i * ch + 2];
+    out->data[i * 4 + 3] = (ch == 4) ? src.data[i * ch + 3] : 255;
+  }
+  return true;
+}
+
+// Match a USD asset path against a .usdz entry name (mirrors tusdrender).
+bool NextUsdzEntryMatches(const std::string& entry, const std::string& asset) {
+  std::string a = asset;
+  if (a.rfind("./", 0) == 0) a = a.substr(2);
+  if (entry == a) return true;
+  if (entry.size() > a.size() &&
+      entry.compare(entry.size() - a.size(), a.size(), a) == 0 &&
+      entry[entry.size() - a.size() - 1] == '/') {
+    return true;
+  }
+  auto base = [](const std::string& s) {
+    size_t p = s.find_last_of('/');
+    return p == std::string::npos ? s : s.substr(p + 1);
+  };
+  return base(entry) == base(a);
+}
+
+bool DecodeNextImage(const NextTexCache& tc, const std::string& asset,
+                     light3d::Image* out) {
+  if (asset.empty()) return false;
+  if (tc.usdz) {
+    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
+      if (!NextUsdzEntryMatches(tc.usdz->EntryName(i), asset)) continue;
+      auto res = tinyusdz::image::LoadImageFromMemory(
+          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
+      if (res) return NextImageToRGBA8(res.value().image, out);
+      return false;
+    }
+  }
+  std::string path = asset;
+  if (path[0] != '/' && !tc.baseDir.empty()) path = tc.baseDir + "/" + path;
+  auto res = tinyusdz::image::LoadImageFromFile(path);
+  if (!res) return false;
+  return NextImageToRGBA8(res.value().image, out);
+}
+
+int NextWrapToDraw(tydn::WrapMode w) {
+  switch (w) {
+    case tydn::WrapMode::Clamp: return static_cast<int>(WrapMode::ClampToEdge);
+    case tydn::WrapMode::Mirror: return static_cast<int>(WrapMode::Mirror);
+    case tydn::WrapMode::Black: return static_cast<int>(WrapMode::ClampToBorder);
+    case tydn::WrapMode::Repeat:
+    default: return static_cast<int>(WrapMode::Repeat);
+  }
+}
+
+int NextScalarChannel(tydn::RenderTexture::Channel c) {
+  switch (c) {
+    case tydn::RenderTexture::Channel::G: return 1;
+    case tydn::RenderTexture::Channel::B: return 2;
+    case tydn::RenderTexture::Channel::A: return 3;
+    default: return 0;  // R / RGB / RGBA
+  }
+}
+
+// Decode + register the texture referenced by scratch.textures[texId]. Deduped
+// by (asset, srgb, wrap). Returns the DrawScene texture index or -1.
+int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
+                    const tydn::RenderScene& scratch, int32_t texId, bool srgb) {
+  if (texId < 0 || static_cast<size_t>(texId) >= scratch.textures.size()) return -1;
+  const tydn::RenderTexture& rt = scratch.textures[static_cast<size_t>(texId)];
+  std::string asset = rt.asset_path;
+  if (asset.empty() && rt.image_id >= 0 &&
+      static_cast<size_t>(rt.image_id) < scratch.images.size()) {
+    asset = scratch.images[static_cast<size_t>(rt.image_id)].resolved_path;
+  }
+  if (asset.empty()) return -1;
+
+  const std::string key = asset + (srgb ? "|s" : "|l") + "|" +
+      std::to_string(static_cast<int>(rt.wrap_s)) + "," +
+      std::to_string(static_cast<int>(rt.wrap_t));
+  auto it = tc.byKey.find(key);
+  if (it != tc.byKey.end()) return it->second;
+
+  DrawTextureCPU dt;
+  if (!DecodeNextImage(tc, asset, &dt.image)) {
+    tc.byKey[key] = -1;  // negative-cache the miss
+    return -1;
+  }
+  dt.assetIdentifier = asset;
+  dt.srgb = srgb;
+  dt.wrapS = NextWrapToDraw(rt.wrap_s);
+  dt.wrapT = NextWrapToDraw(rt.wrap_t);
+  const int idx = static_cast<int>(draw->textures.size());
+  draw->textures.push_back(std::move(dt));
+  tc.byKey[key] = idx;
+  return idx;
+}
+
+// Fill a DrawTexSampleCPU's UV affine + value scale/bias from a RenderTexture.
+void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp) {
+  const float c = std::cos(rt.rotation), s = std::sin(rt.rotation);
+  smp->uv.m00 = c * rt.scale.x; smp->uv.m01 = -s * rt.scale.y;
+  smp->uv.m10 = s * rt.scale.x; smp->uv.m11 =  c * rt.scale.y;
+  smp->uv.tx = rt.offset.x; smp->uv.ty = rt.offset.y;
+  smp->scale[0] = rt.scale_value.x; smp->scale[1] = rt.scale_value.y;
+  smp->scale[2] = rt.scale_value.z; smp->scale[3] = rt.scale_value.w;
+  smp->bias[0] = rt.bias.x; smp->bias[1] = rt.bias.y;
+  smp->bias[2] = rt.bias.z; smp->bias[3] = rt.bias.w;
+}
+
 // Convert a bound material prim into a DrawMaterialCPU appended to `draw`, and
-// return its index (>=1). Phase 1: baked PBR CONSTANTS only (base color,
-// metallic, roughness, emissive, alpha) -- textures/GeomSubset are follow-ups.
-// We reuse tusdview's own BakeLightRtOpenPBR so the --next path shades materials
+// return its index (>=1). Phase 1 baked PBR constants (base color, metallic,
+// roughness, emissive, alpha) + Phase 2 textures (base color, emissive, normal,
+// metal/rough). GeomSubset per-face materials and skinning remain follow-ups.
+// Reuses tusdview's own BakeLightRtOpenPBR so the --next path shades materials
 // through the same path the legacy loader uses. Returns -1 if the prim has no
 // usable surface shader (caller then keeps the default gray material, index 0).
 int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
-                      const tnext::UsdPrim& matPrim, DrawScene* draw) {
-  tydn::RenderScene scratch;  // holds any texture metadata we don't consume yet
+                      const tnext::UsdPrim& matPrim, DrawScene* draw,
+                      NextTexCache& texCache) {
+  tydn::RenderScene scratch;  // texture/image metadata (pixels decoded by us)
   tydn::RenderMaterial rm;
   if (!conv.ConvertMaterial(stage, matPrim, &rm, &scratch)) return -1;
 
   auto setRGB = [](float* dst, const tydn::Float4& v, float w) {
     dst[0] = v.x * w; dst[1] = v.y * w; dst[2] = v.z * w;
   };
+  // Load a color texture into a slot; on success neutralise the baked constant
+  // (so the texture isn't double-tinted) and fill the UV/scale sample.
+  auto colorSlot = [&](const tydn::ShaderParam& sp, bool srgb, int* texField,
+                       DrawTexSampleCPU* smp, float* neutralize3) {
+    if (sp.texture_id < 0) return;
+    int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, srgb);
+    if (t < 0) return;
+    *texField = t;
+    FillNextSample(scratch.textures[static_cast<size_t>(sp.texture_id)], smp);
+    if (neutralize3) { neutralize3[0] = neutralize3[1] = neutralize3[2] = 1.0f; }
+  };
 
   DrawMaterialCPU dm;
   dm.name = rm.name;
   dm.absPath = rm.prim_path;
   dm.displayName = rm.name;
+
+  // Load a normal-map slot (linear; default [0,1]->[-1,1] remap if unauthored).
+  auto loadNormal = [&](const tydn::ShaderParam& sp) {
+    if (sp.texture_id < 0) return;
+    int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, false);
+    if (t < 0) return;
+    dm.normalTex = t;
+    const tydn::RenderTexture& rt = scratch.textures[static_cast<size_t>(sp.texture_id)];
+    FillNextSample(rt, &dm.normalSample);
+    const bool defScale = rt.scale_value.x == 1.0f && rt.scale_value.y == 1.0f &&
+                          rt.scale_value.z == 1.0f;
+    const bool defBias = rt.bias.x == 0.0f && rt.bias.y == 0.0f && rt.bias.z == 0.0f;
+    if (defScale && defBias) {
+      dm.normalSample.scale[0] = dm.normalSample.scale[1] =
+          dm.normalSample.scale[2] = 2.0f;
+      dm.normalSample.bias[0] = dm.normalSample.bias[1] =
+          dm.normalSample.bias[2] = -1.0f;
+    }
+  };
+  // Pack metallic/roughness into the single metalRough slot. Roughness wins the
+  // slot; a separate metallic texture is approximated onto the same slot (a
+  // known Phase-2 limitation for non-packed ORM inputs).
+  auto loadMetalRough = [&](const tydn::ShaderParam& metallic,
+                            const tydn::ShaderParam& roughness) {
+    if (roughness.texture_id >= 0) {
+      int t = LoadNextTexture(texCache, draw, scratch, roughness.texture_id, false);
+      if (t >= 0) {
+        dm.metalRoughTex = t;
+        dm.roughness = 1.0f;
+        const tydn::RenderTexture& rt =
+            scratch.textures[static_cast<size_t>(roughness.texture_id)];
+        dm.roughnessChannel = NextScalarChannel(rt.output_channel);
+        FillNextSample(rt, &dm.metalRoughSample);
+      }
+    }
+    if (metallic.texture_id >= 0) {
+      int t = LoadNextTexture(texCache, draw, scratch, metallic.texture_id, false);
+      if (t >= 0) {
+        const tydn::RenderTexture& rt =
+            scratch.textures[static_cast<size_t>(metallic.texture_id)];
+        if (dm.metalRoughTex < 0) {
+          dm.metalRoughTex = t;
+          FillNextSample(rt, &dm.metalRoughSample);
+        }
+        dm.metallic = 1.0f;
+        dm.metallicChannel = NextScalarChannel(rt.output_channel);
+      }
+    }
+  };
 
   if (rm.shader_type == tydn::RenderMaterial::ShaderType::PreviewSurface &&
       rm.preview_surface) {
@@ -954,6 +1154,10 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.roughness = s.roughness.value.x;
     setRGB(dm.emissive, s.emissive_color.value, 1.0f);
     dm.alpha = s.opacity.value.x;
+    colorSlot(s.diffuse_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
+    colorSlot(s.emissive_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
+    loadNormal(s.normal);
+    loadMetalRough(s.metallic, s.roughness);
   } else if (rm.shader_type == tydn::RenderMaterial::ShaderType::OpenPBR &&
              rm.openpbr) {
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
@@ -964,6 +1168,10 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.roughness = s.specular_roughness.value.x;
     setRGB(dm.emissive, s.emission_color.value, s.emission_luminance.value.x);
     dm.alpha = s.opacity.value.x;
+    colorSlot(s.base_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
+    colorSlot(s.emission_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
+    loadNormal(s.normal);
+    loadMetalRough(s.base_metalness, s.base_roughness);
   } else {
     return -1;  // no PreviewSurface/OpenPBR -- fall back to default material
   }
@@ -1380,8 +1588,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   cfg.mesh.triangulation_method = tydn::MeshConfig::TriangulationMethod::Fan;
   cfg.mesh.compute_normals = true;
   cfg.mesh.build_vertex_indices = true;
-  // Phase 1 --next materials are constants-only: don't let the converter try to
-  // load texture pixels (it has no custom loader here anyway).
+  // Keep the converter from decoding texture pixels: it records RenderTexture
+  // metadata (asset path, wrap, scale/bias, channel) regardless, and we decode
+  // the pixels ourselves in LoadNextTexture (base dir / .usdz aware).
   cfg.material.load_textures = false;
   cfg.material.allow_missing_textures = true;
   cfg.time_code = time;
@@ -1546,6 +1755,16 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // own DrawMaterialCPU instead of the single default gray material.
   std::map<std::tuple<std::string, bool, int>, Batch> open;
 
+  // Texture cache for material building: resolve texture assets against the
+  // source directory and, for a .usdz package, its embedded entries.
+  NextTexCache texCache;
+  texCache.baseDir = tinyusdz::io::GetBaseDir(path);
+  tinyusdz::next::USDZReader usdzArchive;
+  if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".usdz") == 0 &&
+      usdzArchive.OpenFile(path)) {
+    texCache.usdz = &usdzArchive;
+  }
+
   // Resolve a mesh's bound material to a DrawScene material index (cached by
   // material prim path). Unbound / unconvertible -> 0 (default gray material).
   std::unordered_map<std::string, int> matIndexByPath;
@@ -1556,7 +1775,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     auto it = matIndexByPath.find(mpath);
     if (it != matIndexByPath.end()) return it->second;
     tnext::UsdPrim matPrim = stage.GetPrimAtPath((*bind)[0]);
-    int idx = matPrim.IsValid() ? BuildNextMaterial(stage, conv, matPrim, draw) : -1;
+    int idx = matPrim.IsValid()
+                  ? BuildNextMaterial(stage, conv, matPrim, draw, texCache)
+                  : -1;
     if (idx < 0) idx = 0;
     matIndexByPath[mpath] = idx;
     return idx;
@@ -1707,10 +1928,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     else if (dm.purpose == "render") ++nRender;
   }
   LOGI("next: '%s' -> %zu draws (%zu guide, %zu proxy, %zu render), %lld instances, "
-       "%zu unique tris (%lld effective), %zu materials, instXform VRAM ~%.2f GB, up=%s%s",
+       "%zu unique tris (%lld effective), %zu materials, %zu textures, "
+       "instXform VRAM ~%.2f GB, up=%s%s",
        path.c_str(), draw->meshes.size(), nGuide, nProxy, nRender, instTotal,
        draw->triangleCount, effectiveTris, draw->materials.size(),
-       double(instTotal) * 48.0 / 1e9,
+       draw->textures.size(), double(instTotal) * 48.0 / 1e9,
        draw->upAxis.c_str(), draw->truncated ? " (truncated)" : "");
 
   if (draw->meshes.empty() && draw->volumes.empty()) {
