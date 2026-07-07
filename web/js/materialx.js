@@ -529,14 +529,16 @@ function createTimer() {
     if (typeof THREE.Timer === 'function') {
         return new THREE.Timer();
     }
-    const clock = new THREE.Clock();
+    let lastTime = performance.now();
     return {
         reset() {
-            clock.stop();
-            clock.start();
+            lastTime = performance.now();
         },
         getDelta() {
-            return clock.getDelta();
+            const now = performance.now();
+            const delta = (now - lastTime) / 1000;
+            lastTime = now;
+            return delta;
         }
     };
 }
