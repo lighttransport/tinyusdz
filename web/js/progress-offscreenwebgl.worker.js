@@ -27,6 +27,11 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from './src/tinyusdz/TinyUSDZLoaderUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from './src/tinyusdz/TinyUSDZMaterialX.js';
+import {
+    buildNextThreeNode,
+    isNextScene,
+    readNextSceneMeta
+} from './src/tinyusdz/NextRenderSceneUtils.js';
 
 // ---- Worker-compatible image loading patch ----
 THREE.ImageLoader.prototype.load = function (url, onLoad, _onProgress, onError) {
@@ -365,11 +370,11 @@ function applyEnv() {
 // USD Loading with progress
 // ============================================================================
 
-async function handleLoadFile({ data, filename }) {
+async function handleLoadFile({ data, filename, backend = 'legacy' }) {
     sendStatus(`Loading: ${filename}...`);
 
     try {
-        await loadUSDFromData(new Uint8Array(data), filename);
+        await loadUSDFromData(new Uint8Array(data), filename, backend);
     } catch (err) {
         sendError(`Failed to load ${filename}: ${err.message}`);
         console.error('[Worker] loadFile error:', err);
@@ -388,12 +393,13 @@ const COROUTINE_PHASE_MAP = {
     complete:  { stage: 'building', pct: 80, label: 'Parse complete' },
 };
 
-async function loadUSDFromData(data, filename) {
+async function loadUSDFromData(data, filename, backend = 'legacy') {
     clearScene();
 
     sendProgress('parsing', 30, `Parsing: ${filename}...`);
 
-    const useAsync = loaderState.loader.hasAsyncSupport();
+    const useNext = backend === 'next' || backend === 'auto';
+    const useAsync = !useNext && loaderState.loader.hasAsyncSupport();
     console.log(`[Worker] Coroutine async: ${useAsync ? 'ON' : 'OFF'}` +
         (useAsync && DEBUG_PARSE_DELAY_MS > 0 ? `, debug delay: ${DEBUG_PARSE_DELAY_MS}ms/phase` : ''));
 
@@ -420,7 +426,13 @@ async function loadUSDFromData(data, filename) {
             });
         } else {
             usd = await new Promise((resolve, reject) => {
-                loaderState.loader.parse(data, filename, resolve, reject);
+                loaderState.loader.parse(data, filename, resolve, reject, {
+                    backend,
+                    materialDedup: false,
+                    mergeMeshes: false,
+                    mergeMeshesBakeTransform: false,
+                    flattenRenderTree: false
+                });
             });
         }
     } catch (err) {
@@ -441,6 +453,60 @@ async function loadUSDFromData(data, filename) {
     }
 
     loaderState.nativeLoader = usd;
+
+    if (isNextScene(usd)) {
+        const metadata = readNextSceneMeta(usd);
+        sceneState.upAxis = metadata.upAxis || 'Y';
+        sendProgress('building', 80, 'Building next static scene...');
+        const built = buildNextThreeNode(usd, {
+            skipTextures: false,
+            lazyTextures: true
+        });
+        sceneState.root = built.node;
+        sceneState.textureLoadingManager = built.textureManager;
+        sceneState.meshCount = usd.numMeshes ? usd.numMeshes() : 0;
+        sceneState.materials = [];
+        built.node.traverse((obj) => {
+            if (obj.isMesh) {
+                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                for (const mat of mats) {
+                    if (mat && !sceneState.materials.includes(mat)) {
+                        sceneState.materials.push(mat);
+                    }
+                }
+            }
+        });
+        three.scene.add(sceneState.root);
+        if (sceneState.root && sceneState.upAxis === 'Z') {
+            sceneState.root.rotation.x = -Math.PI / 2;
+        }
+        fitCameraToScene();
+        if (sceneState.textureLoadingManager && sceneState.textureLoadingManager.total > 0) {
+            const texManager = sceneState.textureLoadingManager;
+            sendTextureProgress({ loaded: 0, total: texManager.total, percentage: 0, isStart: true });
+            texManager.startLoading({
+                onProgress: (info) => sendTextureProgress(info),
+                onTextureLoaded: (material) => { material.needsUpdate = true; },
+                concurrency: 2,
+                yieldInterval: 16
+            }).then(status => {
+                sceneState.textureCount = status.loaded;
+                sendTextureProgress({
+                    loaded: status.loaded,
+                    total: status.total,
+                    failed: status.failed,
+                    percentage: 100,
+                    isComplete: true
+                });
+            }).catch(err => {
+                console.warn('[Worker] Next texture loading failed:', err);
+            });
+        }
+        console.log('[Worker] next backend renders static geometry/materials only; legacy scene APIs are skipped.');
+        sendLoaded(sceneState.meshCount, sceneState.materials.length, sceneState.textureCount, sceneState.upAxis);
+        clearPauseState();
+        return;
+    }
 
     // Read metadata
     const metadata = usd.getSceneMetadata ? usd.getSceneMetadata() : {};

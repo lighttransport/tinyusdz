@@ -5,8 +5,15 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
 	createConfiguredTinyUSDZLoader,
+	getBackendFromURL,
+	makeStaticNextParseOptions,
 	parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+	buildNextThreeNode,
+	isNextScene,
+	readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
 import { buildJointHierarchyHTML } from 'tinyusdz/JointHierarchyUtils.js';
 import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
 import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
@@ -41,6 +48,7 @@ import {
 // ===========================================
 
 const DEFAULT_USD_MODEL_URI = './assets/skintest-animated.usda';
+const LOADER_BACKEND = getBackendFromURL();
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -1010,6 +1018,7 @@ function updateVariantControls(variantInfos, activeSelection = null) {
 async function parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, variantSelection = null) {
 	let variantInfos = [];
 	const usdScene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, {
+		...makeStaticNextParseOptions({ backend: LOADER_BACKEND }),
 		variantSelection,
 		onVariants: (infos) => {
 			variantInfos = infos;
@@ -1380,6 +1389,46 @@ async function processUSDScene(usd_scene, filename) {
 	while (characterGroup.children.length > 0) {
 		characterGroup.remove(characterGroup.children[0]);
 	}
+
+	if (isNextScene(usd_scene)) {
+		const sceneMetadata = readNextSceneMeta(usd_scene);
+		const fileUpAxis = String(sceneMetadata.upAxis || 'Y');
+		currentMetersPerUnit = Number.isFinite(Number(sceneMetadata.metersPerUnit))
+			? Number(sceneMetadata.metersPerUnit)
+			: 1.0;
+		applyMetersPerUnitScale();
+
+		const built = buildNextThreeNode(usd_scene, {
+			skipTextures: false,
+			lazyTextures: true
+		});
+		characterGroup.add(built.node);
+		if (built.textureManager) {
+			built.textureManager.startLoading({
+				concurrency: 4,
+				yieldInterval: 16,
+				onTextureLoaded: (material) => { material.needsUpdate = true; }
+			}).catch((err) => {
+				console.warn('[skin-anim] Next texture loading failed:', err);
+			});
+		}
+		animationParams.convertZUp = (fileUpAxis.toUpperCase() === 'Z');
+		animationParams.toggleZUp();
+		allSceneMeshes = [];
+		built.node.traverse((obj) => {
+			if (obj.isMesh) {
+				obj.castShadow = true;
+				obj.receiveShadow = true;
+				allSceneMeshes.push(obj);
+			}
+		});
+		console.log('[skin-anim] next backend renders static geometry/materials only; skinning and animation controls are legacy-only.');
+			if (window.updateSkeletonInfo) window.updateSkeletonInfo(null);
+			if (window.updateAnimationList) window.updateAnimationList([], []);
+			fitCameraToScene();
+			window.renderComplete = true;
+			return;
+		}
 
 	// Get normalized scene metadata from library helper.
 	const {

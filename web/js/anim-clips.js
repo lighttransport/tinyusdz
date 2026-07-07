@@ -11,9 +11,16 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
 	createConfiguredTinyUSDZLoader,
+	getBackendFromURL,
 	loadUSDSceneFromURL,
+	makeStaticNextParseOptions,
 	parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+	buildNextThreeNode,
+	isNextScene,
+	readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
 import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
 import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
 import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
@@ -30,6 +37,7 @@ import { raycastSkinnedMeshes, expandBoxByMeshBones } from 'tinyusdz/SkinnedMesh
 import { attachSceneHelpers } from 'tinyusdz/SceneHelpers.js';
 
 const MAX_RENDER_PIXEL_RATIO = 2.0;
+const LOADER_BACKEND = getBackendFromURL();
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
 	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
@@ -283,6 +291,40 @@ async function processUSDScene(usdScene, filename, stats = null) {
 	characterGroup.scale.set(1, 1, 1);
 	while (characterGroup.children.length > 0) {
 		characterGroup.remove(characterGroup.children[0]);
+	}
+
+	if (isNextScene(usdScene)) {
+		const meta = readNextSceneMeta(usdScene);
+		const built = buildNextThreeNode(usdScene, {
+			skipTextures: false,
+			lazyTextures: true
+		});
+		characterGroup.add(built.node);
+		if (built.textureManager) {
+			built.textureManager.startLoading({
+				concurrency: 4,
+				yieldInterval: 16,
+				onTextureLoaded: (material) => { material.needsUpdate = true; }
+			}).catch((err) => {
+				console.warn('[anim-clips] Next texture loading failed:', err);
+			});
+		}
+		if (String(meta.upAxis || 'Y').toUpperCase() === 'Z') {
+			characterGroup.rotation.x = -Math.PI / 2;
+		}
+		allSceneMeshes = [];
+		built.node.traverse((obj) => {
+			if (obj.isMesh) allSceneMeshes.push(obj);
+		});
+		console.log('[anim-clips] next backend renders static geometry/materials only; clip extraction is legacy-only.');
+		renderClipPanel();
+		fitCamera();
+		if (stats) {
+			stats.processMs = performance.now() - processStart;
+			finishLoadStats(stats);
+		}
+		window.renderComplete = true;
+		return;
 	}
 
 	// Get metadata
@@ -991,7 +1033,11 @@ async function loadFromURL(url) {
 		stats.fetchMs = performance.now() - fetchStart;
 		stats.fileSize = arrayBuffer.byteLength;
 		const parseStart = performance.now();
-		const usdScene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, getDisplayNameFromURI(url));
+		const usdScene = await parseUSDSceneFromArrayBuffer(
+			loader,
+			arrayBuffer,
+			getDisplayNameFromURI(url),
+			makeStaticNextParseOptions({ backend: LOADER_BACKEND }));
 		stats.parseMs = performance.now() - parseStart;
 		await processUSDScene(usdScene, url, stats);
 	} catch (err) {
@@ -1007,7 +1053,8 @@ async function loadFromURLViaLoader(url) {
 	const stats = beginLoadStats();
 	try {
 		const parseStart = performance.now();
-		const usdScene = await loadUSDSceneFromURL(loader, url);
+		const usdScene = await loadUSDSceneFromURL(
+			loader, url, makeStaticNextParseOptions({ backend: LOADER_BACKEND }));
 		stats.parseMs = performance.now() - parseStart;
 		await processUSDScene(usdScene, url, stats);
 	} catch (err) {
@@ -1023,7 +1070,8 @@ async function loadFromArrayBuffer(buffer, filename) {
 	const stats = beginLoadStats(buffer.byteLength);
 	try {
 		const parseStart = performance.now();
-		const usdScene = await parseUSDSceneFromArrayBuffer(loader, buffer, filename);
+		const usdScene = await parseUSDSceneFromArrayBuffer(
+			loader, buffer, filename, makeStaticNextParseOptions({ backend: LOADER_BACKEND }));
 		stats.parseMs = performance.now() - parseStart;
 		await processUSDScene(usdScene, filename, stats);
 	} catch (err) {
@@ -1047,7 +1095,8 @@ window.addEventListener('loadUSDFile', async (event) => {
 	if (!loader) await initLoader();
 	try {
 		const parseStart = performance.now();
-		const usdScene = await parseUSDSceneFromArrayBuffer(loader, buffer, file.name);
+		const usdScene = await parseUSDSceneFromArrayBuffer(
+			loader, buffer, file.name, makeStaticNextParseOptions({ backend: LOADER_BACKEND }));
 		stats.parseMs = performance.now() - parseStart;
 		await processUSDScene(usdScene, file.name, stats);
 	} catch (err) {

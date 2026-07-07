@@ -12,6 +12,11 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
+    buildNextThreeNode,
+    isNextScene,
+    readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
+import {
     MtlxNodeGraphProcessor,
     createOpenPBRMaterial,
     DEFAULT_OPENPBR_PARAMS
@@ -38,6 +43,23 @@ function getStartupUSDModelURI(params = new URLSearchParams(window.location.sear
         if (value) return value;
     }
     return null;
+}
+
+function getBackendFromURL(params = new URLSearchParams(window.location.search)) {
+    const backend = params.get('backend');
+    return (backend === 'next' || backend === 'auto' || backend === 'legacy')
+        ? backend
+        : 'legacy';
+}
+
+function staticNextParseOptions() {
+    return {
+        backend: getBackendFromURL(),
+        materialDedup: false,
+        mergeMeshes: false,
+        mergeMeshesBakeTransform: false,
+        flattenRenderTree: false
+    };
 }
 
 function getDisplayNameFromURI(uri) {
@@ -2493,7 +2515,7 @@ async function loadUSDFile(file) {
 
         const parseStart = performance.now();
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(arrayBuffer, file.name, resolve, reject);
+            state.loader.parse(arrayBuffer, file.name, resolve, reject, staticNextParseOptions());
         });
         stats.parseMs = performance.now() - parseStart;
 
@@ -2556,7 +2578,7 @@ async function loadUSDFromURI(uri) {
 
         const parseStart = performance.now();
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(arrayBuffer, displayName, resolve, reject);
+            state.loader.parse(arrayBuffer, displayName, resolve, reject, staticNextParseOptions());
         });
         stats.parseMs = performance.now() - parseStart;
 
@@ -3075,6 +3097,42 @@ async function buildScene() {
     // Clear and load material data (consolidated from callers)
     state.materials = [];
     state.materialData = [];
+
+    if (isNextScene(usd)) {
+        const built = buildNextThreeNode(usd, {
+            skipTextures: false,
+            lazyTextures: true
+        });
+        const root = built.node;
+        const metadata = readNextSceneMeta(usd);
+        if ((metadata.upAxis || 'Y') === 'Z') {
+            root.rotation.x = -Math.PI / 2;
+        }
+        state.currentModel = root;
+        state.scene.add(root);
+        if (built.textureManager) {
+            built.textureManager.startLoading({
+                concurrency: 4,
+                yieldInterval: 16,
+                onTextureLoaded: (material) => { material.needsUpdate = true; }
+            }).catch((err) => {
+                console.warn('[openpbr] Next texture loading failed:', err);
+            });
+        }
+        fitCameraToObject(root);
+        state.envPreset = 'studio';
+        setEnvFromResult(createStudioEnvironment());
+        applyEnvironment();
+        updateEnvUI();
+        const meshCount = usd.numMeshes ? usd.numMeshes() : 0;
+        const materialCount = usd.numMaterials ? usd.numMaterials() : 0;
+        document.getElementById('mesh-count').textContent = meshCount;
+        document.getElementById('material-count').textContent = materialCount;
+        updateStatus(`Loaded: ${meshCount} meshes (backend: next static)`);
+        console.log('[openpbr] next backend renders static geometry/materials only; OpenPBR node graph editing is legacy-only.');
+        window.renderComplete = true;
+        return;
+    }
 
     const numMaterials = usd.numMaterials();
     for (let i = 0; i < numMaterials; i++) {
@@ -3642,7 +3700,7 @@ window.loadBlenderSample = async function() {
 
         const parseStart = performance.now();
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(arrayBuffer, filename, resolve, reject);
+            state.loader.parse(arrayBuffer, filename, resolve, reject, staticNextParseOptions());
         });
         stats.parseMs = performance.now() - parseStart;
 
@@ -4429,7 +4487,7 @@ async function handleBridgeScene(sceneData) {
 
         // Parse with TinyUSDZ
         state.usdData = await new Promise((resolve, reject) => {
-            state.loader.parse(binaryData.buffer, scene?.name || 'BlenderScene.usdz', resolve, reject);
+            state.loader.parse(binaryData.buffer, scene?.name || 'BlenderScene.usdz', resolve, reject, staticNextParseOptions());
         });
 
         if (!state.usdData) {

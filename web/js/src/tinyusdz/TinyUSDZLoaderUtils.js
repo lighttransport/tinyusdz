@@ -1103,12 +1103,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         try {
             // Use the TinyUSDZMaterialX converter (Loaded version waits for textures(if textureLoadingManager is null))
-            const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(parsedMaterial, usdScene, {
-                envMap: options.envMap || null,
-                envMapIntensity: options.envMapIntensity || 1.0,
-                textureCache: options.textureCache || new Map(),
-                textureLoadingManager: options.textureLoadingManager || null
-            });
+	            const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(parsedMaterial, usdScene, {
+	                envMap: options.envMap || null,
+	                envMapIntensity: options.envMapIntensity || 1.0,
+	                textureCache: options.textureCache || new Map(),
+	                textureLoadingManager: options.textureLoadingManager || null,
+	                skipTextures: options.skipTextures || false
+	            });
 
             // Apply sideness based on USD doubleSided attribute
             if (options.doubleSided !== undefined) {

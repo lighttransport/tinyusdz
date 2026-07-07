@@ -5,6 +5,17 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import {
+	buildNextThreeNode,
+	isNextScene,
+	readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
+import {
+	getBackendFromURL,
+	makeStaticNextParseOptions
+} from 'tinyusdz/LoaderConfigUtils.js';
+
+const LOADER_BACKEND = getBackendFromURL();
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
 	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
@@ -2936,22 +2947,85 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 	currentLoader = loader; // Store reference for cleanup
 
-	// Create a Blob URL from the ArrayBuffer
-	// This allows the loader to load the file as if it were a normal URL
-	const blob = new Blob([arrayBuffer]);
-	const blobUrl = URL.createObjectURL(blob);
-
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
-	// Load USD scene from Blob URL
 	const parseStart = performance.now();
-	const usd_scene = await loader.loadAsync(blobUrl);
+	let usd_scene;
+	if (LOADER_BACKEND === 'next' || LOADER_BACKEND === 'auto') {
+		usd_scene = await new Promise((resolve, reject) => {
+			loader.parse(
+				new Uint8Array(arrayBuffer),
+				filename,
+				resolve,
+				reject,
+				makeStaticNextParseOptions({ backend: LOADER_BACKEND })
+			);
+		});
+	} else {
+		const blob = new Blob([arrayBuffer]);
+		const blobUrl = URL.createObjectURL(blob);
+		try {
+			usd_scene = await loader.loadAsync(blobUrl);
+		} finally {
+			URL.revokeObjectURL(blobUrl);
+		}
+	}
 	stats.parseMs = performance.now() - parseStart;
 	currentUSDScene = usd_scene; // Store reference for cleanup
-
-	// Clean up the Blob URL after loading
-	URL.revokeObjectURL(blobUrl);
 	const processStart = performance.now();
+
+	if (isNextScene(usd_scene)) {
+		const sceneMetadata = readNextSceneMeta(usd_scene);
+		const fileUpAxis = sceneMetadata.upAxis || "Y";
+		currentFileUpAxis = fileUpAxis;
+		currentSceneMetadata = {
+			upAxis: fileUpAxis,
+			metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+			framesPerSecond: 24.0,
+			timeCodesPerSecond: 24.0,
+			startTimeCode: null,
+			endTimeCode: null,
+			autoPlay: false,
+			comment: "next backend static render",
+			copyright: ""
+		};
+		updateMetadataUI();
+
+		const built = buildNextThreeNode(usd_scene, {
+			skipTextures: false,
+			lazyTextures: true
+		});
+		usdContentNode = built.node;
+		usdSceneRoot.add(built.node);
+		if (built.textureManager) {
+			built.textureManager.startLoading({
+				concurrency: 4,
+				yieldInterval: 16,
+				onTextureLoaded: (material) => { material.needsUpdate = true; }
+			}).catch((err) => {
+				console.warn('[animation] Next texture loading failed:', err);
+			});
+		}
+
+		if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+			usdSceneRoot.rotation.x = -Math.PI / 2;
+		}
+		animationParams.applySceneScale();
+		usdSceneRoot.traverse((child) => {
+			if (child.isMesh) {
+				child.castShadow = true;
+				child.receiveShadow = true;
+			}
+		});
+		console.log('[animation] next backend renders static geometry/materials only; animation extraction is legacy-only.');
+		buildSceneGraphUI();
+		stats.processMs = performance.now() - processStart;
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		window.renderComplete = true;
+		return;
+	}
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();

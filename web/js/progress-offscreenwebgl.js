@@ -36,6 +36,13 @@ function getStartupUSDModelURI(params = new URLSearchParams(window.location.sear
     return null;
 }
 
+function getBackendFromURL(params = new URLSearchParams(window.location.search)) {
+    const backend = params.get('backend');
+    return (backend === 'next' || backend === 'auto' || backend === 'legacy')
+        ? backend
+        : 'legacy';
+}
+
 function getDisplayNameFromURI(uri) {
     try {
         const parsed = new URL(uri, window.location.href);
@@ -701,9 +708,10 @@ function onWorkerMessage(e) {
             updateUpAxisButton();
             updateFitButton();
 
-            finishLoadStats();
-            hideProgress();
-            break;
+			finishLoadStats();
+			hideProgress();
+			window.renderComplete = true;
+			break;
 
         case 'fps':
             if (fpsValueEl) fpsValueEl.textContent = msg.fps.toFixed(1);
@@ -826,7 +834,7 @@ async function sendFileToWorker(file) {
 
         startLoadingWatchdog();
         worker.postMessage(
-            { type: 'loadFile', data: arrayBuffer, filename: file.name },
+            { type: 'loadFile', data: arrayBuffer, filename: file.name, backend: getBackendFromURL() },
             [arrayBuffer]
         );
     } catch (err) {
@@ -888,7 +896,7 @@ async function loadModelFromURL(url) {
 
         startLoadingWatchdog();
         worker.postMessage(
-            { type: 'loadFile', data: binary.buffer, filename: url },
+            { type: 'loadFile', data: binary.buffer, filename: url, backend: getBackendFromURL() },
             [binary.buffer]
         );
     } catch (err) {
