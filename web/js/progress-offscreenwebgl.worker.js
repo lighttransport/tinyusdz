@@ -555,7 +555,7 @@ async function loadUSDFromData(data, filename, backend = 'legacy') {
             onTextureLoaded: (material, _mapProperty, _texture) => {
                 material.needsUpdate = true;
             },
-            concurrency: 2,
+            concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
             yieldInterval: 16
         }).then(status => {
             console.log(`[Worker] Texture loading complete: ${status.loaded}/${status.total}`);

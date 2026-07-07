@@ -1446,7 +1446,7 @@ async function processUSDScene(usd_scene, filename) {
 		characterGroup.add(built.node);
 		if (built.textureManager) {
 			built.textureManager.startLoading({
-				concurrency: 4,
+				concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
 				yieldInterval: 16,
 				onTextureLoaded: (material) => { material.needsUpdate = true; }
 			}).catch((err) => {
