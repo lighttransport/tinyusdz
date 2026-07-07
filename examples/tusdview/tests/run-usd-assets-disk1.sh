@@ -23,12 +23,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 : "${TUSDVIEW:=$REPO_ROOT/build/tusdview}"
 : "${TUSDRENDER:=$REPO_ROOT/build/tools/tusdrender/tusdrender}"
 : "${TUSDVIEW_USD_ASSETS_MODES:=vk-raster,vk-rt,tusdr-cpu,tusdr-vk}"
+# usd-wg/assets uses '..' parent-relative references (e.g. ../_common/*.usda);
+# tusdview rejects those by default (security policy), so allow them here to
+# match tusdrender's next-path default and actually load these assets.
+: "${TUSDVIEW_USD_ASSETS_ALLOW_PARENT:=1}"
 : "${TUSDVIEW_XVFB:=1}"
 : "${TUSDVIEW_USD_ASSETS_TIMEOUT:=60s}"
 # Report unsupported/empty assets, but only fail on crashes/hangs/backend breakage.
 : "${TUSDVIEW_USD_ASSETS_FAIL_ON:=timeout,backend_error}"
 
 export USD_ASSETS_ROOT TUSDVIEW TUSDRENDER TUSDVIEW_USD_ASSETS_MODES \
-  TUSDVIEW_XVFB TUSDVIEW_USD_ASSETS_TIMEOUT TUSDVIEW_USD_ASSETS_FAIL_ON
+  TUSDVIEW_USD_ASSETS_ALLOW_PARENT TUSDVIEW_XVFB TUSDVIEW_USD_ASSETS_TIMEOUT \
+  TUSDVIEW_USD_ASSETS_FAIL_ON
 
 exec bash "$SCRIPT_DIR/run-usd-assets-render-smoke.sh" "$@"

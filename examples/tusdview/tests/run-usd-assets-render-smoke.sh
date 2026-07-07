@@ -62,6 +62,12 @@ HEIGHT="${SIZE#*x}"
 TIMEOUT_DUR="${TUSDVIEW_USD_ASSETS_TIMEOUT:-45s}"
 MODES="${TUSDVIEW_USD_ASSETS_MODES:-vk-raster,vk-rt,cuda-rt,tusdr-cpu,tusdr-vk,tusdr-vkr}"
 VK_DEVICE="${TUSDVIEW_VK_DEVICE:-}"
+# Permit '..' (parent-directory) segments in composition asset paths for the
+# tusdview modes. tusdview defaults this OFF (security policy); tusdrender's
+# next path allows parent refs by default. External asset suites (e.g.
+# usd-wg/assets) routinely reference `../_common/*.usda`, so enable this to
+# exercise them fairly. Off by default here to preserve the strict default.
+ALLOW_PARENT="${TUSDVIEW_USD_ASSETS_ALLOW_PARENT:-0}"
 NVIDIA_OFFLOAD="${TUSDVIEW_NVIDIA_OFFLOAD:-auto}"
 USE_XVFB="${TUSDVIEW_XVFB:-auto}"
 FAIL_ON="${TUSDVIEW_USD_ASSETS_FAIL_ON:-load_error,timeout,backend_error}"
@@ -381,6 +387,9 @@ run_one() {
     if [ "$use_vk_env" -eq 1 ] && [ -n "$VK_DEVICE" ]; then
       args+=(--vk-device "$VK_DEVICE")
     fi
+    case "$ALLOW_PARENT" in
+      1|ON|on|true|TRUE|yes|YES) args+=(--allow-parent-paths) ;;
+    esac
     args+=(--frames "$FRAMES" --size "$SIZE" --screenshot "$out" "$asset")
 
     if [ "$use_vk_env" -eq 1 ] && [ "$use_xvfb_for_vk" -eq 1 ] && ! use_external_xvfb; then
