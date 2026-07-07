@@ -1,0 +1,39 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+)
+
+# Regression fixture: a prim with BOTH a `payload` (carrying non-geometry, e.g. a
+# material binding) AND a variantSet whose selected variant supplies the geometry
+# via an `over "GEO"`. The geometry lives in variantSet CONTENT (not in metas or
+# plain children). Composing the payload must NOT drop that variant content.
+#
+# Mirrors Animal Logic ALab components: `/root` gets a surfacing look-binding
+# `payload` composed beside the modelling reference's geo variant; pre-fix the
+# payload stage discarded the variant's `over "GEO"` and the component composed
+# to zero meshes. See InheritPrimSpecImpl in src/composition.cc.
+def Xform "root" (
+    prepend payload = @feat-payload-variant-bind.usda@
+    variants = {
+        string geo = "hi"
+    }
+    prepend variantSets = "geo"
+)
+{
+    def Xform "GEO"
+    {
+    }
+    variantSet "geo" = {
+        "hi" {
+            over "GEO"
+            {
+                def Mesh "M"
+                {
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                }
+            }
+        }
+    }
+}

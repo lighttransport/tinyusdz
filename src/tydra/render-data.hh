@@ -301,6 +301,7 @@ enum class NodeType {
   DiskLight,
   CylinderLight,
   GeometryLight,
+  Volume,  // UsdVol Volume (OpenVDB / Field3D)
 };
 
 // High-level categorization of USD Prim types
@@ -946,6 +947,11 @@ struct AnimationChannel {
   // For AnimationPath::CustomProperty channels.
   bool is_custom_property{false};    ///< true when `path == AnimationPath::CustomProperty`
   std::string property_name;         ///< The custom property name for this channel.
+  std::string target_prim_path;      ///< Optional unresolved/resolved target prim path.
+
+  // For AnimationPath::Weights channels sourced from UsdSkel blendShapeWeights.
+  // Values are stored in this target-name order.
+  std::vector<std::string> blendshape_target_names;
 
   /// Check if channel is valid based on its target type
   bool is_valid() const {
@@ -1099,6 +1105,10 @@ struct RenderInstance {
   int32_t prototype_index{-1}; ///< Index to prototype group
   int32_t mesh_id{-1};         ///< Index to RenderScene::meshes (shared)
   int32_t material_id{-1};     ///< Material index (-1 = use mesh default)
+  bool has_display_color{false};
+  std::array<float, 3> display_color{{1.0f, 1.0f, 1.0f}};
+  bool has_display_opacity{false};
+  float display_opacity{1.0f};
 
   value::matrix4d local_matrix;   ///< Instance local transform
   value::matrix4d global_matrix;  ///< Instance world transform
@@ -1307,6 +1317,10 @@ struct RenderMesh {
       0.18f, 0.18f,
       0.18f};  // displayColor primvar(The number of array elements = 1) in USD.
                // default is set to the same in UsdPreviewSurface::diffuseColor
+  // True when a constant (single-element) primvars:displayColor was authored on
+  // the prim and stored in `displayColor` above (vs the 0.18 default). Lets a
+  // consumer distinguish an authored constant color from the fallback.
+  bool has_authored_displayColor{false};
   float displayOpacity{
       1.0};  // displayOpacity primvar(The number of array elements = 1) in USD
   bool is_rightHanded{true};  // orientation attribute in USD.
@@ -1640,6 +1654,16 @@ struct RenderLight
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 
+  // Light linking (LightAPI applies CollectionAPI:lightLink / :shadowLink).
+  // Resolved against scene geometry by ResolveLightLinking(). When a link
+  // collection is unauthored the light affects all geometry (the `*_links_all`
+  // default); otherwise `*_link_mesh_indices` lists the affected RenderMesh
+  // indices in `RenderScene::meshes`.
+  bool light_links_all{true};                  ///< true => illuminates all geometry
+  std::vector<int> light_link_mesh_indices;    ///< affected meshes when !light_links_all
+  bool shadow_links_all{true};                 ///< true => casts shadows from all geometry
+  std::vector<int> shadow_link_mesh_indices;   ///< shadow-casting meshes when !shadow_links_all
+
   /// Check if light has spectral emission data
   bool hasSpectralEmission() const {
     return spd_emission.has_value() && spd_emission->has_data();
@@ -1661,6 +1685,61 @@ struct SceneMetadata
   bool autoPlay{true};
 
   // If you want to lookup more thing on USD Stage Metadata, Use Stage::metas()
+};
+
+///
+/// One scalar field (e.g. "density") of a UsdVol Volume, decoded into a DENSE
+/// float voxel grid. The voxel data lives in RenderScene::buffers[buffer_id]
+/// (componentType Float, length dim[0]*dim[1]*dim[2], x-contiguous:
+/// index = x + dim[0]*(y + dim[1]*z)).
+///
+struct RenderVolumeField {
+  std::string field_name;        // "density", "temperature", ...
+  std::string field_data_type;   // logical type ("float")
+  int32_t dim[3] = {0, 0, 0};    // voxel dimensions (x, y, z)
+  int32_t origin[3] = {0, 0, 0}; // index-space origin (min voxel coord)
+  float voxel_size[3] = {1.0f, 1.0f, 1.0f};
+  float world_translation[3] = {0.0f, 0.0f, 0.0f};
+  float background = 0.0f;
+  int64_t buffer_id = -1;        // index into RenderScene::buffers (dense floats)
+  // Object-space (pre prim-xform) AABB derived from origin/dim/voxel_size +
+  // world_translation. The prim's world matrix (RenderVolume::world_matrix)
+  // maps this box into world space.
+  float bounds_min[3] = {0.0f, 0.0f, 0.0f};
+  float bounds_max[3] = {0.0f, 0.0f, 0.0f};
+};
+
+///
+/// A UsdVol Volume prim converted for rendering. Carries its own world matrix
+/// (renderers may iterate RenderScene::volumes directly) plus simple
+/// emission/absorption shading parameters. (Full volume-material shading is a
+/// TODO; "simple volume shading" per the initial scope.)
+///
+struct RenderVolume {
+  std::string prim_name;
+  std::string abs_path;
+  std::string display_name;
+
+  value::matrix4d world_matrix{value::matrix4d::identity()};
+
+  std::vector<RenderVolumeField> fields;  // density, temperature, ...
+
+  // Simple shading params.
+  float density_scale = 1.0f;
+  float albedo[3] = {0.5f, 0.5f, 0.5f};
+  float emission_color[3] = {0.0f, 0.0f, 0.0f};
+  float emission_scale = 0.0f;
+
+  int material_id = -1;  // optional volume material (unused for now)
+  uint64_t handle = 0;   // graphics API handle. 0 = invalid
+
+  // Convenience: index of the "density" field, or first field, or -1.
+  int density_field_index() const {
+    for (size_t i = 0; i < fields.size(); i++) {
+      if (fields[i].field_name == "density") return int(i);
+    }
+    return fields.empty() ? -1 : 0;
+  }
 };
 
 // Simple glTF-like Scene Graph
@@ -1686,6 +1765,7 @@ class RenderScene {
   ChunkedVectorArray<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
   ChunkedVectorArray<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  ChunkedVectorArray<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #else
   std::vector<Node> nodes;
   std::vector<TextureImage> images;
@@ -1700,6 +1780,7 @@ class RenderScene {
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
   std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  std::vector<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #endif
 
   ///
@@ -1723,6 +1804,23 @@ class RenderScene {
 };
 
 ///
+/// Resolve UsdLux light linking for every light in `scene`.
+///
+/// For each RenderLight, looks up its prim in `stage` and resolves the
+/// `collection:lightLink` / `collection:shadowLink` collections (CollectionAPI
+/// applied by LightAPI) against the scene's meshes. When a link collection is
+/// authored, the light's `light_links_all` / `shadow_links_all` is cleared and
+/// the corresponding `*_link_mesh_indices` is filled with the affected mesh
+/// indices; otherwise the light affects all geometry (the default).
+///
+/// Both relationship-mode (includes/excludes) and expression-mode
+/// (membershipExpression) collections are supported.
+///
+/// @return number of lights whose linking was resolved (had an authored
+///         lightLink/shadowLink collection).
+///
+size_t ResolveLightLinking(const Stage &stage, RenderScene *scene);
+
 /// Phase tag delivered alongside streamed elements during progressive
 /// (streaming) conversion, so a consumer knows what arrives when.
 /// See `RenderSceneSink` and `RenderSceneConverter::ConvertToRenderSceneStreaming`.

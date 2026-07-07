@@ -3,9 +3,11 @@
 #pragma once
 
 #include <limits>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gpu_scene.hh"  // DrawScene
@@ -45,10 +47,25 @@ struct LoadOptions {
   // screenshot at a specific frame); interactive playback re-evaluates via
   // RenderSceneAtTime().
   double timecode{std::numeric_limits<double>::quiet_NaN()};
+  // Conversion-time subdivision surface refinement. subdivisionLevel is the
+  // scene-wide fallback; subdivisionPrimLevels overrides individual mesh prims.
+  // subdivisionAuto is handled by tusdview before conversion by filling
+  // subdivisionPrimLevels from projected mesh screen coverage.
+  int subdivisionLevel{0};
+  bool subdivisionAuto{false};
+  int subdivisionAutoMaxLevel{3};
+  std::map<std::string, int> subdivisionPrimLevels;
   // Variant selection overrides: key = prim full path, value = map of
   // variantSet name -> variant name. Applied before composition so variant
   // arcs resolve with the user's choices instead of the layer defaults.
   std::map<std::string, std::map<std::string, std::string>> variantOverrides;
+  // Allow parent-directory ('..') segments in composition asset paths
+  // (--allow-parent-paths). Off by default (tinyusdz rejects '..' traversal as
+  // unsafe). Some production scenes (e.g. Animal Logic ALab's lighting overrides
+  // referenced as `../lightingrenderovers/...`) need it; resolution of the
+  // surviving '..' is delegated to the asset resolver, anchored at searchPaths.
+  bool allowParentRelativePaths{false};
+  TextureRuntimeOptions textureOptions;
 };
 
 // A payload/reference arc that was skipped during composition.
@@ -79,6 +96,8 @@ struct LoadedScene {
   std::string warn;
   std::string err;
   bool ok{false};
+  int subdivisionLevel{0};
+  std::map<std::string, int> subdivisionPrimLevels;
   // Memory-mapped file handle kept alive for the Stage's lifetime (zero-copy
   // USDC arrays reference this mapping). Unmapped when this LoadedScene dies.
   // Null on the composition path (composition copies specs, so zero-copy
@@ -129,8 +148,29 @@ bool RecomposeWithPayloads(const std::string& path, const CompositionInfo& prev,
 // are rebuilt; callers keep the textures from the initial load. `draw->materials`
 // and `draw->textures` are therefore left empty — only `draw->meshes` (+ bounds)
 // are produced. Returns false with `*err` set on failure.
+// `blendOverride` (optional, by BlendShape name) applies manual blendshape
+// weights (the blend editor) when deforming -- the ray-traced / CPU-skinned
+// equivalent of the GPU path's override; honors in-between shapes.
+//
+// Optional `restCache`: the un-deformed Tydra scene from the last conversion,
+// keyed by timecode. When the requested `timecode` matches the cache, the stage
+// re-conversion (the heavy `ConvertStageToSceneImpl`) is skipped and the cached
+// rest scene is reused -- only the CPU deform + pack re-run. This lets interactive
+// blendshape edits (same timecode, only weights changing) on the RT/CPU path avoid
+// a full re-conversion. The caller owns the cache and must clear it on reload (the
+// geometry belongs to the old scene). NOT thread-safe: only one RenderSceneAtTime
+// may touch a given cache at a time (the app gates reconverts to one in flight).
+struct RestSceneCache {
+  tinyusdz::tydra::RenderScene scene;
+  double timecode = 0.0;
+  bool valid = false;
+};
+
 bool RenderSceneAtTime(const LoadedScene& src, double timecode, bool rtPath,
                        DrawScene* draw, std::string* warn, std::string* err,
-                       LoadControl* ctrl = nullptr);
+                       LoadControl* ctrl = nullptr,
+                       const std::unordered_map<std::string, float>* blendOverride =
+                           nullptr,
+                       RestSceneCache* restCache = nullptr);
 
 }  // namespace tusdview

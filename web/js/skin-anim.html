@@ -40,6 +40,45 @@
 			#fileInput {
 				display: none;
 			}
+			#variant-controls {
+				display: none;
+				margin-top: 8px;
+				gap: 6px;
+				align-items: center;
+				flex-wrap: wrap;
+			}
+			#variantSelect {
+				min-width: 180px;
+				max-width: 100%;
+				padding: 5px 6px;
+				background: #222;
+				color: white;
+				border: 1px solid #555;
+				border-radius: 4px;
+				font-size: 12px;
+			}
+			#variantStatus {
+				display: block;
+				margin-top: 4px;
+				color: #aaa;
+				font-size: 11px;
+			}
+			#drop-overlay {
+				position: fixed;
+				inset: 0;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				background: rgba(0, 0, 0, 0.55);
+				color: white;
+				font-size: 22px;
+				font-weight: 600;
+				z-index: 9999;
+				pointer-events: none;
+			}
+			body.drag-over #drop-overlay {
+				display: flex;
+			}
 			.button {
 				display: inline-block;
 				padding: 6px 12px;
@@ -175,6 +214,7 @@
 		</style>
 	</head>
 	<body>
+		<div id="drop-overlay">Drop USD file</div>
 		<button id="gui-toggle" title="Show GUI (H)">⚙</button>
 		<div id="info">
 			<h3>TinyUSDZ Skeletal Animation Demo</h3>
@@ -188,9 +228,18 @@
 			<p>
 				<strong>Current file:</strong> <span id="currentFile">No file loaded</span>
 			</p>
+			<div id="load-stats" style="display:none; margin-top: 8px; font-size: 12px; line-height: 1.45;">
+				<strong>Load Stats:</strong>
+				<div id="loadStatsDetails"></div>
+			</div>
 			<div id="file-controls">
 				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
 				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
+				<div id="variant-controls">
+					<select id="variantSelect"></select>
+					<button class="button" id="reloadVariantButton" type="button">Reload Variant</button>
+					<span id="variantStatus"></span>
+				</div>
 			</div>
 			<div id="skeleton-info" style="display:none;">
 				<strong>Skeleton Information:</strong>
@@ -217,18 +266,55 @@
 		</div>
 
 		<script type="module">
+			const supportedUSDExtensions = new Set(['usd', 'usda', 'usdc', 'usdz']);
+
+			function dispatchUSDFile(file) {
+				if (!file) return;
+
+				const ext = file.name.split('.').pop()?.toLowerCase();
+				if (!supportedUSDExtensions.has(ext)) {
+					console.warn(`Unsupported file dropped: ${file.name}`);
+					return;
+				}
+
+				document.getElementById('currentFile').textContent = file.name;
+				window.dispatchEvent(new CustomEvent('loadUSDFile', {
+					detail: { file }
+				}));
+			}
+
 			// Handle file upload
 			document.getElementById('fileInput').addEventListener('change', async (event) => {
 				const file = event.target.files[0];
-				if (!file) return;
+				dispatchUSDFile(file);
+			});
 
-				document.getElementById('currentFile').textContent = file.name;
+			let dragDepth = 0;
 
-				// Trigger custom event that skining-anim.js can listen to
-				const customEvent = new CustomEvent('loadUSDFile', {
-					detail: { file }
-				});
-				window.dispatchEvent(customEvent);
+			window.addEventListener('dragenter', (event) => {
+				event.preventDefault();
+				dragDepth += 1;
+				document.body.classList.add('drag-over');
+			});
+
+			window.addEventListener('dragover', (event) => {
+				event.preventDefault();
+				event.dataTransfer.dropEffect = 'copy';
+			});
+
+			window.addEventListener('dragleave', (event) => {
+				event.preventDefault();
+				dragDepth = Math.max(0, dragDepth - 1);
+				if (dragDepth === 0) {
+					document.body.classList.remove('drag-over');
+				}
+			});
+
+			window.addEventListener('drop', (event) => {
+				event.preventDefault();
+				dragDepth = 0;
+				document.body.classList.remove('drag-over');
+				dispatchUSDFile(event.dataTransfer.files[0]);
 			});
 
 			// Function to update skeleton information display

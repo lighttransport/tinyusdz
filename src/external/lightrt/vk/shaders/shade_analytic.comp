@@ -1,0 +1,278 @@
+#version 460
+//
+// shade_analytic.comp — Vulkan compute *shading* of analytic primitives.
+//
+// Scope (deliberately small): GPU shading evaluation only. One invocation = one
+// pixel. Each pixel casts a primary ray, intersects a small set of analytic
+// spheres and axis-aligned boxes (linear scan — no BVH), and forward-shades the
+// closest hit with an OpenPBR-core layered BSDF (Lambert diffuse + GGX specular
+// with metallic/dielectric Schlick Fresnel), one directional "sun" via a hard
+// shadow ray (NEE) plus a 2-colour hemisphere environment as ambient + the miss
+// background. This mirrors examples/vk_shade/vk_shade.c's CPU reference shade()
+// math byte-for-byte so GPU and CPU agree within fp tolerance.
+//
+// Buffers use raw float[]/uint indexing (padding-independent), matching the host
+// packers in lrt_vk_shade_analytic():
+//   Prims  : 16 floats / prim   (center.xyz, radius, half.xyz, type,
+//                                 base.xyz, metalness, roughness, ior,
+//                                 emission, opacity)
+//   Globals: 32 floats          (camera basis, sun, env; see host)
+//   Out    : 4 floats / pixel   (rgba, linear)
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly  buffer Prims   { float prims[]; };
+layout(std430, binding = 1) writeonly buffer Out     { float outp[];  };
+layout(std430, binding = 2) readonly  buffer Globals { float g[];     };
+
+layout(push_constant) uniform PC {
+    uint width;
+    uint height;
+    uint nprims;
+    uint spp;
+} pc;
+
+const float PI     = 3.14159265358979323846;
+const float INV_PI = 0.31830988618379067154;
+const uint  PRIM_STRIDE = 16u;
+
+// ---- globals accessors ----------------------------------------------------
+vec3 cam_origin()   { return vec3(g[0],  g[1],  g[2]);  }
+float tan_half()    { return g[3]; }
+vec3 cam_forward()  { return vec3(g[4],  g[5],  g[6]);  }
+float aspect()      { return g[7]; }
+vec3 cam_right()    { return vec3(g[8],  g[9],  g[10]); }
+vec3 cam_up()       { return vec3(g[12], g[13], g[14]); }
+vec3 sun_dir()      { return vec3(g[16], g[17], g[18]); }   // toward the sun
+vec3 sun_rad()      { return vec3(g[20], g[21], g[22]); }
+vec3 env_top()      { return vec3(g[24], g[25], g[26]); }
+vec3 env_bottom()   { return vec3(g[28], g[29], g[30]); }
+
+// 2-colour vertical gradient environment (lat-long-free: just dir.y).
+vec3 env_eval(vec3 d) {
+    float t = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
+    return mix(env_bottom(), env_top(), t);
+}
+
+// ---- primitive intersection ----------------------------------------------
+// Sphere: smallest positive root of |o + t d - c|^2 = r^2.
+float hit_sphere(vec3 c, float r, vec3 o, vec3 d, float tmax) {
+    vec3 oc = o - c;
+    float b = dot(oc, d);
+    float cc = dot(oc, oc) - r * r;
+    float disc = b * b - cc;            // assumes |d| == 1
+    if (disc < 0.0) return -1.0;
+    float s = sqrt(disc);
+    float t = -b - s;
+    if (t < 1e-4) t = -b + s;
+    if (t < 1e-4 || t >= tmax) return -1.0;
+    return t;
+}
+
+// Axis-aligned box [c-h, c+h]: slab test; returns entry t and sets normal.
+// The entry/exit axis is tracked during the reduction (not re-derived via float
+// equality) so the CPU reference can reproduce the same face deterministically.
+float hit_box(vec3 c, vec3 h, vec3 o, vec3 d, float tmax, out vec3 n) {
+    vec3 lo = c - h, hi = c + h;
+    vec3 invd = 1.0 / d;
+    vec3 t0 = (lo - o) * invd;
+    vec3 t1 = (hi - o) * invd;
+    vec3 tsm = min(t0, t1);
+    vec3 tbg = max(t0, t1);
+    int axis = 0;
+    float tnear = tsm.x;
+    if (tsm.y > tnear) { tnear = tsm.y; axis = 1; }
+    if (tsm.z > tnear) { tnear = tsm.z; axis = 2; }
+    int faxis = 0;
+    float tfar = tbg.x;
+    if (tbg.y < tfar) { tfar = tbg.y; faxis = 1; }
+    if (tbg.z < tfar) { tfar = tbg.z; faxis = 2; }
+    n = vec3(0.0);
+    if (tnear > tfar || tfar < 1e-4) return -1.0;
+    bool use_far = !(tnear > 1e-4);
+    float t = use_far ? tfar : tnear;
+    if (t >= tmax) return -1.0;
+    int a = use_far ? faxis : axis;
+    n[a] = d[a] > 0.0 ? -1.0 : 1.0;
+    return t;
+}
+
+// Closest hit over all prims. Returns prim index (-1 miss); fills t and normal.
+int trace(vec3 o, vec3 d, float tmax, out float besst, out vec3 nrm) {
+    int best = -1;
+    besst = tmax;
+    nrm = vec3(0.0);
+    for (uint i = 0u; i < pc.nprims; i++) {
+        uint b = i * PRIM_STRIDE;
+        vec3 c = vec3(prims[b + 0u], prims[b + 1u], prims[b + 2u]);
+        float r = prims[b + 3u];
+        vec3 h = vec3(prims[b + 4u], prims[b + 5u], prims[b + 6u]);
+        float type = prims[b + 7u];
+        if (type < 0.5) {                       // sphere
+            float t = hit_sphere(c, r, o, d, besst);
+            if (t > 0.0) { besst = t; best = int(i); nrm = normalize(o + t * d - c); }
+        } else {                                // box
+            vec3 n;
+            float t = hit_box(c, h, o, d, besst, n);
+            if (t > 0.0) { besst = t; best = int(i); nrm = n; }
+        }
+    }
+    return best;
+}
+
+// Any-hit shadow test (returns true if occluded before tmax).
+bool occluded(vec3 o, vec3 d, float tmax) {
+    for (uint i = 0u; i < pc.nprims; i++) {
+        uint b = i * PRIM_STRIDE;
+        vec3 c = vec3(prims[b + 0u], prims[b + 1u], prims[b + 2u]);
+        float r = prims[b + 3u];
+        vec3 h = vec3(prims[b + 4u], prims[b + 5u], prims[b + 6u]);
+        float type = prims[b + 7u];
+        if (type < 0.5) {
+            if (hit_sphere(c, r, o, d, tmax) > 0.0) return true;
+        } else {
+            vec3 n;
+            if (hit_box(c, h, o, d, tmax, n) > 0.0) return true;
+        }
+    }
+    return false;
+}
+
+// ---- OpenPBR-core BSDF (reflection only) ----------------------------------
+vec3 fresnel_schlick(float ct, vec3 f0) {
+    float m = clamp(1.0 - ct, 0.0, 1.0);
+    float m5 = m * m * m * m * m;
+    return f0 + (1.0 - f0) * m5;
+}
+float ggx_D(float NoH, float a) {
+    if (NoH <= 0.0) return 0.0;
+    float a2 = a * a;
+    float dd = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * dd * dd);
+}
+float ggx_G1(float NoX, float a) {
+    if (NoX <= 0.0) return 0.0;
+    float a2 = a * a;
+    float t = NoX * NoX;
+    return 2.0 * NoX / (NoX + sqrt(a2 + (1.0 - a2) * t));
+}
+
+// f = diffuse + GGX specular for incoming wi / outgoing wo about normal N.
+vec3 bsdf_eval(uint b, vec3 N, vec3 wo, vec3 wi) {
+    float NoL = dot(N, wi), NoV = dot(N, wo);
+    if (NoL <= 0.0 || NoV <= 0.0) return vec3(0.0);
+    vec3  base  = vec3(prims[b + 8u], prims[b + 9u], prims[b + 10u]);
+    float metal = prims[b + 11u];
+    float rough = clamp(prims[b + 12u], 0.02, 1.0);
+    float ior   = prims[b + 13u];
+    float a = rough * rough;
+
+    vec3 H = normalize(wo + wi);
+    float NoH = dot(N, H), VoH = dot(wo, H);
+
+    vec3 diff = base * (1.0 - metal) * INV_PI;
+
+    float f0d = (ior - 1.0) / (ior + 1.0);
+    f0d = f0d * f0d;
+    vec3 F0 = mix(vec3(f0d), base, metal);
+    float D = ggx_D(NoH, a);
+    float G = ggx_G1(NoV, a) * ggx_G1(NoL, a);
+    vec3 F = fresnel_schlick(VoH, F0);
+    vec3 spec = F * (D * G / (4.0 * NoV * NoL));
+
+    return diff + spec;
+}
+
+vec3 diffuse_albedo(uint b) {
+    vec3  base  = vec3(prims[b + 8u], prims[b + 9u], prims[b + 10u]);
+    float metal = prims[b + 11u];
+    return base * (1.0 - metal);
+}
+
+// Metallic/dielectric F0 (specular reflectance at normal incidence).
+vec3 spec_f0(uint b) {
+    vec3  base  = vec3(prims[b + 8u], prims[b + 9u], prims[b + 10u]);
+    float metal = prims[b + 11u];
+    float ior   = prims[b + 13u];
+    float f0d = (ior - 1.0) / (ior + 1.0);
+    f0d = f0d * f0d;
+    return mix(vec3(f0d), base, metal);
+}
+
+// Ambient environment: diffuse irradiance (1-F weighted) + a Fresnel-weighted
+// specular reflection of the env in the roughness-blurred mirror direction.
+// rd is the incoming view ray direction (into the surface).
+vec3 ambient_env(uint b, vec3 N, vec3 wo, vec3 rd) {
+    float rough = clamp(prims[b + 12u], 0.02, 1.0);
+    vec3 F0 = spec_f0(b);
+    vec3 Fr = fresnel_schlick(max(dot(N, wo), 0.0), F0);
+    vec3 R = reflect(rd, N);
+    vec3 Rb = normalize(mix(R, N, rough));         // crude roughness blur
+    vec3 diff = diffuse_albedo(b) * env_eval(N) * (vec3(1.0) - Fr);
+    vec3 spec = Fr * env_eval(Rb);
+    return diff + spec;
+}
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint npix = pc.width * pc.height;
+    if (gid >= npix) return;
+
+    uint px = gid % pc.width;
+    uint py = gid / pc.width;
+
+    vec3 ro = cam_origin();
+    vec3 fwd = cam_forward(), rgt = cam_right(), up = cam_up();
+    float th = tan_half(), asp = aspect();
+    uint spp = max(pc.spp, 1u);
+
+    vec3 accum = vec3(0.0);
+    for (uint s = 0u; s < spp; s++) {
+        // Deterministic stratified jitter (no RNG needed; matches CPU ref).
+        float jx = (spp == 1u) ? 0.5 : (float(s) + 0.5) / float(spp);
+        float jy = (spp == 1u) ? 0.5 : fract(float(s) * 0.61803398875 + 0.5);
+        float sx = (2.0 * (float(px) + jx) / float(pc.width)  - 1.0) * th * asp;
+        float sy = (1.0 - 2.0 * (float(py) + jy) / float(pc.height)) * th;
+        vec3 rd = normalize(fwd + sx * rgt + sy * up);
+
+        float t;
+        vec3 N;
+        int hit = trace(ro, rd, 1e30, t, N);
+        if (hit < 0) { accum += env_eval(rd); continue; }
+
+        uint b = uint(hit) * PRIM_STRIDE;
+        vec3 P = ro + t * rd;
+        vec3 wo = -rd;
+        if (dot(N, wo) < 0.0) N = -N;
+
+        vec3 col = vec3(0.0);
+        // emission
+        float emis = prims[b + 14u];
+        if (emis > 0.0)
+            col += vec3(prims[b + 8u], prims[b + 9u], prims[b + 10u]) * emis;
+
+        // direct sun (NEE) with hard shadow
+        vec3 L = sun_dir();
+        vec3 srad = sun_rad();
+        if (dot(srad, srad) > 0.0) {
+            float NoL = dot(N, L);
+            if (NoL > 0.0 && !occluded(P + N * 1e-3, L, 1e30)) {
+                vec3 f = bsdf_eval(b, N, wo, L);
+                col += f * srad * NoL;
+            }
+        }
+        // ambient environment: diffuse irradiance + specular reflection
+        col += ambient_env(b, N, wo, rd);
+
+        accum += col;
+    }
+
+    accum /= float(spp);
+    uint o = gid * 4u;
+    outp[o + 0u] = accum.x;
+    outp[o + 1u] = accum.y;
+    outp[o + 2u] = accum.z;
+    outp[o + 3u] = 1.0;
+}

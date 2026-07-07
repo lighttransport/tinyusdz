@@ -8,10 +8,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPARE_SCRIPT="$SCRIPT_DIR/compare-usda.js"
 TUSDCAT_PATH="${TUSDCAT_PATH:-./build/tusdcat}"
-# Default to a sibling OpenUSD checkout (../OpenUSD relative to repo root);
-# fall back to the older ~/local/USD build if that is not present.
+# Prefer the repo-local OpenUSD helper install, then a sibling OpenUSD checkout,
+# then the older ~/local/USD build.
 if [ -z "$USDCAT_PATH" ]; then
-  if [ -x "$SCRIPT_DIR/../../OpenUSD/dist/bin/usdcat" ]; then
+  if [ -x "$SCRIPT_DIR/../ref/dist/bin/usdcat" ]; then
+    USDCAT_PATH="$SCRIPT_DIR/../ref/dist/bin/usdcat"
+  elif [ -x "$SCRIPT_DIR/../../OpenUSD/dist/bin/usdcat" ]; then
     USDCAT_PATH="$SCRIPT_DIR/../../OpenUSD/dist/bin/usdcat"
   else
     USDCAT_PATH="$HOME/local/USD/dist/bin/usdcat"
@@ -222,8 +224,8 @@ main() {
   echo "  SHOW_DETAILED_DIFF=true node $COMPARE_SCRIPT --detailed-diff tests/usda/cube.usda"
   echo ""
   echo "  # Test specific files with tusdcat/usdcat"
-  echo "  TUSDCAT_PATH=./build_gcc/tusdcat USDCAT_PATH=~/local/USD/dist/bin/usdcat \\"
-  echo "    node $COMPARE_SCRIPT --detailed-diff --tusdcat ./build_gcc/tusdcat --usdcat ~/local/USD/dist/bin/usdcat tests/usda/cube.usda"
+  echo "  TUSDCAT_PATH=./build_gcc/tusdcat USDCAT_PATH=ref/dist/bin/usdcat \\"
+  echo "    node $COMPARE_SCRIPT --detailed-diff --tusdcat ./build_gcc/tusdcat --usdcat ref/dist/bin/usdcat tests/usda/cube.usda"
   echo ""
 }
 
@@ -238,7 +240,7 @@ Tests both USDA (ASCII) and USDC (Binary/Crate) file formats.
 OPTIONS:
   -h, --help              Show this help message
   --tusdcat PATH          Path to tusdcat executable (default: ./build_gcc/tusdcat)
-  --usdcat PATH           Path to usdcat executable (default: ~/local/USD/dist/bin/usdcat)
+  --usdcat PATH           Path to usdcat executable (default: ref/dist/bin/usdcat when present)
   --timeout MS            Timeout per file in milliseconds (default: 60000)
   --no-detailed-diff      Disable detailed diff output (shows summary only)
   --no-failure-summary    Disable failure/warning summary at the end
@@ -258,7 +260,7 @@ EXAMPLES:
   $0 --no-detailed-diff
 
   # Run with custom tool paths
-  TUSDCAT_PATH=./build_asan/tusdcat USDCAT_PATH=~/USD/bin/usdcat $0
+  TUSDCAT_PATH=./build_asan/tusdcat USDCAT_PATH=ref/dist/bin/usdcat $0
 
   # Run with longer timeout for slow systems
   $0 --timeout 120000

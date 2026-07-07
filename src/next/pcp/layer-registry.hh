@@ -12,6 +12,7 @@
 #include "../layer/layer.hh"
 #include "../resolver/asset-resolver.hh"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -23,6 +24,32 @@
 namespace tinyusdz {
 namespace next {
 namespace pcp {
+
+struct LayerLoadOptions {
+  /// Maximum file/input bytes for each loaded external layer (0 = no limit).
+  size_t max_memory = 0;
+
+  /// Whether USDC layers should run stage finalization after crate reconstruction.
+  /// Keep false for parse/benchmark workloads that only need low-level validity.
+  bool finalize_usdc_stage = true;
+
+  /// Emit USDC crate-reader timing diagnostics for layers loaded through the
+  /// registry. This is opt-in and intended for benchmark CLIs.
+  bool enable_usdc_timing = false;
+
+  /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
+  int parse_num_threads = 0;
+
+  /// USDC crate-reader limits (for nested crate input and self-contained `.usdc`
+  /// stages). Shared with `--parse-usdc-*` benching where very large scenes
+  /// can exceed default hard caps.
+  size_t max_tokens = 1024 * 1024;
+  size_t max_strings = 1024 * 1024;
+  size_t max_fields = 10 * 1024 * 1024;
+  size_t max_specs = 10 * 1024 * 1024;
+  size_t max_paths = 10 * 1024 * 1024;
+  size_t max_array_elements = 1024 * 1024 * 1024;
+};
 
 class LayerRegistry {
  public:
@@ -43,7 +70,8 @@ class LayerRegistry {
   std::shared_ptr<Layer> GetOrLoad(AssetResolver &resolver,
                                    const std::string &asset_path,
                                    const std::string &anchor,
-                                   std::string *warn, std::string *err);
+                                   std::string *warn, std::string *err,
+                                   const LayerLoadOptions &options = {});
 
   /// Pre-register an in-memory layer under a resolved identifier (so a reference
   /// resolving to that id composes it without touching disk). Does not count as
@@ -98,10 +126,19 @@ class LayerRegistry {
 #endif
 };
 
-/// Load a layer from a resolved file path, dispatching by extension to the
-/// next USDA / USDC readers. Returns nullptr on failure. (USDZ: TODO.)
+/// Load a layer from a resolved file/package path, dispatching by extension to
+/// the next USDA / USDC / USDZ readers. Returns nullptr on failure.
+/// `options.parse_num_threads` forwards to ParseOptions::num_threads for the
+/// USDA large-array parallel parse; `options.max_memory` caps USDA file size
+/// and USDC crate input/allocation checks.
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
-                                         std::string *warn, std::string *err);
+                                         std::string *warn, std::string *err,
+                                         const LayerLoadOptions &options);
+
+/// Back-compat overload for callers that only need USDA parse parallelism.
+std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
+                                         std::string *warn, std::string *err,
+                                         int parse_num_threads = 0);
 
 }  // namespace pcp
 }  // namespace next

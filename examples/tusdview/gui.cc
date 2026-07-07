@@ -2,13 +2,22 @@
 #include "gui.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 
+#include <unistd.h>  // sysconf (RSS page size)
+
 #include "core/prim.hh"
 #include "gizmo_build.hh"
+#include "lod_math.hh"  // BoxFitXform (raster LOD box proxies)
+#include "light3d/camera.h"  // light3d::Frustum (per-mesh frustum culling)
 #include "gui_stringify.hh"
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder*
@@ -41,6 +50,35 @@ const char* NodeTypeName(tydra::NodeType t) {
     case tydra::NodeType::GeometryLight: return "GeometryLight";
     default: return "Node";
   }
+}
+
+const char* MaterialParamTypeName(DrawMaterialParamType t) {
+  switch (t) {
+    case DrawMaterialParamType::Float: return "float";
+    case DrawMaterialParamType::Vec2: return "vec2";
+    case DrawMaterialParamType::Vec3: return "vec3";
+    case DrawMaterialParamType::Vec4: return "vec4";
+    default: return "value";
+  }
+}
+
+const char* MaterialParamChannelName(int channel) {
+  switch (channel) {
+    case 0: return "R";
+    case 1: return "G";
+    case 2: return "B";
+    case 3: return "A";
+    default: return "-";
+  }
+}
+
+bool HasNonIdentityUvXform(const DrawUvXformCPU& uv) {
+  return std::fabs(uv.m00 - 1.0f) > 1.0e-6f ||
+         std::fabs(uv.m01) > 1.0e-6f ||
+         std::fabs(uv.m10) > 1.0e-6f ||
+         std::fabs(uv.m11 - 1.0f) > 1.0e-6f ||
+         std::fabs(uv.tx) > 1.0e-6f ||
+         std::fabs(uv.ty) > 1.0e-6f;
 }
 
 // Greyed, word-wrapped hint text (TextDisabled does not wrap and would clip in
@@ -206,6 +244,10 @@ const char* SkinningModeLabel(SkinningMode mode) {
 }  // namespace
 
 void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
+  // The cull worker reads the current DrawScene; join it before draw_ changes so
+  // it never touches freed geometry.
+  joinCullWorker();
+  lastCullValid_ = false;  // force a re-cull for the new scene
   loaded_ = loaded;
   draw_ = draw;
   selPrim_ = nullptr;
@@ -241,6 +283,7 @@ void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
   drawTimeline();
   drawAboutModal();
   drawLoadingModal();
+  drawProgressOverlay();
 }
 
 void Gui::drawAboutModal() {
@@ -329,6 +372,42 @@ void Gui::drawLoadingModal() {
   }
 }
 
+void Gui::drawProgressOverlay() {
+  // Non-modal: the partial scene stays visible/interactive while geometry streams
+  // to the GPU (raster) or the ray-tracing acceleration structure builds.
+  const bool show = upload_.active || !upload_.note.empty();
+  if (!show) return;
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                 vp->WorkPos.y + 12.0f),
+                          ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+  ImGui::SetNextWindowBgAlpha(0.85f);
+  const ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings;
+  if (ImGui::Begin("##progress_overlay", nullptr, flags)) {
+    auto bar = [](const char* label, size_t done, size_t total) {
+      if (total == 0) return;
+      const float frac = static_cast<float>(done) / static_cast<float>(total);
+      char ov[64];
+      std::snprintf(ov, sizeof(ov), "%s %zu / %zu", label, done, total);
+      ImGui::ProgressBar(frac, ImVec2(260, 0), ov);
+    };
+    if (upload_.active) {
+      ImGui::TextUnformatted("Streaming scene to GPU\xE2\x80\xA6");
+      bar("meshes", upload_.meshesDone, upload_.meshesTotal);
+      if (upload_.meshesDone >= upload_.meshesTotal && upload_.texTotal > 0)
+        bar("textures", upload_.texDone, upload_.texTotal);
+      if (upload_.volTotal > 0) bar("volumes", upload_.volDone, upload_.volTotal);
+    }
+    if (!upload_.note.empty()) {
+      ImGui::TextColored(ImVec4(0.95f, 0.8f, 0.2f, 1.0f), "%s", upload_.note.c_str());
+    }
+  }
+  ImGui::End();
+}
+
 void Gui::buildDefaultLayout(unsigned int dockId) {
   ImGui::DockBuilderRemoveNode(dockId);
   ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
@@ -377,13 +456,33 @@ void Gui::drawDockspaceAndMenu() {
   const ImGuiID dockId = ImGui::GetID("TusdviewDockspace");
   ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
   if (!dockBuilt_) {
-    buildDefaultLayout(dockId);
+    bool hasSavedIni = false;
+    if (const char* ini = ImGui::GetIO().IniFilename) {
+      std::error_code ec;
+      hasSavedIni = std::filesystem::is_regular_file(std::filesystem::path(ini), ec);
+    }
+    if (!hasSavedIni) {
+      buildDefaultLayout(dockId);
+    }
     dockBuilt_ = true;
   }
 
   if (ImGui::BeginMenuBar()) {
     if (ImGui::BeginMenu("File")) {
       if (ImGui::MenuItem("Open...", "Ctrl+O")) wantOpen_ = true;
+      if (ImGui::BeginMenu("Open Recent", !recentScenes_.empty())) {
+        for (const std::string& p : recentScenes_) {
+          // Label with the file name; full path in a tooltip (paths are long).
+          std::string label = std::filesystem::path(p).filename().string();
+          if (label.empty()) label = p;
+          if (ImGui::MenuItem(label.c_str())) {
+            recentToOpen_ = p;
+            wantOpenRecent_ = true;
+          }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.c_str());
+        }
+        ImGui::EndMenu();
+      }
       if (ImGui::MenuItem("Reload", "Ctrl+R", false, loaded_ != nullptr)) wantReload_ = true;
       {
         const bool haveDeferred = loaded_ && !loaded_->comp.deferred.empty();
@@ -396,10 +495,48 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-      bool shaded = mode_ == RenderMode::Shaded;
-      bool wire = mode_ == RenderMode::Wireframe;
-      if (ImGui::MenuItem("Shaded", nullptr, shaded)) mode_ = RenderMode::Shaded;
-      if (ImGui::MenuItem("Wireframe", nullptr, wire)) mode_ = RenderMode::Wireframe;
+      if (ImGui::MenuItem("Shaded", nullptr, mode_ == RenderMode::Shaded))
+        mode_ = RenderMode::Shaded;
+      if (ImGui::MenuItem("Wireframe", nullptr, mode_ == RenderMode::Wireframe))
+        mode_ = RenderMode::Wireframe;
+      // Debug AOV channels (grouped to keep the View menu tidy as they grow).
+      if (ImGui::BeginMenu("Debug AOV")) {
+        struct AovItem { const char* label; RenderMode m; };
+        static const AovItem kAovs[] = {
+            {"Material ID", RenderMode::MaterialId},
+            {"Normals (shading)", RenderMode::Normals},
+            {"Normals (geometric)", RenderMode::GeomNormal},
+            {"UV", RenderMode::Uv},
+            {"UV checker", RenderMode::UvChecker},
+            {"UDIM tile", RenderMode::UdimTile},
+            {"UV set 1", RenderMode::Uv1},
+            {"Blendshape influence", RenderMode::BlendInfluence},
+            {"Texel density", RenderMode::TexelDensity},
+            {"Source face id", RenderMode::SourceFaceId},
+            {"Depth", RenderMode::Depth},
+            {"Position", RenderMode::Position},
+            {"Albedo (unlit)", RenderMode::Albedo},
+            {"Facing", RenderMode::Facing},
+            {"Roughness", RenderMode::Roughness},
+            {"Metallic", RenderMode::Metallic},
+            {"Emissive", RenderMode::Emissive},
+            {"Opacity", RenderMode::Opacity},
+            {"Purpose", RenderMode::Purpose},
+            {"Kind", RenderMode::Kind},
+            {"Missing normals", RenderMode::MissingNormals},
+            {"Double-sided", RenderMode::DoubleSided},
+            {"Skin weights", RenderMode::SkinWeights},
+            {"Tangent", RenderMode::Tangent},
+            {"Curvature", RenderMode::Curvature},
+            {"Instance ID", RenderMode::InstanceId},
+            {"Ambient occlusion (RT)", RenderMode::AmbientOcclusion},
+            {"Soft shadow (RT)", RenderMode::SoftShadow},
+            {"BVH heatmap (CUDA)", RenderMode::BvhHeatmap},
+        };
+        for (const AovItem& a : kAovs)
+          if (ImGui::MenuItem(a.label, nullptr, mode_ == a.m)) mode_ = a.m;
+        ImGui::EndMenu();
+      }
       ImGui::Separator();
       // Ray tracing (Vulkan only; disabled when the device/build can't do it).
       // The checkmark mirrors the renderer's actual technique.
@@ -507,6 +644,7 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::MenuItem("Scene bounds", nullptr, &showSceneBbox_);
       ImGui::MenuItem("Selected bounds", nullptr, &showPrimBbox_);
       ImGui::MenuItem("Skeleton", nullptr, &showSkeleton_);
+      ImGui::MenuItem("Frustum culling", nullptr, &cullEnabled_);
       ImGui::Separator();
       if (ImGui::BeginMenu("Purpose")) {
         ImGui::MenuItem("default", nullptr, &showPurposeDefault_);
@@ -534,6 +672,12 @@ void Gui::drawDockspaceAndMenu() {
       }
       ImGui::SetNextItemWidth(80.0f);
       ImGui::SliderFloat("Tessellation", &tessQuality_, 0.25f, 4.0f, "%.2f");
+      ImGui::Separator();
+      ImGui::MenuItem("Displacement", nullptr, &displacementEnabled_);
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SliderFloat("Disp scale", &displacementScale_, 0.0f, 4.0f, "%.2f");
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SliderInt("Max tess", &maxTessLevel_, 1, 16);
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
@@ -541,8 +685,9 @@ void Gui::drawDockspaceAndMenu() {
       ImGui::Separator();
       ImGui::TextDisabled("Viewport");
       ImGui::TextUnformatted("Alt+LMB  Orbit");
-      ImGui::TextUnformatted("Alt+MMB  Pan");
+      ImGui::TextUnformatted("Alt+MMB / Shift+Alt+LMB  Pan");
       ImGui::TextUnformatted("Alt+RMB / Wheel  Dolly");
+      ImGui::TextUnformatted("W  Cycle wireframe (off / wire / wire+shade)");
       ImGui::Separator();
       ImGui::TextDisabled("Selection");
       ImGui::TextUnformatted("[ / ]  Previous / Next visible selection");
@@ -597,6 +742,15 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
         break;
       }
     }
+    // FindPrimByPath misses prims whose composed absolute_path is unset (e.g.
+    // GeomSubset children); fall back to the stage's path lookup.
+    if (!selPrim_ && !absPath.empty()) {
+      const tinyusdz::Prim* p = nullptr;
+      std::string err;
+      if (loaded_->stage.find_prim_at_path(tinyusdz::Path(absPath, ""), p, &err) && p) {
+        selPrim_ = p;
+      }
+    }
   }
   if (meshIndex < 0 && draw_) {
     for (size_t i = 0; i < draw_->meshes.size(); ++i) {
@@ -611,6 +765,93 @@ void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordH
     inspectorCachePrim_ = nullptr;
     inspectorCachePath_.clear();
     inspectorCacheRows_.clear();
+  }
+  rebuildSubsetHighlight();
+}
+
+// Build the selection-highlight geometry: the GL backend draws a polygon-mode
+// wireframe (whole mesh via highlightMeshIndex, or a GeomSubset's triangles via
+// highlightSubsetIndices_); the Vulkan backend, lacking a wireframe pass, draws
+// world-space orange edge lines (highlightLinesData_). A selected GeomSubset
+// outlines exactly its faces (mapped through the mesh's sourceFaceId).
+void Gui::rebuildSubsetHighlight() {
+  highlightSubsetIndices_.clear();
+  highlightSubsetMesh_ = -1;
+  highlightLinesData_.clear();
+  if (!draw_) return;
+
+  // Resolve the highlighted mesh + the triangle vertex-index list to outline.
+  int mi = -1;
+  const std::vector<uint32_t>* tri = nullptr;  // index list (3 per triangle)
+
+  if (selPrim_) {
+    if (const auto* gs = selPrim_->as<tinyusdz::GeomSubset>()) {
+      if (gs->elementType.get_value() == tinyusdz::GeomSubset::ElementType::Face) {
+        std::set<uint32_t> faces;
+        if (auto opt = gs->indices.get_value()) {
+          std::vector<int32_t> fi;
+          if (opt.value().get_scalar(&fi))
+            for (int32_t f : fi)
+              if (f >= 0) faces.insert(static_cast<uint32_t>(f));
+        }
+        std::string meshPath = selPath_;
+        const size_t slash = meshPath.find_last_of('/');
+        if (!faces.empty() && slash != std::string::npos && slash != 0) {
+          meshPath.resize(slash);
+          for (size_t i = 0; i < draw_->meshes.size(); ++i)
+            if (draw_->meshes[i].absPath == meshPath) { mi = static_cast<int>(i); break; }
+          if (mi >= 0) {
+            const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
+            if (m.sourceFaceId.size() == m.indices.size() / 3) {
+              for (size_t t = 0; t < m.sourceFaceId.size(); ++t)
+                if (faces.count(m.sourceFaceId[t])) {
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 0]);
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 1]);
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 2]);
+                }
+              if (!highlightSubsetIndices_.empty()) {
+                highlightSubsetMesh_ = mi;
+                tri = &highlightSubsetIndices_;
+              } else {
+                mi = -1;
+              }
+            } else {
+              mi = -1;
+            }
+          }
+        }
+      }
+    }
+  }
+  // No GeomSubset: a selected mesh highlights all its triangles.
+  if (mi < 0 && selMeshIndex_ >= 0 &&
+      static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+    mi = selMeshIndex_;
+    tri = &draw_->meshes[static_cast<size_t>(mi)].indices;
+  }
+  if (mi < 0 || !tri) return;
+
+  // World-space orange edge lines (for the Vulkan line-pipeline highlight).
+  const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
+  const float* W = m.world;  // column-major
+  auto wpos = [&](uint32_t vi, float o[3]) {
+    const DrawVertex& v = m.vertices[vi];
+    o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
+    o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
+    o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
+  };
+  const float orange[3] = {1.0f, 0.55f, 0.1f};
+  highlightLinesData_.reserve(tri->size() * 2);
+  const size_t nv = m.vertices.size();
+  for (size_t t = 0; t + 2 < tri->size(); t += 3) {
+    const uint32_t a = (*tri)[t], b = (*tri)[t + 1], c = (*tri)[t + 2];
+    if (a >= nv || b >= nv || c >= nv) continue;
+    HelperVertex va{}, vb{}, vc{};
+    wpos(a, va.pos); wpos(b, vb.pos); wpos(c, vc.pos);
+    for (int k = 0; k < 3; ++k) { va.col[k] = vb.col[k] = vc.col[k] = orange[k]; }
+    highlightLinesData_.push_back(va); highlightLinesData_.push_back(vb);
+    highlightLinesData_.push_back(vb); highlightLinesData_.push_back(vc);
+    highlightLinesData_.push_back(vc); highlightLinesData_.push_back(va);
   }
 }
 
@@ -1145,6 +1386,9 @@ void Gui::drawInspector() {
     }
     ImGui::TextDisabled("Type: %s", inspectorCacheType_.c_str());
 
+    // Blendshape editor (only renders when the selection has blendshape targets).
+    drawBlendShapeEditor();
+
     // Prim metadata (kind/active/hidden/displayName/doc/...).
     if (!inspectorCacheMeta_.empty() &&
         ImGui::CollapsingHeader("Prim metadata", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1369,6 +1613,81 @@ void Gui::drawInspector() {
   ImGui::End();
 }
 
+void Gui::drawBlendShapeEditor() {
+  if (!draw_ || selPath_.empty()) return;
+
+  // Gather blendshapes (by name, with their in-between weights) from meshes that
+  // are the selection itself, an ancestor of it (selecting a BlendShape child),
+  // or a descendant (selecting a SkelRoot/Xform above the mesh).
+  std::map<std::string, std::vector<float>> shapes;  // name -> inbetween weights
+  const std::string selSlash = selPath_ + "/";
+  for (const DrawMeshCPU& m : draw_->meshes) {
+    if (m.morphTargetChannels.empty()) continue;
+    const std::string meshSlash = m.absPath + "/";
+    const bool related = (m.absPath == selPath_) ||
+                         (m.absPath.rfind(selSlash, 0) == 0) ||
+                         (selPath_.rfind(meshSlash, 0) == 0);
+    if (!related) continue;
+    // morphTargetChannels carries name + ascending usdWeights = [inbetween
+    // weights..., 1.0]; the editor wants the in-between weights (drop the
+    // trailing 1.0 primary). The heavy per-vertex morphs are freed after load.
+    for (const MorphTargetChannelsCPU& tc : m.morphTargetChannels) {
+      std::vector<float>& ib = shapes[tc.name];
+      if (ib.empty() && tc.usdWeights.size() > 1) {
+        for (size_t k = 0; k + 1 < tc.usdWeights.size(); ++k) {
+          ib.push_back(tc.usdWeights[k]);
+        }
+      }
+    }
+  }
+  if (shapes.empty()) return;
+
+  if (!ImGui::CollapsingHeader("Blend Shapes", ImGuiTreeNodeFlags_DefaultOpen)) {
+    return;
+  }
+
+  if (ImGui::Checkbox("Manual weights", &blendActive_)) blendDirty_ = true;
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Reset")) {
+    for (auto& kv : blendWeights_) kv.second = 0.0f;
+    blendDirty_ = true;
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("%zu shape%s", shapes.size(), shapes.size() == 1 ? "" : "s");
+  if (!blendActive_) {
+    ImGui::TextDisabled("Enable 'Manual weights' to drive these (overrides anim).");
+  }
+
+  ImGui::BeginDisabled(!blendActive_);
+  for (auto& kv : shapes) {
+    const std::string& name = kv.first;
+    float& w = blendWeights_[name];  // default 0 (rest)
+    ImGui::PushID(name.c_str());
+    // 0..1 slider; ctrl+click to type an overdrive value (the morph eval
+    // extrapolates beyond the end shapes, Maya-style).
+    if (ImGui::SliderFloat(name.c_str(), &w, 0.0f, 1.0f, "%.3f")) {
+      blendDirty_ = true;
+    }
+    // In-between tick marks on the slider track (amber), so authored intermediate
+    // shapes are visible like Maya's target markers.
+    if (!kv.second.empty()) {
+      const ImVec2 mn = ImGui::GetItemRectMin();
+      const ImVec2 mx = ImGui::GetItemRectMax();
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      for (float iw : kv.second) {
+        const float c = iw < 0.0f ? 0.0f : (iw > 1.0f ? 1.0f : iw);
+        const float x = mn.x + (mx.x - mn.x) * c;
+        dl->AddLine(ImVec2(x, mn.y), ImVec2(x, mn.y + 3.0f),
+                    IM_COL32(255, 200, 60, 255), 1.5f);
+        dl->AddLine(ImVec2(x, mx.y - 3.0f), ImVec2(x, mx.y),
+                    IM_COL32(255, 200, 60, 255), 1.5f);
+      }
+    }
+    ImGui::PopID();
+  }
+  ImGui::EndDisabled();
+}
+
 void Gui::drawSelectionList() {
   ImGui::Begin("Selection");
   ImGui::Text("Selected: %zu", selectionList_.size());
@@ -1555,6 +1874,10 @@ void Gui::drawCameraPanel() {
     if (ImGui::SliderFloat("Dolly sensitivity", &dolly, 0.1f, 4.0f, "%.2f")) {
       cam_->setDollySensitivity(dolly);
     }
+    bool legacyYaw = !cam_->invertYaw();
+    if (ImGui::Checkbox("Legacy yaw direction", &legacyYaw)) {
+      cam_->setInvertYaw(!legacyYaw);
+    }
     bool invert = cam_->invertDolly();
     if (ImGui::Checkbox("Invert dolly", &invert)) {
       cam_->setInvertDolly(invert);
@@ -1563,6 +1886,7 @@ void Gui::drawCameraPanel() {
       cam_->setOrbitSensitivity(1.0f);
       cam_->setPanSensitivity(1.0f);
       cam_->setDollySensitivity(1.0f);
+      cam_->setInvertYaw(true);
       cam_->setInvertDolly(false);
     }
     ImGui::SameLine();
@@ -1659,12 +1983,176 @@ void Gui::drawMaterialsPanel() {
         if (mat.alphaMode == static_cast<int>(AlphaMode::Mask)) {
           ImGui::Text("Alpha cutoff: %.3f", mat.alphaCutoff);
         }
+        if (mat.hasOpenPBRSurface) ImGui::TextUnformatted("Shader: OpenPBRSurface");
+        else if (mat.hasUsdPreviewSurface) ImGui::TextUnformatted("Shader: UsdPreviewSurface");
+        if (!mat.params.empty()) {
+          ImGui::Text("Shader inputs: %zu", mat.params.size());
+        }
+        if (mat.hasLightRtOpenPBR) {
+          ImGui::Text("LightRT flags: textures=%s normals=%s",
+                      mat.lightRtOpenPBR.hasTextureInputs ? "yes" : "no",
+                      mat.lightRtOpenPBR.hasNormalInput ? "yes" : "no");
+        }
         if (mat.baseColorTex >= 0) ImGui::Text("Base color tex: %d", mat.baseColorTex);
         if (mat.metalRoughTex >= 0) ImGui::Text("Metallic/roughness tex: %d", mat.metalRoughTex);
         if (mat.normalTex >= 0) ImGui::Text("Normal tex: %d", mat.normalTex);
+        if (mat.coatNormalTex >= 0) ImGui::Text("Coat normal tex: %d", mat.coatNormalTex);
         if (mat.emissiveTex >= 0) ImGui::Text("Emissive tex: %d", mat.emissiveTex);
+        if (!mat.params.empty() && ImGui::TreeNode("Shader inputs")) {
+          if (ImGui::BeginTable("##shader_inputs", 8,
+                                ImGuiTableFlags_BordersInnerV |
+                                    ImGuiTableFlags_RowBg |
+                                    ImGuiTableFlags_Resizable |
+                                    ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Shader");
+            ImGui::TableSetupColumn("Input");
+            ImGui::TableSetupColumn("Type");
+            ImGui::TableSetupColumn("Value");
+            ImGui::TableSetupColumn("Texture");
+            ImGui::TableSetupColumn("Channel");
+            ImGui::TableSetupColumn("Scale/Bias");
+            ImGui::TableSetupColumn("UV");
+            ImGui::TableHeadersRow();
+            for (const DrawMaterialParamCPU& param : mat.params) {
+              ImGui::TableNextRow();
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(param.shader.c_str());
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(param.name.c_str());
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(MaterialParamTypeName(param.type));
+              ImGui::TableNextColumn();
+              if (param.type == DrawMaterialParamType::Float) {
+                ImGui::Text("%.3f", param.value[0]);
+              } else if (param.type == DrawMaterialParamType::Vec2) {
+                ImGui::Text("%.3f %.3f", param.value[0], param.value[1]);
+              } else {
+                ImGui::Text("%.3f %.3f %.3f", param.value[0], param.value[1],
+                            param.value[2]);
+              }
+              ImGui::TableNextColumn();
+              if (param.texture >= 0) ImGui::Text("%d", param.texture);
+              else if (param.renderTexture >= 0) ImGui::Text("render:%d", param.renderTexture);
+              else ImGui::TextUnformatted("-");
+              ImGui::TableNextColumn();
+              ImGui::TextUnformatted(MaterialParamChannelName(param.channel));
+              ImGui::TableNextColumn();
+              const bool hasScaleBias =
+                  std::fabs(param.sample.scale[0] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[1] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[2] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.scale[3] - 1.0f) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[0]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[1]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[2]) > 1.0e-6f ||
+                  std::fabs(param.sample.bias[3]) > 1.0e-6f;
+              if (hasScaleBias) {
+                ImGui::Text("%.2f %.2f %.2f %.2f / %.2f %.2f %.2f %.2f",
+                            param.sample.scale[0], param.sample.scale[1],
+                            param.sample.scale[2], param.sample.scale[3],
+                            param.sample.bias[0], param.sample.bias[1],
+                            param.sample.bias[2], param.sample.bias[3]);
+              } else {
+                ImGui::TextUnformatted("-");
+              }
+              ImGui::TableNextColumn();
+              if (HasNonIdentityUvXform(param.sample.uv)) {
+                ImGui::Text("%.2f %.2f %.2f / %.2f %.2f %.2f",
+                            param.sample.uv.m00, param.sample.uv.m01,
+                            param.sample.uv.tx, param.sample.uv.m10,
+                            param.sample.uv.m11, param.sample.uv.ty);
+              } else {
+                ImGui::TextUnformatted("-");
+              }
+            }
+            ImGui::EndTable();
+          }
+          ImGui::TreePop();
+        }
       }
       ImGui::PopID();
+    }
+    if (!draw_->textures.empty() &&
+        ImGui::CollapsingHeader("Texture Preview", ImGuiTreeNodeFlags_DefaultOpen)) {
+      const float thumb = 96.0f;
+      const float gap = ImGui::GetStyle().ItemSpacing.x;
+      const float avail = ImGui::GetContentRegionAvail().x;
+      int cols = static_cast<int>((avail + gap) / (thumb + gap));
+      if (cols < 1) cols = 1;
+      for (size_t ti = 0; ti < draw_->textures.size(); ++ti) {
+        if (ti > 0 && (static_cast<int>(ti) % cols) != 0) ImGui::SameLine();
+        ImGui::PushID(static_cast<int>(ti));
+        ImGui::BeginGroup();
+        const DrawTextureCPU& tex = draw_->textures[ti];
+        const light3d::Image* img = &tex.image;
+        if (tex.isUdim && !tex.udimTiles.empty()) img = &tex.udimTiles[0].image;
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p, ImVec2(p.x + thumb, p.y + thumb),
+                          IM_COL32(30, 30, 30, 255));
+        if (img && img->width > 0 && img->height > 0 && img->channels >= 4 &&
+            !img->data.empty()) {
+          const int cells = 32;
+          const float cell = thumb / static_cast<float>(cells);
+          for (int y = 0; y < cells; ++y) {
+            const int sy = (y * img->height) / cells;
+            for (int x = 0; x < cells; ++x) {
+              const int sx = (x * img->width) / cells;
+              const size_t off =
+                  (static_cast<size_t>(sy) * static_cast<size_t>(img->width) +
+                   static_cast<size_t>(sx)) *
+                  4u;
+              if (off + 3 >= img->data.size()) continue;
+              const ImU32 c = IM_COL32(img->data[off + 0], img->data[off + 1],
+                                       img->data[off + 2], img->data[off + 3]);
+              dl->AddRectFilled(ImVec2(p.x + x * cell, p.y + y * cell),
+                                ImVec2(p.x + (x + 1) * cell + 0.5f,
+                                       p.y + (y + 1) * cell + 0.5f),
+                                c);
+            }
+          }
+        }
+        dl->AddRect(p, ImVec2(p.x + thumb, p.y + thumb),
+                    IM_COL32(90, 90, 90, 255));
+        ImGui::Dummy(ImVec2(thumb, thumb));
+        ImGui::Text("#%zu %dx%d%s", ti, img ? img->width : 0, img ? img->height : 0,
+                    tex.isUdim ? " UDIM" : "");
+        if (tex.isUdim) {
+          ImGui::Text("tiles %zu", tex.udimTiles.size());
+        }
+        if (tex.renderUdimId >= 0) ImGui::Text("udim image set %d", tex.renderUdimId);
+        else if (tex.renderImageId >= 0) ImGui::Text("image %d", tex.renderImageId);
+        ImGui::Text("wrap %d/%d%s", tex.wrapS, tex.wrapT,
+                    tex.srgb ? " sRGB" : " raw");
+        if (!tex.assetIdentifier.empty()) {
+          std::string label = std::filesystem::path(tex.assetIdentifier).filename().string();
+          if (label.empty()) label = tex.assetIdentifier;
+          ImGui::TextWrapped("%s", label.c_str());
+          if (ImGui::IsItemHovered()) {
+            std::string tip = tex.assetIdentifier;
+            if (tex.isUdim && !tex.udimTiles.empty()) {
+              tip += "\n";
+              const size_t n = std::min<size_t>(tex.udimTiles.size(), 8);
+              for (size_t ui = 0; ui < n; ++ui) {
+                const DrawUdimTileCPU& tile = tex.udimTiles[ui];
+                tip += std::to_string(tile.udim) + " image " +
+                       std::to_string(tile.renderImageId);
+                if (!tile.assetIdentifier.empty()) {
+                  tip += " ";
+                  tip += tile.assetIdentifier;
+                }
+                tip += "\n";
+              }
+              if (tex.udimTiles.size() > n) {
+                tip += "...";
+              }
+            }
+            ImGui::SetTooltip("%s", tip.c_str());
+          }
+        }
+        ImGui::EndGroup();
+        ImGui::PopID();
+      }
     }
   } else {
     ImGui::TextDisabled("No materials loaded.");
@@ -1859,11 +2347,64 @@ void Gui::drawTimeline() {
   ImGui::End();
 }
 
+// Process resident set size (RSS) in MB, from /proc (Linux). 0 if unavailable.
+static size_t ReadProcessRssMB() {
+  FILE* f = std::fopen("/proc/self/statm", "r");
+  if (!f) return 0;
+  long pages = 0, resident = 0;
+  if (std::fscanf(f, "%ld %ld", &pages, &resident) != 2) resident = 0;
+  std::fclose(f);
+  const long pageSz = sysconf(_SC_PAGESIZE);
+  return static_cast<size_t>((static_cast<long long>(resident) * pageSz) / (1024 * 1024));
+}
+
+// amdgpu VRAM (used,total) in MB via sysfs; fallback when the renderer can't
+// report GPU memory (e.g. the Vulkan backend). 0 if unavailable.
+static bool ReadAmdgpuVramMB(size_t* usedMB, size_t* totalMB) {
+  const char* cards[] = {"/sys/class/drm/card0/device/mem_info_vram_",
+                         "/sys/class/drm/card1/device/mem_info_vram_"};
+  for (const char* base : cards) {
+    auto readVal = [](const std::string& path) -> long long {
+      FILE* f = std::fopen(path.c_str(), "r");
+      if (!f) return -1;
+      long long v = -1;
+      if (std::fscanf(f, "%lld", &v) != 1) v = -1;
+      std::fclose(f);
+      return v;
+    };
+    const long long tot = readVal(std::string(base) + "total");
+    const long long use = readVal(std::string(base) + "used");
+    if (tot > 0 && use >= 0) {
+      if (totalMB) *totalMB = static_cast<size_t>(tot / (1024 * 1024));
+      if (usedMB) *usedMB = static_cast<size_t>(use / (1024 * 1024));
+      return true;
+    }
+  }
+  return false;
+}
+
 void Gui::drawStats() {
   ImGui::Begin("Stats");
   ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate,
               1000.0f / ImGui::GetIO().Framerate);
   ImGui::Text("Backend: %s", renderer_ ? renderer_->caps().backend_name : "?");
+  // CPU RSS + GPU VRAM, refreshed a few times a second (the queries touch /proc
+  // and the driver, so they are throttled rather than run every frame).
+  static size_t cpuMB = 0, vramUsedMB = 0, vramTotalMB = 0;
+  static bool haveVram = false;
+  static double lastPoll = -1.0;
+  const double now = ImGui::GetTime();
+  if (lastPoll < 0.0 || now - lastPoll > 0.5) {
+    lastPoll = now;
+    cpuMB = ReadProcessRssMB();
+    haveVram = renderer_ && renderer_->gpuMemoryMB(&vramUsedMB, &vramTotalMB);
+    if (!haveVram) haveVram = ReadAmdgpuVramMB(&vramUsedMB, &vramTotalMB);
+  }
+  if (cpuMB > 0) ImGui::Text("CPU mem (RSS): %zu MB", cpuMB);
+  if (haveVram) {
+    ImGui::Text("GPU VRAM: %zu / %zu MB (%.0f%%)", vramUsedMB, vramTotalMB,
+                vramTotalMB ? 100.0 * double(vramUsedMB) / double(vramTotalMB) : 0.0);
+  }
   ImGui::Text("Skinning: %s requested, %s effective",
               SkinningModeLabel(skinning_.requested),
               SkinningModeLabel(skinning_.effective));
@@ -1871,12 +2412,24 @@ void Gui::drawStats() {
   ImGui::Separator();
   if (draw_) {
     ImGui::Text("Meshes: %zu", draw_->meshes.size());
-    {
-      size_t totalVerts = 0;
-      for (const auto& m : draw_->meshes) totalVerts += m.vertices.size();
-      ImGui::Text("Vertices: %zu", totalVerts);
-    }
+    // draw_->vertexCount is captured at load (CPU geometry may be freed after
+    // upload on the --next path, so summing meshes[].vertices would read 0).
+    ImGui::Text("Vertices: %zu", draw_->vertexCount);
     ImGui::Text("Triangles: %zu", draw_->triangleCount);
+    // Frustum-cull stats (this frame). "visible" reflects per-mesh + per-instance
+    // culling; with culling disabled these equal the totals.
+    ImGui::Text("Visible meshes: %zu / %zu", statVisibleMeshes_,
+                draw_->meshes.size());
+    if (statTotalInstances_ > 0) {
+      ImGui::Text("Visible instances: %zu / %zu", statVisibleInstances_,
+                  statTotalInstances_);
+      if (cullRunning_.load()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.1f, 1.0f), "(culling\xE2\x80\xA6)");
+      }
+    }
+    ImGui::Text("Drawn triangles: %zu", statNonInstTris_ + statInstTris_);
+    ImGui::Text("Draw calls: %zu", statDrawCalls_);
     ImGui::Text("Materials: %zu", draw_->materials.size());
     ImGui::Text("Textures: %zu", draw_->textures.size());
     if (draw_->hasBounds) {
@@ -1941,7 +2494,10 @@ void Gui::handleNavigation() {
   }
 
   if (navMode_ == 0 && vpHovered_ && alt) {
-    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) navMode_ = 1;
+    // Shift+Alt+LMB pans (an alternative to Alt+MMB for trackpads / keypads with
+    // no middle button); plain Alt+LMB orbits. navMode_ latches until release, so
+    // the modifier state at press time selects the mode for the whole drag.
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) navMode_ = io.KeyShift ? 2 : 1;
     else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) navMode_ = 2;
     else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) navMode_ = 3;
   }
@@ -1960,6 +2516,10 @@ void Gui::handleNavigation() {
 
   // Maya-style hotkeys (viewport hovered, no text field focused).
   if (vpHovered_ && !io.WantTextInput) {
+    // 'w' cycles wireframe: shaded -> wireframe only -> wireframe + shading -> ...
+    if (!io.KeyAlt && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W)) {
+      wireCycle_ = (wireCycle_ + 1) % 3;
+    }
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) goSelectionBack();
     if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) goSelectionForward();
     if (ImGui::IsKeyPressed(ImGuiKey_0)) homeView();
@@ -2068,9 +2628,392 @@ void Gui::buildViewVisibilityMask() {
   viewVisible_.clear();
   if (!draw_ || draw_->meshes.empty()) return;
   viewVisible_.resize(draw_->meshes.size(), uint8_t{1});
-  for (size_t i = 0; i < draw_->meshes.size(); ++i) {
-    viewVisible_[i] = meshVisibleForView(i) ? uint8_t{1} : uint8_t{0};
+
+  // Per-mesh frustum culling. Extract the frustum from the GL-convention P*V
+  // (Z in [-1,1]) regardless of backend: light3d's Gribb-Hartmann near-plane
+  // formula assumes that range, and the side/far planes are convention-neutral.
+  // Instanced prototypes carry a scene-spanning union AABB so they rarely cull
+  // here -- per-instance culling (A4) handles those; static-batched non-instanced
+  // meshes have tight world AABBs and cull well.
+  const bool doCull = cullEnabled_ && cam_;
+  light3d::Frustum fr;
+  if (doCull) {
+    const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+    fr = light3d::Frustum::fromViewProjection(vp);
   }
+  // Per-mesh stats here; per-instance stats (visible instances + instanced tris)
+  // are owned by cullInstances (dirty-gated, so not recomputed every frame).
+  statVisibleMeshes_ = 0;
+  statTotalInstances_ = 0;
+  statNonInstTris_ = 0;
+  statDrawCalls_ = 0;
+  for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+    const DrawMeshCPU& m = draw_->meshes[i];
+    const size_t ninst = m.instanceCount();
+    statTotalInstances_ += ninst;
+    bool vis = meshVisibleForView(i);
+    if (vis && doCull) {
+      const light3d::Vec3 mn{m.aabbMin[0], m.aabbMin[1], m.aabbMin[2]};
+      const light3d::Vec3 mx{m.aabbMax[0], m.aabbMax[1], m.aabbMax[2]};
+      if (fr.testAABB(mn, mx) == light3d::CullResult::Outside) vis = false;
+    }
+    viewVisible_[i] = vis ? uint8_t{1} : uint8_t{0};
+    if (!vis) continue;
+    ++statVisibleMeshes_;
+    if (ninst > 0) {
+      ++statDrawCalls_;  // one instanced draw per visible prototype mesh
+    } else {
+      // Triangle count from submesh metadata (DrawMeshCPU.indices is freed after
+      // GPU upload, but submeshes survive).
+      for (const DrawSubmesh& s : m.submeshes) statNonInstTris_ += s.indexCount / 3;
+      statDrawCalls_ += m.submeshes.size();
+    }
+  }
+}
+
+Gui::~Gui() { joinCullWorker(); }
+
+void Gui::joinCullWorker() {
+  if (cullThread_.joinable()) cullThread_.join();
+  cullRunning_.store(false);
+  cullDone_.store(false);
+}
+
+namespace {
+// Below this instance count the flat per-instance cull is already cheap, so the
+// grid (build cost + memory) is not worth it. Matches the RT path's threshold.
+constexpr std::uint32_t kInstGridMinInstances = 4096;
+}  // namespace
+
+// (Re)build instGrids_ -- one coarse spatial grid per instanced prototype -- when
+// the scene changes. Read-only afterwards, so the cull worker can share them.
+void Gui::ensureInstanceGrids() {
+  if (instGridsFor_ == draw_) return;
+  instGrids_.clear();
+  instGridsFor_ = draw_;
+  if (!draw_) return;
+  instGrids_.resize(draw_->meshes.size());
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    if (m.instanceCount() < kInstGridMinInstances) continue;
+    RtLodProto p;
+    p.instanceXforms = m.instanceXforms.data();
+    p.instanceCount = static_cast<std::uint32_t>(m.instanceCount());
+    p.protoAabbMin = m.protoAabbMin;
+    p.protoAabbMax = m.protoAabbMax;
+    p.meshId = static_cast<std::uint32_t>(mi);
+    BuildRtLodGrid(p, kInstGridMinInstances, &instGrids_[mi]);
+  }
+}
+
+// Frustum-test one instanced mesh; append visible instances' 12-float o2w (+ 3-float
+// color) to `out`. cullEnabled=false restores the full set. When lodCam.lodEnabled,
+// also size-classify: sub-pixel (<cullPx) instances are dropped, and (when proxyOut
+// is non-null + lodCam.proxyEnabled) small (<fullPx) instances become shared box
+// proxies -- their box-fit o2w + tint are *appended* to proxyOut (never cleared
+// here; the caller accumulates proxies across all prototypes). Static +
+// snapshot-only, so it is safe to run on the worker thread.
+void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
+                               bool cullEnabled, const RtLodGrid* grid,
+                               const RtLodCamera& lodCam, CullJobMesh* out,
+                               CullJobMesh* proxyOut) {
+  const size_t ninst = m.instanceCount();
+  out->hasColors = m.instanceColors.size() == ninst * 3;
+  out->hasOpacities = m.instanceOpacities.size() == ninst;
+  out->xforms.clear();
+  out->colors.clear();
+  out->opacities.clear();
+  if (!cullEnabled) {
+    out->xforms = m.instanceXforms;  // full set (a prior cull may have compacted)
+    if (out->hasColors) out->colors = m.instanceColors;
+    if (out->hasOpacities) out->opacities = m.instanceOpacities;
+    out->count = static_cast<uint32_t>(ninst);
+    return;
+  }
+  const float* lo = m.protoAabbMin;
+  const float* hi = m.protoAabbMax;
+  const bool hc = out->hasColors;
+  const bool ho = out->hasOpacities;
+  const bool lod = lodCam.lodEnabled;
+  // Degenerate (unset) prototype AABB carries no size -> never size-cull/proxy it.
+  const bool degenerate = !(hi[0] > lo[0] || hi[1] > lo[1] || hi[2] > lo[2]);
+  const bool doProxy = proxyOut && lodCam.proxyEnabled && !degenerate;
+  // Classify + append instance k. Frustum-tests its world AABB unless `assumeInside`
+  // (its whole cell already tested Inside); when LOD is on the AABB is always built
+  // (its projected size drives Full / Proxy / Cull).
+  auto emit = [&](std::uint32_t k, bool assumeInside) {
+    const float* o2w = &m.instanceXforms[k * 12];
+    float center[3], radius = 0.0f;
+    if (!assumeInside || (lod && !degenerate)) {
+      float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
+      for (int c = 0; c < 8; ++c) {
+        const float px = (c & 1) ? hi[0] : lo[0];
+        const float py = (c & 2) ? hi[1] : lo[1];
+        const float pz = (c & 4) ? hi[2] : lo[2];
+        for (int r = 0; r < 3; ++r) {
+          const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
+                          o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
+          wmn[r] = std::min(wmn[r], w);
+          wmx[r] = std::max(wmx[r], w);
+        }
+      }
+      if (!assumeInside &&
+          fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
+              light3d::CullResult::Outside)
+        return;
+      for (int r = 0; r < 3; ++r) center[r] = 0.5f * (wmn[r] + wmx[r]);
+      const float dx = wmx[0] - wmn[0], dy = wmx[1] - wmn[1], dz = wmx[2] - wmn[2];
+      radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+    if (lod && !degenerate) {
+      const float px = ProjectedRadiusPx(center, radius, lodCam);
+      if (px < lodCam.cullPx) return;  // sub-pixel: drop entirely
+      if (doProxy && px < lodCam.fullPx) {
+        float bx[12];
+        BoxFitXform(o2w, lo, hi, bx);  // unit box -> this instance's world AABB
+        proxyOut->xforms.insert(proxyOut->xforms.end(), bx, bx + 12);
+        const float* tint = hc ? &m.instanceColors[k * 3] : m.flatColor;
+        proxyOut->colors.insert(proxyOut->colors.end(), tint, tint + 3);
+        return;
+      }
+    }
+    out->xforms.insert(out->xforms.end(), o2w, o2w + 12);
+    if (hc)
+      out->colors.insert(out->colors.end(), &m.instanceColors[k * 3],
+                         &m.instanceColors[k * 3] + 3);
+    if (ho) out->opacities.push_back(m.instanceOpacities[k]);
+  };
+
+  if (grid && grid->valid) {
+    // Cell-rejection path: skip whole off-screen cells, accept whole inside cells
+    // without per-instance tests, and only per-instance test boundary cells. The
+    // emitted set is identical to the flat loop (order differs, irrelevant for
+    // instancing). Reserve from the non-rejected cells to avoid regrowth.
+    std::uint32_t upper = 0;
+    for (const RtLodGridCell& cell : grid->cells) {
+      if (fr.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
+                      {cell.wmx[0], cell.wmx[1], cell.wmx[2]}) ==
+          light3d::CullResult::Outside)
+        continue;
+      upper += cell.count;
+    }
+    out->xforms.reserve(static_cast<size_t>(upper) * 12);
+    if (hc) out->colors.reserve(static_cast<size_t>(upper) * 3);
+    if (ho) out->opacities.reserve(static_cast<size_t>(upper));
+    for (const RtLodGridCell& cell : grid->cells) {
+      const light3d::CullResult cr =
+          fr.testAABB({cell.wmn[0], cell.wmn[1], cell.wmn[2]},
+                      {cell.wmx[0], cell.wmx[1], cell.wmx[2]});
+      if (cr == light3d::CullResult::Outside) continue;
+      const bool inside = (cr == light3d::CullResult::Inside);
+      for (std::uint32_t i = cell.begin; i < cell.begin + cell.count; ++i)
+        emit(grid->order[i], inside);
+    }
+  } else {
+    for (std::uint32_t k = 0; k < ninst; ++k) emit(k, /*assumeInside=*/false);
+  }
+  out->count = static_cast<uint32_t>(out->xforms.size() / 12);
+  if (proxyOut) {
+    proxyOut->hasColors = true;  // every box proxy carries a tint
+    proxyOut->count = static_cast<uint32_t>(proxyOut->xforms.size() / 12);
+  }
+}
+
+// Build the LOD camera (thresholds + focal length) for the raster instance cull.
+RtLodCamera Gui::buildRasterLodCam() const {
+  RtLodCamera c;
+  c.lodEnabled = rasterLodEnabled_;
+  c.proxyEnabled =
+      rasterLodEnabled_ && renderer_ && renderer_->supportsProxyDraw();
+  c.frustumCull = true;
+  c.fullPx = rasterLodFullPx_;
+  c.cullPx = rasterLodCullPx_;
+  c.bandFrac = 0.0f;  // hard switch -- no accumulation to resolve a dithered band
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  std::memcpy(c.viewProj.m, vp.m, sizeof(c.viewProj.m));
+  const light3d::Vec3 eye = cam_->eye();
+  c.eye = eye;
+  c.forward = light3d::normalize(cam_->target() - eye);
+  c.nearPlane = cam_->nearPlane();
+  // focalPx = (viewportH * 0.5) / tan(fovY/2) = 0.5 * H * proj[1][1]. Matches the
+  // RT path's vpH_ * proj_[5] derivation.
+  const light3d::Mat4 proj = cam_->proj(/*zeroToOneDepth=*/false);
+  c.focalPx = 0.5f * static_cast<float>(viewportH_) *
+              (proj.m[5] != 0.0f ? proj.m[5] : 1.0f);
+  return c;
+}
+
+// Worker thread: compact every visible instanced mesh into cullJobResult_ from the
+// main-thread snapshots (cullJob*). No GPU calls, no live Gui/camera reads.
+void Gui::cullWorkerMain() {
+  const DrawScene* d = cullJobDraw_;
+  // Build the instance grids here (off the main thread) so the one-time build cost
+  // on a huge scene -- O(instances) over the mega-prototypes -- never freezes the
+  // UI; the first worker run is slower, later runs reap the cell-rejection speedup.
+  ensureInstanceGrids();
+  const light3d::Frustum fr = light3d::Frustum::fromViewProjection(cullJobVP_);
+  cullJobResult_.clear();
+  cullJobProxy_.xforms.clear();
+  cullJobProxy_.colors.clear();
+  cullJobProxy_.opacities.clear();
+  cullJobProxy_.count = 0;
+  size_t visInstances = 0, instTris = 0;
+  for (size_t mi = 0; mi < d->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = d->meshes[mi];
+    if (m.instanceCount() == 0) continue;
+    const bool meshVisible =
+        mi >= cullJobViewVisible_.size() || cullJobViewVisible_[mi] != 0;
+    if (!meshVisible) continue;
+    size_t protoTris = 0;
+    for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
+    CullJobMesh r;
+    r.meshIndex = mi;
+    const RtLodGrid* grid =
+        (cullJobGrids_ && mi < cullJobGrids_->size()) ? &(*cullJobGrids_)[mi] : nullptr;
+    compactMeshInstances(m, fr, cullJobEnabled_, grid, cullJobLodCam_, &r,
+                         &cullJobProxy_);
+    visInstances += r.count;
+    instTris += protoTris * r.count;
+    cullJobResult_.push_back(std::move(r));
+  }
+  cullJobVisInstances_ = visInstances;
+  cullJobInstTris_ = instTris;
+  cullDone_.store(true, std::memory_order_release);
+}
+
+// Synchronous path (headless / cullAsync_ off): compact + apply inline, exact
+// original behavior so screenshots stay deterministic.
+void Gui::cullInstancesSync() {
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
+                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_;
+  if (!changed)
+    for (int i = 0; i < 16; ++i)
+      if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
+  if (!changed) return;
+  std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
+  lastCullValid_ = true;
+  lastCullEnabled_ = cullEnabled_;
+  lastCullDraw_ = draw_;
+  lastCullRasterLod_ = rasterLodEnabled_;
+  ensureInstanceGrids();
+  const RtLodCamera lodCam = buildRasterLodCam();
+  proxyResult_.xforms.clear();
+  proxyResult_.colors.clear();
+  proxyResult_.opacities.clear();
+  proxyResult_.count = 0;
+
+  const light3d::Frustum fr = light3d::Frustum::fromViewProjection(vp);
+  size_t visInstances = 0, instTris = 0;
+  CullJobMesh r;
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    if (m.instanceCount() == 0) continue;
+    const bool meshVisible = mi >= viewVisible_.size() || viewVisible_[mi] != 0;
+    if (!meshVisible) continue;
+    size_t protoTris = 0;
+    for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
+    const RtLodGrid* grid = mi < instGrids_.size() ? &instGrids_[mi] : nullptr;
+    compactMeshInstances(m, fr, cullEnabled_, grid, lodCam, &r, &proxyResult_);
+    // Route the GPU upload to the render thread when threaded (else inline).
+    uint32_t cnt = r.count;
+    bool hc = r.hasColors;
+    bool ho = r.hasOpacities;
+    std::vector<float> xf = r.xforms, col = r.colors, op = r.opacities;
+    gpu([this, mi, cnt, hc, ho, xf = std::move(xf), col = std::move(col),
+         op = std::move(op)]() mutable {
+      renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr,
+                                          ho ? op.data() : nullptr, cnt);
+    });
+    visInstances += r.count;
+    instTris += protoTris * r.count;
+  }
+  // Upload the accumulated box proxies (one shared instanced draw). Always called
+  // (count 0 when LOD off) so a previous frame's proxies are cleared.
+  {
+    uint32_t pc = proxyResult_.count;
+    std::vector<float> pxf = std::move(proxyResult_.xforms);
+    std::vector<float> pcol = std::move(proxyResult_.colors);
+    gpu([this, pc, pxf = std::move(pxf), pcol = std::move(pcol)]() mutable {
+      renderer_->updateProxyInstances(pxf.data(), pcol.data(), pc);
+    });
+  }
+  statVisibleInstances_ = visInstances;
+  statInstTris_ = instTris;
+}
+
+void Gui::cullInstances() {
+  if (!draw_ || !renderer_ || !cam_) return;
+  // Only instanced prototypes carry instanceXforms; nothing to do otherwise.
+  bool anyInstanced = false;
+  for (const auto& m : draw_->meshes) {
+    if (m.instanceCount() > 0) { anyInstanced = true; break; }
+  }
+  if (!anyInstanced) {
+    if (!cullRunning_.load()) { statVisibleInstances_ = 0; statInstTris_ = 0; }
+    return;
+  }
+  if (!cullAsync_) { cullInstancesSync(); return; }
+
+  // (1) Apply a finished worker result on the main thread (the GPU upload).
+  if (cullDone_.load(std::memory_order_acquire)) {
+    if (cullThread_.joinable()) cullThread_.join();
+    for (CullJobMesh& r : cullJobResult_) {
+      size_t mi = r.meshIndex;
+      uint32_t cnt = r.count;
+      bool hc = r.hasColors;
+      bool ho = r.hasOpacities;
+      std::vector<float> xf = std::move(r.xforms), col = std::move(r.colors),
+                         op = std::move(r.opacities);
+      gpu([this, mi, cnt, hc, ho, xf = std::move(xf), col = std::move(col),
+           op = std::move(op)]() mutable {
+        renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr,
+                                            ho ? op.data() : nullptr, cnt);
+      });
+    }
+    // Apply the accumulated box proxies (shared instanced draw).
+    {
+      uint32_t pc = cullJobProxy_.count;
+      std::vector<float> pxf = std::move(cullJobProxy_.xforms);
+      std::vector<float> pcol = std::move(cullJobProxy_.colors);
+      gpu([this, pc, pxf = std::move(pxf), pcol = std::move(pcol)]() mutable {
+        renderer_->updateProxyInstances(pxf.data(), pcol.data(), pc);
+      });
+    }
+    statVisibleInstances_ = cullJobVisInstances_;
+    statInstTris_ = cullJobInstTris_;
+    cullDone_.store(false);
+    cullRunning_.store(false);
+  }
+
+  // (2) (Re)launch the worker when the view / cull toggle / scene changed. While a
+  // worker runs the renderer keeps the previous visible set, so the UI never blocks.
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
+                 draw_ != lastCullDraw_ || rasterLodEnabled_ != lastCullRasterLod_;
+  if (!changed)
+    for (int i = 0; i < 16; ++i)
+      if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
+  if (!changed || cullRunning_.load()) return;  // up to date, or worker busy
+  lastCullRasterLod_ = rasterLodEnabled_;
+  std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
+  lastCullValid_ = true;
+  lastCullEnabled_ = cullEnabled_;
+  lastCullDraw_ = draw_;
+  // Snapshot worker inputs: instanceXforms/protoAabb are static after load,
+  // viewVisible_ is copied, so the worker races nothing the main thread mutates.
+  // instGrids_ is built by the worker (cullWorkerMain) on its first run and is
+  // read-only thereafter, so sharing it by pointer is race-free; building there
+  // keeps the one-time O(instances) cost off the main thread.
+  cullJobVP_ = vp;
+  cullJobViewVisible_ = viewVisible_;
+  cullJobEnabled_ = cullEnabled_;
+  cullJobDraw_ = draw_;
+  cullJobGrids_ = &instGrids_;
+  cullJobLodCam_ = buildRasterLodCam();  // camera read on main, used by the worker
+  cullRunning_.store(true);
+  cullDone_.store(false);
+  cullThread_ = std::thread(&Gui::cullWorkerMain, this);
 }
 
 void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) {
@@ -2079,7 +3022,7 @@ void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) 
   const char* title = "Viewport navigation";
   const std::string modeLine = std::string("Mode: ") + NavModeLabel(navMode_);
   const char* lineOrbit = "Alt+LMB Orbit";
-  const char* linePan = "Alt+MMB Pan";
+  const char* linePan = "Alt+MMB / Shift+Alt+LMB Pan";
   const char* lineDolly = "Alt+RMB / Wheel Dolly";
   const char* lineSelect = "[ / ] Prev/Next selection";
   const char* lineHistory = "Alt+Left / Alt+Right Selection back/forward";
@@ -2375,17 +3318,50 @@ void Gui::drawViewport() {
   viewportH_ = h;
 
   if (renderer_ && cam_ && w > 0 && h > 0) {
-    renderer_->resizeViewport(w, h);
+    // resizeViewport is a GL op (re-allocates the offscreen FBO textures); in the
+    // threaded path it must run on the render thread that owns the context, not
+    // here on the UI thread. gpu() routes it to the op-queue (inline when single
+    // threaded). viewportTexture()'s id is stable across resizes, so ImGui::Image
+    // can reference it now and the render thread fills it.
+    gpu([this, w, h] { renderer_->resizeViewport(w, h); });
 
     const ImTextureID tex = static_cast<ImTextureID>(renderer_->viewportTexture());
     const bool flip = renderer_->caps().flipViewportV;
     const ImVec2 uv0 = flip ? ImVec2(0, 1) : ImVec2(0, 0);
     const ImVec2 uv1 = flip ? ImVec2(1, 0) : ImVec2(1, 1);
-    ImGui::Image(tex, avail, uv0, uv1);
-    vpHovered_ = ImGui::IsItemHovered();
-    handleNavigation();
+    // Only draw the viewport image once the backend has a real texture handle. On the
+    // threaded path the offscreen target (and its ImGui descriptor) is created on the
+    // render thread; before its first frame viewportTexture() can be 0, and emitting
+    // ImGui::Image(0) binds an empty descriptor set that the ImGui fragment shader then
+    // samples out-of-bounds -> GPU fault / device loss (VK). Skip it until it's ready.
+    if (tex) ImGui::Image(tex, avail, uv0, uv1);
+    else ImGui::Dummy(avail);
+    const bool imageHovered = ImGui::IsItemHovered();
     const ImVec2 imageMin = ImGui::GetItemRectMin();
     const ImVec2 imageMax = ImGui::GetItemRectMax();
+    bool navButtonHovered = false;
+    {
+      const float buttonSize = ImGui::GetFrameHeight();
+      ImGui::SetCursorScreenPos(ImVec2(imageMax.x - buttonSize - 8.0f,
+                                       imageMin.y + 8.0f));
+      ImGui::PushID("viewport_nav_help");
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+      ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(18, 20, 24, 180));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(42, 48, 58, 220));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(64, 72, 86, 240));
+      if (ImGui::Button("?", ImVec2(buttonSize, buttonSize))) {
+        showNavHelp_ = !showNavHelp_;
+      }
+      navButtonHovered = ImGui::IsItemHovered();
+      if (navButtonHovered) {
+        ImGui::SetTooltip("Viewport navigation");
+      }
+      ImGui::PopStyleColor(3);
+      ImGui::PopStyleVar();
+      ImGui::PopID();
+    }
+    vpHovered_ = imageHovered && !navButtonHovered;
+    handleNavigation();
     drawNavigationOverlay(imageMin, imageMax);
 
     // Prim path labels overlay
@@ -2559,11 +3535,12 @@ void Gui::drawViewport() {
   ImGui::End();
 }
 
-void Gui::renderViewportScene() {
+void Gui::renderViewportScene(FramePacket* packet) {
   if (!renderer_ || !cam_ || viewportW_ <= 0 || viewportH_ <= 0) return;
 
   cam_->setAspect(static_cast<float>(viewportW_) / static_cast<float>(viewportH_));
-  renderer_->resizeViewport(viewportW_, viewportH_);
+  const int vpW = viewportW_, vpH = viewportH_;
+  gpu([this, vpW, vpH] { renderer_->resizeViewport(vpW, vpH); });
 
   const light3d::Mat4 viewM = cam_->view();
   const light3d::Mat4 projM = cam_->proj(renderer_->caps().usesZeroToOneDepth);
@@ -2576,23 +3553,114 @@ void Gui::renderViewportScene() {
   p.cameraPos[1] = eye.y;
   p.cameraPos[2] = eye.z;
   p.mode = mode_;
+  p.wireMode = wireCycle_;  // 'w' key: 0 off / 1 wire-only / 2 wire+shaded
+  p.displacement = displacementEnabled_;
+  p.displacementScale = displacementScale_;
+  p.maxTessLevel = maxTessLevel_;
   // Don't outline a hidden selection.
   const bool selHidden =
       selMeshIndex_ >= 0 &&
       !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
   p.highlightMeshIndex = selHidden ? -1 : selMeshIndex_;
+  // A selected GeomSubset highlights just its faces on the parent mesh (GL
+  // polygon-mode path).
+  if (highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
+      meshVisibleForView(static_cast<size_t>(highlightSubsetMesh_))) {
+    p.highlightMeshIndex = highlightSubsetMesh_;
+    p.highlightIndices = highlightSubsetIndices_.data();
+    p.highlightIndexCount = static_cast<int>(highlightSubsetIndices_.size());
+  }
+  // Vulkan highlight: world-space edge lines (whole mesh or subset).
+  if (p.highlightMeshIndex >= 0 && !highlightLinesData_.empty()) {
+    p.highlightLines = highlightLinesData_.data();
+    p.highlightLineVertexCount = static_cast<int>(highlightLinesData_.size());
+  }
   for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
+  // Scene bbox for the depth + position AOVs.
+  if (draw_ && draw_->hasBounds) {
+    float dx = draw_->aabbMax[0] - draw_->aabbMin[0];
+    float dy = draw_->aabbMax[1] - draw_->aabbMin[1];
+    float dz = draw_->aabbMax[2] - draw_->aabbMin[2];
+    p.depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+    for (int i = 0; i < 3; ++i) {
+      p.sceneMin[i] = draw_->aabbMin[i];
+      p.sceneExtent[i] = std::max(1e-4f, draw_->aabbMax[i] - draw_->aabbMin[i]);
+    }
+  }
+  if (draw_ && draw_->hasPreviewLight) {
+    for (int i = 0; i < 3; ++i) {
+      p.lightDir[i] = draw_->previewLightDir[i];
+      p.lightColor[i] = draw_->previewLightColor[i];
+    }
+  }
+  // Per-phase frame timing (TUSDVIEW_TIME_FRAME): isolates where a heavy scene
+  // spends its frame -- instance cull/upload (CPU + GPU upload) vs renderFrame
+  // (GPU draw submission). The GPU rasterisation itself lands largely in present()
+  // (timed in app.cc), since GL/VK only flush there.
+  static const bool timeFrame = std::getenv("TUSDVIEW_TIME_FRAME") != nullptr;
+  using Clock = std::chrono::steady_clock;
+  auto t0 = timeFrame ? Clock::now() : Clock::time_point{};
   buildViewVisibilityMask();
+  auto t1 = timeFrame ? Clock::now() : Clock::time_point{};
+  cullInstances();  // per-instance frustum cull (updates renderer instance buffers)
+  auto t2 = timeFrame ? Clock::now() : Clock::time_point{};
   if (!viewVisible_.empty()) {
     p.meshVisible = viewVisible_.data();
     p.meshVisibleCount = static_cast<int>(viewVisible_.size());
   }
+  // Purpose visibility for the RT TLAS (PurposeId bit order: default, render,
+  // proxy, guide). Raster gets the same filtering via viewVisible_.
+  p.purposeVisibleMask = (showPurposeDefault_ ? 1u : 0u) |
+                         (showPurposeRender_ ? 2u : 0u) |
+                         (showPurposeProxy_ ? 4u : 0u) |
+                         (showPurposeGuide_ ? 8u : 0u);
   buildHelpers();
   p.helperLines = helperLines_.empty() ? nullptr : helperLines_.data();
   p.helperLineVertexCount = static_cast<int>(helperLines_.size());
   p.overlayLines = overlayLines_.empty() ? nullptr : overlayLines_.data();
   p.overlayLineVertexCount = static_cast<int>(overlayLines_.size());
-  renderer_->renderFrame(p);
+
+  if (!packet) {
+    renderer_->renderFrame(p);  // single-threaded: render inline
+    if (timeFrame) {
+      auto t3 = Clock::now();
+      auto ms = [](auto a, auto b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+      };
+      std::fprintf(stderr,
+                   "[frame] viewmask=%.1fms cull+upload=%.1fms renderFrame=%.1fms "
+                   "(vis inst=%zu, inst tris=%zu)\n",
+                   ms(t0, t1), ms(t1, t2), ms(t2, t3), statVisibleInstances_,
+                   statInstTris_);
+    }
+    return;
+  }
+  // Threaded: copy everything the render thread needs into the owned packet.
+  std::memcpy(packet->view, viewM.m, sizeof(packet->view));
+  std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
+  packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
+  packet->mode = p.mode;
+  for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
+  for (int i = 0; i < 3; ++i) {
+    packet->lightDir[i] = p.lightDir[i];
+    packet->lightColor[i] = p.lightColor[i];
+  }
+  packet->depthScale = p.depthScale;
+  for (int i = 0; i < 3; ++i) { packet->sceneMin[i] = p.sceneMin[i]; packet->sceneExtent[i] = p.sceneExtent[i]; }
+  packet->highlightMeshIndex = p.highlightMeshIndex;
+  if (p.highlightIndices)
+    packet->highlightIndices.assign(p.highlightIndices, p.highlightIndices + p.highlightIndexCount);
+  if (p.highlightLines)
+    packet->highlightLines.assign(p.highlightLines, p.highlightLines + p.highlightLineVertexCount);
+  if (p.helperLines)
+    packet->helperLines.assign(p.helperLines, p.helperLines + p.helperLineVertexCount);
+  if (p.overlayLines)
+    packet->overlayLines.assign(p.overlayLines, p.overlayLines + p.overlayLineVertexCount);
+  if (p.meshVisible)
+    packet->meshVisible.assign(p.meshVisible, p.meshVisible + p.meshVisibleCount);
+  packet->viewportW = vpW;
+  packet->viewportH = vpH;
+  packet->hasParams = true;
 }
 
 void Gui::buildHelpers() {

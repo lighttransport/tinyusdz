@@ -6,6 +6,105 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
+		const value = params.get(key);
+		if (value) return value;
+	}
+	return null;
+}
+
+function getDisplayNameFromURI(uri) {
+	try {
+		const parsed = new URL(uri, window.location.href);
+		return parsed.pathname.split('/').filter(Boolean).pop() || uri;
+	} catch {
+		return uri.split('/').pop() || uri;
+	}
+}
+
+function formatDurationMs(ms) {
+	if (!Number.isFinite(ms)) return 'n/a';
+	return ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+	if (!Number.isFinite(bytes)) return 'n/a';
+	const sign = bytes < 0 ? '-' : '';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	let value = Math.abs(bytes);
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${sign}${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+	const jsHeap = performance.memory?.usedJSHeapSize;
+	const wasmHeap = currentLoader?.native_?.HEAPU8?.buffer?.byteLength;
+	return {
+		jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+		wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+	};
+}
+
+function formatMemoryUse(before, after, key) {
+	const current = after?.[key];
+	if (!Number.isFinite(current)) return 'n/a';
+	const previous = before?.[key];
+	if (!Number.isFinite(previous)) return formatBytes(current);
+	const delta = current - previous;
+	return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
+}
+
+function beginLoadStats(fileSize = null) {
+	const stats = {
+		startTime: performance.now(),
+		fileSize,
+		fetchMs: null,
+		parseMs: null,
+		processMs: null,
+		totalMs: null,
+		memoryBefore: captureMemorySnapshot(),
+		memoryAfter: null
+	};
+	updateLoadStatsPanel(stats, 'Loading...');
+	return stats;
+}
+
+function updateLoadStatsPanel(stats, overrideText = null) {
+	const el = document.getElementById('loadStats');
+	if (!el) return;
+	el.style.display = 'block';
+	if (overrideText) {
+		el.textContent = overrideText;
+		return;
+	}
+	el.textContent = [
+		`File: ${formatBytes(stats.fileSize)}`,
+		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
+		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Total: ${formatDurationMs(stats.totalMs)}`,
+		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+	].join('\n');
+}
+
+function failLoadStats(stats) {
+	if (!stats) return;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats, 'Failed');
+}
+
+function setCurrentFileName(filename) {
+	const currentFileEl = document.getElementById('currentFile');
+	if (currentFileEl) currentFileEl.textContent = filename || '-';
+}
+
 // Scene setup
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1a1a);
@@ -24,7 +123,7 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
 
 // Orbit controls
@@ -478,6 +577,12 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 				// Use UUID-based targeting for reliability (same as channel-based animations)
 				// Format: "<uuid>.<property>" (PropertyBinding checks uuid === nodeName)
 				switch (track.path) {
+					case 'CustomProperty':
+						if (debugAnimationTracking) {
+							console.debug(`Skipping USD custom property animation: ${track.propertyName || '(unnamed)'}`);
+						}
+						continue;
+
 					case 'translation':
 					case 'Translation':
 						keyframeTrack = new THREE.VectorKeyframeTrack(
@@ -581,6 +686,12 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 			// Using UUID is more reliable for hierarchical animations
 			// Format: "<uuid>.<property>" (PropertyBinding checks uuid === nodeName)
 			switch (channel.path) {
+				case 'CustomProperty':
+					if (debugAnimationTracking) {
+						console.debug(`Skipping USD custom property animation: ${channel.propertyName || '(unnamed)'}`);
+					}
+					continue;
+
 				case 'Translation':
 					keyframeTrack = new THREE.VectorKeyframeTrack(
 						`${targetUUID}.position`,
@@ -2708,7 +2819,13 @@ function onMouseClick(event) {
 }
 
 // Function to load a USD file from ArrayBuffer
-async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
+	stats = stats || beginLoadStats(arrayBuffer.byteLength);
+	if (!Number.isFinite(stats.fileSize)) {
+		stats.fileSize = arrayBuffer.byteLength;
+	}
+	setCurrentFileName(filename);
+
 	// Initialize PBR renderer if not already done
 	if (!pmremGenerator) {
 		initializePBRRenderer();
@@ -2827,11 +2944,14 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
 	// Load USD scene from Blob URL
+	const parseStart = performance.now();
 	const usd_scene = await loader.loadAsync(blobUrl);
+	stats.parseMs = performance.now() - parseStart;
 	currentUSDScene = usd_scene; // Store reference for cleanup
 
 	// Clean up the Blob URL after loading
 	URL.revokeObjectURL(blobUrl);
+	const processStart = performance.now();
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -3017,6 +3137,11 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		// Still build scene graph UI for static scenes
 		buildSceneGraphUI();
 	}
+
+	stats.processMs = performance.now() - processStart;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats);
 }
 
 // Listen for file upload events
@@ -3024,9 +3149,13 @@ window.addEventListener('loadUSDFile', async (event) => {
 	const file = event.detail.file;
 	if (!file) return;
 
+	const stats = beginLoadStats();
 	try {
+		const readStart = performance.now();
 		const arrayBuffer = await file.arrayBuffer();
-		await loadUSDFromArrayBuffer(arrayBuffer, file.name);
+		stats.fetchMs = performance.now() - readStart;
+		stats.fileSize = arrayBuffer.byteLength;
+		await loadUSDFromArrayBuffer(arrayBuffer, file.name, stats);
 		console.log('USD file loaded successfully:', file.name);
 
 		// Hide loading indicator
@@ -3034,6 +3163,7 @@ window.addEventListener('loadUSDFile', async (event) => {
 			window.hideLoadingIndicator();
 		}
 	} catch (error) {
+		failLoadStats(stats);
 		console.error('Failed to load USD file:', error);
 		alert('Failed to load USD file: ' + error.message);
 
@@ -3042,6 +3172,56 @@ window.addEventListener('loadUSDFile', async (event) => {
 			window.hideLoadingIndicator();
 		}
 	}
+});
+
+async function loadUSDFromURI(uri) {
+	const displayName = getDisplayNameFromURI(uri);
+	const stats = beginLoadStats();
+	setCurrentFileName(displayName);
+	const loadingIndicator = document.getElementById('loadingIndicator');
+	if (loadingIndicator) loadingIndicator.classList.add('active');
+	try {
+		const fetchStart = performance.now();
+		const response = await fetch(uri);
+		if (!response.ok) {
+			throw new Error(`Failed to fetch ${uri}: ${response.statusText}`);
+		}
+		const arrayBuffer = await response.arrayBuffer();
+		stats.fetchMs = performance.now() - fetchStart;
+		stats.fileSize = arrayBuffer.byteLength;
+		await loadUSDFromArrayBuffer(arrayBuffer, displayName, stats);
+	} catch (error) {
+		failLoadStats(stats);
+		console.error(`Failed to load USD file (${uri}):`, error);
+		alert('Failed to load USD file: ' + error.message);
+	} finally {
+		if (window.hideLoadingIndicator) {
+			window.hideLoadingIndicator();
+		}
+	}
+}
+
+document.body.addEventListener('dragover', (event) => {
+	event.preventDefault();
+	document.body.classList.add('drag-over');
+});
+
+document.body.addEventListener('dragleave', (event) => {
+	if (!event.relatedTarget || !document.body.contains(event.relatedTarget)) {
+		document.body.classList.remove('drag-over');
+	}
+});
+
+document.body.addEventListener('drop', (event) => {
+	event.preventDefault();
+	document.body.classList.remove('drag-over');
+	const file = event.dataTransfer?.files?.[0];
+	if (!file) return;
+	if (!/\.(usd|usda|usdc|usdz)$/i.test(file.name)) {
+		alert('Please drop a USD file (.usd, .usda, .usdc, .usdz)');
+		return;
+	}
+	window.dispatchEvent(new CustomEvent('loadUSDFile', { detail: { file } }));
 });
 
 // Listen for default model reload
@@ -3055,7 +3235,8 @@ window.addEventListener('loadDefaultModel', async () => {
 });
 
 // Load USD model
-loadUSDModel().catch((error) => {
+const startupUSDURI = getStartupUSDModelURI();
+(startupUSDURI ? loadUSDFromURI(startupUSDURI) : loadUSDModel()).catch((error) => {
 	console.error('Failed to load USD model:', error);
 	alert('Failed to load USD file: ' + error.message);
 });
@@ -3080,6 +3261,8 @@ function animate() {
 	if (fpsUpdateTime >= 0.5) {
 		info.fps = Math.round(frames / fpsUpdateTime);
 		fpsController.updateDisplay(); // Manual update instead of .listen()
+		const fpsValueEl = document.getElementById('fpsValue');
+		if (fpsValueEl) fpsValueEl.textContent = String(info.fps);
 		frames = 0;
 		fpsUpdateTime = 0;
 	}

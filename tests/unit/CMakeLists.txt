@@ -9,6 +9,14 @@ set(TEST_SOURCES
 	unit-prim-types.cc
 	unit-primvar.cc
 	unit-pathutil.cc
+	unit-path-expression.cc
+	unit-spline.cc
+	unit-relocates.cc
+	unit-value-clips.cc
+	unit-animation-block.cc
+	unit-array-edit.cc
+	unit-render-vol.cc
+	unit-namespace-edit.cc
 	unit-pprint.cc
 	unit-strutil.cc
 	unit-value-types.cc
@@ -24,7 +32,6 @@ set(TEST_SOURCES
 	unit-imageproc.cc
 	unit-tydra.cc
 	unit-tydra-subdivision.cc
-	unit-subdiv-tinyusdz.cc
 	unit-dedup.cc
 	unit-path.cc
 	unit-crate-writer.cc
@@ -116,11 +123,7 @@ else ()
 endif ()
 
 target_link_libraries(${TEST_TARGET_NAME} PRIVATE tinyusdz_static ${CMAKE_DL_LIBS})
-if(TARGET tinyusdz_subdiv)
-  target_link_libraries(${TEST_TARGET_NAME} PRIVATE tinyusdz_subdiv)
-endif()
 target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-target_include_directories(${TEST_TARGET_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/sandbox/subdiv)
 
 # Add crate-writer library and includes for dedup tests
 if(TARGET crate-writer)

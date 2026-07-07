@@ -28,6 +28,8 @@
 #include <vector>
 #include <type_traits>
 
+#include "compiler-features.hh"
+
 namespace tinyusdz {
 
 template <typename Key, typename Value, typename Hash = std::hash<Key>,
@@ -205,9 +207,13 @@ class HashMap {
 
     iterator() : _m(nullptr), _i(0) {}
     iterator(HashMap *m, size_type i) : _m(m), _i(i) { advance_to_occupied(); }
-    reference operator*() const { return _m->_buckets[_i].kv; }
-    pointer operator->() const { return &_m->_buckets[_i].kv; }
-    iterator &operator++() {
+    reference operator*() const TINYUSDZ_LIFETIMEBOUND {
+      return _m->_buckets[_i].kv;
+    }
+    pointer operator->() const TINYUSDZ_LIFETIMEBOUND {
+      return &_m->_buckets[_i].kv;
+    }
+    iterator &operator++() TINYUSDZ_LIFETIMEBOUND {
       ++_i;
       advance_to_occupied();
       return *this;
@@ -222,8 +228,12 @@ class HashMap {
     }
     bool operator!=(const iterator &o) const { return !(*this == o); }
 
-    const Key &key() const { return _m->_buckets[_i].kv.first; }
-    Value &mapped() const { return _m->_buckets[_i].kv.second; }
+    const Key &key() const TINYUSDZ_LIFETIMEBOUND {
+      return _m->_buckets[_i].kv.first;
+    }
+    Value &mapped() const TINYUSDZ_LIFETIMEBOUND {
+      return _m->_buckets[_i].kv.second;
+    }
   };
 
   class const_iterator {
@@ -247,9 +257,13 @@ class HashMap {
     const_iterator(const HashMap *m, size_type i) : _m(m), _i(i) {
       advance_to_occupied();
     }
-    reference operator*() const { return _m->_buckets[_i].kv; }
-    pointer operator->() const { return &_m->_buckets[_i].kv; }
-    const_iterator &operator++() {
+    reference operator*() const TINYUSDZ_LIFETIMEBOUND {
+      return _m->_buckets[_i].kv;
+    }
+    pointer operator->() const TINYUSDZ_LIFETIMEBOUND {
+      return &_m->_buckets[_i].kv;
+    }
+    const_iterator &operator++() TINYUSDZ_LIFETIMEBOUND {
       ++_i;
       advance_to_occupied();
       return *this;
@@ -264,8 +278,12 @@ class HashMap {
     }
     bool operator!=(const const_iterator &o) const { return !(*this == o); }
 
-    const Key &key() const { return _m->_buckets[_i].kv.first; }
-    const Value &mapped() const { return _m->_buckets[_i].kv.second; }
+    const Key &key() const TINYUSDZ_LIFETIMEBOUND {
+      return _m->_buckets[_i].kv.first;
+    }
+    const Value &mapped() const TINYUSDZ_LIFETIMEBOUND {
+      return _m->_buckets[_i].kv.second;
+    }
   };
 
   HashMap() : _size(0), _mask(0), _max_load(0.5f), _buckets(), _hash(), _eq() {}
@@ -380,7 +398,7 @@ class HashMap {
     return {iterator(this, r.index), r.inserted};
   }
 
-  Value &operator[](const Key &k) {
+  Value &operator[](const Key &k) TINYUSDZ_LIFETIMEBOUND {
     grow_if_needed();
     auto r = insert_into_table(Key(k), Value());
     if (!r.ok) {
@@ -390,7 +408,7 @@ class HashMap {
     }
     return _buckets[r.index].kv.second;
   }
-  Value &operator[](Key &&k) {
+  Value &operator[](Key &&k) TINYUSDZ_LIFETIMEBOUND {
     grow_if_needed();
     auto r = insert_into_table(std::move(k), Value());
     if (!r.ok) {
@@ -404,7 +422,7 @@ class HashMap {
   // Hardened: on miss, return a static fallback without aborting.
   // Callers are expected to check `find`/`contains` first; this is a safety
   // net for unexpected miss cases.
-  Value &at(const Key &k) {
+  Value &at(const Key &k) TINYUSDZ_LIFETIMEBOUND {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) {
       static thread_local Value sink{};
@@ -413,13 +431,35 @@ class HashMap {
     }
     return _buckets[i].kv.second;
   }
-  const Value &at(const Key &k) const {
+  const Value &at(const Key &k) const TINYUSDZ_LIFETIMEBOUND {
     size_type i = find_index(k);
     if (i == static_cast<size_type>(-1)) {
       static const Value sink{};
       return sink;
     }
     return _buckets[i].kv.second;
+  }
+
+  Value *find_value_ptr(const Key &k) TINYUSDZ_LIFETIMEBOUND {
+    size_type i = find_index(k);
+    if (i == static_cast<size_type>(-1)) return nullptr;
+    return &_buckets[i].kv.second;
+  }
+
+  const Value *find_value_ptr(const Key &k) const TINYUSDZ_LIFETIMEBOUND {
+    size_type i = find_index(k);
+    if (i == static_cast<size_type>(-1)) return nullptr;
+    return &_buckets[i].kv.second;
+  }
+
+  template <typename Predicate>
+  const Value *find_value_if(Predicate &&pred) const TINYUSDZ_LIFETIMEBOUND {
+    for (const Bucket &bucket : _buckets) {
+      if (bucket.dist != 0 && pred(bucket.kv.first, bucket.kv.second)) {
+        return &bucket.kv.second;
+      }
+    }
+    return nullptr;
   }
 
   iterator find(const Key &k) {

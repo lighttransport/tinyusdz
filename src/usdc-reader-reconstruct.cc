@@ -170,6 +170,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         << "  fieldSetIndex = " << spec.fieldset_index.value);
 
   if ((spec.spec_type == SpecType::Attribute) ||
+      (spec.spec_type == SpecType::Connection) ||
       (spec.spec_type == SpecType::Relationship)) {
     if (_prim_table.count(parent)) {
       return true;
@@ -466,9 +467,9 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     case SpecType::Connection:
     case SpecType::Relationship:
     case SpecType::RelationshipTarget: {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kTag, fmt::format("TODO: Unsupported/Unimplemented SpecType: {}.",
-                            to_string(spec.spec_type)));
+      PUSH_WARN(fmt::format(
+          "[USDC] Skipping unsupported/usdc-specific spec {} (node = {}, pathIndex = {}).",
+          to_string(spec.spec_type), current, spec.path_index.value));
       break;
     }
     case SpecType::Expression:
@@ -516,7 +517,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         << "  fieldSetIndex = " << spec.fieldset_index.value);
 
   if ((spec.spec_type == SpecType::Attribute) ||
-      (spec.spec_type == SpecType::Relationship)) {
+      (spec.spec_type == SpecType::Relationship) ||
+      (spec.spec_type == SpecType::Connection)) {
     // BuildPropertyMap already captured these during parent reconstruction.
     if (_prim_table.count(parent) || _variantPrimSpecs.count(parent)) {
       return true;
@@ -797,9 +799,9 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
     case SpecType::Connection:
     case SpecType::Relationship:
     case SpecType::RelationshipTarget: {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kTag, fmt::format("TODO: Unsupported/Unimplemented SpecType: {}.",
-                            to_string(spec.spec_type)));
+      PUSH_WARN(fmt::format(
+          "[USDC] Skipping unsupported/usdc-specific spec {} (node = {}, pathIndex = {}).",
+          to_string(spec.spec_type), current, spec.path_index.value));
       break;
     }
     case SpecType::Expression:
@@ -1383,7 +1385,14 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
     if (_variantPrimSpecs.count(parent)) {
       DCOUT("parent is variantPrim: " << parent);
       if (!primspec) {
-        PUSH_WARN("parent is variantPrim, but current is not Prim.");
+        // A null child under a variant parent is benign for the expected
+        // non-prim spec kinds (Variant/VariantSet/Attribute/Relationship/...);
+        // only warn for genuinely unexpected ones. Mirrors the guard at the
+        // ReconstructPrimNode sites above (was unguarded here, which flooded
+        // hundreds of false warnings on caldera).
+        if (!IsExpectedNonPrimVariantChild(current, psmap)) {
+          PUSH_WARN("parent is variantPrim, but current is not Prim.");
+        }
       } else {
         DCOUT("Adding prim to child...");
         PrimSpec &vps = _variantPrimSpecs.at(parent);

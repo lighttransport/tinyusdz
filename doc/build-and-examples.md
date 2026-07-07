@@ -54,9 +54,10 @@ hand-written C++ and does not require Bison, Flex, PEG tools, or code generation
 - `TINYUSDZ_WITH_AUDIO`: build MP3/WAV audio loading support.
 - `TINYUSDZ_WITH_ALAC_AUDIO`: build ALAC/M4A support.
 - `TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER`: build bundled image loaders.
-- `TINYUSDZ_WITH_TINYSUBDIV`: build TinyUSDZ's dependency-free subdivision
-  backend.
-- `TINYUSDZ_WITH_OPENSUBDIV`: build with OpenSubdiv instead of TinySubdiv.
+- `TINYUSDZ_TSD_VERIFY_WITH_OSD`: build the tinysubdiv (src/tsd) vs OpenSubdiv
+  verification test. Requires `OpenSubdiv_ROOT` pointing at an OpenSubdiv
+  source checkout (no pre-build needed). The subdivision library itself
+  (src/tsd) is dependency-free and always built.
 - `TINYUSDZ_WITH_ZSTD_COMPRESSION`: enable zstd compression support.
 - `TINYUSDZ_WITH_COROUTINE`: enable C++20 coroutine support.
 - `TINYUSDZ_WITH_MCP_SERVER`, `TINYUSDZ_WITH_QJS`, `TINYUSDZ_WITH_WAMR`,

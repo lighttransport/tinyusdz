@@ -2,24 +2,9 @@
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
-// TODO:
-//   - [ ] Subdivision surface to polygon mesh conversion.
-//     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
-//     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
-//   - [ ] Support material binding collection(Collection API)
-//   - [ ] Support multiple skel animation
-//   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
-//   - [ ] Adjust normal vector computation with handness?
-//   - [ ] Node xform animation
-//   - [ ] Better build of index buffer
-//     - [ ] Preserve the order of 'points' variable(mesh.points, Skin
-//     indices/weights, BlendShape points, ...) as much as possible.
-//     - Implement spatial hash
-//
-//
 // Material and texture conversion routines split from render-data.cc
 //
+#include <chrono>
 #include <numeric>
 #include <set>
 
@@ -49,7 +34,6 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
-#include "materialx-to-json.hh"
 #include "security-policy.hh"
 
 //
@@ -70,6 +54,14 @@ namespace tinyusdz {
 namespace tydra {
 
 namespace {
+
+using TydraPerfClock = std::chrono::steady_clock;
+
+static uint64_t ElapsedNs(const TydraPerfClock::time_point &start) {
+  return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      TydraPerfClock::now() - start)
+                      .count());
+}
 
 template <typename T>
 bool ResolveTypedAnimatableValue(
@@ -95,6 +87,94 @@ bool ResolveTypedAnimatableValue(
     std::string *err) {
   return EvaluateTypedAnimatableAttribute(stage, attr, attr_name, value_out, err,
                                           timecode, tinterp);
+}
+
+template <typename Dty>
+bool SetShaderParamFromInterfaceAttribute(const Attribute &attr,
+                                          ShaderParam<Dty> *dst_param) {
+  if (!dst_param) {
+    return false;
+  }
+
+  if (auto v = attr.get_value<Dty>()) {
+    dst_param->set_value(*v);
+    return true;
+  }
+
+  if constexpr (std::is_same<Dty, float>::value) {
+    if (auto v = attr.get_value<value::color3f>()) {
+      dst_param->set_value((*v)[0]);
+      return true;
+    }
+    if (auto v = attr.get_value<value::normal3f>()) {
+      dst_param->set_value((*v)[0]);
+      return true;
+    }
+    if (auto v = attr.get_value<value::float3>()) {
+      dst_param->set_value((*v)[0]);
+      return true;
+    }
+  } else if constexpr (std::is_same<Dty, value::color3f>::value) {
+    if (auto v = attr.get_value<float>()) {
+      value::color3f c;
+      c[0] = *v;
+      c[1] = *v;
+      c[2] = *v;
+      dst_param->set_value(c);
+      return true;
+    }
+    if (auto v = attr.get_value<value::normal3f>()) {
+      value::color3f c;
+      c[0] = (*v)[0];
+      c[1] = (*v)[1];
+      c[2] = (*v)[2];
+      dst_param->set_value(c);
+      return true;
+    }
+    if (auto v = attr.get_value<value::float3>()) {
+      value::color3f c;
+      c[0] = (*v)[0];
+      c[1] = (*v)[1];
+      c[2] = (*v)[2];
+      dst_param->set_value(c);
+      return true;
+    }
+  } else if constexpr (std::is_same<Dty, value::float3>::value) {
+    if (auto v = attr.get_value<float>()) {
+      value::float3 c{{*v, *v, *v}};
+      dst_param->set_value(c);
+      return true;
+    }
+    if (auto v = attr.get_value<value::color3f>()) {
+      value::float3 c{{(*v)[0], (*v)[1], (*v)[2]}};
+      dst_param->set_value(c);
+      return true;
+    }
+    if (auto v = attr.get_value<value::normal3f>()) {
+      value::float3 c{{(*v)[0], (*v)[1], (*v)[2]}};
+      dst_param->set_value(c);
+      return true;
+    }
+  } else if constexpr (std::is_same<Dty, value::normal3f>::value) {
+    if (auto v = attr.get_value<value::color3f>()) {
+      value::normal3f n;
+      n[0] = (*v)[0];
+      n[1] = (*v)[1];
+      n[2] = (*v)[2];
+      dst_param->set_value(n);
+      return true;
+    }
+    if (auto v = attr.get_value<value::float3>()) {
+      value::normal3f n;
+      n[0] = (*v)[0];
+      n[1] = (*v)[1];
+      n[2] = (*v)[2];
+      dst_param->set_value(n);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 template <typename EnumTy, typename EnumHandler>
@@ -243,10 +323,10 @@ bool RawAssetRead(
     return false;
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (err) {
       (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                            asset.size(), security_policy::kResolverMaxAssetReadBytes);
+                            asset.size(), security_policy::GetMaxAssetReadBytes());
     }
     return false;
   }
@@ -266,11 +346,27 @@ struct UVConnectionResolveCacheEntry {
   const Shader *shader{nullptr};
 };
 
+struct MtlxTexcoordTransform {
+  value::float2 scale;
+  value::float2 translation;
+  float rotation{0.0f};
+  bool has_transform{false};
+
+  MtlxTexcoordTransform() {
+    scale[0] = 1.0f;
+    scale[1] = 1.0f;
+    translation[0] = 0.0f;
+    translation[1] = 0.0f;
+  }
+};
+
 struct MtlxConnectionResolveCacheEntry {
   Path tex_abs_path;
   const Shader *image_shader{nullptr};
   std::string st_varname;
   const AssetInfo *asset_info{nullptr};
+  UVTexture::Channel output_channel{UVTexture::Channel::RGB};
+  MtlxTexcoordTransform texcoord_transform;
 };
 
 struct ConnectionResolveCache {
@@ -333,6 +429,40 @@ std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
 }
 
 /// Try to read array attribute directly from mmap. Returns true if successful.
+
+void ApplyTexTransform2d(float rotation, const value::float2 &scale,
+                         const value::float2 &translation,
+                         UVTexture *tex_out) {
+  if (!tex_out) {
+    return;
+  }
+
+  // Build transform matrix.
+  // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
+  // Since USD uses post-multiply,
+  //
+  // matrix = scale * rotate * translate
+  //
+  mat3 s;
+  s.set_scale(scale[0], scale[1], 1.0f);
+
+  mat3 r = mat3::identity();
+
+  r.m[0][0] = std::cos(math::radian(rotation));
+  r.m[0][1] = std::sin(math::radian(rotation));
+
+  r.m[1][0] = -std::sin(math::radian(rotation));
+  r.m[1][1] = std::cos(math::radian(rotation));
+
+  mat3 t = mat3::identity();
+  t.set_translation(translation[0], translation[1], 1.0f);
+
+  tex_out->transform = s * r * t;
+  tex_out->tx_rotation = rotation;
+  tex_out->tx_translation = translation;
+  tex_out->tx_scale = scale;
+  tex_out->has_transform2d = true;
+}
 
 // Convert UsdTransform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
@@ -451,35 +581,7 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
   }
   DCOUT("inputs:varname = " << varname);
 
-  // Build transform matrix.
-  // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
-  // Since USD uses post-multiply,
-  //
-  // matrix = scale * rotate * translate
-  //
-  {
-    mat3 s;
-    s.set_scale(scale[0], scale[1], 1.0f);
-
-    mat3 r = mat3::identity();
-
-    r.m[0][0] = std::cos(math::radian(rotation));
-    r.m[0][1] = std::sin(math::radian(rotation));
-
-    r.m[1][0] = -std::sin(math::radian(rotation));
-    r.m[1][1] = std::cos(math::radian(rotation));
-
-    mat3 t = mat3::identity();
-    t.set_translation(translation[0], translation[1], 1.0f);
-
-    tex_out->transform = s * r * t;
-  }
-
-  tex_out->tx_rotation = rotation;
-  tex_out->tx_translation = translation;
-  tex_out->tx_scale = scale;
-  tex_out->has_transform2d = true;
-
+  ApplyTexTransform2d(rotation, scale, translation, tex_out);
   tex_out->varname_uv = varname;
 
   return true;
@@ -554,7 +656,10 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   constexpr auto kOutputsB = "outputs:b";
   constexpr auto kOutputsA = "outputs:a";
 
-  TUSDZ_LOG_I("path: " << path);
+  // Per-texture trace: keep at debug level. At info level this floods the
+  // console for material-heavy scenes (one line per texture connection, on
+  // every conversion).
+  TUSDZ_LOG_D("path: " << path);
 
   // Check if prop_part is a standard UsdUVTexture output
   bool is_standard_output = (prop_part == kOutputsRGB) ||
@@ -795,11 +900,375 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 
 // Helper function to find ND_image_color4 texture nodes in a MaterialX NodeGraph
 // by traversing connections from the given output
+static UVTexture::Channel MaterialXOutputChannelFromPath(const Path &path) {
+  std::string prop = path.prop_part();
+  if (startsWith(prop, "outputs:")) {
+    prop = prop.substr(8);
+  }
+  if (prop == "r" || prop == "x") return UVTexture::Channel::R;
+  if (prop == "g" || prop == "y") return UVTexture::Channel::G;
+  if (prop == "b" || prop == "z") return UVTexture::Channel::B;
+  if (prop == "a" || prop == "w") return UVTexture::Channel::A;
+  if (prop == "rgba" || prop == "outcolor4") return UVTexture::Channel::RGBA;
+  return UVTexture::Channel::RGB;
+}
+
+static std::string MtlxDefaultTexcoordName(const std::string &default_name) {
+  return default_name.empty() ? "st" : default_name;
+}
+
+static std::string MtlxTexcoordIndexName(const std::string &default_name,
+                                         int index) {
+  const std::string base = MtlxDefaultTexcoordName(default_name);
+  if (index <= 0) {
+    return base;
+  }
+  if (base == "st") {
+    return "st" + std::to_string(index);
+  }
+  return base + std::to_string(index);
+}
+
+static bool MtlxPropertyConnection(const Property &prop, Path *path_out) {
+  if (prop.is_attribute()) {
+    const Attribute &attr = prop.get_attribute();
+    if (attr.has_connections() && !attr.connections().empty()) {
+      if (path_out) {
+        *path_out = attr.connections()[0];
+      }
+      return true;
+    }
+  } else if (prop.is_relationship()) {
+    const std::vector<Path> targets = prop.get_relationTargets();
+    if (!targets.empty()) {
+      if (path_out) {
+        *path_out = targets[0];
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool FindMtlxNamedConnection(
+    const std::map<std::string, Property> &props, const std::string &name,
+    Path *path_out) {
+  auto it = props.find(name);
+  if (it != props.end() && MtlxPropertyConnection(it->second, path_out)) {
+    return true;
+  }
+  it = props.find(name + ".connect");
+  if (it != props.end() && MtlxPropertyConnection(it->second, path_out)) {
+    return true;
+  }
+  return false;
+}
+
+static bool FindMtlxAnyInputConnection(
+    const std::map<std::string, Property> &props, Path *path_out) {
+  for (const auto &prop : props) {
+    if (!startsWith(prop.first, "inputs:")) {
+      continue;
+    }
+    if (MtlxPropertyConnection(prop.second, path_out)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool FindMtlxShaderConnection(const Shader &shader,
+                                     const std::string &name,
+                                     Path *path_out) {
+  const ShaderNode *shader_node = shader.value.as<ShaderNode>();
+  if (shader_node &&
+      FindMtlxNamedConnection(shader_node->props, name, path_out)) {
+    return true;
+  }
+  return FindMtlxNamedConnection(shader.props, name, path_out);
+}
+
+static bool FindMtlxShaderAnyInputConnection(const Shader &shader,
+                                             Path *path_out) {
+  const ShaderNode *shader_node = shader.value.as<ShaderNode>();
+  if (shader_node && FindMtlxAnyInputConnection(shader_node->props, path_out)) {
+    return true;
+  }
+  return FindMtlxAnyInputConnection(shader.props, path_out);
+}
+
+static bool FindMtlxStringInput(const std::map<std::string, Property> &props,
+                                const std::string &name,
+                                std::string *value_out) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (!attr.has_value()) {
+    return false;
+  }
+  if (auto s = attr.get_value<std::string>()) {
+    if (value_out) {
+      *value_out = *s;
+    }
+    return true;
+  }
+  if (auto t = attr.get_value<value::token>()) {
+    if (value_out) {
+      *value_out = t->str();
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool FindMtlxShaderStringInput(const Shader &shader,
+                                      const std::string &name,
+                                      std::string *value_out) {
+  const ShaderNode *shader_node = shader.value.as<ShaderNode>();
+  if (shader_node &&
+      FindMtlxStringInput(shader_node->props, name, value_out)) {
+    return true;
+  }
+  return FindMtlxStringInput(shader.props, name, value_out);
+}
+
+static bool FindMtlxIntInput(const std::map<std::string, Property> &props,
+                             const std::string &name, int *value_out) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (!attr.has_value()) {
+    return false;
+  }
+  if (auto i = attr.get_value<int>()) {
+    if (value_out) {
+      *value_out = *i;
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool FindMtlxShaderIntInput(const Shader &shader,
+                                   const std::string &name,
+                                   int *value_out) {
+  const ShaderNode *shader_node = shader.value.as<ShaderNode>();
+  if (shader_node && FindMtlxIntInput(shader_node->props, name, value_out)) {
+    return true;
+  }
+  return FindMtlxIntInput(shader.props, name, value_out);
+}
+
+static bool FindMtlxFloat2Input(const std::map<std::string, Property> &props,
+                                const std::string &name,
+                                value::float2 *value_out) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (!attr.has_value()) {
+    return false;
+  }
+  if (auto v = attr.get_value<value::float2>()) {
+    if (value_out) {
+      *value_out = *v;
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool FindMtlxShaderFloat2Input(const Shader &shader,
+                                      const std::string &name,
+                                      value::float2 *value_out) {
+  const ShaderNode *shader_node = shader.value.as<ShaderNode>();
+  if (shader_node && FindMtlxFloat2Input(shader_node->props, name, value_out)) {
+    return true;
+  }
+  return FindMtlxFloat2Input(shader.props, name, value_out);
+}
+
+static bool FindMtlxFloatInput(const std::map<std::string, Property> &props,
+                               const std::string &name, float *value_out) {
+  auto it = props.find(name);
+  if (it == props.end() || !it->second.is_attribute()) {
+    return false;
+  }
+  const Attribute &attr = it->second.get_attribute();
+  if (!attr.has_value()) {
+    return false;
+  }
+  if (auto v = attr.get_value<float>()) {
+    if (value_out) {
+      *value_out = *v;
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool FindMtlxShaderFloatInput(const Shader &shader,
+                                     const std::string &name,
+                                     float *value_out) {
+  const ShaderNode *shader_node = shader.value.as<ShaderNode>();
+  if (shader_node && FindMtlxFloatInput(shader_node->props, name, value_out)) {
+    return true;
+  }
+  return FindMtlxFloatInput(shader.props, name, value_out);
+}
+
+static void ExtractMtlxShaderUvTransform(const Shader &shader,
+                                         MtlxTexcoordTransform *transform) {
+  if (!transform) {
+    return;
+  }
+
+  value::float2 v;
+  if (FindMtlxShaderFloat2Input(shader, "inputs:uvtiling", &v) ||
+      FindMtlxShaderFloat2Input(shader, "inputs:scale", &v)) {
+    transform->scale = v;
+    transform->has_transform = true;
+  }
+  if (FindMtlxShaderFloat2Input(shader, "inputs:uvoffset", &v) ||
+      FindMtlxShaderFloat2Input(shader, "inputs:translation", &v)) {
+    transform->translation = v;
+    transform->has_transform = true;
+  }
+  float f = 0.0f;
+  if (FindMtlxShaderFloatInput(shader, "inputs:rotate", &f) ||
+      FindMtlxShaderFloatInput(shader, "inputs:rotation", &f)) {
+    transform->rotation = f;
+    transform->has_transform = true;
+  }
+}
+
+static const Prim *FindMtlxNodePrim(const Stage &stage, const Prim *ng_prim,
+                                    const std::string &prim_path,
+                                    std::string *err) {
+  const Prim *prim{nullptr};
+  if (stage.find_prim_at_path(Path(prim_path, ""), prim, err) && prim) {
+    return prim;
+  }
+  if (!ng_prim) {
+    return nullptr;
+  }
+
+  const size_t last_slash = prim_path.rfind('/');
+  if (last_slash == std::string::npos) {
+    return nullptr;
+  }
+  const std::string parent_path = prim_path.substr(0, last_slash);
+  const std::string child_name = prim_path.substr(last_slash + 1);
+  if (parent_path.find("NodeGraphs") == std::string::npos) {
+    return nullptr;
+  }
+  for (const auto &child : ng_prim->children()) {
+    if (child.element_name() == child_name) {
+      return &child;
+    }
+  }
+  return nullptr;
+}
+
+static std::string ResolveMtlxTexcoordVarname(
+    const Stage &stage, const Shader &image_shader, const Path &image_path,
+    const Prim *ng_prim, const std::string &default_texcoords_primvar_name,
+    MtlxTexcoordTransform *transform_out) {
+  (void)image_path;
+  const std::string fallback =
+      MtlxDefaultTexcoordName(default_texcoords_primvar_name);
+  MtlxTexcoordTransform transform;
+
+  Path current_path;
+  if (!FindMtlxShaderConnection(image_shader, "inputs:texcoord",
+                                &current_path)) {
+    if (transform_out) {
+      *transform_out = transform;
+    }
+    return fallback;
+  }
+
+  std::string err;
+  int max_depth = 10;
+  while (max_depth-- > 0) {
+    const Prim *prim =
+        FindMtlxNodePrim(stage, ng_prim, current_path.prim_part(), &err);
+    const Shader *shader = prim ? prim->as<Shader>() : nullptr;
+    if (!shader) {
+      if (transform_out) {
+        *transform_out = transform;
+      }
+      return fallback;
+    }
+
+    if (startsWith(shader->info_id, "ND_geompropvalue_")) {
+      std::string geomprop;
+      if (FindMtlxShaderStringInput(*shader, "inputs:geomprop", &geomprop) &&
+          !geomprop.empty()) {
+        if (transform_out) {
+          *transform_out = transform;
+        }
+        return geomprop;
+      }
+      if (transform_out) {
+        *transform_out = transform;
+      }
+      return fallback;
+    }
+
+    if (shader->info_id == "ND_texcoord_vector2" ||
+        shader->info_id == "ND_texcoord_vector3") {
+      int index = 0;
+      FindMtlxShaderIntInput(*shader, "inputs:index", &index);
+      if (transform_out) {
+        *transform_out = transform;
+      }
+      return MtlxTexcoordIndexName(default_texcoords_primvar_name, index);
+    }
+
+    if (startsWith(shader->info_id, "ND_place2d_")) {
+      ExtractMtlxShaderUvTransform(*shader, &transform);
+      if (FindMtlxShaderConnection(*shader, "inputs:texcoord",
+                                   &current_path)) {
+        continue;
+      }
+      if (transform_out) {
+        *transform_out = transform;
+      }
+      return fallback;
+    }
+
+    if (FindMtlxShaderConnection(*shader, "inputs:in", &current_path) ||
+        FindMtlxShaderConnection(*shader, "inputs:in1", &current_path) ||
+        FindMtlxShaderAnyInputConnection(*shader, &current_path)) {
+      continue;
+    }
+    if (transform_out) {
+      *transform_out = transform;
+    }
+    return fallback;
+  }
+
+  DCOUT("MaterialX texcoord chain exceeded max depth for "
+        << image_path.full_path_name());
+  if (transform_out) {
+    *transform_out = transform;
+  }
+  return fallback;
+}
+
 template <typename T>
 nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
     const Stage &stage, const TypedAnimatableAttributeWithFallback<T> &src,
     Path *tex_abs_path, const Shader **image_shader_out,
     std::string *st_varname_out, const AssetInfo **assetInfo_out,
+    UVTexture::Channel *output_channel_out,
+    MtlxTexcoordTransform *texcoord_transform_out,
     const std::string &default_texcoords_primvar_name = "st") {
 
   if (src.get_connections().empty()) {
@@ -836,17 +1305,27 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
     if (assetInfo_out) {
       *assetInfo_out = mtlx_cache_it->second.asset_info;
     }
+    if (output_channel_out) {
+      *output_channel_out = mtlx_cache_it->second.output_channel;
+    }
+    if (texcoord_transform_out) {
+      *texcoord_transform_out = mtlx_cache_it->second.texcoord_transform;
+    }
     return true;
   }
 
   auto cache_result = [&](const Path &resolved_path, const Shader *image_shader,
                           const std::string &st_varname,
-                          const AssetInfo *asset_info) {
+                          const AssetInfo *asset_info,
+                          UVTexture::Channel output_channel,
+                          const MtlxTexcoordTransform &texcoord_transform) {
     MtlxConnectionResolveCacheEntry entry;
     entry.tex_abs_path = resolved_path;
     entry.image_shader = image_shader;
     entry.st_varname = st_varname;
     entry.asset_info = asset_info;
+    entry.output_channel = output_channel;
+    entry.texcoord_transform = texcoord_transform;
     resolve_cache.mtlx_texture_by_connection[cache_key] = std::move(entry);
   };
 
@@ -1072,15 +1551,25 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
         }
       }
 
-      // For MaterialX ND_texcoord_vector2 node, use configured default primvar name
-      // (similar to OpenUSD's USDMTLX_PRIMARY_UV_NAME environment setting)
+      MtlxTexcoordTransform texcoord_transform;
+      const std::string resolved_st_varname = ResolveMtlxTexcoordVarname(
+          stage, *image_shader, current_path, ng_prim,
+          default_texcoords_primvar_name, &texcoord_transform);
+
       if (st_varname_out) {
-        *st_varname_out = default_texcoords_primvar_name.empty() ? "st" : default_texcoords_primvar_name;
+        *st_varname_out = resolved_st_varname;
+      }
+      if (texcoord_transform_out) {
+        *texcoord_transform_out = texcoord_transform;
       }
 
-      cache_result(current_path, image_shader,
-                   default_texcoords_primvar_name.empty() ? "st" : default_texcoords_primvar_name,
-                   nullptr);
+      const UVTexture::Channel output_channel =
+          MaterialXOutputChannelFromPath(current_path);
+      if (output_channel_out) {
+        *output_channel_out = output_channel;
+      }
+      cache_result(current_path, image_shader, resolved_st_varname,
+                   nullptr, output_channel, texcoord_transform);
       return true;
     }
 
@@ -1158,6 +1647,319 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
 }
 
 }  // namespace
+
+static std::string NormalizeSourceSignaturePath(const Path &path,
+                                                const std::string &root_path) {
+  std::string prim = path.prim_part();
+  if (!root_path.empty() && prim.compare(0, root_path.size(), root_path) == 0) {
+    prim = std::string("<M>") + prim.substr(root_path.size());
+  }
+  std::string result = prim;
+  if (!path.prop_part().empty()) {
+    result += ".";
+    result += path.prop_part();
+  }
+  return result;
+}
+
+static void ReplaceAll(std::string &s, const std::string &from,
+                       const std::string &to) {
+  if (from.empty()) {
+    return;
+  }
+  size_t pos = 0;
+  while ((pos = s.find(from, pos)) != std::string::npos) {
+    s.replace(pos, from.size(), to);
+    pos += to.size();
+  }
+}
+
+static void AppendSourceSignatureProperty(std::ostringstream &ss,
+                                          const std::string &name,
+                                          const Property &prop,
+                                          const std::string &root_path) {
+  ss << "prop:" << name << ":custom=" << (prop.has_custom() ? 1 : 0) << ":";
+  if (prop.is_attribute()) {
+    const Attribute &attr = prop.get_attribute();
+    ss << "attr:type=" << attr.type_name()
+       << ":var=" << int(attr.variability())
+       << ":varying=" << (attr.is_varying_authored() ? 1 : 0);
+    if (attr.has_value()) {
+      ss << ":value=" << value::pprint_value(attr.get_var().value_raw());
+    }
+    if (attr.has_connections()) {
+      ss << ":connections=[";
+      const std::vector<Path> &conns = attr.connections();
+      for (size_t i = 0; i < conns.size(); i++) {
+        if (i) {
+          ss << ",";
+        }
+        ss << NormalizeSourceSignaturePath(conns[i], root_path);
+      }
+      ss << "]";
+    }
+    if (attr.has_timesamples()) {
+      // BuildMaterialSourceSignature rejects time-sampled material graphs.
+      ss << ":timesamples=1";
+    }
+  } else if (prop.is_relationship()) {
+    const Relationship &rel = prop.get_relationship();
+    ss << "rel:blocked=" << (rel.is_blocked() ? 1 : 0) << ":targets=[";
+    std::vector<Path> targets;
+    if (rel.is_path()) {
+      targets.push_back(rel.targetPath);
+    } else if (rel.is_pathvector()) {
+      targets = rel.targetPathVector;
+    }
+    for (size_t i = 0; i < targets.size(); i++) {
+      if (i) {
+        ss << ",";
+      }
+      ss << NormalizeSourceSignaturePath(targets[i], root_path);
+    }
+    ss << "]";
+  } else {
+    ss << "empty";
+  }
+  ss << ";";
+}
+
+static const std::map<std::string, Property> *GetUsdShadePrimProps(
+    const Prim &prim) {
+  if (const Material *p = prim.as<Material>()) {
+    return &p->props;
+  }
+  if (const Shader *p = prim.as<Shader>()) {
+    return &p->props;
+  }
+  if (const NodeGraph *p = prim.as<NodeGraph>()) {
+    return &p->props;
+  }
+  return nullptr;
+}
+
+static bool AppendSourceSignaturePrimRec(const Stage &stage, const Prim &prim,
+                                         const Path &prim_path,
+                                         const std::string &root_path,
+                                         std::set<std::string> *visited,
+                                         std::ostringstream &ss,
+                                         int depth) {
+  if (!visited || depth >= 64) {
+    return false;
+  }
+
+  const std::string path_key = prim_path.prim_part();
+  if (!visited->insert(path_key).second) {
+    return true;
+  }
+
+  ss << "prim:" << NormalizeSourceSignaturePath(prim_path, root_path)
+     << ":type=" << prim.prim_type_name() << "{";
+
+  std::string prim_payload = value::pprint_prim_value(
+      prim.data(), 0, /* closing_brace */ false);
+  if (prim_payload.find("timeSamples") != std::string::npos) {
+    return false;
+  }
+  ReplaceAll(prim_payload, root_path, "<M>");
+  if (prim_path.prim_part() == root_path) {
+    ReplaceAll(prim_payload, std::string(prim.element_name()), "<Material>");
+  }
+  ss << "payload=" << prim_payload << ";";
+
+  const std::map<std::string, Property> *props = GetUsdShadePrimProps(prim);
+  if (!props) {
+    ss << "}";
+    return true;
+  }
+
+  std::vector<std::string> prop_names;
+  prop_names.reserve(props->size());
+  for (const auto &kv : *props) {
+    prop_names.push_back(kv.first);
+  }
+  std::sort(prop_names.begin(), prop_names.end());
+
+  std::vector<Path> local_connections;
+  for (const std::string &name : prop_names) {
+    auto it = props->find(name);
+    if (it == props->end()) {
+      continue;
+    }
+    AppendSourceSignatureProperty(ss, name, it->second, root_path);
+    if (it->second.is_attribute()) {
+      const Attribute &attr = it->second.get_attribute();
+      if (attr.has_timesamples()) {
+        return false;
+      }
+      if (attr.has_connections()) {
+        for (const Path &conn : attr.connections()) {
+          const std::string conn_prim = conn.prim_part();
+          if (!root_path.empty() &&
+              conn_prim.compare(0, root_path.size(), root_path) == 0) {
+            local_connections.push_back(Path(conn_prim, ""));
+          }
+        }
+      }
+    }
+  }
+
+  std::vector<const Prim *> children;
+  children.reserve(prim.children().size());
+  for (const Prim &child : prim.children()) {
+    children.push_back(&child);
+  }
+  std::sort(children.begin(), children.end(),
+            [](const Prim *a, const Prim *b) {
+              return a->element_name() < b->element_name();
+            });
+  for (const Prim *child : children) {
+    if (!child) {
+      continue;
+    }
+    Path child_path = prim_path;
+    child_path = child_path.append_element(child->element_name());
+    if (!AppendSourceSignaturePrimRec(stage, *child, child_path, root_path,
+                                      visited, ss, depth + 1)) {
+      return false;
+    }
+  }
+
+  std::sort(local_connections.begin(), local_connections.end(),
+            [](const Path &a, const Path &b) {
+              return a.full_path_name() < b.full_path_name();
+            });
+  local_connections.erase(
+      std::unique(local_connections.begin(), local_connections.end(),
+                  [](const Path &a, const Path &b) {
+                    return a.full_path_name() == b.full_path_name();
+                  }),
+      local_connections.end());
+  for (const Path &conn_prim_path : local_connections) {
+    const Prim *conn_prim{nullptr};
+    std::string err;
+    if (stage.find_prim_at_path(conn_prim_path, conn_prim, &err) &&
+        conn_prim) {
+      if (!AppendSourceSignaturePrimRec(stage, *conn_prim, conn_prim_path,
+                                        root_path, visited, ss, depth + 1)) {
+        return false;
+      }
+    }
+  }
+
+  ss << "}";
+  return true;
+}
+
+bool RenderSceneConverter::BuildMaterialSourceSignature(
+    const RenderSceneConverterEnv &env, const Path &mat_abs_path,
+    const Material &material, std::string *signature) {
+  if (!signature) {
+    return false;
+  }
+  signature->clear();
+
+  const Prim *mat_prim{nullptr};
+  std::string err;
+  if (!env.stage.find_prim_at_path(Path(mat_abs_path.prim_part(), ""),
+                                   mat_prim, &err) ||
+      !mat_prim) {
+    return false;
+  }
+
+  std::ostringstream ss;
+  ss << "material-source-v1;";
+  ss << "surface=";
+  for (const Path &p : material.surface.get_connections()) {
+    ss << NormalizeSourceSignaturePath(p, mat_abs_path.prim_part()) << ",";
+  }
+  ss << ";mtlxSurface=";
+  for (const Path &p : material.mtlxSurface.get_connections()) {
+    ss << NormalizeSourceSignaturePath(p, mat_abs_path.prim_part()) << ",";
+  }
+  ss << ";displacement=";
+  for (const Path &p : material.displacement.get_connections()) {
+    ss << NormalizeSourceSignaturePath(p, mat_abs_path.prim_part()) << ",";
+  }
+  ss << ";volume=";
+  for (const Path &p : material.volume.get_connections()) {
+    ss << NormalizeSourceSignaturePath(p, mat_abs_path.prim_part()) << ",";
+  }
+  ss << ";";
+
+  std::set<std::string> visited;
+  if (!AppendSourceSignaturePrimRec(env.stage, *mat_prim,
+                                    Path(mat_abs_path.prim_part(), ""),
+                                    mat_abs_path.prim_part(), &visited, ss,
+                                    0)) {
+    return false;
+  }
+
+  *signature = ss.str();
+  return true;
+}
+
+bool RenderSceneConverter::FindMaterialSourceSignature(
+    const std::string &signature, int64_t *material_id) const {
+  auto it = _materialSourceSignatureCache.find(signature);
+  if (it == _materialSourceSignatureCache.end()) {
+    return false;
+  }
+  if (material_id) {
+    *material_id = it->second;
+  }
+  return true;
+}
+
+void RenderSceneConverter::RememberMaterialSourceSignature(
+    const std::string &signature, int64_t material_id) {
+  _materialSourceSignatureCache.emplace(signature, material_id);
+}
+
+bool RenderSceneConverter::GetOrCreateDefaultMaterial(
+    const RenderSceneConverterEnv &env, int *material_id) {
+  if (!material_id) {
+    PUSH_ERROR_AND_RETURN("material_id argument is nullptr.");
+  }
+  *material_id = -1;
+
+  if (!env.material_config.assign_default_material) {
+    return true;
+  }
+
+  constexpr const char *kDefaultMaterialPath =
+      "/__tinyusdz_default_material__";
+  if (auto it = materialMap.find(kDefaultMaterialPath);
+      it != materialMap.s_end()) {
+    *material_id = int(it->second);
+    return true;
+  }
+
+  RenderMaterial material;
+  material.name = env.material_config.default_material_name.empty()
+                      ? "defaultMaterial"
+                      : env.material_config.default_material_name;
+  material.abs_path = kDefaultMaterialPath;
+  material.display_name = material.name;
+
+  PreviewSurfaceShader shader;
+  shader.diffuseColor.value = env.material_config.default_material_diffuse_color;
+  shader.roughness.value = env.material_config.default_material_roughness;
+  shader.metallic.value = env.material_config.default_material_metallic;
+  shader.opacity.value = env.material_config.default_material_opacity;
+  material.surfaceShader = shader;
+  material.computeMaterialTag();
+
+  const int id = int(materials.size());
+  materials.emplace_back(std::move(material));
+  materialMap.add(kDefaultMaterialPath, uint64_t(id));
+  *material_id = id;
+
+  if (!EmitMaterial(size_t(id), kDefaultMaterialPath)) {
+    PUSH_ERROR_AND_RETURN("Conversion cancelled by user.");
+  }
+  return true;
+}
 
 // Convert UsdUVTexture shader node.
 // @return true upon conversion success(textures.back() contains the converted
@@ -1423,40 +2225,16 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       texImage.decoded = tex_loaded;
 
     } else {
-
-      Asset asset;
-      std::string resolvedPath;
-      if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset, resolvedPath, /* userdata */nullptr, /* warn */nullptr, &err )) {
-
-        // store resolved asset path.
-        texImage.asset_identifier = resolvedPath;
-
-
-        BufferData imageBuffer;
-        imageBuffer.componentType = tydra::ComponentType::UInt8;
-
-        // Steal the asset's bytes (no copy); `asset` is not used afterward.
-        SetBufferDataBytes(imageBuffer, asset.release_buffer());
-
-        // Assign buffer id
-        texImage.buffer_id = int64_t(buffers.size());
-
-        // TODO: Share image data as much as possible.
-        // e.g. Texture A and B uses same image file, but texturing parameter is
-        // different.
-        buffers.emplace_back(std::move(imageBuffer));
-
-        texImage.decoded = false;
-        DCOUT("texture image is read, but not decoded.");
-
-      } else {
-        // store resolved asset path.
-        texImage.asset_identifier = env.asset_resolver.resolve(assetPath.GetAssetPath());
-        texImage.decoded = false;
-
-        DCOUT("store asset path.");
+      // Metadata-only path. Keep the resolved asset identifier, but do not
+      // read or copy texture bytes during RenderScene conversion. Web/native
+      // clients can fetch the asset lazily when the texture is actually used.
+      std::string resolvedPath = env.asset_resolver.resolve(assetPath.GetAssetPath());
+      if (resolvedPath.empty()) {
+        resolvedPath = assetPath.GetAssetPath();
       }
-
+      texImage.asset_identifier = resolvedPath;
+      texImage.decoded = false;
+      DCOUT("store asset path.");
     }
 
     // colorSpace.
@@ -1536,7 +2314,6 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
       // Linearlization and widen texel bit depth if required.
       if (env.material_config.linearize_color_space) {
-        // TODO: Support ACEScg and Lin_DisplayP3
         DCOUT("linearlize colorspace.");
         size_t width = size_t(texImage.width);
         size_t height = size_t(texImage.height);
@@ -1544,8 +2321,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
         if (channels > 4) {
           PUSH_ERROR_AND_RETURN(
-              fmt::format("TODO: Multiband color channels(5 or more) are not "
-                          "supported(yet)."));
+              fmt::format("Multiband color channels(5 or more) are not "
+                          "supported for texture color conversion."));
         }
 
         // Helper: convert u8 image data to f32 buffer
@@ -1758,9 +2535,22 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                                    to_string(texImage.usdColorSpace)));
           }
 
+        } else if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+          imageBuffer = std::move(assetImageBuffer);
+          texImage.colorSpace = tydra::ColorSpace::Raw;
+
+        } else if ((texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
+                    texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) &&
+                   env.material_config.preserve_texel_bitdepth) {
+          imageBuffer = std::move(assetImageBuffer);
+          texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
         } else {
-          PUSH_ERROR(fmt::format("Unsupported asset texture texel format: {}",
-                                 to_string(assetImageBuffer.componentType)));
+          PUSH_ERROR(fmt::format(
+              "Unsupported asset texture texel format {} for color conversion "
+              "from {}",
+              to_string(assetImageBuffer.componentType),
+              to_string(texImage.usdColorSpace)));
         }
 
       } else {
@@ -1812,9 +2602,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           imageBuffer = std::move(assetImageBuffer);
 
         } else {
-          PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
-                                 to_string(assetImageBuffer.componentType)));
+          imageBuffer = std::move(assetImageBuffer);
         }
+        texImage.colorSpace = texImage.usdColorSpace;
       }
 
       // Assign buffer id
@@ -2094,9 +2884,12 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
         Path texPath;
         std::string st_varname;
         const AssetInfo *assetInfo{nullptr};
+        UVTexture::Channel mtlx_output_channel{UVTexture::Channel::RGB};
+        MtlxTexcoordTransform mtlx_texcoord_transform;
 
         auto mtlx_result = GetConnectedMtlxTexture(
             env.stage, param, &texPath, &image_shader, &st_varname, &assetInfo,
+            &mtlx_output_channel, &mtlx_texcoord_transform,
             env.mesh_config.default_texcoords_primvar_name);
 
         if (mtlx_result) {
@@ -2143,51 +2936,101 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           UsdUVTexture synth_tex;
           synth_tex.file.set_value(texAssetPath);
 
+          value::float2 mtlx_uv_scale;
+          mtlx_uv_scale[0] = 1.0f;
+          mtlx_uv_scale[1] = 1.0f;
+          value::float2 mtlx_uv_translation;
+          mtlx_uv_translation[0] = 0.0f;
+          mtlx_uv_translation[1] = 0.0f;
+          float mtlx_uv_rotation = 0.0f;
+          bool has_mtlx_uv_transform = false;
+          if (mtlx_texcoord_transform.has_transform) {
+            mtlx_uv_scale = mtlx_texcoord_transform.scale;
+            mtlx_uv_translation = mtlx_texcoord_transform.translation;
+            mtlx_uv_rotation = mtlx_texcoord_transform.rotation;
+            has_mtlx_uv_transform = true;
+          }
+
           // Helper lambda to extract wrap mode from properties
           auto extract_wrap_modes = [&](const std::map<std::string, Property>& props_map) {
-            for (const auto& prop : props_map) {
-              if (prop.first == "inputs:uaddressmode" && prop.second.is_attribute()) {
-                const Attribute &attr = prop.second.get_attribute();
-                if (attr.has_value()) {
-                  auto val = attr.get_value<std::string>();
-                  if (val) {
-                    if (*val == "periodic") {
-                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Repeat);
-                    } else if (*val == "clamp") {
-                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Clamp);
-                    } else if (*val == "mirror") {
-                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Mirror);
-                    } else if (*val == "constant") {
-                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Black);
-                    }
-                  }
-                }
+            auto map_address_mode = [](const std::string &mode,
+                                       UsdUVTexture::Wrap *wrap) {
+              if (!wrap) {
+                return false;
               }
-              if (prop.first == "inputs:vaddressmode" && prop.second.is_attribute()) {
-                const Attribute &attr = prop.second.get_attribute();
-                if (attr.has_value()) {
-                  auto val = attr.get_value<std::string>();
-                  if (val) {
-                    if (*val == "periodic") {
-                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Repeat);
-                    } else if (*val == "clamp") {
-                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Clamp);
-                    } else if (*val == "mirror") {
-                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Mirror);
-                    } else if (*val == "constant") {
-                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Black);
-                    }
-                  }
-                }
+              if (mode == "periodic") {
+                *wrap = UsdUVTexture::Wrap::Repeat;
+                return true;
               }
+              if (mode == "clamp") {
+                *wrap = UsdUVTexture::Wrap::Clamp;
+                return true;
+              }
+              if (mode == "mirror") {
+                *wrap = UsdUVTexture::Wrap::Mirror;
+                return true;
+              }
+              if (mode == "constant") {
+                *wrap = UsdUVTexture::Wrap::Black;
+                return true;
+              }
+              return false;
+            };
+            std::string mode;
+            UsdUVTexture::Wrap wrap;
+            if (FindMtlxStringInput(props_map, "inputs:uaddressmode", &mode) &&
+                map_address_mode(mode, &wrap)) {
+              synth_tex.wrapS.set_value(wrap);
+            }
+            if (FindMtlxStringInput(props_map, "inputs:vaddressmode", &mode) &&
+                map_address_mode(mode, &wrap)) {
+              synth_tex.wrapT.set_value(wrap);
             }
           };
+
+          auto extract_uv_transform =
+              [&](const std::map<std::string, Property> &props_map) {
+                for (const auto &prop : props_map) {
+                  if (!prop.second.is_attribute()) {
+                    continue;
+                  }
+                  const Attribute &attr = prop.second.get_attribute();
+                  if (!attr.has_value()) {
+                    continue;
+                  }
+
+                  if (prop.first == "inputs:uvtiling" ||
+                      prop.first == "inputs:scale") {
+                    auto val = attr.get_value<value::float2>();
+                    if (val) {
+                      mtlx_uv_scale = *val;
+                      has_mtlx_uv_transform = true;
+                    }
+                  } else if (prop.first == "inputs:uvoffset" ||
+                             prop.first == "inputs:translation") {
+                    auto val = attr.get_value<value::float2>();
+                    if (val) {
+                      mtlx_uv_translation = *val;
+                      has_mtlx_uv_transform = true;
+                    }
+                  } else if (prop.first == "inputs:rotate" ||
+                             prop.first == "inputs:rotation") {
+                    auto val = attr.get_value<float>();
+                    if (val) {
+                      mtlx_uv_rotation = *val;
+                      has_mtlx_uv_transform = true;
+                    }
+                  }
+                }
+              };
 
           // Map MaterialX wrap modes to USD - check both ShaderNode and Shader props
           if (shader_node && !shader_node->props.empty()) {
             extract_wrap_modes(shader_node->props);
+            extract_uv_transform(shader_node->props);
           }
           extract_wrap_modes(image_shader->props);
+          extract_uv_transform(image_shader->props);
 
           // Use ConvertUVTexture to properly handle the texture
           UVTexture rtex;
@@ -2224,8 +3067,12 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           }
 
           // Set the connected output channel and UV primvar name
-          rtex.connectedOutputChannel = tydra::UVTexture::Channel::RGB;
+          rtex.connectedOutputChannel = mtlx_output_channel;
           rtex.varname_uv = st_varname;
+          if (has_mtlx_uv_transform) {
+            ApplyTexTransform2d(mtlx_uv_rotation, mtlx_uv_scale,
+                                mtlx_uv_translation, &rtex);
+          }
 
           uint64_t texId = textures.size();
           textures.push_back(rtex);
@@ -2275,6 +3122,11 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               return true;
             }
           }
+          // Capture the constant-evaluator's diagnostic (e.g. "Unsupported node
+          // type ...") so it can be surfaced in the fallback warning below;
+          // otherwise it is lost (it only reached DCOUT before).
+          const std::string mtlx_const_err =
+              const_result ? std::string() : const_result.error();
           // Interface passthrough: the connection may target a Material /
           // Shader / NodeGraph interface input that holds a constant value
           // (e.g. `Material.inputs:metalness = 1`, common in flattened
@@ -2307,8 +3159,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
                 cur = ia.connections()[0];  // forward one hop
                 continue;
               }
-              if (auto tv = ia.get_value<T>()) {
-                dst_param.set_value(*tv);
+              if (SetShaderParamFromInterfaceAttribute(ia, &dst_param)) {
                 return true;
               }
               break;
@@ -2332,9 +3183,18 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           DCOUT(fmt::format(
               "MaterialX: no texture or fallback for {} ({})",
               param_name, mtlx_result.error()));
-          PUSH_ERROR_AND_RETURN(fmt::format(
-              "Failed to find MaterialX texture for {}: {}", param_name,
-              mtlx_result.error()));
+          if (env.material_config.strict_material_check) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Failed to find MaterialX texture for {}: {}", param_name,
+                mtlx_result.error()));
+          }
+          PushWarn(fmt::format(
+              "MaterialX connection for {} could not be resolved to a "
+              "texture or constant ({}){}; using the parameter default instead.",
+              param_name, mtlx_result.error(),
+              mtlx_const_err.empty() ? std::string()
+                                     : " [" + mtlx_const_err + "]"));
+          return true;
         }
       }
     }
@@ -2363,9 +3223,16 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
               param_name, result.error()));
           return true;
         }
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Failed to find MaterialX texture for {}: {}", param_name,
-            result.error()));
+        if (env.material_config.strict_material_check) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to find MaterialX texture for {}: {}", param_name,
+              result.error()));
+        }
+        PushWarn(fmt::format(
+            "MaterialX connection for {} could not be resolved to a "
+            "UsdUVTexture ({}); using the parameter default instead.",
+            param_name, result.error()));
+        return true;
       }
       // The connection did not resolve to a UsdUVTexture (e.g. a UsdPreviewSurface
       // input wired to a non-texture node such as a UsdPrimvarReader) while a
@@ -2705,6 +3572,13 @@ static OpenPBRSurface ConvertMtlxStandardSurfaceToOpenPBRSurface(
 
   // Opacity: StandardSurface is color3f, OpenPBR is float — take luminance
   // Using Rec.709 luminance: 0.2126*R + 0.7152*G + 0.0722*B
+  {
+    value::color3f opacity{1.0f, 1.0f, 1.0f};
+    src.opacity.get_value().get(value::TimeCode::Default(), &opacity);
+    const float alpha = 0.2126f * opacity[0] + 0.7152f * opacity[1] +
+                        0.0722f * opacity[2];
+    dst.opacity.set_value(Animatable<float>(alpha));
+  }
 
   // Geometry (normal, tangent)
   // StandardSurface uses TypedAttribute (optional, no fallback),
@@ -2806,6 +3680,36 @@ static OpenPBRSurface ConvertMtlxOpenPBRSurfaceToOpenPBRSurface(
   return dst;
 }
 
+static std::string MtlxNormalMapUvName(
+    const MtlxNodeGraphInfo &normal_info,
+    const std::string &default_uv_name) {
+  if (normal_info.has_geomprop && !normal_info.geomprop_name.empty()) {
+    return normal_info.geomprop_name;
+  }
+  return MtlxTexcoordIndexName(default_uv_name, normal_info.texcoord_index);
+}
+
+static void ApplyMtlxNormalMapTextureInfo(
+    const MtlxNodeGraphInfo &normal_info, const std::string &default_uv_name,
+    UVTexture *uvtex) {
+  if (!uvtex) {
+    return;
+  }
+  uvtex->varname_uv = MtlxNormalMapUvName(normal_info, default_uv_name);
+  uvtex->connectedOutputChannel = UVTexture::Channel::RGB;
+  uvtex->wrapS = UVTexture::WrapMode::REPEAT;
+  uvtex->wrapT = UVTexture::WrapMode::REPEAT;
+  if (normal_info.has_uvtransform) {
+    value::float2 scale;
+    scale[0] = normal_info.uvtiling[0];
+    scale[1] = normal_info.uvtiling[1];
+    value::float2 translation;
+    translation[0] = normal_info.uvoffset[0];
+    translation[1] = normal_info.uvoffset[1];
+    ApplyTexTransform2d(0.0f, scale, translation, uvtex);
+  }
+}
+
 static int32_t ApplyMtlxNormalMapInfoToOpenPBRShader(
     const MtlxNodeGraphInfo &normal_info, const std::string &default_uv_name,
     std::vector<TextureImage> *images, std::vector<UVTexture> *textures,
@@ -2844,10 +3748,7 @@ static int32_t ApplyMtlxNormalMapInfoToOpenPBRShader(
 
   UVTexture uvtex;
   uvtex.texture_image_id = static_cast<int32_t>(image_id);
-  uvtex.varname_uv = default_uv_name;
-  uvtex.connectedOutputChannel = UVTexture::Channel::RGB;
-  uvtex.wrapS = UVTexture::WrapMode::REPEAT;
-  uvtex.wrapT = UVTexture::WrapMode::REPEAT;
+  ApplyMtlxNormalMapTextureInfo(normal_info, default_uv_name, &uvtex);
 
   int32_t tex_id = static_cast<int32_t>(textures->size());
   textures->push_back(uvtex);
@@ -2960,8 +3861,8 @@ static void ApplyMtlxGeometryNodeGraphInfoToOpenPBRShader(
 
           UVTexture coat_nmap_tex;
           coat_nmap_tex.texture_image_id = static_cast<int32_t>(images->size() - 1);
-          coat_nmap_tex.connectedOutputChannel = UVTexture::Channel::RGB;
-          coat_nmap_tex.varname_uv = default_uv_name;
+          ApplyMtlxNormalMapTextureInfo(coat_normal_info, default_uv_name,
+                                        &coat_nmap_tex);
           textures->push_back(coat_nmap_tex);
 
           openpbr_shader->coat_normal.texture_id = static_cast<int32_t>(textures->size() - 1);
@@ -3243,9 +4144,11 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         }
       }
 
-      // If direct connection parsing failed, look for child Shader prims with OpenPBR info:id
+      // If direct connection parsing failed, look for child Shader prims with a
+      // supported MaterialX surface info:id.
       if (!has_mtlx_surface) {
-        DCOUT("Direct connection not found, searching for child shaders with OpenPBR info:id");
+        DCOUT("Direct connection not found, searching for child MaterialX "
+              "surface shader info:id");
 
         // Get the material prim from the stage to access its children
         const Prim* mat_prim = nullptr;
@@ -3255,14 +4158,18 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
             for (const auto& child : mat_prim->children()) {
               const Shader* shader = child.as<Shader>();
               if (shader) {
-                // Check if this is an OpenPBR shader by its info:id
+                // Check if this is a supported MaterialX surface shader by its
+                // info:id. MaterialX also defines a UsdPreviewSurface node with
+                // the same inputs as USD PreviewSurface.
                 if (shader->info_id == kNdOpenPbrSurfaceSurfaceshader ||
-                    shader->info_id == "ND_open_pbr_surface_surfaceshader") {
+                    shader->info_id == "ND_open_pbr_surface_surfaceshader" ||
+                    shader->info_id == kNdUsdPreviewSurfaceSurfaceshader ||
+                    shader->info_id == kNdStandardSurfaceSurfaceshader) {
                   Path child_path = mat_abs_path;
                   child_path = child_path.append_element(child.element_name());
                   mtlxSurfacePath = child_path;
                   has_mtlx_surface = true;
-                  DCOUT("Found OpenPBR shader child: " << child_path);
+                  DCOUT("Found MaterialX surface shader child: " << child_path);
                   break;
                 }
               }
@@ -3294,10 +4201,31 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
           }
 
           // Check if it's an OpenPBR shader
+          const UsdPreviewSurface *mtlx_psurface =
+              mtlxShader->value.as<UsdPreviewSurface>();
           const MtlxOpenPBRSurface *mtlx_openpbr =
               mtlxShader->value.as<MtlxOpenPBRSurface>();
+          const MtlxAutodeskStandardSurface *mtlx_standard =
+              mtlxShader->value.as<MtlxAutodeskStandardSurface>();
 
-          if (mtlx_openpbr) {
+          if (mtlx_psurface &&
+              mtlxShader->info_id == kNdUsdPreviewSurfaceSurfaceshader) {
+            DCOUT("Converting MaterialX UsdPreviewSurface to RenderMaterial");
+
+            PreviewSurfaceShader pss;
+            if (!ConvertPreviewSurfaceShader(env, mtlxSurfacePath,
+                                             *mtlx_psurface, &pss,
+                                             /* is_materialx */ true)) {
+              PUSH_ERROR_AND_RETURN(fmt::format(
+                  "Failed to convert MaterialX UsdPreviewSurface : {}",
+                  mtlxSurfacePath.prim_part()));
+            }
+
+            rmat.surfaceShader = pss;
+            DCOUT("Successfully attached MaterialX UsdPreviewSurface shader to "
+                  "RenderMaterial: "
+                  << mtlxSurfacePath.full_path_name());
+          } else if (mtlx_openpbr) {
             DCOUT("Converting MtlxOpenPBRSurface to RenderMaterial");
 
             OpenPBRSurface converted_openpbr =
@@ -3348,11 +4276,84 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                     "RenderMaterial: "
                     << mtlxSurfacePath.full_path_name());
             }
+          } else if (mtlx_standard) {
+            DCOUT("Converting MtlxAutodeskStandardSurface to RenderMaterial");
+
+            OpenPBRSurface converted_openpbr =
+                ConvertMtlxStandardSurfaceToOpenPBRSurface(*mtlx_standard);
+
+            OpenPBRSurfaceShader openpbr_shader;
+            if (!ConvertOpenPBRSurfaceShader(env, mtlxSurfacePath,
+                                             converted_openpbr,
+                                             &openpbr_shader,
+                                             /* is_materialx */ true)) {
+              PUSH_ERROR_AND_RETURN(fmt::format(
+                  "Failed to convert MtlxAutodeskStandardSurface : {}",
+                  mtlxSurfacePath.prim_part()));
+            } else {
+              const Prim *material_prim_for_ng = nullptr;
+              if (!env.stage.find_prim_at_path(mat_abs_path,
+                                               material_prim_for_ng, &err)) {
+                DCOUT("Could not find material prim at "
+                      << mat_abs_path.full_path_name());
+                material_prim_for_ng = nullptr;
+              }
+
+              if (material_prim_for_ng) {
+                const auto &normal_conns = mtlx_standard->normal.get_connections();
+                if (!normal_conns.empty()) {
+                  auto normal_info_result = ExtractMtlxNodeGraphInfo(
+                      env.stage, material_prim_for_ng, normal_conns, &err);
+                  if (normal_info_result) {
+                    ApplyMtlxNormalMapInfoToOpenPBRShader(
+                        normal_info_result.value(),
+                        env.mesh_config.default_texcoords_primvar_name,
+                        &images, &textures, &openpbr_shader);
+                  }
+                }
+                const auto &tangent_conns =
+                    mtlx_standard->tangent.get_connections();
+                if (!tangent_conns.empty()) {
+                  auto tangent_info_result = ExtractMtlxNodeGraphInfo(
+                      env.stage, material_prim_for_ng, tangent_conns, &err);
+                  if (tangent_info_result) {
+                    ApplyMtlxTangentInfoToOpenPBRShader(
+                        tangent_info_result.value(), &openpbr_shader);
+                  }
+                }
+              }
+
+              std::string nodegraph_json;
+              std::string conv_err;
+              if (ConvertShaderWithNodeGraphToJson(
+                      *mtlxShaderPrim, mtlxSurfacePath, env.stage,
+                      &nodegraph_json, &conv_err)) {
+                if (!nodegraph_json.empty()) {
+                  openpbr_shader.nodeGraphJson = nodegraph_json;
+                }
+              } else {
+                DCOUT("No MaterialX NodeGraph found for standard_surface "
+                      "shader: "
+                      << mtlxSurfacePath.prim_part() << " (" << conv_err
+                      << ")");
+              }
+
+              rmat.openPBRShader = openpbr_shader;
+              DCOUT("Successfully attached MaterialX standard_surface shader "
+                    "to RenderMaterial: "
+                    << mtlxSurfacePath.full_path_name());
+            }
           } else {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "Found shader {} but it's not "
-                "ND_open_pbr_surface_surfaceshader (got {})",
-                mtlxSurfacePath.prim_part(), mtlxShader->info_id));
+            const std::string msg = fmt::format(
+                "Found shader {} but it's not a supported MaterialX surface "
+                "shader (expected ND_open_pbr_surface_surfaceshader or "
+                "ND_standard_surface_surfaceshader or "
+                "ND_UsdPreviewSurface_surfaceshader, got {})",
+                mtlxSurfacePath.prim_part(), mtlxShader->info_id);
+            if (env.material_config.strict_material_check) {
+              PUSH_ERROR_AND_RETURN(msg);
+            }
+            PUSH_WARN(msg + "; using default material appearance.");
           }
         }
       } else {
@@ -3450,15 +4451,70 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       const size_t tex_begin = conv->textures.size();
       const size_t udim_begin = conv->udim_textures.size();
 
+      std::string source_signature;
+      if (visitorEnv->env->scene_config.dedup_materials_by_texture_identity &&
+          conv->BuildMaterialSourceSignature(*visitorEnv->env,
+                                             bound_material_path,
+                                             *bound_material,
+                                             &source_signature)) {
+        int64_t cached_material_id = -1;
+        if (conv->FindMaterialSourceSignature(source_signature,
+                                              &cached_material_id)) {
+          if (cached_material_id < 0 ||
+              size_t(cached_material_id) >= rmaterials.size()) {
+            if (err) {
+              (*err) += "Material source signature cache index out-of-range.\n";
+            }
+            return false;
+          }
+          rmaterial_id = cached_material_id;
+          visitorEnv->converter->materialMap.add(
+              bound_material_path.full_path_name(), uint64_t(rmaterial_id));
+          visitorEnv->material_cache_hits++;
+          return true;
+        }
+      }
+
       RenderMaterial rmat;
+      const auto material_start = TydraPerfClock::now();
       if (!conv->ConvertMaterial(*visitorEnv->env, bound_material_path,
                                  *bound_material, &rmat)) {
-        if (err) {
-          (*err) += fmt::format("Material conversion failed: {}",
-                                bound_material_path);
+        if (!visitorEnv->env->material_config.assign_default_material ||
+            visitorEnv->env->material_config.strict_material_check) {
+          if (err) {
+            (*err) += fmt::format("Material conversion failed: {}",
+                                  bound_material_path);
+          }
+          return false;
         }
-        return false;
+        int default_material_id = -1;
+        if (!conv->GetOrCreateDefaultMaterial(*visitorEnv->env,
+                                              &default_material_id)) {
+          if (err) {
+            (*err) += fmt::format("Material conversion failed: {}",
+                                  bound_material_path);
+          }
+          return false;
+        }
+        if (default_material_id < 0) {
+          if (err) {
+            (*err) += fmt::format("Material conversion failed: {}",
+                                  bound_material_path);
+          }
+          return false;
+        }
+        const std::string material_error = conv->GetError();
+        conv->AddWarning(fmt::format(
+            "Material conversion failed for {}; using default material. {}",
+            bound_material_path.full_path_name(), material_error));
+        conv->ClearError();
+        conv->materialMap.add(bound_material_path.full_path_name(),
+                              uint64_t(default_material_id));
+        rmaterial_id = int64_t(default_material_id);
+        return true;
       }
+      visitorEnv->convert_material_ns += ElapsedNs(material_start);
+      visitorEnv->material_cache_misses++;
 
       // Assign new material ID
       uint64_t mat_id = rmaterials.size();
@@ -3473,6 +4529,10 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       visitorEnv->converter->materialMap.add(
           bound_material_path.full_path_name(), uint64_t(rmaterial_id));
+      if (!source_signature.empty()) {
+        visitorEnv->converter->RememberMaterialSourceSignature(
+            source_signature, rmaterial_id);
+      }
       // Compute material tag for render pass sorting (opaque/translucent/masked)
       rmat.computeMaterialTag();
 
@@ -3515,8 +4575,10 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           return false;
         }
       }
+      return true;
     }
 
+    visitorEnv->material_cache_hits++;
     return true;
   };
 
@@ -3529,10 +4591,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       return false;
     }
 
+    visitorEnv->material_resolve_calls++;
     std::string local_err;
+    const auto resolve_start = TydraPerfClock::now();
     bool local_found = visitorEnv->converter->GetBoundMaterialCached(
         visitorEnv->env->stage, query_path, purpose, bound_material_path,
         bound_material, &local_err);
+    visitorEnv->resolve_material_ns += ElapsedNs(resolve_start);
 
     if (!local_err.empty()) {
       if (err) {
@@ -3542,6 +4607,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
 
     (*found) = local_found;
+    if (local_found) {
+      visitorEnv->material_resolve_found++;
+    }
     return true;
   };
 
@@ -3655,8 +4723,6 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     MaterialPath material_path;
     material_path.default_texcoords_primvar_name =
         visitorEnv->env->mesh_config.default_texcoords_primvar_name;
-    // TODO: Implement feature to assign default material
-    // id(MaterialPath::default_material_id) when no bound material found.
 
     {
       const std::string mesh_path_str = abs_path.full_path_name();
@@ -3726,6 +4792,17 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
       }
 
+      if (material_path.material_path.empty()) {
+        if (!visitorEnv->converter->GetOrCreateDefaultMaterial(
+                *visitorEnv->env, &material_path.default_material_id)) {
+          return false;
+        }
+      }
+      if (material_path.backface_material_path.empty()) {
+        material_path.default_backface_material_id =
+            material_path.default_material_id;
+      }
+
       // BlendShapes
       std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
       {
@@ -3742,6 +4819,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       RenderMesh rmesh;
 
+      const auto mesh_start = TydraPerfClock::now();
       if (!visitorEnv->converter->ConvertMesh(
               *visitorEnv->env, abs_path, *pmesh, material_path,
               subset_material_path_map, visitorEnv->converter->materialMap,
@@ -3754,6 +4832,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      visitorEnv->convert_mesh_ns += ElapsedNs(mesh_start);
 
       uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
       if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
@@ -3771,6 +4850,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       std::string msg = "Converting mesh " +
           std::to_string(visitorEnv->meshes_processed) + "/" +
           std::to_string(visitorEnv->meshes_total);
+      const auto progress_start = TydraPerfClock::now();
       if (!visitorEnv->converter->ReportMeshProgress(
               visitorEnv->meshes_processed, visitorEnv->meshes_total,
               abs_path.full_path_name(), msg)) {
@@ -3779,6 +4859,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
         return false;
       }
+      visitorEnv->progress_ns += ElapsedNs(progress_start);
+
       // Stream the just-converted mesh (LOCAL space; world placement arrives in
       // the Hierarchy phase). No-op without a streaming sink.
       if (!visitorEnv->converter->EmitMesh(size_t(mesh_id),

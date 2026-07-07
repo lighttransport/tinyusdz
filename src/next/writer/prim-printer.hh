@@ -7,8 +7,8 @@
 #pragma once
 
 #include "../stage/stage.hh"
+#include "stream-writer.hh"
 #include <string>
-#include <ostream>
 
 namespace tinyusdz {
 namespace next {
@@ -40,22 +40,22 @@ struct PrimPrintOptions {
 /// Print a single UsdPrim to string
 std::string PrintPrim(const UsdPrim& prim, const PrimPrintOptions& opts = {});
 
-/// Print a single UsdPrim to stream
-void PrintPrim(std::ostream& os, const UsdPrim& prim, const PrimPrintOptions& opts = {});
+/// Print a single UsdPrim to a StreamWriter sink
+void PrintPrim(StreamWriter& os, const UsdPrim& prim, const PrimPrintOptions& opts = {});
 
 /// Print entire Stage to string
 std::string PrintStage(const Stage& stage, const PrimPrintOptions& opts = {});
 
-/// Print entire Stage to stream
-void PrintStage(std::ostream& os, const Stage& stage, const PrimPrintOptions& opts = {});
+/// Print entire Stage to a StreamWriter sink
+void PrintStage(StreamWriter& os, const Stage& stage, const PrimPrintOptions& opts = {});
 
 /// Print a PrimSpec directly (lower-level)
 std::string PrintPrimSpec(const PrimSpec& spec, const PrimPrintOptions& opts = {});
-void PrintPrimSpec(std::ostream& os, const PrimSpec& spec, int depth, const PrimPrintOptions& opts);
+void PrintPrimSpec(StreamWriter& os, const PrimSpec& spec, int depth, const PrimPrintOptions& opts);
 
 /// Print a Layer to string
 std::string PrintLayer(const Layer& layer, const PrimPrintOptions& opts = {});
-void PrintLayer(std::ostream& os, const Layer& layer, const PrimPrintOptions& opts = {});
+void PrintLayer(StreamWriter& os, const Layer& layer, const PrimPrintOptions& opts = {});
 
 }  // namespace next
 }  // namespace tinyusdz

@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "../strfmt.hh"
+
 namespace tinyusdz {
 namespace next {
 
@@ -189,6 +191,10 @@ enum class CrateTypeId : uint8_t {
   UnregisteredValueListOp = 54,
   PayloadListOp = 55,
   TimeCode = 56,
+  PathExpression = 57,  // SdfPathExpression (crate >= 0.10.0)
+  // 58 = Relocates (SdfRelocates) -- reserved, not yet implemented
+  Spline = 59,          // TsSpline (crate >= 0.12.0)
+  // 60 = AnimationBlock (SdfAnimationBlock) -- reserved, not yet implemented
 };
 
 /// Convert CrateTypeId to string name
@@ -307,7 +313,7 @@ struct CrateVersion {
   }
 
   std::string to_string() const {
-    return std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
+    return UIntToStr(major) + "." + UIntToStr(minor) + "." + UIntToStr(patch);
   }
 };
 
@@ -432,6 +438,9 @@ DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
 /// Encode uint32_t values using pxrUSD delta-coding format.
 /// Returns the raw (uncompressed) delta-coded byte sequence.
 std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count);
+std::vector<uint8_t> EncodeDeltaU32WithCommon(const uint32_t* values,
+                                              size_t count,
+                                              int32_t common_delta);
 
 /// Decode uint32_t values from pxrUSD delta-coded format.
 /// buffer points to the raw (already decompressed) delta-coded data.
@@ -458,6 +467,16 @@ CompressResult WriteCompressedU32(const uint32_t* values, size_t count);
 /// Deserialize (read u64 size + LZ4-decompress + delta-decode).
 DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
                                          uint32_t* dst, size_t count);
+
+/// Decode uint64_t values from pxrUSD delta-coded format (64-bit variant of
+/// DecodeDeltaU32: int64 common value, int16/int32/int64 code widths).
+bool DecodeDeltaU64(const uint8_t* buffer, size_t buffer_size,
+                    uint64_t* dst, size_t count);
+
+/// Deserialize a pxrUSD compressed 64-bit integer section
+/// (read u64 size + LZ4-decompress + 64-bit delta-decode).
+DecompressResult DecompressCompressedU64(const uint8_t* data, size_t data_size,
+                                         uint64_t* dst, size_t count);
 
 }  // namespace next
 }  // namespace tinyusdz

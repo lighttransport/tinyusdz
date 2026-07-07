@@ -7,9 +7,15 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_map>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <atomic>
+#include <shared_mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -36,6 +42,7 @@ public:
   /// Intern a property name, returning its ID
   /// If name already exists, returns existing ID
   PropNameId intern(const std::string& name);
+  PropNameId intern(std::string_view name);
   PropNameId intern(const char* name);
 
   /// Get name by ID (O(1))
@@ -43,13 +50,31 @@ public:
 
   /// Try to find existing ID without creating (O(1) average)
   PropNameId find(const std::string& name) const;
+  PropNameId find(std::string_view name) const;
   PropNameId find(const char* name) const;
 
   /// Get total count of interned names
-  size_t size() const { return names_.size(); }
+  size_t size() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
+    return names_.size();
+  }
 
   /// Pre-register common USD property names for faster lookup
   void register_common_names();
+
+  /// Freeze the table for lock-free concurrent reads. After composition the set
+  /// of interned names is fixed; rendering does millions of find()/get() calls
+  /// across many threads, and the per-call shared_lock then contends purely on
+  /// the lock's own cache line (a measured ~14% of an Island render). Once
+  /// frozen, find()/get() skip the lock entirely (concurrent reads of the now
+  /// immutable map/deque are safe). A subsequent intern() unfreezes (re-enabling
+  /// locking) so a later load/compose is still correct -- callers must not intern
+  /// concurrently with frozen lock-free reads (the load and render phases are
+  /// disjoint). No-op when built without TINYUSDZ_ENABLE_THREAD.
+  void freeze();
+  void unfreeze();
 
   // Common property name IDs (pre-registered for O(1) access)
   PropNameId id_points;       // "points"
@@ -68,9 +93,35 @@ public:
   PropNameId id_height;       // "height"
   PropNameId id_size;         // "size"
 
+  struct StringViewHash {
+    size_t operator()(std::string_view s) const noexcept {
+      return std::hash<std::string_view>{}(s);
+    }
+  };
+
+  struct StringViewEq {
+    bool operator()(std::string_view a, std::string_view b) const noexcept {
+      return a == b;
+    }
+  };
+
 private:
-  std::vector<std::string> names_;
-  std::unordered_map<std::string, uint32_t> name_to_id_;
+  // Interned property names.
+  // We keep pointers stable by owning names via unique_ptr and storing only string_view
+  // keys in the hash map.
+  std::vector<std::unique_ptr<std::string>> names_;
+  std::unordered_map<std::string_view, uint32_t, StringViewHash, StringViewEq>
+      name_to_id_;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // The global table is interned into concurrently when referenced layers are
+  // parsed on worker threads (parallel composition pre-warm). Read-mostly: a
+  // lookup takes a shared lock, the rare new-name insert an exclusive one.
+  // Uncontended in the serial path (~ns) so single-threaded parse is unaffected.
+  mutable std::shared_mutex mu_;
+  // When set, find()/get() bypass mu_ for lock-free concurrent reads (see
+  // freeze()). Acquire/release ordered against the populating writes.
+  std::atomic<bool> frozen_{false};
+#endif
 };
 
 /// Global property name table (singleton)

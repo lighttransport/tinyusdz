@@ -4,7 +4,8 @@
 // so Puppeteer can drive it (see tests/bench-usdzconvert-browser.mjs):
 //
 //   bench-usdzconvert.html?manifest=<url>&root=<rel>&resize=1024
-//     &textureFormat=png&codec=browser|wasm&wasm64=1&concurrency=8
+//     &textureFormat=png&codec=browser|wasm&pipeline=memory|stream|stream-next
+//     &wasm64=1&concurrency=8
 //
 // Results land in window.__usdzBench = { ready|error, timings, stats, gpu }.
 
@@ -58,10 +59,16 @@ async function main() {
   const resize = Number(params.get('resize') || 0);
   const textureFormat = params.get('textureFormat') || 'keep';
   const codec = params.get('codec') || 'wasm';
-  const pipeline = params.get('pipeline') || 'memory';  // memory | stream
+  const pipeline = params.get('pipeline') || 'memory';  // memory | stream | stream-next
+  const streaming = pipeline === 'stream' || pipeline === 'stream-next';
   const wasm64 = params.get('wasm64') !== '0';
   const concurrency = Number(params.get('concurrency') || 8);
   const jpegQuality = Number(params.get('jpegQuality') || 90);
+  const includeUnusedTextures = params.get('includeUnusedTextures') === '1';
+  // Raise the conservative default USDC writer caps (0 = keep default). Needed
+  // for scenes whose flattened root crate exceeds ~100 MB on wasm32.
+  const maxUsdcMb = Number(params.get('maxUsdcMb') || 0);
+  const maxMemMb = Number(params.get('maxMemMb') || 0);
   // keep + no resize = passthrough (otherwise 'keep' would still re-encode).
   const reencode = params.get('reencode') === '0' ? false
       : !(textureFormat === 'keep' && resize <= 0);
@@ -71,13 +78,13 @@ async function main() {
   status(`gpu: ${gpu}`);
 
   // 1. Manifest; for the in-memory pipeline, fetch the whole scene up front
-  //    (folder-upload simulation). The stream pipeline fetches lazily instead.
+  //    (folder-upload simulation). Streaming pipelines fetch lazily instead.
   let t = performance.now();
   status(`fetching manifest ${manifestUrl} ...`);
   const manifest = await (await fetch(manifestUrl)).json();
   let assetMap = null;
   let sceneBytes = 0;
-  if (pipeline !== 'stream') {
+  if (!streaming) {
     status(`fetching ${manifest.length} file(s) ...`);
     const fetched = await fetchAll(
         manifest, 16,
@@ -102,14 +109,17 @@ async function main() {
     maxTextureSize: resize,
     textureFormat,
     jpegQuality,
+    maxUsdcMb,
+    maxMemMb,
     reencode,
     textureProcessor: tp ? tp.processor : undefined,
-    textureConcurrency: tp ? tp.concurrency : (pipeline === 'stream' ? 4 : 0),
+    textureConcurrency: tp ? tp.concurrency : (streaming ? 4 : 0),
+    includeUnusedTextures,
     log: (m) => { if ((lines.length % 25) === 0) status(String(m)); },
   };
   t = performance.now();
   let usdz = null, stats, usdzBytes = 0;
-  if (pipeline === 'stream') {
+  if (streaming) {
     // Lazy source over HTTP: textures fetched -> processed -> zip-appended ->
     // released; only USD layers enter the wasm cache. A real app would point
     // the sink at a File System Access stream; the bench collects chunks and
@@ -128,7 +138,10 @@ async function main() {
     };
     const chunks = [];
     const zipSink = { write: (c) => { usdzBytes += c.length; chunks.push(c.slice ? c.slice() : new Uint8Array(c)); } };
-    ({ stats } = await convertSourceToUSDZStreaming(native, source, { ...convertOpts, zipSink }));
+    const streamOpts = pipeline === 'stream-next'
+      ? { ...convertOpts, pipeline: 'next', nextPreloadUsdLayers: true, zipSink }
+      : { ...convertOpts, zipSink };
+    ({ stats } = await convertSourceToUSDZStreaming(native, source, streamOpts));
     const kValidatableBytes = wasm64 ? 4e9 : 800e6;  // reload copies into the wasm heap
     if (usdzBytes <= kValidatableBytes) {
       usdz = new Uint8Array(usdzBytes);

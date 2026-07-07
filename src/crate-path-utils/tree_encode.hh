@@ -42,8 +42,14 @@ public:
   std::string GetToken(TokenIndex index) const;
 
   /// Get all tokens for serialization
-  const std::map<std::string, TokenIndex>& GetTokens() const { return tokens_; }
-  const std::map<TokenIndex, std::string>& GetReverseTokens() const { return reverse_tokens_; }
+  const std::map<std::string, TokenIndex>& GetTokens() const
+      TINYUSDZ_LIFETIMEBOUND {
+    return tokens_;
+  }
+  const std::map<TokenIndex, std::string>& GetReverseTokens() const
+      TINYUSDZ_LIFETIMEBOUND {
+    return reverse_tokens_;
+  }
 
   /// Clear all tokens
   void Clear();

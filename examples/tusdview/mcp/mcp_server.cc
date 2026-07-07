@@ -84,6 +84,20 @@ json MCPServer::buildToolsList() const {
        {"pitch", numProp("elevation radians (set)")},
        {"distance", numProp("distance to target (set)")}},
       json::array({"op"})));
+  tools.push_back(tool(
+      "screenshot",
+      "Capture the current viewport to an image file (PNG/PPM by extension) for "
+      "visual debugging. Camera moves from the 'viewport' tool apply on the next "
+      "frame, so orbit/pan/dolly then call screenshot as a separate request.",
+      {{"path", strProp("output image path (.png or .ppm)")}},
+      json::array({"path"})));
+  tools.push_back(tool(
+      "input",
+      "Synthesize a keyboard key as if pressed in the viewport. "
+      "key=w (cycle wireframe: off/wire/wire+shade) | f or a (frame all) | "
+      "0 (home) | 5 (isometric) | 1 (front) | 3 (right) | 7 (top).",
+      {{"key", strProp("w | f | a | 0 | 1 | 3 | 5 | 7")}},
+      json::array({"key"})));
   tools.push_back(tool("list_prims", "List renderable mesh prim paths in the scene.",
                        {{"max", {{"type", "integer"}, {"description", "cap (default 1000)"}}}}));
   tools.push_back(tool(
@@ -222,6 +236,10 @@ void MCPServer::drain() {
         payload = host_->mcpSetFocus(cmd->args, err);
       } else if (t == "viewport") {
         payload = host_->mcpViewport(cmd->args, err);
+      } else if (t == "screenshot") {
+        payload = host_->mcpScreenshot(cmd->args, err);
+      } else if (t == "input") {
+        payload = host_->mcpInput(cmd->args, err);
       } else if (t == "list_prims") {
         payload = host_->mcpListPrims(cmd->args, err);
       } else if (t == "load_payloads") {

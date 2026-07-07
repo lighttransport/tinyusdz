@@ -105,8 +105,13 @@ public:
 
   /// Capture and consume a complete bracketed literal without tokenizing every
   /// element. The returned span points into the lexer's input and includes the
-  /// outer '[' and ']'.
-  bool capture_bracketed_literal(const char** out_data, size_t* out_len);
+  /// outer '[' and ']'. When `out_simple` is non-null it reports whether the
+  /// array contains ONLY "plain" bytes (no comment `#`, string/asset quote, or
+  /// nested `[` ) — i.e. all commas/parens are pure structural separators, which
+  /// lets a numeric array be safely split at separator boundaries for parallel
+  /// parsing.
+  bool capture_bracketed_literal(const char** out_data, size_t* out_len,
+                                 bool* out_simple = nullptr);
 
   /// Get error message if in error state
   const std::string& error() const { return error_; }
@@ -116,6 +121,12 @@ public:
 
   /// Set error message
   void set_error(const std::string& msg);
+
+  /// Worker-thread hint for the parallel large-array parse path, forwarded from
+  /// ParseOptions::num_threads (0 = auto, 1 = serial, >1 = that many). Carried on
+  /// the lexer because the stateless value-parser array helpers receive only the
+  /// lexer; replaces the former TINYUSDZ_NEXT_NUM_THREADS env read.
+  int num_threads = 0;
 
 private:
   const char* data_;

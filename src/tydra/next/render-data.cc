@@ -9,6 +9,22 @@
 namespace tinyusdz {
 namespace tydra {
 namespace next {
+namespace {
+
+template <typename T>
+size_t VectorBytes(const std::vector<T>& v) {
+  return v.capacity() * sizeof(T);
+}
+
+size_t StringVectorBytes(const std::vector<std::string>& v) {
+  size_t total = v.capacity() * sizeof(std::string);
+  for (const std::string& s : v) {
+    total += s.capacity();
+  }
+  return total;
+}
+
+}  // namespace
 
 //
 // RenderMesh
@@ -41,6 +57,70 @@ size_t RenderMesh::memory_usage() const {
   }
 
   return total;
+}
+
+//
+// RenderPointInstancer
+//
+
+size_t RenderPointInstancer::memory_usage() const {
+  size_t total = sizeof(*this);
+  total += StringVectorBytes(prototype_paths);
+  total += VectorBytes(prototype_node_ids);
+  total += VectorBytes(prototype_mesh_offsets);
+  total += VectorBytes(prototype_mesh_ids);
+  total += VectorBytes(prototype_mesh_transforms);
+  total += VectorBytes(proto_indices);
+  total += VectorBytes(positions);
+  total += VectorBytes(orientations);
+  total += VectorBytes(scales);
+  total += VectorBytes(velocities);
+  total += VectorBytes(angular_velocities);
+  total += VectorBytes(ids);
+  total += VectorBytes(invisible_ids);
+  total += VectorBytes(inactive_ids);
+  total += VectorBytes(transforms);
+  total += VectorBytes(display_colors);
+  total += VectorBytes(display_opacities);
+  total += VectorBytes(instance_visible);
+  total += name.capacity();
+  total += prim_path.capacity();
+  total += validation_error.capacity();
+  return total;
+}
+
+size_t RenderPointInstancer::prototype_mesh_count(size_t prototype_index) const {
+  if (prototype_index + 1 >= prototype_mesh_offsets.size()) return 0;
+  return prototype_mesh_offsets[prototype_index + 1] -
+         prototype_mesh_offsets[prototype_index];
+}
+
+bool RenderPointInstancer::has_valid_prototype_mesh_bindings() const {
+  if (prototype_mesh_offsets.size() != prototype_paths.size() + 1) return false;
+  if (prototype_node_ids.size() != prototype_paths.size()) return false;
+  if (prototype_mesh_transforms.size() != prototype_mesh_ids.size()) return false;
+  if (prototype_mesh_offsets.empty() || prototype_mesh_offsets[0] != 0) return false;
+  uint32_t prev = 0;
+  for (uint32_t offset : prototype_mesh_offsets) {
+    if (offset < prev) return false;
+    prev = offset;
+  }
+  return prototype_mesh_offsets.back() == prototype_mesh_ids.size();
+}
+
+size_t RenderPointInstancer::visible_instance_count() const {
+  if (instance_visible.empty()) return instance_count();
+  size_t total = 0;
+  for (uint8_t visible : instance_visible) {
+    if (visible) ++total;
+  }
+  return total;
+}
+
+bool RenderPointInstancer::has_valid_draw_range(size_t total_draw_count) const {
+  const size_t start = draw_start;
+  const size_t count = draw_count;
+  return start <= total_draw_count && count <= total_draw_count - start;
 }
 
 //
@@ -78,12 +158,17 @@ size_t RenderScene::memory_usage() const {
     total += mesh.memory_usage();
   }
 
+  for (const auto& instancer : point_instancers) {
+    total += instancer.memory_usage();
+  }
+
   for (const auto& img : images) {
     total += img.memory_usage();
   }
 
   // Estimate for other containers
   total += nodes.size() * sizeof(SceneNode);
+  total += point_instance_draws.size() * sizeof(RenderPointInstanceDraw);
   total += materials.size() * sizeof(RenderMaterial);
   total += textures.size() * sizeof(RenderTexture);
   total += lights.size() * sizeof(RenderLight);
@@ -94,10 +179,92 @@ size_t RenderScene::memory_usage() const {
   return total;
 }
 
+const RenderMesh* RenderScene::get_mesh(int32_t mesh_id) const {
+  if (mesh_id < 0 || static_cast<size_t>(mesh_id) >= meshes.size()) return nullptr;
+  return &meshes[static_cast<size_t>(mesh_id)];
+}
+
+const RenderMaterial* RenderScene::get_material(int32_t material_id) const {
+  if (material_id < 0 ||
+      static_cast<size_t>(material_id) >= materials.size()) {
+    return nullptr;
+  }
+  return &materials[static_cast<size_t>(material_id)];
+}
+
+const RenderPointInstancer* RenderScene::get_point_instancer(
+    int32_t instancer_id) const {
+  if (instancer_id < 0 ||
+      static_cast<size_t>(instancer_id) >= point_instancers.size()) {
+    return nullptr;
+  }
+  return &point_instancers[static_cast<size_t>(instancer_id)];
+}
+
+const RenderPointInstanceDraw* RenderScene::get_point_instance_draw(
+    size_t draw_id) const {
+  if (draw_id >= point_instance_draws.size()) return nullptr;
+  return &point_instance_draws[draw_id];
+}
+
+RenderPointInstanceDrawView RenderScene::get_point_instance_draw_view(
+    size_t draw_id) const {
+  RenderPointInstanceDrawView view;
+  view.draw = get_point_instance_draw(draw_id);
+  if (!view.draw) return view;
+  view.instancer = get_point_instancer(view.draw->point_instancer_id);
+  view.mesh = get_mesh(view.draw->mesh_id);
+  view.expanded_mesh = get_mesh(view.draw->expanded_mesh_id);
+  view.material = get_material(view.draw->material_id);
+  return view;
+}
+
+RenderPointInstanceDrawRange RenderScene::get_point_instancer_draws(
+    int32_t instancer_id) const {
+  RenderPointInstanceDrawRange range;
+  const RenderPointInstancer* instancer = get_point_instancer(instancer_id);
+  if (!instancer || instancer->draw_count == 0) return range;
+  const size_t start = instancer->draw_start;
+  const size_t count = instancer->draw_count;
+  if (start > point_instance_draws.size() ||
+      count > point_instance_draws.size() - start) {
+    return range;
+  }
+  range.data = point_instance_draws.data() + start;
+  range.size = count;
+  return range;
+}
+
+const SceneNode* RenderScene::get_node(int32_t node_id) const {
+  if (node_id < 0 || static_cast<size_t>(node_id) >= nodes.size()) return nullptr;
+  return &nodes[static_cast<size_t>(node_id)];
+}
+
+bool RenderScene::has_valid_point_instance_draw_ranges() const {
+  for (size_t instancer_id = 0; instancer_id < point_instancers.size();
+       ++instancer_id) {
+    const RenderPointInstancer& instancer = point_instancers[instancer_id];
+    if (!instancer.has_valid_draw_range(point_instance_draws.size())) {
+      return false;
+    }
+    for (size_t draw_i = 0; draw_i < instancer.draw_count; ++draw_i) {
+      const size_t draw_id = static_cast<size_t>(instancer.draw_start) + draw_i;
+      if (draw_id >= point_instance_draws.size()) return false;
+      if (point_instance_draws[draw_id].point_instancer_id !=
+          static_cast<int32_t>(instancer_id)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 RenderScene::Stats RenderScene::get_stats() const {
   Stats s = {};
   s.node_count = nodes.size();
   s.mesh_count = meshes.size();
+  s.point_instancer_count = point_instancers.size();
+  s.point_instance_draw_count = point_instance_draws.size();
   s.material_count = materials.size();
   s.texture_count = textures.size();
   s.image_count = images.size();
@@ -121,6 +288,11 @@ RenderScene::Stats RenderScene::get_stats() const {
         }
       }
     }
+  }
+
+  for (const auto& instancer : point_instancers) {
+    s.point_instance_count += instancer.instance_count();
+    s.visible_point_instance_count += instancer.visible_instance_count();
   }
 
   s.memory_bytes = memory_usage();

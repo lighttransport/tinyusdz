@@ -191,11 +191,13 @@ class MaterialBinding {
     _materialBindingCollectionMap[tok.str()].insert(mat_purpose.str(), r);
   }
 
-  const std::map<std::string, Relationship> &materialBindingMap() const {
+  const std::map<std::string, Relationship> &materialBindingMap() const
+      TINYUSDZ_LIFETIMEBOUND {
     return _materialBindingMap;
   }
 
-  const std::map<std::string, ordered_dict<Relationship>> &materialBindingCollectionMap() const {
+  const std::map<std::string, ordered_dict<Relationship>>
+      &materialBindingCollectionMap() const TINYUSDZ_LIFETIMEBOUND {
     return _materialBindingCollectionMap;
   }
 

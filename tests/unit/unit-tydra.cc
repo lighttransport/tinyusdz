@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <array>
-#include <filesystem>
 #include <fstream>
 #include <cmath>
 #include <map>
@@ -18,14 +17,17 @@
 #include <vector>
 
 #include "layer.hh"
+#include "io-util.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
+#include "mtlx-dom.hh"
 #include "value-clip-utils.hh"
 #include "tinyusdz.hh"
 #include "image-types.hh"
 #include "image-writer.hh"
 #include "tydra/attribute-eval.hh"
 #include "tydra/layer-to-renderscene.hh"
+#include "tydra/materialx-to-json.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "usdGeom.hh"
@@ -45,13 +47,10 @@ std::string ToPosixPath(std::string path) {
 }
 
 std::string MakeTempUSDFilePath(const std::string &prefix) {
-  std::error_code ec;
-  std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
-  if (ec) {
-    dir = std::filesystem::current_path();
-  }
   static int counter = 0;
-  return (dir / (prefix + "_" + std::to_string(counter++) + ".usda")).string();
+  return tinyusdz::io::JoinPath(
+      tinyusdz::io::GetTempDir(),
+      prefix + "_" + std::to_string(counter++) + ".usda");
 }
 
 bool WriteTextFile(const std::string &path, const std::string &content) {
@@ -68,8 +67,7 @@ void CleanupTempFiles(const std::vector<std::string> &paths) {
     if (path.empty()) {
       continue;
     }
-    std::error_code ec;
-    (void)std::filesystem::remove(path, ec);
+    (void)tinyusdz::io::RemoveFile(path);
   }
 }
 
@@ -922,6 +920,222 @@ void tydra_blendshape_resolution_test(void) {
   }
 }
 
+// In-between BlendShape offsets must be carried into RenderMesh::targets and,
+// crucially, splatted alongside the primary offsets when a facevarying mesh is
+// de-indexed (single-indexable build duplicates shared points). Regression for
+// the converter populating ShapeTarget::inbetweens + reordering them in
+// ReorderVertexVaryingAttributes.
+void tydra_blendshape_inbetween_test(void) {
+  // Two triangles share points 0 and 2, but their facevarying `st` differs at
+  // those corners, so the single-indexable build duplicates them: 4 -> 6
+  // points. The in-between (parallel to the 4 authored pointIndices) must be
+  // remapped to the same 6-entry space as the primary.
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+def Xform "Root"
+{
+    def Mesh "Mesh" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1),
+            (0.5, 0.5), (0.7, 0.7), (0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+        uniform token[] skel:blendShapes = ["Key"]
+        rel skel:blendShapeTargets = </Root/Mesh/Key>
+
+        def BlendShape "Key"
+        {
+            uniform vector3f[] offsets = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+            uniform int[] pointIndices = [0, 1, 2, 3]
+            uniform vector3f[] inbetweens:half = [(5, 0, 0), (5, 0, 0), (5, 0, 0), (5, 0, 0)] (
+                weight = 0.5
+            )
+        }
+    }
+}
+)";
+
+  Stage stage;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "blendshape_inbetween.usda", &stage, &warn, &err));
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  TEST_CHECK(scene.meshes.size() == 1);
+  if (scene.meshes.empty()) {
+    return;
+  }
+  const tydra::RenderMesh &mesh = scene.meshes[0];
+
+  // Facevarying `st` forced the shared points 0 and 2 to duplicate.
+  TEST_CHECK(mesh.points.size() == 6);
+  TEST_CHECK(mesh.targets.size() == 1);
+  if (mesh.targets.empty()) {
+    return;
+  }
+
+  const tydra::ShapeTarget &tgt = mesh.targets.begin()->second;
+  // Primary offsets were splatted to the duplicated points.
+  TEST_CHECK(tgt.pointIndices.size() == 6);
+  TEST_CHECK(tgt.pointOffsets.size() == 6);
+
+  // The in-between survived conversion and was splatted in lockstep with the
+  // primary (same count, same indexing).
+  TEST_CHECK(tgt.inbetweens.size() == 1);
+  if (tgt.inbetweens.empty()) {
+    return;
+  }
+  const tydra::InbetweenShapeTarget &ib = tgt.inbetweens.begin()->second;
+  TEST_CHECK(std::fabs(ib.weight - 0.5f) < 1e-6f);
+  TEST_CHECK(ib.pointOffsets.size() == tgt.pointIndices.size());
+  TEST_CHECK(ib.pointOffsets.size() == 6);
+  // Every authored in-between offset was (5,0,0); it must be preserved verbatim
+  // through the splat (no aliasing with the primary's (0,0,1)).
+  bool all_x5 = !ib.pointOffsets.empty();
+  for (size_t i = 0; i < ib.pointOffsets.size(); i++) {
+    all_x5 &= (std::fabs(ib.pointOffsets[i][0] - 5.0f) < 1e-6f) &&
+              (std::fabs(ib.pointOffsets[i][1]) < 1e-6f) &&
+              (std::fabs(ib.pointOffsets[i][2]) < 1e-6f);
+  }
+  TEST_CHECK(all_x5);
+}
+
+void tydra_blendshape_weight_animation_target_test(void) {
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+    startTimeCode = 1
+    endTimeCode = 3
+)
+def SkelRoot "Root"
+{
+    def Skeleton "Skeleton"
+    {
+        uniform token[] joints = ["Root"]
+        uniform matrix4d[] bindTransforms = [
+            ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+        ]
+        uniform matrix4d[] restTransforms = [
+            ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))
+        ]
+        rel skel:animationSource = </Root/Anim>
+    }
+
+    def SkelAnimation "Anim"
+    {
+        uniform token[] joints = ["Root"]
+        float3[] translations = [(0, 0, 0)]
+        quatf[] rotations = [(1, 0, 0, 0)]
+        half3[] scales = [(1, 1, 1)]
+        uniform token[] blendShapes = ["Smile"]
+        float[] blendShapeWeights.timeSamples = {
+            1: [0.0],
+            2: [1.0],
+            3: [0.25],
+        }
+    }
+
+    def Mesh "Face" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        rel skel:skeleton = </Root/Skeleton>
+        int[] primvars:skel:jointIndices = [0, 0, 0] (
+            interpolation = "vertex"
+            elementSize = 1
+        )
+        float[] primvars:skel:jointWeights = [1, 1, 1] (
+            interpolation = "vertex"
+            elementSize = 1
+        )
+        uniform token[] skel:blendShapes = ["Smile"]
+        rel skel:blendShapeTargets = </Root/Smile>
+    }
+
+    def BlendShape "Smile"
+    {
+        uniform vector3f[] offsets = [(0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        uniform int[] pointIndices = [0, 1, 2]
+    }
+}
+)";
+
+  Stage stage;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "blendshape_weight_animation.usda", &stage, &warn, &err));
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  const tydra::AnimationChannel *weight_channel = nullptr;
+  const tydra::KeyframeSampler *weight_sampler = nullptr;
+  for (const tydra::AnimationClip &clip : scene.animations) {
+    for (const tydra::AnimationChannel &channel : clip.channels) {
+      if (channel.path != tydra::AnimationPath::Weights) {
+        continue;
+      }
+      if (channel.sampler < 0 ||
+          size_t(channel.sampler) >= clip.samplers.size()) {
+        continue;
+      }
+      weight_channel = &channel;
+      weight_sampler = &clip.samplers[size_t(channel.sampler)];
+      break;
+    }
+    if (weight_channel) {
+      break;
+    }
+  }
+
+  TEST_CHECK(weight_channel != nullptr);
+  TEST_CHECK(weight_sampler != nullptr);
+  if (!weight_channel || !weight_sampler) {
+    return;
+  }
+
+  TEST_CHECK(weight_channel->target_node >= 0);
+  TEST_CHECK(weight_channel->target_prim_path == "/Root/Face");
+  TEST_CHECK(weight_channel->property_name == "blendShapeWeights");
+  TEST_CHECK(weight_channel->blendshape_target_names.size() == 1);
+  if (!weight_channel->blendshape_target_names.empty()) {
+    TEST_CHECK(weight_channel->blendshape_target_names[0] == "Smile");
+  }
+  TEST_CHECK(weight_sampler->times.size() == 3);
+  TEST_CHECK(weight_sampler->values.size() == 3);
+  if (weight_sampler->values.size() == 3) {
+    TEST_CHECK(NearlyEqual(weight_sampler->values[0], 0.0f));
+    TEST_CHECK(NearlyEqual(weight_sampler->values[1], 1.0f));
+    TEST_CHECK(NearlyEqual(weight_sampler->values[2], 0.25f));
+  }
+}
+
 void tydra_material_binding_validation_test(void) {
   auto make_mesh = []() {
     GeomMesh mesh;
@@ -1056,6 +1270,47 @@ void tydra_material_binding_validation_test(void) {
     Stage stage;
 
     Material material;
+    material.surface.set(Path("/UnsupportedSurface", "outputs:surface"));
+
+    Shader unsupported_shader;
+    unsupported_shader.info_id = "ND_unimplemented_surface_surfaceshader";
+    unsupported_shader.value = ShaderNode{};
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(Prim("MaterialPrim", material)));
+    TEST_CHECK(stage.add_root_prim(Prim("UnsupportedSurface", unsupported_shader)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.assign_default_material = true;
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(scene.meshes.size() == 1);
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.meshes.size() == 1) {
+      TEST_CHECK(scene.meshes[0].material_id == 0);
+    }
+    if (scene.materials.size() == 1) {
+      TEST_CHECK(scene.materials[0].name == "defaultMaterial");
+      TEST_CHECK(scene.materials[0].surfaceShader.has_value());
+    }
+    TEST_CHECK(converter.GetWarning().find("Material conversion failed") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetWarning().find("using default material") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage;
+
+    Material material;
     material.surface.set(Path("/PreviewSurface", "outputs:surface"));
 
     UsdPreviewSurface preview_surface;
@@ -1093,6 +1348,315 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(!converter.ConvertToRenderScene(env, &scene));
     TEST_CHECK(converter.GetError().find("/Tex") != std::string::npos);
     TEST_CHECK(converter.GetError().find("`asset:file` is not authored") !=
+               std::string::npos);
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/PreviewSurface",
+                              "outputs:surface"));
+    material.materialXConfig = MaterialXConfigAPI{};
+
+    Relationship mtlx_surface_rel;
+    mtlx_surface_rel.set(Path("/MaterialPrim/MtlxPreviewSurface",
+                              "outputs:out"));
+    material.props["outputs:mtlx:surface.connect"] = Property(
+        mtlx_surface_rel);
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+    preview_surface.diffuseColor.set_value(
+        Animatable<value::color3f>(value::color3f({0.1f, 0.2f, 0.3f})));
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    UsdPreviewSurface mtlx_preview_surface;
+    mtlx_preview_surface.outputsSurface.set_authored(true);
+    mtlx_preview_surface.diffuseColor.set_value(
+        Animatable<value::color3f>(value::color3f({0.7f, 0.4f, 0.2f})));
+
+    Shader mtlx_preview_shader;
+    mtlx_preview_shader.info_id = kNdUsdPreviewSurfaceSurfaceshader;
+    mtlx_preview_shader.value = mtlx_preview_surface;
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(material_prim.add_child(
+        Prim("MtlxPreviewSurface", mtlx_preview_shader)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.materials.size() == 1) {
+      TEST_CHECK(scene.materials[0].surfaceShader.has_value());
+      TEST_CHECK(!scene.materials[0].openPBRShader.has_value());
+      if (scene.materials[0].surfaceShader.has_value()) {
+        const auto &color =
+            scene.materials[0].surfaceShader->diffuseColor.value;
+        TEST_CHECK(color[0] == 0.7f);
+        TEST_CHECK(color[1] == 0.4f);
+        TEST_CHECK(color[2] == 0.2f);
+      }
+    }
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/MtlxSurface",
+                              "outputs:surface"));
+
+    MtlxOpenPBRSurface mtlx_surface;
+    mtlx_surface.surface.set_authored(true);
+    mtlx_surface.geometry_normal.set_connection(
+        Path("/MaterialPrim/NodeGraphs", "outputs:normal"));
+    mtlx_surface.geometry_normal.set_value_empty();
+
+    Shader mtlx_surface_shader;
+    mtlx_surface_shader.info_id = kNdOpenPbrSurfaceSurfaceshader;
+    mtlx_surface_shader.value = mtlx_surface;
+
+    NodeGraph nodegraph;
+    nodegraph.props["outputs:normal"] = Property(
+        Path("/MaterialPrim/NodeGraphs/NormalMap", "outputs:out"),
+        value::TypeTraits<value::vector3f>::type_name());
+
+    Shader normalmap_shader;
+    normalmap_shader.info_id = "ND_normalmap";
+    ShaderNode normalmap_node;
+    normalmap_node.props["inputs:scale"] =
+        Property(Attribute::Uniform(0.5f));
+    normalmap_node.props["inputs:in"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"),
+        value::TypeTraits<value::vector3f>::type_name());
+    normalmap_shader.value = normalmap_node;
+
+    Shader image_shader;
+    image_shader.info_id = "ND_tiledimage_vector3";
+    ShaderNode image_node;
+    image_node.props["inputs:file"] =
+        Property(Attribute::Uniform(value::AssetPath("normal.png")));
+    image_node.props["inputs:texcoord"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Texcoord", "outputs:out"),
+        value::TypeTraits<value::float2>::type_name());
+    {
+      value::float2 uv_tiling;
+      uv_tiling[0] = 2.0f;
+      uv_tiling[1] = 3.0f;
+      value::float2 uv_offset;
+      uv_offset[0] = 0.25f;
+      uv_offset[1] = 0.5f;
+      image_node.props["inputs:uvtiling"] =
+          Property(Attribute::Uniform(uv_tiling));
+      image_node.props["inputs:uvoffset"] =
+          Property(Attribute::Uniform(uv_offset));
+    }
+    image_shader.value = image_node;
+
+    Shader texcoord_shader;
+    texcoord_shader.info_id = "ND_texcoord_vector2";
+    ShaderNode texcoord_node;
+    texcoord_node.props["inputs:index"] = Property(Attribute::Uniform(1));
+    texcoord_shader.value = texcoord_node;
+
+    Prim nodegraph_prim("NodeGraphs", nodegraph);
+    TEST_CHECK(nodegraph_prim.add_child(Prim("NormalMap", normalmap_shader)));
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Image", image_shader)));
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Texcoord", texcoord_shader)));
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(
+        material_prim.add_child(Prim("MtlxSurface", mtlx_surface_shader)));
+    TEST_CHECK(material_prim.add_child(std::move(nodegraph_prim)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.load_texture_assets = false;
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.images.size() == 1);
+    if (scene.images.size() == 1) {
+      TEST_CHECK(scene.images[0].asset_identifier == "normal.png");
+      TEST_CHECK(scene.images[0].colorSpace == tydra::ColorSpace::Raw);
+    }
+    TEST_CHECK(scene.textures.size() == 1);
+    if (scene.textures.size() == 1) {
+      TEST_CHECK(scene.textures[0].varname_uv == "st1");
+      TEST_CHECK(scene.textures[0].connectedOutputChannel ==
+                 tydra::UVTexture::Channel::RGB);
+      TEST_CHECK(scene.textures[0].has_transform2d);
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_scale[0], 2.0f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_scale[1], 3.0f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_translation[0], 0.25f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_translation[1], 0.5f));
+    }
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.materials.size() == 1) {
+      TEST_CHECK(scene.materials[0].openPBRShader.has_value());
+      if (scene.materials[0].openPBRShader.has_value()) {
+        const auto &shader = scene.materials[0].openPBRShader.value();
+        TEST_CHECK(shader.normal.texture_id == 0);
+        TEST_CHECK(NearlyEqual(shader.normal_map_scale, 0.5f));
+      }
+    }
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/OpenPBRShader",
+                              "outputs:surface"));
+
+    OpenPBRSurface openpbr_surface;
+    openpbr_surface.surface.set_authored(true);
+    openpbr_surface.base_color.set_connection(
+        Path("/MaterialPrim/NodeGraphs", "outputs:baseColor"));
+    openpbr_surface.base_color.set_value_empty();
+
+    Shader openpbr_shader;
+    openpbr_shader.info_id = kOpenPBRSurface;
+    openpbr_shader.value = openpbr_surface;
+
+    NodeGraph nodegraph;
+    nodegraph.props["outputs:baseColor.connect"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"),
+        value::TypeTraits<value::color3f>::type_name());
+
+    Shader image_shader;
+    image_shader.info_id = "ND_image_color3";
+    ShaderNode image_node;
+    image_node.props["inputs:file"] =
+        Property(Attribute::Uniform(value::AssetPath("basecolor-uv1.png")));
+    image_node.props["inputs:texcoord"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Texcoord", "outputs:out"),
+        value::TypeTraits<value::float2>::type_name());
+    image_shader.value = image_node;
+
+    Shader texcoord_shader;
+    texcoord_shader.info_id = "ND_texcoord_vector2";
+    ShaderNode texcoord_node;
+    texcoord_node.props["inputs:index"] = Property(Attribute::Uniform(1));
+    texcoord_shader.value = texcoord_node;
+
+    Prim nodegraph_prim("NodeGraphs", nodegraph);
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Image", image_shader)));
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Texcoord", texcoord_shader)));
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("OpenPBRShader", openpbr_shader)));
+    TEST_CHECK(material_prim.add_child(std::move(nodegraph_prim)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.load_texture_assets = false;
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.textures.size() == 1);
+    if (scene.textures.size() == 1) {
+      TEST_CHECK(scene.textures[0].varname_uv == "st1");
+    }
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.materialXConfig = MaterialXConfigAPI{};
+
+    MtlxAutodeskStandardSurface standard_surface;
+    standard_surface.out.set_authored(true);
+    standard_surface.base_color.set_value(
+        Animatable<value::color3f>(value::color3f({0.25f, 0.5f, 0.75f})));
+    standard_surface.metalness.set_value(Animatable<float>(0.4f));
+    standard_surface.specular_roughness.set_value(Animatable<float>(0.32f));
+    standard_surface.emission.set_value(Animatable<float>(1.75f));
+    standard_surface.emission_color.set_value(
+        Animatable<value::color3f>(value::color3f({0.2f, 0.3f, 0.4f})));
+    standard_surface.opacity.set_value(
+        Animatable<value::color3f>(value::color3f({0.5f, 0.25f, 0.125f})));
+
+    Shader standard_shader;
+    standard_shader.info_id = kNdStandardSurfaceSurfaceshader;
+    standard_shader.value = standard_surface;
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("StandardSurface", standard_shader)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.meshes.size() == 1);
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.meshes.size() == 1) {
+      TEST_CHECK(scene.meshes[0].material_id == 0);
+    }
+    if (scene.materials.size() == 1) {
+      TEST_CHECK(scene.materials[0].openPBRShader.has_value());
+      TEST_CHECK(!scene.materials[0].surfaceShader.has_value());
+      TEST_CHECK(scene.materials[0].materialTag ==
+                 tydra::MaterialTag::Translucent);
+      if (scene.materials[0].openPBRShader.has_value()) {
+        const auto &shader = *scene.materials[0].openPBRShader;
+        TEST_CHECK(NearlyEqual(shader.base_color.value[0], 0.25f));
+        TEST_CHECK(NearlyEqual(shader.base_color.value[1], 0.5f));
+        TEST_CHECK(NearlyEqual(shader.base_color.value[2], 0.75f));
+        TEST_CHECK(NearlyEqual(shader.base_metalness.value, 0.4f));
+        TEST_CHECK(NearlyEqual(shader.specular_roughness.value, 0.32f));
+        TEST_CHECK(NearlyEqual(shader.emission_luminance.value, 1.75f));
+        TEST_CHECK(NearlyEqual(shader.emission_color.value[0], 0.2f));
+        const float expected_alpha =
+            0.2126f * 0.5f + 0.7152f * 0.25f + 0.0722f * 0.125f;
+        TEST_CHECK(NearlyEqual(shader.opacity.value, expected_alpha));
+      }
+    }
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(converter.GetWarning().find("using default material appearance") ==
                std::string::npos);
   }
 
@@ -1165,6 +1729,7 @@ void tydra_material_binding_validation_test(void) {
         Path("/MaterialPrim/NodeGraphs/Missing", "outputs:out"));
 
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1174,6 +1739,203 @@ void tydra_material_binding_validation_test(void) {
                std::string::npos);
     TEST_CHECK(converter.GetError().find("/MaterialPrim/NodeGraphs/Missing") !=
                std::string::npos);
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/OpenPBRShader",
+                              "outputs:surface"));
+
+    OpenPBRSurface openpbr_surface;
+    openpbr_surface.surface.set_authored(true);
+    openpbr_surface.base_roughness.set_connection(
+        Path("/MaterialPrim/NodeGraphs", "outputs:rough"));
+    openpbr_surface.base_roughness.set_value_empty();
+
+    Shader openpbr_shader;
+    openpbr_shader.info_id = kOpenPBRSurface;
+    openpbr_shader.value = openpbr_surface;
+
+    NodeGraph nodegraph;
+    nodegraph.props["outputs:rough.connect"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Image", "outputs:g"),
+        value::TypeTraits<float>::type_name());
+
+    Shader image_shader;
+    image_shader.info_id = "ND_image_color4";
+    ShaderNode image_node;
+    image_node.props["inputs:file"] =
+        Property(Attribute::Uniform(value::AssetPath("packed.png")));
+    {
+      value::float2 uv_tiling;
+      uv_tiling[0] = 2.0f;
+      uv_tiling[1] = 3.0f;
+      value::float2 uv_offset;
+      uv_offset[0] = 0.25f;
+      uv_offset[1] = 0.5f;
+      image_node.props["inputs:uvtiling"] =
+          Property(Attribute::Uniform(uv_tiling));
+      image_node.props["inputs:uvoffset"] =
+          Property(Attribute::Uniform(uv_offset));
+      image_node.props["inputs:rotate"] =
+          Property(Attribute::Uniform(15.0f));
+      image_node.props["inputs:uaddressmode"] =
+          Property(Attribute::Uniform(value::token("mirror")));
+      image_node.props["inputs:vaddressmode"] =
+          Property(Attribute::Uniform(value::token("periodic")));
+    }
+    image_shader.value = image_node;
+
+    Prim nodegraph_prim("NodeGraphs", nodegraph);
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Image", image_shader)));
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("OpenPBRShader", openpbr_shader)));
+    TEST_CHECK(material_prim.add_child(std::move(nodegraph_prim)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.load_texture_assets = false;
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.textures.size() == 1);
+    if (scene.textures.size() == 1) {
+      TEST_CHECK(scene.textures[0].connectedOutputChannel ==
+                 tydra::UVTexture::Channel::G);
+      TEST_CHECK(scene.textures[0].has_transform2d);
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_scale[0], 2.0f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_scale[1], 3.0f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_translation[0], 0.25f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_translation[1], 0.5f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_rotation, 15.0f));
+      TEST_CHECK(scene.textures[0].wrapS ==
+                 tydra::UVTexture::WrapMode::MIRROR);
+      TEST_CHECK(scene.textures[0].wrapT ==
+                 tydra::UVTexture::WrapMode::REPEAT);
+    }
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.materials.size() == 1) {
+      TEST_CHECK(scene.materials[0].openPBRShader.has_value());
+      if (scene.materials[0].openPBRShader.has_value()) {
+        TEST_CHECK(scene.materials[0]
+                       .openPBRShader->base_roughness.texture_id == 0);
+      }
+    }
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/OpenPBRShader",
+                              "outputs:surface"));
+
+    OpenPBRSurface openpbr_surface;
+    openpbr_surface.surface.set_authored(true);
+    openpbr_surface.base_color.set_connection(
+        Path("/MaterialPrim/NodeGraphs", "outputs:baseColor"));
+    openpbr_surface.base_color.set_value_empty();
+
+    Shader openpbr_shader;
+    openpbr_shader.info_id = kOpenPBRSurface;
+    openpbr_shader.value = openpbr_surface;
+
+    NodeGraph nodegraph;
+    nodegraph.props["outputs:baseColor.connect"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"),
+        value::TypeTraits<value::color3f>::type_name());
+
+    Shader image_shader;
+    image_shader.info_id = "ND_image_color3";
+    ShaderNode image_node;
+    image_node.props["inputs:file"] =
+        Property(Attribute::Uniform(value::AssetPath("basecolor.png")));
+    image_node.props["inputs:texcoord"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Place2d", "outputs:out"),
+        value::TypeTraits<value::float2>::type_name());
+    image_shader.value = image_node;
+
+    Shader place2d_shader;
+    place2d_shader.info_id = "ND_place2d_vector2";
+    ShaderNode place2d_node;
+    place2d_node.props["inputs:texcoord"] = Property(
+        Path("/MaterialPrim/NodeGraphs/GeomProp", "outputs:out"),
+        value::TypeTraits<value::float2>::type_name());
+    {
+      value::float2 scale;
+      scale[0] = 4.0f;
+      scale[1] = 5.0f;
+      value::float2 translation;
+      translation[0] = 0.125f;
+      translation[1] = 0.25f;
+      place2d_node.props["inputs:scale"] =
+          Property(Attribute::Uniform(scale));
+      place2d_node.props["inputs:translation"] =
+          Property(Attribute::Uniform(translation));
+      place2d_node.props["inputs:rotation"] =
+          Property(Attribute::Uniform(30.0f));
+    }
+    place2d_shader.value = place2d_node;
+
+    Shader geomprop_shader;
+    geomprop_shader.info_id = "ND_geompropvalue_vector2";
+    ShaderNode geomprop_node;
+    geomprop_node.props["inputs:geomprop"] =
+        Property(Attribute::Uniform(value::token("st1")));
+    geomprop_shader.value = geomprop_node;
+
+    Prim nodegraph_prim("NodeGraphs", nodegraph);
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Image", image_shader)));
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Place2d", place2d_shader)));
+    TEST_CHECK(nodegraph_prim.add_child(Prim("GeomProp", geomprop_shader)));
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(material_prim.add_child(Prim("OpenPBRShader", openpbr_shader)));
+    TEST_CHECK(material_prim.add_child(std::move(nodegraph_prim)));
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.load_texture_assets = false;
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.textures.size() == 1);
+    if (scene.textures.size() == 1) {
+      TEST_CHECK(scene.textures[0].varname_uv == "st1");
+      TEST_CHECK(scene.textures[0].has_transform2d);
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_scale[0], 4.0f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_scale[1], 5.0f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_translation[0], 0.125f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_translation[1], 0.25f));
+      TEST_CHECK(NearlyEqual(scene.textures[0].tx_rotation, 30.0f));
+    }
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.materials.size() == 1) {
+      TEST_CHECK(scene.materials[0].openPBRShader.has_value());
+      if (scene.materials[0].openPBRShader.has_value()) {
+        TEST_CHECK(scene.materials[0]
+                       .openPBRShader->base_color.texture_id == 0);
+      }
+    }
   }
 
   {
@@ -1208,6 +1970,7 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1255,6 +2018,7 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1333,6 +2097,149 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(converter.GetError().find("/MaterialPrim/MtlxSurface") !=
                std::string::npos);
   }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/MaterialPrim/MtlxSurface",
+                              "outputs:surface"));
+
+    MtlxOpenPBRSurface mtlx_surface;
+    mtlx_surface.surface.set_authored(true);
+    mtlx_surface.base_color.set_connection(
+        Path("/MaterialPrim/NodeGraphs", "outputs:out"));
+    mtlx_surface.base_color.set_value_empty();
+
+    Shader mtlx_surface_shader;
+    mtlx_surface_shader.info_id = kNdOpenPbrSurfaceSurfaceshader;
+    mtlx_surface_shader.value = mtlx_surface;
+
+    NodeGraph nodegraph;
+    value::color3f tint;
+    tint[0] = 0.25f;
+    tint[1] = 0.5f;
+    tint[2] = 0.75f;
+    nodegraph.props["inputs:tint"] = Property(Attribute::Uniform(tint));
+    nodegraph.props["outputs:out.connect"] = Property(
+        Path("/MaterialPrim/NodeGraphs/Multiply", "outputs:out"),
+        value::TypeTraits<value::color3f>::type_name());
+
+    Shader multiply_shader;
+    multiply_shader.info_id = "ND_multiply_color3";
+    ShaderNode multiply_node;
+    multiply_node.props["inputs:in1"] = Property(
+        Path("/MaterialPrim/NodeGraphs", "inputs:tint"),
+        value::TypeTraits<value::color3f>::type_name());
+    value::color3f scale;
+    scale[0] = 2.0f;
+    scale[1] = 0.5f;
+    scale[2] = 0.25f;
+    multiply_node.props["inputs:in2"] =
+        Property(Attribute::Uniform(scale));
+    multiply_shader.value = multiply_node;
+
+    Prim nodegraph_prim("NodeGraphs", nodegraph);
+    TEST_CHECK(nodegraph_prim.add_child(Prim("Multiply", multiply_shader)));
+
+    Prim material_prim("MaterialPrim", material);
+    TEST_CHECK(
+        material_prim.add_child(Prim("MtlxSurface", mtlx_surface_shader)));
+    TEST_CHECK(material_prim.add_child(std::move(nodegraph_prim)));
+
+    TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
+
+    const Prim *shader_prim = nullptr;
+    std::string find_err;
+    TEST_CHECK(stage.find_prim_at_path(Path("/MaterialPrim/MtlxSurface", ""),
+                                       shader_prim, &find_err));
+    TEST_CHECK(shader_prim != nullptr);
+
+    std::string json;
+    std::string conv_err;
+    TEST_CHECK(shader_prim &&
+               tydra::ConvertShaderWithNodeGraphToJson(
+                   *shader_prim, Path("/MaterialPrim/MtlxSurface", ""), stage,
+                   &json, &conv_err));
+    TEST_MSG("ConvertShaderWithNodeGraphToJson failed: %s",
+             conv_err.c_str());
+    TEST_CHECK(json.find("\"inputs\"") != std::string::npos);
+    TEST_CHECK(json.find("\"name\": \"tint\"") != std::string::npos);
+    TEST_CHECK(json.find("\"interfacename\": \"tint\"") !=
+               std::string::npos);
+    TEST_CHECK(json.find("\"input\": \"base_color\"") != std::string::npos);
+  }
+
+  {
+    mtlx::MtlxNodeGraph dom_graph;
+    dom_graph.SetName("NG_dom_interface");
+
+    auto tint = std::make_shared<mtlx::MtlxInput>();
+    tint->SetName("tint");
+    tint->SetType("color3");
+    tint->SetValue(mtlx::MtlxValue(std::vector<float>{0.25f, 0.5f, 0.75f}));
+    dom_graph.AddInput(tint);
+
+    auto multiply = std::make_shared<mtlx::MtlxNode>();
+    multiply->SetName("mul");
+    multiply->SetCategory("multiply");
+    multiply->SetType("color3");
+    auto in1 = std::make_shared<mtlx::MtlxInput>();
+    in1->SetName("in1");
+    in1->SetType("color3");
+    in1->SetInterfaceName("tint");
+    in1->SetChannels("rgb");
+    multiply->AddInput(in1);
+    auto in2 = std::make_shared<mtlx::MtlxInput>();
+    in2->SetName("in2");
+    in2->SetType("color3");
+    in2->SetValue(mtlx::MtlxValue(std::vector<float>{2.0f, 0.5f, 0.25f}));
+    multiply->AddInput(in2);
+    dom_graph.AddNode(multiply);
+
+    auto out = std::make_shared<mtlx::MtlxOutput>();
+    out->SetName("out");
+    out->SetType("color3");
+    out->SetNodeName("mul");
+    dom_graph.AddOutput(out);
+
+    std::string json;
+    std::string conv_err;
+    TEST_CHECK(tydra::ConvertMtlxNodeGraphToJson(dom_graph, &json,
+                                                 &conv_err));
+    TEST_MSG("ConvertMtlxNodeGraphToJson failed: %s", conv_err.c_str());
+    TEST_CHECK(json.find("\"name\": \"tint\"") != std::string::npos);
+    TEST_CHECK(json.find("\"value\": [0.25, 0.5, 0.75]") !=
+               std::string::npos);
+    TEST_CHECK(json.find("\"interfacename\": \"tint\"") !=
+               std::string::npos);
+    TEST_CHECK(json.find("\"channels\": \"rgb\"") != std::string::npos);
+    TEST_CHECK(json.find("\"nodename\": \"mul\"") != std::string::npos);
+  }
+}
+
+void tydra_material_colorspace_token_test(void) {
+  auto expect_colorspace = [](const char *token,
+                              tydra::ColorSpace expected) {
+    tydra::ColorSpace actual = tydra::ColorSpace::Unknown;
+    TEST_CHECK(tydra::InferColorSpace(value::token(token), &actual));
+    TEST_CHECK(actual == expected);
+  };
+
+  expect_colorspace("acescg", tydra::ColorSpace::Lin_ACEScg);
+  expect_colorspace("lin_ap1", tydra::ColorSpace::Lin_ACEScg);
+  expect_colorspace("ACES - ACEScg", tydra::ColorSpace::Lin_ACEScg);
+  expect_colorspace("aces2065-1", tydra::ColorSpace::ACES2065_1);
+  expect_colorspace("lin_rec2020", tydra::ColorSpace::Lin_Rec2020);
+  expect_colorspace("lin_displayp3", tydra::ColorSpace::Lin_DisplayP3);
+  expect_colorspace("srgb_displayp3", tydra::ColorSpace::sRGB_DisplayP3);
+  expect_colorspace("Input - Texture - sRGB - Display P3",
+                    tydra::ColorSpace::sRGB_DisplayP3);
+
+  tydra::ColorSpace actual = tydra::ColorSpace::Unknown;
+  TEST_CHECK(!tydra::InferColorSpace(value::token("not_a_colorspace"),
+                                     &actual));
+  TEST_CHECK(actual == tydra::ColorSpace::Unknown);
 }
 
 void tydra_progress_cancellation_test(void) {
@@ -1362,6 +2269,119 @@ void tydra_progress_cancellation_test(void) {
   TEST_CHECK(state.mesh_progress_calls == 1);
   TEST_CHECK(converter.GetError().find("Conversion cancelled by user") !=
              std::string::npos);
+}
+
+void tydra_default_material_assignment_test(void) {
+  auto make_mesh = []() {
+    GeomMesh mesh;
+    mesh.points = Animatable<std::vector<value::point3f>>(
+        std::vector<value::point3f>{{0.0f, 0.0f, 0.0f},
+                                    {1.0f, 0.0f, 0.0f},
+                                    {0.0f, 1.0f, 0.0f}});
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{3});
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(
+        std::vector<int32_t>{0, 1, 2});
+    return mesh;
+  };
+
+  auto make_stage = [&]() {
+    Stage stage;
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", make_mesh())));
+    return stage;
+  };
+
+  {
+    Stage stage = make_stage();
+    tydra::RenderSceneConverterEnv env(stage);
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.meshes.size() == 1);
+    if (scene.meshes.size() == 1) {
+      TEST_CHECK(scene.meshes[0].material_id < 0);
+    }
+    TEST_CHECK(scene.materials.empty());
+  }
+
+  {
+    Stage stage = make_stage();
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.assign_default_material = true;
+    env.material_config.default_material_name = "FallbackPreview";
+    env.material_config.default_material_diffuse_color =
+        tydra::vec3{0.25f, 0.5f, 0.75f};
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.meshes.size() == 1);
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.meshes.size() == 1 && scene.materials.size() == 1) {
+      TEST_CHECK(scene.meshes[0].material_id == 0);
+      TEST_CHECK(scene.materials[0].name == "FallbackPreview");
+      TEST_CHECK(scene.materials[0].surfaceShader.has_value());
+      if (scene.materials[0].surfaceShader) {
+        const auto &color = scene.materials[0].surfaceShader->diffuseColor.value;
+        TEST_CHECK(color[0] == 0.25f);
+        TEST_CHECK(color[1] == 0.5f);
+        TEST_CHECK(color[2] == 0.75f);
+      }
+    }
+  }
+
+  {
+    Stage stage;
+
+    Material material;
+    material.surface.set(Path("/PreviewSurface", "outputs:surface"));
+
+    UsdPreviewSurface preview_surface;
+    preview_surface.outputsSurface.set_authored(true);
+    preview_surface.diffuseColor.set_connection(Path("/Tex", "outputs:rgb"));
+    preview_surface.diffuseColor.set_value_empty();
+
+    Shader preview_shader;
+    preview_shader.info_id = kUsdPreviewSurface;
+    preview_shader.value = preview_surface;
+
+    UsdUVTexture uv_texture;
+    uv_texture.outputsRGB.set_authored(true);
+
+    Shader tex_shader;
+    tex_shader.info_id = kUsdUVTexture;
+    tex_shader.value = uv_texture;
+
+    GeomMesh mesh = make_mesh();
+    Relationship material_rel;
+    material_rel.set(Path("/MaterialPrim", ""));
+    mesh.set_materialBinding(material_rel);
+
+    TEST_CHECK(stage.add_root_prim(Prim("MeshPrim", mesh)));
+    TEST_CHECK(stage.add_root_prim(Prim("MaterialPrim", material)));
+    TEST_CHECK(stage.add_root_prim(Prim("PreviewSurface", preview_shader)));
+    TEST_CHECK(stage.add_root_prim(Prim("Tex", tex_shader)));
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.assign_default_material = true;
+    env.material_config.allow_missing_asset = false;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(converter.GetWarning().find("Material conversion failed") !=
+               std::string::npos);
+    TEST_CHECK(scene.meshes.size() == 1);
+    TEST_CHECK(scene.materials.size() == 1);
+    if (scene.meshes.size() == 1) {
+      TEST_CHECK(scene.meshes[0].material_id == 0);
+    }
+  }
 }
 
 void tydra_texture_loader_policy_test(void) {
@@ -1657,13 +2677,9 @@ void tydra_udim_texture_test(void) {
   // --- Set up a temp directory with 3 UDIM tiles: 1001, 1002, 1011 ---
   // Tiles: 1001 -> (u0,v0), 1002 -> (u1,v0), 1011 -> (u0,v1).
   // Grid bounds => cols=2, rows=2.
-  std::error_code ec;
-  std::filesystem::path tmpdir =
-      std::filesystem::temp_directory_path(ec) / "tinyusdz_udim_test";
-  if (ec) {
-    tmpdir = std::filesystem::current_path() / "tinyusdz_udim_test";
-  }
-  std::filesystem::create_directories(tmpdir, ec);
+  const std::string tmpdir =
+      tinyusdz::io::JoinPath(tinyusdz::io::GetTempDir(), "tinyusdz_udim_test");
+  tinyusdz::io::CreateDirectories(tmpdir);
 
   auto make_tile = [](uint8_t r, uint8_t g, uint8_t b) {
     Image img;
@@ -1691,7 +2707,7 @@ void tydra_udim_texture_test(void) {
   for (const auto &ts : tile_specs) {
     Image img = make_tile(ts.r, ts.g, ts.b);
     const std::string path =
-        (tmpdir / ("tile." + std::to_string(ts.id) + ".png")).string();
+        tinyusdz::io::JoinPath(tmpdir, "tile." + std::to_string(ts.id) + ".png");
     auto wret = image::WriteImageToFile(path, img);
     if (!wret) {
       wrote_all = false;
@@ -1709,7 +2725,7 @@ void tydra_udim_texture_test(void) {
   // --- Direct helper test: ExpandUDIMTiles ---
   {
     AssetResolutionResolver resolver;
-    resolver.set_search_paths({tmpdir.string()});
+    resolver.set_search_paths({tmpdir});
 
     std::vector<tydra::UDIMTile> tiles;
     std::string warn, err;
@@ -1799,7 +2815,7 @@ void tydra_udim_texture_test(void) {
   {
     Stage stage = make_stage();
     tydra::RenderSceneConverterEnv env(stage);
-    env.set_search_paths({tmpdir.string()});
+    env.set_search_paths({tmpdir});
     env.material_config.combine_udim_tiles = true;
     env.material_config.udim_max_atlas_size = 256;
 
@@ -1822,7 +2838,7 @@ void tydra_udim_texture_test(void) {
   {
     Stage stage = make_stage();
     tydra::RenderSceneConverterEnv env(stage);
-    env.set_search_paths({tmpdir.string()});
+    env.set_search_paths({tmpdir});
     env.material_config.combine_udim_tiles = false;
 
     tydra::RenderScene scene;
@@ -1847,7 +2863,7 @@ void tydra_udim_texture_test(void) {
   }
 
   CleanupTempFiles(tile_files);
-  std::filesystem::remove(tmpdir, ec);
+  tinyusdz::io::RemoveAll(tmpdir);
 }
 
 void tydra_envmap_loader_policy_test(void) {
@@ -1906,6 +2922,63 @@ void tydra_envmap_loader_policy_test(void) {
     TEST_CHECK(converter.GetError().find(
                    "synthetic texture loader failure") !=
                std::string::npos);
+  }
+}
+
+void tydra_light_shaping_ies_conversion_test(void) {
+  Stage stage;
+  RectLight light;
+  light.name = "Key";
+  light.shapingIesFile.set_value(
+      Animatable<value::AssetPath>(value::AssetPath("profiles/key.ies")));
+  light.shapingIesAngleScale.set_value(Animatable<float>(1.25f));
+  light.shapingIesNormalize.set_value(Animatable<bool>(true));
+  TEST_CHECK(stage.add_root_prim(Prim("Key", light)));
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  TEST_CHECK(scene.lights.size() == 1);
+  if (scene.lights.size() == 1) {
+    const tydra::RenderLight &converted = scene.lights[0];
+    TEST_CHECK(converted.type == tydra::RenderLight::Type::Rect);
+    TEST_CHECK(converted.shapingIesFile == "profiles/key.ies");
+    TEST_CHECK(NearlyEqual(converted.shapingIesAngleScale, 1.25f));
+    TEST_CHECK(converted.shapingIesNormalize);
+  }
+}
+
+void tydra_light_spectral_emission_conversion_test(void) {
+  Stage stage;
+  SphereLight light;
+  light.name = "SpectralKey";
+  light.spectralEmission.set_value(std::vector<value::float2>{
+      value::float2{450.0f, 0.25f},
+      value::float2{550.0f, 1.0f},
+      value::float2{650.0f, 0.5f},
+  });
+  TEST_CHECK(stage.add_root_prim(Prim("SpectralKey", light)));
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  TEST_CHECK(scene.lights.size() == 1);
+  if (scene.lights.size() == 1) {
+    const tydra::RenderLight &converted = scene.lights[0];
+    TEST_CHECK(converted.type == tydra::RenderLight::Type::Sphere);
+    TEST_CHECK(converted.hasSpectralEmission());
+    TEST_CHECK(converted.spd_emission.has_value());
+    if (converted.spd_emission.has_value()) {
+      TEST_CHECK(converted.spd_emission->samples.size() == 3);
+      TEST_CHECK(NearlyEqual(converted.spd_emission->samples[1][0], 550.0f));
+      TEST_CHECK(NearlyEqual(converted.spd_emission->samples[1][1], 1.0f));
+    }
   }
 }
 
@@ -2067,6 +3140,99 @@ void tydra_mesh_fallback_policy_test(void) {
   }
 
   {
+    tydra::RenderSceneConverter converter;
+
+    const std::array<tydra::vec3, 3> normals = {
+        tydra::vec3{0.70710677f, 0.70710677f, 0.0f},
+        tydra::vec3{0.70710677f, 0.70710677f, 0.0f},
+        tydra::vec3{0.70710677f, 0.70710677f, 0.0f},
+    };
+
+    tydra::RenderMesh src;
+    src.abs_path = "/MeshNormal";
+    src.points = {{0.0f, 0.0f, 0.0f},
+                  {1.0f, 0.0f, 0.0f},
+                  {0.0f, 1.0f, 0.0f}};
+    src.usdFaceVertexIndices = {0, 1, 2};
+    src.usdFaceVertexCounts = {3};
+    src.normals.format = tydra::VertexAttributeFormat::Vec3;
+    src.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()),
+                           normals.size() * sizeof(tydra::vec3));
+    src.normals.variability = tydra::VertexVariability::Vertex;
+
+    value::matrix4d scale = value::matrix4d::identity();
+    scale.m[0][0] = 2.0;
+
+    tydra::RenderMesh dst;
+    std::string merge_err;
+    TEST_CHECK(converter.MergeMeshData(src, scale, dst, &merge_err));
+    TEST_CHECK(merge_err.empty());
+    TEST_CHECK(dst.normals.vertex_count() == 3);
+    const tydra::vec3 *baked =
+        reinterpret_cast<const tydra::vec3 *>(dst.normals.data.data());
+    TEST_CHECK(std::fabs((*baked)[0] - 0.4472136f) < 1.0e-5f);
+    TEST_CHECK(std::fabs((*baked)[1] - 0.8944272f) < 1.0e-5f);
+    TEST_CHECK(std::fabs((*baked)[2]) < 1.0e-5f);
+  }
+
+  {
+    tydra::RenderSceneConverter converter;
+
+    const std::array<tydra::vec3, 3> normals = {
+        tydra::vec3{0.0f, 0.0f, 1.0f},
+        tydra::vec3{0.0f, 0.0f, 1.0f},
+        tydra::vec3{0.0f, 0.0f, 1.0f},
+    };
+
+    tydra::RenderMesh src;
+    src.abs_path = "/MeshSingular";
+    src.points = {{0.0f, 0.0f, 0.0f},
+                  {1.0f, 0.0f, 0.0f},
+                  {0.0f, 1.0f, 0.0f}};
+    src.usdFaceVertexIndices = {0, 1, 2};
+    src.usdFaceVertexCounts = {3};
+    src.normals.format = tydra::VertexAttributeFormat::Vec3;
+    src.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()),
+                           normals.size() * sizeof(tydra::vec3));
+    src.normals.variability = tydra::VertexVariability::Vertex;
+
+    value::matrix4d singular = value::matrix4d::identity();
+    singular.m[0][0] = 0.0;
+
+    tydra::RenderMesh dst;
+    std::string merge_err;
+    TEST_CHECK(!converter.MergeMeshData(src, singular, dst, &merge_err));
+    TEST_CHECK(merge_err.find("non-invertible") != std::string::npos);
+    TEST_CHECK(dst.points.empty());
+    TEST_CHECK(dst.normals.empty());
+  }
+
+  {
+    tydra::RenderSceneConverter converter;
+
+    tydra::RenderMesh src;
+    src.abs_path = "/MeshBadIndex";
+    src.points = {{0.0f, 0.0f, 0.0f},
+                  {1.0f, 0.0f, 0.0f},
+                  {0.0f, 1.0f, 0.0f}};
+    src.usdFaceVertexIndices = {0, 1, 99};
+    src.usdFaceVertexCounts = {3};
+
+    tydra::RenderMesh dst;
+    dst.points = {{10.0f, 0.0f, 0.0f}};
+    dst.usdFaceVertexIndices = {0};
+    dst.usdFaceVertexCounts = {1};
+
+    std::string merge_err;
+    TEST_CHECK(!converter.MergeMeshData(
+        src, value::matrix4d::identity(), dst, &merge_err));
+    TEST_CHECK(merge_err.find("out of point range") != std::string::npos);
+    TEST_CHECK(dst.points.size() == 1);
+    TEST_CHECK(dst.usdFaceVertexIndices.size() == 1);
+    TEST_CHECK(dst.usdFaceVertexCounts.size() == 1);
+  }
+
+  {
     Stage stage;
     tydra::RenderSceneConverterEnv env(stage);
     env.scene_config.merge_meshes = true;
@@ -2098,8 +3264,13 @@ void tydra_mesh_fallback_policy_test(void) {
         kTexcoordsVec3.size() * sizeof(value::float3));
     mesh_b.texcoords[0].variability = tydra::VertexVariability::Vertex;
 
+    tydra::RenderMesh mesh_c = mesh_a;
+    mesh_c.prim_name = "MeshC";
+    mesh_c.abs_path = "/MeshC";
+
     converter.meshes.push_back(mesh_a);
     converter.meshes.push_back(mesh_b);
+    converter.meshes.push_back(mesh_c);
 
     tydra::Node node_a;
     node_a.prim_name = "MeshA";
@@ -2115,8 +3286,17 @@ void tydra_mesh_fallback_policy_test(void) {
     node_b.abs_path = "/MeshB";
     node_b.id = 1;
 
+    tydra::Node node_c = node_a;
+    node_c.prim_name = "MeshC";
+    node_c.abs_path = "/MeshC";
+    node_c.id = 2;
+
     converter.root_nodes.push_back(node_a);
     converter.root_nodes.push_back(node_b);
+    converter.root_nodes.push_back(node_c);
+    converter.meshMap.add("/MeshA", uint64_t(0));
+    converter.meshMap.add("/MeshB", uint64_t(1));
+    converter.meshMap.add("/MeshC", uint64_t(2));
 
     TEST_CHECK(converter.MergeMeshesImpl(env));
     TEST_CHECK(converter.GetError().empty());
@@ -2124,6 +3304,648 @@ void tydra_mesh_fallback_policy_test(void) {
                std::string::npos);
     TEST_CHECK(converter.GetInfo().find("Cannot merge texcoords slot 0") !=
                std::string::npos);
+    TEST_CHECK(converter.meshes.size() == 2);
+    bool found_merged = false;
+    for (const tydra::RenderMesh &mesh : converter.meshes) {
+      if (mesh.abs_path == "/merged/merged_material_7") {
+        found_merged = true;
+        TEST_CHECK(mesh.points.size() == 6);
+      }
+    }
+    TEST_CHECK(found_merged);
+  }
+
+  {
+    // Heterogeneous vertex-attribute presence: meshes sharing a material but
+    // differing in whether they carry normals must not be merged into a single
+    // mesh whose normals array is shorter than its point count.
+    Stage stage;
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderSceneConverter converter;
+
+    tydra::RenderMesh mesh_a;
+    mesh_a.prim_name = "MeshA";
+    mesh_a.abs_path = "/MeshA";
+    mesh_a.material_id = 4;
+    mesh_a.points = {{0.0f, 0.0f, 0.0f},
+                     {1.0f, 0.0f, 0.0f},
+                     {0.0f, 1.0f, 0.0f}};
+    mesh_a.usdFaceVertexIndices = {0, 1, 2};
+    mesh_a.usdFaceVertexCounts = {3};
+    mesh_a.normals.format = tydra::VertexAttributeFormat::Vec3;
+    mesh_a.normals.set_buffer(
+        reinterpret_cast<const uint8_t *>(kTexcoordsVec3.data()),
+        kTexcoordsVec3.size() * sizeof(value::float3));
+    mesh_a.normals.variability = tydra::VertexVariability::Vertex;
+
+    // mesh_b: same material, same topology, but NO normals.
+    tydra::RenderMesh mesh_b = mesh_a;
+    mesh_b.prim_name = "MeshB";
+    mesh_b.abs_path = "/MeshB";
+    mesh_b.normals = tydra::VertexAttribute{};
+
+    // mesh_c: identical to mesh_a (has normals) -> mergeable with mesh_a.
+    tydra::RenderMesh mesh_c = mesh_a;
+    mesh_c.prim_name = "MeshC";
+    mesh_c.abs_path = "/MeshC";
+
+    converter.meshes.push_back(mesh_a);
+    converter.meshes.push_back(mesh_b);
+    converter.meshes.push_back(mesh_c);
+
+    tydra::Node node_a;
+    node_a.prim_name = "MeshA";
+    node_a.abs_path = "/MeshA";
+    node_a.category = tydra::NodeCategory::Geom;
+    node_a.nodeType = tydra::NodeType::Mesh;
+    node_a.id = 0;
+    node_a.local_matrix = value::matrix4d::identity();
+    node_a.global_matrix = value::matrix4d::identity();
+
+    tydra::Node node_b = node_a;
+    node_b.prim_name = "MeshB";
+    node_b.abs_path = "/MeshB";
+    node_b.id = 1;
+
+    tydra::Node node_c = node_a;
+    node_c.prim_name = "MeshC";
+    node_c.abs_path = "/MeshC";
+    node_c.id = 2;
+
+    converter.root_nodes.push_back(node_a);
+    converter.root_nodes.push_back(node_b);
+    converter.root_nodes.push_back(node_c);
+    converter.meshMap.add("/MeshA", uint64_t(0));
+    converter.meshMap.add("/MeshB", uint64_t(1));
+    converter.meshMap.add("/MeshC", uint64_t(2));
+
+    TEST_CHECK(converter.MergeMeshesImpl(env));
+    TEST_CHECK(converter.GetError().empty());
+    // mesh_b (no normals) must be refused...
+    TEST_CHECK(converter.GetInfo().find("Skipping mesh merge for /MeshB") !=
+               std::string::npos);
+    TEST_CHECK(converter.GetInfo().find("Cannot merge normals") !=
+               std::string::npos);
+    // ...while mesh_a and mesh_c merge cleanly.
+    bool found_merged = false;
+    for (const tydra::RenderMesh &mesh : converter.meshes) {
+      // No surviving mesh may have a normals array shorter than its points.
+      if (!mesh.normals.empty()) {
+        TEST_CHECK(mesh.normals.vertex_count() == mesh.points.size());
+      }
+      if (mesh.abs_path == "/merged/merged_material_4") {
+        found_merged = true;
+        TEST_CHECK(mesh.points.size() == 6);
+        TEST_CHECK(mesh.normals.vertex_count() == 6);
+      }
+    }
+    TEST_CHECK(found_merged);
+  }
+
+  {
+    // End-to-end regression for the heterogeneous-attribute mesh-merge bug,
+    // mirroring tests/usda/merge-meshes-heterogeneous-attrs.usda. Two meshes
+    // share a material (same merge group) and have identity (bakeable)
+    // transforms, but only one carries a texcoord (st) set. (Texcoords are
+    // used rather than normals because the converter fabricates normals when
+    // absent, which would erase the presence difference.) The merge must be
+    // refused so no mesh ends up with a UV set shorter than its point count.
+    const std::string usda = R"(#usda 1.0
+def Xform "Root" {
+  def Material "Mat" {
+    token outputs:surface.connect = </Root/Mat/Preview.outputs:surface>
+    def Shader "Preview" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+      token outputs:surface
+    }
+  }
+  def Mesh "MeshWithUV" {
+    rel material:binding = </Root/Mat>
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+      interpolation = "vertex"
+    )
+  }
+  def Mesh "MeshNoUV" {
+    rel material:binding = </Root/Mat>
+    point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "merge_meshes_heterogeneous_attrs.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+
+    // Heterogeneous attributes must prevent the merge: both meshes survive and
+    // no synthetic /merged mesh is produced. Any surviving UV set must cover
+    // every vertex of its mesh.
+    TEST_CHECK(scene.meshes.size() == 2);
+    for (const tydra::RenderMesh &mesh : scene.meshes) {
+      TEST_CHECK(mesh.abs_path.find("/merged") == std::string::npos);
+      for (const auto &tc : mesh.texcoords) {
+        TEST_CHECK(tc.second.vertex_count() >= mesh.points.size());
+      }
+    }
+  }
+
+  {
+    // Positive control: when both meshes carry the same attributes they DO
+    // merge, and the merged UV set stays consistent with the points.
+    const std::string usda = R"(#usda 1.0
+def Xform "Root" {
+  def Material "Mat" {
+    token outputs:surface.connect = </Root/Mat/Preview.outputs:surface>
+    def Shader "Preview" {
+      uniform token info:id = "UsdPreviewSurface"
+      color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+      token outputs:surface
+    }
+  }
+  def Mesh "MeshA" {
+    rel material:binding = </Root/Mat>
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+      interpolation = "vertex"
+    )
+  }
+  def Mesh "MeshB" {
+    rel material:binding = </Root/Mat>
+    point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+      interpolation = "vertex"
+    )
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "merge_meshes_homogeneous_attrs.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+
+    // The two homogeneous meshes collapse into a single merged mesh whose UV
+    // set covers every vertex.
+    TEST_CHECK(scene.meshes.size() == 1);
+    for (const tydra::RenderMesh &mesh : scene.meshes) {
+      for (const auto &tc : mesh.texcoords) {
+        TEST_CHECK(tc.second.vertex_count() >= mesh.points.size());
+      }
+    }
+  }
+
+  {
+    tydra::RenderSceneConverter converter;
+
+    tydra::UVTexture texture_a;
+    texture_a.texture_image_id = 5;
+    texture_a.wrapS = tydra::UVTexture::WrapMode::REPEAT;
+    texture_a.wrapT = tydra::UVTexture::WrapMode::REPEAT;
+    texture_a.varname_uv = "st";
+
+    tydra::UVTexture texture_b = texture_a;
+
+    converter.textures.push_back(texture_a);
+    converter.textures.push_back(texture_b);
+
+    tydra::RenderMaterial material;
+    material.surfaceShader = tydra::PreviewSurfaceShader{};
+    material.surfaceShader->diffuseColor.texture_id = 1;
+    converter.materials.push_back(material);
+
+    TEST_CHECK(converter.DeduplicateTexturesByIdentityImpl() == 1);
+    TEST_CHECK(converter.textures.size() == 1);
+    TEST_CHECK(converter.materials.size() == 1);
+    if (converter.materials.size() == 1 &&
+        converter.materials[0].surfaceShader.has_value()) {
+      TEST_CHECK(converter.materials[0]
+                     .surfaceShader->diffuseColor.texture_id == 0);
+    }
+  }
+
+  {
+    Stage stage;
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderSceneConverter converter;
+
+    tydra::RenderMesh mesh_a;
+    mesh_a.prim_name = "MeshA";
+    mesh_a.abs_path = "/MeshA";
+    mesh_a.material_id = 3;
+    mesh_a.points = {{0.0f, 0.0f, 0.0f},
+                     {1.0f, 0.0f, 0.0f},
+                     {0.0f, 1.0f, 0.0f}};
+    mesh_a.usdFaceVertexIndices = {0, 1, 2};
+    mesh_a.usdFaceVertexCounts = {3};
+
+    tydra::RenderMesh mesh_b = mesh_a;
+    mesh_b.prim_name = "MeshB";
+    mesh_b.abs_path = "/MeshB";
+
+    converter.meshes.push_back(mesh_a);
+    converter.meshes.push_back(mesh_b);
+
+    // Scene: /Root (Xform) -> { MeshA, MeshB }. Default root is index 0 (no
+    // defaultPrim set -> default_node stays -1 -> falls back to root 0).
+    tydra::Node node_a;
+    node_a.prim_name = "MeshA";
+    node_a.abs_path = "/Root/MeshA";
+    node_a.category = tydra::NodeCategory::Geom;
+    node_a.nodeType = tydra::NodeType::Mesh;
+    node_a.id = 0;
+    node_a.local_matrix = value::matrix4d::identity();
+    node_a.global_matrix = value::matrix4d::identity();
+
+    tydra::Node node_b = node_a;
+    node_b.prim_name = "MeshB";
+    node_b.abs_path = "/Root/MeshB";
+    node_b.id = 1;
+
+    tydra::Node root;
+    root.prim_name = "Root";
+    root.abs_path = "/Root";
+    root.category = tydra::NodeCategory::Group;
+    root.nodeType = tydra::NodeType::Xform;
+    root.id = -1;
+    root.local_matrix = value::matrix4d::identity();
+    root.global_matrix = value::matrix4d::identity();
+    root.children.push_back(node_a);
+    root.children.push_back(node_b);
+
+    converter.root_nodes.push_back(root);
+
+    TEST_CHECK(converter.MergeMeshesImpl(env));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(converter.meshes.size() == 1);
+    if (converter.meshes.size() == 1) {
+      TEST_CHECK(converter.meshes[0].material_id == 3);
+      TEST_CHECK(converter.meshes[0].points.size() == 6);
+    }
+    // Baked merge: both source nodes become plain groups (transforms intact)
+    // and the merged mesh is attached as a child of the default root with an
+    // identity transform (root is identity here).
+    TEST_CHECK(converter.root_nodes.size() == 1);
+    if (converter.root_nodes.size() == 1) {
+      const tydra::Node &r = converter.root_nodes[0];
+      TEST_CHECK(r.children.size() == 3);
+      if (r.children.size() == 3) {
+        TEST_CHECK(r.children[0].nodeType == tydra::NodeType::Xform);
+        TEST_CHECK(r.children[0].id == -1);
+        TEST_CHECK(r.children[1].nodeType == tydra::NodeType::Xform);
+        TEST_CHECK(r.children[1].id == -1);
+        const tydra::Node &merged = r.children[2];
+        TEST_CHECK(merged.nodeType == tydra::NodeType::Mesh);
+        TEST_CHECK(merged.id == 0);
+        TEST_CHECK(merged.abs_path == "/merged/merged_material_3");
+        TEST_CHECK(tinyusdz::is_identity(merged.local_matrix));
+      }
+    }
+    auto merged_it = converter.meshMap.find("/merged/merged_material_3");
+    TEST_CHECK(merged_it != converter.meshMap.s_end());
+    if (merged_it != converter.meshMap.s_end()) {
+      TEST_CHECK(merged_it->second == 0);
+    }
+    TEST_CHECK(converter.GetInfo().find(
+                   "Mesh merge compacted mesh records: 3 -> 1.") !=
+               std::string::npos);
+  }
+
+  {
+    // Regression (nested mesh-under-mesh): baked merge must NOT rewrite a source
+    // node's local transform in place. Source mesh nodes can be nested (e.g. a
+    // window mesh parented under a wall mesh); neutralizing an ancestor's local
+    // corrupts the world transform of any descendant mesh node — the "floating
+    // mesh" artifact. The fix attaches the world-space merged mesh to a fresh
+    // root-level node (identity transform) and leaves every source node's local
+    // untouched.
+    Stage stage;
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.merge_meshes = true;
+    env.scene_config.merge_meshes_bake_transform = true;
+
+    tydra::RenderSceneConverter converter;
+
+    auto translate_x = [](double tx) {
+      value::matrix4d m = value::matrix4d::identity();
+      m.m[3][0] = tx;
+      return m;
+    };
+
+    tydra::RenderMesh wall_mesh;
+    wall_mesh.prim_name = "Wall";
+    wall_mesh.abs_path = "/Root/Wall";
+    wall_mesh.material_id = 5;
+    wall_mesh.points = {{0.0f, 0.0f, 0.0f},
+                        {1.0f, 0.0f, 0.0f},
+                        {0.0f, 1.0f, 0.0f}};
+    wall_mesh.usdFaceVertexIndices = {0, 1, 2};
+    wall_mesh.usdFaceVertexCounts = {3};
+
+    tydra::RenderMesh window_mesh = wall_mesh;
+    window_mesh.prim_name = "Window";
+    window_mesh.abs_path = "/Root/Wall/Window";
+
+    converter.meshes.push_back(wall_mesh);    // id 0
+    converter.meshes.push_back(window_mesh);  // id 1
+
+    // Scene: /Root (Xform, identity) -> Wall (Mesh, local 10) -> Window
+    // (Mesh, local 2; global = 10 * 2 = 12). Window is nested under Wall.
+    tydra::Node window;
+    window.prim_name = "Window";
+    window.abs_path = "/Root/Wall/Window";
+    window.category = tydra::NodeCategory::Geom;
+    window.nodeType = tydra::NodeType::Mesh;
+    window.id = 1;
+    window.local_matrix = translate_x(2.0);
+    window.global_matrix = translate_x(12.0);
+
+    tydra::Node wall;
+    wall.prim_name = "Wall";
+    wall.abs_path = "/Root/Wall";
+    wall.category = tydra::NodeCategory::Geom;
+    wall.nodeType = tydra::NodeType::Mesh;
+    wall.id = 0;
+    wall.local_matrix = translate_x(10.0);
+    wall.global_matrix = translate_x(10.0);
+    wall.children.push_back(window);
+
+    tydra::Node root;
+    root.prim_name = "Root";
+    root.abs_path = "/Root";
+    root.category = tydra::NodeCategory::Group;
+    root.nodeType = tydra::NodeType::Xform;
+    root.id = -1;
+    root.local_matrix = value::matrix4d::identity();
+    root.global_matrix = value::matrix4d::identity();
+    root.children.push_back(wall);
+
+    converter.root_nodes.push_back(root);
+
+    TEST_CHECK(converter.MergeMeshesImpl(env));
+    TEST_CHECK(converter.GetError().empty());
+
+    // Both sources merged into one world-space mesh.
+    bool found_merged = false;
+    for (const tydra::RenderMesh &m : converter.meshes) {
+      if (m.abs_path == "/merged/merged_material_5") {
+        found_merged = true;
+        TEST_CHECK(m.points.size() == 6);
+      }
+    }
+    TEST_CHECK(found_merged);
+
+    TEST_CHECK(converter.root_nodes.size() == 1);
+    const tydra::Node &root_after = converter.root_nodes[0];
+    // Root gains the merged mesh child; the original Wall subtree is retained.
+    TEST_CHECK(root_after.children.size() == 2);
+    if (root_after.children.size() == 2) {
+      // Source nodes keep their ORIGINAL locals (NOT neutralized) and become
+      // plain groups, so descendants stay correctly placed.
+      const tydra::Node &wall_after = root_after.children[0];
+      TEST_CHECK(wall_after.nodeType == tydra::NodeType::Xform);
+      TEST_CHECK(wall_after.id == -1);
+      TEST_CHECK(std::abs(wall_after.local_matrix.m[3][0] - 10.0) < 1e-9);
+      TEST_CHECK(wall_after.children.size() == 1);
+      if (wall_after.children.size() == 1) {
+        const tydra::Node &window_after = wall_after.children[0];
+        TEST_CHECK(window_after.id == -1);
+        TEST_CHECK(std::abs(window_after.local_matrix.m[3][0] - 2.0) < 1e-9);
+      }
+
+      // Merged mesh attached under the (identity) root with identity transform.
+      const tydra::Node &merged_node = root_after.children[1];
+      TEST_CHECK(merged_node.nodeType == tydra::NodeType::Mesh);
+      TEST_CHECK(merged_node.abs_path == "/merged/merged_material_5");
+      TEST_CHECK(tinyusdz::is_identity(merged_node.local_matrix));
+    }
+  }
+
+  {
+    tydra::RenderSceneConverter converter;
+
+    tydra::Node root;
+    root.prim_name = "Root";
+    root.abs_path = "/Root";
+    root.category = tydra::NodeCategory::Group;
+    root.nodeType = tydra::NodeType::Xform;
+    root.local_matrix = value::matrix4d::identity();
+    root.global_matrix = value::matrix4d::identity();
+
+    tydra::Node group;
+    group.prim_name = "Group";
+    group.abs_path = "/Root/Group";
+    group.category = tydra::NodeCategory::Group;
+    group.nodeType = tydra::NodeType::Xform;
+    group.local_matrix = value::matrix4d::identity();
+    group.global_matrix = value::matrix4d::identity();
+
+    tydra::Node mesh_node;
+    mesh_node.prim_name = "Mesh";
+    mesh_node.abs_path = "/Root/Group/Mesh";
+    mesh_node.category = tydra::NodeCategory::Geom;
+    mesh_node.nodeType = tydra::NodeType::Mesh;
+    mesh_node.id = 0;
+    mesh_node.local_matrix = value::matrix4d::identity();
+    mesh_node.global_matrix = value::matrix4d::identity();
+    mesh_node.global_matrix.m[3][0] = 2.0;
+
+    group.children.push_back(mesh_node);
+    root.children.push_back(group);
+    converter.root_nodes.push_back(root);
+
+    TEST_CHECK(converter.FlattenOptimizedRenderTreeImpl() == 1);
+    TEST_CHECK(converter.root_nodes.size() == 1);
+    if (converter.root_nodes.size() == 1) {
+      TEST_CHECK(converter.root_nodes[0].nodeType == tydra::NodeType::Xform);
+      TEST_CHECK(converter.root_nodes[0].children.size() == 1);
+      if (converter.root_nodes[0].children.size() == 1) {
+        const tydra::Node &flat_mesh = converter.root_nodes[0].children[0];
+        TEST_CHECK(flat_mesh.nodeType == tydra::NodeType::Mesh);
+        TEST_CHECK(flat_mesh.id == 0);
+        TEST_CHECK(flat_mesh.children.empty());
+        TEST_CHECK(flat_mesh.local_matrix.m[3][0] == 2.0);
+      }
+    }
+  }
+
+  {
+    const std::string usda = R"(#usda 1.0
+def Xform "Root" {
+  def Xform "Instancer" {
+    double3 xformOp:translate = (5, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    def PointInstancer "Points" {
+      rel prototypes = </Root/Proto/Mesh>
+      int[] protoIndices = [0]
+      point3f[] positions = [(1, 0, 0)]
+      quatf[] orientations = [(1, 0, 0, 0)]
+      float3[] scales = [(1, 1, 1)]
+      color3f[] primvars:displayColor = [(0.25, 0.5, 0.75)] (
+        interpolation = "vertex"
+      )
+      float[] primvars:displayOpacity = [0.5] (
+        interpolation = "vertex"
+      )
+    }
+  }
+  def Xform "Proto" {
+    def Mesh "Mesh" {
+      point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+      int[] faceVertexCounts = [3]
+      int[] faceVertexIndices = [0,1,2]
+    }
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "flatten_point_instancer.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.expand_point_instancers = true;
+    env.scene_config.flatten_optimized_render_tree = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(converter.GetError().empty());
+    TEST_CHECK(scene.instances.size() == 1);
+    if (scene.instances.size() == 1) {
+      TEST_CHECK(scene.instances[0].global_matrix.m[3][0] == 6.0);
+      TEST_CHECK(scene.instances[0].has_display_color);
+      TEST_CHECK(NearlyEqual(scene.instances[0].display_color[0], 0.25f));
+      TEST_CHECK(NearlyEqual(scene.instances[0].display_color[1], 0.5f));
+      TEST_CHECK(NearlyEqual(scene.instances[0].display_color[2], 0.75f));
+      TEST_CHECK(scene.instances[0].has_display_opacity);
+      TEST_CHECK(NearlyEqual(scene.instances[0].display_opacity, 0.5f));
+    }
+    TEST_CHECK(scene.nodes.size() == 1);
+    if (scene.nodes.size() == 1) {
+      TEST_CHECK(scene.nodes[0].abs_path == "/OptimizedRenderRoot");
+    }
+  }
+
+  {
+    const std::string usda = R"(#usda 1.0
+def Xform "Root" {
+  def Xform "Group" {
+    def Mesh "Mesh" {
+      double3 xformOp:translate.timeSamples = {
+        1: (0, 0, 0),
+        2: (2, 0, 0),
+      }
+      uniform token[] xformOpOrder = ["xformOp:translate"]
+      point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+      int[] faceVertexCounts = [3]
+      int[] faceVertexIndices = [0,1,2]
+    }
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "flatten_animation_remap.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    tydra::RenderSceneConverterEnv env(stage);
+    env.scene_config.flatten_optimized_render_tree = true;
+
+    tydra::RenderScene scene;
+    tydra::RenderSceneConverter converter;
+    TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+    TEST_CHECK(scene.animations.size() == 1);
+    if (scene.animations.size() == 1 &&
+        !scene.animations[0].channels.empty()) {
+      TEST_CHECK(scene.animations[0].channels[0].target_node == 1);
+    }
+  }
+
+  {
+    const std::string usda = R"(#usda 1.0
+def Material "Mat" {
+  token outputs:surface.connect = </Mat/Preview.outputs:surface>
+  def Shader "Preview" {
+    uniform token info:id = "UsdPreviewSurface"
+    color3f inputs:diffuseColor.timeSamples = {
+      1: (1, 0, 0),
+      2: (0, 1, 0),
+    }
+    token outputs:surface
+  }
+}
+)";
+
+    Stage stage;
+    std::string warn;
+    std::string err;
+    TEST_CHECK(LoadUSDAFromMemory(
+        reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+        "timesampled_material.usda", &stage, &warn, &err));
+    TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+    const Prim *prim{nullptr};
+    TEST_CHECK(stage.find_prim_at_path(Path("/Mat", ""), prim, &err));
+    TEST_CHECK(prim != nullptr);
+    if (prim) {
+      const Material *material = prim->as<Material>();
+      TEST_CHECK(material != nullptr);
+      if (material) {
+        tydra::RenderSceneConverterEnv env(stage);
+        tydra::RenderSceneConverter converter;
+        std::string signature;
+        TEST_CHECK(!converter.BuildMaterialSourceSignature(
+            env, Path("/Mat", ""), *material, &signature));
+      }
+    }
   }
 }
 
@@ -2179,6 +4001,175 @@ void tydra_skel_animation_validation_test(void) {
       TEST_CHECK(scene.skeletons[0].rest_transforms.size() == 1);
       TEST_CHECK(scene.skeletons[0].bind_transforms[0] ==
                  value::matrix4d::identity());
+    }
+  }
+}
+
+void tydra_prim_parameter_animation_test(void) {
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+    startTimeCode = 1
+    endTimeCode = 2
+)
+def Xform "Root"
+{
+    def Camera "Cam"
+    {
+        float focalLength.timeSamples = {
+            1: 35,
+            2: 50,
+        }
+        custom quatf customOrientation.timeSamples = {
+            1: (1, 0, 0, 0),
+            2: (0.5, 0.5, 0.5, 0.5),
+        }
+        custom matrix4d customMatrix.timeSamples = {
+            1: ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)),
+            2: ((2, 0, 0, 0), (0, 2, 0, 0), (0, 0, 2, 0), (1, 2, 3, 1)),
+        }
+    }
+
+    def SphereLight "Key"
+    {
+        float inputs:intensity.timeSamples = {
+            1: 10,
+            2: 20,
+        }
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </Root/Mat/PreviewSurface.outputs:surface>
+
+        def Shader "PreviewSurface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.timeSamples = {
+                1: (0.1, 0.2, 0.3),
+                2: (0.4, 0.5, 0.6),
+            }
+            token outputs:surface
+        }
+    }
+}
+)";
+
+  Stage stage;
+  std::string warn;
+  std::string err;
+  TEST_CHECK(LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda.data()), usda.size(),
+      "prim_parameter_animation.usda", &stage, &warn, &err));
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  auto find_custom_channel = [&](const std::string &target_path,
+                                 const std::string &property_name,
+                                 const tydra::KeyframeSampler **sampler_out) {
+    for (const tydra::AnimationClip &clip : scene.animations) {
+      for (const tydra::AnimationChannel &channel : clip.channels) {
+        if (channel.path != tydra::AnimationPath::CustomProperty ||
+            channel.target_prim_path != target_path ||
+            channel.property_name != property_name ||
+            channel.sampler < 0 ||
+            size_t(channel.sampler) >= clip.samplers.size()) {
+          continue;
+        }
+        *sampler_out = &clip.samplers[size_t(channel.sampler)];
+        return true;
+      }
+    }
+    return false;
+  };
+
+  auto count_custom_channels = [&](const std::string &target_path,
+                                   const std::string &property_name) {
+    size_t count = 0;
+    for (const tydra::AnimationClip &clip : scene.animations) {
+      for (const tydra::AnimationChannel &channel : clip.channels) {
+        if (channel.path == tydra::AnimationPath::CustomProperty &&
+            channel.target_prim_path == target_path &&
+            channel.property_name == property_name) {
+          count++;
+        }
+      }
+    }
+    return count;
+  };
+
+  const tydra::KeyframeSampler *camera_sampler = nullptr;
+  const tydra::KeyframeSampler *camera_quat_sampler = nullptr;
+  const tydra::KeyframeSampler *camera_matrix_sampler = nullptr;
+  const tydra::KeyframeSampler *light_sampler = nullptr;
+  const tydra::KeyframeSampler *shader_sampler = nullptr;
+  TEST_CHECK(find_custom_channel("/Root/Cam", "focalLength", &camera_sampler));
+  TEST_CHECK(find_custom_channel("/Root/Cam", "customOrientation",
+                                 &camera_quat_sampler));
+  TEST_CHECK(find_custom_channel("/Root/Cam", "customMatrix",
+                                 &camera_matrix_sampler));
+  TEST_CHECK(find_custom_channel("/Root/Key", "inputs:intensity",
+                                 &light_sampler));
+  TEST_CHECK(find_custom_channel("/Root/Mat/PreviewSurface",
+                                 "inputs:diffuseColor", &shader_sampler));
+  TEST_CHECK(count_custom_channels("/Root/Cam", "focalLength") == 1);
+  TEST_CHECK(count_custom_channels("/Root/Key", "inputs:intensity") == 1);
+
+  if (camera_sampler) {
+    TEST_CHECK(camera_sampler->times.size() == 2);
+    TEST_CHECK(camera_sampler->values.size() == 2);
+    if (camera_sampler->values.size() == 2) {
+      TEST_CHECK(NearlyEqual(camera_sampler->values[0], 35.0f));
+      TEST_CHECK(NearlyEqual(camera_sampler->values[1], 50.0f));
+    }
+  }
+  if (camera_quat_sampler) {
+    TEST_CHECK(camera_quat_sampler->times.size() == 2);
+    TEST_CHECK(camera_quat_sampler->values.size() == 8);
+    if (camera_quat_sampler->values.size() == 8) {
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[0], 0.0f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[1], 0.0f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[2], 0.0f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[3], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[4], 0.5f));
+      TEST_CHECK(NearlyEqual(camera_quat_sampler->values[7], 0.5f));
+    }
+  }
+  if (camera_matrix_sampler) {
+    TEST_CHECK(camera_matrix_sampler->times.size() == 2);
+    TEST_CHECK(camera_matrix_sampler->values.size() == 32);
+    if (camera_matrix_sampler->values.size() == 32) {
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[0], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[5], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[10], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[15], 1.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[16], 2.0f));
+      TEST_CHECK(NearlyEqual(camera_matrix_sampler->values[31], 1.0f));
+    }
+  }
+  if (light_sampler) {
+    TEST_CHECK(light_sampler->times.size() == 2);
+    TEST_CHECK(light_sampler->values.size() == 2);
+    if (light_sampler->values.size() == 2) {
+      TEST_CHECK(NearlyEqual(light_sampler->values[0], 10.0f));
+      TEST_CHECK(NearlyEqual(light_sampler->values[1], 20.0f));
+    }
+  }
+  if (shader_sampler) {
+    TEST_CHECK(shader_sampler->times.size() == 2);
+    TEST_CHECK(shader_sampler->values.size() == 6);
+    if (shader_sampler->values.size() == 6) {
+      TEST_CHECK(NearlyEqual(shader_sampler->values[0], 0.1f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[1], 0.2f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[2], 0.3f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[3], 0.4f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[4], 0.5f));
+      TEST_CHECK(NearlyEqual(shader_sampler->values[5], 0.6f));
     }
   }
 }

@@ -77,17 +77,16 @@ bool DefaultTextureImageLoaderFunction(
     return false;
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
     if (err) {
       (*err) += fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                            asset.size(), security_policy::kResolverMaxAssetReadBytes);
+                            asset.size(), security_policy::GetMaxAssetReadBytes());
     }
     return false;
   }
 
   DCOUT("Resolved asset path = " << resolvedPath);
 
-  // TODO: user-defined image loader handler.
   auto result = tinyusdz::image::LoadImageFromMemory(asset.data(), asset.size(),
                                                      resolvedPath);
   if (!result) {
@@ -135,9 +134,9 @@ bool DefaultTextureImageLoaderFunction(
       return false;
     }
   } else {
-    DCOUT("TODO: bpp = " << result.value().image.bpp);
+    DCOUT("Unsupported bpp = " << result.value().image.bpp);
     if (err) {
-      (*err) += "TODO or unsupported bpp: " +
+      (*err) += "Unsupported bpp: " +
                std::to_string(result.value().image.bpp) + "\n";
     }
     return false;
@@ -146,6 +145,12 @@ bool DefaultTextureImageLoaderFunction(
   texImage.channels = result.value().image.channels;
   texImage.width = result.value().image.width;
   texImage.height = result.value().image.height;
+
+  // `imageData` receives the decoder output as-is, so the buffer's texel type
+  // equals the asset's texel type (HDR/EXR = Float32, 16-bit PNG = UInt16,
+  // ...). Without this, float buffers were tagged UInt8 and every consumer
+  // read the raw float bytes as 8-bit texels (garbage for HDR envmaps).
+  texImage.texelComponentType = texImage.assetTexelComponentType;
 
   (*texImageOut) = texImage;
 

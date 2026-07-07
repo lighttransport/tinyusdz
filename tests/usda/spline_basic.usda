@@ -1,0 +1,31 @@
+#usda 1.0
+(
+    doc = "Spline (TsSpline) coverage: interpolation modes, curve types, value types, extrapolation."
+)
+
+def Xform "Splines"
+{
+    double held.spline = {
+        0: 0; post held,
+        10: 100,
+    }
+    float linear.spline = {
+        0: 0; post linear,
+        10: 100,
+    }
+    float bezier.spline = {
+        bezier,
+        0: 0; post curve (3.333, 1),
+        10: 10; pre (3.333, 1),
+    }
+    double sloped.spline = {
+        pre: sloped(2),
+        post: sloped(2),
+        0: 0; post linear,
+        10: 10,
+    }
+    half hf.spline = {
+        0: 1; post linear,
+        4: 5,
+    }
+}

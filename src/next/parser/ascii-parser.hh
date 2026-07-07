@@ -24,6 +24,12 @@ struct ParseOptions {
 
   /// Maximum nesting depth for prims
   size_t max_depth = 256;
+
+  /// Worker-thread hint for the parallel large-array parse path (when built with
+  /// TINYUSDZ_ENABLE_THREAD). 0 = auto (min(hardware_concurrency, 8)); 1 =
+  /// serial; >1 = that many workers. Replaces the former TINYUSDZ_NEXT_NUM_THREADS
+  /// env read so the library takes no implicit process-environment input.
+  int num_threads = 0;
 };
 
 /// Error information from parsing

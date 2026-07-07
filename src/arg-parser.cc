@@ -75,8 +75,9 @@ bool ArgParser::get(const std::string& name, double& value) const {
     return false;
 }
 
-const std::vector<std::string>& ArgParser::positional() const {
-    return positional_args_;
+const std::vector<std::string>& ArgParser::positional() const
+    TINYUSDZ_LIFETIMEBOUND {
+  return positional_args_;
 }
 
 void ArgParser::print_help() const {

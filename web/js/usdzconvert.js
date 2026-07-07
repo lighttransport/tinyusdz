@@ -11,6 +11,7 @@ import {
   loadWasm,
   isImageName,
   convertFolderToUSDZ,
+  convertSourceToUSDZStreaming,
   outputFormatForImage,
   parseByteSize,
 } from './src/usdzconvert.js';
@@ -71,11 +72,24 @@ container.innerHTML = `
         <option value="usda">USDA</option>
       </select>
 
+      <label>Flatten pipeline</label>
+      <select id="pipeline" style="padding:4px;width:160px"
+        title="Legacy is the stable in-memory path. Stream keeps textures lazy. Next is the experimental low-memory root flattener for supported USDC inputs.">
+        <option value="legacy">Legacy</option>
+        <option value="next">Next (low memory)</option>
+        <option value="stream">Stream</option>
+        <option value="stream-next">Stream + Next</option>
+      </select>
+
       <label>Flatten stage</label>
       <input id="flatten" type="checkbox" checked style="justify-self:start">
 
       <label>ARKit compatible</label>
       <input id="arkitCompatible" type="checkbox" style="justify-self:start">
+
+      <label>Include unused textures</label>
+      <input id="includeUnusedTextures" type="checkbox" style="justify-self:start"
+             title="For stream-next/next-capable conversion paths, also convert and package image files that are not referenced by the composed root.">
 
       <label>Target total texture size</label>
       <input id="targetSize" type="text" placeholder="e.g. 100MB (blank = off)" style="padding:4px;width:200px"
@@ -92,6 +106,10 @@ container.innerHTML = `
 
       <label>JPEG quality</label>
       <input id="jpegQuality" type="number" min="1" max="100" value="90" style="padding:4px;width:120px">
+
+      <label>Max USDC size (MB)</label>
+      <input id="maxUsdcMb" type="number" min="0" step="64" value="0" style="padding:4px;width:120px"
+             title="0 = conservative default (~100 MB). Raise for large scenes whose flattened USDC root exceeds it. 2048 (2 GB) is the cross-browser-safe ceiling (Firefox/Safari ArrayBuffer limit + wasm32 2 GB heap); Chrome allows up to ~4096.">
     </div>
     <p style="color:#888;font-size:12px;margin:10px 0 0">
       Set a <b>target total texture size</b> to auto-fit all textures to a budget — choose the lever:
@@ -166,10 +184,13 @@ const els = {
   resizeColorspace: document.getElementById('resizeColorspace'),
   textureFormat: document.getElementById('textureFormat'),
   rootLayerFormat: document.getElementById('rootLayerFormat'),
+  pipeline: document.getElementById('pipeline'),
   flatten: document.getElementById('flatten'),
   arkitCompatible: document.getElementById('arkitCompatible'),
+  includeUnusedTextures: document.getElementById('includeUnusedTextures'),
   reencode: document.getElementById('reencode'),
   jpegQuality: document.getElementById('jpegQuality'),
+  maxUsdcMb: document.getElementById('maxUsdcMb'),
   nameSuffix: document.getElementById('nameSuffix'),
   nameCustom: document.getElementById('nameCustom'),
   namePreview: document.getElementById('namePreview'),
@@ -510,9 +531,17 @@ els.btnConvert.addEventListener('click', async () => {
       reencode,
       textureFormat,
       rootLayerFormat: els.rootLayerFormat.value,
+      pipeline: els.pipeline.value,
       flatten: els.flatten.checked,
       arkitCompatible: els.arkitCompatible.checked,
+      includeUnusedTextures: els.includeUnusedTextures.checked,
       jpegQuality: parseInt(els.jpegQuality.value, 10) || 90,
+      // Raise the USDC writer's file-size AND working-memory caps together: a
+      // raised file cap with the conservative default memory cap forces a slow
+      // low-memory writer path (and can abort near the wasm32 2 GB heap). On
+      // wasm32 the heap is bounded at 2 GB regardless, so mirroring is safe.
+      maxUsdcMb: parseInt(els.maxUsdcMb.value, 10) || 0,
+      maxMemMb: parseInt(els.maxUsdcMb.value, 10) || 0,
       log,
     };
     // The browser canvas resizes in gamma space (== "linear" filter). When the
@@ -527,16 +556,36 @@ els.btnConvert.addEventListener('click', async () => {
       log(`Fitting textures to ${(targetTextureBytes / 1048576).toFixed(1)} MB via "${fitStrategy}" strategy...`);
     }
 
-    // Read all files into memory.
-    const assetMap = new Map();
-    for (const { path, file } of uploaded) {
-      assetMap.set(path, new Uint8Array(await file.arrayBuffer()));
-    }
-
     // Convert-only: validate the conversion and report bytes/warnings/errors.
     // The download is a separate, explicit step (Download button below).
     setStatus('Converting...');
-    const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, opts);
+    let usdz, stats;
+    if (opts.pipeline === 'stream' || opts.pipeline === 'stream-next') {
+      if (targetTextureBytes > 0) {
+        throw new Error('Streaming conversion does not support target total texture size yet.');
+      }
+      const fileByPath = new Map(uploaded.map(({ path, file }) => [path, file]));
+      const source = {
+        keys: [...fileByPath.keys()],
+        fetch: async (key) => {
+          const file = fileByPath.get(key);
+          if (!file) throw new Error(`Missing uploaded file: ${key}`);
+          return new Uint8Array(await file.arrayBuffer());
+        },
+      };
+      ({ usdz, stats } = await convertSourceToUSDZStreaming(native, source, {
+        ...opts,
+        pipeline: opts.pipeline === 'stream-next' ? 'next' : undefined,
+        nextPreloadUsdLayers: opts.pipeline === 'stream-next',
+      }));
+    } else {
+      // Read all files into memory for the classic folder-conversion API.
+      const assetMap = new Map();
+      for (const { path, file } of uploaded) {
+        assetMap.set(path, new Uint8Array(await file.arrayBuffer()));
+      }
+      ({ usdz, stats } = await convertFolderToUSDZ(native, assetMap, opts));
+    }
     log(`Converted OK. textures: ${stats.textures}, resized: ${stats.resized}, ` +
         `reencoded: ${stats.reencoded}, audio: ${stats.audio || 0}, ` +
         `other assets: ${stats.otherAssets || 0}. USDZ: ${usdz.length} bytes`);

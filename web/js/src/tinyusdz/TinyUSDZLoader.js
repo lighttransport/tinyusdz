@@ -1,4 +1,5 @@
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
+import { parseUSDZEntries } from '../usdzconvert.js';
 
 // tinyusdz module are dynamically imported at TinyUSDZLoader
 
@@ -136,6 +137,225 @@ class FetchAssetResolver {
 
 }
 
+function nextHeapView(native, desc) {
+    const buf = native.HEAPU8.buffer;
+    const ptr = Number(desc.ptr);
+    const n = desc.length;
+    switch (desc.dtype) {
+        case 'f32': return new Float32Array(buf, ptr, n);
+        case 'u32': return new Uint32Array(buf, ptr, n);
+        case 'i32': return new Int32Array(buf, ptr, n);
+        case 'u16': return new Uint16Array(buf, ptr, n);
+        default: return new Uint8Array(buf, ptr, desc.byteLength);
+    }
+}
+
+class NextRenderSceneAdapter {
+    constructor(native, renderStream, options = {}) {
+        this.__backend = 'next';
+        this.native = native;
+        this.renderStream = renderStream;
+        this.filename = options.filename || '';
+        this.archiveEntries = options.archiveEntries || new Map();
+        this.meshes = options.meshes || [];
+        this.materialKeys = new Set();
+        this.textureKeys = new Set();
+        this.sceneMetadata = {
+            upAxis: options.upAxis || 'Y',
+            metersPerUnit: options.metersPerUnit || 1.0
+        };
+        this.fallbackReason = options.fallbackReason || '';
+
+        for (const mesh of this.meshes) {
+            if (mesh.materialKey) this.materialKeys.add(mesh.materialKey);
+            for (const path of Object.values(mesh.texturePaths || {})) {
+                if (path) this.textureKeys.add(this._normTexPath(path));
+            }
+        }
+    }
+
+    static _isUsdName(name) {
+        return /\.(usd|usda|usdc)$/i.test(name || '');
+    }
+
+    static _rootEntry(entries) {
+        return entries.find((entry) => /\.usdc$/i.test(entry.name)) ||
+            entries.find((entry) => this._isUsdName(entry.name));
+    }
+
+    static async create(native, bytes, filename = 'scene.usdz') {
+        if (!native || typeof native.RenderStream !== 'function') {
+            throw new Error('TinyUSDZ next backend is unavailable in this WASM module.');
+        }
+
+        const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        let crate = u8;
+        const archiveEntries = new Map();
+
+        if (/\.usdz$/i.test(filename)) {
+            const entries = parseUSDZEntries(u8);
+            const root = this._rootEntry(entries);
+            if (!root || !/\.usdc$/i.test(root.name)) {
+                throw new Error('TinyUSDZ next backend currently requires a USDZ with a USDC root layer.');
+            }
+            crate = root.data;
+            for (const entry of entries) {
+                if (!entry.name.endsWith('/')) {
+                    archiveEntries.set(this._normTexPathStatic(entry.name), entry.data);
+                }
+            }
+        } else if (!/\.usdc$/i.test(filename)) {
+            throw new Error('TinyUSDZ next backend currently requires USDC input.');
+        }
+
+        const renderStream = new native.RenderStream();
+        let beginResult;
+        try {
+            beginResult = renderStream.begin(crate);
+            if (!beginResult || !beginResult.success) {
+                const error = beginResult?.error || renderStream.error?.() || 'RenderStream begin failed';
+                throw new Error(error);
+            }
+
+            const metadata = typeof renderStream.getSceneMetadata === 'function'
+                ? renderStream.getSceneMetadata()
+                : {};
+            const meshCount = beginResult.meshCount ?? renderStream.meshCount();
+            const meshes = [];
+            for (let i = 0; i < meshCount; i++) {
+                const mesh = renderStream.getMesh(i);
+                if (!mesh || mesh.error) {
+                    throw new Error(mesh?.error || `RenderStream mesh ${i} failed`);
+                }
+                meshes.push(this._copyMesh(native, mesh, i));
+            }
+            try { renderStream.end(); } catch (_) {}
+            try { renderStream.delete(); } catch (_) {}
+            return new NextRenderSceneAdapter(native, null, {
+                filename,
+                archiveEntries,
+                meshes,
+                upAxis: metadata.upAxis || 'Y',
+                metersPerUnit: (typeof metadata.metersPerUnit === 'number' && metadata.metersPerUnit > 0)
+                    ? metadata.metersPerUnit
+                    : 1.0
+            });
+        } catch (error) {
+            try { renderStream.end(); } catch (_) {}
+            try { renderStream.delete(); } catch (_) {}
+            throw error;
+        }
+    }
+
+    static _copyMesh(native, mesh, index) {
+        const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
+        const normalizeMaterial = (source) => {
+            const material = source || {};
+            const texturePaths = {
+                baseColor: material.baseColorTexture || '',
+                normal: material.normalTexture || '',
+                roughness: material.roughnessTexture || '',
+                metallic: material.metallicTexture || '',
+                occlusion: material.occlusionTexture || '',
+                emissive: material.emissiveTexture || ''
+            };
+            return {
+                material: {
+                    baseColor: Array.isArray(material.baseColor) ? material.baseColor : [0.8, 0.8, 0.8],
+                    metallic: typeof material.metallic === 'number' ? material.metallic : 0,
+                    roughness: typeof material.roughness === 'number' ? material.roughness : 0.5,
+                    opacity: typeof material.opacity === 'number' ? material.opacity : 1,
+                    emissive: Array.isArray(material.emissive) ? material.emissive : [0, 0, 0],
+                    occlusion: typeof material.occlusion === 'number' ? material.occlusion : 1,
+                    opacityThreshold: typeof material.opacityThreshold === 'number' ? material.opacityThreshold : -1
+                },
+                texturePaths,
+                materialKey: JSON.stringify({ material, texturePaths })
+            };
+        };
+        const primary = normalizeMaterial(mesh.material);
+        const subsetMaterials = Array.isArray(mesh.materials)
+            ? mesh.materials.map((material) => normalizeMaterial(material))
+            : [];
+        const submeshes = Array.isArray(mesh.submeshes)
+            ? mesh.submeshes
+                .map((g) => ({
+                    start: Number.isFinite(g?.start) ? g.start : 0,
+                    count: Number.isFinite(g?.count) ? g.count : 0,
+                    materialIndex: Number.isFinite(g?.materialIndex) ? g.materialIndex : 0
+                }))
+                .filter((g) => g.count > 0)
+            : [];
+        return {
+            index,
+            primName: mesh.primName || `mesh_${index}`,
+            primPath: mesh.primPath || '',
+            points: copy(mesh.points, Float32Array),
+            indices: copy(mesh.indices, Uint32Array),
+            normals: copy(mesh.normals, Float32Array),
+            uv0: copy(mesh.uv0, Float32Array),
+            localMatrix: Array.isArray(mesh.localMatrix) ? mesh.localMatrix.slice(0, 16) : null,
+            worldMatrix: Array.isArray(mesh.worldMatrix) ? mesh.worldMatrix.slice(0, 16) : null,
+            material: primary.material,
+            texturePaths: primary.texturePaths,
+            materialKey: primary.materialKey,
+            materials: subsetMaterials,
+            submeshes
+        };
+    }
+
+    static _normTexPathStatic(path) {
+        return String(path || '').replace(/^[./]+/, '');
+    }
+
+    _normTexPath(path) {
+        return NextRenderSceneAdapter._normTexPathStatic(path);
+    }
+
+    getArchiveTextureBytes(path) {
+        const key = this._normTexPath(path);
+        if (this.archiveEntries.has(key)) return this.archiveEntries.get(key);
+        for (const [candidate, bytes] of this.archiveEntries) {
+            if (candidate.endsWith('/' + key) || key.endsWith('/' + candidate)) {
+                return bytes;
+            }
+        }
+        return null;
+    }
+
+    getSceneMetadata() {
+        return this.sceneMetadata;
+    }
+
+    numMeshes() {
+        return this.meshes.length;
+    }
+
+    numMaterials() {
+        return this.materialKeys.size || this.meshes.length;
+    }
+
+    numTextures() {
+        return this.textureKeys.size;
+    }
+
+    delete() {
+        this.end();
+    }
+
+    end() {
+        if (this.renderStream) {
+            try { this.renderStream.end(); } catch (_) {}
+            try { this.renderStream.delete(); } catch (_) {}
+            this.renderStream = null;
+        }
+        this.meshes = [];
+        this.archiveEntries.clear();
+        this.materialKeys.clear();
+        this.textureKeys.clear();
+    }
+}
+
 // TODO
 //
 // Polish API
@@ -153,6 +373,7 @@ class TinyUSDZLoader extends Loader {
      * @param {Function} options.onTydraComplete - Callback for Tydra conversion completion ({meshCount, materialCount, textureCount}) => void
      * @param {Function} options.onTinyUSDZDebug - Callback for native debug events ({phase, heapBytes, detail, ...}) => void
      * @param {boolean} options.debugMemory - Print native heap debug events to console
+     * @param {boolean} options.suppressNativeInfoLogs - Drop native [INFO] stdout logs
      */
     constructor(manager, options = {}) {
         super(manager);
@@ -190,6 +411,7 @@ class TinyUSDZLoader extends Loader {
         this.onTydraComplete_ = options.onTydraComplete || null;
         this.onTinyUSDZDebug_ = options.onTinyUSDZDebug || null;
         this.debugMemory_ = !!options.debugMemory;
+        this.suppressNativeInfoLogs_ = !!options.suppressNativeInfoLogs;
     }
 
     _getBinarySize(binary) {
@@ -400,6 +622,21 @@ class TinyUSDZLoader extends Loader {
             if (wasmBinary) {
               initOptions.wasmBinary = wasmBinary;
             }
+            if (this.suppressNativeInfoLogs_) {
+              const filterPrint = (message) => {
+                if (typeof message === 'string' && message.startsWith('[INFO] ')) {
+                  return;
+                }
+                console.log(message);
+              };
+              initOptions.print = filterPrint;
+              initOptions.printErr = (message) => {
+                if (typeof message === 'string' && message.startsWith('[INFO] ')) {
+                  return;
+                }
+                console.error(message);
+              };
+            }
             //initOptions.locateFile = function(path, scriptDirectory) {
             //  // Redirect WASM file loading to your custom file
             //  if (path.endsWith('.wasm')) {
@@ -597,6 +834,40 @@ class TinyUSDZLoader extends Loader {
         }
     }
 
+    /**
+     * Apply render-scene optimization options (material/texture dedup, mesh
+     * merging, render-tree flattening) to a native loader instance before
+     * loadFromBinary() runs the Tydra conversion. Each option is only forwarded
+     * when present in `options`, so existing callers are unaffected.
+     *
+     * @param {Object} usd - native TinyUSDZLoaderNative instance
+     * @param {Object} options - parse/load options
+     * @param {boolean} [options.materialDedup] - deduplicate materials/textures by identity
+     * @param {boolean} [options.mergeMeshes] - merge meshes sharing a material
+     * @param {boolean} [options.mergeMeshesBakeTransform] - bake transforms into merged vertices
+     * @param {boolean} [options.flattenRenderTree] - replace hierarchy with a flat render-only tree
+     * @private
+     */
+    _applyConversionLoadOptions(usd, options = {}) {
+        if (!usd) return;
+        if (options.materialDedup !== undefined &&
+            typeof usd.setNativeMaterialDedup === 'function') {
+            usd.setNativeMaterialDedup(!!options.materialDedup);
+        }
+        if (options.mergeMeshes !== undefined &&
+            typeof usd.setNativeMeshMerge === 'function') {
+            usd.setNativeMeshMerge(!!options.mergeMeshes);
+        }
+        if (options.mergeMeshesBakeTransform !== undefined &&
+            typeof usd.setNativeMeshMergeBakeTransform === 'function') {
+            usd.setNativeMeshMergeBakeTransform(!!options.mergeMeshesBakeTransform);
+        }
+        if (options.flattenRenderTree !== undefined &&
+            typeof usd.setNativeFlattenRenderTree === 'function') {
+            usd.setNativeFlattenRenderTree(!!options.flattenRenderTree);
+        }
+    }
+
     // TODO: remove
     // Set AssetResolver callback.
     // This is used to resolve asset paths(e.g. textures, usd files) in the USD.
@@ -738,6 +1009,8 @@ class TinyUSDZLoader extends Loader {
      * @param {number} options.maxMemoryLimitMB - Override memory limit for this parse
      * @param {boolean} options.debugMemory - Print native heap debug events for this parse
      * @param {Function} options.onTinyUSDZDebug - Per-parse native debug callback
+     * @param {Object} options.variantSelection - Optional variant override {primPath, variantSet, variantName}
+     * @param {Function} options.onVariants - Optional callback receiving discovered variant info
      */
     parse(binary /* ArrayBuffer */, filePath /* optional */, onLoad, onError, options = {}) {
 
@@ -763,7 +1036,31 @@ class TinyUSDZLoader extends Loader {
             _onError(new Error('TinyUSDZLoader: Native module is not initialized.'));
         }
 
+        const backend = options.backend || 'legacy';
+        if (backend === 'next' || backend === 'auto') {
+            NextRenderSceneAdapter.create(this.native_, binary, filePath)
+                .then(onLoad)
+                .catch((error) => {
+                    if (backend === 'auto') {
+                        const legacyOptions = {
+                            ...options,
+                            backend: 'legacy'
+                        };
+                        this.parse(binary, filePath, (usd) => {
+                            usd.__backend = 'legacy';
+                            usd.__backendFallbackReason = error?.message || String(error);
+                            onLoad(usd);
+                        }, onError, legacyOptions);
+                    } else {
+                        this._logFailedUSDInput(binary, filePath, error?.message || String(error));
+                        _onError(error instanceof Error ? error : new Error(String(error)));
+                    }
+                });
+            return;
+        }
+
         const usd = new this.native_.TinyUSDZLoaderNative();
+        usd.__backend = 'legacy';
 
         // Set memory limit before loading if specified (otherwise use native default)
         const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
@@ -772,6 +1069,7 @@ class TinyUSDZLoader extends Loader {
         }
 
         this._applySkinningLoadOptions(usd);
+        this._applyConversionLoadOptions(usd, options);
 
         // Decode referenced texture images inside the native loader. For a USDZ
         // this pulls the bytes from the package and decodes them, so the
@@ -794,9 +1092,39 @@ class TinyUSDZLoader extends Loader {
 
         let ok;
         try {
-            this._logNativeMemory(usd, 'before-loadFromBinary', debugMemory);
-            ok = usd.loadFromBinary(binary, filePath);
-            this._logNativeMemory(usd, 'after-loadFromBinary', debugMemory);
+            const useVariantLayerPath = !!options.variantSelection ||
+                typeof options.onVariants === 'function';
+
+            if (useVariantLayerPath) {
+                this._logNativeMemory(usd, 'before-loadAsLayerFromBinary', debugMemory);
+                ok = usd.loadAsLayerFromBinary(binary, filePath);
+                this._logNativeMemory(usd, 'after-loadAsLayerFromBinary', debugMemory);
+
+                if (ok && typeof options.onVariants === 'function' &&
+                    typeof usd.extractVariants === 'function') {
+                    options.onVariants(usd.extractVariants());
+                }
+
+                if (ok && options.variantSelection) {
+                    const selection = options.variantSelection;
+                    ok = usd.applyVariantSelection(
+                        selection.primPath,
+                        selection.variantSet,
+                        selection.variantName
+                    );
+                } else if (ok && usd.hasVariants && usd.hasVariants()) {
+                    ok = usd.composeVariants();
+                }
+
+                if (ok) {
+                    ok = usd.layerToRenderScene();
+                }
+                this._logNativeMemory(usd, 'after-layerToRenderScene', debugMemory);
+            } else {
+                this._logNativeMemory(usd, 'before-loadFromBinary', debugMemory);
+                ok = usd.loadFromBinary(binary, filePath);
+                this._logNativeMemory(usd, 'after-loadFromBinary', debugMemory);
+            }
         } catch (e) {
             // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
             this._logNativeMemory(usd, 'loadFromBinary-trap', debugMemory);
@@ -960,6 +1288,7 @@ class TinyUSDZLoader extends Loader {
         }
 
         this._applySkinningLoadOptions(usd);
+        this._applyConversionLoadOptions(usd, options);
 
         // Set up async phase callback on Module if provided
         if (options.onPhaseStart) {

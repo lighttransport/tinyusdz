@@ -851,9 +851,13 @@ def Xform "model" (
     }
     prepend variantSets = "size"
 ) {
+    def Scope "Target" {
+    }
+
     variantSet "size" = {
         "small" {
             custom double scale = 1.0
+            rel target = </model/Target>
         }
         "large" {
             custom double scale = 10.0
@@ -869,6 +873,28 @@ def Xform "model" (
 
   auto result = stage.GetPrimAtPath(Path("/model", ""));
   TEST_CHECK(bool(result));
+  if (!result) return;
+
+  const auto &variant_sets = (*result)->variantSets();
+  auto vs_it = variant_sets.find("size");
+  TEST_CHECK(vs_it != variant_sets.end());
+  if (vs_it == variant_sets.end()) return;
+  auto small_it = vs_it->second.variantSet.find("small");
+  TEST_CHECK(small_it != vs_it->second.variantSet.end());
+  if (small_it == vs_it->second.variantSet.end()) return;
+  const auto &props = small_it->second.properties();
+  auto rel_it = props.find("target");
+  TEST_CHECK(rel_it != props.end());
+  if (rel_it != props.end()) {
+    TEST_CHECK(rel_it->second.is_relationship());
+    if (rel_it->second.is_relationship()) {
+      const Relationship &rel = rel_it->second.get_relationship();
+      TEST_CHECK(rel.is_path());
+      if (rel.is_path()) {
+        TEST_CHECK(rel.targetPath.full_path_name() == "/model/Target");
+      }
+    }
+  }
 }
 
 void usda_reader_class_inherits_test(void) {

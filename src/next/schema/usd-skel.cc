@@ -4,6 +4,7 @@
 // TinyUSDZ Next - UsdSkel Schema Implementation
 
 #include "usd-skel.hh"
+#include "../strfmt.hh"
 #include <cstring>
 #include <algorithm>
 
@@ -46,8 +47,21 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     if (!val) {
       val = prim.GetPropertyValue("joints");
     }
-    // skip - token array not yet supported in Value
-    (void)val;
+    if (val) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->joints = *toks;
+      }
+    }
+  }
+
+  // jointNames (uniform token[]) - optional display names
+  {
+    const Value* val = prim.GetPropertyValue("jointNames");
+    if (val) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->jointNames = *toks;
+      }
+    }
   }
 
   // bindTransforms (uniform matrix4d[]) - stored as float array, convert to double
@@ -146,12 +160,11 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("blendShapes");
     if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->blendShapes = *toks;
+      } else if (const std::string* s = val->as_string()) {
         out->blendShapes.push_back(*s);
-      }
-      const std::string* tok = val->as_token();
-      if (tok) {
+      } else if (const std::string* tok = val->as_token()) {
         out->blendShapes.push_back(*tok);
       }
     }
@@ -173,12 +186,11 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("joints");
     if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->joints = *toks;
+      } else if (const std::string* s = val->as_string()) {
         out->joints.push_back(*s);
-      }
-      const std::string* tok = val->as_token();
-      if (tok) {
+      } else if (const std::string* tok = val->as_token()) {
         out->joints.push_back(*tok);
       }
     }
@@ -371,7 +383,7 @@ bool SkelValidateTopology(const std::vector<int>& topology,
 
   if (rootCount != 1) {
     if (err) {
-      *err = "Expected 1 root joint, found " + std::to_string(rootCount);
+      *err = "Expected 1 root joint, found " + IntToStr(rootCount);
     }
     return false;
   }
@@ -381,8 +393,8 @@ bool SkelValidateTopology(const std::vector<int>& topology,
     int parent = topology[i];
     if (parent >= static_cast<int>(topology.size())) {
       if (err) {
-        *err = "Invalid parent index " + std::to_string(parent) +
-               " at joint " + std::to_string(i);
+        *err = "Invalid parent index " + IntToStr(parent) +
+               " at joint " + UIntToStr(i);
       }
       return false;
     }
@@ -404,7 +416,7 @@ bool SkelValidateTopology(const std::vector<int>& topology,
 
         if (inStack[idx]) {
           if (err) {
-            *err = "Cycle detected at joint " + std::to_string(idx);
+            *err = "Cycle detected at joint " + UIntToStr(idx);
           }
           return false;
         }
@@ -429,7 +441,7 @@ bool SkelValidateTopology(const std::vector<int>& topology,
   for (size_t i = 0; i < topology.size(); ++i) {
     if (!visited[i]) {
       if (err) {
-        *err = "Unreachable joint " + std::to_string(i);
+        *err = "Unreachable joint " + UIntToStr(i);
       }
       return false;
     }

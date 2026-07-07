@@ -167,6 +167,7 @@ bool ReconstructPrim<__prim_ty>( \
 }
 
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsScene)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(PhysicsJoint)
 
 }  // namespace prim
 }  // namespace tinyusdz

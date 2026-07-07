@@ -33,6 +33,7 @@ struct USDCLoadResult {
   std::vector<std::string> warnings;
   std::string error_summary;
   CrateVersion version;
+  bool source_was_mmap = false;
 };
 
 /// Load a USDC file from disk
@@ -41,6 +42,12 @@ USDCLoadResult LoadUSDCFromFile(const std::string& filename, const USDCLoadOptio
 
 /// Load a USDC from memory buffer (copies the input into a retained buffer).
 USDCLoadResult LoadUSDCFromMemory(const uint8_t* data, size_t size, const USDCLoadOptions& options = {});
+
+/// Load a USDC from a borrowed memory buffer without copying.
+/// The caller must keep `data` alive while any lazy array in the returned stage
+/// can be materialized (typically until stage destruction).
+USDCLoadResult LoadUSDCFromMemoryBorrowed(
+    const uint8_t* data, size_t size, const USDCLoadOptions& options = {});
 
 /// Load a USDC from an owned buffer adopted by move (single in-heap copy).
 /// Prefer on memory-constrained targets (WASM) when the caller can give up the

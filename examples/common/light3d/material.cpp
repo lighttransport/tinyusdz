@@ -189,6 +189,10 @@ layout(location = 2) in vec3 aUV;
 layout(location = 3) in uvec4 aJoint;
 layout(location = 4) in vec4 aWeight;
 layout(location = 5) in uvec2 aInfluence;
+layout(location = 6) in vec2 aUV1;        // 2nd texcoord set (multi-UV AOV; default 0)
+layout(location = 7) in float aMorphInfl; // blendshape influence magnitude (default 0)
+layout(location = 8) in uvec2 aMorphOffsetCount; // GPU morph (offset,count); default 0
+layout(location = 9) in vec3 aColor;  // per-vertex displayColor (default white)
 
 uniform mat4 uModelViewProj;
 uniform mat4 uModel;
@@ -201,9 +205,35 @@ uniform int uBoneTexWidth;
 uniform int uBoneMatrixCount;
 uniform int uInfluenceTexWidth;
 
+// UsdPreviewSurface displacement (coarse per-vertex). The surface is offset along
+// its normal by (height-map red, or uDisplacementConst) * uDisplacementScale. No
+// derivatives in the vertex stage, so the map is sampled with textureLod(...,0).
+uniform bool uHasDisplacement;
+uniform bool uHasDisplacementTex;
+uniform sampler2D uDisplacementTex;
+uniform float uDisplacementConst;
+uniform float uDisplacementScale;
+uniform float uDisplacementTexScale;  // UsdUVTexture scale/bias (height = t*s + b)
+uniform float uDisplacementTexBias;
+
+// GPU blendshape morph: per-vertex (offset,count) into uMorphDeltaTex (RGBA16F:
+// channelId, dx,dy,dz); uMorphCoeffTex (R32F) holds the per-frame coefficient per
+// channel. pos += sum_i coeff[channel_i] * delta_i, applied before skinning.
+// uMorphChanTex (R16UI) duplicates each entry's channelId so the loop can read the
+// coefficient and skip the wide delta fetch when the channel is inactive.
+uniform bool uHasMorph;
+uniform samplerBuffer uMorphDeltaTex;
+uniform samplerBuffer uMorphCoeffTex;
+uniform usamplerBuffer uMorphChanTex;
+
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
+out vec3 vColor;
+flat out int vDomJoint;    // dominant skin joint (SkinWeights AOV); -1 = unskinned
+out float vDomWeight;      // its weight
+out vec2 vUV1;             // 2nd texcoord set (multi-UV AOV)
+out float vMorphInfl;      // blendshape influence (world units)
 
 mat4 fetchBone(uint idx) {
     int base = int(idx) * 4;
@@ -217,6 +247,22 @@ mat4 fetchBone(uint idx) {
 void main() {
     vec3 pos = aPosition;
     vec3 nrm = aNormal;
+    // GPU blendshape morph (before skinning): sum coeff*delta over this vertex's
+    // sparse channel list. Loop cap mirrors the extended-skinning influence loop.
+    if (uHasMorph && aMorphOffsetCount.y > 0u) {
+        int mbase = int(aMorphOffsetCount.x);
+        int mcount = min(int(aMorphOffsetCount.y), 256);
+        for (int i = 0; i < 256; ++i) {
+            if (i >= mcount) break;
+            // Cheap channelId fetch first; skip the wide delta fetch when this
+            // channel is inactive (facial animation: most coeffs are 0). The
+            // channel order is shared across vertices, so the branch is coherent.
+            int ch = int(texelFetch(uMorphChanTex, mbase + i).r);
+            float c = texelFetch(uMorphCoeffTex, ch).r;
+            if (abs(c) < 1e-6) continue;
+            pos += c * texelFetch(uMorphDeltaTex, mbase + i).yzw;
+        }
+    }
     float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;
     uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));
     if (uSkinningEnabled && uExtendedSkinningEnabled && aInfluence.y > 0u && uInfluenceTexWidth > 0) {
@@ -241,7 +287,7 @@ void main() {
         }
         if (fullWeightSum > 0.0) {
             skin *= 1.0 / fullWeightSum;
-            pos = (skin * vec4(aPosition, 1.0)).xyz;
+            pos = (skin * vec4(pos, 1.0)).xyz;  // skin the morphed position
             nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
         }
     } else if (uSkinningEnabled && wsum > 0.0 && int(maxJoint) < uBoneMatrixCount) {
@@ -250,13 +296,33 @@ void main() {
             fetchBone(aJoint.y) * aWeight.y +
             fetchBone(aJoint.z) * aWeight.z +
             fetchBone(aJoint.w) * aWeight.w;
-        pos = (skin * vec4(aPosition, 1.0)).xyz;
+        pos = (skin * vec4(pos, 1.0)).xyz;  // skin the morphed position
         nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);
+    }
+    // Coarse displacement: offset along the (object-space) normal before the world
+    // transform, so the displacement scales with the model like the geometry does.
+    if (uHasDisplacement) {
+        float d = uHasDisplacementTex
+                      ? textureLod(uDisplacementTex, aUV.xy, 0.0).r *
+                                uDisplacementTexScale +
+                            uDisplacementTexBias
+                      : uDisplacementConst;
+        pos += normalize(nrm) * (d * uDisplacementScale);
     }
     vec4 worldPos = uModel * vec4(pos, 1.0);
     vWorldPos = worldPos.xyz;
     vNormal = normalize(uNormalMatrix * nrm);
     vUV = aUV.xy;
+    vColor = aColor;
+    vUV1 = aUV1;
+    vMorphInfl = aMorphInfl;
+    // Dominant skin joint (SkinWeights AOV) from the base 4-weight set.
+    vDomJoint = -1;
+    vDomWeight = 0.0;
+    if (aWeight.x > vDomWeight) { vDomWeight = aWeight.x; vDomJoint = int(aJoint.x); }
+    if (aWeight.y > vDomWeight) { vDomWeight = aWeight.y; vDomJoint = int(aJoint.y); }
+    if (aWeight.z > vDomWeight) { vDomWeight = aWeight.z; vDomJoint = int(aJoint.z); }
+    if (aWeight.w > vDomWeight) { vDomWeight = aWeight.w; vDomJoint = int(aJoint.w); }
     gl_Position = uModelViewProj * vec4(pos, 1.0);
 }
 )glsl";
@@ -268,6 +334,11 @@ const char* getMaterialFragmentShaderGL330() {
 in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
+in vec3 vColor;
+flat in int vDomJoint;   // dominant skin joint (SkinWeights AOV)
+in float vDomWeight;
+in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
+in float vMorphInfl;     // blendshape influence (world units)
 
 // Material uniforms (one draw call per submesh)
 uniform vec3 uBaseColor;
@@ -275,70 +346,326 @@ uniform float uMetallic;
 uniform float uRoughness;
 uniform vec3 uEmissive;
 uniform float uAlpha;
+uniform int uAlphaMode;       // 0=opaque, 1=mask, 2=blend
+uniform float uAlphaCutoff;
+// When set, shade with the geometric (screen-derivative) normal -- used for
+// meshes without authored normals so hard surfaces aren't smeared by smooth
+// (averaged) normals.
+uniform bool uGeometricNormal;
 
 uniform vec3 uCameraPos;
+uniform vec3 uLightDir;
+uniform vec3 uLightColor;
+
+// DomeLight split-sum IBL (precomputed at load; replaces the constant ambient
+// floor when present).
+uniform bool uHasIbl;
+uniform vec3 uIblColor;             // dome effectiveColor (intensity baked in)
+uniform mat3 uEnvRotation;          // world -> environment direction
+uniform samplerCube uIrradianceMap; // cosine-convolved env, stored E/pi
+uniform samplerCube uPrefilteredMap;// GGX chain, lod = roughness*(lods-1)
+uniform sampler2D uBrdfLut;         // split-sum DFG: x=NdotV, y=roughness
+uniform int uPrefilteredLods;
 
 // Texture samplers
 uniform sampler2D uBaseColorTex;
+uniform sampler2DArray uBaseColorUdimTex;
+uniform isampler1D uBaseColorUdimLut;
 uniform bool uHasBaseColorTex;
+uniform bool uBaseColorTexIsUdim;
 uniform sampler2D uMetalRoughTex;
+uniform sampler2DArray uMetalRoughUdimTex;
+uniform isampler1D uMetalRoughUdimLut;
 uniform bool uHasMetalRoughTex;
+uniform bool uMetalRoughTexIsUdim;
 uniform sampler2D uNormalTex;
+uniform sampler2DArray uNormalUdimTex;
+uniform isampler1D uNormalUdimLut;
 uniform bool uHasNormalTex;
+uniform bool uNormalTexIsUdim;
 uniform sampler2D uEmissiveTex;
+uniform sampler2DArray uEmissiveUdimTex;
+uniform isampler1D uEmissiveUdimLut;
 uniform bool uHasEmissiveTex;
+uniform bool uEmissiveTexIsUdim;
+uniform vec3 uBaseColorUv0;   // m00,m01,tx
+uniform vec3 uBaseColorUv1;   // m10,m11,ty
+uniform vec3 uMetalRoughUv0;
+uniform vec3 uMetalRoughUv1;
+uniform vec3 uNormalUv0;
+uniform vec3 uNormalUv1;
+uniform vec3 uEmissiveUv0;
+uniform vec3 uEmissiveUv1;
+uniform vec4 uBaseColorTexScale;
+uniform vec4 uBaseColorTexBias;
+uniform vec4 uNormalTexScale;
+uniform vec4 uNormalTexBias;
+uniform vec4 uEmissiveTexScale;
+uniform vec4 uEmissiveTexBias;
+uniform int uMetallicChannel;
+uniform int uRoughnessChannel;
+uniform float uMetallicTexScale;
+uniform float uMetallicTexBias;
+uniform float uRoughnessTexScale;
+uniform float uRoughnessTexBias;
 
 out vec4 fragColor;
 
+uniform int uRenderMode;     // RenderMode (see renderer.hh)
+uniform int uMatId;          // per-draw material id (material-id viz; -1 = none)
+uniform float uDepthScale;   // depth AOV: camera-distance normalizer (scene extent)
+uniform vec3 uSceneMin;      // position AOV: scene bbox min
+uniform vec3 uSceneExtent;   // position AOV: scene bbox size (max-min)
+uniform int uMeshId;         // mesh-id AOV (per-draw mesh index)
+uniform bool uDoubleSided;   // double-sided AOV flag
+uniform int uPurpose;        // purpose AOV: 0=default/1=render/2=proxy/3=guide
+uniform int uKind;           // kind AOV: 0=none/1=component/2=group/3=assembly/4=subcomponent
+uniform usamplerBuffer uFaceIdTex;  // per-triangle source face id (source-face-id AOV)
+uniform int uFaceBase;       // first triangle of this submesh (gl_PrimitiveID is submesh-local)
+uniform bool uHasFaceId;
+
+// Stable distinct color per material id (-1 -> neutral gray).
+vec3 idColor(int id) {
+    if (id < 0) return vec3(0.45);
+    uint h = (uint(id) + 1u) * 2654435761u;
+    return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+// USD purpose -> distinct color (shared scheme across all backends).
+vec3 purposeColor(int p) {
+    if (p == 1) return vec3(0.2, 0.8, 0.3);    // render: green
+    if (p == 2) return vec3(0.2, 0.45, 0.95);  // proxy: blue
+    if (p == 3) return vec3(0.95, 0.75, 0.1);  // guide: amber
+    return vec3(0.5);                          // default: gray
+}
+
+// USD model kind -> distinct color (shared scheme across all backends).
+vec3 kindColor(int k) {
+    if (k == 1) return vec3(0.2, 0.8, 0.8);    // component: cyan
+    if (k == 2) return vec3(0.85, 0.3, 0.85);  // group: magenta
+    if (k == 3) return vec3(0.95, 0.6, 0.15);  // assembly: orange
+    if (k == 4) return vec3(0.5, 0.85, 0.4);   // subcomponent: green
+    return vec3(0.35);                         // no kind: dark gray
+}
+
+vec4 sampleUdim(sampler2DArray tex, isampler1D lut, vec2 uv) {
+    ivec2 tile = ivec2(floor(uv));
+    int idx = tile.x + tile.y * 10;
+    if (idx < 0 || idx >= 100) {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    int layer = texelFetch(lut, idx, 0).r;
+    if (layer < 0) {
+        return vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    return texture(tex, vec3(fract(uv), float(layer)));
+}
+
+vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
+    return vec2(dot(vec3(uv, 1.0), row0), dot(vec3(uv, 1.0), row1));
+}
+
+float channelOf(vec4 c, int ch) {
+    if (ch == 1) return c.g;
+    if (ch == 2) return c.b;
+    if (ch == 3) return c.a;
+    return c.r;
+}
+
 void main() {
-    vec3 baseColor = uBaseColor;
+    vec3 baseColor = uBaseColor * vColor;  // vColor defaults to white
     float metallic = uMetallic;
     float roughness = uRoughness;
     vec3 emissive = uEmissive;
+    float opacity = clamp(uAlpha, 0.0, 1.0);
 
     if (uHasBaseColorTex) {
-        baseColor *= texture(uBaseColorTex, vUV).rgb;
+        vec2 uv = xformUv(vUV, uBaseColorUv0, uBaseColorUv1);
+        vec4 texel = uBaseColorTexIsUdim
+                         ? sampleUdim(uBaseColorUdimTex, uBaseColorUdimLut, uv)
+                         : texture(uBaseColorTex, uv);
+        vec4 sample = texel * uBaseColorTexScale + uBaseColorTexBias;
+        baseColor *= sample.rgb;
+        opacity *= clamp(sample.a, 0.0, 1.0);
     }
     if (uHasMetalRoughTex) {
-        vec4 mr = texture(uMetalRoughTex, vUV);
-        roughness *= mr.g;
-        metallic *= mr.b;
+        vec2 uv = xformUv(vUV, uMetalRoughUv0, uMetalRoughUv1);
+        vec4 mr = uMetalRoughTexIsUdim
+                      ? sampleUdim(uMetalRoughUdimTex, uMetalRoughUdimLut, uv)
+                      : texture(uMetalRoughTex, uv);
+        roughness *= channelOf(mr, uRoughnessChannel) * uRoughnessTexScale + uRoughnessTexBias;
+        metallic *= channelOf(mr, uMetallicChannel) * uMetallicTexScale + uMetallicTexBias;
     }
     if (uHasEmissiveTex) {
-        emissive *= texture(uEmissiveTex, vUV).rgb;
+        vec2 uv = xformUv(vUV, uEmissiveUv0, uEmissiveUv1);
+        vec4 texel = uEmissiveTexIsUdim
+                         ? sampleUdim(uEmissiveUdimTex, uEmissiveUdimLut, uv)
+                         : texture(uEmissiveTex, uv);
+        emissive *= (texel * uEmissiveTexScale + uEmissiveTexBias).rgb;
     }
 
-    vec3 N = normalize(vNormal);
+    vec3 N = uGeometricNormal
+                 ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
+                 : normalize(vNormal);
     if (uHasNormalTex) {
-        vec3 tangentNormal = texture(uNormalTex, vUV).xyz * 2.0 - 1.0;
+        vec2 uv = xformUv(vUV, uNormalUv0, uNormalUv1);
+        vec3 tangentNormal = ((uNormalTexIsUdim
+                                  ? sampleUdim(uNormalUdimTex, uNormalUdimLut, uv)
+                                  : texture(uNormalTex, uv)) * uNormalTexScale +
+                              uNormalTexBias).xyz;
         N = normalize(N + tangentNormal * 0.1);
+    }
+    if (uAlphaMode == 1) {
+        opacity = (opacity >= uAlphaCutoff) ? 1.0 : 0.0;
+    }
+
+    // Debug AOVs: override the shaded output with the requested channel.
+    if (uRenderMode != 0) {
+        vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+        if (uRenderMode == 2) { fragColor = vec4(N * 0.5 + 0.5, 1.0); return; }       // shading normal
+        if (uRenderMode == 3) { fragColor = vec4(idColor(uMatId), 1.0); return; }     // material id
+        if (uRenderMode == 4) { fragColor = vec4(Ngeo * 0.5 + 0.5, 1.0); return; }    // geometric normal
+        if (uRenderMode == 6) {                                                       // depth
+            float d = clamp(length(uCameraPos - vWorldPos) / uDepthScale, 0.0, 1.0);
+            fragColor = vec4(vec3(1.0 - d), 1.0);
+            return;
+        }
+        if (uRenderMode == 5) { fragColor = vec4(fract(vUV), 0.0, 1.0); return; }      // uv set 0
+        if (uRenderMode == 7) { fragColor = vec4(baseColor, 1.0); return; }            // albedo (unlit)
+        if (uRenderMode == 8) {                                                        // facing
+            fragColor = gl_FrontFacing ? vec4(0.1, 0.7, 0.1, 1.0) : vec4(0.7, 0.1, 0.1, 1.0);
+            return;
+        }
+        if (uRenderMode == 9)  { fragColor = vec4(vec3(roughness), 1.0); return; }     // roughness
+        if (uRenderMode == 10) { fragColor = vec4(vec3(metallic), 1.0); return; }      // metallic
+        if (uRenderMode == 11) { fragColor = vec4(emissive, 1.0); return; }            // emissive
+        if (uRenderMode == 12) { fragColor = vec4(vec3(opacity), 1.0); return; }       // opacity
+        if (uRenderMode == 13) {                                                       // world position
+            fragColor = vec4(clamp((vWorldPos - uSceneMin) / uSceneExtent, 0.0, 1.0), 1.0);
+            return;
+        }
+        if (uRenderMode == 23) {                                                       // uv checker
+            vec2 c = floor(fract(vUV) * 16.0);
+            float chk = mod(c.x + c.y, 2.0);
+            fragColor = vec4(vec3(mix(0.25, 0.85, chk)), 1.0);
+            return;
+        }
+        if (uRenderMode == 15) { fragColor = vec4(idColor(gl_PrimitiveID), 1.0); return; }  // prim id
+        if (uRenderMode == 16) { fragColor = vec4(idColor(uMeshId), 1.0); return; }         // mesh id
+        if (uRenderMode == 19) {                                                            // missing normals
+            fragColor = uGeometricNormal ? vec4(0.95, 0.1, 0.85, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
+            return;
+        }
+        if (uRenderMode == 20) {                                                            // double-sided
+            fragColor = uDoubleSided ? vec4(0.95, 0.55, 0.1, 1.0) : vec4(0.2, 0.2, 0.2, 1.0);
+            return;
+        }
+        if (uRenderMode == 18) { fragColor = vec4(purposeColor(uPurpose), 1.0); return; }    // purpose
+        if (uRenderMode == 29) { fragColor = vec4(kindColor(uKind), 1.0); return; }          // kind
+        if (uRenderMode == 30) {                                                             // udim tile
+            int tile = int(floor(vUV.x)) + 10 * int(floor(vUV.y));
+            fragColor = vec4(idColor(tile), 1.0); return;
+        }
+        if (uRenderMode == 34) {                                                             // source USD face id
+            int fid = uHasFaceId ? int(texelFetch(uFaceIdTex, uFaceBase + gl_PrimitiveID).r) : -1;
+            fragColor = vec4(idColor(fid), 1.0); return;
+        }
+        if (uRenderMode == 33) {                                                             // texel density (UV/world area ratio)
+            vec2 du = dFdx(vUV), dv = dFdy(vUV);
+            float uvArea = abs(du.x * dv.y - dv.x * du.y);
+            float worldArea = length(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+            float td = sqrt(uvArea / max(worldArea, 1e-12));
+            float c = clamp(td * uDepthScale * 0.5, 0.0, 1.0);  // scene-relative
+            fragColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0); return;
+        }
+        if (uRenderMode == 31) { fragColor = vec4(fract(vUV1), 0.0, 1.0); return; }          // uv set 1
+        if (uRenderMode == 32) {                                                             // blendshape influence
+            // Normalize by ~10% of the scene extent into a blue->red heatmap.
+            float c = clamp(vMorphInfl / max(uDepthScale * 0.1, 1e-4), 0.0, 1.0);
+            fragColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0); return;
+        }
+        if (uRenderMode == 21) {                                                             // skin weights
+            vec3 jc = idColor(vDomJoint);                  // dominant joint -> hashed color
+            fragColor = vec4(jc * (0.3 + 0.7 * clamp(vDomWeight, 0.0, 1.0)), 1.0);
+            return;
+        }
+        if (uRenderMode == 22) {                                                             // tangent (from UV gradient)
+            vec3 dp1 = dFdx(vWorldPos), dp2 = dFdy(vWorldPos);
+            vec2 du1 = dFdx(vUV), du2 = dFdy(vUV);
+            float r = du1.x * du2.y - du2.x * du1.y;
+            vec3 T = dp1 * du2.y - dp2 * du1.y;
+            T = (abs(r) > 1e-8) ? T / r : dp1;
+            fragColor = vec4(normalize(T) * 0.5 + 0.5, 1.0);
+            return;
+        }
+        if (uRenderMode == 25) {                                                             // curvature
+            vec3 n = normalize(vNormal);
+            float c = clamp((length(dFdx(n)) + length(dFdy(n))) * 8.0, 0.0, 1.0);
+            // blue (flat) -> red (high curvature) heatmap
+            fragColor = vec4(c, 1.0 - abs(c - 0.5) * 2.0, 1.0 - c, 1.0);
+            return;
+        }
+        if (uRenderMode == 26) { fragColor = vec4(idColor(-1), 1.0); return; }  // instance id: non-instanced -> gray
     }
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = (dot(uLightDir, uLightDir) > 1e-8)
+                 ? normalize(uLightDir)
+                 : normalize(vec3(0.3, 0.5, 0.8));
+    vec3 lightColor = (dot(uLightColor, uLightColor) > 1e-8)
+                          ? uLightColor
+                          : vec3(1.0);
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient: DomeLight split-sum IBL when baked, else a constant floor
+    // (keeps unlit faces lifted off black).
+    vec3 ambient;
+    if (uHasIbl) {
+        vec3 Ne = normalize(uEnvRotation * Nf);
+        vec3 Re = normalize(uEnvRotation * reflect(-V, Nf));
+        vec3 irr = texture(uIrradianceMap, Ne).rgb;
+        float lod = clamp(roughness, 0.0, 1.0) * float(uPrefilteredLods - 1);
+        vec3 pref = textureLod(uPrefilteredMap, Re, lod).rgb;
+        vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0),
+                                          clamp(roughness, 0.0, 1.0))).rg;
+        vec3 F0 = mix(vec3(0.04), baseColor, metallic);
+        ambient = (baseColor * (1.0 - metallic) * irr +
+                   pref * (F0 * dfg.x + dfg.y)) * uIblColor;
+    } else {
+        ambient = baseColor * 0.25;
+    }
+    vec3 diffuse = baseColor * lightColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
+    vec3 specular = specColor * lightColor * pow(NdotH, specPower) * facing;
 
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
-
+    if (uAlphaMode == 1 && opacity <= 0.0) {
+        discard;
+    }
     vec3 color = ambient + diffuse + specular + emissive;
-    fragColor = vec4(color, uAlpha);
+    fragColor = vec4(color, opacity);
 }
 )glsl";
 }
 
 // ==================== GL430 Bindless Shaders ====================
+//
+// UNUSED scaffold for a future GL 4.3 path (no callers; the renderer uses the
+// GL330 shaders). STALE: these predate GPU blendshape morph, GPU skinning, and
+// displacement, so activating them as-is would render none of those. Re-derive
+// from the GL330 shaders (which carry the current morph/skin/displacement) before
+// wiring up a 4.3 path.
 
 const char* getMaterialVertexShaderGL430() {
     return R"glsl(#version 430 core
@@ -423,21 +750,25 @@ void main() {
 
     vec3 V = normalize(uCameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, alpha);
@@ -446,6 +777,11 @@ void main() {
 }
 
 // ==================== Vulkan 450 Shaders ====================
+//
+// UNUSED: the Vulkan backend compiles vk/shaders/*.vert|frag to SPIR-V (which
+// carry the current morph/skin/displacement) rather than these strings. STALE
+// (predate that work); kept only as a GLSL reference. Don't wire these up without
+// re-deriving from vk/shaders/.
 
 const char* getMaterialVertexShaderVK450() {
     return R"glsl(#version 450
@@ -535,21 +871,25 @@ void main() {
 
     vec3 V = normalize(cameraPos - vWorldPos);
 
-    // Simple directional light
-    vec3 L = normalize(vec3(1.0, 1.0, 1.0));
-    float NdotL = max(dot(N, L), 0.0);
+    // Soft camera-headlight shading (USD-viewer look). Face the shading normal
+    // toward the camera so back / grazing faces never read as pure black, then
+    // combine a view-aligned headlight (N.V) with a gentle half-Lambert key and an
+    // ambient floor -- soft, no hard terminator, no unlit black facets.
+    vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+    float facing = max(dot(Nf, V), 0.0);                 // N.V headlight
+    vec3 L = normalize(vec3(0.3, 0.5, 0.8));
+    float key = dot(Nf, L) * 0.5 + 0.5;                  // half-Lambert, never 0
+    float shade = 0.6 * facing + 0.4 * key;              // [0,1]
 
-    // Simple PBR-ish shading
-    vec3 diffuse = baseColor * (1.0 - metallic) * NdotL;
+    // Ambient floor + view-driven diffuse (keeps unlit faces lifted off black).
+    vec3 ambient = baseColor * 0.25;
+    vec3 diffuse = baseColor * (1.0 - metallic) * (0.75 * shade);
 
     vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
+    float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
     vec3 specColor = mix(vec3(0.04), baseColor, metallic);
-    vec3 specular = specColor * pow(NdotH, specPower);
-
-    // Ambient
-    vec3 ambient = baseColor * 0.05;
+    vec3 specular = specColor * pow(NdotH, specPower) * facing;
 
     vec3 color = ambient + diffuse + specular + emissive;
     fragColor = vec4(color, alpha);

@@ -2,600 +2,317 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 
-// ===========================================
+import initTinyUSDZ from './src/tinyusdz/tinyusdz.js';
+
+// ===========================================================================
 // Scene Setup
-// ===========================================
+// ===========================================================================
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1a2e);
 
-// Camera
 const camera = new THREE.PerspectiveCamera(
-	60,
-	window.innerWidth / window.innerHeight,
-	0.1,
-	1000
-);
+	60, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(3, 3, 5);
 camera.lookAt(0, 0, 0);
 
-// Renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
 
-// Orbit controls
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
 controls.minDistance = 2;
 controls.maxDistance = 20;
 
-// Lighting
-const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
-scene.add(ambientLight);
-
-const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+scene.add(new THREE.AmbientLight(0x808080, 0.7));
+const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
 directionalLight1.position.set(5, 10, 7);
 directionalLight1.castShadow = true;
 scene.add(directionalLight1);
-
 const directionalLight2 = new THREE.DirectionalLight(0x6bb6ff, 0.3);
 directionalLight2.position.set(-5, 5, -5);
 scene.add(directionalLight2);
 
-// Grid helper
-const gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222);
-scene.add(gridHelper);
+scene.add(new THREE.GridHelper(10, 10, 0x444444, 0x222222));
+scene.add(new THREE.AxesHelper(2));
 
-// Axis helper
-const axisHelper = new THREE.AxesHelper(2);
-scene.add(axisHelper);
+// ===========================================================================
+// Control meshes (typed arrays handed to the wasm subdivider)
+//
+// UV meshes additionally carry a stride-2 faceVarying UV channel:
+//   uvValues  (Float32Array)  - the UV value table
+//   uvIndices (Uint32Array)   - per face-corner index into uvValues
+// streamed through tinysubdiv's linear faceVarying ("all" mode).
+// ===========================================================================
 
-// ===========================================
-// Subdivision Algorithms
-// ===========================================
-
-/**
- * Half-edge data structure for subdivision
- */
-class HalfEdgeMesh {
-	constructor(vertices, faces) {
-		this.vertices = vertices; // Array of [x, y, z] arrays
-		this.faces = faces;       // Array of vertex index arrays
-		this.halfEdges = [];
-		this.buildHalfEdges();
+function makeControlMesh(vertices, faces) {
+	const points = new Float32Array(vertices.length * 3);
+	for (let i = 0; i < vertices.length; i++) {
+		points[i * 3] = vertices[i][0];
+		points[i * 3 + 1] = vertices[i][1];
+		points[i * 3 + 2] = vertices[i][2];
 	}
-
-	buildHalfEdges() {
-		// Build half-edge structure for efficient subdivision
-		const edgeMap = new Map();
-
-		this.faces.forEach((face, faceIdx) => {
-			const faceEdges = [];
-			for (let i = 0; i < face.length; i++) {
-				const v0 = face[i];
-				const v1 = face[(i + 1) % face.length];
-				const edgeKey = `${Math.min(v0, v1)}_${Math.max(v0, v1)}`;
-
-				if (!edgeMap.has(edgeKey)) {
-					edgeMap.set(edgeKey, []);
-				}
-				edgeMap.get(edgeKey).push({ face: faceIdx, v0, v1 });
-			}
-		});
-
-		this.edgeMap = edgeMap;
+	const fvc = new Uint32Array(faces.length);
+	let n = 0;
+	for (const f of faces) n += f.length;
+	const fvi = new Uint32Array(n);
+	let k = 0;
+	for (let i = 0; i < faces.length; i++) {
+		fvc[i] = faces[i].length;
+		for (const v of faces[i]) fvi[k++] = v;
 	}
-
-	getEdgeKey(v0, v1) {
-		return `${Math.min(v0, v1)}_${Math.max(v0, v1)}`;
-	}
+	return { points, fvc, fvi, uvValues: null, uvIndices: null };
 }
 
-/**
- * Catmull-Clark Subdivision
- * For quad meshes - produces C² continuous surfaces
- */
-function subdivideCatmullClark(mesh) {
-	const { vertices, faces } = mesh;
-	const newVertices = [...vertices];
-	const newFaces = [];
-
-	// Step 1: Compute face points (average of face vertices)
-	const facePoints = faces.map(face => {
-		const avg = [0, 0, 0];
-		face.forEach(vi => {
-			avg[0] += vertices[vi][0];
-			avg[1] += vertices[vi][1];
-			avg[2] += vertices[vi][2];
-		});
-		const n = face.length;
-		return [avg[0] / n, avg[1] / n, avg[2] / n];
-	});
-
-	const facePointIndices = facePoints.map((fp, i) => {
-		newVertices.push(fp);
-		return newVertices.length - 1;
-	});
-
-	// Step 2: Compute edge points
-	const edgePoints = new Map();
-	mesh.edgeMap.forEach((edgeInfo, edgeKey) => {
-		const [v0, v1] = edgeKey.split('_').map(Number);
-
-		if (edgeInfo.length === 2) {
-			// Interior edge: average of edge vertices + adjacent face points
-			const fp0 = facePoints[edgeInfo[0].face];
-			const fp1 = facePoints[edgeInfo[1].face];
-			const vp0 = vertices[v0];
-			const vp1 = vertices[v1];
-
-			const edgePoint = [
-				(vp0[0] + vp1[0] + fp0[0] + fp1[0]) / 4,
-				(vp0[1] + vp1[1] + fp0[1] + fp1[1]) / 4,
-				(vp0[2] + vp1[2] + fp0[2] + fp1[2]) / 4
-			];
-
-			newVertices.push(edgePoint);
-			edgePoints.set(edgeKey, newVertices.length - 1);
-		} else {
-			// Boundary edge: average of edge vertices only
-			const vp0 = vertices[v0];
-			const vp1 = vertices[v1];
-			const edgePoint = [
-				(vp0[0] + vp1[0]) / 2,
-				(vp0[1] + vp1[1]) / 2,
-				(vp0[2] + vp1[2]) / 2
-			];
-
-			newVertices.push(edgePoint);
-			edgePoints.set(edgeKey, newVertices.length - 1);
-		}
-	});
-
-	// Step 3: Update original vertices
-	const updatedVertices = new Map();
-	faces.forEach((face, faceIdx) => {
-		const fp = facePoints[faceIdx];
-
-		face.forEach((vi, i) => {
-			if (!updatedVertices.has(vi)) {
-				const v = vertices[vi];
-
-				// Find all faces containing this vertex
-				const adjacentFaces = [];
-				const adjacentEdges = [];
-
-				faces.forEach((f, fi) => {
-					if (f.includes(vi)) {
-						adjacentFaces.push(fi);
-
-						// Find edges connected to this vertex
-						const idx = f.indexOf(vi);
-						const prev = f[(idx - 1 + f.length) % f.length];
-						const next = f[(idx + 1) % f.length];
-
-						const key1 = mesh.getEdgeKey(vi, prev);
-						const key2 = mesh.getEdgeKey(vi, next);
-
-						if (!adjacentEdges.includes(key1)) adjacentEdges.push(key1);
-						if (!adjacentEdges.includes(key2)) adjacentEdges.push(key2);
-					}
-				});
-
-				const n = adjacentFaces.length;
-
-				// Compute average of adjacent face points
-				const faceAvg = [0, 0, 0];
-				adjacentFaces.forEach(fi => {
-					faceAvg[0] += facePoints[fi][0];
-					faceAvg[1] += facePoints[fi][1];
-					faceAvg[2] += facePoints[fi][2];
-				});
-				faceAvg[0] /= n;
-				faceAvg[1] /= n;
-				faceAvg[2] /= n;
-
-				// Compute average of adjacent edge midpoints
-				const edgeAvg = [0, 0, 0];
-				adjacentEdges.forEach(edgeKey => {
-					const [e0, e1] = edgeKey.split('_').map(Number);
-					const v0 = vertices[e0];
-					const v1 = vertices[e1];
-					edgeAvg[0] += (v0[0] + v1[0]) / 2;
-					edgeAvg[1] += (v0[1] + v1[1]) / 2;
-					edgeAvg[2] += (v0[2] + v1[2]) / 2;
-				});
-				edgeAvg[0] /= adjacentEdges.length;
-				edgeAvg[1] /= adjacentEdges.length;
-				edgeAvg[2] /= adjacentEdges.length;
-
-				// Catmull-Clark formula: v' = (F + 2R + (n-3)v) / n
-				// where F = face average, R = edge average, v = original vertex
-				const newV = [
-					(faceAvg[0] + 2 * edgeAvg[0] + (n - 3) * v[0]) / n,
-					(faceAvg[1] + 2 * edgeAvg[1] + (n - 3) * v[1]) / n,
-					(faceAvg[2] + 2 * edgeAvg[2] + (n - 3) * v[2]) / n
-				];
-
-				updatedVertices.set(vi, newV);
-			}
-		});
-	});
-
-	// Update vertices in place
-	updatedVertices.forEach((newPos, vi) => {
-		newVertices[vi] = newPos;
-	});
-
-	// Step 4: Create new quad faces
-	faces.forEach((face, faceIdx) => {
-		const fpi = facePointIndices[faceIdx];
-
-		for (let i = 0; i < face.length; i++) {
-			const vi = face[i];
-			const vnext = face[(i + 1) % face.length];
-
-			const e1Key = mesh.getEdgeKey(vi, vnext);
-			const vprev = face[(i - 1 + face.length) % face.length];
-			const e2Key = mesh.getEdgeKey(vprev, vi);
-
-			const ep1 = edgePoints.get(e1Key);
-			const ep2 = edgePoints.get(e2Key);
-
-			// Create quad: [vi, ep1, facePoint, ep2]
-			newFaces.push([vi, ep1, fpi, ep2]);
-		}
-	});
-
-	return new HalfEdgeMesh(newVertices, newFaces);
+function cubeControlMesh() {
+	return makeControlMesh(
+		[[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+		 [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]],
+		[[0, 1, 2, 3], [4, 7, 6, 5], [0, 4, 5, 1],
+		 [2, 6, 7, 3], [0, 3, 7, 4], [1, 5, 6, 2]]);
 }
 
-/**
- * Loop Subdivision
- * For triangle meshes - produces C¹ continuous surfaces
- */
-function subdivideLoop(mesh) {
-	const { vertices, faces } = mesh;
-	const newVertices = [...vertices];
-	const newFaces = [];
-
-	// Step 1: Compute edge vertices (odd vertices)
-	const edgeVertices = new Map();
-	mesh.edgeMap.forEach((edgeInfo, edgeKey) => {
-		const [v0, v1] = edgeKey.split('_').map(Number);
-
-		if (edgeInfo.length === 2) {
-			// Interior edge: use Loop subdivision rule
-			// New vertex = 3/8 * (A + B) + 1/8 * (C + D)
-			// where A, B are edge vertices and C, D are opposite vertices
-			const face0 = faces[edgeInfo[0].face];
-			const face1 = faces[edgeInfo[1].face];
-
-			const opposite0 = face0.find(v => v !== v0 && v !== v1);
-			const opposite1 = face1.find(v => v !== v0 && v !== v1);
-
-			const vp0 = vertices[v0];
-			const vp1 = vertices[v1];
-			const vp2 = vertices[opposite0];
-			const vp3 = vertices[opposite1];
-
-			const edgeVertex = [
-				3/8 * (vp0[0] + vp1[0]) + 1/8 * (vp2[0] + vp3[0]),
-				3/8 * (vp0[1] + vp1[1]) + 1/8 * (vp2[1] + vp3[1]),
-				3/8 * (vp0[2] + vp1[2]) + 1/8 * (vp2[2] + vp3[2])
-			];
-
-			newVertices.push(edgeVertex);
-			edgeVertices.set(edgeKey, newVertices.length - 1);
-		} else {
-			// Boundary edge: simple midpoint
-			const vp0 = vertices[v0];
-			const vp1 = vertices[v1];
-			const edgeVertex = [
-				(vp0[0] + vp1[0]) / 2,
-				(vp0[1] + vp1[1]) / 2,
-				(vp0[2] + vp1[2]) / 2
-			];
-
-			newVertices.push(edgeVertex);
-			edgeVertices.set(edgeKey, newVertices.length - 1);
-		}
-	});
-
-	// Step 2: Update original vertices (even vertices)
-	const updatedVertices = new Map();
-	vertices.forEach((v, vi) => {
-		// Find all adjacent vertices
-		const neighbors = new Set();
-		faces.forEach(face => {
-			if (face.includes(vi)) {
-				face.forEach(fv => {
-					if (fv !== vi) neighbors.add(fv);
-				});
-			}
-		});
-
-		const n = neighbors.size;
-
-		// Loop subdivision weight beta
-		let beta;
-		if (n === 3) {
-			beta = 3/16;
-		} else {
-			beta = 3 / (8 * n);
-		}
-
-		// Compute weighted average
-		const newV = [
-			v[0] * (1 - n * beta),
-			v[1] * (1 - n * beta),
-			v[2] * (1 - n * beta)
-		];
-
-		neighbors.forEach(ni => {
-			const nv = vertices[ni];
-			newV[0] += beta * nv[0];
-			newV[1] += beta * nv[1];
-			newV[2] += beta * nv[2];
-		});
-
-		updatedVertices.set(vi, newV);
-	});
-
-	// Update vertices in place
-	updatedVertices.forEach((newPos, vi) => {
-		newVertices[vi] = newPos;
-	});
-
-	// Step 3: Create new triangle faces
-	faces.forEach(face => {
-		if (face.length !== 3) {
-			console.warn('Loop subdivision requires triangle faces');
-			return;
-		}
-
-		const [v0, v1, v2] = face;
-
-		// Get edge vertices
-		const e01 = edgeVertices.get(mesh.getEdgeKey(v0, v1));
-		const e12 = edgeVertices.get(mesh.getEdgeKey(v1, v2));
-		const e20 = edgeVertices.get(mesh.getEdgeKey(v2, v0));
-
-		// Create 4 new triangles
-		newFaces.push([v0, e01, e20]);
-		newFaces.push([v1, e12, e01]);
-		newFaces.push([v2, e20, e12]);
-		newFaces.push([e01, e12, e20]); // Center triangle
-	});
-
-	return new HalfEdgeMesh(newVertices, newFaces);
-}
-
-/**
- * Bilinear Subdivision
- * Simple linear interpolation - no smoothing
- */
-function subdivideBilinear(mesh) {
-	const { vertices, faces } = mesh;
-	const newVertices = [...vertices];
-	const newFaces = [];
-
-	// Step 1: Add edge midpoints
-	const edgeMidpoints = new Map();
-	mesh.edgeMap.forEach((edgeInfo, edgeKey) => {
-		const [v0, v1] = edgeKey.split('_').map(Number);
-		const vp0 = vertices[v0];
-		const vp1 = vertices[v1];
-
-		const midpoint = [
-			(vp0[0] + vp1[0]) / 2,
-			(vp0[1] + vp1[1]) / 2,
-			(vp0[2] + vp1[2]) / 2
-		];
-
-		newVertices.push(midpoint);
-		edgeMidpoints.set(edgeKey, newVertices.length - 1);
-	});
-
-	// Step 2: Add face centers
-	const faceCenters = faces.map(face => {
-		const center = [0, 0, 0];
-		face.forEach(vi => {
-			center[0] += vertices[vi][0];
-			center[1] += vertices[vi][1];
-			center[2] += vertices[vi][2];
-		});
-		const n = face.length;
-		return [center[0] / n, center[1] / n, center[2] / n];
-	});
-
-	const faceCenterIndices = faceCenters.map(fc => {
-		newVertices.push(fc);
-		return newVertices.length - 1;
-	});
-
-	// Step 3: Create new faces
-	faces.forEach((face, faceIdx) => {
-		const fci = faceCenterIndices[faceIdx];
-
-		for (let i = 0; i < face.length; i++) {
-			const vi = face[i];
-			const vnext = face[(i + 1) % face.length];
-
-			const e1Key = mesh.getEdgeKey(vi, vnext);
-			const vprev = face[(i - 1 + face.length) % face.length];
-			const e2Key = mesh.getEdgeKey(vprev, vi);
-
-			const emp1 = edgeMidpoints.get(e1Key);
-			const emp2 = edgeMidpoints.get(e2Key);
-
-			// Create quad or triangle based on original face
-			if (face.length === 4) {
-				newFaces.push([vi, emp1, fci, emp2]);
-			} else {
-				newFaces.push([vi, emp1, fci, emp2]);
-			}
-		}
-	});
-
-	return new HalfEdgeMesh(newVertices, newFaces);
-}
-
-/**
- * Apply subdivision N times
- */
-function subdivide(vertices, faces, level, scheme) {
-	if (level <= 0) {
-		return { vertices, faces };
-	}
-
-	let mesh = new HalfEdgeMesh(vertices, faces);
-
-	for (let i = 0; i < level; i++) {
-		if (scheme === 'catmullclark') {
-			mesh = subdivideCatmullClark(mesh);
-		} else if (scheme === 'loop') {
-			mesh = subdivideLoop(mesh);
-		} else if (scheme === 'bilinear') {
-			mesh = subdivideBilinear(mesh);
-		}
-	}
-
-	return { vertices: mesh.vertices, faces: mesh.faces };
-}
-
-// ===========================================
-// Control Mesh Creation
-// ===========================================
-
-/**
- * Create a simple cube control mesh (for Catmull-Clark)
- */
-function createCubeControlMesh() {
-	const vertices = [
-		[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], // Back face
-		[-1, -1,  1], [1, -1,  1], [1, 1,  1], [-1, 1,  1]  // Front face
-	];
-
-	const faces = [
-		[0, 1, 2, 3], // Back
-		[4, 7, 6, 5], // Front
-		[0, 4, 5, 1], // Bottom
-		[2, 6, 7, 3], // Top
-		[0, 3, 7, 4], // Left
-		[1, 5, 6, 2]  // Right
-	];
-
-	return { vertices, faces };
-}
-
-/**
- * Create an icosahedron control mesh (for Loop)
- */
-function createIcosahedronControlMesh() {
-	const t = (1 + Math.sqrt(5)) / 2; // Golden ratio
-	const scale = 1 / Math.sqrt(1 + t * t); // Normalize
-
-	const vertices = [
-		[-1,  t,  0], [ 1,  t,  0], [-1, -t,  0], [ 1, -t,  0],
-		[ 0, -1,  t], [ 0,  1,  t], [ 0, -1, -t], [ 0,  1, -t],
-		[ t,  0, -1], [ t,  0,  1], [-t,  0, -1], [-t,  0,  1]
-	].map(v => v.map(x => x * scale));
-
-	const faces = [
-		[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+function icosahedronControlMesh() {
+	const t = (1 + Math.sqrt(5)) / 2;
+	const s = 1 / Math.sqrt(1 + t * t);
+	const v = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+		[0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+		[t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]]
+		.map(p => p.map(x => x * s));
+	const f = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
 		[1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
 		[3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
-		[4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]
-	];
-
-	return { vertices, faces };
+		[4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+	return makeControlMesh(v, f);
 }
 
-/**
- * Create a tetrahedron control mesh (simpler for Loop)
- */
-function createTetrahedronControlMesh() {
-	const vertices = [
-		[1, 1, 1],
-		[-1, -1, 1],
-		[-1, 1, -1],
-		[1, -1, -1]
-	];
-
-	const faces = [
-		[0, 1, 2],
-		[0, 3, 1],
-		[0, 2, 3],
-		[1, 3, 2]
-	];
-
-	return { vertices, faces };
+function tetrahedronControlMesh() {
+	return makeControlMesh(
+		[[1, 1, 1], [-1, -1, 1], [-1, 1, -1], [1, -1, -1]],
+		[[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]]);
 }
 
-// ===========================================
-// Three.js Mesh Creation
-// ===========================================
-
-/**
- * Convert custom mesh format to Three.js geometry
- */
-function createThreeJSMesh(vertices, faces, wireframe = false) {
-	const geometry = new THREE.BufferGeometry();
-
-	// Triangulate faces
-	const positions = [];
-	const indices = [];
-	let vertexIndex = 0;
-
-	// Add all vertices
-	vertices.forEach(v => {
-		positions.push(v[0], v[1], v[2]);
-	});
-
-	// Triangulate faces (simple fan triangulation)
-	faces.forEach(face => {
-		if (face.length === 3) {
-			indices.push(face[0], face[1], face[2]);
-		} else if (face.length === 4) {
-			// Quad -> 2 triangles
-			indices.push(face[0], face[1], face[2]);
-			indices.push(face[0], face[2], face[3]);
-		} else {
-			// N-gon -> fan triangulation
-			for (let i = 1; i < face.length - 1; i++) {
-				indices.push(face[0], face[i], face[i + 1]);
-			}
+function gridControlMesh(n) {
+	const verts = [];
+	for (let y = 0; y <= n; y++) {
+		for (let x = 0; x <= n; x++) {
+			const u = (x / n) * 2 - 1;
+			const v = (y / n) * 2 - 1;
+			verts.push([u, v, 0.3 * Math.sin(u * 3) * Math.cos(v * 3)]);
 		}
-	});
+	}
+	const w = n + 1;
+	const faces = [];
+	for (let y = 0; y < n; y++) {
+		for (let x = 0; x < n; x++) {
+			faces.push([y * w + x, y * w + x + 1, (y + 1) * w + x + 1, (y + 1) * w + x]);
+		}
+	}
+	return makeControlMesh(verts, faces);
+}
 
-	geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-	geometry.setIndex(indices);
-	geometry.computeVertexNormals();
+// Wavy NxN grid with a single continuous [0,1]^2 UV chart (no seams) -- linear
+// faceVarying interpolation reproduces it exactly.
+function uvGridControlMesh(n) {
+	const verts = [];
+	const uv = [];
+	for (let y = 0; y <= n; y++) {
+		for (let x = 0; x <= n; x++) {
+			const u = (x / n) * 2 - 1;
+			const v = (y / n) * 2 - 1;
+			verts.push([u, v, 0.35 * Math.sin(u * 3) * Math.cos(v * 3)]);
+			uv.push(x / n, y / n);
+		}
+	}
+	const w = n + 1;
+	const faces = [];
+	for (let y = 0; y < n; y++) {
+		for (let x = 0; x < n; x++) {
+			faces.push([y * w + x, y * w + x + 1, (y + 1) * w + x + 1, (y + 1) * w + x]);
+		}
+	}
+	const m = makeControlMesh(verts, faces);
+	m.uvValues = new Float32Array(uv);  // per vertex
+	m.uvIndices = m.fvi;                // per-corner UV == vertex UV (continuous)
+	return m;
+}
 
-	const material = wireframe
-		? new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true })
-		: new THREE.MeshStandardMaterial({
-			color: 0x6bb6ff,
-			roughness: 0.5,
-			metalness: 0.2,
-			flatShading: false
-		});
+// Cube where every face maps to the full [0,1]^2 chart -> visible texture
+// seams at the face edges (linear/"all" UVs cannot blend across them).
+function uvCubeControlMesh() {
+	const m = cubeControlMesh();  // 6 quads, 24 corners
+	m.uvValues = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+	const idx = new Uint32Array(m.fvi.length);
+	for (let f = 0; f < m.fvc.length; f++) {
+		for (let k = 0; k < 4; k++) idx[f * 4 + k] = k;
+	}
+	m.uvIndices = idx;
+	return m;
+}
 
-	const mesh = new THREE.Mesh(geometry, material);
+// ===========================================================================
+// WASM streaming subdivision
+// ===========================================================================
+
+let Module = null;
+let streamer = null;
+
+const SCHEME_ID = { catmullclark: 0, loop: 1, bilinear: 2 };
+const BOUNDARY_ID = { edgeAndCorner: 0, edgeOnly: 1, none: 2 };
+
+function concatTyped(chunks, total, Ctor) {
+	const out = new Ctor(total);
+	let off = 0;
+	for (const c of chunks) { out.set(c, off); off += c.length; }
+	return out;
+}
+
+// Runs the wasm streaming refinement. Without UVs: indexed (deduped) geometry.
+// With UVs: faceVarying UVs are per-corner, so the batches are expanded into a
+// non-indexed mesh (each triangle corner is a standalone vertex with its UV).
+function refine(cm, opts) {
+	const textured = !!opts.uvValues;
+
+	const posChunks = [], nrmChunks = [], idxChunks = [];
+	let vertOffset = 0, totalVerts = 0;
+	const expPos = [], expNrm = [], expUv = [];
+	let totalCorners = 0;
+	let totalIdx = 0, batches = 0;
+
+	const onBatch = (pos, nrm, idx, fsrc, uv, nverts, nfaces, bidx) => {
+		batches++;
+		if (textured && uv) {
+			const ni = idx.length;
+			const p = new Float32Array(ni * 3);
+			const nn = nrm ? new Float32Array(ni * 3) : null;
+			const u = new Float32Array(ni * 2);
+			for (let i = 0; i < ni; i++) {
+				const vi = idx[i];
+				p[i * 3] = pos[vi * 3]; p[i * 3 + 1] = pos[vi * 3 + 1]; p[i * 3 + 2] = pos[vi * 3 + 2];
+				if (nn) { nn[i * 3] = nrm[vi * 3]; nn[i * 3 + 1] = nrm[vi * 3 + 1]; nn[i * 3 + 2] = nrm[vi * 3 + 2]; }
+				u[i * 2] = uv[i * 2]; u[i * 2 + 1] = uv[i * 2 + 1];
+			}
+			expPos.push(p); if (nn) expNrm.push(nn); expUv.push(u);
+			totalCorners += ni;
+			totalIdx += ni;
+		} else {
+			posChunks.push(pos.slice());
+			if (nrm) nrmChunks.push(nrm.slice());
+			const off = new Uint32Array(idx.length);
+			for (let i = 0; i < idx.length; i++) off[i] = idx[i] + vertOffset;
+			idxChunks.push(off);
+			vertOffset += nverts; totalVerts += nverts; totalIdx += idx.length;
+		}
+	};
+
+	const t0 = performance.now();
+	const err = streamer.refineStream(
+		cm.points, cm.fvc, cm.fvi,
+		textured ? opts.uvValues : null,
+		textured ? (opts.uvIndices || null) : null,
+		opts.uvInterp || 0,
+		opts.scheme, opts.boundary, opts.level, opts.batchFaces,
+		opts.blockFaces || 0, opts.haloRings || 0,
+		opts.wantNormals, onBatch);
+	const t1 = performance.now();
+	if (err) { throw new Error(err); }
+
+	const common = { batches, timeMs: t1 - t0, heapBytes: streamer.heapBytes(), numTris: totalIdx / 3 };
+	if (textured) {
+		return {
+			...common, textured: true, numVerts: totalCorners,
+			positions: concatTyped(expPos, totalCorners * 3, Float32Array),
+			normals: opts.wantNormals ? concatTyped(expNrm, totalCorners * 3, Float32Array) : null,
+			uvs: concatTyped(expUv, totalCorners * 2, Float32Array),
+		};
+	}
+	return {
+		...common, textured: false, numVerts: totalVerts,
+		positions: concatTyped(posChunks, totalVerts * 3, Float32Array),
+		normals: opts.wantNormals ? concatTyped(nrmChunks, totalVerts * 3, Float32Array) : null,
+		indices: concatTyped(idxChunks, totalIdx, Uint32Array),
+	};
+}
+
+// ===========================================================================
+// Procedural UV-checker texture (CanvasTexture, no asset files)
+// ===========================================================================
+
+let textureCache = { size: 0, tex: null };
+function getTexture() {
+	if (textureCache.tex && textureCache.size === state.textureSize) return textureCache.tex;
+	if (textureCache.tex) textureCache.tex.dispose();
+	const size = state.textureSize;
+	const cv = document.createElement('canvas');
+	cv.width = cv.height = size;
+	const c = cv.getContext('2d');
+	const cells = 8, cell = size / cells;
+	for (let j = 0; j < cells; j++) {
+		for (let i = 0; i < cells; i++) {
+			c.fillStyle = ((i + j) & 1) ? '#6bb6ff' : '#16243d';
+			c.fillRect(i * cell, j * cell, cell, cell);
+		}
+	}
+	c.strokeStyle = 'rgba(255,255,255,0.55)';
+	c.lineWidth = Math.max(1, size / 512);
+	for (let i = 0; i <= cells; i++) {
+		c.beginPath(); c.moveTo(i * cell, 0); c.lineTo(i * cell, size); c.stroke();
+		c.beginPath(); c.moveTo(0, i * cell); c.lineTo(size, i * cell); c.stroke();
+	}
+	// UV origin marker (red dot at (0,0)).
+	c.fillStyle = '#ff5a5a';
+	c.beginPath(); c.arc(0, 0, size / 24, 0, Math.PI * 2); c.fill();
+	const tex = new THREE.CanvasTexture(cv);
+	tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+	tex.colorSpace = THREE.SRGBColorSpace;
+	const maxA = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
+	tex.anisotropy = maxA;
+	tex.needsUpdate = true;
+	textureCache = { size, tex };
+	return tex;
+}
+
+// ===========================================================================
+// THREE.js geometry
+// ===========================================================================
+
+function buildMesh(refined, wireframe) {
+	const g = new THREE.BufferGeometry();
+	g.setAttribute('position', new THREE.BufferAttribute(refined.positions, 3));
+	if (refined.textured) {
+		g.setAttribute('uv', new THREE.BufferAttribute(refined.uvs, 2));
+	} else {
+		g.setIndex(new THREE.BufferAttribute(refined.indices, 1));
+	}
+	if (refined.normals) {
+		g.setAttribute('normal', new THREE.BufferAttribute(refined.normals, 3));
+	} else {
+		g.computeVertexNormals();
+	}
+
+	let material;
+	if (wireframe) {
+		material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+	} else if (refined.textured) {
+		material = new THREE.MeshStandardMaterial({
+			map: getTexture(), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide });
+	} else {
+		material = new THREE.MeshStandardMaterial({
+			color: 0x6bb6ff, roughness: 0.5, metalness: 0.2 });
+	}
+	const mesh = new THREE.Mesh(g, material);
 	mesh.castShadow = true;
 	mesh.receiveShadow = true;
-
 	return mesh;
 }
 
-// ===========================================
-// GUI and State Management
-// ===========================================
+// ===========================================================================
+// State + update
+// ===========================================================================
 
 let currentMesh = null;
 let wireframeMesh = null;
@@ -603,95 +320,160 @@ let wireframeMesh = null;
 const state = {
 	subdivisionLevel: 2,
 	scheme: 'catmullclark',
-	showWireframe: true,
-	baseMesh: 'cube' // 'cube', 'icosahedron', 'tetrahedron'
+	boundary: 'edgeAndCorner',
+	baseMesh: 'uv_grid',
+	textured: true,
+	textureSize: 2048,
+	uvInterp: 'smooth',  // 'linear' (bilinear) or 'smooth' (seam-split, USD default)
+	wantNormals: true,
+	streaming: true,
+	batchFaces: 2048,
+	blockFaces: 0,  // 0 = whole-mesh streaming; >0 = block mode (bounds working set)
+	showWireframe: false,
 };
 
-function updateMesh() {
-	// Remove old mesh
-	if (currentMesh) {
-		scene.remove(currentMesh);
-		currentMesh.geometry.dispose();
-		currentMesh.material.dispose();
-	}
-	if (wireframeMesh) {
-		scene.remove(wireframeMesh);
-		wireframeMesh.geometry.dispose();
-		wireframeMesh.material.dispose();
-	}
+const VRAM_BUDGET = 2 * 1024 * 1024 * 1024;  // 2 GB reference (shared GPU)
 
-	// Get base mesh
-	let controlMesh;
+function getControlMesh() {
 	if (state.scheme === 'loop') {
-		controlMesh = state.baseMesh === 'tetrahedron'
-			? createTetrahedronControlMesh()
-			: createIcosahedronControlMesh();
-	} else {
-		controlMesh = createCubeControlMesh();
+		// Loop needs all-triangle input; UV meshes are quads.
+		return state.baseMesh === 'tetrahedron'
+			? tetrahedronControlMesh() : icosahedronControlMesh();
+	}
+	switch (state.baseMesh) {
+		case 'uv_grid': return uvGridControlMesh(16);
+		case 'uv_cube': return uvCubeControlMesh();
+		case 'grid': return gridControlMesh(16);
+		case 'tetrahedron': return tetrahedronControlMesh();
+		case 'icosahedron': return icosahedronControlMesh();
+		default: return cubeControlMesh();
+	}
+}
+
+function disposeMesh(m) {
+	if (!m) return;
+	scene.remove(m);
+	m.geometry.dispose();
+	m.material.dispose();
+}
+
+function updateMesh() {
+	if (!streamer) return;
+	disposeMesh(currentMesh);
+	disposeMesh(wireframeMesh);
+	currentMesh = null;
+	wireframeMesh = null;
+
+	const cm = getControlMesh();
+	const wantTexture = state.textured && !!cm.uvValues && state.subdivisionLevel >= 1;
+	const opts = {
+		scheme: SCHEME_ID[state.scheme],
+		boundary: BOUNDARY_ID[state.boundary],
+		level: state.subdivisionLevel,
+		batchFaces: state.streaming ? state.batchFaces : 1 << 30,
+		blockFaces: state.streaming ? state.blockFaces : 0,
+		haloRings: 0,  // 0 => library's level-independent default (2 rings)
+		wantNormals: state.wantNormals,
+		uvValues: wantTexture ? cm.uvValues : null,
+		uvIndices: wantTexture ? cm.uvIndices : null,
+		uvInterp: state.uvInterp === 'smooth' ? 1 : 0,
+	};
+
+	let refined;
+	try {
+		refined = refine(cm, opts);
+	} catch (e) {
+		console.error('subdivision failed:', e.message);
+		setStatus('Error: ' + e.message);
+		return;
 	}
 
-	// Apply subdivision
-	const subdivided = subdivide(
-		controlMesh.vertices,
-		controlMesh.faces,
-		state.subdivisionLevel,
-		state.scheme
-	);
-
-	// Create Three.js mesh
-	currentMesh = createThreeJSMesh(subdivided.vertices, subdivided.faces, false);
+	currentMesh = buildMesh(refined, false);
 	scene.add(currentMesh);
-
-	// Create wireframe
 	if (state.showWireframe) {
-		wireframeMesh = createThreeJSMesh(subdivided.vertices, subdivided.faces, true);
+		wireframeMesh = buildMesh(refined, true);
 		scene.add(wireframeMesh);
 	}
 
-	// Update statistics
-	updateStats(subdivided.vertices.length, subdivided.faces.length);
+	updateStats(refined);
 }
 
-function updateStats(vertCount, faceCount) {
-	document.getElementById('vertCount').textContent = vertCount;
-	document.getElementById('faceCount').textContent = faceCount;
-
-	// Calculate triangle count (approximate for quads)
-	let triCount = 0;
-	if (state.scheme === 'loop') {
-		triCount = faceCount;
-	} else {
-		triCount = faceCount * 2; // Each quad becomes 2 triangles
+function setText(id, text, warn) {
+	const el = document.getElementById(id);
+	if (el) {
+		el.textContent = text;
+		el.style.color = warn ? '#ff7a7a' : '';
 	}
-	document.getElementById('triCount').textContent = triCount;
-	document.getElementById('levelDisplay').textContent = state.subdivisionLevel;
 }
 
-// ===========================================
-// GUI Setup
-// ===========================================
+function setStatus(text) { setText('status', text); }
+
+function estVramBytes(refined) {
+	// GPU-resident vertex buffers (+ index buffer when indexed) + texture w/mips.
+	const geom = refined.textured
+		? refined.numTris * 3 * (12 + 12 + 8)              // non-indexed pos+nrm+uv
+		: refined.numVerts * (12 + 12) + refined.numTris * 3 * 4;  // indexed pos+nrm + idx
+	const tex = refined.textured
+		? state.textureSize * state.textureSize * 4 * 1.34  // RGBA + mipmaps
+		: 0;
+	return geom + tex;
+}
+
+function fmtBytes(b) {
+	return b >= 1024 * 1024 * 1024
+		? (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+		: (b / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function updateStats(refined) {
+	setText('vertCount', refined.numVerts.toLocaleString());
+	setText('faceCount', (refined.numTris / 2 | 0).toLocaleString());
+	setText('triCount', refined.numTris.toLocaleString());
+	setText('levelDisplay', String(state.subdivisionLevel));
+	setText('batchCount', refined.batches.toLocaleString());
+	setText('heapMB', fmtBytes(refined.heapBytes));
+	setText('timeMs', refined.timeMs.toFixed(1) + ' ms');
+	const vram = estVramBytes(refined);
+	setText('estVram', fmtBytes(vram) + ' / 2.00 GB', vram > VRAM_BUDGET);
+	setStatus((refined.textured ? `textured (${state.uvInterp} UV) · ` : '') +
+		(state.streaming ? `streaming (${state.batchFaces} f/batch)` : 'bulk (single batch)') +
+		(state.streaming && state.blockFaces > 0
+			? ` · block ${state.blockFaces} f (bounded working set)` : ''));
+}
+
+// ===========================================================================
+// GUI
+// ===========================================================================
 
 const gui = new GUI();
+gui.add(state, 'subdivisionLevel', 0, 5, 1).name('Subdivision Level').onChange(updateMesh);
+gui.add(state, 'scheme', ['catmullclark', 'loop', 'bilinear']).name('Scheme').onChange(updateMesh);
+gui.add(state, 'boundary', ['edgeAndCorner', 'edgeOnly', 'none']).name('Boundary').onChange(updateMesh);
+gui.add(state, 'baseMesh', ['uv_grid', 'uv_cube', 'cube', 'grid', 'tetrahedron', 'icosahedron']).name('Base Mesh').onChange(updateMesh);
+gui.add(state, 'showWireframe').name('Show Wireframe').onChange(updateMesh);
 
-gui.add(state, 'subdivisionLevel', 0, 5, 1)
-	.name('Subdivision Level')
-	.onChange(() => updateMesh());
+const texFolder = gui.addFolder('Texture (faceVarying UVs)');
+texFolder.add(state, 'textured').name('Textured').onChange(updateMesh);
+texFolder.add(state, 'textureSize', [512, 1024, 2048, 4096]).name('Texture size').onChange(updateMesh);
+// faceVarying UV interpolation: linear (bilinear per corner) vs smooth
+// seam-split (UVs follow the limit surface, less distortion on curved regions).
+// Both stream; smooth uses the per-channel split-mesh path.
+texFolder.add(state, 'uvInterp', ['linear', 'smooth']).name('UV interpolation').onChange(updateMesh);
+texFolder.open();
 
-gui.add(state, 'scheme', ['catmullclark', 'loop', 'bilinear'])
-	.name('Scheme')
-	.onChange(() => updateMesh());
+const memFolder = gui.addFolder('Memory (wasm streaming)');
+memFolder.add(state, 'wantNormals').name('Analytic Normals').onChange(updateMesh);
+memFolder.add(state, 'streaming').name('Streaming').onChange(updateMesh);
+memFolder.add(state, 'batchFaces', [256, 1024, 2048, 8192, 65536]).name('Faces / batch').onChange(updateMesh);
+// Block mode bounds the WORKING set (not just the output): refine in blocks of
+// N base faces + halo, so peak heap is independent of mesh size and level.
+// 0 = off (whole-mesh streaming). Works with textured (faceVarying) meshes too.
+memFolder.add(state, 'blockFaces', [0, 16, 64, 256]).name('Block faces (0=off)').onChange(updateMesh);
+memFolder.open();
 
-gui.add(state, 'baseMesh', ['cube', 'tetrahedron', 'icosahedron'])
-	.name('Base Mesh')
-	.onChange(() => updateMesh());
-
-gui.add(state, 'showWireframe')
-	.name('Show Wireframe')
-	.onChange(() => updateMesh());
-
-// ===========================================
-// Animation Loop
-// ===========================================
+// ===========================================================================
+// Animation / resize / init
+// ===========================================================================
 
 function animate() {
 	requestAnimationFrame(animate);
@@ -699,21 +481,23 @@ function animate() {
 	renderer.render(scene, camera);
 }
 
-// ===========================================
-// Window Resize Handler
-// ===========================================
-
 window.addEventListener('resize', () => {
 	camera.aspect = window.innerWidth / window.innerHeight;
 	camera.updateProjectionMatrix();
 	renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ===========================================
-// Initialize
-// ===========================================
+async function main() {
+	setStatus('loading wasm…');
+	Module = await initTinyUSDZ();
+	streamer = new Module.SubdivStreamer();
+	setStatus('ready');
+	updateMesh();
+	animate();
+	console.log('TinyUSDZ streaming subdivision demo loaded');
+}
 
-updateMesh();
-animate();
-
-console.log('TinyUSDZ Subdivision Surface Demo loaded');
+main().catch((e) => {
+	console.error(e);
+	setStatus('failed to load wasm: ' + e.message);
+});

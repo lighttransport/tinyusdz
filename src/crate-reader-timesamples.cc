@@ -4,9 +4,6 @@
 //
 // Crate(binary format) reader
 //
-//
-// - [] Unify BuildDecompressedPathsImpl and BuildNodeHierarchy
-
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -1555,6 +1552,10 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UNREGISTERED_VALUE_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP:
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_CODE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_EXPRESSION:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_RELOCATES:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_SPLINE:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_ANIMATION_BLOCK:
     case crate::CrateDataTypeId::NumDataTypes:
       PUSH_ERROR_AND_RETURN(
           fmt::format("Unsupported or unimplemented type for TimeSamples. ty = "

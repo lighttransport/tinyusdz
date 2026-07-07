@@ -22,6 +22,16 @@
 #include <unordered_map>
 #include <unordered_set>
 
+// This translation unit performs exact bit-level value comparisons for diffing
+// (e.g. the `a == b` fast path in ScalarAlmostEqual deliberately treats
+// inf==inf as equal and +0/-0 as equal; layerOffset compares are exact). These
+// intentional float equality checks trip -Wfloat-equal under -Weverything.
+#if defined(__clang__)
+#pragma clang diagnostic ignored "-Wfloat-equal"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wfloat-equal"
+#endif
+
 namespace tinyusdz {
 namespace tydra {
 

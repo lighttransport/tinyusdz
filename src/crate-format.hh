@@ -116,6 +116,12 @@ enum class CrateDataTypeId {
   CRATE_DATA_TYPE_PAYLOAD_LIST_OP = 55,
   CRATE_DATA_TYPE_TIME_CODE = 56,
 
+  // Added in newer crate versions. See <pxrUSD>/pxr/usd/sdf/crateDataTypes.h
+  CRATE_DATA_TYPE_PATH_EXPRESSION = 57, // SdfPathExpression (crate >= 0.10.0)
+  CRATE_DATA_TYPE_RELOCATES = 58, // SdfRelocates (crate >= 0.11.0)
+  CRATE_DATA_TYPE_SPLINE = 59, // TsSpline (crate >= 0.12.0)
+  CRATE_DATA_TYPE_ANIMATION_BLOCK = 60, // SdfAnimationBlock (no version bump)
+
   NumDataTypes // terminator
 };
 
@@ -201,6 +207,9 @@ struct ValueRep {
   static const uint64_t IsArrayBit_ = 1ull << 63;
   static const uint64_t IsInlinedBit_ = 1ull << 62;
   static const uint64_t IsCompressedBit_ = 1ull << 61;
+  // VtArrayEdit flag (crate >= 0.14.0). Independent of IsArrayBit_; the type
+  // byte holds the array element type, same as a normal array.
+  static const uint64_t IsArrayEditBit_ = 1ull << 60;
 
   static const uint64_t PayloadMask_ = ((1ull << 48) - 1);
 
@@ -212,6 +221,9 @@ struct ValueRep {
 
   inline bool IsCompressed() const { return data & IsCompressedBit_; }
   inline void SetIsCompressed() { data |= IsCompressedBit_; }
+
+  inline bool IsArrayEdit() const { return data & IsArrayEditBit_; }
+  inline void SetIsArrayEdit() { data |= IsArrayEditBit_; }
 
   inline int32_t GetType() const {
     return static_cast<int32_t>((data >> 48) & 0xFF);
@@ -244,6 +256,7 @@ struct ValueRep {
     std::stringstream ss;
     ss << "ty: " << static_cast<int>(GetType()) << "(" << GetCrateDataTypeName(GetType()) << "), isArray: " << IsArray()
        << ", isInlined: " << IsInlined() << ", isCompressed: " << IsCompressed()
+       << ", isArrayEdit: " << IsArrayEdit()
        << ", payload: " << GetPayload();
 
     return ss.str();
@@ -424,8 +437,21 @@ class CrateValue {
                 !std::is_same<typename std::decay<T>::type, CrateValue>::value>::type>
   void Set(T &&v) {
     value_ = std::forward<T>(v);
+    is_unregistered_value_ = false;
   }
 
+  void SetUnregisteredValueString(std::string v) {
+    value_ = std::move(v);
+    is_unregistered_value_ = true;
+  }
+
+  bool IsUnregisteredValue() const {
+    return is_unregistered_value_;
+  }
+
+  const std::string *GetUnregisteredValueString() const {
+    return is_unregistered_value_ ? value_.as<std::string>() : nullptr;
+  }
 
   // Type-safe way to get concrete value.
   template <class T>
@@ -447,21 +473,23 @@ class CrateValue {
     return value_.type_id();
   }
 
-  const value::Value &get_raw() const {
+  const value::Value &get_raw() const TINYUSDZ_LIFETIMEBOUND {
     return value_;
   }
 
-  value::Value &get_raw() {
+  value::Value &get_raw() TINYUSDZ_LIFETIMEBOUND {
     return value_;
   }
 
-  const value::Value *get_raw_ptr() const {
+  const value::Value *get_raw_ptr() const TINYUSDZ_LIFETIMEBOUND {
     return &value_;
   }
 
   // mmap zero-copy: set when value was described but not materialized
   bool has_mmap_ref() const { return _has_mmap_ref; }
-  const MMapArrayRef &mmap_ref() const { return _mmap_ref; }
+  const MMapArrayRef &mmap_ref() const TINYUSDZ_LIFETIMEBOUND {
+    return _mmap_ref;
+  }
   void set_mmap_ref(const MMapArrayRef &ref) {
     _mmap_ref = ref;
     _has_mmap_ref = true;
@@ -469,6 +497,7 @@ class CrateValue {
 
  private:
   value::Value value_;
+  bool is_unregistered_value_{false};
   MMapArrayRef _mmap_ref{};
   bool _has_mmap_ref{false};
 };

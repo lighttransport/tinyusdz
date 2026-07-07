@@ -82,6 +82,23 @@ bool ParsePositiveInt(const json& value, const char* label, int* out, std::strin
   return true;
 }
 
+bool ParseNonNegativeInt(const json& value, const char* label, int* out, std::string* err) {
+  if (!value.is_number()) {
+    *err = std::string(label) + " must be a non-negative integer";
+    return false;
+  }
+
+  const double v = value.get<double>();
+  if (!(v >= 0.0) || !std::isfinite(v) || std::floor(v) != v ||
+      v > static_cast<double>(std::numeric_limits<int>::max())) {
+    *err = std::string(label) + " must be a non-negative integer";
+    return false;
+  }
+
+  *out = static_cast<int>(v);
+  return true;
+}
+
 bool ParseBool(const json& value, const char* label, bool* out, std::string* err) {
   if (!value.is_boolean()) {
     *err = std::string(label) + " must be a boolean";
@@ -161,6 +178,11 @@ bool ParseConfigFile(const fs::path& path, StartupConfig* cfg,
     if (!ParsePositiveFloat(*dolly, "dolly_sensitivity", &v, err)) return false;
     cfg->dollySensitivity = v;
   }
+  if (const json* invert = FindMember(*navObj, {"invert_yaw", "invert-yaw"})) {
+    bool on = false;
+    if (!ParseBool(*invert, "invert_yaw", &on, err)) return false;
+    cfg->invertYaw = on;
+  }
   if (const json* invert = FindMember(*navObj, {"invert_dolly", "invert-dolly"})) {
     bool on = false;
     if (!ParseBool(*invert, "invert_dolly", &on, err)) return false;
@@ -172,6 +194,19 @@ bool ParseConfigFile(const fs::path& path, StartupConfig* cfg,
     if (!ParseBool(*comp, "composition", &on, err)) return false;
     cfg->composition = on;
   }
+  if (const json* recent = FindMember(root, {"recent_scenes", "recent-scenes"})) {
+    if (recent->is_array()) {
+      for (const json& e : *recent) {
+        if (e.is_string()) {
+          const std::string s = e.get<std::string>();
+          if (!s.empty()) cfg->recentScenes.push_back(s);
+        }
+      }
+    } else {
+      warnings->push_back("recent_scenes must be an array of strings; ignored.");
+    }
+  }
+
   if (const json* pl = FindMember(root, {"payload_policy", "payload-policy"})) {
     if (!pl->is_string()) {
       *err = "payload_policy must be \"defer\" or \"load\"";
@@ -183,6 +218,44 @@ bool ParseConfigFile(const fs::path& path, StartupConfig* cfg,
       return false;
     }
     cfg->payloadPolicy = v;
+  }
+
+  if (const json* vkDevice = FindMember(root, {"vulkan_device", "vulkan-device", "vk_device", "vk-device"})) {
+    if (!vkDevice->is_string()) {
+      *err = "vulkan_device must be a string";
+      return false;
+    }
+    const std::string v = vkDevice->get<std::string>();
+    if (!v.empty()) cfg->vulkanDevice = v;
+  }
+
+  if (const json* subd = FindMember(root, {"subdivision_level", "subdivision-level", "subdivision"})) {
+    int v = 0;
+    if (!ParseNonNegativeInt(*subd, "subdivision_level", &v, err)) return false;
+    cfg->subdivisionLevel = v;
+  }
+  if (const json* subdAuto = FindMember(root, {"subdivision_auto", "subdivision-auto"})) {
+    bool on = false;
+    if (!ParseBool(*subdAuto, "subdivision_auto", &on, err)) return false;
+    cfg->subdivisionAuto = on;
+  }
+  if (const json* subdMax = FindMember(root, {"subdivision_auto_max_level", "subdivision-auto-max-level"})) {
+    int v = 0;
+    if (!ParseNonNegativeInt(*subdMax, "subdivision_auto_max_level", &v, err)) return false;
+    cfg->subdivisionAutoMaxLevel = v;
+  }
+  if (const json* subdPrims = FindMember(root, {"subdivision_prim_levels", "subdivision-prim-levels"})) {
+    if (!subdPrims->is_object()) {
+      *err = "subdivision_prim_levels must be an object mapping prim paths to levels";
+      return false;
+    }
+    for (auto it = subdPrims->begin(); it != subdPrims->end(); ++it) {
+      int v = 0;
+      if (!ParseNonNegativeInt(it.value(), "subdivision_prim_levels entry", &v, err)) {
+        return false;
+      }
+      if (!it.key().empty()) cfg->subdivisionPrimLevels[it.key()] = v;
+    }
   }
 
   return true;
@@ -233,6 +306,49 @@ ConfigLoadResult LoadStartupConfig(const std::optional<std::string>& explicitPat
 
   result.status = ConfigLoadStatus::Loaded;
   return result;
+}
+
+std::optional<fs::path> DefaultImGuiIniPath() {
+  auto configPath = DefaultConfigPath();
+  if (!configPath) return std::nullopt;
+  return configPath->parent_path() / "imgui.ini";
+}
+
+bool SaveRecentScenes(const fs::path& path, const std::vector<std::string>& recent,
+                      std::string* err) {
+  if (path.empty()) {
+    if (err) *err = "no config path";
+    return false;
+  }
+  // Merge into existing config so unrelated keys (font_size, navigation, ...) survive.
+  json root = json::object();
+  std::error_code ec;
+  if (fs::exists(path, ec) && fs::is_regular_file(path, ec)) {
+    std::ifstream ifs(path, std::ios::binary);
+    if (ifs) {
+      const std::string text((std::istreambuf_iterator<char>(ifs)),
+                             std::istreambuf_iterator<char>());
+      json parsed = json::parse(text, nullptr, /*allow_exceptions=*/false);
+      if (parsed.is_object()) root = std::move(parsed);
+    }
+  }
+  root["recent_scenes"] = recent;
+
+  const fs::path dir = path.parent_path();
+  if (!dir.empty()) {
+    fs::create_directories(dir, ec);  // best-effort; write below reports real errors
+  }
+  std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+  if (!ofs) {
+    if (err) *err = "failed to open config file for writing";
+    return false;
+  }
+  ofs << root.dump(2) << "\n";
+  if (!ofs) {
+    if (err) *err = "failed to write config file";
+    return false;
+  }
+  return true;
 }
 
 }  // namespace tusdview

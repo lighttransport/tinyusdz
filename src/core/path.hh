@@ -394,7 +394,7 @@ class Path {
   }
 
   // Strip '/'
-  Path &make_relative() {
+  Path &make_relative() TINYUSDZ_LIFETIMEBOUND {
     if (is_absolute_path() && (_prim_len > 1)) {
       // Remove leading '/' from the single buffer and shift offsets left by 1.
       _full.erase(0, 1);
@@ -466,7 +466,7 @@ class Path {
     std::string part;       // e.g. `variantColor` for {variantColor=green}
     std::string selection;  // e.g. `green`; could be empty.
   };
-  VariantTokens &mutable_variant() {
+  VariantTokens &mutable_variant() TINYUSDZ_LIFETIMEBOUND {
     if (!_variant) {
       _variant.reset(new VariantTokens());
     }
@@ -489,6 +489,12 @@ class Path {
 
 bool operator==(const Path &lhs, const Path &rhs);
 
+// SdfRelocates: an ordered list of (source, target) path pairs (layer- or
+// prim-level namespace relocations). Aliased so it can be passed to the
+// single-argument-aware DEFINE_TYPE_TRAIT macro (the bare type contains a
+// comma).
+using SdfRelocates = std::vector<std::pair<Path, Path>>;
+
 namespace value {
 
 #include "define-type-trait.inc"
@@ -496,6 +502,9 @@ namespace value {
 DEFINE_TYPE_TRAIT(Path, "Path", TYPE_ID_PATH, 1);
 // TODO(syoyo): Define as 1D array?
 DEFINE_TYPE_TRAIT(std::vector<Path>, "PathVector", TYPE_ID_PATH_VECTOR, 1);
+// SdfRelocates: an ordered list of (source, target) path pairs. Crate type 58
+// (crate >= 0.11.0). Not array-capable in Crate (the vector IS the value).
+DEFINE_TYPE_TRAIT(SdfRelocates, "Relocates", TYPE_ID_RELOCATES, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

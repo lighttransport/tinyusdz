@@ -361,10 +361,40 @@ PrimSpec PrepareComposedArcPrimSpec(const PrimSpec &src_ps,
   return prepared;
 }
 
+// After an `append`-style arc merge (OverridePrimSpec) of a referenced/payloaded
+// asset `src` onto `dst`, re-anchor `dst`'s working path to the asset's directory
+// IF the asset still carries unresolved reference/payload arcs of its own. Those
+// arcs were authored in the asset's layer and must resolve against the asset's
+// directory (core USD semantics), but OverridePrimSpec leaves `dst` carrying the
+// CONSUMING prim's working path -- which, in a nested assembly chain (a
+// sub-assembly definition payloads a leaf component whose subLayers reference
+// `../../../fragment/geo/...`), is the sub-assembly's `base/definition` dir, one
+// or more levels too high. The prepend path (InheritPrimSpecImpl) already keeps
+// src's anchor when src has arcs; this is its append-path counterpart.
+static void ReanchorArcsToSource(PrimSpec &dst, const PrimSpec &src) {
+  if ((src.metas().references.has_value() || src.metas().payload.has_value()) &&
+      !src.get_current_working_path().empty()) {
+    dst.set_asset_resolution_state(src.get_current_working_path(),
+                                   src.get_asset_search_paths());
+  }
+}
+
 // Copy assetresolver state to all PrimSpec in the tree.
+//
+// `only_if_unset`: when true, a PrimSpec that ALREADY carries a working path is
+// left untouched (gap-fill). Used right after subLayer composition, where each
+// prim has already been anchored to the directory of the layer that authored its
+// arcs (component root for main-layer opinions, a subLayer's dir for opinions a
+// subLayer contributed via CombinePrimSpecRec's cross-directory anchoring).
+// Blindly re-stamping the whole subtree with the reference target's ROOT dir
+// would clobber those subLayer anchors, so a `../../../` reference authored in
+// e.g. `<comp>/surfacing/` would resolve from `<comp>/` -- one dir too high.
+// Prims that genuinely lack an anchor (custom file-format readers that build a
+// PrimSpec directly) still get stamped.
 bool PropagateAssetResolverState(PrimSpec &ps,
                                  const std::string &cwp,
-                                 const std::vector<std::string> &search_paths) {
+                                 const std::vector<std::string> &search_paths,
+                                 bool only_if_unset = false) {
   constexpr size_t kMaxIter = 1024 * 1024 * 512;
 
   DCOUT("current_working_path: " << cwp);
@@ -382,7 +412,9 @@ bool PropagateAssetResolverState(PrimSpec &ps,
     PrimSpec *current = stack.back();
     stack.pop_back();
 
-    current->set_asset_resolution_state(cwp, search_paths);
+    if (!only_if_unset || current->get_current_working_path().empty()) {
+      current->set_asset_resolution_state(cwp, search_paths);
+    }
 
     PushChildAndVariantPrimSpecs(*current, &stack);
   }
@@ -400,7 +432,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
                const bool error_when_no_prims_found,
                const bool error_when_asset_not_found,
                const bool error_when_unsupported_fileformat,
-               const bool allow_parent_relative_paths, std::string *warn,
+               const bool allow_parent_relative_paths, const size_t max_asset_bytes,
+               std::string *warn,
                std::string *err,
                std::map<std::string, Layer> *layer_cache = nullptr) {
   if (!dst_layer) {
@@ -514,13 +547,31 @@ bool LoadAsset(AssetResolutionResolver &resolver,
         fmt::format("Failed to open asset `{}`.", resolved_path));
   }
 
-  if (asset.size() > security_policy::kResolverMaxAssetReadBytes) {
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("Resolved asset exceeds max bytes ({} > {}).",
-                    asset.size(), security_policy::kResolverMaxAssetReadBytes));
+  const size_t asset_limit = max_asset_bytes
+                                 ? max_asset_bytes
+                                 : security_policy::kResolverMaxAssetReadBytes;
+  if (asset.size() > asset_limit) {
+    // An over-cap asset (e.g. Moana island's 683 MB xgGroundCover.usd vs the
+    // 512 MB cap) must not abort the WHOLE composition -- a single oversized
+    // sub-asset would otherwise drop the entire scene. Treat it like an
+    // unresolved asset: hard-fail only when the caller wants strict resolution,
+    // otherwise warn once and skip this arc so the rest of the scene composes.
+    if (error_when_asset_not_found) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Resolved asset exceeds max bytes ({} > {}).",
+                      asset.size(), asset_limit));
+    }
+    warn_once(resolved_path,
+              fmt::format("Asset `{}` exceeds the max composition read size "
+                          "({} > {} bytes); skipping this arc.",
+                          asset_path, asset.size(), asset_limit));
+    if (dst_primspec_root) {
+      (*dst_primspec_root) = nullptr;
+    }
+    return true;
   }
 
-  DCOUT("Opened resolved assst: " << resolved_path
+  DCOUT("Opened resolved asset: " << resolved_path
                                   << ", asset_path: " << asset_path);
 
   if (!layer_from_cache) {
@@ -714,7 +765,8 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
     if (!PropagateAssetResolverState(*const_cast<PrimSpec *>(src_ps),
                                      resolver.current_working_path(),
-                                     resolver.search_paths())) {
+                                     resolver.search_paths(),
+                                     /* only_if_unset */ true)) {
       PUSH_ERROR_AND_RETURN(
           "Store AssetResolver state to each PrimSpec failed.\n");
     }
@@ -1094,7 +1146,8 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                    options.error_when_no_prims_in_sublayer,
                    options.error_when_asset_not_found,
                    options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err)) {
+                   options.allow_parent_relative_paths,
+                   options.max_asset_bytes, warn, err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Load asset in subLayer failed: `{}`", layer.assetPath));
     }
@@ -1240,6 +1293,16 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
     // list). Iterate a stable copy instead (mirrors CompositeInheritsRec).
     const auto references_ops = primspec.metas().references.value();
 
+    // Consume these reference arcs up front: clear them now (we iterate the
+    // `references_ops` copy below, not the live metadata). This lets any NESTED
+    // references the merge carries in from a referenced layer — a
+    // reference-of-a-reference, e.g. `top`->`mid`->`leaf` — accumulate on
+    // `primspec` and survive for the outer fixed-point loop to resolve. A blanket
+    // reset() at the end used to wipe those nested arcs too, so only the FIRST
+    // level of references ever resolved (this is what collapsed deeply-nested
+    // assemblies like Animal Logic ALab to near-empty).
+    primspec.metas().references.reset();
+
     // Process all listops in order (supports multiple listops per arc)
     // Pre-pass: collect deleted reference targets so we can skip them.
     std::set<std::pair<std::string, std::string>> ref_deleted;
@@ -1319,8 +1382,9 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            &src_ps, /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err,
-                   options.layer_cache)) {
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, warn, err,
+                           options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1440,8 +1504,9 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                            &src_ps, /* error_when_no_prims */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err,
-                   options.layer_cache)) {
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, warn, err,
+                           options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(
                   fmt::format("Failed to `references` asset `{}`",
@@ -1478,6 +1543,10 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                                               reference.asset_path));
           }
 
+          // Keep the referenced asset's own unresolved arcs anchored at the
+          // asset's directory (see ReanchorArcsToSource).
+          ReanchorArcsToSource(primspec, prepared_src);
+
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
             if (prepared_src.typeName().empty() ||
@@ -1492,8 +1561,9 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
     }
   }
 
-  // Remove `references`.
-  primspec.metas().references.reset();
+  // NOTE: `primspec.metas().references` was cleared up front (before the loop).
+  // It now holds only NESTED references carried in by the merge above, which the
+  // outer fixed-point loop must still resolve — so we must NOT reset() it here.
 
   return true;
 }
@@ -1596,8 +1666,9 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err,
-                   options.layer_cache)) {
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, warn, err,
+                           options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -1698,8 +1769,9 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                            /* error_when_no_prims_found */ true,
                            options.error_when_asset_not_found,
                            options.error_when_unsupported_fileformat,
-                   options.allow_parent_relative_paths, warn, err,
-                   options.layer_cache)) {
+                           options.allow_parent_relative_paths,
+                           options.max_asset_bytes, warn, err,
+                           options.layer_cache)) {
               visited.erase(visit_key);
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to `payload` asset `{}`",
                                                 pl.asset_path.GetAssetPath()));
@@ -1725,6 +1797,15 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
             PUSH_ERROR_AND_RETURN(
                 fmt::format("Failed to payload layer `{}`", asset_path));
           }
+
+          // A payloaded asset's OWN still-unresolved arcs must keep anchoring at
+          // the asset's directory (core USD semantics), not the consuming prim's.
+          // OverridePrimSpec leaves `primspec` carrying the consuming prim's
+          // working path; if the payload target brought in unresolved reference/
+          // payload arcs (e.g. a leaf component, payloaded by a sub-assembly
+          // definition, whose subLayers reference `../../../fragment/geo/...`),
+          // re-anchor to the target's directory so those nested arcs resolve.
+          ReanchorArcsToSource(primspec, prepared_src);
 
           // Modify Prim type if this PrimSpec is Model type.
           if (primspec.typeName().empty() || primspec.typeName() == "Model") {
@@ -1922,11 +2003,14 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
       // poison the shared `err`.
       std::string find_err;
       if (!layer.find_primspec_at(inheritPath, &src_ps, &find_err) || !src_ps) {
-        if (warn) {
-          (*warn) += "Inherit target <" + inheritPath.prim_part() +
-                     "> not found in this layer; no opinions to inherit "
-                     "(skipped).\n";
-        }
+        // Not a warning: inheriting a class that is undefined in the composed
+        // layer is a standard, intentional USD idiom -- the `</__class__/...>`
+        // override hook (e.g. every Animal Logic ALab entity root `prepend
+        // inherits = </__class__/<name>>`, where `__class__` is never populated
+        // here). OpenUSD/usdcat emit nothing; a warning per such arc just floods
+        // the log (550+ on one ALab workbench). Debug-only.
+        DCOUT("Inherit target <" << inheritPath.prim_part()
+              << "> not found in this layer; no opinions to inherit (skipped).");
         visited.erase(key);
         continue;
       }
@@ -2444,19 +2528,24 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
 
       const PrimSpec *src_ps{nullptr};
 
-      if (!layer.find_primspec_at(specializePath, &src_ps, err)) {
+      // Specializing a class that has no local opinions (or is not defined in
+      // this layer) is valid in USD: the arc contributes nothing. Treat a
+      // missing target as a no-op (matches OpenUSD, and mirrors the inherits
+      // handling above) rather than failing the whole composition. This is what
+      // unblocks referenced assets that specialize an internal class sibling not
+      // pulled in by the reference (e.g. Animal Logic ALab entities, whose roots
+      // `prepend specializes = </_root_type>`). Use a local error string so a
+      // benign miss does not poison the shared `err`.
+      std::string find_err;
+      if (!layer.find_primspec_at(specializePath, &src_ps, &find_err) || !src_ps) {
+        // Not a warning (see the inherits counterpart above): specializing an
+        // undefined class is a standard USD idiom -- every ALab entity root
+        // `prepend specializes = </_root_type>`, and `_root_type`/`__class__` are
+        // intentionally unpopulated here. OpenUSD/usdcat emit nothing. Debug-only.
+        DCOUT("Specialize target <" << specializePath.prim_part()
+              << "> not found in this layer; no opinions to specialize (skipped).");
         visited.erase(key);
-        if (err) {
-          (*err) += "Specialize failed: Path <" +
-                    specializePath.prim_part() + "> not found.\n";
-        }
-        return false;
-      }
-
-      if (!src_ps) {
-        visited.erase(key);
-        PUSH_ERROR_AND_RETURN(
-            "Internal error: PrimSpec is nullptr in CompositeSpecializesRec.\n");
+        continue;
       }
 
       if (!detail::InheritPrimSpecImpl(primspec, *src_ps, warn, err)) {
@@ -2782,6 +2871,65 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
     if (src_child_names.count(dchild.name()) == 0) {
       ps.children().push_back(dchild);
     }
+  }
+
+  // Carry over dst's variantSet CONTENT (the `variantSet "x" = { ... }` blocks).
+  // `ps` started as `src` (weaker) and the loops above merged dst's stronger
+  // metadata / properties / children, but variant content lives in variantSets()
+  // -- NOT in metas() or children() -- so `dst = std::move(ps)` would drop it.
+  // This mirrors CombinePrimSpecRec's variantSet merge. Without it, applying a
+  // payload (or inherit/specialize) onto a prim that already carries variant
+  // content silently loses that content: e.g. ALab components whose `/root`
+  // gets a `payload` (the surfacing look-binding) composed beside the modelling
+  // reference's geo variant -- the variant's `over "GEO"` geometry vanished and
+  // the whole component composed to zero meshes. dst is the stronger opinion.
+  for (const auto &dst_vs : dst.variantSets()) {
+    auto pit = ps.variantSets().find(dst_vs.first);
+    if (pit == ps.variantSets().end()) {
+      ps.variantSets()[dst_vs.first] = dst_vs.second;  // dst-only: add whole set
+    } else {
+      VariantSetSpec &ps_vs = pit->second;
+      for (const auto &v : dst_vs.second.variantSet) {
+        auto vit = ps_vs.variantSet.find(v.first);
+        if (vit == ps_vs.variantSet.end()) {
+          ps_vs.variantSet[v.first] = v.second;  // dst-only variant
+        } else if (!OverridePrimSpecRec(1, vit->second, v.second, warn, err)) {
+          // both authored this variant: dst (stronger) overrides ps (weaker),
+          // matching the dst-children override above.
+          return false;
+        }
+      }
+    }
+  }
+
+  // Preserve dst's asset-resolution anchor. The result prim sits at dst's
+  // namespace location, so any relative reference/payload asset paths that dst
+  // authored (merged into `ps` by the update_from() above) must keep anchoring
+  // at dst's directory -- NOT the base class's. `ps = src` adopted src's working
+  // path, and update_from() restores only metadata, not the resolution state, so
+  // without this a prim that `inherits`/`specializes` an out-of-directory class
+  // (e.g. ALab components whose roots `specializes = </_root_type>`, where
+  // _root_type is defined up at the shot level) would re-anchor its OWN, possibly
+  // still-unresolved, references to the class's directory and silently lose all
+  // of its geometry. Only override when dst contributed arcs (so a prim that
+  // purely inherits a class's arcs still anchors them at the class's directory).
+  //
+  // BUT: when `src` itself still carries UNRESOLVED reference/payload arcs, those
+  // arcs were authored in src's layer and must keep anchoring at SRC's directory
+  // (the payloaded/referenced asset's own location) -- core USD semantics. This
+  // happens for nested assembly chains: a sub-assembly definition `payload`s a
+  // leaf component whose subLayers in turn `reference` `../../../fragment/geo/...`.
+  // `ps = src` already holds src's anchor; overwriting it with dst's (the
+  // consuming prim's, e.g. the sub-assembly's `base/definition` dir) would
+  // re-anchor the leaf's geo reference one place too high -> "Asset not found".
+  // dst's OWN consuming arc is being removed by the caller, so prefer src's anchor
+  // whenever src has surviving arcs.
+  const std::string dst_cwp = dst.get_current_working_path();
+  const bool src_has_arcs =
+      src.metas().references.has_value() || src.metas().payload.has_value();
+  if (!dst_cwp.empty() && !src_has_arcs &&
+      (dst.metas().references.has_value() || dst.metas().payload.has_value())) {
+    ps.set_asset_resolution_state(dst_cwp, dst.get_asset_search_paths());
   }
 
   DCOUT("move");

@@ -11,6 +11,8 @@
 
 #include <mutex>
 
+#include "compiler-features.hh"
+
 // On Apple platforms, back Mutex with os_unfair_lock: a 4-byte
 // kernel-assisted lock with priority donation, cheaper than std::mutex
 // (pthread_mutex) for short critical sections. Available since macOS 10.12.
@@ -54,7 +56,7 @@ class TUSDZ_TSA_CAPABILITY("mutex") Mutex {
 #endif
   // Required so `!m` is a valid expression in negative capability
   // annotations.
-  const Mutex& operator!() const { return *this; }
+  const Mutex& operator!() const TINYUSDZ_LIFETIMEBOUND { return *this; }
 };
 
 // std::lock_guard equivalent for Mutex.

@@ -5,9 +5,10 @@
 // Full support: references, payloads, inherits, specializes, variants, layer offsets
 
 #include "composition.hh"
+#include "../../external/fast_float/include/fast_float/fast_float.h"
 #include <algorithm>
-#include <sstream>
 #include <cstring>
+#include <system_error>
 
 namespace tinyusdz {
 namespace next {
@@ -307,9 +308,7 @@ void Compositor::CopyLocalOpinions(
   // Copy properties (source overrides target for time-sampled props).
   // Preserves valueless slots (connection-only / declared-only attributes),
   // their declared type names, and connection targets for USDC fidelity.
-  PropNameTable& name_table = GetPropNameTable();
   for (const auto& slot : source.properties().slots()) {
-    const std::string& pname = name_table.get(slot.name_id);
     const PropSlot* tgt_slot = target.property(slot.name_id);
     if (tgt_slot) {
       // Field-level fill-absent: pxr composes a property's default VALUE and its
@@ -322,10 +321,10 @@ void Compositor::CopyLocalOpinions(
           target.fill_property_value_if_absent(slot.name_id, *sv);
         }
       }
-      const std::vector<Path>* tconns = target.connection(pname);
+      const std::vector<Path>* tconns = target.connection(slot.name_id);
       if (!tconns || tconns->empty()) {
-        if (const std::vector<Path>* sconns = source.connection(pname)) {
-          for (const auto& c : *sconns) target.add_connection(pname, map_target(c));
+        if (const std::vector<Path>* sconns = source.connection(slot.name_id)) {
+          for (const auto& c : *sconns) target.add_connection(slot.name_id, map_target(c));
         }
       }
       continue;  // target opinion otherwise wins (incl. time-sampled merge)
@@ -339,14 +338,14 @@ void Compositor::CopyLocalOpinions(
       target.add_property_slot(slot.name_id,
                                static_cast<TypeId>(slot.value_type), slot.flags);
     }
-    if (const std::string* tn = source.property_type_name(pname)) {
-      target.set_property_type_name(pname, *tn);
+    if (const std::string* tn = source.property_type_name(slot.name_id)) {
+      target.set_property_type_name(slot.name_id, *tn);
     }
-    if (const std::vector<Path>* conns = source.connection(pname)) {
-      for (const auto& c : *conns) target.add_connection(pname, map_target(c));
+    if (const std::vector<Path>* conns = source.connection(slot.name_id)) {
+      for (const auto& c : *conns) target.add_connection(slot.name_id, map_target(c));
     }
     if (const PropMeta* pm = source.property_meta(slot.name_id)) {
-      target.ensure_property_meta(pname) = *pm;
+      target.ensure_property_meta(slot.name_id) = *pm;
     }
   }
 
@@ -972,18 +971,33 @@ VariantSelection Compositor::ParseVariantSelection(const std::string& str) {
   return sel;
 }
 
+// Locale-independent double parse (replaces std::atof, which honors the C locale
+// and could mis-parse under a comma-decimal locale). fast_float is correctly
+// rounded and already the parser's value producer. Returns 0.0 on a malformed
+// field, matching atof. Tolerates leading whitespace / a single '+' the way atof
+// did, since these query fields are not pre-trimmed.
+static double ParseOffsetField(const char* first, const char* last) {
+  while (first < last && (*first == ' ' || *first == '\t')) ++first;
+  const char* p = (first < last && *first == '+') ? first + 1 : first;
+  double v = 0.0;
+  auto r = fast_float::from_chars(p, last, v);
+  return (r.ec == std::errc{}) ? v : 0.0;
+}
+
 void Compositor::ParseLayerOffset(const std::string& offset_str,
                                    double& offset, double& scale) {
   offset = 0.0;
   scale = 1.0;
 
   // Format: "offset:scale" or just "offset"
+  const char* b = offset_str.data();
+  const char* e = b + offset_str.size();
   size_t colon = offset_str.find(':');
   if (colon == std::string::npos) {
-    offset = std::atof(offset_str.c_str());
+    offset = ParseOffsetField(b, e);
   } else {
-    offset = std::atof(offset_str.substr(0, colon).c_str());
-    scale = std::atof(offset_str.substr(colon + 1).c_str());
+    offset = ParseOffsetField(b, b + colon);
+    scale = ParseOffsetField(b + colon + 1, e);
     if (scale == 0.0) scale = 1.0;
   }
 }
