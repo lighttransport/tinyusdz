@@ -1650,6 +1650,16 @@ endif()
 #add_library(${TINYUSDZ_TARGET_STATIC} STATIC $<TARGET_OBJECTS:tinyusdz_object>)
 #add_sanitizers(${TINYUSDZ_TARGET_STATIC})
 
+# Vendored (external/third-party) sources may contain non-ASCII bytes without a
+# BOM. MSVC otherwise interprets them under the system code page and emits C4819.
+# Force UTF-8 decoding for the dependency/external sources only; our own sources
+# (TINYUSDZ_SOURCES) are saved as UTF-8 with BOM and don't need this.
+if(MSVC AND (TINYUSDZ_DEP_SOURCES OR TINYUSDZ_EXT_SOURCES))
+  set_source_files_properties(
+    ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES}
+    PROPERTIES COMPILE_OPTIONS "/utf-8")
+endif()
+
 add_library(${TINYUSDZ_TARGET_STATIC} STATIC ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
 set_target_properties(${TINYUSDZ_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_sanitizers(${TINYUSDZ_TARGET_STATIC})
