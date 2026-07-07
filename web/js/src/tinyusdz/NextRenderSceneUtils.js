@@ -49,10 +49,14 @@ export class NextTextureLoadingManager {
   }
 
   getStatus() {
+    const completed = this.loaded + this.failed;
     return {
       loaded: this.loaded,
       failed: this.failed,
-      total: this.total
+      total: this.total,
+      pending: Math.max(0, this.total - completed),
+      percentage: this.total > 0 ? (completed / this.total) * 100 : 100,
+      isComplete: this.total === 0 || completed >= this.total
     };
   }
 
@@ -63,6 +67,14 @@ export class NextTextureLoadingManager {
     onProgress = null
   } = {}) {
     this.aborted = false;
+    if (onProgress) {
+      onProgress({
+        ...this.getStatus(),
+        percentage: this.total > 0 ? 0 : 100,
+        isStart: true,
+        isComplete: this.total === 0
+      });
+    }
     let nextIndex = 0;
     let lastYieldTime = performance.now();
     const worker = async () => {
@@ -89,7 +101,11 @@ export class NextTextureLoadingManager {
           }));
         }
         if (onProgress) {
-          onProgress({ loaded: this.loaded, failed: this.failed, total: this.total });
+          onProgress({
+            ...this.getStatus(),
+            currentTexture: task.assetPath,
+            mapProperty: task.bindings?.map((b) => b.mapProperty).join(',') || ''
+          });
         }
         const now = performance.now();
         if (yieldInterval > 0 && now - lastYieldTime >= yieldInterval) {
@@ -199,12 +215,38 @@ export function nextMaterialCacheKey(entry) {
   return `fallback:${JSON.stringify(entry?.material || {})}:${JSON.stringify(entry?.texturePaths || {})}`;
 }
 
-export function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures = false } = {}) {
+export function buildNextThreeNode(adapter, {
+  skipTextures = true,
+  lazyTextures = false,
+  onProgress = null,
+  progressInterval = 25
+} = {}) {
   const group = new THREE.Group();
   group.name = adapter.filename || 'next-scene';
   const textureManager = (lazyTextures && !skipTextures) ? new NextTextureLoadingManager() : null;
   const materialCache = new Map();
   const sceneBox = new THREE.Box3();
+  const meshes = adapter.meshes || [];
+  const totalMeshes = meshes.length;
+  let builtMeshes = 0;
+  let lastProgressMesh = 0;
+  const progressStep = totalMeshes > 0
+    ? Math.max(1, Math.ceil(totalMeshes / Math.max(1, progressInterval)))
+    : 1;
+  const reportProgress = (message, force = false) => {
+    if (!onProgress) return;
+    if (!force && builtMeshes - lastProgressMesh < progressStep) return;
+    lastProgressMesh = builtMeshes;
+    onProgress({
+      stage: 'building',
+      builtMeshes,
+      totalMeshes,
+      materials: materialCache.size,
+      queuedTextures: textureManager ? textureManager.total : 0,
+      percentage: totalMeshes > 0 ? (builtMeshes / totalMeshes) * 100 : 100,
+      message
+    });
+  };
   const getMaterial = (entry) => {
     const key = nextMaterialCacheKey(entry);
     let material = materialCache.get(key);
@@ -225,8 +267,13 @@ export function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures 
     object.matrixAutoUpdate = false;
   };
 
-  for (const mesh of adapter.meshes || []) {
-    if (!mesh.points || mesh.points.length === 0) continue;
+  reportProgress(`Building next scene (0/${totalMeshes})...`, true);
+  for (const mesh of meshes) {
+    builtMeshes++;
+    if (!mesh.points || mesh.points.length === 0) {
+      reportProgress(`Building next scene (${builtMeshes}/${totalMeshes})...`);
+      continue;
+    }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
     if (mesh.normals && mesh.normals.length) {
@@ -285,7 +332,9 @@ export function buildNextThreeNode(adapter, { skipTextures = true, lazyTextures 
       sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threeMesh.matrix));
     }
     group.add(threeMesh);
+    reportProgress(`Building next scene (${builtMeshes}/${totalMeshes})...`);
   }
+  reportProgress(`Built next scene (${builtMeshes}/${totalMeshes}), materials=${materialCache.size}, textures=${textureManager ? textureManager.total : 0}`, true);
 
   if (!sceneBox.isEmpty()) {
     group.userData.localBoundsBox = sceneBox;

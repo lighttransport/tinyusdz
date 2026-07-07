@@ -1724,6 +1724,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             // Create mesh with multi-material array
             const meshCreateStart = performance.now();
             const threeMesh = new THREE.Mesh(geometry, materials);
+            if (mesh.materialId !== undefined) {
+                threeMesh.userData.materialId = mesh.materialId;
+            }
             if (options._debugState) {
                 options._debugState.meshCreateMs += performance.now() - meshCreateStart;
             }
@@ -1735,6 +1738,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
             const meshCreateStart = performance.now();
             const threeMesh = new THREE.Mesh(geometry, mtl);
+            if (mesh.materialId !== undefined) {
+                threeMesh.userData.materialId = mesh.materialId;
+            }
             if (options._debugState) {
                 options._debugState.meshCreateMs += performance.now() - meshCreateStart;
             }
