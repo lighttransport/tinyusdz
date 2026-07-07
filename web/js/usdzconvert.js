@@ -15,6 +15,7 @@ import {
   outputFormatForImage,
   parseByteSize,
 } from './src/usdzconvert.js';
+import { createBrowserTextureProcessor } from './src/texture-processor-browser.mjs';
 
 // ---------------------------------------------------------------------------
 // UI
@@ -145,6 +146,28 @@ container.innerHTML = `
     <span id="status" style="color:#aaa;font-size:13px"></span>
   </div>
 
+  <div id="progressPanel" style="display:none;background:#111;border:1px solid #30304a;border-radius:6px;padding:12px;margin:12px 0 8px">
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px">
+      <div>
+        <div id="progressStage" style="font-size:13px;color:#d7ddff">Preparing conversion...</div>
+        <div id="progressDetails" style="font-size:12px;color:#8f94aa;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:650px"></div>
+      </div>
+      <div id="progressPercent" style="font-variant-numeric:tabular-nums;color:#d7ddff;font-size:13px">0%</div>
+    </div>
+    <div style="height:8px;background:#222338;border-radius:999px;overflow:hidden">
+      <div id="progressBar" style="height:100%;width:0%;background:#4a6ef0;transition:width 120ms linear"></div>
+    </div>
+    <div id="textureProgress" style="display:none;margin-top:10px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#8f94aa;margin-bottom:5px">
+        <span id="textureProgressLabel">Textures</span>
+        <span id="textureProgressCount" style="font-variant-numeric:tabular-nums">0 / 0</span>
+      </div>
+      <div style="height:5px;background:#222338;border-radius:999px;overflow:hidden">
+        <div id="textureProgressBar" style="height:100%;width:0%;background:#28b8a8;transition:width 120ms linear"></div>
+      </div>
+    </div>
+  </div>
+
   <details style="margin-top:18px">
     <summary style="cursor:pointer;color:#bbb">Texture repack tool (merge channels, e.g. R=gloss, G=roughness)</summary>
     <div style="border:1px solid #444;border-radius:6px;padding:12px;margin-top:8px">
@@ -197,6 +220,15 @@ const els = {
   btnConvert: document.getElementById('btnConvert'),
   btnDownload: document.getElementById('btnDownload'),
   status: document.getElementById('status'),
+  progressPanel: document.getElementById('progressPanel'),
+  progressStage: document.getElementById('progressStage'),
+  progressDetails: document.getElementById('progressDetails'),
+  progressPercent: document.getElementById('progressPercent'),
+  progressBar: document.getElementById('progressBar'),
+  textureProgress: document.getElementById('textureProgress'),
+  textureProgressLabel: document.getElementById('textureProgressLabel'),
+  textureProgressCount: document.getElementById('textureProgressCount'),
+  textureProgressBar: document.getElementById('textureProgressBar'),
   repackSlots: document.getElementById('repackSlots'),
   repackChannels: document.getElementById('repackChannels'),
   btnRepack: document.getElementById('btnRepack'),
@@ -209,6 +241,91 @@ function log(msg) {
 }
 
 function setStatus(s) { els.status.textContent = s; }
+
+const PROGRESS_LABELS = {
+  preparing: 'Preparing files...',
+  wasm: 'Loading TinyUSDZ WASM...',
+  layers: 'Reading USD layers...',
+  flatten: 'Composing and flattening...',
+  textures: 'Processing textures...',
+  assets: 'Packaging assets...',
+  package: 'Writing USDZ...',
+  complete: 'Complete',
+};
+
+const PROGRESS_BASE = {
+  preparing: 2,
+  wasm: 8,
+  layers: 18,
+  flatten: 38,
+  textures: 52,
+  assets: 86,
+  package: 94,
+  complete: 100,
+};
+
+const PROGRESS_SPAN = {
+  preparing: 5,
+  wasm: 8,
+  layers: 18,
+  flatten: 14,
+  textures: 32,
+  assets: 6,
+  package: 6,
+  complete: 0,
+};
+
+let visibleProgressPct = 0;
+let lastProgressUpdateMs = 0;
+
+function showProgress() {
+  visibleProgressPct = 0;
+  lastProgressUpdateMs = 0;
+  els.progressPanel.style.display = 'block';
+  els.progressBar.style.width = '0%';
+  els.progressPercent.textContent = '0%';
+  els.progressStage.textContent = PROGRESS_LABELS.preparing;
+  els.progressDetails.textContent = '';
+  els.textureProgress.style.display = 'none';
+  els.textureProgressBar.style.width = '0%';
+  els.textureProgressCount.textContent = '0 / 0';
+}
+
+function updateTextureProgress(current, total, detail) {
+  if (!total) {
+    els.textureProgress.style.display = 'none';
+    return;
+  }
+  const cur = Math.max(0, Math.min(total, current || 0));
+  els.textureProgress.style.display = 'block';
+  els.textureProgressLabel.textContent = detail ? `Textures: ${detail}` : 'Textures';
+  els.textureProgressCount.textContent = `${cur.toLocaleString()} / ${total.toLocaleString()}`;
+  els.textureProgressBar.style.width = `${Math.round((cur / total) * 100)}%`;
+}
+
+function updateProgress(info = {}) {
+  const stage = info.stage || 'preparing';
+  const total = Number(info.total || 0);
+  const current = Number(info.current || 0);
+  let pct = PROGRESS_BASE[stage] ?? visibleProgressPct;
+  if (total > 0 && PROGRESS_SPAN[stage]) {
+    pct += Math.max(0, Math.min(1, current / total)) * PROGRESS_SPAN[stage];
+  }
+  if (stage === 'complete') pct = 100;
+
+  const now = performance.now();
+  const rounded = Math.max(visibleProgressPct, Math.min(100, Math.round(pct)));
+  if (now - lastProgressUpdateMs < 80 && rounded < 100 && stage !== 'textures') return;
+  lastProgressUpdateMs = now;
+  visibleProgressPct = rounded;
+
+  els.progressPanel.style.display = 'block';
+  els.progressBar.style.width = `${rounded}%`;
+  els.progressPercent.textContent = `${rounded}%`;
+  els.progressStage.textContent = PROGRESS_LABELS[stage] || stage;
+  els.progressDetails.textContent = info.message || info.path || '';
+  if (stage === 'textures') updateTextureProgress(current, total, info.path || info.message || '');
+}
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -372,6 +489,11 @@ function browserImageFormat(name) {
   return null;
 }
 
+function browserTextureConcurrency() {
+  const cores = navigator.hardwareConcurrency || 4;
+  return Math.max(1, Math.min(8, cores - 1 || 1));
+}
+
 function targetBrowserFormat(name, requested) {
   const fmt = outputFormatForImage(name, requested);
   if (fmt.format === 'jpeg') return { format: 'jpeg', mime: 'image/jpeg', ext: fmt.ext };
@@ -504,7 +626,10 @@ els.btnConvert.addEventListener('click', async () => {
   try {
     els.btnConvert.disabled = true;
     invalidateResult();
+    showProgress();
+    updateProgress({ stage: 'wasm', current: 0, total: 1, message: 'Loading converter module' });
     await ensureWasm();
+    updateProgress({ stage: 'wasm', current: 1, total: 1, message: 'Converter module ready' });
 
     const rootPath = els.rootSelect.value;
     const fitStrategy = (document.querySelector('input[name="fitStrategy"]:checked') || {}).value || 'size';
@@ -543,14 +668,28 @@ els.btnConvert.addEventListener('click', async () => {
       maxUsdcMb: parseInt(els.maxUsdcMb.value, 10) || 0,
       maxMemMb: parseInt(els.maxUsdcMb.value, 10) || 0,
       log,
+      progress: updateProgress,
     };
     // The browser canvas resizes in gamma space (== "linear" filter). When the
     // user asks for colorspace-aware resampling (auto/sRGB), route textures to
     // TinyUSDZ WASM instead so convertImage can honor it (the canvas can't).
     const colorspaceAware = opts.resizeColorspace === 'auto' ||
                             opts.resizeColorspace === 'srgb';
+    let browserTexturePool = null;
     if (needsTextureWork && !colorspaceAware) {
-      opts.textureProcessor = browserTextureProcessor;
+      if (typeof OffscreenCanvas !== 'undefined' &&
+          typeof OffscreenCanvas.prototype.convertToBlob === 'function') {
+        browserTexturePool = createBrowserTextureProcessor({
+          concurrency: browserTextureConcurrency(),
+        });
+        opts.textureProcessor = browserTexturePool.processor;
+        opts.textureConcurrency = browserTexturePool.concurrency;
+        log(`Browser texture codec: OffscreenCanvas (${browserTexturePool.concurrency} concurrent job(s))`);
+      } else {
+        opts.textureProcessor = browserTextureProcessor;
+        opts.textureConcurrency = 1;
+        log('Browser texture codec: canvas fallback (1 concurrent job)');
+      }
     }
     if (targetTextureBytes > 0) {
       log(`Fitting textures to ${(targetTextureBytes / 1048576).toFixed(1)} MB via "${fitStrategy}" strategy...`);
@@ -559,6 +698,7 @@ els.btnConvert.addEventListener('click', async () => {
     // Convert-only: validate the conversion and report bytes/warnings/errors.
     // The download is a separate, explicit step (Download button below).
     setStatus('Converting...');
+    updateProgress({ stage: 'preparing', current: 1, total: 1, message: rootPath });
     let usdz, stats;
     if (opts.pipeline === 'stream' || opts.pipeline === 'stream-next') {
       if (targetTextureBytes > 0) {
@@ -568,6 +708,7 @@ els.btnConvert.addEventListener('click', async () => {
       const source = {
         keys: [...fileByPath.keys()],
         fetch: async (key) => {
+          updateProgress({ stage: isImageName(key) ? 'textures' : 'layers', message: key });
           const file = fileByPath.get(key);
           if (!file) throw new Error(`Missing uploaded file: ${key}`);
           return new Uint8Array(await file.arrayBuffer());
@@ -581,21 +722,34 @@ els.btnConvert.addEventListener('click', async () => {
     } else {
       // Read all files into memory for the classic folder-conversion API.
       const assetMap = new Map();
+      updateProgress({ stage: 'preparing', current: 0, total: uploaded.length, message: 'Reading selected files' });
+      let fileReadCount = 0;
       for (const { path, file } of uploaded) {
         assetMap.set(path, new Uint8Array(await file.arrayBuffer()));
+        fileReadCount++;
+        updateProgress({ stage: 'preparing', current: fileReadCount, total: uploaded.length, message: path });
       }
       ({ usdz, stats } = await convertFolderToUSDZ(native, assetMap, opts));
     }
     log(`Converted OK. textures: ${stats.textures}, resized: ${stats.resized}, ` +
         `reencoded: ${stats.reencoded}, audio: ${stats.audio || 0}, ` +
         `other assets: ${stats.otherAssets || 0}. USDZ: ${usdz.length} bytes`);
+    if (browserTexturePool) {
+      const tex = browserTexturePool.stats();
+      log(`Browser texture time: decode ${tex.decodeMs.toFixed(1)} ms, ` +
+          `raster ${tex.rasterMs.toFixed(1)} ms, encode ${tex.encodeMs.toFixed(1)} ms; ` +
+          `processed ${tex.processed}, skipped ${tex.skipped}`);
+    }
 
     lastResult = { usdz, filename: outputFilename() };
     els.btnDownload.disabled = false;
     refreshNamePreview();
+    updateProgress({ stage: 'complete', message: `${usdz.length.toLocaleString()} bytes` });
     setStatus(`✓ Converted — ${usdz.length.toLocaleString()} bytes. Ready to download.`);
   } catch (err) {
     log('ERROR: ' + (err && err.message ? err.message : err));
+    els.progressStage.textContent = 'Conversion failed';
+    els.progressDetails.textContent = err && err.message ? err.message : String(err);
     setStatus('✗ Conversion failed — see log.');
   } finally {
     els.btnConvert.disabled = false;
