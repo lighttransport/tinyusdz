@@ -1,5 +1,12 @@
 import * as THREE from 'three';
 
+export function defaultTextureConcurrency() {
+  const cores = (typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency))
+    ? navigator.hardwareConcurrency
+    : 8;
+  return Math.max(4, Math.min(16, cores || 8));
+}
+
 export class NextTextureLoadingManager {
   constructor() {
     this.tasks = [];
@@ -61,7 +68,7 @@ export class NextTextureLoadingManager {
   }
 
   async startLoading({
-    concurrency = 4,
+    concurrency = defaultTextureConcurrency(),
     yieldInterval = 16,
     onTextureLoaded = null,
     onProgress = null
@@ -219,7 +226,8 @@ export function buildNextThreeNode(adapter, {
   skipTextures = true,
   lazyTextures = false,
   onProgress = null,
-  progressInterval = 25
+  progressInterval = 25,
+  releaseBuildData = true
 } = {}) {
   const group = new THREE.Group();
   group.name = adapter.filename || 'next-scene';
@@ -338,6 +346,10 @@ export function buildNextThreeNode(adapter, {
 
   if (!sceneBox.isEmpty()) {
     group.userData.localBoundsBox = sceneBox;
+  }
+
+  if (releaseBuildData && adapter && typeof adapter.releaseBuildData === 'function') {
+    adapter.releaseBuildData();
   }
 
   return { node: group, textureManager };

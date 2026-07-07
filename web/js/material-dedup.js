@@ -70,6 +70,12 @@ let jsPostStats = null;
 // Background lazy texture loader for the currently displayed scene.
 let textureManager = null;
 let activeLoadStats = null;
+let activeProgress = {
+	visible: false,
+	stage: '',
+	percentage: 0,
+	message: ''
+};
 
 const textureCache = new Map();
 const frameState = {
@@ -131,6 +137,36 @@ function formatMemoryUse(before, after, key) {
 	return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
 }
 
+function showProgress(stage, percentage, message) {
+	const panel = document.getElementById('progressPanel');
+	const label = document.getElementById('progressLabel');
+	const bar = document.getElementById('progressBar');
+	if (!panel || !label || !bar) return;
+	const pct = Math.max(0, Math.min(100,
+		Number.isFinite(percentage) ? percentage : activeProgress.percentage || 0));
+	activeProgress = {
+		visible: true,
+		stage: stage || activeProgress.stage,
+		percentage: pct,
+		message: message || activeProgress.message
+	};
+	panel.style.display = 'block';
+	label.textContent = message || stage || 'Loading...';
+	bar.style.transform = `scaleX(${pct / 100})`;
+}
+
+function hideProgress(delayMs = 1200) {
+	const panel = document.getElementById('progressPanel');
+	if (!panel) return;
+	if (delayMs > 0) {
+		setTimeout(() => {
+			if (activeProgress.percentage >= 100) panel.style.display = 'none';
+		}, delayMs);
+	} else {
+		panel.style.display = 'none';
+	}
+}
+
 function beginLoadStats(fileSize = null) {
 	const stats = {
 		startTime: performance.now(),
@@ -149,6 +185,7 @@ function beginLoadStats(fileSize = null) {
 	};
 	activeLoadStats = stats;
 	updateLoadStatsPanel(stats, 'Loading...');
+	showProgress('start', 0, 'Preparing load...');
 	return stats;
 }
 
@@ -196,6 +233,7 @@ function failLoadStats(stats) {
 	stats.totalMs = performance.now() - stats.startTime;
 	stats.memoryAfter = captureMemorySnapshot();
 	updateLoadStatsPanel(stats, 'Failed');
+	showProgress('failed', 100, 'Load failed');
 }
 
 function updateTextureLoadStats(info = {}) {
@@ -666,13 +704,23 @@ function applyJsPostProcess(node) {
 // `lazyTextures` queues textures for background decoding via a returned
 // TextureLoadingManager (the caller starts loading after the first render).
 async function mountScene(usd,
-		{ skipTextures = true, postProcess = false, lazyTextures = false } = {}) {
+		{ skipTextures = true, postProcess = false, lazyTextures = false, progressBase = 55, progressRange = 25 } = {}) {
 	abortTextureManager();
 	disposeSceneRoot();
 	disposeTextureCache();
 
+	const reportBuildProgress = (info = {}) => {
+		const localPct = Math.max(0, Math.min(100, Number(info.percentage) || 0));
+		const pct = progressBase + (localPct / 100) * progressRange;
+		showProgress('building', pct, info.message || 'Building scene...');
+	};
+
 	if (isNextScene(usd)) {
-		const built = buildNextThreeNode(usd, { skipTextures, lazyTextures });
+		const built = buildNextThreeNode(usd, {
+			skipTextures,
+			lazyTextures,
+			onProgress: reportBuildProgress
+		});
 		if (postProcess) {
 			applyJsPostProcess(built.node);
 		} else {
@@ -700,6 +748,7 @@ async function mountScene(usd,
 			preferredMaterialType: 'auto',
 			textureCache,
 			storeMaterialData: true,
+			onProgress: reportBuildProgress,
 			// When textures are disabled this is a geometry/count-focused view;
 			// skipping texture loads also avoids 404 spam from unresolved URIs.
 			skipTextures,
@@ -741,14 +790,21 @@ function startLazyTextureLoading() {
 	});
 	updateDebugHandle();
 	mgr.startLoading({
-		concurrency: 4,
+		concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
 		yieldInterval: 16,
-		onTextureLoaded: (material) => { material.needsUpdate = true; },
-		onProgress: (info) => {
-			updateTextureLoadStats(info);
-			setStatus(`${describeOptions()} · textures ${info.loaded}/${info.total}` +
-				(info.failed ? ` (${info.failed} failed)` : ''));
-		}
+			onTextureLoaded: (material) => { material.needsUpdate = true; },
+			onProgress: (info) => {
+				updateTextureLoadStats(info);
+				const localPct = Number.isFinite(info.percentage)
+					? info.percentage
+					: ((info.loaded + (info.failed || 0)) / Math.max(1, info.total || 1)) * 100;
+				showProgress('textures',
+					80 + Math.max(0, Math.min(100, localPct)) * 0.2,
+					`Loading textures ${info.loaded}/${info.total}` +
+						(info.failed ? ` (${info.failed} failed)` : ''));
+				setStatus(`${describeOptions()} · textures ${info.loaded}/${info.total}` +
+					(info.failed ? ` (${info.failed} failed)` : ''));
+			}
 	}).then(() => {
 		const elapsed = performance.now() - textureStart;
 		updateTextureLoadStats({
@@ -758,13 +814,18 @@ function startLazyTextureLoading() {
 			complete: true,
 			ms: elapsed
 		});
-		setStatus(`${describeOptions()} · textures complete ${mgr.loaded}/${mgr.total}` +
-			(mgr.failed ? ` (${mgr.failed} failed)` : '') +
-			` in ${formatDurationMs(elapsed)}`);
-		updateDebugHandle();
-	})
-		.catch((err) => console.warn('[material-dedup] texture loading:', err));
-}
+			setStatus(`${describeOptions()} · textures complete ${mgr.loaded}/${mgr.total}` +
+				(mgr.failed ? ` (${mgr.failed} failed)` : '') +
+				` in ${formatDurationMs(elapsed)}`);
+			showProgress('complete', 100, 'Textures complete');
+			hideProgress();
+			updateDebugHandle();
+		})
+			.catch((err) => {
+				console.warn('[material-dedup] texture loading:', err);
+				showProgress('failed', 100, 'Texture loading failed');
+			});
+	}
 
 // Deterministically measure the built USD scene by walking usdSceneRoot. This
 // avoids relying on renderer.info (which only reflects the last drawn frame and
@@ -806,6 +867,7 @@ async function loadModel(bytes, name, stats = null) {
 	currentName = name;
 	document.getElementById('currentFile').textContent = name;
 	setStatus('Converting baseline (no optimizations)…');
+	showProgress('parsing', 20, 'Converting baseline...');
 
 	let baseResult = null;
 	try {
@@ -818,10 +880,11 @@ async function loadModel(bytes, name, stats = null) {
 			flattenRenderTree: false
 		});
 		if (stats) stats.parseMs = performance.now() - parseStart;
+		showProgress('building', 38, 'Building baseline scene...');
 		sceneMeta = readSceneMeta(baseResult.usd);
 		// Baseline is for counts only; never decode/apply its (undeduplicated)
 		// texture set — it can be enormous and is immediately replaced below.
-		await mountScene(baseResult.usd, { skipTextures: true });
+		await mountScene(baseResult.usd, { skipTextures: true, progressBase: 30, progressRange: 10 });
 		const baseInfo = measureSceneInfo();
 		baseline = {
 			meshes: baseResult.counts.meshes,
@@ -835,11 +898,16 @@ async function loadModel(bytes, name, stats = null) {
 
 		// Now the current selection, then frame the camera once for this model.
 		const processStart = performance.now();
+		showProgress('processing', 45, 'Converting with current options...');
 		await rebuild();
 		if (stats) stats.processMs = performance.now() - processStart;
 		frameCameraToScene();
 		finishLoadStats(stats);
 		window.renderComplete = true;
+		if (!textureManager || textureManager.total <= 0) {
+			showProgress('complete', 100, 'Load complete');
+			hideProgress();
+		}
 		updateDebugHandle();
 	} catch (err) {
 		console.error(err);
@@ -858,6 +926,7 @@ async function loadModel(bytes, name, stats = null) {
 async function rebuild() {
 	if (!rawBytes) return;
 	setStatus('Converting with current options…');
+	showProgress('processing', 45, 'Converting with current options...');
 	// Stop texture loads, dispose Three.js/GPU objects, and free the previous
 	// native scene before parsing the next variant. This keeps repeated reloads
 	// and optimization toggles from retaining multiple large USD scenes at once.
@@ -874,7 +943,9 @@ async function rebuild() {
 		updateDebugHandle();
 		await mountScene(usd, {
 			skipTextures: !params.loadTextures, postProcess: true,
-			lazyTextures: params.loadTextures });
+			lazyTextures: params.loadTextures,
+			progressBase: 55,
+			progressRange: params.loadTextures ? 25 : 40 });
 		const info = measureSceneInfo();
 		updateStatsUI(counts, info);
 		setStatus(describeOptions());
@@ -896,17 +967,25 @@ async function rebuild() {
 async function reapplyThreePostProcess() {
 	if (!currentUsd || !currentCounts) return;
 	setStatus('Applying three.js post-process…');
+	showProgress('postprocess', 65, 'Applying three.js post-process...');
 	try {
 		await mountScene(currentUsd, {
 			skipTextures: !params.loadTextures, postProcess: true,
-			lazyTextures: params.loadTextures });
+			lazyTextures: params.loadTextures,
+			progressBase: 65,
+			progressRange: params.loadTextures ? 15 : 30 });
 		const info = measureSceneInfo();
 		updateStatsUI(currentCounts, info);
 		setStatus(describeOptions());
 		startLazyTextureLoading();
+		if (!textureManager || textureManager.total <= 0) {
+			showProgress('complete', 100, 'Update complete');
+			hideProgress();
+		}
 	} catch (err) {
 		console.error(err);
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		showProgress('failed', 100, 'Update failed');
 	}
 }
 
@@ -1057,6 +1136,7 @@ async function loadSampleScene() {
 	const bytes = new TextEncoder().encode(usda);
 	const stats = beginLoadStats(bytes.byteLength);
 	stats.fetchMs = 0;
+	showProgress('fetch', 10, 'Generated sample scene');
 	await loadModel(bytes, `sample ${params.sampleGrid}×${params.sampleGrid} grid`, stats);
 }
 
@@ -1064,12 +1144,14 @@ async function loadSampleScene() {
 async function loadModelFromURL(url, stats = null) {
 	setStatus('Fetching ' + url + ' …');
 	const localStats = stats || beginLoadStats();
+	showProgress('fetch', 5, 'Fetching USD file...');
 	const fetchStart = performance.now();
 	const resp = await fetch(url);
 	if (!resp.ok) throw new Error(`fetch ${url}: ${resp.status}`);
 	const buf = await resp.arrayBuffer();
 	localStats.fetchMs = performance.now() - fetchStart;
 	localStats.fileSize = buf.byteLength;
+	showProgress('fetch', 15, 'USD file fetched');
 	await loadModel(new Uint8Array(buf), getDisplayNameFromURI(url), localStats);
 }
 
@@ -1079,10 +1161,12 @@ function setupFileInput() {
 		if (!file) return;
 		const stats = beginLoadStats();
 		try {
+			showProgress('fetch', 5, 'Reading USD file...');
 			const readStart = performance.now();
 			const buf = await file.arrayBuffer();
 			stats.fetchMs = performance.now() - readStart;
 			stats.fileSize = buf.byteLength;
+			showProgress('fetch', 15, 'USD file read');
 			await loadModel(new Uint8Array(buf), file.name, stats);
 		} catch (err) {
 			console.error(err);
@@ -1129,10 +1213,12 @@ function setupDragAndDrop() {
 		}
 		const stats = beginLoadStats();
 		try {
+			showProgress('fetch', 5, 'Reading dropped USD file...');
 			const readStart = performance.now();
 			const buf = await file.arrayBuffer();
 			stats.fetchMs = performance.now() - readStart;
 			stats.fileSize = buf.byteLength;
+			showProgress('fetch', 15, 'USD file read');
 			await loadModel(new Uint8Array(buf), file.name, stats);
 		} catch (err) {
 			console.error(err);

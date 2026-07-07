@@ -30,6 +30,7 @@ class TextureLoadingManager {
         this.queue = [];           // Pending texture tasks
         this.taskMap = new Map();  // texture key -> task with material bindings
         this.promiseCache = new Map(); // textureId -> in-flight/completed Promise
+        this.textureSignatureCache = new Map(); // textureId -> sampler/image signature
         this.loaded = 0;           // Number of loaded textures
         this.failed = 0;           // Number of failed textures
         this.total = 0;            // Total textures to load
@@ -46,10 +47,13 @@ class TextureLoadingManager {
      * @param {Object} options - Additional options (e.g., normalScale)
      */
     queueTexture(material, mapProperty, textureId, usdScene, options = {}) {
-        const key = `${TinyUSDZLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty)}:${options.sourceFileName || ''}`;
+        const cacheKey = TinyUSDZLoaderUtils.textureCacheKey(
+            textureId, usdScene, mapProperty, this.textureSignatureCache);
+        const key = `${cacheKey}:${options.sourceFileName || ''}`;
         let task = this.taskMap.get(key);
         if (!task) {
             task = {
+                cacheKey,
                 mapProperty,
                 textureId,
                 usdScene,
@@ -73,7 +77,7 @@ class TextureLoadingManager {
             loaded: this.loaded,
             failed: this.failed,
             pending: this.total - this.loaded - this.failed,
-            percentage: this.total > 0 ? (this.loaded / this.total) * 100 : 0,
+            percentage: this.total > 0 ? ((this.loaded + this.failed) / this.total) * 100 : 100,
             isLoading: this.isLoading,
             isComplete: this.loaded + this.failed >= this.total && !this.isLoading
         };
@@ -93,6 +97,7 @@ class TextureLoadingManager {
         this.queue = [];
         this.taskMap.clear();
         this.promiseCache.clear();
+        this.textureSignatureCache.clear();
         this.loaded = 0;
         this.failed = 0;
         this.total = 0;
@@ -113,7 +118,7 @@ class TextureLoadingManager {
         const {
             onProgress = null,
             onTextureLoaded = null,
-            concurrency = 1,
+            concurrency = TinyUSDZLoaderUtils.defaultTextureConcurrency(),
             yieldInterval = 16
         } = options;
 
@@ -130,9 +135,13 @@ class TextureLoadingManager {
         if (onProgress) {
             onProgress({
                 loaded: 0,
+                failed: 0,
                 total: this.total,
+                pending: this.total,
                 percentage: 0,
-                currentTexture: null
+                currentTexture: null,
+                isStart: true,
+                isComplete: this.total === 0
             });
         }
 
@@ -150,7 +159,8 @@ class TextureLoadingManager {
             const { mapProperty, textureId, usdScene, options: taskOptions } = task;
 
             try {
-                const cacheKey = TinyUSDZLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty);
+                const cacheKey = task.cacheKey ||
+                    TinyUSDZLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty, this.textureSignatureCache);
                 let promise = this.promiseCache.get(cacheKey);
                 if (!promise) {
                     promise = TinyUSDZLoaderUtils.getTextureFromUSD(usdScene, textureId);
@@ -203,8 +213,10 @@ class TextureLoadingManager {
                     loaded: this.loaded,
                     failed: this.failed,
                     total: this.total,
-                    percentage: (this.loaded / this.total) * 100,
-                    currentTexture: `${mapProperty} (${textureId})`
+                    pending: this.total - this.loaded - this.failed,
+                    percentage: this.total > 0 ? ((this.loaded + this.failed) / this.total) * 100 : 100,
+                    currentTexture: `${mapProperty} (${textureId})`,
+                    isComplete: this.loaded + this.failed >= this.total
                 });
             }
 
@@ -243,6 +255,7 @@ class TextureLoadingManager {
                 loaded: this.loaded,
                 failed: this.failed,
                 total: this.total,
+                pending: 0,
                 percentage: 100,
                 currentTexture: null,
                 isComplete: true
@@ -263,6 +276,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     // Yield interval for UI updates (ms)
     static YIELD_INTERVAL_MS = 250;
+
+    static defaultTextureConcurrency() {
+        const cores = (typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency))
+            ? navigator.hardwareConcurrency
+            : 8;
+        return Math.max(4, Math.min(16, cores || 8));
+    }
 
     constructor() {
         super();
@@ -621,9 +641,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return texture;
     }
 
-    static textureCacheKey(textureId, usdScene, mapProperty = '') {
+    static textureCacheKey(textureId, usdScene, mapProperty = '', textureSignatureCache = null) {
         const role = this.textureColorRole(mapProperty);
-        const signature = this.textureSignature(textureId, usdScene);
+        const signature = this.textureSignature(textureId, usdScene, textureSignatureCache);
         return `${role}:${JSON.stringify(signature)}`;
     }
 
