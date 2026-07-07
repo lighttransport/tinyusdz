@@ -1145,8 +1145,32 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     }
   };
 
-  if (rm.shader_type == tydn::RenderMaterial::ShaderType::PreviewSurface &&
-      rm.preview_surface) {
+  // A material can author BOTH a UsdPreviewSurface and an OpenPBR/mtlx shader
+  // (DCC exports, MaterialX-with-fallback); ConvertMaterial fills both but sets
+  // shader_type to the last child (often OpenPBR). tydra-next resolves *direct*
+  // UsdUVTexture connections into texture_ids but not MaterialX nodegraph image
+  // nodes, so the two shaders can disagree on which textures resolved. Pick the
+  // shader that actually resolved the most textures (tie -> UsdPreviewSurface,
+  // the interop path). Falls back cleanly for single-shader materials.
+  auto texCount = [](std::initializer_list<int> ids) {
+    int n = 0; for (int i : ids) if (i >= 0) ++n; return n;
+  };
+  int pvTex = -1, opTex = -1;
+  if (rm.preview_surface) {
+    const tydn::PreviewSurfaceShader& s = *rm.preview_surface;
+    pvTex = texCount({s.diffuse_color.texture_id, s.normal.texture_id,
+                      s.emissive_color.texture_id, s.metallic.texture_id,
+                      s.roughness.texture_id});
+  }
+  if (rm.openpbr) {
+    const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
+    opTex = texCount({s.base_color.texture_id, s.normal.texture_id,
+                      s.emission_color.texture_id, s.base_metalness.texture_id,
+                      s.base_roughness.texture_id});
+  }
+  const bool usePreview = rm.preview_surface && (!rm.openpbr || pvTex >= opTex);
+
+  if (usePreview) {
     const tydn::PreviewSurfaceShader& s = *rm.preview_surface;
     dm.hasUsdPreviewSurface = true;
     setRGB(dm.baseColor, s.diffuse_color.value, 1.0f);
@@ -1158,8 +1182,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     colorSlot(s.emissive_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
     loadNormal(s.normal);
     loadMetalRough(s.metallic, s.roughness);
-  } else if (rm.shader_type == tydn::RenderMaterial::ShaderType::OpenPBR &&
-             rm.openpbr) {
+  } else if (rm.openpbr) {
     const tydn::OpenPBRSurfaceShader& s = *rm.openpbr;
     dm.hasOpenPBRSurface = true;
     dm.materialXNodeGraphJson = s.nodegraph_json;
