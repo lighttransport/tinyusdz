@@ -450,11 +450,17 @@ bool CrateReader::Impl::BuildStage() {
       // them to PrimSpecMeta so they do not leak in as phantom properties.
       if (ps) {
         if (field.first == "active") {
-          if (const bool* b = field.second.as_bool()) ps->meta().active = *b;
+          if (const bool* b = field.second.as_bool()) {
+            ps->meta().active = *b;
+            ps->meta().active_authored = true;
+          }
           continue;
         }
         if (field.first == "hidden") {
-          if (const bool* b = field.second.as_bool()) ps->meta().hidden = *b;
+          if (const bool* b = field.second.as_bool()) {
+            ps->meta().hidden = *b;
+            ps->meta().hidden_authored = true;
+          }
           continue;
         }
         if (field.first == "doc") {

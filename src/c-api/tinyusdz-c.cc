@@ -1858,10 +1858,12 @@ tusd_status tusd_prim_set_metadata(tusd_stage* stage, const char* prim_path,
     const bool* b = v.as_bool();
     if (!b) return Fail(TUSD_ERR_TYPE_MISMATCH, "expects a bool");
     m.active = *b;
+    m.active_authored = true;
   } else if (k == "hidden") {
     const bool* b = v.as_bool();
     if (!b) return Fail(TUSD_ERR_TYPE_MISMATCH, "expects a bool");
     m.hidden = *b;
+    m.hidden_authored = true;
   } else if (k == "instanceable") {
     const bool* b = v.as_bool();
     if (!b) return Fail(TUSD_ERR_TYPE_MISMATCH, "expects a bool");

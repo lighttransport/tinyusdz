@@ -110,6 +110,8 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
   }
   holder.meta().active = vd.active;
   holder.meta().hidden = vd.hidden;
+  if (!vd.active) holder.meta().active_authored = true;
+  if (vd.hidden) holder.meta().hidden_authored = true;
   if (!vd.doc.empty()) holder.meta().doc() = vd.doc;
   holder.meta().references = vd.references;
   holder.meta().payloads = vd.payloads;

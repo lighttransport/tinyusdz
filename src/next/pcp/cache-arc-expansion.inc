@@ -254,16 +254,19 @@
           }
           if (!vd->payloads.empty()) {
             const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
+            bool any_deferred = false;
             for (const std::string &pl_str : vd->payloads) {
               CompositionArc arc = Compositor::ParsePayload(pl_str);
               if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
-                deferred_payload_prims.insert(root_prim_path);
+                any_deferred = true;
                 continue;
               }
-              deferred_payload_prims.erase(root_prim_path);
               ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
                          chain, warn, err, sr.layer_id);
             }
+            // insert-only here: another arc group's loaded payloads must not
+            // clear a deferral recorded for this option's payloads.
+            if (any_deferred) deferred_payload_prims.insert(root_prim_path);
           }
           for (const std::string &s : vd->specializes) {
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
@@ -330,18 +333,24 @@
                    frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
       }
 
-      // Payloads (deferrable, weaker than references).
+      // Payloads (deferrable, weaker than references). See the merge path:
+      // erase the deferral marker only when NO payload on this prim deferred.
       if (!spec->meta().payloads.empty()) {
         const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
+        bool any_deferred = false;
         for (const std::string &pl_str : spec->meta().payloads) {
           CompositionArc arc = Compositor::ParsePayload(pl_str);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
-            deferred_payload_prims.insert(root_prim_path);
+            any_deferred = true;
             continue;  // deferred: contributes no opinions.
           }
-          deferred_payload_prims.erase(root_prim_path);
           ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
                      chain, warn, err, sr.layer_id);
+        }
+        if (any_deferred) {
+          deferred_payload_prims.insert(root_prim_path);
+        } else {
+          deferred_payload_prims.erase(root_prim_path);
         }
       }
 
@@ -362,15 +371,24 @@
       auto mpay = MergeArcField(specs, ArcSel::Payloads);
       if (!mpay.empty()) {
         const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
+        // Track deferral across ALL of this prim's payloads: erasing per
+        // loaded arc let a later loaded payload clear the marker set by an
+        // earlier deferred one (HasDeferredPayload then lied depending on
+        // authored arc order). Erase only when nothing was deferred.
+        bool any_deferred = false;
         for (const auto &pl : mpay) {
           CompositionArc arc = Compositor::ParsePayload(pl.first);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
-            deferred_payload_prims.insert(root_prim_path);
+            any_deferred = true;
             continue;
           }
-          deferred_payload_prims.erase(root_prim_path);
           ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
                      chain, warn, err, pl.second);
+        }
+        if (any_deferred) {
+          deferred_payload_prims.insert(root_prim_path);
+        } else {
+          deferred_payload_prims.erase(root_prim_path);
         }
       }
       for (const auto &s : MergeArcField(specs, ArcSel::Specializes)) {

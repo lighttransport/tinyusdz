@@ -129,6 +129,14 @@ bool AsciiParser::Impl::ParseStageMetadata() {
               break;  // unexpected token: stop rather than mis-consume
             }
             layer_->meta().subLayers.push_back(path);
+            // Optional per-sublayer layer offset "(offset = ..; scale = ..)".
+            // Sublayer offsets are not yet plumbed through composition; parse
+            // and skip so the file at least LOADS (previously the unexpected
+            // '(' failed the whole metadata block and thus the whole load).
+            if (Check(TokenType::OpenParen)) {
+              AddWarning("subLayers layer offsets are parsed but not applied");
+              SkipValueLike();
+            }
             Match(TokenType::Comma);
           }
           Match(TokenType::CloseBracket);

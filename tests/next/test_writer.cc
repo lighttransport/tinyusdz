@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Writer Test
 
 #include <iostream>
+#include <cstring>
 #include <sstream>
 #include <fstream>
 #include <cassert>
@@ -21,6 +22,7 @@
 #include "next/writer/value-printer.hh"
 #include "next/writer/prim-printer.hh"
 #include "next/writer/usda-writer.hh"
+#include "next/reader/usda-reader.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/writer/dtoa.hh"
 
@@ -938,6 +940,37 @@ void test_timesamples_metadata_placement() {
   std::cout << "  timeSamples metadata placement test passed!\n\n";
 }
 
+
+// An authored DEFAULT must survive alongside .timeSamples on the same
+// attribute (pxr keeps both; the writer used to drop the default).
+void test_default_with_timesamples() {
+  std::cout << "Testing default + timeSamples coexistence...\n";
+  const char* src =
+      "#usda 1.0\n"
+      "def Xform \"p\"\n{\n"
+      "    double v = 5\n"
+      "    double v.timeSamples = {\n        0: 1,\n        10: 2,\n    }\n"
+      "}\n";
+  LoadResult r = LoadUSDAFromString(src, std::strlen(src));
+  assert(r.success);
+  std::string usda = WriteUSDAToString(r.stage);
+  assert(usda.find("double v = 5") != std::string::npos &&
+         "authored default dropped when timeSamples coexist");
+  assert(usda.find("v.timeSamples") != std::string::npos &&
+         "timeSamples block missing");
+  // Round-trip: both fields still there after re-parsing the output.
+  LoadResult r2 = LoadUSDAFromString(usda.c_str(), usda.size());
+  assert(r2.success);
+  const PrimSpec* p2 = r2.stage.GetRootLayer()->prim_at_path("/p");
+  assert(p2);
+  const Value* def = p2->property_value("v");
+  assert(def && def->as_double() && *def->as_double() == 5.0);
+  PropNameId vid = GetPropNameTable().find("v");
+  const auto* ts = p2->time_samples(vid);
+  assert(ts && ts->size() == 2);
+  std::cout << "  default + timeSamples test passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Writer Tests ===\n\n";
 
@@ -947,6 +980,7 @@ int main() {
     test_array_range_split_parity();
     test_lazy_usdc_stream_value_printer();
     test_timesamples_metadata_placement();
+    test_default_with_timesamples();
     test_layer_printer();
     test_stage_writer();
     test_time_samples();

@@ -223,6 +223,12 @@ struct PrimSpecMetaExt {
 struct PrimSpecMeta {
   bool active = true;
   bool hidden = false;
+  // Authored-ness for the two bools above: plain bools cannot distinguish
+  // "authored true/false" from "default", and fill-absent composition needs
+  // to know (a weaker spec's DEFAULT active=true must not clobber a stronger
+  // authored active=false).
+  bool active_authored = false;
+  bool hidden_authored = false;
   bool instanceable = false;  // when true (with arcs), the prim is an instance
 
   // Composition arcs (stored as paths for lazy resolution).
@@ -245,6 +251,8 @@ struct PrimSpecMeta {
   PrimSpecMeta &operator=(const PrimSpecMeta &o) {
     active = o.active;
     hidden = o.hidden;
+    active_authored = o.active_authored;
+    hidden_authored = o.hidden_authored;
     instanceable = o.instanceable;
     references = o.references;
     payloads = o.payloads;
@@ -490,6 +498,9 @@ public:
   /// (Stored values remain in the value pool; they may be shared.)
   bool remove(PropNameId name_id);
 
+  /// Remap every sample time t -> offset + scale * t (layer-offset baking).
+  void remap_times(double offset, double scale);
+
   /// Get interpolated value at a given time
   /// @param name_id Property name ID
   /// @param time Time to sample at
@@ -658,6 +669,9 @@ public:
 
   /// Rewrite scalar asset paths stored in defaults and time samples.
   size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
+
+  /// Remap every time sample's time by a layer offset (t -> offset+scale*t).
+  void remap_time_sample_times(double offset, double scale);
 
   /// Get all property names that have time samples
   std::vector<PropNameId> time_sampled_properties() const;

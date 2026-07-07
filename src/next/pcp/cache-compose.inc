@@ -24,9 +24,16 @@
       // (properties + relationships) with fill-absent semantics. Variant child
       // prims are not yet modeled (VariantData has no child storage).
       if (s.variant) {
-        // Prim-state opinions from the selected option.
-        if (!s.variant->active) out->meta().active = false;
-        if (s.variant->hidden) out->meta().hidden = true;
+        // Prim-state opinions from the selected option (authored, so a
+        // weaker source's default cannot flip them back).
+        if (!s.variant->active) {
+          out->meta().active = false;
+          out->meta().active_authored = true;
+        }
+        if (s.variant->hidden) {
+          out->meta().hidden = true;
+          out->meta().hidden_authored = true;
+        }
         if (!s.variant->doc.empty() && out->meta().doc().empty()) {
           out->meta().doc() = s.variant->doc;
         }
@@ -67,7 +74,17 @@
         // their flattened paths. Identity for local opinions.
         Compositor::CopyLocalOpinions(
             *out, *spec, s.offset.offset, s.offset.scale,
-            [&](const std::string &p) { return Mapping(s.map_idx).Apply(p); });
+            [&](const std::string &p) {
+              // Target paths outside a reference/payload arc's namespace are
+              // unmappable: return "" so CopyLocalOpinions drops them (pxr
+              // behavior). VARIANT arcs are namespace-preserving — targets in
+              // a variant body are authored in the HOST's namespace (outside
+              // the holder/content prefix by construction), so map leniently.
+              if (s.arc_kind == ArcType::Variant) {
+                return Mapping(s.map_idx).Apply(p);
+              }
+              return Mapping(s.map_idx).ApplyTarget(p);
+            });
       }
     }
 
