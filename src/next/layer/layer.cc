@@ -58,7 +58,32 @@ void Layer::sort_prims_by_path() {
                    [](const PrimSpec& a, const PrimSpec& b) {
                      return a.path().str() < b.path().str();
                    });
+
   path_to_index_.clear();
+  path_to_index_.reserve(prims_.size());
+  for (size_t i = 0; i < prims_.size(); ++i) {
+    prims_[i].clear_child_indices();
+    const std::string& path_str = prims_[i].path().str();
+    if (!path_str.empty()) {
+      path_to_index_[path_str] = static_cast<uint32_t>(i);
+    }
+  }
+
+  root_indices_.clear();
+  for (size_t i = 0; i < prims_.size(); ++i) {
+    const std::string& path_str = prims_[i].path().str();
+    if (path_str.size() < 2 || path_str[0] != '/') continue;
+    const size_t slash = path_str.rfind('/');
+    if (slash == 0) {
+      root_indices_.push_back(static_cast<uint32_t>(i));
+      continue;
+    }
+    const std::string parent_path = path_str.substr(0, slash);
+    auto parent_it = path_to_index_.find(parent_path);
+    if (parent_it != path_to_index_.end()) {
+      prims_[parent_it->second].add_child_index(static_cast<uint32_t>(i));
+    }
+  }
 }
 
 Layer Layer::Clone() const {

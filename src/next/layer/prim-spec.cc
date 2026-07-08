@@ -819,42 +819,6 @@ const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) cons
   return &it->second;
 }
 
-size_t PrimSpec::prune_connection_targets(
-    const std::function<bool(const Path&)>& keep_target) {
-  if (!keep_target) return 0;
-  size_t removed = 0;
-  for (auto it = connections_.begin(); it != connections_.end();) {
-    std::vector<Path>& targets = it->second;
-    if (targets.empty()) {
-      ++it;
-      continue;
-    }
-    const size_t old_size = targets.size();
-    targets.erase(std::remove_if(targets.begin(), targets.end(),
-                                 [&](const Path& target) {
-                                   return !keep_target(target);
-                                 }),
-                  targets.end());
-    removed += old_size - targets.size();
-    if (targets.empty()) {
-      PropNameId name_id;
-      name_id.id = it->first;
-      if (PropSlot* slot = props_.find_mutable(name_id)) {
-        slot->flags &= static_cast<uint16_t>(~PropSlot::kFlagConnection);
-        if (slot->value_offset == UINT32_MAX && !has_time_samples(name_id)) {
-          props_.remove(name_id);
-          prop_type_names_.erase(name_id.id);
-          prop_metas_.erase(name_id.id);
-        }
-      }
-      it = connections_.erase(it);
-    } else {
-      ++it;
-    }
-  }
-  return removed;
-}
-
 void PrimSpec::remap_target_prefix(const std::string& old_prefix,
                                    const std::string& new_prefix) {
   auto remap = [&](std::vector<Path>& targets) {

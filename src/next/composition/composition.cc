@@ -111,24 +111,6 @@ std::unique_ptr<Layer> ExtractSubtree(const Layer& src,
   return out;
 }
 
-std::string ConnectionTargetPrimPath(const Path& target) {
-  if (target.empty() || !target.is_absolute()) return std::string();
-  return target.prim_path().str();
-}
-
-size_t PruneDanglingConnectionTargets(Layer& layer) {
-  size_t removed = 0;
-  for (size_t i = 0; i < layer.prim_count(); ++i) {
-    PrimSpec* prim = layer.prim_mutable(static_cast<uint32_t>(i));
-    if (!prim) continue;
-    removed += prim->prune_connection_targets([&](const Path& target) {
-      const std::string prim_path = ConnectionTargetPrimPath(target);
-      return prim_path.empty() || layer.prim_at_path(prim_path) != nullptr;
-    });
-  }
-  return removed;
-}
-
 }  // namespace
 
 // ============================================================
@@ -232,8 +214,6 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   }
   pending_graft_.clear();
   graft_paths_.clear();
-  result->build_path_index();
-  PruneDanglingConnectionTargets(*result);
 
   // The flattened output has all sublayer opinions baked in: keeping the
   // subLayers list would re-apply (now stale) layers on re-read. Fill stage
