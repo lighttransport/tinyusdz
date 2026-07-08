@@ -51,13 +51,16 @@
 
 #include "external/fast_float/include/fast_float/fast_float.h"
 
+// Subtract-first form (avoids the uint64 wrap that `_memory_usage += nbytes`
+// then compare has when nbytes is attacker-large); matches ascii-parser.cc.
 #define CHECK_MEMORY_USAGE(__nbytes) do { \
-  _memory_usage += (__nbytes); \
-  if (_memory_usage > _max_memory_limit_bytes) { \
+  uint64_t _chk_nbytes = static_cast<uint64_t>(__nbytes); \
+  if (_chk_nbytes > (_max_memory_limit_bytes - _memory_usage)) { \
     PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
       _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
     return false; \
-  }  \
+  } \
+  _memory_usage += _chk_nbytes; \
   } while(0)
 
 #define REDUCE_MEMORY_USAGE(__nbytes) do { \
