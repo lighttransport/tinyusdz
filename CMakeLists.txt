@@ -397,6 +397,14 @@ if (PROJECT_IS_TOP_LEVEL)
   set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
 
+if(MSVC)
+  # nonstd::expected (src/nonstd/expected.hpp) includes <windows.h> when built
+  # without exceptions (our default); without NOMINMAX its min/max macros
+  # clobber std::numeric_limits<T>::max()/min() calls project-wide with
+  # cryptic C2589/C2059 syntax errors.
+  add_compile_definitions(NOMINMAX)
+endif()
+
 # [ccache]
 if(TINYUSDZ_USE_CCACHE)
   if(MSVC)

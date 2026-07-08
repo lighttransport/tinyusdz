@@ -1882,7 +1882,12 @@ bool CrateWriter::ConvertValue(
   }
 
   // Token and String types
-  else if (type_name == "token") {
+  // NOTE: split from the preceding chain into its own `if` (not `else if`) --
+  // MSVC hits C1061 ("blocks nested too deeply") once a single else-if chain
+  // this large accumulates that much nesting. Safe because type_name strings
+  // are mutually exclusive across the whole function: at most one branch in
+  // any of these chains can ever match.
+  if (type_name == "token") {
     if (auto v = val.get_value<value::token>()) {
       // Store the typed token value; the crate packer pools it through
       // the tokens section at serialization time. Storing the raw pool
@@ -2140,8 +2145,8 @@ bool CrateWriter::ConvertValue(
     }
   }
 
-  // Array types
-  else if (type_name == "uchar[]") {
+  // Array types (split from the preceding chain; see NOTE above)
+  if (type_name == "uchar[]") {
     if (auto v = val.get_value<std::vector<uint8_t>>()) {
       out.Set(*v);
       return true;
@@ -2391,8 +2396,8 @@ bool CrateWriter::ConvertValue(
       return true;
     }
   }
-  // Base float2/double2 arrays
-  else if (type_name == "float2[]") {
+  // Base float2/double2 arrays (split from the preceding chain; see NOTE above)
+  if (type_name == "float2[]") {
     if (auto v = val.get_value<std::vector<value::float2>>()) {
       out.Set(*v);
       return true;
