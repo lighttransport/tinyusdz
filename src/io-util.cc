@@ -3,6 +3,7 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 
@@ -54,7 +55,6 @@
 // Assume Posix
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <wordexp.h>
 
 #ifndef TINYUSDZ_MMAP_SUPPORTED
 #define TINYUSDZ_MMAP_SUPPORTED (1)
@@ -75,7 +75,6 @@
 
 #if !defined(__wasi__)
 #include "external/filesystem/include/ghc/filesystem.hpp"
-#include "external/glob/single_include/glob/glob.hpp"
 #endif
 
 #ifdef __clang__
@@ -397,6 +396,182 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
 #endif
 }
 
+// Full desktop platforms (POSIX + Windows) that have a real filesystem to glob
+// against. Restricted/sandboxed targets do only string (env/tilde) expansion.
+#if !defined(__wasi__) && !defined(TINYUSDZ_BUILD_IOS) &&      \
+    !defined(TARGET_OS_IPHONE) && !defined(TARGET_IPHONE_SIMULATOR) && \
+    !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__OpenBSD__)
+#define TINYUSDZ_HAVE_GLOB_FS 1
+#else
+#define TINYUSDZ_HAVE_GLOB_FS 0
+#endif
+
+// Simple glob matcher (`*` = any run, `?` = one char). Classic linear
+// two-pointer algorithm with a single backtrack point; O(len(pattern) +
+// len(name)) and NO recursion, so it cannot blow up on adversarial input.
+bool SimpleGlobMatch(const std::string &pattern, const std::string &name) {
+  const size_t P = pattern.size(), S = name.size();
+  size_t p = 0, s = 0;
+  size_t star = std::string::npos;  // last '*' position in pattern
+  size_t ss = 0;                    // name position when '*' was seen
+  while (s < S) {
+    if (p < P && (pattern[p] == '?' || pattern[p] == name[s])) {
+      ++p;
+      ++s;
+    } else if (p < P && pattern[p] == '*') {
+      star = p++;
+      ss = s;
+    } else if (star != std::string::npos) {
+      // Backtrack: let the last '*' consume one more character.
+      p = star + 1;
+      s = ++ss;
+    } else {
+      return false;
+    }
+  }
+  while (p < P && pattern[p] == '*') ++p;  // trailing stars match empty
+  return p == P;
+}
+
+namespace {
+
+inline bool HasGlobWildcard(const std::string &s) {
+  return s.find_first_of("*?") != std::string::npos;
+}
+
+// POSIX-style leading '~' (-> $HOME) plus $VAR / ${VAR} environment-variable
+// substitution. Pure string transform — no filesystem, no shell, no brace or
+// glob expansion — so it is safe on any input (this replaces the useful,
+// deterministic part of the old wordexp() call). Undefined variables expand to
+// empty (matching shell default).
+std::string ExpandEnvAndTilde(const std::string &in) {
+  std::string out;
+  out.reserve(in.size());
+  size_t i = 0;
+  if (!in.empty() && in[0] == '~' && (in.size() == 1 || in[1] == '/')) {
+    if (const char *home = std::getenv("HOME")) out += home;
+    i = 1;  // skip the '~'; the following '/...' (if any) is copied below
+  }
+  for (; i < in.size(); ++i) {
+    const char c = in[i];
+    if (c == '$' && (i + 1) < in.size()) {
+      size_t j = i + 1;
+      std::string name;
+      const bool braced = (in[j] == '{');
+      if (braced) {
+        ++j;
+        while (j < in.size() && in[j] != '}') name += in[j++];
+        if (j < in.size()) ++j;  // consume '}'
+      } else {
+        while (j < in.size() &&
+               (std::isalnum(static_cast<unsigned char>(in[j])) ||
+                in[j] == '_')) {
+          name += in[j++];
+        }
+      }
+      if (!name.empty()) {
+        if (const char *val = std::getenv(name.c_str())) out += val;
+        i = j - 1;  // -1: the for-loop's ++i re-advances
+        continue;
+      }
+    }
+    out += c;
+  }
+  return out;
+}
+
+}  // namespace
+
+std::vector<std::string> SimpleGlob(const std::string &pattern,
+                                    size_t max_results) {
+  std::vector<std::string> results;
+  if (max_results == 0) return results;
+
+#if TINYUSDZ_HAVE_GLOB_FS
+  namespace fs = ghc::filesystem;
+
+  // No wildcard: resolve to the literal path iff it exists.
+  if (!HasGlobWildcard(pattern)) {
+    std::error_code ec;
+    if (fs::exists(fs::path(pattern), ec)) results.push_back(pattern);
+    return results;
+  }
+
+  const bool absolute = !pattern.empty() && pattern[0] == '/';
+
+  // Split into '/'-separated components (empty components from '//' skipped).
+  std::vector<std::string> comps;
+  {
+    std::string cur;
+    for (char c : pattern) {
+      if (c == '/') {
+        if (!cur.empty()) comps.push_back(cur);
+        cur.clear();
+      } else {
+        cur += c;
+      }
+    }
+    if (!cur.empty()) comps.push_back(cur);
+  }
+  if (comps.empty()) return results;
+
+  auto join = [](const std::string &dir, const std::string &name) {
+    if (dir == "/") return std::string("/") + name;
+    if (dir == ".") return name;  // relative: no "./" prefix
+    return dir + "/" + name;
+  };
+
+  std::vector<std::string> cands;
+  cands.push_back(absolute ? std::string("/") : std::string("."));
+
+  for (size_t ci = 0; ci < comps.size(); ++ci) {
+    const std::string &comp = comps[ci];
+    std::vector<std::string> next;
+    if (!HasGlobWildcard(comp)) {
+      // Literal component: append without a filesystem probe (a later wildcard
+      // component's directory listing, or the final existence filter, validates
+      // it). '.' and '..' pass through unchanged.
+      for (const std::string &cand : cands) {
+        next.push_back(join(cand, comp));
+        if (next.size() >= max_results) break;
+      }
+    } else {
+      // Wildcard component: list each candidate directory and keep matches.
+      for (const std::string &cand : cands) {
+        std::error_code ec;
+        fs::directory_iterator it(fs::path(cand), ec);
+        if (ec) continue;
+        const fs::directory_iterator end;
+        for (; it != end; it.increment(ec)) {
+          if (ec) break;
+          const std::string name = it->path().filename().string();
+          if (SimpleGlobMatch(comp, name)) {
+            next.push_back(join(cand, name));
+            if (next.size() >= max_results) break;
+          }
+        }
+        if (next.size() >= max_results) break;
+      }
+    }
+    if (next.empty()) return results;  // nothing matched: no results
+    cands.swap(next);
+  }
+
+  // Keep only paths that actually exist (validates trailing literal components).
+  for (const std::string &c : cands) {
+    std::error_code ec;
+    if (fs::exists(fs::path(c), ec)) {
+      results.push_back(c);
+      if (results.size() >= max_results) break;
+    }
+  }
+  return results;
+#else
+  (void)max_results;
+  return results;  // no filesystem globbing on this platform
+#endif
+}
+
 std::string ExpandFilePath(const std::string &_filepath, void *) {
   std::string filepath = _filepath;
   if (filepath.size() > 2048) {
@@ -404,87 +579,42 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
     // TODO: Report warn.
     filepath.resize(2048);
   }
+  if (filepath.empty()) return filepath;
 
+  // Step 1: environment-variable / tilde expansion (safe string transform;
+  // replaces the deterministic part of the old wordexp() call).
 #ifdef _WIN32
-  // Assume input `filepath` is encoded in UTF-8
-  std::wstring wfilepath = UTF8ToWchar(filepath);
-  DWORD wlen = ExpandEnvironmentStringsW(wfilepath.c_str(), nullptr, 0);
-  if (wlen == 0) {
-    return filepath;
-  }
-  wchar_t *wstr = new wchar_t[wlen];
-  ExpandEnvironmentStringsW(wfilepath.c_str(), wstr, wlen);
-
-  std::wstring ws(wstr);
-  delete[] wstr;
-  return WcharToUTF8(ws);
-
-#else
-
-#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || \
-    defined(TARGET_IPHONE_SIMULATOR) || defined(__ANDROID__) || \
-    defined(__EMSCRIPTEN__) || defined(__OpenBSD__) || defined(__wasi__)
-  // no expansion
-  std::string s = filepath;
-#else
-  std::string s;
-  wordexp_t p;
-
-  // wordexp() performs glob/brace expansion and honors quoting. A crafted
-  // asset path (e.g. from a malicious USD reference) that contains a '\"'
-  // breaks out of the quoting below, re-exposing glob '*?[' and brace
-  // '{a,b}{c,d}...' metacharacters — brace expansion is exponential and glob
-  // walks the filesystem, so wordexp() becomes a DoS / hang. These characters
-  // are never part of a legitimate asset file path; skip expansion (return the
-  // path verbatim) when any are present. '~' and '$VAR' expansion still work
-  // for normal paths.
-  auto has_wordexp_hazard = [](const std::string &fp) {
-    for (char c : fp) {
-      switch (c) {
-        case '"': case '\'': case '`': case '*': case '?':
-        case '[': case ']': case '{': case '}': case '|':
-        case '&': case ';': case '<': case '>': case '(':
-        case ')': case '\n': case '\\':
-          return true;
-        default:
-          break;
-      }
-    }
-    return false;
-  };
-
-  if (filepath.empty()) {
-    s = "";
-  } else if (has_wordexp_hazard(filepath)) {
-    s = filepath;  // unsafe for wordexp: use as-is
-  } else {
-
-    // Quote the string to keep any spaces in filepath intact.
-    std::string quoted_path = "\"" + filepath + "\"";
-    // char** w;
-    // TODO: wordexp() is a awful API. Implement our own file path expansion
-    // routine. Set NOCMD for security.
-    int ret = wordexp(quoted_path.c_str(), &p, WRDE_NOCMD);
-    if (ret) {
-      // err
-      s = filepath;
-      //return s;
+  // Windows uses %VAR% expansion.
+  std::string expanded;
+  {
+    std::wstring wfilepath = UTF8ToWchar(filepath);
+    DWORD wlen = ExpandEnvironmentStringsW(wfilepath.c_str(), nullptr, 0);
+    if (wlen == 0) {
+      expanded = filepath;
     } else {
-
-      // Use first element only.
-      if (p.we_wordv) {
-        s = std::string(p.we_wordv[0]);
-        wordfree(&p);
-      } else {
-        s = filepath;
-      }
+      std::wstring ws(static_cast<size_t>(wlen), 0);
+      ExpandEnvironmentStringsW(wfilepath.c_str(), &ws[0], wlen);
+      if (!ws.empty() && ws.back() == L'\0') ws.pop_back();
+      expanded = WcharToUTF8(ws);
     }
   }
-
+#else
+  const std::string expanded = ExpandEnvAndTilde(filepath);
 #endif
 
-  return s;
+  // Step 2: simple glob. Only '*' and '?' are wildcards (no brace expansion,
+  // no '**' recursion), so this is bounded by the actual directory sizes and
+  // cannot exhibit the wordexp() brace-expansion DoS. A path without wildcards
+  // is returned as-is. When wildcards match, return the first match (this
+  // mirrors the old wordexp() "use we_wordv[0]" behavior); otherwise return the
+  // env-expanded path unchanged.
+#if TINYUSDZ_HAVE_GLOB_FS
+  if (HasGlobWildcard(expanded)) {
+    std::vector<std::string> matches = SimpleGlob(expanded, /* max */ 64);
+    if (!matches.empty()) return matches[0];
+  }
 #endif
+  return expanded;
 }
 
 #ifdef _WIN32
