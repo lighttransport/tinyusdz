@@ -196,6 +196,47 @@ void test_layer_stats() {
   std::cout << "  Memory usage: " << stats.memory_bytes << " bytes" << std::endl;
 }
 
+void test_layer_sort_rebuilds_hierarchy() {
+  std::cout << "Testing Layer sort hierarchy rebuild..." << std::endl;
+
+  Layer layer;
+
+  uint32_t shader = layer.add_prim(PrimSpec("Shader", "Shader"));
+  layer.prim_mutable(shader)->set_path(Path("/Root/Material/Shader"));
+  uint32_t root = layer.add_prim(PrimSpec("Root", "Xform"));
+  layer.prim_mutable(root)->set_path(Path("/Root"));
+  uint32_t material = layer.add_prim(PrimSpec("Material", "Material"));
+  layer.prim_mutable(material)->set_path(Path("/Root/Material"));
+  uint32_t mesh = layer.add_prim(PrimSpec("Mesh", "Mesh"));
+  layer.prim_mutable(mesh)->set_path(Path("/Root/Mesh"));
+
+  layer.add_root(root);
+  layer.set_parent(material, root);
+  layer.set_parent(mesh, root);
+  layer.set_parent(shader, material);
+  layer.build_path_index();
+
+  layer.sort_prims_by_path();
+
+  const PrimSpec* sorted_root = layer.prim_at_path("/Root");
+  const PrimSpec* sorted_material = layer.prim_at_path("/Root/Material");
+  const PrimSpec* sorted_shader = layer.prim_at_path("/Root/Material/Shader");
+  const PrimSpec* sorted_mesh = layer.prim_at_path("/Root/Mesh");
+
+  assert(sorted_root && sorted_material && sorted_shader && sorted_mesh);
+  assert(layer.root_indices().size() == 1 && "sort should rebuild roots");
+  assert(layer.prim(layer.root_indices()[0]) == sorted_root);
+  assert(sorted_root->child_count() == 2 && "root children must survive sort");
+  assert(sorted_material->child_count() == 1 &&
+         "nested children must survive sort");
+  assert(layer.children(layer.index_at_path("/Root")).size() == 2);
+  assert(layer.children(layer.index_at_path("/Root/Material")).size() == 1);
+  assert(layer.children(layer.index_at_path("/Root/Material"))[0] ==
+         sorted_shader);
+
+  std::cout << "  Layer sort hierarchy rebuild: PASSED" << std::endl;
+}
+
 void test_metadata() {
   std::cout << "Testing metadata..." << std::endl;
 
@@ -461,6 +502,7 @@ int main() {
   test_prim_spec();
   test_layer_builder();
   test_layer_stats();
+  test_layer_sort_rebuilds_hierarchy();
   test_metadata();
   test_interpolation();
   test_time_samples();
