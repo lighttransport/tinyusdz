@@ -10,6 +10,7 @@
 #include "../types/type-info.hh"
 
 #include <algorithm>
+#include <deque>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -927,16 +928,22 @@ bool CrateReader::Impl::BuildStage() {
       std::vector<uint32_t> out;
       out.reserve(current.size());
       std::vector<bool> used(current.size(), false);
+      // Map each child name to a FIFO of its positions in `current` (preserving
+      // original order for duplicate names). Reordering is then O(N+M) instead
+      // of O(N*M): a malformed file with N root prims and an N-name primChildren
+      // list previously cost O(N^2) string compares (a ~O(N) file could hang).
+      std::unordered_map<std::string, std::deque<size_t>> by_name;
+      for (size_t i = 0; i < current.size(); ++i) {
+        const PrimSpec* c = layer.prim(current[i]);
+        if (c) by_name[c->name()].push_back(i);
+      }
       for (const std::string& nm : names) {
-        for (size_t i = 0; i < current.size(); ++i) {
-          if (used[i]) continue;
-          const PrimSpec* c = layer.prim(current[i]);
-          if (c && c->name() == nm) {
-            out.push_back(current[i]);
-            used[i] = true;
-            break;
-          }
-        }
+        auto it = by_name.find(nm);
+        if (it == by_name.end() || it->second.empty()) continue;
+        size_t idx = it->second.front();
+        it->second.pop_front();
+        used[idx] = true;
+        out.push_back(current[idx]);
       }
       for (size_t i = 0; i < current.size(); ++i) {
         if (!used[i]) out.push_back(current[i]);

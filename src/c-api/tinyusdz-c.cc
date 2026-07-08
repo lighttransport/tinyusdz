@@ -644,6 +644,11 @@ tusd_status tusd_stage_load(const char* filename,
   } else {
     ok = n::LoadUSD(filename, &stage->stage, lo, &warn, &err);
   }
+  if (ok) {
+    const std::string fn(filename ? filename : "");
+    const size_t slash = fn.rfind('/');
+    stage->source_dir = (slash == std::string::npos) ? "" : fn.substr(0, slash);
+  }
   if (!ok) {
     // Distinguish IO from parse errors coarsely.
     const bool io = err.find("Failed to open") != std::string::npos ||

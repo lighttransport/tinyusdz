@@ -1032,9 +1032,20 @@ bool CrateReader::Impl::ReadPaths() {
 
   // Recurse over a sibling chain that all share `parent` (the parent prim path,
   // without any property '.' prefix). Depth is bounded by max_path_depth.
+  //
+  // A well-formed pre-order tree visits every encoded node exactly once. A
+  // malformed jump table can make the child pointer (i+1) and a sibling pointer
+  // (i+jump) reference the SAME node from different parents, so a node gets
+  // re-entered — e.g. a chain of `jump == 1` nodes visits node k 2^k times
+  // (super-linear/exponential CPU hang) from a sub-kilobyte input. `visited`
+  // bounds total work to O(n): re-entering an already-emitted node stops that
+  // chain (the input is malformed, but we terminate instead of hanging).
+  std::vector<uint8_t> visited(n, uint8_t{0});
   std::function<void(size_t, const std::string&, size_t)> build =
       [&](size_t i, const std::string& parent, size_t depth) {
         while (i < n) {
+          if (visited[i]) return;  // node already emitted: malformed, stop
+          visited[i] = uint8_t{1};
           bool is_prop = false;
           std::string elem = element_for(i, is_prop);
           int32_t jump = static_cast<int32_t>(jump_raw[i]);

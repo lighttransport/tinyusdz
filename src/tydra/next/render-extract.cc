@@ -133,9 +133,21 @@ void CollectRec(const ::tinyusdz::next::UsdPrim& prim,
 
 const ::tinyusdz::next::Value* ValueAtOrDefault(
     const ::tinyusdz::next::UsdPrim& prim, const char* name, double time) {
-  const ::tinyusdz::next::Value* v =
-      std::isnan(time) ? nullptr : prim.GetValueAtTime(name, time);
-  return v ? v : prim.GetPropertyValue(name);
+  if (!std::isnan(time)) {
+    // Linear interpolation between samples (pxr semantics). The scratch slot
+    // is per-thread and callers consume the pointer before requesting the
+    // next value (single-live-pointer pattern throughout this TU).
+    static thread_local ::tinyusdz::next::Value scratch;
+    ::tinyusdz::next::Value v = prim.GetInterpolatedValue(name, time);
+    if (!v.is_empty()) {
+      scratch = std::move(v);
+      return &scratch;
+    }
+    if (const ::tinyusdz::next::Value* held = prim.GetValueAtTime(name, time)) {
+      return held;
+    }
+  }
+  return prim.GetPropertyValue(name);
 }
 
 }  // namespace

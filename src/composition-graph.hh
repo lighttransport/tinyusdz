@@ -381,6 +381,26 @@ struct CompositionGraphOptions {
   /// Maximum composition depth (prevents infinite recursion).
   uint32_t max_depth{256};
 
+  /// Maximum namespace depth (number of '/' components) of any composed prim
+  /// path, relative to the whole stage. A reference/payload cycle that
+  /// reconstructs referenced descendants generates ever-LONGER unique paths
+  /// (/A/B/A/B/...), each a distinct key that the built-set dedup never
+  /// catches — an unbounded worklist (hang / OOM). Real USD namespace depth
+  /// never approaches this.
+  uint32_t max_namespace_depth{1024};
+
+  /// Backstop on the total number of composed prim indices built. Bounds the
+  /// worklist even if a cycle stays under max_namespace_depth per step but
+  /// fans out. 0 = unlimited. Conservative default bounds a cyclic-composition
+  /// DoS to a few seconds; large-scene loaders raise it for genuine mega-scenes.
+  size_t max_composed_prims{256u * 1024u};
+
+  /// Global budget on composition-arc nodes created across the whole graph
+  /// (bounds total arc work + synthesized variant layers — a variant cycle
+  /// copies growing layers, so this also bounds that O(n^2) cost). 0 =
+  /// unlimited. Raise for very large scenes (see LargeSceneLoader).
+  size_t max_arc_nodes{256u * 1024u};
+
   /// Enable instancing detection during composition.
   bool detect_instances{true};
 
@@ -432,6 +452,16 @@ struct CompositionGraphOptions {
 /// the expensive parsed layers via a LayerRegistry, reached through the
 /// `load_layer_fn` seam below.
 struct CompositionContext {
+  // GLOBAL budget on composition-arc nodes created across the WHOLE graph
+  // (every PrimIndex build shares this). AddNode caps per-index at uint16, but
+  // a cyclic scene fans out across many indices — each variant node also
+  // creates a synthesized Layer copy — so the true DoS bound is the total arc
+  // work, not per-index. When exceeded, AddNode returns kInvalidIndex and the
+  // affected build stops growing. The default is generous (any realistic scene
+  // stays far below it) but finite. 0 = unlimited.
+  size_t _arc_node_count{0};
+  size_t _max_arc_nodes{256u * 1024u};
+
   // Shared tables (referenced by PrimIndex via borrowed pointers).
   std::vector<std::string> _path_table;
   HashMap<std::string, uint32_t> _path_intern_map;
@@ -447,6 +477,14 @@ struct CompositionContext {
   // is set (pcp::Cache), referenced/payload layers are owned elsewhere (a
   // LayerRegistry) and this stays empty.
   std::vector<std::unique_ptr<Layer>> _loaded_layers;
+
+  // Resolve-and-parse cache for the DEFAULT loader, keyed on
+  // "asset_path\ncwp". Caches both hits (Layer*) and misses (nullptr) so a
+  // large composed tree that references the same asset (or the same missing
+  // asset) from thousands of prims does not repeat the filesystem resolve +
+  // parse per prim — an O(prims) DoS on external-arc-heavy scenes. Not used on
+  // the load_layer_fn (pcp registry) path, which dedups itself.
+  HashMap<std::string, const Layer *> _default_layer_cache;
 
   // Payloads skipped during initial composition (for incremental loading).
   std::vector<DeferredPayloadInfo> _deferred_payloads;
@@ -611,6 +649,17 @@ class CompositionGraph {
 
   /// Collect the composed child names of a prim (union of children across all
   /// non-culled, non-deferred nodes of its index, strongest-first, deduped).
+  /// True if `index`'s composition arcs target an ancestor of `prim_path`
+  /// (a namespace cycle). Used to stop the build worklist from re-expanding
+  /// the ancestor subtree unboundedly.
+  bool IndexArcTargetsAncestor(const PrimIndex &index,
+                               const std::string &prim_path) const;
+
+  /// Position-independent hash of a prim's composed ARC content. Equal
+  /// signatures on the same build path (ancestor/descendant) indicate a
+  /// composition cycle. 0 = no arc content.
+  uint64_t ComposedContentSignature(const PrimIndex &index) const;
+
   std::vector<std::string> GatherComposedChildNames(
       const PrimIndex &index) const;
 
@@ -716,6 +765,12 @@ class PrimIndexBuilder {
   bool PropagateImpliedSpecializes(uint16_t source_node, std::string *err);
 
   // Node management
+  /// True if an arc from `node_idx` to (layer_stack, site_path) revisits an
+  /// ancestor site (composition cycle). Prevents exponential blow-up on
+  /// cyclic references/payloads.
+  bool ArcWouldRevisitSite(uint16_t node_idx, uint16_t target_ls_idx,
+                           uint32_t target_site_idx) const;
+
   uint16_t AddNode(ArcType arc_type, uint16_t parent_idx,
                    uint16_t layer_stack_idx, uint16_t layer_idx,
                    uint32_t site_path_idx, uint16_t map_expr_idx);
