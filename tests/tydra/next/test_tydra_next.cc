@@ -1015,6 +1015,208 @@ def Material "Mat"
 // Main
 //
 
+
+// 2026-07 tydra audit regressions: ChunkedArray over-reserve accounting,
+// malformed topology sanitization, authored-normals interpolation, leftHanded
+// winding, holeIndices, GeomSubset material bindings, NodeGraph texture
+// indirection, UsdTransform2d + primvar-reader varname, purpose bindings,
+// surface-output shader selection, spot lights, generic/indexed primvars.
+void TestAudit2026_07() {
+  std::cout << "TestAudit2026_07..." << std::endl;
+
+  // --- ChunkedArray: reserve() beyond the fill must not leak whole chunks
+  // into copy_to()/flatten() (was a heap-buffer-overflow through the C API).
+  {
+    ChunkedArray<uint32_t> a;
+    a.reserve(20000);  // 2+ chunks
+    for (uint32_t i = 0; i < 10; ++i) a.push_back(i);
+    assert(a.size() == 10);
+    assert(a.chunk_size(0) == 10);
+    assert(a.chunk_size(1) == 0);
+    std::vector<uint32_t> flat = a.flatten();
+    assert(flat.size() == 10 && flat[9] == 9);
+    uint32_t dst[10];
+    a.copy_to(dst);
+    assert(dst[0] == 0 && dst[9] == 9);
+    assert(a.is_contiguous());  // logical size fits chunk 0
+  }
+
+  const char* usda = R"(#usda 1.0
+def Xform "Root"
+{
+    def Mesh "M"
+    {
+        rel material:binding:preview = </Root/Mat>
+        int[] faceVertexCounts = [4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 1, 4, 5, 2]
+        int[] holeIndices = [1]
+        point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0), (2,0,0), (2,1,0)]
+        normal3f[] normals = [(0,0,1), (0,0,1)] (
+            interpolation = "uniform"
+        )
+        float[] primvars:heat = [7, 9] (
+            interpolation = "vertex"
+        )
+        int[] primvars:heat:indices = [0, 1, 1, 0, 1, 0]
+
+        def GeomSubset "SubA"
+        {
+            uniform token familyName = "materialBind"
+            int[] indices = [1]
+            rel material:binding = </Root/Mat2>
+        }
+    }
+
+    def Mesh "LH"
+    {
+        uniform token orientation = "leftHanded"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]
+    }
+
+    def Mesh "Bad"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, -1, 99]
+        point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </Root/Mat/Graph.outputs:out>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </Root/Mat/Graph.outputs:tex>
+            token outputs:surface
+        }
+
+        def "Graph"
+        {
+            token outputs:out.connect = </Root/Mat/PS.outputs:surface>
+            color3f outputs:tex.connect = </Root/Mat/Tex.outputs:rgb>
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @checker.png@
+            float2 inputs:st.connect = </Root/Mat/Xf.outputs:result>
+            color3f outputs:rgb
+        }
+
+        def Shader "Xf"
+        {
+            uniform token info:id = "UsdTransform2d"
+            float2 inputs:translation = (0.5, 0.25)
+            float inputs:rotation = 90
+            float2 inputs:scale = (2, 3)
+            float2 inputs:in.connect = </Root/Mat/Reader.outputs:result>
+            float2 outputs:result
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "uvSet1"
+            float2 outputs:result
+        }
+    }
+
+    def Material "Mat2"
+    {
+        def Shader "PS2"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 1, 0)
+            token outputs:surface
+        }
+    }
+
+    def SphereLight "Spot"
+    {
+        float inputs:shaping:cone:angle = 45
+        bool inputs:shadow:enable = false
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  ConverterConfig cfg;
+  RenderSceneConverter conv(cfg);
+  ConvertResult res = conv.Convert(lr.stage);
+  assert(res.success);
+  RenderScene& scene = res.scene;
+
+  // Mesh M: hole face skipped in triangulation, uniform normals kept as 2
+  // elements, subset binding on face 1, indexed generic primvar preserved.
+  {
+    auto it = scene.mesh_by_path.find("/Root/M");
+    assert(it != scene.mesh_by_path.end());
+    RenderMesh& m = scene.meshes[static_cast<size_t>(it->second)];
+    assert(m.triangulated_indices.size() == 6);  // 1 quad, hole skipped
+    assert(m.normals.size() == 6 &&
+           m.normals_interp == Interpolation::Uniform);
+    assert(m.material_id >= 0);  // purpose binding (material:binding:preview)
+    assert(m.material_subsets.size() == 1);
+    assert(m.material_subsets[0].face_start == 1 &&
+           m.material_subsets[0].face_count == 1);
+    assert(m.material_subsets[0].material_id != m.material_id);
+    assert(m.primvars.size() == 1 && m.primvars[0].name == "heat");
+    assert(m.primvars[0].indices.size() == 6);
+  }
+
+  // Mesh LH: reversed winding + flipped computed normal.
+  {
+    auto it = scene.mesh_by_path.find("/Root/LH");
+    assert(it != scene.mesh_by_path.end());
+    RenderMesh& m = scene.meshes[static_cast<size_t>(it->second)];
+    assert(m.left_handed);
+    assert(m.triangulated_indices.size() == 3);
+    assert(m.triangulated_indices[1] == 2 && m.triangulated_indices[2] == 1);
+    assert(m.normals.size() >= 3 && m.normals[2] < 0.0f);  // z of vertex 0
+  }
+
+  // Mesh Bad: invalid indices dropped without crashing.
+  {
+    auto it = scene.mesh_by_path.find("/Root/Bad");
+    assert(it != scene.mesh_by_path.end());
+    RenderMesh& m = scene.meshes[static_cast<size_t>(it->second)];
+    assert(m.face_count() == 0);
+  }
+
+  // Material Mat: texture found through the NodeGraph indirection, with the
+  // Transform2d UV transform and the primvar-reader varname.
+  {
+    auto it = scene.material_by_path.find("/Root/Mat");
+    assert(it != scene.material_by_path.end());
+    RenderMaterial& mat = scene.materials[static_cast<size_t>(it->second)];
+    assert(mat.preview_surface);
+    assert(mat.preview_surface->diffuse_color.is_texture());
+    const RenderTexture& tex = scene.textures[static_cast<size_t>(
+        mat.preview_surface->diffuse_color.texture_id)];
+    assert(tex.offset.x == 0.5f && tex.offset.y == 0.25f);
+    assert(tex.scale.x == 2.0f && tex.scale.y == 3.0f);
+    assert(std::fabs(tex.rotation - 1.5707963f) < 1e-4f);
+    assert(tex.uv_primvar == "uvSet1");
+  }
+
+  // Light: cone shaping -> Spot; shadow:enable honored.
+  {
+    assert(scene.lights.size() == 1);
+    const RenderLight& l = scene.lights[0];
+    assert(l.type == LightType::Spot);
+    assert(std::fabs(l.params.spot.angle - 45.0f * 3.14159265f / 180.0f) < 1e-4f);
+    assert(!l.enable_shadow);
+  }
+
+  std::cout << "  TestAudit2026_07 PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -1044,6 +1246,7 @@ int main() {
   TestRenderConverterPointInstancerWarnings();
   TestRenderConverterPointInstancerIndexVisibility();
   TestMaterialXUtilities();
+  TestAudit2026_07();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

@@ -24,35 +24,47 @@ bool IsNodeGraph(const UsdPrim& prim) {
 // Material API Implementation
 // ============================================================
 
-std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) {
-  if (!IsMaterial(material)) return "";
-
-  // Get outputs:surface relationship
-  const std::vector<Path>* targets = material.GetRelationship("outputs:surface");
+// A material terminal ("outputs:surface" etc.) is an ATTRIBUTE CONNECTION in
+// USD (`token outputs:surface.connect = </Mat/Shader.outputs:surface>`), not a
+// relationship. Accept both (some hand-authored files use a rel). The returned
+// path is the connected PRIM (property suffix stripped).
+static std::string GetTerminalShaderPath(const UsdPrim& material,
+                                         const char* output_name) {
+  auto strip_prop = [](const std::string& p) {
+    size_t dot = p.rfind('.');
+    // Property separator only when the dot comes after the last '/'.
+    size_t slash = p.rfind('/');
+    if (dot != std::string::npos &&
+        (slash == std::string::npos || dot > slash)) {
+      return p.substr(0, dot);
+    }
+    return p;
+  };
+  if (const PrimSpec* spec = material.GetPrimSpec()) {
+    if (const std::vector<Path>* conns = spec->connection(output_name)) {
+      if (!conns->empty()) return strip_prop((*conns)[0].str());
+    }
+  }
+  const std::vector<Path>* targets = material.GetRelationship(output_name);
   if (targets && !targets->empty()) {
-    return (*targets)[0].str();
+    return strip_prop((*targets)[0].str());
   }
   return "";
+}
+
+std::string GetSurfaceShader(const Stage& /* stage */, const UsdPrim& material) {
+  if (!IsMaterial(material)) return "";
+  return GetTerminalShaderPath(material, "outputs:surface");
 }
 
 std::string GetDisplacementShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
-
-  const std::vector<Path>* targets = material.GetRelationship("outputs:displacement");
-  if (targets && !targets->empty()) {
-    return (*targets)[0].str();
-  }
-  return "";
+  return GetTerminalShaderPath(material, "outputs:displacement");
 }
 
 std::string GetVolumeShader(const Stage& /* stage */, const UsdPrim& material) {
   if (!IsMaterial(material)) return "";
-
-  const std::vector<Path>* targets = material.GetRelationship("outputs:volume");
-  if (targets && !targets->empty()) {
-    return (*targets)[0].str();
-  }
-  return "";
+  return GetTerminalShaderPath(material, "outputs:volume");
 }
 
 bool GetMaterialBinding(const Stage& stage, const UsdPrim& material,
@@ -78,10 +90,18 @@ UsdPrim GetBoundMaterial(const Stage& stage, const UsdPrim& prim) {
 std::string GetBoundMaterialPath(const UsdPrim& prim) {
   if (!prim.IsValid()) return "";
 
-  // Check material:binding relationship
-  const std::vector<Path>* targets = prim.GetRelationship("material:binding");
-  if (targets && !targets->empty()) {
-    return (*targets)[0].str();
+  // Purpose-specific bindings take precedence for a preview extractor:
+  // material:binding:preview, then the all-purpose material:binding, then
+  // material:binding:full (UsdShade ComputeBoundMaterial semantics for the
+  // "preview" purpose).
+  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        "material:binding",
+                                        "material:binding:full"};
+  for (const char* rel : kBindingOrder) {
+    const std::vector<Path>* targets = prim.GetRelationship(rel);
+    if (targets && !targets->empty()) {
+      return (*targets)[0].str();
+    }
   }
   return "";
 }
