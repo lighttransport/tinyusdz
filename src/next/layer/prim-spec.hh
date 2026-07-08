@@ -790,6 +790,12 @@ public:
   /// Get connection targets for an attribute (nullptr if none)
   const std::vector<Path>* connection(const std::string& prop_name) const;
 
+  /// Remove connection targets that do not satisfy `keep_target`. Existing
+  /// authored connection blocks (empty target lists) are preserved; non-empty
+  /// lists that become empty are removed instead of converted into blocks.
+  size_t prune_connection_targets(
+      const std::function<bool(const Path&)>& keep_target);
+
   /// Rewrite relationship + connection target paths that lie WITHIN `old_prefix`
   /// (== it, or a descendant `old_prefix/...`) to the corresponding path under
   /// `new_prefix`. Used by the extracted-prototype flatten to retarget internal

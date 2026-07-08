@@ -111,6 +111,24 @@ std::unique_ptr<Layer> ExtractSubtree(const Layer& src,
   return out;
 }
 
+std::string ConnectionTargetPrimPath(const Path& target) {
+  if (target.empty() || !target.is_absolute()) return std::string();
+  return target.prim_path().str();
+}
+
+size_t PruneDanglingConnectionTargets(Layer& layer) {
+  size_t removed = 0;
+  for (size_t i = 0; i < layer.prim_count(); ++i) {
+    PrimSpec* prim = layer.prim_mutable(static_cast<uint32_t>(i));
+    if (!prim) continue;
+    removed += prim->prune_connection_targets([&](const Path& target) {
+      const std::string prim_path = ConnectionTargetPrimPath(target);
+      return prim_path.empty() || layer.prim_at_path(prim_path) != nullptr;
+    });
+  }
+  return removed;
+}
+
 }  // namespace
 
 // ============================================================
@@ -182,14 +200,24 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
     for (auto& g : batch) {
       std::string gp = g.prim.path().str();
       // Variant-holder prims and unselected variant content keep a "{...}"
-      // segment in their path; a flatten never materializes those.
-      if (gp.find('{') != std::string::npos) continue;
+      // segment in their path. Drop them only for a final variant-resolving
+      // flatten; when composing an external layer with variants deferred, the
+      // caller still needs those descendants so its selected holder can be
+      // remapped into the host namespace.
+      if (options_.resolve_variants && gp.find('{') != std::string::npos) {
+        continue;
+      }
       if (PrimSpec* existing = result->prim_at_path_mutable(gp)) {
         // A local spec already exists at this path (e.g. the root layer
         // authors `over "LOD1"` material-binding overrides on a prim whose
         // definition arrives via a referenced file's variant). Local opinions
         // win; the graft fills in type/properties/children content.
         CopyLocalOpinions(*existing, g.prim);
+        const uint32_t existing_index = result->index_at_path(gp);
+        if (existing_index != UINT32_MAX) {
+          arc_resolved_.erase(gp);
+          added.emplace_back(existing_index, g.anchor);
+        }
         continue;
       }
       added.emplace_back(result->prim_count(), g.anchor);
@@ -204,6 +232,8 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   }
   pending_graft_.clear();
   graft_paths_.clear();
+  result->build_path_index();
+  PruneDanglingConnectionTargets(*result);
 
   // The flattened output has all sublayer opinions baked in: keeping the
   // subLayers list would re-apply (now stale) layers on re-read. Fill stage
@@ -1181,12 +1211,19 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
     // the layer) and graft its descendant subtree (variant CHILD prims) under
     // <prim>. (The vs.variants loop above covers in-memory model variants; this
     // covers reader-produced variants whose content lives in the layer.)
+    const std::string dst = prim.path().str();
     const std::string holder =
-        prim.path().str() + "/{" + vs.name + "=" + chosen + "}";
-    if (const PrimSpec* h = layer.prim_at_path(holder)) {
-      CopyLocalOpinions(prim, *h);
+        dst + "/{" + vs.name + "=" + chosen + "}";
+    const std::string holder_legacy =
+        dst + "/" + prim.name() + "{" + vs.name + "=" + chosen + "}";
+    std::vector<std::string> holders{holder};
+    if (holder_legacy != holder) holders.push_back(holder_legacy);
+    for (const std::string& hp : holders) {
+      if (const PrimSpec* h = layer.prim_at_path(hp)) {
+        CopyLocalOpinions(prim, *h);
+      }
+      GraftSubtree(layer, anchor_path, hp, dst);
     }
-    GraftSubtree(layer, anchor_path, holder, prim.path().str());
 
     // The holder (and its children) may have JUST been grafted from a
     // referenced layer in this same pass and still sit in the pending buffer
@@ -1195,17 +1232,26 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
     // opinions and re-root its descendants under the prim, dropping the
     // "{vset=sel}" path segment. Unselected variant content keeps its brace
     // path and is filtered out at append time.
-    const std::string hprefix = holder + "/";
-    const std::string dst = prim.path().str();
+    const std::string holder_alt =
+        dst + "{" + vs.name + "=" + chosen + "}";
     for (auto& pg : pending_graft_) {
       const std::string& pp = pg.prim.path().str();
-      if (pp == holder) {
-        CopyLocalOpinions(prim, pg.prim);
-      } else if (pp.size() > hprefix.size() &&
-                 pp.compare(0, hprefix.size(), hprefix) == 0) {
-        std::string new_path = dst + "/" + pp.substr(hprefix.size());
-        if (graft_paths_.insert(new_path).second) {
+      for (const std::string& hp : holders) {
+        const std::string hprefix = hp + "/";
+        if (pp == hp) {
+          pg.prim.remap_target_prefix(hp, dst);
+          pg.prim.remap_target_prefix(holder_alt, dst);
+          CopyLocalOpinions(prim, pg.prim);
+          break;
+        }
+        if (pp.size() > hprefix.size() &&
+            pp.compare(0, hprefix.size(), hprefix) == 0) {
+          std::string new_path = dst + "/" + pp.substr(hprefix.size());
+          graft_paths_.insert(new_path);
+          pg.prim.remap_target_prefix(hp, dst);
+          pg.prim.remap_target_prefix(holder_alt, dst);
           pg.prim.set_path(Path(new_path));
+          break;
         }
       }
     }

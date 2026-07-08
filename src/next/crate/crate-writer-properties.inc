@@ -256,7 +256,7 @@
       uint32_t tok = InternToken(names[i]);
       std::memcpy(raw.data() + 8 + i * 4, &tok, 4);
     }
-    uint64_t data_idx = InternBlock({TypeId::Token, std::move(raw)});
+    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
     CrateField f;
     f.token_index.value = InternToken(field_name);
     f.value_rep = ValueRep::Make(CrateTypeId::TokenVector, data_idx, false, false);

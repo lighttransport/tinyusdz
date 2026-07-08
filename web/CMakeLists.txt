@@ -148,6 +148,7 @@ list(
   ${TINYUSDZ_NEXT_DIR}/crate/crate-reader-vectors.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer-types.cc
   ${TINYUSDZ_NEXT_DIR}/crate/crate-writer.cc
+  ${TINYUSDZ_NEXT_DIR}/crate/variant-holders.cc
   ${TINYUSDZ_NEXT_DIR}/parser/lexer.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser-types.cc
