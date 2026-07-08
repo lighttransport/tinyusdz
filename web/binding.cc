@@ -2719,33 +2719,14 @@ class TinyUSDZLoaderNative {
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
     options.mmap_zero_copy = mmap_zero_copy_;
 
-    tinyusdz::Layer layer;
-    loaded_ = tinyusdz::LoadLayerFromMemory(
+    tinyusdz::Stage stage;
+    loaded_ = tinyusdz::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
-        filename, &layer, &warn_, &error_, options);
+        filename, &stage, &warn_, &error_, options);
 
     if (!loaded_) {
       ReportTinyUSDZDebugEvent(
           "loadFromBinary.parseFailed", error_, binary.size(), is_usdz);
-      return false;
-    }
-
-    if (tinyusdz::HasVariants(layer)) {
-      tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeVariant(layer, &composited_layer, &warn_, &error_)) {
-        ReportTinyUSDZDebugEvent(
-            "loadFromBinary.variantComposeFailed", error_, binary.size(), is_usdz);
-        loaded_ = false;
-        return false;
-      }
-      layer = std::move(composited_layer);
-    }
-
-    tinyusdz::Stage stage;
-    if (!tinyusdz::LayerToStage(std::move(layer), &stage, &warn_, &error_)) {
-      ReportTinyUSDZDebugEvent(
-          "loadFromBinary.layerToStageFailed", error_, binary.size(), is_usdz);
-      loaded_ = false;
       return false;
     }
 
@@ -2933,6 +2914,8 @@ class TinyUSDZLoaderNative {
 
     loaded_as_layer_ = false;
     filename_ = filename;
+    export_stage_ = stage;
+    has_stage_ = true;
 
     // Yield after parsing to allow UI update
     co_await yieldToEventLoop();
@@ -8809,6 +8792,8 @@ class TinyUSDZLoaderNative {
 
     loaded_as_layer_ = false;
     filename_ = filename;
+    export_stage_ = stage;
+    has_stage_ = true;
 
     // Now convert to render scene
     parsing_progress_.setStage(ParsingProgress::Stage::Converting);
@@ -11288,13 +11273,17 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::extractVariants)
 
       .function("applyVariantSelection",
-                &TinyUSDZLoaderNative::applyVariantSelection)
+                select_overload<bool(const std::string &,
+                                     const std::string &,
+                                     const std::string &)>(
+                    &TinyUSDZLoaderNative::applyVariantSelection))
 
       .function("composeVariants",
                 &TinyUSDZLoaderNative::composeVariants)
 
       .function("applyVariantSelection",
-                &TinyUSDZLoaderNative::applyVariantSelection)
+                select_overload<bool(const std::string &)>(
+                    &TinyUSDZLoaderNative::applyVariantSelection))
 
       .function("lodVariantCount",
                 &TinyUSDZLoaderNative::lodVariantCount)
