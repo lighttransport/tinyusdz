@@ -711,7 +711,15 @@ bool AsciiParser::ReadBasicType(int *value) {
     if (!flt) {
       PUSH_ERROR_AND_RETURN("Failed to parse floating value.");
     } else {
-      (*value) = int(flt.value());
+      // Converting a double to int is undefined behavior when the truncated
+      // value does not fit in `int` (float-cast-overflow). pxrUSD allows a
+      // floating literal for an int-typed attribute, so range-check instead of
+      // casting blindly. NaN fails both comparisons and is rejected.
+      const double d = flt.value();
+      if (!(d >= -2147483648.0 && d <= 2147483647.0)) {
+        PUSH_ERROR_AND_RETURN("Floating value out of range for int.");
+      }
+      (*value) = int(d);
       return true;
     }
   }
