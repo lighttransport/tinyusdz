@@ -78,20 +78,22 @@
         }
       }
 
-      // active
-      if (!prim.meta().active) {
+      // active (authored true also round-trips via active_authored)
+      if (!prim.meta().active || prim.meta().active_authored) {
         CrateField f;
         f.token_index.value = InternToken("active");
-        f.value_rep = ValueRep::Make(CrateTypeId::Bool, 0, false, true);
+        f.value_rep = ValueRep::Make(CrateTypeId::Bool,
+                                     prim.meta().active ? 1 : 0, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
 
-      // hidden
-      if (prim.meta().hidden) {
+      // hidden (authored false also round-trips via hidden_authored)
+      if (prim.meta().hidden || prim.meta().hidden_authored) {
         CrateField f;
         f.token_index.value = InternToken("hidden");
-        f.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        f.value_rep = ValueRep::Make(CrateTypeId::Bool,
+                                     prim.meta().hidden ? 1 : 0, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }

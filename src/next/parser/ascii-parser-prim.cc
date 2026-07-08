@@ -332,6 +332,13 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
   ParsePropertyMetadata(rel_name);
 
   if (!Match(TokenType::Equals)) {
+    // Bare declaration (`custom rel material:binding`): register an empty
+    // relationship so it round-trips (writers emit `rel name`, no targets).
+    if (PrimSpec* prim = builder_->current()) {
+      if (!prim->relationship(rel_name)) {
+        prim->set_relationship_targets(rel_name, {});
+      }
+    }
     return true;
   }
 
@@ -356,8 +363,14 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
     lexer_->next();
   }
 
-  if (!targets.empty()) {
-    if (PrimSpec* prim = builder_->current()) {
+  if (PrimSpec* prim = builder_->current()) {
+    if (targets.empty()) {
+      // `= None` / `= []`: keep the relationship declared (empty) rather than
+      // dropping it.
+      if (!prim->relationship(rel_name)) {
+        prim->set_relationship_targets(rel_name, {});
+      }
+    } else {
       prim->apply_relationship_list_op(rel_name, targets, op);
     }
   }

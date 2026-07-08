@@ -207,13 +207,78 @@ struct SliceParser {
       }
       if (c == '\\' && p < end) {
         char esc = *p++;
+        auto hexval = [](char h) -> int {
+          if (h >= '0' && h <= '9') return h - '0';
+          if (h >= 'a' && h <= 'f') return h - 'a' + 10;
+          if (h >= 'A' && h <= 'F') return h - 'A' + 10;
+          return -1;
+        };
         switch (esc) {
           case 'n': out->push_back('\n'); break;
           case 'r': out->push_back('\r'); break;
           case 't': out->push_back('\t'); break;
+          case 'a': out->push_back('\a'); break;
+          case 'b': out->push_back('\b'); break;
+          case 'f': out->push_back('\f'); break;
+          case 'v': out->push_back('\v'); break;
           case '"': out->push_back('"'); break;
           case '\'': out->push_back('\''); break;
           case '\\': out->push_back('\\'); break;
+          case 'x': {
+            // \xNN — up to two hex digits (matches the scalar lexer decode)
+            int v = 0, n = 0;
+            while (n < 2 && p < end && hexval(*p) >= 0) {
+              v = v * 16 + hexval(*p);
+              ++p;
+              ++n;
+            }
+            if (n == 0) { out->push_back('\\'); out->push_back('x'); }
+            else out->push_back(static_cast<char>(v));
+            break;
+          }
+          case '0': case '1': case '2': case '3':
+          case '4': case '5': case '6': case '7': {
+            // Octal \NNN — first digit is `esc`, up to two more
+            int v = esc - '0', n = 1;
+            while (n < 3 && p < end && *p >= '0' && *p <= '7') {
+              v = v * 8 + (*p - '0');
+              ++p;
+              ++n;
+            }
+            out->push_back(static_cast<char>(v & 0xff));
+            break;
+          }
+          case 'u':
+          case 'U': {
+            // \uXXXX / \UXXXXXXXX -> UTF-8 (matches the scalar lexer decode)
+            const int want = (esc == 'u') ? 4 : 8;
+            uint32_t cp = 0;
+            int n = 0;
+            while (n < want && p < end && hexval(*p) >= 0) {
+              cp = cp * 16 + static_cast<uint32_t>(hexval(*p));
+              ++p;
+              ++n;
+            }
+            if (n != want) {
+              out->push_back('\\');
+              out->push_back(esc);
+            } else if (cp < 0x80) {
+              out->push_back(static_cast<char>(cp));
+            } else if (cp < 0x800) {
+              out->push_back(static_cast<char>(0xC0 | (cp >> 6)));
+              out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else if (cp < 0x10000) {
+              out->push_back(static_cast<char>(0xE0 | (cp >> 12)));
+              out->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+              out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else {
+              out->push_back(static_cast<char>(0xF0 | (cp >> 18)));
+              out->push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+              out->push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+              out->push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            }
+            break;
+          }
           default: out->push_back(esc); break;
         }
       } else {
@@ -639,8 +704,29 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
     auto parse_asset = [](SliceParser* s, std::string* v) {
       s->skip_ws();
       if (s->p >= s->end || *s->p != '@') return false;
-      ++s->p;
+      // Triple-@ delimited form (path contains '@'): @@@path@@@ with \@@@
+      // escaping inside.
+      const bool triple =
+          (s->end - s->p) >= 3 && s->p[1] == '@' && s->p[2] == '@';
+      s->p += triple ? 3 : 1;
       v->clear();
+      if (triple) {
+        while (s->p < s->end) {
+          if (*s->p == '\\' && (s->end - s->p) >= 4 && s->p[1] == '@' &&
+              s->p[2] == '@' && s->p[3] == '@') {
+            v->append("@@@");
+            s->p += 4;
+            continue;
+          }
+          if ((s->end - s->p) >= 3 && s->p[0] == '@' && s->p[1] == '@' &&
+              s->p[2] == '@') {
+            s->p += 3;
+            return true;
+          }
+          v->push_back(*s->p++);
+        }
+        return false;
+      }
       while (s->p < s->end && *s->p != '@') v->push_back(*s->p++);
       if (s->p >= s->end) return false;
       ++s->p;  // closing '@'
@@ -677,6 +763,31 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
                            : (element_type == TypeId::Int3) ? 3u
                                                             : 4u;
     return ParseResult::Ok(Value::MakeIntCompArray(std::move(values), element_type, comps));
+  }
+
+  if (element_type == TypeId::UInt2 || element_type == TypeId::UInt3 ||
+      element_type == TypeId::UInt4) {
+    auto parse_u32 = [](SliceParser* s, uint32_t* v) {
+      uint64_t tmp = 0;
+      if (!s->parse_u64(&tmp) || tmp > std::numeric_limits<uint32_t>::max())
+        return false;
+      *v = static_cast<uint32_t>(tmp);
+      return true;
+    };
+    std::vector<uint32_t> values;
+    bool ok = false;
+    if (element_type == TypeId::UInt2) {
+      ok = ParseTupleArrayMaybeParallel<uint32_t, 2>(data, len, simple, lexer.num_threads, &values, parse_u32);
+    } else if (element_type == TypeId::UInt3) {
+      ok = ParseTupleArrayMaybeParallel<uint32_t, 3>(data, len, simple, lexer.num_threads, &values, parse_u32);
+    } else {
+      ok = ParseTupleArrayMaybeParallel<uint32_t, 4>(data, len, simple, lexer.num_threads, &values, parse_u32);
+    }
+    if (!ok) return ParseResult::Error("Failed to parse uint-vector array");
+    const uint32_t comps = (element_type == TypeId::UInt2)   ? 2u
+                           : (element_type == TypeId::UInt3) ? 3u
+                                                             : 4u;
+    return ParseResult::Ok(Value::MakeUIntCompArray(std::move(values), element_type, comps));
   }
 
   if (IsFloat2Like(element_type)) {
@@ -791,6 +902,9 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
     case TypeId::Int2:
     case TypeId::Int3:
     case TypeId::Int4:
+    case TypeId::UInt2:
+    case TypeId::UInt3:
+    case TypeId::UInt4:
     case TypeId::TimeCode:
     case TypeId::Float2:
     case TypeId::Float3:

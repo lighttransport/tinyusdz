@@ -332,7 +332,8 @@
         case TypeId::Point3f:
         case TypeId::Vector3f:
         case TypeId::Normal3f:
-        case TypeId::Color3f: {
+        case TypeId::Color3f:
+        case TypeId::Texcoord3f: {
           const std::vector<float>* arr = val.as_float_array();
           if (arr && arr->size() % 3 == 0) {
             count = arr->size() / 3;
@@ -552,6 +553,10 @@
         case TypeId::Point3d:
         case TypeId::Vector3d:
         case TypeId::Normal3d:
+        case TypeId::Color3d:
+        case TypeId::Color4d:
+        case TypeId::Texcoord2d:
+        case TypeId::Texcoord3d:
         case TypeId::Matrix2d:
         case TypeId::Matrix3d:
         case TypeId::Matrix4d: {
@@ -591,7 +596,14 @@
         case TypeId::Half:
         case TypeId::Half2:
         case TypeId::Half3:
-        case TypeId::Half4: {
+        case TypeId::Half4:
+        case TypeId::Point3h:
+        case TypeId::Vector3h:
+        case TypeId::Normal3h:
+        case TypeId::Color3h:
+        case TypeId::Color4h:
+        case TypeId::Texcoord2h:
+        case TypeId::Texcoord3h: {
           const std::vector<float>* arr = val.as_float_array();
           const uint32_t comps = ArrayComps(type_id);
           if (arr && comps && arr->size() % comps == 0) {

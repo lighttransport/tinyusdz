@@ -120,9 +120,23 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
   PrimSpec* prim = builder_->current();
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
+    // Bare string = doc shorthand (`float x = 1 ( "doc" )`), same as the
+    // prim/layer metadata blocks.
+    if (Check(TokenType::String)) {
+      std::string doc;
+      lexer_->expect(TokenType::String, doc);
+      if (prim) {
+        PropMeta& dm = prim->ensure_property_meta(prop_name);
+        dm.doc = std::move(doc);
+        dm.authored |= PropMeta::kDoc;
+      }
+      Match(TokenType::Comma);
+      continue;
+    }
     std::string key;
     if (!lexer_->expect(TokenType::Identifier, key)) {
-      lexer_->next();  // robustness: skip stray token
+      // expect() consumes the mismatched token; do NOT skip another one (a
+      // second next() here used to eat the ')' and derail the prim body).
       continue;
     }
     if (!Match(TokenType::Equals)) break;
