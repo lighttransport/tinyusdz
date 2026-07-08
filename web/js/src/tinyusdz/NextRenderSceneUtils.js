@@ -16,6 +16,8 @@ export class NextTextureLoadingManager {
     this.loaded = 0;
     this.failed = 0;
     this.aborted = false;
+    this.isLoading = false;
+    this.pendingReleaseAdapters = new Set();
   }
 
   queueTexture(material, mapProperty, adapter, assetPath, colorRole = 'data') {
@@ -45,14 +47,21 @@ export class NextTextureLoadingManager {
     this.total = 0;
     this.loaded = 0;
     this.failed = 0;
-    this.aborted = false;
-    for (const adapter of adapters) {
-      adapter.releaseArchiveTextureBytes();
-    }
+    this.aborted = true;
+    this.releaseAdapters(adapters);
   }
 
   abort() {
     this.aborted = true;
+  }
+
+  releaseAdapters(adapters) {
+    if (!adapters || adapters.size === 0) return;
+    if (this.isLoading) {
+      for (const adapter of adapters) this.pendingReleaseAdapters.add(adapter);
+      return;
+    }
+    for (const adapter of adapters) adapter.releaseArchiveTextureBytes();
   }
 
   getStatus() {
@@ -73,6 +82,10 @@ export class NextTextureLoadingManager {
     onTextureLoaded = null,
     onProgress = null
   } = {}) {
+    if (this.isLoading) {
+      throw new Error('texture loading is already running');
+    }
+    this.isLoading = true;
     this.aborted = false;
     if (onProgress) {
       onProgress({
@@ -121,8 +134,15 @@ export class NextTextureLoadingManager {
         }
       }
     };
-    await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
-    return this.getStatus();
+    try {
+      await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+      return this.getStatus();
+    } finally {
+      this.isLoading = false;
+      const adapters = this.pendingReleaseAdapters;
+      this.pendingReleaseAdapters = new Set();
+      this.releaseAdapters(adapters);
+    }
   }
 
   async loadTexture(task) {

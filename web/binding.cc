@@ -10033,6 +10033,60 @@ class RenderStream {
     const size_t uvCount = UV.size() / 2;
     const size_t nCount = N.size() / 3;
 
+    auto fail = [&](const std::string &msg) {
+      if (err) *err = msg;
+      return false;
+    };
+    if ((P.size() % 3) != 0) {
+      return fail("Mesh points array length is not divisible by 3");
+    }
+    if ((N.size() % 3) != 0) {
+      return fail("Mesh normals array length is not divisible by 3");
+    }
+    if ((UV.size() % 2) != 0) {
+      return fail("Mesh texture coordinate array length is not divisible by 2");
+    }
+    if (!stIdx.empty()) {
+      if (stIdx.size() != faceVtx) {
+        return fail("Mesh texture coordinate index count does not match face vertex count");
+      }
+      for (int32_t idx : stIdx) {
+        if (idx < 0 || static_cast<size_t>(idx) >= uvCount) {
+          return fail("Mesh texture coordinate index is out of range");
+        }
+      }
+    }
+    if (fvc.empty()) {
+      if (!fvi.empty() && (fvi.size() % 3) != 0) {
+        return fail("Mesh indexed triangle list length is not divisible by 3");
+      }
+      for (int32_t idx : fvi) {
+        if (idx < 0 || static_cast<size_t>(idx) >= vtxCount) {
+          return fail("Mesh face index is out of point range");
+        }
+      }
+    } else {
+      size_t base = 0;
+      for (int32_t n : fvc) {
+        if (n < 0) {
+          return fail("Mesh face vertex count is negative");
+        }
+        const size_t count = static_cast<size_t>(n);
+        if (base > fvi.size() || count > fvi.size() - base) {
+          return fail("Mesh face vertex counts exceed index array length");
+        }
+        base += count;
+      }
+      if (base != fvi.size()) {
+        return fail("Mesh face vertex counts do not match index array length");
+      }
+      for (int32_t idx : fvi) {
+        if (idx < 0 || static_cast<size_t>(idx) >= vtxCount) {
+          return fail("Mesh face index is out of point range");
+        }
+      }
+    }
+
     const bool uvFaceVarying = !UV.empty() && uvCount != vtxCount &&
                                (uvCount == faceVtx || !stIdx.empty());
     const bool nFaceVarying = !N.empty() && nCount != vtxCount && nCount == faceVtx;
@@ -10057,7 +10111,7 @@ class RenderStream {
                        float *x, float *y, float *z) {
       if (idx < 0) return false;
       const size_t i = static_cast<size_t>(idx);
-      if (i > (src.size() / 3)) return false;
+      if (i >= (src.size() / 3)) return false;
       const size_t off = i * 3;
       if (off + 2 >= src.size()) return false;
       *x = src[off];
@@ -10069,7 +10123,7 @@ class RenderStream {
                        float *x, float *y) {
       if (idx < 0) return false;
       const size_t i = static_cast<size_t>(idx);
-      if (i > (src.size() / 2)) return false;
+      if (i >= (src.size() / 2)) return false;
       const size_t off = i * 2;
       if (off + 1 >= src.size()) return false;
       *x = src[off];
