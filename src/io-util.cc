@@ -435,10 +435,6 @@ bool SimpleGlobMatch(const std::string &pattern, const std::string &name) {
 
 namespace {
 
-inline bool HasGlobWildcard(const std::string &s) {
-  return s.find_first_of("*?") != std::string::npos;
-}
-
 // POSIX-style leading '~' (-> $HOME) plus $VAR / ${VAR} environment-variable
 // substitution. Pure string transform — no filesystem, no shell, no brace or
 // glob expansion — so it is safe on any input (this replaces the useful,
@@ -481,6 +477,16 @@ std::string ExpandEnvAndTilde(const std::string &in) {
 }
 
 }  // namespace
+
+#if TINYUSDZ_HAVE_GLOB_FS
+namespace {
+
+inline bool HasGlobWildcard(const std::string &s) {
+  return s.find_first_of("*?") != std::string::npos;
+}
+
+}  // namespace
+#endif
 
 std::vector<std::string> SimpleGlob(const std::string &pattern,
                                     size_t max_results) {
@@ -567,6 +573,7 @@ std::vector<std::string> SimpleGlob(const std::string &pattern,
   }
   return results;
 #else
+  (void)pattern;
   (void)max_results;
   return results;  // no filesystem globbing on this platform
 #endif

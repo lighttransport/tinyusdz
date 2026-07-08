@@ -58,6 +58,10 @@ struct CompositionOptions {
   bool resolve_variants = true;           // Apply variant selections
   int max_depth = 100;                    // Max composition recursion depth
   std::vector<std::string> muted_layers;  // Layers to skip
+
+  // Strongest variant selections for flattening: set name -> variant name.
+  // Empty keeps authored selections.
+  std::map<std::string, std::string> variant_overrides;
 };
 
 /// Composition error

@@ -444,6 +444,19 @@ EM_JS(void, reportTinyUSDZDebug, (const char* phase, const char* detail, double 
   }
 });
 
+EM_JS(void, reportNextCrateProgress, (const char* phase, double current, double total), {
+  if (typeof Module.onNextCrateProgress === 'function') {
+    const cur = Number(current);
+    const tot = Number(total);
+    Module.onNextCrateProgress({
+      phase: UTF8ToString(Number(phase)),
+      current: cur,
+      total: tot,
+      percentage: tot > 0 ? (cur / tot) * 100 : 0
+    });
+  }
+});
+
 static inline double GetWasmHeapByteLengthForDebug() {
   return getWasmHeapByteLengthForDebug();
 }
@@ -2876,6 +2889,10 @@ class TinyUSDZLoaderNative {
   // Returns a Promise that resolves to a JS object: { success: bool, error?: string }
   //
 #if defined(TINYUSDZ_USE_COROUTINE)
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcoroutine-missing-unhandled-exception"
+#endif
   emscripten::val loadFromBinaryAsync(std::string binary, std::string filename) {
     // IMPORTANT: Parameters are passed by VALUE (not by reference) to ensure
     // data remains valid across co_await suspension points. References would
@@ -3044,6 +3061,9 @@ class TinyUSDZLoaderNative {
     result.set("textureCount", static_cast<int>(render_scene_.textures.size()));
     co_return result;
   }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #endif // TINYUSDZ_USE_COROUTINE
 
   // u8 : Uint8Array object.
@@ -6900,11 +6920,21 @@ class TinyUSDZLoaderNative {
   emscripten::val nextFlattenOwnedRemap(
       std::string &&input, bool lazyArrays,
       const std::map<std::string, std::string> &remap) {
+    return nextFlattenOwnedRemapVariants(
+        std::move(input), lazyArrays, remap,
+        std::map<std::string, std::string>());
+  }
+
+  emscripten::val nextFlattenOwnedRemapVariants(
+      std::string &&input, bool lazyArrays,
+      const std::map<std::string, std::string> &remap,
+      const std::map<std::string, std::string> &variants) {
     emscripten::val result = emscripten::val::object();
     std::vector<uint8_t> out;
     tinyusdz::next::pipeline::FlattenOptions opts;
     opts.read.lazy_arrays = lazyArrays;  // false => eager decode (A/B baseline)
     opts.asset_path_remap = remap;
+    opts.composition.variant_overrides = variants;
     tinyusdz::next::pipeline::FlattenStats stats;
     std::string err;
     bool ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwned(
@@ -6975,6 +7005,14 @@ class TinyUSDZLoaderNative {
   emscripten::val nextFlattenBufferRemap(const std::string &uuid,
                                          bool lazyArrays,
                                          emscripten::val remap) {
+    return nextFlattenBufferRemapVariants(
+        uuid, lazyArrays, remap, emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenBufferRemapVariants(const std::string &uuid,
+                                                 bool lazyArrays,
+                                                 emscripten::val remap,
+                                                 emscripten::val variants) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -6988,7 +7026,14 @@ class TinyUSDZLoaderNative {
       result.set("error", "Invalid asset path remap");
       return result;
     }
-    return nextFlattenOwnedRemap(std::move(input), lazyArrays, remap_map);
+    std::map<std::string, std::string> variant_map;
+    if (!parseVariantOverrides(variants, &variant_map)) {
+      result.set("success", false);
+      result.set("error", "Invalid variant overrides");
+      return result;
+    }
+    return nextFlattenOwnedRemapVariants(
+        std::move(input), lazyArrays, remap_map, variant_map);
   }
 
   /// Streaming-output variant of nextFlattenBuffer: the flattened crate is
@@ -7008,6 +7053,13 @@ class TinyUSDZLoaderNative {
                                                bool lazyArrays,
                                                emscripten::val chunkCb,
                                                emscripten::val remap) {
+    return nextFlattenBufferToSinkRemapVariants(
+        uuid, lazyArrays, chunkCb, remap, emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenBufferToSinkRemapVariants(
+      const std::string &uuid, bool lazyArrays, emscripten::val chunkCb,
+      emscripten::val remap, emscripten::val variants) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -7021,6 +7073,11 @@ class TinyUSDZLoaderNative {
     if (!parseAssetPathRemap(remap, &opts.asset_path_remap)) {
       result.set("success", false);
       result.set("error", "Invalid asset path remap");
+      return result;
+    }
+    if (!parseVariantOverrides(variants, &opts.composition.variant_overrides)) {
+      result.set("success", false);
+      result.set("error", "Invalid variant overrides");
       return result;
     }
     tinyusdz::next::pipeline::FlattenStats stats;
@@ -7091,6 +7148,16 @@ class TinyUSDZLoaderNative {
       const std::string &uuid, const std::string &rootName, bool lazyArrays,
       emscripten::val chunkCb, emscripten::val layerExistsCb,
       emscripten::val layerFetchCb, emscripten::val remap) {
+    return nextFlattenMultiBufferToSinkFetchRemapVariants(
+        uuid, rootName, lazyArrays, chunkCb, layerExistsCb, layerFetchCb, remap,
+        emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenMultiBufferToSinkFetchRemapVariants(
+      const std::string &uuid, const std::string &rootName, bool lazyArrays,
+      emscripten::val chunkCb, emscripten::val layerExistsCb,
+      emscripten::val layerFetchCb, emscripten::val remap,
+      emscripten::val variants) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -7105,6 +7172,11 @@ class TinyUSDZLoaderNative {
     if (!parseAssetPathRemap(remap, &opts.asset_path_remap)) {
       result.set("success", false);
       result.set("error", "Invalid asset path remap");
+      return result;
+    }
+    if (!parseVariantOverrides(variants, &opts.composition.variant_overrides)) {
+      result.set("success", false);
+      result.set("error", "Invalid variant overrides");
       return result;
     }
 
@@ -7291,6 +7363,13 @@ class TinyUSDZLoaderNative {
                                              const std::string &rootName,
                                              bool lazyArrays,
                                              emscripten::val remap) {
+    return nextFlattenAsyncBeginRemapVariants(
+        uuid, rootName, lazyArrays, remap, emscripten::val::undefined());
+  }
+
+  emscripten::val nextFlattenAsyncBeginRemapVariants(
+      const std::string &uuid, const std::string &rootName, bool lazyArrays,
+      emscripten::val remap, emscripten::val variants) {
     emscripten::val result = emscripten::val::object();
     std::string input = em_resolver_.takeZeroCopyBufferString(uuid);
     if (input.empty()) {
@@ -7307,6 +7386,11 @@ class TinyUSDZLoaderNative {
     if (!parseAssetPathRemap(remap, &session.asset_path_remap)) {
       result.set("success", false);
       result.set("error", "Invalid asset path remap");
+      return result;
+    }
+    if (!parseVariantOverrides(variants, &session.variant_overrides)) {
+      result.set("success", false);
+      result.set("error", "Invalid variant overrides");
       return result;
     }
     next_async_flatten_sessions_[session_id] = std::move(session);
@@ -7363,6 +7447,7 @@ class TinyUSDZLoaderNative {
     opts.root_anchor_path = state.root_name;
     opts.fail_on_composition_error = true;
     opts.asset_path_remap = state.asset_path_remap;
+    opts.composition.variant_overrides = state.variant_overrides;
 
     using tinyusdz::next::AssetResolver;
     AssetResolver resolver;
@@ -8890,6 +8975,7 @@ class TinyUSDZLoaderNative {
     std::string root_name;
     bool lazy_arrays = true;
     std::map<std::string, std::string> asset_path_remap;
+    std::map<std::string, std::string> variant_overrides;
     std::map<std::string, std::string> layers;
     std::map<std::string, std::shared_ptr<tinyusdz::next::Layer>> parsed_layers;
   };
@@ -8906,6 +8992,25 @@ class TinyUSDZLoaderNative {
     for (size_t i = 0; i < nkeys; i++) {
       std::string k = keys[i].as<std::string>();
       (*out)[k] = remap[k].as<std::string>();
+    }
+    return true;
+  }
+
+  bool parseVariantOverrides(emscripten::val variants,
+                             std::map<std::string, std::string> *out) {
+    if (!out) return false;
+    out->clear();
+    if (variants.isUndefined() || variants.isNull()) return true;
+    emscripten::val keys =
+        emscripten::val::global("Object").call<emscripten::val>("keys", variants);
+    const size_t nkeys = keys["length"].as<size_t>();
+    for (size_t i = 0; i < nkeys; i++) {
+      std::string k = keys[i].as<std::string>();
+      if (k.empty()) continue;
+      emscripten::val v = variants[k];
+      if (v.isUndefined() || v.isNull()) continue;
+      std::string value = v.as<std::string>();
+      if (!value.empty()) (*out)[k] = value;
     }
     return true;
   }
@@ -9653,8 +9758,15 @@ class RenderStream {
     emscripten::val r = emscripten::val::object();
     end();
     error_.clear();
+    tinyusdz::next::USDCLoadOptions opts;
+    opts.crate_options.progress_callback =
+        [](const char *phase, size_t current, size_t total) -> bool {
+      reportNextCrateProgress(
+          phase, static_cast<double>(current), static_cast<double>(total));
+      return true;
+    };
     tinyusdz::next::USDCLoadResult res =
-        tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(crate));
+        tinyusdz::next::LoadUSDCFromMemoryOwned(std::move(crate), opts);
     if (!res.success) {
       error_ = res.error_summary.empty() ? std::string("USDC load failed")
                                          : res.error_summary;
@@ -10964,20 +11076,28 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("nextFlattenBuffer", &TinyUSDZLoaderNative::nextFlattenBuffer)
       .function("nextFlattenBufferRemap",
                 &TinyUSDZLoaderNative::nextFlattenBufferRemap)
+      .function("nextFlattenBufferRemapVariants",
+                &TinyUSDZLoaderNative::nextFlattenBufferRemapVariants)
       .function("nextFlattenBufferToSink",
                 &TinyUSDZLoaderNative::nextFlattenBufferToSink)
       .function("nextFlattenBufferToSinkRemap",
                 &TinyUSDZLoaderNative::nextFlattenBufferToSinkRemap)
+      .function("nextFlattenBufferToSinkRemapVariants",
+                &TinyUSDZLoaderNative::nextFlattenBufferToSinkRemapVariants)
       .function("nextFlattenMultiBufferToSink",
                 &TinyUSDZLoaderNative::nextFlattenMultiBufferToSink)
       .function("nextFlattenMultiBufferToSinkFetch",
                 &TinyUSDZLoaderNative::nextFlattenMultiBufferToSinkFetch)
       .function("nextFlattenMultiBufferToSinkFetchRemap",
                 &TinyUSDZLoaderNative::nextFlattenMultiBufferToSinkFetchRemap)
+      .function("nextFlattenMultiBufferToSinkFetchRemapVariants",
+                &TinyUSDZLoaderNative::nextFlattenMultiBufferToSinkFetchRemapVariants)
       .function("nextFlattenAsyncBegin",
                 &TinyUSDZLoaderNative::nextFlattenAsyncBegin)
       .function("nextFlattenAsyncBeginRemap",
                 &TinyUSDZLoaderNative::nextFlattenAsyncBeginRemap)
+      .function("nextFlattenAsyncBeginRemapVariants",
+                &TinyUSDZLoaderNative::nextFlattenAsyncBeginRemapVariants)
       .function("nextFlattenAsyncProvideLayer",
                 &TinyUSDZLoaderNative::nextFlattenAsyncProvideLayer)
       .function("nextFlattenAsyncStep",

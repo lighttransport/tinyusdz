@@ -1167,6 +1167,10 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
 
   for (const auto& vs : prim.meta().variantSets()) {
     std::string chosen = vs.selected;
+    auto override_it = options_.variant_overrides.find(vs.name);
+    if (override_it != options_.variant_overrides.end()) {
+      chosen = override_it->second;
+    }
     if (chosen.empty()) {
       for (const auto& sel : prim.meta().variantSelections()) {
         if (sel.first == vs.name) {

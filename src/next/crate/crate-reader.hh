@@ -8,6 +8,7 @@
 
 #include "crate-format.hh"
 #include "../stage/stage.hh"
+#include <functional>
 #include <string>
 #include <vector>
 #include <memory>
@@ -17,6 +18,11 @@ namespace next {
 
 /// Options for reading crate files
 struct CrateReadOptions {
+  /// Optional progress callback. `phase` is a stable short string, `current`
+  /// and `total` are phase-local counts when available. Return false to cancel.
+  std::function<bool(const char* phase, size_t current, size_t total)>
+      progress_callback;
+
   /// Maximum number of tokens allowed
   size_t max_tokens = 1024 * 1024;
 

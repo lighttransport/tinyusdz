@@ -422,6 +422,14 @@ void CrateReader::Impl::AddError(const std::string& msg) {
   result_.errors.push_back(err);
 }
 
+bool CrateReader::Impl::ReportProgress(const char* phase, size_t current,
+                                       size_t total) {
+  if (!options_.progress_callback) return true;
+  if (options_.progress_callback(phase, current, total)) return true;
+  AddError(std::string("USDC read cancelled during ") + phase);
+  return false;
+}
+
 void CrateReader::Impl::AddWarning(const std::string& msg) {
   result_.warnings.push_back(msg);
 }
