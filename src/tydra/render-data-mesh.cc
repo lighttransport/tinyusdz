@@ -157,8 +157,18 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
         num_uniforms, faceVertexCounts.size()));
   }
 
-  const uint32_t num_vertices =
-      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
+  // max_element on an empty range is UB, and `max + 1` on uint32 wraps to 0
+  // for a 0xFFFFFFFF index (a source -1), making dst.resize(0) then OOB writes
+  // below. The sole live caller validates indices first, but guard here too.
+  if (faceVertexIndices.empty()) {
+    return nonstd::make_unexpected("faceVertexIndices is empty.");
+  }
+  const uint32_t max_index =
+      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend());
+  if (max_index == (std::numeric_limits<uint32_t>::max)()) {
+    return nonstd::make_unexpected("faceVertexIndices contains an invalid (max-uint32) index.");
+  }
+  const size_t num_vertices = size_t(max_index) + 1;
 
   size_t resize_size;
   if (!safe::mul(num_vertices, stride_bytes, &resize_size)) {
@@ -333,8 +343,15 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
                     faceVertexIndices.size()));
   }
 
-  const uint32_t num_vertices =
-      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
+  if (faceVertexIndices.empty()) {
+    return nonstd::make_unexpected("faceVertexIndices is empty.");
+  }
+  const uint32_t max_index =
+      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend());
+  if (max_index == (std::numeric_limits<uint32_t>::max)()) {
+    return nonstd::make_unexpected("faceVertexIndices contains an invalid (max-uint32) index.");
+  }
+  const size_t num_vertices = size_t(max_index) + 1;
 
   std::vector<uint8_t> dst;
 

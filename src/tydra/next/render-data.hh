@@ -249,6 +249,7 @@ struct RenderMesh {
     UInt16Chunked joint_indices;  // 4 joints per vertex
     FloatChunked joint_weights;   // 4 weights per vertex
     int32_t skeleton_id = -1;
+    std::string skeleton_path;    // bound Skeleton prim (resolves skeleton_id)
     Matrix4 geom_bind_transform;
   };
   std::unique_ptr<SkinBinding> skin;
@@ -258,12 +259,29 @@ struct RenderMesh {
     std::string name;
     FloatChunked point_offsets;   // xyz deltas
     FloatChunked normal_offsets;  // xyz deltas (optional)
+    // Sparse target: point_offsets[k] applies to point point_indices[k].
+    // Empty = dense (offsets parallel to points).
+    std::vector<uint32_t> point_indices;
     float weight = 0.0f;
   };
   std::vector<BlendShape> blend_shapes;
 
+  // holeIndices: faces excluded from rendering (skipped at triangulation;
+  // kept in the topology so uniform/faceVarying primvar alignment holds).
+  std::vector<uint32_t> hole_faces;
+
+  // Authored winding: `orientation = "leftHanded"`. Triangulation emits
+  // reversed (rightHanded) winding for these meshes so consumers can treat
+  // triangulated_indices as CCW uniformly; computed normals follow.
+  bool left_handed = false;
+
   // Triangulated data (computed on demand)
   UInt32Chunked triangulated_indices;
+  // Per triangulated CORNER, the original face-vertex (corner) index into the
+  // authored faceVarying arrays, so a consumer can index faceVarying primvars
+  // (uv/normals) against the triangulated topology. Parallel to
+  // triangulated_indices (same length). Empty until TriangulateMesh runs.
+  UInt32Chunked triangulated_face_vertex_indices;
   bool is_triangulated = false;
 
   // Bounding box
@@ -499,6 +517,10 @@ struct RenderTexture {
   Float2 scale = {1, 1};
   float rotation = 0.0f;  // Radians
 
+  // UV set sampled by this texture (UsdPrimvarReader varname on the st
+  // chain); empty = the default uv primvar ("st").
+  std::string uv_primvar;
+
   // Sampling
   WrapMode wrap_s = WrapMode::Repeat;
   WrapMode wrap_t = WrapMode::Repeat;
@@ -561,6 +583,8 @@ struct RenderLight {
     struct { float radius; } disk;
     struct { float angle; } spot;  // Cone angle in radians
     struct { int32_t texture_id; } dome;
+    struct { float radius, length; } cylinder;
+    struct { float angle; } distant;  // Angular size in degrees
   } params = {};
 
   // Shadow

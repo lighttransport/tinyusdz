@@ -528,6 +528,15 @@ void MatMulD(double* dst, const double* a, const double* b) {
 const Value* PropAtTime(const UsdPrim& prim, const std::string& name,
                         double time) {
   if (std::isnan(time)) return prim.GetPropertyValue(name);
+  // Linear interpolation between samples (pxr semantics); held/default
+  // fallback. Scratch is per-thread; callers consume the pointer before the
+  // next PropAtTime call (single-live-pointer pattern in this TU).
+  static thread_local Value scratch;
+  Value v = prim.GetInterpolatedValue(name, time);
+  if (!v.is_empty()) {
+    scratch = std::move(v);
+    return &scratch;
+  }
   return prim.GetValueAtTime(name, time);
 }
 
@@ -898,9 +907,19 @@ std::vector<Primvar> GetPrimvars(const UsdPrim& prim) {
       if (pv.value) {
         pv.type_id = pv.value->type_id();
 
-        // Get interpolation
-        std::string interp_attr = name + ":interpolation";
-        GetToken(prim, interp_attr, &pv.interpolation);
+        // Get interpolation: authored property metadata first (the usda/crate
+        // readers store it in PropMeta), then the legacy attribute form.
+        if (const PrimSpec* spec = prim.GetPrimSpec()) {
+          if (const PropMeta* pm = spec->property_meta(name)) {
+            if (pm->authored & PropMeta::kInterpolation) {
+              pv.interpolation = pm->interpolation;
+            }
+          }
+        }
+        if (pv.interpolation.empty()) {
+          std::string interp_attr = name + ":interpolation";
+          GetToken(prim, interp_attr, &pv.interpolation);
+        }
         if (pv.interpolation.empty()) {
           pv.interpolation = "vertex";  // Default
         }
@@ -927,8 +946,17 @@ Primvar GetPrimvar(const UsdPrim& prim, const std::string& name) {
   if (pv.value) {
     pv.type_id = pv.value->type_id();
 
-    std::string interp_attr = full_name + ":interpolation";
-    GetToken(prim, interp_attr, &pv.interpolation);
+    if (const PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const PropMeta* pm = spec->property_meta(full_name)) {
+        if (pm->authored & PropMeta::kInterpolation) {
+          pv.interpolation = pm->interpolation;
+        }
+      }
+    }
+    if (pv.interpolation.empty()) {
+      std::string interp_attr = full_name + ":interpolation";
+      GetToken(prim, interp_attr, &pv.interpolation);
+    }
     if (pv.interpolation.empty()) {
       pv.interpolation = "vertex";
     }
