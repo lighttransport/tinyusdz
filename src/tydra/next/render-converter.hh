@@ -109,7 +109,7 @@ class RenderSceneConverter {
   ConvertResult Convert(const ::tinyusdz::next::Stage& stage);
 
   // Individual conversion methods (for custom pipelines)
-  bool ConvertMesh(const UsdPrim& prim, RenderMesh* out);
+  bool ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);
@@ -147,6 +147,15 @@ class RenderSceneConverter {
 
   // Normal computation
   bool ComputeVertexNormals(RenderMesh* mesh);
+  /// Per-vertex tangent frame (xyzw, w=handedness) from triangles + per-vertex
+  /// normals + per-vertex UVs. No-op unless those inputs are consistent.
+  bool ComputeVertexTangents(RenderMesh* mesh);
+
+  /// Resolve an authored asset path against the source layer directory.
+  std::string ResolveAssetPath(const std::string& file) const;
+  /// Find-or-create an image record for `file`; returns its id (-1 on empty).
+  int32_t ResolveImageId(RenderScene* scene, const std::string& file,
+                         ColorSpace color_space);
 
   // Material extraction
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
