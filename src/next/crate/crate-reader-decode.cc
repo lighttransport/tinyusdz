@@ -278,15 +278,22 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
     return true;
   };
 
-  // ListOpHeader bits / read order match DecodeReferenceListOp.
+  // ListOpHeader bits / read order match DecodeReferenceListOp. Non-explicit
+  // sublists are marker-delimited ("\x01" "P"/"A"/"D"/"O") so BuildStage can
+  // recover the authored qualifier (e.g. `prepend apiSchemas`).
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
   const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
                 kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  const bool mark = !(bits & kHasExplicit);
+  auto marked_run = [&](const char* marker, bool keep) -> bool {
+    if (mark && keep) out.push_back(marker);
+    return read_run(keep);
+  };
   if ((bits & kHasExplicit) && !read_run(true)) return false;
-  if ((bits & kHasAdded) && !read_run(true)) return false;
-  if ((bits & kHasPrepended) && !read_run(true)) return false;
-  if ((bits & kHasAppended) && !read_run(true)) return false;
+  if ((bits & kHasAdded) && !marked_run("\x01" "A", true)) return false;
+  if ((bits & kHasPrepended) && !marked_run("\x01" "P", true)) return false;
+  if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
   if ((bits & kHasDeleted) && !read_run(false)) return false;
   if ((bits & kHasOrdered) && !read_run(false)) return false;
   return true;

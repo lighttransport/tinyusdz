@@ -23,6 +23,11 @@ struct StageMeta {
   double timeCodesPerSecond = 24.0;
   double startTimeCode = 0.0;
   double endTimeCode = 0.0;
+  bool upAxis_set = false;
+  bool metersPerUnit_set = false;
+  bool timeCodesPerSecond_set = false;
+  bool startTimeCode_set = false;
+  bool endTimeCode_set = false;
   double framesPerSecond = 24.0;
   bool framesPerSecond_set = false;
   double kilogramsPerUnit = 1.0;

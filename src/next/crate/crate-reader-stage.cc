@@ -35,6 +35,10 @@ bool CrateReader::Impl::BuildStage() {
   LayerBuilder builder(layer);
 
   // First, process the PseudoRoot spec to extract layer metadata
+  // Authored child order per prim path (from primChildren fields; "/" = the
+  // pseudo-root's list), applied after the sorted hierarchy build.
+  std::unordered_map<std::string, std::vector<std::string>> prim_children_order;
+
   for (const auto& spec : specs_) {
     if (spec.spec_type != SpecType::PseudoRoot) continue;
     if (spec.path_index.value >= paths_.size()) continue;
@@ -45,24 +49,43 @@ bool CrateReader::Impl::BuildStage() {
     }
 
     for (auto& field : fields) {
-      if (field.first == "defaultPrim") {
+      if (field.first == "primChildren") {
+        if (const std::vector<std::string>* names =
+                field.second.as_token_array()) {
+          if (!names->empty()) prim_children_order["/"] = *names;
+        }
+      } else if (field.first == "defaultPrim") {
         if (const std::string* s = field.second.as_token())
           layer.meta().defaultPrim = *s;
       } else if (field.first == "upAxis") {
-        if (const std::string* s = field.second.as_token())
+        if (const std::string* s = field.second.as_token()) {
           layer.meta().upAxis = *s;
+          layer.meta().upAxis_set = true;
+        }
       } else if (field.first == "metersPerUnit") {
         const double* d = field.second.as_double();
-        if (d) layer.meta().metersPerUnit = *d;
+        if (d) {
+          layer.meta().metersPerUnit = *d;
+          layer.meta().metersPerUnit_set = true;
+        }
       } else if (field.first == "timeCodesPerSecond") {
         const double* d = field.second.as_double();
-        if (d) layer.meta().timeCodesPerSecond = *d;
+        if (d) {
+          layer.meta().timeCodesPerSecond = *d;
+          layer.meta().timeCodesPerSecond_set = true;
+        }
       } else if (field.first == "startTimeCode") {
         const double* d = field.second.as_double();
-        if (d) layer.meta().startTimeCode = *d;
+        if (d) {
+          layer.meta().startTimeCode = *d;
+          layer.meta().startTimeCode_set = true;
+        }
       } else if (field.first == "endTimeCode") {
         const double* d = field.second.as_double();
-        if (d) layer.meta().endTimeCode = *d;
+        if (d) {
+          layer.meta().endTimeCode = *d;
+          layer.meta().endTimeCode_set = true;
+        }
       } else if (field.first == "framesPerSecond") {
         const double* d = field.second.as_double();
         if (d) {
@@ -98,6 +121,13 @@ bool CrateReader::Impl::BuildStage() {
       } else if (field.first == "comment") {
         if (const std::string* s = field.second.as_string())
           layer.meta().comment = *s;
+      } else if (field.first == "subLayerOffsets") {
+        if (const std::vector<double>* arr = field.second.as_double_array()) {
+          layer.meta().subLayerOffsets.clear();
+          for (size_t i = 0; i + 1 < arr->size(); i += 2) {
+            layer.meta().subLayerOffsets.emplace_back((*arr)[i], (*arr)[i + 1]);
+          }
+        }
       } else if (field.first == "subLayers") {
         if (const std::vector<std::string>* arr = field.second.as_token_array()) {
           for (const auto& s : *arr) layer.meta().subLayers.push_back(s);
@@ -247,6 +277,8 @@ bool CrateReader::Impl::BuildStage() {
   struct RelInfo {
     std::string name;
     std::vector<std::string> targets;
+    ArcEdit edits;        // authored list-op sublists (marker-decoded)
+    bool custom = false;
     bool uniform = false;
   };
   std::unordered_map<std::string, std::vector<AttrInfo>> attr_map;
@@ -289,7 +321,32 @@ bool CrateReader::Impl::BuildStage() {
       ri.name = std::move(prop_name);
       for (auto& f : property_raw_field_scratch) {
         if (f.first == "targetPaths") {
-          DecodePathTargets(f.second, ri.targets);
+          std::vector<std::string> raw;
+          DecodePathTargets(f.second, raw, /*with_markers=*/true);
+          if (!raw.empty() && !raw[0].empty() && raw[0][0] == '\x01') {
+            // Non-explicit list op: sublists are marker-delimited.
+            ri.edits.authored = true;
+            ri.edits.is_explicit = false;
+            std::vector<std::string>* cur = nullptr;
+            for (std::string& t : raw) {
+              if (t == "\x01" "P") cur = &ri.edits.prepended;
+              else if (t == "\x01" "A") cur = &ri.edits.appended;
+              else if (t == "\x01" "D") cur = &ri.edits.deleted;
+              else if (t == "\x01" "O") cur = &ri.edits.ordered;
+              else if (cur) cur->push_back(std::move(t));
+            }
+            // Within-spec effective list: prepended then appended.
+            ri.targets = ri.edits.prepended;
+            ri.targets.insert(ri.targets.end(), ri.edits.appended.begin(),
+                              ri.edits.appended.end());
+          } else {
+            ri.targets = std::move(raw);
+          }
+        } else if (f.first == "custom") {
+          Value v;
+          if (UnpackValue(f.second, v)) {
+            if (const bool* b = v.as_bool()) ri.custom = *b;
+          }
         } else if (f.first == "variability") {
           Value v;
           if (UnpackValue(f.second, v)) {
@@ -319,8 +376,8 @@ bool CrateReader::Impl::BuildStage() {
       } else if (f.first == "timeSamples") {
         DecodeTimeSamples(f.second, &ai.time_samples);
       } else if (f.first == "connectionPaths") {
-        if (DecodePathTargets(f.second, ai.connection_targets) &&
-            !ai.connection_targets.empty()) {
+        if (DecodePathTargets(f.second, ai.connection_targets)) {
+          // Present-but-empty = authored connection block (`.connect = None`).
           ai.is_connection = true;
         }
       } else if (f.first == "variability") {
@@ -493,12 +550,22 @@ bool CrateReader::Impl::BuildStage() {
       // skip them rather than crash.)
       if (ps) {
         if (field.first == "apiSchemas") {
-          // Applied API schemas. pxrUSD stores this as a TokenListOp; by the
-          // time it reaches this field loop UnpackValue has flattened it to its
-          // effective token list. Route it to PrimSpecMeta (the composed/flatten
-          // form pxr writes as `apiSchemas = [...]` in the metadata block);
-          // otherwise it leaks as a phantom `token[] apiSchemas` body property.
-          append_token_list(field.second, ps->meta().apiSchemas(), "apiSchemas");
+          // Applied API schemas (TokenListOp). Non-explicit sublists arrive
+          // marker-delimited; recover the qualifier and strip the markers.
+          if (const std::vector<std::string>* arr =
+                  field.second.as_token_array()) {
+            std::string qual;
+            for (const std::string& t : *arr) {
+              if (t == "\x01" "P") { qual = "prepend"; continue; }
+              if (t == "\x01" "A") { qual = "append"; continue; }
+              if (!t.empty() && t[0] == '\x01') continue;
+              ps->meta().apiSchemas().push_back(t);
+            }
+            if (!qual.empty()) ps->meta().apiSchemasQualifier() = qual;
+          } else {
+            append_token_list(field.second, ps->meta().apiSchemas(),
+                              "apiSchemas");
+          }
           continue;
         }
         // Composition arc lists. A marker-delimited token array (first entry
@@ -649,7 +716,18 @@ bool CrateReader::Impl::BuildStage() {
       // sequence. Composition derives child order from child_indices() directly
       // (see cache.cc ComposeInto), so consume these so they do not leak as
       // phantom `token[] primChildren`/`properties` attributes.
-      if (field.first == "primChildren" || field.first == "properties" ||
+      if (field.first == "primChildren") {
+        // Authored sibling order: the hierarchy below is built in path-sorted
+        // order, so capture the order here and restore it after finalize.
+        if (const std::vector<std::string>* names =
+                field.second.as_token_array()) {
+          if (!names->empty()) {
+            prim_children_order[entry.full_path] = *names;
+          }
+        }
+        continue;
+      }
+      if (field.first == "properties" ||
           field.first == "propertyChildren" ||
           field.first == "variantChildren" ||
           field.first == "variantSetChildren") {
@@ -708,6 +786,9 @@ bool CrateReader::Impl::BuildStage() {
         if (!ai.type_name.empty()) {
           ps->set_property_type_name(ai.name, ai.type_name);
         }
+        if (ai.is_connection && ai.connection_targets.empty()) {
+          ps->set_connection_block(ai.name);  // authored `.connect = None`
+        }
         for (const auto& t : ai.connection_targets) {
           ps->add_connection(ai.name, Path(t));
         }
@@ -737,13 +818,22 @@ bool CrateReader::Impl::BuildStage() {
     auto rm = rel_map.find(entry.full_path);
     if (ps && rm != rel_map.end()) {
       for (auto& ri : rm->second) {
-        // A target-less relationship is recorded with a single empty Path
-        // marker (the writer emits no targetPaths for it); relationships with
-        // targets push one Path per target.
+        // A target-less relationship stays a declared (empty) relationship;
+        // relationships with targets push one Path per target.
         if (ri.targets.empty()) {
-          ps->add_relationship(ri.name, Path());
+          if (!ps->relationship(ri.name)) {
+            ps->set_relationship_targets(ri.name, {});
+          }
         } else {
           for (const auto& t : ri.targets) ps->add_relationship(ri.name, Path(t));
+        }
+        if (ri.edits.authored) {
+          ps->ensure_relationship_edit(ri.name) = std::move(ri.edits);
+        }
+        if (ri.custom) {
+          ps->set_relationship_flags(
+              ri.name, static_cast<uint16_t>(ps->relationship_flags(ri.name) |
+                                             PropSlot::kFlagCustom));
         }
       }
     }
@@ -826,6 +916,45 @@ bool CrateReader::Impl::BuildStage() {
 
   // Finalize
   builder.finalize();
+
+  // Restore authored namespace order from primChildren: reorder each prim's
+  // child links (and the root list) to the recorded name order; unlisted
+  // children keep their relative (sorted) order at the end.
+  if (!prim_children_order.empty()) {
+    layer.build_path_index();
+    auto reorder = [&](const std::vector<uint32_t>& current,
+                       const std::vector<std::string>& names) {
+      std::vector<uint32_t> out;
+      out.reserve(current.size());
+      std::vector<bool> used(current.size(), false);
+      for (const std::string& nm : names) {
+        for (size_t i = 0; i < current.size(); ++i) {
+          if (used[i]) continue;
+          const PrimSpec* c = layer.prim(current[i]);
+          if (c && c->name() == nm) {
+            out.push_back(current[i]);
+            used[i] = true;
+            break;
+          }
+        }
+      }
+      for (size_t i = 0; i < current.size(); ++i) {
+        if (!used[i]) out.push_back(current[i]);
+      }
+      return out;
+    };
+    for (auto& kv : prim_children_order) {
+      if (kv.first == "/") {
+        std::vector<uint32_t> ro = reorder(layer.root_indices(), kv.second);
+        layer.set_root_indices(std::move(ro));
+        continue;
+      }
+      if (PrimSpec* p = layer.prim_at_path_mutable(kv.first)) {
+        std::vector<uint32_t> co = reorder(p->child_indices(), kv.second);
+        p->set_child_indices(std::move(co));
+      }
+    }
+  }
 
   // Create stage from layer
   result_.stage.SetRootLayer(std::move(layer));

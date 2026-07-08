@@ -451,8 +451,13 @@ PrimSpec PrimSpec::Clone() const {
     }
   }
 
-  // Deep copy relationships
+  // Deep copy relationships (+ authored list-op edits and qualifier flags)
   c.relationships_ = relationships_;
+  if (rel_edits_) {
+    c.rel_edits_.reset(
+        new std::unordered_map<std::string, ArcEdit>(*rel_edits_));
+  }
+  c.rel_flags_ = rel_flags_;
 
   // Deep copy attribute connections + declared type names
   c.connections_ = connections_;
@@ -713,6 +718,22 @@ void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   relationships_[name].push_back(target);
 }
 
+ArcEdit& PrimSpec::ensure_relationship_edit(const std::string& name) {
+  if (!rel_edits_) {
+    rel_edits_.reset(new std::unordered_map<std::string, ArcEdit>());
+  }
+  return (*rel_edits_)[name];
+}
+
+uint16_t PrimSpec::relationship_flags(const std::string& name) const {
+  auto it = rel_flags_.find(name);
+  return it == rel_flags_.end() ? 0 : it->second;
+}
+
+void PrimSpec::set_relationship_flags(const std::string& name, uint16_t flags) {
+  if (flags) rel_flags_[name] = flags;
+}
+
 void PrimSpec::apply_relationship_list_op(const std::string& name,
                                           const std::vector<Path>& targets,
                                           RelationshipListOp op) {
@@ -784,6 +805,10 @@ std::vector<std::string> PrimSpec::relationship_names() const {
 
 void PrimSpec::add_connection(const std::string& prop_name, const Path& target) {
   connections_[GetPropNameTable().intern(prop_name).id].push_back(target);
+}
+
+void PrimSpec::set_connection_block(const std::string& prop_name) {
+  connections_[GetPropNameTable().intern(prop_name).id];  // empty vector
 }
 
 const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {

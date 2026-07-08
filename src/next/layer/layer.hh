@@ -23,6 +23,14 @@ struct LayerMeta {
   double timeCodesPerSecond = 24.0;
   double startTimeCode = 0.0;
   double endTimeCode = 0.0;
+  // Authored flags for the core fields above: an opinion authored AT the
+  // fallback value ("upAxis = \"Y\"", "startTimeCode = 0") must round-trip
+  // as authored, and an unauthored field must not be written.
+  bool upAxis_set = false;
+  bool metersPerUnit_set = false;
+  bool timeCodesPerSecond_set = false;
+  bool startTimeCode_set = false;
+  bool endTimeCode_set = false;
 
   // Optional stage metadata (parity with the mature reader). The *_set flags
   // distinguish "authored" from "default" so the writer re-emits only authored
@@ -43,6 +51,10 @@ struct LayerMeta {
 
   // Sublayer paths for composition
   std::vector<std::string> subLayers;
+  // Per-sublayer layer offsets (offset, scale), parallel to subLayers.
+  // May be shorter than subLayers (older files / API construction): missing
+  // entries are identity (0, 1).
+  std::vector<std::pair<double, double>> subLayerOffsets;
 };
 
 /// Layer - owns all PrimSpecs for a USD file
@@ -141,6 +153,12 @@ public:
 
   /// Get root prim indices
   const std::vector<uint32_t>& root_indices() const { return root_indices_; }
+
+  /// Replace the root prim order (namespace reordering; e.g. the crate reader
+  /// restoring authored order from the pseudo-root's primChildren).
+  void set_root_indices(std::vector<uint32_t>&& idx) {
+    root_indices_ = std::move(idx);
+  }
 
   /// Get all prims (flat array)
   const std::vector<PrimSpec>& prims() const { return prims_; }

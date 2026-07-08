@@ -312,6 +312,11 @@ void Stage::UpdateMetaFromRootLayer() {
   meta_.timeCodesPerSecond = lm.timeCodesPerSecond;
   meta_.startTimeCode = lm.startTimeCode;
   meta_.endTimeCode = lm.endTimeCode;
+  meta_.upAxis_set = lm.upAxis_set;
+  meta_.metersPerUnit_set = lm.metersPerUnit_set;
+  meta_.timeCodesPerSecond_set = lm.timeCodesPerSecond_set;
+  meta_.startTimeCode_set = lm.startTimeCode_set;
+  meta_.endTimeCode_set = lm.endTimeCode_set;
   meta_.framesPerSecond = lm.framesPerSecond;
   meta_.framesPerSecond_set = lm.framesPerSecond_set;
   meta_.kilogramsPerUnit = lm.kilogramsPerUnit;
@@ -505,27 +510,37 @@ void StageBuilder::SetDefaultPrim(const std::string& primName) {
 
 void StageBuilder::SetUpAxis(const std::string& axis) {
   meta_.upAxis = axis;
+  meta_.upAxis_set = true;
   layer_->meta().upAxis = axis;
+  layer_->meta().upAxis_set = true;
 }
 
 void StageBuilder::SetMetersPerUnit(double value) {
   meta_.metersPerUnit = value;
+  meta_.metersPerUnit_set = true;
   layer_->meta().metersPerUnit = value;
+  layer_->meta().metersPerUnit_set = true;
 }
 
 void StageBuilder::SetTimeCodesPerSecond(double fps) {
   meta_.timeCodesPerSecond = fps;
+  meta_.timeCodesPerSecond_set = true;
   layer_->meta().timeCodesPerSecond = fps;
+  layer_->meta().timeCodesPerSecond_set = true;
 }
 
 void StageBuilder::SetStartTimeCode(double time) {
   meta_.startTimeCode = time;
+  meta_.startTimeCode_set = true;
   layer_->meta().startTimeCode = time;
+  layer_->meta().startTimeCode_set = true;
 }
 
 void StageBuilder::SetEndTimeCode(double time) {
   meta_.endTimeCode = time;
+  meta_.endTimeCode_set = true;
   layer_->meta().endTimeCode = time;
+  layer_->meta().endTimeCode_set = true;
 }
 
 Stage StageBuilder::Build() {

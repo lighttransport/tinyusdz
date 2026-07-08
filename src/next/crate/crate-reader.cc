@@ -88,6 +88,25 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::DoubleVector:
       return UnpackDoubleVector(rep, out);
 
+    // std::vector<SdfLayerOffset>: [u64 count][f64 offset, f64 scale]*count.
+    // Surfaced as a flat double array (pairs); BuildStage pairs it with
+    // subLayers into LayerMeta::subLayerOffsets.
+    case CrateTypeId::LayerOffsetVector: {
+      if (rep.payload() == 0) {
+        out = Value::MakeDoubleArray(std::vector<double>());
+        return true;
+      }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      uint64_t n = 0;
+      if (!reader_->read_u64(n)) return false;
+      if (n > options_.max_array_elements) return false;
+      if (!reader_->has_elements(static_cast<size_t>(n), 16)) return false;
+      std::vector<double> vals(static_cast<size_t>(n) * 2);
+      if (n && !reader_->read(vals.data(), vals.size() * sizeof(double))) return false;
+      out = Value::MakeDoubleArray(std::move(vals));
+      return true;
+    }
+
     // Path-valued fields: inheritPaths / specializes arcs (PathListOp) and
     // raw path vectors. Flattened to a token array of path strings; BuildStage
     // routes them into PrimSpecMeta.

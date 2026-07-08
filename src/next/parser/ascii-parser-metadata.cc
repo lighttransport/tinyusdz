@@ -52,26 +52,31 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         std::string value;
         if (lexer_->expect(TokenType::String, value)) {
           layer_->meta().upAxis = value;
+          layer_->meta().upAxis_set = true;
         }
       } else if (key == "metersPerUnit") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
         if (result.success && result.value.as_double()) {
           layer_->meta().metersPerUnit = *result.value.as_double();
+          layer_->meta().metersPerUnit_set = true;
         }
       } else if (key == "timeCodesPerSecond") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
         if (result.success && result.value.as_double()) {
           layer_->meta().timeCodesPerSecond = *result.value.as_double();
+          layer_->meta().timeCodesPerSecond_set = true;
         }
       } else if (key == "startTimeCode") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
         if (result.success && result.value.as_double()) {
           layer_->meta().startTimeCode = *result.value.as_double();
+          layer_->meta().startTimeCode_set = true;
         }
       } else if (key == "endTimeCode") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
         if (result.success && result.value.as_double()) {
           layer_->meta().endTimeCode = *result.value.as_double();
+          layer_->meta().endTimeCode_set = true;
         }
       } else if (key == "framesPerSecond") {
         ParseResult result = ParseValue(*lexer_, TypeId::Double);
@@ -130,13 +135,26 @@ bool AsciiParser::Impl::ParseStageMetadata() {
             }
             layer_->meta().subLayers.push_back(path);
             // Optional per-sublayer layer offset "(offset = ..; scale = ..)".
-            // Sublayer offsets are not yet plumbed through composition; parse
-            // and skip so the file at least LOADS (previously the unexpected
-            // '(' failed the whole metadata block and thus the whole load).
+            double sl_offset = 0.0, sl_scale = 1.0;
             if (Check(TokenType::OpenParen)) {
-              AddWarning("subLayers layer offsets are parsed but not applied");
-              SkipValueLike();
+              lexer_->next();
+              while (!Check(TokenType::CloseParen) && !AtEnd()) {
+                std::string okey;
+                if (!lexer_->expect(TokenType::Identifier, okey)) break;
+                if (!Match(TokenType::Equals)) break;
+                ParseResult r = ParseValue(*lexer_, TypeId::Double);
+                if (r.success && r.value.as_double()) {
+                  if (okey == "offset") sl_offset = *r.value.as_double();
+                  else if (okey == "scale") sl_scale = *r.value.as_double();
+                }
+                Match(TokenType::Semicolon);
+              }
+              Match(TokenType::CloseParen);
             }
+            // Keep the offsets vector parallel to subLayers.
+            auto& offs = layer_->meta().subLayerOffsets;
+            offs.resize(layer_->meta().subLayers.size() - 1, {0.0, 1.0});
+            offs.emplace_back(sl_offset, sl_scale);
             Match(TokenType::Comma);
           }
           Match(TokenType::CloseBracket);

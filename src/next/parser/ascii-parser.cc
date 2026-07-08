@@ -394,7 +394,15 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         Match(TokenType::CloseBracket);
       }
       // Apply per the authored qualifier: `delete apiSchemas = [...]` must
-      // REMOVE the schemas (appending them would invert the opinion).
+      // REMOVE the schemas (appending them would invert the opinion). The
+      // qualifier itself is recorded so it round-trips (pxr authors applied
+      // schemas as `prepend apiSchemas`).
+      switch (arc_qual) {
+        case ArcQual::Prepend: prim->meta().apiSchemasQualifier() = "prepend"; break;
+        case ArcQual::Append: prim->meta().apiSchemasQualifier() = "append"; break;
+        case ArcQual::Delete: prim->meta().apiSchemasQualifier() = "delete"; break;
+        default: break;
+      }
       std::vector<std::string>& applied = prim->meta().apiSchemas();
       switch (arc_qual) {
         case ArcQual::Delete:

@@ -46,7 +46,8 @@ private:
   bool ParsePrimContents();
   bool ParseAttribute();
   bool ParseRelationship(PrimSpec::RelationshipListOp op =
-                         PrimSpec::RelationshipListOp::Append);
+                             PrimSpec::RelationshipListOp::Append,
+                         bool explicit_list = true, uint16_t flags = 0);
   bool ParseMetadataBlock();
   bool ParseTimeSamples(const std::string& prop_name, TypeId type_id,
                         bool is_array);

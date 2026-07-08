@@ -274,23 +274,23 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + "comment = " + EscapeString(meta.comment));
   }
 
-  if (meta.metersPerUnit != 0.01) {
+  if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
     lines.push_back(opts.indent + "metersPerUnit = " + dtos(meta.metersPerUnit));
   }
 
-  if (meta.startTimeCode != 0.0) {
+  if (meta.startTimeCode_set || meta.startTimeCode != 0.0) {
     lines.push_back(opts.indent + "startTimeCode = " + dtos(meta.startTimeCode));
   }
 
-  if (meta.endTimeCode != 0.0) {
+  if (meta.endTimeCode_set || meta.endTimeCode != 0.0) {
     lines.push_back(opts.indent + "endTimeCode = " + dtos(meta.endTimeCode));
   }
 
-  if (meta.timeCodesPerSecond != 24.0) {
+  if (meta.timeCodesPerSecond_set || meta.timeCodesPerSecond != 24.0) {
     lines.push_back(opts.indent + "timeCodesPerSecond = " + dtos(meta.timeCodesPerSecond));
   }
 
-  if (meta.upAxis != "Y") {
+  if (meta.upAxis_set || meta.upAxis != "Y") {
     lines.push_back(opts.indent + "upAxis = " + EscapeString(meta.upAxis));
   }
 
@@ -321,8 +321,22 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
 
   if (!meta.subLayers.empty()) {
     std::string s = opts.indent + "subLayers = [\n";
-    for (const auto& layer : meta.subLayers) {
-      s += opts.indent + opts.indent + FormatAssetPathForUsda(layer) + ",\n";
+    for (size_t i = 0; i < meta.subLayers.size(); ++i) {
+      s += opts.indent + opts.indent + FormatAssetPathForUsda(meta.subLayers[i]);
+      if (i < meta.subLayerOffsets.size()) {
+        const double off = meta.subLayerOffsets[i].first;
+        const double scl = meta.subLayerOffsets[i].second;
+        if (off != 0.0 || scl != 1.0) {
+          s += " (";
+          if (off != 0.0) {
+            s += "offset = " + dtos(off);
+            if (scl != 1.0) s += "; ";
+          }
+          if (scl != 1.0) s += "scale = " + dtos(scl);
+          s += ")";
+        }
+      }
+      s += ",\n";
     }
     s += opts.indent + "]";
     lines.push_back(std::move(s));
@@ -535,7 +549,9 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   // value (a connection-only attr has no authored default). A property may also
   // carry BOTH a value and a connection -> emit them as separate statements.
   const std::vector<Path>* conns = spec.connection(name);
-  const bool has_conn = conns && !conns->empty();
+  // A present-but-empty entry is an authored connection BLOCK
+  // (`.connect = None`); absent means no connection opinion.
+  const bool has_conn = conns != nullptr;
 
   // Value statement (authored default).
   if (has_value && value->is_block()) {
@@ -570,7 +586,9 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   if (has_conn) {
     emit_decl();
     os << ".connect = ";
-    if (conns->size() == 1) {
+    if (conns->empty()) {
+      os << "None";
+    } else if (conns->size() == 1) {
       os << "<" << (*conns)[0].str() << ">";
     } else {
       os << "[";
@@ -600,22 +618,71 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
                        const std::vector<Path>& targets, const PrimSpec& spec,
                        PropNameId name_id, int depth,
                        const USDAWriteOptions& opts) {
-  WriteIndent(os, depth, opts.indent);
-  os << "rel " << name;
+  const bool is_custom =
+      (spec.relationship_flags(name) & PropSlot::kFlagCustom) != 0;
+  auto head = [&]() {
+    WriteIndent(os, depth, opts.indent);
+    if (opts.emit_custom && is_custom) os << "custom ";
+    os << "rel " << name;
+  };
+  auto targets_text = [&](const std::vector<std::string>& tgts) {
+    if (tgts.size() == 1) {
+      os << " = <" << tgts[0] << ">";
+    } else {
+      os << " = [\n";
+      for (const auto& t : tgts) {
+        WriteIndent(os, depth + 1, opts.indent);
+        os << "<" << t << ">,\n";
+      }
+      WriteIndent(os, depth, opts.indent);
+      os << "]";
+    }
+  };
 
+  // Authored list-op edits re-emit their qualifiers (a bare explicit list
+  // changes composition semantics for delete/prepend against weaker layers).
+  const ArcEdit* re = nullptr;
+  {
+    const auto& edits = spec.relationship_edits();
+    auto it = edits.find(name);
+    if (it != edits.end() && it->second.authored && !it->second.is_explicit) {
+      re = &it->second;
+    }
+  }
+  if (re) {
+    bool first = true;
+    auto qual_line = [&](const char* qual,
+                         const std::vector<std::string>& items) {
+      if (items.empty()) return;
+      WriteIndent(os, depth, opts.indent);
+      if (opts.emit_custom && is_custom && first) os << "custom ";
+      os << qual << "rel " << name;
+      targets_text(items);
+      if (first) WritePropMeta(os, spec, name_id, depth, opts);
+      os << "\n";
+      first = false;
+    };
+    qual_line("prepend ", re->prepended);
+    qual_line("append ", re->appended);
+    qual_line("delete ", re->deleted);
+    qual_line("reorder ", re->ordered);
+    if (first) {  // authored but empty edit: keep the declaration
+      head();
+      WritePropMeta(os, spec, name_id, depth, opts);
+      os << "\n";
+    }
+    return;
+  }
+
+  head();
   if (targets.empty()) {
     // Declared-only relationship: bare `rel name` (pxr re-parses it as a
     // declaration; `= None` would author a block instead).
-  } else if (targets.size() == 1) {
-    os << " = <" << targets[0].str() << ">";
   } else {
-    os << " = [\n";
-    for (const auto& target : targets) {
-      WriteIndent(os, depth + 1, opts.indent);
-      os << "<" << target.str() << ">,\n";
-    }
-    WriteIndent(os, depth, opts.indent);
-    os << "]";
+    std::vector<std::string> tgts;
+    tgts.reserve(targets.size());
+    for (const auto& t : targets) tgts.push_back(t.str());
+    targets_text(tgts);
   }
   WritePropMeta(os, spec, name_id, depth, opts);
   os << "\n";
@@ -910,7 +977,12 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     if (has_doc) kv("doc = " + EscapeString(meta.doc()));
     if (has_comment) kv("comment = " + EscapeString(meta.comment()));
     if (!meta.apiSchemas().empty()) {
-      std::string s = "apiSchemas = [";
+      std::string s;
+      if (!meta.apiSchemasQualifier().empty() &&
+          meta.apiSchemasQualifier() != "delete") {
+        s += meta.apiSchemasQualifier() + " ";
+      }
+      s += "apiSchemas = [";
       for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
         if (i > 0) s += ", ";
         s += "\"" + meta.apiSchemas()[i] + "\"";
@@ -1298,6 +1370,11 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.timeCodesPerSecond = stage_meta.timeCodesPerSecond;
   meta.startTimeCode = stage_meta.startTimeCode;
   meta.endTimeCode = stage_meta.endTimeCode;
+  meta.upAxis_set = stage_meta.upAxis_set;
+  meta.metersPerUnit_set = stage_meta.metersPerUnit_set;
+  meta.timeCodesPerSecond_set = stage_meta.timeCodesPerSecond_set;
+  meta.startTimeCode_set = stage_meta.startTimeCode_set;
+  meta.endTimeCode_set = stage_meta.endTimeCode_set;
   meta.framesPerSecond = stage_meta.framesPerSecond;
   meta.framesPerSecond_set = stage_meta.framesPerSecond_set;
   meta.kilogramsPerUnit = stage_meta.kilogramsPerUnit;
@@ -1311,6 +1388,7 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.customLayerData = root_layer->meta().customLayerData;
   meta.expressionVariables = root_layer->meta().expressionVariables;
   meta.subLayers = root_layer->meta().subLayers;
+  meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);

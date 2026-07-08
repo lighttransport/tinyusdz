@@ -182,6 +182,17 @@ private:
   std::shared_ptr<std::map<std::string, std::shared_ptr<Layer>>>
       composed_ext_cache_;
   std::shared_ptr<std::set<std::string>> composing_ext_;
+  // Resolved sublayer paths currently being composed (cycle guard; shared
+  // across the recursion like composing_ext_).
+  std::shared_ptr<std::set<std::string>> composing_sublayers_;
+  // Arc strings deleted by STRONGER layers, per prim path. Consulted by
+  // ResolveArcsForPrim during the nested sublayer composition, where a weaker
+  // layer's reference would otherwise be resolved (baked) before the
+  // stronger layer's `delete references = ...` can remove it.
+  std::map<std::string, std::set<std::string>> pending_arc_deletes_;
+  void CollectArcDeletes(const Layer& layer);
+  bool ArcDeletedByStronger(const std::string& prim_path,
+                            const std::string& arc) const;
 
   // Composition state (for cycle detection)
   std::vector<std::string> composition_stack_;

@@ -618,6 +618,13 @@ tusd_status tusd_stage_load(const char* filename,
 
   n::LoadUSDOptions lo;
   tinyusdz::next::pcp::CompositionOptions co;
+  // The binding's composed stage is consumed by value readers AND by
+  // export/save round-trips: Native instancing would export instance prims as
+  // empty husks (no prototype linkage in usda text). Holder mode keeps the
+  // flattened layer self-contained: the prototype member holds the content,
+  // other members reference it internally.
+  co.flatten_instances = true;
+  co.instance_flatten_mode = tinyusdz::next::pcp::InstanceFlattenMode::Holder;
   ApplyLoadOptions(opts, &lo, &co);
   const bool composed = opts ? opts->composed != 0 : true;
   const uint32_t format =
@@ -888,22 +895,27 @@ tusd_status tusd_stage_set_metadata(tusd_stage* stage, const char* key,
     }
     sm.upAxis = *s;
     lm.upAxis = *s;
+    sm.upAxis_set = lm.upAxis_set = true;
   } else if (k == "metersPerUnit") {
     if (!as_dbl()) return Fail(TUSD_ERR_TYPE_MISMATCH, "expects double");
     sm.metersPerUnit = dbl();
     lm.metersPerUnit = dbl();
+    sm.metersPerUnit_set = lm.metersPerUnit_set = true;
   } else if (k == "timeCodesPerSecond") {
     if (!as_dbl()) return Fail(TUSD_ERR_TYPE_MISMATCH, "expects double");
     sm.timeCodesPerSecond = dbl();
     lm.timeCodesPerSecond = dbl();
+    sm.timeCodesPerSecond_set = lm.timeCodesPerSecond_set = true;
   } else if (k == "startTimeCode") {
     if (!as_dbl()) return Fail(TUSD_ERR_TYPE_MISMATCH, "expects double");
     sm.startTimeCode = dbl();
     lm.startTimeCode = dbl();
+    sm.startTimeCode_set = lm.startTimeCode_set = true;
   } else if (k == "endTimeCode") {
     if (!as_dbl()) return Fail(TUSD_ERR_TYPE_MISMATCH, "expects double");
     sm.endTimeCode = dbl();
     lm.endTimeCode = dbl();
+    sm.endTimeCode_set = lm.endTimeCode_set = true;
   } else if (k == "framesPerSecond") {
     if (!as_dbl()) return Fail(TUSD_ERR_TYPE_MISMATCH, "expects double");
     sm.framesPerSecond = dbl();
