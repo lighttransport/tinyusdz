@@ -18,50 +18,6 @@
 namespace tinyusdz {
 namespace next {
 
-namespace {
-
-// True for array element types that DecodeCrateArray can materialize, so a lazy
-// reference emitted for them is always safe to decode on demand. Int/UInt are
-// fine whether integer-compressed or raw; the others only when uncompressed
-// (compressed POD float/vec arrays do not occur and aren't decodable here).
-bool IsLazyArrayType(CrateTypeId t, bool compressed) {
-  switch (t) {
-    case CrateTypeId::Int:
-    case CrateTypeId::UInt:
-      return true;
-    case CrateTypeId::Float:
-    case CrateTypeId::Vec2f:
-    case CrateTypeId::Vec3f:
-    case CrateTypeId::Vec4f:
-    case CrateTypeId::Double:
-    case CrateTypeId::Vec2d:
-    case CrateTypeId::Vec3d:
-    case CrateTypeId::Vec4d:
-    case CrateTypeId::Matrix2d:
-    case CrateTypeId::Matrix3d:
-    case CrateTypeId::Matrix4d:
-    case CrateTypeId::Half:
-    case CrateTypeId::Vec2h:
-    case CrateTypeId::Vec3h:
-    case CrateTypeId::Vec4h:
-    case CrateTypeId::Int64:
-    case CrateTypeId::UInt64:
-    case CrateTypeId::Bool:
-      return !compressed;
-    // Quat arrays need a per-element component swizzle (disk is
-    // imaginary-first, internal is real-first), so they must decode eagerly:
-    // a lazy byte view would surface the wrong component order.
-    case CrateTypeId::Quatf:
-    case CrateTypeId::Quatd:
-    case CrateTypeId::Quath:
-      return false;
-    default:
-      return false;
-  }
-}
-
-}  // namespace
-
 bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   CrateTypeId type_id = rep.type_id();
 
@@ -70,9 +26,10 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   // access and can be written back via verbatim byte pass-through. Token/string
   // and unsupported array types fall through to eager decode below.
   if (options_.lazy_arrays && source_ &&
-      IsLazyArrayType(type_id, rep.is_compressed())) {
+      CrateArrayTypeCanBeLazy(type_id, rep.is_compressed())) {
     LazyArrayRef lr;
-    if (ProbeArrayBlock(source_, rep, options_.max_array_elements, &lr)) {
+    if (ProbeArrayBlock(source_, rep,
+                        (std::numeric_limits<size_t>::max)(), &lr)) {
       out = Value::MakeLazyArray(lr);
       return true;
     }
@@ -89,6 +46,7 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   if (rep.payload() != 0) {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
     if (!reader_->read_u64(count)) return false;
+    count = CrateArrayElementCount(count);
   }
 
   // Bound the file-controlled element count before any allocation.
