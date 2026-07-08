@@ -404,6 +404,58 @@ void tydra_geommesh_property_accessor_test(void) {
   }
 }
 
+void tydra_analytic_shape_facevarying_attrs_test(void) {
+  const std::string path = MakeTempUSDFilePath("tydra_analytic_shapes");
+  auto cleanup = [&]() { CleanupTempFiles({path}); };
+
+  const char *usda = R"USD(#usda 1.0
+
+def Xform "World"
+{
+    def Capsule "Capsule"
+    {
+        double radius = 0.05
+        double height = 0.4
+    }
+
+    def Cylinder "Cylinder"
+    {
+        double radius = 0.05
+        double height = 0.4
+    }
+
+    def Cone "Cone"
+    {
+        double radius = 0.05
+        double height = 0.4
+    }
+
+    def Plane "Plane"
+    {
+        double width = 1
+        double length = 1
+    }
+}
+)USD";
+
+  std::string err;
+  TEST_CHECK(WriteTextFile(path, usda));
+
+  Stage stage;
+  TEST_CHECK(LoadUSDFromFile(path, &stage, nullptr, &err));
+  TEST_MSG("LoadUSDFromFile failed: %s", err.c_str());
+
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverterEnv env(stage);
+  tydra::RenderSceneConverter converter;
+
+  TEST_CHECK(converter.ConvertToRenderScene(env, &scene));
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+  TEST_CHECK(scene.meshes.size() == 4);
+
+  cleanup();
+}
+
 void tydra_memory_tracking_test(void) {
   tydra::detail::MemoryUsageState state;
   std::vector<std::string> progress_messages;
