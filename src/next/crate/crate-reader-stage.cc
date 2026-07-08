@@ -34,6 +34,15 @@ bool CrateReader::Impl::BuildStage() {
   // Create layer and builder
   Layer layer;
   LayerBuilder builder(layer);
+  constexpr size_t kReportInterval = 512;
+  auto report_stage = [&](const char* phase, size_t current,
+                          size_t total) -> bool {
+    if (current == 0 || current == total ||
+        (current % kReportInterval) == 0) {
+      return ReportProgress(phase, current, total);
+    }
+    return true;
+  };
 
   // First, process the PseudoRoot spec to extract layer metadata
   // Authored child order per prim path (from primChildren fields; "/" = the
@@ -167,7 +176,13 @@ bool CrateReader::Impl::BuildStage() {
   std::vector<PrimEntry> prim_entries;
   std::vector<std::pair<std::string, ValueRep>> raw_field_scratch;
   std::vector<std::pair<std::string, Value>> value_field_scratch;
-  for (const auto& spec : specs_) {
+  if (!report_stage("stage.prims", 0, specs_.size())) return false;
+  for (size_t spec_index = 0; spec_index < specs_.size(); ++spec_index) {
+    if (spec_index > 0 &&
+        !report_stage("stage.prims", spec_index, specs_.size())) {
+      return false;
+    }
+    const auto& spec = specs_[spec_index];
     // Build Prim specs AND variant-namespace holders (Variant/VariantSet specs
     // at "/Prim/{vset=sel}" / "/Prim/{vset=}"). The holders are needed so that
     // variant CHILD prims ("/Prim/{vset=sel}/Geo") get a correct path from the
@@ -248,6 +263,9 @@ bool CrateReader::Impl::BuildStage() {
     }
     prim_entries.push_back(std::move(entry));
   }
+  if (!report_stage("stage.prims", specs_.size(), specs_.size())) {
+    return false;
+  }
 
   // Collect separate Attribute and Relationship specs. pxrUSD-authored crates
   // store each property as its own spec at "<primpath>/<name>" (rendered with a
@@ -298,7 +316,13 @@ bool CrateReader::Impl::BuildStage() {
     return !prim_path.empty() && !prop_name.empty();
   };
 
-  for (const auto& spec : specs_) {
+  if (!report_stage("stage.properties", 0, specs_.size())) return false;
+  for (size_t spec_index = 0; spec_index < specs_.size(); ++spec_index) {
+    if (spec_index > 0 &&
+        !report_stage("stage.properties", spec_index, specs_.size())) {
+      return false;
+    }
+    const auto& spec = specs_[spec_index];
     const bool is_attr = spec.spec_type == SpecType::Attribute;
     const bool is_rel = spec.spec_type == SpecType::Relationship;
     if (!is_attr && !is_rel) continue;
@@ -444,6 +468,9 @@ bool CrateReader::Impl::BuildStage() {
     }
     attr_map[prim_path].push_back(std::move(ai));
   }
+  if (!report_stage("stage.properties", specs_.size(), specs_.size())) {
+    return false;
+  }
 
   // Sort by full path (produces correct depth-first order with parents before children)
   std::sort(prim_entries.begin(), prim_entries.end(),
@@ -456,7 +483,14 @@ bool CrateReader::Impl::BuildStage() {
   std::vector<std::string> prim_stack;
   std::vector<std::pair<std::string, Value>> prim_value_field_scratch;
 
-  for (auto& entry : prim_entries) {
+  if (!report_stage("stage.hierarchy", 0, prim_entries.size())) return false;
+  for (size_t entry_index = 0; entry_index < prim_entries.size();
+       ++entry_index) {
+    if (entry_index > 0 &&
+        !report_stage("stage.hierarchy", entry_index, prim_entries.size())) {
+      return false;
+    }
+    auto& entry = prim_entries[entry_index];
     // Compute depth of this prim (number of '/' in path)
     size_t depth = std::count(entry.full_path.begin(), entry.full_path.end(), '/');
 
@@ -907,6 +941,10 @@ bool CrateReader::Impl::BuildStage() {
         ps->meta().variantSelection = first.first + "=" + first.second;
       }
     }
+  }
+  if (!report_stage("stage.hierarchy", prim_entries.size(),
+                    prim_entries.size())) {
+    return false;
   }
 
   // Close remaining prims

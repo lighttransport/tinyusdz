@@ -41,16 +41,29 @@ CrateReadResult CrateReader::Impl::ParseFromSource() {
 
   reader_ = std::make_unique<StreamReader>(source_->base(), source_->size());
 
+  constexpr size_t kPhaseTotal = 10;
+  if (!ReportProgress("bootstrap", 0, kPhaseTotal)) return std::move(result_);
   if (!ReadBootstrap()) return std::move(result_);
   source_->set_version(version_);
+  if (!ReportProgress("toc", 1, kPhaseTotal)) return std::move(result_);
   if (!ReadTOC()) return std::move(result_);
+  if (!ReportProgress("tokens", 2, kPhaseTotal)) return std::move(result_);
   if (!ReadTokens()) return std::move(result_);
+  if (!ReportProgress("strings", 3, kPhaseTotal)) return std::move(result_);
   if (!ReadStrings()) return std::move(result_);
+  if (!ReportProgress("fields", 4, kPhaseTotal)) return std::move(result_);
   if (!ReadFields()) return std::move(result_);
+  if (!ReportProgress("fieldsets", 5, kPhaseTotal)) return std::move(result_);
   if (!ReadFieldsets()) return std::move(result_);
+  if (!ReportProgress("specs", 6, kPhaseTotal)) return std::move(result_);
   if (!ReadSpecs()) return std::move(result_);
+  if (!ReportProgress("paths", 7, kPhaseTotal)) return std::move(result_);
   if (!ReadPaths()) return std::move(result_);
+  if (!ReportProgress("stage", 8, kPhaseTotal)) return std::move(result_);
   if (!BuildStage()) return std::move(result_);
+  if (!ReportProgress("complete", kPhaseTotal, kPhaseTotal)) {
+    return std::move(result_);
+  }
 
   result_.success = result_.errors.empty();
   result_.version = version_;

@@ -125,6 +125,28 @@
 				color: #999;
 				min-height: 14px;
 			}
+			#pickInfo {
+				display: none;
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #ccc;
+			}
+			#pickInfo h4 {
+				margin: 0 0 6px;
+				color: #6bb6ff;
+				font-size: 12px;
+			}
+			#pickDetails {
+				margin: 0;
+				white-space: pre-wrap;
+				overflow-wrap: anywhere;
+				max-height: 240px;
+				overflow: auto;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				line-height: 1.35;
+			}
 			#loadStats {
 				display: none;
 				margin-top: 8px;
@@ -255,6 +277,10 @@
 					</tbody>
 				</table>
 				<div id="status"></div>
+			</div>
+			<div id="pickInfo">
+				<h4>Picked Mesh</h4>
+				<pre id="pickDetails">Click a mesh to inspect material and texture bindings.</pre>
 			</div>
 		</div>
 

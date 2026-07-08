@@ -199,6 +199,15 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     alphaTest: (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0
   });
   material.userData.nextTexturePaths = paths;
+  material.userData.nextMaterial = {
+    id: Number.isFinite(entry.materialId) ? entry.materialId : (src.id ?? -1),
+    key: entry.materialKey || src.key || '',
+    primPath: src.primPath || '',
+    baseColor: src.baseColor || null,
+    metallic: src.metallic ?? null,
+    roughness: src.roughness ?? null,
+    opacity: src.opacity ?? null
+  };
 
   const queue = (mapProperty, assetPath) => {
     if (!assetPath || skipTextures || !textureManager) return;
@@ -335,6 +344,25 @@ export function buildNextThreeNode(adapter, {
     }
     const threeMesh = new THREE.Mesh(geometry, material);
     threeMesh.name = mesh.primPath || mesh.primName || `mesh_${mesh.index}`;
+    threeMesh.userData.usdMesh = {
+      index: mesh.index,
+      primName: mesh.primName || '',
+      primPath: mesh.primPath || '',
+      materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : -1,
+      materialKey: mesh.materialKey || '',
+      texturePaths: mesh.texturePaths || {},
+      materials: Array.isArray(mesh.materials) ? mesh.materials.map((entry) => ({
+        materialId: Number.isFinite(entry.materialId) ? entry.materialId : -1,
+        materialKey: entry.materialKey || '',
+        material: entry.material || {},
+        texturePaths: entry.texturePaths || {}
+      })) : [],
+      submeshes: Array.isArray(mesh.submeshes) ? mesh.submeshes.map((part) => ({
+        start: part.start | 0,
+        count: part.count | 0,
+        materialIndex: part.materialIndex | 0
+      })) : []
+    };
     applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);
     if (geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
       sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threeMesh.matrix));
