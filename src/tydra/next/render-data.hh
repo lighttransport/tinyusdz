@@ -249,6 +249,7 @@ struct RenderMesh {
     UInt16Chunked joint_indices;  // 4 joints per vertex
     FloatChunked joint_weights;   // 4 weights per vertex
     int32_t skeleton_id = -1;
+    std::string skeleton_path;    // bound Skeleton prim (resolves skeleton_id)
     Matrix4 geom_bind_transform;
   };
   std::unique_ptr<SkinBinding> skin;
@@ -261,6 +262,15 @@ struct RenderMesh {
     float weight = 0.0f;
   };
   std::vector<BlendShape> blend_shapes;
+
+  // holeIndices: faces excluded from rendering (skipped at triangulation;
+  // kept in the topology so uniform/faceVarying primvar alignment holds).
+  std::vector<uint32_t> hole_faces;
+
+  // Authored winding: `orientation = "leftHanded"`. Triangulation emits
+  // reversed (rightHanded) winding for these meshes so consumers can treat
+  // triangulated_indices as CCW uniformly; computed normals follow.
+  bool left_handed = false;
 
   // Triangulated data (computed on demand)
   UInt32Chunked triangulated_indices;
@@ -499,6 +509,10 @@ struct RenderTexture {
   Float2 scale = {1, 1};
   float rotation = 0.0f;  // Radians
 
+  // UV set sampled by this texture (UsdPrimvarReader varname on the st
+  // chain); empty = the default uv primvar ("st").
+  std::string uv_primvar;
+
   // Sampling
   WrapMode wrap_s = WrapMode::Repeat;
   WrapMode wrap_t = WrapMode::Repeat;
@@ -561,6 +575,8 @@ struct RenderLight {
     struct { float radius; } disk;
     struct { float angle; } spot;  // Cone angle in radians
     struct { int32_t texture_id; } dome;
+    struct { float radius, length; } cylinder;
+    struct { float angle; } distant;  // Angular size in degrees
   } params = {};
 
   // Shadow

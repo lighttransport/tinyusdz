@@ -114,7 +114,6 @@ class ChunkedArray {
 
   void shrink_to_fit() {
     size_t needed_chunks = (size_ + kElementsPerChunk - 1) / kElementsPerChunk;
-    if (needed_chunks == 0) needed_chunks = 0;
     while (chunks_.size() > needed_chunks) {
       chunks_.pop_back();
     }
@@ -164,9 +163,10 @@ class ChunkedArray {
   size_t chunk_count() const { return chunks_.size(); }
   size_t capacity() const { return chunks_.size() * kElementsPerChunk; }
 
-  // True when the data already lives in one contiguous block (0 or 1 chunk),
-  // i.e. chunk_data(0) can be handed out directly without flattening.
-  bool is_contiguous() const { return chunks_.size() <= 1; }
+  // True when the data already lives in one contiguous block (fits in the
+  // first chunk), i.e. chunk_data(0) can be handed out directly without
+  // flattening. Uses the LOGICAL size: extra reserved chunks don't matter.
+  bool is_contiguous() const { return size_ <= kElementsPerChunk; }
 
   // Memory usage in bytes
   size_t memory_usage() const {
@@ -182,13 +182,16 @@ class ChunkedArray {
     return chunks_[chunk_idx].get();
   }
 
-  // Get size of elements in a specific chunk
+  // Number of DATA elements in a chunk, derived from the logical size —
+  // NOT from chunks_.size(): reserve() (or clear() + smaller refill) leaves
+  // more chunks allocated than the logical size covers, and sizing the "last"
+  // chunk off the allocation count made copy_to()/flatten() read (and memcpy
+  // into exact-sized destination buffers!) whole 64KB chunks past the end.
   size_t chunk_size(size_t chunk_idx) const {
-    if (chunk_idx >= chunks_.size()) return 0;
-    if (chunk_idx < chunks_.size() - 1) return kElementsPerChunk;
-    // Last chunk may be partial
-    size_t last_chunk_size = size_ % kElementsPerChunk;
-    return (last_chunk_size == 0 && size_ > 0) ? kElementsPerChunk : last_chunk_size;
+    const size_t begin = chunk_idx * kElementsPerChunk;
+    if (begin >= size_) return 0;
+    const size_t remaining = size_ - begin;
+    return remaining < kElementsPerChunk ? remaining : kElementsPerChunk;
   }
 
   // Flatten to contiguous vector (for compatibility/GPU upload)
@@ -197,16 +200,18 @@ class ChunkedArray {
     result.reserve(size_);
     for (size_t i = 0; i < chunks_.size(); ++i) {
       size_t count = chunk_size(i);
+      if (count == 0) break;
       result.insert(result.end(), chunks_[i].get(), chunks_[i].get() + count);
     }
     return result;
   }
 
-  // Copy to pre-allocated buffer (avoids allocation)
+  // Copy to pre-allocated buffer of exactly size() elements.
   void copy_to(T* dest) const {
     size_t copied = 0;
     for (size_t i = 0; i < chunks_.size() && copied < size_; ++i) {
       size_t count = chunk_size(i);
+      if (count == 0) break;
       std::memcpy(dest + copied, chunks_[i].get(), count * sizeof(T));
       copied += count;
     }

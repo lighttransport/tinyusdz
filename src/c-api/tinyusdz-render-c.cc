@@ -171,6 +171,7 @@ tusd_status tusd_render_convert(const tusd_stage* stage,
   *out = nullptr;
 
   td::ConverterConfig config;
+  config.asset_base_dir = stage->source_dir;
   if (cfg) {
     config.mesh.triangulate = cfg->triangulate != 0;
     config.mesh.compute_normals = cfg->compute_normals != 0;
