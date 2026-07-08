@@ -148,6 +148,47 @@ uint32_t CrateArrayElemStride(CrateTypeId id) {
   }
 }
 
+uint64_t CrateArrayElementCount(uint64_t raw_count) {
+  const uint64_t hi = raw_count >> 32;
+  const uint64_t lo = raw_count & 0xffffffffull;
+  return (hi != 0 && lo != 0) ? lo : raw_count;
+}
+
+bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed) {
+  switch (id) {
+    case CrateTypeId::Int:
+    case CrateTypeId::UInt:
+      return true;
+    case CrateTypeId::Float:
+    case CrateTypeId::Vec2f:
+    case CrateTypeId::Vec3f:
+    case CrateTypeId::Vec4f:
+    case CrateTypeId::Double:
+    case CrateTypeId::Vec2d:
+    case CrateTypeId::Vec3d:
+    case CrateTypeId::Vec4d:
+    case CrateTypeId::Matrix2d:
+    case CrateTypeId::Matrix3d:
+    case CrateTypeId::Matrix4d:
+    case CrateTypeId::Half:
+    case CrateTypeId::Vec2h:
+    case CrateTypeId::Vec3h:
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Int64:
+    case CrateTypeId::UInt64:
+    case CrateTypeId::Bool:
+      return !compressed;
+    // Quat arrays need a per-element component swizzle (disk is
+    // imaginary-first, internal is real-first), so they must decode eagerly.
+    case CrateTypeId::Quatf:
+    case CrateTypeId::Quatd:
+    case CrateTypeId::Quath:
+      return false;
+    default:
+      return false;
+  }
+}
+
 TypeId CrateArrayValueType(CrateTypeId id) {
   switch (id) {
     case CrateTypeId::Bool:
@@ -244,6 +285,7 @@ bool ProbeArrayBlock(const std::shared_ptr<CrateDataSource>& source, ValueRep re
   if (!r.seek(off)) return false;
   uint64_t count = 0;
   if (!r.read_u64(count)) return false;
+  count = CrateArrayElementCount(count);
   if (count > max_elements) return false;
 
   out->element_count = count;
@@ -308,6 +350,7 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
   if (rep.payload() != 0) {
     if (!r.seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
     if (!r.read_u64(count)) return false;
+    count = CrateArrayElementCount(count);
   }
   if (count > max_elements) return false;
 
