@@ -397,6 +397,17 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
                                            std::string *err) {
   if (!ctx->_resolver) return nullptr;
 
+  // Resolve-and-parse cache: a big composed tree can request the same asset
+  // (or the same missing asset) from many prims; without this each request
+  // repeats an expensive filesystem resolve (+ parse) — O(prims) work.
+  const std::string cache_key = asset_path + "\n" + cwp;
+  {
+    auto it = ctx->_default_layer_cache.find(cache_key);
+    if (it != ctx->_default_layer_cache.end()) {
+      return it.mapped();  // cached hit (Layer*) or miss (nullptr)
+    }
+  }
+
   std::string old_cwp = ctx->_resolver->current_working_path();
   if (!cwp.empty()) {
     ctx->_resolver->set_current_working_path(cwp);
@@ -433,6 +444,7 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
   if (!old_cwp.empty()) {
     ctx->_resolver->set_current_working_path(old_cwp);
   }
+  ctx->_default_layer_cache.insert({cache_key, result});  // cache hit OR miss
   return result;
 }
 
@@ -1681,6 +1693,49 @@ static uint32_t NamespaceDepth(const std::string &abs_path) {
 // its own parent). Descending into such a prim's children re-expands the
 // ancestor's subtree, producing ever-longer unique paths (/A/B/A/B/...): an
 // unbounded worklist / OOM. We register the prim once but do not descend.
+// Content signature of a composed prim: an order-independent hash of the
+// (layer_stack, site) of its ARC nodes (node 0, the local root, is excluded so
+// the signature is position-independent). Two prims with the same signature
+// pull in identical composed content. Used to detect a composition cycle: if a
+// prim's signature equals one of its NAMESPACE ANCESTORS on the build path,
+// descending would regenerate the same subtree forever (e.g. a variant/ref that
+// re-selects the same content one level deeper: /P/a/b/a/b/...). Distinct
+// instances of the same asset are siblings (never ancestors), so this does not
+// false-positive on instancing. A signature of 0 means "no arc content" (a
+// plain local prim) and never triggers the check.
+uint64_t CompositionGraph::ComposedContentSignature(
+    const PrimIndex &index) const {
+  // Collect (layer_stack, site) of arc nodes, sort for order-independence.
+  std::vector<uint64_t> keys;
+  const uint16_t nc = index.GetNodeCount();
+  for (uint16_t i = 1; i < nc; ++i) {  // skip node 0 (local root)
+    const CompNode &n = index.GetNode(i);
+    if (n.is_culled()) continue;
+    switch (n.arc_type) {
+      case ArcType::Reference:
+      case ArcType::Payload:
+      case ArcType::Inherit:
+      case ArcType::Specialize:
+      case ArcType::Variant:
+        break;
+      default:
+        continue;
+    }
+    keys.push_back((uint64_t(n.layer_stack_idx) << 32) ^ n.site_path_idx);
+  }
+  if (keys.empty()) return 0;
+  std::sort(keys.begin(), keys.end());
+  // FNV-1a over the sorted keys.
+  uint64_t h = 1469598103934665603ull;
+  for (uint64_t k : keys) {
+    for (int b = 0; b < 8; ++b) {
+      h ^= (k >> (b * 8)) & 0xff;
+      h *= 1099511628211ull;
+    }
+  }
+  return h ? h : 1;  // never return 0 for non-empty content
+}
+
 bool CompositionGraph::IndexArcTargetsAncestor(const PrimIndex &index,
                                                const std::string &prim_path) const {
   const uint16_t nc = index.GetNodeCount();
@@ -1725,13 +1780,30 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
   // references/payloads. A child is built by descending the parent index one
   // namespace level (BuildChildFrom), which both reconstructs referenced
   // descendants and follows their own (nested) arcs.
+  // Persistent immutable chain of composed-content signatures along the build
+  // path from the root prim. Shared across sibling branches (cheap to extend);
+  // membership check is O(namespace depth). Detects composition cycles in
+  // O(cycle length) instead of relying on the size backstops.
+  struct SigNode {
+    uint64_t sig;
+    std::shared_ptr<const SigNode> parent;
+  };
+  auto sig_on_path = [](const std::shared_ptr<const SigNode> &tail,
+                        uint64_t sig) {
+    for (const SigNode *n = tail.get(); n; n = n->parent.get()) {
+      if (n->sig == sig) return true;
+    }
+    return false;
+  };
+
   struct Item {
     std::string path;
     std::shared_ptr<PrimIndex> parent;  // null for the root prim
     std::string child_name;             // unused for the root prim
+    std::shared_ptr<const SigNode> ancestor_sigs;  // build-path signatures
   };
   std::vector<Item> stack;
-  stack.push_back({prim_path, nullptr, std::string()});
+  stack.push_back({prim_path, nullptr, std::string(), nullptr});
 
   while (!stack.empty()) {
     Item item = std::move(stack.back());
@@ -1769,17 +1841,25 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
       return false;
     }
 
-    // Namespace cycle: this prim composes an arc back to one of its own
-    // ancestors — descending would re-expand the ancestor subtree forever.
-    // Register the prim (done above) but don't enqueue its children.
+    // Composition cycle: this prim composes an arc back to one of its own
+    // ancestors (IndexArcTargetsAncestor), OR its composed arc content is
+    // identical to a namespace ancestor's (content signature) — a
+    // variant/reference that re-selects the same content one level deeper,
+    // which would regenerate the same subtree forever. Register the prim
+    // (done above) but don't descend.
     if (IndexArcTargetsAncestor(*index, item.path)) {
       continue;
     }
+    const uint64_t sig = ComposedContentSignature(*index);
+    if (sig != 0 && sig_on_path(item.ancestor_sigs, sig)) {
+      continue;  // content cycle: identical composed arcs as an ancestor
+    }
+    std::shared_ptr<const SigNode> child_sigs =
+        (sig != 0) ? std::make_shared<const SigNode>(SigNode{sig, item.ancestor_sigs})
+                   : item.ancestor_sigs;
 
     // Enqueue composed children in reverse for left-to-right pre-order. Reject
-    // paths deeper than the namespace-depth cap — a reference cycle that
-    // reconstructs referenced descendants yields ever-longer unique paths and
-    // would otherwise grow the worklist without bound.
+    // paths deeper than the namespace-depth cap.
     const std::vector<std::string> child_names =
         GatherComposedChildNames(*index);
     for (auto it = child_names.rbegin(); it != child_names.rend(); ++it) {
@@ -1787,7 +1867,7 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
       if (NamespaceDepth(child_path) > _ctx._options.max_namespace_depth) {
         continue;  // too deep: likely a reference cycle; stop descending
       }
-      stack.push_back({child_path, index, *it});
+      stack.push_back({child_path, index, *it, child_sigs});
     }
   }
 

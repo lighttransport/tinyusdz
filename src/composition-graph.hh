@@ -478,6 +478,14 @@ struct CompositionContext {
   // LayerRegistry) and this stays empty.
   std::vector<std::unique_ptr<Layer>> _loaded_layers;
 
+  // Resolve-and-parse cache for the DEFAULT loader, keyed on
+  // "asset_path\ncwp". Caches both hits (Layer*) and misses (nullptr) so a
+  // large composed tree that references the same asset (or the same missing
+  // asset) from thousands of prims does not repeat the filesystem resolve +
+  // parse per prim — an O(prims) DoS on external-arc-heavy scenes. Not used on
+  // the load_layer_fn (pcp registry) path, which dedups itself.
+  HashMap<std::string, const Layer *> _default_layer_cache;
+
   // Payloads skipped during initial composition (for incremental loading).
   std::vector<DeferredPayloadInfo> _deferred_payloads;
 
@@ -646,6 +654,11 @@ class CompositionGraph {
   /// the ancestor subtree unboundedly.
   bool IndexArcTargetsAncestor(const PrimIndex &index,
                                const std::string &prim_path) const;
+
+  /// Position-independent hash of a prim's composed ARC content. Equal
+  /// signatures on the same build path (ancestor/descendant) indicate a
+  /// composition cycle. 0 = no arc content.
+  uint64_t ComposedContentSignature(const PrimIndex &index) const;
 
   std::vector<std::string> GatherComposedChildNames(
       const PrimIndex &index) const;
