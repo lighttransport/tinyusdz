@@ -2490,6 +2490,13 @@ if(TINYUSDZ_BUILD_TESTS)
                        ${_vchain_tusdzconvert})
     endif()
 
+    if(UNIX AND TARGET tusdzconvert AND TARGET tusdcat)
+      add_test(NAME tusdzconvert-regression-driver
+               COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-tusdzconvert-regression.sh
+                       $<TARGET_FILE:tusdzconvert> $<TARGET_FILE:tusdcat>
+                       ${PROJECT_SOURCE_DIR})
+    endif()
+
     # PointInstancer instancing (compute API + Tydra expansion)
     add_executable(feat-instancing tests/feat/instancing/test-instancing.cc)
     add_sanitizers(feat-instancing)
