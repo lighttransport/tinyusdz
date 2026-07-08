@@ -13,12 +13,14 @@
 #endif
 
 #include "tinyusdz.hh"
+#include "core/prim-spec.hh"
 #include "layer.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "io-util.hh"
 #include "usd-to-json.hh"
 #include "usd-dump.hh"
+#include "value-pprint.hh"
 #include "logger.hh"
 #include "crate-dump.hh"
 #include "usdc-reader.hh"
@@ -79,6 +81,541 @@ static bool ParseOutputFormat(const std::string &value, OutputFormat *format) {
   }
 
   return false;
+}
+
+static bool HasProp(const tinyusdz::PrimSpec &ps, const std::string &name) {
+  return ps.props().find(name) != ps.props().end();
+}
+
+static bool HasMaterialBinding(const tinyusdz::PrimSpec &ps) {
+  for (const auto &item : ps.props()) {
+    if (item.first.rfind("material:binding", 0) == 0 &&
+        item.second.is_relationship()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static std::string RelationTargetsString(const tinyusdz::Property &prop) {
+  std::stringstream ss;
+  const std::vector<tinyusdz::Path> targets = prop.get_relationTargets();
+  for (size_t i = 0; i < targets.size(); i++) {
+    if (i > 0) {
+      ss << ", ";
+    }
+    ss << tinyusdz::to_string(targets[i]);
+  }
+  return ss.str();
+}
+
+static size_t IntArrayValueCount(const tinyusdz::Property &prop) {
+  if (!prop.is_attribute()) {
+    return 0;
+  }
+  const auto view = prop.get_attribute().get_value_view<int32_t>();
+  return view.size();
+}
+
+static std::string SnipString(std::string s, size_t max_len = 160) {
+  if (s.size() <= max_len) {
+    return s;
+  }
+  return s.substr(0, max_len) + "...";
+}
+
+static bool StartsWithAny(const std::string &s,
+                          const std::initializer_list<const char *> prefixes) {
+  for (const char *prefix : prefixes) {
+    if (s.rfind(prefix, 0) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool ContainsAny(const std::string &s,
+                        const std::initializer_list<const char *> needles) {
+  for (const char *needle : needles) {
+    if (s.find(needle) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename T>
+static size_t AttrArrayCountAs(const tinyusdz::Attribute &attr) {
+  return attr.get_value_view<T>().size();
+}
+
+static size_t AttrArrayCount(const tinyusdz::Attribute &attr) {
+  if (!attr.has_value() || attr.has_timesamples() || attr.is_connection()) {
+    return 0;
+  }
+  size_t n = AttrArrayCountAs<int32_t>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<uint32_t>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<float>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<double>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<tinyusdz::value::float2>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<tinyusdz::value::float3>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<tinyusdz::value::point3f>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<tinyusdz::value::point3d>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<tinyusdz::value::normal3f>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<tinyusdz::value::vector3f>(attr);
+  if (n) return n;
+  n = AttrArrayCountAs<tinyusdz::value::quatf>(attr);
+  if (n) return n;
+  return 0;
+}
+
+static size_t AttrArrayCountForName(const tinyusdz::PrimSpec &ps,
+                                    const std::string &name) {
+  auto it = ps.props().find(name);
+  if (it == ps.props().end() || !it->second.is_attribute()) {
+    return 0;
+  }
+  return AttrArrayCount(it->second.get_attribute());
+}
+
+static std::string AttrValueSummary(const tinyusdz::Attribute &attr,
+                                    size_t max_len = 160) {
+  if (attr.is_connection()) {
+    std::stringstream ss;
+    ss << "connections=[";
+    const auto &paths = attr.connections();
+    for (size_t i = 0; i < paths.size(); i++) {
+      if (i > 0) {
+        ss << ", ";
+      }
+      ss << tinyusdz::to_string(paths[i]);
+    }
+    ss << "]";
+    return ss.str();
+  }
+  if (attr.has_timesamples()) {
+    return "timeSamples";
+  }
+  if (attr.is_blocked()) {
+    return "blocked";
+  }
+  if (!attr.has_value()) {
+    return "noValue";
+  }
+  return SnipString(tinyusdz::value::pprint_value(attr.get_var().value_raw(), 0, false),
+                    max_len);
+}
+
+static std::string PropertySummary(const tinyusdz::Property &prop,
+                                   size_t max_len = 160) {
+  if (prop.is_relationship()) {
+    return "targets=[" + RelationTargetsString(prop) + "]";
+  }
+  if (prop.is_attribute()) {
+    const tinyusdz::Attribute &attr = prop.get_attribute();
+    std::stringstream ss;
+    ss << "type=" << attr.type_name();
+    ss << " variability="
+       << (attr.variability() == tinyusdz::Variability::Uniform ? "uniform" : "varying");
+    const size_t count = AttrArrayCount(attr);
+    if (count > 0) {
+      ss << " count=" << count;
+    }
+    if (attr.metas().authored()) {
+      ss << " meta=yes";
+      if (attr.metas().has_interpolation()) {
+        ss << " interpolation=" << attr.metas().get_interpolation().str();
+      }
+      if (attr.metas().has_unauthoredValuesIndex()) {
+        ss << " unauthoredValuesIndex="
+           << attr.metas().get_unauthoredValuesIndex();
+      }
+    }
+    ss << " value=" << AttrValueSummary(attr, max_len);
+    return ss.str();
+  }
+  return "empty";
+}
+
+static bool PathSelected(const std::string &pattern, const std::string &path) {
+  return pattern.empty() || tinyusdz::GlobMatchPath(pattern, path);
+}
+
+static void PrintPropertyLine(const std::string &name,
+                              const tinyusdz::Property &prop,
+                              const std::string &indent = "    ") {
+  std::cout << indent << name << ": " << PropertySummary(prop) << "\n";
+}
+
+static bool PathMatchesOrDescendantMayMatch(const std::string &pattern,
+                                            const std::string &path) {
+  if (pattern.empty()) {
+    return true;
+  }
+  if (tinyusdz::GlobMatchPath(pattern, path)) {
+    return true;
+  }
+  if (pattern.size() > path.size() && pattern.compare(0, path.size(), path) == 0 &&
+      pattern[path.size()] == '/') {
+    return true;
+  }
+  return false;
+}
+
+static bool AnyChildPathMatches(const tinyusdz::PrimSpec &ps,
+                                const std::string &path,
+                                const std::string &pattern) {
+  if (pattern.empty()) {
+    return true;
+  }
+  for (const auto &child : ps.children()) {
+    const std::string child_path = path + "/" + child.name();
+    if (PathMatchesOrDescendantMayMatch(pattern, child_path) ||
+        AnyChildPathMatches(child, child_path, pattern)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void PrintMeshSubsetReportRec(const tinyusdz::PrimSpec &ps,
+                                     const std::string &path,
+                                     const std::string &pattern,
+                                     size_t *mesh_count,
+                                     size_t *suspicious_count) {
+  const bool path_selected =
+      PathMatchesOrDescendantMayMatch(pattern, path) ||
+      AnyChildPathMatches(ps, path, pattern);
+
+  if (ps.typeName() == "Mesh" && path_selected) {
+    (*mesh_count)++;
+    std::cout << "\n" << path << "\n";
+    size_t subset_count = 0;
+    size_t suspicious_here = 0;
+
+    for (const auto &child : ps.children()) {
+      const std::string child_path = path + "/" + child.name();
+      const bool child_selected = PathMatchesOrDescendantMayMatch(pattern, child_path);
+      const bool has_subset_fields =
+          HasProp(child, "indices") || HasProp(child, "elementType") ||
+          HasProp(child, "familyName");
+      const bool has_binding = HasMaterialBinding(child);
+      const bool looks_relevant =
+          child.typeName() == "GeomSubset" || has_subset_fields || has_binding;
+      if (!looks_relevant || (!pattern.empty() && !child_selected &&
+                              !PathMatchesOrDescendantMayMatch(pattern, path))) {
+        continue;
+      }
+
+      subset_count++;
+      const bool suspicious =
+          child.typeName() != "GeomSubset" && has_binding &&
+          (!HasProp(child, "indices") || !HasProp(child, "elementType"));
+      if (suspicious) {
+        suspicious_here++;
+        (*suspicious_count)++;
+      }
+
+      std::cout << "  - " << child.name();
+      std::cout << " type=" << (child.typeName().empty() ? "<empty>" : child.typeName());
+      std::cout << " indices=";
+      auto it = child.props().find("indices");
+      if (it != child.props().end()) {
+        std::cout << IntArrayValueCount(it->second);
+      } else {
+        std::cout << "missing";
+      }
+      std::cout << " elementType=" << (HasProp(child, "elementType") ? "yes" : "missing");
+      std::cout << " familyName=" << (HasProp(child, "familyName") ? "yes" : "missing");
+
+      for (const auto &prop_item : child.props()) {
+        if (prop_item.first.rfind("material:binding", 0) == 0 &&
+            prop_item.second.is_relationship()) {
+          std::cout << " " << prop_item.first << "=["
+                    << RelationTargetsString(prop_item.second) << "]";
+        }
+      }
+      if (suspicious) {
+        std::cout << " WARNING=material-bound-non-GeomSubset";
+      }
+      std::cout << "\n";
+    }
+
+    std::cout << "  summary: subset-like children=" << subset_count
+              << ", suspicious=" << suspicious_here << "\n";
+  }
+
+  for (const auto &child : ps.children()) {
+    PrintMeshSubsetReportRec(child, path + "/" + child.name(), pattern,
+                             mesh_count, suspicious_count);
+  }
+}
+
+static void PrintMeshSubsetReport(const tinyusdz::Layer &layer,
+                                  const std::string &pattern) {
+  size_t mesh_count = 0;
+  size_t suspicious_count = 0;
+  std::cout << "# Mesh subset/material binding report\n";
+  if (!pattern.empty()) {
+    std::cout << "path_filter: " << pattern << "\n";
+  }
+  for (const auto &item : layer.primspecs()) {
+    PrintMeshSubsetReportRec(item.second, "/" + item.first, pattern,
+                             &mesh_count, &suspicious_count);
+  }
+  std::cout << "\nmeshes_reported: " << mesh_count
+            << "\nsuspicious_children: " << suspicious_count << "\n";
+}
+
+static std::vector<std::pair<std::string, std::string>> MaterialBindings(
+    const tinyusdz::PrimSpec &ps) {
+  std::vector<std::pair<std::string, std::string>> bindings;
+  for (const auto &item : ps.props()) {
+    if (item.first.rfind("material:binding", 0) == 0 &&
+        item.second.is_relationship()) {
+      bindings.emplace_back(item.first, RelationTargetsString(item.second));
+    }
+  }
+  return bindings;
+}
+
+static bool IsMaterialPrim(const tinyusdz::PrimSpec &ps) {
+  return ps.typeName() == "Material" || ps.typeName() == "Shader" ||
+         ps.typeName() == "NodeGraph";
+}
+
+static bool IsGeomPrim(const tinyusdz::PrimSpec &ps) {
+  return ps.typeName() == "Mesh" || ps.typeName() == "GeomSubset" ||
+         ps.typeName() == "BasisCurves" || ps.typeName() == "NurbsCurves" ||
+         ps.typeName() == "Points" || ps.typeName() == "PointInstancer" ||
+         ps.typeName() == "Cube" || ps.typeName() == "Sphere" ||
+         ps.typeName() == "Capsule" || ps.typeName() == "Cone" ||
+         ps.typeName() == "Cylinder" || ps.typeName() == "Plane";
+}
+
+static bool IsSkelPrim(const tinyusdz::PrimSpec &ps) {
+  return ps.typeName() == "SkelRoot" || ps.typeName() == "Skeleton" ||
+         ps.typeName() == "SkelAnimation" || ps.typeName() == "BlendShape";
+}
+
+static bool IsTextureLikeProperty(const std::string &name,
+                                  const tinyusdz::Property &prop) {
+  if (!prop.is_attribute()) {
+    return false;
+  }
+  const tinyusdz::Attribute &attr = prop.get_attribute();
+  return attr.type_name() == "asset" ||
+         ContainsAny(name, {"file", "filename", "texture", "Texture"}) ||
+         (attr.has_value() &&
+          tinyusdz::value::pprint_value(attr.get_var().value_raw(), 0, false).find('@') !=
+              std::string::npos);
+}
+
+static void PrintMaterialReportRec(
+    const tinyusdz::PrimSpec &ps, const std::string &path,
+    const std::string &pattern,
+    const std::vector<std::pair<std::string, std::string>> &inherited_bindings,
+    size_t *prim_count, size_t *binding_count, size_t *texture_count) {
+  std::vector<std::pair<std::string, std::string>> current_bindings =
+      MaterialBindings(ps);
+  const std::vector<std::pair<std::string, std::string>> &effective_bindings =
+      current_bindings.empty() ? inherited_bindings : current_bindings;
+  const bool selected = PathSelected(pattern, path);
+
+  bool has_texture = false;
+  bool has_shader_io = false;
+  for (const auto &item : ps.props()) {
+    has_texture = has_texture || IsTextureLikeProperty(item.first, item.second);
+    has_shader_io =
+        has_shader_io || StartsWithAny(item.first, {"inputs:", "outputs:", "info:"});
+  }
+
+  const bool should_print =
+      selected && (IsMaterialPrim(ps) || !current_bindings.empty() ||
+                  (ps.typeName() == "Mesh" && !effective_bindings.empty()) ||
+                  has_texture || has_shader_io);
+
+  if (should_print) {
+    (*prim_count)++;
+    std::cout << "\n" << path << " type="
+              << (ps.typeName().empty() ? "<empty>" : ps.typeName()) << "\n";
+    if (!current_bindings.empty()) {
+      for (const auto &b : current_bindings) {
+        (*binding_count)++;
+        std::cout << "  binding " << b.first << " -> [" << b.second << "]\n";
+      }
+    } else if (ps.typeName() == "Mesh" && !effective_bindings.empty()) {
+      for (const auto &b : effective_bindings) {
+        std::cout << "  inheritedBinding " << b.first << " -> [" << b.second
+                  << "]\n";
+      }
+    }
+
+    for (const auto &item : ps.props()) {
+      if (StartsWithAny(item.first, {"info:", "inputs:", "outputs:"}) ||
+          IsTextureLikeProperty(item.first, item.second)) {
+        if (IsTextureLikeProperty(item.first, item.second)) {
+          (*texture_count)++;
+        }
+        PrintPropertyLine(item.first, item.second);
+      }
+    }
+  }
+
+  for (const auto &child : ps.children()) {
+    PrintMaterialReportRec(child, path + "/" + child.name(), pattern,
+                           effective_bindings, prim_count, binding_count,
+                           texture_count);
+  }
+}
+
+static void PrintMaterialReport(const tinyusdz::Layer &layer,
+                                const std::string &pattern) {
+  size_t prim_count = 0;
+  size_t binding_count = 0;
+  size_t texture_count = 0;
+  std::cout << "# Material/shader/texture report\n";
+  if (!pattern.empty()) {
+    std::cout << "path_filter: " << pattern << "\n";
+  }
+  const std::vector<std::pair<std::string, std::string>> no_bindings;
+  for (const auto &item : layer.primspecs()) {
+    PrintMaterialReportRec(item.second, "/" + item.first, pattern, no_bindings,
+                           &prim_count, &binding_count, &texture_count);
+  }
+  std::cout << "\nprims_reported: " << prim_count
+            << "\nbindings_reported: " << binding_count
+            << "\ntexture_like_properties: " << texture_count << "\n";
+}
+
+static void PrintGeomReportRec(const tinyusdz::PrimSpec &ps,
+                               const std::string &path,
+                               const std::string &pattern,
+                               size_t *prim_count, size_t *primvar_count) {
+  const bool selected = PathSelected(pattern, path);
+  const bool has_geom_api_props =
+      HasProp(ps, "points") || HasProp(ps, "faceVertexCounts") ||
+      HasProp(ps, "faceVertexIndices") || HasProp(ps, "normals") ||
+      HasProp(ps, "extent");
+
+  if (selected && (IsGeomPrim(ps) || has_geom_api_props)) {
+    (*prim_count)++;
+    std::cout << "\n" << path << " type="
+              << (ps.typeName().empty() ? "<empty>" : ps.typeName()) << "\n";
+    if (HasProp(ps, "points")) {
+      std::cout << "  points=" << AttrArrayCountForName(ps, "points") << "\n";
+    }
+    if (HasProp(ps, "faceVertexCounts")) {
+      std::cout << "  faceVertexCounts="
+                << AttrArrayCountForName(ps, "faceVertexCounts") << "\n";
+    }
+    if (HasProp(ps, "faceVertexIndices")) {
+      std::cout << "  faceVertexIndices="
+                << AttrArrayCountForName(ps, "faceVertexIndices") << "\n";
+    }
+    if (HasProp(ps, "normals")) {
+      std::cout << "  normals=" << AttrArrayCountForName(ps, "normals") << "\n";
+    }
+    if (HasProp(ps, "extent")) {
+      PrintPropertyLine("extent", ps.props().at("extent"), "  ");
+    }
+    const auto bindings = MaterialBindings(ps);
+    for (const auto &b : bindings) {
+      std::cout << "  binding " << b.first << " -> [" << b.second << "]\n";
+    }
+
+    for (const auto &item : ps.props()) {
+      if (StartsWithAny(item.first, {"primvars:", "skel:"}) ||
+          item.first.find(":indices") != std::string::npos) {
+        (*primvar_count)++;
+        PrintPropertyLine(item.first, item.second);
+      }
+    }
+  }
+
+  for (const auto &child : ps.children()) {
+    PrintGeomReportRec(child, path + "/" + child.name(), pattern, prim_count,
+                       primvar_count);
+  }
+}
+
+static void PrintGeomReport(const tinyusdz::Layer &layer,
+                            const std::string &pattern) {
+  size_t prim_count = 0;
+  size_t primvar_count = 0;
+  std::cout << "# Geometry/topology/primvar report\n";
+  if (!pattern.empty()) {
+    std::cout << "path_filter: " << pattern << "\n";
+  }
+  for (const auto &item : layer.primspecs()) {
+    PrintGeomReportRec(item.second, "/" + item.first, pattern, &prim_count,
+                       &primvar_count);
+  }
+  std::cout << "\nprims_reported: " << prim_count
+            << "\nprimvar_or_skel_properties: " << primvar_count << "\n";
+}
+
+static bool HasSkelProperty(const tinyusdz::PrimSpec &ps) {
+  for (const auto &item : ps.props()) {
+    if (StartsWithAny(item.first, {"skel:", "primvars:skel:"}) ||
+        ContainsAny(item.first, {"jointIndices", "jointWeights", "blendShape"})) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void PrintSkinningReportRec(const tinyusdz::PrimSpec &ps,
+                                   const std::string &path,
+                                   const std::string &pattern,
+                                   size_t *prim_count,
+                                   size_t *skel_prop_count) {
+  const bool selected = PathSelected(pattern, path);
+  const bool should_print = selected && (IsSkelPrim(ps) || HasSkelProperty(ps));
+  if (should_print) {
+    (*prim_count)++;
+    std::cout << "\n" << path << " type="
+              << (ps.typeName().empty() ? "<empty>" : ps.typeName()) << "\n";
+    for (const auto &item : ps.props()) {
+      if (StartsWithAny(item.first, {"skel:", "primvars:skel:"}) ||
+          ContainsAny(item.first, {"jointIndices", "jointWeights", "joints",
+                                   "bindTransforms", "restTransforms",
+                                   "blendShape", "rotations", "translations",
+                                   "scales"})) {
+        (*skel_prop_count)++;
+        PrintPropertyLine(item.first, item.second);
+      }
+    }
+  }
+  for (const auto &child : ps.children()) {
+    PrintSkinningReportRec(child, path + "/" + child.name(), pattern, prim_count,
+                           skel_prop_count);
+  }
+}
+
+static void PrintSkinningReport(const tinyusdz::Layer &layer,
+                                const std::string &pattern) {
+  size_t prim_count = 0;
+  size_t skel_prop_count = 0;
+  std::cout << "# Skinning/skeleton report\n";
+  if (!pattern.empty()) {
+    std::cout << "path_filter: " << pattern << "\n";
+  }
+  for (const auto &item : layer.primspecs()) {
+    PrintSkinningReportRec(item.second, "/" + item.first, pattern, &prim_count,
+                           &skel_prop_count);
+  }
+  std::cout << "\nprims_reported: " << prim_count
+            << "\nskel_properties: " << skel_prop_count << "\n";
 }
 
 static bool InferOutputFormatFromFilename(const std::string &filename,
@@ -422,6 +959,15 @@ void print_help() {
   std::cout << "Inspect options (YAML-like tree output):\n";
   std::cout << "  --inspect           Inspect Layer structure (YAML-like output)\n";
   std::cout << "  --inspect-json      Inspect Layer structure (JSON output)\n";
+  std::cout << "  --mesh-subset-report\n";
+  std::cout << "                      Report mesh child GeomSubset/material binding state\n";
+  std::cout << "                      to find typeless or incomplete subset children\n";
+  std::cout << "  --material-report   Report material bindings, shader inputs/outputs,\n";
+  std::cout << "                      texture-like asset properties, and inherited mesh binding\n";
+  std::cout << "  --geom-report       Report geometry topology counts, primvars, subsets,\n";
+  std::cout << "                      material bindings, and attribute metadata hints\n";
+  std::cout << "  --skinning-report   Report UsdSkel prims, skel relationships, joint arrays,\n";
+  std::cout << "                      blend shapes, and skinning primvars\n";
   std::cout << "  --value=MODE        Value printing mode:\n";
   std::cout << "                        none = schema only, no values\n";
   std::cout << "                        snip = first N items (default)\n";
@@ -436,6 +982,9 @@ void print_help() {
   std::cout << "Low-level USDC dump options:\n";
   std::cout << "  --dumpcrate         Dump low-level USDC Crate structure (YAML)\n";
   std::cout << "                      Only works with .usdc files\n";
+  std::cout << "  --dumpcrate-path=TEXT   Only show crate paths/specs containing TEXT\n";
+  std::cout << "  --dumpcrate-token=TEXT  Only show crate tokens/fields containing TEXT\n";
+  std::cout << "  --dumpcrate-limit=N     Limit crate path/spec/token/field output\n";
   std::cout << "\n";
   std::cout << "MaterialX validation options:\n";
   std::cout << "  --strict-mtlx-check Enable strict MaterialX validation\n";
@@ -494,10 +1043,16 @@ int main(int argc, char **argv) {
 
   // Inspect options
   bool do_inspect{false};
+  bool do_mesh_subset_report{false};
+  bool do_material_report{false};
+  bool do_geom_report{false};
+  bool do_skinning_report{false};
   tinyusdz::InspectOptions inspect_opts;
 
   // Dumpcrate option
   bool do_dumpcrate{false};
+  tinyusdz::crate::DumpOptions dump_opts;
+  dump_opts.format = tinyusdz::crate::OutputFormat::YAML;
 
   // MaterialX validation
   bool strict_mtlx_check{false};
@@ -595,6 +1150,22 @@ int main(int argc, char **argv) {
       show_progress = true;
     } else if (arg.compare("--dumpcrate") == 0) {
       do_dumpcrate = true;
+    } else if (tinyusdz::startsWith(arg, "--dumpcrate-path=")) {
+      dump_opts.path_filter = tinyusdz::removePrefix(arg, "--dumpcrate-path=");
+    } else if (tinyusdz::startsWith(arg, "--dumpcrate-token=")) {
+      dump_opts.token_filter = tinyusdz::removePrefix(arg, "--dumpcrate-token=");
+    } else if (tinyusdz::startsWith(arg, "--dumpcrate-limit=")) {
+      std::string limit_str = tinyusdz::removePrefix(arg, "--dumpcrate-limit=");
+      nonstd::optional<int> limit_val = tinyusdz::atoi(limit_str);
+      if (!limit_val.has_value() || limit_val.value() < 1) {
+        std::cerr << "Invalid dumpcrate limit: " << limit_str << "\n";
+        return EXIT_FAILURE;
+      }
+      dump_opts.max_tokens = limit_val.value();
+      dump_opts.max_fields = limit_val.value();
+      dump_opts.max_fieldsets = limit_val.value();
+      dump_opts.max_paths = limit_val.value();
+      dump_opts.max_specs = limit_val.value();
     } else if (arg.compare("--strict-mtlx-check") == 0) {
       strict_mtlx_check = true;
     } else if (arg.compare("--validate") == 0) {
@@ -625,6 +1196,14 @@ int main(int argc, char **argv) {
     } else if (arg.compare("--inspect-json") == 0) {
       do_inspect = true;
       inspect_opts.format = tinyusdz::InspectOutputFormat::Json;
+    } else if (arg.compare("--mesh-subset-report") == 0) {
+      do_mesh_subset_report = true;
+    } else if (arg.compare("--material-report") == 0) {
+      do_material_report = true;
+    } else if (arg.compare("--geom-report") == 0) {
+      do_geom_report = true;
+    } else if (arg.compare("--skinning-report") == 0) {
+      do_skinning_report = true;
     } else if (tinyusdz::startsWith(arg, "--value=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--value=");
       if (value_str == "none") {
@@ -811,14 +1390,55 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    tinyusdz::crate::DumpOptions dump_opts;
-    dump_opts.format = tinyusdz::crate::OutputFormat::YAML;
-
     if (!tinyusdz::crate::DumpCrate(filepath, dump_opts, &err)) {
       std::cerr << "Failed to dump crate: " << err << "\n";
       return EXIT_FAILURE;
     }
 
+    return EXIT_SUCCESS;
+  }
+
+  // Handle focused Layer report modes
+  if (do_mesh_subset_report || do_material_report || do_geom_report ||
+      do_skinning_report) {
+    tinyusdz::Layer layer;
+    bool ret = tinyusdz::LoadLayerFromFile(filepath, &layer, &warn, &err);
+
+    if (!warn.empty()) {
+      std::cerr << "WARN: " << warn << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USD file as Layer: " << filepath << "\n";
+      if (!err.empty()) {
+        std::cerr << err << "\n";
+      }
+      return EXIT_FAILURE;
+    }
+
+    bool need_separator = false;
+    auto separator = [&]() {
+      if (need_separator) {
+        std::cout << "\n";
+      }
+      need_separator = true;
+    };
+    if (do_mesh_subset_report) {
+      separator();
+      PrintMeshSubsetReport(layer, inspect_opts.prim_path_pattern);
+    }
+    if (do_material_report) {
+      separator();
+      PrintMaterialReport(layer, inspect_opts.prim_path_pattern);
+    }
+    if (do_geom_report) {
+      separator();
+      PrintGeomReport(layer, inspect_opts.prim_path_pattern);
+    }
+    if (do_skinning_report) {
+      separator();
+      PrintSkinningReport(layer, inspect_opts.prim_path_pattern);
+    }
     return EXIT_SUCCESS;
   }
 
