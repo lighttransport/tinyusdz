@@ -33,6 +33,19 @@ inline T FastFloatParseToken(const std::string& s) {
   return v;
 }
 
+// Strict decimal-integer token check: pxr rejects `int x = 1e3`, hex, and a
+// sign that doesn't match the type — DecimalTo* would silently stop at the
+// first non-digit instead.
+inline bool IsDecimalIntToken(const std::string& s, bool allow_neg) {
+  size_t i = 0;
+  if (i < s.size() && (s[i] == '+' || (allow_neg && s[i] == '-'))) ++i;
+  if (i >= s.size()) return false;
+  for (; i < s.size(); ++i) {
+    if (s[i] < '0' || s[i] > '9') return false;
+  }
+  return true;
+}
+
 inline int64_t DecimalToI64(const char* s) {
   if (!s) return 0;
   bool neg = false;
@@ -56,6 +69,16 @@ inline int64_t DecimalToI64(const char* s) {
   return neg ? static_cast<int64_t>(0u - v) : static_cast<int64_t>(v);
 }
 
+// 32-bit forms SATURATE at the type range (matching the 64-bit helpers'
+// saturation) instead of silently truncating bits: `int i = 1e23` must not
+// come back as -1.
+inline int32_t DecimalToI32(const char* s) {
+  const int64_t v = DecimalToI64(s);
+  if (v > INT32_MAX) return INT32_MAX;
+  if (v < INT32_MIN) return INT32_MIN;
+  return static_cast<int32_t>(v);
+}
+
 inline uint64_t DecimalToU64(const char* s) {
   if (!s) return 0;
   if (*s == '+') ++s;
@@ -70,6 +93,11 @@ inline uint64_t DecimalToU64(const char* s) {
     ++s;
   }
   return v;
+}
+
+inline uint32_t DecimalToU32(const char* s) {
+  const uint64_t v = DecimalToU64(s);
+  return v > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(v);
 }
 
 }  // namespace value_parser_detail

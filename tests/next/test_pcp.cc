@@ -2481,8 +2481,18 @@ static void test_sublayer_cycle_and_depth() {
   resolver.SetWorkingDirectory("/tmp");
   std::string warn, err;
   auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root);
-  assert(!cycle_opened && "sublayer cycle should fail Cache::Open");
-  assert(cycle_opened.error().find("Sublayer cycle") != std::string::npos);
+  // pxr parity: a sublayer cycle is WARNED and the repeated layer skipped —
+  // the rest of the scene still composes (previously the whole load failed).
+  assert(cycle_opened && "sublayer cycle should warn + skip, not fail");
+  {
+    bool cycle_reported = false;
+    for (const auto& is : cycle_opened->GetCompositionIssues()) {
+      if (is.message.find("Sublayer cycle") != std::string::npos) {
+        cycle_reported = true;
+      }
+    }
+    assert(cycle_reported && "cycle must still be diagnosed");
+  }
 
   const std::string depth_sub = "/tmp/next_pcp_depth_sub.usda";
   {
@@ -3134,6 +3144,174 @@ static void test_variant_selected_field() {
   std::cout << "  OK" << std::endl;
 }
 
+
+// ------------------------------------------------------------------
+// Regression tests from the 2026-07 composition/pcp audit.
+// ------------------------------------------------------------------
+
+// Authored `active = false` must survive weaker sources (a referenced prim's
+// DEFAULT active=true used to flip it back — the inverse of LIVRPS).
+static void test_active_survives_weaker_arc() {
+  std::cout << "test_active_survives_weaker_arc..." << std::endl;
+  const std::string ref = "/tmp/next_act_ref.usda";
+  const std::string root = "/tmp/next_act_root.usda";
+  {
+    std::ofstream o(ref);
+    o << "#usda 1.0\ndef Xform \"R\"\n{\n    float x = 1\n}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"A\" (\n"
+         "    active = false\n"
+         "    prepend references = @./next_act_ref.usda@</R>\n"
+         ")\n{\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  UsdPrim a = stage.GetPrimAtPath("/A");
+  assert(a.IsValid());
+  assert(!a.IsActive() && "authored active=false clobbered by weaker source");
+  assert(a.GetPropertyValue("x") != nullptr && "reference still composes");
+  std::remove(ref.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// Relationship / connection targets pointing OUTSIDE a referenced subtree are
+// not expressible in the composed namespace and must be dropped (pxr warns
+// and drops); leaking them verbatim silently aliased unrelated stage prims.
+// In-scope targets keep retargeting.
+static void test_out_of_scope_targets_dropped() {
+  std::cout << "test_out_of_scope_targets_dropped..." << std::endl;
+  const std::string asset = "/tmp/next_scope_asset.usda";
+  const std::string root = "/tmp/next_scope_root.usda";
+  {
+    std::ofstream o(asset);
+    o << "#usda 1.0\n"
+         "def Xform \"Model\"\n{\n"
+         "    def Mesh \"Geo\"\n    {\n"
+         "        rel material:binding = </Materials/Red>\n"
+         "        rel ok = </Model/Geo>\n"
+         "    }\n"
+         "}\n"
+         "def Scope \"Materials\" { def Material \"Red\" { } }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"W\" (prepend references = "
+         "@./next_scope_asset.usda@</Model>)\n{\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  UsdPrim geo = stage.GetPrimAtPath("/W/Geo");
+  assert(geo.IsValid());
+  const std::vector<Path>* binding = geo.GetRelationship("material:binding");
+  assert((!binding || binding->empty()) &&
+         "out-of-scope rel target must be dropped, not leaked verbatim");
+  const std::vector<Path>* ok = geo.GetRelationship("ok");
+  assert(ok && ok->size() == 1 && (*ok)[0].str() == "/W/Geo" &&
+         "in-scope rel target retargeted");
+  std::remove(asset.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// HasDeferredPayload must not depend on authored payload ORDER: with two
+// payloads where only one loads, a later loaded arc used to erase the
+// deferral marker set by an earlier deferred one.
+static void test_deferred_payload_marker_order() {
+  std::cout << "test_deferred_payload_marker_order..." << std::endl;
+  const std::string pay1 = "/tmp/next_def_p1.usda";
+  const std::string pay2 = "/tmp/next_def_p2.usda";
+  {
+    std::ofstream o(pay1);
+    o << "#usda 1.0\ndef Xform \"P1\" { float a = 1 }\n";
+  }
+  {
+    std::ofstream o(pay2);
+    o << "#usda 1.0\ndef Xform \"P2\" { float b = 2 }\n";
+  }
+  for (int order = 0; order < 2; ++order) {
+    const std::string root = "/tmp/next_def_root.usda";
+    {
+      std::ofstream o(root);
+      o << "#usda 1.0\n"
+           "def Xform \"A\" (prepend payload = [";
+      if (order == 0) {
+        o << "@./next_def_p2.usda@</P2>, @./next_def_p1.usda@</P1>";
+      } else {
+        o << "@./next_def_p1.usda@</P1>, @./next_def_p2.usda@</P2>";
+      }
+      o << "])\n{\n}\n";
+    }
+    AssetResolver resolver;
+    resolver.SetWorkingDirectory("/tmp");
+    pcp::CompositionOptions opts;
+    // Load only p1; p2 stays deferred — regardless of arc order.
+    opts.payload_policy = [](const Path&, const std::string& asset) {
+      return asset.find("p1") != std::string::npos;
+    };
+    auto layer = std::make_shared<Layer>();
+    {
+      Stage tmp;
+      std::string w, e;
+      assert(LoadUSDA(root, &tmp, &w, &e));
+      layer = std::shared_ptr<Layer>(tmp.ReleaseRootLayer());
+    }
+    auto opened = pcp::Cache::Open(resolver, layer, root, opts);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim a = stage.GetPrimAtPath("/A");
+    assert(a.GetPropertyValue("a") != nullptr && "loaded payload composes");
+    assert(a.GetPropertyValue("b") == nullptr && "deferred payload leaked");
+    assert(cache.HasDeferredPayload(Path("/A")) &&
+           "deferral marker lost (payload order dependence)");
+    std::remove(root.c_str());
+  }
+  std::remove(pay1.c_str());
+  std::remove(pay2.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// A per-sublayer layer offset must not fail the whole load (offsets are
+// parsed and skipped with a warning until composition plumbs them through).
+static void test_sublayer_offset_parses() {
+  std::cout << "test_sublayer_offset_parses..." << std::endl;
+  const std::string sub = "/tmp/next_slo_sub.usda";
+  const std::string root = "/tmp/next_slo_root.usda";
+  {
+    std::ofstream o(sub);
+    o << "#usda 1.0\ndef Xform \"p\" { float a = 1 }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n(\n"
+         "    subLayers = [ @./next_slo_sub.usda@ (offset = 10; scale = 2) ]\n"
+         ")\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err) &&
+         "sublayer layer-offset syntax must not fail the load");
+  assert(stage.GetPrimAtPath("/p").IsValid());
+  std::remove(sub.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
@@ -3143,6 +3321,10 @@ int main() {
   test_crate_style_variant_holder();
   test_usda_connection_and_custom_rel();
   test_variant_option_payload_arc();
+  test_active_survives_weaker_arc();
+  test_out_of_scope_targets_dropped();
+  test_deferred_payload_marker_order();
+  test_sublayer_offset_parses();
   test_parallel_compose_byte_identical();
   test_value_block_roundtrip();
   test_extracted_prototypes();

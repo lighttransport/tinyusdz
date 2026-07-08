@@ -118,7 +118,7 @@ bool AsciiParser::Impl::ParsePrimContents() {
         } else if (op_tok == TokenType::Add) {
           op = PrimSpec::RelationshipListOp::Add;
         }
-        if (!ParseRelationship(op)) return false;
+        if (!ParseRelationship(op, /*explicit_list=*/false)) return false;
       }
       continue;
     }
@@ -175,7 +175,11 @@ bool AsciiParser::Impl::ParseAttribute() {
   }
 
   if (lexer_->peek().type == TokenType::Rel) {
-    return ParseRelationship();
+    uint16_t rflags = 0;
+    if (is_custom) rflags |= PropSlot::kFlagCustom;
+    if (is_uniform) rflags |= PropSlot::kFlagUniform;
+    return ParseRelationship(PrimSpec::RelationshipListOp::Append,
+                             /*explicit_list=*/true, rflags);
   }
 
   std::string type_name;
@@ -221,11 +225,39 @@ bool AsciiParser::Impl::ParseAttribute() {
     lexer_->next();
 
     if (type_id == TypeId::Invalid) {
-      if (!SkipValueLike()) {
-        AddError("Failed to skip value for unknown attribute type: " + type_name);
-        return false;
+      // Unknown attribute type: keep the VALUE via literal inference where the
+      // form is unambiguous (pxr preserves `widget w = 5`); the declared type
+      // name is preserved separately, so the writer re-emits `widget w = 5`.
+      Value inferred;
+      const Token& vt = lexer_->peek();
+      if (vt.type == TokenType::Number) {
+        ParseResult r = ParseValue(*lexer_, TypeId::Double);
+        if (r.success) inferred = std::move(r.value);
+      } else if (vt.type == TokenType::String) {
+        ParseResult r = ParseValue(*lexer_, TypeId::String);
+        if (r.success) inferred = std::move(r.value);
+      } else if (vt.type == TokenType::True || vt.type == TokenType::False) {
+        ParseResult r = ParseValue(*lexer_, TypeId::Bool);
+        if (r.success) inferred = std::move(r.value);
       }
-      builder_->add_property(attr_name, Value(), flags);
+      if (!inferred.is_empty()) {
+        if (PrimSpec* cur = builder_->current()) {
+          cur->upsert_property(attr_name, std::move(inferred), flags);
+        }
+      } else {
+        if (!SkipValueLike()) {
+          AddError("Failed to skip value for unknown attribute type: " +
+                   type_name);
+          return false;
+        }
+        // Declared-only slot: storing an Invalid-typed Value here would
+        // surface as a `default` field with type enum 0 in the crate writer
+        // (pxr hard error).
+        if (PrimSpec* cur = builder_->current()) {
+          const PropNameId nid = GetPropNameTable().intern(attr_name);
+          if (!cur->property(nid)) cur->add_property_slot(nid, type_id, flags);
+        }
+      }
     } else {
       ParseResult result;
       if (is_array) {
@@ -239,7 +271,13 @@ bool AsciiParser::Impl::ParseAttribute() {
         return false;
       }
 
-      builder_->add_property(attr_name, std::move(result.value), flags);
+      // Upsert: `attr.timeSamples = {...}` authored before `attr = v` already
+      // created a slot; a second slot with the same name would emit two
+      // Attribute specs with the same path (pxr: "invalid specs: spec
+      // repeated" — the whole layer fails to open).
+      if (PrimSpec* cur = builder_->current()) {
+        cur->upsert_property(attr_name, std::move(result.value), flags);
+      }
     }
     ParsePropertyMetadata(attr_name);
 
@@ -273,7 +311,9 @@ bool AsciiParser::Impl::ParseAttribute() {
         cur->add_property_slot(nid, type_id, flags);
       }
       if (Check(TokenType::None)) {
+        // `.connect = None`: an authored connection block.
         lexer_->next();
+        if (cur) cur->set_connection_block(attr_name);
       } else if (Check(TokenType::OpenBracket)) {
         lexer_->next();
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
@@ -298,23 +338,44 @@ bool AsciiParser::Impl::ParseAttribute() {
       lexer_->next();
     }
   } else {
-    builder_->add_property(attr_name, Value(), flags);
+    // Bare declaration (`token outputs:out`): declared-only slot with no
+    // value; an Invalid-typed Value would emit a type-enum-0 `default` field.
+    if (PrimSpec* cur = builder_->current()) {
+      const PropNameId nid = GetPropNameTable().intern(attr_name);
+      if (!cur->property(nid)) cur->add_property_slot(nid, type_id, flags);
+    }
   }
 
   return true;
 }
 
-bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
+bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
+                                          bool explicit_list,
+                                          uint16_t flags) {
   lexer_->next();
 
   std::string rel_name;
   if (!ParseNamespacedName(&rel_name, "relationship name")) {
     return false;
   }
+  if (flags) {
+    if (PrimSpec* prim = builder_->current()) {
+      prim->set_relationship_flags(
+          rel_name, static_cast<uint16_t>(
+                        prim->relationship_flags(rel_name) | flags));
+    }
+  }
 
   ParsePropertyMetadata(rel_name);
 
   if (!Match(TokenType::Equals)) {
+    // Bare declaration (`custom rel material:binding`): register an empty
+    // relationship so it round-trips (writers emit `rel name`, no targets).
+    if (PrimSpec* prim = builder_->current()) {
+      if (!prim->relationship(rel_name)) {
+        prim->set_relationship_targets(rel_name, {});
+      }
+    }
     return true;
   }
 
@@ -339,9 +400,52 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op) {
     lexer_->next();
   }
 
-  if (!targets.empty()) {
-    if (PrimSpec* prim = builder_->current()) {
+  if (PrimSpec* prim = builder_->current()) {
+    if (targets.empty()) {
+      // `= None` / `= []`: keep the relationship declared (empty) rather than
+      // dropping it.
+      if (!prim->relationship(rel_name)) {
+        prim->set_relationship_targets(rel_name, {});
+      }
+    } else {
+      // A bare explicit list authored BEFORE any edits dominates: the
+      // explicit base is not representable in edit sublists, so subsequent
+      // edits keep the legacy flatten-into-effective behavior.
+      const bool explicit_base =
+          !explicit_list && prim->relationship_edits().count(rel_name) == 0 &&
+          prim->relationship(rel_name) && !prim->relationship(rel_name)->empty();
       prim->apply_relationship_list_op(rel_name, targets, op);
+      // Record the authored list-op edit so the qualifier round-trips
+      // (`prepend rel r = <...>` used to flatten to an explicit list and
+      // `delete` edits vanished entirely).
+      if (!explicit_list && !explicit_base) {
+        ArcEdit& e = prim->ensure_relationship_edit(rel_name);
+        e.authored = true;
+        e.is_explicit = false;
+        std::vector<std::string>* sub = nullptr;
+        switch (op) {
+          case PrimSpec::RelationshipListOp::Prepend:
+            sub = &e.prepended;
+            break;
+          case PrimSpec::RelationshipListOp::Append:
+          case PrimSpec::RelationshipListOp::Add:
+            sub = &e.appended;
+            break;
+          case PrimSpec::RelationshipListOp::Delete:
+            sub = &e.deleted;
+            break;
+        }
+        if (sub) {
+          for (const Path& t : targets) sub->push_back(t.str());
+        }
+      } else {
+        // A later bare (explicit) authoring replaces any recorded edits.
+        if (prim->relationship_edits().count(rel_name)) {
+          ArcEdit& e = prim->ensure_relationship_edit(rel_name);
+          e = ArcEdit();
+          e.authored = true;
+        }
+      }
     }
   }
   ParsePropertyMetadata(rel_name);

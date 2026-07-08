@@ -23,6 +23,7 @@
 #include "next/reader/usda-reader.hh"
 #include "next/schema/physics-api.hh"
 #include "next/schema/physics-joint.hh"
+#include "next/tinyusdz-next.hh"
 
 using namespace tinyusdz::next;
 
@@ -647,6 +648,48 @@ def PhysicsSphericalJoint "Ball"
   std::cout << "  physics schema tests passed!" << std::endl;
 }
 
+void test_load_usd_from_memory() {
+  std::cout << "Testing LoadUSDFromMemory..." << std::endl;
+
+  const char* usda = R"(#usda 1.0
+def Xform "root" {
+  def Mesh "geom" {
+    float radius = 3.0
+  }
+}
+)";
+
+  // USDA sniffed from content
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(usda),
+                              std::strlen(usda), &stage, &warn, &err);
+  assert(ok && "memory load should succeed");
+  assert(stage.GetPrimAtPath("/root/geom").IsValid());
+
+  // USDC: write the stage to memory, load it back
+  std::vector<uint8_t> usdc;
+  USDCWriteResult wres = WriteUSDCToMemory(usdc, stage);
+  assert(wres.success && "usdc memory write should succeed");
+  Stage stage2;
+  ok = LoadUSDFromMemory(usdc.data(), usdc.size(), &stage2, &warn, &err);
+  assert(ok && "usdc memory load should succeed");
+  assert(stage2.GetPrimAtPath("/root/geom").IsValid());
+
+  // Garbage input fails cleanly
+  const uint8_t garbage[] = {0xFF, 0xFE, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  Stage stage3;
+  err.clear();
+  ok = LoadUSDFromMemory(garbage, sizeof(garbage), &stage3, &warn, &err);
+  assert(!ok && !err.empty() && "garbage input should fail with an error");
+
+  // Empty input fails cleanly
+  ok = LoadUSDFromMemory(nullptr, 0, &stage3, &warn, &err);
+  assert(!ok && "empty input should fail");
+
+  std::cout << "  LoadUSDFromMemory tests passed!" << std::endl;
+}
+
 // ============================================================
 // Main
 // ============================================================
@@ -667,6 +710,7 @@ int main() {
     test_arc_listops();
     test_arc_layer_offset_parse();
     test_physics_schema();
+    test_load_usd_from_memory();
 
     std::cout << std::endl;
     std::cout << "All tests passed!" << std::endl;

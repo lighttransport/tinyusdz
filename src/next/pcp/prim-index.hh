@@ -36,6 +36,10 @@ namespace pcp {
 struct LayerStack {
   std::vector<std::shared_ptr<Layer>> layers;  // strongest first
   std::vector<std::string> layer_identifiers;  // resolved id for each layer
+  // Per-layer time offset RELATIVE TO THE STACK ROOT, accumulated through
+  // nested sublayer `(offset = ..; scale = ..)` annotations. Parallel to
+  // `layers`; entry 0 (the root) is identity.
+  std::vector<LayerOffset> layer_offsets;
   std::string identifier;                       // resolved asset path (registry key)
   LayerOffset offset;                           // cumulative time offset to root
 };

@@ -62,6 +62,188 @@
     return InternBlock(std::move(block));
   }
 
+  // Encode an SdfReferenceListOp / SdfPayloadListOp in pxr's on-disk layout:
+  //   [u8 ListOpHeader=0x03 explicit][u64 n] then per item
+  //   [u32 assetStrIdx][u32 pathIdx][f64 offset][f64 scale]
+  //   (+ [u64 customDataCount=0] for references only).
+  // Items come from next's canonical arc strings
+  // ("@asset@<prim>?layerOffset=offset:scale"; empty asset = internal arc).
+  uint64_t StoreReferenceListOp(const std::vector<std::string>& arcs,
+                                bool is_payload, const ArcEdit* edits) {
+    std::vector<uint8_t> blob;
+    auto put_bytes = [&](const void* d, size_t n) {
+      const uint8_t* b = static_cast<const uint8_t*>(d);
+      blob.insert(blob.end(), b, b + n);
+    };
+    auto put_items = [&](const std::vector<std::string>& items) {
+      uint64_t count = items.size();
+      put_bytes(&count, 8);
+      for (const std::string& arc : items) {
+        EncodeArcItem(arc, is_payload, put_bytes);
+      }
+    };
+    // Authored non-explicit list-op edits round-trip natively via pxr's
+    // sublist header bits; a bare/explicit list is one explicit run.
+    if (edits && edits->authored && !edits->is_explicit) {
+      uint8_t bits = 0;
+      if (!edits->prepended.empty()) bits |= 0x20;
+      if (!edits->appended.empty()) bits |= 0x40;
+      if (!edits->deleted.empty()) bits |= 0x08;
+      if (!edits->ordered.empty()) bits |= 0x10;
+      blob.push_back(bits);
+      // Run order matches the reader: prepended, appended, deleted, ordered.
+      if (!edits->prepended.empty()) put_items(edits->prepended);
+      if (!edits->appended.empty()) put_items(edits->appended);
+      if (!edits->deleted.empty()) put_items(edits->deleted);
+      if (!edits->ordered.empty()) put_items(edits->ordered);
+      DataBlock block;
+      block.type = TypeId::Invalid;
+      block.data = std::move(blob);
+      return InternBlock(std::move(block));
+    }
+    blob.push_back(0x03);  // IsExplicit | HasExplicitItems
+    put_items(arcs);
+    DataBlock block;
+    block.type = TypeId::Invalid;
+    block.data = std::move(blob);
+    return InternBlock(std::move(block));
+  }
+
+  // Encode a single SdfReference/SdfPayload item from next's canonical arc
+  // string ("@asset@<prim>?layerOffset=offset:scale").
+  template <typename PutBytes>
+  void EncodeArcItem(const std::string& arc, bool is_payload,
+                     PutBytes& put_bytes) {
+    {
+      // Parse the canonical arc string (mirrors Compositor::ParseReference).
+      std::string asset, prim_path;
+      double offset = 0.0, scale = 1.0;
+      std::string str = arc;
+      if (!str.empty() && str[0] == '@') {
+        size_t end = str.find('@', 1);
+        if (end != std::string::npos) {
+          asset = str.substr(1, end - 1);
+          str = str.substr(end + 1);
+        }
+      }
+      size_t ps = str.find('<');
+      size_t pe = str.find('>');
+      if (ps != std::string::npos && pe != std::string::npos && pe > ps) {
+        prim_path = str.substr(ps + 1, pe - ps - 1);
+      }
+      size_t op = str.find("layerOffset=");
+      if (op != std::string::npos) {
+        const char* c = str.c_str() + op + 12;
+        char* endp = nullptr;
+        offset = std::strtod(c, &endp);
+        if (endp && *endp == ':') scale = std::strtod(endp + 1, nullptr);
+      }
+      uint32_t asset_idx = InternString(asset);
+      uint32_t path_idx = InternPath(prim_path.empty() ? "/" : prim_path);
+      put_bytes(&asset_idx, 4);
+      put_bytes(&path_idx, 4);
+      put_bytes(&offset, 8);
+      put_bytes(&scale, 8);
+      if (!is_payload) {
+        uint64_t custom_data_count = 0;  // reference customData: none
+        put_bytes(&custom_data_count, 8);
+      }
+    }
+  }
+
+  // inheritPaths / specializes: PathListOp built from arc strings
+  // ("</Base>"), optionally carrying non-explicit list-op sublists natively.
+  uint64_t StorePathArcListOp(const std::vector<std::string>& arcs,
+                              const ArcEdit* edits) {
+    auto strip = [](const std::vector<std::string>& in) {
+      std::vector<std::string> out;
+      out.reserve(in.size());
+      for (const std::string& a : in) {
+        size_t ps = a.find('<');
+        size_t pe = a.rfind('>');
+        if (ps != std::string::npos && pe != std::string::npos && pe > ps) {
+          out.push_back(a.substr(ps + 1, pe - ps - 1));
+        } else if (!a.empty()) {
+          out.push_back(a);
+        }
+      }
+      return out;
+    };
+    std::vector<uint8_t> blob;
+    auto put_run = [&](const std::vector<std::string>& paths) {
+      uint64_t n = paths.size();
+      const uint8_t* b = reinterpret_cast<const uint8_t*>(&n);
+      blob.insert(blob.end(), b, b + 8);
+      for (const std::string& path : paths) {
+        uint32_t idx = InternPath(path);
+        const uint8_t* ib = reinterpret_cast<const uint8_t*>(&idx);
+        blob.insert(blob.end(), ib, ib + 4);
+      }
+    };
+    if (edits && edits->authored && !edits->is_explicit) {
+      std::vector<std::string> pre = strip(edits->prepended);
+      std::vector<std::string> app = strip(edits->appended);
+      std::vector<std::string> del = strip(edits->deleted);
+      std::vector<std::string> ord = strip(edits->ordered);
+      uint8_t bits = 0;
+      if (!pre.empty()) bits |= 0x20;
+      if (!app.empty()) bits |= 0x40;
+      if (!del.empty()) bits |= 0x08;
+      if (!ord.empty()) bits |= 0x10;
+      blob.push_back(bits);
+      if (!pre.empty()) put_run(pre);
+      if (!app.empty()) put_run(app);
+      if (!del.empty()) put_run(del);
+      if (!ord.empty()) put_run(ord);
+    } else {
+      blob.push_back(0x03);  // IsExplicit | HasExplicitItems
+      put_run(strip(arcs));
+    }
+    DataBlock block;
+    block.type = TypeId::Invalid;
+    block.data = std::move(blob);
+    return InternBlock(std::move(block));
+  }
+
+  // Build a StringListOp field ([u8 header=0x03][u64 n][u32 string_idx]*n) --
+  // pxr's encoding for variantSetNames.
+  CrateField MakeStringListOpField(const std::string& field_name,
+                                   const std::vector<std::string>& names) {
+    std::vector<uint8_t> raw(9 + names.size() * 4);
+    raw[0] = 0x03;  // IsExplicit | HasExplicitItems
+    uint64_t cnt = names.size();
+    std::memcpy(raw.data() + 1, &cnt, 8);
+    for (size_t i = 0; i < names.size(); ++i) {
+      uint32_t idx = InternString(names[i]);
+      std::memcpy(raw.data() + 9 + i * 4, &idx, 4);
+    }
+    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+    CrateField f;
+    f.token_index.value = InternToken(field_name);
+    f.value_rep =
+        ValueRep::Make(CrateTypeId::StringListOp, data_idx, false, false);
+    return f;
+  }
+
+  // Build a StringVector field ([u64 count][u32 string_idx]*count) -- pxr's
+  // encoding for subLayers.
+  CrateField MakeStringVectorField(const std::string& field_name,
+                                   const std::vector<std::string>& items) {
+    std::vector<uint8_t> raw(8 + items.size() * 4);
+    uint64_t cnt = items.size();
+    std::memcpy(raw.data(), &cnt, 8);
+    for (size_t i = 0; i < items.size(); ++i) {
+      uint32_t idx = InternString(items[i]);
+      std::memcpy(raw.data() + 8 + i * 4, &idx, 4);
+    }
+    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+    CrateField f;
+    f.token_index.value = InternToken(field_name);
+    f.value_rep =
+        ValueRep::Make(CrateTypeId::StringVector, data_idx, false, false);
+    return f;
+  }
+
   // Build a TokenVector field ([u64 count][u32 token_idx]*count) -- used for
   // primChildren / variantSetChildren / variantChildren.
   CrateField MakeTokenVectorField(const std::string& field_name,
@@ -126,6 +308,11 @@
         sample_reps[ti] = ts_val
             ? EncodeValue(*ts_val)
             : ValueRep::Make(CrateTypeId::ValueBlock, 0, false, true);
+        if (sample_reps[ti].type_id() == CrateTypeId::Invalid) {
+          // Unencodable sample: degrade to a block rather than a type-enum-0
+          // rep that makes pxr reject the layer.
+          sample_reps[ti] = ValueRep::Make(CrateTypeId::ValueBlock, 0, false, true);
+        }
         ti++;
       }
     }
@@ -186,6 +373,10 @@
 
     for (const auto& slot : prim.properties().slots()) {
       const std::string& prop_name = name_table.get(slot.name_id);
+      // Defense against duplicate slots for one property (the parser now
+      // upserts, but crate-read or API-built layers could still carry them):
+      // two Attribute specs with the same path make pxr reject the layer.
+      if (emitted.count(prop_name)) continue;
       const Value* val = prim.property_value(slot.name_id);
       const bool has_ts = prim.has_time_samples(slot.name_id);
       std::vector<CrateField> flds;
@@ -215,7 +406,12 @@
         CrateField df;
         df.token_index.value = InternToken("default");
         df.value_rep = EncodeValue(*val);
-        flds.push_back(df);
+        // An unencodable value must not become a `default` field with type
+        // enum 0 — pxr fails the whole layer on it. The typeName field above
+        // still records the declared type.
+        if (df.value_rep.type_id() != CrateTypeId::Invalid) {
+          flds.push_back(df);
+        }
       }
 
       if (slot.flags & PropSlot::kFlagConnection) {
@@ -224,14 +420,14 @@
           targets.reserve(conns->size());
           for (const auto& p : *conns)
             if (!p.str().empty()) targets.push_back(p.str());
-          if (!targets.empty()) {
-            uint64_t blk = StorePathListOp(targets);
-            CrateField cf;
-            cf.token_index.value = InternToken("connectionPaths");
-            cf.value_rep =
-                ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
-            flds.push_back(cf);
-          }
+          // An authored-empty list is a connection BLOCK (`.connect = None`):
+          // emit an explicit-empty PathListOp so it round-trips.
+          uint64_t blk = StorePathListOp(targets);
+          CrateField cf;
+          cf.token_index.value = InternToken("connectionPaths");
+          cf.value_rep =
+              ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
+          flds.push_back(cf);
         }
       }
 
@@ -297,7 +493,31 @@
       vf.token_index.value = InternToken("variability");
       vf.value_rep = ValueRep::Make(CrateTypeId::Variability, 1, false, true);
       flds.push_back(vf);
-      if (const std::vector<Path>* tgts = prim.relationship(rel_name)) {
+      if (prim.relationship_flags(rel_name) & PropSlot::kFlagCustom) {
+        CrateField cf;
+        cf.token_index.value = InternToken("custom");
+        cf.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        flds.push_back(cf);
+      }
+      // Authored list-op edits encode natively via sublist header bits
+      // (StorePathArcListOp), like the composition-arc fields.
+      const ArcEdit* rel_edit = nullptr;
+      {
+        const auto& edits = prim.relationship_edits();
+        auto eit = edits.find(rel_name);
+        if (eit != edits.end() && eit->second.authored &&
+            !eit->second.is_explicit) {
+          rel_edit = &eit->second;
+        }
+      }
+      if (rel_edit) {
+        uint64_t blk = StorePathArcListOp({}, rel_edit);
+        CrateField rf;
+        rf.token_index.value = InternToken("targetPaths");
+        rf.value_rep =
+            ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
+        flds.push_back(rf);
+      } else if (const std::vector<Path>* tgts = prim.relationship(rel_name)) {
         std::vector<std::string> targets;
         for (const auto& p : *tgts)
           if (!p.str().empty()) targets.push_back(p.str());

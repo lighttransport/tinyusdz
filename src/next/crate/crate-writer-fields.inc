@@ -19,7 +19,9 @@
       // variantSets, so these become leftover and are dropped.
       {
         const std::string& pp = prim.path().str();
-        size_t lb = pp.find("/{");
+        // Nearest bracketed component owns this prim (nested variants):
+        // "/P/{a=x}/{b=y}/Geo" is owned by "/P/{a=x}", not "/P".
+        size_t lb = pp.rfind("/{");
         if (lb != std::string::npos) {
           const PrimSpec* owner = layer.prim_at_path(pp.substr(0, lb));
           if (!owner || owner->meta().variantSets().empty()) return;
@@ -61,7 +63,8 @@
       if (is_variant_holder && prim_nm.size() >= 3 &&
           prim_nm[prim_nm.size() - 2] == '=') {  // "{vset=}"
         const std::string& pth = prim.path().str();
-        size_t lb = pth.find("/{");
+        // Owner = path before the LAST bracketed component (nested variants).
+        size_t lb = pth.rfind("/{");
         std::string owning = (lb == std::string::npos) ? std::string()
                                                        : pth.substr(0, lb);
         std::string vset = prim_nm.substr(1, prim_nm.size() - 3);  // "{vset=}"->vset
@@ -75,20 +78,22 @@
         }
       }
 
-      // active
-      if (!prim.meta().active) {
+      // active (authored true also round-trips via active_authored)
+      if (!prim.meta().active || prim.meta().active_authored) {
         CrateField f;
         f.token_index.value = InternToken("active");
-        f.value_rep = ValueRep::Make(CrateTypeId::Bool, 0, false, true);
+        f.value_rep = ValueRep::Make(CrateTypeId::Bool,
+                                     prim.meta().active ? 1 : 0, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
 
-      // hidden
-      if (prim.meta().hidden) {
+      // hidden (authored false also round-trips via hidden_authored)
+      if (prim.meta().hidden || prim.meta().hidden_authored) {
         CrateField f;
         f.token_index.value = InternToken("hidden");
-        f.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        f.value_rep = ValueRep::Make(CrateTypeId::Bool,
+                                     prim.meta().hidden ? 1 : 0, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -103,11 +108,11 @@
         fields_.push_back(f);
       }
 
-      // apiSchemas — a flattened (explicit) TokenListOp. The on-disk layout the
-      // reader (DecodeTokenListOp) and pxrUSD expect is
-      //   [u8 ListOpHeader=0x02 explicit][u64 count][u32 token_idx]*count
-      // (the earlier code omitted the header byte, so the count's low byte was
-      // misread as the header -> apiSchemas did not round-trip).
+      // apiSchemas — a TokenListOp with one PREPENDED run:
+      //   [u8 ListOpHeader=0x20 prepended][u64 count][u32 token_idx]*count
+      // pxr itself authors applied API schemas as `prepend apiSchemas`, so
+      // this both satisfies its schema type and round-trips the qualifier
+      // (next flattens list-op sublists on read, so any form reads back).
       if (!prim.meta().apiSchemas().empty()) {
         size_t count = prim.meta().apiSchemas().size();
         size_t items_bytes = 0;
@@ -118,7 +123,11 @@
           return;
         }
         std::vector<uint8_t> api_data(api_data_size);
-        api_data[0] = 0x02;  // kHasExplicit
+        // Header bit from the authored qualifier; bare lists write pxr's
+        // conventional prepended form (pxr authors `prepend apiSchemas`).
+        api_data[0] = prim.meta().apiSchemasQualifier() == "append"
+                          ? 0x40   // kHasAppended
+                          : 0x20;  // kHasPrepended
         uint64_t cnt = count;
         std::memcpy(api_data.data() + 1, &cnt, 8);
         for (size_t i = 0; i < count; ++i) {
@@ -165,39 +174,49 @@
         fields_.push_back(f);
       };
 
-      // Composition arcs + list metadata as token[] fields (full round-trip).
-      // The token[] carries the within-spec effective (composed) list.
-      add_token_array_field("references", prim.meta().references);
-      add_token_array_field("payload", prim.meta().payloads);
-      add_token_array_field("inherits", prim.meta().inherits);
-      add_token_array_field("specializes", prim.meta().specializes);
-
-      // Phase 7 S5: when an arc field carries a non-bare list-op qualifier,
-      // also emit a companion `<arc>_listOp` token[] preserving the authored
-      // prepend/append/delete/order sublists (marker-delimited). Absent =>
-      // the token[] above is an explicit (bare) list. Next-private fields;
-      // unknown fields are ignored by other readers.
-      const ArcListOpEdits* edits = prim.meta().arc_edits();
-      auto add_arc_listop = [&](const char* base, const ArcEdit* e) {
-        if (!e || !e->authored || e->is_explicit) return;
-        std::vector<std::string> enc;
-        auto section = [&](const char* marker,
-                           const std::vector<std::string>& items) {
-          if (items.empty()) return;
-          enc.push_back(marker);
-          enc.insert(enc.end(), items.begin(), items.end());
-        };
-        section("\x01P", e->prepended);
-        section("\x01A", e->appended);
-        section("\x01D", e->deleted);
-        section("\x01O", e->ordered);
-        if (enc.empty()) enc.push_back("\x01N");  // non-explicit, no items
-        add_token_array_field(std::string(base) + "_listOp", enc);
+      // Composition arcs in pxr-native encodings (pxr rejects the whole layer
+      // when a known field like `references` holds a token[] instead of its
+      // schema type). The effective (composed) list is written explicitly;
+      // authored list-op sublists additionally round-trip via the next-private
+      // `<arc>_listOp` companion fields below.
+      const ArcListOpEdits* arc_edits = prim.meta().arc_edits();
+      auto add_ref_listop_field = [&](const char* name,
+                                      const std::vector<std::string>& arcs,
+                                      bool is_payload, const ArcEdit* e) {
+        if (arcs.empty() && !(e && e->authored)) return;
+        uint64_t blk = StoreReferenceListOp(arcs, is_payload, e);
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep = ValueRep::Make(is_payload ? CrateTypeId::PayloadListOp
+                                                : CrateTypeId::ReferenceListOp,
+                                     blk, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
       };
-      add_arc_listop("references", edits ? &edits->references : nullptr);
-      add_arc_listop("payload", edits ? &edits->payloads : nullptr);
-      add_arc_listop("inherits", edits ? &edits->inherits : nullptr);
-      add_arc_listop("specializes", edits ? &edits->specializes : nullptr);
+      auto add_path_listop_field = [&](const char* name,
+                                       const std::vector<std::string>& arcs,
+                                       const ArcEdit* e) {
+        if (arcs.empty() && !(e && e->authored)) return;
+        uint64_t blk = StorePathArcListOp(arcs, e);
+        CrateField f;
+        f.token_index.value = InternToken(name);
+        f.value_rep =
+            ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      };
+      add_ref_listop_field("references", prim.meta().references, false,
+                           arc_edits ? &arc_edits->references : nullptr);
+      add_ref_listop_field("payload", prim.meta().payloads, true,
+                           arc_edits ? &arc_edits->payloads : nullptr);
+      // pxr's field name for inherits is "inheritPaths".
+      add_path_listop_field("inheritPaths", prim.meta().inherits,
+                            arc_edits ? &arc_edits->inherits : nullptr);
+      add_path_listop_field("specializes", prim.meta().specializes,
+                            arc_edits ? &arc_edits->specializes : nullptr);
+
+      // Authored list-op sublists round-trip natively inside the pxr listop
+      // encodings above (no next-private companion fields).
       if (!prim.meta().comment().empty()) {
         add_string_field("comment", prim.meta().comment());
       }
@@ -244,10 +263,35 @@
       // holder prims, so no separate variantSets token field is emitted. (The
       // bracketed holder/child prims carry the variant CONTENT and are emitted
       // above for unflattened layers.)
-      if (!prim.meta().variantSets().empty()) {
+      // NOTE: not gated on variantSets(): a prim may only SELECT a variant
+      // defined by a referenced asset ("variants = {...}" next to a
+      // reference), in which case it has selections but no local sets.
+      {
+        // Selections can live in three places depending on how the layer was
+        // produced: VariantSetData::selected (crate reader / authoring API,
+        // the authoritative per-set form), the plural variantSelections()
+        // list (USDA parser), or the legacy single "set=sel" string. Merge
+        // all three, per-set `selected` first (matches RecordSelections).
         std::vector<std::pair<std::string, std::string>> sels;
+        auto add_sel = [&sels](const std::string& set, const std::string& v) {
+          if (set.empty() || v.empty()) return;
+          for (auto& kv : sels) {
+            if (kv.first == set) return;  // first writer wins
+          }
+          sels.emplace_back(set, v);
+        };
         for (const auto& vs : prim.meta().variantSets()) {
-          if (!vs.selected.empty()) sels.emplace_back(vs.name, vs.selected);
+          add_sel(vs.name, vs.selected);
+        }
+        for (const auto& kv : prim.meta().variantSelections()) {
+          add_sel(kv.first, kv.second);
+        }
+        if (!prim.meta().variantSelection.empty()) {
+          size_t eq = prim.meta().variantSelection.find('=');
+          if (eq != std::string::npos) {
+            add_sel(prim.meta().variantSelection.substr(0, eq),
+                    prim.meta().variantSelection.substr(eq + 1));
+          }
         }
         if (!sels.empty()) {
           uint64_t blk = StoreVariantSelectionMap(sels);
@@ -267,6 +311,11 @@
           for (const auto& kv : oit->second) set_names.push_back(kv.first);
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
           fields_.push_back(MakeTokenVectorField("variantSetChildren", set_names));
+          // variantSetNames (StringListOp): required by pxr's Pcp to create
+          // the variant arcs — without it usdcat opens the layer but a
+          // flatten/compose drops all variant content.
+          fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(MakeStringListOpField("variantSetNames", set_names));
         }
       }
 
@@ -332,8 +381,12 @@
         fields_.push_back(f);
       }
 
+      // Stage metadata below is gated on the same "differs from fallback"
+      // heuristics the usda writer uses, so an unauthored default does not
+      // round-trip into a spuriously authored opinion (authored-at-default
+      // values are collapsed, matching the usda writer).
       // upAxis
-      {
+      if (layer.meta().upAxis_set || layer.meta().upAxis != "Y") {
         CrateField f;
         f.token_index.value = InternToken("upAxis");
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
@@ -344,7 +397,7 @@
       }
 
       // metersPerUnit
-      {
+      if (layer.meta().metersPerUnit_set || layer.meta().metersPerUnit != 0.01) {
         CrateField f;
         f.token_index.value = InternToken("metersPerUnit");
         double v = layer.meta().metersPerUnit;
@@ -355,7 +408,7 @@
       }
 
       // timeCodesPerSecond
-      {
+      if (layer.meta().timeCodesPerSecond_set || layer.meta().timeCodesPerSecond != 24.0) {
         CrateField f;
         f.token_index.value = InternToken("timeCodesPerSecond");
         double v = layer.meta().timeCodesPerSecond;
@@ -366,7 +419,9 @@
       }
 
       // startTimeCode
-      {
+      if (layer.meta().startTimeCode_set ||
+          layer.meta().startTimeCode != 0.0 ||
+          layer.meta().endTimeCode != 0.0) {
         CrateField f;
         f.token_index.value = InternToken("startTimeCode");
         double v = layer.meta().startTimeCode;
@@ -378,7 +433,9 @@
       }
 
       // endTimeCode
-      {
+      if (layer.meta().endTimeCode_set ||
+          layer.meta().startTimeCode != 0.0 ||
+          layer.meta().endTimeCode != 0.0) {
         CrateField f;
         f.token_index.value = InternToken("endTimeCode");
         double v = layer.meta().endTimeCode;
@@ -444,13 +501,33 @@
         fields_.push_back(f);
       }
 
-      // subLayers (token[] — all entries round-trip; the reader reads them back)
+      // subLayers (StringVector — pxr's schema type; a token[] here reads back
+      // in pxr as an empty sublayer list)
       if (!layer.meta().subLayers.empty()) {
-        CrateField f;
-        f.token_index.value = InternToken("subLayers");
-        f.value_rep = EncodeValue(Value::MakeTokenArray(layer.meta().subLayers));
+        CrateField f = MakeStringVectorField("subLayers", layer.meta().subLayers);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
+        // subLayerOffsets must accompany subLayers (one offset per entry) —
+        // pxr errors with "Invalid sublayer index" without it.
+        // Layout: [u64 count][f64 offset, f64 scale] per entry.
+        const size_t n = layer.meta().subLayers.size();
+        std::vector<uint8_t> raw(8 + n * 16);
+        uint64_t cnt = n;
+        std::memcpy(raw.data(), &cnt, 8);
+        for (size_t i = 0; i < n; ++i) {
+          const bool have = i < layer.meta().subLayerOffsets.size();
+          const double offset = have ? layer.meta().subLayerOffsets[i].first : 0.0;
+          const double scale = have ? layer.meta().subLayerOffsets[i].second : 1.0;
+          std::memcpy(raw.data() + 8 + i * 16, &offset, 8);
+          std::memcpy(raw.data() + 8 + i * 16 + 8, &scale, 8);
+        }
+        uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+        CrateField fo;
+        fo.token_index.value = InternToken("subLayerOffsets");
+        fo.value_rep = ValueRep::Make(CrateTypeId::LayerOffsetVector, data_idx,
+                                      false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(fo);
       }
 
       uint32_t fs_idx = static_cast<uint32_t>(fieldsets_.size());
@@ -478,7 +555,10 @@
       std::string var = nm.substr(eq + 1, nm.size() - eq - 2);  // between = and }
       if (var.empty()) continue;  // "{vset=}" is the VariantSet decl, not a variant
       const std::string& path = p.path().str();
-      size_t lb = path.find("/{");
+      // The holder's own name is the LAST component; its owner is everything
+      // before it. rfind so nested holders ("/P/{a=x}/{b=y}") attribute to
+      // the inner owner ("/P/{a=x}"), not the outermost prim.
+      size_t lb = path.rfind("/{");
       if (lb == std::string::npos) continue;
       variant_names[path.substr(0, lb)][nm.substr(1, eq - 1)].push_back(var);
     }
@@ -490,15 +570,26 @@
       if (!result_.error.empty()) return;
     }
 
-    // Add primChildren to pseudo-root (fieldset 0) from root prims
+    // Add primChildren to pseudo-root (fieldset 0) from root prims, in the
+    // layer's AUTHORED namespace order (root_indices) when available — the
+    // storage order is path-sorted after a crate read, and pxr treats
+    // primChildren as the semantic child order.
     {
       std::vector<uint32_t> root_child_tokens;
-      for (const auto& prim : layer.prims()) {
-        // Root prims have exactly one '/' in their path (e.g., "/World")
-        const std::string& path_str = prim.path().str();
-        if (!path_str.empty() && path_str != "/" &&
-            path_str.find('/', 1) == std::string::npos) {
-          root_child_tokens.push_back(InternToken(prim.name()));
+      if (!layer.root_indices().empty()) {
+        for (uint32_t ri : layer.root_indices()) {
+          if (const PrimSpec* rp = layer.prim(ri)) {
+            root_child_tokens.push_back(InternToken(rp->name()));
+          }
+        }
+      } else {
+        for (const auto& prim : layer.prims()) {
+          // Root prims have exactly one '/' in their path (e.g., "/World")
+          const std::string& path_str = prim.path().str();
+          if (!path_str.empty() && path_str != "/" &&
+              path_str.find('/', 1) == std::string::npos) {
+            root_child_tokens.push_back(InternToken(prim.name()));
+          }
         }
       }
       if (!root_child_tokens.empty()) {
@@ -544,6 +635,25 @@
       if (slash == std::string::npos) continue;
       std::string parent = (slash == 0) ? "/" : p.substr(0, slash);
       parent_children[parent].push_back(InternToken(prim.name()));
+    }
+    // Prefer the AUTHORED sibling order via child links (the storage order is
+    // path-sorted after a crate read). Only replace when the link count
+    // matches the path-derived count (links may be absent/partial on
+    // hand-built layers).
+    for (const auto& prim : layer.prims()) {
+      if (prim.child_indices().empty()) continue;
+      auto pit = parent_children.find(prim.path().str());
+      if (pit == parent_children.end()) continue;
+      std::vector<uint32_t> linked;
+      linked.reserve(prim.child_indices().size());
+      for (uint32_t ci : prim.child_indices()) {
+        const PrimSpec* c = layer.prim(ci);
+        if (!c) continue;
+        const std::string& cn = c->name();
+        if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') continue;
+        linked.push_back(InternToken(cn));
+      }
+      if (linked.size() == pit->second.size()) pit->second = std::move(linked);
     }
 
     // Add primChildren to non-root prims that have children. (Variant holders

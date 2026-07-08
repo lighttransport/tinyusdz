@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Value Printer Implementation
 
 #include "value-printer.hh"
+#include "../crate/crate-format.hh"  // HalfToFloat
 #include "stream-writer.hh"
 #include "../types/value-view.hh"
 #include "../types/type-id.hh"
@@ -48,7 +49,20 @@ std::string EscapeString(const std::string& s) {
       case '\n': result += "\\n"; break;
       case '\r': result += "\\r"; break;
       case '\t': result += "\\t"; break;
-      default:   result += c; break;
+      default: {
+        // Control bytes written raw make the output unreadable by next's own
+        // loader (format sniffing rejects them); emit \xNN like pxr does.
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc == 0x7f) {
+          static const char* hexd = "0123456789abcdef";
+          result += "\\x";
+          result += hexd[uc >> 4];
+          result += hexd[uc & 0xf];
+        } else {
+          result += c;
+        }
+        break;
+      }
     }
   }
   result += '"';
@@ -303,9 +317,7 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
       for (size_t i = 0; i < limit; ++i) {
         if (i) out.append(", ");
         if (type_id == TypeId::AssetPath) {
-          out.append('@');
-          out.append((*a)[i]);
-          out.append('@');
+          out.append(FormatAssetPathForUsda((*a)[i]));
         } else {
           out.append(EscapeString((*a)[i]));
         }
@@ -316,7 +328,9 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
     }
     default: {
       const TypeId component = GetComponentType(type_id);
-      const bool dbl = (component == TypeId::Double) || type_id == TypeId::Double;
+      const bool dbl = (component == TypeId::Double) ||
+                       type_id == TypeId::Double ||
+                       type_id == TypeId::TimeCode;
       const bool flt = (component == TypeId::Float) || type_id == TypeId::Float;
       if (dbl) {
         ArrayScratch<double> scratch;
@@ -332,6 +346,22 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
         if (!GetFloatArrayView(value, &scratch, &view)) return false;
         EmitCompArray(out, view.data, view.size, type_id, maxN,
                       [&](float v) { out.append_float(v); });
+        return true;
+      }
+      if (component == TypeId::Int) {  // Int2/Int3/Int4 arrays
+        ArrayScratch<int32_t> scratch;
+        ArrayView<int32_t> view;
+        if (!GetIntArrayView(value, &scratch, &view)) return false;
+        EmitCompArray(out, view.data, view.size, type_id, maxN,
+                      [&](int32_t v) { out.append_int(v); });
+        return true;
+      }
+      if (component == TypeId::UInt) {  // UInt2/UInt3/UInt4 arrays
+        ArrayScratch<uint32_t> scratch;
+        ArrayView<uint32_t> view;
+        if (!GetUIntArrayView(value, &scratch, &view)) return false;
+        EmitCompArray(out, view.data, view.size, type_id, maxN,
+                      [&](uint32_t v) { out.append_uint(v); });
         return true;
       }
       return false;
@@ -470,7 +500,7 @@ void PrintValueInto(std::string& out, const Value& value,
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           for (size_t i = 0; i < limit; ++i) {
             if (i) out += ", ";
-            if (type_id == TypeId::AssetPath) { out += '@'; out += (*a)[i]; out += '@'; }
+            if (type_id == TypeId::AssetPath) out += FormatAssetPathForUsda((*a)[i]);
             else out += EscapeString((*a)[i]);
           }
           if (limit < a->size()) out += ", ...";
@@ -480,13 +510,50 @@ void PrintValueInto(std::string& out, const Value& value,
       default: {
         // float- or double-backed scalar / vector / matrix arrays
         const bool dbl = (GetComponentType(type_id) == TypeId::Double) ||
-                         type_id == TypeId::Double;
+                         type_id == TypeId::Double ||
+                         type_id == TypeId::TimeCode;
         if (dbl) {
           if (const auto* a = value.as_double_array()) {
             size_t n = a->size() / comp_count;
             size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
             ReserveArrayHeadroom(out, limit * comp_count * 12);
             for (size_t i = 0; i < limit; ++i) { if (i) out += ", "; emit_elem_double(a->data() + i * comp_count); }
+            if (limit < n) out += ", ...";
+          }
+        } else if (GetComponentType(type_id) == TypeId::UInt) {
+          // UInt2/UInt3/UInt4 arrays (flat uint32 buffer)
+          if (const auto* a = value.as_uint_array()) {
+            size_t n = a->size() / comp_count;
+            size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+            ReserveArrayHeadroom(out, limit * comp_count * 12);
+            for (size_t i = 0; i < limit; ++i) {
+              if (i) out += ", ";
+              const uint32_t* d = a->data() + i * comp_count;
+              out += "(";
+              for (size_t c = 0; c < comp_count; ++c) {
+                if (c) out += ", ";
+                AppendUInt(out, d[c]);
+              }
+              out += ")";
+            }
+            if (limit < n) out += ", ...";
+          }
+        } else if (GetComponentType(type_id) == TypeId::Int) {
+          // Int2/Int3/Int4 arrays (flat int32 buffer)
+          if (const auto* a = value.as_int_array()) {
+            size_t n = a->size() / comp_count;
+            size_t limit = (maxN > 0) ? std::min(maxN, n) : n;
+            ReserveArrayHeadroom(out, limit * comp_count * 12);
+            for (size_t i = 0; i < limit; ++i) {
+              if (i) out += ", ";
+              const int32_t* d = a->data() + i * comp_count;
+              out += "(";
+              for (size_t c = 0; c < comp_count; ++c) {
+                if (c) out += ", ";
+                AppendInt(out, d[c]);
+              }
+              out += ")";
+            }
             if (limit < n) out += ", ...";
           }
         } else {
@@ -564,7 +631,26 @@ void PrintValueInto(std::string& out, const Value& value,
 
     case TypeId::AssetPath: {
       const std::string* v = value.as_asset_path();
-      if (v) { out += '@'; out += *v; out += '@'; } else out += "None";
+      if (v) out += FormatAssetPathForUsda(*v); else out += "None";
+      return;
+    }
+
+    case TypeId::UInt2:
+    case TypeId::UInt3:
+    case TypeId::UInt4: {
+      // Raw uint32 SBO lanes (no dedicated accessors).
+      size_t nbytes = 0;
+      const uint8_t* b = value.raw_bytes(&nbytes);
+      const size_t comps = nbytes / 4;
+      if (!b || comps < 2 || comps > 4) { out += "None"; return; }
+      uint32_t lanes[4];
+      std::memcpy(lanes, b, comps * 4);
+      out += '(';
+      for (size_t c = 0; c < comps; ++c) {
+        if (c) out += ", ";
+        AppendUInt(out, lanes[c]);
+      }
+      out += ')';
       return;
     }
 
@@ -591,7 +677,8 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
-    case TypeId::Float2: {
+    case TypeId::Float2:
+    case TypeId::Texcoord2f: {
       const float* v = value.as_float2();
       if (!v) { out += "None"; return; }
       out += '('; AppendFloat(out, v[0]); out += ", "; AppendFloat(out, v[1]); out += ')';
@@ -602,7 +689,8 @@ void PrintValueInto(std::string& out, const Value& value,
     case TypeId::Point3f:
     case TypeId::Vector3f:
     case TypeId::Normal3f:
-    case TypeId::Color3f: {
+    case TypeId::Color3f:
+    case TypeId::Texcoord3f: {
       const float* v = value.as_float3();
       if (!v) { out += "None"; return; }
       out += '('; AppendFloat(out, v[0]); out += ", "; AppendFloat(out, v[1]);
@@ -619,7 +707,8 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
-    case TypeId::Double2: {
+    case TypeId::Double2:
+    case TypeId::Texcoord2d: {
       const double* v = value.as_double2();
       if (!v) { out += "None"; return; }
       out += '('; AppendDouble(out, v[0]); out += ", "; AppendDouble(out, v[1]); out += ')';
@@ -629,7 +718,9 @@ void PrintValueInto(std::string& out, const Value& value,
     case TypeId::Double3:
     case TypeId::Point3d:
     case TypeId::Vector3d:
-    case TypeId::Normal3d: {
+    case TypeId::Normal3d:
+    case TypeId::Color3d:
+    case TypeId::Texcoord3d: {
       const double* v = value.as_double3();
       if (!v) { out += "None"; return; }
       out += '('; AppendDouble(out, v[0]); out += ", "; AppendDouble(out, v[1]);
@@ -637,7 +728,8 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
-    case TypeId::Double4: {
+    case TypeId::Double4:
+    case TypeId::Color4d: {
       const double* v = value.as_double4();
       if (!v) { out += "None"; return; }
       out += '('; AppendDouble(out, v[0]); out += ", "; AppendDouble(out, v[1]);
@@ -737,6 +829,36 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
+    // Raw-half SBO scalars (half, half2/3/4, quath, half role types): the
+    // parser stores raw half-bit lanes; widen per lane for printing.
+    case TypeId::Half:
+    case TypeId::Half2:
+    case TypeId::Half3:
+    case TypeId::Half4:
+    case TypeId::Quath:
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+    case TypeId::Color4h:
+    case TypeId::Texcoord2h:
+    case TypeId::Texcoord3h: {
+      size_t nbytes = 0;
+      const uint8_t* b = value.raw_bytes(&nbytes);
+      const size_t comps = nbytes / 2;
+      if (!b || comps == 0 || comps > 4) { out += "None"; return; }
+      uint16_t lanes[4];
+      std::memcpy(lanes, b, comps * 2);
+      if (comps == 1) { AppendFloat(out, HalfToFloat(lanes[0])); return; }
+      out += '(';
+      for (size_t c = 0; c < comps; ++c) {
+        if (c) out += ", ";
+        AppendFloat(out, HalfToFloat(lanes[c]));
+      }
+      out += ')';
+      return;
+    }
+
     case TypeId::Dictionary: {
       const Dict* d = value.as_dictionary();
       if (d) out += PrintDictionaryIndented(*d, opts, 0); else out += "{\n}";
@@ -749,6 +871,25 @@ void PrintValueInto(std::string& out, const Value& value,
       out += ">";
       return;
   }
+}
+
+std::string FormatAssetPathForUsda(const std::string& path) {
+  if (path.find('@') == std::string::npos) {
+    return "@" + path + "@";
+  }
+  // pxr triple-delimiter form for paths containing '@'; a literal "@@@" inside
+  // is escaped as "\\@@@".
+  std::string out = "@@@";
+  for (size_t i = 0; i < path.size(); ++i) {
+    if (path.compare(i, 3, "@@@") == 0) {
+      out += "\\@@@";
+      i += 2;
+    } else {
+      out += path[i];
+    }
+  }
+  out += "@@@";
+  return out;
 }
 
 std::string PrintValue(const Value& value, const PrintOptions& opts) {
@@ -784,7 +925,8 @@ bool IsChunkableType(const Value& value, const PrintOptions& opts) {
       return true;
     default: {
       const TypeId comp = GetComponentType(type_id);
-      const bool dbl = (comp == TypeId::Double) || type_id == TypeId::Double;
+      const bool dbl = (comp == TypeId::Double) || type_id == TypeId::Double ||
+                       type_id == TypeId::TimeCode;
       // Half-backed types (half / half3 / quath / ...) are widened to float by
       // as_float_array, so the float range printer handles them identically.
       const bool flt = (comp == TypeId::Float) || type_id == TypeId::Float ||
@@ -815,7 +957,8 @@ bool IsChunkableArray(const Value& value, const PrintOptions& opts) {
       return true;
     default: {
       const TypeId comp = GetComponentType(type_id);
-      const bool dbl = (comp == TypeId::Double) || type_id == TypeId::Double;
+      const bool dbl = (comp == TypeId::Double) || type_id == TypeId::Double ||
+                       type_id == TypeId::TimeCode;
       const bool flt = (comp == TypeId::Float) || type_id == TypeId::Float ||
                        (comp == TypeId::Half) || type_id == TypeId::Half;
       return dbl || flt;
@@ -904,20 +1047,38 @@ std::string PrintDictionaryIndented(const Dict& d, const PrintOptions& opts,
   std::string closing;
   for (int i = 0; i < base_depth; ++i) closing += opts.indent;
 
+  // Keys that aren't valid identifiers (spaces, punctuation, leading digit,
+  // keyword-free requirement does not apply) must be quoted or the output is
+  // unparseable.
+  auto key_text = [](const std::string& k) -> std::string {
+    auto ident = [](const std::string& v) {
+      if (v.empty()) return false;
+      auto head = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+      };
+      if (!head(v[0])) return false;
+      for (char c : v) {
+        if (!head(c) && !(c >= '0' && c <= '9') && c != ':') return false;
+      }
+      return true;
+    };
+    return ident(k) ? k : EscapeString(k);
+  };
+
   for (const auto& kv : d.entries) {
     const std::string& key = kv.first;
     const Value& val = kv.second;
     s += inner;
     if (val.is_dictionary()) {
       s += "dictionary ";
-      s += key;
+      s += key_text(key);
       s += " = ";
       s += PrintDictionaryIndented(*val.as_dictionary(), opts, base_depth + 1);
       s += "\n";
     } else {
       s += PrintTypeName(val.type_id(), val.is_array());
       s += " ";
-      s += key;
+      s += key_text(key);
       s += " = ";
       PrintValueInto(s, val, opts);
       s += "\n";

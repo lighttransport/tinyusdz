@@ -237,7 +237,31 @@ bool Lexer::capture_bracketed_literal(const char** out_data, size_t* out_len,
 
     if (c == '@') {
       simple = false;  // asset-ref bytes may contain separators
+      // Triple-@ form (@@@path@@@, used when the path itself contains '@'):
+      // terminated only by an unescaped @@@ run.
+      const bool triple = (pos_ + 2 < length_ && data_[pos_ + 1] == '@' &&
+                           data_[pos_ + 2] == '@');
       advance();
+      if (triple) {
+        advance();
+        advance();
+        while (pos_ < length_) {
+          if (current_char() == '\\') {
+            advance();
+            if (pos_ < length_) advance();
+            continue;
+          }
+          if (current_char() == '@' && pos_ + 2 < length_ &&
+              data_[pos_ + 1] == '@' && data_[pos_ + 2] == '@') {
+            advance();
+            advance();
+            advance();
+            break;
+          }
+          advance();
+        }
+        continue;
+      }
       while (pos_ < length_) {
         if (current_char() == '\\') {
           advance();
@@ -355,7 +379,10 @@ Token Lexer::scan_token() {
     case '}': advance(); return make_token(TokenType::CloseBrace, start_line, start_col);
     case '=': advance(); return make_token(TokenType::Equals, start_line, start_col);
     case ':': advance(); return make_token(TokenType::Colon, start_line, start_col);
-    case '.': advance(); return make_token(TokenType::Dot, start_line, start_col);
+    case '.':
+      if (IsDigit(peek_char())) break;  // leading-dot float literal (.5)
+      advance();
+      return make_token(TokenType::Dot, start_line, start_col);
     case ',': advance(); return make_token(TokenType::Comma, start_line, start_col);
     case ';': advance(); return make_token(TokenType::Semicolon, start_line, start_col);
   }
@@ -385,6 +412,8 @@ Token Lexer::scan_token() {
   // the value parser accepts those in numeric context (keeping an attribute
   // literally named `inf` safe).
   if (IsDigit(c) || (c == '-' && IsDigit(peek_char())) || (c == '+' && IsDigit(peek_char())) ||
+      (c == '.' && IsDigit(peek_char())) ||
+      ((c == '-' || c == '+') && peek_char() == '.') ||
       ((c == '-' || c == '+') && MatchFloatSpecial(data_ + pos_ + 1, data_ + length_) > 0)) {
     return scan_number();
   }
@@ -441,22 +470,31 @@ Token Lexer::scan_number() {
       advance();
     }
 
-    // Decimal part
-    if (current_char() == '.' && IsDigit(peek_char())) {
+    // Decimal part. pxr's grammar is `[0-9]+\.?[0-9]*|\.[0-9]+`: a leading
+    // dot (`.5`) and a trailing dot (`1.`) are both valid float literals.
+    if (current_char() == '.') {
       advance();  // '.'
       while (IsDigit(current_char())) {
         advance();
       }
     }
 
-    // Exponent
+    // Exponent: only consume when followed by digits (`1e` / `1e+` are NOT
+    // numbers — consuming a bare exponent silently truncated `1e3`-style
+    // typos to `1`; leave the `e` for the parser to reject).
     if (current_char() == 'e' || current_char() == 'E') {
+      const size_t exp_pos = pos_;
       advance();
       if (current_char() == '+' || current_char() == '-') {
         advance();
       }
-      while (IsDigit(current_char())) {
-        advance();
+      if (IsDigit(current_char())) {
+        while (IsDigit(current_char())) {
+          advance();
+        }
+      } else {
+        // rewind: not an exponent
+        while (pos_ > exp_pos) { pos_--; column_--; }
       }
     }
   }
