@@ -263,9 +263,12 @@ int main() {
               << (view.borrowed ? " (borrowed)" : " (scratch)") << std::endl;
   }
 
-  // ---- orientations / xforms: newly supported vector/matrix array laziness --
+  // ---- orientations / xforms: vector/matrix array laziness ------------------
+  // Quat arrays decode EAGERLY by design: the crate stores components
+  // imaginary-first while the internal layout is real-first, so a lazy byte
+  // view would surface the wrong component order. The values still round-trip.
   const Value* qv = ps->property_value("orientations");
-  assert(qv && qv->is_array() && qv->is_lazy());
+  assert(qv && qv->is_array() && !qv->is_lazy());
   const std::vector<float>* qa = qv->as_float_array();
   assert(qa && *qa == quats);
   const Value* mv = ps->property_value("xforms");
@@ -337,9 +340,11 @@ int main() {
     CrateWriteResult wres = writer.WriteLayerToMemory(out, *layer);
     assert(wres.success);
     // Numeric arrays (points Vec3f, indices Int, ids UInt, hashes UInt64,
-    // orientations Quatf, xforms Matrix4d, tangents Vec4f, extent Vec2d, and
-    // two velocities TimeSamples) copied verbatim.
-    assert(wres.arrays_passed_through >= 10);
+    // xforms Matrix4d, tangents Vec4f, extent Vec2d, and two velocities
+    // TimeSamples) copied verbatim. Quat arrays (orientations) are no longer
+    // lazy (component swizzle on decode), so they re-encode rather than
+    // pass through.
+    assert(wres.arrays_passed_through >= 9);
     assert(wres.arrays_reencoded == 0);
     std::cout << "  writer passed through " << wres.arrays_passed_through
               << " arrays (" << wres.arrays_reencoded << " reencoded)" << std::endl;
@@ -395,7 +400,7 @@ int main() {
     bool ok = pipeline::FlattenUSDCToUSDC(buf.data(), buf.size(), fout, fopts,
                                           &fstats, &ferr);
     assert(ok);
-    assert(fstats.arrays_passed_through >= 10);
+    assert(fstats.arrays_passed_through >= 9);  // quats re-encode (swizzle)
     assert(fstats.arrays_reencoded == 0);
     std::cout << "  FlattenUSDCToUSDC: " << fstats.input_bytes << " -> "
               << fstats.output_bytes << " bytes, passthrough="

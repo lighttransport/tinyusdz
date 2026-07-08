@@ -70,6 +70,10 @@
 
     out->finalize();
     out->meta() = root->meta();
+    // Sublayer opinions are baked into the flattened output; keeping the
+    // subLayers list would re-apply (now stale) layers when the exported
+    // layer is read back.
+    out->meta().subLayers.clear();
     stage->SetRootLayer(std::move(*out));
     return true;
   }

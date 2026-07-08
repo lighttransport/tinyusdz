@@ -53,6 +53,7 @@ set(TINYUSDZ_NEXT_SOURCES
     crate/crate-reader-vectors.cc
     crate/crate-writer-types.cc
     crate/crate-writer.cc
+    crate/variant-holders.cc
 
     # High-level readers
     reader/usda-reader.cc
@@ -102,7 +103,6 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # High-level API
     tinyusdz-next.cc
-    c-tinyusd-next.cc
 )
 
 # Define header files (for IDE project generation)
@@ -208,7 +208,6 @@ set(TINYUSDZ_NEXT_HEADERS
     # High-level API
     tinyusdz-next.hh
     compat.hh
-    c-tinyusd-next.h
 )
 
 # LZ4 source (from existing TinyUSDZ)
@@ -517,6 +516,44 @@ if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     endif()
 endif()
 
+# ============================================================
+# C API (tinyusdz_c): FFI layer over tinyusdz_next + tydra_next.
+# Used by the Python binding and any other language binding.
+# ============================================================
+add_library(tinyusdz_c STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/tinyusdz-c.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/tinyusdz-render-c.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/tinyusdz-c.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/tinyusdz-render-c.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../c-api/c-internal.hh
+)
+target_link_libraries(tinyusdz_c PUBLIC tinyusdz_next tydra_next)
+target_compile_features(tinyusdz_c PUBLIC cxx_std_17)
+target_include_directories(tinyusdz_c PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../c-api>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
+    $<INSTALL_INTERFACE:include>
+)
+if(MSVC)
+    target_compile_options(tinyusdz_c PRIVATE /W4)
+else()
+    target_compile_options(tinyusdz_c PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+        target_compile_options(tinyusdz_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+        target_compile_options(tinyusdz_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+        target_compile_options(tinyusdz_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+    else()
+        target_compile_options(tinyusdz_c PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
+endif()
+
 # Tydra Next test
 if(TINYUSDZ_NEXT_BUILD_TESTS)
     add_executable(test_tydra_next
@@ -532,6 +569,16 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
 
     # Register tests with ctest
     enable_testing()
+
+    # C API smoke test (pure C11 translation unit)
+    add_executable(test_tinyusdz_c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/c-api/test_tinyusdz_c.c
+    )
+    target_link_libraries(test_tinyusdz_c PRIVATE tinyusdz_c)
+    set_target_properties(test_tinyusdz_c PROPERTIES C_STANDARD 11)
+    add_test(NAME next_test_c_api COMMAND test_tinyusdz_c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/usda/cube.usda
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
     add_test(NAME next_test_tinyusdz COMMAND test_tinyusdz_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -646,43 +693,6 @@ endif()
 # Python extension module (optional)
 # ============================================================
 
-option(TINYUSDZ_NEXT_BUILD_PYTHON "Build Python extension for TinyUSDZ Next" OFF)
+# (The Python binding is built by setup.py at the repo root; see
+#  src/python/py-*.c and src/c-api/.)
 
-if(TINYUSDZ_NEXT_BUILD_PYTHON)
-    find_package(Python3 3.10 COMPONENTS Interpreter Development REQUIRED)
-
-    # Determine extension suffix
-    if(WIN32)
-        set(PYTHON_EXT_SUFFIX ".pyd")
-    else()
-        set(PYTHON_EXT_SUFFIX ".so")
-    endif()
-
-    add_library(_next_core MODULE
-        ${CMAKE_CURRENT_SOURCE_DIR}/python/module.c
-    )
-
-    target_include_directories(_next_core PRIVATE
-        ${Python3_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}
-    )
-
-    target_link_libraries(_next_core PRIVATE
-        tinyusdz_next
-    )
-
-    set_target_properties(_next_core PROPERTIES
-        PREFIX ""
-        SUFFIX ${PYTHON_EXT_SUFFIX}
-    )
-
-    # Install to python package directory
-    install(TARGETS _next_core
-        LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/python/next/tinyusdz_next
-        RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/python/next/tinyusdz_next
-    )
-
-    message(STATUS "TinyUSDZ Next Python extension: enabled")
-    message(STATUS "  Python version: ${Python3_VERSION}")
-    message(STATUS "  Python include: ${Python3_INCLUDE_DIRS}")
-endif()

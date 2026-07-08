@@ -364,6 +364,111 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   return true;
 }
 
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       std::string* warn, std::string* err) {
+  return LoadUSDFromMemory(data, size, stage, LoadUSDOptions{}, warn, err);
+}
+
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       const LoadUSDOptions& options,
+                       std::string* warn, std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+  if (!data || size == 0) {
+    if (err) *err = "input buffer is empty";
+    return false;
+  }
+
+  switch (DetectFormat(data, size)) {
+    case FileFormat::USDA: {
+      LoadResult result =
+          LoadUSDAFromString(reinterpret_cast<const char*>(data), size,
+                             EffectiveUSDAOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDC: {
+      USDCLoadResult result =
+          LoadUSDCFromMemory(data, size, EffectiveUSDCOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDZ: {
+      USDZReader usdz;
+      if (!usdz.Open(data, size, EffectiveUSDZOptions(options))) {
+        if (err) {
+          *err = usdz.Error().empty() ? "Failed to open USDZ archive"
+                                      : usdz.Error();
+        }
+        return false;
+      }
+      int idx = usdz.FindUSDCFile();
+      bool inner_is_usdc = true;
+      if (idx < 0) {
+        idx = usdz.FindUSDAFile();
+        inner_is_usdc = false;
+      }
+      if (idx < 0) {
+        if (err) *err = "No .usdc or .usda entry found in USDZ archive";
+        return false;
+      }
+      const uint8_t* entry_data = usdz.EntryData(idx);
+      size_t entry_size = usdz.EntrySize(idx);
+      if (!entry_data || entry_size == 0) {
+        if (err) *err = "Empty USD entry in USDZ";
+        return false;
+      }
+      if (inner_is_usdc) {
+        USDCLoadResult result = LoadUSDCFromMemory(entry_data, entry_size,
+                                                   EffectiveUSDCOptions(options));
+        if (!result.success) {
+          if (err) *err = result.error_summary;
+          return false;
+        }
+        if (warn && !result.warnings.empty()) {
+          for (const auto& w : result.warnings) *warn += w + "\n";
+        }
+        *stage = std::move(result.stage);
+      } else {
+        LoadResult result = LoadUSDAFromString(
+            reinterpret_cast<const char*>(entry_data), entry_size,
+            EffectiveUSDAOptions(options));
+        if (!result.success) {
+          if (err) *err = result.error_summary;
+          return false;
+        }
+        if (warn && !result.warnings.empty()) {
+          for (const auto& w : result.warnings) *warn += w + "\n";
+        }
+        *stage = std::move(result.stage);
+      }
+      return true;
+    }
+
+    default:
+      if (err) *err = "Unknown data format (not USDA/USDC/USDZ)";
+      return false;
+  }
+}
+
 bool LoadUSDA(const std::string& filename, Stage* stage,
               std::string* warn, std::string* err) {
   return LoadUSDA(filename, stage, LoadOptions{}, warn, err);

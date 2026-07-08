@@ -25,27 +25,30 @@ ParseResult ParseBool(Lexer& lexer) {
 // tokens. Keeps the parser free of libc/locale (and thus WASM/WASI-friendly).
 ParseResult ParseInt(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number) {
+  if (tok.type != TokenType::Number ||
+      !IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
     return ParseResult::Error("Expected integer value");
   }
   lexer.next();
-  int32_t value = static_cast<int32_t>(DecimalToI64(tok.value.c_str()));
+  int32_t value = DecimalToI32(tok.value.c_str());
   return ParseResult::Ok(Value(value));
 }
 
 ParseResult ParseUInt(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number) {
+  if (tok.type != TokenType::Number ||
+      !IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
     return ParseResult::Error("Expected unsigned integer value");
   }
   lexer.next();
-  uint32_t value = static_cast<uint32_t>(DecimalToU64(tok.value.c_str()));
+  uint32_t value = DecimalToU32(tok.value.c_str());
   return ParseResult::Ok(Value(value));
 }
 
 ParseResult ParseInt64(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number) {
+  if (tok.type != TokenType::Number ||
+      !IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
     return ParseResult::Error("Expected 64-bit integer value");
   }
   lexer.next();
@@ -55,7 +58,8 @@ ParseResult ParseInt64(Lexer& lexer) {
 
 ParseResult ParseUInt64(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number) {
+  if (tok.type != TokenType::Number ||
+      !IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
   }
   lexer.next();
@@ -179,7 +183,7 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
       lexer.set_error("Expected integer in tuple");
       return false;
     }
-    out[i] = static_cast<int32_t>(DecimalToI64(tok.value.c_str()));
+    out[i] = DecimalToI32(tok.value.c_str());
     lexer.next();
 
     if (i < count - 1) {
@@ -204,7 +208,7 @@ bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
       lexer.set_error("Expected non-negative unsigned integer in tuple");
       return false;
     }
-    out[i] = static_cast<uint32_t>(DecimalToU64(tok.value.c_str()));
+    out[i] = DecimalToU32(tok.value.c_str());
     lexer.next();
 
     if (i < count - 1) {

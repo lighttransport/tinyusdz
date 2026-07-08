@@ -119,6 +119,13 @@ bool IsFloatBackedArray(TypeId id) {
     case TypeId::Half3:
     case TypeId::Half4:
     case TypeId::Quath:
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+    case TypeId::Color4h:
+    case TypeId::Texcoord2h:
+    case TypeId::Texcoord3h:
       return true;
     default:
       return false;
@@ -126,9 +133,36 @@ bool IsFloatBackedArray(TypeId id) {
 }
 
 // Array element types stored as a flat std::vector<double> (DoubleArrayStorage).
+// Int-vector element types share the flat int32 array storage with Int.
+bool IsIntBackedArray(TypeId id) {
+  switch (id) {
+    case TypeId::Int:
+    case TypeId::Int2:
+    case TypeId::Int3:
+    case TypeId::Int4:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// UInt-vector element types share the flat uint32 array storage with UInt.
+bool IsUIntBackedArray(TypeId id) {
+  switch (id) {
+    case TypeId::UInt:
+    case TypeId::UInt2:
+    case TypeId::UInt3:
+    case TypeId::UInt4:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool IsDoubleBackedArray(TypeId id) {
   switch (id) {
     case TypeId::Double:
+    case TypeId::TimeCode:
     case TypeId::Double2:
     case TypeId::Double3:
     case TypeId::Double4:
@@ -651,9 +685,60 @@ Value Value::MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
   return v;
 }
 
+Value Value::MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
+                               uint32_t comps_per_elem) {
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  v.array_size_ = comps_per_elem
+                      ? static_cast<uint32_t>(data.size() / comps_per_elem)
+                      : 0;
+  new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(std::move(data)));
+  return v;
+}
+
+Value Value::MakeStringLikeArray(std::vector<std::string>&& data,
+                                 TypeId elem_type) {
+  Value v;
+  v.type_id_ = elem_type;  // Token, String or AssetPath
+  v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(std::move(data)));
+  return v;
+}
+
+Value Value::MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
+                              uint32_t comps_per_elem) {
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  v.array_size_ = comps_per_elem
+                      ? static_cast<uint32_t>(data.size() / comps_per_elem)
+                      : 0;
+  new (v.storage_) ArrayHandle(std::make_shared<IntArrayStorage>(std::move(data)));
+  return v;
+}
+
 // ============================================================
 // Queries and accessors
 // ============================================================
+
+void Value::retag_role(TypeId new_type) {
+  if (new_type == type_id_ || new_type == TypeId::Invalid ||
+      type_id_ == TypeId::Invalid || is_lazy_ || is_block_) {
+    return;
+  }
+  // Only role re-tags: same scalar component type and component count, so the
+  // buffer/SBO layout is identical (Float3 -> point3f, Half4 -> color4h, ...).
+  auto comp = [](TypeId t) {
+    TypeId c = GetComponentType(t);
+    return c == TypeId::Invalid ? t : c;
+  };
+  if (comp(type_id_) != comp(new_type)) return;
+  if (GetComponentCount(type_id_) != GetComponentCount(new_type)) return;
+  if (!is_array_ && GetTypeSize(type_id_) != GetTypeSize(new_type)) return;
+  type_id_ = new_type;
+}
 
 void Value::clear() {
   destroy();
@@ -937,14 +1022,16 @@ const int32_t* Value::as_int4() const {
 }
 
 const float* Value::as_float2() const {
-  if (type_id_ != TypeId::Float2 || is_array_) return nullptr;
+  if ((type_id_ != TypeId::Float2 && type_id_ != TypeId::Texcoord2f) ||
+      is_array_) return nullptr;
   return reinterpret_cast<const float*>(storage_);
 }
 
 const float* Value::as_float3() const {
   if (type_id_ != TypeId::Float3 && type_id_ != TypeId::Point3f &&
       type_id_ != TypeId::Vector3f && type_id_ != TypeId::Normal3f &&
-      type_id_ != TypeId::Color3f) return nullptr;
+      type_id_ != TypeId::Color3f && type_id_ != TypeId::Texcoord3f)
+    return nullptr;
   if (is_array_) return nullptr;
   return reinterpret_cast<const float*>(storage_);
 }
@@ -957,14 +1044,16 @@ const float* Value::as_float4() const {
 }
 
 const double* Value::as_double2() const {
-  if (type_id_ != TypeId::Double2 || is_array_) return nullptr;
+  if ((type_id_ != TypeId::Double2 && type_id_ != TypeId::Texcoord2d) ||
+      is_array_) return nullptr;
   return reinterpret_cast<const double*>(storage_);
 }
 
 const double* Value::as_double3() const {
   if (type_id_ != TypeId::Double3 && type_id_ != TypeId::Point3d &&
       type_id_ != TypeId::Vector3d && type_id_ != TypeId::Normal3d &&
-      type_id_ != TypeId::Color3d) return nullptr;
+      type_id_ != TypeId::Color3d && type_id_ != TypeId::Texcoord3d)
+    return nullptr;
   if (is_array_) return nullptr;
   return reinterpret_cast<const double*>(storage_);
 }
@@ -1026,7 +1115,7 @@ std::vector<float>* Value::as_float_array() {
 
 const std::vector<int32_t>* Value::as_int_array() const {
   ensure_materialized();
-  if (type_id_ != TypeId::Int || !is_array_) return nullptr;
+  if (!is_array_ || !IsIntBackedArray(type_id_)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<IntArrayStorage*>(ptr)->data;
 }
@@ -1068,13 +1157,13 @@ std::vector<int64_t>* Value::as_int64_array() {
 }
 const std::vector<uint32_t>* Value::as_uint_array() const {
   ensure_materialized();
-  if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
+  if (!is_array_ || !IsUIntBackedArray(type_id_)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<UIntArrayStorage*>(ptr)->data;
 }
 std::vector<uint32_t>* Value::as_uint_array() {
   ensure_materialized(); dirty_ = true;
-  if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
+  if (!is_array_ || !IsUIntBackedArray(type_id_)) return nullptr;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<UIntArrayStorage*>(ptr)->data;
@@ -1100,7 +1189,9 @@ const std::vector<uint8_t>* Value::as_bool_array() const {
 }
 const std::vector<std::string>* Value::as_token_array() const {
   ensure_materialized();
-  if (type_id_ != TypeId::Token || !is_array_) return nullptr;
+  // Token / String / AssetPath arrays share the string-vector storage.
+  if (!is_array_ || (type_id_ != TypeId::Token && type_id_ != TypeId::String &&
+                     type_id_ != TypeId::AssetPath)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<TokenArrayStorage*>(ptr)->data;
 }
@@ -1127,14 +1218,17 @@ bool Value::operator==(const Value& other) const {
       return *as_int_array() == *other.as_int_array();
     } else if (type_id_ == TypeId::Int64) {
       return *as_int64_array() == *other.as_int64_array();
-    } else if (type_id_ == TypeId::UInt) {
+    } else if (IsUIntBackedArray(type_id_)) {
       return *as_uint_array() == *other.as_uint_array();
     } else if (type_id_ == TypeId::UInt64) {
       return *as_uint64_array() == *other.as_uint64_array();
     } else if (type_id_ == TypeId::Bool) {
       return *as_bool_array() == *other.as_bool_array();
-    } else if (type_id_ == TypeId::Token) {
+    } else if (type_id_ == TypeId::Token || type_id_ == TypeId::String ||
+               type_id_ == TypeId::AssetPath) {
       return *as_token_array() == *other.as_token_array();
+    } else if (IsIntBackedArray(type_id_)) {  // Int2/Int3/Int4 arrays
+      return *as_int_array() == *other.as_int_array();
     }
     return false;
   }
@@ -1207,7 +1301,7 @@ uint64_t Value::hash() const {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(double));
       }
-    } else if (type_id_ == TypeId::Int) {
+    } else if (IsIntBackedArray(type_id_)) {
       const auto* arr = as_int_array();
       if (arr && !arr->empty()) {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
@@ -1219,7 +1313,7 @@ uint64_t Value::hash() const {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(int64_t));
       }
-    } else if (type_id_ == TypeId::UInt) {
+    } else if (IsUIntBackedArray(type_id_)) {
       const auto* arr = as_uint_array();
       if (arr && !arr->empty()) {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
@@ -1302,7 +1396,7 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
         *out_size = arr->size() * sizeof(double);
         return reinterpret_cast<const uint8_t*>(arr->data());
       }
-    } else if (type_id_ == TypeId::Int) {
+    } else if (IsIntBackedArray(type_id_)) {
       const auto* arr = as_int_array();
       if (arr && !arr->empty()) {
         *out_size = arr->size() * sizeof(int32_t);
@@ -1314,7 +1408,7 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
         *out_size = arr->size() * sizeof(int64_t);
         return reinterpret_cast<const uint8_t*>(arr->data());
       }
-    } else if (type_id_ == TypeId::UInt) {
+    } else if (IsUIntBackedArray(type_id_)) {
       const auto* arr = as_uint_array();
       if (arr && !arr->empty()) {
         *out_size = arr->size() * sizeof(uint32_t);
