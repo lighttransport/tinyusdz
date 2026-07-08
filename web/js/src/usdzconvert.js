@@ -824,7 +824,7 @@ function exportUSDZ(usd, remap, opts) {
   return usd.exportAsUSDZ();
 }
 
-export function composeToFixedPoint(usd) {
+export function composeToFixedPoint(usd, progress = null) {
   const steps = [
     { has: 'hasSublayers', compose: 'composeSublayers', name: 'sublayers' },
     { has: 'hasReferences', compose: 'composeReferences', name: 'references' },
@@ -832,15 +832,26 @@ export function composeToFixedPoint(usd) {
     { has: 'hasInherits', compose: 'composeInherits', name: 'inherits' },
     { has: 'hasVariants', compose: 'composeVariants', name: 'variants' },
   ];
+  const total = 64 * steps.length;
   for (let iter = 0; iter < 64; iter++) {
     let didCompose = false;
-    for (const step of steps) {
+    for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+      const step = steps[stepIndex];
       if (typeof usd[step.has] !== 'function' ||
           typeof usd[step.compose] !== 'function') {
         continue;
       }
       if (!usd[step.has]()) {
         continue;
+      }
+      if (progress) {
+        progress({
+          iteration: iter + 1,
+          step: step.name,
+          current: iter * steps.length + stepIndex,
+          total,
+          message: `Composing ${step.name}`,
+        });
       }
       if (!usd[step.compose]()) {
         throw new Error(`Failed to compose ${step.name}: ${usd.error()}`);
@@ -852,6 +863,13 @@ export function composeToFixedPoint(usd) {
     }
   }
   throw new Error('Composition did not converge before the iteration limit.');
+}
+
+function loadLayerFromBinary(usd, bytes, filename) {
+  if (typeof usd.loadAsLayerFromBinaryWithProgress === 'function') {
+    return usd.loadAsLayerFromBinaryWithProgress(bytes, filename);
+  }
+  return usd.loadAsLayerFromBinary(bytes, filename);
 }
 
 function shouldUseLowHeapFlattenedUSDZ(rootPath, assetMap, opts, textureFormat) {
@@ -1049,7 +1067,7 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
     }
 
     log(`Low-heap ${mode} flatten; inner root layer: ${rootEntry.name}`);
-    if (!usd.loadAsLayerFromBinary(rootEntry.data, rootEntry.name.split('/').pop())) {
+    if (!loadLayerFromBinary(usd, rootEntry.data, rootEntry.name.split('/').pop())) {
       throw new Error('Failed to load USD: ' + usd.error());
     }
     if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
@@ -1265,7 +1283,7 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
       guardWasmAsset(e.name, e.data, 'USD dependency layer');
       usd.setAsset(e.name, e.data);
     }
-    if (!usd.loadAsLayerFromBinary(rootEntry.data, rootEntry.name.split('/').pop())) {
+    if (!loadLayerFromBinary(usd, rootEntry.data, rootEntry.name.split('/').pop())) {
       throw new Error('Failed to load USD: ' + usd.error());
     }
     const flatten = opts.flatten !== false || !!opts.arkitCompatible ||
@@ -1510,16 +1528,24 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   };
 
   const loadRootLayer = (usd) => {
-    reportProgress('flatten', 0, 1, 'Loading root USD layer', rootPath);
+    reportProgress('flatten', 0, 4, 'Reading root USD layer', rootPath);
     const usdBytes = assetMap.get(rootPath);
-    const ok = usd.loadAsLayerFromBinary(usdBytes, rootPath.split('/').pop());
+    reportProgress('flatten', 1, 4, 'Parsing root USD layer', rootPath);
+    const ok = loadLayerFromBinary(usd, usdBytes, rootPath.split('/').pop());
     if (!ok) throw new Error('Failed to load USD: ' + usd.error());
     if (typeof usd.warn === 'function' && usd.warn()) log('WARN: ' + usd.warn());
     if (flatten) {
-      reportProgress('flatten', 0, 1, 'Composing USD layers', rootPath);
-      composeToFixedPoint(usd);
+      reportProgress('flatten', 2, 4, 'Composing USD layers', rootPath);
+      composeToFixedPoint(usd, (info) => {
+        reportProgress(
+          'flatten',
+          2 + Math.min(1, Math.max(0, (info.current || 0) / (info.total || 1))),
+          4,
+          info.message || 'Composing USD layers',
+          rootPath);
+      });
     }
-    reportProgress('flatten', 1, 1, 'Root layer ready', rootPath);
+    reportProgress('flatten', 4, 4, 'Root layer ready', rootPath);
   };
 
   const usd = new native.TinyUSDZLoaderNative();
@@ -1889,13 +1915,21 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       if (canFetchUsdLayerSync) {
         await preloadUsdDependencies();
       }
-      reportProgress('flatten', 0, 1, 'Loading root USD layer', rootPath);
-      if (!usd.loadAsLayerFromBinary(rootBytes, rootPath.split('/').pop())) {
+      reportProgress('flatten', 0, 4, 'Root USD bytes ready', rootPath);
+      reportProgress('flatten', 1, 4, 'Parsing root USD layer', rootPath);
+      if (!loadLayerFromBinary(usd, rootBytes, rootPath.split('/').pop())) {
         throw new Error('Failed to load USD: ' + usd.error());
       }
-      reportProgress('flatten', 0, 1, 'Composing USD layers', rootPath);
-      composeToFixedPoint(usd);
-      reportProgress('flatten', 1, 1, 'Root layer ready', rootPath);
+      reportProgress('flatten', 2, 4, 'Composing USD layers', rootPath);
+      composeToFixedPoint(usd, (info) => {
+        reportProgress(
+          'flatten',
+          2 + Math.min(1, Math.max(0, (info.current || 0) / (info.total || 1))),
+          4,
+          info.message || 'Composing USD layers',
+          rootPath);
+      });
+      reportProgress('flatten', 4, 4, 'Root layer ready', rootPath);
       // Composition is done: drop the previous-iteration source layer (a full
       // copy of the composed scene) and the USD-layer bytes in the wasm asset
       // cache — only the composed layer is used from here on.
