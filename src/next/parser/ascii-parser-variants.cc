@@ -5,6 +5,7 @@
 
 #include "ascii-parser-internal.hh"
 #include <algorithm>
+#include <unordered_set>
 #include "value-parser.hh"
 
 namespace tinyusdz {
@@ -180,6 +181,16 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
             target->insert(target->begin(),
                            std::make_move_iterator(items.begin()),
                            std::make_move_iterator(items.end()));
+          } else if (arc_op == ArcOp::Delete) {
+            // Bulk delete via a hash set (per-item apply_arc would be
+            // O(items * target) = O(N^2) for a `delete <arc> = [...]` list).
+            const std::unordered_set<std::string> del(items.begin(),
+                                                     items.end());
+            target->erase(std::remove_if(target->begin(), target->end(),
+                                         [&](const std::string& x) {
+                                           return del.count(x) != 0;
+                                         }),
+                          target->end());
           } else {
             for (auto& it : items) apply_arc(std::move(it));
           }

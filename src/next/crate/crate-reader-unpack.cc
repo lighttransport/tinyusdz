@@ -184,6 +184,11 @@ bool CrateReader::Impl::DecodeTimeSamples(
   uint64_t n = 0;
   if (!reader_->read_u64(n)) return false;
   if (n > options_.max_array_elements || n > 100000000ull) return false;
+  // Each sample ValueRep is an 8-byte read that immediately follows; require the
+  // file to actually hold n*8 bytes before allocating the vector, so a tiny file
+  // cannot demand an ~800 MB allocation via an absurd count (has_elements uses
+  // division, so no count*8 overflow).
+  if (n > 0 && !reader_->has_elements(static_cast<size_t>(n), 8)) return false;
 
   // Read all sample ValueReps before decoding (decoding seeks elsewhere).
   std::vector<ValueRep> sample_reps(static_cast<size_t>(n));
