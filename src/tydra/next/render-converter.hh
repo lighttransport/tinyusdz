@@ -126,6 +126,8 @@ class RenderSceneConverter {
  private:
   // Build scene hierarchy
   void BuildNodeHierarchy(const RenderExtractResult& extracted, RenderScene* scene);
+  void ExtractPhysicsAnnotations(const ::tinyusdz::next::Stage& stage,
+                                 RenderScene* scene);
   void AssignMaterialBindings(const ::tinyusdz::next::Stage& stage,
                               RenderScene* scene);
   void AssignPointInstanceDrawMaterials(RenderScene* scene);

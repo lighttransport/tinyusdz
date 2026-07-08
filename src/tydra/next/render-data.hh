@@ -16,6 +16,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <utility>
 
 #include "chunked-array.hh"
 
@@ -723,6 +724,95 @@ struct Skeleton {
 };
 
 //
+// USD Physics annotations extracted from next::Stage.
+// These are descriptive data for render/tool consumers; tydra-next does not
+// simulate physics.
+//
+struct PhysicsProperty {
+  std::string name;
+  std::string value;
+};
+
+struct PhysicsSceneAnnotation {
+  std::string prim_path;
+  Float3 gravity_direction{0.0f, -1.0f, 0.0f};
+  float gravity_magnitude = 9.81f;
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsRigidBodyAnnotation {
+  std::string prim_path;
+  bool rigid_body_enabled = true;
+  bool kinematic_enabled = false;
+  std::string simulation_owner;
+  Float3 velocity{0.0f, 0.0f, 0.0f};
+  Float3 angular_velocity{0.0f, 0.0f, 0.0f};
+  bool starts_asleep = false;
+  bool has_mass = false;
+  float mass = 0.0f;
+  float density = 0.0f;
+  Float3 center_of_mass{0.0f, 0.0f, 0.0f};
+  Float3 diagonal_inertia{0.0f, 0.0f, 0.0f};
+  Float4 principal_axes{0.0f, 0.0f, 0.0f, 0.0f};
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsColliderAnnotation {
+  std::string prim_path;
+  bool collision_enabled = true;
+  std::string simulation_owner;
+  bool has_mesh_collision = false;
+  std::string approximation = "none";
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsJointAnnotation {
+  std::string prim_path;
+  std::string type_name;
+  std::string body0;
+  std::string body1;
+  bool has_body0 = false;
+  bool has_body1 = false;
+  Float3 local_pos0{0.0f, 0.0f, 0.0f};
+  Float3 local_pos1{0.0f, 0.0f, 0.0f};
+  Float4 local_rot0{1.0f, 0.0f, 0.0f, 0.0f};
+  Float4 local_rot1{1.0f, 0.0f, 0.0f, 0.0f};
+  Float3 axis{1.0f, 0.0f, 0.0f};
+  float lower_limit = 0.0f;
+  float upper_limit = 0.0f;
+  float cone_angle0_limit = -1.0f;
+  float cone_angle1_limit = -1.0f;
+  float min_distance = -1.0f;
+  float max_distance = -1.0f;
+  bool collision_enabled = false;
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsMaterialAnnotation {
+  std::string prim_path;
+  float static_friction = 0.0f;
+  float dynamic_friction = 0.0f;
+  float restitution = 0.0f;
+  float density = 0.0f;
+  std::vector<PhysicsProperty> extension_properties;
+};
+
+struct PhysicsFilteredPairsAnnotation {
+  std::string prim_path;
+  std::vector<std::string> filtered_pair_paths;
+};
+
+struct PhysicsAnnotations {
+  std::vector<PhysicsSceneAnnotation> scenes;
+  std::vector<PhysicsRigidBodyAnnotation> rigid_bodies;
+  std::vector<PhysicsColliderAnnotation> colliders;
+  std::vector<PhysicsJointAnnotation> joints;
+  std::vector<PhysicsMaterialAnnotation> materials;
+  std::vector<PhysicsFilteredPairsAnnotation> filtered_pairs;
+  std::vector<std::string> articulation_roots;
+};
+
+//
 // RenderScene - top-level container
 //
 class RenderScene {
@@ -759,6 +849,7 @@ class RenderScene {
   std::vector<RenderCamera> cameras;
   std::vector<AnimationClip> animations;
   std::vector<Skeleton> skeletons;
+  PhysicsAnnotations physics;
 
   // Root nodes
   std::vector<int32_t> root_nodes;

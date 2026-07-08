@@ -1980,6 +1980,19 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
                "Skipping mesh `" + fallback_name + "`: indices must be triangles.\n");
     return true;
   }
+  const size_t point_count = positions->size() / 3;
+  bool identity_indices = indices.size() == point_count;
+  for (size_t i = 0; i < indices.size(); i++) {
+    const int32_t idx = indices[i];
+    if (idx < 0 || static_cast<size_t>(idx) >= point_count) {
+      AppendWarn(warn, "Skipping mesh `" + fallback_name +
+                           "`: index out of range.\n");
+      return true;
+    }
+    if (identity_indices && static_cast<size_t>(idx) != i) {
+      identity_indices = false;
+    }
+  }
 
   const std::string mesh_name = SanitizeUSDIdentifier(
       JsonString(mesh_json, "name", fallback_name), fallback_name);
@@ -2002,23 +2015,42 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
 
   if (normals && normals->size() == positions->size()) {
     std::vector<value::normal3f> ns;
-    ns.reserve(normals->size() / 3);
-    for (size_t i = 0; i + 2 < normals->size(); i += 3) {
-      ns.push_back({(*normals)[i + 0], (*normals)[i + 1], (*normals)[i + 2]});
+    if (identity_indices) {
+      ns.reserve(normals->size() / 3);
+      for (size_t i = 0; i + 2 < normals->size(); i += 3) {
+        ns.push_back({(*normals)[i + 0], (*normals)[i + 1], (*normals)[i + 2]});
+      }
+      mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
+    } else {
+      ns.reserve(indices.size());
+      for (int32_t idx : indices) {
+        const size_t src = static_cast<size_t>(idx) * 3;
+        ns.push_back({(*normals)[src + 0], (*normals)[src + 1],
+                      (*normals)[src + 2]});
+      }
+      mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
     }
     mesh.normals.set_value(std::move(ns));
-    mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
 
-  if (uvs && uvs->size() == (positions->size() / 3) * 2) {
+  if (uvs && uvs->size() == point_count * 2) {
     Attribute uv_attr;
     std::vector<value::texcoord2f> st;
-    st.reserve(uvs->size() / 2);
-    for (size_t i = 0; i + 1 < uvs->size(); i += 2) {
-      st.push_back({(*uvs)[i + 0], (*uvs)[i + 1]});
+    if (identity_indices) {
+      st.reserve(uvs->size() / 2);
+      for (size_t i = 0; i + 1 < uvs->size(); i += 2) {
+        st.push_back({(*uvs)[i + 0], (*uvs)[i + 1]});
+      }
+      uv_attr.metas().set_interpolation_enum(Interpolation::Vertex);
+    } else {
+      st.reserve(indices.size());
+      for (int32_t idx : indices) {
+        const size_t src = static_cast<size_t>(idx) * 2;
+        st.push_back({(*uvs)[src + 0], (*uvs)[src + 1]});
+      }
+      uv_attr.metas().set_interpolation_enum(Interpolation::FaceVarying);
     }
     uv_attr.set_value(std::move(st));
-    uv_attr.metas().set_interpolation_enum(Interpolation::Vertex);
     mesh.props.emplace("primvars:st", Property(std::move(uv_attr), false));
   }
 

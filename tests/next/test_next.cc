@@ -515,6 +515,10 @@ void test_physics_schema() {
   std::cout << "Testing physics schema readers..." << std::endl;
 
   const char* input = R"(#usda 1.0
+(
+    upAxis = "Z"
+)
+
 def Xform "Body" (
     prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
 )
@@ -537,16 +541,53 @@ def PhysicsScene "Scene"
 {
 }
 
+def PhysicsScene "AuthoredScene"
+{
+    vector3f physics:gravityDirection = (0, -1, 0)
+    float physics:gravityMagnitude = 3
+}
+
 def PhysicsRevoluteJoint "Joint"
 {
+    token physics:axis = "Z"
     point3f physics:localPos0 = (1, 0, 0)
     point3f physics:localPos1 = (0, 1, 0)
+}
+
+def PhysicsSliderJoint "Slider"
+{
+    token physics:axis = "Y"
+    float physics:lowerLimit = -2
+    float physics:upperLimit = 4
 }
 
 def PhysicsSphericalJoint "Ball"
 {
     float physics:coneAngle0Limit = 30
     float physics:coneAngle1Limit = 45
+}
+
+def PhysicsBallJoint "BallAlias"
+{
+    float physics:coneAngle0Limit = 15
+    float physics:coneAngle1Limit = 25
+}
+
+def Mesh "MeshCollider" (
+    prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"]
+)
+{
+    token physics:approximation = "convexHull"
+}
+
+def PhysicsJoint "Driven" (
+    prepend apiSchemas = ["PhysicsDriveAPI:rotX", "PhysicsLimitAPI:transY"]
+)
+{
+    token physics:drive:rotX:type = "acceleration"
+    float physics:drive:rotX:maxForce = 8
+    float physics:limit:transY:low = -1
+    float physics:limit:transY:high = 2
 }
 )";
 
@@ -601,6 +642,31 @@ def PhysicsSphericalJoint "Ball"
   UsdPrim scene = result.stage.GetPrimAtPath("/Scene");
   assert(scene.IsValid());
   assert(!IsPhysicsJoint(scene));
+  PhysicsSceneData scene_data;
+  assert(GetPhysicsSceneData(result.stage, scene, &scene_data));
+  assert(std::abs(scene_data.gravityMagnitude - 9.81f) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[0]) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[1]) < 0.001f);
+  assert(std::abs(scene_data.gravityDirection[2] + 1.0f) < 0.001f);
+
+  UsdPrim authored_scene = result.stage.GetPrimAtPath("/AuthoredScene");
+  assert(authored_scene.IsValid());
+  PhysicsSceneData authored_scene_data;
+  assert(GetPhysicsSceneData(result.stage, authored_scene, &authored_scene_data));
+  assert(std::abs(authored_scene_data.gravityMagnitude - 3.0f) < 0.001f);
+  assert(std::abs(authored_scene_data.gravityDirection[1] + 1.0f) < 0.001f);
+
+  PhysicsRevoluteJointData rj;
+  assert(GetPhysicsRevoluteJointData(result.stage, joint, &rj, 0.0));
+  assert(std::abs(rj.axis[2] - 1.0f) < 0.001f);
+
+  UsdPrim slider = result.stage.GetPrimAtPath("/Slider");
+  assert(slider.IsValid());
+  PhysicsSliderJointData slider_data;
+  assert(GetPhysicsSliderJointData(result.stage, slider, &slider_data, 0.0));
+  assert(std::abs(slider_data.axis[1] - 1.0f) < 0.001f);
+  assert(std::abs(slider_data.lowerLimit + 2.0f) < 0.001f);
+  assert(std::abs(slider_data.upperLimit - 4.0f) < 0.001f);
 
   UsdPrim ball = result.stage.GetPrimAtPath("/Ball");
   assert(ball.IsValid());
@@ -608,6 +674,30 @@ def PhysicsSphericalJoint "Ball"
   assert(GetPhysicsSphericalJointData(result.stage, ball, &sj, 0.0));
   assert(std::abs(sj.coneAngle0Limit - 30.0f) < 0.001f);
   assert(std::abs(sj.coneAngle1Limit - 45.0f) < 0.001f);
+
+  UsdPrim ball_alias = result.stage.GetPrimAtPath("/BallAlias");
+  assert(ball_alias.IsValid());
+  PhysicsBallJointData ball_alias_data;
+  assert(GetPhysicsBallJointData(result.stage, ball_alias, &ball_alias_data, 0.0));
+  assert(std::abs(ball_alias_data.coneAngle0Limit - 15.0f) < 0.001f);
+  assert(std::abs(ball_alias_data.coneAngle1Limit - 25.0f) < 0.001f);
+
+  UsdPrim mesh_collider = result.stage.GetPrimAtPath("/MeshCollider");
+  assert(mesh_collider.IsValid());
+  PhysicsMeshCollisionData mesh_collision;
+  assert(GetPhysicsMeshCollisionData(mesh_collider, &mesh_collision));
+  assert(mesh_collision.approximation == "convexHull");
+
+  UsdPrim driven = result.stage.GetPrimAtPath("/Driven");
+  assert(driven.IsValid());
+  PhysicsDriveData drive;
+  assert(GetPhysicsDriveData(driven, "rotX", &drive));
+  assert(drive.type == "acceleration");
+  assert(std::abs(drive.maxForce - 8.0f) < 0.001f);
+  PhysicsLimitData limit;
+  assert(GetPhysicsLimitData(driven, "transY", &limit));
+  assert(std::abs(limit.low + 1.0f) < 0.001f);
+  assert(std::abs(limit.high - 2.0f) < 0.001f);
 
   {
     LoadResult fixture =

@@ -1318,6 +1318,115 @@ def "Root"
   std::cout << "  TestAudit2026_07_Gaps PASSED" << std::endl;
 }
 
+void TestPhysicsAnnotations() {
+  std::cout << "Testing USD Physics annotations...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Z"
+)
+
+def Xform "Root"
+{
+    def PhysicsScene "Scene"
+    {
+    }
+
+    def Xform "Body" (
+        prepend apiSchemas = [
+            "PhysicsRigidBodyAPI",
+            "PhysicsMassAPI",
+            "PhysicsArticulationRootAPI",
+            "PhysicsFilteredPairsAPI"
+        ]
+    )
+    {
+        bool physics:kinematicEnabled = true
+        vector3f physics:velocity = (1, 2, 3)
+        float physics:mass = 4
+        float3 physics:diagonalInertia = (5, 6, 7)
+        uniform int mjc:freeJoint = 1
+        rel physics:filteredPairs = </Root/Collider>
+    }
+
+    def Mesh "Collider" (
+        prepend apiSchemas = [
+            "PhysicsCollisionAPI",
+            "PhysicsMeshCollisionAPI",
+            "PhysicsMaterialAPI"
+        ]
+    )
+    {
+        bool physics:collisionEnabled = false
+        token physics:approximation = "convexHull"
+        float physics:staticFriction = 0.7
+    }
+
+    def PhysicsRevoluteJoint "Joint"
+    {
+        rel physics:body0 = </Root/Body>
+        rel physics:body1 = </Root/Collider>
+        token physics:axis = "Z"
+        float physics:lowerLimit = -90
+        float physics:upperLimit = 90
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  RenderSceneConverter conv;
+  ConvertResult res = conv.Convert(lr.stage);
+  assert(res.success);
+  const RenderScene& scene = res.scene;
+
+  assert(scene.physics.scenes.size() == 1);
+  assert(scene.physics.scenes[0].prim_path == "/Root/Scene");
+  assert(std::fabs(scene.physics.scenes[0].gravity_magnitude - 9.81f) <
+         0.001f);
+  assert(std::fabs(scene.physics.scenes[0].gravity_direction.z + 1.0f) <
+         0.001f);
+
+  assert(scene.physics.rigid_bodies.size() == 1);
+  const PhysicsRigidBodyAnnotation& body = scene.physics.rigid_bodies[0];
+  assert(body.prim_path == "/Root/Body");
+  assert(body.kinematic_enabled);
+  assert(body.has_mass);
+  assert(std::fabs(body.mass - 4.0f) < 0.001f);
+  assert(std::fabs(body.diagonal_inertia.z - 7.0f) < 0.001f);
+  assert(!body.extension_properties.empty());
+  assert(body.extension_properties[0].name == "mjc:freeJoint");
+
+  assert(scene.physics.colliders.size() == 1);
+  assert(scene.physics.colliders[0].prim_path == "/Root/Collider");
+  assert(!scene.physics.colliders[0].collision_enabled);
+  assert(scene.physics.colliders[0].has_mesh_collision);
+  assert(scene.physics.colliders[0].approximation == "convexHull");
+
+  assert(scene.physics.materials.size() == 1);
+  assert(std::fabs(scene.physics.materials[0].static_friction - 0.7f) <
+         0.001f);
+
+  assert(scene.physics.joints.size() == 1);
+  const PhysicsJointAnnotation& joint = scene.physics.joints[0];
+  assert(joint.type_name == "PhysicsRevoluteJoint");
+  assert(joint.body0 == "/Root/Body");
+  assert(joint.body1 == "/Root/Collider");
+  assert(std::fabs(joint.axis.z - 1.0f) < 0.001f);
+  assert(std::fabs(joint.lower_limit + 90.0f) < 0.001f);
+
+  assert(scene.physics.filtered_pairs.size() == 1);
+  assert(scene.physics.filtered_pairs[0].filtered_pair_paths.size() == 1);
+  assert(scene.physics.filtered_pairs[0].filtered_pair_paths[0] ==
+         "/Root/Collider");
+  assert(scene.physics.articulation_roots.size() == 1);
+  assert(scene.physics.articulation_roots[0] == "/Root/Body");
+
+  std::cout << "  USD Physics annotations: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -1349,6 +1458,7 @@ int main() {
   TestMaterialXUtilities();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
+  TestPhysicsAnnotations();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;
