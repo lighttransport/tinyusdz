@@ -430,8 +430,33 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
   std::string s;
   wordexp_t p;
 
+  // wordexp() performs glob/brace expansion and honors quoting. A crafted
+  // asset path (e.g. from a malicious USD reference) that contains a '\"'
+  // breaks out of the quoting below, re-exposing glob '*?[' and brace
+  // '{a,b}{c,d}...' metacharacters — brace expansion is exponential and glob
+  // walks the filesystem, so wordexp() becomes a DoS / hang. These characters
+  // are never part of a legitimate asset file path; skip expansion (return the
+  // path verbatim) when any are present. '~' and '$VAR' expansion still work
+  // for normal paths.
+  auto has_wordexp_hazard = [](const std::string &fp) {
+    for (char c : fp) {
+      switch (c) {
+        case '"': case '\'': case '`': case '*': case '?':
+        case '[': case ']': case '{': case '}': case '|':
+        case '&': case ';': case '<': case '>': case '(':
+        case ')': case '\n': case '\\':
+          return true;
+        default:
+          break;
+      }
+    }
+    return false;
+  };
+
   if (filepath.empty()) {
     s = "";
+  } else if (has_wordexp_hazard(filepath)) {
+    s = filepath;  // unsafe for wordexp: use as-is
   } else {
 
     // Quote the string to keep any spaces in filepath intact.

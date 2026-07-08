@@ -391,8 +391,15 @@ struct CompositionGraphOptions {
 
   /// Backstop on the total number of composed prim indices built. Bounds the
   /// worklist even if a cycle stays under max_namespace_depth per step but
-  /// fans out. 0 = unlimited.
-  size_t max_composed_prims{4u * 1024u * 1024u};
+  /// fans out. 0 = unlimited. Conservative default bounds a cyclic-composition
+  /// DoS to a few seconds; large-scene loaders raise it for genuine mega-scenes.
+  size_t max_composed_prims{256u * 1024u};
+
+  /// Global budget on composition-arc nodes created across the whole graph
+  /// (bounds total arc work + synthesized variant layers — a variant cycle
+  /// copies growing layers, so this also bounds that O(n^2) cost). 0 =
+  /// unlimited. Raise for very large scenes (see LargeSceneLoader).
+  size_t max_arc_nodes{256u * 1024u};
 
   /// Enable instancing detection during composition.
   bool detect_instances{true};
@@ -445,6 +452,16 @@ struct CompositionGraphOptions {
 /// the expensive parsed layers via a LayerRegistry, reached through the
 /// `load_layer_fn` seam below.
 struct CompositionContext {
+  // GLOBAL budget on composition-arc nodes created across the WHOLE graph
+  // (every PrimIndex build shares this). AddNode caps per-index at uint16, but
+  // a cyclic scene fans out across many indices — each variant node also
+  // creates a synthesized Layer copy — so the true DoS bound is the total arc
+  // work, not per-index. When exceeded, AddNode returns kInvalidIndex and the
+  // affected build stops growing. The default is generous (any realistic scene
+  // stays far below it) but finite. 0 = unlimited.
+  size_t _arc_node_count{0};
+  size_t _max_arc_nodes{256u * 1024u};
+
   // Shared tables (referenced by PrimIndex via borrowed pointers).
   std::vector<std::string> _path_table;
   HashMap<std::string, uint32_t> _path_intern_map;
@@ -624,6 +641,12 @@ class CompositionGraph {
 
   /// Collect the composed child names of a prim (union of children across all
   /// non-culled, non-deferred nodes of its index, strongest-first, deduped).
+  /// True if `index`'s composition arcs target an ancestor of `prim_path`
+  /// (a namespace cycle). Used to stop the build worklist from re-expanding
+  /// the ancestor subtree unboundedly.
+  bool IndexArcTargetsAncestor(const PrimIndex &index,
+                               const std::string &prim_path) const;
+
   std::vector<std::string> GatherComposedChildNames(
       const PrimIndex &index) const;
 
