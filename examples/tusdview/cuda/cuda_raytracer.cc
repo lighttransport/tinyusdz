@@ -277,7 +277,12 @@ __device__ F3 compositeVolume(const float* dens, const VolParam* vp, F3 worg, F3
   float ex=vp->bmax[0]-vp->bmin[0], ey=vp->bmax[1]-vp->bmin[1], ez=vp->bmax[2]-vp->bmin[2];
   float vmin=fminf(ex/vp->dim[0], fminf(ey/vp->dim[1], ez/vp->dim[2]));
   float step=vmin*0.5f; if (step<=0.f) step=(tmax-t0)/256.f;
-  float scaleD=vp->albedo[3], background=vp->emission[3];
+)CUDA"
+// MSVC caps a single string literal at 16380 bytes (C2026); split the kernel
+// source into two adjacent raw-string literals concatenated by the compiler
+// into one kKernelSrc. Keep the split on a line boundary so the NVRTC source
+// stays byte-identical.
+R"CUDA(  float scaleD=vp->albedo[3], background=vp->emission[3];
   float T=1.f; F3 L=mk(0.f,0.f,0.f);
   float t=t0;
   for (int i=0;i<256 && t<tmax;i++,t+=step){
