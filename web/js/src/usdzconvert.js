@@ -335,7 +335,12 @@ export class ZipStreamWriter {
     // sink additionally enables addEntryStreaming() — the local header's CRC and
     // sizes are written as placeholders, then patched after the streamed data.
     if (typeof sink === 'function') { this._write = sink; this._patch = null; }
-    else { this._write = sink.write; this._patch = sink.patch || null; }
+    else if (sink && typeof sink.write === 'function') {
+      this._write = sink.write.bind(sink);
+      this._patch = typeof sink.patch === 'function' ? sink.patch.bind(sink) : null;
+    } else {
+      throw new Error('ZipStreamWriter requires a write-capable sink.');
+    }
     this.offset = 0;
     this.entries = [];  // { nameBytes, crc32, size, localHeaderOffset }
     this._enc = new TextEncoder();
@@ -418,6 +423,9 @@ export class ZipStreamWriter {
         crc = table[(crc ^ c[i]) & 0xff] ^ (crc >>> 8);
       }
       size += c.length;
+      if (size > 0xffffffff) {
+        throw new Error(`USDZ entry "${name}" exceeds ZIP32 size limit.`);
+      }
       this._emit(c);  // copies synchronously (fs write / append)
     });
     crc = (crc ^ 0xffffffff) >>> 0;
@@ -1128,19 +1136,23 @@ export function nextFlattenViaStreaming(native, usd, usdcBytes, log = () => {}, 
       typeof usd.allocateZeroCopyBuffer !== 'function') {
     return null;  // old wasm without the next pipeline
   }
-  const uuid = nextAllocAndFill(native, usd, usdcBytes, maxBufferBytes, log);
-  if (uuid === null) return null;
   const hasRemap = remap && Object.keys(remap).length > 0;
   const hasVariants = variantSelections && Object.keys(variantSelections).length > 0;
+  if (hasVariants && typeof usd.nextFlattenBufferRemapVariants !== 'function') {
+    log('next flatten variant selection requires newer wasm; falling back.');
+    return null;
+  }
+  if (hasRemap && !hasVariants && typeof usd.nextFlattenBufferRemap !== 'function') {
+    log('next flatten asset-path remap requires newer wasm; falling back.');
+    return null;
+  }
+  const uuid = nextAllocAndFill(native, usd, usdcBytes, maxBufferBytes, log);
+  if (uuid === null) return null;
   let res = null;
   if (hasVariants) {
-    if (typeof usd.nextFlattenBufferRemapVariants !== 'function') {
-      log('next flatten variant selection requires newer wasm; falling back.');
-      return null;
-    }
     res = usd.nextFlattenBufferRemapVariants(uuid, lazy, remap, variantSelections);
   } else {
-    res = hasRemap && typeof usd.nextFlattenBufferRemap === 'function'
+    res = hasRemap
       ? usd.nextFlattenBufferRemap(uuid, lazy, remap)
       : usd.nextFlattenBuffer(uuid, lazy);
   }
@@ -1415,6 +1427,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       if (next) return next;
       log('next pipeline declined; falling back to the legacy flatten path.');
     } catch (e) {
+      if (opts.zipSink) throw e;
       log('next pipeline error (' + (e && e.message) + '); falling back to legacy.');
     }
   }
@@ -1436,6 +1449,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       if (streamed) return streamed;
       log('stream-textures declined; falling back to the standard texture path.');
     } catch (e) {
+      if (opts.zipSink) throw e;
       log('stream-textures error (' + (e && e.message) + '); falling back.');
     }
   }
