@@ -957,6 +957,148 @@ static void test_cross_layer_arc_merge() {
   CHECK(o && o->as_float() && *o->as_float() == 1.0f, "over opinion kept");
 }
 
+
+// 2026-07 composition/flatten audit regressions (legacy Compositor engine).
+static void test_audit_2026_07() {
+  std::cout << "[2026-07 audit regressions]\n";
+
+  // --- Sublayer cycle: must not crash / recurse unbounded; the rest of the
+  // scene still composes.
+  {
+    auto loader = [&](const std::string& path,
+                      std::string*) -> std::unique_ptr<Layer> {
+      if (path.find("cyc_b") != std::string::npos) {
+        return ParseLayer(
+            "#usda 1.0\n(\n subLayers = [ @./cyc_a.usda@ ]\n)\n"
+            "def Xform \"B\" { int y = 2 }\n");
+      }
+      return ParseLayer(
+          "#usda 1.0\n(\n subLayers = [ @./cyc_b.usda@ ]\n)\n"
+          "def Xform \"A\" { int x = 1 }\n");
+    };
+    auto root = ParseLayer(
+        "#usda 1.0\n(\n subLayers = [ @./cyc_b.usda@ ]\n)\n"
+        "def Xform \"A\" { int x = 1 }\n");
+    Compositor comp;
+    comp.SetLayerLoader(loader);
+    auto out = comp.Compose(*root);
+    CHECK(out != nullptr, "cycle: compose survives");
+    CHECK(out && PropOf(*out, "/B", "y") != nullptr, "cycle: other layer composed");
+  }
+
+  // --- Sublayer layer offsets applied to time samples (offset=10, scale=2).
+  {
+    auto loader = [&](const std::string&,
+                      std::string*) -> std::unique_ptr<Layer> {
+      return ParseLayer(
+          "#usda 1.0\nover \"R\" { float v.timeSamples = { 0: 100, 5: 200 } }\n");
+    };
+    auto root = ParseLayer(
+        "#usda 1.0\n(\n subLayers = [ @./anim.usda@ (offset = 10; scale = 2) ]\n)\n"
+        "def Xform \"R\" { }\n");
+    Compositor comp;
+    comp.SetLayerLoader(loader);
+    auto out = comp.Compose(*root);
+    CHECK(out != nullptr, "sublayer offset: compose succeeds");
+    const PrimSpec* r = out ? out->prim_at_path("/R") : nullptr;
+    const auto* ts = r ? r->time_samples(GetPropNameTable().intern("v")) : nullptr;
+    CHECK(ts && ts->size() == 2, "sublayer offset: samples present");
+    CHECK(ts && (*ts)[0].first == 10.0 && (*ts)[1].first == 20.0,
+          "sublayer offset: t -> t*scale + offset");
+  }
+
+  // --- A stronger authored default blocks a weaker layer's timeSamples, and
+  // weaker property metadata (interpolation) fills absent fields.
+  {
+    auto loader = [&](const std::string&,
+                      std::string*) -> std::unique_ptr<Layer> {
+      return ParseLayer(
+          "#usda 1.0\nover \"M\" {\n"
+          "  double anim = 99\n"
+          "  double anim.timeSamples = { 1: 1, 2: 2 }\n"
+          "  float2[] primvars:st = [(0, 0)] ( interpolation = \"vertex\" )\n"
+          "}\n");
+    };
+    auto root = ParseLayer(
+        "#usda 1.0\n(\n subLayers = [ @./weak.usda@ ]\n)\n"
+        "def Mesh \"M\" {\n"
+        "  double anim = 42\n"
+        "  float2[] primvars:st = [(1, 1)]\n"
+        "}\n");
+    Compositor comp;
+    comp.SetLayerLoader(loader);
+    auto out = comp.Compose(*root);
+    const PrimSpec* m = out ? out->prim_at_path("/M") : nullptr;
+    CHECK(m != nullptr, "default-vs-samples: prim composes");
+    const Value* av = m ? m->property_value("anim") : nullptr;
+    CHECK(av && av->as_double() && *av->as_double() == 42.0,
+          "stronger default wins");
+    CHECK(m && !m->has_time_samples(GetPropNameTable().intern("anim")),
+          "weaker samples blocked by stronger default");
+    const PropMeta* pm = m ? m->property_meta("primvars:st") : nullptr;
+    CHECK(pm && (pm->authored & PropMeta::kInterpolation) &&
+              pm->interpolation == "vertex",
+          "weaker interpolation fills absent metadata");
+  }
+
+  // --- `delete references` in the root removes a weaker sublayer's reference.
+  {
+    auto loader = [&](const std::string& path,
+                      std::string*) -> std::unique_ptr<Layer> {
+      if (path.find("sub") != std::string::npos) {
+        return ParseLayer(
+            "#usda 1.0\ndef Xform \"M\" (\n"
+            "  references = [ @./ra.usda@, @./rb.usda@ ]\n) { }\n");
+      }
+      if (path.find("ra") != std::string::npos) {
+        return ParseLayer(
+            "#usda 1.0\n(\n defaultPrim = \"P\"\n)\n"
+            "def Xform \"P\" { int fromA = 1\n string src = \"a\" }\n");
+      }
+      return ParseLayer(
+          "#usda 1.0\n(\n defaultPrim = \"P\"\n)\n"
+          "def Xform \"P\" { int fromB = 1\n string src = \"b\" }\n");
+    };
+    auto root = ParseLayer(
+        "#usda 1.0\n(\n subLayers = [ @./sub.usda@ ]\n)\n"
+        "over \"M\" (\n  delete references = @./ra.usda@\n) { }\n");
+    Compositor comp;
+    comp.SetLayerLoader(loader);
+    auto out = comp.Compose(*root);
+    const PrimSpec* m = out ? out->prim_at_path("/M") : nullptr;
+    CHECK(m != nullptr, "delete refs: prim composes");
+    CHECK(m && m->property_value("fromB") != nullptr, "kept ref composes");
+    CHECK(m && m->property_value("fromA") == nullptr,
+          "deleted ref does not compose");
+  }
+
+  // --- Variant set and selection split across layers compose.
+  {
+    auto loader = [&](const std::string&,
+                      std::string*) -> std::unique_ptr<Layer> {
+      return ParseLayer(
+          "#usda 1.0\nover \"M\" (\n"
+          "  variants = { string look = \"red\" }\n) { }\n");
+    };
+    auto root = ParseLayer(
+        "#usda 1.0\n(\n subLayers = [ @./sel.usda@ ]\n)\n"
+        "def Xform \"M\" (\n  prepend variantSets = \"look\"\n) {\n"
+        "  variantSet \"look\" = {\n"
+        "    \"red\" { string color = \"red\" }\n"
+        "    \"blue\" { string color = \"blue\" }\n"
+        "  }\n}\n");
+    Compositor comp;
+    comp.SetLayerLoader(loader);
+    auto out = comp.Compose(*root);
+    const PrimSpec* m = out ? out->prim_at_path("/M") : nullptr;
+    const Value* c = m ? m->property_value("color") : nullptr;
+    CHECK(c && c->as_string() && *c->as_string() == "red",
+          "cross-layer variant set/selection composes");
+    CHECK(m && m->meta().variantSets().empty(),
+          "baked variant metadata cleared");
+  }
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -980,6 +1122,7 @@ int main() {
   test_variant_content_legacy();
   test_active_authored();
   test_cross_layer_arc_merge();
+  test_audit_2026_07();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";

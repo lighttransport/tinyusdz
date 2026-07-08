@@ -180,6 +180,9 @@ struct PrimSpecMetaExt {
   // children come from the prototype prim at this path (no duplicated subtree).
   std::string instance_prototype;
   std::vector<std::string> apiSchemas;
+  // Authored list-op qualifier for apiSchemas: "" (bare/explicit),
+  // "prepend", "append" or "delete" — pxr's own convention is prepend.
+  std::string apiSchemasQualifier;
   // Variant set definitions.
   std::vector<VariantSetData> variantSets;
   // Multiple variant selections (set -> selection); composed in addition to the
@@ -203,6 +206,7 @@ struct PrimSpecMetaExt {
         displayName(o.displayName),
         instance_prototype(o.instance_prototype),
         apiSchemas(o.apiSchemas),
+        apiSchemasQualifier(o.apiSchemasQualifier),
         variantSets(o.variantSets),
         variantSelections(o.variantSelections),
         relocates(o.relocates),
@@ -277,6 +281,10 @@ struct PrimSpecMeta {
   const ArcListOpEdits *arc_edits() const {
     return ext_ ? ext_->arc_edits.get() : nullptr;
   }
+  /// Drop all arc list-op edits (used when composition consumes the arcs).
+  void clear_arc_edits() {
+    if (ext_) ext_->arc_edits.reset();
+  }
   ArcListOpEdits &ensure_arc_edits() {
     ensure_ext();
     if (!ext_->arc_edits) ext_->arc_edits.reset(new ArcListOpEdits());
@@ -330,6 +338,14 @@ struct PrimSpecMeta {
   std::vector<std::string> &apiSchemas() {
     ensure_ext();
     return ext_->apiSchemas;
+  }
+  const std::string &apiSchemasQualifier() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->apiSchemasQualifier : kEmpty;
+  }
+  std::string &apiSchemasQualifier() {
+    ensure_ext();
+    return ext_->apiSchemasQualifier;
   }
   const std::vector<VariantSetData> &variantSets() const {
     static const std::vector<VariantSetData> kEmpty;
@@ -606,6 +622,11 @@ public:
   /// Get property by name ID (fastest)
   const PropSlot* property(PropNameId name_id) const;
 
+  /// Mutable slot lookup (flag merges during composition).
+  PropSlot* property_mutable(PropNameId name_id) {
+    return props_.find_mutable(name_id);
+  }
+
   /// Get property by name string
   const PropSlot* property(const std::string& name) const;
 
@@ -728,6 +749,20 @@ public:
   /// kFlagRelationship slot was declared). Returns true if removed.
   bool remove_relationship(const std::string& name);
 
+  /// Authored list-op edits for a relationship (prepend/append/delete
+  /// sublists, like ArcEdit for composition arcs). Keyed by relationship
+  /// name. Empty map = no relationship carries qualifiers.
+  const std::unordered_map<std::string, ArcEdit>& relationship_edits() const {
+    static const std::unordered_map<std::string, ArcEdit> kEmpty;
+    return rel_edits_ ? *rel_edits_ : kEmpty;
+  }
+  ArcEdit& ensure_relationship_edit(const std::string& name);
+
+  /// Per-relationship qualifier flags (PropSlot::kFlagCustom /
+  /// kFlagUniform). 0 when unauthored.
+  uint16_t relationship_flags(const std::string& name) const;
+  void set_relationship_flags(const std::string& name, uint16_t flags);
+
   /// Apply same-spec relationship list-op targets. Used by USDA body syntax
   /// such as `prepend rel prototypes = [...]`.
   void apply_relationship_list_op(const std::string& name,
@@ -747,6 +782,10 @@ public:
   /// Add an attribute connection target (e.g. inputs:x.connect = </path>).
   /// The property itself should also exist as a slot (kFlagConnection).
   void add_connection(const std::string& prop_name, const Path& target);
+
+  /// Author a connection BLOCK (`attr.connect = None`): an empty entry in the
+  /// connection map (distinct from "no connection authored").
+  void set_connection_block(const std::string& prop_name);
 
   /// Get connection targets for an attribute (nullptr if none)
   const std::vector<Path>* connection(const std::string& prop_name) const;
@@ -801,6 +840,12 @@ public:
   /// `/Flattened_Prototype_N` root.
   void clear_child_indices() { child_indices_.clear(); }
 
+  /// Replace the child index list wholesale (namespace reordering; e.g. the
+  /// crate reader restoring authored order from primChildren).
+  void set_child_indices(std::vector<uint32_t>&& idx) {
+    child_indices_ = std::move(idx);
+  }
+
   /// Get child count
   size_t child_count() const { return child_indices_.size(); }
 
@@ -833,6 +878,9 @@ private:
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
+  // Lazily allocated (rare): authored rel list-op edits + qualifier flags.
+  std::unique_ptr<std::unordered_map<std::string, ArcEdit>> rel_edits_;
+  std::unordered_map<std::string, uint16_t> rel_flags_;
 
   // Attribute connections: interned property-name id -> connection targets.
   // (Keyed by PropNameId.id rather than a string to avoid a key string per

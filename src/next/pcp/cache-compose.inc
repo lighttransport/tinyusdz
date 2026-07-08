@@ -71,9 +71,11 @@
         // Remap relationship/connection TARGET paths from this arc's
         // (site-local) namespace into the composed namespace, so a referenced
         // asset's internal targets (e.g. material:binding, .connect) resolve to
-        // their flattened paths. Identity for local opinions.
+        // their flattened paths. Identity for local opinions. The time offset
+        // composes the arc's offset with the spec layer's sublayer offset.
+        const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
         Compositor::CopyLocalOpinions(
-            *out, *spec, s.offset.offset, s.offset.scale,
+            *out, *spec, spec_off.offset, spec_off.scale,
             [&](const std::string &p) {
               // Target paths outside a reference/payload arc's namespace are
               // unmappable: return "" so CopyLocalOpinions drops them (pxr

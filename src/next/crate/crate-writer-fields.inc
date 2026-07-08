@@ -123,7 +123,11 @@
           return;
         }
         std::vector<uint8_t> api_data(api_data_size);
-        api_data[0] = 0x20;  // kHasPrepended
+        // Header bit from the authored qualifier; bare lists write pxr's
+        // conventional prepended form (pxr authors `prepend apiSchemas`).
+        api_data[0] = prim.meta().apiSchemasQualifier() == "append"
+                          ? 0x40   // kHasAppended
+                          : 0x20;  // kHasPrepended
         uint64_t cnt = count;
         std::memcpy(api_data.data() + 1, &cnt, 8);
         for (size_t i = 0; i < count; ++i) {
@@ -382,7 +386,7 @@
       // round-trip into a spuriously authored opinion (authored-at-default
       // values are collapsed, matching the usda writer).
       // upAxis
-      if (layer.meta().upAxis != "Y") {
+      if (layer.meta().upAxis_set || layer.meta().upAxis != "Y") {
         CrateField f;
         f.token_index.value = InternToken("upAxis");
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
@@ -393,7 +397,7 @@
       }
 
       // metersPerUnit
-      if (layer.meta().metersPerUnit != 0.01) {
+      if (layer.meta().metersPerUnit_set || layer.meta().metersPerUnit != 0.01) {
         CrateField f;
         f.token_index.value = InternToken("metersPerUnit");
         double v = layer.meta().metersPerUnit;
@@ -404,7 +408,7 @@
       }
 
       // timeCodesPerSecond
-      if (layer.meta().timeCodesPerSecond != 24.0) {
+      if (layer.meta().timeCodesPerSecond_set || layer.meta().timeCodesPerSecond != 24.0) {
         CrateField f;
         f.token_index.value = InternToken("timeCodesPerSecond");
         double v = layer.meta().timeCodesPerSecond;
@@ -415,7 +419,8 @@
       }
 
       // startTimeCode
-      if (layer.meta().startTimeCode != 0.0 ||
+      if (layer.meta().startTimeCode_set ||
+          layer.meta().startTimeCode != 0.0 ||
           layer.meta().endTimeCode != 0.0) {
         CrateField f;
         f.token_index.value = InternToken("startTimeCode");
@@ -428,7 +433,8 @@
       }
 
       // endTimeCode
-      if (layer.meta().startTimeCode != 0.0 ||
+      if (layer.meta().endTimeCode_set ||
+          layer.meta().startTimeCode != 0.0 ||
           layer.meta().endTimeCode != 0.0) {
         CrateField f;
         f.token_index.value = InternToken("endTimeCode");
@@ -501,15 +507,17 @@
         CrateField f = MakeStringVectorField("subLayers", layer.meta().subLayers);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
-        // subLayerOffsets must accompany subLayers (one identity offset per
-        // entry) — pxr errors with "Invalid sublayer index" without it.
+        // subLayerOffsets must accompany subLayers (one offset per entry) —
+        // pxr errors with "Invalid sublayer index" without it.
         // Layout: [u64 count][f64 offset, f64 scale] per entry.
         const size_t n = layer.meta().subLayers.size();
         std::vector<uint8_t> raw(8 + n * 16);
         uint64_t cnt = n;
         std::memcpy(raw.data(), &cnt, 8);
         for (size_t i = 0; i < n; ++i) {
-          const double offset = 0.0, scale = 1.0;
+          const bool have = i < layer.meta().subLayerOffsets.size();
+          const double offset = have ? layer.meta().subLayerOffsets[i].first : 0.0;
+          const double scale = have ? layer.meta().subLayerOffsets[i].second : 1.0;
           std::memcpy(raw.data() + 8 + i * 16, &offset, 8);
           std::memcpy(raw.data() + 8 + i * 16 + 8, &scale, 8);
         }
@@ -562,15 +570,26 @@
       if (!result_.error.empty()) return;
     }
 
-    // Add primChildren to pseudo-root (fieldset 0) from root prims
+    // Add primChildren to pseudo-root (fieldset 0) from root prims, in the
+    // layer's AUTHORED namespace order (root_indices) when available — the
+    // storage order is path-sorted after a crate read, and pxr treats
+    // primChildren as the semantic child order.
     {
       std::vector<uint32_t> root_child_tokens;
-      for (const auto& prim : layer.prims()) {
-        // Root prims have exactly one '/' in their path (e.g., "/World")
-        const std::string& path_str = prim.path().str();
-        if (!path_str.empty() && path_str != "/" &&
-            path_str.find('/', 1) == std::string::npos) {
-          root_child_tokens.push_back(InternToken(prim.name()));
+      if (!layer.root_indices().empty()) {
+        for (uint32_t ri : layer.root_indices()) {
+          if (const PrimSpec* rp = layer.prim(ri)) {
+            root_child_tokens.push_back(InternToken(rp->name()));
+          }
+        }
+      } else {
+        for (const auto& prim : layer.prims()) {
+          // Root prims have exactly one '/' in their path (e.g., "/World")
+          const std::string& path_str = prim.path().str();
+          if (!path_str.empty() && path_str != "/" &&
+              path_str.find('/', 1) == std::string::npos) {
+            root_child_tokens.push_back(InternToken(prim.name()));
+          }
         }
       }
       if (!root_child_tokens.empty()) {
@@ -616,6 +635,25 @@
       if (slash == std::string::npos) continue;
       std::string parent = (slash == 0) ? "/" : p.substr(0, slash);
       parent_children[parent].push_back(InternToken(prim.name()));
+    }
+    // Prefer the AUTHORED sibling order via child links (the storage order is
+    // path-sorted after a crate read). Only replace when the link count
+    // matches the path-derived count (links may be absent/partial on
+    // hand-built layers).
+    for (const auto& prim : layer.prims()) {
+      if (prim.child_indices().empty()) continue;
+      auto pit = parent_children.find(prim.path().str());
+      if (pit == parent_children.end()) continue;
+      std::vector<uint32_t> linked;
+      linked.reserve(prim.child_indices().size());
+      for (uint32_t ci : prim.child_indices()) {
+        const PrimSpec* c = layer.prim(ci);
+        if (!c) continue;
+        const std::string& cn = c->name();
+        if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') continue;
+        linked.push_back(InternToken(cn));
+      }
+      if (linked.size() == pit->second.size()) pit->second = std::move(linked);
     }
 
     // Add primChildren to non-root prims that have children. (Variant holders

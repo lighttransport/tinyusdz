@@ -420,14 +420,14 @@
           targets.reserve(conns->size());
           for (const auto& p : *conns)
             if (!p.str().empty()) targets.push_back(p.str());
-          if (!targets.empty()) {
-            uint64_t blk = StorePathListOp(targets);
-            CrateField cf;
-            cf.token_index.value = InternToken("connectionPaths");
-            cf.value_rep =
-                ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
-            flds.push_back(cf);
-          }
+          // An authored-empty list is a connection BLOCK (`.connect = None`):
+          // emit an explicit-empty PathListOp so it round-trips.
+          uint64_t blk = StorePathListOp(targets);
+          CrateField cf;
+          cf.token_index.value = InternToken("connectionPaths");
+          cf.value_rep =
+              ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
+          flds.push_back(cf);
         }
       }
 
@@ -493,7 +493,31 @@
       vf.token_index.value = InternToken("variability");
       vf.value_rep = ValueRep::Make(CrateTypeId::Variability, 1, false, true);
       flds.push_back(vf);
-      if (const std::vector<Path>* tgts = prim.relationship(rel_name)) {
+      if (prim.relationship_flags(rel_name) & PropSlot::kFlagCustom) {
+        CrateField cf;
+        cf.token_index.value = InternToken("custom");
+        cf.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        flds.push_back(cf);
+      }
+      // Authored list-op edits encode natively via sublist header bits
+      // (StorePathArcListOp), like the composition-arc fields.
+      const ArcEdit* rel_edit = nullptr;
+      {
+        const auto& edits = prim.relationship_edits();
+        auto eit = edits.find(rel_name);
+        if (eit != edits.end() && eit->second.authored &&
+            !eit->second.is_explicit) {
+          rel_edit = &eit->second;
+        }
+      }
+      if (rel_edit) {
+        uint64_t blk = StorePathArcListOp({}, rel_edit);
+        CrateField rf;
+        rf.token_index.value = InternToken("targetPaths");
+        rf.value_rep =
+            ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
+        flds.push_back(rf);
+      } else if (const std::vector<Path>* tgts = prim.relationship(rel_name)) {
         std::vector<std::string> targets;
         for (const auto& p : *tgts)
           if (!p.str().empty()) targets.push_back(p.str());

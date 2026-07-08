@@ -2481,8 +2481,18 @@ static void test_sublayer_cycle_and_depth() {
   resolver.SetWorkingDirectory("/tmp");
   std::string warn, err;
   auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root);
-  assert(!cycle_opened && "sublayer cycle should fail Cache::Open");
-  assert(cycle_opened.error().find("Sublayer cycle") != std::string::npos);
+  // pxr parity: a sublayer cycle is WARNED and the repeated layer skipped —
+  // the rest of the scene still composes (previously the whole load failed).
+  assert(cycle_opened && "sublayer cycle should warn + skip, not fail");
+  {
+    bool cycle_reported = false;
+    for (const auto& is : cycle_opened->GetCompositionIssues()) {
+      if (is.message.find("Sublayer cycle") != std::string::npos) {
+        cycle_reported = true;
+      }
+    }
+    assert(cycle_reported && "cycle must still be diagnosed");
+  }
 
   const std::string depth_sub = "/tmp/next_pcp_depth_sub.usda";
   {
