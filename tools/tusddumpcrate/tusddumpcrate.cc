@@ -49,7 +49,26 @@ struct DumpOptions {
   int max_fieldsets = -1;
   int max_paths = -1;
   int max_specs = -1;
+  std::string token_filter;
+  std::string path_filter;
 };
+
+static bool ContainsFilter(const std::string& value, const std::string& filter) {
+  return filter.empty() || (value.find(filter) != std::string::npos);
+}
+
+template <typename PathLike>
+static std::string CratePathString(const PathLike& path) {
+  std::string full_path = path.full_path_name();
+  if (!path.prop_part().empty()) {
+    const std::string suffix = "." + path.prop_part();
+    if (full_path.size() < suffix.size() ||
+        full_path.compare(full_path.size() - suffix.size(), suffix.size(), suffix) != 0) {
+      full_path += suffix;
+    }
+  }
+  return full_path;
+}
 
 // Helper function to convert SpecType to string
 static std::string GetSpecTypeName(SpecType type) {
@@ -307,18 +326,22 @@ private:
       out() << "values:" << std::endl;
       indent_++;
 
-      int limit = (opts_.max_tokens > 0) ? std::min(opts_.max_tokens, static_cast<int>(tokens.size()))
-                                          : tokens.size();
+      int emitted = 0;
+      int limit = (opts_.max_tokens > 0) ? opts_.max_tokens : static_cast<int>(tokens.size());
 
-      for (int i = 0; i < limit; i++) {
+      for (size_t i = 0; i < tokens.size() && emitted < limit; i++) {
+        if (!ContainsFilter(tokens[i].str(), opts_.token_filter)) {
+          continue;
+        }
         out() << "- index: " << i << std::endl;
         indent_++;
         out() << "value: \"" << EscapeYAML(tokens[i].str()) << "\"" << std::endl;
         indent_--;
+        emitted++;
       }
 
-      if (opts_.max_tokens > 0 && tokens.size() > static_cast<size_t>(opts_.max_tokens)) {
-        out() << "# ... (" << (tokens.size() - opts_.max_tokens) << " more)" << std::endl;
+      if (opts_.max_tokens > 0 && emitted >= opts_.max_tokens) {
+        out() << "# ... (token output limited)" << std::endl;
       }
 
       indent_--;
@@ -372,17 +395,24 @@ private:
       out() << "values:" << std::endl;
       indent_++;
 
-      int limit = (opts_.max_fields > 0) ? std::min(opts_.max_fields, static_cast<int>(fields.size()))
-                                          : fields.size();
+      int emitted = 0;
+      int limit = (opts_.max_fields > 0) ? opts_.max_fields : static_cast<int>(fields.size());
 
-      for (int i = 0; i < limit; i++) {
+      for (size_t i = 0; i < fields.size() && emitted < limit; i++) {
         const auto& field = fields[i];
+        std::string field_name;
+        if (field.token_index.value < reader.GetTokens().size()) {
+          field_name = reader.GetTokens()[field.token_index.value].str();
+        }
+        if (!ContainsFilter(field_name, opts_.token_filter)) {
+          continue;
+        }
         out() << "- index: " << i << std::endl;
         indent_++;
 
         out() << "token_index: " << field.token_index.value << std::endl;
-        if (field.token_index.value < reader.GetTokens().size()) {
-          out() << "name: \"" << EscapeYAML(reader.GetTokens()[field.token_index.value].str()) << "\"" << std::endl;
+        if (!field_name.empty()) {
+          out() << "name: \"" << EscapeYAML(field_name) << "\"" << std::endl;
         }
 
         out() << "value_rep:" << std::endl;
@@ -391,10 +421,11 @@ private:
         indent_--;
 
         indent_--;
+        emitted++;
       }
 
-      if (opts_.max_fields > 0 && fields.size() > static_cast<size_t>(opts_.max_fields)) {
-        out() << "# ... (" << (fields.size() - opts_.max_fields) << " more)" << std::endl;
+      if (opts_.max_fields > 0 && emitted >= opts_.max_fields) {
+        out() << "# ... (field output limited)" << std::endl;
       }
 
       indent_--;
@@ -503,11 +534,15 @@ private:
       out() << "values:" << std::endl;
       indent_++;
 
-      int limit = (opts_.max_paths > 0) ? std::min(opts_.max_paths, static_cast<int>(paths.size()))
-                                         : paths.size();
+      int emitted = 0;
+      int limit = (opts_.max_paths > 0) ? opts_.max_paths : static_cast<int>(paths.size());
 
-      for (int i = 0; i < limit; i++) {
+      for (size_t i = 0; i < paths.size() && emitted < limit; i++) {
         const auto& path = paths[i];
+        std::string full_path = CratePathString(path);
+        if (!ContainsFilter(full_path, opts_.path_filter)) {
+          continue;
+        }
         out() << "- index: " << i << std::endl;
         indent_++;
         out() << "prim: \"" << EscapeYAML(path.full_path_name()) << "\"" << std::endl;
@@ -515,10 +550,11 @@ private:
           out() << "property: \"" << EscapeYAML(path.prop_part()) << "\"" << std::endl;
         }
         indent_--;
+        emitted++;
       }
 
-      if (opts_.max_paths > 0 && paths.size() > static_cast<size_t>(opts_.max_paths)) {
-        out() << "# ... (" << (paths.size() - opts_.max_paths) << " more)" << std::endl;
+      if (opts_.max_paths > 0 && emitted >= opts_.max_paths) {
+        out() << "# ... (path output limited)" << std::endl;
       }
 
       indent_--;
@@ -538,22 +574,26 @@ private:
       out() << "values:" << std::endl;
       indent_++;
 
-      int limit = (opts_.max_specs > 0) ? std::min(opts_.max_specs, static_cast<int>(specs.size()))
-                                         : specs.size();
+      int emitted = 0;
+      int limit = (opts_.max_specs > 0) ? opts_.max_specs : static_cast<int>(specs.size());
 
-      for (int i = 0; i < limit; i++) {
+      for (size_t i = 0; i < specs.size() && emitted < limit; i++) {
         const auto& spec = specs[i];
+        std::string full_path;
+        if (spec.path_index.value < reader.GetPaths().size()) {
+          const auto& path = reader.GetPaths()[spec.path_index.value];
+          full_path = CratePathString(path);
+        }
+        if (!ContainsFilter(full_path, opts_.path_filter)) {
+          continue;
+        }
         out() << "- index: " << i << std::endl;
         indent_++;
 
         out() << "path_index: " << spec.path_index.value << std::endl;
         if (spec.path_index.value < reader.GetPaths().size()) {
           const auto& path = reader.GetPaths()[spec.path_index.value];
-          out() << "path: \"" << EscapeYAML(path.full_path_name());
-          if (!path.prop_part().empty()) {
-            std::cout << "." << EscapeYAML(path.prop_part());
-          }
-          std::cout << "\"" << std::endl;
+          out() << "path: \"" << EscapeYAML(CratePathString(path)) << "\"" << std::endl;
         }
 
         out() << "fieldset_index: " << spec.fieldset_index.value << std::endl;
@@ -561,10 +601,11 @@ private:
         out() << "spec_type_name: \"" << GetSpecTypeName(spec.spec_type) << "\"" << std::endl;
 
         indent_--;
+        emitted++;
       }
 
-      if (opts_.max_specs > 0 && specs.size() > static_cast<size_t>(opts_.max_specs)) {
-        out() << "# ... (" << (specs.size() - opts_.max_specs) << " more)" << std::endl;
+      if (opts_.max_specs > 0 && emitted >= opts_.max_specs) {
+        out() << "# ... (spec output limited)" << std::endl;
       }
 
       indent_--;
@@ -622,6 +663,9 @@ void PrintUsage(const char* prog) {
   std::cout << "  --limit-fieldsets N   Limit fieldsets output to N items\n";
   std::cout << "  --limit-paths N       Limit paths output to N items\n";
   std::cout << "  --limit-specs N       Limit specs output to N items\n";
+  std::cout << "  --path-filter TEXT    Only show paths/specs containing TEXT\n";
+  std::cout << "  --token-filter TEXT   Only show tokens/fields containing TEXT\n";
+  std::cout << "  --limit N             Limit token/field/path/spec output to N items\n";
   std::cout << "  -h, --help            Show this help\n";
   std::cout << "\nExample:\n";
   std::cout << "  " << prog << " model.usdc\n";
@@ -683,6 +727,21 @@ int main(int argc, char** argv) {
       opts.max_paths = std::atoi(argv[++i]);
     } else if (arg == "--limit-specs" && i + 1 < argc) {
       opts.max_specs = std::atoi(argv[++i]);
+    } else if (arg == "--path-filter" && i + 1 < argc) {
+      opts.path_filter = argv[++i];
+    } else if (arg == "--token-filter" && i + 1 < argc) {
+      opts.token_filter = argv[++i];
+    } else if (arg == "--limit" && i + 1 < argc) {
+      int limit = std::atoi(argv[++i]);
+      if (limit < 1) {
+        std::cerr << "Invalid limit: " << limit << std::endl;
+        return 1;
+      }
+      opts.max_tokens = limit;
+      opts.max_fields = limit;
+      opts.max_fieldsets = limit;
+      opts.max_paths = limit;
+      opts.max_specs = limit;
     } else if (arg[0] != '-') {
       input_file = arg;
     } else {
