@@ -860,7 +860,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
 
       RenderMesh mesh;
-      if (ConvertMesh(mesh_prim, &mesh)) {
+      if (ConvertMesh(stage, mesh_prim, &mesh)) {
         int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
         result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
         result.scene.meshes.push_back(std::move(mesh));
@@ -938,6 +938,21 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       if (ConvertLight(rec.prim, &light)) {
         for (int i = 0; i < 16; ++i) {
           light.transform.m[i] = static_cast<float>(rec.world[i]);
+        }
+        // DomeLight environment texture -> image, id stored in params.dome.
+        if (light.type == LightType::Dome) {
+          light.params.dome.texture_id = -1;
+          std::string tex;
+          const Value* fv = GetAttribute(rec.prim, "inputs:texture:file");
+          if (fv) {
+            if (const std::string* ap = fv->as_asset_path()) tex = *ap;
+            else if (const std::string* s = fv->as_string()) tex = *s;
+            else if (const std::string* t = fv->as_token()) tex = *t;
+          }
+          if (!tex.empty()) {
+            light.params.dome.texture_id =
+                ResolveImageId(&result.scene, tex, ColorSpace::Linear);
+          }
         }
         int32_t light_id = static_cast<int32_t>(result.scene.lights.size());
         result.scene.lights.push_back(std::move(light));
@@ -1146,7 +1161,7 @@ void RenderSceneConverter::DuplicatePointInstanceMeshes(RenderScene* scene) {
 // Mesh conversion
 //
 
-bool RenderSceneConverter::ConvertMesh(const UsdPrim& prim, RenderMesh* out) {
+bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out) {
   if (!out || !IsMesh(prim)) {
     last_error_ = "Invalid mesh prim";
     return false;
@@ -1196,6 +1211,32 @@ bool RenderSceneConverter::ConvertMesh(const UsdPrim& prim, RenderMesh* out) {
     }
   }
 
+  // Blend shapes (skel:blendShapes names + skel:blendShapeTargets prims).
+  for (const BlendShapeInfo& bs : GetBlendShapes(prim)) {
+    UsdPrim bs_prim = stage.GetPrimAtPath(bs.path);
+    if (!bs_prim.IsValid()) continue;
+    ::tinyusdz::next::BlendShapeData bd;
+    if (!::tinyusdz::next::GetBlendShapeData(stage, bs_prim, &bd)) continue;
+    if (bd.offsets.empty()) continue;
+    RenderMesh::BlendShape shape;
+    shape.name = bs.name.empty() ? bs_prim.GetName() : bs.name;
+    shape.point_offsets.append(bd.offsets.data(), bd.offsets.size());
+    if (bd.hasNormalOffsets && !bd.normalOffsets.empty()) {
+      shape.normal_offsets.append(bd.normalOffsets.data(),
+                                  bd.normalOffsets.size());
+    }
+    if (bd.hasPointIndices) {
+      const size_t npts = out->point_count();
+      for (int32_t pi : bd.pointIndices) {
+        // Drop out-of-range point indices (a consumer would index OOB).
+        if (pi >= 0 && static_cast<size_t>(pi) < npts) {
+          shape.point_indices.push_back(static_cast<uint32_t>(pi));
+        }
+      }
+    }
+    out->blend_shapes.push_back(std::move(shape));
+  }
+
   // Triangulate if requested
   if (config_.mesh.triangulate && !out->is_triangulated) {
     TriangulateMesh(out);
@@ -1206,6 +1247,99 @@ bool RenderSceneConverter::ConvertMesh(const UsdPrim& prim, RenderMesh* out) {
     ComputeVertexNormals(out);
   }
 
+  // Compute tangents if requested (needs triangles, per-vertex normals and
+  // per-vertex UVs).
+  if (config_.mesh.compute_tangents && out->tangents.empty()) {
+    ComputeVertexTangents(out);
+  }
+
+  return true;
+}
+
+// Per-vertex tangent frame (Lengyel's method) from triangulated topology,
+// per-vertex normals and per-vertex UVs. Output is xyzw per vertex (w = sign
+// so bitangent = cross(normal, tangent) * w). No-op unless all inputs are
+// per-vertex and consistent.
+bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
+  if (!mesh->is_triangulated) {
+    if (!TriangulateMesh(mesh)) return false;
+  }
+  const size_t np = mesh->point_count();
+  if (np == 0) return false;
+  // Require per-vertex normals + per-vertex 2-component UVs of matching size.
+  if (mesh->normals_interp != Interpolation::Vertex ||
+      mesh->normals.size() != np * 3) {
+    return false;
+  }
+  if (mesh->texcoords_0_interp != Interpolation::Vertex ||
+      mesh->texcoords_0.size() != np * 2) {
+    return false;
+  }
+
+  std::vector<float> tan(np * 3, 0.0f);
+  std::vector<float> bit(np * 3, 0.0f);
+  const size_t ntris = mesh->triangulated_indices.size() / 3;
+  for (size_t t = 0; t < ntris; ++t) {
+    const uint32_t i0 = mesh->triangulated_indices[t * 3 + 0];
+    const uint32_t i1 = mesh->triangulated_indices[t * 3 + 1];
+    const uint32_t i2 = mesh->triangulated_indices[t * 3 + 2];
+    if (i0 >= np || i1 >= np || i2 >= np) continue;
+    const float* p0 = &mesh->points[i0 * 3];
+    const float* p1 = &mesh->points[i1 * 3];
+    const float* p2 = &mesh->points[i2 * 3];
+    const float* u0 = &mesh->texcoords_0[i0 * 2];
+    const float* u1 = &mesh->texcoords_0[i1 * 2];
+    const float* u2 = &mesh->texcoords_0[i2 * 2];
+    const float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+    const float e2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+    const float du1 = u1[0] - u0[0], dv1 = u1[1] - u0[1];
+    const float du2 = u2[0] - u0[0], dv2 = u2[1] - u0[1];
+    const float det = du1 * dv2 - du2 * dv1;
+    const float r = (std::fabs(det) > 1e-12f) ? 1.0f / det : 0.0f;
+    const float sdir[3] = {(dv2 * e1[0] - dv1 * e2[0]) * r,
+                           (dv2 * e1[1] - dv1 * e2[1]) * r,
+                           (dv2 * e1[2] - dv1 * e2[2]) * r};
+    const float tdir[3] = {(du1 * e2[0] - du2 * e1[0]) * r,
+                           (du1 * e2[1] - du2 * e1[1]) * r,
+                           (du1 * e2[2] - du2 * e1[2]) * r};
+    for (uint32_t vi : {i0, i1, i2}) {
+      tan[vi * 3 + 0] += sdir[0];
+      tan[vi * 3 + 1] += sdir[1];
+      tan[vi * 3 + 2] += sdir[2];
+      bit[vi * 3 + 0] += tdir[0];
+      bit[vi * 3 + 1] += tdir[1];
+      bit[vi * 3 + 2] += tdir[2];
+    }
+  }
+
+  std::vector<float> out_tan(np * 4, 0.0f);
+  for (size_t v = 0; v < np; ++v) {
+    const float* n = &mesh->normals[v * 3];
+    const float* tv = &tan[v * 3];
+    // Gram-Schmidt orthogonalize t against n.
+    const float ndt = n[0] * tv[0] + n[1] * tv[1] + n[2] * tv[2];
+    float tx = tv[0] - n[0] * ndt;
+    float ty = tv[1] - n[1] * ndt;
+    float tz = tv[2] - n[2] * ndt;
+    const float len = std::sqrt(tx * tx + ty * ty + tz * tz);
+    if (len > 1e-12f) {
+      tx /= len; ty /= len; tz /= len;
+    } else {
+      tx = 1.0f; ty = 0.0f; tz = 0.0f;
+    }
+    // Handedness: sign of dot(cross(n, t), bitangent).
+    const float* bv = &bit[v * 3];
+    const float cx = n[1] * tz - n[2] * ty;
+    const float cy = n[2] * tx - n[0] * tz;
+    const float cz = n[0] * ty - n[1] * tx;
+    const float w = (cx * bv[0] + cy * bv[1] + cz * bv[2]) < 0.0f ? -1.0f : 1.0f;
+    out_tan[v * 4 + 0] = tx;
+    out_tan[v * 4 + 1] = ty;
+    out_tan[v * 4 + 2] = tz;
+    out_tan[v * 4 + 3] = w;
+  }
+  mesh->tangents.clear();
+  mesh->tangents.append(out_tan.data(), out_tan.size());
   return true;
 }
 
@@ -1608,6 +1742,7 @@ bool RenderSceneConverter::ConvertPointInstancer(const UsdPrim& prim,
 bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   if (mesh->face_vertex_counts.empty()) return false;
   mesh->triangulated_indices.clear();  // re-entry / failure-path hardening
+  mesh->triangulated_face_vertex_indices.clear();
 
   // Check if already triangulated
   bool all_triangles = true;
@@ -1619,10 +1754,13 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
 
   if (all_triangles && !mesh->left_handed && mesh->hole_faces.empty()) {
-    // Just copy indices
-    mesh->triangulated_indices.resize(mesh->face_vertex_indices.size());
-    for (size_t i = 0; i < mesh->face_vertex_indices.size(); ++i) {
+    // Just copy indices; corner remap is identity.
+    const size_t n = mesh->face_vertex_indices.size();
+    mesh->triangulated_indices.resize(n);
+    mesh->triangulated_face_vertex_indices.resize(n);
+    for (size_t i = 0; i < n; ++i) {
       mesh->triangulated_indices[i] = mesh->face_vertex_indices[i];
+      mesh->triangulated_face_vertex_indices[i] = static_cast<uint32_t>(i);
     }
     mesh->is_triangulated = true;
     return true;
@@ -1644,17 +1782,27 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
                                             static_cast<uint32_t>(f));
     if (nverts >= 3 && !is_hole) {
       const uint32_t v0 = mesh->face_vertex_indices[idx_offset];
+      const uint32_t c0 = static_cast<uint32_t>(idx_offset);
       for (uint32_t i = 1; i < nverts - 1; ++i) {
+        const uint32_t ca = static_cast<uint32_t>(idx_offset + i);
+        const uint32_t cb = static_cast<uint32_t>(idx_offset + i + 1);
         // leftHanded meshes emit reversed winding so the triangulated output
-        // is uniformly CCW/rightHanded.
+        // is uniformly CCW/rightHanded. The corner map records the original
+        // face-vertex index for each emitted corner.
         if (mesh->left_handed) {
           mesh->triangulated_indices.push_back(v0);
-          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[idx_offset + i + 1]);
-          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[idx_offset + i]);
+          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[cb]);
+          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[ca]);
+          mesh->triangulated_face_vertex_indices.push_back(c0);
+          mesh->triangulated_face_vertex_indices.push_back(cb);
+          mesh->triangulated_face_vertex_indices.push_back(ca);
         } else {
           mesh->triangulated_indices.push_back(v0);
-          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[idx_offset + i]);
-          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[idx_offset + i + 1]);
+          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[ca]);
+          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[cb]);
+          mesh->triangulated_face_vertex_indices.push_back(c0);
+          mesh->triangulated_face_vertex_indices.push_back(ca);
+          mesh->triangulated_face_vertex_indices.push_back(cb);
         }
       }
     }
@@ -1778,6 +1926,39 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
 //
 // Material conversion
 //
+
+std::string RenderSceneConverter::ResolveAssetPath(
+    const std::string& file) const {
+  if (config_.asset_base_dir.empty() || file.empty() || file[0] == '/' ||
+      file.find("://") != std::string::npos) {
+    return file;
+  }
+  std::string rel = file;
+  if (rel.rfind("./", 0) == 0) rel = rel.substr(2);
+  return config_.asset_base_dir + "/" + rel;
+}
+
+int32_t RenderSceneConverter::ResolveImageId(RenderScene* scene,
+                                             const std::string& file,
+                                             ColorSpace color_space) {
+  if (!scene || file.empty()) return -1;
+  const std::string resolved = ResolveAssetPath(file);
+  const ColorSpace csp =
+      color_space == ColorSpace::Unknown ? ColorSpace::sRGB : color_space;
+  for (size_t i = 0; i < scene->images.size(); ++i) {
+    if (scene->images[i].resolved_path == resolved &&
+        scene->images[i].color_space == csp) {
+      return static_cast<int32_t>(i);
+    }
+  }
+  TextureImage image;
+  image.name = file;
+  image.resolved_path = resolved;
+  image.color_space = csp;
+  const int32_t id = static_cast<int32_t>(scene->images.size());
+  scene->images.push_back(std::move(image));
+  return id;
+}
 
 bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
                                            const UsdPrim& prim,
@@ -1997,20 +2178,11 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
 
     TextureNodeData tex_data;
     if (scene && ExtractTextureNodeData(stage, texture_prim, config_.time_code, &tex_data)) {
-      int32_t image_id = -1;
       const ColorSpace cs = ParseColorSpace(tex_data.source_color_space);
       const ColorSpace image_color_space =
           cs == ColorSpace::Unknown ? ColorSpace::sRGB : cs;
-      // Resolve relative asset paths against the source layer's directory
-      // (dedup below keys on the RESOLVED path).
-      std::string resolved = tex_data.file;
-      if (!config_.asset_base_dir.empty() && !tex_data.file.empty() &&
-          tex_data.file[0] != '/' &&
-          tex_data.file.find("://") == std::string::npos) {
-        std::string rel = tex_data.file;
-        if (rel.rfind("./", 0) == 0) rel = rel.substr(2);
-        resolved = config_.asset_base_dir + "/" + rel;
-      }
+      const std::string resolved = ResolveAssetPath(tex_data.file);
+      int32_t image_id = -1;
       for (size_t i = 0; i < scene->images.size(); ++i) {
         if (scene->images[i].resolved_path == resolved &&
             scene->images[i].color_space == image_color_space) {

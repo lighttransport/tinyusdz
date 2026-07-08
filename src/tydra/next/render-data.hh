@@ -259,6 +259,9 @@ struct RenderMesh {
     std::string name;
     FloatChunked point_offsets;   // xyz deltas
     FloatChunked normal_offsets;  // xyz deltas (optional)
+    // Sparse target: point_offsets[k] applies to point point_indices[k].
+    // Empty = dense (offsets parallel to points).
+    std::vector<uint32_t> point_indices;
     float weight = 0.0f;
   };
   std::vector<BlendShape> blend_shapes;
@@ -274,6 +277,11 @@ struct RenderMesh {
 
   // Triangulated data (computed on demand)
   UInt32Chunked triangulated_indices;
+  // Per triangulated CORNER, the original face-vertex (corner) index into the
+  // authored faceVarying arrays, so a consumer can index faceVarying primvars
+  // (uv/normals) against the triangulated topology. Parallel to
+  // triangulated_indices (same length). Empty until TriangulateMesh runs.
+  UInt32Chunked triangulated_face_vertex_indices;
   bool is_triangulated = false;
 
   // Bounding box

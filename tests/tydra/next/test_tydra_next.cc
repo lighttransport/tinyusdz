@@ -1217,6 +1217,107 @@ def Xform "Root"
   std::cout << "  TestAudit2026_07 PASSED" << std::endl;
 }
 
+
+// 2026-07 tydra-next gap follow-ups: tangent generation, faceVarying corner
+// remap table, DomeLight environment texture, blendshape extraction.
+void TestAudit2026_07_Gaps() {
+  std::cout << "TestAudit2026_07_Gaps..." << std::endl;
+
+  const char* usda = R"(#usda 1.0
+def "Root"
+{
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]
+        texCoord2f[] primvars:st = [(0,0), (1,0), (1,1), (0,1)] (
+            interpolation = "vertex"
+        )
+        normal3f[] normals = [(0,0,1), (0,0,1), (0,0,1), (0,0,1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def SkelRoot "SR"
+    {
+        def Mesh "BSMesh" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]
+            uniform token[] skel:blendShapes = ["smile"]
+            prepend rel skel:blendShapeTargets = </Root/SR/BSMesh/Smile>
+
+            def BlendShape "Smile"
+            {
+                uniform vector3f[] offsets = [(0, 0.5, 0), (0, 0.5, 0)]
+                uniform int[] pointIndices = [0, 2]
+            }
+        }
+    }
+
+    def DomeLight "Env"
+    {
+        asset inputs:texture:file = @env.hdr@
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  ConverterConfig cfg;
+  cfg.mesh.compute_tangents = true;
+  RenderSceneConverter conv(cfg);
+  ConvertResult res = conv.Convert(lr.stage);
+  assert(res.success);
+  RenderScene& scene = res.scene;
+
+  // Tangents + faceVarying corner remap on the quad.
+  {
+    auto it = scene.mesh_by_path.find("/Root/Quad");
+    assert(it != scene.mesh_by_path.end());
+    RenderMesh& m = scene.meshes[static_cast<size_t>(it->second)];
+    // Unit quad, axis-aligned UVs -> tangent +X, w=+1.
+    assert(m.tangents.size() == m.point_count() * 4);
+    assert(std::fabs(m.tangents[0] - 1.0f) < 1e-4f);
+    assert(std::fabs(m.tangents[3] - 1.0f) < 1e-4f);  // handedness w
+    // Corner remap parallel to triangulated_indices.
+    assert(m.triangulated_face_vertex_indices.size() ==
+           m.triangulated_indices.size());
+    assert(m.triangulated_face_vertex_indices[0] == 0);
+    assert(m.triangulated_face_vertex_indices[2] == 2);
+    assert(m.triangulated_face_vertex_indices[5] == 3);
+  }
+
+  // Blendshape extraction (sparse, with pointIndices).
+  {
+    auto it = scene.mesh_by_path.find("/Root/SR/BSMesh");
+    assert(it != scene.mesh_by_path.end());
+    RenderMesh& m = scene.meshes[static_cast<size_t>(it->second)];
+    assert(m.blend_shapes.size() == 1);
+    assert(m.blend_shapes[0].name == "smile");
+    assert(m.blend_shapes[0].point_offsets.size() == 6);  // 2 points x3
+    assert(m.blend_shapes[0].point_indices.size() == 2 &&
+           m.blend_shapes[0].point_indices[0] == 0 &&
+           m.blend_shapes[0].point_indices[1] == 2);
+  }
+
+  // DomeLight environment texture imported as an image.
+  {
+    assert(scene.lights.size() == 1);
+    const RenderLight& l = scene.lights[0];
+    assert(l.type == LightType::Dome);
+    assert(l.params.dome.texture_id >= 0);
+    assert(static_cast<size_t>(l.params.dome.texture_id) < scene.images.size());
+  }
+
+  std::cout << "  TestAudit2026_07_Gaps PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -1247,6 +1348,7 @@ int main() {
   TestRenderConverterPointInstancerIndexVisibility();
   TestMaterialXUtilities();
   TestAudit2026_07();
+  TestAudit2026_07_Gaps();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

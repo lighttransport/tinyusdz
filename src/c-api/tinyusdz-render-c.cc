@@ -407,6 +407,9 @@ tusd_status tusd_render_mesh_buffer(tusd_render_scene* scene, int32_t mesh_id,
     case TUSD_MESH_BUF_TRI_INDICES:
       return ViewFromChunked(scene, m->triangulated_indices, key,
                              TUSD_COMP_UINT32, 1, out);
+    case TUSD_MESH_BUF_TRI_FACEVARYING_INDICES:
+      return ViewFromChunked(scene, m->triangulated_face_vertex_indices, key,
+                             TUSD_COMP_UINT32, 1, out);
     case TUSD_MESH_BUF_NORMALS:
       return ViewFromChunked(scene, m->normals, key, TUSD_COMP_FLOAT32, 3,
                              out);
