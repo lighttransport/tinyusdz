@@ -14,6 +14,7 @@ import {
   convertSourceToUSDZStreaming,
   outputFormatForImage,
   parseByteSize,
+  wasmHeapByteLength,
 } from './src/usdzconvert.js';
 import { createBrowserTextureProcessor } from './src/texture-processor-browser.mjs';
 
@@ -111,6 +112,10 @@ container.innerHTML = `
       <label>Max USDC size (MB)</label>
       <input id="maxUsdcMb" type="number" min="0" step="64" value="0" style="padding:4px;width:120px"
              title="0 = conservative default (~100 MB). Raise for large scenes whose flattened USDC root exceeds it. 2048 (2 GB) is the cross-browser-safe ceiling (Firefox/Safari ArrayBuffer limit + wasm32 2 GB heap); Chrome allows up to ~4096.">
+
+      <label>Max WASM heap (MB)</label>
+      <input id="maxWasmHeapMb" type="number" min="0" step="64" value="1024" style="padding:4px;width:120px"
+             title="0 = off. Browser conversion uses this cap to avoid WASM heap growth aborts; large folder conversions auto-switch to the streaming path before bulk texture assets enter WASM.">
     </div>
     <p style="color:#888;font-size:12px;margin:10px 0 0">
       Set a <b>target total texture size</b> to auto-fit all textures to a budget — choose the lever:
@@ -214,6 +219,7 @@ const els = {
   reencode: document.getElementById('reencode'),
   jpegQuality: document.getElementById('jpegQuality'),
   maxUsdcMb: document.getElementById('maxUsdcMb'),
+  maxWasmHeapMb: document.getElementById('maxWasmHeapMb'),
   nameSuffix: document.getElementById('nameSuffix'),
   nameCustom: document.getElementById('nameCustom'),
   namePreview: document.getElementById('namePreview'),
@@ -372,6 +378,12 @@ async function ensureWasm() {
   return native;
 }
 
+function releaseWasmModule(reason = '') {
+  if (!native) return;
+  native = null;
+  if (reason) log(`Released TinyUSDZ WASM module (${reason}).`);
+}
+
 function refreshFileList() {
   if (!uploaded.length) {
     els.fileList.style.display = 'none';
@@ -406,11 +418,16 @@ function invalidateResult() {
   els.btnDownload.disabled = true;
 }
 
+function releasePreviousConversion(reason) {
+  invalidateResult();
+  releaseWasmModule(reason);
+}
+
 // Remove all uploaded files and reset to the initial state. Clearing the file
 // inputs' .value lets the user re-pick the same folder/files afterwards.
 function clearFiles() {
   uploaded = [];
-  invalidateResult();
+  releasePreviousConversion('clear');
   els.folderInput.value = '';
   els.filesInput.value = '';
   refreshFileList();
@@ -420,6 +437,7 @@ function clearFiles() {
 }
 
 async function addFiles(fileEntries) {
+  invalidateResult();
   // fileEntries: array of { path, file }
   for (const e of fileEntries) {
     if (!uploaded.some(u => u.path === e.path)) uploaded.push(e);
@@ -492,6 +510,39 @@ function browserImageFormat(name) {
 function browserTextureConcurrency() {
   const cores = navigator.hardwareConcurrency || 4;
   return Math.max(1, Math.min(8, cores - 1 || 1));
+}
+
+function uploadedSizeSum(predicate) {
+  return uploaded.reduce((sum, entry) =>
+    predicate(entry.path) ? sum + (entry.file ? entry.file.size : 0) : sum, 0);
+}
+
+function shouldAutoStreamForWasmCap(opts, rootPath) {
+  const cap = Number(opts.wasmHeapLimitBytes || 0);
+  if (!cap || opts.pipeline === 'stream' || opts.pipeline === 'stream-next') return null;
+  if (!opts.flatten) return null;
+  if (!rootPath || /\.usdz$/i.test(rootPath)) return null;
+  if ((opts.targetTextureBytes || 0) > 0) return null;
+
+  const imageBytes = uploadedSizeSum(isImageName);
+  const usdBytes = uploadedSizeSum((path) => /\.(usd|usda|usdc)$/i.test(path));
+  const otherBytes = uploadedSizeSum((path) => !isImageName(path) && !/\.(usd|usda|usdc|usdz)$/i.test(path));
+  const currentHeap = wasmHeapByteLength(native);
+  const reserve = Math.max(128 * 1024 * 1024, Math.floor(cap * 0.25));
+  const availableBulkBudget = currentHeap > cap ? 0 : Math.max(0, cap - reserve);
+  // Bulk conversion mirrors textures/passthrough assets into the WASM resolver
+  // cache before export. USD layers also need transient composition memory, so
+  // count them twice as a conservative browser-side trigger.
+  const estimatedBulkBytes = imageBytes + otherBytes + usdBytes * 2;
+  if (estimatedBulkBytes <= availableBulkBudget) return null;
+  return {
+    pipeline: opts.pipeline === 'next' ? 'stream-next' : 'stream',
+    estimatedBulkBytes,
+    availableBulkBudget,
+    imageBytes,
+    usdBytes,
+    otherBytes,
+  };
 }
 
 function targetBrowserFormat(name, requested) {
@@ -625,7 +676,7 @@ async function browserRepackChannels(slots, channels) {
 els.btnConvert.addEventListener('click', async () => {
   try {
     els.btnConvert.disabled = true;
-    invalidateResult();
+    releasePreviousConversion('new conversion');
     showProgress();
     updateProgress({ stage: 'wasm', current: 0, total: 1, message: 'Loading converter module' });
     await ensureWasm();
@@ -637,6 +688,7 @@ els.btnConvert.addEventListener('click', async () => {
     const maxTextureSize = parseInt(els.maxSize.value, 10) || 0;
     const textureFormat = els.textureFormat.value;
     const reencode = els.reencode.checked;
+    const maxWasmHeapMb = parseInt(els.maxWasmHeapMb.value, 10) || 0;
     // Only attach the browser texture processor when textures actually need work
     // (resize / re-encode / format change / size-fit). When they pass through
     // unchanged, omitting it lets the low-heap flatten path engage for a single
@@ -667,6 +719,7 @@ els.btnConvert.addEventListener('click', async () => {
       // wasm32 the heap is bounded at 2 GB regardless, so mirroring is safe.
       maxUsdcMb: parseInt(els.maxUsdcMb.value, 10) || 0,
       maxMemMb: parseInt(els.maxUsdcMb.value, 10) || 0,
+      wasmHeapLimitBytes: maxWasmHeapMb > 0 ? maxWasmHeapMb * 1024 * 1024 : 0,
       log,
       progress: updateProgress,
     };
@@ -693,6 +746,20 @@ els.btnConvert.addEventListener('click', async () => {
     }
     if (targetTextureBytes > 0) {
       log(`Fitting textures to ${(targetTextureBytes / 1048576).toFixed(1)} MB via "${fitStrategy}" strategy...`);
+    }
+    const autoStream = shouldAutoStreamForWasmCap(opts, rootPath);
+    if (autoStream) {
+      log(`WASM heap cap: estimated bulk asset load ` +
+          `${(autoStream.estimatedBulkBytes / 1048576).toFixed(1)} MiB exceeds ` +
+          `${(autoStream.availableBulkBudget / 1048576).toFixed(1)} MiB budget; ` +
+          `using ${autoStream.pipeline} pipeline.`);
+      opts.pipeline = autoStream.pipeline;
+      updateProgress({
+        stage: 'preparing',
+        current: 1,
+        total: 1,
+        message: `Auto-switched to ${autoStream.pipeline} for WASM heap cap`,
+      });
     }
 
     // Convert-only: validate the conversion and report bytes/warnings/errors.

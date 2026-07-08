@@ -648,6 +648,47 @@ export function parseByteSize(input) {
   return Math.floor(num * mult);
 }
 
+export function wasmHeapByteLength(native) {
+  const heap = native && native.HEAPU8;
+  if (!heap) return 0;
+  return heap.buffer ? heap.buffer.byteLength : heap.length;
+}
+
+function wasmHeapLimitBytes(opts) {
+  const limit = Number((opts && opts.wasmHeapLimitBytes) || 0);
+  return Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+}
+
+function wasmBulkAssetBudgetBytes(native, opts) {
+  const limit = wasmHeapLimitBytes(opts);
+  if (!limit) return 0;
+  const currentHeap = wasmHeapByteLength(native);
+  if (currentHeap > limit) return 0;
+  const reserve = Math.max(128 * 1024 * 1024, Math.floor(limit * 0.25));
+  return Math.max(0, limit - reserve);
+}
+
+function createWasmBulkAssetGuard(native, opts, log) {
+  const limit = wasmHeapLimitBytes(opts);
+  if (!limit) return () => {};
+  const budget = wasmBulkAssetBudgetBytes(native, opts);
+  let registered = 0;
+  return (name, bytes, phase = 'asset cache') => {
+    const size = bytes && bytes.length ? bytes.length : 0;
+    if (registered + size > budget) {
+      const heapMiB = Math.round(wasmHeapByteLength(native) / 1048576);
+      const limitMiB = Math.round(limit / 1048576);
+      const budgetMiB = Math.round(budget / 1048576);
+      throw new Error(
+        `WASM heap cap would be exceeded while registering ${phase} "${name}" ` +
+        `(${Math.round(size / 1048576)} MiB). Current heap ${heapMiB} MiB, ` +
+        `configured cap ${limitMiB} MiB, bulk asset budget ${budgetMiB} MiB. ` +
+        'Use the streaming pipeline or resize/re-encode textures.');
+    }
+    registered += size;
+  };
+}
+
 // Replace a path's extension (keeping directories): "a/b.png","jpg" -> "a/b.jpg".
 export function replaceExt(name, ext) {
   const dot = name.lastIndexOf('.');
@@ -991,6 +1032,7 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
 
   let rootUSDC = null;
   const usd = new native.TinyUSDZLoaderNative();
+  const guardWasmAsset = createWasmBulkAssetGuard(native, opts, log);
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
         typeof usd.setUSDCExportLimitMB === 'function') {
@@ -1001,7 +1043,9 @@ async function convertSingleUSDZToLowHeapFlattenedUSDZ(native, rootPath, bytes,
       if (entry === rootEntry || !isUsdName(entry.name) || /\.usdz$/i.test(entry.name)) {
         continue;
       }
-      usd.setAsset(assetNameFor(entry.name), entry.data);
+      const name = assetNameFor(entry.name);
+      guardWasmAsset(name, entry.data, 'USD dependency layer');
+      usd.setAsset(name, entry.data);
     }
 
     log(`Low-heap ${mode} flatten; inner root layer: ${rootEntry.name}`);
@@ -1209,6 +1253,7 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
   // 1) Flatten the root layer low-heap. Textures are NOT registered in WASM.
   let rootUSDC = null;
   const usd = new native.TinyUSDZLoaderNative();
+  const guardWasmAsset = createWasmBulkAssetGuard(native, opts, log);
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
         typeof usd.setUSDCExportLimitMB === 'function') {
@@ -1217,6 +1262,7 @@ async function convertSingleUSDZStreamTextures(native, bytes, opts, log) {
     // Register only dependency USD layers (sublayers/refs), never images.
     for (const e of archiveEntries) {
       if (e === rootEntry || !isUsdName(e.name) || /\.usdz$/i.test(e.name)) continue;
+      guardWasmAsset(e.name, e.data, 'USD dependency layer');
       usd.setAsset(e.name, e.data);
     }
     if (!usd.loadAsLayerFromBinary(rootEntry.data, rootEntry.name.split('/').pop())) {
@@ -1419,7 +1465,10 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
       if (/\.usdz$/i.test(path)) {
         continue;
       }
-      usd.setAsset(assetNameFor(path), assetMap.get(path));
+      const bytes = assetMap.get(path);
+      const name = assetNameFor(path);
+      guardWasmAsset(name, bytes, 'USD dependency layer');
+      usd.setAsset(name, bytes);
       current++;
       reportProgress('layers', current, total, 'Registering USD dependency layers', path);
     }
@@ -1451,6 +1500,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
           log(`  ${name}: audio processing failed (${err && err.message ? err.message : err}); passing through`);
         }
       }
+      guardWasmAsset(name, bytes, audio ? 'audio asset' : 'passthrough asset');
       usd.setAsset(name, bytes);
       current++;
       reportProgress('assets', current, passthroughPaths.length, 'Packaging passthrough assets', name);
@@ -1473,6 +1523,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
   };
 
   const usd = new native.TinyUSDZLoaderNative();
+  const guardWasmAsset = createWasmBulkAssetGuard(native, opts, log);
   try {
     // Raise the USDC writer resource limits when requested (0 = keep the
     // conservative WASM default). Needed to export large scenes (dense meshes /
@@ -1508,7 +1559,9 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         const r = fit.results[i];
         const oldName = entries[i].name;
         const newName = replaceExt(oldName, r.ext);
-        usd.setAsset(newName, new Uint8Array(r.data));
+        const fitBytes = new Uint8Array(r.data);
+        guardWasmAsset(newName, fitBytes, 'processed texture');
+        usd.setAsset(newName, fitBytes);
         stats.textures++;
         stats.reencoded++;
         if (opts.fitStrategy === 'size') stats.resized++;
@@ -1626,6 +1679,7 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         log(`  ${assetName}: ${bytes.length} bytes [passthrough]`);
       }
 
+      guardWasmAsset(assetName, outBytes, 'texture');
       usd.setAsset(assetName, outBytes);
       packagedTextures++;
       reportProgress('textures', packagedTextures, images.length, 'Packaging textures', assetName);
@@ -1700,6 +1754,7 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
   };
 
   const usd = new native.TinyUSDZLoaderNative();
+  const guardWasmAsset = createWasmBulkAssetGuard(native, opts, log);
   try {
     if ((opts.maxUsdcMb > 0 || opts.maxMemMb > 0) &&
         typeof usd.setUSDCExportLimitMB === 'function') {
@@ -1753,7 +1808,9 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
         usdBytesTotal += bytes.length;
         usdLayersPreloaded++;
         rememberPreloadedUsdLayer(key, bytes);
-        usd.setAsset(assetNameFor(key), bytes);
+        const name = assetNameFor(key);
+        guardWasmAsset(name, bytes, 'USD dependency layer');
+        usd.setAsset(name, bytes);
         reportProgress('layers', usdLayersPreloaded, usdKeys.length, 'Preloading USD dependency layers', key);
       }
     };
@@ -1765,7 +1822,11 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       usdLayersPreloaded++;
       rememberPreloadedUsdLayer(key, bytes);
       if (key === rootPath) rootBytes = bytes;
-      else usd.setAsset(assetNameFor(key), bytes);
+      else {
+        const name = assetNameFor(key);
+        guardWasmAsset(name, bytes, 'USD dependency layer');
+        usd.setAsset(name, bytes);
+      }
       reportProgress('layers', usdLayersPreloaded, usdKeys.length, 'Reading USD layers', key);
     }
     if (!rootBytes) throw new Error(`root ${rootPath} not fetchable from source`);

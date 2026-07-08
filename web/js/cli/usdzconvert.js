@@ -57,6 +57,8 @@ Convert options:
                            (0 = keep the conservative ~100 MB WASM default).
                            Needed for very large scenes.
   --max-mem-mb <N>         Raise the USDC writer memory cap to N MB (0 = default)
+  --max-wasm-heap-mb <N>   Best-effort cap for bulk WASM asset registration
+                           (0 = off). Use stream/stream-next for large folders.
   --url-list <file.json>   Streaming source as URLs: [{key,url}...], [url...],
                            or {baseUrl, files}. Implies network fetch per asset.
   --pipeline <legacy|next|stream|stream-next> Flatten pipeline (default: legacy).
@@ -150,6 +152,8 @@ function parseArgs() {
     flatten: true,
     targetSize: 0, fitStrategy: 'size', fitMinSize: 64, fitMinQuality: 30,
     maxUsdcMb: 0, maxMemMb: 0,
+    wasmHeapLimitBytes: process.env.TINYUSDZ_MAX_WASM_HEAP ?
+      parseByteSize(process.env.TINYUSDZ_MAX_WASM_HEAP) : 0,
     pipeline: process.env.TINYUSDZ_PIPELINE || 'legacy',
     // undefined => auto (stream textures for a single .usdz keep-format re-encode,
     // the low-memory default); true => force; false => force the in-heap path.
@@ -199,6 +203,7 @@ function parseArgs() {
     else if (a === '--fit-min-quality') o.fitMinQuality = parseInt(args[++i], 10) || 30;
     else if (a === '--max-usdc-mb') o.maxUsdcMb = parseInt(args[++i], 10) || 0;
     else if (a === '--max-mem-mb') o.maxMemMb = parseInt(args[++i], 10) || 0;
+    else if (a === '--max-wasm-heap-mb') o.wasmHeapLimitBytes = (parseInt(args[++i], 10) || 0) * 1024 * 1024;
     else if (a === '--pipeline') o.pipeline = args[++i];
     else if (a === '--stream-textures') o.streamTextures = true;
     else if (a === '--no-stream-textures') o.streamTextures = false;
@@ -467,6 +472,7 @@ async function runStreamingConvert(native, o) {
       pngEncoder: o.pngEncoder,
       maxUsdcMb: o.maxUsdcMb,
       maxMemMb: o.maxMemMb,
+      wasmHeapLimitBytes: o.wasmHeapLimitBytes,
       pipeline: o.pipeline === 'stream-next' ? 'next' : undefined,
       streamWrite: o.streamWrite,
       optimizeMaterials: o.optimizeMaterials,
@@ -713,6 +719,7 @@ async function main() {
       jpegQuality: o.jpegQuality,
       maxUsdcMb: o.maxUsdcMb,
       maxMemMb: o.maxMemMb,
+      wasmHeapLimitBytes: o.wasmHeapLimitBytes,
       pipeline: o.pipeline,
       streamTextures: o.streamTextures,
       streamWrite: o.streamWrite,
