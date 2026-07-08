@@ -11408,10 +11408,16 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::extractVariants)
 
       .function("applyVariantSelection",
-                &TinyUSDZLoaderNative::applyVariantSelection)
+                select_overload<bool(const std::string &, const std::string &,
+                                     const std::string &)>(
+                    &TinyUSDZLoaderNative::applyVariantSelection))
 
       .function("composeVariants",
                 &TinyUSDZLoaderNative::composeVariants)
+
+      .function("applyVariantSelection",
+                select_overload<bool(const std::string &)>(
+                    &TinyUSDZLoaderNative::applyVariantSelection))
 
       .function("lodVariantCount",
                 &TinyUSDZLoaderNative::lodVariantCount)
