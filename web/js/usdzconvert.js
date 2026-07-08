@@ -10,13 +10,9 @@
 import {
   loadWasm,
   isImageName,
-  convertFolderToUSDZ,
-  convertSourceToUSDZStreaming,
-  outputFormatForImage,
   parseByteSize,
   wasmHeapByteLength,
 } from './src/usdzconvert.js';
-import { createBrowserTextureProcessor } from './src/texture-processor-browser.mjs';
 
 // ---------------------------------------------------------------------------
 // UI
@@ -347,6 +343,7 @@ function downloadBlob(blob, filename) {
 // ---------------------------------------------------------------------------
 
 let native = null;
+let conversionWorker = null;
 let uploaded = []; // [{ path, file }]
 let lastResult = null; // { usdz: Uint8Array, filename: string } after a successful convert
 
@@ -382,6 +379,13 @@ function releaseWasmModule(reason = '') {
   if (!native) return;
   native = null;
   if (reason) log(`Released TinyUSDZ WASM module (${reason}).`);
+}
+
+function terminateConversionWorker(reason = '') {
+  if (!conversionWorker) return;
+  conversionWorker.terminate();
+  conversionWorker = null;
+  if (reason) log(`Stopped conversion worker (${reason}).`);
 }
 
 function refreshFileList() {
@@ -420,6 +424,7 @@ function invalidateResult() {
 
 function releasePreviousConversion(reason) {
   invalidateResult();
+  terminateConversionWorker(reason);
   releaseWasmModule(reason);
 }
 
@@ -545,13 +550,6 @@ function shouldAutoStreamForWasmCap(opts, rootPath) {
   };
 }
 
-function targetBrowserFormat(name, requested) {
-  const fmt = outputFormatForImage(name, requested);
-  if (fmt.format === 'jpeg') return { format: 'jpeg', mime: 'image/jpeg', ext: fmt.ext };
-  if (fmt.format === 'png') return { format: 'png', mime: 'image/png', ext: fmt.ext };
-  return null;
-}
-
 function encodeCanvas(canvas, mime, quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => {
@@ -569,35 +567,6 @@ async function imageBitmapFromBytes(data, name) {
   if (!fmt) return null;
   const mime = fmt === 'jpeg' ? 'image/jpeg' : 'image/png';
   return await createImageBitmap(new Blob([data], { type: mime }));
-}
-
-async function browserTextureProcessor({ name, data, maxTextureSize, reencode, textureFormat, jpegQuality }) {
-  const target = targetBrowserFormat(name, textureFormat);
-  if (!target) return null;
-  const mustTranscode = String(textureFormat || 'keep').toLowerCase() !== 'keep';
-  const wantResize = maxTextureSize > 0;
-  if (!wantResize && !reencode && !mustTranscode) return null;
-
-  const bitmap = await imageBitmapFromBytes(data, name);
-  if (!bitmap) return null;
-
-  const scale = wantResize ? Math.min(1, maxTextureSize / Math.max(bitmap.width, bitmap.height)) : 1;
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { alpha: target.format !== 'jpeg' });
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close?.();
-
-  const encoded = await encodeCanvas(canvas, target.mime, Math.max(0.01, Math.min(1, jpegQuality / 100)));
-  return {
-    data: encoded,
-    ext: target.ext,
-    resized: scale < 1,
-    reencoded: true,
-  };
 }
 
 async function imageDataFromSlot(slot) {
@@ -673,14 +642,43 @@ async function browserRepackChannels(slots, channels) {
 // Convert
 // ---------------------------------------------------------------------------
 
+function runConversionWorker(payload) {
+  terminateConversionWorker();
+  conversionWorker = new Worker(new URL('./usdzconvert.worker.js', import.meta.url), { type: 'module' });
+  return new Promise((resolve, reject) => {
+    const worker = conversionWorker;
+    worker.onmessage = (event) => {
+      const data = event.data || {};
+      if (data.type === 'log') {
+        log(data.message);
+      } else if (data.type === 'progress') {
+        updateProgress(data.info || {});
+      } else if (data.type === 'complete') {
+        if (conversionWorker === worker) conversionWorker = null;
+        worker.terminate();
+        resolve(data);
+      } else if (data.type === 'error') {
+        if (conversionWorker === worker) conversionWorker = null;
+        worker.terminate();
+        const err = new Error(data.message || 'Conversion worker failed');
+        if (data.stack) err.stack = data.stack;
+        reject(err);
+      }
+    };
+    worker.onerror = (event) => {
+      if (conversionWorker === worker) conversionWorker = null;
+      worker.terminate();
+      reject(new Error(event.message || 'Conversion worker failed'));
+    };
+    worker.postMessage({ type: 'convert', ...payload });
+  });
+}
+
 els.btnConvert.addEventListener('click', async () => {
   try {
     els.btnConvert.disabled = true;
     releasePreviousConversion('new conversion');
     showProgress();
-    updateProgress({ stage: 'wasm', current: 0, total: 1, message: 'Loading converter module' });
-    await ensureWasm();
-    updateProgress({ stage: 'wasm', current: 1, total: 1, message: 'Converter module ready' });
 
     const rootPath = els.rootSelect.value;
     const fitStrategy = (document.querySelector('input[name="fitStrategy"]:checked') || {}).value || 'size';
@@ -689,14 +687,6 @@ els.btnConvert.addEventListener('click', async () => {
     const textureFormat = els.textureFormat.value;
     const reencode = els.reencode.checked;
     const maxWasmHeapMb = parseInt(els.maxWasmHeapMb.value, 10) || 0;
-    // Only attach the browser texture processor when textures actually need work
-    // (resize / re-encode / format change / size-fit). When they pass through
-    // unchanged, omitting it lets the low-heap flatten path engage for a single
-    // self-contained .usdz (streams the root USDC out of the wasm heap and
-    // repacks the zip in JS), so large scenes convert without exhausting the
-    // 2 GB wasm32 heap. ARKit + passthrough uses the faithful Layer->Layer
-    // flatten by default ('flatten-layer'); set lowHeapStageMode:'stage' to
-    // force the typed-Prim Stage reconstruction.
     const needsTextureWork = maxTextureSize > 0 || reencode ||
       String(textureFormat).toLowerCase() !== 'keep' || targetTextureBytes > 0;
     const opts = {
@@ -715,35 +705,13 @@ els.btnConvert.addEventListener('click', async () => {
       jpegQuality: parseInt(els.jpegQuality.value, 10) || 90,
       // Raise the USDC writer's file-size AND working-memory caps together: a
       // raised file cap with the conservative default memory cap forces a slow
-      // low-memory writer path (and can abort near the wasm32 2 GB heap). On
-      // wasm32 the heap is bounded at 2 GB regardless, so mirroring is safe.
+      // low-memory writer path. On wasm32 the heap is bounded at 2 GB.
       maxUsdcMb: parseInt(els.maxUsdcMb.value, 10) || 0,
       maxMemMb: parseInt(els.maxUsdcMb.value, 10) || 0,
       wasmHeapLimitBytes: maxWasmHeapMb > 0 ? maxWasmHeapMb * 1024 * 1024 : 0,
-      log,
-      progress: updateProgress,
     };
-    // The browser canvas resizes in gamma space (== "linear" filter). When the
-    // user asks for colorspace-aware resampling (auto/sRGB), route textures to
-    // TinyUSDZ WASM instead so convertImage can honor it (the canvas can't).
     const colorspaceAware = opts.resizeColorspace === 'auto' ||
                             opts.resizeColorspace === 'srgb';
-    let browserTexturePool = null;
-    if (needsTextureWork && !colorspaceAware) {
-      if (typeof OffscreenCanvas !== 'undefined' &&
-          typeof OffscreenCanvas.prototype.convertToBlob === 'function') {
-        browserTexturePool = createBrowserTextureProcessor({
-          concurrency: browserTextureConcurrency(),
-        });
-        opts.textureProcessor = browserTexturePool.processor;
-        opts.textureConcurrency = browserTexturePool.concurrency;
-        log(`Browser texture codec: OffscreenCanvas (${browserTexturePool.concurrency} concurrent job(s))`);
-      } else {
-        opts.textureProcessor = browserTextureProcessor;
-        opts.textureConcurrency = 1;
-        log('Browser texture codec: canvas fallback (1 concurrent job)');
-      }
-    }
     if (targetTextureBytes > 0) {
       log(`Fitting textures to ${(targetTextureBytes / 1048576).toFixed(1)} MB via "${fitStrategy}" strategy...`);
     }
@@ -762,48 +730,23 @@ els.btnConvert.addEventListener('click', async () => {
       });
     }
 
-    // Convert-only: validate the conversion and report bytes/warnings/errors.
-    // The download is a separate, explicit step (Download button below).
     setStatus('Converting...');
     updateProgress({ stage: 'preparing', current: 1, total: 1, message: rootPath });
-    let usdz, stats;
-    if (opts.pipeline === 'stream' || opts.pipeline === 'stream-next') {
-      if (targetTextureBytes > 0) {
-        throw new Error('Streaming conversion does not support target total texture size yet.');
-      }
-      const fileByPath = new Map(uploaded.map(({ path, file }) => [path, file]));
-      const source = {
-        keys: [...fileByPath.keys()],
-        fetch: async (key) => {
-          updateProgress({ stage: isImageName(key) ? 'textures' : 'layers', message: key });
-          const file = fileByPath.get(key);
-          if (!file) throw new Error(`Missing uploaded file: ${key}`);
-          return new Uint8Array(await file.arrayBuffer());
-        },
-      };
-      ({ usdz, stats } = await convertSourceToUSDZStreaming(native, source, {
-        ...opts,
-        pipeline: opts.pipeline === 'stream-next' ? 'next' : undefined,
-        nextPreloadUsdLayers: opts.pipeline === 'stream-next',
-      }));
-    } else {
-      // Read all files into memory for the classic folder-conversion API.
-      const assetMap = new Map();
-      updateProgress({ stage: 'preparing', current: 0, total: uploaded.length, message: 'Reading selected files' });
-      let fileReadCount = 0;
-      for (const { path, file } of uploaded) {
-        assetMap.set(path, new Uint8Array(await file.arrayBuffer()));
-        fileReadCount++;
-        updateProgress({ stage: 'preparing', current: fileReadCount, total: uploaded.length, message: path });
-      }
-      ({ usdz, stats } = await convertFolderToUSDZ(native, assetMap, opts));
-    }
-    log(`Converted OK. textures: ${stats.textures}, resized: ${stats.resized}, ` +
-        `reencoded: ${stats.reencoded}, audio: ${stats.audio || 0}, ` +
+    const result = await runConversionWorker({
+      files: uploaded.map(({ path, file }) => ({ path, file })),
+      opts,
+      needsTextureWork,
+      colorspaceAware,
+      textureConcurrency: browserTextureConcurrency(),
+    });
+    const usdz = result.usdz instanceof Uint8Array ? result.usdz : new Uint8Array(result.usdz);
+    const stats = result.stats || {};
+    log(`Converted OK. textures: ${stats.textures || 0}, resized: ${stats.resized || 0}, ` +
+        `reencoded: ${stats.reencoded || 0}, audio: ${stats.audio || 0}, ` +
         `other assets: ${stats.otherAssets || 0}. USDZ: ${usdz.length} bytes`);
-    if (browserTexturePool) {
-      const tex = browserTexturePool.stats();
-      log(`Browser texture time: decode ${tex.decodeMs.toFixed(1)} ms, ` +
+    if (result.textureStats) {
+      const tex = result.textureStats;
+      log(`Worker texture time: decode ${tex.decodeMs.toFixed(1)} ms, ` +
           `raster ${tex.rasterMs.toFixed(1)} ms, encode ${tex.encodeMs.toFixed(1)} ms; ` +
           `processed ${tex.processed}, skipped ${tex.skipped}`);
     }
@@ -814,12 +757,13 @@ els.btnConvert.addEventListener('click', async () => {
     updateProgress({ stage: 'complete', message: `${usdz.length.toLocaleString()} bytes` });
     setStatus(`✓ Converted — ${usdz.length.toLocaleString()} bytes. Ready to download.`);
   } catch (err) {
+    terminateConversionWorker('failed conversion');
     log('ERROR: ' + (err && err.message ? err.message : err));
     els.progressStage.textContent = 'Conversion failed';
     els.progressDetails.textContent = err && err.message ? err.message : String(err);
     setStatus('✗ Conversion failed — see log.');
   } finally {
-    els.btnConvert.disabled = false;
+    els.btnConvert.disabled = !uploaded.some(u => /\.(usd|usda|usdc|usdz)$/i.test(u.path));
   }
 });
 
