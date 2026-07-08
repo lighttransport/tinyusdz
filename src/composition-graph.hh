@@ -381,6 +381,19 @@ struct CompositionGraphOptions {
   /// Maximum composition depth (prevents infinite recursion).
   uint32_t max_depth{256};
 
+  /// Maximum namespace depth (number of '/' components) of any composed prim
+  /// path, relative to the whole stage. A reference/payload cycle that
+  /// reconstructs referenced descendants generates ever-LONGER unique paths
+  /// (/A/B/A/B/...), each a distinct key that the built-set dedup never
+  /// catches — an unbounded worklist (hang / OOM). Real USD namespace depth
+  /// never approaches this.
+  uint32_t max_namespace_depth{1024};
+
+  /// Backstop on the total number of composed prim indices built. Bounds the
+  /// worklist even if a cycle stays under max_namespace_depth per step but
+  /// fans out. 0 = unlimited.
+  size_t max_composed_prims{4u * 1024u * 1024u};
+
   /// Enable instancing detection during composition.
   bool detect_instances{true};
 
@@ -716,6 +729,12 @@ class PrimIndexBuilder {
   bool PropagateImpliedSpecializes(uint16_t source_node, std::string *err);
 
   // Node management
+  /// True if an arc from `node_idx` to (layer_stack, site_path) revisits an
+  /// ancestor site (composition cycle). Prevents exponential blow-up on
+  /// cyclic references/payloads.
+  bool ArcWouldRevisitSite(uint16_t node_idx, uint16_t target_ls_idx,
+                           uint32_t target_site_idx) const;
+
   uint16_t AddNode(ArcType arc_type, uint16_t parent_idx,
                    uint16_t layer_stack_idx, uint16_t layer_idx,
                    uint32_t site_path_idx, uint16_t map_expr_idx);
