@@ -481,6 +481,14 @@ public:
   /// If an identical value exists, reuses its offset
   uint32_t add_dedup(PropNameId name_id, double time, Value value);
 
+private:
+  /// Keep each property's (time, offset) vector sorted by time (consumers —
+  /// interpolation's FindBracket, the crate writer's times block — assume it),
+  /// with last-wins upsert for a re-authored time.
+  void insert_sample(PropNameId name_id, double time, uint32_t offset);
+
+public:
+
   /// Get time samples for a property
   /// Returns vector of (time, value_offset) pairs, sorted by time
   const std::vector<std::pair<double, uint32_t>>* get(PropNameId name_id) const;

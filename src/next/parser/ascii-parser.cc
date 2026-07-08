@@ -64,6 +64,15 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
 
   // Parse root prims
   while (!AtEnd()) {
+    // `reorder rootPrims = [...]` at root scope: accepted and skipped (prim
+    // ordering metadata is not modeled; failing the whole file is worse).
+    if (lexer_->peek().type == TokenType::Reorder) {
+      lexer_->next();
+      std::string what;
+      lexer_->expect(TokenType::Identifier, what);
+      if (Match(TokenType::Equals)) SkipValueLike();
+      continue;
+    }
     if (!ParsePrim()) {
       return false;
     }
@@ -217,6 +226,17 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   auto ReadArcList = [this, &SelectArc, &SelectEdit](
                          PrimSpecMeta& meta, ArcField field, ArcQual qual) {
     std::vector<std::string> items;
+    if (Check(TokenType::None)) {
+      // `references = None`: an explicit-clear list op. Consume the token
+      // (leaving it un-consumed desynchronizes the metadata loop) and record
+      // an authored empty explicit edit.
+      lexer_->next();
+      ArcEdit& e0 = SelectEdit(meta.ensure_arc_edits(), field);
+      e0 = ArcEdit();
+      e0.authored = true;
+      SelectArc(meta, field).clear();
+      return;
+    }
     if (Match(TokenType::OpenBracket)) {
       while (!Check(TokenType::CloseBracket) && !AtEnd()) {
         std::string ref;
@@ -357,6 +377,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         prim->meta().instanceable = *result.value.as_bool();
       }
     } else if (key == "apiSchemas") {
+      std::vector<std::string> schemas;
       if (Match(TokenType::OpenBracket)) {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
           // Schema names are authored as quoted strings (`"PhysicsRigidBodyAPI"`);
@@ -366,11 +387,35 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           if (Check(TokenType::String)
                   ? lexer_->expect(TokenType::String, schema)
                   : lexer_->expect(TokenType::Identifier, schema)) {
-            prim->meta().apiSchemas().push_back(schema);
+            schemas.push_back(schema);
           }
           Match(TokenType::Comma);
         }
         Match(TokenType::CloseBracket);
+      }
+      // Apply per the authored qualifier: `delete apiSchemas = [...]` must
+      // REMOVE the schemas (appending them would invert the opinion).
+      std::vector<std::string>& applied = prim->meta().apiSchemas();
+      switch (arc_qual) {
+        case ArcQual::Delete:
+          applied.erase(
+              std::remove_if(applied.begin(), applied.end(),
+                             [&](const std::string& a) {
+                               return std::find(schemas.begin(), schemas.end(),
+                                                a) != schemas.end();
+                             }),
+              applied.end());
+          break;
+        case ArcQual::Explicit:
+          applied = std::move(schemas);
+          break;
+        case ArcQual::Prepend:
+          applied.insert(applied.begin(), schemas.begin(), schemas.end());
+          break;
+        case ArcQual::Append:
+        case ArcQual::Reorder:
+          applied.insert(applied.end(), schemas.begin(), schemas.end());
+          break;
       }
     } else if (key == "references") {
       ReadArcList(prim->meta(), ArcField::References, arc_qual);

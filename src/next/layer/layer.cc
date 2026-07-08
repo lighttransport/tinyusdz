@@ -313,6 +313,40 @@ uint32_t LayerBuilder::begin_prim(const std::string& name, const std::string& ty
   }
   spec.set_path(Path(path_str));
 
+  // Duplicate sibling name: re-open the existing prim instead of appending a
+  // second spec with the same path. Two same-path specs corrupt a subsequent
+  // crate write (pxr: "invalid specs: spec repeated") — pxr errors on the
+  // duplicate at parse time; merging keeps the file loadable while staying
+  // single-spec-per-path.
+  if (!prim_stack_.empty()) {
+    const PrimSpec* parent = layer_.prim(prim_stack_.back());
+    if (parent) {
+      for (uint32_t ci : parent->child_indices()) {
+        const PrimSpec* child = layer_.prim(ci);
+        if (child && child->name() == name) {
+          current_index_ = ci;
+          if (!type_name.empty() && layer_.prim(ci)->type_name().empty()) {
+            layer_.prim_mutable(ci)->set_type_name(type_name);
+          }
+          prim_stack_.push_back(current_index_);
+          return current_index_;
+        }
+      }
+    }
+  } else {
+    for (uint32_t ri : layer_.root_indices()) {
+      const PrimSpec* root = layer_.prim(ri);
+      if (root && root->name() == name) {
+        current_index_ = ri;
+        if (!type_name.empty() && layer_.prim(ri)->type_name().empty()) {
+          layer_.prim_mutable(ri)->set_type_name(type_name);
+        }
+        prim_stack_.push_back(current_index_);
+        return current_index_;
+      }
+    }
+  }
+
   current_index_ = layer_.add_prim(std::move(spec));
 
   // Set up parent-child relationship

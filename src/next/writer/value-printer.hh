@@ -81,6 +81,10 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
 /// Print a Value type name
 std::string PrintTypeName(TypeId type_id, bool is_array = false);
 
+/// Format an asset path for usda text: `@path@`, or the pxr triple-delimiter
+/// form `@@@path@@@` (with `\@@@` escaping) when the path itself contains '@'.
+std::string FormatAssetPathForUsda(const std::string& path);
+
 /// Print a Value to USDA attribute declaration format
 /// e.g., "float3 points = (1, 2, 3)"
 std::string PrintAttributeValue(const std::string& type_name, const std::string& attr_name,

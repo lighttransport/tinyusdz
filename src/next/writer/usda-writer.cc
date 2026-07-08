@@ -126,6 +126,59 @@ const char* SpecifierKeyword(PrimSpecifier spec) {
 // per prim/property on the hot path. The cache is thread_local so it stays
 // correct under the parallel subtree stitcher (each worker has its own
 // StreamWriter). Byte-identical to emitting `indent` in a loop for any unit.
+// Render a canonical arc string for usda text. Arc strings are stored as
+// "@asset@</prim>" / "</prim>" (internal) / bare asset path, optionally with
+// the internal layer-offset suffix "?layerOffset=offset:scale" — the suffix
+// must be re-emitted in pxr syntax `(offset = N; scale = M)` (pxr rejects the
+// internal form).
+std::string FormatArcRef(const std::string& arc) {
+  std::string body = arc;
+  std::string suffix;
+  size_t q = body.find("?layerOffset=");
+  if (q != std::string::npos) {
+    const char* c = body.c_str() + q + 13;
+    char* endp = nullptr;
+    double off = std::strtod(c, &endp);
+    double scl = (endp && *endp == ':') ? std::strtod(endp + 1, nullptr) : 1.0;
+    body.resize(q);
+    if (off != 0.0 || scl != 1.0) {
+      suffix = " (";
+      if (off != 0.0) {
+        suffix += "offset = " + dtos(off);
+        if (scl != 1.0) suffix += "; ";
+      }
+      if (scl != 1.0) suffix += "scale = " + dtos(scl);
+      suffix += ")";
+    }
+  }
+  std::string out;
+  if (!body.empty() && body[0] == '<') {
+    out = body;  // internal arc
+  } else if (!body.empty() && body[0] == '@') {
+    // Already-delimited asset form (possibly with a <prim> suffix): if the
+    // asset segment contains an inner '@', re-delimit it triple-@.
+    size_t close = body.find('@', 1);
+    std::string asset =
+        (close != std::string::npos) ? body.substr(1, close - 1) : "";
+    std::string rest =
+        (close != std::string::npos) ? body.substr(close + 1) : "";
+    if (asset.find('@') != std::string::npos || rest.find('@') == 0) {
+      // Conservative re-parse: extract asset by the LAST '@' before any '<'.
+      size_t lt = body.find('<');
+      size_t last_at = (lt == std::string::npos ? body : body.substr(0, lt))
+                           .rfind('@');
+      asset = body.substr(1, last_at - 1);
+      rest = body.substr(last_at + 1);
+      out = FormatAssetPathForUsda(asset) + rest;
+    } else {
+      out = body;
+    }
+  } else {
+    out = FormatAssetPathForUsda(body);
+  }
+  return out + suffix;
+}
+
 void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
   if (depth <= 0 || indent.empty()) return;
   thread_local std::string pad;    // cached repetition of `unit`
@@ -155,7 +208,19 @@ std::string EscapeString(const std::string& s) {
       case '\n': result += "\\n"; break;
       case '\r': result += "\\r"; break;
       case '\t': result += "\\t"; break;
-      default:   result += c; break;
+      default: {
+        // Match the value printer: \xNN-escape control bytes.
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc == 0x7f) {
+          static const char* hexd = "0123456789abcdef";
+          result += "\\x";
+          result += hexd[uc >> 4];
+          result += hexd[uc & 0xf];
+        } else {
+          result += c;
+        }
+        break;
+      }
     }
   }
   result += '"';
@@ -210,19 +275,19 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if (meta.metersPerUnit != 0.01) {
-    lines.push_back(opts.indent + "metersPerUnit = " + format_g(meta.metersPerUnit, opts.double_precision));
+    lines.push_back(opts.indent + "metersPerUnit = " + dtos(meta.metersPerUnit));
   }
 
   if (meta.startTimeCode != 0.0) {
-    lines.push_back(opts.indent + "startTimeCode = " + format_g(meta.startTimeCode, opts.double_precision));
+    lines.push_back(opts.indent + "startTimeCode = " + dtos(meta.startTimeCode));
   }
 
   if (meta.endTimeCode != 0.0) {
-    lines.push_back(opts.indent + "endTimeCode = " + format_g(meta.endTimeCode, opts.double_precision));
+    lines.push_back(opts.indent + "endTimeCode = " + dtos(meta.endTimeCode));
   }
 
   if (meta.timeCodesPerSecond != 24.0) {
-    lines.push_back(opts.indent + "timeCodesPerSecond = " + format_g(meta.timeCodesPerSecond, opts.double_precision));
+    lines.push_back(opts.indent + "timeCodesPerSecond = " + dtos(meta.timeCodesPerSecond));
   }
 
   if (meta.upAxis != "Y") {
@@ -230,16 +295,16 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if (meta.framesPerSecond_set) {
-    lines.push_back(opts.indent + "framesPerSecond = " + format_g(meta.framesPerSecond, opts.double_precision));
+    lines.push_back(opts.indent + "framesPerSecond = " + dtos(meta.framesPerSecond));
   }
 
   if (meta.kilogramsPerUnit_set) {
-    lines.push_back(opts.indent + "kilogramsPerUnit = " + format_g(meta.kilogramsPerUnit, opts.double_precision));
+    lines.push_back(opts.indent + "kilogramsPerUnit = " + dtos(meta.kilogramsPerUnit));
   }
 
   if (!meta.colorConfiguration.empty()) {
-    lines.push_back(opts.indent + "colorConfiguration = @" +
-                    meta.colorConfiguration + "@");
+    lines.push_back(opts.indent + "colorConfiguration = " +
+                    FormatAssetPathForUsda(meta.colorConfiguration));
   }
 
   if (!meta.colorManagementSystem.empty()) {
@@ -257,7 +322,7 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   if (!meta.subLayers.empty()) {
     std::string s = opts.indent + "subLayers = [\n";
     for (const auto& layer : meta.subLayers) {
-      s += opts.indent + opts.indent + "@" + layer + "@,\n";
+      s += opts.indent + opts.indent + FormatAssetPathForUsda(layer) + ",\n";
     }
     s += opts.indent + "]";
     lines.push_back(std::move(s));
@@ -283,6 +348,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   const int md = depth + 1;
   os << " (\n";
   auto kv = [&](const std::string& s) {
+    if (s.empty()) return;  // e.g. DictMetaLine of an empty dict
     WriteIndent(os, md, opts.indent);
     os << s << "\n";
   };
@@ -313,7 +379,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   if (m->authored & PropMeta::kKind)
     kv("kind = " + EscapeString(m->kind));
   if (m->authored & PropMeta::kWeight) {
-    kv("weight = " + format_g(m->weight, opts.double_precision));
+    kv("weight = " + dtos(m->weight));
   }
   if (m->authored & PropMeta::kUnauthoredIdx)
     kv("unauthoredValuesIndex = " + IntToStr(static_cast<long long>(m->unauthoredValuesIndex)));
@@ -366,7 +432,7 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
   for (size_t i = 0; i < samples->size(); ++i) {
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
-    os << format_g(sample.first, opts.double_precision) << ": ";
+    os << dtos(sample.first) << ": ";
 
     const Value* val = spec.time_sample_value(sample.second);
     if (val && val->is_block()) {
@@ -538,7 +604,8 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   os << "rel " << name;
 
   if (targets.empty()) {
-    os << " = None";
+    // Declared-only relationship: bare `rel name` (pxr re-parses it as a
+    // declaration; `= None` would author a block instead).
   } else if (targets.size() == 1) {
     os << " = <" << targets[0].str() << ">";
   } else {
@@ -636,12 +703,7 @@ void WriteVariantSets(StreamWriter& os,
                             const std::vector<std::string>& arcs) {
           for (const std::string& a : arcs) {
             WriteIndent(os, depth + 2, opts.indent);
-            os << "prepend " << keyword << " = ";
-            if (!a.empty() && (a[0] == '@' || a[0] == '<'))
-              os << a;
-            else
-              os << "@" << a << "@";
-            os << "\n";
+            os << "prepend " << keyword << " = " << FormatArcRef(a) << "\n";
           }
         };
         arc_line("references", o_refs);
@@ -833,11 +895,14 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     const int md = depth + 1;
     os << " (\n";
     auto kv = [&](const std::string& s) {
+      if (s.empty()) return;  // e.g. DictMetaLine of an empty dict
       WriteIndent(os, md, opts.indent);
       os << s << "\n";
     };
     if (!meta.active) kv("active = false");
+    else if (meta.active_authored) kv("active = true");
     if (meta.hidden) kv("hidden = true");
+    else if (meta.hidden_authored) kv("hidden = false");
     if (meta.instanceable) kv("instanceable = true");
     if (!meta.kind().empty()) kv("kind = " + EscapeString(meta.kind()));
     if (!meta.displayName().empty())
@@ -871,20 +936,19 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         os << qual << field << " = [\n";
         for (const auto& a : items) {
           WriteIndent(os, md + 1, opts.indent);
-          // `a` is a composed arc string: "@asset@</prim>" (external),
-          // "</prim>" (internal reference, no asset), or a bare asset path.
-          // Emit external/internal forms as-is; only a bare asset path is
-          // wrapped in @...@.
-          if (!a.empty() && (a[0] == '@' || a[0] == '<'))
-            os << a << ",\n";
-          else
-            os << "@" << a << "@,\n";
+          os << FormatArcRef(a) << ",\n";
         }
         WriteIndent(os, md, opts.indent);
         os << "]\n";
       };
       if (!e || !e->authored || e->is_explicit) {
-        emit("", inl);  // bare/explicit list
+        if (e && e->authored && e->is_explicit && inl.empty()) {
+          // Authored explicit-clear (`references = None`).
+          WriteIndent(os, md, opts.indent);
+          os << field << " = None\n";
+        } else {
+          emit("", inl);  // bare/explicit list
+        }
       } else {
         emit("prepend ", e->prepended);
         emit("append ", e->appended);

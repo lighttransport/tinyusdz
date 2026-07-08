@@ -158,6 +158,9 @@ public:
   /// Int-vector element types (Int2/Int3/Int4): flat int32 buffer.
   static Value MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
                                 uint32_t comps_per_elem);
+  /// UInt-vector element types (UInt2/UInt3/UInt4): flat uint32 buffer.
+  static Value MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
+                                 uint32_t comps_per_elem);
   /// String-family arrays with an explicit element type (Token / String /
   /// AssetPath); same storage as MakeTokenArray.
   static Value MakeStringLikeArray(std::vector<std::string>&& data,

@@ -242,11 +242,28 @@ uint32_t TimeSampleStorage::find_or_store(Value value) {
   return offset;
 }
 
+void TimeSampleStorage::insert_sample(PropNameId name_id, double time,
+                                      uint32_t offset) {
+  auto& vec = samples_[name_id.id];
+  if (vec.empty() || time > vec.back().first) {  // common: authored in order
+    vec.emplace_back(time, offset);
+    return;
+  }
+  auto it = std::lower_bound(
+      vec.begin(), vec.end(), time,
+      [](const std::pair<double, uint32_t>& a, double t) { return a.first < t; });
+  if (it != vec.end() && it->first == time) {
+    it->second = offset;  // re-authored time: last opinion wins
+    return;
+  }
+  vec.insert(it, {time, offset});
+}
+
 uint32_t TimeSampleStorage::add(PropNameId name_id, double time, Value value) {
   // Store without deduplication (faster for unique values)
   uint32_t offset = static_cast<uint32_t>(values_.size());
   values_.push_back(std::move(value));
-  samples_[name_id.id].emplace_back(time, offset);
+  insert_sample(name_id, time, offset);
   return offset;
 }
 
@@ -263,7 +280,7 @@ uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value val
   }
   // Store with deduplication (good for repeated array values)
   uint32_t offset = find_or_store(std::move(value));
-  samples_[name_id.id].emplace_back(time, offset);
+  insert_sample(name_id, time, offset);
   return offset;
 }
 
