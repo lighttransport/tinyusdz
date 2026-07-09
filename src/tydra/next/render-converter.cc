@@ -9,6 +9,7 @@
 #include "next/schema/usd-shade.hh"
 #include "next/schema/usd-skel.hh"
 #include "next/types/type-info.hh"
+#include "tydra/shape-to-mesh.hh"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -390,6 +391,8 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
   CopyChunkedArray(src.texcoords_1, &dst->texcoords_1);
   CopyChunkedArray(src.colors, &dst->colors);
   CopyChunkedArray(src.triangulated_indices, &dst->triangulated_indices);
+  CopyChunkedArray(src.triangulated_face_vertex_indices,
+                   &dst->triangulated_face_vertex_indices);
   dst->normals_interp = src.normals_interp;
   dst->texcoords_0_interp = src.texcoords_0_interp;
   dst->texcoords_1_interp = src.texcoords_1_interp;
@@ -397,6 +400,11 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
   dst->material_id = src.material_id;
   dst->material_subsets = src.material_subsets;
   dst->is_triangulated = src.is_triangulated;
+  dst->hole_faces = src.hole_faces;
+  dst->left_handed = src.left_handed;
+  dst->bbox_min = src.bbox_min;
+  dst->bbox_max = src.bbox_max;
+  dst->has_bbox = src.has_bbox;
 
   dst->primvars.reserve(src.primvars.size());
   for (const VertexAttribute& pv : src.primvars) {
@@ -410,6 +418,7 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
     CopyChunkedArray(src.skin->joint_indices, &dst->skin->joint_indices);
     CopyChunkedArray(src.skin->joint_weights, &dst->skin->joint_weights);
     dst->skin->skeleton_id = src.skin->skeleton_id;
+    dst->skin->skeleton_path = src.skin->skeleton_path;
     dst->skin->geom_bind_transform = src.skin->geom_bind_transform;
   }
 
@@ -419,6 +428,7 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
     copy.name = bs.name;
     CopyChunkedArray(bs.point_offsets, &copy.point_offsets);
     CopyChunkedArray(bs.normal_offsets, &copy.normal_offsets);
+    copy.point_indices = bs.point_indices;
     copy.weight = bs.weight;
     dst->blend_shapes.push_back(std::move(copy));
   }
@@ -532,6 +542,7 @@ void AppendPointInstanceDraws(int32_t instancer_id,
   if (!scene || !instancer || instancer_id < 0) return;
   instancer->draw_start = static_cast<uint32_t>(scene->point_instance_draws.size());
   instancer->draw_count = 0;
+  if (!instancer->valid) return;
 
   const size_t instance_count = instancer->instance_count();
   for (size_t instance_index = 0; instance_index < instance_count; ++instance_index) {
@@ -804,6 +815,126 @@ std::string ValueSummary(const Value& value) {
   return type_name ? type_name : "value";
 }
 
+bool ReadStringLikeProperty(const UsdPrim& prim, const std::string& name,
+                            std::string* out) {
+  if (!out) return false;
+  if (GetString(prim, name, out) || GetToken(prim, name, out)) return true;
+  const Value* v = GetAttribute(prim, name);
+  if (!v) return false;
+  if (const std::string* ap = v->as_asset_path()) {
+    *out = *ap;
+    return true;
+  }
+  return false;
+}
+
+double ReadDoubleProperty(const UsdPrim& prim, const std::string& name,
+                          double fallback) {
+  double d = fallback;
+  if (GetDouble(prim, name, &d)) return d;
+  return fallback;
+}
+
+void ApplyAxis(std::vector<value::float3>* points,
+               std::vector<value::float3>* normals,
+               const std::string& axis) {
+  if (axis == "Y" || axis.empty()) return;
+  auto map_point = [&](value::float3& v) {
+    const float x = v[0], y = v[1], z = v[2];
+    if (axis == "Z") {
+      v[0] = x; v[1] = z; v[2] = y;
+    } else if (axis == "X") {
+      v[0] = y; v[1] = x; v[2] = z;
+    }
+  };
+  for (value::float3& p : *points) map_point(p);
+  if (normals) {
+    for (value::float3& n : *normals) map_point(n);
+  }
+}
+
+void FillGeneratedMesh(const UsdPrim& prim,
+                       const std::vector<value::float3>& points,
+                       const std::vector<int>& face_counts,
+                       const std::vector<int>& face_indices,
+                       const std::vector<value::float3>& normals,
+                       const std::vector<value::float2>& uvs,
+                       RenderMesh* out) {
+  out->name = prim.GetName();
+  out->prim_path = prim.GetPath().str();
+  out->face_vertex_counts.reserve(face_counts.size());
+  for (int c : face_counts) {
+    out->face_vertex_counts.push_back(c < 0 ? uint32_t{0}
+                                            : static_cast<uint32_t>(c));
+  }
+  out->face_vertex_indices.reserve(face_indices.size());
+  for (int idx : face_indices) {
+    out->face_vertex_indices.push_back(idx < 0 ? uint32_t{0}
+                                               : static_cast<uint32_t>(idx));
+  }
+  for (const value::float3& p : points) {
+    out->points.push_back(p[0]);
+    out->points.push_back(p[1]);
+    out->points.push_back(p[2]);
+  }
+  if (!normals.empty()) {
+    out->normals_interp = Interpolation::FaceVarying;
+    for (const value::float3& n : normals) {
+      out->normals.push_back(n[0]);
+      out->normals.push_back(n[1]);
+      out->normals.push_back(n[2]);
+    }
+  }
+  if (!uvs.empty()) {
+    out->texcoords_0_interp = Interpolation::FaceVarying;
+    for (const value::float2& uv : uvs) {
+      out->texcoords_0.push_back(uv[0]);
+      out->texcoords_0.push_back(uv[1]);
+    }
+  }
+  std::string orientation;
+  if (GetToken(prim, "orientation", &orientation)) {
+    out->left_handed = (orientation == "leftHanded");
+  }
+  if (!points.empty()) {
+    out->bbox_min = Float3(1e30f, 1e30f, 1e30f);
+    out->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
+    for (const value::float3& p : points) {
+      out->bbox_min.x = std::min(out->bbox_min.x, p[0]);
+      out->bbox_min.y = std::min(out->bbox_min.y, p[1]);
+      out->bbox_min.z = std::min(out->bbox_min.z, p[2]);
+      out->bbox_max.x = std::max(out->bbox_max.x, p[0]);
+      out->bbox_max.y = std::max(out->bbox_max.y, p[1]);
+      out->bbox_max.z = std::max(out->bbox_max.z, p[2]);
+    }
+    out->has_bbox = true;
+  }
+}
+
+void ExtractMaterialXConfig(const UsdPrim& prim,
+                            RenderMaterial::MaterialXConfig* out) {
+  if (!out || !prim.IsValid()) return;
+  std::string v;
+  if (ReadStringLikeProperty(prim, "config:mtlx:version", &v)) {
+    out->version = v;
+    out->authored = true;
+  }
+  if (ReadStringLikeProperty(prim, "config:mtlx:namespace", &v)) {
+    out->name_space = v;
+    out->authored = true;
+  }
+  if (ReadStringLikeProperty(prim, "config:mtlx:colorspace", &v)) {
+    out->colorspace = v;
+    out->authored = true;
+  }
+  if (ReadStringLikeProperty(prim, "config:mtlx:sourceUri", &v) ||
+      ReadStringLikeProperty(prim, "config:mtlx:sourceAsset", &v) ||
+      ReadStringLikeProperty(prim, "config:mtlx:file", &v)) {
+    out->source_uri = v;
+    out->authored = true;
+  }
+}
+
 std::vector<PhysicsProperty> CollectPhysicsExtensionProperties(
     const UsdPrim& prim) {
   std::vector<PhysicsProperty> props;
@@ -912,6 +1043,17 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
     BuildNodeHierarchy(extracted, &result.scene);
     ExtractPhysicsAnnotations(stage, &result.scene);
+    for (const RenderPrimRecord& rec : extracted.records) {
+      if (!IsUnsupportedRenderableTypeName(rec.type_name)) continue;
+      UnsupportedRenderable unsupported;
+      unsupported.prim_path = rec.path;
+      unsupported.type_name = rec.type_name;
+      unsupported.reason =
+          "recognized by extraction but not converted to render geometry";
+      result.scene.unsupported_renderables.push_back(unsupported);
+      warnings_.push_back("Unsupported renderable prim '" + rec.path +
+                          "' of type '" + rec.type_name + "'");
+    }
 
     for (const auto& rec : extracted.records) {
       AnimationClip clip;
@@ -940,13 +1082,18 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       }
 
       RenderMesh mesh;
-      if (ConvertMesh(stage, mesh_prim, &mesh)) {
+      const bool converted =
+          mesh_prim.GetTypeName() == "Mesh"
+              ? ConvertMesh(stage, mesh_prim, &mesh)
+              : ConvertGeomPrimitive(mesh_prim, &mesh);
+      if (converted) {
         int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
         result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
         result.scene.meshes.push_back(std::move(mesh));
         AssignNodeDataId(&result.scene, mesh_prim.GetPath().str(), mesh_id);
       } else {
-        warnings_.push_back("Failed to convert mesh: " + mesh_prim.GetPath().str());
+        warnings_.push_back("Failed to convert renderable mesh prim: " +
+                            mesh_prim.GetPath().str());
       }
     }
 
@@ -1276,7 +1423,7 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
 
     // Determine node type
     const std::string& type = rec.type_name;
-    if (type == "Mesh") node.type = NodeType::Mesh;
+    if (IsMeshRenderableTypeName(type)) node.type = NodeType::Mesh;
     else if (type == "PointInstancer") node.type = NodeType::PointInstancer;
     else if (type == "Xform") node.type = NodeType::Xform;
     else if (type == "Camera") node.type = NodeType::Camera;
@@ -1290,6 +1437,12 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
         case LightKind::DiskLight: node.type = NodeType::DiskLight; break;
         case LightKind::SphereLight: node.type = NodeType::SphereLight; break;
         case LightKind::PointLight: node.type = NodeType::PointLight; break;
+        case LightKind::GeometryLight: node.type = NodeType::PointLight; break;
+        case LightKind::PortalLight: node.type = NodeType::RectLight; break;
+        case LightKind::PluginLight: node.type = NodeType::PointLight; break;
+        case LightKind::LightFilter: node.type = NodeType::PointLight; break;
+        case LightKind::PluginLightFilter: node.type = NodeType::PointLight; break;
+        case LightKind::Unknown: node.type = NodeType::PointLight; break;
         default: node.type = NodeType::PointLight; break;
       }
     }
@@ -1415,6 +1568,90 @@ void RenderSceneConverter::DuplicatePointInstanceMeshes(RenderScene* scene) {
 //
 // Mesh conversion
 //
+
+bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
+                                                RenderMesh* out) {
+  if (!out || !prim.IsValid() || !IsAnalyticGeomTypeName(prim.GetTypeName())) {
+    last_error_ = "Invalid analytic geom prim";
+    return false;
+  }
+
+  std::vector<value::float3> points;
+  std::vector<int> face_counts;
+  std::vector<int> face_indices;
+  std::vector<value::float3> normals;
+  std::vector<value::float2> uvs;
+
+  const std::string type = prim.GetTypeName();
+  if (type == "Cube") {
+    ::tinyusdz::tydra::GenerateCubeMesh(
+        ReadDoubleProperty(prim, "size", 2.0), points, face_counts,
+        face_indices, normals, uvs);
+  } else if (type == "Sphere") {
+    ::tinyusdz::tydra::GenerateIcosphereMesh(
+        ReadDoubleProperty(prim, "radius", 2.0), 2, points, face_counts,
+        face_indices, normals, uvs);
+  } else if (type == "Cylinder" || type == "Cylinder_1") {
+    double radius = ReadDoubleProperty(prim, "radius", 1.0);
+    if (type == "Cylinder_1") {
+      const double rt = ReadDoubleProperty(prim, "radiusTop", 1.0);
+      const double rb = ReadDoubleProperty(prim, "radiusBottom", 1.0);
+      radius = std::max(rt, rb);
+      if (std::fabs(rt - rb) > 1.0e-9) {
+        warnings_.push_back("Cylinder_1 '" + prim.GetPath().str() +
+                            "': tapered radii are approximated with max radius");
+      }
+    }
+    ::tinyusdz::tydra::GenerateCylinderMesh(
+        radius, ReadDoubleProperty(prim, "height", 2.0), 24, 1, points,
+        face_counts, face_indices, normals, uvs);
+  } else if (type == "Cone") {
+    ::tinyusdz::tydra::GenerateConeMesh(
+        ReadDoubleProperty(prim, "radius", 1.0),
+        ReadDoubleProperty(prim, "height", 2.0), 24, points, face_counts,
+        face_indices, normals, uvs);
+  } else if (type == "Capsule" || type == "Capsule_1") {
+    double radius = ReadDoubleProperty(prim, "radius", 0.5);
+    double height = ReadDoubleProperty(prim, "height", type == "Capsule_1" ? 1.0 : 2.0);
+    if (type == "Capsule_1") {
+      const double rt = ReadDoubleProperty(prim, "radiusTop", 0.5);
+      const double rb = ReadDoubleProperty(prim, "radiusBottom", 0.5);
+      radius = std::max(rt, rb);
+      if (std::fabs(rt - rb) > 1.0e-9) {
+        warnings_.push_back("Capsule_1 '" + prim.GetPath().str() +
+                            "': asymmetric radii are approximated with max radius");
+      }
+    }
+    ::tinyusdz::tydra::GenerateCapsuleMesh(radius, height, 24, 1, points,
+                                           face_counts, face_indices, normals,
+                                           uvs);
+  } else if (type == "Plane") {
+    ::tinyusdz::tydra::GeneratePlaneMesh(
+        ReadDoubleProperty(prim, "width", 2.0),
+        ReadDoubleProperty(prim, "length", 2.0), 1, 1, points, face_counts,
+        face_indices, normals, uvs);
+  } else {
+    last_error_ = "Unsupported analytic geom prim";
+    return false;
+  }
+
+  std::string axis = "Z";
+  GetToken(prim, "axis", &axis);
+  if (type == "Cube" || type == "Sphere") axis = "Y";
+  ApplyAxis(&points, &normals, axis);
+  FillGeneratedMesh(prim, points, face_counts, face_indices, normals, uvs, out);
+  SanitizeMeshTopology(out);
+  if (config_.mesh.triangulate && !out->is_triangulated) {
+    TriangulateMesh(out);
+  }
+  if (config_.mesh.compute_normals && out->normals.empty()) {
+    ComputeVertexNormals(out);
+  }
+  if (config_.mesh.compute_tangents && out->tangents.empty()) {
+    ComputeVertexTangents(out);
+  }
+  return true;
+}
 
 bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out) {
   if (!out || !IsMesh(prim)) {
@@ -2232,6 +2469,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
 
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
+  ExtractMaterialXConfig(prim, &out->mtlx_config);
 
   // Find shader(s) in material. The material's `outputs:surface` connection
   // names the authoritative surface shader (child iteration order previously
@@ -2298,6 +2536,9 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         out->preview_surface = std::move(mtlx_out.preview_surface);
         out->alpha_mode = mtlx_out.alpha_mode;
         out->alpha_cutoff = mtlx_out.alpha_cutoff;
+        if (!out->mtlx_config.authored) {
+          out->mtlx_config = std::move(mtlx_out.mtlx_config);
+        }
         found_shader = true;
       }
     }
@@ -2540,6 +2781,22 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
     case LightKind::DiskLight: out->type = LightType::Disk; break;
     case LightKind::SphereLight: out->type = LightType::Sphere; break;
     case LightKind::CylinderLight: out->type = LightType::Cylinder; break;
+    case LightKind::GeometryLight: out->type = LightType::Geometry; break;
+    case LightKind::PortalLight: out->type = LightType::Rect; break;
+    case LightKind::PluginLight:
+      out->type = LightType::Point;
+      warnings_.push_back("PluginLight '" + prim.GetPath().str() +
+                          "': shader registry evaluation is unsupported; "
+                          "using point light fallback");
+      break;
+    case LightKind::LightFilter:
+    case LightKind::PluginLightFilter:
+      out->type = LightType::Point;
+      warnings_.push_back("Light filter '" + prim.GetPath().str() +
+                          "': filter evaluation is unsupported; "
+                          "using inert point light fallback");
+      out->intensity = 0.0f;
+      break;
     default: out->type = LightType::Point; break;
   }
 

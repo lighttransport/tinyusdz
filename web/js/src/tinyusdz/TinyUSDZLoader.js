@@ -281,10 +281,15 @@ class NextRenderSceneAdapter {
             report('archive', 4, 'Reading USDZ archive...');
             const entries = parseUSDZEntries(u8);
             const root = this._rootEntry(entries);
-            if (!root || !/\.usdc$/i.test(root.name)) {
-                throw new Error('TinyUSDZ next backend currently requires a USDZ with a USDC root layer.');
+            if (!root) {
+                throw new Error('TinyUSDZ next backend could not find a USD root layer in the USDZ archive.');
             }
-            crate = root.data;
+            // Prefer the owned USDC root path for crate-reader progress and
+            // lower native memory pressure. USDA-root USDZ files are passed as
+            // the full archive so next-core can detect and load them.
+            if (/\.usdc$/i.test(root.name)) {
+                crate = root.data;
+            }
             let copiedEntries = 0;
             for (const entry of entries) {
                 if (!entry.name.endsWith('/')) {
@@ -300,8 +305,6 @@ class NextRenderSceneAdapter {
             }
             report('archive', 20, `Indexed USDZ assets ${entries.length}/${entries.length}`,
                 { archiveCurrent: entries.length, archiveTotal: entries.length });
-        } else if (!/\.usdc$/i.test(filename)) {
-            throw new Error('TinyUSDZ next backend currently requires USDC input.');
         }
 
         const renderStream = new native.RenderStream();
@@ -532,6 +535,7 @@ class TinyUSDZLoader extends Loader {
         super(manager);
 
         this.native_ = null;
+        this.nextOnlyNative_ = false;
 
         this.assetResolver_ = null;
 
@@ -730,15 +734,22 @@ class TinyUSDZLoader extends Loader {
         if (!this.native_) {
           
             // WASM module of TinyUSDZ.
-            const url = new URL(import.meta.url);
+            const moduleUrl = new URL(import.meta.url);
+            const pageParams = (typeof window !== 'undefined' && window.location)
+                ? new URLSearchParams(window.location.search)
+                : new URLSearchParams();
+            const getParam = (key) => moduleUrl.searchParams.get(key) ?? pageParams.get(key);
 
             //let initTinyUSDZNative = null;
           
 
             let use_memory64 = this.useMemory64_;
-            if (url.searchParams.get("memory64") == "true") {
+            if (getParam("memory64") == "true") {
               use_memory64 = true;
             }
+            const use_next_only_wasm = options.useNextOnlyWasm === true ||
+                getParam("wasm") === "next" ||
+                getParam("nextWasm") === "true";
 
 
             let initTinyUSDZNative = null;
@@ -746,20 +757,39 @@ class TinyUSDZLoader extends Loader {
             // Use dynamic import based on memory64 parameter.
             // Build the 64-bit module path via URL so Vite's static import
             // analysis does not fail when tinyusdz_64.js is absent.
-            if (use_memory64) {
+            if (use_next_only_wasm) {
+                const nextUrl = new URL(use_memory64 ? './tinyusdz_next_64.js' : './tinyusdz_next.js',
+                    import.meta.url).href;
+                const module = await import(/* @vite-ignore */ nextUrl);
+                initTinyUSDZNative = module.default;
+                this.nextOnlyNative_ = true;
+            } else if (use_memory64) {
                 try {
                     const wasm64Url = new URL('./tinyusdz_64.js', import.meta.url).href;
                     const module = await import(/* @vite-ignore */ wasm64Url);
                     initTinyUSDZNative = module.default;
+                    this.nextOnlyNative_ = false;
                 } catch (e) {
                     console.warn('[TinyUSDZLoader] WASM64 module (tinyusdz_64.js) not found, falling back to 32-bit module.', e.message);
                     use_memory64 = false;
-                    const module = await import('./tinyusdz.js');
+                    const wasm32Url = new URL('./tinyusdz.js', import.meta.url).href;
+                    const module = await import(/* @vite-ignore */ wasm32Url);
                     initTinyUSDZNative = module.default;
+                    this.nextOnlyNative_ = false;
                 }
             } else {
-                const module = await import('./tinyusdz.js');
-                initTinyUSDZNative = module.default;
+                try {
+                    const wasm32Url = new URL('./tinyusdz.js', import.meta.url).href;
+                    const module = await import(/* @vite-ignore */ wasm32Url);
+                    initTinyUSDZNative = module.default;
+                    this.nextOnlyNative_ = false;
+                } catch (e) {
+                    const nextUrl = new URL('./tinyusdz_next.js', import.meta.url).href;
+                    const module = await import(/* @vite-ignore */ nextUrl);
+                    initTinyUSDZNative = module.default;
+                    this.nextOnlyNative_ = true;
+                    console.info('[TinyUSDZLoader] Legacy WASM module not found; using next-only WASM module.');
+                }
             }
 
             let wasmBinary = null;
@@ -1190,6 +1220,10 @@ class TinyUSDZLoader extends Loader {
         }
 
         const backend = options.backend || 'legacy';
+        if (this.nextOnlyNative_ && backend !== 'next' && backend !== 'auto') {
+            _onError(new Error('TinyUSDZLoader: next-only WASM module supports backend=next only.'));
+            return;
+        }
         if (backend === 'next' || backend === 'auto') {
             NextRenderSceneAdapter.create(this.native_, binary, filePath, options)
                 .then(onLoad)

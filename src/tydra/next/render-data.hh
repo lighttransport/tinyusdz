@@ -480,6 +480,14 @@ struct RenderMaterial {
   std::string name;
   std::string prim_path;
 
+  struct MaterialXConfig {
+    bool authored = false;
+    std::string version;
+    std::string name_space;
+    std::string colorspace;
+    std::string source_uri;
+  };
+
   // Shader type
   enum class ShaderType : uint8_t {
     None = 0,
@@ -503,6 +511,8 @@ struct RenderMaterial {
   };
   AlphaMode alpha_mode = AlphaMode::Opaque;
   float alpha_cutoff = 0.5f;
+
+  MaterialXConfig mtlx_config;
 };
 
 //
@@ -812,6 +822,12 @@ struct PhysicsAnnotations {
   std::vector<std::string> articulation_roots;
 };
 
+struct UnsupportedRenderable {
+  std::string prim_path;
+  std::string type_name;
+  std::string reason;
+};
+
 //
 // RenderScene - top-level container
 //
@@ -849,6 +865,7 @@ class RenderScene {
   std::vector<RenderCamera> cameras;
   std::vector<AnimationClip> animations;
   std::vector<Skeleton> skeletons;
+  std::vector<UnsupportedRenderable> unsupported_renderables;
   PhysicsAnnotations physics;
 
   // Root nodes

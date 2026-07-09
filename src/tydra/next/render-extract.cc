@@ -38,7 +38,10 @@ void MulRowMajor(const double a[16], const double b[16], double out[16]) {
 bool IsLightType(const std::string& t) {
   return t == "RectLight" || t == "SphereLight" || t == "DiskLight" ||
          t == "CylinderLight" || t == "DistantLight" || t == "DomeLight" ||
-         t == "PointLight";
+         t == "DomeLight_1" || t == "PointLight" ||
+         t == "GeometryLight" || t == "PortalLight" ||
+         t == "PluginLight" || t == "LightFilter" ||
+         t == "PluginLightFilter";
 }
 
 bool IsCurveType(const std::string& t) {
@@ -53,7 +56,7 @@ RenderPrimKind Classify(const ::tinyusdz::next::UsdPrim& prim,
     if (native_prototype) *native_prototype = spec->meta().instance_prototype();
     return RenderPrimKind::NativeInstance;
   }
-  if (type_name == "Mesh") return RenderPrimKind::Mesh;
+  if (IsMeshRenderableTypeName(type_name)) return RenderPrimKind::Mesh;
   if (type_name == "PointInstancer") return RenderPrimKind::PointInstancer;
   if (IsLightType(type_name)) return RenderPrimKind::Light;
   if (type_name == "Camera") return RenderPrimKind::Camera;
@@ -61,6 +64,7 @@ RenderPrimKind Classify(const ::tinyusdz::next::UsdPrim& prim,
   if (type_name == "Volume") return RenderPrimKind::Volume;
   if (IsCurveType(type_name)) return RenderPrimKind::Curve;
   if (type_name == "Skeleton") return RenderPrimKind::Skeleton;
+  if (IsUnsupportedRenderableTypeName(type_name)) return RenderPrimKind::Other;
   return RenderPrimKind::Other;
 }
 
@@ -151,6 +155,24 @@ const ::tinyusdz::next::Value* ValueAtOrDefault(
 }
 
 }  // namespace
+
+bool IsAnalyticGeomTypeName(const std::string& type_name) {
+  return type_name == "Cube" || type_name == "Sphere" ||
+         type_name == "Cone" || type_name == "Cylinder" ||
+         type_name == "Capsule" || type_name == "Plane" ||
+         type_name == "Cylinder_1" || type_name == "Capsule_1";
+}
+
+bool IsMeshRenderableTypeName(const std::string& type_name) {
+  return type_name == "Mesh" || IsAnalyticGeomTypeName(type_name);
+}
+
+bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
+  return type_name == "Points" || type_name == "BasisCurves" ||
+         type_name == "NurbsCurves" || type_name == "HermiteCurves" ||
+         type_name == "Volume" || type_name == "TetMesh" ||
+         type_name == "NurbsPatch";
+}
 
 bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
                         const RenderExtractOptions& options,
