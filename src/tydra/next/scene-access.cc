@@ -45,9 +45,11 @@ bool IsLight(const UsdPrim& prim) {
   if (!prim.IsValid()) return false;
   const std::string& type = prim.GetTypeName();
   return type == "DistantLight" || type == "DomeLight" ||
-         type == "RectLight" || type == "DiskLight" ||
+         type == "DomeLight_1" || type == "RectLight" || type == "DiskLight" ||
          type == "SphereLight" || type == "CylinderLight" ||
-         type == "PointLight";
+         type == "PointLight" || type == "GeometryLight" ||
+         type == "PortalLight" || type == "PluginLight" ||
+         type == "LightFilter" || type == "PluginLightFilter";
 }
 
 bool IsSkeleton(const UsdPrim& prim) {
@@ -71,12 +73,17 @@ LightKind GetLightKind(const UsdPrim& prim) {
   const std::string& type = prim.GetTypeName();
 
   if (type == "DistantLight") return LightKind::DistantLight;
-  if (type == "DomeLight") return LightKind::DomeLight;
+  if (type == "DomeLight" || type == "DomeLight_1") return LightKind::DomeLight;
   if (type == "RectLight") return LightKind::RectLight;
   if (type == "DiskLight") return LightKind::DiskLight;
   if (type == "SphereLight") return LightKind::SphereLight;
   if (type == "CylinderLight") return LightKind::CylinderLight;
   if (type == "PointLight") return LightKind::PointLight;
+  if (type == "GeometryLight") return LightKind::GeometryLight;
+  if (type == "PortalLight") return LightKind::PortalLight;
+  if (type == "PluginLight") return LightKind::PluginLight;
+  if (type == "LightFilter") return LightKind::LightFilter;
+  if (type == "PluginLightFilter") return LightKind::PluginLightFilter;
 
   return LightKind::Unknown;
 }

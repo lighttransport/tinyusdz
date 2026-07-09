@@ -67,7 +67,8 @@ typedef enum tusd_render_kind {
   TUSD_RENDER_SKELETON = 7,
   TUSD_RENDER_ANIMATION = 8,
   TUSD_RENDER_INSTANCER = 9,
-  TUSD_RENDER_ROOT_NODE = 10
+  TUSD_RENDER_ROOT_NODE = 10,
+  TUSD_RENDER_UNSUPPORTED = 11
 } tusd_render_kind;
 
 TUSD_API size_t tusd_render_count(const tusd_render_scene* scene,
@@ -228,6 +229,19 @@ TUSD_API tusd_status tusd_render_material_get_info(
     const tusd_render_scene* scene, int32_t id,
     tusd_render_material_info* out);
 
+typedef struct tusd_render_materialx_config_info {
+  uint8_t authored;
+  uint8_t _pad[7];
+  tusd_sv version;
+  tusd_sv name_space;
+  tusd_sv colorspace;
+  tusd_sv source_uri;
+} tusd_render_materialx_config_info;
+
+TUSD_API tusd_status tusd_render_material_mtlx_config(
+    const tusd_render_scene* scene, int32_t id,
+    tusd_render_materialx_config_info* out);
+
 /* Named shader parameter. PreviewSurface names: diffuse_color,
  * emissive_color, specular_color, metallic, roughness, clearcoat,
  * clearcoat_roughness, opacity, opacity_threshold, ior, normal,
@@ -371,12 +385,27 @@ typedef enum tusd_instancer_buffer_kind {
   TUSD_INST_BUF_ORIENTATIONS = 2,  /* f32 x4 */
   TUSD_INST_BUF_SCALES = 3,        /* f32 x3 */
   TUSD_INST_BUF_TRANSFORMS = 4,    /* f32 x16 */
-  TUSD_INST_BUF_VISIBLE = 5        /* u8 x1 */
+  TUSD_INST_BUF_VISIBLE = 5,       /* u8 x1 */
+  TUSD_INST_BUF_VELOCITIES = 6,    /* f32 x3 */
+  TUSD_INST_BUF_ANGULAR_VELOCITIES = 7, /* f32 x3 */
+  TUSD_INST_BUF_IDS = 8,           /* i64 x1 */
+  TUSD_INST_BUF_INVISIBLE_IDS = 9, /* i64 x1 */
+  TUSD_INST_BUF_INACTIVE_IDS = 10  /* i64 x1 */
 } tusd_instancer_buffer_kind;
 
 TUSD_API tusd_status tusd_render_instancer_buffer(tusd_render_scene* scene,
                                                   int32_t id, uint8_t kind,
                                                   tusd_buffer_view* out);
+
+typedef struct tusd_render_unsupported_info {
+  tusd_sv prim_path;
+  tusd_sv type_name;
+  tusd_sv reason;
+} tusd_render_unsupported_info;
+
+TUSD_API tusd_status tusd_render_unsupported_get_info(
+    const tusd_render_scene* scene, int32_t id,
+    tusd_render_unsupported_info* out);
 
 #ifdef __cplusplus
 } /* extern "C" */

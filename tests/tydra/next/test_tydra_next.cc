@@ -911,6 +911,184 @@ def Xform "World"
   std::cout << "  RenderConverter PointInstancer index visibility: PASSED\n";
 }
 
+void TestRenderConverterPointInstancerInvalidArrays() {
+  std::cout << "Testing RenderConverter PointInstancer invalid arrays...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "Proto"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+
+    def PointInstancer "Inst"
+    {
+        rel prototypes = </World/Proto>
+        point3f[] positions = [(0, 0, 0)]
+        int[] protoIndices = [0, 0]
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse invalid-array USDA)\n";
+    return;
+  }
+
+  RenderSceneConverter converter;
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+  assert(result.scene.point_instancers.size() == 1);
+  assert(result.scene.point_instance_draws.empty());
+  assert(result.scene.get_stats().point_instance_count == 2);
+  assert(result.scene.get_stats().point_instance_draw_count == 0);
+  assert(result.scene.has_valid_point_instance_draw_ranges());
+
+  const RenderPointInstancer& instancer = result.scene.point_instancers[0];
+  assert(!instancer.valid);
+  assert(instancer.validation_error == "positions size does not match protoIndices");
+  assert(instancer.instance_count() == 2);
+  assert(instancer.positions == std::vector<float>({0, 0, 0}));
+  assert(instancer.transforms.empty());
+  assert(instancer.draw_start == 0);
+  assert(instancer.draw_count == 0);
+
+  bool found_warning = false;
+  for (const std::string& warning : result.warnings) {
+    if (warning.find("Invalid PointInstancer data at /World/Inst") !=
+            std::string::npos &&
+        warning.find("positions size does not match protoIndices") !=
+            std::string::npos) {
+      found_warning = true;
+    }
+  }
+  assert(found_warning);
+
+  std::cout << "  RenderConverter PointInstancer invalid arrays: PASSED\n";
+}
+
+void TestRenderConverterPointInstancerDuplicateMeshMetadata() {
+  std::cout << "Testing RenderConverter PointInstancer duplicate metadata...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root"
+{
+    def SkelRoot "SR"
+    {
+        def Mesh "Proto" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform token orientation = "leftHanded"
+            int[] faceVertexCounts = [4, 3]
+            int[] faceVertexIndices = [0, 1, 2, 3, 0, 2, 4]
+            int[] holeIndices = [1]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (2, 0, 0)]
+            float[] primvars:temperature = [0.25, 0.75] (
+                interpolation = "vertex"
+            )
+            int[] primvars:temperature:indices = [0, 1, 0, 1, 0]
+            uniform token[] skel:blendShapes = ["smile"]
+            prepend rel skel:blendShapeTargets = </Root/SR/Proto/Smile>
+
+            def BlendShape "Smile"
+            {
+                uniform vector3f[] offsets = [(0, 0.5, 0), (0, 0.25, 0)]
+                uniform int[] pointIndices = [1, 3]
+            }
+        }
+    }
+
+    def PointInstancer "Inst"
+    {
+        rel prototypes = </Root/SR/Proto>
+        point3f[] positions = [(10, 0, 0)]
+        int[] protoIndices = [0]
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse duplicate-metadata USDA)\n";
+    return;
+  }
+
+  ConverterConfig config;
+  config.mesh.triangulate = true;
+  config.point_instancer.duplicate_meshes = true;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+  assert(result.scene.point_instancers.size() == 1);
+  assert(result.scene.point_instance_draws.size() == 1);
+  assert(result.scene.point_instance_draws[0].expanded_mesh_id >= 0);
+
+  const RenderPointInstanceDrawView view =
+      result.scene.get_point_instance_draw_view(0);
+  assert(view.valid());
+  assert(view.mesh);
+  assert(view.expanded_mesh);
+  const RenderMesh& src = *view.mesh;
+  const RenderMesh& expanded = *view.expanded_mesh;
+
+  assert(src.left_handed);
+  assert(expanded.left_handed);
+  assert(src.hole_faces == std::vector<uint32_t>({1}));
+  assert(expanded.hole_faces == src.hole_faces);
+  assert(src.is_triangulated);
+  assert(expanded.is_triangulated);
+  assert(src.triangulated_indices.size() == 6);
+  assert(expanded.triangulated_indices.size() == src.triangulated_indices.size());
+  assert(expanded.triangulated_face_vertex_indices.size() ==
+         src.triangulated_face_vertex_indices.size());
+  for (size_t i = 0; i < src.triangulated_face_vertex_indices.size(); ++i) {
+    assert(expanded.triangulated_face_vertex_indices[i] ==
+           src.triangulated_face_vertex_indices[i]);
+  }
+
+  const VertexAttribute* temp_src = nullptr;
+  const VertexAttribute* temp_expanded = nullptr;
+  for (const VertexAttribute& pv : src.primvars) {
+    if (pv.name == "temperature") temp_src = &pv;
+  }
+  for (const VertexAttribute& pv : expanded.primvars) {
+    if (pv.name == "temperature") temp_expanded = &pv;
+  }
+  assert(temp_src);
+  assert(temp_expanded);
+  assert(temp_expanded->indices.size() == temp_src->indices.size());
+  assert(temp_expanded->indices.size() == 5);
+  assert(temp_expanded->indices[1] == 1);
+
+  assert(src.blend_shapes.size() == 1);
+  assert(expanded.blend_shapes.size() == 1);
+  assert(src.blend_shapes[0].point_indices == std::vector<uint32_t>({1, 3}));
+  assert(expanded.blend_shapes[0].point_indices == src.blend_shapes[0].point_indices);
+  assert(expanded.blend_shapes[0].point_offsets.size() ==
+         src.blend_shapes[0].point_offsets.size());
+
+  assert(expanded.point_count() == src.point_count());
+  assert(std::abs(expanded.points[0] - 10.0f) < 0.001f);
+  assert(std::abs(expanded.points[3] - 11.0f) < 0.001f);
+  assert(expanded.has_bbox);
+  assert(result.scene.has_valid_point_instance_draw_ranges());
+
+  std::cout << "  RenderConverter PointInstancer duplicate metadata: PASSED\n";
+}
+
 void TestMaterialXUtilities() {
   std::cout << "Testing MaterialX utilities...\n";
 
@@ -1427,6 +1605,149 @@ def Xform "Root"
   std::cout << "  USD Physics annotations: PASSED\n";
 }
 
+void TestLegacyParityExtraction() {
+  std::cout << "Testing legacy schema parity extraction...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "Root"
+{
+    def Material "Mat"
+    {
+        string config:mtlx:version = "1.38"
+        token config:mtlx:namespace = "mtlx"
+        token config:mtlx:colorspace = "lin_rec709"
+        asset config:mtlx:sourceUri = @looks/test.mtlx@
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.25, 0.5, 0.75)
+            token outputs:surface
+        }
+    }
+
+    def Cube "Box"
+    {
+        rel material:binding = </Root/Mat>
+        double size = 4
+    }
+
+    def Sphere "Ball"
+    {
+        double radius = 1.5
+    }
+
+    def Cylinder "Pipe"
+    {
+        token axis = "Z"
+        double radius = 0.5
+        double height = 3
+    }
+
+    def Plane "Ground"
+    {
+        token axis = "Z"
+        double width = 6
+        double length = 8
+    }
+
+    def PointLight "Point" {}
+    def GeometryLight "GeoLight" {}
+    def DomeLight_1 "Env" {}
+    def LightFilter "Filter" {}
+
+    def BasisCurves "Curve" {}
+    def Points "Pts" {}
+    def Volume "Fog" {}
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  RenderExtractOptions opts;
+  opts.collect_other = true;
+  RenderExtractResult er;
+  assert(CollectRenderPrims(lr.stage, opts, &er));
+  assert(er.meshes.size() == 4);
+  assert(er.lights.size() == 4);
+  assert(er.curves.size() == 1);
+  assert(er.volumes.size() == 1);
+
+  RenderSceneConverter conv;
+  ConvertResult res = conv.Convert(lr.stage);
+  assert(res.success);
+  RenderScene& scene = res.scene;
+
+  auto box_it = scene.mesh_by_path.find("/Root/Box");
+  assert(box_it != scene.mesh_by_path.end());
+  const RenderMesh& box = scene.meshes[static_cast<size_t>(box_it->second)];
+  assert(box.point_count() == 8);
+  assert(box.face_count() == 6);
+  assert(box.is_triangulated);
+  assert(box.material_id >= 0);
+  assert(std::fabs(box.bbox_min.x + 2.0f) < 0.001f);
+  assert(std::fabs(box.bbox_max.x - 2.0f) < 0.001f);
+
+  auto pipe_it = scene.mesh_by_path.find("/Root/Pipe");
+  assert(pipe_it != scene.mesh_by_path.end());
+  const RenderMesh& pipe = scene.meshes[static_cast<size_t>(pipe_it->second)];
+  assert(pipe.point_count() > 0);
+  assert(pipe.has_bbox);
+  assert(std::fabs(pipe.bbox_min.z + 1.5f) < 0.001f);
+  assert(std::fabs(pipe.bbox_max.z - 1.5f) < 0.001f);
+
+  auto mat_it = scene.material_by_path.find("/Root/Mat");
+  assert(mat_it != scene.material_by_path.end());
+  const RenderMaterial& mat =
+      scene.materials[static_cast<size_t>(mat_it->second)];
+  assert(mat.mtlx_config.authored);
+  assert(mat.mtlx_config.version == "1.38");
+  assert(mat.mtlx_config.name_space == "mtlx");
+  assert(mat.mtlx_config.colorspace == "lin_rec709");
+  assert(mat.mtlx_config.source_uri == "looks/test.mtlx");
+
+  bool saw_point = false;
+  bool saw_geometry = false;
+  bool saw_dome = false;
+  bool saw_filter_fallback = false;
+  for (const RenderLight& light : scene.lights) {
+    if (light.prim_path == "/Root/Point" && light.type == LightType::Point) {
+      saw_point = true;
+    }
+    if (light.prim_path == "/Root/GeoLight" &&
+        light.type == LightType::Geometry) {
+      saw_geometry = true;
+    }
+    if (light.prim_path == "/Root/Env" && light.type == LightType::Dome) {
+      saw_dome = true;
+    }
+    if (light.prim_path == "/Root/Filter" && light.type == LightType::Point &&
+        light.intensity == 0.0f) {
+      saw_filter_fallback = true;
+    }
+  }
+  assert(saw_point);
+  assert(saw_geometry);
+  assert(saw_dome);
+  assert(saw_filter_fallback);
+
+  assert(scene.unsupported_renderables.size() == 3);
+  bool saw_curve = false;
+  bool saw_points = false;
+  bool saw_volume = false;
+  for (const UnsupportedRenderable& rec : scene.unsupported_renderables) {
+    if (rec.type_name == "BasisCurves") saw_curve = true;
+    if (rec.type_name == "Points") saw_points = true;
+    if (rec.type_name == "Volume") saw_volume = true;
+  }
+  assert(saw_curve);
+  assert(saw_points);
+  assert(saw_volume);
+
+  std::cout << "  Legacy schema parity extraction: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -1455,10 +1776,13 @@ int main() {
   TestRenderConverterMaterials();
   TestRenderConverterPointInstancerWarnings();
   TestRenderConverterPointInstancerIndexVisibility();
+  TestRenderConverterPointInstancerInvalidArrays();
+  TestRenderConverterPointInstancerDuplicateMeshMetadata();
   TestMaterialXUtilities();
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();
+  TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
   return 0;

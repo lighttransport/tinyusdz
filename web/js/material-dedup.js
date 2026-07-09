@@ -989,9 +989,7 @@ function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
 async function convertScene(bytes, name, opts) {
 	await ensureLoader();
 	const requestedBackend = opts.backend || params.backend || 'legacy';
-	const backend = currentIsGeneratedSample && requestedBackend === 'next'
-		? 'legacy'
-		: requestedBackend;
+	const backend = requestedBackend;
 	const usd = await parseWithOptions(bytes, name, {
 		backend,
 		materialDedup: !!opts.materialDedup,

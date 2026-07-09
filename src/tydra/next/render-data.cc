@@ -173,6 +173,7 @@ size_t RenderScene::memory_usage() const {
   total += cameras.size() * sizeof(RenderCamera);
   total += animations.size() * sizeof(AnimationClip);
   total += skeletons.size() * sizeof(Skeleton);
+  total += unsupported_renderables.size() * sizeof(UnsupportedRenderable);
 
   return total;
 }

@@ -134,6 +134,7 @@ class RenderSceneConverter {
   void DuplicatePointInstanceMeshes(RenderScene* scene);
 
   // Extract mesh data directly into chunked arrays
+  bool ConvertGeomPrimitive(const UsdPrim& prim, RenderMesh* out);
   bool ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh);
   bool ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh);
   /// Drop faces with out-of-range (or negative) indices and truncate counts

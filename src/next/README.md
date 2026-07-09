@@ -13,7 +13,11 @@ API breakage and feature deletion are acceptable for this redesign. The goal is 
 
 ## Current Status
 
-### Completed Components
+### Implemented Components
+
+Status here means the current `next` subset is implemented. It does not mean
+legacy typed-schema parity; render-facing legacy schema compatibility is handled
+by extraction/downstream layers such as `tydra/next`.
 
 | Component | Status | Files |
 |-----------|--------|-------|
