@@ -20,6 +20,7 @@
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/crate/lazy-array.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/parser/ascii-parser.hh"
@@ -27,6 +28,14 @@
 #include "next/pcp/prim-index.hh"
 
 using namespace tinyusdz::next;
+
+#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+    !defined(__wasi__) &&                                             \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
+constexpr bool kExpectUsdaLazyMmap = true;
+#else
+constexpr bool kExpectUsdaLazyMmap = false;
+#endif
 
 static const Value* DictFind(const Value& dv, const char* key) {
   if (!dv.is_dictionary() || !dv.as_dictionary()) return nullptr;
@@ -838,6 +847,10 @@ void test_load_usdcomposed_usda_parse_options() {
     const Value* points = mesh.GetPropertyValue("points");
     assert(small && large && points);
     assert(small->is_lazy());
+    assert(small->lazy_ref() && small->lazy_ref()->source);
+    if (kExpectUsdaLazyMmap) {
+      assert(small->lazy_ref()->source->is_mmapped());
+    }
     assert(!large->is_lazy());
     assert(!points->is_lazy());
   }
@@ -856,6 +869,12 @@ void test_load_usdcomposed_usda_parse_options() {
     assert(large && points);
     assert(large->is_lazy());
     assert(points->is_lazy());
+    assert(large->lazy_ref() && large->lazy_ref()->source);
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    if (kExpectUsdaLazyMmap) {
+      assert(large->lazy_ref()->source->is_mmapped());
+      assert(points->lazy_ref()->source->is_mmapped());
+    }
   }
 
   std::remove(root_file);

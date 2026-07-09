@@ -7,6 +7,7 @@
 
 #include "ascii-parser.hh"
 #include "lexer.hh"
+#include "../crate/lazy-array.hh"
 #include "../layer/layer.hh"
 
 #include <memory>
@@ -22,7 +23,7 @@ public:
 
   bool Parse(const char* data, size_t length);
   bool ParseWithSource(const char* data, size_t length,
-                      std::shared_ptr<std::string> source);
+                      std::shared_ptr<LazyArraySource> source);
   bool ParseFile(const char* filename);
 
   Stage TakeStage() { return std::move(stage_); }
@@ -35,7 +36,7 @@ private:
   Stage stage_;
   std::vector<ParseError> errors_;
   std::vector<std::string> warnings_;
-  std::shared_ptr<std::string> source_;
+  std::shared_ptr<LazyArraySource> source_;
 
   // Parsing state
   std::unique_ptr<Lexer> lexer_;
