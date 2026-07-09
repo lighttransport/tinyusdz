@@ -16,7 +16,11 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <optional>
+#include <set>
+#include <sstream>
+#include <iomanip>
 #include <unordered_set>
 
 namespace tinyusdz {
@@ -628,6 +632,235 @@ bool IsXformAnimationProperty(const std::string& prop_name) {
          prop_name.find("scale") != std::string::npos ||
          prop_name.find("rotate") != std::string::npos ||
          prop_name.find("orient") != std::string::npos;
+}
+
+struct NextClipSetMetadata {
+  std::string name;
+  std::vector<std::string> asset_paths;
+  std::vector<std::pair<double, double>> times;
+  std::vector<std::pair<double, int>> active;
+  std::string prim_path;
+  std::string manifest_asset_path;
+  bool interpolate_missing = false;
+};
+
+bool ClipValueToDouble(const Value* value, double* out) {
+  if (!value || !out) return false;
+  if (const double* v = value->as_double()) {
+    *out = *v;
+    return true;
+  }
+  if (const float* v = value->as_float()) {
+    *out = *v;
+    return true;
+  }
+  if (const int32_t* v = value->as_int()) {
+    *out = *v;
+    return true;
+  }
+  if (const int64_t* v = value->as_int64()) {
+    *out = static_cast<double>(*v);
+    return true;
+  }
+  return false;
+}
+
+bool ClipValueToString(const Value* value, std::string* out) {
+  if (!value || !out) return false;
+  if (const std::string* v = value->as_string()) {
+    *out = *v;
+    return true;
+  }
+  if (const std::string* v = value->as_token()) {
+    *out = *v;
+    return true;
+  }
+  if (const std::string* v = value->as_asset_path()) {
+    *out = *v;
+    return true;
+  }
+  return false;
+}
+
+std::vector<std::pair<double, double>> ClipPairArray(const Value* value) {
+  std::vector<std::pair<double, double>> out;
+  if (!value || !value->is_array()) return out;
+  if (const std::vector<double>* flat = value->as_double_array()) {
+    for (size_t i = 0; i + 1 < flat->size(); i += 2) {
+      out.emplace_back((*flat)[i], (*flat)[i + 1]);
+    }
+  } else if (const std::vector<float>* flat = value->as_float_array()) {
+    for (size_t i = 0; i + 1 < flat->size(); i += 2) {
+      out.emplace_back((*flat)[i], (*flat)[i + 1]);
+    }
+  }
+  return out;
+}
+
+bool ExpandNextTemplateClips(const ::tinyusdz::next::Dict& dict,
+                             NextClipSetMetadata* out,
+                             std::string* error) {
+  std::string pattern;
+  if (!ClipValueToString(dict.find("templateAssetPath"), &pattern)) {
+    return false;
+  }
+  double start = 0.0;
+  double end = 0.0;
+  double stride = 1.0;
+  double active_offset = 0.0;
+  ClipValueToDouble(dict.find("templateStartTime"), &start);
+  ClipValueToDouble(dict.find("templateEndTime"), &end);
+  ClipValueToDouble(dict.find("templateStride"), &stride);
+  ClipValueToDouble(dict.find("templateActiveOffset"), &active_offset);
+  if (stride <= 0.0 || end < start) {
+    if (error) *error = "Invalid value-clip template time range";
+    return false;
+  }
+
+  const size_t first_hash = pattern.find('#');
+  if (first_hash == std::string::npos) {
+    if (error) *error = "Value-clip templateAssetPath has no # placeholder";
+    return false;
+  }
+  size_t first_end = first_hash;
+  while (first_end < pattern.size() && pattern[first_end] == '#') ++first_end;
+  const size_t first_width = first_end - first_hash;
+  size_t second_start = std::string::npos;
+  size_t second_end = std::string::npos;
+  if (first_end + 1 < pattern.size() && pattern[first_end] == '.' &&
+      pattern[first_end + 1] == '#') {
+    second_start = first_end + 1;
+    second_end = second_start;
+    while (second_end < pattern.size() && pattern[second_end] == '#') {
+      ++second_end;
+    }
+  }
+  const std::string prefix = pattern.substr(0, first_hash);
+  const std::string suffix = second_start == std::string::npos
+                                 ? pattern.substr(first_end)
+                                 : pattern.substr(second_end);
+
+  int asset_index = 0;
+  for (double time = start; time <= end + stride * 0.5; time += stride) {
+    const double t = std::min(time, end);
+    double integer_part = 0.0;
+    const double fractional_part = std::modf(t, &integer_part);
+    std::ostringstream path;
+    path << prefix << std::setfill('0') << std::setw(static_cast<int>(first_width))
+         << static_cast<int>(integer_part);
+    if (second_start != std::string::npos) {
+      const size_t width = second_end - second_start;
+      const double scale = std::pow(10.0, static_cast<double>(width));
+      path << '.' << std::setw(static_cast<int>(width))
+           << static_cast<int>(std::round(std::fabs(fractional_part) * scale));
+    }
+    path << suffix;
+    out->asset_paths.push_back(path.str());
+    out->times.emplace_back(t, t);
+    out->active.emplace_back(t + active_offset, asset_index++);
+    if (t >= end) break;
+  }
+  return !out->asset_paths.empty();
+}
+
+bool ParseNextClipSets(const UsdPrim& prim,
+                       std::vector<NextClipSetMetadata>* out,
+                       std::string* error) {
+  if (!out || !prim.GetPrimSpec()) return false;
+  const ::tinyusdz::next::Dict* clips =
+      prim.GetPrimSpec()->meta().clips().as_dictionary();
+  if (!clips) return false;
+
+  for (const auto& entry : clips->entries) {
+    const ::tinyusdz::next::Dict* dict = entry.second.as_dictionary();
+    if (!dict) continue;
+    NextClipSetMetadata meta;
+    meta.name = entry.first;
+    if (dict->find("templateAssetPath")) {
+      if (!ExpandNextTemplateClips(*dict, &meta, error)) continue;
+    } else if (const Value* assets = dict->find("assetPaths")) {
+      if (const std::vector<std::string>* paths = assets->as_token_array()) {
+        meta.asset_paths = *paths;
+      }
+      meta.times = ClipPairArray(dict->find("times"));
+      const std::vector<std::pair<double, double>> active_pairs =
+          ClipPairArray(dict->find("active"));
+      for (const auto& pair : active_pairs) {
+        meta.active.emplace_back(pair.first, static_cast<int>(pair.second));
+      }
+    }
+    ClipValueToString(dict->find("primPath"), &meta.prim_path);
+    ClipValueToString(dict->find("manifestAssetPath"),
+                      &meta.manifest_asset_path);
+    if (const bool* interpolate =
+            dict->find("interpolateMissingClipValues")
+                ? dict->find("interpolateMissingClipValues")->as_bool()
+                : nullptr) {
+      meta.interpolate_missing = *interpolate;
+    }
+    if (meta.active.empty() && !meta.asset_paths.empty()) {
+      meta.active.emplace_back(0.0, 0);
+    }
+    if (!meta.asset_paths.empty()) {
+      std::sort(meta.times.begin(), meta.times.end());
+      std::sort(meta.active.begin(), meta.active.end());
+      out->push_back(std::move(meta));
+    }
+  }
+  return !out->empty();
+}
+
+int ActiveClipIndex(const NextClipSetMetadata& meta, double stage_time) {
+  if (meta.active.empty()) return meta.asset_paths.empty() ? -1 : 0;
+  int index = meta.active.front().second;
+  for (const auto& entry : meta.active) {
+    if (entry.first > stage_time) break;
+    index = entry.second;
+  }
+  return index;
+}
+
+double ValueClipTime(const NextClipSetMetadata& meta, double stage_time) {
+  if (meta.times.empty()) return stage_time;
+  if (stage_time <= meta.times.front().first) return meta.times.front().second;
+  if (stage_time >= meta.times.back().first) return meta.times.back().second;
+  for (size_t i = 0; i + 1 < meta.times.size(); ++i) {
+    const auto& a = meta.times[i];
+    const auto& b = meta.times[i + 1];
+    if (stage_time < a.first || stage_time > b.first) continue;
+    const double span = b.first - a.first;
+    const double alpha = span > 0.0 ? (stage_time - a.first) / span : 0.0;
+    return a.second + (b.second - a.second) * alpha;
+  }
+  return stage_time;
+}
+
+std::vector<double> ValueClipSampleTimes(const Stage& stage,
+                                         const NextClipSetMetadata& meta,
+                                         uint32_t max_samples) {
+  std::set<double> exact;
+  for (const auto& value : meta.times) exact.insert(value.first);
+  for (const auto& value : meta.active) exact.insert(value.first);
+  const ::tinyusdz::next::StageMeta stage_meta = stage.GetMeta();
+  double start = exact.empty() ? 0.0 : *exact.begin();
+  double end = exact.empty() ? start : *exact.rbegin();
+  if (stage_meta.startTimeCode_set) start = stage_meta.startTimeCode;
+  if (stage_meta.endTimeCode_set) end = stage_meta.endTimeCode;
+  if (end < start) std::swap(start, end);
+  exact.insert(start);
+  exact.insert(end);
+
+  const uint32_t limit = std::max<uint32_t>(2, max_samples);
+  const double span = end - start;
+  double step = 1.0;
+  if (span > static_cast<double>(limit - 1)) {
+    step = span / static_cast<double>(limit - 1);
+  }
+  for (double t = start; t <= end + step * 0.25; t += step) {
+    exact.insert(std::min(t, end));
+    if (exact.size() >= limit + meta.times.size() + meta.active.size()) break;
+  }
+  return std::vector<double>(exact.begin(), exact.end());
 }
 
 struct TextureNodeData {
@@ -3997,6 +4230,108 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
   out->prim_path = prim.GetPath().str();
   out->start_time = std::numeric_limits<double>::max();
   out->end_time = -std::numeric_limits<double>::max();
+
+  if (config_.animation.bake_value_clips) {
+    std::vector<NextClipSetMetadata> clip_sets;
+    std::string clip_error;
+    if (ParseNextClipSets(prim, &clip_sets, &clip_error)) {
+      std::map<std::string, Stage> clip_stages;
+      for (const NextClipSetMetadata& clip_set : clip_sets) {
+        for (const std::string& asset_path : clip_set.asset_paths) {
+          if (std::find(out->clip_asset_paths.begin(),
+                        out->clip_asset_paths.end(), asset_path) ==
+              out->clip_asset_paths.end()) {
+            out->clip_asset_paths.push_back(asset_path);
+          }
+          if (clip_stages.find(asset_path) != clip_stages.end()) continue;
+          if (!config_.animation.clip_stage_loader) continue;
+          Stage clip_stage;
+          std::string warn;
+          std::string err;
+          if (config_.animation.clip_stage_loader(asset_path, &clip_stage,
+                                                  &warn, &err)) {
+            clip_stages.emplace(asset_path, std::move(clip_stage));
+          } else {
+            warnings_.push_back("Unable to load value clip '" + asset_path +
+                                "' for " + prim.GetPath().str() +
+                                (err.empty() ? std::string() : ": " + err));
+          }
+          if (!warn.empty()) warnings_.push_back(std::move(warn));
+        }
+      }
+
+      for (const NextClipSetMetadata& clip_set : clip_sets) {
+        std::set<std::string> properties;
+        const std::string clip_prim_path =
+            clip_set.prim_path.empty() ? prim.GetPath().str()
+                                       : clip_set.prim_path;
+        for (const std::string& asset_path : clip_set.asset_paths) {
+          const auto stage_it = clip_stages.find(asset_path);
+          if (stage_it == clip_stages.end()) continue;
+          const UsdPrim clip_prim =
+              stage_it->second.GetPrimAtPath(clip_prim_path);
+          if (!clip_prim.IsValid()) continue;
+          for (const std::string& property : clip_prim.GetPropertyNames()) {
+            properties.insert(property);
+          }
+        }
+
+        const std::vector<double> sample_times = ValueClipSampleTimes(
+            stage, clip_set, config_.animation.max_value_clip_samples);
+        for (const std::string& property : properties) {
+          AnimationChannel channel;
+          channel.target_path =
+              IsXformAnimationProperty(property)
+                  ? TargetPathForXformOp(property)
+                  : AnimationChannel::TargetPath::CustomProperty;
+          channel.target_prim_path = prim.GetPath().str();
+          channel.property_name = property;
+          channel.keyframes.reserve(sample_times.size());
+
+          for (double stage_time : sample_times) {
+            const int asset_index = ActiveClipIndex(clip_set, stage_time);
+            Value value;
+            bool have_value = false;
+            if (asset_index >= 0 &&
+                static_cast<size_t>(asset_index) <
+                    clip_set.asset_paths.size()) {
+              const auto stage_it = clip_stages.find(
+                  clip_set.asset_paths[static_cast<size_t>(asset_index)]);
+              if (stage_it != clip_stages.end()) {
+                const UsdPrim clip_prim =
+                    stage_it->second.GetPrimAtPath(clip_prim_path);
+                if (clip_prim.IsValid() && clip_prim.HasProperty(property)) {
+                  value = clip_prim.GetInterpolatedValue(
+                      property, ValueClipTime(clip_set, stage_time));
+                  have_value = !value.is_empty();
+                }
+              }
+            }
+            if (!have_value && prim.HasProperty(property)) {
+              value = prim.GetInterpolatedValue(property, stage_time);
+              have_value = !value.is_empty();
+            }
+            if (!have_value) continue;
+            Float4 converted;
+            if (!ValueToAnimationFloat4(property, value, &converted)) {
+              continue;
+            }
+            channel.keyframes.push_back(Keyframe{stage_time, converted});
+            out->start_time = std::min(out->start_time, stage_time);
+            out->end_time = std::max(out->end_time, stage_time);
+          }
+
+          if (!channel.keyframes.empty()) {
+            out->channels.push_back(std::move(channel));
+            out->value_clip_baked = true;
+          }
+        }
+      }
+    } else if (!clip_error.empty()) {
+      warnings_.push_back("Invalid value clips on " + prim.GetPath().str() +
+                          ": " + clip_error);
+    }
+  }
 
   if (::tinyusdz::next::IsSkelAnimation(prim)) {
     const std::vector<std::string> joint_order =

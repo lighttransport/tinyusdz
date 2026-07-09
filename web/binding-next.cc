@@ -1372,6 +1372,19 @@ class RenderStream {
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
   void setComputeTangents(bool enabled) { compute_tangents_ = enabled; }
 
+  void provideAsset(const std::string& name, const emscripten::val& bytes) {
+    std::string copy_error;
+    std::string data = CopyUint8ArrayToString(bytes, &copy_error);
+    if (!copy_error.empty()) {
+      error_ = copy_error;
+      return;
+    }
+    std::string key = tn::AssetResolver::NormalizePath(name);
+    while (key.rfind("./", 0) == 0) key.erase(0, 2);
+    clip_assets_[key] = std::move(data);
+  }
+  void clearAssets() { clip_assets_.clear(); }
+
   // Strongest variant selection for a variant SET (applies to every prim
   // carrying that set, matching the compositor's set-name-keyed overrides).
   // Takes effect on the next begin()/beginOwned().
@@ -2096,11 +2109,14 @@ class RenderStream {
     info.set("has_node_animation", static_cast<bool>(!clip.channels.empty()));
     info.set("startTime", clip.start_time);
     info.set("endTime", clip.end_time);
-    info.set("clipAssetPaths", emscripten::val::array());
-    info.set("numClipAssetPaths", 0);
-    info.set("valueClipBaked", false);
-    info.set("sourceType", has_skel ? std::string("SkelAnimation")
-                                    : std::string("XformOp"));
+    info.set("clipAssetPaths", VectorToArray(clip.clip_asset_paths));
+    info.set("numClipAssetPaths",
+             static_cast<int>(clip.clip_asset_paths.size()));
+    info.set("valueClipBaked", clip.value_clip_baked);
+    info.set("sourceType", clip.value_clip_baked
+                               ? std::string("ValueClip")
+                               : (has_skel ? std::string("SkelAnimation")
+                                           : std::string("XformOp")));
     return info;
   }
 
@@ -2267,6 +2283,29 @@ class RenderStream {
     cfg.material.load_textures = false;
     cfg.material.allow_missing_textures = true;
     cfg.point_instancer.duplicate_meshes = false;
+    cfg.animation.clip_stage_loader =
+        [this](const std::string& asset_path, tn::Stage* stage,
+               std::string* warn, std::string* err) {
+          std::string key = tn::AssetResolver::NormalizePath(asset_path);
+          while (key.rfind("./", 0) == 0) key.erase(0, 2);
+          auto it = clip_assets_.find(key);
+          if (it == clip_assets_.end()) {
+            for (const std::string& candidate :
+                 tn::AssetResolver::SuffixCandidates(key)) {
+              it = clip_assets_.find(candidate);
+              if (it != clip_assets_.end()) break;
+            }
+          }
+          if (it == clip_assets_.end()) {
+            if (err) *err = "asset was not supplied to RenderStream";
+            return false;
+          }
+          tn::LoadUSDOptions options;
+          options.usda_options.parse_options.enable_usda_lazy_arrays = true;
+          std::string bytes = it->second;
+          return tn::LoadUSDFromMemoryOwned(std::move(bytes), stage, options,
+                                            warn, err);
+        };
     tr::RenderSceneConverter converter(cfg);
     tr::ConvertResult result = converter.Convert(stage_);
     render_scene_ = std::move(result.scene);
@@ -3607,6 +3646,7 @@ class RenderStream {
   std::set<std::string> source_material_keys_;
   std::set<std::string> source_texture_keys_;
   std::set<std::string> texture_keys_;
+  std::map<std::string, std::string> clip_assets_;
   struct VariantSetInfo {
     std::string prim_path;
     std::string set_name;
@@ -3943,6 +3983,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("setFlattenRenderTree", &RenderStream::setFlattenRenderTree)
       .function("setComputeTangents", &RenderStream::setComputeTangents)
       .function("setTangentMethod", &RenderStream::setTangentMethod)
+      .function("provideAsset", &RenderStream::provideAsset)
+      .function("clearAssets", &RenderStream::clearAssets)
       .function("setVariantOverride", &RenderStream::setVariantOverride)
       .function("clearVariantOverrides", &RenderStream::clearVariantOverrides)
       .function("listVariants", &RenderStream::listVariants)
