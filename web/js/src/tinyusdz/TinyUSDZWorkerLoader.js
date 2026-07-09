@@ -275,6 +275,10 @@ class WorkerLoadResult {
         return this._data.numPoints || 0;
     }
 
+    numCurves() {
+        return this._data.numCurves || 0;
+    }
+
     numNodes() {
         return this._data.numNodes || 0;
     }
@@ -329,6 +333,10 @@ class WorkerLoadResult {
 
     getPoints(index) {
         return this._data.points ? this._data.points[index] : null;
+    }
+
+    getCurves(index) {
+        return this._data.curves ? this._data.curves[index] : null;
     }
 
     getMaterial(index) {

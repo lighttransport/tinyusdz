@@ -155,8 +155,57 @@ static const char* NodeTypeName(tr::NodeType type) {
       return "sphereLight";
     case tr::NodeType::Skeleton:
       return "skeleton";
+    case tr::NodeType::Curves:
+      return "curves";
     default:
       return "unknown";
+  }
+}
+
+static const char* InterpolationName(tr::Interpolation interpolation) {
+  switch (interpolation) {
+    case tr::Interpolation::Constant:
+      return "constant";
+    case tr::Interpolation::Uniform:
+      return "uniform";
+    case tr::Interpolation::Vertex:
+      return "vertex";
+    case tr::Interpolation::Varying:
+      return "varying";
+    case tr::Interpolation::FaceVarying:
+      return "faceVarying";
+    default:
+      return "constant";
+  }
+}
+
+static const char* CurveTypeName(tr::CurveType type) {
+  return type == tr::CurveType::Linear ? "linear" : "cubic";
+}
+
+static const char* CurveBasisName(tr::CurveBasis basis) {
+  switch (basis) {
+    case tr::CurveBasis::Bezier:
+      return "bezier";
+    case tr::CurveBasis::BSpline:
+      return "bspline";
+    case tr::CurveBasis::CatmullRom:
+      return "catmullRom";
+    default:
+      return "bezier";
+  }
+}
+
+static const char* CurveWrapName(tr::CurveWrap wrap) {
+  switch (wrap) {
+    case tr::CurveWrap::Nonperiodic:
+      return "nonperiodic";
+    case tr::CurveWrap::Periodic:
+      return "periodic";
+    case tr::CurveWrap::Pinned:
+      return "pinned";
+    default:
+      return "nonperiodic";
   }
 }
 
@@ -1112,6 +1161,8 @@ class RenderStream {
     r.set("meshCount", meshCount());
     r.set("points", static_cast<int>(pointsCount()));
     r.set("pointsCount", static_cast<int>(pointsCount()));
+    r.set("curves", static_cast<int>(curvesCount()));
+    r.set("curvesCount", static_cast<int>(curvesCount()));
     r.set("nodes", static_cast<int>(nodeCount()));
     r.set("nodeCount", static_cast<int>(nodeCount()));
     r.set("lights", static_cast<int>(lightCount()));
@@ -1171,6 +1222,10 @@ class RenderStream {
 
   int pointsCount() const {
     return render_scene_valid_ ? static_cast<int>(render_scene_.points.size()) : 0;
+  }
+
+  int curvesCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.curves.size()) : 0;
   }
 
   int cameraCount() const {
@@ -1332,6 +1387,89 @@ class RenderStream {
     if (points.has_bbox) {
       out.set("bboxMin", Float3Value(points.bbox_min));
       out.set("bboxMax", Float3Value(points.bbox_max));
+    }
+    return out;
+  }
+
+  emscripten::val getCurves(int32_t curves_id) {
+    emscripten::val out = emscripten::val::object();
+    if (!render_scene_valid_ || curves_id < 0 ||
+        static_cast<size_t>(curves_id) >= render_scene_.curves.size()) {
+      out.set("error", std::string("invalid curves index"));
+      return out;
+    }
+    const tr::RenderCurves& curves =
+        render_scene_.curves[static_cast<size_t>(curves_id)];
+
+    s_curve_points_.clear();
+    s_curve_widths_.clear();
+    s_curve_colors_.clear();
+    s_curve_tessellated_points_.clear();
+    s_curve_tessellated_widths_.clear();
+    s_curve_tessellated_colors_.clear();
+    s_curve_points_.reserve(curves.points.size());
+    for (size_t i = 0; i < curves.points.size(); ++i) {
+      s_curve_points_.push_back(curves.points[i]);
+    }
+    s_curve_widths_.reserve(curves.widths.size());
+    for (size_t i = 0; i < curves.widths.size(); ++i) {
+      s_curve_widths_.push_back(curves.widths[i]);
+    }
+    s_curve_colors_.reserve(curves.colors.size());
+    for (size_t i = 0; i < curves.colors.size(); ++i) {
+      s_curve_colors_.push_back(curves.colors[i]);
+    }
+    s_curve_tessellated_points_.reserve(curves.tessellated_points.size());
+    for (size_t i = 0; i < curves.tessellated_points.size(); ++i) {
+      s_curve_tessellated_points_.push_back(curves.tessellated_points[i]);
+    }
+    s_curve_tessellated_widths_.reserve(curves.tessellated_widths.size());
+    for (size_t i = 0; i < curves.tessellated_widths.size(); ++i) {
+      s_curve_tessellated_widths_.push_back(curves.tessellated_widths[i]);
+    }
+    s_curve_tessellated_colors_.reserve(curves.tessellated_colors.size());
+    for (size_t i = 0; i < curves.tessellated_colors.size(); ++i) {
+      s_curve_tessellated_colors_.push_back(curves.tessellated_colors[i]);
+    }
+
+    out.set("index", curves_id);
+    out.set("name", curves.name);
+    out.set("primPath", curves.prim_path);
+    out.set("curveCount", static_cast<int>(curves.curve_count()));
+    out.set("controlPointCount", static_cast<int>(curves.control_point_count()));
+    out.set("tessellatedPointCount",
+            static_cast<int>(curves.tessellated_point_count()));
+    out.set("type", CurveTypeName(curves.type));
+    out.set("typeCode", static_cast<int>(curves.type));
+    out.set("basis", CurveBasisName(curves.basis));
+    out.set("basisCode", static_cast<int>(curves.basis));
+    out.set("wrap", CurveWrapName(curves.wrap));
+    out.set("wrapCode", static_cast<int>(curves.wrap));
+    out.set("isNurbs", curves.is_nurbs);
+    out.set("materialId", curves.material_id);
+    out.set("widthsInterpolation", InterpolationName(curves.widths_interp));
+    out.set("colorsInterpolation", InterpolationName(curves.colors_interp));
+    out.set("curveVertexCounts", VectorToArray(curves.curve_vertex_counts));
+    out.set("tessellatedVertexCounts",
+            VectorToArray(curves.tessellated_vertex_counts));
+    out.set("points", heapF_(s_curve_points_, 3));
+    out.set("tessellatedPoints", heapF_(s_curve_tessellated_points_, 3));
+    if (!s_curve_widths_.empty()) {
+      out.set("widths", heapF_(s_curve_widths_, 1));
+    }
+    if (!s_curve_colors_.empty()) {
+      out.set("colors", heapF_(s_curve_colors_, 3));
+    }
+    if (!s_curve_tessellated_widths_.empty()) {
+      out.set("tessellatedWidths", heapF_(s_curve_tessellated_widths_, 1));
+    }
+    if (!s_curve_tessellated_colors_.empty()) {
+      out.set("tessellatedColors", heapF_(s_curve_tessellated_colors_, 3));
+    }
+    out.set("hasBounds", curves.has_bbox);
+    if (curves.has_bbox) {
+      out.set("bboxMin", Float3Value(curves.bbox_min));
+      out.set("bboxMax", Float3Value(curves.bbox_max));
     }
     return out;
   }
@@ -1695,6 +1833,7 @@ class RenderStream {
       s.set("renderSceneNodes", static_cast<int>(render_scene_.nodes.size()));
       s.set("renderSceneMeshes", static_cast<int>(render_scene_.meshes.size()));
       s.set("renderScenePoints", static_cast<int>(render_scene_.points.size()));
+      s.set("renderSceneCurves", static_cast<int>(render_scene_.curves.size()));
       s.set("renderScenePointInstancers",
             static_cast<int>(render_scene_.point_instancers.size()));
       s.set("renderScenePointInstanceDraws",
@@ -1718,6 +1857,7 @@ class RenderStream {
       s.set("renderSceneNodes", 0);
       s.set("renderSceneMeshes", 0);
       s.set("renderScenePoints", 0);
+      s.set("renderSceneCurves", 0);
       s.set("renderScenePointInstancers", 0);
       s.set("renderScenePointInstanceDraws", 0);
       s.set("renderSceneMaterials", 0);
@@ -1790,6 +1930,12 @@ class RenderStream {
     freeVec_(s_points_cloud_points_);
     freeVec_(s_points_cloud_widths_);
     freeVec_(s_points_cloud_colors_);
+    freeVec_(s_curve_points_);
+    freeVec_(s_curve_widths_);
+    freeVec_(s_curve_colors_);
+    freeVec_(s_curve_tessellated_points_);
+    freeVec_(s_curve_tessellated_widths_);
+    freeVec_(s_curve_tessellated_colors_);
   }
 
   void buildRenderScene_() {
@@ -3197,6 +3343,10 @@ class RenderStream {
   std::vector<float> s_points_, s_normals_, s_uv_, s_tangents_;
   std::vector<float> s_points_cloud_points_, s_points_cloud_widths_;
   std::vector<float> s_points_cloud_colors_;
+  std::vector<float> s_curve_points_, s_curve_widths_, s_curve_colors_;
+  std::vector<float> s_curve_tessellated_points_;
+  std::vector<float> s_curve_tessellated_widths_;
+  std::vector<float> s_curve_tessellated_colors_;
   std::vector<uint32_t> s_indices_;
   std::vector<uint16_t> s_joint_indices_;
   std::vector<float> s_joint_weights_;
@@ -3470,6 +3620,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("numLights", &RenderStream::lightCount)
       .function("pointsCount", &RenderStream::pointsCount)
       .function("numPoints", &RenderStream::pointsCount)
+      .function("curvesCount", &RenderStream::curvesCount)
+      .function("numCurves", &RenderStream::curvesCount)
       .function("cameraCount", &RenderStream::cameraCount)
       .function("numCameras", &RenderStream::cameraCount)
       .function("pointInstancerCount", &RenderStream::pointInstancerCount)
@@ -3489,6 +3641,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("getNode", &RenderStream::getNode)
       .function("getLight", &RenderStream::getLight)
       .function("getPoints", &RenderStream::getPoints)
+      .function("getCurves", &RenderStream::getCurves)
       .function("getCamera", &RenderStream::getCamera)
       .function("getPointInstancer", &RenderStream::getPointInstancer)
       .function("getPointInstanceDraw", &RenderStream::getPointInstanceDraw)

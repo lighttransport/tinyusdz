@@ -1745,6 +1745,139 @@ def Xform "Root"
   std::cout << "  USD Physics annotations: PASSED\n";
 }
 
+void TestRenderConverterCurves() {
+  std::cout << "Testing RenderConverter curves...\n";
+
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def BasisCurves "Linear"
+    {
+        uniform token type = "linear"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [3, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0),
+                            (2, 0, 0), (2, 1, 0)]
+        float[] widths = [0.1, 0.2, 0.3, 0.4, 0.5]
+        color3f[] primvars:displayColor = [(0.25, 0.5, 0.75)] (
+            interpolation = "constant"
+        )
+    }
+
+    def BasisCurves "Bezier"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "bezier"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
+    }
+
+    def BasisCurves "PeriodicCatmullRom"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "catmullRom"
+        uniform token wrap = "periodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    }
+
+    def NurbsCurves "Nurbs"
+    {
+        int[] curveVertexCounts = [4]
+        int[] order = [3]
+        double[] knots = [0, 0, 0, 1, 2, 2, 2]
+        double2[] ranges = [(0, 2)]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
+    }
+
+    def NurbsCurves "BadNurbs"
+    {
+        int[] curveVertexCounts = [4]
+        int[] order = [3]
+        double[] knots = [0, 0]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (2, 1, 0)]
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  ConverterConfig cfg;
+  cfg.curves.tessellation_segments = 2;
+  RenderSceneConverter converter(cfg);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.curves.size() == 5);
+  assert(result.scene.get_stats().curves_count == 5);
+  assert(result.scene.get_stats().curve_count == 6);
+
+  auto curve = [&](const char* path) -> const RenderCurves& {
+    auto it = result.scene.curves_by_path.find(path);
+    assert(it != result.scene.curves_by_path.end());
+    const RenderCurves* value = result.scene.get_curves(it->second);
+    assert(value);
+    return *value;
+  };
+
+  const RenderCurves& linear = curve("/World/Linear");
+  assert(linear.type == CurveType::Linear);
+  assert(linear.curve_vertex_counts == std::vector<uint32_t>({3, 2}));
+  assert(linear.tessellated_vertex_counts ==
+         std::vector<uint32_t>({3, 2}));
+  assert(linear.tessellated_widths.size() == 5);
+  assert(linear.colors.size() == 3);
+  assert(linear.colors_interp == Interpolation::Constant);
+  assert(linear.tessellated_colors.size() == 15);
+  assert(linear.has_bbox);
+
+  const RenderCurves& bezier = curve("/World/Bezier");
+  assert(bezier.type == CurveType::Cubic);
+  assert(bezier.basis == CurveBasis::Bezier);
+  assert(bezier.tessellated_vertex_counts == std::vector<uint32_t>({3}));
+  assert(std::fabs(bezier.tessellated_points[0]) < 0.001f);
+  assert(std::fabs(bezier.tessellated_points[8] - 0.0f) < 0.001f);
+  assert(std::fabs(bezier.tessellated_points[6] - 2.0f) < 0.001f);
+  assert(std::fabs(bezier.tessellated_points[7] - 1.0f) < 0.001f);
+
+  const RenderCurves& periodic = curve("/World/PeriodicCatmullRom");
+  assert(periodic.wrap == CurveWrap::Periodic);
+  assert(periodic.tessellated_vertex_counts == std::vector<uint32_t>({9}));
+  const size_t last = periodic.tessellated_points.size() - 3;
+  assert(std::fabs(periodic.tessellated_points[0] -
+                   periodic.tessellated_points[last]) < 0.001f);
+  assert(std::fabs(periodic.tessellated_points[1] -
+                   periodic.tessellated_points[last + 1]) < 0.001f);
+
+  const RenderCurves& nurbs = curve("/World/Nurbs");
+  assert(nurbs.is_nurbs);
+  assert(nurbs.tessellated_vertex_counts == std::vector<uint32_t>({5}));
+  assert(std::fabs(nurbs.tessellated_points[0]) < 0.001f);
+  assert(std::fabs(nurbs.tessellated_points[nurbs.tessellated_points.size() - 3] -
+                   2.0f) < 0.001f);
+
+  const RenderCurves& bad_nurbs = curve("/World/BadNurbs");
+  assert(bad_nurbs.tessellated_vertex_counts ==
+         std::vector<uint32_t>({4}));
+  bool saw_fallback = false;
+  for (const std::string& warning : result.warnings) {
+    if (warning.find("BadNurbs") != std::string::npos &&
+        warning.find("control-polygon passthrough") != std::string::npos) {
+      saw_fallback = true;
+    }
+  }
+  assert(saw_fallback);
+
+  auto node_it = result.scene.node_by_path.find("/World/Bezier");
+  assert(node_it != result.scene.node_by_path.end());
+  const SceneNode& node = result.scene.nodes[node_it->second];
+  assert(node.type == NodeType::Curves);
+  assert(node.data_id >= 0);
+
+  std::cout << "  RenderConverter curves: PASSED\n";
+}
+
 void TestLegacyParityExtraction() {
   std::cout << "Testing legacy schema parity extraction...\n";
 
@@ -1928,15 +2061,19 @@ def Xform "Root"
   assert(scene.nodes[static_cast<size_t>(pts_node->second)].type == NodeType::Points);
   assert(scene.nodes[static_cast<size_t>(pts_node->second)].data_id == 0);
 
-  assert(scene.unsupported_renderables.size() == 2);
-  bool saw_curve = false;
-  bool saw_volume = false;
-  for (const UnsupportedRenderable& rec : scene.unsupported_renderables) {
-    if (rec.type_name == "BasisCurves") saw_curve = true;
-    if (rec.type_name == "Volume") saw_volume = true;
+  // BasisCurves are converted now (the empty def fails conversion with a
+  // warning), so only Volume remains unsupported.
+  assert(scene.unsupported_renderables.size() == 1);
+  assert(scene.unsupported_renderables[0].type_name == "Volume");
+  assert(scene.curves.empty());  // "/Root/Curve" has no points/counts
+  bool saw_curve_warning = false;
+  for (const std::string& w : res.warnings) {
+    if (w.find("Failed to convert curves prim: /Root/Curve") !=
+        std::string::npos) {
+      saw_curve_warning = true;
+    }
   }
-  assert(saw_curve);
-  assert(saw_volume);
+  assert(saw_curve_warning);
 
   std::cout << "  Legacy schema parity extraction: PASSED\n";
 }
@@ -1975,6 +2112,7 @@ int main() {
   TestAudit2026_07();
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();
+  TestRenderConverterCurves();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

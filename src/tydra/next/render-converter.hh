@@ -63,6 +63,12 @@ struct MaterialConfig {
   TextureLoader custom_texture_loader;
 };
 
+struct CurvesConfig {
+  // Polyline samples per cubic/NURBS span when tessellating BasisCurves /
+  // NurbsCurves (linear curves pass through unchanged). Clamped to >= 1.
+  uint32_t tessellation_segments = 8;
+};
+
 struct PointInstancerConfig {
   // Keep the default as lightweight draw references. Enable this only for
   // consumers that require ordinary mesh payloads for each visible instance.
@@ -72,6 +78,7 @@ struct PointInstancerConfig {
 struct ConverterConfig {
   MeshConfig mesh;
   MaterialConfig material;
+  CurvesConfig curves;
   PointInstancerConfig point_instancer;
 
   // Time code for evaluation
@@ -118,6 +125,7 @@ class RenderSceneConverter {
   // Individual conversion methods (for custom pipelines)
   bool ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out);
   bool ConvertPoints(const UsdPrim& prim, RenderPoints* out);
+  bool ConvertCurves(const UsdPrim& prim, RenderCurves* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);

@@ -464,26 +464,31 @@ export function buildNextThreeNode(adapter, {
   const sceneBox = new THREE.Box3();
   const meshes = adapter.meshes || [];
   const points = adapter.points || [];
+  const curves = adapter.curves || [];
   const totalMeshes = meshes.length;
   const totalPoints = points.length;
-  const totalRenderables = totalMeshes + totalPoints;
+  const totalCurves = curves.length;
+  const totalRenderables = totalMeshes + totalPoints + totalCurves;
   let builtMeshes = 0;
   let builtPoints = 0;
+  let builtCurves = 0;
   let lastProgressMesh = 0;
   const progressStep = totalRenderables > 0
     ? Math.max(1, Math.ceil(totalRenderables / Math.max(1, progressInterval)))
     : 1;
   const reportProgress = (message, force = false) => {
     if (!onProgress) return;
-    const builtRenderables = builtMeshes + builtPoints;
+    const builtRenderables = builtMeshes + builtPoints + builtCurves;
     if (!force && builtRenderables - lastProgressMesh < progressStep) return;
     lastProgressMesh = builtRenderables;
     onProgress({
       stage: 'building',
       builtMeshes,
       builtPoints,
+      builtCurves,
       totalMeshes,
       totalPoints,
+      totalCurves,
       materials: materialCache.size,
       queuedTextures: textureManager ? textureManager.total : 0,
       percentage: totalRenderables > 0 ? (builtRenderables / totalRenderables) * 100 : 100,
@@ -510,9 +515,13 @@ export function buildNextThreeNode(adapter, {
     object.matrixAutoUpdate = false;
   };
   const pointNodes = new Map();
+  const curveNodes = new Map();
   for (const node of adapter.nodes || []) {
     if (node && node.type === 'points' && Number.isFinite(node.dataId) && !pointNodes.has(node.dataId)) {
       pointNodes.set(node.dataId, node);
+    }
+    if (node && node.type === 'curves' && Number.isFinite(node.dataId) && !curveNodes.has(node.dataId)) {
+      curveNodes.set(node.dataId, node);
     }
   }
   const pointSize = (entry) => {
@@ -535,7 +544,7 @@ export function buildNextThreeNode(adapter, {
   for (const mesh of meshes) {
     builtMeshes++;
     if (!mesh.points || mesh.points.length === 0) {
-      reportProgress(`Building next scene (${builtMeshes + builtPoints}/${totalRenderables})...`);
+      reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
       continue;
     }
     const geometry = new THREE.BufferGeometry();
@@ -619,13 +628,13 @@ export function buildNextThreeNode(adapter, {
       sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threeMesh.matrix));
     }
     group.add(threeMesh);
-    reportProgress(`Building next scene (${builtMeshes + builtPoints}/${totalRenderables})...`);
+    reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
   }
 
   for (const pointCloud of points) {
     builtPoints++;
     if (!pointCloud.points || pointCloud.points.length === 0) {
-      reportProgress(`Building next scene (${builtMeshes + builtPoints}/${totalRenderables})...`);
+      reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
       continue;
     }
     const geometry = new THREE.BufferGeometry();
@@ -659,9 +668,81 @@ export function buildNextThreeNode(adapter, {
       sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threePoints.matrix));
     }
     group.add(threePoints);
-    reportProgress(`Building next scene (${builtMeshes + builtPoints}/${totalRenderables})...`);
+    reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
   }
-  reportProgress(`Built next scene (${builtMeshes + builtPoints}/${totalRenderables}), meshes=${builtMeshes}, points=${builtPoints}, materials=${materialCache.size}, textures=${textureManager ? textureManager.total : 0}`, true);
+
+  for (const curveSet of curves) {
+    builtCurves++;
+    const tessellated = curveSet.tessellatedPoints;
+    const counts = curveSet.tessellatedVertexCounts || [];
+    if (!tessellated || tessellated.length === 0 || counts.length === 0) {
+      reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
+      continue;
+    }
+
+    const curveGroup = new THREE.Group();
+    curveGroup.name = curveSet.primPath || curveSet.name || `curves_${curveSet.index}`;
+    curveGroup.userData['primMeta.absPath'] = curveSet.primPath || '';
+    curveGroup.userData.usdCurves = {
+      index: curveSet.index,
+      name: curveSet.name || '',
+      primPath: curveSet.primPath || '',
+      curveCount: Number.isFinite(curveSet.curveCount) ? curveSet.curveCount : counts.length,
+      type: curveSet.type || 'cubic',
+      basis: curveSet.basis || 'bezier',
+      wrap: curveSet.wrap || 'nonperiodic',
+      isNurbs: !!curveSet.isNurbs,
+      materialId: Number.isFinite(curveSet.materialId) ? curveSet.materialId : -1,
+      widthsInterpolation: curveSet.widthsInterpolation || 'constant',
+      colorsInterpolation: curveSet.colorsInterpolation || 'constant'
+    };
+
+    const tessellatedColors = curveSet.tessellatedColors;
+    const tessellatedWidths = curveSet.tessellatedWidths;
+    let pointOffset = 0;
+    for (let curveIndex = 0; curveIndex < counts.length; ++curveIndex) {
+      const pointCount = Math.max(0, Number(counts[curveIndex]) | 0);
+      if (pointCount < 2 || pointOffset + pointCount > tessellated.length / 3) {
+        pointOffset += pointCount;
+        continue;
+      }
+      const positions = tessellated.subarray(pointOffset * 3, (pointOffset + pointCount) * 3);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const hasColors = tessellatedColors &&
+        tessellatedColors.length >= (pointOffset + pointCount) * 3;
+      if (hasColors) {
+        geometry.setAttribute('color', new THREE.BufferAttribute(
+          tessellatedColors.subarray(pointOffset * 3, (pointOffset + pointCount) * 3), 3));
+      }
+      geometry.computeBoundingBox();
+      let lineWidth = 1;
+      if (tessellatedWidths && tessellatedWidths.length >= pointOffset + pointCount) {
+        let widthSum = 0;
+        for (let i = pointOffset; i < pointOffset + pointCount; ++i) widthSum += tessellatedWidths[i];
+        lineWidth = Math.max(1, widthSum / pointCount);
+      } else if (curveSet.widths && curveSet.widths.length === 1) {
+        lineWidth = Math.max(1, curveSet.widths[0]);
+      }
+      const material = new THREE.LineBasicMaterial({
+        color: hasColors ? 0xffffff : 0xc7d3e0,
+        vertexColors: !!hasColors,
+        linewidth: lineWidth
+      });
+      const line = new THREE.Line(geometry, material);
+      line.name = `${curveGroup.name}:${curveIndex}`;
+      curveGroup.add(line);
+      pointOffset += pointCount;
+    }
+
+    const curveNode = curveNodes.get(curveSet.index);
+    applyUsdRowMajorMatrix(curveGroup, curveNode?.worldMatrix);
+    const localBox = new THREE.Box3().setFromObject(curveGroup);
+    if (!localBox.isEmpty()) sceneBox.union(localBox);
+    group.add(curveGroup);
+    reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
+  }
+  reportProgress(`Built next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables}), meshes=${builtMeshes}, points=${builtPoints}, curves=${builtCurves}, materials=${materialCache.size}, textures=${textureManager ? textureManager.total : 0}`, true);
 
   if (!sceneBox.isEmpty()) {
     group.userData.localBoundsBox = sceneBox;
@@ -693,6 +774,7 @@ export function nextCountsFromScene(usd) {
     animations: usd && usd.numAnimations ? usd.numAnimations() : 0,
     lights: usd && usd.numLights ? usd.numLights() : 0,
     cameras: usd && usd.numCameras ? usd.numCameras() : 0,
+    curves: usd && usd.numCurves ? usd.numCurves() : 0,
     pointInstancers: usd && usd.numPointInstancers ? usd.numPointInstancers() : 0,
     pointInstanceDraws: usd && usd.numPointInstanceDraws ? usd.numPointInstanceDraws() : 0,
     skeletons: usd && usd.numSkeletons ? usd.numSkeletons() : 0,

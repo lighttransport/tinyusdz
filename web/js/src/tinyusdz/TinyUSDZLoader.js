@@ -193,6 +193,7 @@ export class NextRenderSceneAdapter {
         this.archiveEntries = options.archiveEntries || new Map();
         this.meshes = options.meshes || [];
         this.points = options.points || [];
+        this.curves = options.curves || [];
         this.nodes = options.nodes || [];
         this.lights = options.lights || [];
         this.cameras = options.cameras || [];
@@ -212,6 +213,9 @@ export class NextRenderSceneAdapter {
         this.pointsCountValue = Number.isFinite(options.pointsCount)
             ? options.pointsCount
             : this.points.length;
+        this.curvesCountValue = Number.isFinite(options.curvesCount)
+            ? options.curvesCount
+            : this.curves.length;
         this.nodeCountValue = Number.isFinite(options.nodeCount)
             ? options.nodeCount
             : this.nodes.length;
@@ -486,6 +490,12 @@ export class NextRenderSceneAdapter {
                     : (typeof renderStream.numPoints === 'function'
                         ? renderStream.numPoints()
                         : 0));
+            const curvesCount = Number.isFinite(beginResult.curvesCount)
+                ? beginResult.curvesCount
+                : (typeof beginResult.curves === 'number' ? beginResult.curves
+                    : (typeof renderStream.numCurves === 'function'
+                        ? renderStream.numCurves()
+                        : 0));
             const cameraCount = Number.isFinite(beginResult.cameraCount)
                 ? beginResult.cameraCount
                 : (typeof renderStream.cameraCount === 'function'
@@ -593,6 +603,19 @@ export class NextRenderSceneAdapter {
                     points[i] = this._copyPoints(native, item, i);
                 }
             }
+            const curves = [];
+            for (let i = 0; i < curvesCount; i++) {
+                if (typeof renderStream.getCurves === 'function') {
+                    const item = renderStream.getCurves(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getCurves(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    curves[i] = this._copyCurves(native, item, i);
+                }
+            }
             const cameras = [];
             for (let i = 0; i < cameraCount; i++) {
                 if (typeof renderStream.getCamera === 'function') {
@@ -676,6 +699,7 @@ export class NextRenderSceneAdapter {
                 archiveEntries,
                 meshes,
                 points,
+                curves,
                 nodes,
                 lights,
                 cameras,
@@ -685,6 +709,7 @@ export class NextRenderSceneAdapter {
                 unsupportedRenderables,
                 nodeCount,
                 pointsCount,
+                curvesCount,
                 lightCount,
                 cameraCount,
                 pointInstancerCount,
@@ -813,6 +838,37 @@ export class NextRenderSceneAdapter {
         };
     }
 
+    static _copyCurves(native, curves, index) {
+        const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
+        return {
+            index,
+            name: curves.name || `curves_${index}`,
+            primPath: curves.primPath || '',
+            curveCount: Number.isFinite(curves.curveCount) ? curves.curveCount : 0,
+            controlPointCount: Number.isFinite(curves.controlPointCount) ? curves.controlPointCount : 0,
+            tessellatedPointCount: Number.isFinite(curves.tessellatedPointCount)
+                ? curves.tessellatedPointCount : 0,
+            type: curves.type || 'cubic',
+            basis: curves.basis || 'bezier',
+            wrap: curves.wrap || 'nonperiodic',
+            isNurbs: !!curves.isNurbs,
+            materialId: Number.isFinite(curves.materialId) ? curves.materialId : -1,
+            widthsInterpolation: curves.widthsInterpolation || 'constant',
+            colorsInterpolation: curves.colorsInterpolation || 'constant',
+            curveVertexCounts: Array.from(curves.curveVertexCounts || []),
+            tessellatedVertexCounts: Array.from(curves.tessellatedVertexCounts || []),
+            points: copy(curves.points, Float32Array),
+            widths: copy(curves.widths, Float32Array),
+            colors: copy(curves.colors, Float32Array),
+            tessellatedPoints: copy(curves.tessellatedPoints, Float32Array),
+            tessellatedWidths: copy(curves.tessellatedWidths, Float32Array),
+            tessellatedColors: copy(curves.tessellatedColors, Float32Array),
+            hasBounds: !!curves.hasBounds,
+            bboxMin: Array.isArray(curves.bboxMin) ? curves.bboxMin.slice(0, 3) : null,
+            bboxMax: Array.isArray(curves.bboxMax) ? curves.bboxMax.slice(0, 3) : null
+        };
+    }
+
     static _normTexPathStatic(path) {
         return String(path || '').replace(/^[./]+/, '');
     }
@@ -839,6 +895,7 @@ export class NextRenderSceneAdapter {
     releaseBuildData() {
         this.meshes = [];
         this.points = [];
+        this.curves = [];
         this.nodes = [];
         this.lights = [];
         this.cameras = [];
@@ -869,6 +926,10 @@ export class NextRenderSceneAdapter {
 
     numPoints() {
         return this.pointsCountValue || 0;
+    }
+
+    numCurves() {
+        return this.curvesCountValue || 0;
     }
 
     numMaterials() {
@@ -960,6 +1021,28 @@ export class NextRenderSceneAdapter {
             points: points.points ? new Float32Array(points.points) : null,
             widths: points.widths ? new Float32Array(points.widths) : null,
             colors: points.colors ? new Float32Array(points.colors) : null
+        };
+    }
+
+    getCurves(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.curvesCountValue) {
+            return null;
+        }
+        const curves = this.curves[index];
+        if (!curves) return null;
+        return {
+            ...curves,
+            curveVertexCounts: Array.from(curves.curveVertexCounts || []),
+            tessellatedVertexCounts: Array.from(curves.tessellatedVertexCounts || []),
+            points: curves.points ? new Float32Array(curves.points) : null,
+            widths: curves.widths ? new Float32Array(curves.widths) : null,
+            colors: curves.colors ? new Float32Array(curves.colors) : null,
+            tessellatedPoints: curves.tessellatedPoints
+                ? new Float32Array(curves.tessellatedPoints) : null,
+            tessellatedWidths: curves.tessellatedWidths
+                ? new Float32Array(curves.tessellatedWidths) : null,
+            tessellatedColors: curves.tessellatedColors
+                ? new Float32Array(curves.tessellatedColors) : null
         };
     }
 
@@ -1172,6 +1255,7 @@ export class NextRenderSceneAdapter {
         }
         this.meshes = [];
         this.points = [];
+        this.curves = [];
         this.nodes = [];
         this.lights = [];
         this.cameras = [];
