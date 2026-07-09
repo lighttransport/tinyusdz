@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -71,6 +72,26 @@ std::string CopyUint8ArrayToString(const emscripten::val& bytes,
 bool IsUSDCBytes(const std::string& bytes) {
   return bytes.size() >= 8 &&
          std::memcmp(bytes.data(), "PXR-USDC", 8) == 0;
+}
+
+emscripten::val Uint8ArrayFromBytes(const uint8_t* data, size_t size) {
+  emscripten::val out = emscripten::val::global("Uint8Array").new_(
+      emscripten::val(static_cast<double>(size)));
+  if (size > 0) {
+    emscripten::val view = emscripten::val(
+        emscripten::typed_memory_view(size, data));
+    out.call<void>("set", view);
+  }
+  return out;
+}
+
+emscripten::val Uint8ArrayFromString(const std::string& s) {
+  return Uint8ArrayFromBytes(reinterpret_cast<const uint8_t*>(s.data()),
+                             s.size());
+}
+
+emscripten::val Uint8ArrayFromVector(const std::vector<uint8_t>& v) {
+  return Uint8ArrayFromBytes(v.data(), v.size());
 }
 
 template <typename T>
@@ -165,6 +186,90 @@ std::string MaterialKey(const tr::RenderScene& scene, int32_t material_id) {
 }
 
 }  // namespace
+
+class NextUSDZConverterNative {
+ public:
+  NextUSDZConverterNative() = default;
+
+  std::string error() const { return error_; }
+  std::string warn() const { return warn_; }
+
+  emscripten::val rewriteRoot(emscripten::val bytes, const std::string& filename,
+                              emscripten::val options) {
+    error_.clear();
+    warn_.clear();
+
+    std::string copy_error;
+    std::string input = CopyUint8ArrayToString(bytes, &copy_error);
+    if (!copy_error.empty()) return ErrorResult(copy_error);
+
+    tn::Stage stage;
+    tn::LoadUSDOptions load_opts;
+    if (!options.isNull() && !options.isUndefined()) {
+      emscripten::val max_memory = options["maxMemory"];
+      if (!max_memory.isUndefined() && !max_memory.isNull()) {
+        load_opts.max_memory = max_memory.as<size_t>();
+      }
+    }
+
+    const bool ok = tn::LoadUSDFromMemory(
+        reinterpret_cast<const uint8_t*>(input.data()), input.size(), &stage,
+        load_opts, &warn_, &error_);
+    if (!ok) {
+      return ErrorResult(error_.empty() ? "next-core USD load failed" : error_);
+    }
+
+    std::string root_format = "usdc";
+    if (!options.isNull() && !options.isUndefined()) {
+      emscripten::val fmt = options["rootLayerFormat"];
+      if (!fmt.isUndefined() && !fmt.isNull()) {
+        root_format = fmt.as<std::string>();
+      }
+    }
+    std::transform(root_format.begin(), root_format.end(), root_format.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    emscripten::val out = emscripten::val::object();
+    out.set("success", true);
+    out.set("sourcePath", filename);
+
+    if (root_format == "usda") {
+      std::string text = tn::WriteUSDAToString(stage);
+      out.set("rootName", std::string("root.usda"));
+      out.set("rootLayerFormat", std::string("usda"));
+      out.set("data", Uint8ArrayFromString(text));
+      out.set("size", static_cast<double>(text.size()));
+      return out;
+    }
+
+    std::vector<uint8_t> usdc;
+    tn::USDCWriteResult wr = tn::WriteUSDCToMemory(usdc, stage);
+    if (!wr.success) {
+      return ErrorResult(wr.error.empty() ? "next-core USDC write failed"
+                                          : wr.error);
+    }
+    out.set("rootName", std::string("root.usdc"));
+    out.set("rootLayerFormat", std::string("usdc"));
+    out.set("data", Uint8ArrayFromVector(usdc));
+    out.set("size", static_cast<double>(usdc.size()));
+    out.set("tokenCount", static_cast<double>(wr.token_count));
+    out.set("pathCount", static_cast<double>(wr.path_count));
+    out.set("specCount", static_cast<double>(wr.spec_count));
+    return out;
+  }
+
+ private:
+  emscripten::val ErrorResult(const std::string& error) {
+    error_ = error;
+    emscripten::val out = emscripten::val::object();
+    out.set("success", false);
+    out.set("error", error_);
+    return out;
+  }
+
+  std::string error_;
+  std::string warn_;
+};
 
 class RenderStream {
  public:
@@ -597,6 +702,12 @@ class RenderStream {
 };
 
 EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
+  emscripten::class_<NextUSDZConverterNative>("NextUSDZConverterNative")
+      .constructor<>()
+      .function("rewriteRoot", &NextUSDZConverterNative::rewriteRoot)
+      .function("error", &NextUSDZConverterNative::error)
+      .function("warn", &NextUSDZConverterNative::warn);
+
   emscripten::class_<RenderStream>("RenderStream")
       .constructor<>()
       .function("setMaterialDedup", &RenderStream::setMaterialDedup)
