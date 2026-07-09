@@ -849,6 +849,11 @@ struct AnimationClip {
   double end_time = 0.0;
 
   std::vector<AnimationChannel> channels;
+
+  // Source value-clip metadata retained after baking for diagnostics and web
+  // feature-parity reporting.
+  std::vector<std::string> clip_asset_paths;
+  bool value_clip_baked = false;
 };
 
 //

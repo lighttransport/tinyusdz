@@ -2189,6 +2189,83 @@ def Xform "Root"
   std::cout << "  Legacy schema parity extraction: PASSED\n";
 }
 
+void TestValueClipBaking() {
+  std::cout << "Testing next value-clip baking...\n";
+
+  const std::string root = R"(#usda 1.0
+(
+    startTimeCode = 0
+    endTimeCode = 2
+)
+def Xform "Root" (
+    clips = {
+        dictionary default = {
+            double2[] active = [(0, 0), (2, 1)]
+            asset[] assetPaths = [@clip_0.usda@, @clip_1.usda@]
+            string primPath = "/Root"
+            double2[] times = [(0, 0), (2, 2)]
+            bool interpolateMissingClipValues = true
+        }
+    }
+)
+{
+}
+)";
+  const std::map<std::string, std::string> assets = {
+      {"clip_0.usda", R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate = (1, 2, 3)
+}
+)"},
+      {"clip_1.usda", R"(#usda 1.0
+def Xform "Root"
+{
+    double3 xformOp:translate = (5, 6, 7)
+}
+)"}};
+
+  LoadResult loaded = LoadUSDAFromString(root);
+  assert(loaded.success);
+  ConverterConfig config;
+  config.animation.clip_stage_loader =
+      [&assets](const std::string& path, Stage* stage, std::string* warn,
+                std::string* err) {
+        const auto it = assets.find(path);
+        if (it == assets.end()) {
+          if (err) *err = "missing test clip";
+          return false;
+        }
+        LoadResult clip = LoadUSDAFromString(it->second);
+        if (!clip.success) {
+          if (err) *err = clip.error_summary;
+          return false;
+        }
+        if (warn && !clip.warnings.empty()) *warn = clip.warnings.front();
+        *stage = std::move(clip.stage);
+        return true;
+      };
+  RenderSceneConverter converter(config);
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success);
+  assert(converted.scene.animations.size() == 1);
+  const AnimationClip& animation = converted.scene.animations[0];
+  assert(animation.value_clip_baked);
+  assert(animation.clip_asset_paths.size() == 2);
+  assert(animation.start_time == 0.0);
+  assert(animation.end_time == 2.0);
+  assert(animation.channels.size() == 1);
+  const AnimationChannel& channel = animation.channels[0];
+  assert(channel.target_path == AnimationChannel::TargetPath::Translation);
+  assert(channel.target_prim_path == "/Root");
+  assert(channel.keyframes.size() == 3);
+  assert(std::fabs(channel.keyframes[0].value.x - 1.0f) < 0.001f);
+  assert(std::fabs(channel.keyframes[1].value.x - 1.0f) < 0.001f);
+  assert(std::fabs(channel.keyframes[2].value.x - 5.0f) < 0.001f);
+
+  std::cout << "  Next value-clip baking: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -2224,6 +2301,7 @@ int main() {
   TestAudit2026_07_Gaps();
   TestPhysicsAnnotations();
   TestRenderConverterCurves();
+  TestValueClipBaking();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

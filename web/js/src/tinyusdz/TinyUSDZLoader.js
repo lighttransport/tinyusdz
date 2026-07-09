@@ -433,6 +433,16 @@ export class NextRenderSceneAdapter {
                 typeof renderStream.setTangentMethod === 'function') {
                 renderStream.setTangentMethod(String(options.tangentMethod));
             }
+            // Value-clip layers are ordinary USD files in the package. Supply
+            // them before conversion so tydra-next can bake clips without
+            // depending on a filesystem inside WASM.
+            if (typeof renderStream.provideAsset === 'function') {
+                for (const [assetName, assetBytes] of archiveEntries) {
+                    if (this._isUsdName(assetName)) {
+                        renderStream.provideAsset(assetName, assetBytes);
+                    }
+                }
+            }
             // Variant selection: the next compositor keys overrides by variant
             // SET name (applies to every prim carrying that set).
             if (options.variantSelection && options.variantSelection.variantSet &&
@@ -684,7 +694,9 @@ export class NextRenderSceneAdapter {
                 if (!mesh || mesh.error) {
                     throw new Error(mesh?.error || `RenderStream mesh ${i} failed`);
                 }
-                meshes.push(this._copyMesh(native, mesh, i));
+                const copiedMesh = this._copyMesh(native, mesh, i);
+                this._applyUDIMLayout(copiedMesh, archiveEntries);
+                meshes.push(copiedMesh);
             }
             report('mesh-copy', 95, `Materialized meshes ${meshCount}/${meshCount}`,
                 { meshCurrent: meshCount, meshTotal: meshCount });
@@ -873,6 +885,71 @@ export class NextRenderSceneAdapter {
         return String(path || '').replace(/^[./]+/, '');
     }
 
+    static _isUDIMPath(path) {
+        return /<udim>|%\(udim\)d/i.test(String(path || ''));
+    }
+
+    static _udimTilePath(path, tileId) {
+        return String(path || '')
+            .replace(/<udim>/ig, String(tileId))
+            .replace(/%\(udim\)d/ig, String(tileId));
+    }
+
+    static _findArchiveEntry(entries, path) {
+        const key = this._normTexPathStatic(path);
+        if (entries.has(key)) return { path: key, bytes: entries.get(key) };
+        for (const [candidate, bytes] of entries) {
+            if (candidate.endsWith('/' + key) || key.endsWith('/' + candidate)) {
+                return { path: candidate, bytes };
+            }
+        }
+        return null;
+    }
+
+    static _udimLayout(entries, pattern) {
+        if (!this._isUDIMPath(pattern)) return null;
+        const tiles = [];
+        let maxU = 0;
+        let maxV = 0;
+        for (let id = 1001; id <= 1100; ++id) {
+            const found = this._findArchiveEntry(entries, this._udimTilePath(pattern, id));
+            if (!found) continue;
+            const u = (id - 1001) % 10;
+            const v = Math.floor((id - 1001) / 10);
+            maxU = Math.max(maxU, u);
+            maxV = Math.max(maxV, v);
+            tiles.push({ id, u, v, path: found.path, bytes: found.bytes });
+        }
+        if (!tiles.length) return null;
+        return { pattern, tiles, columns: maxU + 1, rows: maxV + 1 };
+    }
+
+    static _applyUDIMLayout(mesh, archiveEntries) {
+        if (!mesh?.uv0?.length) return;
+        const paths = [
+            ...Object.values(mesh.texturePaths || {}),
+            ...(mesh.materials || []).flatMap((entry) =>
+                Object.values(entry?.texturePaths || {}))
+        ];
+        const pattern = paths.find((path) => this._isUDIMPath(path));
+        const layout = pattern ? this._udimLayout(archiveEntries, pattern) : null;
+        if (!layout) return;
+        for (let i = 0; i + 1 < mesh.uv0.length; i += 2) {
+            const sourceU = mesh.uv0[i];
+            const sourceV = mesh.uv0[i + 1];
+            const tileU = Math.floor(sourceU);
+            const tileV = Math.floor(sourceV);
+            mesh.uv0[i] = (tileU + (sourceU - tileU)) / layout.columns;
+            mesh.uv0[i + 1] = (tileV + (sourceV - tileV)) / layout.rows;
+        }
+        mesh.udimLayout = {
+            pattern: layout.pattern,
+            columns: layout.columns,
+            rows: layout.rows,
+            tileIds: layout.tiles.map((tile) => tile.id)
+        };
+    }
+
     _normTexPath(path) {
         return NextRenderSceneAdapter._normTexPathStatic(path);
     }
@@ -886,6 +963,10 @@ export class NextRenderSceneAdapter {
             }
         }
         return null;
+    }
+
+    getArchiveUDIMTiles(path) {
+        return NextRenderSceneAdapter._udimLayout(this.archiveEntries, path);
     }
 
     releaseArchiveTextureBytes() {

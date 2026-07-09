@@ -184,6 +184,45 @@ export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') 
     error.name = 'UnsupportedTextureFormatError';
     throw error;
   }
+  const udim = typeof adapter?.getArchiveUDIMTiles === 'function'
+    ? adapter.getArchiveUDIMTiles(assetPath)
+    : null;
+  if (udim?.tiles?.length) {
+    const images = await Promise.all(udim.tiles.map(async (tile) => {
+      const mimeType = browserTextureMimeType(tile.path);
+      const blob = new Blob([tile.bytes], mimeType ? { type: mimeType } : undefined);
+      const blobUrl = URL.createObjectURL(blob);
+      try {
+        const image = await new THREE.ImageLoader().loadAsync(blobUrl);
+        return { ...tile, image };
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+    }));
+    const tileWidth = Math.max(...images.map((tile) => tile.image.width || 1));
+    const tileHeight = Math.max(...images.map((tile) => tile.image.height || 1));
+    const width = tileWidth * udim.columns;
+    const height = tileHeight * udim.rows;
+    const canvas = typeof OffscreenCanvas === 'function'
+      ? new OffscreenCanvas(width, height)
+      : Object.assign(document.createElement('canvas'), { width, height });
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error(`could not create UDIM atlas canvas: ${assetPath}`);
+    context.clearRect(0, 0, width, height);
+    for (const tile of images) {
+      const y = (udim.rows - 1 - tile.v) * tileHeight;
+      context.drawImage(tile.image, tile.u * tileWidth, y, tileWidth, tileHeight);
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.name = `${assetPath} [${images.map((tile) => tile.id).join(',')}]`;
+    texture.colorSpace = role === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.flipY = true;
+    texture.needsUpdate = true;
+    return texture;
+  }
+
   const bytes = adapter.getArchiveTextureBytes(assetPath);
   if (!bytes) {
     throw new Error(`texture asset not found in archive: ${assetPath}`);

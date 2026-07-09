@@ -75,11 +75,27 @@ struct PointInstancerConfig {
   bool duplicate_meshes = false;
 };
 
+struct AnimationConfig {
+  // Bake value clips into ordinary AnimationClip channels. Clip layers are
+  // supplied by the application so the converter remains filesystem- and
+  // archive-agnostic.
+  bool bake_value_clips = true;
+  using ClipStageLoader = std::function<bool(
+      const std::string& asset_path, ::tinyusdz::next::Stage* stage,
+      std::string* warn, std::string* err)>;
+  ClipStageLoader clip_stage_loader;
+
+  // Maximum number of samples generated for a clip set. The authored stage
+  // timeCodesPerSecond is used as the sampling rate.
+  uint32_t max_value_clip_samples = 10000;
+};
+
 struct ConverterConfig {
   MeshConfig mesh;
   MaterialConfig material;
   CurvesConfig curves;
   PointInstancerConfig point_instancer;
+  AnimationConfig animation;
 
   // Time code for evaluation
   double time_code = 0.0;
