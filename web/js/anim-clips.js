@@ -403,22 +403,75 @@ async function processUSDScene(usdScene, filename, stats = null) {
 
 	if (isNextScene(usdScene)) {
 		const meta = readNextSceneMeta(usdScene);
+		const rawMeta = usdScene.getSceneMetadata ? usdScene.getSceneMetadata() : {};
+		sceneTimeCodesPerSecond = rawMeta.timeCodesPerSecond || rawMeta.framesPerSecond || 24;
+		const {
+			hasSkinnedMeshData,
+			allSkinnedMeshUSDData,
+			skinnedMeshDataByName
+		} = extractSkinnedMeshData(usdScene, { logger: console });
+		const skeletonBuild = buildSkeletonDataFromUSD(usdScene, {
+			logger: console,
+			hasSkinnedMeshData
+		});
 		const built = buildNextThreeNode(usdScene, {
 			skipTextures: false,
 			lazyTextures: true
 		});
-		characterGroup.add(built.node);
 		if (built.textureManager) {
 			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
 		}
+		const nodeIndexMap = buildNodeIndexMap(built.node);
 		if (String(meta.upAxis || 'Y').toUpperCase() === 'Z') {
 			characterGroup.rotation.x = -Math.PI / 2;
 		}
-		allSceneMeshes = [];
-		built.node.traverse((obj) => {
-			if (obj.isMesh) allSceneMeshes.push(obj);
+		const skinningResult = applyUSDSceneSkinningPipeline({
+			threeNode: built.node,
+			characterGroup,
+			helperScene: scene,
+			skeletonDataArray: skeletonBuild.skeletonDataArray,
+			allSkinnedMeshUSDData,
+			skinnedMeshDataByName,
+			usdScene,
+			showMesh: true,
+			showSkeleton: showSkeletonVisualization,
+			useWASMBoneTexture: false,
+			logger: console
 		});
-		console.log('[anim-clips] next backend renders static geometry/materials only; clip extraction is legacy-only.');
+		skeletons = skinningResult.skeletons;
+		skeletonHelpers = skinningResult.skeletonHelpers;
+		allSceneMeshes = skinningResult.allSceneMeshes;
+		try {
+			const animData = extractUSDSceneAnimations(usdScene, {
+				boneMaps: skeletonBuild.boneMaps,
+				nodeIndexMap,
+				timeCodesPerSecond: sceneTimeCodesPerSecond,
+				logger: console
+			});
+			animationInfos = animData.animationInfos || [];
+			allClips.push(...animData.usdAnimations, ...animData.usdNodeAnimations);
+			console.log(`[anim-clips] next backend loaded ${allClips.length} animation clip(s)`);
+		} catch (err) {
+			console.error('[anim-clips] next animation extraction failed:', err);
+		}
+		if (allClips.length > 0) {
+			mixer = new THREE.AnimationMixer(characterGroup);
+			mixer.timeScale = sceneTimeCodesPerSecond * playbackSpeed;
+			allActions.push(...prepareClipsForBlending(mixer, allClips));
+			buildObjectAnimMap();
+			for (const [, state] of objectAnimMap) {
+				state.activeClipIndex = 0;
+				state.isPlaying = true;
+				for (let i = 0; i < state.actions.length; i++) {
+					state.actions[i].enabled = true;
+					state.actions[i].setEffectiveWeight(i === 0 ? 1 : 0);
+					if (i === 0) state.actions[i].play();
+				}
+			}
+			activeIndex = 0;
+			blendMode = 'solo';
+			isPlaying = true;
+		}
 		renderClipPanel();
 		fitCamera();
 		if (typeof usdScene.releaseBuildData === 'function') {

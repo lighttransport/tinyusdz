@@ -1417,8 +1417,40 @@ def "Root"
         )
     }
 
+    def Mesh "Mirror"
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0,0,0), (1,0,0), (1,1,0), (0,1,0)]
+        texCoord2f[] primvars:st = [(0,0), (1,0), (1,1), (0,0), (-1,1), (0,1)] (
+            interpolation = "faceVarying"
+        )
+        normal3f[] normals = [(0,0,1), (0,0,1), (0,0,1), (0,0,1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "DegenerateUV"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0,0,0), (1,0,0), (0,1,0)]
+        texCoord2f[] primvars:st = [(0,0), (0,0), (0,0)] (
+            interpolation = "vertex"
+        )
+        normal3f[] normals = [(0,0,1), (0,0,1), (0,0,1)] (
+            interpolation = "vertex"
+        )
+    }
+
     def SkelRoot "SR"
     {
+        def Skeleton "Skel"
+        {
+            uniform token[] joints = ["root", "root/child"]
+            rel skel:animationSource = </Root/Anim>
+        }
+
         def Mesh "BSMesh" (
             prepend apiSchemas = ["SkelBindingAPI"]
         )
@@ -1437,9 +1469,34 @@ def "Root"
         }
     }
 
+    def SkelAnimation "Anim"
+    {
+        uniform token[] joints = ["root", "root/child"]
+        uniform token[] blendShapes = ["smile"]
+        float3[] translations.timeSamples = {
+            0: [(0, 0, 0), (1, 0, 0)],
+            1: [(0, 1, 0), (1, 1, 0)]
+        }
+        quatf[] rotations.timeSamples = {
+            0: [(1, 0, 0, 0), (1, 0, 0, 0)],
+            1: [(1, 0, 0, 0), (0, 0, 0, 1)]
+        }
+        half3[] scales.timeSamples = {
+            0: [(1, 1, 1), (1, 1, 1)],
+            1: [(1, 1, 1), (2, 2, 2)]
+        }
+        float[] blendShapeWeights.timeSamples = {
+            0: [0],
+            1: [1]
+        }
+    }
+
     def DomeLight "Env"
     {
         asset inputs:texture:file = @env.hdr@
+        rel light:link = </Root/Quad>
+        rel shadow:link = </Root/SR/BSMesh>
+        rel filters = </Root/EnvFilter>
     }
 }
 )";
@@ -1484,6 +1541,83 @@ def "Root"
            m.blend_shapes[0].point_indices[1] == 2);
   }
 
+  // Face-varying mirrored UVs require per-corner tangents and negative
+  // handedness on at least one corner.
+  {
+    auto it = scene.mesh_by_path.find("/Root/Mirror");
+    assert(it != scene.mesh_by_path.end());
+    RenderMesh& m = scene.meshes[static_cast<size_t>(it->second)];
+    assert(m.tangents_interp == Interpolation::FaceVarying);
+    assert(m.tangents.size() == m.triangulated_indices.size() * 4);
+    bool saw_negative = false;
+    for (size_t i = 3; i < m.tangents.size(); i += 4) {
+      if (m.tangents[i] < 0.0f) saw_negative = true;
+    }
+    assert(saw_negative);
+  }
+
+  // Degenerate UVs should not produce NaN/Inf tangent data.
+  {
+    auto it = scene.mesh_by_path.find("/Root/DegenerateUV");
+    assert(it != scene.mesh_by_path.end());
+    RenderMesh& m = scene.meshes[static_cast<size_t>(it->second)];
+    assert(!m.tangents.empty());
+    for (size_t i = 0; i < m.tangents.size(); ++i) {
+      assert(std::isfinite(m.tangents[i]));
+    }
+  }
+
+  // SkelAnimation channels preserve full per-joint/per-weight arrays.
+  {
+    assert(scene.animations.size() == 1);
+    const AnimationClip& clip = scene.animations[0];
+    assert(clip.channels.size() == 4);
+    bool saw_translations = false;
+    bool saw_rotations = false;
+    bool saw_scales = false;
+    bool saw_weights = false;
+    for (const AnimationChannel& ch : clip.channels) {
+        assert(ch.is_skeletal);
+        assert(ch.keyframes.size() == 2);
+        assert(ch.target_skeleton == 0);
+        assert(ch.target_skeleton_path == "/Root/SR/Skel");
+        if (ch.property_name == "translations") {
+          saw_translations = true;
+          assert(ch.value_stride == 3);
+          assert(ch.element_count == 2);
+          assert(ch.joint_order.size() == 2);
+          assert(ch.joint_remap.size() == 2);
+          assert(ch.joint_remap[0] == 0);
+          assert(ch.joint_remap[1] == 1);
+          assert(ch.array_values.size() == 12);
+          assert(std::fabs(ch.array_values[3] - 1.0f) < 1e-4f);
+      } else if (ch.property_name == "rotations") {
+        saw_rotations = true;
+        assert(ch.value_stride == 4);
+        assert(ch.element_count == 2);
+        assert(ch.array_values.size() == 16);
+        assert(std::fabs(ch.array_values[15] - 1.0f) < 1e-4f);
+      } else if (ch.property_name == "scales") {
+        saw_scales = true;
+        assert(ch.value_stride == 3);
+        assert(ch.element_count == 2);
+        assert(ch.array_values.size() == 12);
+        assert(std::fabs(ch.array_values[9] - 2.0f) < 1e-4f);
+      } else if (ch.property_name == "blendShapeWeights") {
+        saw_weights = true;
+        assert(ch.value_stride == 1);
+        assert(ch.element_count == 1);
+        assert(ch.blend_shape_order.size() == 1);
+        assert(ch.array_values.size() == 2);
+        assert(std::fabs(ch.array_values[1] - 1.0f) < 1e-4f);
+      }
+    }
+    assert(saw_translations && saw_rotations && saw_scales && saw_weights);
+    assert(scene.skeletons.size() == 1);
+    assert(scene.skeletons[0].animation_id == 0);
+    assert(scene.skeletons[0].animation_source_path == "/Root/Anim");
+  }
+
   // DomeLight environment texture imported as an image.
   {
     assert(scene.lights.size() == 1);
@@ -1491,6 +1625,12 @@ def "Root"
     assert(l.type == LightType::Dome);
     assert(l.params.dome.texture_id >= 0);
     assert(static_cast<size_t>(l.params.dome.texture_id) < scene.images.size());
+    assert(l.light_link_targets.size() == 1 &&
+           l.light_link_targets[0] == "/Root/Quad");
+    assert(l.shadow_link_targets.size() == 1 &&
+           l.shadow_link_targets[0] == "/Root/SR/BSMesh");
+    assert(l.filter_targets.size() == 1 &&
+           l.filter_targets[0] == "/Root/EnvFilter");
   }
 
   std::cout << "  TestAudit2026_07_Gaps PASSED" << std::endl;
@@ -1651,13 +1791,34 @@ def Xform "Root"
         double length = 8
     }
 
-    def PointLight "Point" {}
+    def PointLight "Point"
+    {
+        bool inputs:enableColorTemperature = true
+        float inputs:colorTemperature = 4200
+        float inputs:diffuse = 0.75
+        float inputs:specular = 0.25
+        float inputs:shaping:focus = 0.5
+        float inputs:shaping:focusTint = 0.2
+        float inputs:shaping:cone:softness = 0.1
+        asset inputs:shaping:ies:file = @profiles/key.ies@
+        color3f inputs:shadow:color = (0.1, 0.2, 0.3)
+        float inputs:shadow:distance = 12
+        float inputs:shadow:falloff = 2
+        float inputs:shadow:falloffGamma = 1.5
+    }
     def GeometryLight "GeoLight" {}
     def DomeLight_1 "Env" {}
     def LightFilter "Filter" {}
 
     def BasisCurves "Curve" {}
-    def Points "Pts" {}
+    def Points "Pts"
+    {
+        point3f[] points = [(0, 0, 0), (1, 2, 3), (-1, 0, 2)]
+        float[] widths = [0.1, 0.2, 0.3]
+        color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1)] (
+            interpolation = "vertex"
+        )
+    }
     def Volume "Fog" {}
 }
 )";
@@ -1714,6 +1875,20 @@ def Xform "Root"
   for (const RenderLight& light : scene.lights) {
     if (light.prim_path == "/Root/Point" && light.type == LightType::Point) {
       saw_point = true;
+      assert(light.enable_color_temperature);
+      assert(std::fabs(light.color_temperature - 4200.0f) < 0.001f);
+      assert(std::fabs(light.diffuse - 0.75f) < 0.001f);
+      assert(std::fabs(light.specular - 0.25f) < 0.001f);
+      assert(std::fabs(light.shaping_focus - 0.5f) < 0.001f);
+      assert(std::fabs(light.shaping_focus_tint - 0.2f) < 0.001f);
+      assert(std::fabs(light.shaping_cone_softness - 0.1f) < 0.001f);
+      assert(light.shaping_ies_file == "profiles/key.ies");
+      assert(std::fabs(light.shadow_color.x - 0.1f) < 0.001f);
+      assert(std::fabs(light.shadow_color.y - 0.2f) < 0.001f);
+      assert(std::fabs(light.shadow_color.z - 0.3f) < 0.001f);
+      assert(std::fabs(light.shadow_distance - 12.0f) < 0.001f);
+      assert(std::fabs(light.shadow_falloff - 2.0f) < 0.001f);
+      assert(std::fabs(light.shadow_falloff_gamma - 1.5f) < 0.001f);
     }
     if (light.prim_path == "/Root/GeoLight" &&
         light.type == LightType::Geometry) {
@@ -1732,17 +1907,29 @@ def Xform "Root"
   assert(saw_dome);
   assert(saw_filter_fallback);
 
-  assert(scene.unsupported_renderables.size() == 3);
+  assert(scene.points.size() == 1);
+  const RenderPoints& pts = scene.points[0];
+  assert(pts.prim_path == "/Root/Pts");
+  assert(pts.point_count() == 3);
+  assert(pts.widths.size() == 3);
+  assert(pts.colors.size() == 9);
+  assert(pts.colors_interp == Interpolation::Vertex);
+  assert(pts.has_bbox);
+  assert(std::fabs(pts.bbox_min.x + 1.0f) < 0.001f);
+  assert(std::fabs(pts.bbox_max.y - 2.0f) < 0.001f);
+  auto pts_node = scene.node_by_path.find("/Root/Pts");
+  assert(pts_node != scene.node_by_path.end());
+  assert(scene.nodes[static_cast<size_t>(pts_node->second)].type == NodeType::Points);
+  assert(scene.nodes[static_cast<size_t>(pts_node->second)].data_id == 0);
+
+  assert(scene.unsupported_renderables.size() == 2);
   bool saw_curve = false;
-  bool saw_points = false;
   bool saw_volume = false;
   for (const UnsupportedRenderable& rec : scene.unsupported_renderables) {
     if (rec.type_name == "BasisCurves") saw_curve = true;
-    if (rec.type_name == "Points") saw_points = true;
     if (rec.type_name == "Volume") saw_volume = true;
   }
   assert(saw_curve);
-  assert(saw_points);
   assert(saw_volume);
 
   std::cout << "  Legacy schema parity extraction: PASSED\n";

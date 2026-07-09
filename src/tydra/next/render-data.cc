@@ -63,6 +63,20 @@ size_t RenderMesh::memory_usage() const {
 // RenderPointInstancer
 //
 
+size_t RenderPoints::memory_usage() const {
+  size_t total = sizeof(*this);
+  total += name.capacity();
+  total += prim_path.capacity();
+  total += points.memory_usage();
+  total += widths.memory_usage();
+  total += colors.memory_usage();
+  return total;
+}
+
+//
+// RenderPointInstancer
+//
+
 size_t RenderPointInstancer::memory_usage() const {
   size_t total = sizeof(*this);
   total += StringVectorBytes(prototype_paths);
@@ -156,6 +170,10 @@ size_t RenderScene::memory_usage() const {
     total += mesh.memory_usage();
   }
 
+  for (const auto& point_cloud : points) {
+    total += point_cloud.memory_usage();
+  }
+
   for (const auto& instancer : point_instancers) {
     total += instancer.memory_usage();
   }
@@ -181,6 +199,11 @@ size_t RenderScene::memory_usage() const {
 const RenderMesh* RenderScene::get_mesh(int32_t mesh_id) const {
   if (mesh_id < 0 || static_cast<size_t>(mesh_id) >= meshes.size()) return nullptr;
   return &meshes[static_cast<size_t>(mesh_id)];
+}
+
+const RenderPoints* RenderScene::get_points(int32_t points_id) const {
+  if (points_id < 0 || static_cast<size_t>(points_id) >= points.size()) return nullptr;
+  return &points[static_cast<size_t>(points_id)];
 }
 
 const RenderMaterial* RenderScene::get_material(int32_t material_id) const {
@@ -262,6 +285,7 @@ RenderScene::Stats RenderScene::get_stats() const {
   Stats s = {};
   s.node_count = nodes.size();
   s.mesh_count = meshes.size();
+  s.points_count = points.size();
   s.point_instancer_count = point_instancers.size();
   s.point_instance_draw_count = point_instance_draws.size();
   s.material_count = materials.size();
@@ -292,6 +316,10 @@ RenderScene::Stats RenderScene::get_stats() const {
   for (const auto& instancer : point_instancers) {
     s.point_instance_count += instancer.instance_count();
     s.visible_point_instance_count += instancer.visible_instance_count();
+  }
+
+  for (const auto& point_cloud : points) {
+    s.point_cloud_point_count += point_cloud.point_count();
   }
 
   s.memory_bytes = memory_usage();

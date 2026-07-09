@@ -204,6 +204,193 @@ export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') 
   }
 }
 
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeParam(param, fallbackValue = undefined) {
+  if (param && typeof param === 'object' && !Array.isArray(param)) {
+    const out = {};
+    if (param.value !== undefined) out.value = param.value;
+    if (param.texture !== undefined && param.texture !== '') out.texture = param.texture;
+    if (param.texturePath !== undefined && param.texturePath !== '') out.texturePath = param.texturePath;
+    if (Number.isFinite(param.textureId)) out.textureId = param.textureId;
+    if (param.colorspace !== undefined && param.colorspace !== '') out.colorspace = param.colorspace;
+    if (Object.keys(out).length) return out;
+  }
+  if (param !== undefined && param !== null) return { value: param };
+  if (fallbackValue !== undefined && fallbackValue !== null) return { value: fallbackValue };
+  return undefined;
+}
+
+function paramValue(param, fallbackValue = undefined) {
+  if (param && typeof param === 'object' && !Array.isArray(param) && param.value !== undefined) {
+    return param.value;
+  }
+  if (param !== undefined && param !== null) return param;
+  return fallbackValue;
+}
+
+function firstParam(source, keys, fallbackValue = undefined) {
+  for (const key of keys) {
+    if (source && source[key] !== undefined && source[key] !== null) {
+      return normalizeParam(source[key], fallbackValue);
+    }
+  }
+  return normalizeParam(null, fallbackValue);
+}
+
+function attachOpenPBRParam(openPBR, sectionName, key, param) {
+  if (!param) return;
+  if (!openPBR[sectionName]) openPBR[sectionName] = {};
+  openPBR[sectionName][key] = param;
+  openPBR[key] = param;
+}
+
+function texturePathParam(value, texturePath) {
+  const param = normalizeParam(null, value) || (texturePath ? {} : undefined);
+  if (param && texturePath) {
+    param.texturePath = texturePath;
+    param.texture = texturePath;
+    param.textureId = Number.isFinite(param.textureId) ? param.textureId : -1;
+  }
+  return param;
+}
+
+function normalizeNodeGraphJson(materialRecord, parsedMaterial) {
+  const openPBR = parsedMaterial?.openPBR || {};
+  const graphCandidates = [
+    openPBR.nodeGraph,
+    openPBR.nodegraph,
+    openPBR.nodegraphJson,
+    openPBR.nodeGraphJson,
+    materialRecord?.openPBRNodeGraphJson
+  ];
+  for (const candidate of graphCandidates) {
+    const parsed = parseJsonObject(candidate);
+    if (parsed) return parsed;
+    if (candidate && typeof candidate === 'object') return candidate;
+  }
+  return null;
+}
+
+export function normalizeNextMaterialData(materialRecord = {}, texturePaths = {}) {
+  const parsed = parseJsonObject(materialRecord.materialXJson) || {};
+  const parsedPreview = parsed.previewSurface || {};
+  const parsedOpenPBR = parsed.openPBR || {};
+  const shaderType = materialRecord.shaderType || parsed.shaderType || '';
+  const name = materialRecord.name || materialRecord.key || parsed.name || '';
+  const primPath = materialRecord.primPath || parsed.primPath || '';
+  const baseColor = materialRecord.baseColor || paramValue(parsedOpenPBR.baseColor) ||
+    paramValue(parsedPreview.diffuseColor) || [0.8, 0.8, 0.8];
+  const roughness = materialRecord.roughness ?? paramValue(parsedOpenPBR.baseRoughness) ??
+    paramValue(parsedPreview.roughness) ?? 0.5;
+  const metalness = materialRecord.metallic ?? paramValue(parsedOpenPBR.baseMetalness) ??
+    paramValue(parsedPreview.metallic) ?? 0.0;
+  const opacity = materialRecord.opacity ?? paramValue(parsedOpenPBR.opacity) ??
+    paramValue(parsedPreview.opacity) ?? 1.0;
+  const emissive = materialRecord.emissive || paramValue(parsedOpenPBR.emissionColor) ||
+    paramValue(parsedPreview.emissiveColor) || [0.0, 0.0, 0.0];
+
+  const surfaceShader = {
+    diffuseColor: texturePathParam(baseColor, texturePaths.baseColor),
+    metallic: texturePathParam(metalness, texturePaths.metallic),
+    roughness: texturePathParam(roughness, texturePaths.roughness),
+    opacity: texturePathParam(opacity, texturePaths.opacity),
+    emissiveColor: texturePathParam(emissive, texturePaths.emissive),
+    normal: texturePathParam(undefined, texturePaths.normal)
+  };
+
+  const openPBR = { type: 'OpenPBR' };
+  attachOpenPBRParam(openPBR, 'base', 'base_color',
+    firstParam(parsedOpenPBR, ['base_color', 'baseColor'], baseColor));
+  attachOpenPBRParam(openPBR, 'base', 'base_weight',
+    firstParam(parsedOpenPBR, ['base_weight', 'baseWeight'], 1.0));
+  attachOpenPBRParam(openPBR, 'base', 'base_metalness',
+    firstParam(parsedOpenPBR, ['base_metalness', 'baseMetalness'], metalness));
+  attachOpenPBRParam(openPBR, 'base', 'base_roughness',
+    firstParam(parsedOpenPBR, ['base_roughness', 'baseRoughness'], roughness));
+  attachOpenPBRParam(openPBR, 'specular', 'specular_roughness',
+    firstParam(parsedOpenPBR, ['specular_roughness', 'baseRoughness'], roughness));
+  attachOpenPBRParam(openPBR, 'specular', 'specular_weight',
+    firstParam(parsedOpenPBR, ['specular_weight', 'specularWeight'], 1.0));
+  attachOpenPBRParam(openPBR, 'specular', 'specular_color',
+    firstParam(parsedOpenPBR, ['specular_color', 'specularColor'], [1.0, 1.0, 1.0]));
+  attachOpenPBRParam(openPBR, 'emission', 'emission_color',
+    firstParam(parsedOpenPBR, ['emission_color', 'emissionColor'], emissive));
+  attachOpenPBRParam(openPBR, 'emission', 'emission_luminance',
+    firstParam(parsedOpenPBR, ['emission_luminance', 'emissionLuminance'], 0.0));
+  attachOpenPBRParam(openPBR, 'geometry', 'geometry_opacity',
+    firstParam(parsedOpenPBR, ['geometry_opacity', 'opacity'], opacity));
+  attachOpenPBRParam(openPBR, 'geometry', 'normal',
+    firstParam(parsedOpenPBR, ['normal', 'geometry_normal'], undefined));
+  attachOpenPBRParam(openPBR, 'geometry', 'geometry_normal', openPBR.normal);
+
+  if (texturePaths.baseColor) {
+    openPBR.base_color.texturePath = texturePaths.baseColor;
+    openPBR.base_color.texture = texturePaths.baseColor;
+    openPBR.base_color.textureId = -1;
+  }
+  if (texturePaths.roughness) {
+    openPBR.specular_roughness.texturePath = texturePaths.roughness;
+    openPBR.specular_roughness.texture = texturePaths.roughness;
+    openPBR.specular_roughness.textureId = -1;
+  }
+  if (texturePaths.metallic) {
+    openPBR.base_metalness.texturePath = texturePaths.metallic;
+    openPBR.base_metalness.texture = texturePaths.metallic;
+    openPBR.base_metalness.textureId = -1;
+  }
+  if (texturePaths.emissive) {
+    openPBR.emission_color.texturePath = texturePaths.emissive;
+    openPBR.emission_color.texture = texturePaths.emissive;
+    openPBR.emission_color.textureId = -1;
+  }
+  if (texturePaths.normal) {
+    if (!openPBR.normal) {
+      attachOpenPBRParam(openPBR, 'geometry', 'normal', {
+        texturePath: texturePaths.normal,
+        texture: texturePaths.normal,
+        textureId: -1
+      });
+    }
+    openPBR.normal.texturePath = texturePaths.normal;
+    openPBR.normal.texture = texturePaths.normal;
+    openPBR.normal.textureId = -1;
+    openPBR.geometry_normal = openPBR.normal;
+    openPBR.geometry.geometry_normal = openPBR.normal;
+  }
+
+  const nodeGraph = normalizeNodeGraphJson(materialRecord, parsed);
+  if (nodeGraph) openPBR.nodeGraph = nodeGraph;
+
+  return {
+    name,
+    materialName: name,
+    primPath,
+    shaderType,
+    hasOpenPBR: shaderType === 'OpenPBR' || !!parsed.openPBR || !!nodeGraph,
+    hasUsdPreviewSurface: shaderType === 'PreviewSurface' || !!parsed.previewSurface || !!materialRecord.baseColor,
+    materialXConfig: parsed.materialXConfig || materialRecord.materialXConfig || {},
+    surfaceShader,
+    openPBR,
+    openPBRShader: openPBR,
+    texturePaths: { ...texturePaths },
+    textureMetadata: materialRecord.textureMetadata || {},
+    materialXJson: materialRecord.materialXJson || '',
+    openPBRNodeGraphJson: materialRecord.openPBRNodeGraphJson || '',
+    __nextMaterial: true
+  };
+}
+
 export function createNextMaterial(entry, adapter, textureManager, skipTextures) {
   const src = entry.material || {};
   const paths = entry.texturePaths || {};
@@ -219,6 +406,9 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     alphaTest: (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0
   });
   material.userData.nextTexturePaths = paths;
+  material.userData.nextTextureMetadata = src.textureMetadata || entry.textureMetadata || {};
+  material.userData.nextMaterialXJson = src.materialXJson || '';
+  material.userData.nextOpenPBRNodeGraphJson = src.openPBRNodeGraphJson || '';
   material.userData.nextMaterial = {
     id: Number.isFinite(entry.materialId) ? entry.materialId : (src.id ?? -1),
     key: entry.materialKey || src.key || '',
@@ -228,6 +418,15 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     roughness: src.roughness ?? null,
     opacity: src.opacity ?? null
   };
+  const rawData = normalizeNextMaterialData(src, paths);
+  material.userData.rawData = rawData;
+  material.userData.typeInfo = {
+    hasOpenPBR: !!rawData.hasOpenPBR,
+    hasUsdPreviewSurface: !!rawData.hasUsdPreviewSurface
+  };
+  material.userData.typeString = rawData.hasOpenPBR
+    ? (rawData.hasUsdPreviewSurface ? 'OpenPBR + PreviewSurface' : 'OpenPBR')
+    : (rawData.hasUsdPreviewSurface ? 'PreviewSurface' : 'Unknown');
 
   const queue = (mapProperty, assetPath) => {
     if (!assetPath || skipTextures || !textureManager) return;
@@ -264,23 +463,30 @@ export function buildNextThreeNode(adapter, {
   const materialCache = new Map();
   const sceneBox = new THREE.Box3();
   const meshes = adapter.meshes || [];
+  const points = adapter.points || [];
   const totalMeshes = meshes.length;
+  const totalPoints = points.length;
+  const totalRenderables = totalMeshes + totalPoints;
   let builtMeshes = 0;
+  let builtPoints = 0;
   let lastProgressMesh = 0;
-  const progressStep = totalMeshes > 0
-    ? Math.max(1, Math.ceil(totalMeshes / Math.max(1, progressInterval)))
+  const progressStep = totalRenderables > 0
+    ? Math.max(1, Math.ceil(totalRenderables / Math.max(1, progressInterval)))
     : 1;
   const reportProgress = (message, force = false) => {
     if (!onProgress) return;
-    if (!force && builtMeshes - lastProgressMesh < progressStep) return;
-    lastProgressMesh = builtMeshes;
+    const builtRenderables = builtMeshes + builtPoints;
+    if (!force && builtRenderables - lastProgressMesh < progressStep) return;
+    lastProgressMesh = builtRenderables;
     onProgress({
       stage: 'building',
       builtMeshes,
+      builtPoints,
       totalMeshes,
+      totalPoints,
       materials: materialCache.size,
       queuedTextures: textureManager ? textureManager.total : 0,
-      percentage: totalMeshes > 0 ? (builtMeshes / totalMeshes) * 100 : 100,
+      percentage: totalRenderables > 0 ? (builtRenderables / totalRenderables) * 100 : 100,
       message
     });
   };
@@ -303,12 +509,33 @@ export function buildNextThreeNode(adapter, {
     );
     object.matrixAutoUpdate = false;
   };
+  const pointNodes = new Map();
+  for (const node of adapter.nodes || []) {
+    if (node && node.type === 'points' && Number.isFinite(node.dataId) && !pointNodes.has(node.dataId)) {
+      pointNodes.set(node.dataId, node);
+    }
+  }
+  const pointSize = (entry) => {
+    const widths = entry.widths;
+    if (!widths || !widths.length) return 0.02;
+    if (widths.length === 1) return Math.max(0.0001, widths[0]);
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < widths.length; i++) {
+      const value = widths[i];
+      if (Number.isFinite(value) && value > 0) {
+        sum += value;
+        count++;
+      }
+    }
+    return count > 0 ? Math.max(0.0001, sum / count) : 0.02;
+  };
 
-  reportProgress(`Building next scene (0/${totalMeshes})...`, true);
+  reportProgress(`Building next scene (0/${totalRenderables})...`, true);
   for (const mesh of meshes) {
     builtMeshes++;
     if (!mesh.points || mesh.points.length === 0) {
-      reportProgress(`Building next scene (${builtMeshes}/${totalMeshes})...`);
+      reportProgress(`Building next scene (${builtMeshes + builtPoints}/${totalRenderables})...`);
       continue;
     }
     const geometry = new THREE.BufferGeometry();
@@ -317,6 +544,9 @@ export function buildNextThreeNode(adapter, {
       geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
     } else {
       geometry.computeVertexNormals();
+    }
+    if (mesh.tangents && mesh.tangents.length) {
+      geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 4));
     }
     if (mesh.uv0 && mesh.uv0.length) {
       geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.uv0, 2));
@@ -364,6 +594,7 @@ export function buildNextThreeNode(adapter, {
     }
     const threeMesh = new THREE.Mesh(geometry, material);
     threeMesh.name = mesh.primPath || mesh.primName || `mesh_${mesh.index}`;
+    threeMesh.userData['primMeta.absPath'] = mesh.primPath || '';
     threeMesh.userData.usdMesh = {
       index: mesh.index,
       primName: mesh.primName || '',
@@ -388,9 +619,49 @@ export function buildNextThreeNode(adapter, {
       sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threeMesh.matrix));
     }
     group.add(threeMesh);
-    reportProgress(`Building next scene (${builtMeshes}/${totalMeshes})...`);
+    reportProgress(`Building next scene (${builtMeshes + builtPoints}/${totalRenderables})...`);
   }
-  reportProgress(`Built next scene (${builtMeshes}/${totalMeshes}), materials=${materialCache.size}, textures=${textureManager ? textureManager.total : 0}`, true);
+
+  for (const pointCloud of points) {
+    builtPoints++;
+    if (!pointCloud.points || pointCloud.points.length === 0) {
+      reportProgress(`Building next scene (${builtMeshes + builtPoints}/${totalRenderables})...`);
+      continue;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(pointCloud.points, 3));
+    const hasColors = pointCloud.colors &&
+      pointCloud.colors.length === pointCloud.points.length;
+    if (hasColors) {
+      geometry.setAttribute('color', new THREE.BufferAttribute(pointCloud.colors, 3));
+    }
+    geometry.computeBoundingBox();
+    const material = new THREE.PointsMaterial({
+      size: pointSize(pointCloud),
+      sizeAttenuation: true,
+      color: hasColors ? new THREE.Color(1, 1, 1) : new THREE.Color(0.78, 0.84, 0.9),
+      vertexColors: !!hasColors
+    });
+    const threePoints = new THREE.Points(geometry, material);
+    threePoints.name = pointCloud.primPath || pointCloud.name || `points_${pointCloud.index}`;
+    threePoints.userData.usdPoints = {
+      index: pointCloud.index,
+      name: pointCloud.name || '',
+      primPath: pointCloud.primPath || '',
+      pointCount: Number.isFinite(pointCloud.pointCount) ? pointCloud.pointCount : 0,
+      materialId: Number.isFinite(pointCloud.materialId) ? pointCloud.materialId : -1,
+      hasWidths: !!(pointCloud.widths && pointCloud.widths.length),
+      hasColors
+    };
+    const pointNode = pointNodes.get(pointCloud.index);
+    applyUsdRowMajorMatrix(threePoints, pointNode?.worldMatrix);
+    if (geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
+      sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threePoints.matrix));
+    }
+    group.add(threePoints);
+    reportProgress(`Building next scene (${builtMeshes + builtPoints}/${totalRenderables})...`);
+  }
+  reportProgress(`Built next scene (${builtMeshes + builtPoints}/${totalRenderables}), meshes=${builtMeshes}, points=${builtPoints}, materials=${materialCache.size}, textures=${textureManager ? textureManager.total : 0}`, true);
 
   if (!sceneBox.isEmpty()) {
     group.userData.localBoundsBox = sceneBox;
@@ -418,6 +689,14 @@ export function nextCountsFromScene(usd) {
     meshes: usd && usd.numMeshes ? usd.numMeshes() : 0,
     materials: usd && usd.numMaterials ? usd.numMaterials() : 0,
     textures: usd && usd.numTextures ? usd.numTextures() : 0,
+    nodes: usd && usd.numNodes ? usd.numNodes() : 0,
+    animations: usd && usd.numAnimations ? usd.numAnimations() : 0,
+    lights: usd && usd.numLights ? usd.numLights() : 0,
+    cameras: usd && usd.numCameras ? usd.numCameras() : 0,
+    pointInstancers: usd && usd.numPointInstancers ? usd.numPointInstancers() : 0,
+    pointInstanceDraws: usd && usd.numPointInstanceDraws ? usd.numPointInstanceDraws() : 0,
+    skeletons: usd && usd.numSkeletons ? usd.numSkeletons() : 0,
+    unsupportedRenderables: usd && usd.numUnsupportedRenderables ? usd.numUnsupportedRenderables() : 0,
     stats
   };
 }

@@ -9,6 +9,8 @@
 #include "next/schema/usd-shade.hh"
 #include "next/schema/usd-skel.hh"
 #include "next/types/type-info.hh"
+#include "tydra/fast-mikktspace.hh"
+#include "tydra/mikktspace-tangent.hh"
 #include "tydra/shape-to-mesh.hh"
 #include <cmath>
 #include <algorithm>
@@ -394,6 +396,7 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
   CopyChunkedArray(src.triangulated_face_vertex_indices,
                    &dst->triangulated_face_vertex_indices);
   dst->normals_interp = src.normals_interp;
+  dst->tangents_interp = src.tangents_interp;
   dst->texcoords_0_interp = src.texcoords_0_interp;
   dst->texcoords_1_interp = src.texcoords_1_interp;
   dst->colors_interp = src.colors_interp;
@@ -779,6 +782,28 @@ bool IsPhysicsExtensionPropertyName(const std::string& name) {
          name.rfind("state:", 0) == 0;
 }
 
+void ComputePointBounds(const FloatChunked& points, Float3* bbox_min,
+                        Float3* bbox_max, bool* has_bbox) {
+  if (!bbox_min || !bbox_max || !has_bbox) return;
+  *has_bbox = false;
+  if (points.size() < 3) return;
+  *bbox_min = Float3(1e30f, 1e30f, 1e30f);
+  *bbox_max = Float3(-1e30f, -1e30f, -1e30f);
+  const size_t point_count = points.size() / 3;
+  for (size_t i = 0; i < point_count; ++i) {
+    const float x = points[i * 3 + 0];
+    const float y = points[i * 3 + 1];
+    const float z = points[i * 3 + 2];
+    bbox_min->x = std::min(bbox_min->x, x);
+    bbox_min->y = std::min(bbox_min->y, y);
+    bbox_min->z = std::min(bbox_min->z, z);
+    bbox_max->x = std::max(bbox_max->x, x);
+    bbox_max->y = std::max(bbox_max->y, y);
+    bbox_max->z = std::max(bbox_max->z, z);
+  }
+  *has_bbox = true;
+}
+
 std::string ValueSummary(const Value& value) {
   if (const bool* b = value.as_bool()) return *b ? "true" : "false";
   if (const int32_t* i = value.as_int()) return std::to_string(*i);
@@ -826,6 +851,127 @@ bool ReadStringLikeProperty(const UsdPrim& prim, const std::string& name,
     return true;
   }
   return false;
+}
+
+std::vector<std::string> ReadTokenArrayProperty(const UsdPrim& prim,
+                                                const std::string& name) {
+  std::vector<std::string> out;
+  const Value* value = prim.GetPropertyValue(name);
+  if (!value) return out;
+  if (const std::vector<std::string>* arr = value->as_token_array()) {
+    return *arr;
+  }
+  if (const std::string* tok = value->as_token()) {
+    out.push_back(*tok);
+  } else if (const std::string* str = value->as_string()) {
+    out.push_back(*str);
+  }
+  return out;
+}
+
+bool FirstArrayElementToFloat4(const std::vector<float>& values,
+                               uint32_t stride,
+                               Float4* out) {
+  if (!out || values.empty() || stride == 0) return false;
+  const float x = values.size() > 0 ? values[0] : 0.0f;
+  const float y = values.size() > 1 ? values[1] : 0.0f;
+  const float z = values.size() > 2 ? values[2] : 0.0f;
+  const float w = values.size() > 3 ? values[3] : 0.0f;
+  if (stride == 1) {
+    *out = Float4(x, 0.0f, 0.0f, 0.0f);
+  } else if (stride == 3) {
+    *out = Float4(x, y, z, 0.0f);
+  } else {
+    *out = Float4(x, y, z, w);
+  }
+  return true;
+}
+
+bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
+  if (token.empty()) return false;
+  if (joint.path == token || joint.name == token) return true;
+  if (LeafNameFromJointPath(joint.path) == token) return true;
+  if (joint.path.size() > token.size() &&
+      joint.path.compare(joint.path.size() - token.size(), token.size(),
+                         token) == 0) {
+    const size_t sep = joint.path.size() - token.size();
+    return sep == 0 || joint.path[sep - 1] == '/';
+  }
+  return false;
+}
+
+void ResolveSkeletalAnimationTargets(RenderScene* scene) {
+  if (!scene) return;
+  for (size_t ai = 0; ai < scene->animations.size(); ++ai) {
+    AnimationClip& clip = scene->animations[ai];
+    for (AnimationChannel& channel : clip.channels) {
+      if (!channel.is_skeletal) continue;
+
+      int32_t skeleton_id = -1;
+      for (size_t si = 0; si < scene->skeletons.size(); ++si) {
+        const Skeleton& skel = scene->skeletons[si];
+        if (!skel.animation_source_path.empty() &&
+            skel.animation_source_path == clip.prim_path) {
+          skeleton_id = static_cast<int32_t>(si);
+          break;
+        }
+      }
+      if (skeleton_id < 0 && !channel.joint_order.empty()) {
+        size_t best_matches = 0;
+        for (size_t si = 0; si < scene->skeletons.size(); ++si) {
+          const Skeleton& skel = scene->skeletons[si];
+          size_t matches = 0;
+          for (const std::string& token : channel.joint_order) {
+            for (const SkeletonJoint& joint : skel.joints) {
+              if (JointTokenMatches(joint, token)) {
+                ++matches;
+                break;
+              }
+            }
+          }
+          if (matches > best_matches) {
+            best_matches = matches;
+            skeleton_id = static_cast<int32_t>(si);
+          }
+        }
+      }
+
+      channel.target_skeleton = skeleton_id;
+      channel.joint_remap.clear();
+      if (skeleton_id < 0 ||
+          static_cast<size_t>(skeleton_id) >= scene->skeletons.size()) {
+        continue;
+      }
+      const Skeleton& skel = scene->skeletons[static_cast<size_t>(skeleton_id)];
+      channel.target_skeleton_path = skel.prim_path;
+      channel.joint_remap.reserve(channel.joint_order.size());
+      for (const std::string& token : channel.joint_order) {
+        int32_t joint_id = -1;
+        for (size_t ji = 0; ji < skel.joints.size(); ++ji) {
+          if (JointTokenMatches(skel.joints[ji], token)) {
+            joint_id = static_cast<int32_t>(ji);
+            break;
+          }
+        }
+        channel.joint_remap.push_back(joint_id);
+      }
+      scene->skeletons[static_cast<size_t>(skeleton_id)].animation_id =
+          static_cast<int32_t>(ai);
+    }
+  }
+}
+
+std::vector<std::string> ReadRelationshipTargets(const UsdPrim& prim,
+                                                 const std::string& name) {
+  std::vector<std::string> out;
+  const std::vector<::tinyusdz::next::Path>* targets =
+      prim.GetRelationship(name);
+  if (!targets) return out;
+  out.reserve(targets->size());
+  for (const ::tinyusdz::next::Path& target : *targets) {
+    out.push_back(target.str());
+  }
+  return out;
 }
 
 double ReadDoubleProperty(const UsdPrim& prim, const std::string& name,
@@ -1044,6 +1190,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     BuildNodeHierarchy(extracted, &result.scene);
     ExtractPhysicsAnnotations(stage, &result.scene);
     for (const RenderPrimRecord& rec : extracted.records) {
+      if (rec.type_name == "Points") continue;
       if (!IsUnsupportedRenderableTypeName(rec.type_name)) continue;
       UnsupportedRenderable unsupported;
       unsupported.prim_path = rec.path;
@@ -1057,7 +1204,7 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
 
     for (const auto& rec : extracted.records) {
       AnimationClip clip;
-      if (ConvertAnimation(rec.prim, &clip)) {
+      if (ConvertAnimation(stage, rec.prim, &clip)) {
         const auto node_it = result.scene.node_by_path.find(rec.path);
         if (node_it != result.scene.node_by_path.end()) {
           for (AnimationChannel& channel : clip.channels) {
@@ -1094,6 +1241,19 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       } else {
         warnings_.push_back("Failed to convert renderable mesh prim: " +
                             mesh_prim.GetPath().str());
+      }
+    }
+
+    for (const auto& rec : extracted.records) {
+      if (rec.type_name != "Points") continue;
+      RenderPoints points;
+      if (ConvertPoints(rec.prim, &points)) {
+        int32_t points_id = static_cast<int32_t>(result.scene.points.size());
+        result.scene.points_by_path[points.prim_path] = points_id;
+        result.scene.points.push_back(std::move(points));
+        AssignNodeDataId(&result.scene, rec.path, points_id);
+      } else {
+        warnings_.push_back("Failed to convert Points: " + rec.path);
       }
     }
 
@@ -1220,6 +1380,8 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         }
       }
     }
+
+    ResolveSkeletalAnimationTargets(&result.scene);
 
     if (config_.progress_callback) {
       config_.progress_callback(1.0f, "Conversion complete");
@@ -1424,6 +1586,7 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
     // Determine node type
     const std::string& type = rec.type_name;
     if (IsMeshRenderableTypeName(type)) node.type = NodeType::Mesh;
+    else if (type == "Points") node.type = NodeType::Points;
     else if (type == "PointInstancer") node.type = NodeType::PointInstancer;
     else if (type == "Xform") node.type = NodeType::Xform;
     else if (type == "Camera") node.type = NodeType::Camera;
@@ -1748,29 +1911,44 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   return true;
 }
 
-// Per-vertex tangent frame (Lengyel's method) from triangulated topology,
-// per-vertex normals and per-vertex UVs. Output is xyzw per vertex (w = sign
-// so bitangent = cross(normal, tangent) * w). No-op unless all inputs are
-// per-vertex and consistent.
+// Tangent frame from triangulated topology. Lengyel keeps the compact
+// per-vertex path. MikkTSpace-style methods expand to face corners first so
+// UV seams and mirrored islands are not averaged through shared point indices.
 bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
   if (!mesh->is_triangulated) {
     if (!TriangulateMesh(mesh)) return false;
   }
   const size_t np = mesh->point_count();
   if (np == 0) return false;
-  // Require per-vertex normals + per-vertex 2-component UVs of matching size.
-  if (mesh->normals_interp != Interpolation::Vertex ||
-      mesh->normals.size() != np * 3) {
-    return false;
-  }
-  if (mesh->texcoords_0_interp != Interpolation::Vertex ||
-      mesh->texcoords_0.size() != np * 2) {
+
+  const bool vertex_normals =
+      mesh->normals_interp == Interpolation::Vertex &&
+      mesh->normals.size() == np * 3;
+  const bool vertex_uvs =
+      mesh->texcoords_0_interp == Interpolation::Vertex &&
+      mesh->texcoords_0.size() == np * 2;
+
+  const size_t authored_corner_count = mesh->face_vertex_indices.size();
+  const size_t tri_corner_count = mesh->triangulated_indices.size();
+  const bool facevarying_normals =
+      mesh->normals_interp == Interpolation::FaceVarying &&
+      (mesh->normals.size() == authored_corner_count * 3 ||
+       mesh->normals.size() == tri_corner_count * 3);
+  const bool facevarying_uvs =
+      mesh->texcoords_0_interp == Interpolation::FaceVarying &&
+      (mesh->texcoords_0.size() == authored_corner_count * 2 ||
+       mesh->texcoords_0.size() == tri_corner_count * 2);
+
+  if ((!vertex_normals && !facevarying_normals) ||
+      (!vertex_uvs && !facevarying_uvs)) {
     return false;
   }
 
   std::vector<float> tan(np * 3, 0.0f);
   std::vector<float> bit(np * 3, 0.0f);
   const size_t ntris = mesh->triangulated_indices.size() / 3;
+  if (config_.mesh.tangent_method == MeshConfig::TangentComputationMethod::Lengyel &&
+      vertex_normals && vertex_uvs) {
   for (size_t t = 0; t < ntris; ++t) {
     const uint32_t i0 = mesh->triangulated_indices[t * 3 + 0];
     const uint32_t i1 = mesh->triangulated_indices[t * 3 + 1];
@@ -1832,6 +2010,134 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
   }
   mesh->tangents.clear();
   mesh->tangents.append(out_tan.data(), out_tan.size());
+  mesh->tangents_interp = Interpolation::Vertex;
+  return true;
+  }
+
+  std::vector<value::float3> fv_positions(tri_corner_count);
+  std::vector<value::float3> fv_normals(tri_corner_count);
+  std::vector<value::float2> fv_uvs(tri_corner_count);
+  std::vector<uint32_t> tri_counts(ntris, 3);
+
+  const bool tri_corner_remap =
+      mesh->triangulated_face_vertex_indices.size() == tri_corner_count;
+
+  for (size_t c = 0; c < tri_corner_count; ++c) {
+    const uint32_t point_id = mesh->triangulated_indices[c];
+    if (point_id >= np) return false;
+
+    const size_t authored_corner =
+        tri_corner_remap ? mesh->triangulated_face_vertex_indices[c] : c;
+
+    const size_t p3 = size_t(point_id) * 3;
+    fv_positions[c] = {mesh->points[p3 + 0], mesh->points[p3 + 1],
+                       mesh->points[p3 + 2]};
+
+    size_t nidx = 0;
+    if (vertex_normals) {
+      nidx = size_t(point_id);
+    } else if (mesh->normals.size() == tri_corner_count * 3) {
+      nidx = c;
+    } else {
+      if (authored_corner >= authored_corner_count) return false;
+      nidx = authored_corner;
+    }
+    const size_t n3 = nidx * 3;
+    if (n3 + 2 >= mesh->normals.size()) return false;
+    fv_normals[c] = {mesh->normals[n3 + 0], mesh->normals[n3 + 1],
+                     mesh->normals[n3 + 2]};
+
+    size_t uvidx = 0;
+    if (vertex_uvs) {
+      uvidx = size_t(point_id);
+    } else if (mesh->texcoords_0.size() == tri_corner_count * 2) {
+      uvidx = c;
+    } else {
+      if (authored_corner >= authored_corner_count) return false;
+      uvidx = authored_corner;
+    }
+    const size_t uv2 = uvidx * 2;
+    if (uv2 + 1 >= mesh->texcoords_0.size()) return false;
+    fv_uvs[c] = {mesh->texcoords_0[uv2 + 0], mesh->texcoords_0[uv2 + 1]};
+  }
+
+  std::vector<value::float3> fv_tangents;
+  std::vector<value::float3> fv_binormals;
+  std::string tangent_error;
+  bool tangent_ok = false;
+
+  switch (config_.mesh.tangent_method) {
+    case MeshConfig::TangentComputationMethod::MikkTSpace:
+      tangent_ok = ::tinyusdz::tydra::ComputeTangentsMikkTSpace(
+          fv_positions, fv_normals, fv_uvs, tri_counts, &fv_tangents,
+          &fv_binormals, &tangent_error);
+      break;
+    case MeshConfig::TangentComputationMethod::FastMikkTSpace:
+      tangent_ok = ::tinyusdz::tydra::fast_mikkt::ComputeTangentsFastMikkTSpace(
+          fv_positions, fv_normals, fv_uvs, tri_counts, &fv_tangents,
+          &fv_binormals, &tangent_error);
+      break;
+    case MeshConfig::TangentComputationMethod::Hybrid: {
+      ::tinyusdz::tydra::fast_mikkt::HybridStats stats = {};
+      tangent_ok = ::tinyusdz::tydra::fast_mikkt::ComputeTangentsHybrid(
+          fv_positions, fv_normals, fv_uvs, tri_counts, &fv_tangents,
+          &fv_binormals, &stats, &tangent_error);
+      break;
+    }
+    case MeshConfig::TangentComputationMethod::Lengyel:
+      // Face-varying Lengyel is intentionally not duplicated here; Hybrid is
+      // the O(n) seam-aware fallback for non-vertex data.
+      tangent_ok = ::tinyusdz::tydra::fast_mikkt::ComputeTangentsHybrid(
+          fv_positions, fv_normals, fv_uvs, tri_counts, &fv_tangents,
+          &fv_binormals, nullptr, &tangent_error);
+      break;
+  }
+
+  if (!tangent_ok || fv_tangents.size() != tri_corner_count ||
+      fv_binormals.size() != tri_corner_count) {
+    if (!tangent_error.empty()) {
+      warnings_.push_back("Tangent computation failed for mesh '" +
+                          mesh->prim_path + "': " + tangent_error);
+    }
+    return false;
+  }
+
+  std::vector<float> fv_out(tri_corner_count * 4, 0.0f);
+  for (size_t i = 0; i < tri_corner_count; ++i) {
+    const value::float3& n = fv_normals[i];
+    const value::float3& t = fv_tangents[i];
+    const value::float3& b = fv_binormals[i];
+    const float cx = n[1] * t[2] - n[2] * t[1];
+    const float cy = n[2] * t[0] - n[0] * t[2];
+    const float cz = n[0] * t[1] - n[1] * t[0];
+    const float sign =
+        (cx * b[0] + cy * b[1] + cz * b[2]) < 0.0f ? -1.0f : 1.0f;
+    fv_out[i * 4 + 0] = t[0];
+    fv_out[i * 4 + 1] = t[1];
+    fv_out[i * 4 + 2] = t[2];
+    fv_out[i * 4 + 3] = sign;
+  }
+
+  if (vertex_normals && vertex_uvs) {
+    std::vector<float> vertex_out(np * 4, 0.0f);
+    std::vector<uint8_t> seen(np, 0);
+    for (size_t c = 0; c < tri_corner_count; ++c) {
+      const uint32_t point_id = mesh->triangulated_indices[c];
+      if (point_id >= np || seen[point_id]) continue;
+      seen[point_id] = 1;
+      vertex_out[size_t(point_id) * 4 + 0] = fv_out[c * 4 + 0];
+      vertex_out[size_t(point_id) * 4 + 1] = fv_out[c * 4 + 1];
+      vertex_out[size_t(point_id) * 4 + 2] = fv_out[c * 4 + 2];
+      vertex_out[size_t(point_id) * 4 + 3] = fv_out[c * 4 + 3];
+    }
+    mesh->tangents.clear();
+    mesh->tangents.append(vertex_out.data(), vertex_out.size());
+    mesh->tangents_interp = Interpolation::Vertex;
+  } else {
+    mesh->tangents.clear();
+    mesh->tangents.append(fv_out.data(), fv_out.size());
+    mesh->tangents_interp = Interpolation::FaceVarying;
+  }
   return true;
 }
 
@@ -2182,6 +2488,68 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     mesh->primvars.push_back(std::move(attr));
   }
 
+  return true;
+}
+
+bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
+                                         RenderPoints* out) {
+  if (!out || !prim.IsValid() || prim.GetTypeName() != "Points") {
+    last_error_ = "Invalid Points prim";
+    return false;
+  }
+
+  ValueArrayRead<float> points;
+  if (!ReadFloatArray(prim, "points", config_.time_code, &points) ||
+      points.empty() || (points.view.size % 3) != 0) {
+    last_error_ = "Invalid Points.points data";
+    return false;
+  }
+
+  out->name = prim.GetName();
+  out->prim_path = prim.GetPath().str();
+  out->points.append(points.view.data, points.view.size);
+
+  ValueArrayRead<float> widths;
+  if (ReadFloatArray(prim, "widths", config_.time_code, &widths) &&
+      !widths.empty()) {
+    const size_t n = out->point_count();
+    if (widths.view.size == 1 || widths.view.size == n) {
+      out->widths.append(widths.view.data, widths.view.size);
+    } else {
+      warnings_.push_back("Points '" + out->prim_path +
+                          "': ignoring widths with mismatched element count");
+    }
+  }
+
+  ValueArrayRead<float> colors;
+  if (ReadFloatArray(prim, "primvars:displayColor", config_.time_code,
+                     &colors) &&
+      !colors.empty()) {
+    std::string interp_tok = "vertex";
+    if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+      if (const ::tinyusdz::next::PropMeta* pm =
+              spec->property_meta("primvars:displayColor")) {
+        if (pm->authored & ::tinyusdz::next::PropMeta::kInterpolation) {
+          interp_tok = pm->interpolation;
+        }
+      }
+    }
+    const Interpolation interp = ParsePrimvarInterp(interp_tok);
+    const size_t elems = colors.view.size / 3;
+    const size_t expected = (interp == Interpolation::Constant)
+                                ? 1
+                                : out->point_count();
+    if ((colors.view.size % 3) == 0 && elems == expected) {
+      out->colors.append(colors.view.data, colors.view.size);
+      out->colors_interp = interp;
+    } else {
+      warnings_.push_back("Points '" + out->prim_path +
+                          "': ignoring displayColor with mismatched element count");
+    }
+  }
+
+  ComputePointBounds(out->points, &out->bbox_min, &out->bbox_max,
+                     &out->has_bbox);
   return true;
 }
 
@@ -2805,6 +3173,30 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   GetFloat(prim, "inputs:intensity", &out->intensity);
   GetFloat(prim, "inputs:exposure", &out->exposure);
   GetBool(prim, "inputs:normalize", &out->normalize);
+  GetBool(prim, "inputs:enableColorTemperature",
+          &out->enable_color_temperature);
+  GetFloat(prim, "inputs:colorTemperature", &out->color_temperature);
+  GetFloat(prim, "inputs:diffuse", &out->diffuse);
+  GetFloat(prim, "inputs:specular", &out->specular);
+  GetFloat(prim, "inputs:shaping:focus", &out->shaping_focus);
+  GetFloat(prim, "inputs:shaping:focusTint", &out->shaping_focus_tint);
+  GetFloat(prim, "inputs:shaping:cone:softness",
+           &out->shaping_cone_softness);
+  ReadStringLikeProperty(prim, "inputs:shaping:ies:file",
+                         &out->shaping_ies_file);
+  out->light_link_targets = ReadRelationshipTargets(prim, "light:link");
+  if (out->light_link_targets.empty()) {
+    out->light_link_targets = ReadRelationshipTargets(prim, "collection:lightLink:includes");
+  }
+  out->shadow_link_targets = ReadRelationshipTargets(prim, "shadow:link");
+  if (out->shadow_link_targets.empty()) {
+    out->shadow_link_targets =
+        ReadRelationshipTargets(prim, "collection:shadowLink:includes");
+  }
+  out->filter_targets = ReadRelationshipTargets(prim, "filters");
+  if (out->filter_targets.empty()) {
+    out->filter_targets = ReadRelationshipTargets(prim, "light:filters");
+  }
 
   // Type-specific properties
   switch (out->type) {
@@ -2841,6 +3233,11 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   if (!GetBool(prim, "inputs:shadow:enable", &out->enable_shadow)) {
     GetBool(prim, "inputs:enableShadows", &out->enable_shadow);
   }
+  GetFloat3(prim, "inputs:shadow:color", &out->shadow_color.x,
+            &out->shadow_color.y, &out->shadow_color.z);
+  GetFloat(prim, "inputs:shadow:distance", &out->shadow_distance);
+  GetFloat(prim, "inputs:shadow:falloff", &out->shadow_falloff);
+  GetFloat(prim, "inputs:shadow:falloffGamma", &out->shadow_falloff_gamma);
 
   return true;
 }
@@ -2913,6 +3310,7 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
       skel.joints.empty()) {
     return true;
   }
+  out->animation_source_path = skel.animationSource;
 
   std::vector<int> topology;
   std::string err;
@@ -2958,13 +3356,104 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 // Animation conversion
 //
 
-bool RenderSceneConverter::ConvertAnimation(const UsdPrim& prim, AnimationClip* out) {
+bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
+                                            const UsdPrim& prim,
+                                            AnimationClip* out) {
   if (!out || !prim.IsValid()) return false;
 
   out->name = prim.GetName() + "_Anim";
   out->prim_path = prim.GetPath().str();
   out->start_time = std::numeric_limits<double>::max();
   out->end_time = -std::numeric_limits<double>::max();
+
+  if (::tinyusdz::next::IsSkelAnimation(prim)) {
+    const std::vector<std::string> joint_order =
+        ReadTokenArrayProperty(prim, "joints");
+    const std::vector<std::string> blend_shape_order =
+        ReadTokenArrayProperty(prim, "blendShapes");
+
+    auto append_skel_channel = [&](const char* prop_name,
+                                   AnimationChannel::TargetPath target_path,
+                                   uint32_t stride) {
+      std::vector<double> times = prim.GetTimeSampleTimes(prop_name);
+      if (times.empty()) return;
+      std::sort(times.begin(), times.end());
+      times.erase(std::unique(times.begin(), times.end()), times.end());
+
+      AnimationChannel channel;
+      channel.target_path = target_path;
+      channel.target_prim_path = prim.GetPath().str();
+      channel.property_name = prop_name;
+      channel.joint_order = joint_order;
+      channel.blend_shape_order = blend_shape_order;
+      channel.value_stride = stride;
+      channel.is_skeletal = true;
+
+      uint32_t expected_elements = 0;
+      for (double t : times) {
+        ::tinyusdz::next::SkelAnimationData data;
+        if (!::tinyusdz::next::GetSkelAnimationDataAtTime(stage, prim, &data,
+                                                          t)) {
+          continue;
+        }
+
+        const std::vector<float>* values = nullptr;
+        if (target_path == AnimationChannel::TargetPath::Translation &&
+            data.hasTranslations) {
+          values = &data.translations;
+        } else if (target_path == AnimationChannel::TargetPath::Rotation &&
+                   data.hasRotations) {
+          values = &data.rotations;
+        } else if (target_path == AnimationChannel::TargetPath::Scale &&
+                   data.hasScales) {
+          values = &data.scales;
+        } else if (target_path == AnimationChannel::TargetPath::Weights &&
+                   data.hasBlendShapes) {
+          values = &data.blendShapeWeights;
+        }
+        if (!values || values->empty() || ((*values).size() % stride) != 0) {
+          continue;
+        }
+
+        const uint32_t element_count =
+            static_cast<uint32_t>((*values).size() / stride);
+        if (expected_elements == 0) {
+          expected_elements = element_count;
+          channel.element_count = element_count;
+          channel.array_values.reserve(times.size() * values->size());
+        } else if (element_count != expected_elements) {
+          warnings_.push_back("Skipping inconsistent SkelAnimation sample for " +
+                              prim.GetPath().str() + "." + prop_name);
+          continue;
+        }
+
+        Float4 preview;
+        if (!FirstArrayElementToFloat4(*values, stride, &preview)) continue;
+        channel.keyframes.push_back(Keyframe{t, preview});
+        channel.array_values.insert(channel.array_values.end(),
+                                    values->begin(), values->end());
+        out->start_time = std::min(out->start_time, t);
+        out->end_time = std::max(out->end_time, t);
+      }
+
+      if (!channel.keyframes.empty()) {
+        out->channels.push_back(std::move(channel));
+      }
+    };
+
+    append_skel_channel("translations",
+                        AnimationChannel::TargetPath::Translation, 3);
+    append_skel_channel("rotations",
+                        AnimationChannel::TargetPath::Rotation, 4);
+    append_skel_channel("scales",
+                        AnimationChannel::TargetPath::Scale, 3);
+    append_skel_channel("blendShapeWeights",
+                        AnimationChannel::TargetPath::Weights, 1);
+
+    if (!out->channels.empty()) {
+      return true;
+    }
+  }
 
   for (const std::string& prop_name : prim.GetPropertyNames()) {
     const std::vector<double> times = prim.GetTimeSampleTimes(prop_name);

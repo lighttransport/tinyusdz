@@ -1,6 +1,42 @@
 import * as THREE from 'three';
 import { createThreeSkeletonFromUSD } from './USDSkeletalHelper.js';
 
+function normalizeSkeletonForThree(usdSkeleton) {
+  if (!usdSkeleton || usdSkeleton.root_node) {
+    return usdSkeleton;
+  }
+
+  const joints = Array.isArray(usdSkeleton.joints) ? usdSkeleton.joints : [];
+  if (joints.length === 0) {
+    return usdSkeleton;
+  }
+
+  const nodes = joints.map((joint, index) => ({
+    joint_id: Number.isFinite(joint.index) ? joint.index : index,
+    joint_name: joint.name || joint.path || `joint_${index}`,
+    joint_path: joint.path || joint.name || `joint_${index}`,
+    bind_transform: Array.isArray(joint.bindMatrix) ? joint.bindMatrix : null,
+    rest_transform: Array.isArray(joint.restMatrix) ? joint.restMatrix : null,
+    children: []
+  }));
+
+  const roots = [];
+  for (let i = 0; i < joints.length; ++i) {
+    const parentId = Number.isFinite(joints[i].parentId) ? joints[i].parentId : -1;
+    if (parentId >= 0 && parentId < nodes.length) {
+      nodes[parentId].children.push(nodes[i]);
+    } else {
+      roots.push(nodes[i]);
+    }
+  }
+
+  return {
+    ...usdSkeleton,
+    abs_path: usdSkeleton.abs_path || usdSkeleton.primPath || '',
+    root_node: roots[0] || nodes[0] || null
+  };
+}
+
 /**
  * Build skeleton/bone maps from a TinyUSDZ scene.
  *
@@ -26,8 +62,8 @@ export function buildSkeletonDataFromUSD(usdScene, options = {}) {
 
   if (numSkeletons > 0) {
     for (let skelId = 0; skelId < numSkeletons; skelId++) {
-      const usdSkeleton = usdScene.getSkeleton(skelId);
-      const skelAbsPath = usdSkeleton.abs_path || null;
+      const usdSkeleton = normalizeSkeletonForThree(usdScene.getSkeleton(skelId));
+      const skelAbsPath = usdSkeleton.abs_path || usdSkeleton.primPath || null;
       logger.log(`USD Skeleton ${skelId}: ${skelAbsPath || '(no path)'}`, usdSkeleton);
 
       const skeletonData = createThreeSkeletonFromUSD(usdSkeleton, { skelId });

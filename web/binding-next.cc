@@ -119,6 +119,113 @@ std::array<double, 16> MatrixToArray(const tr::Matrix4& m) {
   return out;
 }
 
+static const char* NodeTypeName(tr::NodeType type) {
+  switch (type) {
+    case tr::NodeType::Xform:
+      return "xform";
+    case tr::NodeType::Mesh:
+      return "mesh";
+    case tr::NodeType::Points:
+      return "points";
+    case tr::NodeType::PointInstancer:
+      return "pointInstancer";
+    case tr::NodeType::Camera:
+      return "camera";
+    case tr::NodeType::PointLight:
+      return "pointLight";
+    case tr::NodeType::DirectionalLight:
+      return "directionalLight";
+    case tr::NodeType::SpotLight:
+      return "spotLight";
+    case tr::NodeType::RectLight:
+      return "rectLight";
+    case tr::NodeType::DiskLight:
+      return "diskLight";
+    case tr::NodeType::DomeLight:
+      return "domeLight";
+    case tr::NodeType::SphereLight:
+      return "sphereLight";
+    case tr::NodeType::Skeleton:
+      return "skeleton";
+    default:
+      return "unknown";
+  }
+}
+
+static const char* LightTypeName(tr::LightType type) {
+  switch (type) {
+    case tr::LightType::Point:
+      return "point";
+    case tr::LightType::Directional:
+      return "directional";
+    case tr::LightType::Spot:
+      return "spot";
+    case tr::LightType::Rect:
+      return "rect";
+    case tr::LightType::Disk:
+      return "disk";
+    case tr::LightType::Dome:
+      return "dome";
+    case tr::LightType::Sphere:
+      return "sphere";
+    case tr::LightType::Cylinder:
+      return "cylinder";
+    case tr::LightType::Geometry:
+      return "geometry";
+    default:
+      return "unknown";
+  }
+}
+
+static const char* AnimationPathName(tr::AnimationChannel::TargetPath path) {
+  switch (path) {
+    case tr::AnimationChannel::TargetPath::Translation:
+      return "Translation";
+    case tr::AnimationChannel::TargetPath::Rotation:
+      return "Rotation";
+    case tr::AnimationChannel::TargetPath::Scale:
+      return "Scale";
+    case tr::AnimationChannel::TargetPath::Weights:
+      return "Weights";
+    case tr::AnimationChannel::TargetPath::CustomProperty:
+      return "CustomProperty";
+    default:
+      return "Unknown";
+  }
+}
+
+static const char* AnimationInterpolationName(
+    tr::AnimationChannel::Interpolation interp) {
+  switch (interp) {
+    case tr::AnimationChannel::Interpolation::Step:
+      return "STEP";
+    case tr::AnimationChannel::Interpolation::Linear:
+      return "LINEAR";
+    case tr::AnimationChannel::Interpolation::CubicSpline:
+      return "CUBICSPLINE";
+    default:
+      return "LINEAR";
+  }
+}
+
+static const char* CameraTypeName(tr::CameraType type) {
+  switch (type) {
+    case tr::CameraType::Perspective:
+      return "perspective";
+    case tr::CameraType::Orthographic:
+      return "orthographic";
+    default:
+      return "unknown";
+  }
+}
+
+template <typename T>
+emscripten::val VectorToArray(const std::vector<T>& values) {
+  emscripten::val array = emscripten::val::array();
+  for (const auto& v : values) array.call<void>("push", v);
+  return array;
+}
+
 emscripten::val MatrixValue(const std::array<double, 16>& m) {
   emscripten::val a = emscripten::val::array();
   for (double v : m) a.call<void>("push", v);
@@ -189,6 +296,159 @@ std::string MaterialKey(const tr::RenderScene& scene, int32_t material_id) {
   std::ostringstream ss;
   ss << material_id << "|" << mat->prim_path;
   return ss.str();
+}
+
+std::string JsonEscape(const std::string& s) {
+  std::ostringstream out;
+  for (char c : s) {
+    switch (c) {
+      case '"': out << "\\\""; break;
+      case '\\': out << "\\\\"; break;
+      case '\n': out << "\\n"; break;
+      case '\r': out << "\\r"; break;
+      case '\t': out << "\\t"; break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20) {
+          out << "\\u00" << std::hex << std::setw(2) << std::setfill('0')
+              << static_cast<int>(static_cast<unsigned char>(c))
+              << std::dec << std::setfill(' ');
+        } else {
+          out << c;
+        }
+        break;
+    }
+  }
+  return out.str();
+}
+
+const char* RenderMaterialShaderTypeName(tr::RenderMaterial::ShaderType type) {
+  switch (type) {
+    case tr::RenderMaterial::ShaderType::PreviewSurface:
+      return "PreviewSurface";
+    case tr::RenderMaterial::ShaderType::OpenPBR:
+      return "OpenPBR";
+    case tr::RenderMaterial::ShaderType::None:
+    default:
+      return "None";
+  }
+}
+
+std::string ShaderParamJson(const tr::RenderScene& scene,
+                            const tr::ShaderParam& p) {
+  std::ostringstream ss;
+  ss << "{\"value\":[" << p.value.x << "," << p.value.y << ","
+     << p.value.z << "," << p.value.w << "]";
+  if (p.texture_id >= 0) {
+    ss << ",\"texture\":\"" << JsonEscape(TexturePath(scene, p)) << "\"";
+    ss << ",\"textureId\":" << p.texture_id;
+  }
+  ss << "}";
+  return ss.str();
+}
+
+std::string RenderMaterialJson(const tr::RenderScene& scene,
+                               const tr::RenderMaterial& mat) {
+  std::ostringstream ss;
+  ss << "{\"name\":\"" << JsonEscape(mat.name) << "\",";
+  ss << "\"primPath\":\"" << JsonEscape(mat.prim_path) << "\",";
+  ss << "\"shaderType\":\"" << RenderMaterialShaderTypeName(mat.shader_type)
+     << "\",";
+  ss << "\"materialXConfig\":{";
+  ss << "\"authored\":" << (mat.mtlx_config.authored ? "true" : "false");
+  ss << ",\"version\":\"" << JsonEscape(mat.mtlx_config.version) << "\"";
+  ss << ",\"namespace\":\"" << JsonEscape(mat.mtlx_config.name_space) << "\"";
+  ss << ",\"colorspace\":\"" << JsonEscape(mat.mtlx_config.colorspace) << "\"";
+  ss << ",\"sourceUri\":\"" << JsonEscape(mat.mtlx_config.source_uri) << "\"";
+  ss << "}";
+  if (mat.preview_surface) {
+    const tr::PreviewSurfaceShader& ps = *mat.preview_surface;
+    ss << ",\"previewSurface\":{";
+    ss << "\"diffuseColor\":" << ShaderParamJson(scene, ps.diffuse_color);
+    ss << ",\"emissiveColor\":" << ShaderParamJson(scene, ps.emissive_color);
+    ss << ",\"metallic\":" << ShaderParamJson(scene, ps.metallic);
+    ss << ",\"roughness\":" << ShaderParamJson(scene, ps.roughness);
+    ss << ",\"opacity\":" << ShaderParamJson(scene, ps.opacity);
+    ss << ",\"normal\":" << ShaderParamJson(scene, ps.normal);
+    ss << "}";
+  }
+  if (mat.openpbr) {
+    const tr::OpenPBRSurfaceShader& op = *mat.openpbr;
+    ss << ",\"openPBR\":{";
+    ss << "\"baseColor\":" << ShaderParamJson(scene, op.base_color);
+    ss << ",\"baseWeight\":" << ShaderParamJson(scene, op.base_weight);
+    ss << ",\"baseRoughness\":" << ShaderParamJson(scene, op.base_roughness);
+    ss << ",\"baseMetalness\":" << ShaderParamJson(scene, op.base_metalness);
+    ss << ",\"specularWeight\":" << ShaderParamJson(scene, op.specular_weight);
+    ss << ",\"specularColor\":" << ShaderParamJson(scene, op.specular_color);
+    ss << ",\"emissionColor\":" << ShaderParamJson(scene, op.emission_color);
+    ss << ",\"emissionLuminance\":"
+       << ShaderParamJson(scene, op.emission_luminance);
+    ss << ",\"opacity\":" << ShaderParamJson(scene, op.opacity);
+    ss << ",\"normal\":" << ShaderParamJson(scene, op.normal);
+    ss << ",\"nodegraphJson\":\"" << JsonEscape(op.nodegraph_json) << "\"";
+    ss << "}";
+  }
+  ss << "}";
+  return ss.str();
+}
+
+static size_t AnimationComponentCount(const tr::AnimationChannel& channel) {
+  switch (channel.target_path) {
+    case tr::AnimationChannel::TargetPath::Rotation:
+      return 4;
+    case tr::AnimationChannel::TargetPath::Weights:
+      return 1;
+    case tr::AnimationChannel::TargetPath::CustomProperty:
+      return 4;
+    case tr::AnimationChannel::TargetPath::Translation:
+    case tr::AnimationChannel::TargetPath::Scale:
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+static void AppendAnimationKeyframeValues(const tr::AnimationChannel& channel,
+                                        const tr::Keyframe& keyframe,
+                                        std::vector<float>* values) {
+  if (!values) return;
+
+  const size_t component_count = AnimationComponentCount(channel);
+  const tr::Float4& v = keyframe.value;
+
+  switch (component_count) {
+    case 1:
+      values->push_back(v.x);
+      break;
+    case 3:
+      values->push_back(v.x);
+      values->push_back(v.y);
+      values->push_back(v.z);
+      break;
+    default:
+      values->push_back(v.x);
+      values->push_back(v.y);
+      values->push_back(v.z);
+      values->push_back(v.w);
+      break;
+  }
+}
+
+static int AnimationTargetNodeCount(const tr::AnimationClip& clip) {
+  std::set<int32_t> node_ids;
+  for (const tr::AnimationChannel& channel : clip.channels) {
+    if (channel.target_node >= 0) {
+      node_ids.insert(channel.target_node);
+    }
+  }
+  return static_cast<int>(node_ids.size());
+}
+
+static bool AnimationHasSkeletalChannels(const tr::AnimationClip& clip) {
+  for (const tr::AnimationChannel& channel : clip.channels) {
+    if (channel.is_skeletal) return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -292,6 +552,13 @@ class RenderStream {
     mesh_merge_bake_transform_ = enabled;
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
+  void setComputeTangents(bool enabled) { compute_tangents_ = enabled; }
+  void setTangentMethod(const std::string &method) {
+    tangent_method_ = method;
+    std::transform(tangent_method_.begin(), tangent_method_.end(),
+                   tangent_method_.begin(),
+                   [](unsigned char c) { return char(std::tolower(c)); });
+  }
 
   // Adopt the root bytes by move. USDC lazy arrays and USDA lazy slices retain
   // this buffer directly instead of copying it again inside the loader.
@@ -343,9 +610,28 @@ class RenderStream {
     if (mesh_merge_) {
       buildOptimizedOutputs_();
     }
+    buildRenderScene_();
     loaded_ = true;
     r.set("success", true);
     r.set("meshCount", meshCount());
+    r.set("points", static_cast<int>(pointsCount()));
+    r.set("pointsCount", static_cast<int>(pointsCount()));
+    r.set("nodes", static_cast<int>(nodeCount()));
+    r.set("nodeCount", static_cast<int>(nodeCount()));
+    r.set("lights", static_cast<int>(lightCount()));
+    r.set("lightCount", static_cast<int>(lightCount()));
+    r.set("cameras", static_cast<int>(cameraCount()));
+    r.set("cameraCount", static_cast<int>(cameraCount()));
+    r.set("pointInstancers", static_cast<int>(pointInstancerCount()));
+    r.set("pointInstancerCount", static_cast<int>(pointInstancerCount()));
+    r.set("skeletons", static_cast<int>(skeletonCount()));
+    r.set("skeletonCount", static_cast<int>(skeletonCount()));
+    r.set("unsupportedRenderables", static_cast<int>(unsupportedRenderableCount()));
+    r.set("unsupportedRenderableCount", static_cast<int>(unsupportedRenderableCount()));
+    r.set("animations", static_cast<int>(animationCount()));
+    r.set("animationCount", static_cast<int>(animationCount()));
+    r.set("pointInstanceDraws", static_cast<int>(pointInstanceDrawCount()));
+    r.set("pointInstanceDrawCount", static_cast<int>(pointInstanceDrawCount()));
     return r;
   }
 
@@ -378,7 +664,511 @@ class RenderStream {
     if (mesh_merge_) return static_cast<int>(outputs_.size());
     return static_cast<int>(meshes_.size());
   }
+
+  int nodeCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.nodes.size()) : 0;
+  }
+
+  int lightCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.lights.size()) : 0;
+  }
+
+  int pointsCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.points.size()) : 0;
+  }
+
+  int cameraCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.cameras.size()) : 0;
+  }
+
+  int pointInstancerCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.point_instancers.size())
+                              : 0;
+  }
+
+  int pointInstanceDrawCount() const {
+    return render_scene_valid_
+               ? static_cast<int>(render_scene_.point_instance_draws.size())
+               : 0;
+  }
+
+  int skeletonCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.skeletons.size()) : 0;
+  }
+
+  int animationCount() const {
+    return render_scene_valid_ ? static_cast<int>(render_scene_.animations.size()) : 0;
+  }
+
+  int unsupportedRenderableCount() const {
+    return render_scene_valid_
+               ? static_cast<int>(render_scene_.unsupported_renderables.size())
+               : 0;
+  }
+
   std::string error() const { return error_; }
+
+  emscripten::val getNode(int32_t node_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!render_scene_valid_ || node_id < 0 ||
+        static_cast<size_t>(node_id) >= render_scene_.nodes.size()) {
+      out.set("error", std::string("invalid node index"));
+      return out;
+    }
+    const tr::SceneNode& node = render_scene_.nodes[static_cast<size_t>(node_id)];
+    out.set("index", node_id);
+    out.set("name", node.name);
+    out.set("primPath", node.prim_path);
+    out.set("type", NodeTypeName(node.type));
+    out.set("visible", node.visible);
+    out.set("dataId", node.data_id);
+    out.set("parentId", node.parent_id);
+    out.set("localMatrix", MatrixValue(MatrixToArray(node.local_transform)));
+    out.set("worldMatrix", MatrixValue(MatrixToArray(node.world_transform)));
+    out.set("children", VectorToArray(node.children));
+    return out;
+  }
+
+  emscripten::val getLight(int32_t light_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!render_scene_valid_ || light_id < 0 ||
+        static_cast<size_t>(light_id) >= render_scene_.lights.size()) {
+      out.set("error", std::string("invalid light index"));
+      return out;
+    }
+    const tr::RenderLight& light = render_scene_.lights[static_cast<size_t>(light_id)];
+    out.set("index", light_id);
+    out.set("name", light.name);
+    out.set("primPath", light.prim_path);
+    out.set("type", LightTypeName(light.type));
+    out.set("typeCode", static_cast<int>(light.type));
+    out.set("intensity", light.intensity);
+    out.set("exposure", light.exposure);
+    out.set("normalize", light.normalize);
+    out.set("enableColorTemperature", light.enable_color_temperature);
+    out.set("colorTemperature", light.color_temperature);
+    out.set("diffuse", light.diffuse);
+    out.set("specular", light.specular);
+    out.set("shapingFocus", light.shaping_focus);
+    out.set("shapingFocusTint", light.shaping_focus_tint);
+    out.set("shapingConeSoftness", light.shaping_cone_softness);
+    out.set("shapingIesFile", light.shaping_ies_file);
+    out.set("lightLinkTargets", VectorToArray(light.light_link_targets));
+    out.set("shadowLinkTargets", VectorToArray(light.shadow_link_targets));
+    out.set("filterTargets", VectorToArray(light.filter_targets));
+    out.set("enableShadow", light.enable_shadow);
+    out.set("color", Float3Value(light.color));
+    out.set("transform", MatrixValue(MatrixToArray(light.transform)));
+    out.set("shadowColor", Float3Value(light.shadow_color));
+    out.set("shadowDistance", light.shadow_distance);
+    out.set("shadowFalloff", light.shadow_falloff);
+    out.set("shadowFalloffGamma", light.shadow_falloff_gamma);
+    switch (light.type) {
+      case tr::LightType::Sphere:
+        out.set("radius", light.params.sphere.radius);
+        break;
+      case tr::LightType::Rect:
+        out.set("width", light.params.rect.width);
+        out.set("height", light.params.rect.height);
+        break;
+      case tr::LightType::Disk:
+        out.set("radius", light.params.disk.radius);
+        break;
+      case tr::LightType::Spot:
+        out.set("angle", light.params.spot.angle);
+        break;
+      case tr::LightType::Dome:
+        out.set("textureId", light.params.dome.texture_id);
+        break;
+      case tr::LightType::Cylinder:
+        out.set("radius", light.params.cylinder.radius);
+        out.set("length", light.params.cylinder.length);
+        break;
+      case tr::LightType::Directional:
+        out.set("angle", light.params.distant.angle);
+        break;
+      default:
+        break;
+    }
+    return out;
+  }
+
+  emscripten::val getPoints(int32_t points_id) {
+    emscripten::val out = emscripten::val::object();
+    if (!render_scene_valid_ || points_id < 0 ||
+        static_cast<size_t>(points_id) >= render_scene_.points.size()) {
+      out.set("error", std::string("invalid points index"));
+      return out;
+    }
+    const tr::RenderPoints& points =
+        render_scene_.points[static_cast<size_t>(points_id)];
+    s_points_cloud_points_.clear();
+    s_points_cloud_widths_.clear();
+    s_points_cloud_colors_.clear();
+    s_points_cloud_points_.reserve(points.points.size());
+    for (size_t i = 0; i < points.points.size(); ++i) {
+      s_points_cloud_points_.push_back(points.points[i]);
+    }
+    s_points_cloud_widths_.reserve(points.widths.size());
+    for (size_t i = 0; i < points.widths.size(); ++i) {
+      s_points_cloud_widths_.push_back(points.widths[i]);
+    }
+    s_points_cloud_colors_.reserve(points.colors.size());
+    for (size_t i = 0; i < points.colors.size(); ++i) {
+      s_points_cloud_colors_.push_back(points.colors[i]);
+    }
+
+    out.set("index", points_id);
+    out.set("name", points.name);
+    out.set("primPath", points.prim_path);
+    out.set("pointCount", static_cast<int>(points.point_count()));
+    out.set("materialId", points.material_id);
+    out.set("points", heapF_(s_points_cloud_points_, 3));
+    if (!s_points_cloud_widths_.empty()) {
+      out.set("widths", heapF_(s_points_cloud_widths_, 1));
+    }
+    if (!s_points_cloud_colors_.empty()) {
+      out.set("colors", heapF_(s_points_cloud_colors_, 3));
+    }
+    out.set("hasBounds", points.has_bbox);
+    if (points.has_bbox) {
+      out.set("bboxMin", Float3Value(points.bbox_min));
+      out.set("bboxMax", Float3Value(points.bbox_max));
+    }
+    return out;
+  }
+
+  emscripten::val getCamera(int32_t camera_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!render_scene_valid_ || camera_id < 0 ||
+        static_cast<size_t>(camera_id) >= render_scene_.cameras.size()) {
+      out.set("error", std::string("invalid camera index"));
+      return out;
+    }
+    const tr::RenderCamera& camera = render_scene_.cameras[static_cast<size_t>(camera_id)];
+    out.set("index", camera_id);
+    out.set("name", camera.name);
+    out.set("primPath", camera.prim_path);
+    out.set("type", CameraTypeName(camera.type));
+    out.set("typeCode", static_cast<int>(camera.type));
+    out.set("transform", MatrixValue(MatrixToArray(camera.transform)));
+    out.set("focalLength", camera.focal_length);
+    out.set("horizontalAperture", camera.horizontal_aperture);
+    out.set("verticalAperture", camera.vertical_aperture);
+    out.set("orthoWidth", camera.ortho_width);
+    out.set("nearClip", camera.near_clip);
+    out.set("farClip", camera.far_clip);
+    out.set("fovY", camera.fov_y());
+    out.set("fovX", camera.fov_x());
+    out.set("aspect", camera.aspect_ratio());
+    return out;
+  }
+
+  emscripten::val getPointInstancer(int32_t instancer_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!render_scene_valid_ || instancer_id < 0 ||
+        static_cast<size_t>(instancer_id) >=
+            render_scene_.point_instancers.size()) {
+      out.set("error", std::string("invalid point instancer index"));
+      return out;
+    }
+    const tr::RenderPointInstancer& instancer =
+        render_scene_.point_instancers[static_cast<size_t>(instancer_id)];
+    out.set("index", instancer_id);
+    out.set("name", instancer.name);
+    out.set("primPath", instancer.prim_path);
+    out.set("prototypePaths", VectorToArray(instancer.prototype_paths));
+    out.set("prototypeNodeIds", VectorToArray(instancer.prototype_node_ids));
+    out.set("prototypeMeshOffsets", VectorToArray(instancer.prototype_mesh_offsets));
+    out.set("prototypeMeshIds", VectorToArray(instancer.prototype_mesh_ids));
+    out.set("drawStart", static_cast<int>(instancer.draw_start));
+    out.set("drawCount", static_cast<int>(instancer.draw_count));
+    out.set("protoCount", static_cast<int>(instancer.prototype_count()));
+    out.set("instanceCount", static_cast<int>(instancer.instance_count()));
+    out.set("visibleInstanceCount",
+            static_cast<int>(instancer.visible_instance_count()));
+    out.set("hasTransforms", !instancer.transforms.empty());
+    out.set("hasOrientations", instancer.has_orientations());
+    out.set("hasScales", instancer.has_scales());
+    out.set("hasVelocities", instancer.has_velocities());
+    out.set("hasAngularVelocities", instancer.has_angular_velocities());
+    out.set("valid", instancer.valid);
+    if (!instancer.validation_error.empty()) {
+      out.set("validationError", instancer.validation_error);
+    }
+    return out;
+  }
+
+  emscripten::val getPointInstanceDraw(int32_t draw_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!render_scene_valid_ || draw_id < 0 ||
+        static_cast<size_t>(draw_id) >=
+            render_scene_.point_instance_draws.size()) {
+      out.set("error", std::string("invalid point instance draw index"));
+      return out;
+    }
+    const tr::RenderPointInstanceDraw* draw =
+        render_scene_.get_point_instance_draw(static_cast<size_t>(draw_id));
+    if (!draw) {
+      out.set("error", std::string("invalid point instance draw index"));
+      return out;
+    }
+    out.set("index", draw_id);
+    out.set("pointInstancerId", draw->point_instancer_id);
+    out.set("instanceIndex", static_cast<int>(draw->instance_index));
+    out.set("prototypeIndex", static_cast<int>(draw->prototype_index));
+    out.set("meshId", draw->mesh_id);
+    out.set("materialId", draw->material_id);
+    out.set("expandedMeshId", draw->expanded_mesh_id);
+    out.set("transform", MatrixValue(MatrixToArray(draw->transform)));
+    if (draw->mesh_id >= 0 &&
+        static_cast<size_t>(draw->mesh_id) < render_scene_.meshes.size()) {
+      out.set("meshPath", render_scene_.meshes[static_cast<size_t>(draw->mesh_id)].prim_path);
+    }
+    if (draw->material_id >= 0 &&
+        static_cast<size_t>(draw->material_id) < render_scene_.materials.size()) {
+      out.set("materialPath", render_scene_.materials[static_cast<size_t>(draw->material_id)].prim_path);
+    }
+    return out;
+  }
+
+  emscripten::val getSkeleton(int32_t skeleton_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!render_scene_valid_ || skeleton_id < 0 ||
+        static_cast<size_t>(skeleton_id) >= render_scene_.skeletons.size()) {
+      out.set("error", std::string("invalid skeleton index"));
+      return out;
+    }
+    const tr::Skeleton& skel = render_scene_.skeletons[static_cast<size_t>(skeleton_id)];
+    out.set("index", skeleton_id);
+    out.set("name", skel.name);
+    out.set("primPath", skel.prim_path);
+    out.set("rootJoint", skel.root_joint);
+    out.set("jointCount", static_cast<int>(skel.joints.size()));
+    out.set("animationId", skel.animation_id);
+    out.set("animationSourcePath", skel.animation_source_path);
+    emscripten::val joints = emscripten::val::array();
+    for (size_t i = 0; i < skel.joints.size(); ++i) {
+      const tr::SkeletonJoint& j = skel.joints[i];
+      emscripten::val jo = emscripten::val::object();
+      jo.set("index", static_cast<int>(i));
+      jo.set("name", j.name);
+      jo.set("path", j.path);
+      jo.set("parentId", j.parent_id);
+      jo.set("bindMatrix", MatrixValue(MatrixToArray(j.bind_transform)));
+      jo.set("restMatrix", MatrixValue(MatrixToArray(j.rest_transform)));
+      jo.set("children", VectorToArray(j.children));
+      joints.set(static_cast<int>(i), jo);
+    }
+    out.set("joints", joints);
+    return out;
+  }
+
+  emscripten::val getAnimation(int32_t anim_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!loaded_ || anim_id < 0 ||
+        static_cast<size_t>(anim_id) >= render_scene_.animations.size()) {
+      return out;
+    }
+    const tr::AnimationClip& clip = render_scene_.animations[static_cast<size_t>(anim_id)];
+
+    const double duration = clip.end_time - clip.start_time;
+    const double clamped_duration = std::isfinite(duration)
+                                       ? std::max(0.0, duration)
+                                       : 0.0;
+    out.set("index", anim_id);
+    out.set("name", clip.name.empty()
+                           ? std::string("Animation") + std::to_string(anim_id)
+                           : clip.name);
+    out.set("primPath", clip.prim_path);
+    out.set("startTime", clip.start_time);
+    out.set("endTime", clip.end_time);
+    out.set("duration", clamped_duration);
+
+    emscripten::val channels = emscripten::val::array();
+    emscripten::val samplers = emscripten::val::array();
+    emscripten::val tracks = emscripten::val::array();
+
+    for (size_t i = 0; i < clip.channels.size(); ++i) {
+      const tr::AnimationChannel& channel = clip.channels[i];
+
+      std::vector<float> times;
+      times.reserve(channel.keyframes.size());
+      std::vector<float> values;
+      values.reserve(channel.keyframes.size() *
+                     AnimationComponentCount(channel));
+
+      for (const auto& keyframe : channel.keyframes) {
+        times.push_back(static_cast<float>(keyframe.time));
+        AppendAnimationKeyframeValues(channel, keyframe, &values);
+      }
+
+      const std::string path = AnimationPathName(channel.target_path);
+      const std::string interpolation =
+          AnimationInterpolationName(channel.interpolation);
+      const int32_t sampler_id = static_cast<int32_t>(i);
+
+      emscripten::val sampler = emscripten::val::object();
+      sampler.set("index", sampler_id);
+      sampler.set("interpolation", interpolation);
+      sampler.set("times", VectorToArray(times));
+      sampler.set("values", VectorToArray(values));
+      sampler.set("valueStride", static_cast<int>(channel.value_stride));
+      sampler.set("elementCount", static_cast<int>(channel.element_count));
+      sampler.set("isSkeletal", channel.is_skeletal);
+      if (!channel.array_values.empty()) {
+        sampler.set("arrayValues", VectorToArray(channel.array_values));
+      }
+      samplers.set(static_cast<int>(sampler_id), sampler);
+
+      emscripten::val ch = emscripten::val::object();
+      ch.set("sampler", sampler_id);
+      ch.set("target_node", channel.target_node);
+      ch.set("target_prim_path", channel.target_prim_path);
+      ch.set("target_type", channel.is_skeletal ? std::string("SkelAnimation")
+                                                 : std::string("SceneNode"));
+      ch.set("skeleton_id", channel.target_skeleton);
+      ch.set("joint_id", -1);
+      ch.set("path", path);
+      ch.set("isCustomProperty",
+             channel.target_path == tr::AnimationChannel::TargetPath::CustomProperty);
+      ch.set("propertyName", channel.property_name);
+      ch.set("isSkeletal", channel.is_skeletal);
+      ch.set("targetSkeletonPath", channel.target_skeleton_path);
+      ch.set("jointOrder", VectorToArray(channel.joint_order));
+      ch.set("jointRemap", VectorToArray(channel.joint_remap));
+      ch.set("blendShapeOrder", VectorToArray(channel.blend_shape_order));
+      ch.set("valueStride", static_cast<int>(channel.value_stride));
+      ch.set("elementCount", static_cast<int>(channel.element_count));
+      channels.set(static_cast<int>(i), ch);
+
+      emscripten::val track = emscripten::val::object();
+      track.set("sampler", sampler_id);
+      track.set("target_node", channel.target_node);
+      track.set("path", path);
+      track.set("interpolation", interpolation);
+      track.set("times", VectorToArray(times));
+      track.set("values", VectorToArray(values));
+      track.set("isSkeletal", channel.is_skeletal);
+      track.set("propertyName", channel.property_name);
+      track.set("targetSkeletonId", channel.target_skeleton);
+      track.set("targetSkeletonPath", channel.target_skeleton_path);
+      track.set("jointRemap", VectorToArray(channel.joint_remap));
+      track.set("valueStride", static_cast<int>(channel.value_stride));
+      track.set("elementCount", static_cast<int>(channel.element_count));
+      if (!channel.array_values.empty()) {
+        track.set("arrayValues", VectorToArray(channel.array_values));
+      }
+
+      std::string track_type = "number";
+      switch (channel.target_path) {
+        case tr::AnimationChannel::TargetPath::Translation:
+          track.set("name", path);
+          track_type = channel.is_skeletal ? "vector3Array" : "vector3";
+          break;
+        case tr::AnimationChannel::TargetPath::Rotation:
+          track.set("name", path);
+          track_type = channel.is_skeletal ? "quaternionArray" : "quaternion";
+          break;
+        case tr::AnimationChannel::TargetPath::Scale:
+          track.set("name", path);
+          track_type = channel.is_skeletal ? "vector3Array" : "vector3";
+          break;
+        case tr::AnimationChannel::TargetPath::Weights:
+          track.set("name", path);
+          track_type = channel.is_skeletal ? "weightArray" : "number";
+          break;
+        case tr::AnimationChannel::TargetPath::CustomProperty:
+        default:
+          track.set("name", path);
+          track_type = "number";
+          break;
+      }
+      track.set("type", track_type);
+      tracks.set(static_cast<int>(i), track);
+    }
+
+    out.set("channels", channels);
+    out.set("samplers", samplers);
+    out.set("tracks", tracks);
+    out.set("numChannels", static_cast<int>(clip.channels.size()));
+    out.set("numSamplers", static_cast<int>(clip.channels.size()));
+    out.set("has_skeletal_animation", AnimationHasSkeletalChannels(clip));
+    out.set("has_node_animation", static_cast<bool>(!clip.channels.empty()));
+
+    if (clip.channels.empty()) {
+      out.set("tracks", emscripten::val::array());
+    }
+
+    return out;
+  }
+
+  emscripten::val getAllAnimations() const {
+    emscripten::val animations = emscripten::val::array();
+    if (!loaded_) {
+      return animations;
+    }
+    for (int i = 0; i < static_cast<int>(render_scene_.animations.size()); ++i) {
+      animations.call<void>("push", getAnimation(i));
+    }
+    return animations;
+  }
+
+  emscripten::val getAnimationInfo(int32_t anim_id) const {
+    emscripten::val info = emscripten::val::object();
+    if (!loaded_ || anim_id < 0 ||
+        static_cast<size_t>(anim_id) >= render_scene_.animations.size()) {
+      return info;
+    }
+
+    const tr::AnimationClip& clip = render_scene_.animations[static_cast<size_t>(anim_id)];
+    info.set("id", anim_id);
+    info.set("name", clip.name.empty()
+                          ? std::string("Animation") + std::to_string(anim_id)
+                          : clip.name);
+    info.set("duration", clip.end_time - clip.start_time);
+    info.set("numTracks", static_cast<int>(clip.channels.size()));
+    info.set("numSamplers", static_cast<int>(clip.channels.size()));
+    info.set("numTargetNodes", AnimationTargetNodeCount(clip));
+    const bool has_skel = AnimationHasSkeletalChannels(clip);
+    info.set("has_skeletal_animation", has_skel);
+    info.set("has_node_animation", static_cast<bool>(!clip.channels.empty()));
+    info.set("startTime", clip.start_time);
+    info.set("endTime", clip.end_time);
+    info.set("clipAssetPaths", emscripten::val::array());
+    info.set("numClipAssetPaths", 0);
+    info.set("valueClipBaked", false);
+    info.set("sourceType", has_skel ? std::string("SkelAnimation")
+                                    : std::string("XformOp"));
+    return info;
+  }
+
+  emscripten::val getAllAnimationInfos() const {
+    emscripten::val infos = emscripten::val::array();
+    if (!loaded_) {
+      return infos;
+    }
+    for (int i = 0; i < static_cast<int>(render_scene_.animations.size()); ++i) {
+      infos.call<void>("push", getAnimationInfo(i));
+    }
+    return infos;
+  }
+
+  emscripten::val getUnsupportedRenderables() const {
+    emscripten::val out = emscripten::val::array();
+    if (!render_scene_valid_) return out;
+    for (size_t i = 0; i < render_scene_.unsupported_renderables.size(); ++i) {
+      const tr::UnsupportedRenderable& unsupported =
+          render_scene_.unsupported_renderables[static_cast<size_t>(i)];
+      emscripten::val item = emscripten::val::object();
+      item.set("index", static_cast<int>(i));
+      item.set("primPath", unsupported.prim_path);
+      item.set("type", unsupported.type_name);
+      item.set("reason", unsupported.reason);
+      out.set(static_cast<int>(i), item);
+    }
+    return out;
+  }
 
   emscripten::val getStats() const {
     emscripten::val s = emscripten::val::object();
@@ -399,6 +1189,45 @@ class RenderStream {
     s.set("meshMerge", mesh_merge_);
     s.set("meshMergeBakeTransform", mesh_merge_bake_transform_);
     s.set("flattenRenderTree", flatten_render_tree_);
+    if (render_scene_valid_) {
+      s.set("renderSceneNodes", static_cast<int>(render_scene_.nodes.size()));
+      s.set("renderSceneMeshes", static_cast<int>(render_scene_.meshes.size()));
+      s.set("renderScenePoints", static_cast<int>(render_scene_.points.size()));
+      s.set("renderScenePointInstancers",
+            static_cast<int>(render_scene_.point_instancers.size()));
+      s.set("renderScenePointInstanceDraws",
+            static_cast<int>(render_scene_.point_instance_draws.size()));
+      s.set("renderSceneMaterials",
+            static_cast<int>(render_scene_.materials.size()));
+      s.set("renderSceneTextures",
+            static_cast<int>(render_scene_.textures.size()));
+      s.set("renderSceneImages", static_cast<int>(render_scene_.images.size()));
+      s.set("renderSceneLights", static_cast<int>(render_scene_.lights.size()));
+      s.set("renderSceneCameras",
+            static_cast<int>(render_scene_.cameras.size()));
+      s.set("renderSceneAnimations",
+            static_cast<int>(render_scene_.animations.size()));
+      s.set("renderSceneSkeletons",
+            static_cast<int>(render_scene_.skeletons.size()));
+      s.set("renderSceneUnsupportedRenderables",
+            static_cast<int>(render_scene_.unsupported_renderables.size()));
+      s.set("renderSceneWarnings", static_cast<int>(render_scene_warnings_.size()));
+    } else {
+      s.set("renderSceneNodes", 0);
+      s.set("renderSceneMeshes", 0);
+      s.set("renderScenePoints", 0);
+      s.set("renderScenePointInstancers", 0);
+      s.set("renderScenePointInstanceDraws", 0);
+      s.set("renderSceneMaterials", 0);
+      s.set("renderSceneTextures", 0);
+      s.set("renderSceneImages", 0);
+      s.set("renderSceneLights", 0);
+      s.set("renderSceneCameras", 0);
+      s.set("renderSceneAnimations", 0);
+      s.set("renderSceneSkeletons", 0);
+      s.set("renderSceneUnsupportedRenderables", 0);
+      s.set("renderSceneWarnings", 0);
+    }
     return s;
   }
 
@@ -435,6 +1264,9 @@ class RenderStream {
   // Free the stage, mesh list and scratch (returns the heap to the allocator).
   void end() {
     loaded_ = false;
+    render_scene_valid_ = false;
+    render_scene_ = tr::RenderScene();
+    render_scene_warnings_.clear();
     meshes_.clear();
     meshes_.shrink_to_fit();
     outputs_.clear();
@@ -449,10 +1281,42 @@ class RenderStream {
     freeVec_(s_points_);
     freeVec_(s_normals_);
     freeVec_(s_uv_);
+    freeVec_(s_tangents_);
     freeVec_(s_indices_);
+    freeVec_(s_joint_indices_);
+    freeVec_(s_joint_weights_);
+    freeVec_(s_points_cloud_points_);
+    freeVec_(s_points_cloud_widths_);
+    freeVec_(s_points_cloud_colors_);
+  }
+
+  void buildRenderScene_() {
+    tr::ConverterConfig cfg;
+    cfg.time_code = 0.0;
+    cfg.mesh.compute_tangents = compute_tangents_;
+    cfg.mesh.tangent_method = tangentMethod_();
+    cfg.material.load_textures = false;
+    cfg.material.allow_missing_textures = true;
+    cfg.point_instancer.duplicate_meshes = false;
+    tr::RenderSceneConverter converter(cfg);
+    tr::ConvertResult result = converter.Convert(stage_);
+    render_scene_ = std::move(result.scene);
+    render_scene_warnings_ = result.warnings;
+    render_scene_valid_ = result.success;
+    if (!result.success && !result.error.empty()) {
+      error_ = result.error;
+    }
   }
 
  private:
+  struct TextureMeta {
+    std::string path;
+    std::string source_color_space = "auto";
+    std::string wrap_s = "useMetadata";
+    std::string wrap_t = "useMetadata";
+    bool is_udim = false;
+  };
+
   struct MaterialRecord {
     int32_t id = -1;
     std::string key;
@@ -470,6 +1334,12 @@ class RenderStream {
     std::string metallic_texture;
     std::string occlusion_texture;
     std::string emissive_texture;
+    TextureMeta base_color_meta;
+    TextureMeta normal_meta;
+    TextureMeta roughness_meta;
+    TextureMeta metallic_meta;
+    TextureMeta occlusion_meta;
+    TextureMeta emissive_meta;
   };
 
   struct OutputMesh {
@@ -519,6 +1389,47 @@ class RenderStream {
     if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
     if (!s_uv_.empty()) out.set("uv0", heapF_(s_uv_, 2));
+    if (compute_tangents_ && computeScratchTangents_()) {
+      out.set("tangents", heapF_(s_tangents_, 4));
+      out.set("tangentMethod", tangent_method_);
+    }
+    s_joint_indices_.clear();
+    s_joint_weights_.clear();
+    if (render_scene_valid_) {
+      auto it = render_scene_.mesh_by_path.find(prim.GetPath().str());
+      if (it != render_scene_.mesh_by_path.end() && it->second >= 0 &&
+          static_cast<size_t>(it->second) < render_scene_.meshes.size()) {
+        const tr::RenderMesh& rmesh =
+            render_scene_.meshes[static_cast<size_t>(it->second)];
+        if (rmesh.skin) {
+          s_joint_indices_.reserve(rmesh.skin->joint_indices.size());
+          for (size_t ji = 0; ji < rmesh.skin->joint_indices.size(); ++ji) {
+            s_joint_indices_.push_back(rmesh.skin->joint_indices[ji]);
+          }
+          s_joint_weights_.reserve(rmesh.skin->joint_weights.size());
+          for (size_t jw = 0; jw < rmesh.skin->joint_weights.size(); ++jw) {
+            s_joint_weights_.push_back(rmesh.skin->joint_weights[jw]);
+          }
+          const size_t point_count = rmesh.point_count();
+          const int element_size =
+              point_count > 0
+                  ? static_cast<int>(s_joint_indices_.size() / point_count)
+                  : 0;
+          if (!s_joint_indices_.empty()) {
+            out.set("jointIndices", heapU16_(s_joint_indices_));
+          }
+          if (!s_joint_weights_.empty()) {
+            out.set("jointWeights", heapF_(s_joint_weights_, 1));
+          }
+          out.set("skel_id", rmesh.skin->skeleton_id);
+          out.set("skeletonPath", rmesh.skin->skeleton_path);
+          out.set("elementSize", element_size);
+          out.set("hasGeomBindTransform", true);
+          out.set("geomBindTransform",
+                  MatrixValue(MatrixToArray(rmesh.skin->geom_bind_transform)));
+        }
+      }
+    }
     out.set("localMatrix", matArray_(localMatrix_(prim)));
     out.set("worldMatrix", matArray_(worldMatrix_(prim)));
     const int32_t material_id = materialIdForBoundPrim_(prim);
@@ -548,6 +1459,111 @@ class RenderStream {
 
   template <typename T>
   static void freeVec_(std::vector<T> &v) { std::vector<T>().swap(v); }
+
+  tr::MeshConfig::TangentComputationMethod tangentMethod_() const {
+    if (tangent_method_ == "mikk" || tangent_method_ == "mikktspace") {
+      return tr::MeshConfig::TangentComputationMethod::MikkTSpace;
+    }
+    if (tangent_method_ == "fast" || tangent_method_ == "fastmikk" ||
+        tangent_method_ == "fastmikktspace") {
+      return tr::MeshConfig::TangentComputationMethod::FastMikkTSpace;
+    }
+    if (tangent_method_ == "lengyel") {
+      return tr::MeshConfig::TangentComputationMethod::Lengyel;
+    }
+    return tr::MeshConfig::TangentComputationMethod::Hybrid;
+  }
+
+  bool computeScratchTangents_() {
+    s_tangents_.clear();
+    const size_t vertex_count = s_points_.size() / 3;
+    if (vertex_count == 0 || s_normals_.size() != vertex_count * 3 ||
+        s_uv_.size() != vertex_count * 2) {
+      return false;
+    }
+
+    std::vector<float> tan(vertex_count * 3, 0.0f);
+    std::vector<float> bit(vertex_count * 3, 0.0f);
+
+    auto addTri = [&](uint32_t i0, uint32_t i1, uint32_t i2) {
+      if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) {
+        return;
+      }
+      const float *p0 = &s_points_[size_t(i0) * 3];
+      const float *p1 = &s_points_[size_t(i1) * 3];
+      const float *p2 = &s_points_[size_t(i2) * 3];
+      const float *u0 = &s_uv_[size_t(i0) * 2];
+      const float *u1 = &s_uv_[size_t(i1) * 2];
+      const float *u2 = &s_uv_[size_t(i2) * 2];
+      const float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+      const float e2[3] = {p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]};
+      const float du1 = u1[0] - u0[0];
+      const float dv1 = u1[1] - u0[1];
+      const float du2 = u2[0] - u0[0];
+      const float dv2 = u2[1] - u0[1];
+      const float det = du1 * dv2 - du2 * dv1;
+      if (std::fabs(det) <= 1.0e-12f) return;
+      const float r = 1.0f / det;
+      const float sdir[3] = {(dv2 * e1[0] - dv1 * e2[0]) * r,
+                             (dv2 * e1[1] - dv1 * e2[1]) * r,
+                             (dv2 * e1[2] - dv1 * e2[2]) * r};
+      const float tdir[3] = {(du1 * e2[0] - du2 * e1[0]) * r,
+                             (du1 * e2[1] - du2 * e1[1]) * r,
+                             (du1 * e2[2] - du2 * e1[2]) * r};
+      const uint32_t ids[3] = {i0, i1, i2};
+      for (uint32_t id : ids) {
+        tan[size_t(id) * 3 + 0] += sdir[0];
+        tan[size_t(id) * 3 + 1] += sdir[1];
+        tan[size_t(id) * 3 + 2] += sdir[2];
+        bit[size_t(id) * 3 + 0] += tdir[0];
+        bit[size_t(id) * 3 + 1] += tdir[1];
+        bit[size_t(id) * 3 + 2] += tdir[2];
+      }
+    };
+
+    if (!s_indices_.empty()) {
+      for (size_t i = 0; i + 2 < s_indices_.size(); i += 3) {
+        addTri(s_indices_[i], s_indices_[i + 1], s_indices_[i + 2]);
+      }
+    } else {
+      for (size_t i = 0; i + 2 < vertex_count; i += 3) {
+        addTri(static_cast<uint32_t>(i), static_cast<uint32_t>(i + 1),
+               static_cast<uint32_t>(i + 2));
+      }
+    }
+
+    s_tangents_.assign(vertex_count * 4, 0.0f);
+    for (size_t v = 0; v < vertex_count; ++v) {
+      const float *n = &s_normals_[v * 3];
+      const float *tv = &tan[v * 3];
+      const float ndt = n[0] * tv[0] + n[1] * tv[1] + n[2] * tv[2];
+      float tx = tv[0] - n[0] * ndt;
+      float ty = tv[1] - n[1] * ndt;
+      float tz = tv[2] - n[2] * ndt;
+      const float len = std::sqrt(tx * tx + ty * ty + tz * tz);
+      if (len > 1.0e-12f) {
+        tx /= len;
+        ty /= len;
+        tz /= len;
+      } else {
+        tx = 1.0f;
+        ty = 0.0f;
+        tz = 0.0f;
+      }
+      const float *bv = &bit[v * 3];
+      const float cx = n[1] * tz - n[2] * ty;
+      const float cy = n[2] * tx - n[0] * tz;
+      const float cz = n[0] * ty - n[1] * tx;
+      const float w = (cx * bv[0] + cy * bv[1] + cz * bv[2]) < 0.0f
+                          ? -1.0f
+                          : 1.0f;
+      s_tangents_[v * 4 + 0] = tx;
+      s_tangents_[v * 4 + 1] = ty;
+      s_tangents_[v * 4 + 2] = tz;
+      s_tangents_[v * 4 + 3] = w;
+    }
+    return true;
+  }
 
   // Read an array property through a COPY of the lazy Value, so the Stage's own
   // property stays lazy (per-mesh decode does not accumulate across meshes).
@@ -874,6 +1890,48 @@ class RenderStream {
     return path.substr(first);
   }
 
+  static bool isUdimPath_(const std::string &path) {
+    return path.find("<UDIM>") != std::string::npos ||
+           path.find("%04d") != std::string::npos ||
+           path.find("%(UDIM)d") != std::string::npos;
+  }
+
+  TextureMeta texMeta_(const std::string &connPath) {
+    TextureMeta meta;
+    if (connPath.empty()) return meta;
+    const size_t slash = connPath.rfind('/');
+    const size_t dot = connPath.find('.', slash == std::string::npos ? 0 : slash);
+    const std::string primPath = (dot == std::string::npos)
+                                     ? connPath
+                                     : connPath.substr(0, dot);
+    tinyusdz::next::UsdPrim tex = stage_.GetPrimAtPath(primPath);
+    if (!tex.IsValid()) return meta;
+
+    const tinyusdz::next::Value *file = tex.GetPropertyValue("inputs:file");
+    if (file) {
+      if (const std::string *a = file->as_asset_path()) {
+        meta.path = *a;
+      } else if (const std::string *s = file->as_string()) {
+        meta.path = *s;
+      }
+    }
+    auto read_tokenish = [&](const char *name, std::string *out) {
+      if (!out) return;
+      const tinyusdz::next::Value *v = tex.GetPropertyValue(name);
+      if (!v) return;
+      if (const std::string *tok = v->as_token()) {
+        *out = *tok;
+      } else if (const std::string *str = v->as_string()) {
+        *out = *str;
+      }
+    };
+    read_tokenish("inputs:sourceColorSpace", &meta.source_color_space);
+    read_tokenish("inputs:wrapS", &meta.wrap_s);
+    read_tokenish("inputs:wrapT", &meta.wrap_t);
+    meta.is_udim = isUdimPath_(meta.path);
+    return meta;
+  }
+
   static void addTextureKey_(const std::string &role,
                              const std::string &path,
                              std::set<std::string> *keys) {
@@ -935,12 +1993,18 @@ class RenderStream {
         rec.opacity_threshold = ps.opacity_threshold > 0.0f
                                     ? ps.opacity_threshold
                                     : -1.0f;
-        rec.base_color_texture = texFile_(ps.diffuse_texture);
-        rec.normal_texture = texFile_(ps.normal_texture);
-        rec.roughness_texture = texFile_(ps.roughness_texture);
-        rec.metallic_texture = texFile_(ps.metallic_texture);
-        rec.occlusion_texture = texFile_(ps.occlusion_texture);
-        rec.emissive_texture = texFile_(ps.emissive_texture);
+        rec.base_color_meta = texMeta_(ps.diffuse_texture);
+        rec.normal_meta = texMeta_(ps.normal_texture);
+        rec.roughness_meta = texMeta_(ps.roughness_texture);
+        rec.metallic_meta = texMeta_(ps.metallic_texture);
+        rec.occlusion_meta = texMeta_(ps.occlusion_texture);
+        rec.emissive_meta = texMeta_(ps.emissive_texture);
+        rec.base_color_texture = rec.base_color_meta.path;
+        rec.normal_texture = rec.normal_meta.path;
+        rec.roughness_texture = rec.roughness_meta.path;
+        rec.metallic_texture = rec.metallic_meta.path;
+        rec.occlusion_texture = rec.occlusion_meta.path;
+        rec.emissive_texture = rec.emissive_meta.path;
       }
     }
     std::ostringstream ss;
@@ -1291,6 +2355,15 @@ class RenderStream {
     d.set("byteLength", static_cast<double>(v.size() * sizeof(uint32_t)));
     return d;
   }
+  emscripten::val heapU16_(const std::vector<uint16_t> &v) const {
+    emscripten::val d = emscripten::val::object();
+    d.set("ptr", static_cast<double>(reinterpret_cast<uintptr_t>(v.data())));
+    d.set("length", static_cast<double>(v.size()));
+    d.set("comps", 1);
+    d.set("dtype", std::string("u16"));
+    d.set("byteLength", static_cast<double>(v.size() * sizeof(uint16_t)));
+    return d;
+  }
   static emscripten::val arr3_(const float *c) {
     emscripten::val a = emscripten::val::array();
     a.call<void>("push", c[0]);
@@ -1397,6 +2470,26 @@ class RenderStream {
     m.set("id", rec.id);
     m.set("key", rec.key);
     m.set("primPath", rec.prim_path);
+    const tr::RenderMaterial* render_mat = nullptr;
+    auto mat_it = render_scene_.material_by_path.find(rec.prim_path);
+    if (mat_it != render_scene_.material_by_path.end()) {
+      render_mat = render_scene_.get_material(mat_it->second);
+    }
+    if (render_mat) {
+      m.set("shaderType", RenderMaterialShaderTypeName(render_mat->shader_type));
+      emscripten::val mtlx = emscripten::val::object();
+      mtlx.set("authored", render_mat->mtlx_config.authored);
+      mtlx.set("version", render_mat->mtlx_config.version);
+      mtlx.set("namespace", render_mat->mtlx_config.name_space);
+      mtlx.set("colorspace", render_mat->mtlx_config.colorspace);
+      mtlx.set("sourceUri", render_mat->mtlx_config.source_uri);
+      m.set("materialXConfig", mtlx);
+      m.set("materialXJson", RenderMaterialJson(render_scene_, *render_mat));
+      if (render_mat->openpbr &&
+          !render_mat->openpbr->nodegraph_json.empty()) {
+        m.set("openPBRNodeGraphJson", render_mat->openpbr->nodegraph_json);
+      }
+    }
     m.set("baseColor", arr3_(rec.base_color));
     m.set("metallic", rec.metallic);
     m.set("roughness", rec.roughness);
@@ -1424,6 +2517,35 @@ class RenderStream {
     if (!rec.emissive_texture.empty()) {
       m.set("emissiveTexture", rec.emissive_texture);
     }
+    auto metaObject = [](const TextureMeta &meta) {
+      emscripten::val out = emscripten::val::object();
+      out.set("path", meta.path);
+      out.set("sourceColorSpace", meta.source_color_space);
+      out.set("wrapS", meta.wrap_s);
+      out.set("wrapT", meta.wrap_t);
+      out.set("isUdim", meta.is_udim);
+      return out;
+    };
+    emscripten::val texture_meta = emscripten::val::object();
+    if (!rec.base_color_meta.path.empty()) {
+      texture_meta.set("baseColor", metaObject(rec.base_color_meta));
+    }
+    if (!rec.normal_meta.path.empty()) {
+      texture_meta.set("normal", metaObject(rec.normal_meta));
+    }
+    if (!rec.roughness_meta.path.empty()) {
+      texture_meta.set("roughness", metaObject(rec.roughness_meta));
+    }
+    if (!rec.metallic_meta.path.empty()) {
+      texture_meta.set("metallic", metaObject(rec.metallic_meta));
+    }
+    if (!rec.occlusion_meta.path.empty()) {
+      texture_meta.set("occlusion", metaObject(rec.occlusion_meta));
+    }
+    if (!rec.emissive_meta.path.empty()) {
+      texture_meta.set("emissive", metaObject(rec.emissive_meta));
+    }
+    m.set("textureMetadata", texture_meta);
     return m;
   }
 
@@ -1505,6 +2627,9 @@ class RenderStream {
   }
 
   tinyusdz::next::Stage stage_;
+  tr::RenderScene render_scene_;
+  bool render_scene_valid_ = false;
+  std::vector<std::string> render_scene_warnings_;
   std::vector<tinyusdz::next::UsdGeomMesh> meshes_;
   std::vector<OutputMesh> outputs_;
   std::vector<MaterialRecord> materials_;
@@ -1519,9 +2644,15 @@ class RenderStream {
   bool mesh_merge_ = false;
   bool mesh_merge_bake_transform_ = false;
   bool flatten_render_tree_ = false;
+  bool compute_tangents_ = false;
+  std::string tangent_method_ = "hybrid";
   std::string error_;
-  std::vector<float> s_points_, s_normals_, s_uv_;
+  std::vector<float> s_points_, s_normals_, s_uv_, s_tangents_;
+  std::vector<float> s_points_cloud_points_, s_points_cloud_widths_;
+  std::vector<float> s_points_cloud_colors_;
   std::vector<uint32_t> s_indices_;
+  std::vector<uint16_t> s_joint_indices_;
+  std::vector<float> s_joint_weights_;
 };
 
 EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
@@ -1538,9 +2669,43 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("setMeshMergeBakeTransform",
                 &RenderStream::setMeshMergeBakeTransform)
       .function("setFlattenRenderTree", &RenderStream::setFlattenRenderTree)
+      .function("setComputeTangents", &RenderStream::setComputeTangents)
+      .function("setTangentMethod", &RenderStream::setTangentMethod)
       .function("begin", &RenderStream::begin)
       .function("beginOwned", &RenderStream::beginOwned)
       .function("meshCount", &RenderStream::meshCount)
+      .function("numMeshes", &RenderStream::meshCount)
+      .function("nodeCount", &RenderStream::nodeCount)
+      .function("numNodes", &RenderStream::nodeCount)
+      .function("lightCount", &RenderStream::lightCount)
+      .function("numLights", &RenderStream::lightCount)
+      .function("pointsCount", &RenderStream::pointsCount)
+      .function("numPoints", &RenderStream::pointsCount)
+      .function("cameraCount", &RenderStream::cameraCount)
+      .function("numCameras", &RenderStream::cameraCount)
+      .function("pointInstancerCount", &RenderStream::pointInstancerCount)
+      .function("numPointInstancers", &RenderStream::pointInstancerCount)
+      .function("pointInstanceDrawCount", &RenderStream::pointInstanceDrawCount)
+      .function("numPointInstanceDraws", &RenderStream::pointInstanceDrawCount)
+      .function("skeletonCount", &RenderStream::skeletonCount)
+      .function("numSkeletons", &RenderStream::skeletonCount)
+      .function("unsupportedRenderableCount",
+                &RenderStream::unsupportedRenderableCount)
+      .function("numUnsupportedRenderables", &RenderStream::unsupportedRenderableCount)
+      .function("numAnimations", &RenderStream::animationCount)
+      .function("getAnimation", &RenderStream::getAnimation)
+      .function("getAllAnimations", &RenderStream::getAllAnimations)
+      .function("getAnimationInfo", &RenderStream::getAnimationInfo)
+      .function("getAllAnimationInfos", &RenderStream::getAllAnimationInfos)
+      .function("getNode", &RenderStream::getNode)
+      .function("getLight", &RenderStream::getLight)
+      .function("getPoints", &RenderStream::getPoints)
+      .function("getCamera", &RenderStream::getCamera)
+      .function("getPointInstancer", &RenderStream::getPointInstancer)
+      .function("getPointInstanceDraw", &RenderStream::getPointInstanceDraw)
+      .function("getSkeleton", &RenderStream::getSkeleton)
+      .function("getUnsupportedRenderables",
+                &RenderStream::getUnsupportedRenderables)
       .function("getSceneMetadata", &RenderStream::getSceneMetadata)
       .function("getStats", &RenderStream::getStats)
       .function("getMesh", &RenderStream::getMesh)
