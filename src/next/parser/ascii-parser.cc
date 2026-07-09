@@ -9,6 +9,7 @@
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
+#include <unordered_set>
 #include <fstream>
 #include <system_error>
 
@@ -291,12 +292,19 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       case ArcQual::Reorder:
         target->insert(target->end(), items.begin(), items.end());
         break;
-      case ArcQual::Delete:
-        for (const std::string& d : items) {
-          target->erase(std::remove(target->begin(), target->end(), d),
-                        target->end());
-        }
+      case ArcQual::Delete: {
+        // Single O(N+M) pass via a hash set of the deleted entries. A per-entry
+        // erase(remove()) is O(items * target) = O(N^2) for a `references=[...]`
+        // then `delete references=[...]` block with N distinct refs (a ~O(N)
+        // text input could hang).
+        const std::unordered_set<std::string> del(items.begin(), items.end());
+        target->erase(std::remove_if(target->begin(), target->end(),
+                                     [&](const std::string& x) {
+                                       return del.count(x) != 0;
+                                     }),
+                      target->end());
         break;
+      }
     }
   };
 
@@ -405,15 +413,19 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       }
       std::vector<std::string>& applied = prim->meta().apiSchemas();
       switch (arc_qual) {
-        case ArcQual::Delete:
+        case ArcQual::Delete: {
+          // Hash-set membership instead of std::find per element (was
+          // O(applied * schemas)).
+          const std::unordered_set<std::string> del(schemas.begin(),
+                                                    schemas.end());
           applied.erase(
               std::remove_if(applied.begin(), applied.end(),
                              [&](const std::string& a) {
-                               return std::find(schemas.begin(), schemas.end(),
-                                                a) != schemas.end();
+                               return del.count(a) != 0;
                              }),
               applied.end());
           break;
+        }
         case ArcQual::Explicit:
           applied = std::move(schemas);
           break;

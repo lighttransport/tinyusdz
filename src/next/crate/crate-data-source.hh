@@ -105,8 +105,18 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 /// Bytes per element of an array CrateTypeId as stored on disk (0 if unknown).
 uint32_t CrateArrayElemStride(CrateTypeId id);
 
+/// Decode the element-count word at a crate array payload. Some older pxrUSD
+/// crates pack auxiliary data in the high 32 bits and the element count in the
+/// low 32 bits.
+uint64_t CrateArrayElementCount(uint64_t raw_count);
+
 /// next::TypeId that materialize() would surface for an array CrateTypeId.
 TypeId CrateArrayValueType(CrateTypeId id);
+
+/// Whether an array type can be represented as a lazy byte reference without
+/// changing its logical value. Unsupported and swizzled-on-read types must be
+/// decoded eagerly, so they keep the normal element-count guard.
+bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed);
 
 }  // namespace next
 }  // namespace tinyusdz

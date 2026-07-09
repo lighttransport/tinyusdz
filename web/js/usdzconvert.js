@@ -79,6 +79,11 @@ container.innerHTML = `
         <option value="stream-next">Stream + Next</option>
       </select>
 
+      <label>Variant overrides</label>
+      <input id="variantSelections" type="text" placeholder="set=value, lod=high"
+             style="padding:4px;width:200px"
+             title="Variant set overrides for next flatten. Comma-separated set=value pairs.">
+
       <label>Flatten stage</label>
       <input id="flatten" type="checkbox" checked style="justify-self:start">
 
@@ -209,6 +214,7 @@ const els = {
   textureFormat: document.getElementById('textureFormat'),
   rootLayerFormat: document.getElementById('rootLayerFormat'),
   pipeline: document.getElementById('pipeline'),
+  variantSelections: document.getElementById('variantSelections'),
   flatten: document.getElementById('flatten'),
   arkitCompatible: document.getElementById('arkitCompatible'),
   includeUnusedTextures: document.getElementById('includeUnusedTextures'),
@@ -550,6 +556,20 @@ function shouldAutoStreamForWasmCap(opts, rootPath) {
   };
 }
 
+function parseVariantSelections(text) {
+  const out = {};
+  for (const item of String(text || '').split(',')) {
+    const spec = item.trim();
+    if (!spec) continue;
+    const eq = spec.indexOf('=');
+    if (eq <= 0 || eq === spec.length - 1) continue;
+    const key = spec.slice(0, eq).trim();
+    const value = spec.slice(eq + 1).trim();
+    if (key && value) out[key] = value;
+  }
+  return out;
+}
+
 function encodeCanvas(canvas, mime, quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => {
@@ -699,6 +719,7 @@ els.btnConvert.addEventListener('click', async () => {
       textureFormat,
       rootLayerFormat: els.rootLayerFormat.value,
       pipeline: els.pipeline.value,
+      variantSelections: parseVariantSelections(els.variantSelections.value),
       flatten: els.flatten.checked,
       arkitCompatible: els.arkitCompatible.checked,
       includeUnusedTextures: els.includeUnusedTextures.checked,

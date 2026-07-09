@@ -1122,7 +1122,8 @@ function nextAllocAndFill(native, usd, usdcBytes, maxBufferBytes, log) {
 // declines (so the caller can fall back to the legacy path). `native` is the
 // Emscripten Module (exposes HEAPU8); `usd` is a TinyUSDZLoaderNative instance.
 export function nextFlattenViaStreaming(native, usd, usdcBytes, log = () => {}, lazy = true,
-                                        maxBufferBytes = 0, remap = undefined) {
+                                        maxBufferBytes = 0, remap = undefined,
+                                        variantSelections = undefined) {
   if (typeof usd.nextFlattenBuffer !== 'function' ||
       typeof usd.allocateZeroCopyBuffer !== 'function') {
     return null;  // old wasm without the next pipeline
@@ -1130,14 +1131,34 @@ export function nextFlattenViaStreaming(native, usd, usdcBytes, log = () => {}, 
   const uuid = nextAllocAndFill(native, usd, usdcBytes, maxBufferBytes, log);
   if (uuid === null) return null;
   const hasRemap = remap && Object.keys(remap).length > 0;
-  const res = hasRemap && typeof usd.nextFlattenBufferRemap === 'function'
-    ? usd.nextFlattenBufferRemap(uuid, lazy, remap)
-    : usd.nextFlattenBuffer(uuid, lazy);
+  const hasVariants = variantSelections && Object.keys(variantSelections).length > 0;
+  let res = null;
+  if (hasVariants) {
+    if (typeof usd.nextFlattenBufferRemapVariants !== 'function') {
+      log('next flatten variant selection requires newer wasm; falling back.');
+      return null;
+    }
+    res = usd.nextFlattenBufferRemapVariants(uuid, lazy, remap, variantSelections);
+  } else {
+    res = hasRemap && typeof usd.nextFlattenBufferRemap === 'function'
+      ? usd.nextFlattenBufferRemap(uuid, lazy, remap)
+      : usd.nextFlattenBuffer(uuid, lazy);
+  }
   if (!res || !res.success) {
     log('next flatten failed: ' + (res && res.error));
     return null;
   }
   return { data: new Uint8Array(res.data), stats: res };
+}
+
+function variantSelectionsFromOptions(opts = {}) {
+  const src = opts.variantSelections || opts.variants || {};
+  const out = {};
+  for (const [key, value] of Object.entries(src)) {
+    if (!key || value == null || String(value) === '') continue;
+    out[String(key)] = String(value);
+  }
+  return out;
 }
 
 // Gated conversion path: flatten a single-.usdz (USDC root) with the next
@@ -1165,6 +1186,8 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
   const lazy = opts.nextEager !== true;
   const remap = textureAssetPathRemapForEntries(archiveEntries, opts.textureFormat);
   const hasRemap = Object.keys(remap).length > 0;
+  const variantSelections = variantSelectionsFromOptions(opts);
+  const hasVariants = Object.keys(variantSelections).length > 0;
 
   // Streaming-write path: the default for the next pipeline. When a patch-capable
   // (seekable) sink is available, stream the flattened root crate straight from
@@ -1186,6 +1209,18 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
       log('next pipeline: wasm lacks asset-path remap support; falling back.');
       return null;
     }
+    if (hasVariants && typeof usd.nextFlattenBufferRemapVariants !== 'function') {
+      log('next pipeline: wasm lacks variant-selection support; falling back.');
+      return null;
+    }
+    if (hasVariants && canStreamWrite &&
+        typeof usd.nextFlattenBufferToSinkRemapVariants !== 'function') {
+      log('next pipeline: wasm lacks streaming variant-selection support; falling back.');
+      return null;
+    }
+    if (hasVariants) {
+      log(`next pipeline: applying ${Object.keys(variantSelections).length} variant selection(s)`);
+    }
 
     if (canStreamWrite && typeof usd.nextFlattenBufferToSink === 'function') {
       // Allocate + fill BEFORE touching the sink so a declined alloc (cap) falls
@@ -1194,7 +1229,9 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
       if (uuid === null) return null;  // declined -> caller falls back to legacy
       r = repackUSDZEntries(native, 'root.usdc',
         { stream: (emit) => {
-            const s = hasRemap && typeof usd.nextFlattenBufferToSinkRemap === 'function'
+            const s = hasVariants && typeof usd.nextFlattenBufferToSinkRemapVariants === 'function'
+              ? usd.nextFlattenBufferToSinkRemapVariants(uuid, lazy, (view) => { emit(view); return true; }, remap, variantSelections)
+              : hasRemap && typeof usd.nextFlattenBufferToSinkRemap === 'function'
               ? usd.nextFlattenBufferToSinkRemap(uuid, lazy, (view) => { emit(view); return true; }, remap)
               : usd.nextFlattenBufferToSink(uuid, lazy, (view) => { emit(view); return true; });
             if (!s || !s.success) {
@@ -1205,7 +1242,7 @@ async function convertSingleUSDZToNextLowMemUSDZ(native, bytes, opts, log) {
         archiveEntries, rootEntry, opts, log);
     } else {
       const flat = nextFlattenViaStreaming(native, usd, rootEntry.data, log, lazy,
-                                           maxBufferBytes, remap);
+                                           maxBufferBytes, remap, variantSelections);
       if (!flat) return null;
       stats = flat.stats;
       // Repack: next-flattened root + textures (re-encoded one-at-a-time when
@@ -1955,6 +1992,8 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       if (p.outName !== p.name) addTextureRemapAliases(remap, p.name, p.outName);
     }
     const hasRemap = Object.keys(remap).length > 0;
+    const variantSelections = variantSelectionsFromOptions(opts);
+    const hasVariants = Object.keys(variantSelections).length > 0;
     if (hasRemap && !nextRoot) {
       if (typeof usd.remapLayerAssetPaths !== 'function') {
         throw new Error('texture format change requires remapLayerAssetPaths (rebuild the wasm module), or use --texture-format keep');
@@ -1963,6 +2002,9 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
       log(`streaming: remapped ${n} texture reference(s) for format change`);
     } else if (hasRemap && nextRoot) {
       log(`streaming: queued ${Object.keys(remap).length} texture path rename(s) for next flatten`);
+    }
+    if (hasVariants && nextRoot) {
+      log(`streaming: applying ${Object.keys(variantSelections).length} variant selection(s) in next flatten`);
     }
 
     let referencedAssetNames = null;
@@ -2014,11 +2056,21 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
           throw new Error('next pipeline texture format change requires remap-capable wasm bindings');
         }
       }
+      if (hasVariants) {
+        const hasVariantBinding = nextRoot.asyncLayers
+          ? typeof usd.nextFlattenAsyncBeginRemapVariants === 'function'
+          : typeof usd.nextFlattenMultiBufferToSinkFetchRemapVariants === 'function';
+        if (!hasVariantBinding) {
+          throw new Error('next pipeline variant selection requires variant-capable wasm bindings');
+        }
+      }
       let s = null;
       let asyncSession = null;
       if (nextRoot.asyncLayers) {
         reportProgress('flatten', 0, 1, 'Preparing next flatten pipeline', rootPath);
-        const begin = hasRemap && typeof usd.nextFlattenAsyncBeginRemap === 'function'
+        const begin = hasVariants && typeof usd.nextFlattenAsyncBeginRemapVariants === 'function'
+          ? usd.nextFlattenAsyncBeginRemapVariants(nextRoot.uuid, nextRoot.anchor, lazy, remap, variantSelections)
+          : hasRemap && typeof usd.nextFlattenAsyncBeginRemap === 'function'
           ? usd.nextFlattenAsyncBeginRemap(nextRoot.uuid, nextRoot.anchor, lazy, remap)
           : usd.nextFlattenAsyncBegin(nextRoot.uuid, nextRoot.anchor, lazy);
         if (!begin || !begin.success) {
@@ -2063,7 +2115,10 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
               const key = resolveUsdKey(name);
               return getUsdLayerSync(key);
             };
-            if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
+            if (hasVariants && typeof usd.nextFlattenMultiBufferToSinkFetchRemapVariants === 'function') {
+              s = usd.nextFlattenMultiBufferToSinkFetchRemapVariants(
+                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer, remap, variantSelections);
+            } else if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
               s = usd.nextFlattenMultiBufferToSinkFetchRemap(
                 nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer, remap);
             } else {
@@ -2071,7 +2126,10 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
                 nextRoot.uuid, nextRoot.anchor, lazy, emitCb, hasLayer, fetchLayer);
             }
           } else {
-            if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
+            if (hasVariants && typeof usd.nextFlattenMultiBufferToSinkFetchRemapVariants === 'function') {
+              s = usd.nextFlattenMultiBufferToSinkFetchRemapVariants(
+                nextRoot.uuid, nextRoot.anchor, lazy, emitCb, undefined, undefined, remap, variantSelections);
+            } else if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
               s = usd.nextFlattenMultiBufferToSinkFetchRemap(
                 nextRoot.uuid, nextRoot.anchor, lazy, emitCb, undefined, undefined, remap);
             } else {
@@ -2096,7 +2154,10 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
             const key = resolveUsdKey(name);
             return getUsdLayerSync(key);
           };
-          if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
+          if (hasVariants && typeof usd.nextFlattenMultiBufferToSinkFetchRemapVariants === 'function') {
+            s = usd.nextFlattenMultiBufferToSinkFetchRemapVariants(
+              nextRoot.uuid, nextRoot.anchor, lazy, null, hasLayer, fetchLayer, remap, variantSelections);
+          } else if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
             s = usd.nextFlattenMultiBufferToSinkFetchRemap(
               nextRoot.uuid, nextRoot.anchor, lazy, null, hasLayer, fetchLayer, remap);
           } else {
@@ -2104,7 +2165,10 @@ export async function convertSourceToUSDZStreaming(native, source, opts = {}) {
               nextRoot.uuid, nextRoot.anchor, lazy, null, hasLayer, fetchLayer);
           }
         } else {
-          if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
+          if (hasVariants && typeof usd.nextFlattenMultiBufferToSinkFetchRemapVariants === 'function') {
+            s = usd.nextFlattenMultiBufferToSinkFetchRemapVariants(
+              nextRoot.uuid, nextRoot.anchor, lazy, null, undefined, undefined, remap, variantSelections);
+          } else if (hasRemap && typeof usd.nextFlattenMultiBufferToSinkFetchRemap === 'function') {
             s = usd.nextFlattenMultiBufferToSinkFetchRemap(
               nextRoot.uuid, nextRoot.anchor, lazy, null, undefined, undefined, remap);
           } else {

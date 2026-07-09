@@ -161,6 +161,12 @@ bool LargeSceneLoader::Load(const std::string &filename,
   cgopts.detect_instances = options.detect_instances;
   cgopts.allow_parent_relative_paths = options.allow_parent_relative_paths;
   cgopts.max_depth = options.max_composition_depth;
+  // Large scenes legitimately have many millions of composed prims / arc nodes;
+  // raise the general-API safety backstops accordingly (this loader is the
+  // explicit large-scene path).
+  cgopts.max_composed_prims = 64u * 1024u * 1024u;
+  cgopts.max_arc_nodes = 64u * 1024u * 1024u;
+  cgopts.max_namespace_depth = 8192;
   if (_registry) {
     cgopts.load_layer_fn = &LargeSceneLoader::LoadLayerThunk;
     cgopts.load_layer_userdata = this;

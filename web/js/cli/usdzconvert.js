@@ -80,6 +80,8 @@ Convert options:
                            root does not reference them. Default is to skip
                            unreferenced textures for lower memory and smaller
                            USDZ output.
+  --variant <set=value>    Override a variant set during next flattening.
+                           Repeat for multiple sets. Example: --variant lod=high
   --stream-textures        Re-encode/resize textures one at a time and repack in
                            JS, so decoded images never accumulate in the WASM
                            heap. This is the DEFAULT for a single .usdz with
@@ -182,6 +184,7 @@ function parseArgs() {
     meshMergeMaxInputPoints: 4096,
     meshMergeMaxAggregateFaces: 65536,
     meshMergeMinGroupSize: 2,
+    variantSelections: {},
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -226,6 +229,15 @@ function parseArgs() {
     else if (a === '--mesh-merge-max-input-points') o.meshMergeMaxInputPoints = parseInt(args[++i], 10) || 4096;
     else if (a === '--mesh-merge-max-aggregate-faces') o.meshMergeMaxAggregateFaces = parseInt(args[++i], 10) || 65536;
     else if (a === '--mesh-merge-min-group-size') o.meshMergeMinGroupSize = parseInt(args[++i], 10) || 2;
+    else if (a === '--variant' || a === '--variant-selection') {
+      const spec = args[++i] || '';
+      const eq = spec.indexOf('=');
+      if (eq <= 0 || eq === spec.length - 1) {
+        console.error('--variant expects set=value');
+        process.exit(1);
+      }
+      o.variantSelections[spec.slice(0, eq)] = spec.slice(eq + 1);
+    }
     else if (a === '--url-list') o.urlList = args[++i];
     else if (a === '-v' || a === '--verbose') o.verbose = true;
     else if (a === '--repack') o.repack = args[++i];
@@ -482,6 +494,7 @@ async function runStreamingConvert(native, o) {
       materialAtlasMinGroupSize: o.materialAtlasMinGroupSize,
       optimizeGeometry: o.optimizeGeometry,
       includeUnusedTextures: o.includeUnusedTextures,
+      variantSelections: o.variantSelections,
       meshMergeMaxInputFaces: o.meshMergeMaxInputFaces,
       meshMergeMaxInputPoints: o.meshMergeMaxInputPoints,
       meshMergeMaxAggregateFaces: o.meshMergeMaxAggregateFaces,
@@ -730,6 +743,7 @@ async function main() {
       materialAtlasMinGroupSize: o.materialAtlasMinGroupSize,
       optimizeGeometry: o.optimizeGeometry,
       includeUnusedTextures: o.includeUnusedTextures,
+      variantSelections: o.variantSelections,
       meshMergeMaxInputFaces: o.meshMergeMaxInputFaces,
       meshMergeMaxInputPoints: o.meshMergeMaxInputPoints,
       meshMergeMaxAggregateFaces: o.meshMergeMaxAggregateFaces,
