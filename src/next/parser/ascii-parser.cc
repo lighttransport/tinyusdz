@@ -129,6 +129,17 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   return ParseWithSource(data, length, nullptr);
 }
 
+bool AsciiParser::Impl::ParseOwned(std::string&& data) {
+  const size_t length = data.size();
+  if (options_.enable_usda_lazy_arrays) {
+    auto source = UsdaLazyArraySource::AdoptString(std::move(data));
+    const char* src_data = reinterpret_cast<const char*>(source->base());
+    return ParseWithSource(src_data, length, std::move(source));
+  }
+  const char* src_data = data.empty() ? nullptr : data.data();
+  return ParseWithSource(src_data, length, nullptr);
+}
+
 bool AsciiParser::Impl::ParseFile(const char* filename) {
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
@@ -607,6 +618,10 @@ AsciiParser& AsciiParser::operator=(AsciiParser&&) noexcept = default;
 
 bool AsciiParser::Parse(const char* data, size_t length) {
   return impl_->Parse(data, length);
+}
+
+bool AsciiParser::ParseOwned(std::string&& data) {
+  return impl_->ParseOwned(std::move(data));
 }
 
 bool AsciiParser::ParseFile(const char* filename) {

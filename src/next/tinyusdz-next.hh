@@ -148,6 +148,14 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
                        const LoadUSDOptions& options,
                        std::string* warn = nullptr, std::string* err = nullptr);
 
+/// Load USD from an owned in-memory buffer adopted by move. USDA lazy arrays and
+/// USDC lazy arrays retain this buffer directly, avoiding an extra heap copy in
+/// WASM/browser bindings that already copied JS bytes into a C++ string.
+bool LoadUSDFromMemoryOwned(std::string&& data, Stage* stage,
+                            const LoadUSDOptions& options = {},
+                            std::string* warn = nullptr,
+                            std::string* err = nullptr);
+
 /// Load USDA (ASCII) file
 bool LoadUSDA(const std::string& filename, Stage* stage,
               std::string* warn = nullptr, std::string* err = nullptr);

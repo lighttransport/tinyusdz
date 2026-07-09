@@ -75,6 +75,11 @@ public:
   /// Parse from string data
   bool Parse(const char* data, size_t length);
 
+  /// Parse from an owned string buffer. When USDA lazy arrays are enabled, the
+  /// parser adopts this buffer as the retained source for lazy array slices,
+  /// avoiding a second in-heap copy on memory-constrained targets such as WASM.
+  bool ParseOwned(std::string&& data);
+
   /// Parse from a file
   bool ParseFile(const char* filename);
 
