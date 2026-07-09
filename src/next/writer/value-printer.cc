@@ -13,6 +13,7 @@
 #include "dtoa.hh"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -241,6 +242,31 @@ void EmitCompRange(ChunkedStream& out, const T* data, TypeId type_id, size_t lo,
     EmitCompElem(out, data + i * s.comp_count, s, emit);
   }
   if (close) out.append(']');
+}
+
+void DiscardLazyArrayRangePages(const Value& value, size_t elem_lo,
+                                size_t elem_hi) {
+  if (!value.is_lazy() || elem_hi <= elem_lo) return;
+  const LazyArrayRef* ref = value.lazy_ref();
+  if (!ref || !ref->source || ref->block_len == 0 ||
+      ref->crate_type == CrateTypeId::Invalid || ref->src_elem_stride == 0) {
+    return;
+  }
+  const uint64_t data_begin = ref->block_offset + 8u;
+  if (data_begin < ref->block_offset) return;
+  const uint64_t stride = uint64_t(ref->src_elem_stride);
+  if (uint64_t(elem_lo) > ((std::numeric_limits<uint64_t>::max)() - data_begin) /
+                              stride ||
+      uint64_t(elem_hi) > ((std::numeric_limits<uint64_t>::max)() - data_begin) /
+                              stride) {
+    return;
+  }
+  const uint64_t byte_begin =
+      data_begin + uint64_t(elem_lo) * stride;
+  const uint64_t byte_end =
+      data_begin + uint64_t(elem_hi) * stride;
+  if (byte_begin < data_begin || byte_end < byte_begin) return;
+  ref->source->DiscardRange(byte_begin, byte_end - byte_begin);
 }
 
 bool PrintArrayToStream(StreamWriter& os, const Value& value,
@@ -986,6 +1012,10 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
   (void)opts;
   if (!value.is_array()) return false;
   ChunkedStream out(os);
+  auto done = [&]() {
+    DiscardLazyArrayRangePages(value, elem_lo, elem_hi);
+    return true;
+  };
   const TypeId type_id = value.type_id();
   switch (type_id) {
     case TypeId::Int: {
@@ -994,7 +1024,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       if (!GetIntArrayView(value, &scratch, &view)) return false;
       EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
                       [&](int32_t v) { out.append_int(v); });
-      return true;
+      return done();
     }
     case TypeId::UInt: {
       ArrayScratch<uint32_t> scratch;
@@ -1002,7 +1032,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       if (!GetUIntArrayView(value, &scratch, &view)) return false;
       EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
                       [&](uint32_t v) { out.append_uint(v); });
-      return true;
+      return done();
     }
     case TypeId::Int64: {
       ArrayScratch<int64_t> scratch;
@@ -1010,7 +1040,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       if (!GetInt64ArrayView(value, &scratch, &view)) return false;
       EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
                       [&](int64_t v) { out.append_int(v); });
-      return true;
+      return done();
     }
     case TypeId::UInt64: {
       ArrayScratch<uint64_t> scratch;
@@ -1018,7 +1048,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       if (!GetUInt64ArrayView(value, &scratch, &view)) return false;
       EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
                       [&](uint64_t v) { out.append_uint(v); });
-      return true;
+      return done();
     }
     default: {
       const TypeId component = GetComponentType(type_id);
@@ -1032,7 +1062,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
         if (!GetDoubleArrayView(value, &scratch, &view)) return false;
         EmitCompRange(out, view.data, type_id, elem_lo, elem_hi, open, close,
                       [&](double v) { out.append_double(v); });
-        return true;
+        return done();
       }
       if (flt) {
         ArrayScratch<float> scratch;
@@ -1040,7 +1070,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
         if (!GetFloatArrayView(value, &scratch, &view)) return false;
         EmitCompRange(out, view.data, type_id, elem_lo, elem_hi, open, close,
                       [&](float v) { out.append_float(v); });
-        return true;
+        return done();
       }
       return false;
     }
