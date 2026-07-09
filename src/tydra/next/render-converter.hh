@@ -26,7 +26,7 @@ namespace next {
 struct MeshConfig {
   // Triangulation
   bool triangulate = true;
-  enum class TriangulationMethod { Earcut, Fan } triangulation_method = TriangulationMethod::Fan;
+  enum class TriangulationMethod { Earcut, Fan } triangulation_method = TriangulationMethod::Earcut;
 
   // Normals
   bool compute_normals = true;
@@ -45,6 +45,11 @@ struct MeshConfig {
   // Index optimization
   bool build_vertex_indices = true;
   float dedup_epsilon = 1e-6f;
+
+  // Optional real-time skinning reduction. Keeps the strongest influences per
+  // point and renormalizes them, matching the legacy converter contract.
+  bool enable_bone_reduction = false;
+  uint32_t target_bone_count = 4;
 
   // Memory optimization
   bool use_chunked_arrays = true;

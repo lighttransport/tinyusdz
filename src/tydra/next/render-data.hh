@@ -271,8 +271,9 @@ struct RenderMesh {
 
   // Skinning data
   struct SkinBinding {
-    UInt16Chunked joint_indices;  // 4 joints per vertex
-    FloatChunked joint_weights;   // 4 weights per vertex
+    UInt16Chunked joint_indices;
+    FloatChunked joint_weights;
+    uint32_t influences_per_vertex = 0;
     int32_t skeleton_id = -1;
     std::string skeleton_path;    // bound Skeleton prim (resolves skeleton_id)
     Matrix4 geom_bind_transform;
@@ -281,6 +282,11 @@ struct RenderMesh {
 
   // Blend shapes
   struct BlendShape {
+    struct Inbetween {
+      std::string name;
+      FloatChunked point_offsets;
+      float weight = 0.0f;
+    };
     std::string name;
     FloatChunked point_offsets;   // xyz deltas
     FloatChunked normal_offsets;  // xyz deltas (optional)
@@ -288,6 +294,7 @@ struct RenderMesh {
     // Empty = dense (offsets parallel to points).
     std::vector<uint32_t> point_indices;
     float weight = 0.0f;
+    std::vector<Inbetween> inbetweens;
   };
   std::vector<BlendShape> blend_shapes;
 

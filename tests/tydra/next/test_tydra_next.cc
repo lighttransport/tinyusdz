@@ -435,6 +435,8 @@ def Xform "World"
 
     def Camera "AnimatedCamera"
     {
+        double shutter:open = -0.25
+        double shutter:close = 0.25
         float focalLength.timeSamples = {
             0: 35,
             1: 50,
@@ -666,6 +668,9 @@ def Xform "World"
   assert_custom_clip(camera_clip, "focalLength", 50.0f);
   assert_custom_clip(light_clip, "intensity", 20.0f);
   assert_custom_clip(material_clip, "renderer:opacity", 0.5f);
+  assert(result.scene.cameras.size() == 1);
+  assert(std::fabs(result.scene.cameras[0].shutter_open + 0.25) < 0.001);
+  assert(std::fabs(result.scene.cameras[0].shutter_close - 0.25) < 0.001);
 
   assert(result.scene.skeletons.size() == 1);
   assert(result.scene.skeletons[0].joints.size() == 2);
@@ -2266,6 +2271,75 @@ def Xform "Root"
   std::cout << "  Next value-clip baking: PASSED\n";
 }
 
+void TestMeshParityCleanups() {
+  std::cout << "Testing mesh parity cleanups...\n";
+  const char* usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Mesh "Concave"
+    {
+        point3f[] points = [(0, 0, 0), (2, 0, 0), (2, 2, 0), (1, 1, 0), (0, 2, 0)]
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4]
+        int[] primvars:skel:jointIndices = [0,1,2,3,4,5, 0,1,2,3,4,5, 0,1,2,3,4,5, 0,1,2,3,4,5, 0,1,2,3,4,5] (
+            elementSize = 6
+            interpolation = "vertex"
+        )
+        float[] primvars:skel:jointWeights = [.1,.3,.2,.05,.25,.1, .1,.3,.2,.05,.25,.1, .1,.3,.2,.05,.25,.1, .1,.3,.2,.05,.25,.1, .1,.3,.2,.05,.25,.1] (
+            elementSize = 6
+            interpolation = "vertex"
+        )
+        uniform token[] skel:blendShapes = ["Smile"]
+        rel skel:blendShapeTargets = </World/Smile>
+    }
+    def BlendShape "Smile"
+    {
+        uniform vector3f[] offsets = [(0,0,1), (0,0,1), (0,0,1), (0,0,1), (0,0,1)]
+        uniform vector3f[] inbetweens:half = [(0,0,.5), (0,0,.5), (0,0,.5), (0,0,.5), (0,0,.5)] (
+            weight = 0.5
+        )
+    }
+}
+)";
+  LoadResult loaded = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(loaded.success);
+  ConverterConfig config;
+  config.mesh.triangulation_method = MeshConfig::TriangulationMethod::Earcut;
+  config.mesh.enable_bone_reduction = true;
+  config.mesh.target_bone_count = 4;
+  RenderSceneConverter converter(config);
+  ConvertResult converted = converter.Convert(loaded.stage);
+  assert(converted.success);
+  assert(converted.scene.meshes.size() == 1);
+  const RenderMesh& mesh = converted.scene.meshes[0];
+  assert(mesh.triangulated_indices.size() == 9);
+  for (size_t i = 0; i < mesh.triangulated_indices.size(); i += 3) {
+    const uint32_t ia = mesh.triangulated_indices[i] * 3;
+    const uint32_t ib = mesh.triangulated_indices[i + 1] * 3;
+    const uint32_t ic = mesh.triangulated_indices[i + 2] * 3;
+    const float area =
+        (mesh.points[ib] - mesh.points[ia]) *
+            (mesh.points[ic + 1] - mesh.points[ia + 1]) -
+        (mesh.points[ib + 1] - mesh.points[ia + 1]) *
+            (mesh.points[ic] - mesh.points[ia]);
+    assert(std::fabs(area) > 0.001f);
+  }
+  assert(mesh.skin);
+  assert(mesh.skin->influences_per_vertex == 4);
+  assert(mesh.skin->joint_indices.size() == 20);
+  assert(mesh.skin->joint_indices[0] == 1);
+  assert(mesh.skin->joint_indices[1] == 4);
+  float weight_sum = 0.0f;
+  for (size_t i = 0; i < 4; ++i) weight_sum += mesh.skin->joint_weights[i];
+  assert(std::fabs(weight_sum - 1.0f) < 0.001f);
+  assert(mesh.blend_shapes.size() == 1);
+  assert(mesh.blend_shapes[0].inbetweens.size() == 1);
+  assert(mesh.blend_shapes[0].inbetweens[0].name == "half");
+  assert(std::fabs(mesh.blend_shapes[0].inbetweens[0].weight - 0.5f) <
+         0.001f);
+  std::cout << "  Mesh parity cleanups: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -2302,6 +2376,7 @@ int main() {
   TestPhysicsAnnotations();
   TestRenderConverterCurves();
   TestValueClipBaking();
+  TestMeshParityCleanups();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
