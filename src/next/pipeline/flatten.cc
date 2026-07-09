@@ -275,9 +275,14 @@ bool FlattenUSDCToUSDCOwnedToSink(std::string&& data, const CrateWriteSink& sink
 }
 
 LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts) {
-  return [read_opts](const std::string& resolved_path,
+  return MakeFileSystemLayerLoader(read_opts, {});
+}
+
+LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts,
+                                     const pcp::LayerLoadOptions& layer_load_opts) {
+  return [read_opts, layer_load_opts](const std::string& resolved_path,
                      std::string* error) -> std::unique_ptr<Layer> {
-    pcp::LayerLoadOptions lopts;
+    pcp::LayerLoadOptions lopts = layer_load_opts;
     lopts.max_memory = read_opts.max_memory;
     std::string warn;
     std::shared_ptr<Layer> loaded =
@@ -300,7 +305,12 @@ bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out
   resolver.SetWorkingDirectory(AssetResolver::GetDirectory(filename));
   if (!effective.resolver) effective.resolver = &resolver;
   if (!effective.layer_loader) {
-    effective.layer_loader = MakeFileSystemLayerLoader(opts.read);
+    pcp::LayerLoadOptions layer_load_opts;
+    layer_load_opts.max_memory = opts.read.max_memory;
+    layer_load_opts.usda_parse_options = opts.composition.usda_parse_options;
+    layer_load_opts.parse_num_threads =
+        opts.composition.usda_parse_options.num_threads;
+    effective.layer_loader = MakeFileSystemLayerLoader(opts.read, layer_load_opts);
   }
   if (effective.root_anchor_path.empty()) effective.root_anchor_path = filename;
 
@@ -316,7 +326,10 @@ bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out
   }
 
   pcp::LayerLoadOptions lopts;
-  lopts.max_memory = opts.read.max_memory;
+  lopts.max_memory = opts.composition.max_layer_memory;
+  if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
+  lopts.usda_parse_options = opts.composition.usda_parse_options;
+  lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
   std::shared_ptr<Layer> loaded =
       pcp::LoadLayerFromFile(filename, &warn, err, lopts);
@@ -346,7 +359,12 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
   resolver.SetWorkingDirectory(AssetResolver::GetDirectory(filename));
   if (!effective.resolver) effective.resolver = &resolver;
   if (!effective.layer_loader) {
-    effective.layer_loader = MakeFileSystemLayerLoader(opts.read);
+    pcp::LayerLoadOptions layer_load_opts;
+    layer_load_opts.max_memory = opts.read.max_memory;
+    layer_load_opts.usda_parse_options = opts.composition.usda_parse_options;
+    layer_load_opts.parse_num_threads =
+        opts.composition.usda_parse_options.num_threads;
+    effective.layer_loader = MakeFileSystemLayerLoader(opts.read, layer_load_opts);
   }
   if (effective.root_anchor_path.empty()) effective.root_anchor_path = filename;
 
@@ -362,7 +380,10 @@ bool FlattenUSDFileToUSDCToSink(const std::string& filename,
   }
 
   pcp::LayerLoadOptions lopts;
-  lopts.max_memory = opts.read.max_memory;
+  lopts.max_memory = opts.composition.max_layer_memory;
+  if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
+  lopts.usda_parse_options = opts.composition.usda_parse_options;
+  lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
   std::string warn;
   std::shared_ptr<Layer> loaded =
       pcp::LoadLayerFromFile(filename, &warn, err, lopts);

@@ -121,7 +121,8 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   if (options_.enable_usda_lazy_arrays) {
     auto source =
         std::make_shared<std::string>(data ? std::string(data, data + length) : "");
-    return ParseWithSource(data, length, std::move(source));
+    const char* src_data = source->data();
+    return ParseWithSource(src_data, length, std::move(source));
   }
   return ParseWithSource(data, length, nullptr);
 }
@@ -147,7 +148,8 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
       return false;
     }
     auto src = std::make_shared<std::string>(std::move(content));
-    return ParseWithSource(src->data(), size, std::move(src));
+    const char* data = src->data();
+    return ParseWithSource(data, size, std::move(src));
   }
 
   // Default-init (NOT value-init) the buffer: `new char[]` leaves the bytes

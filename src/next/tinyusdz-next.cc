@@ -312,6 +312,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   copts.num_threads = 1;
 #endif
   copts.max_layer_memory = load_options.max_memory;
+  copts.usda_parse_options = load_options.usda_options.parse_options;
   if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
     int n = std::atoi(ct);
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -337,6 +338,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
     if (comp_opts->payload_policy) copts.payload_policy = comp_opts->payload_policy;
     if (!comp_opts->variant_overrides.empty())
       copts.variant_overrides = comp_opts->variant_overrides;
+    copts.usda_parse_options = comp_opts->usda_parse_options;
     copts.max_layer_memory =
         MinNonZero(copts.max_layer_memory, comp_opts->max_layer_memory);
   }

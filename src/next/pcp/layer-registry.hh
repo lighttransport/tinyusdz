@@ -10,6 +10,7 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 
 #include <cstddef>
@@ -28,6 +29,9 @@ namespace pcp {
 struct LayerLoadOptions {
   /// Maximum file/input bytes for each loaded external layer (0 = no limit).
   size_t max_memory = 0;
+
+  /// USDA parser options applied to each external USDA layer.
+  ParseOptions usda_parse_options = {};
 
   /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
   int parse_num_threads = 0;

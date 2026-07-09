@@ -8,6 +8,7 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 #include <string>
 #include <vector>
@@ -58,6 +59,10 @@ struct CompositionOptions {
   bool resolve_variants = true;           // Apply variant selections
   int max_depth = 100;                    // Max composition recursion depth
   std::vector<std::string> muted_layers;  // Layers to skip
+  // Flatten pipeline memory/parse policy for external USDA layers loaded by the
+  // low-memory compositing path.
+  size_t max_layer_memory = 0;
+  ParseOptions usda_parse_options = {};
 
   // Strongest variant selections for flattening: set name -> variant name.
   // Empty keeps authored selections.

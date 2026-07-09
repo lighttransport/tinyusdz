@@ -14,6 +14,7 @@
 #include "../composition/composition.hh"
 #include "../crate/crate-reader.hh"
 #include "../crate/crate-writer.hh"
+#include "../pcp/layer-registry.hh"
 
 #include <cstdint>
 #include <map>
@@ -74,6 +75,8 @@ struct FlattenOptions {
 /// Crate-backed layers keep their source bytes alive via the crate data source,
 /// so arrays still pass through verbatim.
 LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts = {});
+LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts,
+                                     const pcp::LayerLoadOptions& layer_load_opts);
 
 /// Load a root USD file (.usda/.usd/.usdc/.usdz), optionally flatten it through
 /// filesystem-resolved dependencies, and write a USDC buffer. This is the native
