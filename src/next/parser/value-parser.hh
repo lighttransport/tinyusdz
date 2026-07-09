@@ -14,9 +14,10 @@ namespace tinyusdz {
 namespace next {
 
 class Lexer;
+class LazyArraySource;
 struct ParseArrayContext {
   /// Retained USDA source backing lazy arrays.
-  std::shared_ptr<std::string> source_text;
+  std::shared_ptr<LazyArraySource> source;
 
   /// Copy of parser options relevant to lazy USDA array behavior.
   bool enable_usda_lazy_arrays = false;

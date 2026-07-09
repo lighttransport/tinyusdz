@@ -5,6 +5,7 @@
 
 #include "ascii-parser-internal.hh"
 #include "../strfmt.hh"
+#include "usda-lazy-source.hh"
 #include "value-parser.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
@@ -58,7 +59,7 @@ bool IsNameToken(const Token& tok) {
 }
 
 bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
-                                       std::shared_ptr<std::string> source) {
+                                       std::shared_ptr<LazyArraySource> source) {
   errors_.clear();
   warnings_.clear();
   depth_ = 0;
@@ -76,7 +77,8 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
   if (source_) {
     // Keep a shared ownership of the full USDA source while parsing so any lazy
     // array source slices stay valid until the parse/build graph drops them.
-    lexer_ = std::make_unique<Lexer>(source_->data(), length);
+    lexer_ = std::make_unique<Lexer>(
+        reinterpret_cast<const char*>(source_->base()), length);
   } else {
     lexer_ = std::make_unique<Lexer>(data, length);
   }
@@ -119,9 +121,9 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
 
 bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   if (options_.enable_usda_lazy_arrays) {
-    auto source =
-        std::make_shared<std::string>(data ? std::string(data, data + length) : "");
-    const char* src_data = source->data();
+    auto source = UsdaLazyArraySource::AdoptString(
+        data ? std::string(data, data + length) : std::string());
+    const char* src_data = reinterpret_cast<const char*>(source->base());
     return ParseWithSource(src_data, length, std::move(source));
   }
   return ParseWithSource(data, length, nullptr);
@@ -142,13 +144,21 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
   }
 
   if (options_.enable_usda_lazy_arrays) {
+    std::string mmap_error;
+    auto mapped = UsdaLazyArraySource::MmapFile(filename, &mmap_error);
+    if (mapped) {
+      const char* data = reinterpret_cast<const char*>(mapped->base());
+      const size_t mapped_size = mapped->size();
+      return ParseWithSource(data, mapped_size, std::move(mapped));
+    }
+
     std::string content(size ? size : 0, '\0');
     if (size && !file.read(content.data(), static_cast<std::streamsize>(size))) {
       AddError("Failed to read file contents");
       return false;
     }
-    auto src = std::make_shared<std::string>(std::move(content));
-    const char* data = src->data();
+    auto src = UsdaLazyArraySource::AdoptString(std::move(content));
+    const char* data = reinterpret_cast<const char*>(src->base());
     return ParseWithSource(data, size, std::move(src));
   }
 

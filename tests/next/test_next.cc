@@ -4,7 +4,9 @@
 // TinyUSDZ Next - Unit tests
 
 #include <iostream>
+#include <fstream>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <limits>
@@ -14,6 +16,7 @@
 #include "next/types/type-id.hh"
 #include "next/types/type-info.hh"
 #include "next/types/value.hh"
+#include "next/crate/lazy-array.hh"
 #include "next/prim/path.hh"
 #include "next/prim/attribute.hh"
 #include "next/prim/prim.hh"
@@ -29,6 +32,14 @@
 using namespace tinyusdz::next;
 
 namespace {
+
+#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+    !defined(__wasi__) &&                                             \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
+constexpr bool kExpectUsdaLazyMmap = true;
+#else
+constexpr bool kExpectUsdaLazyMmap = false;
+#endif
 
 std::string UsdaFixturePath(const std::string& filename) {
   const std::string file_path(__FILE__);
@@ -485,8 +496,39 @@ def Mesh "MeshA" {
     assert(mesh.GetPropertyValue("large")->is_lazy());
     const Value* points = mesh.GetPropertyValue("points");
     assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
     assert(points->array_size() == 3);
     assert(points->as_float_array());
+  }
+
+  // File-backed lazy parsing should retain the source through mmap on native
+  // POSIX builds, avoiding the extra full-file string copy kept by the string
+  // input path above.
+  {
+    const char* path = "/tmp/tinyusdz_next_usda_lazy_mmap_test.usda";
+    {
+      std::ofstream f(path, std::ios::binary);
+      f << input;
+    }
+
+    LoadResult result = LoadUSDAFromFile(path, enabled_opts);
+    std::remove(path);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    if (kExpectUsdaLazyMmap) {
+      assert(points->lazy_ref()->source->is_mmapped());
+    } else {
+      assert(!points->lazy_ref()->source->is_mmapped());
+    }
+    assert(points->array_size() == 3);
+    const std::vector<float>* values = points->as_float_array();
+    assert(values && values->size() == 9);
+    assert((*values)[0] == 1.0f && (*values)[8] == 9.0f);
   }
 
   // Tight max element policy should keep oversized arrays eager.

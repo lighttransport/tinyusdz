@@ -469,52 +469,12 @@ const char* SnapElementBoundary(const char* t, const char* end) {
 }
 
 // ---------------------------------------------------------------------------
-// USDA lazy-array source and count helpers
+// USDA lazy-array count helpers
 // ---------------------------------------------------------------------------
 
 // Forward declaration for lazy materialization path.
 ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
                                     int nt_hint, TypeId element_type);
-
-class UsdaLazyArraySource : public LazyArraySource {
- public:
-  explicit UsdaLazyArraySource(std::shared_ptr<std::string> source)
-      : source_(std::move(source)) {}
-
-  bool MaterializeArray(const LazyArrayRef& ref, Value* out) const override {
-    if (!out || !source_) return false;
-    const char* base = source_->data();
-    const size_t source_size = source_->size();
-    const uint64_t begin = ref.block_offset;
-    const uint64_t len = ref.block_len;
-
-    if (begin > source_size || len > source_size - begin) return false;
-
-    const char* data = base + static_cast<size_t>(begin);
-    ParseResult result =
-        ParseArrayValueFromSlice(data, static_cast<size_t>(len), false,
-                                /*nt_hint=*/0, ref.value_type);
-    if (!result.success) return false;
-
-    *out = std::move(result.value);
-    return true;
-  }
-
-  const uint8_t* base() const override {
-    return reinterpret_cast<const uint8_t*>(source_ ? source_->data() : "");
-  }
-
-  size_t size() const override { return source_ ? source_->size() : 0; }
-
-  CrateVersion version() const override { return CrateVersion{}; }
-
-  bool is_mmapped() const override { return false; }
-
-  bool can_borrow() const override { return true; }
-
- private:
-  std::shared_ptr<std::string> source_;
-};
 
 template <class T, class ParseOne>
 bool CountScalarArray(const char* data, size_t len, size_t max_elements,
@@ -1266,7 +1226,7 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
 
   const bool capture_optimized = IsUsdaArrayLazyCandidate(element_type) &&
                                  context.enable_usda_lazy_arrays &&
-                                 context.source_text;
+                                 context.source;
 
   if (capture_optimized || IsUsdaArrayLazyCandidate(element_type)) {
     const char* data = nullptr;
@@ -1281,14 +1241,14 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
       if (ParseUsdaArrayElementCount(
               data, len, context.max_usda_lazy_array_elements,
               element_type, &element_count)) {
-        const char* base = context.source_text->data();
-        const char* end = base + context.source_text->size();
+        const char* base =
+            reinterpret_cast<const char*>(context.source->base());
+        const char* end = base + context.source->size();
         if (data >= base && data <= end && data + len <= end) {
           const uint64_t begin =
               static_cast<uint64_t>(data - base);
           LazyArrayRef ref;
-          ref.source = std::make_shared<UsdaLazyArraySource>(
-              context.source_text);
+          ref.source = context.source;
           ref.rep = ValueRep{};
           ref.block_offset = begin;
           ref.block_len = static_cast<uint64_t>(len);
