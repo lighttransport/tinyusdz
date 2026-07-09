@@ -260,8 +260,14 @@ bool AsciiParser::Impl::ParseAttribute() {
       }
     } else {
       ParseResult result;
+      ParseArrayContext array_ctx;
+      array_ctx.source_text = source_;
+      array_ctx.enable_usda_lazy_arrays = options_.enable_usda_lazy_arrays;
+      array_ctx.max_usda_lazy_array_elements =
+          options_.max_usda_lazy_array_elements;
+      array_ctx.num_threads = options_.num_threads;
       if (is_array) {
-        result = ParseArrayValue(*lexer_, type_id);
+        result = ParseArrayValue(*lexer_, type_id, array_ctx);
       } else {
         result = ParseValue(*lexer_, type_id);
       }

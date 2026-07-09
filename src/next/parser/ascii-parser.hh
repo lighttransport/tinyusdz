@@ -22,6 +22,17 @@ struct ParseOptions {
   /// Maximum file size to parse (0 = no limit)
   size_t max_file_size = 0;
 
+  /// Enable USDA array lazy-materialization mode.
+  ///
+  /// When true, numeric/textual array literals may be kept as lazy references
+  /// against a retained input-buffer copy. Values are parsed and decoded on first
+  /// materialization through a lazy `Value::materialize()` path.
+  bool enable_usda_lazy_arrays = false;
+
+  /// Maximum elements accepted for USDA array lazy-materialization (hard cap per
+  /// array). Arrays larger than this are parsed eagerly.
+  size_t max_usda_lazy_array_elements = (static_cast<size_t>(1) << 30);
+
   /// Maximum nesting depth for prims
   size_t max_depth = 256;
 
