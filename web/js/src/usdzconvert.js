@@ -774,6 +774,112 @@ export function rootUsdFromMap(assetMap, preferred) {
   return usds[0] || null;
 }
 
+function hasLegacyConverter(native) {
+  return !!native && typeof native.TinyUSDZLoaderNative === 'function';
+}
+
+function hasNextOnlyConverter(native) {
+  return !!native && typeof native.NextUSDZConverterNative === 'function';
+}
+
+function assertNextOnlyUSDZConvertOptions(assetMap, rootPath, opts, textureFormat) {
+  if ((opts.maxTextureSize || 0) > 0 || opts.reencode === true ||
+      (opts.targetTextureBytes || 0) > 0 || textureFormat !== 'keep' ||
+      typeof opts.textureProcessor === 'function' ||
+      typeof opts.audioProcessor === 'function') {
+    throw new Error('next-only WASM usdzconvert supports USD layer rewrite and asset passthrough only; texture/audio processing requires the legacy module.');
+  }
+  if (opts.arkitCompatible || isMaterialOptimizationEnabled(opts) ||
+      isGeometryOptimizationEnabled(opts)) {
+    throw new Error('next-only WASM usdzconvert does not support ARKit/material/geometry optimization options.');
+  }
+  const usdDeps = [...assetMap.keys()].filter((path) =>
+    path !== rootPath && isUsdName(path) && !/\.usdz$/i.test(path));
+  if (usdDeps.length > 0) {
+    throw new Error('next-only WASM usdzconvert currently supports a single root USD layer; external USD dependency layers require the legacy module.');
+  }
+}
+
+async function convertFolderToUSDZNextOnly(native, inputAssetMap, opts, log, reportProgress) {
+  let assetMap = inputAssetMap;
+  let rootPath = opts.rootPath || rootUsdFromMap(assetMap);
+  if (!rootPath) throw new Error('No USD file (.usd/.usda/.usdc/.usdz) found in the input.');
+
+  if (/\.usdz$/i.test(rootPath) && opts.repackUsdz !== false) {
+    const expanded = expandUsdzInputs(assetMap, { log });
+    if (expanded.innerRoot || [...expanded.assetMap.keys()].some(isUsdName)) {
+      assetMap = expanded.assetMap;
+      rootPath = expanded.innerRoot || rootUsdFromMap(assetMap);
+      if (!rootPath) throw new Error('USDZ archive contained no USD layer.');
+      log(`Repacking USDZ with next-only module; inner root layer: ${rootPath}`);
+    }
+  }
+
+  const textureFormat = normalizedTextureFormat(opts.textureFormat);
+  assertNextOnlyUSDZConvertOptions(assetMap, rootPath, opts, textureFormat);
+
+  const rootLayerFormat =
+    String(opts.rootLayerFormat || 'usdc').toLowerCase() === 'usda' ? 'usda' : 'usdc';
+  const rootDir = rootPath.includes('/') ? rootPath.slice(0, rootPath.lastIndexOf('/') + 1) : '';
+  const assetNameFor = (path) =>
+    (rootDir && path.startsWith(rootDir)) ? path.slice(rootDir.length) : path;
+
+  const passthroughEntries = [];
+  let textures = 0;
+  let audio = 0;
+  let otherAssets = 0;
+  for (const path of assetMap.keys()) {
+    if (path === rootPath || isUsdName(path)) continue;
+    const name = assetNameFor(path);
+    const data = assetMap.get(path);
+    passthroughEntries.push({ name, data });
+    if (isImageName(path)) textures++;
+    else if (isAudioName(path)) audio++;
+    else otherAssets++;
+  }
+
+  const converter = new native.NextUSDZConverterNative();
+  try {
+    const rootBytes = assetMap.get(rootPath);
+    reportProgress('flatten', 0, 2, 'Parsing root USD layer', rootPath);
+    const result = converter.rewriteRoot(rootBytes, rootPath.split('/').pop(), {
+      rootLayerFormat,
+      maxMemory: opts.maxMemory || 0,
+    });
+    if (!result || !result.success) {
+      throw new Error((result && result.error) || converter.error() || 'next-only root rewrite failed');
+    }
+    if (typeof converter.warn === 'function' && converter.warn()) {
+      log('WARN: ' + converter.warn());
+    }
+    reportProgress('flatten', 1, 2, 'Writing root USD layer', rootPath);
+    const rewrittenRoot = new Uint8Array(result.data);
+    const rootName = result.rootName || (rootLayerFormat === 'usda' ? 'root.usda' : 'root.usdc');
+    reportProgress('package', 0, 1, 'Writing USDZ package', rootName);
+    const usdz = buildUSDZWithNewRoot(rootName, rewrittenRoot, passthroughEntries);
+    reportProgress('complete', 1, 1, 'USDZ package ready', rootName);
+    return {
+      usdz,
+      stats: {
+        textures,
+        resized: 0,
+        reencoded: 0,
+        audio,
+        otherAssets,
+        rootPath,
+        rootLayerFormat,
+        flatten: false,
+        arkitCompatible: false,
+        pipeline: 'next-only',
+        singleLayerRewrite: true,
+        rootBytes: rewrittenRoot.length,
+      },
+    };
+  } finally {
+    converter.delete();
+  }
+}
+
 // Convert an asset map (Map<path, Uint8Array>) into a USDZ Uint8Array.
 //
 function isMaterialOptimizationEnabled(opts) {
@@ -1413,6 +1519,10 @@ export async function convertFolderToUSDZ(native, assetMap, opts = {}) {
         passthrough: true,
       },
     };
+  }
+
+  if (!hasLegacyConverter(native) && hasNextOnlyConverter(native)) {
+    return convertFolderToUSDZNextOnly(native, assetMap, opts, log, reportProgress);
   }
 
   // Experimental: next low-memory lazy-ValueRep flatten pipeline. Opt-in via

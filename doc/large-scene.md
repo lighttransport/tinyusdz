@@ -734,6 +734,32 @@ byte-identical) in `tests/next/test_writer.cc`.
 The remaining serial cost is the ~6 s Phase-1 build walk on Island (not yet
 overlapped with Phase 2) — the next available lever.
 
+### 6.3 USDA `/dev/null` write vs USDC crate write
+
+Do not compare the USDA `/dev/null` write numbers above with
+`next_usdcat -f -o out.usdc` timings as if they were the same writer path.
+They exercise different serializers:
+
+- `-o /dev/null` has no `.usdc` suffix, so `next_usdcat` writes flattened USDA
+  text through the optimized parallel ASCII writer. On the local 32-thread /
+  16-core workstation, Island writes ~10.8 GB of USDA text to `/dev/null` in
+  about **14 s** with `TINYUSDZ_NEXT_NUM_THREADS=16` and `--compose-threads 16`.
+- `-o out.usdc` uses the next crate writer. Island's crate output is only
+  ~2.5 GB, but the write phase is still about **36-40 s** even when the output
+  path is a `.usdc` symlink to `/dev/null` or a real file under `/dev/shm`.
+  Thus the time is not storage bandwidth.
+
+The remaining USDC cost is internal crate construction. As detailed in
+[`crate-writer.md`](crate-writer.md), the Island crate writer is dominated by the
+serial per-spec structural build and global interning/dedup tables over ~4.25M
+specs (paths, tokens/strings, fieldsets, value-block dedup). Final byte emission
+and array encoding are a smaller slice. Threaded crate writer paths help
+moderately: for Island, a `/dev/null`-symlink USDC write was ~47.6 s with
+`TINYUSDZ_NEXT_NUM_THREADS=1` and ~36.1 s with `TINYUSDZ_NEXT_NUM_THREADS=16`,
+but they do not remove the global-dedup floor. Writing the same USDC to
+`/dev/shm` remains ~40 s, confirming the bottleneck is CPU/structure building,
+not disk I/O.
+
 ## 7. Verification
 
 ```

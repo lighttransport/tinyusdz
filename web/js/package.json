@@ -53,6 +53,7 @@
     "test:regression": "node tests/regression-usdzconvert-material-dedup.mjs",
     "test:urdf-cli": "node tests/urdf-to-usd-cli.test.mjs",
     "test:usdzconvert-next": "node tests/usdzconvert-next.test.mjs",
+    "test:usdzconvert-next-only": "node tests/usdzconvert-next-only.test.mjs",
     "test:usdskel": "vite-node tests/usdskel-animation-test.js",
     "test:loader-fast-materials": "node tests/loader-utils-fast-materials.mjs",
     "usd-export": "vite-node cli/usd-export-cli.js",
