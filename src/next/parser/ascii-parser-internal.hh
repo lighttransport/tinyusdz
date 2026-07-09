@@ -22,6 +22,7 @@ public:
   explicit Impl(const ParseOptions& options) : options_(options) {}
 
   bool Parse(const char* data, size_t length);
+  bool ParseOwned(std::string&& data);
   bool ParseWithSource(const char* data, size_t length,
                       std::shared_ptr<LazyArraySource> source);
   bool ParseFile(const char* filename);

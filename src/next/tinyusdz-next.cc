@@ -471,6 +471,59 @@ bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
   }
 }
 
+bool LoadUSDFromMemoryOwned(std::string&& data, Stage* stage,
+                            const LoadUSDOptions& options,
+                            std::string* warn, std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+  if (data.empty()) {
+    if (err) *err = "input buffer is empty";
+    return false;
+  }
+
+  const FileFormat format = DetectFormat(
+      reinterpret_cast<const uint8_t*>(data.data()), data.size());
+  switch (format) {
+    case FileFormat::USDA: {
+      LoadResult result =
+          LoadUSDAFromStringOwned(std::move(data), EffectiveUSDAOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDC: {
+      USDCLoadResult result =
+          LoadUSDCFromMemoryOwned(std::move(data), EffectiveUSDCOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDZ:
+      return LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(data.data()),
+                               data.size(), stage, options, warn, err);
+
+    default:
+      if (err) *err = "Unknown file format";
+      return false;
+  }
+}
+
 bool LoadUSDA(const std::string& filename, Stage* stage,
               std::string* warn, std::string* err) {
   return LoadUSDA(filename, stage, LoadOptions{}, warn, err);

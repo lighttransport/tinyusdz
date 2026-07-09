@@ -11,6 +11,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "next/types/type-id.hh"
@@ -499,6 +500,44 @@ def Mesh "MeshA" {
     assert(points->lazy_ref() && points->lazy_ref()->source);
     assert(!points->lazy_ref()->source->is_mmapped());
     assert(!points->lazy_ref()->source->can_borrow());
+    assert(points->array_size() == 3);
+    assert(points->as_float_array());
+  }
+
+  // Owned string parsing adopts the caller's buffer as the retained lazy source.
+  // This is the WASM/browser path after JS bytes have already been copied into a
+  // C++ string; it avoids a second full USDA source copy.
+  {
+    std::string owned(input);
+    LoadResult result = LoadUSDAFromStringOwned(std::move(owned), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
+    assert(!points->lazy_ref()->source->can_borrow());
+    const std::vector<float>* values = points->as_float_array();
+    assert(values && values->size() == 9);
+    assert((*values)[0] == 1.0f && (*values)[8] == 9.0f);
+  }
+
+  // Top-level owned memory loader should take the same single-copy USDA path.
+  {
+    std::string owned(input);
+    LoadUSDOptions opts;
+    opts.usda_options = enabled_opts;
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDFromMemoryOwned(std::move(owned), &stage, opts, &warn, &err);
+    assert(ok);
+    UsdPrim mesh = stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    assert(!points->lazy_ref()->source->is_mmapped());
     assert(points->array_size() == 3);
     assert(points->as_float_array());
   }

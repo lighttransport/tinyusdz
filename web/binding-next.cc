@@ -211,16 +211,21 @@ class NextUSDZConverterNative {
 
     tn::Stage stage;
     tn::LoadUSDOptions load_opts;
+    load_opts.usda_options.parse_options.enable_usda_lazy_arrays = true;
     if (!options.isNull() && !options.isUndefined()) {
       emscripten::val max_memory = options["maxMemory"];
       if (!max_memory.isUndefined() && !max_memory.isNull()) {
         load_opts.max_memory = max_memory.as<size_t>();
       }
+      emscripten::val usda_lazy = options["usdaLazy"];
+      if (!usda_lazy.isUndefined() && !usda_lazy.isNull()) {
+        load_opts.usda_options.parse_options.enable_usda_lazy_arrays =
+            usda_lazy.as<bool>();
+      }
     }
 
-    const bool ok = tn::LoadUSDFromMemory(
-        reinterpret_cast<const uint8_t*>(input.data()), input.size(), &stage,
-        load_opts, &warn_, &error_);
+    const bool ok = tn::LoadUSDFromMemoryOwned(
+        std::move(input), &stage, load_opts, &warn_, &error_);
     if (!ok) {
       return ErrorResult(error_.empty() ? "next-core USD load failed" : error_);
     }
@@ -288,8 +293,8 @@ class RenderStream {
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
 
-  // Adopt the root bytes by move and load lazily when the input is USDC.
-  // USDA-root/full-archive inputs still go through the generic next loader.
+  // Adopt the root bytes by move. USDC lazy arrays and USDA lazy slices retain
+  // this buffer directly instead of copying it again inside the loader.
   emscripten::val beginOwned(std::string &&crate) {
     emscripten::val r = emscripten::val::object();
     end();
@@ -314,6 +319,7 @@ class RenderStream {
       stage_ = std::move(res.stage);
     } else {
       tinyusdz::next::LoadUSDOptions opts;
+      opts.usda_options.parse_options.enable_usda_lazy_arrays = true;
       opts.usdc_options.crate_options.progress_callback =
           [](const char *phase, size_t current, size_t total) -> bool {
         reportNextCrateProgress(
@@ -322,9 +328,8 @@ class RenderStream {
       };
       std::string warn;
       std::string err;
-      const bool ok = tinyusdz::next::LoadUSDFromMemory(
-          reinterpret_cast<const uint8_t *>(crate.data()), crate.size(),
-          &stage_, opts, &warn, &err);
+      const bool ok = tinyusdz::next::LoadUSDFromMemoryOwned(
+          std::move(crate), &stage_, opts, &warn, &err);
       if (!ok) {
         error_ = err.empty() ? std::string("USD memory load failed") : err;
         r.set("success", false);

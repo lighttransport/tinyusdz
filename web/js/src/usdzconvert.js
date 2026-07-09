@@ -845,6 +845,7 @@ async function convertFolderToUSDZNextOnly(native, inputAssetMap, opts, log, rep
     const result = converter.rewriteRoot(rootBytes, rootPath.split('/').pop(), {
       rootLayerFormat,
       maxMemory: opts.maxMemory || 0,
+      usdaLazy: opts.nextEager !== true,
     });
     if (!result || !result.success) {
       throw new Error((result && result.error) || converter.error() || 'next-only root rewrite failed');
