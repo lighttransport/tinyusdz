@@ -5,6 +5,7 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
 	createConfiguredTinyUSDZLoader,
+	getAssetUriFromURL,
 	getBackendFromURL,
 	makeStaticNextParseOptions,
 	parseUSDSceneFromArrayBuffer
@@ -957,12 +958,7 @@ async function createConfiguredLoader() {
 }
 
 function getStartupUSDModelURI() {
-	const params = new URLSearchParams(window.location.search);
-	for (const key of ['uri', 'url', 'src', 'model']) {
-		const value = params.get(key);
-		if (value) return value;
-	}
-	return DEFAULT_USD_MODEL_URI;
+	return getAssetUriFromURL(undefined, ['usd']) || DEFAULT_USD_MODEL_URI;
 }
 
 function getDisplayNameFromURI(uri) {

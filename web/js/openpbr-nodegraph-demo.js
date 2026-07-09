@@ -11,6 +11,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 // import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';    // Available for EXR env presets
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
 import {
     buildNextThreeNode,
     isNextScene,
@@ -39,11 +40,7 @@ try {
 }
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
-    for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
-        const value = params.get(key);
-        if (value) return value;
-    }
-    return null;
+    return getAssetUriFromURL(params, ['usd']);
 }
 
 function getBackendFromURL(params = new URLSearchParams(window.location.search)) {

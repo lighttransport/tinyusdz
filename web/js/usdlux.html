@@ -49,6 +49,17 @@
         #fileInput {
             display: none;
         }
+        #loadStats {
+            display: none;
+            margin-top: 6px;
+            padding: 6px 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 11px;
+            color: #aaa;
+            white-space: pre-line;
+        }
         .button {
             display: inline-block;
             padding: 8px 14px;
@@ -915,6 +926,7 @@
             <strong>Current:</strong> <span id="currentFile">Embedded Scene</span>
             <span id="loadingIndicator">Loading...</span>
         </p>
+        <div id="loadStats"></div>
 
         <div id="light-info">
             <h4>Lights (<span id="lightCount">0</span>)</h4>

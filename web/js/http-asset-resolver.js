@@ -627,6 +627,8 @@ const DEMO2_PRESETS = [
 function fmtMB(b) { return (b / 1048576).toFixed(1) + ' MB'; }
 
 export async function mountHttpAssetResolverDemo(opts = {}) {
+  window.renderComplete = false;
+  window.renderError = null;
   const canvas = opts.canvas || document.getElementById('gl');
   const statusEl = opts.status || document.getElementById('status');
   const logEl = opts.log || document.getElementById('log');
@@ -723,10 +725,12 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
       console.error(e);
       setStatus('Error: ' + (e && e.message));
       appendLog('Error: ' + (e && e.message));
+      window.renderError = e?.message || String(e);
     } finally {
       busy = false;
       if (btnLocal) btnLocal.disabled = false;
       if (btnHttp) btnHttp.disabled = false;
+      window.renderComplete = true;
     }
   }
 
@@ -734,7 +738,13 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
   async function loadLocalHttpTexture() {
     setStatus(`Fetching local ${LOCAL_HTTP_TEXTURE_USDA}…`);
     const resp = await fetch(LOCAL_HTTP_TEXTURE_USDA);
-    if (!resp.ok) { setStatus(`Cannot load ${LOCAL_HTTP_TEXTURE_USDA}: HTTP ${resp.status}`); return; }
+    if (!resp.ok) {
+      const message = `Cannot load ${LOCAL_HTTP_TEXTURE_USDA}: HTTP ${resp.status}`;
+      setStatus(message);
+      window.renderError = message;
+      window.renderComplete = true;
+      return;
+    }
     const bytes = new Uint8Array(await resp.arrayBuffer());
     // baseUrl '' — the texture path is already absolute http, fetched directly.
     await run({ rootBytes: bytes, filename: 'http-cat-plane.usda', baseUrl: '', label: 'Local USDA (HTTP texture)' });
@@ -751,6 +761,8 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
       bytes = new Uint8Array(await resp.arrayBuffer());
     } catch (e) {
       setStatus(`Cannot fetch ${target}: ${e.message}`);
+      window.renderError = e?.message || String(e);
+      window.renderComplete = true;
       return;
     }
     const filename = target.split('/').pop() || 'root.usd';
@@ -806,7 +818,10 @@ export async function mountHttpAssetResolverDemo(opts = {}) {
     if (q.get('demo') === '1') loadLocalHttpTexture();
     else if (q.get('demo') === '2') loadOverHttp(url || undefined);
     else if (url) loadOverHttp(url);
-    else setStatus('Pick a demo: load the local USDA (HTTP texture), or a USD over HTTP.');
+    else {
+      setStatus('Pick a demo: load the local USDA (HTTP texture), or a USD over HTTP.');
+      window.renderComplete = true;
+    }
   }
 
   return { renderer, loadLocalHttpTexture, loadOverHttp, loadLocalFile };

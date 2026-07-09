@@ -14,6 +14,7 @@ import {
     nextCountsFromScene,
     readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
+import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
 import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
 import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.js';
@@ -61,11 +62,7 @@ function traceLoadPhase(name, detail = '') {
 }
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
-    for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
-        const value = params.get(key);
-        if (value) return value;
-    }
-    return null;
+    return getAssetUriFromURL(params, ['usd']);
 }
 
 function getDisplayNameFromURI(uri) {

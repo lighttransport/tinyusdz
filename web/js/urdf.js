@@ -221,6 +221,24 @@ const exportButtons = [
 ];
 const DEFAULT_USDC_EXPORT_LIMIT_MB = 2048;
 const DEFAULT_MEM_EXPORT_LIMIT_MB = 4096;
+const DEFAULT_SAMPLE_URDF = `<?xml version="1.0"?>
+<robot name="tinyusdz_sample">
+  <link name="base">
+    <visual>
+      <geometry><box size="1 1 0.3"/></geometry>
+      <material name="blue"><color rgba="0.2 0.45 0.9 1"/></material>
+    </visual>
+    <collision><geometry><box size="1 1 0.3"/></geometry></collision>
+    <inertial><mass value="1"/><inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/></inertial>
+  </link>
+  <link name="arm">
+    <visual><origin xyz="0 0 0.6"/><geometry><cylinder radius="0.12" length="1.2"/></geometry></visual>
+  </link>
+  <joint name="shoulder" type="revolute">
+    <parent link="base"/><child link="arm"/><origin xyz="0 0 0.15"/>
+    <axis xyz="0 1 0"/><limit lower="-1.2" upper="1.2" effort="10" velocity="2"/>
+  </joint>
+</robot>`;
 
 function parsePositiveInt(value) {
   const n = Number(value);
@@ -5382,10 +5400,20 @@ function setupDragAndDrop() {
 function setupURLAutoload() {
   const params = new URLSearchParams(window.location.search);
   const url = urlParam(params);
-  if (!url) return;
-  loadURL(url).catch((err) => {
+  window.renderComplete = false;
+  window.renderError = null;
+  const load = url
+    ? loadURL(url)
+    : loadRobotFile(new File([DEFAULT_SAMPLE_URDF], 'sample.urdf', {
+        type: 'text/xml'
+      }));
+  load.then(() => {
+    window.renderComplete = true;
+  }).catch((err) => {
     console.error(err);
-    setStatus(`URL load failed: ${err.message}`);
+    setStatus(`${url ? 'URL' : 'Sample'} load failed: ${err.message}`);
+    window.renderError = err?.message || String(err);
+    window.renderComplete = true;
   });
 }
 

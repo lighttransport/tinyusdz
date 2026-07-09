@@ -22,7 +22,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { getBackendFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import { basenameFromUri, getAssetUriFromURL, getBackendFromURL } from 'tinyusdz/LoaderConfigUtils.js';
 
 // Light-to-HDRI projection (no TinyUSDZ dependency)
 import {
@@ -4417,15 +4417,96 @@ async function initLoader() {
 }
 
 /**
+ * Load stats (file size / timings / JS+WASM heap) shown in the info panel
+ */
+let currentLoadStats = null;
+
+function formatStatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'n/a';
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatStatMs(ms) {
+  return Number.isFinite(ms) ? `${ms.toFixed(1)} ms` : 'n/a';
+}
+
+function captureMemoryStats() {
+  return {
+    jsHeap: performance.memory?.usedJSHeapSize ?? NaN,
+    wasmHeap: loader?.native_?.HEAPU8?.buffer?.byteLength ?? NaN
+  };
+}
+
+function heapStatLine(label, current, before) {
+  if (!Number.isFinite(current)) return null;
+  if (!Number.isFinite(before)) return `${label}: ${formatStatBytes(current)}`;
+  const delta = current - before;
+  return `${label}: ${formatStatBytes(current)} (${delta >= 0 ? '+' : '-'}${formatStatBytes(Math.abs(delta))})`;
+}
+
+function updateLoadStatsPanel(overrideText = null) {
+  const el = document.getElementById('loadStats');
+  if (!el || !currentLoadStats) return;
+  el.style.display = 'block';
+  if (overrideText) {
+    el.textContent = overrideText;
+    return;
+  }
+  const stats = currentLoadStats;
+  const lines = [
+    `Size: ${formatStatBytes(stats.fileSize)}`,
+    `Fetch/read: ${formatStatMs(stats.readMs)}`,
+    `Parse: ${formatStatMs(stats.parseMs)}`,
+    `Build lights: ${formatStatMs(stats.processMs)}`,
+    `Total: ${formatStatMs(stats.totalMs)}`,
+    heapStatLine('JS heap', stats.memoryAfter.jsHeap, stats.memoryBefore.jsHeap),
+    heapStatLine('WASM heap', stats.memoryAfter.wasmHeap, stats.memoryBefore.wasmHeap)
+  ].filter(Boolean);
+  el.textContent = lines.join('\n');
+}
+
+function beginLoadStats(filename, fileSize = NaN) {
+  const memory = captureMemoryStats();
+  currentLoadStats = {
+    filename,
+    fileSize,
+    startTime: performance.now(),
+    readMs: NaN,
+    parseMs: NaN,
+    processMs: NaN,
+    totalMs: NaN,
+    memoryBefore: memory,
+    memoryAfter: memory
+  };
+  updateLoadStatsPanel('Loading...');
+  return currentLoadStats;
+}
+
+function finishLoadStats(stats = currentLoadStats) {
+  if (!stats) return;
+  stats.totalMs = performance.now() - stats.startTime;
+  stats.memoryAfter = captureMemoryStats();
+  updateLoadStatsPanel();
+}
+
+function failLoadStats(stats = currentLoadStats) {
+  if (!stats) return;
+  updateLoadStatsPanel('Failed');
+}
+
+/**
  * Load USD from ArrayBuffer
  */
-async function loadUSDFromBuffer(buffer, filename) {
+async function loadUSDFromBuffer(buffer, filename, stats = null) {
   try {
     await initLoader();
 
+    const parseStart = performance.now();
     const usd = await new Promise((resolve, reject) => {
       loader.parse(buffer, filename, resolve, reject, { backend: getBackendFromURL() });
     });
+    if (stats) stats.parseMs = performance.now() - parseStart;
 
     if (!usd) {
       throw new Error('Failed to parse USD file');
@@ -4436,11 +4517,17 @@ async function loadUSDFromBuffer(buffer, filename) {
     debugLog(`  Materials: ${usd.numMaterials()}`);
     debugLog(`  Lights: ${usd.numLights()}`);
 
+    const buildStart = performance.now();
     await loadLightsFromUSD(usd);
+    if (stats) {
+      stats.processMs = performance.now() - buildStart;
+      finishLoadStats(stats);
+    }
 
     return usd;
   } catch (error) {
     console.error('Error loading USD:', error);
+    if (stats) failLoadStats(stats);
     throw error;
   }
 }
@@ -4449,8 +4536,41 @@ async function loadUSDFromBuffer(buffer, filename) {
  * Load USD from File object
  */
 async function loadUSDFromFile(file) {
+  const stats = beginLoadStats(file.name, file.size);
+  const readStart = performance.now();
   const buffer = await file.arrayBuffer();
-  return loadUSDFromBuffer(buffer, file.name);
+  stats.readMs = performance.now() - readStart;
+  stats.fileSize = buffer.byteLength;
+  return loadUSDFromBuffer(buffer, file.name, stats);
+}
+
+/**
+ * Load USD from a URL (?uri= / ?url= / ?src= / ?model= parameter)
+ */
+async function loadUSDFromURL(url) {
+  const filename = basenameFromUri(url);
+  document.getElementById('currentFile').textContent = filename;
+  document.getElementById('loadingIndicator').classList.add('active');
+  const stats = beginLoadStats(filename);
+  try {
+    const fetchStart = performance.now();
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+    const buffer = await response.arrayBuffer();
+    stats.readMs = performance.now() - fetchStart;
+    stats.fileSize = buffer.byteLength;
+    return await loadUSDFromBuffer(buffer, filename, stats);
+  } catch (error) {
+    failLoadStats(stats);
+    document.getElementById('currentFile').textContent = `Failed to load ${filename}: ${error.message}`;
+    throw error;
+  } finally {
+    if (window.hideLoadingIndicator) {
+      window.hideLoadingIndicator();
+    }
+  }
 }
 
 /**
@@ -4469,7 +4589,9 @@ async function loadEmbeddedScene(sceneName = 'complete') {
   try {
     const encoder = new TextEncoder();
     const buffer = encoder.encode(usda).buffer;
-    await loadUSDFromBuffer(buffer, `${sceneName}.usda`);
+    const stats = beginLoadStats(`${sceneName}.usda`, buffer.byteLength);
+    stats.readMs = 0;
+    await loadUSDFromBuffer(buffer, `${sceneName}.usda`, stats);
   } catch (error) {
     console.error('Error loading embedded scene:', error);
     alert(`Failed to load embedded scene: ${error.message}`);
@@ -5000,6 +5122,7 @@ window.addEventListener('loadUSDFile', async (event) => {
   try {
     await loadUSDFromFile(file);
   } catch (error) {
+    failLoadStats();
     alert(`Failed to load USD file: ${error.message}`);
   } finally {
     if (window.hideLoadingIndicator) {
@@ -5218,10 +5341,29 @@ async function init() {
   // Start animation loop
   animate();
 
-  // Load default embedded scene
-  await loadEmbeddedScene('complete');
+  // Load startup scene: ?uri=/?url=/?src=/?model= override, else the default
+  // embedded scene.
+  const startupUri = getAssetUriFromURL();
+  if (startupUri) {
+    try {
+      await loadUSDFromURL(startupUri);
+    } catch (error) {
+      console.error('Failed to load USD from URL:', error);
+      window.renderError = error.message || String(error);
+    }
+  } else {
+    await loadEmbeddedScene('complete');
+  }
 
   debugLog('UsdLux demo initialized');
 }
 
-init();
+window.renderComplete = false;
+window.renderError = null;
+init().then(() => {
+  window.renderComplete = true;
+}).catch((error) => {
+  window.renderError = error?.message || String(error);
+  window.renderComplete = true;
+  console.error(error);
+});
