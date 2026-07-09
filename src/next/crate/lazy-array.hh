@@ -31,6 +31,10 @@ public:
   virtual CrateVersion version() const = 0;
   virtual bool is_mmapped() const = 0;
   virtual bool can_borrow() const { return false; }
+  virtual void DiscardRange(uint64_t offset, uint64_t length) const {
+    (void)offset;
+    (void)length;
+  }
 };
 
 /// Lightweight descriptor for an array value stored in a retained crate buffer.
