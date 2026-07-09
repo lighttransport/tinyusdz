@@ -38,8 +38,12 @@
 #include "next/schema/usd-shade.hh"
 #include "next/stage/stage.hh"
 #include "next/tinyusdz-next.hh"
+#include "next/writer/usda-writer.hh"
+#include "next/writer/usdc-writer.hh"
+#include "next/writer/usdz-writer.hh"
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/render-data.hh"
+#include "tydra/next/urdf-to-usd.hh"
 
 namespace tn = tinyusdz::next;
 namespace tr = tinyusdz::tydra::next;
@@ -950,12 +954,279 @@ class NextFlattenSession {
   std::map<std::string, std::string> variant_overrides_;
 };
 
+nlohmann::json NextValueJSON(const tn::Value& value) {
+  if (const bool* v = value.as_bool()) return *v;
+  if (const int32_t* v = value.as_int()) return *v;
+  if (const uint32_t* v = value.as_uint()) return *v;
+  if (const int64_t* v = value.as_int64()) return *v;
+  if (const uint64_t* v = value.as_uint64()) return *v;
+  if (const float* v = value.as_float()) return *v;
+  if (const double* v = value.as_double()) return *v;
+  if (const std::string* v = value.as_string()) return *v;
+  if (const std::string* v = value.as_token()) return *v;
+  if (const std::string* v = value.as_asset_path()) return *v;
+  if (const std::vector<float>* v = value.as_float_array()) return *v;
+  if (const std::vector<double>* v = value.as_double_array()) return *v;
+  if (const std::vector<int32_t>* v = value.as_int_array()) return *v;
+  if (const std::vector<int64_t>* v = value.as_int64_array()) return *v;
+  if (const std::vector<uint32_t>* v = value.as_uint_array()) return *v;
+  if (const std::vector<uint64_t>* v = value.as_uint64_array()) return *v;
+  if (const std::vector<std::string>* v = value.as_token_array()) return *v;
+
+  auto float_array = [](const float* ptr, size_t count) {
+    nlohmann::json out = nlohmann::json::array();
+    for (size_t i = 0; i < count; ++i) out.push_back(ptr[i]);
+    return out;
+  };
+  auto double_array = [](const double* ptr, size_t count) {
+    nlohmann::json out = nlohmann::json::array();
+    for (size_t i = 0; i < count; ++i) out.push_back(ptr[i]);
+    return out;
+  };
+  switch (value.type_id()) {
+    case tn::TypeId::Float2:
+    case tn::TypeId::Texcoord2f:
+      return float_array(static_cast<const float*>(value.raw_data()), 2);
+    case tn::TypeId::Float3:
+    case tn::TypeId::Point3f:
+    case tn::TypeId::Vector3f:
+    case tn::TypeId::Normal3f:
+    case tn::TypeId::Color3f:
+      return float_array(static_cast<const float*>(value.raw_data()), 3);
+    case tn::TypeId::Float4:
+    case tn::TypeId::Color4f:
+    case tn::TypeId::Quatf:
+      return float_array(static_cast<const float*>(value.raw_data()), 4);
+    case tn::TypeId::Double2:
+    case tn::TypeId::Texcoord2d:
+      return double_array(static_cast<const double*>(value.raw_data()), 2);
+    case tn::TypeId::Double3:
+    case tn::TypeId::Point3d:
+    case tn::TypeId::Vector3d:
+    case tn::TypeId::Normal3d:
+    case tn::TypeId::Color3d:
+      return double_array(static_cast<const double*>(value.raw_data()), 3);
+    case tn::TypeId::Double4:
+    case tn::TypeId::Color4d:
+    case tn::TypeId::Quatd:
+      return double_array(static_cast<const double*>(value.raw_data()), 4);
+    case tn::TypeId::Matrix4f:
+      return float_array(value.as_matrix4f(), 16);
+    case tn::TypeId::Matrix4d:
+      return double_array(value.as_matrix4d(), 16);
+    default:
+      break;
+  }
+  return nullptr;
+}
+
+void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, nlohmann::json* out) {
+  if (!out || !prim.IsValid()) return;
+  nlohmann::json item;
+  item["name"] = prim.GetName();
+  item["path"] = prim.GetPath().str();
+  item["type"] = prim.GetTypeName();
+  item["apiSchemas"] = prim.GetMeta().apiSchemas();
+  item["properties"] = nlohmann::json::object();
+  item["relationships"] = nlohmann::json::object();
+  for (const std::string& name : prim.GetPropertyNames()) {
+    const tn::Value* value = prim.GetPropertyValue(name);
+    if (value) item["properties"][name] = NextValueJSON(*value);
+  }
+  for (const std::string& name : prim.GetRelationshipNames()) {
+    const std::vector<tn::Path>* targets = prim.GetRelationship(name);
+    if (!targets) continue;
+    nlohmann::json paths = nlohmann::json::array();
+    for (const tn::Path& path : *targets) paths.push_back(path.str());
+    item["relationships"][name] = std::move(paths);
+  }
+  if (const tn::Value* purpose = prim.GetPropertyValue("purpose")) {
+    if (const std::string* token = purpose->as_token()) item["purpose"] = *token;
+  }
+  if (const tn::Value* matrix = prim.GetPropertyValue("xformOp:transform")) {
+    item["matrix"] = NextValueJSON(*matrix);
+  }
+  const std::string& type = prim.GetTypeName();
+  if (type == "Mesh" || type == "Cube" || type == "Sphere" ||
+      type == "Cylinder" || type == "Capsule" || type == "Plane") {
+    nlohmann::json geometry;
+    geometry["type"] = type == "Mesh" ? "mesh" :
+                         type == "Cube" ? "box" :
+                         std::string(1, static_cast<char>(std::tolower(type[0]))) +
+                             type.substr(1);
+    auto copy_property = [&](const char* property, const char* key) {
+      if (const tn::Value* value = prim.GetPropertyValue(property)) {
+        geometry[key] = NextValueJSON(*value);
+      }
+    };
+    copy_property("points", "positions");
+    copy_property("faceVertexIndices", "indices");
+    copy_property("normals", "normals");
+    copy_property("primvars:st", "uvs");
+    copy_property("size", "size");
+    copy_property("radius", "radius");
+    copy_property("height", "height");
+    copy_property("width", "width");
+    copy_property("length", "length");
+    copy_property("axis", "axis");
+    item["geometry"] = std::move(geometry);
+  }
+  out->push_back(std::move(item));
+  for (const tn::UsdPrim& child : prim.GetChildren()) {
+    AppendNextPhysicsPrimJSON(child, out);
+  }
+}
+
 class NextUSDZConverterNative {
  public:
   NextUSDZConverterNative() = default;
 
   std::string error() const { return error_; }
   std::string warn() const { return warn_; }
+
+  void clearURDFMeshBuffers() { urdf_mesh_buffers_.clear(); }
+
+  bool setVisualMesh(const std::string& name, const emscripten::val& positions,
+                     const emscripten::val& normals,
+                     const emscripten::val& uvs,
+                     const emscripten::val& indices) {
+    return setURDFMeshBuffer(name, positions, normals, uvs, indices);
+  }
+
+  bool setCollisionMesh(const std::string& name,
+                        const emscripten::val& positions,
+                        const emscripten::val& normals,
+                        const emscripten::val& uvs,
+                        const emscripten::val& indices) {
+    return setURDFMeshBuffer(name, positions, normals, uvs, indices);
+  }
+
+  bool createURDFPhysicsScene(const std::string& robot_json) {
+    tn::Stage stage;
+    std::string warn;
+    std::string err;
+    if (!tr::ConvertURDFJsonToUSDStage(robot_json, &urdf_mesh_buffers_,
+                                       &stage, &warn, &err)) {
+      warn_ = std::move(warn);
+      error_ = err.empty() ? "URDF/MJCF conversion failed" : std::move(err);
+      has_stage_ = false;
+      return false;
+    }
+    stage_ = std::move(stage);
+    warn_ = std::move(warn);
+    error_.clear();
+    has_stage_ = true;
+    return true;
+  }
+
+  bool loadFromBinary(const emscripten::val& bytes,
+                      const std::string& filename) {
+    std::string copy_error;
+    std::string input = CopyUint8ArrayToString(bytes, &copy_error);
+    if (!copy_error.empty()) {
+      error_ = copy_error;
+      has_stage_ = false;
+      return false;
+    }
+    tn::LoadUSDOptions options;
+    options.usda_options.parse_options.enable_usda_lazy_arrays = true;
+    tn::Stage stage;
+    std::string warn;
+    std::string err;
+    if (!tn::LoadUSDFromMemoryOwned(std::move(input), &stage, options,
+                                    &warn, &err)) {
+      error_ = err.empty() ? "Failed to load " + filename : std::move(err);
+      warn_ = std::move(warn);
+      has_stage_ = false;
+      return false;
+    }
+    stage_ = std::move(stage);
+    warn_ = std::move(warn);
+    error_.clear();
+    has_stage_ = true;
+    return true;
+  }
+
+  void setAsset(const std::string& name, const emscripten::val& bytes) {
+    std::string copy_error;
+    std::string data = CopyUint8ArrayToString(bytes, &copy_error);
+    if (!copy_error.empty()) {
+      error_ = copy_error;
+      return;
+    }
+    assets_[name] = std::vector<uint8_t>(data.begin(), data.end());
+    error_.clear();
+  }
+
+  void setUSDCExportLimitMB(int file_size_mb, int memory_mb) {
+    (void)file_size_mb;
+    (void)memory_mb;
+  }
+
+  std::string extractPhysicsSceneJSON() {
+    if (!has_stage_) {
+      error_ = "No stage loaded";
+      return std::string();
+    }
+    nlohmann::json root;
+    root["name"] = stage_.GetMeta().defaultPrim;
+    root["upAxis"] = stage_.GetMeta().upAxis;
+    root["prims"] = nlohmann::json::array();
+    for (const tn::UsdPrim& prim : stage_.GetRootPrims()) {
+      AppendNextPhysicsPrimJSON(prim, &root["prims"]);
+    }
+    error_.clear();
+    return root.dump();
+  }
+
+  std::string exportAsUSDA() {
+    if (!has_stage_) {
+      error_ = "No stage loaded";
+      return std::string();
+    }
+    std::string output = tn::WriteUSDAToString(stage_);
+    if (output.empty()) error_ = "USDA export failed";
+    else error_.clear();
+    return output;
+  }
+
+  emscripten::val exportAsUSDC() {
+    if (!has_stage_) {
+      error_ = "No stage loaded";
+      return emscripten::val::null();
+    }
+    std::vector<uint8_t> output;
+    tn::USDCWriteResult result = tn::WriteUSDCToMemory(output, stage_);
+    if (!result.success) {
+      error_ = result.error.empty() ? "USDC export failed" : result.error;
+      return emscripten::val::null();
+    }
+    error_.clear();
+    return Uint8ArrayFromVector(output);
+  }
+
+  emscripten::val exportAsUSDZ() {
+    if (!has_stage_) {
+      error_ = "No stage loaded";
+      return emscripten::val::null();
+    }
+    std::vector<uint8_t> usdc;
+    tn::USDCWriteResult usdc_result = tn::WriteUSDCToMemory(usdc, stage_);
+    if (!usdc_result.success) {
+      error_ = usdc_result.error.empty() ? "USDC export failed"
+                                         : usdc_result.error;
+      return emscripten::val::null();
+    }
+    std::vector<uint8_t> output;
+    tn::USDZWriteResult result = tn::WriteUSDZFromUSDCAndAssetsToMemory(
+        output, usdc.data(), usdc.size(), assets_);
+    if (!result.success) {
+      error_ = result.error.empty() ? "USDZ export failed" : result.error;
+      return emscripten::val::null();
+    }
+    error_.clear();
+    return Uint8ArrayFromVector(output);
+  }
 
   emscripten::val rewriteRoot(emscripten::val bytes, const std::string& filename,
                               emscripten::val options) {
@@ -1027,6 +1298,52 @@ class NextUSDZConverterNative {
   }
 
  private:
+  bool setURDFMeshBuffer(const std::string& name,
+                         const emscripten::val& positions,
+                         const emscripten::val& normals,
+                         const emscripten::val& uvs,
+                         const emscripten::val& indices) {
+    if (name.empty()) {
+      error_ = "setVisualMesh/setCollisionMesh requires a non-empty name";
+      return false;
+    }
+    tr::URDFMeshBuffer buffer;
+    CopyTypedArrayToVector(positions, buffer.positions);
+    CopyTypedArrayToVector(normals, buffer.normals);
+    CopyTypedArrayToVector(uvs, buffer.uvs);
+    std::vector<uint32_t> unsigned_indices;
+    CopyTypedArrayToVector(indices, unsigned_indices);
+    buffer.indices.reserve(unsigned_indices.size());
+    for (uint32_t index : unsigned_indices) {
+      if (index > static_cast<uint32_t>(INT32_MAX)) {
+        error_ = "Mesh index exceeds int32 range";
+        return false;
+      }
+      buffer.indices.push_back(static_cast<int32_t>(index));
+    }
+    if (buffer.positions.size() < 9 || buffer.positions.size() % 3 != 0) {
+      error_ = "Mesh positions must contain at least three xyz points";
+      return false;
+    }
+    if (!buffer.normals.empty() &&
+        buffer.normals.size() != buffer.positions.size()) {
+      error_ = "Mesh normals length must match positions length";
+      return false;
+    }
+    if (!buffer.uvs.empty() &&
+        buffer.uvs.size() != (buffer.positions.size() / 3) * 2) {
+      error_ = "Mesh UV length must equal vertex count * 2";
+      return false;
+    }
+    if (!buffer.indices.empty() && buffer.indices.size() % 3 != 0) {
+      error_ = "Mesh indices must contain triangles";
+      return false;
+    }
+    urdf_mesh_buffers_[name] = std::move(buffer);
+    error_.clear();
+    return true;
+  }
+
   emscripten::val ErrorResult(const std::string& error) {
     error_ = error;
     emscripten::val out = emscripten::val::object();
@@ -1037,6 +1354,10 @@ class NextUSDZConverterNative {
 
   std::string error_;
   std::string warn_;
+  tn::Stage stage_;
+  bool has_stage_ = false;
+  std::map<std::string, tr::URDFMeshBuffer> urdf_mesh_buffers_;
+  std::map<std::string, std::vector<uint8_t>> assets_;
 };
 
 class RenderStream {
@@ -3582,6 +3903,21 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
   emscripten::class_<NextUSDZConverterNative>("NextUSDZConverterNative")
       .constructor<>()
       .function("rewriteRoot", &NextUSDZConverterNative::rewriteRoot)
+      .function("clearURDFMeshBuffers",
+                &NextUSDZConverterNative::clearURDFMeshBuffers)
+      .function("setVisualMesh", &NextUSDZConverterNative::setVisualMesh)
+      .function("setCollisionMesh", &NextUSDZConverterNative::setCollisionMesh)
+      .function("createURDFPhysicsScene",
+                &NextUSDZConverterNative::createURDFPhysicsScene)
+      .function("loadFromBinary", &NextUSDZConverterNative::loadFromBinary)
+      .function("extractPhysicsSceneJSON",
+                &NextUSDZConverterNative::extractPhysicsSceneJSON)
+      .function("setAsset", &NextUSDZConverterNative::setAsset)
+      .function("setUSDCExportLimitMB",
+                &NextUSDZConverterNative::setUSDCExportLimitMB)
+      .function("exportAsUSDA", &NextUSDZConverterNative::exportAsUSDA)
+      .function("exportAsUSDC", &NextUSDZConverterNative::exportAsUSDC)
+      .function("exportAsUSDZ", &NextUSDZConverterNative::exportAsUSDZ)
       .function("error", &NextUSDZConverterNative::error)
       .function("warn", &NextUSDZConverterNative::warn);
 
