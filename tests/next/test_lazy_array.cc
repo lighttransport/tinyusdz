@@ -16,6 +16,7 @@
 
 #include "next/composition/composition.hh"
 #include "next/crate/crate-data-source.hh"
+#include "next/crate/crate-format.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/lazy-array.hh"
 #include "next/layer/layer.hh"
@@ -44,6 +45,24 @@ int main() {
     std::vector<float> copied(view.begin(), view.end());
     assert(copied.empty());
     assert(view.size_bytes() == 0);
+  }
+
+  // Capacity-hinted crate blob decompression should grow from an undersized
+  // initial buffer and still reproduce the exact delta payload.
+  {
+    std::vector<uint32_t> values(4096);
+    for (size_t i = 0; i < values.size(); ++i) {
+      values[i] = static_cast<uint32_t>((i * 251u) ^ (i >> 1));
+    }
+    std::vector<uint8_t> delta = EncodeDeltaU32(values.data(), values.size());
+    CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
+    assert(cr.success);
+    DecompressResult dr = DecompressCrateBlobWithCapacityHint(
+        cr.data.data(), cr.data.size(), delta.size(), 8);
+    assert(dr.success);
+    assert(dr.data == delta);
+    std::cout << "  capacity-hinted crate blob decompression grows correctly"
+              << std::endl;
   }
 
   // ---- Build a stage with numeric POD arrays --------------------------------

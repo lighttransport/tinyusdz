@@ -309,17 +309,23 @@ bool PrintCompressedIntLazyArrayToStream(StreamWriter& os, const Value& value,
   size_t code_bits = 0;
   size_t code_bytes = 0;
   size_t value_bytes = 0;
+  size_t hint_value_bytes = 0;
+  size_t initial_delta_size = 0;
   size_t max_delta_size = 0;
   if (!safe::mul(static_cast<size_t>(count), size_t(2), &code_bits) ||
       !safe::add(code_bits, size_t(7), &code_bits) ||
       !safe::mul(static_cast<size_t>(count), sizeof(int32_t), &value_bytes) ||
+      !safe::mul(static_cast<size_t>(count), size_t(2), &hint_value_bytes) ||
       !safe::add(sizeof(int32_t), code_bits / 8, &code_bytes) ||
+      !safe::add(code_bytes, hint_value_bytes, &initial_delta_size) ||
       !safe::add(code_bytes, value_bytes, &max_delta_size)) {
     return false;
   }
+  initial_delta_size = std::min(initial_delta_size, max_delta_size);
 
-  DecompressResult dr = DecompressCrateBlob(
-      base + block_begin + 16, static_cast<size_t>(comp_size), max_delta_size);
+  DecompressResult dr = DecompressCrateBlobWithCapacityHint(
+      base + block_begin + 16, static_cast<size_t>(comp_size), max_delta_size,
+      initial_delta_size);
   if (!dr.success) return false;
   const uint8_t* buffer = dr.data.data();
   const size_t buffer_size = dr.data.size();
