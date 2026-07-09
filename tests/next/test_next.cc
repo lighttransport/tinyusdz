@@ -9,6 +9,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <vector>
 
 #include "next/types/type-id.hh"
 #include "next/types/type-info.hh"
@@ -447,6 +448,97 @@ def Sphere "MySphere" {
   std::cout << "  USDAReader tests passed!" << std::endl;
 }
 
+void test_usda_lazy_parse_policies() {
+  std::cout << "Testing USDA lazy parse policies..." << std::endl;
+
+  const char* input = R"(#usda 1.0
+def Mesh "MeshA" {
+    int[] small = [1, 2]
+    int[] large = [1, 2, 3, 4]
+    point3f[] points = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
+}
+)";
+
+  // Lazy parsing disabled by default -> every supported array is eager.
+  {
+    LoadResult result = LoadUSDAFromString(input, std::strlen(input));
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small"));
+    assert(!mesh.GetPropertyValue("small")->is_lazy());
+    assert(!mesh.GetPropertyValue("large")->is_lazy());
+    assert(!mesh.GetPropertyValue("points")->is_lazy());
+  }
+
+  LoadOptions enabled_opts;
+  enabled_opts.parse_options.enable_usda_lazy_arrays = true;
+
+  // Enable lazy arrays with default policy -> all supported arrays become lazy.
+  {
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small")->is_lazy());
+    assert(mesh.GetPropertyValue("large")->is_lazy());
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(points && points->is_lazy());
+    assert(points->array_size() == 3);
+    assert(points->as_float_array());
+  }
+
+  // Tight max element policy should keep oversized arrays eager.
+  {
+    LoadOptions limited = enabled_opts;
+    limited.parse_options.max_usda_lazy_array_elements = 2;
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), limited);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("small")->is_lazy());
+    assert(!mesh.GetPropertyValue("large")->is_lazy());
+    assert(!mesh.GetPropertyValue("points")->is_lazy());
+  }
+
+  // 0 => no cap.
+  {
+    LoadOptions unlimited = enabled_opts;
+    unlimited.parse_options.max_usda_lazy_array_elements = 0;
+    LoadResult result =
+        LoadUSDAFromString(input, std::strlen(input), unlimited);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshA");
+    assert(mesh.IsValid());
+    assert(mesh.GetPropertyValue("large")->is_lazy());
+  }
+
+  // Non-simple arrays are still parsed correctly, but not captured lazily.
+  const char* comments = R"(#usda 1.0
+def Mesh "MeshB" {
+    int[] with_comment = [1, # inline comment
+        2, 3]
+}
+)";
+  {
+    LoadResult result =
+        LoadUSDAFromString(comments, std::strlen(comments), enabled_opts);
+    assert(result.success);
+    UsdPrim mesh = result.stage.GetPrimAtPath("/MeshB");
+    assert(mesh.IsValid());
+    const Value* with_comment = mesh.GetPropertyValue("with_comment");
+    assert(with_comment);
+    assert(!with_comment->is_lazy());
+    const std::vector<int32_t>* values = with_comment->as_int_array();
+    assert(values && values->size() == 3);
+    assert((*values)[1] == 2);
+  }
+
+  std::cout << "  USDA lazy parse policy tests passed!" << std::endl;
+}
+
 // ============================================================
 // Arc list-op qualifiers (prepend / append / delete)
 // ============================================================
@@ -797,6 +889,7 @@ int main() {
     test_value_parser();
     test_ascii_parser();
     test_usda_reader();
+    test_usda_lazy_parse_policies();
     test_arc_listops();
     test_arc_layer_offset_parse();
     test_physics_schema();

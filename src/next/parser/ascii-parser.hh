@@ -30,7 +30,7 @@ struct ParseOptions {
   bool enable_usda_lazy_arrays = false;
 
   /// Maximum elements accepted for USDA array lazy-materialization (hard cap per
-  /// array). Arrays larger than this are parsed eagerly.
+  /// array). Arrays larger than this are parsed eagerly. 0 means no cap.
   size_t max_usda_lazy_array_elements = (static_cast<size_t>(1) << 30);
 
   /// Maximum nesting depth for prims

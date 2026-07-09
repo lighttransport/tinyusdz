@@ -12,9 +12,25 @@
 #include <unordered_set>
 #include <fstream>
 #include <system_error>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
+namespace {
+
+ParseOptions NormalizeParseOptions(const ParseOptions& options) {
+  ParseOptions normalized = options;
+  if (normalized.max_usda_lazy_array_elements == 0) {
+    normalized.max_usda_lazy_array_elements =
+        std::numeric_limits<size_t>::max();
+  }
+  if (normalized.num_threads < 0) {
+    normalized.num_threads = 0;
+  }
+  return normalized;
+}
+
+}  // namespace
 
 bool IsNameToken(const Token& tok) {
   switch (tok.type) {
@@ -570,7 +586,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 // ============================================================
 
 AsciiParser::AsciiParser(const ParseOptions& options)
-    : impl_(std::make_unique<Impl>(options)) {}
+    : impl_(std::make_unique<Impl>(NormalizeParseOptions(options))) {}
 
 AsciiParser::~AsciiParser() = default;
 
