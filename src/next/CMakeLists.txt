@@ -104,6 +104,9 @@ set(TINYUSDZ_NEXT_SOURCES
     pcp/load-rules.cc
     pcp/cache.cc
 
+    # AOUSD Core validation
+    validation/usd-validation.cc
+
     # High-level API
     tinyusdz-next.cc
 )
@@ -200,6 +203,9 @@ set(TINYUSDZ_NEXT_HEADERS
     pcp/namespace-mapping.hh
     pcp/prim-index.hh
     pcp/layer-registry.hh
+
+    # AOUSD Core validation
+    validation/usd-validation.hh
     pcp/cache-arc-expansion.inc
     pcp/cache.hh
     pcp/cache-compose.inc
@@ -425,6 +431,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_memory_flatten PRIVATE tinyusdz_next)
 
+    add_executable(test_validation
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation.cc
+    )
+    target_link_libraries(test_validation PRIVATE tinyusdz_next)
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -645,6 +656,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_memory_flatten COMMAND test_memory_flatten
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_validation COMMAND test_validation
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_tydra COMMAND test_tydra_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
@@ -675,6 +688,7 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_load_rules
         next_test_layer_diff
         next_test_memory_flatten
+        next_test_validation
         next_test_tydra)
     set_tests_properties(${TINYUSDZ_NEXT_SMOKE_TESTS}
         PROPERTIES LABELS "next")

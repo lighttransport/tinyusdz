@@ -238,4 +238,35 @@ await testAsync('next-only module usddiff diffs USDA layers', async () => {
   assert.ok(json.property_diffs, 'json output should carry property_diffs');
 });
 
+await testAsync('next-only module validates USD from binary', async () => {
+  const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js'
+                      : '../src/tinyusdz/tinyusdz_next.js';
+  const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
+    locateFile: (file) => new URL(file, wasmDir).pathname,
+  });
+  assert.equal(typeof native.validateFromBinary, 'function',
+    'next-only glue should expose validateFromBinary');
+
+  const ok = JSON.parse(native.validateFromBinary(
+    encode(DEP_USDA), 'ok.usda', JSON.stringify({ groups: ['core', 'geom'] })));
+  assert.equal(ok.parse_ok, true, 'valid USDA should parse');
+  assert.ok(Array.isArray(ok.issues), 'issues should be an array');
+  assert.ok(ok.checked_groups.includes('core'), 'core group should be checked');
+  assert.ok(ok.checked_groups.includes('geom'), 'geom group should be checked');
+  assert.equal(typeof ok.spec_version, 'string', 'spec_version should be present');
+
+  // metersPerUnit = 0 is an AOUSD core violation.
+  const bad = JSON.parse(native.validateFromBinary(
+    encode('#usda 1.0\n(\n    metersPerUnit = 0\n)\n'), 'bad.usda',
+    JSON.stringify({ groups: ['core'] })));
+  assert.equal(bad.parse_ok, true, 'bad-meta USDA still parses');
+  assert.equal(bad.ok, false, 'violations should fail validation');
+  assert.ok(bad.error_count >= 1, 'error_count should reflect violations');
+
+  const noParse = JSON.parse(native.validateFromBinary(
+    encode('not a usd file at all'), 'junk.bin', '{}'));
+  assert.equal(noParse.parse_ok, false, 'junk input should report parse failure');
+  assert.equal(typeof noParse.error, 'string', 'parse failure should carry error');
+});
+
 console.log(`next-usda-composition tests done (${wasm64 ? 'wasm64' : 'wasm32'})`);

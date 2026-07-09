@@ -614,9 +614,11 @@ struct RenderLight {
   float diffuse = 1.0f;
   float specular = 1.0f;
   float shaping_focus = 0.0f;
-  float shaping_focus_tint = 0.0f;
+  Float3 shaping_focus_tint = {0, 0, 0};  // color3f per UsdLux ShapingAPI
   float shaping_cone_softness = 0.0f;
   std::string shaping_ies_file;
+  float shaping_ies_angle_scale = 0.0f;
+  bool shaping_ies_normalize = false;
   std::vector<std::string> light_link_targets;
   std::vector<std::string> shadow_link_targets;
   std::vector<std::string> filter_targets;
@@ -665,6 +667,15 @@ struct RenderCamera {
   // Clipping
   float near_clip = 0.1f;
   float far_clip = 10000.0f;
+
+  // Depth of field / exposure
+  float focus_distance = 0.0f;  // 0 = no DoF
+  float fstop = 0.0f;           // 0 = no DoF
+
+  // Motion-blur shutter interval (UsdGeomCamera shutter:open/close), in
+  // time-code offsets relative to the sample time.
+  double shutter_open = 0.0;
+  double shutter_close = 0.0;
 
   // Computed FOV
   float fov_y() const;
