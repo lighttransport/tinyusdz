@@ -272,6 +272,22 @@ void DiscardLazyArrayRangePages(const Value& value, size_t elem_lo,
 bool PrintArrayToStream(StreamWriter& os, const Value& value,
                         const PrintOptions& opts) {
   if (!value.is_array()) return false;
+  constexpr size_t kSerialRangeChunkElems = 64u * 1024u;
+  if (value.is_lazy() && value.array_size() >= kSerialRangeChunkElems &&
+      IsChunkableArray(value, opts)) {
+    const size_t n = value.array_size();
+    for (size_t lo = 0; lo < n; lo += kSerialRangeChunkElems) {
+      const size_t hi = (lo + kSerialRangeChunkElems < n)
+                            ? lo + kSerialRangeChunkElems
+                            : n;
+      if (!PrintArrayRangeToStream(os, value, opts, lo, hi,
+                                   /*open=*/lo == 0,
+                                   /*close=*/hi == n)) {
+        return false;
+      }
+    }
+    return true;
+  }
   ChunkedStream out(os);
   const size_t maxN = opts.max_array_elements;
   const TypeId type_id = value.type_id();
