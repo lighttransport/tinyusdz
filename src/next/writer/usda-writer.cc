@@ -7,6 +7,7 @@
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
+#include "../crate/lazy-array.hh"
 #include "../strfmt.hh"
 #include "../layer/property-index.hh"
 #include <cstdio>
@@ -52,6 +53,12 @@ constexpr size_t kSplitMinElems = 2u * kChunkElems;
 constexpr size_t kOffloadMinElems = 256u;
 constexpr size_t kMaterializeChunkMin = 1u << 20;  // 1Mi elements
 
+bool IsCompressedLazyIntArray(const Value& value) {
+  if (!value.is_lazy() || value.type_id() != TypeId::Int) return false;
+  const LazyArrayRef* ref = value.lazy_ref();
+  return ref && ref->is_compressed && ref->crate_type == CrateTypeId::Int;
+}
+
 // Collects ordered tasks during the serial build walk. Structural bytes accrue in
 // `cur` (the StreamWriter target); each offloaded array flushes `cur` as a Text
 // task and appends WholeValue/Chunk task(s). The worker emits the array's full
@@ -93,6 +100,11 @@ struct SegmentSink {
     const size_t n = ArrayElementCount(*v);
     if (n >= kSplitMinElems && IsChunkableArray(*v, *po)) {
       push_chunks(v, n, /*free_idx=*/-1);  // borrowable: chunk in place
+    } else if (IsCompressedLazyIntArray(*v)) {
+      WriteTask t;
+      t.kind = WriteTask::Kind::WholeValue;
+      t.value = v;
+      tasks->push_back(std::move(t));
     } else if (n >= kMaterializeChunkMin && holder && IsChunkableType(*v, *po)) {
       holder->push_back(v->materialized_copy());  // decode once, then chunk
       push_chunks(&holder->back(), n,
