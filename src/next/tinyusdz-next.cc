@@ -266,12 +266,18 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
                          comp_opts);
 }
 
-bool LoadUSDComposed(const std::string& filename, Stage* stage,
-                     const LoadUSDOptions& load_options,
-                     std::string* warn, std::string* err,
-                     const pcp::CompositionOptions* comp_opts) {
-  // Lazy single-layer load first (keeps arrays as lazy ValueRefs).
-  if (!LoadUSD(filename, stage, load_options, warn, err)) {
+bool StageNeedsComposition(const Stage& stage) {
+  const Layer* root = stage.GetRootLayer();
+  return root && RootNeedsComposition(*root);
+}
+
+bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
+                        const std::string& anchor_label,
+                        const LoadUSDOptions& load_options,
+                        std::string* warn, std::string* err,
+                        const pcp::CompositionOptions* comp_opts) {
+  if (!stage) {
+    if (err) *err = "composition failed: null stage";
     return false;
   }
   Layer* root = stage->GetRootLayer();
@@ -280,6 +286,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
     // the byte-identical fast path for pre-flattened / self-contained scenes.
     return true;
   }
+  const std::string& filename = anchor_label;
 
   // The root has composition arcs. Resolve them through the full PCP composition
   // engine (sublayers + references + payloads + inherits/specializes + variants
@@ -295,9 +302,6 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   // the composed STAGE keeps just one copy per prototype. (Inline expansion via
   // detect_instances=false instead duplicates every instance's geometry into the
   // stage and OOMs on large scenes like Caldera beachhead/capital.)
-  AssetResolver resolver;
-  resolver.SetWorkingDirectory(DirOfPath(filename));
-
   pcp::CompositionOptions copts;
   copts.load_payloads = true;
   // Diagnostics: TINYUSDZ_NEXT_TIMING emits [next_build]/[next_compose] phase
@@ -364,6 +368,31 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   }
   *stage = std::move(composed);
   return true;
+}
+
+bool ComposeLoadedStage(Stage* stage, std::string* warn, std::string* err,
+                        const pcp::CompositionOptions* comp_opts,
+                        const std::string& anchor_label) {
+  // Memory-rooted stages have no anchor directory; external arcs resolve
+  // through the resolver's custom callbacks only (or surface as warnings).
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("");
+  return ComposeLoadedStage(stage, resolver, anchor_label, LoadUSDOptions{},
+                            warn, err, comp_opts);
+}
+
+bool LoadUSDComposed(const std::string& filename, Stage* stage,
+                     const LoadUSDOptions& load_options,
+                     std::string* warn, std::string* err,
+                     const pcp::CompositionOptions* comp_opts) {
+  // Lazy single-layer load first (keeps arrays as lazy ValueRefs).
+  if (!LoadUSD(filename, stage, load_options, warn, err)) {
+    return false;
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(DirOfPath(filename));
+  return ComposeLoadedStage(stage, resolver, filename, load_options, warn, err,
+                            comp_opts);
 }
 
 bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,

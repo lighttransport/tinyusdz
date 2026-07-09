@@ -238,7 +238,13 @@ export class NextRenderSceneAdapter {
             : this.unsupportedRenderables.length;
         this.sceneMetadata = {
             upAxis: options.upAxis || 'Y',
-            metersPerUnit: options.metersPerUnit || 1.0
+            metersPerUnit: options.metersPerUnit || 1.0,
+            framesPerSecond: Number.isFinite(options.framesPerSecond) && options.framesPerSecond > 0
+                ? options.framesPerSecond : undefined,
+            timeCodesPerSecond: Number.isFinite(options.timeCodesPerSecond) && options.timeCodesPerSecond > 0
+                ? options.timeCodesPerSecond : undefined,
+            startTimeCode: Number.isFinite(options.startTimeCode) ? options.startTimeCode : undefined,
+            endTimeCode: Number.isFinite(options.endTimeCode) ? options.endTimeCode : undefined
         };
         this.fallbackReason = options.fallbackReason || '';
 
@@ -423,6 +429,14 @@ export class NextRenderSceneAdapter {
                 typeof renderStream.setTangentMethod === 'function') {
                 renderStream.setTangentMethod(String(options.tangentMethod));
             }
+            // Variant selection: the next compositor keys overrides by variant
+            // SET name (applies to every prim carrying that set).
+            if (options.variantSelection && options.variantSelection.variantSet &&
+                typeof renderStream.setVariantOverride === 'function') {
+                renderStream.setVariantOverride(
+                    String(options.variantSelection.variantSet),
+                    String(options.variantSelection.variantName ?? ''));
+            }
             report('native-load', 24, 'Starting USD crate reader...');
             await yieldForProgress();
             beginResult = renderStream.begin(crate);
@@ -432,6 +446,25 @@ export class NextRenderSceneAdapter {
             }
             report('native-load', 48, 'Constructed render stream.');
             await yieldForProgress();
+
+            // Surface authored variant sets in the legacy extractVariants()
+            // shape: [{primPath, variantSets: [{name, selection, options}]}].
+            if (typeof options.onVariants === 'function' &&
+                typeof renderStream.listVariants === 'function') {
+                const byPrim = new Map();
+                for (const entry of renderStream.listVariants()) {
+                    if (!entry || !entry.primPath) continue;
+                    if (!byPrim.has(entry.primPath)) {
+                        byPrim.set(entry.primPath, { primPath: entry.primPath, variantSets: [] });
+                    }
+                    byPrim.get(entry.primPath).variantSets.push({
+                        name: entry.setName,
+                        selection: entry.selected || '',
+                        options: Array.from(entry.variants || [])
+                    });
+                }
+                options.onVariants(Array.from(byPrim.values()));
+            }
 
             const metadata = typeof renderStream.getSceneMetadata === 'function'
                 ? renderStream.getSceneMetadata()
@@ -665,7 +698,11 @@ export class NextRenderSceneAdapter {
                 upAxis: metadata.upAxis || 'Y',
                 metersPerUnit: (typeof metadata.metersPerUnit === 'number' && metadata.metersPerUnit > 0)
                     ? metadata.metersPerUnit
-                    : 1.0
+                    : 1.0,
+                framesPerSecond: metadata.framesPerSecond,
+                timeCodesPerSecond: metadata.timeCodesPerSecond,
+                startTimeCode: metadata.startTimeCode,
+                endTimeCode: metadata.endTimeCode
             });
         } catch (error) {
             try { renderStream.end(); } catch (_) {}
@@ -1388,9 +1425,19 @@ class TinyUSDZLoader extends Loader {
             if (getParam("memory64") == "true") {
               use_memory64 = true;
             }
-            const use_next_only_wasm = options.useNextOnlyWasm === true ||
-                getParam("wasm") === "next" ||
-                getParam("nextWasm") === "true";
+            // backend=next selects the next-only WASM module so the page runs
+            // on the full next RenderStream surface (the legacy module's
+            // RenderStream is a reduced legacy shim). `wasm=` stays the
+            // explicit override in both directions.
+            const wasmParam = getParam("wasm");
+            const backendWantsNext = options.backend === 'next' ||
+                getParam("backend") === "next";
+            const use_next_only_wasm = wasmParam === "legacy"
+                ? false
+                : (options.useNextOnlyWasm === true ||
+                   wasmParam === "next" ||
+                   getParam("nextWasm") === "true" ||
+                   backendWantsNext);
 
 
             let initTinyUSDZNative = null;

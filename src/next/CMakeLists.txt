@@ -93,6 +93,9 @@ set(TINYUSDZ_NEXT_SOURCES
     # Composition
     composition/composition.cc
 
+    # Layer / PrimSpec diff
+    diff/layer-diff.cc
+
     # Low-memory flatten pipeline
     pipeline/flatten.cc
 
@@ -188,6 +191,9 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Composition
     composition/composition.hh
+
+    # Layer / PrimSpec diff
+    diff/layer-diff.hh
 
     # PCP-style lazy composition cache (native to next)
     pcp/arc-types.hh
@@ -408,6 +414,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_load_rules.cc
     )
     target_link_libraries(test_load_rules PRIVATE tinyusdz_next)
+
+    add_executable(test_layer_diff
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_layer_diff.cc
+    )
+    target_link_libraries(test_layer_diff PRIVATE tinyusdz_next)
 
     add_executable(test_memory_flatten
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_memory_flatten.cc
@@ -630,6 +641,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_layer_diff COMMAND test_layer_diff
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_memory_flatten COMMAND test_memory_flatten
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_tydra COMMAND test_tydra_next
@@ -660,6 +673,7 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_crash_regressions
         next_test_usdc_malformed
         next_test_load_rules
+        next_test_layer_diff
         next_test_memory_flatten
         next_test_tydra)
     set_tests_properties(${TINYUSDZ_NEXT_SMOKE_TESTS}

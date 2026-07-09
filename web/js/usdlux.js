@@ -22,6 +22,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { getBackendFromURL } from 'tinyusdz/LoaderConfigUtils.js';
 
 // Light-to-HDRI projection (no TinyUSDZ dependency)
 import {
@@ -4408,7 +4409,7 @@ async function initLoader() {
   if (loader) return loader;
 
   loader = new TinyUSDZLoader();
-  await loader.init({ useMemory64: false });
+  await loader.init({ useMemory64: false, backend: getBackendFromURL() });
   loader.setMaxMemoryLimitMB(500);
 
   debugLog('TinyUSDZ loader initialized');
@@ -4423,7 +4424,7 @@ async function loadUSDFromBuffer(buffer, filename) {
     await initLoader();
 
     const usd = await new Promise((resolve, reject) => {
-      loader.parse(buffer, filename, resolve, reject);
+      loader.parse(buffer, filename, resolve, reject, { backend: getBackendFromURL() });
     });
 
     if (!usd) {

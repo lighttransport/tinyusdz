@@ -25,8 +25,10 @@
 #include <utility>
 #include <vector>
 
+#include "next/diff/layer-diff.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/pipeline/flatten.hh"
+#include "tsd/tinysubdiv.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-xform.hh"
@@ -496,6 +498,155 @@ static std::unique_ptr<tn::Layer> ParseNextLayerBytes(
 
 }  // namespace
 
+namespace {
+
+// Copy a JS typed array (or null/undefined -> empty) into a C++ vector.
+template <typename T>
+void CopyTypedArrayToVector(const emscripten::val& v, std::vector<T>& out) {
+  out.clear();
+  if (v.isNull() || v.isUndefined()) return;
+  const size_t len = v["length"].as<size_t>();
+  if (!len) return;
+  out.resize(len);
+  emscripten::val heap =
+      emscripten::val(emscripten::typed_memory_view(len, out.data()));
+  heap.call<void>("set", v);
+}
+
+}  // namespace
+
+// ===========================================================================
+// SubdivStreamer.refineStream(...) refines a control mesh and delivers the
+// refined surface to a JS callback in bounded batches (zero-copy heap views),
+// so the full level-N output never resides in the wasm heap at once. Ported
+// verbatim from the legacy module (pure tsd::, no legacy-core dependency).
+// ===========================================================================
+class SubdivStreamer {
+ public:
+  // points: Float32Array (xyz interleaved). fvc/fvi: Uint32Array.
+  // scheme: 0=catmullClark, 1=loop, 2=bilinear.
+  // boundary: 0=edgeAndCorner, 1=edgeOnly, 2=none.
+  // uvValues: Float32Array (stride 2) or null/empty for no texturing.
+  // uvIndices: Uint32Array (per face-corner) or null for identity.
+  // uvInterp: 0 = linear ("all"); 1 = smooth seam-split ("cornersPlus1").
+  // batchFaces: parent faces per output batch (0 => default).
+  // blockFaces: >0 bounds the WORKING set; 0 => whole-mesh streaming.
+  // haloRings: block halo radius (0 => library default).
+  // onBatch(positions, normals|null, indices, faceSource, uv|null,
+  //         numVertices, numFaces, batchIndex): views valid only for the call.
+  // Returns "" on success, else an error message.
+  std::string refineStream(const emscripten::val &points,
+                           const emscripten::val &fvc,
+                           const emscripten::val &fvi,
+                           const emscripten::val &uvValues,
+                           const emscripten::val &uvIndices, int uvInterp,
+                           int scheme, int boundary, int level, int batchFaces,
+                           int blockFaces, int haloRings, bool wantNormals,
+                           emscripten::val onBatch) {
+    namespace tsd = tinyusdz::tsd;
+
+    std::vector<float> pts;
+    std::vector<uint32_t> counts;
+    std::vector<uint32_t> indices;
+    CopyTypedArrayToVector(points, pts);
+    CopyTypedArrayToVector(fvc, counts);
+    CopyTypedArrayToVector(fvi, indices);
+    if ((pts.size() % 3) != 0) {
+      return "points length must be a multiple of 3";
+    }
+    if (counts.empty() || indices.empty()) {
+      return "empty mesh";
+    }
+
+    std::vector<float> uvs;
+    std::vector<uint32_t> uvidx;
+    CopyTypedArrayToVector(uvValues, uvs);
+    CopyTypedArrayToVector(uvIndices, uvidx);
+    const bool has_uv = (uvs.size() >= 2) && ((uvs.size() % 2) == 0);
+
+    tsd::MeshView mesh;
+    mesh.points = pts.data();
+    mesh.num_points = uint32_t(pts.size() / 3);
+    mesh.face_vertex_counts = counts.data();
+    mesh.num_faces = uint32_t(counts.size());
+    mesh.face_vertex_indices = indices.data();
+    mesh.num_face_vertex_indices = uint32_t(indices.size());
+
+    tsd::FVarChannelView uvchan;
+    if (has_uv) {
+      uvchan.values = uvs.data();
+      uvchan.num_values = uint32_t(uvs.size() / 2);
+      uvchan.indices = uvidx.empty() ? nullptr : uvidx.data();
+      uvchan.stride = 2;
+      uvchan.interpolation = (uvInterp == 1)
+                                 ? tsd::FVarLinearInterpolation::CornersPlus1
+                                 : tsd::FVarLinearInterpolation::All;
+    }
+
+    tsd::Options opts;
+    opts.scheme = (scheme == 1)   ? tsd::Scheme::Loop
+                  : (scheme == 2) ? tsd::Scheme::Bilinear
+                                  : tsd::Scheme::CatmullClark;
+    opts.boundary = (boundary == 1)   ? tsd::BoundaryInterpolation::EdgeOnly
+                    : (boundary == 2) ? tsd::BoundaryInterpolation::None
+                                      : tsd::BoundaryInterpolation::EdgeAndCorner;
+    opts.level = level;
+    opts.remove_holes = true;
+
+    tsd::StreamOptions so;
+    so.batch_faces = (batchFaces > 0) ? uint32_t(batchFaces) : 4096u;
+    so.emit_triangles = true;
+    so.want_normals = wantNormals;
+    so.dedup_within_batch = true;
+    so.block_faces = (blockFaces > 0) ? uint32_t(blockFaces) : 0u;
+    so.halo_rings = (haloRings > 0) ? uint32_t(haloRings) : 0u;
+
+    struct SinkCtx {
+      emscripten::val *cb;
+      bool want_normals;
+    } ctx{&onBatch, wantNormals};
+
+    auto sink = [](void *user, const tsd::StreamBatch *b) -> bool {
+      SinkCtx *c = static_cast<SinkCtx *>(user);
+      emscripten::val pos(emscripten::typed_memory_view(
+          size_t(b->num_vertices) * 3, const_cast<float *>(b->positions)));
+      emscripten::val nrm =
+          (c->want_normals && b->normals)
+              ? emscripten::val(emscripten::typed_memory_view(
+                    size_t(b->num_vertices) * 3, const_cast<float *>(b->normals)))
+              : emscripten::val::null();
+      emscripten::val idx(emscripten::typed_memory_view(
+          size_t(b->num_indices), const_cast<uint32_t *>(b->indices)));
+      emscripten::val fsrc(emscripten::typed_memory_view(
+          size_t(b->num_faces), const_cast<uint32_t *>(b->face_source)));
+      emscripten::val uv =
+          (b->num_fvar == 1)
+              ? emscripten::val(emscripten::typed_memory_view(
+                    size_t(b->num_indices) * 2,
+                    const_cast<float *>(b->fvar[0].values)))
+              : emscripten::val::null();
+      (*c->cb)(pos, nrm, idx, fsrc, uv, b->num_vertices, b->num_faces,
+               b->batch_index);
+      return true;
+    };
+
+    std::string err;
+    const tsd::Result r = tsd::RefineStream(
+        mesh, has_uv ? &uvchan : nullptr, has_uv ? 1u : 0u, nullptr, 0, opts, so,
+        sink, &ctx, &err);
+    if (r != tsd::Result::Success) {
+      return std::string("RefineStream failed (") + tsd::to_string(r) +
+             "): " + err;
+    }
+    return "";
+  }
+
+  // Total wasm linear-memory bytes (grow-only => heap high-water mark).
+  double heapBytes() const {
+    return emscripten::val::module_property("HEAPU8")["length"].as<double>();
+  }
+};
+
 // Resumable multi-layer flatten session: JS drives a need-layer loop,
 // providing dependency layer bytes (USDA / USDC / USDZ, fetched over HTTP or
 // pulled from a package) until the flatten converges, then receives a
@@ -847,6 +998,35 @@ class RenderStream {
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
   void setComputeTangents(bool enabled) { compute_tangents_ = enabled; }
+
+  // Strongest variant selection for a variant SET (applies to every prim
+  // carrying that set, matching the compositor's set-name-keyed overrides).
+  // Takes effect on the next begin()/beginOwned().
+  void setVariantOverride(const std::string &set_name,
+                          const std::string &selection) {
+    variant_overrides_[set_name] = selection;
+  }
+  void clearVariantOverrides() { variant_overrides_.clear(); }
+
+  // Authored variant sets of the most recently loaded root layer (recorded
+  // before composition consumes them): [{primPath, setName, selected,
+  // variants: [names...]}].
+  emscripten::val listVariants() const {
+    emscripten::val out = emscripten::val::array();
+    for (const VariantSetInfo &info : variant_sets_) {
+      emscripten::val item = emscripten::val::object();
+      item.set("primPath", info.prim_path);
+      item.set("setName", info.set_name);
+      item.set("selected", info.selected);
+      emscripten::val names = emscripten::val::array();
+      for (const std::string &name : info.variant_names) {
+        names.call<void>("push", name);
+      }
+      item.set("variants", names);
+      out.call<void>("push", item);
+    }
+    return out;
+  }
   void setTangentMethod(const std::string &method) {
     tangent_method_ = method;
     std::transform(tangent_method_.begin(), tangent_method_.end(),
@@ -893,6 +1073,25 @@ class RenderStream {
           std::move(crate), &stage_, opts, &warn, &err);
       if (!ok) {
         error_ = err.empty() ? std::string("USD memory load failed") : err;
+        r.set("success", false);
+        r.set("error", error_);
+        return r;
+      }
+    }
+    // Record authored variant sets (consumed by composition below), then
+    // compose in place when the layer carries composition arcs — variants,
+    // internal references, inherits/specializes. External arcs cannot anchor
+    // for memory roots and surface as warnings (multi-layer scenes go through
+    // NextFlattenSession instead).
+    collectVariantSets_();
+    if (tinyusdz::next::StageNeedsComposition(stage_)) {
+      tinyusdz::next::pcp::CompositionOptions copts;
+      copts.variant_overrides = variant_overrides_;
+      std::string cwarn, cerr;
+      if (!tinyusdz::next::ComposeLoadedStage(&stage_, &cwarn, &cerr, &copts,
+                                              "memory-root")) {
+        error_ = cerr.empty() ? std::string("in-memory composition failed")
+                              : cerr;
         r.set("success", false);
         r.set("error", error_);
         return r;
@@ -2932,6 +3131,51 @@ class RenderStream {
   std::set<std::string> source_material_keys_;
   std::set<std::string> source_texture_keys_;
   std::set<std::string> texture_keys_;
+  struct VariantSetInfo {
+    std::string prim_path;
+    std::string set_name;
+    std::string selected;
+    std::vector<std::string> variant_names;
+  };
+
+  void collectVariantSets_() {
+    variant_sets_.clear();
+    const tinyusdz::next::Layer *root = stage_.GetRootLayer();
+    if (!root) return;
+    for (const auto &prim : root->prims()) {
+      const auto &meta = prim.meta();
+      for (const auto &vs : meta.variantSets()) {
+        VariantSetInfo info;
+        info.prim_path = prim.path().str();
+        info.set_name = vs.name;
+        // Authored selection lives in the prim's `variants = {...}` metadata
+        // (variantSelections / legacy single variantSelection), not on the
+        // VariantSetData itself.
+        info.selected = vs.selected;
+        for (const auto &sel : meta.variantSelections()) {
+          if (sel.first == vs.name) {
+            info.selected = sel.second;
+            break;
+          }
+        }
+        if (info.selected.empty() && !meta.variantSelection.empty()) {
+          const std::string &legacy = meta.variantSelection;
+          const size_t eq = legacy.find('=');
+          if (eq != std::string::npos && legacy.substr(0, eq) == vs.name) {
+            info.selected = legacy.substr(eq + 1);
+          }
+        }
+        for (const auto &variant : vs.variants) {
+          info.variant_names.push_back(variant.name);
+        }
+        variant_sets_.push_back(std::move(info));
+      }
+    }
+  }
+
+  std::vector<VariantSetInfo> variant_sets_;
+  std::map<std::string, std::string> variant_overrides_;
+
   Stats stats_;
   bool loaded_ = false;
   bool material_dedup_ = false;
@@ -2949,12 +3193,134 @@ class RenderStream {
   std::vector<float> s_joint_weights_;
 };
 
+namespace {
+
+int OptInt(const emscripten::val& opts, const char* key, int def) {
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<int>();
+}
+
+double OptDouble(const emscripten::val& opts, const char* key, double def) {
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<double>();
+}
+
+bool OptBool(const emscripten::val& opts, const char* key, bool def) {
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<bool>();
+}
+
+std::string OptStr(const emscripten::val& opts, const char* key,
+                   const char* def) {
+  emscripten::val v = opts[key];
+  if (v.isUndefined() || v.isNull()) return def;
+  return v.as<std::string>();
+}
+
+}  // namespace
+
+// usddiff(opts) -> { success, hasDiffs, text?, json?, error?, warn? }
+// opts: { left:{data:Uint8Array, name?}, right:{data:Uint8Array, name?},
+//         format?:"text"|"json"|"both", ulps?, eps?, compareMetadata?,
+//         fuzzyAssetPaths? }
+// Pre-composition layer diff over next::Layer, mirroring the legacy module's
+// usddiff / native tusddiff contract.
+static emscripten::val usddiff(const emscripten::val& opts) {
+  emscripten::val result = emscripten::val::object();
+
+  if (opts.isUndefined() || opts.isNull()) {
+    result.set("success", false);
+    result.set("error", std::string("usddiff: missing options"));
+    return result;
+  }
+  emscripten::val left = opts["left"];
+  emscripten::val right = opts["right"];
+  if (left.isUndefined() || left.isNull() || right.isUndefined() ||
+      right.isNull()) {
+    result.set("success", false);
+    result.set("error",
+               std::string("usddiff: 'left' and 'right' are required"));
+    return result;
+  }
+
+  std::string copy_error;
+  std::string lhsBuf = CopyUint8ArrayToString(left["data"], &copy_error);
+  std::string rhsBuf = CopyUint8ArrayToString(right["data"], &copy_error);
+  const std::string lhsName = OptStr(left, "name", "left");
+  const std::string rhsName = OptStr(right, "name", "right");
+  const std::string format = OptStr(opts, "format", "text");
+
+  tn::DiffOptions diffOpts;
+  {
+    const int ulps = OptInt(opts, "ulps", -1);
+    if (ulps >= 0) {
+      diffOpts.floatUlps = static_cast<uint32_t>(ulps);
+      diffOpts.doubleUlps = static_cast<uint64_t>(ulps);
+    }
+    diffOpts.absEps = OptDouble(opts, "eps", diffOpts.absEps);
+    diffOpts.compareMetadata =
+        OptBool(opts, "compareMetadata", diffOpts.compareMetadata);
+    diffOpts.fuzzyAssetPaths =
+        OptBool(opts, "fuzzyAssetPaths", diffOpts.fuzzyAssetPaths);
+  }
+
+  std::string warn, err;
+  std::shared_ptr<tn::Layer> lhs = tn::pcp::LoadLayerFromMemory(
+      lhsName, reinterpret_cast<const uint8_t*>(lhsBuf.data()), lhsBuf.size(),
+      &warn, &err);
+  if (!lhs) {
+    result.set("success", false);
+    result.set("error", "Error loading " + lhsName + ": " + err);
+    return result;
+  }
+  err.clear();
+  std::shared_ptr<tn::Layer> rhs = tn::pcp::LoadLayerFromMemory(
+      rhsName, reinterpret_cast<const uint8_t*>(rhsBuf.data()), rhsBuf.size(),
+      &warn, &err);
+  if (!rhs) {
+    result.set("success", false);
+    result.set("error", "Error loading " + rhsName + ": " + err);
+    return result;
+  }
+
+  std::unordered_map<std::string, tn::PrimSpecDiff> psDiffs;
+  std::unordered_map<std::string, tn::PropDiff> propDiffs;
+  tn::LayerMetaDiff layerMetaDiff;
+  tn::Diff(*lhs, *rhs, psDiffs, propDiffs, diffOpts, &layerMetaDiff);
+  const bool hasDiffs =
+      !psDiffs.empty() || !propDiffs.empty() || layerMetaDiff.changed();
+
+  result.set("success", true);
+  result.set("hasDiffs", hasDiffs);
+  if (!warn.empty()) result.set("warn", warn);
+  if (format == "text" || format == "both") {
+    result.set("text", hasDiffs
+                           ? tn::DiffToText(*lhs, *rhs, lhsName, rhsName,
+                                            diffOpts)
+                           : std::string("No differences found.\n"));
+  }
+  if (format == "json" || format == "both") {
+    result.set("json", tn::DiffToJSON(*lhs, *rhs, lhsName, rhsName, diffOpts));
+  }
+  return result;
+}
+
 EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
+  emscripten::function("usddiff", &usddiff);
+
   emscripten::class_<NextUSDZConverterNative>("NextUSDZConverterNative")
       .constructor<>()
       .function("rewriteRoot", &NextUSDZConverterNative::rewriteRoot)
       .function("error", &NextUSDZConverterNative::error)
       .function("warn", &NextUSDZConverterNative::warn);
+
+  emscripten::class_<SubdivStreamer>("SubdivStreamer")
+      .constructor<>()
+      .function("refineStream", &SubdivStreamer::refineStream)
+      .function("heapBytes", &SubdivStreamer::heapBytes);
 
   emscripten::class_<NextFlattenSession>("NextFlattenSession")
       .constructor<>()
@@ -2973,6 +3339,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("setFlattenRenderTree", &RenderStream::setFlattenRenderTree)
       .function("setComputeTangents", &RenderStream::setComputeTangents)
       .function("setTangentMethod", &RenderStream::setTangentMethod)
+      .function("setVariantOverride", &RenderStream::setVariantOverride)
+      .function("clearVariantOverrides", &RenderStream::clearVariantOverrides)
+      .function("listVariants", &RenderStream::listVariants)
       .function("begin", &RenderStream::begin)
       .function("beginOwned", &RenderStream::beginOwned)
       .function("meshCount", &RenderStream::meshCount)

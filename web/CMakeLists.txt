@@ -131,6 +131,17 @@ if (TINYUSDZ_WASM_NEXT_ONLY)
   add_subdirectory(${PROJECT_SOURCE_DIR}/../src/next tinyusdz_next_build EXCLUDE_FROM_ALL)
 
   add_executable(tinyusdz_next_wasm binding-next.cc)
+  # tinysubdiv (tsd): dependency-free subdivision streaming for SubdivStreamer.
+  target_sources(tinyusdz_next_wasm PRIVATE
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-validate.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-topology.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-bilinear.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-catmark.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-loop.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-fvar.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-refine.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-stream.cc
+    ${PROJECT_SOURCE_DIR}/../src/tsd/tsd-limit.cc)
   target_link_libraries(tinyusdz_next_wasm PRIVATE tydra_next tinyusdz_next)
   target_include_directories(tinyusdz_next_wasm PRIVATE "${PROJECT_SOURCE_DIR}/../src/")
   target_compile_features(tinyusdz_next_wasm PRIVATE cxx_std_17)

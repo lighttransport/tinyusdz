@@ -113,6 +113,73 @@ await testAsync('next-only module composes USDA root + USDA dependency', async (
   }
 });
 
+const VARIANT_USDA = `#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root" (
+    variants = {
+        string lod = "high"
+    }
+    prepend variantSets = "lod"
+)
+{
+    variantSet "lod" = {
+        "high" {
+            def Mesh "HighGeo"
+            {
+                int[] faceVertexCounts = [3, 3]
+                int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            }
+        }
+        "low" {
+            def Mesh "LowGeo"
+            {
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            }
+        }
+    }
+}
+`;
+
+await testAsync('next-only RenderStream applies variant selections', async () => {
+  const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js'
+                      : '../src/tinyusdz/tinyusdz_next.js';
+  const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
+    locateFile: (file) => new URL(file, wasmDir).pathname,
+  });
+
+  // Authored selection ("high") composes by default.
+  const stream = new native.RenderStream();
+  try {
+    const load = stream.begin(encode(VARIANT_USDA));
+    assert.ok(load && load.success, `variant scene load failed: ${load?.error || stream.error()}`);
+    assert.equal(load.meshCount, 1, 'selected variant should contribute one mesh');
+    const variants = stream.listVariants();
+    assert.equal(variants.length, 1, 'authored variant set should be listed');
+    assert.equal(variants[0].setName, 'lod');
+    assert.equal(variants[0].selected, 'high');
+    assert.deepEqual(Array.from(variants[0].variants), ['high', 'low']);
+    const highMesh = stream.getMesh(0);
+    assert.equal(highMesh.points.length, 12, 'high variant mesh should have 4 points');
+
+    // Override to "low" and reload.
+    stream.setVariantOverride('lod', 'low');
+    const reload = stream.begin(encode(VARIANT_USDA));
+    assert.ok(reload && reload.success, `variant override reload failed: ${reload?.error}`);
+    assert.equal(reload.meshCount, 1, 'override variant should contribute one mesh');
+    const lowMesh = stream.getMesh(0);
+    assert.equal(lowMesh.points.length, 9, 'low variant mesh should have 3 points');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
 await testAsync('legacy module next session accepts USDA dependency layers', async () => {
   const glue = wasm64 ? '../src/tinyusdz/tinyusdz_64.js' : '../src/tinyusdz/tinyusdz.js';
   const native = await loadWasm(() => import(new URL(glue, import.meta.url).href));
@@ -140,6 +207,35 @@ await testAsync('legacy module next session accepts USDA dependency layers', asy
   } finally {
     if (typeof usd.delete === 'function') usd.delete();
   }
+});
+
+await testAsync('next-only module usddiff diffs USDA layers', async () => {
+  const glue = wasm64 ? '../src/tinyusdz/tinyusdz_next_64.js'
+                      : '../src/tinyusdz/tinyusdz_next.js';
+  const native = await loadWasm(() => import(new URL(glue, import.meta.url).href), {
+    locateFile: (file) => new URL(file, wasmDir).pathname,
+  });
+  assert.equal(typeof native.usddiff, 'function', 'next-only glue should expose usddiff');
+
+  const same = native.usddiff({
+    left: { data: encode(DEP_USDA), name: 'a.usda' },
+    right: { data: encode(DEP_USDA), name: 'b.usda' },
+    format: 'both'
+  });
+  assert.ok(same.success, `usddiff failed: ${same.error}`);
+  assert.equal(same.hasDiffs, false, 'identical layers should have no diffs');
+  assert.match(same.text, /No differences found/);
+
+  const changed = native.usddiff({
+    left: { data: encode(DEP_USDA), name: 'a.usda' },
+    right: { data: encode(DEP_USDA.replace('(1, 0, 0)', '(2, 0, 0)')), name: 'b.usda' },
+    format: 'both'
+  });
+  assert.ok(changed.success, `usddiff failed: ${changed.error}`);
+  assert.equal(changed.hasDiffs, true, 'value change should be detected');
+  assert.match(changed.text, /Property modified/);
+  const json = JSON.parse(changed.json);
+  assert.ok(json.property_diffs, 'json output should carry property_diffs');
 });
 
 console.log(`next-usda-composition tests done (${wasm64 ? 'wasm64' : 'wasm32'})`);
