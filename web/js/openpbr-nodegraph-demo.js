@@ -14,6 +14,7 @@ import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
     buildNextThreeNode,
     isNextScene,
+    nextCountsFromScene,
     readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
 import {
@@ -1572,7 +1573,10 @@ function updateNodeStats() {
         }
     }
 
-    document.getElementById('node-count').textContent = nodeCount;
+    const sceneNodeCountEl = document.getElementById('graph-node-count');
+    if (sceneNodeCountEl) {
+        sceneNodeCountEl.textContent = nodeCount;
+    }
     document.getElementById('connection-count').textContent = connectionCount;
 
     const hiddenEl = document.getElementById('hidden-nodes-info');
@@ -3372,17 +3376,34 @@ async function buildScene() {
         if (built.textureManager) {
             startTrackedTextureLoading(built.textureManager, state.loadStats, 'nextTextureQueue');
         }
+        const materialSet = new Set();
+        root.traverse((obj) => {
+            if (!obj.isMesh || !obj.material) return;
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            for (const mat of mats) {
+                if (mat?.userData?.rawData) materialSet.add(mat);
+            }
+        });
+        state.materials = Array.from(materialSet);
+        state.materialData = state.materials.map((mat, index) => {
+            const rawData = mat.userData.rawData || {};
+            if (!rawData.name) rawData.name = mat.name || `Material_${index}`;
+            return rawData;
+        });
         fitCameraToObject(root);
         state.envPreset = 'studio';
         setEnvFromResult(createStudioEnvironment());
         applyEnvironment();
         updateEnvUI();
+        const counts = nextCountsFromScene(usd);
         const meshCount = usd.numMeshes ? usd.numMeshes() : 0;
-        const materialCount = usd.numMaterials ? usd.numMaterials() : 0;
-        document.getElementById('mesh-count').textContent = meshCount;
-        document.getElementById('material-count').textContent = materialCount;
-        updateStatus(`Loaded: ${meshCount} meshes (backend: next static)`);
-        console.log('[openpbr] next backend renders static geometry/materials only; OpenPBR node graph editing is legacy-only.');
+        const materialCount = state.materialData.length || (usd.numMaterials ? usd.numMaterials() : 0);
+        updateSceneEntityInfo(usd, meshCount, materialCount, counts);
+        updateMaterialSelector();
+        if (state.materialData.length > 0) {
+            selectMaterial(0);
+        }
+        updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials (backend: next · OpenPBR node graph data)`);
         if (typeof usd.releaseBuildData === 'function') {
             usd.releaseBuildData();
         }
@@ -3619,8 +3640,7 @@ async function buildScene() {
 
     const numMeshes = usd.numMeshes();
     updateStatus(`Loaded: ${numMeshes} meshes, ${state.materials.length} materials`);
-    document.getElementById('mesh-count').textContent = numMeshes;
-    document.getElementById('material-count').textContent = state.materials.length;
+    updateSceneEntityInfo(usd, numMeshes, state.materials.length);
 
     // Pre-compute bounding spheres so Three.js doesn't do it lazily on the
     // first render frame (which would cause a visible spike).
@@ -3875,8 +3895,16 @@ function createSampleScene() {
     selectMaterial(0);
 
     updateStatus('Sample loaded');
-    document.getElementById('mesh-count').textContent = '1';
-    document.getElementById('material-count').textContent = '1';
+    updateSceneEntityInfo(null, 1, 1, {
+        lights: 0,
+        cameras: 0,
+        nodes: 0,
+        pointInstancers: 0,
+        pointInstanceDraws: 0,
+        skeletons: 0,
+        animations: 0,
+        unsupportedRenderables: 0
+    });
 
     showToast('Sample scene with double-invert node graph');
 }
@@ -3884,6 +3912,66 @@ function createSampleScene() {
 // ============================================================================
 // UI Helpers
 // ============================================================================
+
+function safeCountFromUSDMethod(usd, method) {
+    if (typeof method !== 'function') {
+        return null;
+    }
+    try {
+        const value = method.call(usd);
+        return Number.isFinite(value) ? value : null;
+    } catch {
+        return null;
+    }
+}
+
+function sceneEntityCountsFromUSD(usd, explicitCounts) {
+    if (explicitCounts) {
+        return explicitCounts;
+    }
+
+    if (!usd) return {};
+
+    const unsupportedFromNum = safeCountFromUSDMethod(usd, usd.numUnsupportedRenderables);
+    let unsupportedRenderables = unsupportedFromNum;
+    if (unsupportedFromNum === null && typeof usd.getUnsupportedRenderables === 'function') {
+        try {
+            const unsupported = usd.getUnsupportedRenderables();
+            if (Array.isArray(unsupported)) {
+                unsupportedRenderables = unsupported.length;
+            }
+        } catch {
+            unsupportedRenderables = null;
+        }
+    }
+
+    return {
+        lights: safeCountFromUSDMethod(usd, usd.numLights),
+        cameras: safeCountFromUSDMethod(usd, usd.numCameras),
+        nodes: safeCountFromUSDMethod(usd, usd.numNodes),
+        pointInstancers: safeCountFromUSDMethod(usd, usd.numPointInstancers),
+        pointInstanceDraws: safeCountFromUSDMethod(usd, usd.numPointInstanceDraws),
+        skeletons: safeCountFromUSDMethod(usd, usd.numSkeletons),
+        animations: safeCountFromUSDMethod(usd, usd.numAnimations),
+        unsupportedRenderables: Number.isFinite(unsupportedRenderables) ? unsupportedRenderables : 0
+    };
+}
+
+function updateSceneEntityInfo(usd, meshCount = 0, materialCount = 0, explicitCounts) {
+    const safeCount = (value) => Number.isFinite(value) ? value : 0;
+    const counts = sceneEntityCountsFromUSD(usd, explicitCounts);
+
+    document.getElementById('mesh-count').textContent = meshCount;
+    document.getElementById('material-count').textContent = materialCount;
+    document.getElementById('light-count').textContent = safeCount(counts.lights);
+    document.getElementById('camera-count').textContent = safeCount(counts.cameras);
+    document.getElementById('node-count').textContent = safeCount(counts.nodes);
+    document.getElementById('point-instancer-count').textContent = safeCount(counts.pointInstancers);
+    document.getElementById('point-instance-draw-count').textContent = safeCount(counts.pointInstanceDraws);
+    document.getElementById('animation-count').textContent = safeCount(counts.animations);
+    document.getElementById('skeleton-count').textContent = safeCount(counts.skeletons);
+    document.getElementById('unsupported-renderable-count').textContent = safeCount(counts.unsupportedRenderables);
+}
 
 function updateStatus(text) {
     document.getElementById('status').textContent = text;

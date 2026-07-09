@@ -1431,21 +1431,18 @@ async function processUSDScene(usd_scene, filename) {
 		characterGroup.remove(characterGroup.children[0]);
 	}
 
+	let nextBuiltNode = null;
+	let nextTextureManager = null;
 	if (isNextScene(usd_scene)) {
-		const sceneMetadata = readNextSceneMeta(usd_scene);
-		const fileUpAxis = String(sceneMetadata.upAxis || 'Y');
-		currentMetersPerUnit = Number.isFinite(Number(sceneMetadata.metersPerUnit))
-			? Number(sceneMetadata.metersPerUnit)
-			: 1.0;
-		applyMetersPerUnitScale();
-
 		const built = buildNextThreeNode(usd_scene, {
 			skipTextures: false,
-			lazyTextures: true
+			lazyTextures: true,
+			releaseBuildData: false
 		});
-		characterGroup.add(built.node);
-		if (built.textureManager) {
-			built.textureManager.startLoading({
+		nextBuiltNode = built.node;
+		nextTextureManager = built.textureManager || null;
+		if (nextTextureManager) {
+			nextTextureManager.startLoading({
 				concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
 				yieldInterval: 16,
 				onTextureLoaded: (material) => { material.needsUpdate = true; }
@@ -1453,22 +1450,7 @@ async function processUSDScene(usd_scene, filename) {
 				console.warn('[skin-anim] Next texture loading failed:', err);
 			});
 		}
-		animationParams.convertZUp = (fileUpAxis.toUpperCase() === 'Z');
-		animationParams.toggleZUp();
-		allSceneMeshes = [];
-		built.node.traverse((obj) => {
-			if (obj.isMesh) {
-				setMeshShadowFlags(obj, obj.visible);
-				allSceneMeshes.push(obj);
-			}
-		});
-		console.log('[skin-anim] next backend renders static geometry/materials only; skinning and animation controls are legacy-only.');
-			if (window.updateSkeletonInfo) window.updateSkeletonInfo(null);
-			if (window.updateAnimationList) window.updateAnimationList([], []);
-			fitCameraToScene();
-			window.renderComplete = true;
-			return;
-		}
+	}
 
 	// Get normalized scene metadata from library helper.
 	const {
@@ -1549,9 +1531,6 @@ async function processUSDScene(usd_scene, filename) {
 		);
 	}
 
-	// Get the default root node from USD
-	const usdRootNode = usd_scene.getDefaultRootNode();
-
 	// Create default material
 	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
 
@@ -1567,8 +1546,13 @@ async function processUSDScene(usd_scene, filename) {
 	const wasmHeapBefore = typeof WebAssembly !== 'undefined' && WebAssembly.Memory ?
 		(window._tinyusdz_wasm_memory ? window._tinyusdz_wasm_memory.buffer.byteLength : null) : null;
 
-	// Build Three.js node from USD
-	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	// Build Three.js node from USD. Next scenes are already materialized from
+	// RenderScene data; legacy scenes are built from the USD node tree.
+	let threeNode = nextBuiltNode;
+	if (!threeNode) {
+		const usdRootNode = usd_scene.getDefaultRootNode();
+		threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	}
 
 	if (wasmHeapBefore !== null && window._tinyusdz_wasm_memory) {
 		const wasmHeapAfter = window._tinyusdz_wasm_memory.buffer.byteLength;

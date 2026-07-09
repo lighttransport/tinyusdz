@@ -92,6 +92,7 @@ enum class Interpolation : uint8_t {
 enum class NodeType : uint8_t {
   Xform = 0,
   Mesh,
+  Points,
   PointInstancer,
   Camera,
   PointLight,
@@ -226,6 +227,7 @@ struct RenderMesh {
 
   // Interpolation modes for attributes
   Interpolation normals_interp = Interpolation::Vertex;
+  Interpolation tangents_interp = Interpolation::Vertex;
   Interpolation texcoords_0_interp = Interpolation::Vertex;
   Interpolation texcoords_1_interp = Interpolation::Vertex;
   Interpolation colors_interp = Interpolation::Vertex;
@@ -300,6 +302,30 @@ struct RenderMesh {
   bool has_skin() const { return skin != nullptr; }
   bool has_blend_shapes() const { return !blend_shapes.empty(); }
 
+  size_t memory_usage() const;
+};
+
+//
+// RenderPoints - GPU-ready point cloud data for UsdGeomPoints
+//
+struct RenderPoints {
+  std::string name;
+  std::string prim_path;
+
+  FloatChunked points;  // xyz interleaved, size = point_count * 3
+  FloatChunked widths;  // optional per-point or constant authored width
+  FloatChunked colors;  // optional rgb/rgba displayColor data
+  Interpolation colors_interp = Interpolation::Vertex;
+
+  int32_t material_id = -1;
+
+  Float3 bbox_min;
+  Float3 bbox_max;
+  bool has_bbox = false;
+
+  size_t point_count() const { return points.size() / 3; }
+  bool has_widths() const { return !widths.empty(); }
+  bool has_colors() const { return !colors.empty(); }
   size_t memory_usage() const;
 };
 
@@ -583,6 +609,17 @@ struct RenderLight {
   float intensity = 1.0f;
   float exposure = 0.0f;
   bool normalize = false;
+  bool enable_color_temperature = false;
+  float color_temperature = 6500.0f;
+  float diffuse = 1.0f;
+  float specular = 1.0f;
+  float shaping_focus = 0.0f;
+  float shaping_focus_tint = 0.0f;
+  float shaping_cone_softness = 0.0f;
+  std::string shaping_ies_file;
+  std::vector<std::string> light_link_targets;
+  std::vector<std::string> shadow_link_targets;
+  std::vector<std::string> filter_targets;
 
   // Transform
   Matrix4 transform;
@@ -601,6 +638,9 @@ struct RenderLight {
   // Shadow
   bool enable_shadow = true;
   Float3 shadow_color = {0, 0, 0};
+  float shadow_distance = -1.0f;
+  float shadow_falloff = -1.0f;
+  float shadow_falloff_gamma = 1.0f;
 };
 
 //
@@ -677,11 +717,28 @@ struct AnimationChannel {
 
   TargetPath target_path = TargetPath::Translation;
   int32_t target_node = -1;
+  int32_t target_skeleton = -1;
   std::string target_prim_path;
   std::string property_name;
+  std::string target_skeleton_path;
+  std::vector<std::string> joint_order;
+  std::vector<std::string> blend_shape_order;
+  // Maps each SkelAnimation joint_order element to a Skeleton::joints index.
+  // -1 means the animation joint could not be resolved on the target skeleton.
+  std::vector<int32_t> joint_remap;
 
   // Keyframes (sorted by time)
   std::vector<Keyframe> keyframes;
+
+  // Optional full array payload for UsdSkelAnimation channels. For frame i,
+  // slice array_values at:
+  //   i * element_count * value_stride
+  // with element_count values, each value_stride floats wide.
+  // Existing scalar keyframes keep a first-element preview for compatibility.
+  std::vector<float> array_values;
+  uint32_t element_count = 1;
+  uint32_t value_stride = 4;
+  bool is_skeletal = false;
 
   // Interpolation
   enum class Interpolation : uint8_t {
@@ -731,6 +788,7 @@ struct Skeleton {
 
   // Animation reference
   int32_t animation_id = -1;
+  std::string animation_source_path;
 };
 
 //
@@ -856,6 +914,7 @@ class RenderScene {
   // Scene data
   std::vector<SceneNode> nodes;
   std::vector<RenderMesh> meshes;
+  std::vector<RenderPoints> points;
   std::vector<RenderPointInstancer> point_instancers;
   std::vector<RenderPointInstanceDraw> point_instance_draws;
   std::vector<RenderMaterial> materials;
@@ -874,6 +933,7 @@ class RenderScene {
   // Lookup by path
   std::unordered_map<std::string, int32_t> node_by_path;
   std::unordered_map<std::string, int32_t> mesh_by_path;
+  std::unordered_map<std::string, int32_t> points_by_path;
   std::unordered_map<std::string, int32_t> point_instancer_by_path;
   std::unordered_map<std::string, int32_t> material_by_path;
 
@@ -882,6 +942,7 @@ class RenderScene {
 
   // Bounds-checked accessors
   const RenderMesh* get_mesh(int32_t mesh_id) const;
+  const RenderPoints* get_points(int32_t points_id) const;
   const RenderMaterial* get_material(int32_t material_id) const;
   const RenderPointInstancer* get_point_instancer(int32_t instancer_id) const;
   const RenderPointInstanceDraw* get_point_instance_draw(size_t draw_id) const;
@@ -894,6 +955,8 @@ class RenderScene {
   struct Stats {
     size_t node_count;
     size_t mesh_count;
+    size_t points_count;
+    size_t point_cloud_point_count;
     size_t point_instancer_count;
     size_t point_instance_count;
     size_t visible_point_instance_count;

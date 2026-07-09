@@ -43,7 +43,7 @@
 
 import { StreamingUSDRenderer } from './streaming.js';
 import { TinyUSDZComposer } from './src/tinyusdz/TinyUSDZComposer.js';
-import { parseUSDZEntries } from './src/usdzconvert.js';
+import { parseUSDZEntries, ZipStreamWriter } from './src/usdzconvert.js';
 
 // ---------------------------------------------------------------------------
 // HttpAssetResolver — fetch + base-URL rewrite, keyed by the authored path.
@@ -215,6 +215,9 @@ export function detectMaterialX(bytes) {
 }
 
 function isUsdz(name) { return /\.usdz$/i.test(name || ''); }
+function isUsdc(name) { return /\.usdc$/i.test(name || ''); }
+function isUsdName(name) { return /\.(usd|usda|usdc)$/i.test(name || ''); }
+function isTextureName(name) { return /\.(png|jpe?g|webp|gif|bmp|tiff?|exr|hdr)$/i.test(String(name || '').split(/[?#]/)[0]); }
 function normalizeBackend(value, fallback = 'legacy') {
   return (value === 'next' || value === 'auto' || value === 'legacy') ? value : fallback;
 }
@@ -227,6 +230,211 @@ function jsHeapBytes() {
   return (typeof performance !== 'undefined' && performance.memory)
     ? performance.memory.usedJSHeapSize
     : 0;
+}
+
+function normalizeAssetKey(path) {
+  return String(path || '').replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
+}
+
+function findAssetByKey(assetMap, key) {
+  const norm = normalizeAssetKey(key);
+  if (assetMap.has(norm)) return assetMap.get(norm);
+  if (assetMap.has(key)) return assetMap.get(key);
+  for (const [candidate, value] of assetMap) {
+    const c = normalizeAssetKey(candidate);
+    if (c === norm || c.endsWith('/' + norm) || norm.endsWith('/' + c)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function isUSDCBytes(bytes) {
+  return bytes && bytes.length >= 8 &&
+    bytes[0] === 0x50 && bytes[1] === 0x58 && bytes[2] === 0x52 &&
+    bytes[3] === 0x2d && bytes[4] === 0x55 && bytes[5] === 0x53 &&
+    bytes[6] === 0x44 && bytes[7] === 0x43;
+}
+
+function allocateNextInput(native, usd, bytes) {
+  if (typeof usd.allocateZeroCopyBuffer !== 'function') {
+    throw new Error('next HTTP composition requires allocateZeroCopyBuffer in the WASM module');
+  }
+  const info = usd.allocateZeroCopyBuffer('__next_http_root__', bytes.length, 0);
+  if (!info || !info.success) {
+    throw new Error(`next input allocation failed: ${info?.error || 'unknown'}`);
+  }
+  const ptr = Number(info.bufferPtr);
+  const chunk = 16 * 1024 * 1024;
+  for (let off = 0; off < bytes.length; off += chunk) {
+    const end = Math.min(off + chunk, bytes.length);
+    native.HEAPU8.set(bytes.subarray(off, end), ptr + off);
+  }
+  return info.uuid;
+}
+
+function buildUsdzFromEntries(rootName, rootBytes, entries) {
+  const chunks = [];
+  const writer = new ZipStreamWriter((bytes) => {
+    chunks.push(bytes.slice ? bytes.slice() : new Uint8Array(bytes));
+  });
+  writer.addEntry(rootName, rootBytes);
+  for (const entry of entries) {
+    if (!entry || !entry.name || !entry.data || isUsdName(entry.name)) continue;
+    writer.addEntry(entry.name, entry.data);
+  }
+  writer.finalize();
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function prepareNextRoot(rootBytes, filename) {
+  const seedAssets = new Map();
+  if (isUsdz(filename)) {
+    const entries = parseUSDZEntries(rootBytes);
+    const root = entries.find((entry) => isUsdc(entry.name));
+    if (!root) {
+      throw new Error('next HTTP composition requires a USDC root in USDZ input');
+    }
+    for (const entry of entries) {
+      if (!entry.name.endsWith('/')) {
+        seedAssets.set(normalizeAssetKey(entry.name), entry.data);
+      }
+    }
+    return {
+      rootBytes: root.data,
+      rootName: normalizeAssetKey(root.name),
+      seedAssets
+    };
+  }
+  if (!isUsdc(filename)) {
+    throw new Error('next HTTP composition currently requires a .usdc root or .usdz with .usdc root');
+  }
+  const bytes = rootBytes instanceof Uint8Array ? rootBytes : new Uint8Array(rootBytes);
+  if (!isUSDCBytes(bytes)) {
+    throw new Error('next HTTP composition root is not a USDC crate');
+  }
+  return {
+    rootBytes: bytes,
+    rootName: normalizeAssetKey(filename.split('/').pop() || 'root.usdc'),
+    seedAssets
+  };
+}
+
+async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus }) {
+  const native = renderer.native;
+  if (!native || typeof native.TinyUSDZLoaderNative !== 'function') {
+    throw new Error('next HTTP composition requires the full TinyUSDZ WASM module');
+  }
+  const usd = new native.TinyUSDZLoaderNative();
+  try {
+    if (typeof usd.nextFlattenAsyncBegin !== 'function' ||
+        typeof usd.nextFlattenAsyncStep !== 'function' ||
+        typeof usd.nextFlattenAsyncProvideLayer !== 'function' ||
+        typeof usd.nextFlattenAsyncEnd !== 'function') {
+      throw new Error('next async flatten bindings are unavailable');
+    }
+
+    const prepared = prepareNextRoot(rootBytes, filename);
+    const uuid = allocateNextInput(native, usd, prepared.rootBytes);
+    const begin = usd.nextFlattenAsyncBegin(uuid, prepared.rootName, true);
+    if (!begin || !begin.success) {
+      throw new Error(`next flatten begin failed: ${begin?.error || 'unknown'}`);
+    }
+    const session = begin.session;
+    let result = null;
+    try {
+      for (;;) {
+        const step = usd.nextFlattenAsyncStep(session, null);
+        if (!step || !step.success) {
+          throw new Error(`next flatten failed: ${step?.error || 'unknown'}`);
+        }
+        if (step.status === 'need-layer') {
+          const key = normalizeAssetKey(step.key);
+          let bytes = findAssetByKey(prepared.seedAssets, key);
+          if (!bytes) {
+            const [, fetched, url] = await resolver.resolveAsync(key);
+            bytes = new Uint8Array(fetched);
+            resolver.setAsset(key, bytes, url || '');
+            onStatus && onStatus(`Fetched next dependency layer: ${key}`);
+          } else {
+            onStatus && onStatus(`Using in-archive next dependency layer: ${key}`);
+          }
+          if (!isUSDCBytes(bytes)) {
+            throw new Error(`next dependency layer is not USDC: ${key}`);
+          }
+          const provided = usd.nextFlattenAsyncProvideLayer(session, key, bytes);
+          if (!provided || !provided.success) {
+            throw new Error(`next flatten provide failed for ${key}: ${provided?.error || 'unknown'}`);
+          }
+          continue;
+        }
+        if (step.status === 'done' || step.status === 'ready') {
+          result = step;
+          break;
+        }
+        throw new Error(`next flatten returned unexpected status: ${step.status}`);
+      }
+    } finally {
+      usd.nextFlattenAsyncEnd(session);
+    }
+    if (!result || !result.data) {
+      throw new Error('next flatten produced no root layer');
+    }
+
+    const rootOut = new Uint8Array(result.data);
+    const passthrough = [];
+    const added = new Set();
+    const addEntry = (name, data) => {
+      const key = normalizeAssetKey(name);
+      if (!key || added.has(key) || isUsdName(key)) return;
+      added.add(key);
+      passthrough.push({ name: key, data: data instanceof Uint8Array ? data : new Uint8Array(data) });
+    };
+
+    for (const [name, data] of prepared.seedAssets) {
+      if (!isUsdName(name)) addEntry(name, data);
+    }
+
+    const referencedAssets = Array.isArray(result.assetPaths) ? result.assetPaths : [];
+    let fetchedAssets = 0;
+    for (const assetPath of referencedAssets) {
+      if (!assetPath || isUsdName(assetPath) || !isTextureName(assetPath)) continue;
+      const key = normalizeAssetKey(assetPath);
+      if (added.has(key)) continue;
+      let bytes = findAssetByKey(prepared.seedAssets, key);
+      if (!bytes) {
+        try {
+          const [, fetched, url] = await resolver.resolveAsync(assetPath);
+          bytes = new Uint8Array(fetched);
+          resolver.setAsset(assetPath, bytes, url || '');
+          fetchedAssets++;
+          onStatus && onStatus(`Fetched next texture asset: ${assetPath}`);
+        } catch (e) {
+          onStatus && onStatus(`Next texture missing (skipped): ${assetPath}`);
+          continue;
+        }
+      }
+      addEntry(assetPath, bytes);
+    }
+
+    const usdz = buildUsdzFromEntries('root.usdc', rootOut, passthrough);
+    return {
+      usdz,
+      stats: result,
+      fetchedAssets,
+      packagedAssets: passthrough.length,
+      referencedAssets: referencedAssets.length
+    };
+  } finally {
+    if (typeof usd.delete === 'function') usd.delete();
+  }
 }
 
 // Build a composed native Layer instance from root bytes, fetching every
@@ -317,22 +525,31 @@ export async function renderHttpUSD({
 
   if (requestedBackend === 'next' || requestedBackend === 'auto') {
     try {
-      onStatus && onStatus(`Loading ${label} with next backend...`);
-      const result = await renderer.loadBytesIncremental(rootBytes, filename);
+      const resolver = new HttpAssetResolver({ baseUrl });
+      onStatus && onStatus(`Loading ${label} with next HTTP composition...`);
+      const flattened = await flattenNextOverHttp({
+        renderer,
+        rootBytes,
+        filename,
+        resolver,
+        onStatus
+      });
+      const result = await renderer.loadBytesIncremental(flattened.usdz, 'next-http-composed.usdz');
       const isNextResult = !!result?.memory?.summary?.incremental;
       if (isNextResult) {
         return {
           backend: 'next',
           requestedBackend,
           result,
-          inputBytes: inputRootBytes,
-          fetchedBytes: 0,
-          fetches: 0,
-          fetchLog: [],
-          shadeLabel: 'next static render scene',
+          inputBytes: inputRootBytes + resolver.bytesFetched,
+          fetchedBytes: resolver.bytesFetched,
+          fetches: resolver.fetchLog.length,
+          fetchLog: resolver.fetchLog,
+          shadeLabel: 'next render scene',
           loadMs: performance.now() - loadStart,
           jsHeapDelta: jsHeapBytes() - jsStart,
-          note: 'next backend uses the self-contained root; external HTTP composition is legacy-only'
+          note: `next HTTP composition: ${flattened.packagedAssets} packaged asset(s), ` +
+            `${flattened.referencedAssets} referenced asset path(s)`
         };
       }
       if (requestedBackend === 'next') {

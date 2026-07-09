@@ -2136,20 +2136,22 @@ async function loadUSDFromData(data, filename, stats = null) {
             if (built.textureManager && !settings.skipTextures) {
                 startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
             }
+            collectMaterialsFromScene();
+            updateMaterialUI();
             initUpAxisConversion();
             applyUpAxisConversion();
             fitCameraToScene();
             updateHelpersSize();
             const counts = nextCountsFromScene(usdScene);
             const meshCount = counts.meshes;
-            const materialCount = counts.materials;
+            const materialCount = sceneState.materials.length || counts.materials;
             document.getElementById('model-info').style.display = 'block';
             document.getElementById('current-file').textContent = loaderState.currentFileName || '-';
             document.getElementById('mesh-count').textContent = meshCount;
             document.getElementById('material-count').textContent = materialCount;
+            setSceneEntityCountsFromScene(counts);
             updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials ` +
-                `(backend: next static · ${describeNativeOptimizations()})${describeNextNativeStats(counts.stats)}`);
-            console.log('[materialx] next backend renders static geometry/materials only; MaterialX/OpenPBR graph and dome-light processing are legacy-only.');
+                `(backend: next · MaterialX/OpenPBR material data · ${describeNativeOptimizations()})${describeNextNativeStats(counts.stats)}`);
             if (typeof usdScene.releaseBuildData === 'function') {
                 usdScene.releaseBuildData();
             }
@@ -2656,6 +2658,55 @@ function resetAnimation() {
     });
 }
 
+function readNumberFromMethod(context, method) {
+    if (typeof method !== 'function') return null;
+    try {
+        const value = method.call(context);
+        return Number.isFinite(value) ? value : null;
+    } catch {
+        return null;
+    }
+}
+
+function readLegacySceneEntityCounts(usd) {
+    if (!usd) return {};
+
+    let unsupportedRenderables = readNumberFromMethod(usd, usd.numUnsupportedRenderables);
+    if (unsupportedRenderables === null && typeof usd.getUnsupportedRenderables === 'function') {
+        try {
+            const list = usd.getUnsupportedRenderables();
+            if (Array.isArray(list)) {
+                unsupportedRenderables = list.length;
+            }
+        } catch {
+            unsupportedRenderables = null;
+        }
+    }
+
+    return {
+        lights: readNumberFromMethod(usd, usd.numLights),
+        cameras: readNumberFromMethod(usd, usd.numCameras),
+        nodes: readNumberFromMethod(usd, usd.numNodes),
+        pointInstancers: readNumberFromMethod(usd, usd.numPointInstancers),
+        pointInstanceDraws: readNumberFromMethod(usd, usd.numPointInstanceDraws),
+        skeletons: readNumberFromMethod(usd, usd.numSkeletons),
+        animations: readNumberFromMethod(usd, usd.numAnimations),
+        unsupportedRenderables: Number.isFinite(unsupportedRenderables) ? unsupportedRenderables : 0
+    };
+}
+
+function setSceneEntityCountsFromScene(counts) {
+    const safe = (value) => Number.isFinite(value) ? value : 0;
+    document.getElementById('light-count').textContent = safe(counts?.lights);
+    document.getElementById('camera-count').textContent = safe(counts?.cameras);
+    document.getElementById('node-count').textContent = safe(counts?.nodes);
+    document.getElementById('point-instancer-count').textContent = safe(counts?.pointInstancers);
+    document.getElementById('point-instance-draw-count').textContent = safe(counts?.pointInstanceDraws);
+    document.getElementById('animation-count').textContent = safe(counts?.animations);
+    document.getElementById('skeleton-count').textContent = safe(counts?.skeletons);
+    document.getElementById('unsupported-renderable-count').textContent = safe(counts?.unsupportedRenderables);
+}
+
 function updateModelInfo() {
     const numMeshes = loaderState.nativeLoader.numMeshes();
     const numMaterials = loaderState.nativeLoader.numMaterials();
@@ -2667,9 +2718,51 @@ function updateModelInfo() {
         `${renderMeshes} (${numMeshes} native)` :
         numMeshes;
     document.getElementById('material-count').textContent = numMaterials;
+
+    const entityCounts = readLegacySceneEntityCounts(loaderState.nativeLoader);
+    setSceneEntityCountsFromScene(entityCounts);
 }
 
 async function convertMaterial(matData, index) {
+    if (matData?.__nextMaterial) {
+        const previousMaterial = sceneState.materials[index] || null;
+        const openPBR = matData.openPBR || {};
+        const baseColorParam = openPBR.base_color || openPBR.base?.base_color;
+        const roughnessParam = openPBR.specular_roughness || openPBR.base_roughness ||
+            openPBR.specular?.specular_roughness || openPBR.base?.base_roughness;
+        const metalnessParam = openPBR.base_metalness || openPBR.base?.base_metalness;
+        const opacityParam = openPBR.geometry_opacity || openPBR.opacity ||
+            openPBR.geometry?.geometry_opacity;
+        const emissionParam = openPBR.emission_color || openPBR.emission?.emission_color;
+        const material = new THREE.MeshPhysicalMaterial({
+            color: extractOpenPBRColor(baseColorParam, [0.8, 0.8, 0.8]),
+            roughness: extractOpenPBRValue(roughnessParam, 0.5),
+            metalness: extractOpenPBRValue(metalnessParam, 0.0),
+            opacity: extractOpenPBRValue(opacityParam, 1.0),
+            transparent: extractOpenPBRValue(opacityParam, 1.0) < 1.0,
+            emissive: extractOpenPBRColor(emissionParam, [0.0, 0.0, 0.0]),
+            envMap: threeState.envMap,
+            envMapIntensity: settings.envMapIntensity
+        });
+        material.name = matData.name || `next_material_${index}`;
+        material.userData.rawData = matData;
+        material.userData.typeInfo = {
+            hasOpenPBR: !!matData.hasOpenPBR,
+            hasUsdPreviewSurface: !!matData.hasUsdPreviewSurface
+        };
+        material.userData.typeString = matData.hasOpenPBR
+            ? (matData.hasUsdPreviewSurface ? 'OpenPBR + PreviewSurface' : 'OpenPBR')
+            : (matData.hasUsdPreviewSurface ? 'PreviewSurface' : 'Unknown');
+        material.userData.nextTexturePaths = { ...(matData.texturePaths || previousMaterial?.userData?.nextTexturePaths || {}) };
+        material.userData.nextTextureMetadata = { ...(matData.textureMetadata || previousMaterial?.userData?.nextTextureMetadata || {}) };
+        for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']) {
+            if (previousMaterial && previousMaterial[key]) {
+                material[key] = previousMaterial[key];
+            }
+        }
+        return material;
+    }
+
     const typeInfo = TinyUSDZLoaderUtils.getMaterialType(matData);
     const typeString = TinyUSDZLoaderUtils.getMaterialTypeString(matData);
 

@@ -31,6 +31,13 @@ struct MeshConfig {
   // Normals
   bool compute_normals = true;
   bool compute_tangents = false;
+  enum class TangentComputationMethod {
+    Lengyel,
+    MikkTSpace,
+    FastMikkTSpace,
+    Hybrid
+  };
+  TangentComputationMethod tangent_method = TangentComputationMethod::Hybrid;
 
   // UV handling
   std::string default_uv_primvar = "st";
@@ -110,12 +117,14 @@ class RenderSceneConverter {
 
   // Individual conversion methods (for custom pipelines)
   bool ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out);
+  bool ConvertPoints(const UsdPrim& prim, RenderPoints* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);
   bool ConvertCamera(const UsdPrim& prim, RenderCamera* out);
   bool ConvertSkeleton(const UsdPrim& prim, Skeleton* out);
-  bool ConvertAnimation(const UsdPrim& prim, AnimationClip* out);
+  bool ConvertAnimation(const ::tinyusdz::next::Stage& stage,
+                        const UsdPrim& prim, AnimationClip* out);
 
   // Texture loading
   bool LoadTexture(const std::string& asset_path, TextureImage* out);
@@ -150,8 +159,9 @@ class RenderSceneConverter {
 
   // Normal computation
   bool ComputeVertexNormals(RenderMesh* mesh);
-  /// Per-vertex tangent frame (xyzw, w=handedness) from triangles + per-vertex
-  /// normals + per-vertex UVs. No-op unless those inputs are consistent.
+  /// Tangent frame (xyzw, w=handedness) from triangulated topology, normals,
+  /// and UVs. Emits vertex tangents for vertex-varying inputs and faceVarying
+  /// tangents when seams/mirrors require per-corner data.
   bool ComputeVertexTangents(RenderMesh* mesh);
 
   /// Resolve an authored asset path against the source layer directory.

@@ -11,6 +11,7 @@ set(TYDRA_NEXT_SOURCES
     scene-access.cc
     render-extract.cc
     render-converter.cc
+    ../../external/mikktspace/mikktspace.c
 )
 
 set(TYDRA_NEXT_HEADERS

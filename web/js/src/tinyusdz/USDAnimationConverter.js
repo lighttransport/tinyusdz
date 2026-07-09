@@ -31,6 +31,72 @@ export function getUSDInterpolationMode(interpolation) {
 	}
 }
 
+function expandArraySkeletalChannels(usdAnimation, samplers) {
+	const syntheticChannels = [];
+	const channels = Array.isArray(usdAnimation.channels) ? usdAnimation.channels : [];
+
+	for (const channel of channels) {
+		if (!channel || !channel.isSkeletal) continue;
+		if (channel.target_type === 'SkeletonJoint') continue;
+		if (channel.path === 'Weights') continue;
+
+		const sampler = samplers[channel.sampler];
+		const arrayValues = sampler?.arrayValues;
+		const times = sampler?.times;
+		const stride = Number.isFinite(channel.valueStride)
+			? channel.valueStride
+			: (Number.isFinite(sampler?.valueStride) ? sampler.valueStride : 0);
+		const elementCount = Number.isFinite(channel.elementCount)
+			? channel.elementCount
+			: (Number.isFinite(sampler?.elementCount) ? sampler.elementCount : 0);
+		const jointRemap = Array.isArray(channel.jointRemap) ? channel.jointRemap : [];
+		if (!arrayValues || !times || stride <= 0 || elementCount <= 0) continue;
+
+		const frameCount = times.length;
+		const expected = frameCount * elementCount * stride;
+		if (arrayValues.length < expected) {
+			console.warn(`Skipping skeletal array channel ${channel.path}: expected ${expected} values, got ${arrayValues.length}`);
+			continue;
+		}
+
+		for (let elem = 0; elem < elementCount; ++elem) {
+			const jointId = jointRemap.length > elem ? jointRemap[elem] : elem;
+			if (!Number.isFinite(jointId) || jointId < 0) continue;
+
+			const values = new Float32Array(frameCount * stride);
+			for (let frame = 0; frame < frameCount; ++frame) {
+				const src = (frame * elementCount + elem) * stride;
+				const dst = frame * stride;
+				for (let c = 0; c < stride; ++c) {
+					values[dst + c] = arrayValues[src + c];
+				}
+			}
+
+			const samplerId = samplers.length;
+			samplers.push({
+				index: samplerId,
+				interpolation: sampler.interpolation,
+				times,
+				values,
+				valueStride: stride,
+				elementCount: 1,
+				isSkeletal: true
+			});
+			syntheticChannels.push({
+				sampler: samplerId,
+				target_type: 'SkeletonJoint',
+				skeleton_id: Number.isFinite(channel.skeleton_id) ? channel.skeleton_id : 0,
+				joint_id: jointId,
+				path: channel.path,
+				isSkeletal: true,
+				propertyName: channel.propertyName || ''
+			});
+		}
+	}
+
+	return syntheticChannels;
+}
+
 /**
  * Convert USD skeletal animation data to Three.js AnimationClip
  * Extracts only SkeletonJoint animations from USD SkelAnimation
@@ -60,11 +126,16 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeC
 			continue;
 		}
 
+		const samplers = Array.isArray(usdAnimation.samplers)
+			? usdAnimation.samplers.slice()
+			: [];
+		const expandedArrayChannels = expandArraySkeletalChannels(usdAnimation, samplers);
+
 		// Filter for skeletal animations only (skip node animations)
 		const skeletalChannels = usdAnimation.channels.filter(channel => {
 			const targetType = channel.target_type || 'SceneNode';
 			return targetType === 'SkeletonJoint';
-		});
+		}).concat(expandedArrayChannels);
 
 		if (skeletalChannels.length === 0) {
 			console.log(`Animation ${i} has no SkeletonJoint channels (skipping node-only animation)`);
@@ -121,7 +192,7 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeC
 			// Process Translation channel
 			if (channels.Translation) {
 				const channel = channels.Translation;
-				const sampler = usdAnimation.samplers[channel.sampler];
+				const sampler = samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
 					// Copy WASM typed_memory_view arrays into JS-owned buffers.
 					// usd_scene.delete() frees C++ data, invalidating views.
@@ -139,7 +210,7 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeC
 			// Process Rotation channel
 			if (channels.Rotation) {
 				const channel = channels.Rotation;
-				const sampler = usdAnimation.samplers[channel.sampler];
+				const sampler = samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
 					// Copy WASM typed_memory_view arrays into JS-owned buffers.
 					// Keep times in timeCodes (frames), not seconds
@@ -156,7 +227,7 @@ export function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMaps, timeC
 			// Process Scale channel
 			if (channels.Scale) {
 				const channel = channels.Scale;
-				const sampler = usdAnimation.samplers[channel.sampler];
+				const sampler = samplers[channel.sampler];
 				if (sampler && sampler.times && sampler.values) {
 					// Copy WASM typed_memory_view arrays into JS-owned buffers.
 					// Keep times in timeCodes (frames), not seconds
