@@ -1798,9 +1798,11 @@ def Xform "Root"
         float inputs:diffuse = 0.75
         float inputs:specular = 0.25
         float inputs:shaping:focus = 0.5
-        float inputs:shaping:focusTint = 0.2
+        color3f inputs:shaping:focusTint = (0.2, 0.3, 0.4)
         float inputs:shaping:cone:softness = 0.1
         asset inputs:shaping:ies:file = @profiles/key.ies@
+        float inputs:shaping:ies:angleScale = 1.5
+        bool inputs:shaping:ies:normalize = true
         color3f inputs:shadow:color = (0.1, 0.2, 0.3)
         float inputs:shadow:distance = 12
         float inputs:shadow:falloff = 2
@@ -1880,9 +1882,13 @@ def Xform "Root"
       assert(std::fabs(light.diffuse - 0.75f) < 0.001f);
       assert(std::fabs(light.specular - 0.25f) < 0.001f);
       assert(std::fabs(light.shaping_focus - 0.5f) < 0.001f);
-      assert(std::fabs(light.shaping_focus_tint - 0.2f) < 0.001f);
+      assert(std::fabs(light.shaping_focus_tint.x - 0.2f) < 0.001f);
+      assert(std::fabs(light.shaping_focus_tint.y - 0.3f) < 0.001f);
+      assert(std::fabs(light.shaping_focus_tint.z - 0.4f) < 0.001f);
       assert(std::fabs(light.shaping_cone_softness - 0.1f) < 0.001f);
       assert(light.shaping_ies_file == "profiles/key.ies");
+      assert(std::fabs(light.shaping_ies_angle_scale - 1.5f) < 0.001f);
+      assert(light.shaping_ies_normalize);
       assert(std::fabs(light.shadow_color.x - 0.1f) < 0.001f);
       assert(std::fabs(light.shadow_color.y - 0.2f) < 0.001f);
       assert(std::fabs(light.shadow_color.z - 0.3f) < 0.001f);

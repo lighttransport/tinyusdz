@@ -28,7 +28,10 @@
 #include "next/diff/layer-diff.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/pipeline/flatten.hh"
+#include "next/validation/usd-validation.hh"
 #include "tsd/tinysubdiv.hh"
+
+#include "external/jsonhpp/nlohmann/json.hpp"
 #include "next/resolver/asset-resolver.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-xform.hh"
@@ -1243,9 +1246,11 @@ class RenderStream {
     out.set("diffuse", light.diffuse);
     out.set("specular", light.specular);
     out.set("shapingFocus", light.shaping_focus);
-    out.set("shapingFocusTint", light.shaping_focus_tint);
+    out.set("shapingFocusTint", Float3Value(light.shaping_focus_tint));
     out.set("shapingConeSoftness", light.shaping_cone_softness);
     out.set("shapingIesFile", light.shaping_ies_file);
+    out.set("shapingIesAngleScale", light.shaping_ies_angle_scale);
+    out.set("shapingIesNormalize", light.shaping_ies_normalize);
     out.set("lightLinkTargets", VectorToArray(light.light_link_targets));
     out.set("shadowLinkTargets", VectorToArray(light.shadow_link_targets));
     out.set("filterTargets", VectorToArray(light.filter_targets));
@@ -1351,6 +1356,10 @@ class RenderStream {
     out.set("orthoWidth", camera.ortho_width);
     out.set("nearClip", camera.near_clip);
     out.set("farClip", camera.far_clip);
+    out.set("focusDistance", camera.focus_distance);
+    out.set("fStop", camera.fstop);
+    out.set("shutterOpen", camera.shutter_open);
+    out.set("shutterClose", camera.shutter_close);
     out.set("fovY", camera.fov_y());
     out.set("fovX", camera.fov_x());
     out.set("aspect", camera.aspect_ratio());
@@ -3222,6 +3231,114 @@ std::string OptStr(const emscripten::val& opts, const char* key,
 
 }  // namespace
 
+namespace {
+
+tn::ValidationOptions ParseValidationOptionsJSONForWeb(
+    const std::string& options_json) {
+  tn::ValidationOptions opts;
+  if (options_json.empty()) return opts;
+
+  nlohmann::json args = nlohmann::json::parse(options_json, nullptr, false);
+  if (args.is_discarded() || !args.is_object() || !args.contains("groups") ||
+      !args["groups"].is_array()) {
+    return opts;
+  }
+
+  opts.core = false;
+  opts.geom = false;
+  opts.shade = false;
+  opts.lux = false;
+  opts.physics = false;
+  opts.crate = false;
+  for (const auto& group : args["groups"]) {
+    if (!group.is_string()) continue;
+    const std::string name = group.get<std::string>();
+    if (name == "core") {
+      opts.core = true;
+    } else if (name == "geom") {
+      opts.geom = true;
+    } else if (name == "shade") {
+      opts.shade = true;
+    } else if (name == "lux") {
+      opts.lux = true;
+    } else if (name == "physics") {
+      opts.physics = true;
+    } else if (name == "crate") {
+      opts.crate = true;
+    } else if (name == "all") {
+      opts = tn::MakeValidateAllOptions();
+    }
+  }
+  if (!opts.core && !opts.geom && !opts.shade && !opts.lux && !opts.physics &&
+      !opts.crate) {
+    opts.core = true;
+  }
+  return opts;
+}
+
+nlohmann::json ValidationResultToJSON(const tn::USDValidationResult& v) {
+  nlohmann::json result;
+  result["parse_ok"] = true;
+  result["ok"] = v.ok();
+  result["error_count"] = v.error_count();
+  result["warning_count"] = v.warning_count();
+  result["spec_version"] = tn::GetAOUSDCoreSpecVersionString();
+  {
+    nlohmann::json groups = nlohmann::json::array();
+    for (const std::string& name :
+         tn::GetValidationGroupNames(v.checked_groups)) {
+      groups.push_back(name);
+    }
+    result["checked_groups"] = groups;
+  }
+  nlohmann::json issues = nlohmann::json::array();
+  for (const tn::USDValidationIssue* issue :
+       tn::GetOrderedValidationIssues(v)) {
+    nlohmann::json item;
+    item["severity"] =
+        issue->severity == tn::USDValidationSeverity::Error ? "error"
+                                                            : "warning";
+    item["rule_id"] = issue->rule_id;
+    item["location"] = issue->location;
+    item["message"] = issue->message;
+    issues.push_back(item);
+  }
+  result["issues"] = issues;
+  return result;
+}
+
+}  // namespace
+
+// validateFromBinary(bytes, filename, optionsJson) -> JSON string, matching
+// the legacy TinyUSDZLoaderNative.validateFromBinary contract consumed by
+// web/js/validation.js. Runs AOUSD-core validation over next::Layer.
+static std::string validateFromBinary(const emscripten::val& data,
+                                      const std::string& filename,
+                                      const std::string& options_json) {
+  std::string copy_error;
+  std::string bytes = CopyUint8ArrayToString(data, &copy_error);
+  const tn::ValidationOptions options =
+      ParseValidationOptionsJSONForWeb(options_json);
+
+  nlohmann::json result;
+  tn::USDValidationResult validation;
+  std::string warn, err;
+  const bool loaded = tn::ValidateUSDFromMemoryAgainstAOUSDCore(
+      reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), filename,
+      options, &validation, &warn, &err);
+  if (!loaded) {
+    result["parse_ok"] = false;
+    result["ok"] = false;
+    result["error"] = err.empty() ? copy_error : err;
+    if (!warn.empty()) result["warn"] = warn;
+    return result.dump();
+  }
+
+  result = ValidationResultToJSON(validation);
+  if (!warn.empty()) result["warn"] = warn;
+  return result.dump();
+}
+
 // usddiff(opts) -> { success, hasDiffs, text?, json?, error?, warn? }
 // opts: { left:{data:Uint8Array, name?}, right:{data:Uint8Array, name?},
 //         format?:"text"|"json"|"both", ulps?, eps?, compareMetadata?,
@@ -3310,6 +3427,7 @@ static emscripten::val usddiff(const emscripten::val& opts) {
 
 EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
   emscripten::function("usddiff", &usddiff);
+  emscripten::function("validateFromBinary", &validateFromBinary);
 
   emscripten::class_<NextUSDZConverterNative>("NextUSDZConverterNative")
       .constructor<>()

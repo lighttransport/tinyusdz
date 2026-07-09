@@ -3179,11 +3179,15 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
   GetFloat(prim, "inputs:diffuse", &out->diffuse);
   GetFloat(prim, "inputs:specular", &out->specular);
   GetFloat(prim, "inputs:shaping:focus", &out->shaping_focus);
-  GetFloat(prim, "inputs:shaping:focusTint", &out->shaping_focus_tint);
+  GetFloat3(prim, "inputs:shaping:focusTint", &out->shaping_focus_tint.x,
+            &out->shaping_focus_tint.y, &out->shaping_focus_tint.z);
   GetFloat(prim, "inputs:shaping:cone:softness",
            &out->shaping_cone_softness);
   ReadStringLikeProperty(prim, "inputs:shaping:ies:file",
                          &out->shaping_ies_file);
+  GetFloat(prim, "inputs:shaping:ies:angleScale",
+           &out->shaping_ies_angle_scale);
+  GetBool(prim, "inputs:shaping:ies:normalize", &out->shaping_ies_normalize);
   out->light_link_targets = ReadRelationshipTargets(prim, "light:link");
   if (out->light_link_targets.empty()) {
     out->light_link_targets = ReadRelationshipTargets(prim, "collection:lightLink:includes");
@@ -3278,6 +3282,14 @@ bool RenderSceneConverter::ConvertCamera(const UsdPrim& prim, RenderCamera* out)
   }
   out->near_clip = clip_range[0];
   out->far_clip = clip_range[1];
+
+  // Depth of field / exposure
+  GetFloat(prim, "focusDistance", &out->focus_distance);
+  GetFloat(prim, "fStop", &out->fstop);
+
+  // Motion-blur shutter interval
+  GetDouble(prim, "shutter:open", &out->shutter_open);
+  GetDouble(prim, "shutter:close", &out->shutter_close);
 
   return true;
 }
