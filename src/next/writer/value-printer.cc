@@ -5,6 +5,7 @@
 
 #include "value-printer.hh"
 #include "../crate/crate-format.hh"  // HalfToFloat
+#include "../crate/lazy-array.hh"
 #include "stream-writer.hh"
 #include "../types/value-view.hh"
 #include "../types/type-id.hh"
@@ -367,6 +368,15 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
       return false;
     }
   }
+}
+
+void DiscardLazyArraySourcePages(const Value& value) {
+  if (!value.is_lazy()) return;
+  const LazyArrayRef* ref = value.lazy_ref();
+  if (!ref || !ref->source || ref->block_len == 0) return;
+  constexpr uint64_t kMinDiscard = 1ull << 20;
+  if (ref->block_len < kMinDiscard) return;
+  ref->source->DiscardRange(ref->block_offset, ref->block_len);
 }
 
 }  // anonymous namespace
@@ -900,6 +910,7 @@ std::string PrintValue(const Value& value, const PrintOptions& opts) {
 
 void PrintValue(StreamWriter& out, const Value& value, const PrintOptions& opts) {
   if (value.is_array() && PrintArrayToStream(out, value, opts)) {
+    DiscardLazyArraySourcePages(value);
     return;
   }
   std::string tmp;

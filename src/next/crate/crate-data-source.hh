@@ -61,6 +61,7 @@ class CrateDataSource : public LazyArraySource {
   }
   size_t size() const override { return mmap_base_ ? mmap_size_ : bytes_.size(); }
   CrateVersion version() const override { return version_; }
+  void DiscardRange(uint64_t offset, uint64_t length) const override;
 
   /// Set the crate version once it has been parsed from the bootstrap header.
   /// (The buffer is adopted before the header is read.)

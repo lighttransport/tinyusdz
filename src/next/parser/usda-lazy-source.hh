@@ -124,6 +124,28 @@ class UsdaLazyArraySource final : public LazyArraySource {
 
   bool can_borrow() const override { return true; }
 
+  void DiscardRange(uint64_t offset, uint64_t length) const override {
+#if TINYUSDZ_NEXT_USDA_LAZY_MMAP
+    if (!mapped_ || length == 0 || offset >= size_) return;
+    uint64_t end = offset + length;
+    if (end < offset || end > size_) end = size_;
+    const long page = ::sysconf(_SC_PAGESIZE);
+    if (page <= 0) return;
+    const uint64_t page_size = static_cast<uint64_t>(page);
+    const uint64_t aligned_begin = offset & ~(page_size - 1u);
+    const uint64_t aligned_end = (end + page_size - 1u) & ~(page_size - 1u);
+    if (aligned_end <= aligned_begin || aligned_begin >= size_) return;
+    const uint64_t clamped_end =
+        aligned_end > size_ ? static_cast<uint64_t>(size_) : aligned_end;
+    (void)::madvise(const_cast<uint8_t*>(mapped_ + aligned_begin),
+                   static_cast<size_t>(clamped_end - aligned_begin),
+                   MADV_DONTNEED);
+#else
+    (void)offset;
+    (void)length;
+#endif
+  }
+
  private:
   explicit UsdaLazyArraySource(std::string&& source)
       : owned_(std::move(source)), size_(owned_.size()) {}

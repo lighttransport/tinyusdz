@@ -88,6 +88,28 @@ CrateDataSource::~CrateDataSource() {
 #endif
 }
 
+void CrateDataSource::DiscardRange(uint64_t offset, uint64_t length) const {
+#if defined(TINYUSDZ_NEXT_HAVE_MMAP)
+  if (!mmap_addr_ || length == 0 || offset >= mmap_size_) return;
+  uint64_t end = offset + length;
+  if (end < offset || end > mmap_size_) end = mmap_size_;
+  const long page = ::sysconf(_SC_PAGESIZE);
+  if (page <= 0) return;
+  const uint64_t page_size = static_cast<uint64_t>(page);
+  const uint64_t aligned_begin = offset & ~(page_size - 1u);
+  const uint64_t aligned_end = (end + page_size - 1u) & ~(page_size - 1u);
+  if (aligned_end <= aligned_begin || aligned_begin >= mmap_size_) return;
+  const uint64_t clamped_end =
+      aligned_end > mmap_size_ ? static_cast<uint64_t>(mmap_size_) : aligned_end;
+  (void)::madvise(const_cast<uint8_t*>(mmap_base_ + aligned_begin),
+                 static_cast<size_t>(clamped_end - aligned_begin),
+                 MADV_DONTNEED);
+#else
+  (void)offset;
+  (void)length;
+#endif
+}
+
 bool CrateDataSource::MaterializeArray(const LazyArrayRef& ref, Value* out) const {
   if (!out) return false;
   return DecodeCrateArray(base(), size(), ref.rep, tokens_,

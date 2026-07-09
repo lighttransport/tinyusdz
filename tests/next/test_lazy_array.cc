@@ -199,7 +199,7 @@ int main() {
     assert(GetFloatArrayView(*pv, &scratch, &view));
     assert(view.borrowed);
     assert(view.size == points.size());
-    assert(scratch.storage.empty());
+    assert(scratch.materialized.is_empty());
     for (size_t i = 0; i < points.size(); i++) assert(view[i] == points[i]);
     assert(pv->is_lazy());
     assert(!pv->is_dirty());
