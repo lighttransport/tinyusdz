@@ -1261,6 +1261,12 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
     if (t.kind == WriteTask::Kind::Chunk) return scalar_bytes(*t.value, t.hi - t.lo);
     return scalar_bytes(*t.value, ArrayElementCount(*t.value));  // WholeValue
   };
+  auto direct_stream_task = [&](const WriteTask& t) -> bool {
+    constexpr uint64_t kDirectStreamBytes = 64ull << 20;
+    return t.kind == WriteTask::Kind::WholeValue && t.value &&
+           IsCompressedLazyIntArray(*t.value) &&
+           task_bytes(t) >= kDirectStreamBytes;
+  };
   uint64_t total_bytes = 0;
   for (const auto& t : tasks) total_bytes += task_bytes(t);
   const size_t k_target = std::max<size_t>(1, static_cast<size_t>(nthreads) * 64);
@@ -1269,6 +1275,12 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   seg_begin.push_back(0);
   uint64_t acc = 0;
   for (size_t i = 0; i < m; ++i) {
+    if (direct_stream_task(tasks[i])) {
+      if (seg_begin.back() != i) seg_begin.push_back(i);
+      seg_begin.push_back(i + 1);
+      acc = 0;
+      continue;
+    }
     acc += task_bytes(tasks[i]);
     if (acc >= seg_target && seg_begin.back() != i + 1) {
       seg_begin.push_back(i + 1);
@@ -1277,6 +1289,14 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   }
   if (seg_begin.back() != m) seg_begin.push_back(m);
   const size_t K = seg_begin.size() - 1;
+  std::vector<uint8_t> direct_segment(K, 0);
+  for (size_t k = 0; k < K; ++k) {
+    direct_segment[k] =
+        (seg_begin[k + 1] == seg_begin[k] + 1 &&
+         direct_stream_task(tasks[seg_begin[k]]))
+            ? 1
+            : 0;
+  }
 
   // Per-segment list of decoded-buffer holder indices to free once that segment is
   // written. A buffer's freeing flag sits on its last chunk; by the time that
@@ -1292,9 +1312,12 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   }
 
   // Phase 2: workers format whole segments; the main thread writes segment buffers
-  // in order. Lock-free: each segment is claimed once via `next`, produced into
-  // results[k], published via ready[k]; the consumer spins (yielding) on ready[s]
-  // and advances `consumed`, back-pressuring workers past W segments ahead.
+  // in order. Very large compressed int arrays are marked direct and formatted by
+  // the consumer into the final stream so they do not allocate a full text buffer.
+  // Lock-free: each segment is claimed once via `next`, produced into results[k]
+  // (or marked direct), published via ready[k]; the consumer spins (yielding) on
+  // ready[s] and advances `consumed`, back-pressuring workers past W segments
+  // ahead.
   std::vector<std::string> results(K);
   std::vector<std::atomic<uint8_t>> ready(K);
   for (size_t i = 0; i < K; ++i) ready[i].store(0, std::memory_order_relaxed);
@@ -1302,9 +1325,7 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   std::atomic<size_t> consumed{0};
   const size_t W = static_cast<size_t>(nthreads) * 2 + 2;
 
-  auto format_segment = [&](size_t k, std::string& buf) {
-    buf.clear();
-    StreamWriter sw(&buf);
+  auto format_segment_to = [&](size_t k, StreamWriter& sw) {
     for (size_t i = seg_begin[k]; i < seg_begin[k + 1]; ++i) {
       WriteTask& t = tasks[i];
       switch (t.kind) {
@@ -1321,6 +1342,11 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
       }
     }
   };
+  auto format_segment = [&](size_t k, std::string& buf) {
+    buf.clear();
+    StreamWriter sw(&buf);
+    format_segment_to(k, sw);
+  };
 
   auto worker = [&]() {
     std::string buf;
@@ -1329,6 +1355,10 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
       if (k >= K) break;
       while (k >= consumed.load(std::memory_order_acquire) + W) {
         std::this_thread::yield();
+      }
+      if (direct_segment[k]) {
+        ready[k].store(2, std::memory_order_release);
+        continue;
       }
       format_segment(k, buf);
       results[k] = std::move(buf);
@@ -1342,9 +1372,16 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   for (int t = 0; t < nw; ++t) pool.emplace_back(worker);
 
   for (size_t s = 0; s < K; ++s) {
-    while (ready[s].load(std::memory_order_acquire) == 0) std::this_thread::yield();
-    os.write(results[s].data(), results[s].size());
-    std::string().swap(results[s]);  // free as we go
+    uint8_t state = 0;
+    while ((state = ready[s].load(std::memory_order_acquire)) == 0) {
+      std::this_thread::yield();
+    }
+    if (state == 2) {
+      format_segment_to(s, os);
+    } else {
+      os.write(results[s].data(), results[s].size());
+      std::string().swap(results[s]);  // free as we go
+    }
     for (int idx : seg_free[s]) holder[idx] = Value{};  // release decoded buffers
     consumed.store(s + 1, std::memory_order_release);
   }
