@@ -137,7 +137,12 @@ function setStatus(s) { els.status.textContent = s; }
 async function ensureWasm() {
   if (native) return native;
   setStatus('Loading WASM…');
-  native = await loadWasm(() => import('./src/tinyusdz/tinyusdz.js'));
+  // backend=next / wasm=next load the next-only module (its usddiff diffs
+  // next::Layer with the same options/result contract).
+  const params = new URLSearchParams(window.location.search);
+  const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
+  const glue = useNext ? './src/tinyusdz/tinyusdz_next.js' : './src/tinyusdz/tinyusdz.js';
+  native = await loadWasm(() => import(/* @vite-ignore */ new URL(glue, import.meta.url).href));
   setStatus('');
   return native;
 }

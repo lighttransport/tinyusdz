@@ -138,6 +138,29 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
                      std::string* warn = nullptr, std::string* err = nullptr,
                      const pcp::CompositionOptions* comp_opts = nullptr);
 
+/// True when the stage's root layer authors composition arcs (sublayers,
+/// references, payloads, inherits, specializes, or variants) that a plain
+/// single-layer load leaves unresolved.
+bool StageNeedsComposition(const Stage& stage);
+
+/// Compose an already-loaded stage in place through the PCP engine (variants,
+/// internal references/inherits/specializes; external arcs resolve through
+/// `resolver`). No-op for self-contained stages. `anchor_label` names the root
+/// layer in diagnostics and anchors arcs authored in it.
+bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
+                        const std::string& anchor_label,
+                        const LoadUSDOptions& load_options,
+                        std::string* warn, std::string* err,
+                        const pcp::CompositionOptions* comp_opts = nullptr);
+
+/// Convenience overload for memory-rooted stages (wasm): no anchor directory;
+/// external arcs resolve only through resolver custom callbacks (none by
+/// default). Primary use: applying variant selections / internal arcs after
+/// LoadUSDFromMemory[Owned].
+bool ComposeLoadedStage(Stage* stage, std::string* warn, std::string* err,
+                        const pcp::CompositionOptions* comp_opts = nullptr,
+                        const std::string& anchor_label = "");
+
 /// Load USD from an in-memory buffer (auto-detects USDA / USDC / USDZ from the
 /// content). Single-layer load only: composition arcs are not resolved (there
 /// is no anchor directory for external assets).

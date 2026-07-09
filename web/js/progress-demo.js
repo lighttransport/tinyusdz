@@ -1350,6 +1350,7 @@ async function loadWithWorker(source, isFile, stats) {
     }
 
     let usd;
+    const workerParseOptions = makeStaticNextParseOptions({ backend: settings.backend });
     const parseStart = performance.now();
     if (isFile) {
         // Load from File object
@@ -1359,10 +1360,10 @@ async function loadWithWorker(source, isFile, stats) {
         stats.readMs = performance.now() - readStart;
         stats.fileSize = arrayBuffer.byteLength;
         updateLoadStatsPanel(stats);
-        usd = await loaderState.workerLoader.parse(new Uint8Array(arrayBuffer), source.name);
+        usd = await loaderState.workerLoader.parse(new Uint8Array(arrayBuffer), source.name, workerParseOptions);
     } else {
         // Load from URL - worker handles download progress
-        usd = await loaderState.workerLoader.load(source);
+        usd = await loaderState.workerLoader.load(source, workerParseOptions);
     }
     stats.parseMs = performance.now() - parseStart;
     updateLoadStatsPanel(stats);
@@ -1458,13 +1459,12 @@ async function loadUSDWithProgress(source, isFile = false) {
     try {
         let usd;
 
-        // Use Web Worker for responsive UI during parsing
-        if (loaderState.useWorker && settings.backend === 'legacy') {
+        // Use Web Worker for responsive UI during parsing. TinyUSDZWorker
+        // handles both backends (it dynamically imports the next-only module
+        // when the load options request backend=next).
+        if (loaderState.useWorker) {
             usd = await loadWithWorker(source, isFile, stats);
         } else {
-            if (loaderState.useWorker && settings.backend !== 'legacy') {
-                console.log('[Progress Demo] next backend uses main-thread loader path');
-            }
             usd = await loadWithMainThread(source, isFile, stats);
         }
 
