@@ -498,6 +498,7 @@ def Mesh "MeshA" {
     assert(points && points->is_lazy());
     assert(points->lazy_ref() && points->lazy_ref()->source);
     assert(!points->lazy_ref()->source->is_mmapped());
+    assert(!points->lazy_ref()->source->can_borrow());
     assert(points->array_size() == 3);
     assert(points->as_float_array());
   }
@@ -525,6 +526,7 @@ def Mesh "MeshA" {
     } else {
       assert(!points->lazy_ref()->source->is_mmapped());
     }
+    assert(!points->lazy_ref()->source->can_borrow());
     assert(points->array_size() == 3);
     const std::vector<float>* values = points->as_float_array();
     assert(values && values->size() == 9);

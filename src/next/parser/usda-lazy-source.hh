@@ -122,7 +122,7 @@ class UsdaLazyArraySource final : public LazyArraySource {
 
   bool is_mmapped() const override { return mapped_ != nullptr; }
 
-  bool can_borrow() const override { return true; }
+  bool can_borrow() const override { return false; }
 
   void DiscardRange(uint64_t offset, uint64_t length) const override {
 #if TINYUSDZ_NEXT_USDA_LAZY_MMAP
