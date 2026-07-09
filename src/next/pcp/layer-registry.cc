@@ -20,6 +20,12 @@ namespace pcp {
 
 namespace {
 
+size_t MinNonZero(size_t a, size_t b) {
+  if (a == 0) return b;
+  if (b == 0) return a;
+  return std::min(a, b);
+}
+
 std::string ToLowerExt(const std::string &path) {
   std::string p = path;
   size_t bracket = p.find('[');
@@ -140,8 +146,12 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
   }
   if (is_usda) {
     LoadOptions lopts;
-    lopts.parse_options.num_threads = options.parse_num_threads;
-    lopts.parse_options.max_file_size = options.max_memory;
+    lopts.parse_options = options.usda_parse_options;
+    lopts.parse_options.num_threads =
+        options.parse_num_threads > 0 ? options.parse_num_threads
+                                     : lopts.parse_options.num_threads;
+    lopts.parse_options.max_file_size =
+        MinNonZero(lopts.parse_options.max_file_size, options.max_memory);
     return ConvertLoadedUSDA(
         LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
         label, warn, err);
@@ -182,8 +192,12 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
 
   if (ext == "usda") {
     LoadOptions lopts;
-    lopts.parse_options.num_threads = options.parse_num_threads;
-    lopts.parse_options.max_file_size = options.max_memory;
+    lopts.parse_options = options.usda_parse_options;
+    lopts.parse_options.num_threads =
+        options.parse_num_threads > 0 ? options.parse_num_threads
+                                     : lopts.parse_options.num_threads;
+    lopts.parse_options.max_file_size =
+        MinNonZero(lopts.parse_options.max_file_size, options.max_memory);
     return ConvertLoadedUSDA(LoadUSDAFromFile(resolved_path, lopts),
                              resolved_path, warn, err);
   }
@@ -210,6 +224,7 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          int parse_num_threads) {
   LayerLoadOptions options;
   options.parse_num_threads = parse_num_threads;
+  options.usda_parse_options.num_threads = parse_num_threads;
   return LoadLayerFromFile(resolved_path, warn, err, options);
 }
 
