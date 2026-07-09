@@ -12,7 +12,11 @@ async function ensureLoader() {
 	loader = new TinyUSDZLoader(null, {
 		suppressNativeInfoLogs: true
 	});
-	await loader.init();
+	// Workers do not inherit the page's location query parameters, so
+	// backend=next/wasm=next cannot select the module implicitly here. This
+	// worker is exclusively the next conversion path; load the full next-only
+	// RenderStream explicitly instead of the legacy USDC-only shim.
+	await loader.init({ backend: 'next', useNextOnlyWasm: true });
 	return loader;
 }
 
