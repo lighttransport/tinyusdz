@@ -20,6 +20,7 @@ struct ParseArrayContext {
 
   /// Copy of parser options relevant to lazy USDA array behavior.
   bool enable_usda_lazy_arrays = false;
+  /// Hard cap for lazy USDA array element count; 0 means no cap.
   size_t max_usda_lazy_array_elements = (static_cast<size_t>(1) << 30);
   int num_threads = 0;
 };

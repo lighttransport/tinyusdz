@@ -612,6 +612,9 @@ bool ParseUsdaArrayElementCount(const char* data, size_t len,
                                size_t max_elements, TypeId element_type,
                                size_t* out_count) {
   if (!out_count) return false;
+  if (max_elements == 0) {
+    max_elements = std::numeric_limits<size_t>::max();
+  }
   *out_count = 0;
 
   auto parse_f = [](SliceParser* s, float* v) { return s->parse_float(v); };
