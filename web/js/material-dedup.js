@@ -35,6 +35,7 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { dedupMaterialsByContent, batchByMaterial } from 'tinyusdz/MeshBatching.js';
+import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
 import {
 	buildNextThreeNode,
 	isNextScene,
@@ -94,11 +95,7 @@ const frameState = {
 };
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
-	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
-		const value = params.get(key);
-		if (value) return value;
-	}
-	return null;
+	return getAssetUriFromURL(params, ['usd']);
 }
 
 function getDisplayNameFromURI(uri) {

@@ -96,6 +96,8 @@
     document.getElementById('btn-file').addEventListener('click', () => fileInput.click());
     mountHttpAssetResolverDemo({ fileInput }).catch((e) => {
       document.getElementById('status').textContent = 'Init failed: ' + e.message;
+      window.renderError = e.message || String(e);
+      window.renderComplete = true;
       console.error(e);
     });
   </script>

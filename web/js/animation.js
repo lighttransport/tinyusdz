@@ -11,6 +11,7 @@ import {
 	readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
 import {
+	getAssetUriFromURL,
 	getBackendFromURL,
 	makeStaticNextParseOptions
 } from 'tinyusdz/LoaderConfigUtils.js';
@@ -23,11 +24,7 @@ import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js
 const LOADER_BACKEND = getBackendFromURL();
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
-	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
-		const value = params.get(key);
-		if (value) return value;
-	}
-	return null;
+	return getAssetUriFromURL(params, ['usd']);
 }
 
 function getDisplayNameFromURI(uri) {

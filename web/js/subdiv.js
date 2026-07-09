@@ -483,10 +483,23 @@ memFolder.open();
 // Animation / resize / init
 // ===========================================================================
 
+// FPS display (updated every ~500 ms to keep UI overhead low)
+let fpsFrameCount = 0;
+let fpsLastUpdateMs = performance.now();
+
 function animate() {
 	requestAnimationFrame(animate);
 	controls.update();
 	renderer.render(scene, camera);
+
+	fpsFrameCount++;
+	const now = performance.now();
+	if (now - fpsLastUpdateMs >= 500) {
+		const fps = fpsFrameCount * 1000 / (now - fpsLastUpdateMs);
+		setText('fps', fps.toFixed(1));
+		fpsFrameCount = 0;
+		fpsLastUpdateMs = now;
+	}
 }
 
 window.addEventListener('resize', () => {

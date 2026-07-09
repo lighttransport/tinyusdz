@@ -12,6 +12,8 @@
 // DOM references (mutable: canvas is replaced on worker respawn)
 // ============================================================================
 
+import { getAssetUriFromURL } from './src/tinyusdz/LoaderConfigUtils.js';
+
 let canvas = document.getElementById('gl');
 const statusEl = document.getElementById('status');
 const modelInfoEl = document.getElementById('model-info');
@@ -37,11 +39,7 @@ const fileInput = document.getElementById('file-input');
 const unsupportedOverlay = document.getElementById('unsupported-overlay');
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
-    for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
-        const value = params.get(key);
-        if (value) return value;
-    }
-    return null;
+    return getAssetUriFromURL(params, ['usd']);
 }
 
 function getBackendFromURL(params = new URLSearchParams(window.location.search)) {
