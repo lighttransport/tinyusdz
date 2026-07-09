@@ -3,12 +3,14 @@
 //
 // Tydra Next - Unit Tests
 
+#include <algorithm>
 #include <iostream>
 #include <cassert>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <unordered_set>
 
 #include "tydra/next/chunked-array.hh"
@@ -17,6 +19,7 @@
 #include "tydra/next/scene-access.hh"
 #include "tydra/next/render-extract.hh"
 #include "tydra/next/render-converter.hh"
+#include "tydra/next/urdf-to-usd.hh"
 #include "next/reader/usda-reader.hh"
 
 using namespace tinyusdz::tydra::next;
@@ -1800,6 +1803,114 @@ def Xform "World"
     }
 }
 )";
+
+  auto test_urdf_mjcf_conversion = []() {
+  std::cout << "Testing URDF/MJCF next-core conversion...\n";
+
+  const char* payload = R"JSON({
+    "name": "test_robot",
+    "sourceFormat": "mjcf",
+    "upAxis": "Z",
+    "gravity": [0, 0, -1],
+    "timestep": 0.001,
+    "newton": {"selfCollisionEnabled": false},
+    "links": [
+      {
+        "name": "base-link",
+        "inertial": {
+          "mass": 2.5,
+          "centerOfMass": [0.1, 0.2, 0.3],
+          "diagonalInertia": [1, 2, 3]
+        },
+        "visuals": [{"name": "body", "meshRef": "body_mesh"}],
+        "collisions": [{
+          "name": "collider",
+          "shape": {"type": "sphere", "radius": 0.25},
+          "mjc": {"group": 4, "contype": 2, "conaffinity": 3}
+        }]
+      },
+      {"name": "tip", "visuals": [], "collisions": []}
+    ],
+    "joints": [{
+      "name": "hinge",
+      "type": "revolute",
+      "parent": "base-link",
+      "child": "tip",
+      "axis": [0, 0, 1],
+      "localPos0": [0, 0, 0.5],
+      "localPos1": [0, 0, 0],
+      "limit": {"lower": -1, "upper": 1},
+      "dynamics": {"damping": 0.5, "stiffness": 3, "armature": 0.02}
+    }],
+    "tendons": [{"name": "cable", "stiffness": 10}],
+    "mjcActuators": [{"name": "motor", "gear": [2]}],
+    "keyframes": [{"name": "home", "qpos": [0]}],
+    "sensors": [{"name": "position", "type": "jointpos"}]
+  })JSON";
+
+  tinyusdz::tydra::next::URDFMeshBuffer mesh;
+  mesh.positions = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  mesh.normals = {0, 0, 1, 0, 0, 1, 0, 0, 1};
+  mesh.uvs = {0, 0, 1, 0, 0, 1};
+  mesh.indices = {0, 1, 2};
+  std::map<std::string, tinyusdz::tydra::next::URDFMeshBuffer> meshes;
+  meshes["body_mesh"] = mesh;
+
+  tinyusdz::next::Stage stage;
+  std::string warn;
+  std::string err;
+  assert(tinyusdz::tydra::next::ConvertURDFJsonToUSDStage(
+      payload, &meshes, &stage, &warn, &err));
+  assert(err.empty());
+  assert(stage.GetMeta().defaultPrim == "World");
+  assert(stage.GetMeta().upAxis == "Z");
+
+  UsdPrim scene = stage.GetPrimAtPath("/World/PhysicsScene");
+  assert(scene.IsValid());
+  assert(scene.GetTypeName() == "PhysicsScene");
+  const Value* timestep = scene.GetPropertyValue("mjc:timestep");
+  assert(timestep && timestep->as_double());
+  assert(std::fabs(*timestep->as_double() - 0.001) < 1.0e-9);
+
+  UsdPrim base = stage.GetPrimAtPath("/World/Links/base_link");
+  assert(base.IsValid());
+  const Value* mass = base.GetPropertyValue("physics:mass");
+  assert(mass && mass->as_float());
+  assert(std::fabs(*mass->as_float() - 2.5f) < 0.001f);
+  assert(std::find(base.GetMeta().apiSchemas().begin(),
+                   base.GetMeta().apiSchemas().end(),
+                   "PhysicsRigidBodyAPI") != base.GetMeta().apiSchemas().end());
+
+  UsdPrim visual = stage.GetPrimAtPath("/World/Links/base_link/body");
+  assert(visual.IsValid());
+  assert(visual.GetTypeName() == "Mesh");
+  assert(visual.GetPropertyValue("points"));
+
+  UsdPrim collider = stage.GetPrimAtPath("/World/Links/base_link/collider");
+  assert(collider.IsValid());
+  assert(collider.GetTypeName() == "Sphere");
+  const Value* group = collider.GetPropertyValue("mjc:group");
+  assert(group && group->as_int() && *group->as_int() == 4);
+
+  UsdPrim joint = stage.GetPrimAtPath("/World/Joints/hinge");
+  assert(joint.IsValid());
+  assert(joint.GetTypeName() == "PhysicsRevoluteJoint");
+  const std::vector<Path>* body0 = joint.GetRelationship("physics:body0");
+  const std::vector<Path>* body1 = joint.GetRelationship("physics:body1");
+  assert(body0 && body0->size() == 1 && (*body0)[0].str() == "/World/Links/base_link");
+  assert(body1 && body1->size() == 1 && (*body1)[0].str() == "/World/Links/tip");
+  const Value* damping = joint.GetPropertyValue("mjc:damping");
+  assert(damping && damping->as_double());
+  assert(std::fabs(*damping->as_double() - 0.5) < 1.0e-9);
+
+  assert(stage.HasPrimAtPath("/World/Tendons/cable"));
+  assert(stage.HasPrimAtPath("/World/MjcActuators/motor"));
+  assert(stage.HasPrimAtPath("/World/Keyframes/home"));
+  assert(stage.HasPrimAtPath("/World/Sensors/position"));
+
+  std::cout << "  URDF/MJCF next-core conversion: PASSED\n";
+  };
+  test_urdf_mjcf_conversion();
 
   LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
   assert(lr.success);

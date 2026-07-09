@@ -7,7 +7,9 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import URDFLoader from 'urdf-loader';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
+  basenameFromUri,
   createConfiguredTinyUSDZLoader,
+  getAssetUriFromURL,
   getBackendFromURL,
   makeStaticNextParseOptions,
   parseUSDSceneFromArrayBuffer
@@ -330,12 +332,11 @@ function finishLoadStats(stats) {
 }
 
 function urlParam(params) {
-  return params.get('uri') || params.get('url') || params.get('src') || params.get('model') || '';
+  return getAssetUriFromURL(params) || '';
 }
 
 function basenameFromUrl(url) {
-  const clean = String(url || '').split(/[?#]/)[0];
-  return decodeURIComponent(clean.slice(clean.lastIndexOf('/') + 1)) || 'scene.usd';
+  return basenameFromUri(url);
 }
 
 function isNextSceneObject(object) {
@@ -538,7 +539,14 @@ function extension(path) {
 async function ensureTinyLoader() {
   if (!state.tinyLoader) {
     setStatus('Loading TinyUSDZ WASM...');
-    state.tinyLoader = await createConfiguredTinyUSDZLoader();
+    state.tinyLoader = await createConfiguredTinyUSDZLoader({
+      initOptions: {
+        useZstdCompressedWasm: false,
+        useMemory64: false,
+        backend: state.settings.backend,
+        useNextOnlyWasm: state.settings.backend === 'next'
+      }
+    });
     TinyUSDZLoaderUtils.setTinyUSDZ(state.tinyLoader.native_);
   }
   return state.tinyLoader;
@@ -4876,7 +4884,12 @@ function buildGeneratedSourceFromUSD(model) {
 async function ensureNativeExporter() {
   const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
-    state.nativeExporter = new loader.native_.TinyUSDZLoaderNative();
+    const Exporter = loader.native_.TinyUSDZLoaderNative ||
+      loader.native_.NextUSDZConverterNative;
+    if (typeof Exporter !== 'function') {
+      throw new Error('The selected TinyUSDZ backend does not provide the URDF/MJCF exporter.');
+    }
+    state.nativeExporter = new Exporter();
     const { maxUsdcMb, maxMemMb } = resolveUSDCExportCapsFromRuntime();
     // Raise the USDC writer's conservative WASM size caps so mesh-dense scenes
     // (e.g. robot_soccer_kit ~104MB, apptronik_apollo ~111MB) can export past
@@ -5533,6 +5546,10 @@ buildGUI();
 if (backendSelect) {
   backendSelect.value = state.settings.backend;
   backendSelect.addEventListener('change', () => {
+    state.nativeExporter?.delete?.();
+    state.tinyLoader?.dispose?.();
+    state.nativeExporter = null;
+    state.tinyLoader = null;
     state.settings.backend = backendSelect.value;
     if (loadStats.current) loadStats.current.backend = state.settings.backend;
     updateLoadStatsPanel();
