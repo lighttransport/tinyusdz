@@ -24,6 +24,8 @@
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 #include "next/types/value-view.hh"
+#include "next/writer/stream-writer.hh"
+#include "next/writer/value-printer.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -204,6 +206,46 @@ int main() {
     assert(pv->is_lazy());
     assert(!pv->is_dirty());
     std::cout << "  points borrowed view reads without materializing" << std::endl;
+  }
+
+  // Large borrowable lazy arrays should use the serial range printer, so source
+  // pages can be discarded per chunk without changing text or materializing the
+  // original Value.
+  {
+    std::vector<float> big_points((64u * 1024u + 17u) * 3u);
+    for (size_t i = 0; i < big_points.size(); ++i) {
+      big_points[i] = static_cast<float>(i % 257) * 0.25f;
+    }
+
+    StageBuilder big_sb;
+    big_sb.SetDefaultPrim("BigMesh");
+    LayerBuilder& big_lb = big_sb.GetLayerBuilder();
+    big_lb.begin_prim("BigMesh", "Mesh");
+    big_lb.add_property("points", Value::MakeFloat3Array(big_points));
+    big_lb.end_prim();
+    big_lb.finalize();
+
+    std::vector<uint8_t> big_buf;
+    USDCWriteResult big_wr = WriteUSDCToMemory(big_buf, big_sb.Build());
+    assert(big_wr.success);
+    USDCLoadResult big_lr = LoadUSDCFromMemory(big_buf.data(), big_buf.size());
+    assert(big_lr.success);
+    UsdPrim big_mesh = big_lr.stage.GetPrimAtPath("/BigMesh");
+    assert(big_mesh.IsValid());
+    const Value* lazy_points = big_mesh.GetPropertyValue("points");
+    assert(lazy_points && lazy_points->is_lazy());
+
+    Value eager = lazy_points->materialized_copy();
+    const std::string expected = PrintValue(eager);
+    std::string actual;
+    {
+      StreamWriter sw(&actual);
+      PrintValue(sw, *lazy_points);
+    }
+    assert(actual == expected);
+    assert(lazy_points->is_lazy());
+    assert(!lazy_points->is_dirty());
+    std::cout << "  serial range printer preserves lazy array text" << std::endl;
   }
 
   // Materialize the original via accessor; verify contents byte-for-byte.
