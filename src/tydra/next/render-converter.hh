@@ -70,6 +70,11 @@ struct ConverterConfig {
   // Time code for evaluation
   double time_code = 0.0;
 
+  // Directory of the source USD file: relative texture asset paths resolve
+  // against it into TextureImage::resolved_path. Empty = leave paths as
+  // authored.
+  std::string asset_base_dir;
+
   // Progress callback
   using ProgressCallback = std::function<void(float progress, const std::string& message)>;
   ProgressCallback progress_callback;
@@ -104,7 +109,7 @@ class RenderSceneConverter {
   ConvertResult Convert(const ::tinyusdz::next::Stage& stage);
 
   // Individual conversion methods (for custom pipelines)
-  bool ConvertMesh(const UsdPrim& prim, RenderMesh* out);
+  bool ConvertMesh(const Stage& stage, const UsdPrim& prim, RenderMesh* out);
   bool ConvertPointInstancer(const UsdPrim& prim, RenderPointInstancer* out);
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage, const UsdPrim& prim, RenderMaterial* out);
   bool ConvertLight(const UsdPrim& prim, RenderLight* out);
@@ -129,6 +134,9 @@ class RenderSceneConverter {
   // Extract mesh data directly into chunked arrays
   bool ExtractMeshGeometry(const UsdPrim& prim, RenderMesh* mesh);
   bool ExtractMeshTopology(const UsdPrim& prim, RenderMesh* mesh);
+  /// Drop faces with out-of-range (or negative) indices and truncate counts
+  /// that overrun the index buffer; appends a warning when anything changed.
+  void SanitizeMeshTopology(RenderMesh* mesh);
   bool ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* mesh);
 
   // Triangulation
@@ -138,8 +146,16 @@ class RenderSceneConverter {
                       UInt32Chunked* out_indices);
 
   // Normal computation
-  bool ComputeFaceNormals(RenderMesh* mesh);
   bool ComputeVertexNormals(RenderMesh* mesh);
+  /// Per-vertex tangent frame (xyzw, w=handedness) from triangles + per-vertex
+  /// normals + per-vertex UVs. No-op unless those inputs are consistent.
+  bool ComputeVertexTangents(RenderMesh* mesh);
+
+  /// Resolve an authored asset path against the source layer directory.
+  std::string ResolveAssetPath(const std::string& file) const;
+  /// Find-or-create an image record for `file`; returns its id (-1 on empty).
+  int32_t ResolveImageId(RenderScene* scene, const std::string& file,
+                         ColorSpace color_space);
 
   // Material extraction
   bool ConvertMaterial(const ::tinyusdz::next::Stage& stage,
@@ -169,24 +185,10 @@ class RenderSceneConverter {
 // Utility functions
 //
 
-// Triangulate a polygon (ear clipping)
-bool TriangulatePolygon(const float* positions, size_t vertex_count,
-                        const uint32_t* indices, std::vector<uint32_t>* out_triangles);
-
-// Compute flat normal for a triangle
-void ComputeTriangleNormal(const float* p0, const float* p1, const float* p2,
-                           float* normal);
-
-// Compute smooth normals by averaging face normals at each vertex
-bool ComputeSmoothNormals(const float* positions, size_t vertex_count,
-                          const uint32_t* indices, size_t triangle_count,
-                          float* normals);
-
-// Compute tangent frame (Mikktspace-compatible)
-bool ComputeTangentFrame(const float* positions, const float* normals,
-                         const float* texcoords, const uint32_t* indices,
-                         size_t vertex_count, size_t triangle_count,
-                         float* tangents);  // vec4 output (xyz = tangent, w = sign)
+// (Utility triangulation/normal/tangent free functions were declared here but
+// never defined; the declarations were removed — a caller would only get a
+// link error. Fan triangulation and vertex-normal generation live on
+// RenderSceneConverter.)
 
 }  // namespace next
 }  // namespace tydra

@@ -11,7 +11,7 @@ option(TINYUSDZ_WASM64 "Use wasm64(memory64). Available only for Chrome and Fire
 option(TINYUSDZ_WASM_DEBUG "Enable WASM debug mode with source maps and assertions" OFF)
 option(TINYUSDZ_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported since 2021)" ON)
 option(TINYUSDZ_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
-option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" OFF)
+option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
 
 if (TINYUSDZ_WASM64)
   set(BUILD_TARGET "tinyusdz_64")

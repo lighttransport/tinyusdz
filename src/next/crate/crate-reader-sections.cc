@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC Crate Reader structural section readers
 
 #include "crate-reader-internal.hh"
+#include "lazy-array.hh"
 #include "safe-arithmetic.hh"
 #include "../strfmt.hh"
 
@@ -448,13 +449,34 @@ bool CrateReader::Impl::ReadFields() {
           AddError("Failed to read array ValueRep element count");
           return false;
         }
+        count = CrateArrayElementCount(count);
         if (!reader_->seek(saved)) {
           AddError("Failed to restore FIELDS reader position");
           return false;
         }
-        if (count > options_.max_array_elements) {
+        const bool lazy_over_cap_ok =
+            options_.lazy_arrays &&
+            CrateArrayTypeCanBeLazy(rep.type_id(), rep.is_compressed());
+        if (count > options_.max_array_elements && !lazy_over_cap_ok) {
           AddError("Array ValueRep element count exceeds max_array_elements limit");
           return false;
+        }
+        if (count >
+            static_cast<uint64_t>((std::numeric_limits<size_t>::max)())) {
+          AddError("Array ValueRep element count exceeds addressable memory");
+          return false;
+        }
+        bool valid_lazy_block = false;
+        if (lazy_over_cap_ok && source_) {
+          LazyArrayRef lr;
+          valid_lazy_block =
+              ProbeArrayBlock(source_, rep,
+                              (std::numeric_limits<size_t>::max)(), &lr) &&
+              (rep.payload() == 0 || lr.block_len > 0);
+          if (!valid_lazy_block && count > options_.max_array_elements) {
+            AddError("Lazy Array ValueRep payload is out of bounds");
+            return false;
+          }
         }
         const uint64_t stride = CrateArrayElemStride(rep.type_id());
         const uint64_t elem_bytes = stride ? stride : 1;
@@ -463,7 +485,8 @@ bool CrateReader::Impl::ReadFields() {
           AddError("Array ValueRep payload byte size overflow");
           return false;
         }
-        if (!CheckByteAllocation(count * elem_bytes, "Array ValueRep payload")) {
+        if (!valid_lazy_block &&
+            !CheckByteAllocation(count * elem_bytes, "Array ValueRep payload")) {
           return false;
         }
       } else if (rep.payload() != 0) {
@@ -1032,9 +1055,20 @@ bool CrateReader::Impl::ReadPaths() {
 
   // Recurse over a sibling chain that all share `parent` (the parent prim path,
   // without any property '.' prefix). Depth is bounded by max_path_depth.
+  //
+  // A well-formed pre-order tree visits every encoded node exactly once. A
+  // malformed jump table can make the child pointer (i+1) and a sibling pointer
+  // (i+jump) reference the SAME node from different parents, so a node gets
+  // re-entered — e.g. a chain of `jump == 1` nodes visits node k 2^k times
+  // (super-linear/exponential CPU hang) from a sub-kilobyte input. `visited`
+  // bounds total work to O(n): re-entering an already-emitted node stops that
+  // chain (the input is malformed, but we terminate instead of hanging).
+  std::vector<uint8_t> visited(n, uint8_t{0});
   std::function<void(size_t, const std::string&, size_t)> build =
       [&](size_t i, const std::string& parent, size_t depth) {
         while (i < n) {
+          if (visited[i]) return;  // node already emitted: malformed, stop
+          visited[i] = uint8_t{1};
           bool is_prop = false;
           std::string elem = element_for(i, is_prop);
           int32_t jump = static_cast<int32_t>(jump_raw[i]);

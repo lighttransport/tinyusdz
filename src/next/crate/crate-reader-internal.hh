@@ -157,6 +157,8 @@ class CrateReader::Impl {
   bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);
   bool DecodeDictionary(ValueRep rep, Value& out, int depth);
 
+  bool ReportProgress(const char* phase, size_t current = 0,
+                      size_t total = 0);
   void AddError(const std::string& msg);
   void AddWarning(const std::string& msg);
 };

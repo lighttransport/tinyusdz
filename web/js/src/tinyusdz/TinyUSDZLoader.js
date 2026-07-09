@@ -150,6 +150,40 @@ function nextHeapView(native, desc) {
     }
 }
 
+function nextAnimationFrame() {
+    return new Promise((resolve) => {
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => resolve());
+        } else {
+            setTimeout(resolve, 0);
+        }
+    });
+}
+
+function nextCrateProgressLocalPercentage(info = {}) {
+    const phase = String(info.phase || '');
+    const ratio = Number.isFinite(info.percentage)
+        ? Math.max(0, Math.min(100, info.percentage)) / 100
+        : 0;
+    const ranged = (base, span) => base + ratio * span;
+    switch (phase) {
+        case 'bootstrap': return 24;
+        case 'toc': return 26;
+        case 'tokens': return 28;
+        case 'strings': return 30;
+        case 'fields': return 32;
+        case 'fieldsets': return 34;
+        case 'specs': return 36;
+        case 'paths': return 38;
+        case 'stage': return 40;
+        case 'stage.prims': return ranged(40, 3);
+        case 'stage.properties': return ranged(43, 3);
+        case 'stage.hierarchy': return ranged(46, 2);
+        case 'complete': return 48;
+        default: return ranged(24, 24);
+    }
+}
+
 class NextRenderSceneAdapter {
     constructor(native, renderStream, options = {}) {
         this.__backend = 'next';
@@ -198,22 +232,74 @@ class NextRenderSceneAdapter {
             throw new Error('TinyUSDZ next backend is unavailable in this WASM module.');
         }
 
+        const onProgress = typeof options.onProgress === 'function'
+            ? options.onProgress
+            : null;
+        const progressBase = Number.isFinite(options.progressBase)
+            ? options.progressBase
+            : 0;
+        const progressRange = Number.isFinite(options.progressRange)
+            ? options.progressRange
+            : 100;
+        const report = (stage, localPercentage, message, extra = {}) => {
+            if (!onProgress) return;
+            const p = Math.max(0, Math.min(100, Number(localPercentage) || 0));
+            onProgress({
+                backend: 'next',
+                stage,
+                percentage: progressBase + (p / 100) * progressRange,
+                localPercentage: p,
+                message,
+                ...extra
+            });
+        };
+        const yieldForProgress = onProgress ? nextAnimationFrame : async () => {};
+        const previousNextCrateProgress = native.onNextCrateProgress;
+        if (onProgress) {
+            native.onNextCrateProgress = (info = {}) => {
+                const phase = info.phase || 'crate';
+                const total = Number(info.total);
+                const current = Number(info.current);
+                const count = Number.isFinite(total) && total > 0
+                    ? ` ${Math.min(current, total)}/${total}`
+                    : '';
+                report('native-load',
+                    nextCrateProgressLocalPercentage(info),
+                    `Loading USD crate: ${phase}${count}`,
+                    { cratePhase: phase, crateCurrent: current, crateTotal: total });
+            };
+        }
+
         const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
         let crate = u8;
         const archiveEntries = new Map();
 
+        report('archive', 0, 'Preparing next backend input...');
+        await yieldForProgress();
+
         if (/\.usdz$/i.test(filename)) {
+            report('archive', 4, 'Reading USDZ archive...');
             const entries = parseUSDZEntries(u8);
             const root = this._rootEntry(entries);
             if (!root || !/\.usdc$/i.test(root.name)) {
                 throw new Error('TinyUSDZ next backend currently requires a USDZ with a USDC root layer.');
             }
             crate = root.data;
+            let copiedEntries = 0;
             for (const entry of entries) {
                 if (!entry.name.endsWith('/')) {
                     archiveEntries.set(this._normTexPathStatic(entry.name), entry.data);
                 }
+                copiedEntries++;
+                if ((copiedEntries & 255) === 0) {
+                    report('archive', 4 + Math.min(16, (copiedEntries / Math.max(1, entries.length)) * 16),
+                        `Indexing USDZ assets ${copiedEntries}/${entries.length}`,
+                        { archiveCurrent: copiedEntries, archiveTotal: entries.length });
+                    await yieldForProgress();
+                }
             }
+            report('archive', 20, `Indexed USDZ assets ${entries.length}/${entries.length}`,
+                { archiveCurrent: entries.length, archiveTotal: entries.length });
         } else if (!/\.usdc$/i.test(filename)) {
             throw new Error('TinyUSDZ next backend currently requires USDC input.');
         }
@@ -237,11 +323,15 @@ class NextRenderSceneAdapter {
                 typeof renderStream.setFlattenRenderTree === 'function') {
                 renderStream.setFlattenRenderTree(!!options.flattenRenderTree);
             }
+            report('native-load', 24, 'Starting USD crate reader...');
+            await yieldForProgress();
             beginResult = renderStream.begin(crate);
             if (!beginResult || !beginResult.success) {
                 const error = beginResult?.error || renderStream.error?.() || 'RenderStream begin failed';
                 throw new Error(error);
             }
+            report('native-load', 48, 'Constructed render stream.');
+            await yieldForProgress();
 
             const metadata = typeof renderStream.getSceneMetadata === 'function'
                 ? renderStream.getSceneMetadata()
@@ -249,12 +339,22 @@ class NextRenderSceneAdapter {
             const meshCount = beginResult.meshCount ?? renderStream.meshCount();
             const meshes = [];
             for (let i = 0; i < meshCount; i++) {
+                if (i === 0 || (i & 31) === 0) {
+                    report('mesh-copy',
+                        50 + Math.min(45, (i / Math.max(1, meshCount)) * 45),
+                        `Materializing meshes ${i}/${meshCount}`,
+                        { meshCurrent: i, meshTotal: meshCount });
+                    await yieldForProgress();
+                }
                 const mesh = renderStream.getMesh(i);
                 if (!mesh || mesh.error) {
                     throw new Error(mesh?.error || `RenderStream mesh ${i} failed`);
                 }
                 meshes.push(this._copyMesh(native, mesh, i));
             }
+            report('mesh-copy', 95, `Materialized meshes ${meshCount}/${meshCount}`,
+                { meshCurrent: meshCount, meshTotal: meshCount });
+            await yieldForProgress();
             const stats = typeof renderStream.getStats === 'function'
                 ? renderStream.getStats()
                 : {};
@@ -274,6 +374,10 @@ class NextRenderSceneAdapter {
             try { renderStream.end(); } catch (_) {}
             try { renderStream.delete(); } catch (_) {}
             throw error;
+        } finally {
+            if (onProgress) {
+                native.onNextCrateProgress = previousNextCrateProgress;
+            }
         }
     }
 
@@ -1138,6 +1242,19 @@ class TinyUSDZLoader extends Loader {
                 this.native_.onTinyUSDZDebug = previousDebugCallback;
             };
         }
+        const tydraProgressCallback = options.onTydraProgress || null;
+        let restoreTydraProgressCallback = () => {};
+        if (tydraProgressCallback) {
+            const previousTydraProgressCallback = this.native_.onTydraProgress;
+            this.native_.onTydraProgress = tydraProgressCallback;
+            restoreTydraProgressCallback = () => {
+                this.native_.onTydraProgress = previousTydraProgressCallback;
+            };
+        }
+        const restoreCallbacks = () => {
+            restoreDebugCallback();
+            restoreTydraProgressCallback();
+        };
 
         let ok;
         try {
@@ -1177,19 +1294,19 @@ class TinyUSDZLoader extends Loader {
         } catch (e) {
             // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
             this._logNativeMemory(usd, 'loadFromBinary-trap', debugMemory);
-            restoreDebugCallback();
+            restoreCallbacks();
             this._logFailedUSDInput(binary, filePath, e instanceof Error ? e.message : String(e));
             _onError(e instanceof Error ? e : new Error(String(e)));
             return;
         }
         if (!ok) {
             this._logNativeMemory(usd, 'loadFromBinary-failed', debugMemory);
-            restoreDebugCallback();
+            restoreCallbacks();
             this._logFailedUSDInput(binary, filePath, usd.error());
             const fileInfo = filePath ? ` (file: ${filePath})` : '';
             _onError(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
         } else {
-            restoreDebugCallback();
+            restoreCallbacks();
             onLoad(usd);
         }
     }
@@ -1338,7 +1455,16 @@ class TinyUSDZLoader extends Loader {
 
         this._applySkinningLoadOptions(usd);
         this._applyConversionLoadOptions(usd, options);
+        if (options.loadTextureInNative && typeof usd.setLoadTextureInNative === 'function') {
+            usd.setLoadTextureInNative(true);
+        }
 
+        const previousTydraProgressCallback = this.native_.onTydraProgress;
+        if (options.onTydraProgress) {
+            this.native_.onTydraProgress = options.onTydraProgress;
+        }
+
+        const previousAsyncPhaseStart = this.native_.onAsyncPhaseStart;
         // Set up async phase callback on Module if provided
         if (options.onPhaseStart) {
             this.native_.onAsyncPhaseStart = options.onPhaseStart;
@@ -1366,9 +1492,12 @@ class TinyUSDZLoader extends Loader {
 
             return usd;
         } finally {
-            // Clean up callback
+            // Clean up callbacks
             if (options.onPhaseStart) {
-                this.native_.onAsyncPhaseStart = null;
+                this.native_.onAsyncPhaseStart = previousAsyncPhaseStart;
+            }
+            if (options.onTydraProgress) {
+                this.native_.onTydraProgress = previousTydraProgressCallback;
             }
         }
     }

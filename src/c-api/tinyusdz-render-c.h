@@ -189,7 +189,11 @@ typedef enum tusd_mesh_buffer_kind {
   TUSD_MESH_BUF_TEXCOORDS1 = 7,      /* f32 x2 */
   TUSD_MESH_BUF_COLORS = 8,          /* f32 x3 */
   TUSD_MESH_BUF_JOINT_INDICES = 9,   /* u16 x4 (skin) */
-  TUSD_MESH_BUF_JOINT_WEIGHTS = 10   /* f32 x4 (skin) */
+  TUSD_MESH_BUF_JOINT_WEIGHTS = 10,  /* f32 x4 (skin) */
+  TUSD_MESH_BUF_TRI_FACEVARYING_INDICES = 11 /* u32 x1: per triangulated corner,
+                                                the original faceVarying corner
+                                                index (index faceVarying uv/
+                                                normals against the triangles) */
 } tusd_mesh_buffer_kind;
 
 TUSD_API tusd_status tusd_render_mesh_buffer(tusd_render_scene* scene,

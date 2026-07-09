@@ -35,6 +35,9 @@ struct tusd_value {
 struct tusd_stage {
   tinyusdz::next::Stage stage;
   std::string warnings;
+  // Directory of the file this stage was loaded from (empty for in-memory /
+  // created stages); used to resolve relative texture asset paths.
+  std::string source_dir;
   // Bumped by structural mutations (define/remove prim) so bindings can
   // detect stale tusd_prim handles.
   std::atomic<uint64_t> generation{0};

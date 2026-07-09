@@ -36,6 +36,8 @@ struct DumpOptions {
   int max_fieldsets = -1;
   int max_paths = -1;
   int max_specs = -1;
+  std::string token_filter;  // substring filter for tokens/fields
+  std::string path_filter;   // substring filter for paths/spec paths
 };
 
 ///
