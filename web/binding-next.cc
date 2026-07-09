@@ -1371,7 +1371,10 @@ class RenderStream {
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
   void setComputeTangents(bool enabled) { compute_tangents_ = enabled; }
-  void setBuildVertexIndices(bool enabled) { build_vertex_indices_ = enabled; }
+  void setBuildVertexIndices(bool enabled) {
+    build_vertex_indices_ = enabled;
+    build_vertex_indices_set_ = true;
+  }
 
   void provideAsset(const std::string& name, const emscripten::val& bytes) {
     std::string copy_error;
@@ -2822,9 +2825,26 @@ class RenderStream {
       return base + add;
     };
 
-    // The next render contract uses a single index buffer. Weld expanded
-    // face-varying tuples by default; callers may explicitly request soup.
-    const bool doWeld = build_vertex_indices_;
+    // Preserve the pre-existing adaptive behavior unless callers explicitly
+    // request an index strategy.
+    const bool doWeld = build_vertex_indices_set_ ? build_vertex_indices_ : [&]() {
+      size_t triCount = 0;
+      for (int32_t nn : fvc) {
+        if (nn >= 3) {
+          const size_t add = static_cast<size_t>(nn - 2);
+          if (triCount > (std::numeric_limits<size_t>::max)() - add) {
+            triCount = (std::numeric_limits<size_t>::max)();
+            break;
+          }
+          triCount += add;
+        }
+      }
+      const size_t cornerCount =
+          (triCount > (std::numeric_limits<size_t>::max)() / 3)
+              ? (std::numeric_limits<size_t>::max)()
+              : triCount * 3;
+      return vtxCount > 0 && vtxCount < cornerCount / 3;
+    }();
 
     if (!doWeld) {
       // Non-indexed triangle soup (the minimal form for unique-per-corner UVs).
@@ -3772,6 +3792,7 @@ class RenderStream {
   bool flatten_render_tree_ = false;
   bool compute_tangents_ = false;
   bool build_vertex_indices_ = true;
+  bool build_vertex_indices_set_ = false;
   std::string tangent_method_ = "hybrid";
   std::string error_;
   std::vector<float> s_points_, s_normals_, s_uv_, s_tangents_;
