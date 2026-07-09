@@ -128,6 +128,53 @@ void AssetResolver::SetCustomResolver(ResolverCallback callback) {
   custom_resolver_ = std::move(callback);
 }
 
+void AssetResolver::SetAssetReader(AssetReadCallback reader) {
+  asset_reader_ = std::move(reader);
+}
+
+bool AssetResolver::ReadAsset(const std::string& resolved_path,
+                              std::vector<uint8_t>* out,
+                              std::string* err) const {
+  if (!out) {
+    if (err) *err += "ReadAsset: null output buffer\n";
+    return false;
+  }
+  out->clear();
+
+  if (asset_reader_) {
+    return asset_reader_(resolved_path, out, err);
+  }
+
+#if defined(__EMSCRIPTEN__)
+  // No filesystem under -sFILESYSTEM=0; bytes must come from a custom reader.
+  if (err) {
+    *err += "ReadAsset: no asset reader installed (wasm build has no "
+            "filesystem): " + resolved_path + "\n";
+  }
+  return false;
+#else
+  std::ifstream f(resolved_path, std::ios::binary | std::ios::ate);
+  if (!f) {
+    if (err) *err += "ReadAsset: failed to open: " + resolved_path + "\n";
+    return false;
+  }
+  const std::streamoff size = f.tellg();
+  if (size < 0) {
+    if (err) *err += "ReadAsset: failed to stat: " + resolved_path + "\n";
+    return false;
+  }
+  f.seekg(0, std::ios::beg);
+  out->resize(static_cast<size_t>(size));
+  if (size > 0 &&
+      !f.read(reinterpret_cast<char*>(out->data()), size)) {
+    if (err) *err += "ReadAsset: short read: " + resolved_path + "\n";
+    out->clear();
+    return false;
+  }
+  return true;
+#endif
+}
+
 ResolvedAsset AssetResolver::Resolve(const std::string& asset_path,
                                       const std::string& anchor_path) const {
   return ResolveInternal(asset_path, anchor_path);
@@ -397,6 +444,51 @@ std::string AssetResolver::NormalizePath(const std::string& path) {
   }
 
   return normalized;
+}
+
+std::vector<std::string> AssetResolver::SuffixCandidates(
+    const std::string& asset_path) {
+  std::vector<std::string> candidates;
+  if (asset_path.empty()) return candidates;
+
+  std::string p = asset_path;
+  std::replace(p.begin(), p.end(), '\\', '/');
+
+  // Strip a Windows drive prefix (e.g. "F:")
+  if ((p.size() >= 2) &&
+      (((p[0] >= 'A') && (p[0] <= 'Z')) || ((p[0] >= 'a') && (p[0] <= 'z'))) &&
+      (p[1] == ':')) {
+    p = p.substr(2);
+  }
+
+  // Strip leading '/', './' and '../' runs.
+  size_t pos = 0;
+  while (pos < p.size()) {
+    if (p[pos] == '/') {
+      pos++;
+    } else if (p.compare(pos, 2, "./") == 0) {
+      pos += 2;
+    } else if (p.compare(pos, 3, "../") == 0) {
+      pos += 3;
+    } else {
+      break;
+    }
+  }
+  p = p.substr(pos);
+
+  // Emit progressively shorter suffixes, longest first, down to the basename.
+  while (p.size()) {
+    if (p != asset_path) {
+      candidates.push_back(p);
+    }
+    size_t slash_loc = p.find('/');
+    if (slash_loc == std::string::npos) {
+      break;
+    }
+    p = p.substr(slash_loc + 1);
+  }
+
+  return candidates;
 }
 
 std::string AssetResolver::MakeRelative(const std::string& path, const std::string& base) {

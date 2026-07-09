@@ -35,6 +35,7 @@
 // next: low-memory lazy-ValueRep flatten pipeline (src/next/).
 #include "io-util.hh"  // AssetPathSuffixCandidates (UE-export suffix fallback)
 #include "next/pipeline/flatten.hh"
+#include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/reader/usdc-reader.hh"
 #include "next/stage/stage.hh"
@@ -2374,6 +2375,84 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
   for (const auto &child : prim.children()) {
     AppendPhysicsPrimJson(child, path + "/" + child.element_name(), prims, depth + 1);
   }
+}
+
+// Parse a dependency layer's bytes for the next flatten compositor. Crate
+// bytes keep the lazy CrateReader path (arrays pass through verbatim);
+// anything else (USDA text, USDZ package) dispatches through the
+// content-sniffing pcp memory loader.
+static std::unique_ptr<tinyusdz::next::Layer> ParseNextLayerBytesOwned(
+    std::string &&bytes, const std::string &key,
+    const tinyusdz::next::CrateReadOptions &read_opts, std::string *error) {
+  namespace tn = tinyusdz::next;
+  if (bytes.size() >= 8 && std::memcmp(bytes.data(), "PXR-USDC", 8) == 0) {
+    tn::CrateReader reader(read_opts);
+    tn::CrateReadResult rr = reader.ReadOwned(std::move(bytes));
+    if (!rr.success) {
+      if (error) {
+        *error = rr.errors.empty() ? ("crate read failed: " + key)
+                                   : rr.errors[0].message;
+      }
+      return nullptr;
+    }
+    std::unique_ptr<tn::Layer> layer = rr.stage.ReleaseRootLayer();
+    if (layer) layer->build_path_index();  // compositor looks prims up by path
+    return layer;
+  }
+
+  tn::pcp::LayerLoadOptions lopts;
+  lopts.max_memory = read_opts.max_memory;
+  std::string warn;
+  std::string parse_err;
+  std::shared_ptr<tn::Layer> loaded = tn::pcp::LoadLayerFromMemoryOwned(
+      key, std::move(bytes), &warn, &parse_err, lopts);
+  if (!loaded) {
+    if (error) {
+      *error = parse_err.empty() ? ("failed to parse layer: " + key)
+                                 : parse_err;
+    }
+    return nullptr;
+  }
+  std::unique_ptr<tn::Layer> layer(new tn::Layer(std::move(*loaded)));
+  layer->build_path_index();
+  return layer;
+}
+
+static std::unique_ptr<tinyusdz::next::Layer> ParseNextLayerBytes(
+    const uint8_t *data, size_t size, const std::string &key,
+    const tinyusdz::next::CrateReadOptions &read_opts, std::string *error) {
+  namespace tn = tinyusdz::next;
+  if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
+    tn::CrateReader reader(read_opts);
+    tn::CrateReadResult rr = reader.Read(data, size);
+    if (!rr.success) {
+      if (error) {
+        *error = rr.errors.empty() ? ("crate read failed: " + key)
+                                   : rr.errors[0].message;
+      }
+      return nullptr;
+    }
+    std::unique_ptr<tn::Layer> layer = rr.stage.ReleaseRootLayer();
+    if (layer) layer->build_path_index();
+    return layer;
+  }
+
+  tn::pcp::LayerLoadOptions lopts;
+  lopts.max_memory = read_opts.max_memory;
+  std::string warn;
+  std::string parse_err;
+  std::shared_ptr<tn::Layer> loaded =
+      tn::pcp::LoadLayerFromMemory(key, data, size, &warn, &parse_err, lopts);
+  if (!loaded) {
+    if (error) {
+      *error = parse_err.empty() ? ("failed to parse layer: " + key)
+                                 : parse_err;
+    }
+    return nullptr;
+  }
+  std::unique_ptr<tn::Layer> layer(new tn::Layer(std::move(*loaded)));
+  layer->build_path_index();
+  return layer;
 }
 
 }  // namespace
@@ -7266,25 +7345,7 @@ class TinyUSDZLoaderNative {
         if (error) *error = "asset not in cache: " + key;
         return nullptr;
       }
-      if (bytes.size() < 8 || std::memcmp(bytes.data(), "PXR-USDC", 8) != 0) {
-        if (error) {
-          *error = "not a USDC crate (USDA dependencies are not supported by "
-                   "the next loader yet): " + key;
-        }
-        return nullptr;
-      }
-      tinyusdz::next::CrateReader reader(read_opts);
-      tinyusdz::next::CrateReadResult rr = reader.ReadOwned(std::move(bytes));
-      if (!rr.success) {
-        if (error) {
-          *error = rr.errors.empty() ? ("crate read failed: " + key)
-                                     : rr.errors[0].message;
-        }
-        return nullptr;
-      }
-      std::unique_ptr<tinyusdz::next::Layer> layer = rr.stage.ReleaseRootLayer();
-      if (layer) layer->build_path_index();  // compositor looks prims up by path
-      return layer;
+      return ParseNextLayerBytesOwned(std::move(bytes), key, read_opts, error);
     };
 
     const bool buffered = chunkCb.isNull() || chunkCb.isUndefined();
@@ -7294,8 +7355,8 @@ class TinyUSDZLoaderNative {
     std::vector<uint8_t> out;
     bool aborted = false;
     if (buffered) {
-      ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwned(
-          std::move(input), out, opts, &stats, &err);
+      ok = tinyusdz::next::pipeline::FlattenUSDMemoryToUSDCOwned(
+          rootName, std::move(input), out, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
       tinyusdz::next::CrateWriteSink sink =
@@ -7308,8 +7369,8 @@ class TinyUSDZLoaderNative {
         }
         return true;
       };
-      ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCOwnedToSink(
-          std::move(input), sink, opts, &stats, &err);
+      ok = tinyusdz::next::pipeline::FlattenUSDMemoryToUSDCOwnedToSink(
+          rootName, std::move(input), sink, opts, &stats, &err);
     }
     result.set("success", ok);
     if (!ok) {
@@ -7524,25 +7585,9 @@ class TinyUSDZLoaderNative {
       }
       consumed->insert(key);
       const std::string &src = it->second;
-      if (src.size() < 8 || std::memcmp(src.data(), "PXR-USDC", 8) != 0) {
-        if (error) {
-          *error = "not a USDC crate (USDA dependencies are not supported by "
-                   "the next loader yet): " + key;
-        }
-        return nullptr;
-      }
-      tinyusdz::next::CrateReader reader(read_opts);
-      tinyusdz::next::CrateReadResult rr = reader.Read(
-          reinterpret_cast<const uint8_t *>(src.data()), src.size());
-      if (!rr.success) {
-        if (error) {
-          *error = rr.errors.empty() ? ("crate read failed: " + key)
-                                     : rr.errors[0].message;
-        }
-        return nullptr;
-      }
-      std::unique_ptr<tinyusdz::next::Layer> layer = rr.stage.ReleaseRootLayer();
-      if (layer) layer->build_path_index();
+      std::unique_ptr<tinyusdz::next::Layer> layer = ParseNextLayerBytes(
+          reinterpret_cast<const uint8_t *>(src.data()), src.size(), key,
+          read_opts, error);
       if (!layer) return nullptr;
       state.parsed_layers[key] =
           std::shared_ptr<tinyusdz::next::Layer>(
@@ -7560,8 +7605,8 @@ class TinyUSDZLoaderNative {
         reinterpret_cast<const uint8_t *>(state.root.data());
     const size_t root_size = state.root.size();
     if (buffered) {
-      ok = tinyusdz::next::pipeline::FlattenUSDCToUSDC(
-          root_data, root_size, out, opts, &stats, &err);
+      ok = tinyusdz::next::pipeline::FlattenUSDMemoryToUSDC(
+          state.root_name, root_data, root_size, out, opts, &stats, &err);
     } else {
       opts.write.streaming = true;
       tinyusdz::next::CrateWriteSink sink =
@@ -7574,8 +7619,8 @@ class TinyUSDZLoaderNative {
         }
         return true;
       };
-      ok = tinyusdz::next::pipeline::FlattenUSDCToUSDCToSink(
-          root_data, root_size, sink, opts, &stats, &err);
+      ok = tinyusdz::next::pipeline::FlattenUSDMemoryToUSDCToSink(
+          state.root_name, root_data, root_size, sink, opts, &stats, &err);
     }
 
     if (!missing_key.empty()) {

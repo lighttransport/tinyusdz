@@ -231,11 +231,19 @@ list(
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser.cc
   ${TINYUSDZ_NEXT_DIR}/parser/value-parser-types.cc
   ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-metadata.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-prim.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-timesamples.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-utils.cc
+  ${TINYUSDZ_NEXT_DIR}/parser/ascii-parser-variants.cc
   ${TINYUSDZ_NEXT_DIR}/parser/simd-scan.cc
   ${TINYUSDZ_NEXT_DIR}/composition/composition.cc
   ${TINYUSDZ_NEXT_DIR}/resolver/asset-resolver.cc
   ${TINYUSDZ_NEXT_DIR}/pipeline/flatten.cc
+  ${TINYUSDZ_NEXT_DIR}/pcp/layer-registry.cc
+  ${TINYUSDZ_NEXT_DIR}/reader/usda-reader.cc
   ${TINYUSDZ_NEXT_DIR}/reader/usdc-reader.cc
+  ${TINYUSDZ_NEXT_DIR}/reader/usdz-reader.cc
   ${TINYUSDZ_NEXT_DIR}/schema/geom-mesh.cc
   ${TINYUSDZ_NEXT_DIR}/schema/geom-xform.cc
   ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc

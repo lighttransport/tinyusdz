@@ -86,6 +86,73 @@ std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
   return r.stage.ReleaseRootLayer();
 }
 
+ParseOptions MakeUSDAParseOptions(const LayerLoadOptions &options) {
+  ParseOptions popts = options.usda_parse_options;
+  popts.num_threads = options.parse_num_threads > 0 ? options.parse_num_threads
+                                                    : popts.num_threads;
+  popts.max_file_size = MinNonZero(popts.max_file_size, options.max_memory);
+  return popts;
+}
+
+std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
+                                              const std::string &package_label,
+                                              const std::string &entry_name,
+                                              const LayerLoadOptions &options,
+                                              std::string *warn,
+                                              std::string *err) {
+  int idx = -1;
+  if (entry_name.empty()) {
+    idx = reader.FindUSDCFile();
+    if (idx < 0) idx = reader.FindUSDAFile();
+  } else {
+    const std::string want = NormalizeEntryName(entry_name);
+    for (size_t i = 0; i < reader.NumEntries(); ++i) {
+      if (NormalizeEntryName(reader.EntryName(i)) == want) {
+        idx = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  if (idx < 0) {
+    if (err) {
+      *err += "USDZ layer entry not found: " + package_label +
+              (entry_name.empty() ? std::string() : "[" + entry_name + "]") +
+              "\n";
+    }
+    return nullptr;
+  }
+
+  const uint8_t *data = reader.EntryData(static_cast<size_t>(idx));
+  const size_t size = reader.EntrySize(static_cast<size_t>(idx));
+  if (!data || size == 0) {
+    if (err) *err += "USDZ layer entry is empty\n";
+    return nullptr;
+  }
+
+  const std::string label = package_label + "[" + reader.EntryName(static_cast<size_t>(idx)) + "]";
+  bool is_usdc = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usdc");
+  bool is_usda = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usda");
+  if (!is_usdc && !is_usda && size >= 8 &&
+      std::memcmp(data, "PXR-USDC", 8) == 0) {
+    is_usdc = true;
+  }
+  if (is_usdc) {
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
+  }
+  if (is_usda) {
+    LoadOptions lopts;
+    lopts.parse_options = MakeUSDAParseOptions(options);
+    return ConvertLoadedUSDA(
+        LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
+        label, warn, err);
+  }
+
+  if (err) *err += "Unsupported USDZ layer entry format: " + label + "\n";
+  return nullptr;
+}
+
 std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
                                          const std::string &entry_name,
                                          const LayerLoadOptions &options,
@@ -103,62 +170,8 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
     return nullptr;
   }
 
-  int idx = -1;
-  if (entry_name.empty()) {
-    idx = reader.FindUSDCFile();
-    if (idx < 0) idx = reader.FindUSDAFile();
-  } else {
-    const std::string want = NormalizeEntryName(entry_name);
-    for (size_t i = 0; i < reader.NumEntries(); ++i) {
-      if (NormalizeEntryName(reader.EntryName(i)) == want) {
-        idx = static_cast<int>(i);
-        break;
-      }
-    }
-  }
-  if (idx < 0) {
-    if (err) {
-      *err += "USDZ layer entry not found: " + package_file +
-              (entry_name.empty() ? std::string() : "[" + entry_name + "]") +
-              "\n";
-    }
-    return nullptr;
-  }
-
-  const uint8_t *data = reader.EntryData(static_cast<size_t>(idx));
-  const size_t size = reader.EntrySize(static_cast<size_t>(idx));
-  if (!data || size == 0) {
-    if (err) *err += "USDZ layer entry is empty\n";
-    return nullptr;
-  }
-
-  const std::string label = package_file + "[" + reader.EntryName(static_cast<size_t>(idx)) + "]";
-  bool is_usdc = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usdc");
-  bool is_usda = EndsWithNoCase(reader.EntryName(static_cast<size_t>(idx)), ".usda");
-  if (!is_usdc && !is_usda && size >= 8 &&
-      std::memcmp(data, "PXR-USDC", 8) == 0) {
-    is_usdc = true;
-  }
-  if (is_usdc) {
-    USDCLoadOptions lopts;
-    lopts.crate_options.max_memory = options.max_memory;
-    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
-  }
-  if (is_usda) {
-    LoadOptions lopts;
-    lopts.parse_options = options.usda_parse_options;
-    lopts.parse_options.num_threads =
-        options.parse_num_threads > 0 ? options.parse_num_threads
-                                     : lopts.parse_options.num_threads;
-    lopts.parse_options.max_file_size =
-        MinNonZero(lopts.parse_options.max_file_size, options.max_memory);
-    return ConvertLoadedUSDA(
-        LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
-        label, warn, err);
-  }
-
-  if (err) *err += "Unsupported USDZ layer entry format: " + label + "\n";
-  return nullptr;
+  return LoadLayerFromUSDZEntry(reader, package_file, entry_name, options,
+                                warn, err);
 }
 
 }  // namespace
@@ -226,6 +239,94 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   options.parse_num_threads = parse_num_threads;
   options.usda_parse_options.num_threads = parse_num_threads;
   return LoadLayerFromFile(resolved_path, warn, err, options);
+}
+
+std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
+                                           const uint8_t *data, size_t size,
+                                           std::string *warn, std::string *err,
+                                           const LayerLoadOptions &options) {
+  if (!data || size == 0) {
+    if (err) *err += "Empty layer buffer for: " + key + "\n";
+    return nullptr;
+  }
+  if (options.max_memory > 0 && size > options.max_memory) {
+    if (err) {
+      *err += "Layer buffer exceeds max_memory for: " + key + "\n";
+    }
+    return nullptr;
+  }
+
+  if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, err);
+  }
+
+  if (size >= 4 && std::memcmp(data, "PK\x03\x04", 4) == 0) {
+    // A package-path key ("pkg.usdz[entry]") selects a specific entry;
+    // otherwise the first .usdc (then .usda) entry is the root layer.
+    std::string entry_name;
+    if (AssetResolver::IsPackagePath(key)) {
+      std::string package_file;
+      AssetResolver::ParsePackagePath(key, &package_file, &entry_name);
+    }
+    USDZReadOptions zopts;
+    zopts.max_archive_size = options.max_memory;
+    zopts.max_entry_size = options.max_memory;
+    USDZReader reader;
+    if (!reader.Open(data, size, zopts)) {
+      if (err) {
+        *err += "Failed to open USDZ layer buffer: " + key + " : " +
+                (reader.Error().empty() ? "open failed" : reader.Error()) +
+                "\n";
+      }
+      return nullptr;
+    }
+    return LoadLayerFromUSDZEntry(reader, key, entry_name, options, warn, err);
+  }
+
+  LoadOptions lopts;
+  lopts.parse_options = MakeUSDAParseOptions(options);
+  return ConvertLoadedUSDA(
+      LoadUSDAFromString(reinterpret_cast<const char *>(data), size, lopts),
+      key, warn, err);
+}
+
+std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
+                                                std::string &&data,
+                                                std::string *warn,
+                                                std::string *err,
+                                                const LayerLoadOptions &options) {
+  if (data.empty()) {
+    if (err) *err += "Empty layer buffer for: " + key + "\n";
+    return nullptr;
+  }
+  if (options.max_memory > 0 && data.size() > options.max_memory) {
+    if (err) {
+      *err += "Layer buffer exceeds max_memory for: " + key + "\n";
+    }
+    return nullptr;
+  }
+
+  if (data.size() >= 8 && std::memcmp(data.data(), "PXR-USDC", 8) == 0) {
+    USDCLoadOptions lopts;
+    lopts.crate_options.max_memory = options.max_memory;
+    return ConvertLoadedUSDC(LoadUSDCFromMemoryOwned(std::move(data), lopts),
+                             key, err);
+  }
+
+  if (data.size() >= 4 && std::memcmp(data.data(), "PK\x03\x04", 4) == 0) {
+    // USDZ entries are parsed with copying readers, so the archive buffer can
+    // be released when this call returns.
+    return LoadLayerFromMemory(key,
+                               reinterpret_cast<const uint8_t *>(data.data()),
+                               data.size(), warn, err, options);
+  }
+
+  LoadOptions lopts;
+  lopts.parse_options = MakeUSDAParseOptions(options);
+  return ConvertLoadedUSDA(LoadUSDAFromStringOwned(std::move(data), lopts),
+                           key, warn, err);
 }
 
 std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,

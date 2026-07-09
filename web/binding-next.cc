@@ -25,6 +25,9 @@
 #include <utility>
 #include <vector>
 
+#include "next/pcp/layer-registry.hh"
+#include "next/pipeline/flatten.hh"
+#include "next/resolver/asset-resolver.hh"
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-xform.hh"
 #include "next/schema/usd-shade.hh"
@@ -451,7 +454,298 @@ static bool AnimationHasSkeletalChannels(const tr::AnimationClip& clip) {
   return false;
 }
 
+// Parse a dependency layer's bytes for the flatten compositor. Crate bytes
+// keep the lazy CrateReader path (arrays pass through verbatim); anything else
+// (USDA text, USDZ package) dispatches through the content-sniffing pcp
+// memory loader.
+static std::unique_ptr<tn::Layer> ParseNextLayerBytes(
+    const uint8_t* data, size_t size, const std::string& key,
+    const tn::CrateReadOptions& read_opts, std::string* error) {
+  if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
+    tn::CrateReader reader(read_opts);
+    tn::CrateReadResult rr = reader.Read(data, size);
+    if (!rr.success) {
+      if (error) {
+        *error = rr.errors.empty() ? ("crate read failed: " + key)
+                                   : rr.errors[0].message;
+      }
+      return nullptr;
+    }
+    std::unique_ptr<tn::Layer> layer = rr.stage.ReleaseRootLayer();
+    if (layer) layer->build_path_index();  // compositor looks prims up by path
+    return layer;
+  }
+
+  tn::pcp::LayerLoadOptions lopts;
+  lopts.max_memory = read_opts.max_memory;
+  std::string warn;
+  std::string parse_err;
+  std::shared_ptr<tn::Layer> loaded =
+      tn::pcp::LoadLayerFromMemory(key, data, size, &warn, &parse_err, lopts);
+  if (!loaded) {
+    if (error) {
+      *error = parse_err.empty() ? ("failed to parse layer: " + key)
+                                 : parse_err;
+    }
+    return nullptr;
+  }
+  std::unique_ptr<tn::Layer> layer(new tn::Layer(std::move(*loaded)));
+  layer->build_path_index();
+  return layer;
+}
+
 }  // namespace
+
+// Resumable multi-layer flatten session: JS drives a need-layer loop,
+// providing dependency layer bytes (USDA / USDC / USDZ, fetched over HTTP or
+// pulled from a package) until the flatten converges, then receives a
+// flattened USDC buffer. One instance = one session; mirrors the legacy
+// module's nextFlattenAsyncBegin/ProvideLayer/Step/End protocol with the
+// session id replaced by the instance.
+class NextFlattenSession {
+ public:
+  NextFlattenSession() = default;
+
+  emscripten::val begin(emscripten::val rootBytes, const std::string& rootName,
+                        bool lazyArrays) {
+    emscripten::val result = emscripten::val::object();
+    reset_();
+    std::string copy_error;
+    root_ = CopyUint8ArrayToString(rootBytes, &copy_error);
+    if (root_.empty()) {
+      result.set("success", false);
+      result.set("error", copy_error.empty()
+                              ? std::string("empty root layer buffer")
+                              : copy_error);
+      return result;
+    }
+    root_name_ = rootName;
+    lazy_arrays_ = lazyArrays;
+    began_ = true;
+    result.set("success", true);
+    result.set("status", "ready");
+    return result;
+  }
+
+  emscripten::val setVariantOverride(const std::string& prim_path,
+                                     const std::string& selection) {
+    emscripten::val result = emscripten::val::object();
+    variant_overrides_[prim_path] = selection;
+    result.set("success", true);
+    return result;
+  }
+
+  emscripten::val provideLayer(const std::string& key, emscripten::val data) {
+    emscripten::val result = emscripten::val::object();
+    if (!began_) {
+      result.set("success", false);
+      result.set("error", "session not started (call begin first)");
+      return result;
+    }
+    std::string copy_error;
+    std::string bytes = CopyUint8ArrayToString(data, &copy_error);
+    if (bytes.empty()) {
+      result.set("success", false);
+      result.set("error", "Invalid or empty layer data for: " + key);
+      return result;
+    }
+    std::string norm_key = tn::AssetResolver::NormalizePath(key);
+    while (norm_key.rfind("./", 0) == 0) norm_key = norm_key.substr(2);
+    layers_[norm_key] = std::move(bytes);
+    parsed_layers_.erase(norm_key);
+    result.set("success", true);
+    return result;
+  }
+
+  emscripten::val step(emscripten::val chunkCb) {
+    emscripten::val result = emscripten::val::object();
+    if (!began_) {
+      result.set("success", false);
+      result.set("error", "session not started (call begin first)");
+      return result;
+    }
+
+    tn::pipeline::FlattenOptions opts;
+    opts.read.lazy_arrays = lazy_arrays_;
+    opts.root_anchor_path = root_name_;
+    opts.fail_on_composition_error = true;
+    opts.composition.variant_overrides = variant_overrides_;
+
+    using tn::AssetResolver;
+    AssetResolver resolver;
+    std::string missing_key;
+    auto consumed = std::make_shared<std::set<std::string>>();
+    auto resolved_cache =
+        std::make_shared<std::map<std::string, std::string>>();
+    resolver.SetCustomResolver(
+        [this, consumed, resolved_cache](
+            const std::string& asset, const std::string& anchor) -> std::string {
+          const std::string cache_key = anchor + "\n" + asset;
+          auto hit = resolved_cache->find(cache_key);
+          if (hit != resolved_cache->end()) return hit->second;
+          auto try_key = [this, &consumed](std::string key) -> std::string {
+            key = AssetResolver::NormalizePath(key);
+            while (key.rfind("./", 0) == 0) key = key.substr(2);
+            return (layers_.count(key) || consumed->count(key))
+                       ? key
+                       : std::string();
+          };
+          if (!anchor.empty()) {
+            std::string k = try_key(AssetResolver::JoinPath(
+                AssetResolver::GetDirectory(anchor), asset));
+            if (!k.empty()) {
+              (*resolved_cache)[cache_key] = k;
+              return k;
+            }
+          }
+          {
+            std::string k = try_key(asset);
+            if (!k.empty()) {
+              (*resolved_cache)[cache_key] = k;
+              return k;
+            }
+          }
+          for (const auto& cand : AssetResolver::SuffixCandidates(asset)) {
+            std::string k = try_key(cand);
+            if (!k.empty()) {
+              (*resolved_cache)[cache_key] = k;
+              return k;
+            }
+          }
+          // Return the best normalized candidate so the loader can surface
+          // exactly which layer JS should fetch.
+          std::string request = asset;
+          if (!anchor.empty()) {
+            request = AssetResolver::JoinPath(
+                AssetResolver::GetDirectory(anchor), asset);
+          }
+          request = AssetResolver::NormalizePath(request);
+          while (request.rfind("./", 0) == 0) request = request.substr(2);
+          (*resolved_cache)[cache_key] = request;
+          return request;
+        });
+    opts.resolver = &resolver;
+
+    const tn::CrateReadOptions read_opts = opts.read;
+    opts.layer_loader = [this, read_opts, consumed, &missing_key](
+                            const std::string& key,
+                            std::string* error) -> std::unique_ptr<tn::Layer> {
+      auto cached = parsed_layers_.find(key);
+      if (cached != parsed_layers_.end() && cached->second) {
+        consumed->insert(key);
+        std::unique_ptr<tn::Layer> layer(
+            new tn::Layer(cached->second->Clone()));
+        layer->build_path_index();
+        return layer;
+      }
+
+      auto it = layers_.find(key);
+      if (it == layers_.end()) {
+        missing_key = key;
+        if (error) *error = "NEED_LAYER:" + key;
+        return nullptr;
+      }
+      consumed->insert(key);
+      const std::string& src = it->second;
+      std::unique_ptr<tn::Layer> layer = ParseNextLayerBytes(
+          reinterpret_cast<const uint8_t*>(src.data()), src.size(), key,
+          read_opts, error);
+      if (!layer) return nullptr;
+      parsed_layers_[key] =
+          std::shared_ptr<tn::Layer>(new tn::Layer(layer->Clone()));
+      return layer;
+    };
+
+    const bool buffered = chunkCb.isNull() || chunkCb.isUndefined();
+    tn::pipeline::FlattenStats stats;
+    std::string err;
+    bool ok = false;
+    std::vector<uint8_t> out;
+    bool aborted = false;
+    const uint8_t* root_data = reinterpret_cast<const uint8_t*>(root_.data());
+    const size_t root_size = root_.size();
+    if (buffered) {
+      ok = tn::pipeline::FlattenUSDMemoryToUSDC(root_name_, root_data,
+                                                root_size, out, opts, &stats,
+                                                &err);
+    } else {
+      opts.write.streaming = true;
+      tn::CrateWriteSink sink = [&](const uint8_t* data, size_t size) -> bool {
+        emscripten::val view(emscripten::typed_memory_view(size, data));
+        emscripten::val r = chunkCb(view);
+        if (r.isFalse()) {
+          aborted = true;
+          return false;
+        }
+        return true;
+      };
+      ok = tn::pipeline::FlattenUSDMemoryToUSDCToSink(
+          root_name_, root_data, root_size, sink, opts, &stats, &err);
+    }
+
+    if (!missing_key.empty()) {
+      result.set("success", true);
+      result.set("status", "need-layer");
+      result.set("key", missing_key);
+      return result;
+    }
+    result.set("success", ok);
+    if (!ok) {
+      if (aborted) {
+        result.set("success", true);
+        result.set("status", "ready");
+        return result;
+      }
+      result.set("status", "error");
+      result.set("error", err);
+      return result;
+    }
+
+    result.set("status", "done");
+    if (buffered) result.set("data", Uint8ArrayFromVector(out));
+    result.set("inputBytes", static_cast<double>(stats.input_bytes));
+    result.set("outputBytes", static_cast<double>(stats.output_bytes));
+    result.set("primCount", static_cast<double>(stats.prim_count));
+    result.set("arraysPassedThrough",
+               static_cast<double>(stats.arrays_passed_through));
+    result.set("arraysReencoded", static_cast<double>(stats.arrays_reencoded));
+    result.set("readMs", stats.read_ms);
+    result.set("composeMs", stats.compose_ms);
+    result.set("writeMs", stats.write_ms);
+    {
+      emscripten::val assets = emscripten::val::array();
+      for (const auto& path : stats.referenced_assets) {
+        assets.call<void>("push", path);
+      }
+      result.set("assetPaths", assets);
+      result.set("assetPathCount",
+                 static_cast<double>(stats.referenced_assets.size()));
+    }
+    return result;
+  }
+
+  void end() { reset_(); }
+
+ private:
+  void reset_() {
+    root_.clear();
+    root_.shrink_to_fit();
+    root_name_.clear();
+    lazy_arrays_ = true;
+    began_ = false;
+    layers_.clear();
+    parsed_layers_.clear();
+    variant_overrides_.clear();
+  }
+
+  std::string root_;
+  std::string root_name_;
+  bool lazy_arrays_ = true;
+  bool began_ = false;
+  std::map<std::string, std::string> layers_;
+  std::map<std::string, std::shared_ptr<tn::Layer>> parsed_layers_;
+  std::map<std::string, std::string> variant_overrides_;
+};
 
 class NextUSDZConverterNative {
  public:
@@ -2661,6 +2955,14 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("rewriteRoot", &NextUSDZConverterNative::rewriteRoot)
       .function("error", &NextUSDZConverterNative::error)
       .function("warn", &NextUSDZConverterNative::warn);
+
+  emscripten::class_<NextFlattenSession>("NextFlattenSession")
+      .constructor<>()
+      .function("begin", &NextFlattenSession::begin)
+      .function("setVariantOverride", &NextFlattenSession::setVariantOverride)
+      .function("provideLayer", &NextFlattenSession::provideLayer)
+      .function("step", &NextFlattenSession::step)
+      .function("end", &NextFlattenSession::end);
 
   emscripten::class_<RenderStream>("RenderStream")
       .constructor<>()

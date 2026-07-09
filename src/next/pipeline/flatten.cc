@@ -278,6 +278,46 @@ LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts) {
   return MakeFileSystemLayerLoader(read_opts, {});
 }
 
+LayerLoader MakeResolverLayerLoader(const AssetResolver* resolver,
+                                    const CrateReadOptions& read_opts,
+                                    const pcp::LayerLoadOptions& layer_load_opts) {
+  return [resolver, read_opts, layer_load_opts](
+             const std::string& resolved_path,
+             std::string* error) -> std::unique_ptr<Layer> {
+    if (!resolver) {
+      if (error) *error = "no resolver installed";
+      return nullptr;
+    }
+    pcp::LayerLoadOptions lopts = layer_load_opts;
+    if (lopts.max_memory == 0) lopts.max_memory = read_opts.max_memory;
+
+    // A package path reads the package file's bytes; entry selection happens
+    // inside the content-sniffing parser.
+    std::string read_path = resolved_path;
+    if (AssetResolver::IsPackagePath(resolved_path)) {
+      std::string package_file;
+      std::string entry_name;
+      if (AssetResolver::ParsePackagePath(resolved_path, &package_file,
+                                          &entry_name)) {
+        read_path = package_file;
+      }
+    }
+
+    std::vector<uint8_t> bytes;
+    if (!resolver->ReadAsset(read_path, &bytes, error)) {
+      return nullptr;
+    }
+
+    std::string warn;
+    std::shared_ptr<Layer> loaded = pcp::LoadLayerFromMemory(
+        resolved_path, bytes.data(), bytes.size(), &warn, error, lopts);
+    if (!loaded) return nullptr;
+    std::unique_ptr<Layer> layer(new Layer(std::move(*loaded)));
+    layer->build_path_index();  // compositor looks prims up by path
+    return layer;
+  };
+}
+
 LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts,
                                      const pcp::LayerLoadOptions& layer_load_opts) {
   return [read_opts, layer_load_opts](const std::string& resolved_path,
@@ -292,6 +332,123 @@ LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts,
     layer->build_path_index();  // compositor looks prims up by path
     return layer;
   };
+}
+
+namespace {
+
+bool FlattenUSDMemoryImpl(const std::string& key, std::string&& data,
+                          std::vector<uint8_t>* out, const CrateWriteSink* sink,
+                          const FlattenOptions& opts, FlattenStats* stats,
+                          std::string* err) {
+  if (stats) *stats = FlattenStats{};
+  if (data.empty()) {
+    if (err) *err = "empty input";
+    return false;
+  }
+
+  // Crate roots keep the lazy array pass-through of the USDC path.
+  if (data.size() >= 8 && std::memcmp(data.data(), "PXR-USDC", 8) == 0) {
+    if (out) {
+      return FlattenUSDCToUSDCOwned(std::move(data), *out, opts, stats, err);
+    }
+    return FlattenUSDCToUSDCOwnedToSink(std::move(data), *sink, opts, stats,
+                                        err);
+  }
+
+  // USDA / USDZ roots parse into a layer, then flatten structurally.
+  const size_t input_bytes = data.size();
+  const auto read_begin = Clock::now();
+  pcp::LayerLoadOptions lopts;
+  lopts.max_memory = opts.composition.max_layer_memory;
+  if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
+  lopts.usda_parse_options = opts.composition.usda_parse_options;
+  lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
+  std::string warn;
+  std::shared_ptr<Layer> loaded =
+      pcp::LoadLayerFromMemoryOwned(key, std::move(data), &warn, err, lopts);
+  const auto read_end = Clock::now();
+  if (!loaded) {
+    if (err && err->empty()) *err = "failed to load root layer: " + key;
+    return false;
+  }
+
+  std::unique_ptr<Layer> root(new Layer(std::move(*loaded)));
+  bool ok = FlattenLayer(std::move(root), input_bytes, out, sink, opts, stats,
+                         err);
+  if (stats) stats->read_ms = ElapsedMs(read_begin, read_end);
+  return ok;
+}
+
+bool FlattenUSDMemoryImplNonOwned(const std::string& key, const uint8_t* data,
+                                  size_t size, std::vector<uint8_t>* out,
+                                  const CrateWriteSink* sink,
+                                  const FlattenOptions& opts,
+                                  FlattenStats* stats, std::string* err) {
+  if (stats) *stats = FlattenStats{};
+  if (!data || size == 0) {
+    if (err) *err = "empty input";
+    return false;
+  }
+
+  if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
+    if (out) return FlattenUSDCToUSDC(data, size, *out, opts, stats, err);
+    return FlattenUSDCToUSDCToSink(data, size, *sink, opts, stats, err);
+  }
+
+  const auto read_begin = Clock::now();
+  pcp::LayerLoadOptions lopts;
+  lopts.max_memory = opts.composition.max_layer_memory;
+  if (lopts.max_memory == 0) lopts.max_memory = opts.read.max_memory;
+  lopts.usda_parse_options = opts.composition.usda_parse_options;
+  lopts.parse_num_threads = opts.composition.usda_parse_options.num_threads;
+  std::string warn;
+  std::shared_ptr<Layer> loaded =
+      pcp::LoadLayerFromMemory(key, data, size, &warn, err, lopts);
+  const auto read_end = Clock::now();
+  if (!loaded) {
+    if (err && err->empty()) *err = "failed to load root layer: " + key;
+    return false;
+  }
+
+  std::unique_ptr<Layer> root(new Layer(std::move(*loaded)));
+  bool ok = FlattenLayer(std::move(root), size, out, sink, opts, stats, err);
+  if (stats) stats->read_ms = ElapsedMs(read_begin, read_end);
+  return ok;
+}
+
+}  // namespace
+
+bool FlattenUSDMemoryToUSDC(const std::string& key, const uint8_t* data,
+                            size_t size, std::vector<uint8_t>& out,
+                            const FlattenOptions& opts, FlattenStats* stats,
+                            std::string* err) {
+  return FlattenUSDMemoryImplNonOwned(key, data, size, &out, nullptr, opts,
+                                      stats, err);
+}
+
+bool FlattenUSDMemoryToUSDCToSink(const std::string& key, const uint8_t* data,
+                                  size_t size, const CrateWriteSink& sink,
+                                  const FlattenOptions& opts,
+                                  FlattenStats* stats, std::string* err) {
+  return FlattenUSDMemoryImplNonOwned(key, data, size, nullptr, &sink, opts,
+                                      stats, err);
+}
+
+bool FlattenUSDMemoryToUSDCOwned(const std::string& key, std::string&& data,
+                                 std::vector<uint8_t>& out,
+                                 const FlattenOptions& opts,
+                                 FlattenStats* stats, std::string* err) {
+  return FlattenUSDMemoryImpl(key, std::move(data), &out, nullptr, opts, stats,
+                              err);
+}
+
+bool FlattenUSDMemoryToUSDCOwnedToSink(const std::string& key,
+                                       std::string&& data,
+                                       const CrateWriteSink& sink,
+                                       const FlattenOptions& opts,
+                                       FlattenStats* stats, std::string* err) {
+  return FlattenUSDMemoryImpl(key, std::move(data), nullptr, &sink, opts, stats,
+                              err);
 }
 
 bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out,

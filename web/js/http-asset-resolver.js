@@ -249,13 +249,6 @@ function findAssetByKey(assetMap, key) {
   return null;
 }
 
-function isUSDCBytes(bytes) {
-  return bytes && bytes.length >= 8 &&
-    bytes[0] === 0x50 && bytes[1] === 0x58 && bytes[2] === 0x52 &&
-    bytes[3] === 0x2d && bytes[4] === 0x55 && bytes[5] === 0x53 &&
-    bytes[6] === 0x44 && bytes[7] === 0x43;
-}
-
 function allocateNextInput(native, usd, bytes) {
   if (typeof usd.allocateZeroCopyBuffer !== 'function') {
     throw new Error('next HTTP composition requires allocateZeroCopyBuffer in the WASM module');
@@ -298,9 +291,12 @@ function prepareNextRoot(rootBytes, filename) {
   const seedAssets = new Map();
   if (isUsdz(filename)) {
     const entries = parseUSDZEntries(rootBytes);
-    const root = entries.find((entry) => isUsdc(entry.name));
+    // Root layer: first .usdc entry, else first .usda entry (the next loader
+    // content-sniffs, so either format works as a session root).
+    const root = entries.find((entry) => isUsdc(entry.name)) ||
+      entries.find((entry) => isUsdName(entry.name));
     if (!root) {
-      throw new Error('next HTTP composition requires a USDC root in USDZ input');
+      throw new Error('next HTTP composition requires a USD root layer in USDZ input');
     }
     for (const entry of entries) {
       if (!entry.name.endsWith('/')) {
@@ -313,45 +309,66 @@ function prepareNextRoot(rootBytes, filename) {
       seedAssets
     };
   }
-  if (!isUsdc(filename)) {
-    throw new Error('next HTTP composition currently requires a .usdc root or .usdz with .usdc root');
-  }
+  // Plain roots: any USD format (.usdc/.usda/.usd) — the native session
+  // content-sniffs the bytes.
   const bytes = rootBytes instanceof Uint8Array ? rootBytes : new Uint8Array(rootBytes);
-  if (!isUSDCBytes(bytes)) {
-    throw new Error('next HTTP composition root is not a USDC crate');
-  }
   return {
     rootBytes: bytes,
-    rootName: normalizeAssetKey(filename.split('/').pop() || 'root.usdc'),
+    rootName: normalizeAssetKey(filename.split('/').pop() || 'root.usd'),
     seedAssets
   };
 }
 
-async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus }) {
-  const native = renderer.native;
-  if (!native || typeof native.TinyUSDZLoaderNative !== 'function') {
-    throw new Error('next HTTP composition requires the full TinyUSDZ WASM module');
-  }
-  const usd = new native.TinyUSDZLoaderNative();
-  try {
-    if (typeof usd.nextFlattenAsyncBegin !== 'function' ||
-        typeof usd.nextFlattenAsyncStep !== 'function' ||
-        typeof usd.nextFlattenAsyncProvideLayer !== 'function' ||
-        typeof usd.nextFlattenAsyncEnd !== 'function') {
-      throw new Error('next async flatten bindings are unavailable');
-    }
-
-    const prepared = prepareNextRoot(rootBytes, filename);
+// Session handle abstraction over the two WASM flavors:
+// - next-only module: instance-based `NextFlattenSession` class
+// - legacy module: `TinyUSDZLoaderNative.nextFlattenAsync*` session-id protocol
+function openNextFlattenSession(native, usd, prepared) {
+  if (usd && typeof usd.nextFlattenAsyncBegin === 'function') {
     const uuid = allocateNextInput(native, usd, prepared.rootBytes);
     const begin = usd.nextFlattenAsyncBegin(uuid, prepared.rootName, true);
     if (!begin || !begin.success) {
       throw new Error(`next flatten begin failed: ${begin?.error || 'unknown'}`);
     }
     const session = begin.session;
+    return {
+      step: () => usd.nextFlattenAsyncStep(session, null),
+      provideLayer: (key, bytes) => usd.nextFlattenAsyncProvideLayer(session, key, bytes),
+      close: () => usd.nextFlattenAsyncEnd(session)
+    };
+  }
+  if (typeof native.NextFlattenSession === 'function') {
+    const session = new native.NextFlattenSession();
+    const begin = session.begin(prepared.rootBytes, prepared.rootName, true);
+    if (!begin || !begin.success) {
+      session.delete();
+      throw new Error(`next flatten begin failed: ${begin?.error || 'unknown'}`);
+    }
+    return {
+      step: () => session.step(null),
+      provideLayer: (key, bytes) => session.provideLayer(key, bytes),
+      close: () => {
+        session.end();
+        if (typeof session.delete === 'function') session.delete();
+      }
+    };
+  }
+  throw new Error('next flatten bindings are unavailable in this WASM module');
+}
+
+async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, onStatus }) {
+  const native = renderer.native;
+  if (!native) {
+    throw new Error('next HTTP composition requires a TinyUSDZ WASM module');
+  }
+  const usd = typeof native.TinyUSDZLoaderNative === 'function'
+    ? new native.TinyUSDZLoaderNative() : null;
+  try {
+    const prepared = prepareNextRoot(rootBytes, filename);
+    const handle = openNextFlattenSession(native, usd, prepared);
     let result = null;
     try {
       for (;;) {
-        const step = usd.nextFlattenAsyncStep(session, null);
+        const step = handle.step();
         if (!step || !step.success) {
           throw new Error(`next flatten failed: ${step?.error || 'unknown'}`);
         }
@@ -366,10 +383,9 @@ async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, on
           } else {
             onStatus && onStatus(`Using in-archive next dependency layer: ${key}`);
           }
-          if (!isUSDCBytes(bytes)) {
-            throw new Error(`next dependency layer is not USDC: ${key}`);
-          }
-          const provided = usd.nextFlattenAsyncProvideLayer(session, key, bytes);
+          // Dependency layers may be USDC, USDA, or USDZ — the native loader
+          // content-sniffs the bytes.
+          const provided = handle.provideLayer(key, bytes);
           if (!provided || !provided.success) {
             throw new Error(`next flatten provide failed for ${key}: ${provided?.error || 'unknown'}`);
           }
@@ -382,7 +398,7 @@ async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, on
         throw new Error(`next flatten returned unexpected status: ${step.status}`);
       }
     } finally {
-      usd.nextFlattenAsyncEnd(session);
+      handle.close();
     }
     if (!result || !result.data) {
       throw new Error('next flatten produced no root layer');
@@ -433,7 +449,7 @@ async function flattenNextOverHttp({ renderer, rootBytes, filename, resolver, on
       referencedAssets: referencedAssets.length
     };
   } finally {
-    if (typeof usd.delete === 'function') usd.delete();
+    if (usd && typeof usd.delete === 'function') usd.delete();
   }
 }
 
@@ -553,7 +569,7 @@ export async function renderHttpUSD({
         };
       }
       if (requestedBackend === 'next') {
-        throw new Error('next backend requires a self-contained USDC root or USDZ with a USDC root');
+        throw new Error('next backend did not produce an incremental render scene result');
       }
       onStatus && onStatus('next backend not applicable; falling back to legacy HTTP composition...');
     } catch (e) {
