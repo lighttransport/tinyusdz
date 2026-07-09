@@ -250,7 +250,12 @@ typedef struct tusd_load_options {
   uint64_t max_memory;  /* per-input memory cap in bytes; 0 = unlimited */
   uint8_t composed;     /* 1: resolve composition arcs (LoadUSDComposed) */
   uint8_t load_payloads;
-  uint8_t _pad[6];
+  /* USDA array parsing policy */
+  uint8_t enable_usda_lazy_arrays; /* 1: enable lazy USDA array materialization */
+  uint8_t _pad_usda[5];
+  uint64_t max_usda_lazy_array_elements; /* 0 = parser disables lazy cap */
+  int32_t usda_num_threads;             /* 0 = auto; 1 = serial */
+  uint8_t _pad_compose[6];
   uint32_t max_depth; /* composition recursion limit; 0 = default */
   uint32_t _pad2;
   /* Variant selection overrides (set name -> variant name), applied on every
