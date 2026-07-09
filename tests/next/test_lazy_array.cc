@@ -298,7 +298,7 @@ int main() {
     assert(sps);
     const Value* sv = sps->property_value("points");
     assert(sv && sv->is_lazy());
-    const CrateDataSource* src = sv->lazy_ref()->source.get();
+    const auto* src = sv->lazy_ref()->source.get();
     long uc0 = sv->lazy_ref()->source.use_count();
 
     // PrimSpec::Clone() preserves laziness and shares the source buffer.

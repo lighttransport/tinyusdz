@@ -21,6 +21,8 @@ public:
   explicit Impl(const ParseOptions& options) : options_(options) {}
 
   bool Parse(const char* data, size_t length);
+  bool ParseWithSource(const char* data, size_t length,
+                      std::shared_ptr<std::string> source);
   bool ParseFile(const char* filename);
 
   Stage TakeStage() { return std::move(stage_); }
@@ -33,6 +35,7 @@ private:
   Stage stage_;
   std::vector<ParseError> errors_;
   std::vector<std::string> warnings_;
+  std::shared_ptr<std::string> source_;
 
   // Parsing state
   std::unique_ptr<Lexer> lexer_;

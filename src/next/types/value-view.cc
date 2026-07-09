@@ -25,7 +25,8 @@ template <typename T>
 bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
                          ArrayView<T>* out) {
   const LazyArrayRef* ref = value.lazy_ref();
-  if (!ref || !ref->source || ref->is_compressed) return false;
+  if (!ref || !ref->source || ref->is_compressed || !ref->source->can_borrow())
+    return false;
   if (ScalarComponent(ref->value_type) != component_type) return false;
   const size_t comps = GetComponentCount(ref->value_type);
   if (comps == 0) return false;
@@ -89,7 +90,8 @@ bool CanBorrowLazyFlat(const Value& value) {
   // (so independent element ranges can be formatted concurrently, with no decode).
   if (!value.is_lazy()) return false;
   const LazyArrayRef* ref = value.lazy_ref();
-  if (!ref || !ref->source || ref->is_compressed) return false;
+  if (!ref || !ref->source || ref->is_compressed || !ref->source->can_borrow())
+    return false;
   const size_t ts = ScalarByteSize(ScalarComponent(ref->value_type));
   if (ts == 0) return false;
   const size_t comps = GetComponentCount(ref->value_type);

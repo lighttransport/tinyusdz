@@ -41,10 +41,12 @@ bool IsNameToken(const Token& tok) {
   }
 }
 
-bool AsciiParser::Impl::Parse(const char* data, size_t length) {
+bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
+                                       std::shared_ptr<std::string> source) {
   errors_.clear();
   warnings_.clear();
   depth_ = 0;
+  source_ = std::move(source);
 
   if (options_.max_file_size > 0 && length > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
@@ -55,7 +57,13 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   layer_ = std::make_unique<Layer>();
   builder_ = std::make_unique<LayerBuilder>(*layer_);
 
-  lexer_ = std::make_unique<Lexer>(data, length);
+  if (source_) {
+    // Keep a shared ownership of the full USDA source while parsing so any lazy
+    // array source slices stay valid until the parse/build graph drops them.
+    lexer_ = std::make_unique<Lexer>(source_->data(), length);
+  } else {
+    lexer_ = std::make_unique<Lexer>(data, length);
+  }
   lexer_->num_threads = options_.num_threads;
 
   // Parse stage metadata (header block)
@@ -93,6 +101,15 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   return errors_.empty();
 }
 
+bool AsciiParser::Impl::Parse(const char* data, size_t length) {
+  if (options_.enable_usda_lazy_arrays) {
+    auto source =
+        std::make_shared<std::string>(data ? std::string(data, data + length) : "");
+    return ParseWithSource(data, length, std::move(source));
+  }
+  return ParseWithSource(data, length, nullptr);
+}
+
 bool AsciiParser::Impl::ParseFile(const char* filename) {
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
@@ -105,6 +122,16 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
   if (options_.max_file_size > 0 && size > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
     return false;
+  }
+
+  if (options_.enable_usda_lazy_arrays) {
+    std::string content(size ? size : 0, '\0');
+    if (size && !file.read(content.data(), static_cast<std::streamsize>(size))) {
+      AddError("Failed to read file contents");
+      return false;
+    }
+    auto src = std::make_shared<std::string>(std::move(content));
+    return ParseWithSource(src->data(), size, std::move(src));
   }
 
   // Default-init (NOT value-init) the buffer: `new char[]` leaves the bytes
