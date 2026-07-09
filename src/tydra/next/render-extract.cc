@@ -168,8 +168,8 @@ bool IsMeshRenderableTypeName(const std::string& type_name) {
 }
 
 bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
-  return type_name == "Points" || type_name == "BasisCurves" ||
-         type_name == "NurbsCurves" || type_name == "HermiteCurves" ||
+  // BasisCurves/NurbsCurves are converted (RenderCurves); HermiteCurves is not.
+  return type_name == "Points" || type_name == "HermiteCurves" ||
          type_name == "Volume" || type_name == "TetMesh" ||
          type_name == "NurbsPatch";
 }

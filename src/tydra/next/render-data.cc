@@ -74,6 +74,25 @@ size_t RenderPoints::memory_usage() const {
 }
 
 //
+// RenderCurves
+//
+
+size_t RenderCurves::memory_usage() const {
+  size_t total = sizeof(*this);
+  total += name.capacity();
+  total += prim_path.capacity();
+  total += VectorBytes(curve_vertex_counts);
+  total += points.memory_usage();
+  total += widths.memory_usage();
+  total += colors.memory_usage();
+  total += VectorBytes(tessellated_vertex_counts);
+  total += tessellated_points.memory_usage();
+  total += tessellated_widths.memory_usage();
+  total += tessellated_colors.memory_usage();
+  return total;
+}
+
+//
 // RenderPointInstancer
 //
 
@@ -174,6 +193,10 @@ size_t RenderScene::memory_usage() const {
     total += point_cloud.memory_usage();
   }
 
+  for (const auto& curve : curves) {
+    total += curve.memory_usage();
+  }
+
   for (const auto& instancer : point_instancers) {
     total += instancer.memory_usage();
   }
@@ -204,6 +227,13 @@ const RenderMesh* RenderScene::get_mesh(int32_t mesh_id) const {
 const RenderPoints* RenderScene::get_points(int32_t points_id) const {
   if (points_id < 0 || static_cast<size_t>(points_id) >= points.size()) return nullptr;
   return &points[static_cast<size_t>(points_id)];
+}
+
+const RenderCurves* RenderScene::get_curves(int32_t curves_id) const {
+  if (curves_id < 0 || static_cast<size_t>(curves_id) >= curves.size()) {
+    return nullptr;
+  }
+  return &curves[static_cast<size_t>(curves_id)];
 }
 
 const RenderMaterial* RenderScene::get_material(int32_t material_id) const {
@@ -320,6 +350,12 @@ RenderScene::Stats RenderScene::get_stats() const {
 
   for (const auto& point_cloud : points) {
     s.point_cloud_point_count += point_cloud.point_count();
+  }
+
+  s.curves_count = curves.size();
+  for (const auto& curve : curves) {
+    s.curve_count += curve.curve_count();
+    s.curve_tessellated_point_count += curve.tessellated_point_count();
   }
 
   s.memory_bytes = memory_usage();

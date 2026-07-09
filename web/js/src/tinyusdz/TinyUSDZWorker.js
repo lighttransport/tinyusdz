@@ -170,6 +170,9 @@ function extractSceneData(loader) {
     const numPoints = typeof loader.numPoints === 'function'
         ? loader.numPoints()
         : 0;
+    const numCurves = typeof loader.numCurves === 'function'
+        ? loader.numCurves()
+        : 0;
     const numMaterials = loader.numMaterials();
     const numTextures = loader.numTextures();
     const numLights = loader.numLights();
@@ -198,6 +201,7 @@ function extractSceneData(loader) {
 
     const meshes = [];
     const points = [];
+    const curves = [];
     const materials = [];
     const textures = [];
     const images = [];
@@ -237,6 +241,13 @@ function extractSceneData(loader) {
         if (pointCloud) {
             points.push(extractPointsData(pointCloud));
         }
+    }
+
+    for (let i = 0; i < numCurves; i++) {
+        const curveSet = typeof loader.getCurves === 'function'
+            ? loader.getCurves(i)
+            : null;
+        if (curveSet) curves.push(extractCurvesData(curveSet));
     }
 
     // Extract materials using getMaterialWithFormat for full OpenPBR data
@@ -378,6 +389,7 @@ function extractSceneData(loader) {
     return {
         meshes,
         points,
+        curves,
         materials,
         textures,
         images,
@@ -387,6 +399,7 @@ function extractSceneData(loader) {
         metadata,
         numMeshes,
         numPoints,
+        numCurves,
         numMaterials,
         numTextures,
         numNodes,
@@ -449,6 +462,17 @@ function extractPointsData(points) {
     }
     if (points.colors && points.colors.buffer) {
         data.colors = new Float32Array(points.colors);
+    }
+    return data;
+}
+
+function extractCurvesData(curves) {
+    const data = deepClone(curves);
+    for (const key of ['points', 'widths', 'colors', 'tessellatedPoints',
+        'tessellatedWidths', 'tessellatedColors']) {
+        if (curves[key] && curves[key].buffer) {
+            data[key] = new Float32Array(curves[key]);
+        }
     }
     return data;
 }
@@ -626,6 +650,16 @@ function collectTransferables(sceneData) {
         }
         if (points.colors && points.colors.buffer) {
             transferables.push(points.colors.buffer);
+        }
+    }
+
+
+    for (const curves of sceneData.curves || []) {
+        for (const key of ['points', 'widths', 'colors', 'tessellatedPoints',
+            'tessellatedWidths', 'tessellatedColors']) {
+            if (curves[key] && curves[key].buffer) {
+                transferables.push(curves[key].buffer);
+            }
         }
     }
 

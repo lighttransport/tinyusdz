@@ -102,7 +102,29 @@ enum class NodeType : uint8_t {
   DiskLight,
   DomeLight,
   SphereLight,
-  Skeleton
+  Skeleton,
+  Curves
+};
+
+//
+// Curve enums (UsdGeomBasisCurves / UsdGeomNurbsCurves)
+//
+
+enum class CurveType : uint8_t {
+  Linear = 0,  // Polyline segments between control points
+  Cubic        // Cubic spans (see CurveBasis)
+};
+
+enum class CurveBasis : uint8_t {
+  Bezier = 0,
+  BSpline,
+  CatmullRom
+};
+
+enum class CurveWrap : uint8_t {
+  Nonperiodic = 0,
+  Periodic,   // Curve closes back onto its first point
+  Pinned      // bspline/catmullRom interpolate their end control points
 };
 
 enum class LightType : uint8_t {
@@ -324,6 +346,62 @@ struct RenderPoints {
   bool has_bbox = false;
 
   size_t point_count() const { return points.size() / 3; }
+  bool has_widths() const { return !widths.empty(); }
+  bool has_colors() const { return !colors.empty(); }
+  size_t memory_usage() const;
+};
+
+//
+// RenderCurves - curve prim data for UsdGeomBasisCurves / UsdGeomNurbsCurves.
+//
+// Carries both the authored CONTROL data (control points, widths, colors,
+// topology) and a render-ready TESSELLATED polyline representation produced
+// by the converter (CurvesConfig::tessellation_segments samples per span;
+// linear curves pass through unchanged).
+//
+struct RenderCurves {
+  std::string name;
+  std::string prim_path;
+
+  //
+  // Control (authored) data
+  //
+  std::vector<uint32_t> curve_vertex_counts;  // control points per curve
+  FloatChunked points;   // control points, xyz interleaved
+  FloatChunked widths;   // authored widths (element count per widths_interp)
+  Interpolation widths_interp = Interpolation::Constant;
+  FloatChunked colors;   // displayColor, rgb interleaved
+  Interpolation colors_interp = Interpolation::Constant;
+
+  CurveType type = CurveType::Cubic;
+  CurveBasis basis = CurveBasis::Bezier;  // cubic BasisCurves only
+  CurveWrap wrap = CurveWrap::Nonperiodic;
+  bool is_nurbs = false;  // true = NurbsCurves (order/knots evaluated)
+
+  //
+  // Tessellated polylines (render-ready output)
+  //
+  // Each curve becomes one polyline; periodic curves are closed by
+  // duplicating the first tessellated point at the end.
+  std::vector<uint32_t> tessellated_vertex_counts;  // points per polyline
+  FloatChunked tessellated_points;  // xyz interleaved
+  // Per-tessellated-point widths (linearly interpolated along the curve).
+  // Empty when widths are absent or constant (use widths[0] instead).
+  FloatChunked tessellated_widths;
+  // Per-tessellated-point display colors. Empty when displayColor is absent.
+  FloatChunked tessellated_colors;
+
+  int32_t material_id = -1;
+
+  Float3 bbox_min;
+  Float3 bbox_max;
+  bool has_bbox = false;
+
+  size_t curve_count() const { return curve_vertex_counts.size(); }
+  size_t control_point_count() const { return points.size() / 3; }
+  size_t tessellated_point_count() const {
+    return tessellated_points.size() / 3;
+  }
   bool has_widths() const { return !widths.empty(); }
   bool has_colors() const { return !colors.empty(); }
   size_t memory_usage() const;
@@ -926,6 +1004,7 @@ class RenderScene {
   std::vector<SceneNode> nodes;
   std::vector<RenderMesh> meshes;
   std::vector<RenderPoints> points;
+  std::vector<RenderCurves> curves;
   std::vector<RenderPointInstancer> point_instancers;
   std::vector<RenderPointInstanceDraw> point_instance_draws;
   std::vector<RenderMaterial> materials;
@@ -945,6 +1024,7 @@ class RenderScene {
   std::unordered_map<std::string, int32_t> node_by_path;
   std::unordered_map<std::string, int32_t> mesh_by_path;
   std::unordered_map<std::string, int32_t> points_by_path;
+  std::unordered_map<std::string, int32_t> curves_by_path;
   std::unordered_map<std::string, int32_t> point_instancer_by_path;
   std::unordered_map<std::string, int32_t> material_by_path;
 
@@ -954,6 +1034,7 @@ class RenderScene {
   // Bounds-checked accessors
   const RenderMesh* get_mesh(int32_t mesh_id) const;
   const RenderPoints* get_points(int32_t points_id) const;
+  const RenderCurves* get_curves(int32_t curves_id) const;
   const RenderMaterial* get_material(int32_t material_id) const;
   const RenderPointInstancer* get_point_instancer(int32_t instancer_id) const;
   const RenderPointInstanceDraw* get_point_instance_draw(size_t draw_id) const;
@@ -968,6 +1049,9 @@ class RenderScene {
     size_t mesh_count;
     size_t points_count;
     size_t point_cloud_point_count;
+    size_t curves_count;                    // RenderCurves records
+    size_t curve_count;                     // individual curves (all records)
+    size_t curve_tessellated_point_count;   // total tessellated polyline points
     size_t point_instancer_count;
     size_t point_instance_count;
     size_t visible_point_instance_count;
