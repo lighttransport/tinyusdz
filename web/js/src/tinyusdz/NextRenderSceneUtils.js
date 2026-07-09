@@ -603,6 +603,37 @@ export function buildNextThreeNode(adapter, {
     if (mesh.indices && mesh.indices.length) {
       geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
     }
+    if (Array.isArray(mesh.blendShapes) && mesh.blendShapes.length) {
+      geometry.morphTargetsRelative = true;
+      geometry.morphAttributes.position = [];
+      const pointCount = mesh.points.length / 3;
+      const addMorph = (offsets, pointIndices, name) => {
+        if (!offsets?.length) return;
+        let dense = offsets;
+        if (pointIndices?.length) {
+          dense = new Float32Array(pointCount * 3);
+          const sparseCount = Math.min(pointIndices.length, Math.floor(offsets.length / 3));
+          for (let i = 0; i < sparseCount; ++i) {
+            const point = pointIndices[i];
+            if (point >= pointCount) continue;
+            dense[point * 3] = offsets[i * 3];
+            dense[point * 3 + 1] = offsets[i * 3 + 1];
+            dense[point * 3 + 2] = offsets[i * 3 + 2];
+          }
+        }
+        if (dense.length !== mesh.points.length) return;
+        const attribute = new THREE.BufferAttribute(dense, 3);
+        attribute.name = name;
+        geometry.morphAttributes.position.push(attribute);
+      };
+      for (const shape of mesh.blendShapes) {
+        addMorph(shape.pointOffsets, shape.pointIndices, shape.name);
+        for (const inbetween of shape.inbetweens || []) {
+          addMorph(inbetween.pointOffsets, shape.pointIndices,
+            `${shape.name}:${inbetween.name || inbetween.weight}`);
+        }
+      }
+    }
     geometry.computeBoundingBox();
     let material = getMaterial(mesh);
     if (Array.isArray(mesh.materials) && mesh.materials.length &&
@@ -660,6 +691,13 @@ export function buildNextThreeNode(adapter, {
         start: part.start | 0,
         count: part.count | 0,
         materialIndex: part.materialIndex | 0
+      })) : [],
+      blendShapes: Array.isArray(mesh.blendShapes) ? mesh.blendShapes.map((shape) => ({
+        name: shape.name,
+        inbetweens: (shape.inbetweens || []).map((entry) => ({
+          name: entry.name,
+          weight: entry.weight
+        }))
       })) : []
     };
     applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);

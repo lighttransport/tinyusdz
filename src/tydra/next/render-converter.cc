@@ -12,6 +12,7 @@
 #include "tydra/fast-mikktspace.hh"
 #include "tydra/mikktspace-tangent.hh"
 #include "tydra/shape-to-mesh.hh"
+#include "external/mapbox/earcut/earcut.hpp"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -424,6 +425,7 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
     dst->skin = std::make_unique<RenderMesh::SkinBinding>();
     CopyChunkedArray(src.skin->joint_indices, &dst->skin->joint_indices);
     CopyChunkedArray(src.skin->joint_weights, &dst->skin->joint_weights);
+    dst->skin->influences_per_vertex = src.skin->influences_per_vertex;
     dst->skin->skeleton_id = src.skin->skeleton_id;
     dst->skin->skeleton_path = src.skin->skeleton_path;
     dst->skin->geom_bind_transform = src.skin->geom_bind_transform;
@@ -437,6 +439,14 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
     CopyChunkedArray(bs.normal_offsets, &copy.normal_offsets);
     copy.point_indices = bs.point_indices;
     copy.weight = bs.weight;
+    copy.inbetweens.reserve(bs.inbetweens.size());
+    for (const RenderMesh::BlendShape::Inbetween& source : bs.inbetweens) {
+      RenderMesh::BlendShape::Inbetween inbetween;
+      inbetween.name = source.name;
+      inbetween.weight = source.weight;
+      CopyChunkedArray(source.point_offsets, &inbetween.point_offsets);
+      copy.inbetweens.push_back(std::move(inbetween));
+    }
     dst->blend_shapes.push_back(std::move(copy));
   }
 }
@@ -2104,19 +2114,86 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     SkinBindingInfo sb;
     if (GetSkinBinding(prim, &sb) && !sb.joint_indices.empty() &&
         sb.joint_indices.size() == sb.joint_weights.size()) {
+      const size_t point_count = out->point_count();
+      size_t influences = sb.influences_per_vertex > 0
+                              ? static_cast<size_t>(sb.influences_per_vertex)
+                              : 0;
+      if (influences == 0 && point_count > 0 &&
+          (sb.joint_indices.size() % point_count) == 0) {
+        influences = sb.joint_indices.size() / point_count;
+      }
+      if (influences > 0 && point_count > 1 &&
+          sb.joint_indices.size() == influences) {
+        const std::vector<int32_t> indices = sb.joint_indices;
+        const std::vector<float> weights = sb.joint_weights;
+        sb.joint_indices.clear();
+        sb.joint_weights.clear();
+        sb.joint_indices.reserve(point_count * influences);
+        sb.joint_weights.reserve(point_count * influences);
+        for (size_t point = 0; point < point_count; ++point) {
+          sb.joint_indices.insert(sb.joint_indices.end(), indices.begin(),
+                                  indices.end());
+          sb.joint_weights.insert(sb.joint_weights.end(), weights.begin(),
+                                  weights.end());
+        }
+      }
+      if (influences == 0 || point_count == 0 ||
+          sb.joint_indices.size() != point_count * influences) {
+        warnings_.push_back("Ignoring malformed skin influences on " +
+                            prim.GetPath().str());
+      } else {
+        size_t output_influences = influences;
+        std::vector<int32_t> reduced_indices;
+        std::vector<float> reduced_weights;
+        if (config_.mesh.enable_bone_reduction &&
+            config_.mesh.target_bone_count > 0 &&
+            config_.mesh.target_bone_count < influences) {
+          output_influences = config_.mesh.target_bone_count;
+          reduced_indices.resize(point_count * output_influences, 0);
+          reduced_weights.resize(point_count * output_influences, 0.0f);
+          std::vector<std::pair<float, int32_t>> ranked(influences);
+          for (size_t point = 0; point < point_count; ++point) {
+            const size_t source = point * influences;
+            for (size_t i = 0; i < influences; ++i) {
+              ranked[i] = {sb.joint_weights[source + i],
+                           sb.joint_indices[source + i]};
+            }
+            std::stable_sort(
+                ranked.begin(), ranked.end(),
+                [](const auto& a, const auto& b) { return a.first > b.first; });
+            float sum = 0.0f;
+            for (size_t i = 0; i < output_influences; ++i) {
+              sum += std::max(0.0f, ranked[i].first);
+            }
+            for (size_t i = 0; i < output_influences; ++i) {
+              const size_t destination = point * output_influences + i;
+              reduced_indices[destination] = ranked[i].second;
+              reduced_weights[destination] =
+                  sum > 0.0f ? std::max(0.0f, ranked[i].first) / sum
+                             : (i == 0 ? 1.0f : 0.0f);
+            }
+          }
+          sb.joint_indices = std::move(reduced_indices);
+          sb.joint_weights = std::move(reduced_weights);
+        }
+
       out->skin = std::make_unique<RenderMesh::SkinBinding>();
       out->skin->joint_indices.reserve(sb.joint_indices.size());
       for (int32_t ji : sb.joint_indices) {
         out->skin->joint_indices.push_back(
-            ji < 0 ? uint16_t(0) : static_cast<uint16_t>(ji));
+            ji < 0 ? uint16_t(0)
+                   : static_cast<uint16_t>(std::min<int32_t>(ji, 65535)));
       }
       out->skin->joint_weights.append(sb.joint_weights.data(),
                                       sb.joint_weights.size());
+      out->skin->influences_per_vertex =
+          static_cast<uint32_t>(output_influences);
       std::memcpy(out->skin->geom_bind_transform.m, sb.geom_bind_transform,
                   sizeof(sb.geom_bind_transform));
       // skeleton_id is resolved by the caller once skeletons are converted
       // (stored in skin->skeleton_id via the path recorded here).
       out->skin->skeleton_path = sb.skeleton_path;
+      }
     }
   }
 
@@ -2142,6 +2219,20 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
           shape.point_indices.push_back(static_cast<uint32_t>(pi));
         }
       }
+    }
+    for (const ::tinyusdz::next::BlendShapeData::Inbetween& source :
+         bd.inbetweens) {
+      if (source.offsets.size() != bd.offsets.size()) {
+        warnings_.push_back("Ignoring malformed in-between '" + source.name +
+                            "' on " + bs_prim.GetPath().str());
+        continue;
+      }
+      RenderMesh::BlendShape::Inbetween inbetween;
+      inbetween.name = source.name;
+      inbetween.weight = source.weight;
+      inbetween.point_offsets.append(source.offsets.data(),
+                                     source.offsets.size());
+      shape.inbetweens.push_back(std::move(inbetween));
     }
     out->blend_shapes.push_back(std::move(shape));
   }
@@ -3494,28 +3585,75 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
                                             mesh->hole_faces.end(),
                                             static_cast<uint32_t>(f));
     if (nverts >= 3 && !is_hole) {
-      const uint32_t v0 = mesh->face_vertex_indices[idx_offset];
-      const uint32_t c0 = static_cast<uint32_t>(idx_offset);
-      for (uint32_t i = 1; i < nverts - 1; ++i) {
-        const uint32_t ca = static_cast<uint32_t>(idx_offset + i);
-        const uint32_t cb = static_cast<uint32_t>(idx_offset + i + 1);
-        // leftHanded meshes emit reversed winding so the triangulated output
-        // is uniformly CCW/rightHanded. The corner map records the original
-        // face-vertex index for each emitted corner.
-        if (mesh->left_handed) {
-          mesh->triangulated_indices.push_back(v0);
-          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[cb]);
-          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[ca]);
-          mesh->triangulated_face_vertex_indices.push_back(c0);
-          mesh->triangulated_face_vertex_indices.push_back(cb);
-          mesh->triangulated_face_vertex_indices.push_back(ca);
+      auto emit_triangle = [&](uint32_t a, uint32_t b, uint32_t c) {
+        if (mesh->left_handed) std::swap(b, c);
+        const uint32_t corners[3] = {a, b, c};
+        for (uint32_t corner : corners) {
+          mesh->triangulated_indices.push_back(
+              mesh->face_vertex_indices[idx_offset + corner]);
+          mesh->triangulated_face_vertex_indices.push_back(
+              static_cast<uint32_t>(idx_offset + corner));
+        }
+      };
+
+      bool used_earcut = false;
+      if (config_.mesh.triangulation_method ==
+              MeshConfig::TriangulationMethod::Earcut &&
+          nverts > 4) {
+        using Point2 = std::array<double, 2>;
+        std::vector<std::vector<Point2>> polygon(1);
+        polygon[0].reserve(nverts);
+
+        // Newell normal chooses the projection plane with the largest area,
+        // keeping concave and non-axis-aligned polygons stable.
+        double normal[3] = {0.0, 0.0, 0.0};
+        for (uint32_t i = 0; i < nverts; ++i) {
+          const uint32_t ia = mesh->face_vertex_indices[idx_offset + i];
+          const uint32_t ib =
+              mesh->face_vertex_indices[idx_offset + ((i + 1) % nverts)];
+          const size_t a = static_cast<size_t>(ia) * 3;
+          const size_t b = static_cast<size_t>(ib) * 3;
+          normal[0] += (mesh->points[a + 1] - mesh->points[b + 1]) *
+                       (mesh->points[a + 2] + mesh->points[b + 2]);
+          normal[1] += (mesh->points[a + 2] - mesh->points[b + 2]) *
+                       (mesh->points[a] + mesh->points[b]);
+          normal[2] += (mesh->points[a] - mesh->points[b]) *
+                       (mesh->points[a + 1] + mesh->points[b + 1]);
+        }
+        int drop_axis = 0;
+        if (std::fabs(normal[1]) > std::fabs(normal[drop_axis])) drop_axis = 1;
+        if (std::fabs(normal[2]) > std::fabs(normal[drop_axis])) drop_axis = 2;
+        for (uint32_t i = 0; i < nverts; ++i) {
+          const uint32_t vertex = mesh->face_vertex_indices[idx_offset + i];
+          const size_t p = static_cast<size_t>(vertex) * 3;
+          if (drop_axis == 0) {
+            polygon[0].push_back({mesh->points[p + 1], mesh->points[p + 2]});
+          } else if (drop_axis == 1) {
+            polygon[0].push_back({mesh->points[p], mesh->points[p + 2]});
+          } else {
+            polygon[0].push_back({mesh->points[p], mesh->points[p + 1]});
+          }
+        }
+        const std::vector<uint32_t> local =
+            mapbox::earcut<uint32_t>(polygon);
+        if (!local.empty() && (local.size() % 3) == 0) {
+          used_earcut = true;
+          for (size_t i = 0; i < local.size(); i += 3) {
+            // earcut emits clockwise triangles. Reverse them to the USD
+            // right-handed convention; emit_triangle applies the authored
+            // leftHanded correction afterwards.
+            emit_triangle(local[i], local[i + 2], local[i + 1]);
+          }
         } else {
-          mesh->triangulated_indices.push_back(v0);
-          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[ca]);
-          mesh->triangulated_indices.push_back(mesh->face_vertex_indices[cb]);
-          mesh->triangulated_face_vertex_indices.push_back(c0);
-          mesh->triangulated_face_vertex_indices.push_back(ca);
-          mesh->triangulated_face_vertex_indices.push_back(cb);
+          warnings_.push_back("Earcut failed for face " + std::to_string(f) +
+                              " of " + mesh->prim_path +
+                              "; using triangle fan fallback");
+        }
+      }
+
+      if (!used_earcut) {
+        for (uint32_t i = 1; i < nverts - 1; ++i) {
+          emit_triangle(0, i, i + 1);
         }
       }
     }

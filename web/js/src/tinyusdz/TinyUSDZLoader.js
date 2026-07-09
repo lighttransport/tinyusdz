@@ -429,6 +429,10 @@ export class NextRenderSceneAdapter {
                 typeof renderStream.setComputeTangents === 'function') {
                 renderStream.setComputeTangents(!!options.computeTangents);
             }
+            if (options.buildVertexIndices !== undefined &&
+                typeof renderStream.setBuildVertexIndices === 'function') {
+                renderStream.setBuildVertexIndices(!!options.buildVertexIndices);
+            }
             if (options.tangentMethod !== undefined &&
                 typeof renderStream.setTangentMethod === 'function') {
                 renderStream.setTangentMethod(String(options.tangentMethod));
@@ -802,6 +806,20 @@ export class NextRenderSceneAdapter {
                 }))
                 .filter((g) => g.count > 0)
             : [];
+        const blendShapes = Array.isArray(mesh.blendShapes)
+            ? mesh.blendShapes.map((shape) => ({
+                name: shape?.name || '',
+                weight: Number(shape?.weight) || 0,
+                pointOffsets: new Float32Array(shape?.pointOffsets || []),
+                normalOffsets: new Float32Array(shape?.normalOffsets || []),
+                pointIndices: new Uint32Array(shape?.pointIndices || []),
+                inbetweens: Array.isArray(shape?.inbetweens)
+                    ? shape.inbetweens.map((entry) => ({
+                        name: entry?.name || '',
+                        weight: Number(entry?.weight) || 0,
+                        pointOffsets: new Float32Array(entry?.pointOffsets || [])
+                    })) : []
+            })) : [];
         return {
             index,
             primName: mesh.primName || `mesh_${index}`,
@@ -829,7 +847,8 @@ export class NextRenderSceneAdapter {
             materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : primary.materialId,
             materialKey: primary.materialKey,
             materials: subsetMaterials,
-            submeshes
+            submeshes,
+            blendShapes
         };
     }
 

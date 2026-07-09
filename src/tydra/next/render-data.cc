@@ -54,6 +54,10 @@ size_t RenderMesh::memory_usage() const {
   for (const auto& bs : blend_shapes) {
     total += bs.point_offsets.memory_usage();
     total += bs.normal_offsets.memory_usage();
+    for (const auto& inbetween : bs.inbetweens) {
+      total += inbetween.name.capacity();
+      total += inbetween.point_offsets.memory_usage();
+    }
   }
 
   return total;

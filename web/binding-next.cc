@@ -1371,6 +1371,7 @@ class RenderStream {
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
   void setComputeTangents(bool enabled) { compute_tangents_ = enabled; }
+  void setBuildVertexIndices(bool enabled) { build_vertex_indices_ = enabled; }
 
   void provideAsset(const std::string& name, const emscripten::val& bytes) {
     std::string copy_error;
@@ -2264,6 +2265,7 @@ class RenderStream {
     freeVec_(s_indices_);
     freeVec_(s_joint_indices_);
     freeVec_(s_joint_weights_);
+    freeVec_(s_point_source_indices_);
     freeVec_(s_points_cloud_points_);
     freeVec_(s_points_cloud_widths_);
     freeVec_(s_points_cloud_colors_);
@@ -2280,6 +2282,8 @@ class RenderStream {
     cfg.time_code = 0.0;
     cfg.mesh.compute_tangents = compute_tangents_;
     cfg.mesh.tangent_method = tangentMethod_();
+    cfg.mesh.enable_bone_reduction = true;
+    cfg.mesh.target_bone_count = 4;
     cfg.material.load_textures = false;
     cfg.material.allow_missing_textures = true;
     cfg.point_instancer.duplicate_meshes = false;
@@ -2410,19 +2414,27 @@ class RenderStream {
         const tr::RenderMesh& rmesh =
             render_scene_.meshes[static_cast<size_t>(it->second)];
         if (rmesh.skin) {
-          s_joint_indices_.reserve(rmesh.skin->joint_indices.size());
-          for (size_t ji = 0; ji < rmesh.skin->joint_indices.size(); ++ji) {
-            s_joint_indices_.push_back(rmesh.skin->joint_indices[ji]);
-          }
-          s_joint_weights_.reserve(rmesh.skin->joint_weights.size());
-          for (size_t jw = 0; jw < rmesh.skin->joint_weights.size(); ++jw) {
-            s_joint_weights_.push_back(rmesh.skin->joint_weights[jw]);
-          }
-          const size_t point_count = rmesh.point_count();
           const int element_size =
-              point_count > 0
-                  ? static_cast<int>(s_joint_indices_.size() / point_count)
-                  : 0;
+              static_cast<int>(rmesh.skin->influences_per_vertex);
+          if (element_size > 0 &&
+              s_point_source_indices_.size() == s_points_.size() / 3) {
+            const size_t influences = static_cast<size_t>(element_size);
+            s_joint_indices_.reserve(s_point_source_indices_.size() * influences);
+            s_joint_weights_.reserve(s_point_source_indices_.size() * influences);
+            for (uint32_t source_point : s_point_source_indices_) {
+              const size_t source = static_cast<size_t>(source_point) * influences;
+              if (source + influences > rmesh.skin->joint_indices.size() ||
+                  source + influences > rmesh.skin->joint_weights.size()) {
+                continue;
+              }
+              for (size_t influence = 0; influence < influences; ++influence) {
+                s_joint_indices_.push_back(
+                    rmesh.skin->joint_indices[source + influence]);
+                s_joint_weights_.push_back(
+                    rmesh.skin->joint_weights[source + influence]);
+              }
+            }
+          }
           if (!s_joint_indices_.empty()) {
             out.set("jointIndices", heapU16_(s_joint_indices_));
           }
@@ -2435,6 +2447,76 @@ class RenderStream {
           out.set("hasGeomBindTransform", true);
           out.set("geomBindTransform",
                   MatrixValue(MatrixToArray(rmesh.skin->geom_bind_transform)));
+        }
+        if (!rmesh.blend_shapes.empty()) {
+          auto float_array = [](const tr::FloatChunked& values) {
+            emscripten::val array = emscripten::val::array();
+            for (size_t index = 0; index < values.size(); ++index) {
+              array.set(static_cast<unsigned>(index), values[index]);
+            }
+            return array;
+          };
+          auto remapped_offsets = [this](
+              const tr::FloatChunked& values,
+              const std::vector<uint32_t>& sparse_points) {
+            emscripten::val array = emscripten::val::array();
+            std::unordered_map<uint32_t, size_t> sparse_index;
+            for (size_t i = 0; i < sparse_points.size(); ++i) {
+              sparse_index.emplace(sparse_points[i], i);
+            }
+            size_t output = 0;
+            for (uint32_t source_point : s_point_source_indices_) {
+              size_t source_offset = static_cast<size_t>(source_point) * 3;
+              if (!sparse_points.empty()) {
+                const auto it = sparse_index.find(source_point);
+                source_offset = it == sparse_index.end()
+                                    ? (std::numeric_limits<size_t>::max)()
+                                    : it->second * 3;
+              }
+              for (size_t component = 0; component < 3; ++component) {
+                const float value =
+                    source_offset != (std::numeric_limits<size_t>::max)() &&
+                            source_offset + component < values.size()
+                        ? values[source_offset + component]
+                        : 0.0f;
+                array.set(static_cast<unsigned>(output++), value);
+              }
+            }
+            return array;
+          };
+          emscripten::val shapes = emscripten::val::array();
+          for (size_t shape_index = 0;
+               shape_index < rmesh.blend_shapes.size(); ++shape_index) {
+            const tr::RenderMesh::BlendShape& shape =
+                rmesh.blend_shapes[shape_index];
+            emscripten::val value = emscripten::val::object();
+            value.set("name", shape.name);
+            value.set("weight", shape.weight);
+            value.set("pointOffsets",
+                      remapped_offsets(shape.point_offsets,
+                                       shape.point_indices));
+            value.set("normalOffsets",
+                      shape.normal_offsets.empty()
+                          ? float_array(shape.normal_offsets)
+                          : remapped_offsets(shape.normal_offsets,
+                                             shape.point_indices));
+            value.set("pointIndices", emscripten::val::array());
+            emscripten::val inbetweens = emscripten::val::array();
+            for (size_t i = 0; i < shape.inbetweens.size(); ++i) {
+              const tr::RenderMesh::BlendShape::Inbetween& source =
+                  shape.inbetweens[i];
+              emscripten::val inbetween = emscripten::val::object();
+              inbetween.set("name", source.name);
+              inbetween.set("weight", source.weight);
+              inbetween.set("pointOffsets",
+                            remapped_offsets(source.point_offsets,
+                                             shape.point_indices));
+              inbetweens.set(static_cast<unsigned>(i), inbetween);
+            }
+            value.set("inbetweens", inbetweens);
+            shapes.set(static_cast<unsigned>(shape_index), value);
+          }
+          out.set("blendShapes", shapes);
         }
       }
     }
@@ -2679,9 +2761,14 @@ class RenderStream {
     const bool needExpand = uvFaceVarying || nFaceVarying || !stIdx.empty();
 
     s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+    s_point_source_indices_.clear();
 
     if (!needExpand) {
       s_points_ = std::move(P);
+      s_point_source_indices_.resize(vtxCount);
+      for (size_t i = 0; i < vtxCount; ++i) {
+        s_point_source_indices_[i] = static_cast<uint32_t>(i);
+      }
       triangulate_(fvi, fvc, s_indices_);
       if (nCount == vtxCount) s_normals_ = std::move(N);
       else computeNormals_(s_points_, s_indices_, s_normals_);
@@ -2735,28 +2822,9 @@ class RenderStream {
       return base + add;
     };
 
-    // Decide weld vs soup by POSITION sharing, not interpolation type: a welded
-    // mesh has at least vtxCount vertices, so it can only beat the (index-free)
-    // soup when positions are heavily shared (vtxCount well below the triangle-
-    // corner count). Face-varying UVs still weld well when positions share — what
-    // matters is the expansion factor. When vtxCount is already close to the
-    // corner count, the soup is minimal, so skip welding and keep it.
-    size_t triCount = 0;
-    for (int32_t nn : fvc) {
-      if (nn >= 3) {
-        const size_t add = static_cast<size_t>(nn - 2);
-        if (triCount > (std::numeric_limits<size_t>::max)() - add) {
-          triCount = (std::numeric_limits<size_t>::max)();
-          break;
-        }
-        triCount += add;
-      }
-    }
-    const size_t cornerCount =
-        (triCount > (std::numeric_limits<size_t>::max)() / 3)
-            ? (std::numeric_limits<size_t>::max)()
-            : triCount * 3;
-    const bool doWeld = vtxCount > 0 && vtxCount < cornerCount / 3;
+    // The next render contract uses a single index buffer. Weld expanded
+    // face-varying tuples by default; callers may explicitly request soup.
+    const bool doWeld = build_vertex_indices_;
 
     if (!doWeld) {
       // Non-indexed triangle soup (the minimal form for unique-per-corner UVs).
@@ -2779,11 +2847,13 @@ class RenderStream {
       }
       const size_t corners = slots.size();
       s_points_.resize(corners * 3);
+      s_point_source_indices_.resize(corners, 0);
       if (!UV.empty()) s_uv_.assign(corners * 2, 0.0f);
       if (haveN) s_normals_.resize(corners * 3);
       for (size_t c = 0; c < corners; ++c) {
         const size_t slot = slots[c];
         const int32_t vi = (slot < faceVtx) ? fvi[slot] : -1;
+        if (vi >= 0) s_point_source_indices_[c] = static_cast<uint32_t>(vi);
         float px = 0.0f, py = 0.0f, pz = 0.0f;
         if (readVec3(P, vi, &px, &py, &pz)) {
           s_points_[c * 3] = px; s_points_[c * 3 + 1] = py; s_points_[c * 3 + 2] = pz;
@@ -2856,6 +2926,8 @@ class RenderStream {
       }
       const uint32_t idx = static_cast<uint32_t>(nextIdx);
       s_points_.push_back(px); s_points_.push_back(py); s_points_.push_back(pz);
+      s_point_source_indices_.push_back(
+          vi < 0 ? uint32_t(0) : static_cast<uint32_t>(vi));
       if (!UV.empty()) { s_uv_.push_back(u); s_uv_.push_back(v); }
       if (haveN) { s_normals_.push_back(nx); s_normals_.push_back(ny); s_normals_.push_back(nz); }
       weld.emplace(key, idx);
@@ -3699,6 +3771,7 @@ class RenderStream {
   bool mesh_merge_bake_transform_ = false;
   bool flatten_render_tree_ = false;
   bool compute_tangents_ = false;
+  bool build_vertex_indices_ = true;
   std::string tangent_method_ = "hybrid";
   std::string error_;
   std::vector<float> s_points_, s_normals_, s_uv_, s_tangents_;
@@ -3709,6 +3782,7 @@ class RenderStream {
   std::vector<float> s_curve_tessellated_widths_;
   std::vector<float> s_curve_tessellated_colors_;
   std::vector<uint32_t> s_indices_;
+  std::vector<uint32_t> s_point_source_indices_;
   std::vector<uint16_t> s_joint_indices_;
   std::vector<float> s_joint_weights_;
 };
@@ -3982,6 +4056,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
                 &RenderStream::setMeshMergeBakeTransform)
       .function("setFlattenRenderTree", &RenderStream::setFlattenRenderTree)
       .function("setComputeTangents", &RenderStream::setComputeTangents)
+      .function("setBuildVertexIndices", &RenderStream::setBuildVertexIndices)
       .function("setTangentMethod", &RenderStream::setTangentMethod)
       .function("provideAsset", &RenderStream::provideAsset)
       .function("clearAssets", &RenderStream::clearAssets)
