@@ -248,6 +248,46 @@ int main() {
     std::cout << "  serial range printer preserves lazy array text" << std::endl;
   }
 
+  // Compressed lazy int arrays should print without materializing a decoded
+  // int vector into the source Value.
+  {
+    std::vector<int32_t> big_indices(96u * 1024u);
+    for (size_t i = 0; i < big_indices.size(); ++i) {
+      big_indices[i] = static_cast<int32_t>((i * 17u) % 1009u) - 503;
+    }
+
+    StageBuilder big_sb;
+    big_sb.SetDefaultPrim("BigInts");
+    LayerBuilder& big_lb = big_sb.GetLayerBuilder();
+    big_lb.begin_prim("BigInts", "Mesh");
+    big_lb.add_property("faceVertexIndices", Value::MakeIntArray(big_indices));
+    big_lb.end_prim();
+    big_lb.finalize();
+
+    std::vector<uint8_t> big_buf;
+    USDCWriteResult big_wr = WriteUSDCToMemory(big_buf, big_sb.Build());
+    assert(big_wr.success);
+    USDCLoadResult big_lr = LoadUSDCFromMemory(big_buf.data(), big_buf.size());
+    assert(big_lr.success);
+    UsdPrim big_mesh = big_lr.stage.GetPrimAtPath("/BigInts");
+    assert(big_mesh.IsValid());
+    const Value* lazy_indices = big_mesh.GetPropertyValue("faceVertexIndices");
+    assert(lazy_indices && lazy_indices->is_lazy());
+    assert(lazy_indices->lazy_ref() && lazy_indices->lazy_ref()->is_compressed);
+
+    Value eager = lazy_indices->materialized_copy();
+    const std::string expected = PrintValue(eager);
+    std::string actual;
+    {
+      StreamWriter sw(&actual);
+      PrintValue(sw, *lazy_indices);
+    }
+    assert(actual == expected);
+    assert(lazy_indices->is_lazy());
+    assert(!lazy_indices->is_dirty());
+    std::cout << "  compressed lazy int printer preserves text" << std::endl;
+  }
+
   // Materialize the original via accessor; verify contents byte-for-byte.
   const std::vector<float>* arr = pv->as_float_array();
   assert(arr);
