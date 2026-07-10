@@ -404,6 +404,56 @@ void test_stage_move() {
   std::cout << "  Stage move semantics: PASSED" << std::endl;
 }
 
+// Regression: default-time value resolution matches OpenUSD — a property
+// with no authored default but with timeSamples resolves to the EARLIEST
+// sample via GetPropertyValue (timeSamples-only xformOps used to evaluate as
+// missing, collapsing static transforms to identity components).
+void test_default_time_timesample_fallback() {
+  std::cout << "Testing default-time timeSamples fallback..." << std::endl;
+
+  StageBuilder builder;
+  LayerBuilder& lb = builder.GetLayerBuilder();
+
+  lb.begin_prim("Anim", "Xform");
+  // timeSamples only, multiple samples (earliest wins at default time).
+  lb.add_time_sample("xformOp:translate", 1.0,
+                     Value::MakeDouble3(10.0, 20.0, 30.0));
+  lb.add_time_sample("xformOp:translate", 2.0,
+                     Value::MakeDouble3(11.0, 21.0, 31.0));
+  // timeSamples only, single sample (the Blender-export shape).
+  lb.add_time_sample("xformOp:rotateXYZ", 0.0,
+                     Value::MakeFloat3(-88.25f, 0.0f, 0.0f));
+  // Authored default AND timeSamples: the default must win at default time.
+  lb.add_property("xformOp:scale", Value::MakeFloat3(2.0f, 2.0f, 2.0f));
+  lb.add_time_sample("xformOp:scale", 1.0, Value::MakeFloat3(5.0f, 5.0f, 5.0f));
+  lb.end_prim();
+
+  Stage stage = builder.Build();
+  UsdPrim prim = stage.GetPrimAtPath("/Anim");
+  assert(prim.IsValid());
+
+  const Value* t = prim.GetPropertyValue("xformOp:translate");
+  assert(t && "timeSamples-only property should resolve at default time");
+  const double* td = t->as_double3();
+  assert(td && td[0] == 10.0 && td[1] == 20.0 && td[2] == 30.0 &&
+         "should be the earliest sample");
+
+  const Value* r = prim.GetPropertyValue("xformOp:rotateXYZ");
+  assert(r && "single-sample property should resolve at default time");
+  const float* rf = r->as_float3();
+  assert(rf && rf[0] == -88.25f && rf[1] == 0.0f && rf[2] == 0.0f);
+
+  const Value* s = prim.GetPropertyValue("xformOp:scale");
+  assert(s);
+  const float* sf = s->as_float3();
+  assert(sf && sf[0] == 2.0f && "authored default must win over samples");
+
+  const Value* missing = prim.GetPropertyValue("xformOp:orient");
+  assert(!missing && "absent property still resolves to null");
+
+  std::cout << "  Default-time timeSamples fallback: PASSED" << std::endl;
+}
+
 int main() {
   std::cout << "=== Stage Tests ===" << std::endl;
 
@@ -416,6 +466,7 @@ int main() {
   test_attribute_eval();
   test_attribute_eval_convenience();
   test_stage_move();
+  test_default_time_timesample_fallback();
 
   std::cout << "\n=== All Stage tests PASSED ===" << std::endl;
   return 0;
