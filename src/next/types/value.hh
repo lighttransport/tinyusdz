@@ -162,6 +162,16 @@ public:
                                   uint32_t comps_per_elem);
   static Value MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
                                    uint32_t comps_per_elem);
+  /// Int-vector element types (Int2/Int3/Int4): flat int32 buffer.
+  static Value MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
+                                uint32_t comps_per_elem);
+  /// UInt-vector element types (UInt2/UInt3/UInt4): flat uint32 buffer.
+  static Value MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
+                                 uint32_t comps_per_elem);
+  /// String-family arrays with an explicit element type (Token / String /
+  /// AssetPath); same storage as MakeTokenArray.
+  static Value MakeStringLikeArray(std::vector<std::string>&& data,
+                                   TypeId elem_type);
 
   // ============================================================
   // Type queries
@@ -169,6 +179,11 @@ public:
 
   /// Get the type ID
   TypeId type_id() const { return type_id_; }
+
+  /// Re-tag the semantic (role) type without touching storage — e.g.
+  /// Float2 -> Texcoord2f after a crate read, where roles exist only in the
+  /// declared type name. No-op unless the two types share a storage layout.
+  void retag_role(TypeId new_type);
 
   /// Check if empty (no value stored). A value BLOCK (`= None`) is NOT empty:
   /// it is an authored opinion that blocks weaker values and must round-trip.

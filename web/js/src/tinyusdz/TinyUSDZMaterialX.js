@@ -185,8 +185,8 @@ function applyNormalScale(material, normalScale) {
 /**
  * Apply normal map texture in async (await) conversion path.
  */
-async function applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager = null) {
-    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+async function applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager = null, skipTextures = false) {
+    if (skipTextures || !(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
         return;
     }
 
@@ -210,8 +210,8 @@ async function applyNormalMapLoaded(material, normalParam, normalScale, usdScene
 /**
  * Apply normal map texture in legacy fire-and-forget conversion path.
  */
-function applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache) {
-    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+function applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache, skipTextures = false) {
+    if (skipTextures || !(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
         return;
     }
 
@@ -258,7 +258,7 @@ async function applyOpenPBRNormalMapFromGetter(
     loadTextureFn = loadTextureFromUSD
 ) {
     const normalParam = extractNormalParamFromGetter(getParam);
-    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+    if (loadTextureFn === null || !(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
         return;
     }
 
@@ -650,9 +650,10 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         return material;
     }
 
-    // Texture cache and delayed loading manager
-    const textureCache = options.textureCache || new Map();
-    const textureManager = options.textureLoadingManager || null;
+	    // Texture cache and delayed loading manager
+	    const textureCache = options.textureCache || new Map();
+	    const textureManager = options.textureLoadingManager || null;
+	    const skipTextures = options.skipTextures || false;
 
     // Helper to apply parameter with optional texture
     const applyParam = async (paramName, paramValue, group = null) => {
@@ -669,7 +670,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         }
 
         // Load and apply texture if present
-        if (usdScene && hasTexture(paramValue)) {
+	        if (!skipTextures && usdScene && hasTexture(paramValue)) {
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
                 const textureId = getTextureId(paramValue);
@@ -747,7 +748,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                 material.emissive = createColor(emissionColor);
             }
             // Load emission texture
-            if (usdScene && hasTexture(flat.emission_color)) {
+            if (!skipTextures && usdScene && hasTexture(flat.emission_color)) {
                 const textureId = getTextureId(flat.emission_color);
                 if (textureManager) {
                     textureManager.queueTexture(material, 'emissiveMap', textureId, usdScene);
@@ -772,7 +773,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                 material.opacity = opacityValue;
                 material.transparent = opacityValue < 1.0;
             }
-            if (usdScene && hasTexture(opacityParam)) {
+            if (!skipTextures && usdScene && hasTexture(opacityParam)) {
                 const textureId = getTextureId(opacityParam);
                 // For alpha maps, we need to set transparent=true even in delayed mode
                 material.transparent = true;
@@ -790,7 +791,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
 
         const normalParam = extractNormalParam(flat);
         const normalScale = extractNormalMapScale(flat);
-        await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager);
+        await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager, skipTextures);
     }
 
     // Process grouped format
@@ -852,7 +853,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
             if (emissionColor && Array.isArray(emissionColor)) {
                 material.emissive = createColor(emissionColor);
             }
-            if (usdScene && hasTexture(pbr.emission.emission_color)) {
+            if (!skipTextures && usdScene && hasTexture(pbr.emission.emission_color)) {
                 const textureId = getTextureId(pbr.emission.emission_color);
                 if (textureManager) {
                     textureManager.queueTexture(material, 'emissiveMap', textureId, usdScene);
@@ -878,7 +879,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                     material.opacity = opacityValue;
                     material.transparent = opacityValue < 1.0;
                 }
-                if (usdScene && hasTexture(opacityParam)) {
+                if (!skipTextures && usdScene && hasTexture(opacityParam)) {
                     const textureId = getTextureId(opacityParam);
                     material.transparent = true;
                     if (textureManager) {
@@ -895,7 +896,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
 
             const normalParam = extractNormalParam(pbr.geometry);
             const normalScale = extractNormalMapScale(pbr.geometry);
-            await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager);
+            await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager, skipTextures);
         }
     }
 
@@ -957,8 +958,9 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
         return material;
     }
 
-    // Texture cache
-    const textureCache = options.textureCache || new Map();
+	    // Texture cache
+	    const textureCache = options.textureCache || new Map();
+	    const skipTextures = options.skipTextures || false;
 
     // Helper to apply parameter value (sync) and queue texture loading (async)
     const applyParam = (paramName, paramValue) => {
@@ -975,7 +977,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
         }
 
         // Queue texture loading (fire-and-forget)
-        if (usdScene && hasTexture(paramValue)) {
+	        if (!skipTextures && usdScene && hasTexture(paramValue)) {
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
                 if (texMapName === 'map') {
@@ -1048,7 +1050,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
                 material.emissive = createColor(emissionColor);
             }
             // Load emission texture (fire-and-forget)
-            if (usdScene && hasTexture(flat.emission_color)) {
+            if (!skipTextures && usdScene && hasTexture(flat.emission_color)) {
                 loadTextureFromUSD(usdScene, getTextureId(flat.emission_color), textureCache).then((texture) => {
                     if (texture) {
                         material.emissiveMap = texture;
@@ -1072,7 +1074,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
                 material.opacity = opacityValue;
                 material.transparent = opacityValue < 1.0;
             }
-            if (usdScene && hasTexture(opacityParam)) {
+            if (!skipTextures && usdScene && hasTexture(opacityParam)) {
                 loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache).then((texture) => {
                     if (texture) {
                         material.alphaMap = texture;
@@ -1088,7 +1090,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
 
         const normalParam = extractNormalParam(flat);
         const normalScale = extractNormalMapScale(flat);
-        applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache);
+        applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache, skipTextures);
     }
 
     // Process grouped format
@@ -1150,7 +1152,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
             if (emissionColor && Array.isArray(emissionColor)) {
                 material.emissive = createColor(emissionColor);
             }
-            if (usdScene && hasTexture(pbr.emission.emission_color)) {
+            if (!skipTextures && usdScene && hasTexture(pbr.emission.emission_color)) {
                 loadTextureFromUSD(usdScene, getTextureId(pbr.emission.emission_color), textureCache).then((texture) => {
                     if (texture) {
                         material.emissiveMap = texture;
@@ -1175,7 +1177,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
                     material.opacity = opacityValue;
                     material.transparent = opacityValue < 1.0;
                 }
-                if (usdScene && hasTexture(opacityParam)) {
+                if (!skipTextures && usdScene && hasTexture(opacityParam)) {
                     loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache).then((texture) => {
                         if (texture) {
                             material.alphaMap = texture;
@@ -1191,7 +1193,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
 
             const normalParam = extractNormalParam(pbr.geometry);
             const normalScale = extractNormalMapScale(pbr.geometry);
-            applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache);
+            applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache, skipTextures);
         }
     }
 

@@ -88,6 +88,27 @@ std::string TestFixturePath(const std::string &rel) {
   return rel;
 }
 
+bool CopyFile(const std::string &src, const std::string &dst) {
+  std::vector<uint8_t> bytes;
+  std::string ioerr;
+  if (!tinyusdz::io::ReadWholeFile(&bytes, &ioerr, src, 0)) {
+    return false;
+  }
+  return tinyusdz::io::WriteWholeFile(dst, bytes.data(), bytes.size(), &ioerr);
+}
+
+bool WritePNG(const std::string &path, const tinyusdz::Image &img) {
+  tinyusdz::image::WriteOption wopt;
+  wopt.format = tinyusdz::image::WriteImageFormat::PNG;
+  auto enc = tinyusdz::image::WriteImageToMemory(img, wopt);
+  if (!enc) {
+    return false;
+  }
+  std::string werr;
+  return tinyusdz::io::WriteWholeFile(path, enc.value().data(),
+                                      enc.value().size(), &werr);
+}
+
 size_t CountAggregateFaces(const tinyusdz::Layer &layer) {
   using namespace tinyusdz;
   const PrimSpec *root = nullptr;
@@ -911,6 +932,143 @@ void usdz_convert_remap_asset_paths_test(void) {
   // An empty stage has no textures, so count should be 0.
   size_t count = usdz::RemapTextureAssetPaths(stage, remap);
   TEST_CHECK(count == 0);
+}
+
+void usdz_convert_regression_texture_remap_test(void) {
+  using namespace tinyusdz;
+
+  const std::string dir = tinyusdz::io::JoinPath(TempDir(), "regression_remap");
+  tinyusdz::io::CreateDirectories(dir);
+  const std::string src_fixture = TestFixturePath(
+      "tests/unit/fixtures/usdzconvert-regression-textured-two-materials.usda");
+  const std::string usda_path = tinyusdz::io::JoinPath(dir, "scene.usda");
+  const std::string png_path = tinyusdz::io::JoinPath(dir, "Texture.png");
+  const std::string usdz_path = tinyusdz::io::JoinPath(dir, "out.usdz");
+
+  TEST_CHECK(CopyFile(src_fixture, usda_path));
+  TEST_CHECK(WritePNG(png_path, MakeSolidImage(8, 8, 3, 90, 120, 180, 255)));
+
+  usdz::UsdzConvertOptions opts;
+  opts.inputs.push_back(usda_path);
+  opts.output = usdz_path;
+  opts.flatten = true;
+  opts.texture_format = usdz::OutputTextureFormat::JPEG;
+  opts.jpeg_quality = 85;
+
+  usdz::UsdzConvertStats stats;
+  std::string warn, err;
+  bool ok = usdz::Convert(opts, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("convert error: %s", err.c_str());
+    return;
+  }
+  TEST_CHECK(stats.num_textures == 1);
+  TEST_CHECK(stats.num_textures_reencoded == 1);
+
+  USDZAsset asset;
+  std::string awarn, aerr;
+  bool asset_ok = ReadUSDZAssetInfoFromFile(usdz_path, &asset, &awarn, &aerr);
+  TEST_CHECK(asset_ok);
+  if (asset_ok) {
+    size_t jpg_count = 0;
+    size_t png_count = 0;
+    for (const auto &kv : asset.asset_map) {
+      if (kv.first.find("Texture.jpg") != std::string::npos) {
+        jpg_count++;
+      }
+      if (kv.first.find("Texture.png") != std::string::npos) {
+        png_count++;
+      }
+    }
+    TEST_CHECK(jpg_count == 1);
+    TEST_CHECK(png_count == 0);
+  }
+
+  Stage loaded_stage;
+  std::string lwarn, lerr;
+  bool loaded = LoadUSDFromFile(usdz_path, &loaded_stage, &lwarn, &lerr);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadUSDFromFile failed: %s", lerr.c_str());
+    return;
+  }
+
+  std::string texture_path;
+  TEST_CHECK(FindTextureFilePath(loaded_stage, &texture_path));
+  TEST_CHECK(texture_path.find("Texture.jpg") != std::string::npos);
+  TEST_CHECK(texture_path.find("Texture.png") == std::string::npos);
+}
+
+void usdz_convert_regression_material_preview_dedupe_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath(
+          "tests/unit/fixtures/usdzconvert-regression-textured-two-materials.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.material_optimization = usdz::MaterialOptimizationMode::Preview;
+  usdz::MaterialOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeMaterialsInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_materials_before == 2);
+  TEST_CHECK(stats.num_materials_after == 1);
+  TEST_CHECK(stats.num_materials_deduped == 1);
+  TEST_CHECK(stats.num_materials_preview_converted == 2);
+
+  const PrimSpec *mesh_b = nullptr;
+  ok = layer.find_primspec_at(Path("/Root/MeshB", ""), &mesh_b, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(mesh_b != nullptr);
+  if (mesh_b) {
+    auto binding_it = mesh_b->props().find("material:binding");
+    TEST_CHECK(binding_it != mesh_b->props().end());
+    if (binding_it != mesh_b->props().end()) {
+      auto target = binding_it->second.get_relationTarget();
+      TEST_CHECK(target.has_value());
+      if (target) {
+        TEST_CHECK(target->prim_part() == "/Root/MatA");
+      }
+    }
+  }
+}
+
+void usdz_convert_regression_invalid_index_skip_test(void) {
+  using namespace tinyusdz;
+
+  Layer layer;
+  std::string warn, err;
+  bool loaded = LoadLayerFromFile(
+      TestFixturePath(
+          "tests/unit/fixtures/usdzconvert-regression-invalid-indices.usda"),
+      &layer, &warn, &err);
+  TEST_CHECK(loaded);
+  if (!loaded) {
+    TEST_MSG("LoadLayerFromFile failed: %s", err.c_str());
+    return;
+  }
+
+  usdz::UsdzConvertOptions opts;
+  opts.geometry_optimization = usdz::GeometryOptimizationMode::MergeMeshes;
+  usdz::GeometryOptimizationStats stats;
+  bool ok =
+      usdz::OptimizeGeometryInLayer(opts, &layer, &stats, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_CHECK(stats.num_meshes_before == 1);
+  TEST_CHECK(stats.num_meshes_eligible == 0);
+  TEST_CHECK(stats.num_meshes_skipped == 1);
+  TEST_CHECK(stats.num_mesh_aggregates == 0);
+  TEST_CHECK(stats.num_meshes_after == 1);
 }
 
 void usdz_convert_material_dedupe_test(void) {

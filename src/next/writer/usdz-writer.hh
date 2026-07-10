@@ -3,6 +3,7 @@
 #include "../stage/stage.hh"
 #include <string>
 #include <vector>
+#include <map>
 #include <cstdint>
 
 namespace tinyusdz {
@@ -28,6 +29,13 @@ USDZWriteResult WriteUSDZFromUSDCToFile(const std::string& filename,
                                          const uint8_t* usdc_data, size_t usdc_size);
 USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
                                            const uint8_t* usdc_data, size_t usdc_size);
+
+/// Write a USDC root plus additional package assets into a USDZ archive.
+/// Asset names must be relative normalized package paths and may not replace
+/// root.usdc. Entries are stored uncompressed and aligned to 64 bytes.
+USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
+    std::vector<uint8_t>& buffer, const uint8_t* usdc_data, size_t usdc_size,
+    const std::map<std::string, std::vector<uint8_t>>& assets);
 
 } // namespace next
 } // namespace tinyusdz

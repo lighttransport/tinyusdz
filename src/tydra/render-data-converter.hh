@@ -905,6 +905,10 @@ class RenderSceneConverter {
   void AddWarning(const std::string &msg) { _warn += msg + "\n"; }
   void ClearError() { _err.clear(); }
 
+  // Append a warning line. Public so free-function prim visitors (which hold a
+  // RenderSceneConverter*) can record non-fatal degradations.
+  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
+
   // Prim path <-> index for corresponding array
   // e.g. meshMap: primPath/index to `meshes`.
 
@@ -1484,7 +1488,6 @@ class RenderSceneConverter {
   bool IsMeshMergeable(const RenderMesh &mesh) const;
 
   void PushInfo(const std::string &msg) { _info += msg + "\n"; }
-  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
   void PushError(const std::string &msg) { _err += msg + "\n"; }
 
   ///

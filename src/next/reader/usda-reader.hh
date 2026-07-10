@@ -42,6 +42,12 @@ LoadResult LoadUSDAFromFile(const std::string& filename, const LoadOptions& opti
 LoadResult LoadUSDAFromString(const char* data, size_t length, const LoadOptions& options = {});
 LoadResult LoadUSDAFromString(const std::string& data, const LoadOptions& options = {});
 
+/// Load a USDA from an owned string buffer adopted by move. Prefer on
+/// memory-constrained targets (WASM) when the caller can give up ownership of
+/// the input bytes and lazy USDA arrays are enabled.
+LoadResult LoadUSDAFromStringOwned(std::string&& data,
+                                   const LoadOptions& options = {});
+
 /// Quick check if a file appears to be USDA format (checks magic bytes)
 bool IsUSDAFile(const char* filename);
 

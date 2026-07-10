@@ -8,6 +8,7 @@
 
 #include <fstream>
 #include <cstring>
+#include <utility>
 
 namespace tinyusdz {
 namespace next {
@@ -90,6 +91,29 @@ LoadResult LoadUSDAFromString(const char* data, size_t length, const LoadOptions
 
 LoadResult LoadUSDAFromString(const std::string& data, const LoadOptions& options) {
   return LoadUSDAFromString(data.c_str(), data.size(), options);
+}
+
+LoadResult LoadUSDAFromStringOwned(std::string&& data,
+                                   const LoadOptions& options) {
+  LoadResult result;
+
+  AsciiParser parser(options.parse_options);
+
+  if (parser.ParseOwned(std::move(data))) {
+    result.success = true;
+    result.stage = parser.TakeStage();
+  } else {
+    result.errors = parser.GetErrors();
+    if (!result.errors.empty()) {
+      const auto& first_err = result.errors[0];
+      result.error_summary = "Line " + UIntToStr(first_err.line) +
+                             ", column " + UIntToStr(first_err.column) +
+                             ": " + first_err.message;
+    }
+  }
+
+  result.warnings = parser.GetWarnings();
+  return result;
 }
 
 bool IsUSDAFile(const char* filename) {

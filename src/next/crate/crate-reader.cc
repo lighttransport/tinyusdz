@@ -88,6 +88,76 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::DoubleVector:
       return UnpackDoubleVector(rep, out);
 
+    // std::vector<SdfLayerOffset>: [u64 count][f64 offset, f64 scale]*count.
+    // Surfaced as a flat double array (pairs); BuildStage pairs it with
+    // subLayers into LayerMeta::subLayerOffsets.
+    case CrateTypeId::LayerOffsetVector: {
+      if (rep.payload() == 0) {
+        out = Value::MakeDoubleArray(std::vector<double>());
+        return true;
+      }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      uint64_t n = 0;
+      if (!reader_->read_u64(n)) return false;
+      if (n > options_.max_array_elements) return false;
+      if (!reader_->has_elements(static_cast<size_t>(n), 16)) return false;
+      std::vector<double> vals(static_cast<size_t>(n) * 2);
+      if (n && !reader_->read(vals.data(), vals.size() * sizeof(double))) return false;
+      out = Value::MakeDoubleArray(std::move(vals));
+      return true;
+    }
+
+    // Path-valued fields: inheritPaths / specializes arcs (PathListOp) and
+    // raw path vectors. Flattened to a token array of path strings; BuildStage
+    // routes them into PrimSpecMeta.
+    case CrateTypeId::PathVector:
+    case CrateTypeId::PathListOp: {
+      std::vector<std::string> paths;
+      if (!DecodePathTargets(rep, paths, /*with_markers=*/true)) return false;
+      // Arc-string form ("</Base>"), matching what the usda parser stores in
+      // PrimSpecMeta::inherits/specializes. Sublist markers ("\x01?") pass
+      // through unbracketed for BuildStage's list-op reconstruction.
+      for (std::string& p : paths) {
+        if (!p.empty() && p[0] != '\x01') p = "<" + p + ">";
+      }
+      out = Value::MakeTokenArray(std::move(paths));
+      return true;
+    }
+
+    // Single (non-listOp) SdfPayload item: [u32 assetIdx][u32 pathIdx]
+    // (+ [f64 offset][f64 scale] from crate 0.8). Common in pxr-written 0.8.x
+    // crates for `payload = @asset@</P>`.
+    case CrateTypeId::Payload: {
+      if (rep.payload() == 0) {
+        out = Value::MakeTokenArray(std::vector<std::string>());
+        return true;
+      }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+      uint32_t asset_idx = 0, path_idx = 0;
+      if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
+        return false;
+      }
+      double offset = 0.0, scale = 1.0;
+      if (version_.minor >= 8) {
+        if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
+          return false;
+        }
+      }
+      std::string asset;
+      GetString(asset_idx, asset);
+      std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+      // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
+      std::string arc;
+      if (!asset.empty()) arc = "@" + asset + "@";
+      if (!prim.empty() && prim != "/") arc += "<" + prim + ">";
+      if (offset != 0.0 || scale != 1.0) {
+        arc += "?layerOffset=" + std::to_string(offset) + ":" +
+               std::to_string(scale);
+      }
+      out = Value::MakeTokenArray({std::move(arc)});
+      return true;
+    }
+
     case CrateTypeId::TokenListOp:
     case CrateTypeId::StringListOp: {
       std::vector<std::string> toks;

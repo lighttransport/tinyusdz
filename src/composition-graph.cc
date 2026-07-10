@@ -316,8 +316,16 @@ uint16_t PrimIndexBuilder::AddNode(ArcType arc_type, uint16_t parent_idx,
                                    uint32_t site_path_idx,
                                    uint16_t map_expr_idx) {
   if (_result._nodes.size() >= CompNode::kInvalidIndex) {
-    return CompNode::kInvalidIndex;  // overflow
+    return CompNode::kInvalidIndex;  // per-index overflow
   }
+  // Global arc-node budget: bounds total composition work (and the synthesized
+  // variant Layer copies) across the whole graph so a cyclic scene cannot grow
+  // memory without limit.
+  if (_ctx->_max_arc_nodes > 0 &&
+      _ctx->_arc_node_count >= _ctx->_max_arc_nodes) {
+    return CompNode::kInvalidIndex;
+  }
+  ++_ctx->_arc_node_count;
 
   uint16_t idx = static_cast<uint16_t>(_result._nodes.size());
   CompNode node;
@@ -390,6 +398,17 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
                                            std::string *err) {
   if (!ctx->_resolver) return nullptr;
 
+  // Resolve-and-parse cache: a big composed tree can request the same asset
+  // (or the same missing asset) from many prims; without this each request
+  // repeats an expensive filesystem resolve (+ parse) — O(prims) work.
+  const std::string cache_key = asset_path + "\n" + cwp;
+  {
+    auto it = ctx->_default_layer_cache.find(cache_key);
+    if (it != ctx->_default_layer_cache.end()) {
+      return it.mapped();  // cached hit (Layer*) or miss (nullptr)
+    }
+  }
+
   std::string old_cwp = ctx->_resolver->current_working_path();
   if (!cwp.empty()) {
     ctx->_resolver->set_current_working_path(cwp);
@@ -426,6 +445,7 @@ static const Layer *DefaultLoadAndOwnLayer(CompositionContext *ctx,
   if (!old_cwp.empty()) {
     ctx->_resolver->set_current_working_path(old_cwp);
   }
+  ctx->_default_layer_cache.insert({cache_key, result});  // cache hit OR miss
   return result;
 }
 
@@ -756,7 +776,12 @@ bool PrimIndexBuilder::EvalInherits(uint16_t node_idx, std::string * /* err */) 
         (void)qual;
       }
 
-      _inherit_visited.erase(path_str);
+      // NOTE: do NOT erase here. Arcs are processed from a deferred task
+      // queue (ScanArcsAndEnqueueTasks only enqueues), so erasing before the
+      // child task runs made this cycle guard a no-op and a self/mutual
+      // inherit looped to the per-index node cap. Keeping the target site
+      // marked for the whole build composes each class at most once (idempotent
+      // for USD class composition) and bounds cycles.
     }
   }
   return true;
@@ -766,6 +791,30 @@ bool PrimIndexBuilder::EvalInherits(uint16_t node_idx, std::string * /* err */) 
 // EvalReferences
 // ---------------------------------------------------------------------------
 
+// True if following an arc from `node_idx` to (layer_stack, site_path) would
+// revisit a site already present in the ancestor node chain — i.e. a
+// composition cycle (A references B references A, or an internal self/ancestor
+// reference). Without this, a cyclic internal reference reconstructs referenced
+// descendants into ever-deeper composed prims: exponential node/prim blow-up
+// (multi-hundred-MB hang) that a depth cap alone cannot tame.
+bool PrimIndexBuilder::ArcWouldRevisitSite(uint16_t node_idx,
+                                           uint16_t target_ls_idx,
+                                           uint32_t target_site_idx) const {
+  uint16_t cur = node_idx;
+  // Bound the walk by the node count (defensive against a malformed chain).
+  for (size_t steps = 0; steps <= _result._nodes.size(); ++steps) {
+    if (cur >= _result._nodes.size()) break;
+    const CompNode &n = _result._nodes[cur];
+    if (n.layer_stack_idx == target_ls_idx &&
+        n.site_path_idx == target_site_idx) {
+      return true;
+    }
+    if (n.parent == CompNode::kInvalidIndex || n.parent == cur) break;
+    cur = n.parent;
+  }
+  return false;
+}
+
 bool PrimIndexBuilder::EvalReferences(uint16_t node_idx, std::string *err) {
   const PrimSpec *ps = GetPrimSpecForNode(node_idx);
   if (!ps) return true;
@@ -773,9 +822,18 @@ bool PrimIndexBuilder::EvalReferences(uint16_t node_idx, std::string *err) {
   const auto &refs_opt = ps->metas().references;
   if (!refs_opt.has_value()) return true;
 
-  if (_depth >= _ctx->_options.max_depth) {
-    if (err) *err = "Reference composition depth limit exceeded";
-    return false;
+  // Bound the arc chain by the NODE's composition depth, not the builder's
+  // `_depth` member: arcs are processed from a deferred task queue
+  // (ScanArcsAndEnqueueTasks only enqueues), so `_depth++/--` around the
+  // enqueue is restored before the task runs — the member is effectively
+  // constant and never bounds a reference cycle (internal or external), which
+  // grows nodes to the uint16 cap (~65535) = a multi-hundred-MB DoS.
+  // node.depth increments per parent chain and is the true recursion depth.
+  if (node_idx < _result._nodes.size() &&
+      _result._nodes[node_idx].depth >=
+          std::min<uint32_t>(_ctx->_options.max_depth, 255)) {
+    // Chain too deep (likely a reference cycle). Stop, don't fail the build.
+    return true;
   }
 
   uint16_t sibling_count = 0;
@@ -806,6 +864,12 @@ bool PrimIndexBuilder::EvalReferences(uint16_t node_idx, std::string *err) {
 
           uint16_t map_idx = _ctx->AddMapExpression(mapping, -1);
           uint32_t site_path_idx = _ctx->InternPath(target_path);
+
+          if (ArcWouldRevisitSite(
+                  node_idx, _result._nodes[node_idx].layer_stack_idx,
+                  site_path_idx)) {
+            continue;  // internal reference cycle
+          }
 
           uint16_t child_idx =
               AddNode(ArcType::Reference, node_idx,
@@ -884,6 +948,11 @@ bool PrimIndexBuilder::EvalReferences(uint16_t node_idx, std::string *err) {
           uint32_t site_path_idx =
               _ctx->InternPath(target_prim_path.prim_part());
 
+          if (ArcWouldRevisitSite(node_idx, ref_ls_idx, site_path_idx)) {
+            _arc_stack.erase({asset_path_str, ref.prim_path.prim_part()});
+            continue;  // reference cycle (ancestor site revisited)
+          }
+
           uint16_t child_idx =
               AddNode(ArcType::Reference, node_idx, ref_ls_idx, 0,
                       site_path_idx, map_idx);
@@ -949,9 +1018,11 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
   const auto &payload_opt = ps->metas().payload;
   if (!payload_opt.has_value()) return true;
 
-  if (_depth >= _ctx->_options.max_depth) {
-    if (err) *err = "Payload composition depth limit exceeded";
-    return false;
+  if (node_idx < _result._nodes.size() &&
+      _result._nodes[node_idx].depth >=
+          std::min<uint32_t>(_ctx->_options.max_depth, 255)) {
+    // Chain too deep (likely a payload cycle). Stop, don't fail the build.
+    return true;
   }
 
   uint16_t sibling_count = 0;
@@ -1020,7 +1091,13 @@ bool PrimIndexBuilder::EvalPayloads(uint16_t node_idx, std::string *err) {
           if (_ctx->_root_layer &&
               _ctx->_root_layer->find_primspec_at(
                   pl.prim_path, &target_ps, &find_err) &&
-              target_ps) {
+              target_ps &&
+              // Skip a cyclic internal payload (target site already an
+              // ancestor) — otherwise it re-expands referenced content
+              // unboundedly.
+              !ArcWouldRevisitSite(
+                  node_idx, _result._nodes[node_idx].layer_stack_idx,
+                  site_path_idx)) {
             _result._nodes[child_idx].layer_stack_idx =
                 _result._nodes[node_idx].layer_stack_idx;
             _result._nodes[child_idx].flags =
@@ -1322,7 +1399,9 @@ bool PrimIndexBuilder::EvalSpecializes(uint16_t node_idx, std::string * /* err *
         }
       }
 
-      _specialize_visited.erase(path_str);
+      // NOTE: do NOT erase — see EvalInherits. A persistent per-build visited
+      // set composes each specialize target once and stops self/mutual
+      // specialize cycles (the erase-before-deferred-task made it a no-op).
     }
   }
   return true;
@@ -1598,6 +1677,94 @@ std::vector<std::string> CompositionGraph::GatherComposedChildNames(
   return names;
 }
 
+// Namespace depth = number of '/'-separated components in an absolute prim
+// path ("/A/B/C" -> 3). Used to bound worklist growth from reference cycles
+// that generate ever-longer unique paths.
+static uint32_t NamespaceDepth(const std::string &abs_path) {
+  uint32_t d = 0;
+  for (char c : abs_path) {
+    if (c == '/') ++d;
+  }
+  return d;  // leading '/' counts the first component boundary
+}
+
+// True if the composed index for `prim_path` contains a composition arc
+// (reference/payload/inherit/specialize) whose TARGET SITE is an ancestor
+// (or self) of `prim_path` — a namespace cycle (e.g. a prim that specializes
+// its own parent). Descending into such a prim's children re-expands the
+// ancestor's subtree, producing ever-longer unique paths (/A/B/A/B/...): an
+// unbounded worklist / OOM. We register the prim once but do not descend.
+// Content signature of a composed prim: an order-independent hash of the
+// (layer_stack, site) of its ARC nodes (node 0, the local root, is excluded so
+// the signature is position-independent). Two prims with the same signature
+// pull in identical composed content. Used to detect a composition cycle: if a
+// prim's signature equals one of its NAMESPACE ANCESTORS on the build path,
+// descending would regenerate the same subtree forever (e.g. a variant/ref that
+// re-selects the same content one level deeper: /P/a/b/a/b/...). Distinct
+// instances of the same asset are siblings (never ancestors), so this does not
+// false-positive on instancing. A signature of 0 means "no arc content" (a
+// plain local prim) and never triggers the check.
+uint64_t CompositionGraph::ComposedContentSignature(
+    const PrimIndex &index) const {
+  // Collect (layer_stack, site) of arc nodes, sort for order-independence.
+  std::vector<uint64_t> keys;
+  const uint16_t nc = index.GetNodeCount();
+  for (uint16_t i = 1; i < nc; ++i) {  // skip node 0 (local root)
+    const CompNode &n = index.GetNode(i);
+    if (n.is_culled()) continue;
+    switch (n.arc_type) {
+      case ArcType::Reference:
+      case ArcType::Payload:
+      case ArcType::Inherit:
+      case ArcType::Specialize:
+      case ArcType::Variant:
+        break;
+      default:
+        continue;
+    }
+    keys.push_back((uint64_t(n.layer_stack_idx) << 32) ^ n.site_path_idx);
+  }
+  if (keys.empty()) return 0;
+  std::sort(keys.begin(), keys.end());
+  // FNV-1a over the sorted keys.
+  uint64_t h = 1469598103934665603ull;
+  for (uint64_t k : keys) {
+    for (int b = 0; b < 8; ++b) {
+      h ^= (k >> (b * 8)) & 0xff;
+      h *= 1099511628211ull;
+    }
+  }
+  return h ? h : 1;  // never return 0 for non-empty content
+}
+
+bool CompositionGraph::IndexArcTargetsAncestor(const PrimIndex &index,
+                                               const std::string &prim_path) const {
+  const uint16_t nc = index.GetNodeCount();
+  for (uint16_t i = 0; i < nc; ++i) {
+    const CompNode &n = index.GetNode(i);
+    switch (n.arc_type) {
+      case ArcType::Reference:
+      case ArcType::Payload:
+      case ArcType::Inherit:
+      case ArcType::Specialize:
+        break;
+      default:
+        continue;
+    }
+    if (n.site_path_idx >= _ctx._path_table.size()) continue;
+    const std::string &site = _ctx._path_table[n.site_path_idx];
+    if (site.empty() || site == "/") continue;
+    // site is an ancestor-or-self of prim_path?
+    if (prim_path == site) return true;
+    if (prim_path.size() > site.size() &&
+        prim_path.compare(0, site.size(), site) == 0 &&
+        prim_path[site.size()] == '/') {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
                                       const PrimSpec &primspec,
                                       uint16_t root_layer_stack_idx,
@@ -1614,13 +1781,30 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
   // references/payloads. A child is built by descending the parent index one
   // namespace level (BuildChildFrom), which both reconstructs referenced
   // descendants and follows their own (nested) arcs.
+  // Persistent immutable chain of composed-content signatures along the build
+  // path from the root prim. Shared across sibling branches (cheap to extend);
+  // membership check is O(namespace depth). Detects composition cycles in
+  // O(cycle length) instead of relying on the size backstops.
+  struct SigNode {
+    uint64_t sig;
+    std::shared_ptr<const SigNode> parent;
+  };
+  auto sig_on_path = [](const std::shared_ptr<const SigNode> &tail,
+                        uint64_t sig) {
+    for (const SigNode *n = tail.get(); n; n = n->parent.get()) {
+      if (n->sig == sig) return true;
+    }
+    return false;
+  };
+
   struct Item {
     std::string path;
     std::shared_ptr<PrimIndex> parent;  // null for the root prim
     std::string child_name;             // unused for the root prim
+    std::shared_ptr<const SigNode> ancestor_sigs;  // build-path signatures
   };
   std::vector<Item> stack;
-  stack.push_back({prim_path, nullptr, std::string()});
+  stack.push_back({prim_path, nullptr, std::string(), nullptr});
 
   while (!stack.empty()) {
     Item item = std::move(stack.back());
@@ -1650,11 +1834,41 @@ bool CompositionGraph::BuildPrimIndex(const std::string &prim_path,
     DetectAndRegisterInstance(item.path, index);
     _prim_indices[item.path] = index;
 
-    // Enqueue composed children in reverse for left-to-right pre-order.
+    // Backstop: bound the total number of composed prims (a cycle can fan out
+    // under the per-path depth cap).
+    if (_ctx._options.max_composed_prims > 0 &&
+        _prim_indices.size() > _ctx._options.max_composed_prims) {
+      if (err) *err = "Composed prim count exceeded max_composed_prims";
+      return false;
+    }
+
+    // Composition cycle: this prim composes an arc back to one of its own
+    // ancestors (IndexArcTargetsAncestor), OR its composed arc content is
+    // identical to a namespace ancestor's (content signature) — a
+    // variant/reference that re-selects the same content one level deeper,
+    // which would regenerate the same subtree forever. Register the prim
+    // (done above) but don't descend.
+    if (IndexArcTargetsAncestor(*index, item.path)) {
+      continue;
+    }
+    const uint64_t sig = ComposedContentSignature(*index);
+    if (sig != 0 && sig_on_path(item.ancestor_sigs, sig)) {
+      continue;  // content cycle: identical composed arcs as an ancestor
+    }
+    std::shared_ptr<const SigNode> child_sigs =
+        (sig != 0) ? std::make_shared<const SigNode>(SigNode{sig, item.ancestor_sigs})
+                   : item.ancestor_sigs;
+
+    // Enqueue composed children in reverse for left-to-right pre-order. Reject
+    // paths deeper than the namespace-depth cap.
     const std::vector<std::string> child_names =
         GatherComposedChildNames(*index);
     for (auto it = child_names.rbegin(); it != child_names.rend(); ++it) {
-      stack.push_back({item.path + "/" + *it, index, *it});
+      const std::string child_path = item.path + "/" + *it;
+      if (NamespaceDepth(child_path) > _ctx._options.max_namespace_depth) {
+        continue;  // too deep: likely a reference cycle; stop descending
+      }
+      stack.push_back({child_path, index, *it, child_sigs});
     }
   }
 
@@ -1673,14 +1887,23 @@ bool CompositionGraph::RebuildDescendantPrimIndices(
   };
 
   std::vector<Item> stack;
+  const uint32_t max_ns_depth = _ctx._options.max_namespace_depth;
   const std::vector<std::string> child_names = GatherComposedChildNames(*parent);
   for (auto it = child_names.rbegin(); it != child_names.rend(); ++it) {
-    stack.push_back({prim_path + "/" + *it, parent, *it});
+    const std::string child_path = prim_path + "/" + *it;
+    if (NamespaceDepth(child_path) > max_ns_depth) continue;
+    stack.push_back({child_path, parent, *it});
   }
 
   while (!stack.empty()) {
     Item item = std::move(stack.back());
     stack.pop_back();
+
+    if (_ctx._options.max_composed_prims > 0 &&
+        _prim_indices.size() > _ctx._options.max_composed_prims) {
+      if (err) *err = "Composed prim count exceeded max_composed_prims";
+      return false;
+    }
 
     PrimIndexBuilder builder(&_ctx, Path(item.path, ""));
     auto result = builder.BuildChildFrom(*item.parent, item.child_name);
@@ -1689,9 +1912,13 @@ bool CompositionGraph::RebuildDescendantPrimIndices(
     auto index = std::make_shared<PrimIndex>(std::move(*result));
     _prim_indices[item.path] = index;
 
+    if (IndexArcTargetsAncestor(*index, item.path)) continue;  // namespace cycle
+
     const std::vector<std::string> nested = GatherComposedChildNames(*index);
     for (auto it = nested.rbegin(); it != nested.rend(); ++it) {
-      stack.push_back({item.path + "/" + *it, index, *it});
+      const std::string child_path = item.path + "/" + *it;
+      if (NamespaceDepth(child_path) > max_ns_depth) continue;
+      stack.push_back({child_path, index, *it});
     }
   }
 
@@ -1709,6 +1936,7 @@ nonstd::expected<CompositionGraph, std::string> CompositionGraph::Compose(
   CompositionGraph graph;
   graph._ctx._resolver = &resolver;
   graph._ctx._options = options;
+  graph._ctx._max_arc_nodes = options.max_arc_nodes;
 
   // Route referenced/payload layer loads through the optional parse-once seam.
   graph._ctx.load_layer_fn = options.load_layer_fn;

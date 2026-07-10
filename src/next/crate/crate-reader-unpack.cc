@@ -196,6 +196,11 @@ bool CrateReader::Impl::DecodeTimeSamples(
     return false;
   }
   if (n > options_.max_array_elements || n > 100000000ull) return false;
+  // Each sample ValueRep is an 8-byte read that immediately follows; require the
+  // file to actually hold n*8 bytes before allocating the vector, so a tiny file
+  // cannot demand an ~800 MB allocation via an absurd count (has_elements uses
+  // division, so no count*8 overflow).
+  if (n > 0 && !reader_->has_elements(static_cast<size_t>(n), 8)) return false;
 
   const size_t sample_count = static_cast<size_t>(n);
   const size_t pair_count = std::min<size_t>(times->size(), sample_count);
@@ -288,7 +293,9 @@ bool CrateReader::Impl::UnpackVec3f(ValueRep rep, Value& out) {
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeFloat3(float(b[0]), float(b[1]), float(b[2]));
+    uint16_t hv[3];
+    for (int i = 0; i < 3; ++i) hv[i] = FloatToHalf(float(b[i]));
+    out = Value::MakeFromRaw(TypeId::Half3, hv);
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
@@ -305,7 +312,9 @@ bool CrateReader::Impl::UnpackVec4f(ValueRep rep, Value& out) {
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeFloat4(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
+    uint16_t hv[4];
+    for (int i = 0; i < 4; ++i) hv[i] = FloatToHalf(float(b[i]));
+    out = Value::MakeFromRaw(TypeId::Half4, hv);
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
@@ -367,19 +376,20 @@ bool CrateReader::Impl::UnpackVec4d(ValueRep rep, Value& out) {
 }
 
 bool CrateReader::Impl::UnpackQuatf(ValueRep rep, Value& out) {
+  // Crate / GfQuat layout is imaginary-first (x, y, z, w); internal layout is
+  // real-first (w, x, y, z). Swizzle on read (the writer swizzles back).
   if (rep.is_inlined()) {
-    // pxrUSD inlines integer-valued vectors/matrices as int8 components
-    // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    // pxrUSD inlines integer-valued quats as int8 components in memory order.
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeQuatf(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
+    out = Value::MakeQuatf(float(b[3]), float(b[0]), float(b[1]), float(b[2]));
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   float data[4];
   if (!reader_->read(data, sizeof(data))) return false;
-  out = Value::MakeQuatf(data[0], data[1], data[2], data[3]);
+  out = Value::MakeQuatf(data[3], data[0], data[1], data[2]);
   return true;
 }
 
@@ -390,13 +400,14 @@ bool CrateReader::Impl::UnpackQuatd(ValueRep rep, Value& out) {
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeQuatd(double(b[0]), double(b[1]), double(b[2]), double(b[3]));
+    // Imaginary-first on disk; internal is real-first (see UnpackQuatf).
+    out = Value::MakeQuatd(double(b[3]), double(b[0]), double(b[1]), double(b[2]));
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   double data[4];
   if (!reader_->read(data, sizeof(data))) return false;
-  out = Value::MakeQuatd(data[0], data[1], data[2], data[3]);
+  out = Value::MakeQuatd(data[3], data[0], data[1], data[2]);
   return true;
 }
 
@@ -442,11 +453,10 @@ bool CrateReader::Impl::UnpackMatrix2d(ValueRep rep, Value& out) {
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    // Diagonal int8 encoding, matching Matrix3d/Matrix4d inline forms.
     double m[4] = {0.0};
     m[0] = double(b[0]);
-    m[1] = double(b[1]);
-    m[2] = double(b[2]);
-    m[3] = double(b[3]);
+    m[3] = double(b[1]);
     out = Value::MakeMatrix2d(m);
     return true;
   }
@@ -479,8 +489,14 @@ bool CrateReader::Impl::UnpackVariability(ValueRep rep, Value& out) {
 // ============================================================
 
 bool CrateReader::Impl::UnpackVec2i(ValueRep rep, Value& out) {
-  // 8 bytes — never inlinable (inline payload is 6 bytes).
-  if (rep.is_inlined()) return false;
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued vectors as int8 components.
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeInt2(int32_t(b[0]), int32_t(b[1]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   int32_t data[2];
   if (!reader_->read(data, sizeof(data))) return false;
@@ -569,17 +585,19 @@ inline float half_to_float(uint16_t h) {
 } // namespace
 
 bool CrateReader::Impl::UnpackHalf(ValueRep rep, Value& out) {
-  if (rep.is_inlined()) {
-    uint16_t h = static_cast<uint16_t>(rep.payload() & 0xFFFF);
-    out = Value(half_to_float(h));
-    return true;
-  }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  // Preserve the half domain: the usda parser stores scalar halves as raw
+  // half bits under TypeId::Half, so the crate reader must match for value
+  // equality across formats.
   uint16_t h;
-  uint8_t hb[2];
-  if (!reader_->read(hb, 2)) return false;
-  h = static_cast<uint16_t>(hb[0]) | (static_cast<uint16_t>(hb[1]) << 8);
-  out = Value(half_to_float(h));
+  if (rep.is_inlined()) {
+    h = static_cast<uint16_t>(rep.payload() & 0xFFFF);
+  } else {
+    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    uint8_t hb[2];
+    if (!reader_->read(hb, 2)) return false;
+    h = static_cast<uint16_t>(hb[0]) | (static_cast<uint16_t>(hb[1]) << 8);
+  }
+  out = Value::MakeFromRaw(TypeId::Half, &h);
   return true;
 }
 
@@ -594,45 +612,61 @@ bool CrateReader::Impl::UnpackVec2h(ValueRep rep, Value& out) {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
     if (!reader_->read(raw, sizeof(raw))) return false;
   }
-  out = Value::MakeFloat2(half_to_float(raw[0]), half_to_float(raw[1]));
+  out = Value::MakeFromRaw(TypeId::Half2, raw);
   return true;
 }
 
 bool CrateReader::Impl::UnpackVec3h(ValueRep rep, Value& out) {
   uint16_t raw[3];
   if (rep.is_inlined()) {
-    // 6 bytes fit in the 48-bit inline payload (little-endian half lanes).
+    // pxrUSD inlines integer-valued half vectors as int8 components (verified
+    // against pxr crates: Vec3h (1,2,3) -> payload 0x030201), not half lanes.
     uint64_t p = rep.payload();
-    raw[0] = static_cast<uint16_t>(p & 0xFFFF);
-    raw[1] = static_cast<uint16_t>((p >> 16) & 0xFFFF);
-    raw[2] = static_cast<uint16_t>((p >> 32) & 0xFFFF);
-  } else {
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeFloat3(float(b[0]), float(b[1]), float(b[2]));
+    return true;
+  }
+  {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
     if (!reader_->read(raw, sizeof(raw))) return false;
   }
-  out = Value::MakeFloat3(half_to_float(raw[0]), half_to_float(raw[1]), half_to_float(raw[2]));
+  out = Value::MakeFromRaw(TypeId::Half3, raw);
   return true;
 }
 
 bool CrateReader::Impl::UnpackVec4h(ValueRep rep, Value& out) {
-  // 8 bytes — never inlinable (inline payload is 6 bytes).
-  if (rep.is_inlined()) return false;
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued half vectors as int8 components.
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    out = Value::MakeFloat4(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
+    return true;
+  }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint16_t raw[4];
   if (!reader_->read(raw, sizeof(raw))) return false;
-  out = Value::MakeFloat4(half_to_float(raw[0]), half_to_float(raw[1]),
-                           half_to_float(raw[2]), half_to_float(raw[3]));
+  out = Value::MakeFromRaw(TypeId::Half4, raw);
   return true;
 }
 
 bool CrateReader::Impl::UnpackQuath(ValueRep rep, Value& out) {
-  // 8 bytes — never inlinable (inline payload is 6 bytes).
-  if (rep.is_inlined()) return false;
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+  // Imaginary-first on disk; internal is real-first raw half bits (matching
+  // the usda parser's Quath SBO layout).
   uint16_t raw[4];
-  if (!reader_->read(raw, sizeof(raw))) return false;
-  out = Value::MakeQuatf(half_to_float(raw[0]), half_to_float(raw[1]),
-                          half_to_float(raw[2]), half_to_float(raw[3]));
+  if (rep.is_inlined()) {
+    // pxrUSD inlines integer-valued quats as int8 components in memory order.
+    uint64_t p = rep.payload();
+    int8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
+    for (int i = 0; i < 4; ++i) raw[i] = FloatToHalf(float(b[i]));
+  } else {
+    if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+    if (!reader_->read(raw, sizeof(raw))) return false;
+  }
+  const uint16_t wxyz[4] = {raw[3], raw[0], raw[1], raw[2]};
+  out = Value::MakeFromRaw(TypeId::Quath, wxyz);
   return true;
 }
 

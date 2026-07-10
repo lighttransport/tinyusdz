@@ -14,18 +14,33 @@
 #include "crate-format.hh"      // ValueRep, CrateTypeId
 #include "../types/type-id.hh"  // next::TypeId
 
-#include <cstdint>
 #include <memory>
+#include <cstdint>
 
 namespace tinyusdz {
 namespace next {
 
 class CrateDataSource;
+class LazyArraySource {
+public:
+  virtual ~LazyArraySource() = default;
+
+  virtual bool MaterializeArray(const struct LazyArrayRef& ref, class Value* out) const = 0;
+  virtual const uint8_t* base() const = 0;
+  virtual size_t size() const = 0;
+  virtual CrateVersion version() const = 0;
+  virtual bool is_mmapped() const = 0;
+  virtual bool can_borrow() const { return false; }
+  virtual void DiscardRange(uint64_t offset, uint64_t length) const {
+    (void)offset;
+    (void)length;
+  }
+};
 
 /// Lightweight descriptor for an array value stored in a retained crate buffer.
 /// The on-disk block is `[u64 count][data...]` at `block_offset`.
 struct LazyArrayRef {
-  std::shared_ptr<CrateDataSource> source;  // keeps the backing buffer alive
+  std::shared_ptr<LazyArraySource> source;  // keeps the backing source alive
   ValueRep rep;                             // original on-disk rep (flags+payload)
   uint64_t block_offset = 0;   // absolute offset of the block (0 => empty array)
   uint64_t block_len = 0;      // total block bytes for verbatim copy (0 => unknown)

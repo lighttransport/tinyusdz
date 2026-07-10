@@ -5,12 +5,10 @@
 
 #include "crate-reader-internal.hh"
 #include "safe-arithmetic.hh"
-#include "../prim/path.hh"
 
 #include <cstdint>
 #include <limits>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -18,86 +16,30 @@ namespace tinyusdz {
 namespace next {
 
 bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
-                                        std::vector<std::pair<std::string, Value>>& out) {
-  if (fieldset_indices_.empty() || fieldset_index >= fieldset_indices_.size()) {
-    return false;
-  }
-  if (fieldset_index >= fieldset_index_to_id_.size()) {
-    return false;
-  }
-  const uint32_t fi32 = fieldset_index_to_id_[fieldset_index];
-  if (fi32 == 0xFFFFFFFFu) {
-    return false;
-  }
-  const size_t fi = static_cast<size_t>(fi32);
-  if (fi >= fieldset_counts_.size()) {
-    return false;
-  }
-  const size_t start = static_cast<size_t>(fieldset_offsets_[fi]);
-  const size_t count = static_cast<size_t>(fieldset_counts_[fi]);
-  if (start >= fieldset_indices_.size() ||
-      count > fieldset_indices_.size() - start) {
-    return false;
-  }
-
+                                         std::vector<std::pair<std::string, Value>>& out) {
   out.clear();
-  if (out.capacity() < count) out.reserve(count);
-  for (size_t idx = start; idx < start + count; ++idx) {
-    const uint32_t field_idx = fieldset_indices_[idx];
-    if (field_idx >= fields_.size()) continue;
 
-    const CrateField& field = fields_[field_idx];
-    std::string_view name;
-    if (!GetToken(field.token_index.value, &name)) continue;
-
-    Value value;
-    if (!UnpackValue(field.value_rep, value)) continue;
-    out.emplace_back(name, std::move(value));
-  }
-  return true;
-}
-
-bool CrateReader::Impl::ResolveFieldset(
-    uint32_t fieldset_index, std::vector<std::pair<std::string_view, Value>>& out) {
-  if (fieldset_indices_.empty() || fieldset_index >= fieldset_indices_.size()) {
+  if (fieldset_index >= fieldset_indices_.size()) {
     return false;
   }
 
-  if (fieldset_index >= fieldset_index_to_id_.size()) {
-    return false;
-  }
-  const uint32_t fi32 = fieldset_index_to_id_[fieldset_index];
-  if (fi32 == 0xFFFFFFFFu) {
-    return false;
-  }
-  const size_t fi = static_cast<size_t>(fi32);
-  if (fi >= fieldset_counts_.size()) {
-    return false;
-  }
-  const size_t start = static_cast<size_t>(fieldset_offsets_[fi]);
-  const size_t count = static_cast<size_t>(fieldset_counts_[fi]);
-  if (start >= fieldset_indices_.size() ||
-      count > fieldset_indices_.size() - start) {
-    return false;
-  }
-
-  out.clear();
-  if (out.capacity() < count) out.reserve(count);
-
-  for (size_t idx = start; idx < start + count; ++idx) {
-    uint32_t field_idx = fieldset_indices_[idx];
+  size_t start = fieldset_index;
+  while (start < fieldset_indices_.size()) {
+    uint32_t field_idx = fieldset_indices_[start];
+    if (field_idx == 0xFFFFFFFF) break;
 
     if (field_idx < fields_.size()) {
       const CrateField& field = fields_[field_idx];
 
-      std::string_view name;
-      if (GetToken(field.token_index.value, &name)) {
+      std::string name;
+      if (GetToken(field.token_index.value, name)) {
         Value value;
         if (UnpackValue(field.value_rep, value)) {
-          out.emplace_back(name, std::move(value));
+          out.emplace_back(std::move(name), std::move(value));
         }
       }
     }
+    start++;
   }
 
   return true;
@@ -106,79 +48,33 @@ bool CrateReader::Impl::ResolveFieldset(
 bool CrateReader::Impl::ResolveFieldsetRaw(
     uint32_t fieldset_index,
     std::vector<std::pair<std::string, ValueRep>>& out) {
-  if (fieldset_indices_.empty() || fieldset_index >= fieldset_indices_.size()) return false;
-  if (fieldset_index >= fieldset_index_to_id_.size()) {
-    return false;
-  }
-  const uint32_t fi32 = fieldset_index_to_id_[fieldset_index];
-  if (fi32 == 0xFFFFFFFFu) {
-    return false;
-  }
-  const size_t fi = static_cast<size_t>(fi32);
-  if (fi >= fieldset_counts_.size()) {
-    return false;
-  }
-  const size_t start = static_cast<size_t>(fieldset_offsets_[fi]);
-  const size_t count = static_cast<size_t>(fieldset_counts_[fi]);
-  if (start >= fieldset_indices_.size() ||
-      count > fieldset_indices_.size() - start) {
-    return false;
-  }
-
   out.clear();
-  if (out.capacity() < count) out.reserve(count);
-  for (size_t idx = start; idx < start + count; ++idx) {
-    uint32_t field_idx = fieldset_indices_[idx];
-    if (field_idx >= fields_.size()) continue;
-    const CrateField& field = fields_[field_idx];
-    std::string_view name;
-    if (!GetToken(field.token_index.value, &name)) continue;
-    out.emplace_back(name, field.value_rep);
-  }
-  return true;
-}
+  if (fieldset_index >= fieldset_indices_.size()) return false;
 
-bool CrateReader::Impl::ResolveFieldsetRaw(
-    uint32_t fieldset_index,
-    std::vector<std::pair<std::string_view, ValueRep>>& out) {
-  if (fieldset_indices_.empty() || fieldset_index >= fieldset_indices_.size()) return false;
-
-  if (fieldset_index >= fieldset_index_to_id_.size()) {
-    return false;
-  }
-  const uint32_t fi32 = fieldset_index_to_id_[fieldset_index];
-  if (fi32 == 0xFFFFFFFFu) {
-    return false;
-  }
-  const size_t fi = static_cast<size_t>(fi32);
-  if (fi >= fieldset_counts_.size()) {
-    return false;
-  }
-  const size_t start = static_cast<size_t>(fieldset_offsets_[fi]);
-  const size_t count = static_cast<size_t>(fieldset_counts_[fi]);
-  if (start >= fieldset_indices_.size() ||
-      count > fieldset_indices_.size() - start) {
-    return false;
-  }
-
-  out.clear();
-  if (out.capacity() < count) out.reserve(count);
-
-  for (size_t idx = start; idx < start + count; ++idx) {
-    uint32_t field_idx = fieldset_indices_[idx];
+  size_t start = fieldset_index;
+  while (start < fieldset_indices_.size()) {
+    uint32_t field_idx = fieldset_indices_[start];
+    if (field_idx == 0xFFFFFFFF) break;
     if (field_idx < fields_.size()) {
       const CrateField& field = fields_[field_idx];
-      std::string_view name;
-      if (GetToken(field.token_index.value, &name)) {
-        out.emplace_back(name, field.value_rep);
+      std::string name;
+      if (GetToken(field.token_index.value, name)) {
+        out.emplace_back(std::move(name), field.value_rep);
       }
     }
+    start++;
   }
   return true;
 }
 
 bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
                                           std::vector<std::string>& out) {
+  return DecodePathTargets(rep, out, /*with_markers=*/false);
+}
+
+bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
+                                          std::vector<std::string>& out,
+                                          bool with_markers) {
   // Reads one or more [u64 count][u32 path_index * count] runs of path indices
   // (uncompressed, per pxrUSD). PathVector has a single run; PathListOp is
   // prefixed by a 1-byte ListOpHeader selecting which sublists are present. We
@@ -195,32 +91,24 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     uint64_t n = 0;
     if (!reader_->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
-    out.reserve(out.size() + static_cast<size_t>(n));
-    auto& idxs = array_scratch_.u32_indices;
-    idxs.resize(static_cast<size_t>(n));
-    if (!reader_->read_u32_array(idxs, static_cast<size_t>(n))) return false;
-    for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
-      const uint32_t idx = idxs[i];
+    for (uint64_t i = 0; i < n; ++i) {
+      uint32_t idx = 0;
+      if (!reader_->read_u32(idx)) return false;
       if (idx < paths_.size()) {
         // paths_ renders a property path as ".<primpath>/<prop>"; convert to the
         // canonical USD form "<primpath>.<prop>" so targets re-intern correctly
         // (and survive repeated round-trips). Prim targets pass through as-is.
         const std::string& p = paths_[idx];
         if (!p.empty() && p[0] == '.') {
-          std::string_view body = std::string_view(p).substr(1);  // "/a/b/prop"
-          const size_t slash = body.rfind('/');
-          if (slash != std::string_view::npos) {
-            std::string s;
-            s.reserve(body.size());
-            s.append(body.data(), slash);
-            s.push_back('.');
-            s.append(body.data() + slash + 1, body.size() - slash - 1);
-            out.push_back(std::move(s));
+          std::string body = p.substr(1);          // "/a/b/prop"
+          size_t slash = body.rfind('/');
+          if (slash != std::string::npos) {
+            out.push_back(body.substr(0, slash) + "." + body.substr(slash + 1));
           } else {
-            out.emplace_back(body);
+            out.push_back(body);
           }
         } else {
-          out.push_back(p);  // prim path "/a/b"
+          out.push_back(p);                        // prim path "/a/b"
         }
       }
     }
@@ -235,91 +123,24 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   //   0x02 explicit, 0x04 added, 0x08 deleted, 0x10 ordered,
   //   0x20 prepended, 0x40 appended. Read order matches the legacy reader:
   //   explicit, added, prepended, appended, deleted, ordered.
+  // With `with_markers`, a non-explicit listop's sublists are delimited by
+  // "\x01P"/"\x01A"/"\x01D"/"\x01O" marker entries so the caller can
+  // reconstruct the authored list-op edits.
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
   const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
                 kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
-  if ((bits & kHasExplicit) && !read_run()) return false;
-  if ((bits & kHasAdded) && !read_run()) return false;
-  if ((bits & kHasPrepended) && !read_run()) return false;
-  if ((bits & kHasAppended) && !read_run()) return false;
-  if ((bits & kHasDeleted) && !read_run()) return false;
-  if ((bits & kHasOrdered) && !read_run()) return false;
-  return true;
-}
-
-bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
-                                          std::vector<Path>& out) {
-  // Reads one or more [u64 count][u32 path_index * count] runs of path indices
-  // (uncompressed, per pxrUSD). PathVector has a single run; PathListOp is
-  // prefixed by a 1-byte ListOpHeader selecting which sublists are present. We
-  // flatten every present sublist's targets (sufficient for round-tripping
-  // relationship/connection targets; list-edit semantics are not preserved).
-  CrateTypeId tid = rep.type_id();
-  if (tid != CrateTypeId::PathVector && tid != CrateTypeId::PathListOp) {
-    return false;
-  }
-  if (rep.payload() == 0) return true;  // empty
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-
-  auto append_path_index = [&](uint32_t idx) -> bool {
-    if (idx >= paths_.size()) {
-      return true;
-    }
-
-    const std::string& p = paths_[idx];
-    if (!p.empty() && p[0] == '.') {
-      std::string_view body = std::string_view(p).substr(1);  // "/a/b/prop"
-      const size_t slash = body.rfind('/');
-      if (slash != std::string_view::npos) {
-        std::string s;
-        s.reserve(body.size());
-        s.append(body.data(), slash);
-        s.push_back('.');
-        s.append(body.data() + slash + 1, body.size() - slash - 1);
-        out.emplace_back(std::move(s));
-      } else {
-        out.emplace_back(std::string(body));
-      }
-      return true;
-    }
-
-    out.emplace_back(p);
-    return true;
-  };
-
-  auto read_run = [&]() -> bool {
-    uint64_t n = 0;
-    if (!reader_->read_u64(n)) return false;
-    if (n > options_.max_array_elements) return false;
-    out.reserve(out.size() + static_cast<size_t>(n));
-    auto& idxs = array_scratch_.u32_indices;
-    idxs.resize(static_cast<size_t>(n));
-    if (!reader_->read_u32_array(idxs, static_cast<size_t>(n))) return false;
-    for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
-      if (!append_path_index(idxs[i])) return false;
-    }
-    return true;
-  };
-
-  if (tid == CrateTypeId::PathVector) {
+  const bool mark = with_markers && !(bits & kHasExplicit);
+  auto marked_run = [&](const char* marker) -> bool {
+    if (mark) out.push_back(marker);
     return read_run();
-  }
-
-  // PathListOp: [u8 header][present sublists...]. ListOpHeader bits (pxrUSD):
-  //   0x02 explicit, 0x04 added, 0x08 deleted, 0x10 ordered,
-  //   0x20 prepended, 0x40 appended. Read order matches the legacy reader:
-  //   explicit, added, prepended, appended, deleted, ordered.
-  uint8_t bits = 0;
-  if (!reader_->read_u8(bits)) return false;
-  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
-                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  };
   if ((bits & kHasExplicit) && !read_run()) return false;
-  if ((bits & kHasAdded) && !read_run()) return false;
-  if ((bits & kHasPrepended) && !read_run()) return false;
-  if ((bits & kHasAppended) && !read_run()) return false;
-  if ((bits & kHasDeleted) && !read_run()) return false;
-  if ((bits & kHasOrdered) && !read_run()) return false;
+  if ((bits & kHasAdded) && !marked_run("\x01" "A")) return false;
+  if ((bits & kHasPrepended) && !marked_run("\x01" "P")) return false;
+  if ((bits & kHasAppended) && !marked_run("\x01" "A")) return false;
+  if ((bits & kHasDeleted) && !(mark ? marked_run("\x01" "D") : read_run())) return false;
+  if ((bits & kHasOrdered) && !(mark ? marked_run("\x01" "O") : read_run())) return false;
   return true;
 }
 
@@ -336,206 +157,92 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
   const bool payload_has_offset =
       !is_payload || (version_.minor >= 8);
 
+  // Read one SdfReference/SdfPayload item; when `keep`, append its arc string.
+  auto read_item = [&](bool keep) -> bool {
+    uint32_t asset_idx = 0, path_idx = 0;
+    if (!reader_->read_u32(asset_idx) || !reader_->read_u32(path_idx)) {
+      return false;
+    }
+    double offset = 0.0, scale = 1.0;
+    if (payload_has_offset) {
+      if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
+        return false;
+      }
+    }
+    if (!is_payload) {
+      // customData dict: u64 count, then per-entry recursive offsets. UE/pxr
+      // references rarely author it; decoding requires recursive value reads,
+      // so bail (drop the whole listop with a warning) when non-empty.
+      uint64_t dict_count = 0;
+      if (!reader_->read_u64(dict_count)) return false;
+      if (dict_count != 0) {
+        AddWarning("Reference customData is not supported; arc dropped");
+        return false;
+      }
+    }
+    if (!keep) return true;
+
+    std::string asset;
+    GetString(asset_idx, asset);
+    std::string prim = (path_idx < paths_.size()) ? paths_[path_idx] : "";
+    // Internal arcs (no asset) render as "</Prim>", matching the usda parser.
+    std::string arc;
+    if (!asset.empty()) arc = "@" + asset + "@";
+    if (!prim.empty() && prim != "/") arc += "<" + prim + ">";
+    if (offset != 0.0 || scale != 1.0) {
+      arc += "?layerOffset=" + std::to_string(offset) + ":" +
+             std::to_string(scale);
+    }
+    out.push_back(std::move(arc));
+    return true;
+  };
+
   auto read_run = [&](bool keep) -> bool {
     uint64_t n = 0;
     if (!reader_->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
-    if (n == 0) return true;
-
-    const size_t run_count = static_cast<size_t>(n);
-    auto& idxs = array_scratch_.u32_indices;
-    size_t pair_count = 0;
-    if (!safe::mul(run_count, size_t(2), &pair_count)) return false;
-    idxs.resize(pair_count);
-    if (!reader_->read_u32_array(idxs, pair_count)) return false;
-
-    if (payload_has_offset) {
-      if (keep) {
-        // We need per-item offset/scale for arc formatting. Read and convert only
-        // for kept sublists.
-        for (size_t i = 0; i < run_count; ++i) {
-          const size_t base = i * 2;
-          uint32_t asset_idx = idxs[base];
-          uint32_t path_idx = idxs[base + 1];
-          uint64_t dict_count = 0;
-          if (!reader_->read_u64(dict_count)) return false;
-          if (!is_payload && dict_count != 0) {
-            AddWarning("Reference customData is not supported; arc dropped");
-            return false;
-          }
-          double offset = 0.0, scale = 1.0;
-          if (!reader_->read_f64(offset) || !reader_->read_f64(scale)) {
-            return false;
-          }
-
-          std::string_view asset;
-          if (!GetString(asset_idx, &asset)) return false;
-
-          std::string_view prim;
-          if (path_idx < paths_.size()) {
-            prim = paths_[path_idx];
-          }
-
-          std::string arc;
-          if (asset.empty()) {
-            if (!prim.empty() && prim != "/") {
-              arc.push_back('<');
-              arc.append(prim.data(), prim.size());
-              arc.push_back('>');
-            }
-          } else {
-            arc.reserve(asset.size() + 2 +
-                        ((prim.empty() || prim == "/") ? 0 : prim.size() + 2));
-            arc.push_back('@');
-            arc.append(asset.data(), asset.size());
-            arc.push_back('@');
-            if (!prim.empty() && prim != "/") {
-              arc.push_back('<');
-              arc.append(prim.data(), prim.size());
-              arc.push_back('>');
-            }
-          }
-          if (offset != 0.0 || scale != 1.0) {
-            arc.append("?layerOffset=");
-            arc.append(std::to_string(offset));
-            arc.push_back(':');
-            arc.append(std::to_string(scale));
-          }
-          out.push_back(std::move(arc));
-        }
-      } else {
-        // Kept=false sublists only need payload offsets to move the read cursor.
-        if (!is_payload) {
-          for (size_t i = 0; i < run_count; ++i) {
-            uint64_t dict_count = 0;
-            if (!reader_->read_u64(dict_count)) return false;
-            if (dict_count != 0) {
-              AddWarning("Reference customData is not supported; arc dropped");
-              return false;
-            }
-            if (!reader_->skip(sizeof(double) * 2)) return false;
-          }
-        } else {
-          const size_t bytes_per_item =
-              sizeof(uint64_t) + sizeof(double) * 2;
-          size_t skip_bytes = 0;
-          if (!safe::mul(run_count, bytes_per_item, &skip_bytes)) return false;
-          if (!reader_->skip(skip_bytes)) return false;
-        }
-      }
-    } else {
-      // Not expected for current payload formats, but keep exact cursor semantics:
-      // parse each item and apply `keep` filtering.
-      for (size_t i = 0; i < run_count; ++i) {
-        const size_t base = i * 2;
-        if (!is_payload) {
-          uint64_t dict_count = 0;
-          if (!reader_->read_u64(dict_count)) return false;
-          if (dict_count != 0) {
-            AddWarning("Reference customData is not supported; arc dropped");
-            return false;
-          }
-        }
-        if (!keep) continue;
-        std::string_view asset;
-        if (!GetString(idxs[base], &asset)) return false;
-        std::string_view prim;
-        if (idxs[base + 1] < paths_.size()) prim = paths_[base + 1];
-
-        if (asset.empty()) {
-          if (!prim.empty() && prim != "/") {
-            out.emplace_back("<" + std::string(prim) + ">");
-          } else {
-            out.emplace_back("");
-          }
-        } else {
-          std::string arc = "@";
-          arc.append(asset.data(), asset.size());
-          arc.push_back('@');
-          if (!prim.empty() && prim != "/") {
-            arc.push_back('<');
-            arc.append(prim.data(), prim.size());
-            arc.push_back('>');
-          }
-          out.emplace_back(std::move(arc));
-        }
-      }
+    for (uint64_t i = 0; i < n; ++i) {
+      if (!read_item(keep)) return false;
     }
     return true;
   };
 
-  // ListOpHeader bits / read order match DecodePathTargets.
+  // ListOpHeader bits / read order match DecodePathTargets. Non-explicit
+  // sublists are marker-delimited ("\x01" "P"/"A"/"D"/"O") so BuildStage can
+  // reconstruct the authored list-op edits.
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
   const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
                 kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  const bool mark = !(bits & kHasExplicit);
+  auto marked_run = [&](const char* marker, bool keep) -> bool {
+    if (mark && keep) out.push_back(marker);
+    return read_run(keep);
+  };
   if ((bits & kHasExplicit) && !read_run(true)) return false;
-  if ((bits & kHasAdded) && !read_run(true)) return false;
-  if ((bits & kHasPrepended) && !read_run(true)) return false;
-  if ((bits & kHasAppended) && !read_run(true)) return false;
-  if ((bits & kHasDeleted) && !read_run(false)) return false;
-  if ((bits & kHasOrdered) && !read_run(false)) return false;
+  if ((bits & kHasAdded) && !marked_run("\x01" "A", true)) return false;
+  if ((bits & kHasPrepended) && !marked_run("\x01" "P", true)) return false;
+  if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
+  if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;
+  if ((bits & kHasOrdered) && !marked_run("\x01" "O", mark)) return false;
   return true;
 }
 
 bool CrateReader::Impl::DecodeVariantSelectionMap(
     ValueRep rep, std::vector<std::pair<std::string, std::string>>& out) {
   if (rep.type_id() != CrateTypeId::VariantSelectionMap) return false;
-  if (rep.payload() == 0) {
-    out.clear();
-    return true;
-  }
+  if (rep.payload() == 0) return true;  // empty map
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
   uint64_t count = 0;
   if (!reader_->read_u64(count)) return false;
   if (count > options_.max_array_elements) return false;
-
-  out.clear();
-  out.reserve(static_cast<size_t>(count));
-  auto& idxs = array_scratch_.u32_indices;
-  size_t pair_count = 0;
-  if (!safe::mul(static_cast<size_t>(count), size_t(2), &pair_count)) return false;
-  idxs.resize(pair_count);
-  if (!reader_->read_u32_array(idxs, pair_count)) return false;
-  for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
-    const uint32_t k = idxs[(i * 2)];
-    const uint32_t v = idxs[(i * 2) + 1];
-    std::string_view key;
-    std::string_view val;
-    if (!GetString(k, &key) || !GetString(v, &val)) return false;
-    out.emplace_back(std::string(key), std::string(val));
-  }
-  return true;
-}
-
-bool CrateReader::Impl::DecodeVariantSelectionMap(
-    ValueRep rep,
-    std::vector<std::pair<std::string_view, std::string_view>>* out) {
-  if (!out) return false;
-  if (rep.type_id() != CrateTypeId::VariantSelectionMap) return false;
-  if (rep.payload() == 0) {
-    out->clear();
-    return true;  // empty map
-  }
-  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-  uint64_t count = 0;
-  if (!reader_->read_u64(count)) return false;
-  if (count > options_.max_array_elements) return false;
-  out->clear();
-  out->reserve(out->size() + static_cast<size_t>(count));
-  auto& idxs = array_scratch_.u32_indices;
-  size_t pair_count = 0;
-  if (!safe::mul(static_cast<size_t>(count), size_t(2), &pair_count)) return false;
-  idxs.resize(pair_count);
-  if (!reader_->read_u32_array(idxs, pair_count)) return false;
-  for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
-    std::string_view key;
-    std::string_view val;
-    if (!GetString(idxs[(i * 2)], &key) ||
-        !GetString(idxs[(i * 2) + 1], &val)) {
-      return false;
-    }
-    out->emplace_back(key, val);
+  for (uint64_t i = 0; i < count; ++i) {
+    uint32_t k = 0, v = 0;
+    if (!reader_->read_u32(k) || !reader_->read_u32(v)) return false;
+    std::string key, val;
+    GetString(k, key);
+    GetString(v, val);
+    out.emplace_back(std::move(key), std::move(val));
   }
   return true;
 }
@@ -555,34 +262,38 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
     uint64_t n = 0;
     if (!reader_->read_u64(n)) return false;
     if (n > options_.max_array_elements) return false;
-    out.reserve(out.size() + static_cast<size_t>(n));
-    auto& idxs = array_scratch_.u32_indices;
-    idxs.resize(static_cast<size_t>(n));
-    if (!reader_->read_u32_array(idxs, static_cast<size_t>(n))) return false;
-    if (!keep) return true;
-    for (size_t i = 0; i < static_cast<size_t>(n); ++i) {
-      const uint32_t idx = idxs[i];
+    for (uint64_t i = 0; i < n; ++i) {
+      uint32_t idx = 0;
+      if (!reader_->read_u32(idx)) return false;
+      if (!keep) continue;
+      std::string s;
       if (is_token) {
         if (idx >= tokens_.size()) return false;
-        out.emplace_back(tokens_.view(idx));
+        s = tokens_.str(idx);
       } else {
-        std::string_view s;
-        if (!GetString(idx, &s)) return false;
-        out.emplace_back(s);
+        GetString(idx, s);
       }
+      out.push_back(std::move(s));
     }
     return true;
   };
 
-  // ListOpHeader bits / read order match DecodeReferenceListOp.
+  // ListOpHeader bits / read order match DecodeReferenceListOp. Non-explicit
+  // sublists are marker-delimited ("\x01" "P"/"A"/"D"/"O") so BuildStage can
+  // recover the authored qualifier (e.g. `prepend apiSchemas`).
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
   const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
                 kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
+  const bool mark = !(bits & kHasExplicit);
+  auto marked_run = [&](const char* marker, bool keep) -> bool {
+    if (mark && keep) out.push_back(marker);
+    return read_run(keep);
+  };
   if ((bits & kHasExplicit) && !read_run(true)) return false;
-  if ((bits & kHasAdded) && !read_run(true)) return false;
-  if ((bits & kHasPrepended) && !read_run(true)) return false;
-  if ((bits & kHasAppended) && !read_run(true)) return false;
+  if ((bits & kHasAdded) && !marked_run("\x01" "A", true)) return false;
+  if ((bits & kHasPrepended) && !marked_run("\x01" "P", true)) return false;
+  if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
   if ((bits & kHasDeleted) && !read_run(false)) return false;
   if ((bits & kHasOrdered) && !read_run(false)) return false;
   return true;
@@ -611,8 +322,8 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
   for (uint64_t i = 0; i < count; ++i) {
     uint32_t kidx = 0;
     if (!reader_->read_u32(kidx)) return false;
-    std::string_view key;
-    if (!GetString(kidx, &key)) return false;
+    std::string key;
+    GetString(kidx, key);
 
     const size_t val_start = reader_->position();
     uint64_t rec_off_raw = 0;
@@ -632,7 +343,7 @@ bool CrateReader::Impl::DecodeDictionary(ValueRep rep, Value& out, int depth) {
     } else if (vr.type_id() != CrateTypeId::Invalid) {
       UnpackValue(vr, cv);
     }
-    d->set(std::string(key), std::move(cv));
+    d->set(std::move(key), std::move(cv));
 
     if (!reader_->seek(next_entry_pos)) return false;  // resume after this value
   }
@@ -689,43 +400,19 @@ bool CrateReader::Impl::CheckElementAllocation(uint64_t count, size_t elem_size,
   return CheckByteAllocation(static_cast<uint64_t>(total), what);
 }
 
-bool CrateReader::Impl::GetToken(uint32_t index, std::string_view* out) const {
-  if (!out || index >= tokens_.size()) {
-    return false;
-  }
-  *out = tokens_.view(index);
-  return true;
-}
-
 bool CrateReader::Impl::GetToken(uint32_t index, std::string& out) {
   if (index >= tokens_.size()) {
     return false;
   }
-  std::string_view s;
-  if (!GetToken(index, &s)) {
-    return false;
-  }
-  out.assign(s.data(), s.size());
+  out = tokens_.str(index);
   return true;
-}
-
-bool CrateReader::Impl::GetString(uint32_t index, std::string_view* out) const {
-  if (!out || index >= string_indices_.size()) {
-    return false;
-  }
-  return GetToken(string_indices_[index], out);
 }
 
 bool CrateReader::Impl::GetString(uint32_t index, std::string& out) {
   if (index >= string_indices_.size()) {
     return false;
   }
-  std::string_view s;
-  if (!GetString(index, &s)) {
-    return false;
-  }
-  out.assign(s.data(), s.size());
-  return true;
+  return GetToken(string_indices_[index], out);
 }
 
 void CrateReader::Impl::AddError(const std::string& msg) {
@@ -733,6 +420,14 @@ void CrateReader::Impl::AddError(const std::string& msg) {
   err.offset = reader_ ? reader_->position() : 0;
   err.message = msg;
   result_.errors.push_back(err);
+}
+
+bool CrateReader::Impl::ReportProgress(const char* phase, size_t current,
+                                       size_t total) {
+  if (!options_.progress_callback) return true;
+  if (options_.progress_callback(phase, current, total)) return true;
+  AddError(std::string("USDC read cancelled during ") + phase);
+  return false;
 }
 
 void CrateReader::Impl::AddWarning(const std::string& msg) {

@@ -173,6 +173,10 @@ public:
   /// Find property by name string (O(log n) after table lookup)
   const PropSlot* find(const std::string& name) const;
 
+  /// Remove a property slot by name ID. Preserves slot order (and thus the
+  /// sorted state). Returns true if a slot was removed.
+  bool remove(PropNameId name_id);
+
   /// Get all properties
   const std::vector<PropSlot>& slots() const { return slots_; }
 

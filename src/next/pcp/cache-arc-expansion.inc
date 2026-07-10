@@ -52,9 +52,12 @@
           !authoring_layer_id.empty()
               ? authoring_layer_id
               : layer_stacks[src.stack_idx].identifier);
+      LayerLoadOptions load_opts;
+      load_opts.max_memory = options.max_layer_memory;
+      load_opts.usda_parse_options = options.usda_parse_options;
       std::shared_ptr<Layer> arc_layer =
           reg_->GetOrLoad(*resolver, arc.asset_path, anchor, warn, err,
-                          MakeLayerLoadOptions());
+                          load_opts);
       if (!arc_layer) {
         if (options.error_when_asset_not_found) {
           AddIssue(ErrorCode::InvalidAssetPath, arc.asset_path,
@@ -195,10 +198,15 @@
       }
 
       // Variants (weaker than inherits, stronger than references). For each
-      // selected variant, graft its inline opinions and/or its content subtree.
+      // selected variant, graft its inline opinions and/or its content
+      // subtree. `apply_variant` recurses into nested variant sets authored
+      // on the option itself (selection from the accumulated map — which
+      // includes caller overrides — falling back to the nested set's own
+      // `selected`).
       if (!spec->meta().variantSets().empty()) {
-        for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
-          const VariantData *vd = sv.vd;
+        std::function<void(const std::string &, const VariantData *, int)>
+            apply_variant = [&](const std::string &set_name,
+                                const VariantData *vd, int vdepth) {
           // Subtree content: model as a reference-style Variant source into the
           // content layer's "/__self__" root, so child prims compose normally.
           if (vd->content) {
@@ -208,10 +216,10 @@
             // keys), and never matched across two parses of the same asset.
             const std::string vid = "variant:" +
                                     layer_stacks[src.stack_idx].identifier +
-                                    ":" + src.site + ":" + *sv.set_name + ":" +
+                                    ":" + src.site + ":" + set_name + ":" +
                                     vd->name;
             uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
-            if (cstack == kInvalidStack) continue;
+            if (cstack == kInvalidStack) return;
             Src vsrc;
             vsrc.stack_idx = cstack;
             vsrc.site = "/__self__";
@@ -223,8 +231,11 @@
                                         frame ? frame->depth + 1 : 0};
             ExpandArcs(vsrc, &vframe, out, spec_out, sels, chain, warn, err);
           }
-          // Inline opinions (properties/relationships on the host prim itself).
-          if (!vd->properties.empty() || !vd->relationships.empty()) {
+          // Inline opinions (properties/relationships on the host prim
+          // itself), plus prim-state opinions (`active = false` on a variant
+          // option deactivates the host — a common pruning pattern).
+          if (!vd->properties.empty() || !vd->relationships.empty() ||
+              !vd->active || vd->hidden) {
             Src vsrc = src;
             vsrc.arc_kind = ArcType::Variant;
             vsrc.variant = vd;
@@ -246,21 +257,48 @@
           }
           if (!vd->payloads.empty()) {
             const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
+            bool any_deferred = false;
             for (const std::string &pl_str : vd->payloads) {
               CompositionArc arc = Compositor::ParsePayload(pl_str);
               if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
-                deferred_payload_prims.insert(root_prim_path);
+                any_deferred = true;
                 continue;
               }
-              deferred_payload_prims.erase(root_prim_path);
               ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
                          chain, warn, err, sr.layer_id);
             }
+            // insert-only here: another arc group's loaded payloads must not
+            // clear a deferral recorded for this option's payloads.
+            if (any_deferred) deferred_payload_prims.insert(root_prim_path);
           }
           for (const std::string &s : vd->specializes) {
             ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
                        frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
           }
+
+          // Nested variant sets authored on this option (inline / USDA
+          // representation). Crate-representation nesting recurses naturally
+          // through the holder graft below (the holder prim carries the
+          // nested sets in its own meta).
+          if (vdepth < 16) {
+            for (const VariantSetData &nvs : vd->variantSets) {
+              std::string chosen;
+              auto nsit = sels->find(nvs.name);
+              if (nsit != sels->end()) chosen = nsit->second;
+              if (chosen.empty()) chosen = nvs.selected;
+              if (chosen.empty()) continue;
+              for (const VariantData &nvd : nvs.variants) {
+                if (nvd.name == chosen) {
+                  apply_variant(nvs.name, &nvd, vdepth + 1);
+                  break;
+                }
+              }
+            }
+          }
+        };
+
+        for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
+          apply_variant(*sv.set_name, sv.vd, 0);
         }
 
         // Crate representation: pxr-authored crates store variant content as
@@ -298,18 +336,24 @@
                    frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
       }
 
-      // Payloads (deferrable, weaker than references).
+      // Payloads (deferrable, weaker than references). See the merge path:
+      // erase the deferral marker only when NO payload on this prim deferred.
       if (!spec->meta().payloads.empty()) {
         const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
+        bool any_deferred = false;
         for (const std::string &pl_str : spec->meta().payloads) {
           CompositionArc arc = Compositor::ParsePayload(pl_str);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
-            deferred_payload_prims.insert(root_prim_path);
+            any_deferred = true;
             continue;  // deferred: contributes no opinions.
           }
-          deferred_payload_prims.erase(root_prim_path);
           ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
                      chain, warn, err, sr.layer_id);
+        }
+        if (any_deferred) {
+          deferred_payload_prims.insert(root_prim_path);
+        } else {
+          deferred_payload_prims.erase(root_prim_path);
         }
       }
 
@@ -330,15 +374,24 @@
       auto mpay = MergeArcField(specs, ArcSel::Payloads);
       if (!mpay.empty()) {
         const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
+        // Track deferral across ALL of this prim's payloads: erasing per
+        // loaded arc let a later loaded payload clear the marker set by an
+        // earlier deferred one (HasDeferredPayload then lied depending on
+        // authored arc order). Erase only when nothing was deferred.
+        bool any_deferred = false;
         for (const auto &pl : mpay) {
           CompositionArc arc = Compositor::ParsePayload(pl.first);
           if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
-            deferred_payload_prims.insert(root_prim_path);
+            any_deferred = true;
             continue;
           }
-          deferred_payload_prims.erase(root_prim_path);
           ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
                      chain, warn, err, pl.second);
+        }
+        if (any_deferred) {
+          deferred_payload_prims.insert(root_prim_path);
+        } else {
+          deferred_payload_prims.erase(root_prim_path);
         }
       }
       for (const auto &s : MergeArcField(specs, ArcSel::Specializes)) {
@@ -353,7 +406,15 @@
     std::vector<Src> main;
     std::vector<Src> spec;  // specialize-derived: globally weakest
     // Variant selections accumulated across the prim's sources (cross-source).
+    // Seed with the caller's variant overrides BEFORE expansion: selection
+    // recording uses first-wins emplace, so pre-seeding makes an override
+    // beat every authored selection during grafting. (It was previously
+    // applied after ExpandArcs, so the prim's own variant graft still used
+    // the authored selection and only descendant expansion saw the override.)
     std::map<std::string, std::string> sels;
+    for (const auto &ov : options.variant_overrides) {
+      sels[ov.first] = ov.second;
+    }
     for (const Src &s : base) {
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
@@ -361,12 +422,6 @@
       std::vector<uint32_t> chain{s.stack_idx};
       const ExpansionFrame seed{s.stack_idx, &s.site, nullptr, 0};
       ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
-    }
-    // Apply variant overrides (stronger than any authored selection) so the
-    // caller can force a specific variant (e.g. --variant districtLod=full)
-    // without modifying the layer files.
-    for (const auto &ov : options.variant_overrides) {
-      sels[ov.first] = ov.second;
     }
     main.insert(main.end(), spec.begin(), spec.end());
     return main;

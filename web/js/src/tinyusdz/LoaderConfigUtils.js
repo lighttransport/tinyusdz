@@ -1,5 +1,47 @@
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 
+export function getBackendFromURL(params = new URLSearchParams(window.location.search), fallback = 'legacy') {
+  const backend = params.get('backend');
+  return (backend === 'next' || backend === 'auto' || backend === 'legacy')
+    ? backend
+    : fallback;
+}
+
+/**
+ * Read a USD asset URI from URL query parameters.
+ *
+ * Checks the shared aliases (?uri= / ?url= / ?src= / ?model=) plus any
+ * page-specific extra aliases (e.g. ['usd']). Returns null when absent.
+ */
+export function getAssetUriFromURL(params = new URLSearchParams(window.location.search), extraKeys = []) {
+  for (const key of ['uri', 'url', 'src', 'model', ...extraKeys]) {
+    const value = params.get(key);
+    if (value) return value;
+  }
+  return null;
+}
+
+/**
+ * Friendly filename derived from a URI/URL path (query/hash stripped,
+ * percent-decoded last path segment).
+ */
+export function basenameFromUri(uri, fallback = 'scene.usd') {
+  const clean = String(uri || '').split(/[?#]/)[0];
+  return decodeURIComponent(clean.slice(clean.lastIndexOf('/') + 1)) || fallback;
+}
+
+export function makeStaticNextParseOptions(options = {}) {
+  const backend = options.backend || 'legacy';
+  return {
+    ...options,
+    backend,
+    materialDedup: false,
+    mergeMeshes: false,
+    mergeMeshesBakeTransform: false,
+    flattenRenderTree: false
+  };
+}
+
 /**
  * Apply skinning-related load options to a TinyUSDZLoader instance.
  */

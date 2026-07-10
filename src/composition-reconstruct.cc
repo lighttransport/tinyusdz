@@ -220,7 +220,12 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpecRec(
     PrimSpec &primspec, std::string *warn, std::string *err,
     uint32_t depth = 0) {
 
-  if (size_t(depth) > kMaxDefaultTraversalLimit) {
+  // This recurses once per namespace level (over children), so the cap must be
+  // a stack-safe recursion depth, NOT the 1M iteration limit — a crafted deep
+  // PrimSpec tree at 1M would overflow the native stack. Real USD namespace
+  // depth never approaches this.
+  constexpr uint32_t kMaxReconstructDepth = 1024;
+  if (depth > kMaxReconstructDepth) {
     if (err) {
       (*err) += "ReconstructPrimFromPrimSpecRec: recursion too deep.\n";
     }

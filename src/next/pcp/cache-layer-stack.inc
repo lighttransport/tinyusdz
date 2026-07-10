@@ -14,13 +14,6 @@
   static constexpr uint32_t kInvalidStack =
       (std::numeric_limits<uint32_t>::max)();
 
-  LayerLoadOptions MakeLayerLoadOptions() const {
-    LayerLoadOptions out;
-    out.max_memory = options.max_layer_memory;
-    out.enable_usdc_timing = options.enable_timing;
-    return out;
-  }
-
   uint32_t InternLayerStack(std::shared_ptr<Layer> layer,
                             const std::string &identifier, std::string *warn,
                             std::string *err) {
@@ -31,8 +24,8 @@
     st.identifier = identifier;
     std::set<std::string> visiting;
     visiting.insert(identifier);
-    if (!AppendLayerAndSublayers(st, layer, identifier, &visiting, 0, warn,
-                                 err)) {
+    if (!AppendLayerAndSublayers(st, layer, identifier, &visiting, 0,
+                                 LayerOffset{}, warn, err)) {
       return kInvalidStack;
     }
 
@@ -45,8 +38,8 @@
   bool AppendLayerAndSublayers(LayerStack &st, std::shared_ptr<Layer> layer,
                                const std::string &identifier,
                                std::set<std::string> *visiting,
-                               uint32_t depth, std::string *warn,
-                               std::string *err) {
+                               uint32_t depth, const LayerOffset &cum_offset,
+                               std::string *warn, std::string *err) {
     if (!layer) return false;
     if (depth > options.max_depth) {
       AddIssue(ErrorCode::MaxDepthExceeded, identifier,
@@ -55,11 +48,21 @@
     }
     st.layers.push_back(layer);
     st.layer_identifiers.push_back(identifier);
+    st.layer_offsets.push_back(cum_offset);
     // Anchor = the referencing layer's FILE path; AssetResolver::Resolve takes
     // its directory internally. (Passing a pre-stripped dir double-strips and
     // breaks deep relative paths like `../../Materials/x.usd`.)
     const std::string &anchor = identifier;
-    for (const std::string &sub : layer->meta().subLayers) {
+    const auto &sub_offsets = layer->meta().subLayerOffsets;
+    for (size_t sub_i = 0; sub_i < layer->meta().subLayers.size(); ++sub_i) {
+      const std::string &sub = layer->meta().subLayers[sub_i];
+      // Cumulative offset for this sublayer: parent's offset composed with the
+      // authored per-sublayer (offset = ..; scale = ..).
+      LayerOffset sub_cum = cum_offset;
+      if (sub_i < sub_offsets.size()) {
+        sub_cum = cum_offset.Compose(
+            LayerOffset{sub_offsets[sub_i].first, sub_offsets[sub_i].second});
+      }
       const std::string sub_id = resolver->ResolvePath(sub, anchor);
       if (sub_id.empty()) {
         AddIssue(ErrorCode::InvalidAssetPath, sub,
@@ -68,17 +71,21 @@
         continue;
       }
       if (visiting && visiting->count(sub_id)) {
+        // pxr warns and breaks the cycle, composing the rest — failing the
+        // whole load here dropped otherwise-valid scenes.
         AddIssue(ErrorCode::SublayerCycle, sub_id,
-                 "Sublayer cycle detected at: " + sub_id, err);
-        return false;
+                 "Sublayer cycle detected (skipped): " + sub_id, warn);
+        continue;
       }
+      LayerLoadOptions load_opts;
+      load_opts.max_memory = options.max_layer_memory;
+      load_opts.usda_parse_options = options.usda_parse_options;
       std::shared_ptr<Layer> sl =
-          reg_->GetOrLoad(*resolver, sub, anchor, warn, err,
-                          MakeLayerLoadOptions());
+          reg_->GetOrLoad(*resolver, sub, anchor, warn, err, load_opts);
       if (sl) {
         if (visiting) visiting->insert(sub_id);
         if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,
-                                     warn, err)) {
+                                     sub_cum, warn, err)) {
           if (visiting) visiting->erase(sub_id);
           return false;
         }

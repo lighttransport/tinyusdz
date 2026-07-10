@@ -404,7 +404,7 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           std::string *warn, std::string *err) {
   LayerLoadOptions lopts;
   lopts.max_memory = options.max_layer_memory;
-  lopts.enable_usdc_timing = options.enable_timing;
+  lopts.usda_parse_options = options.usda_parse_options;
   std::shared_ptr<Layer> root = LoadLayerFromFile(
       filename, warn, err, lopts);
   if (!root) return false;

@@ -7,6 +7,7 @@
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
+#include "../crate/lazy-array.hh"
 #include "../strfmt.hh"
 #include "../layer/property-index.hh"
 #include <cstdio>
@@ -52,6 +53,12 @@ constexpr size_t kSplitMinElems = 2u * kChunkElems;
 constexpr size_t kOffloadMinElems = 256u;
 constexpr size_t kMaterializeChunkMin = 1u << 20;  // 1Mi elements
 
+bool IsCompressedLazyIntArray(const Value& value) {
+  if (!value.is_lazy() || value.type_id() != TypeId::Int) return false;
+  const LazyArrayRef* ref = value.lazy_ref();
+  return ref && ref->is_compressed && ref->crate_type == CrateTypeId::Int;
+}
+
 // Collects ordered tasks during the serial build walk. Structural bytes accrue in
 // `cur` (the StreamWriter target); each offloaded array flushes `cur` as a Text
 // task and appends WholeValue/Chunk task(s). The worker emits the array's full
@@ -93,6 +100,11 @@ struct SegmentSink {
     const size_t n = ArrayElementCount(*v);
     if (n >= kSplitMinElems && IsChunkableArray(*v, *po)) {
       push_chunks(v, n, /*free_idx=*/-1);  // borrowable: chunk in place
+    } else if (IsCompressedLazyIntArray(*v)) {
+      WriteTask t;
+      t.kind = WriteTask::Kind::WholeValue;
+      t.value = v;
+      tasks->push_back(std::move(t));
     } else if (n >= kMaterializeChunkMin && holder && IsChunkableType(*v, *po)) {
       holder->push_back(v->materialized_copy());  // decode once, then chunk
       push_chunks(&holder->back(), n,
@@ -126,6 +138,59 @@ const char* SpecifierKeyword(PrimSpecifier spec) {
 // per prim/property on the hot path. The cache is thread_local so it stays
 // correct under the parallel subtree stitcher (each worker has its own
 // StreamWriter). Byte-identical to emitting `indent` in a loop for any unit.
+// Render a canonical arc string for usda text. Arc strings are stored as
+// "@asset@</prim>" / "</prim>" (internal) / bare asset path, optionally with
+// the internal layer-offset suffix "?layerOffset=offset:scale" — the suffix
+// must be re-emitted in pxr syntax `(offset = N; scale = M)` (pxr rejects the
+// internal form).
+std::string FormatArcRef(const std::string& arc) {
+  std::string body = arc;
+  std::string suffix;
+  size_t q = body.find("?layerOffset=");
+  if (q != std::string::npos) {
+    const char* c = body.c_str() + q + 13;
+    char* endp = nullptr;
+    double off = std::strtod(c, &endp);
+    double scl = (endp && *endp == ':') ? std::strtod(endp + 1, nullptr) : 1.0;
+    body.resize(q);
+    if (off != 0.0 || scl != 1.0) {
+      suffix = " (";
+      if (off != 0.0) {
+        suffix += "offset = " + dtos(off);
+        if (scl != 1.0) suffix += "; ";
+      }
+      if (scl != 1.0) suffix += "scale = " + dtos(scl);
+      suffix += ")";
+    }
+  }
+  std::string out;
+  if (!body.empty() && body[0] == '<') {
+    out = body;  // internal arc
+  } else if (!body.empty() && body[0] == '@') {
+    // Already-delimited asset form (possibly with a <prim> suffix): if the
+    // asset segment contains an inner '@', re-delimit it triple-@.
+    size_t close = body.find('@', 1);
+    std::string asset =
+        (close != std::string::npos) ? body.substr(1, close - 1) : "";
+    std::string rest =
+        (close != std::string::npos) ? body.substr(close + 1) : "";
+    if (asset.find('@') != std::string::npos || rest.find('@') == 0) {
+      // Conservative re-parse: extract asset by the LAST '@' before any '<'.
+      size_t lt = body.find('<');
+      size_t last_at = (lt == std::string::npos ? body : body.substr(0, lt))
+                           .rfind('@');
+      asset = body.substr(1, last_at - 1);
+      rest = body.substr(last_at + 1);
+      out = FormatAssetPathForUsda(asset) + rest;
+    } else {
+      out = body;
+    }
+  } else {
+    out = FormatAssetPathForUsda(body);
+  }
+  return out + suffix;
+}
+
 void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
   if (depth <= 0 || indent.empty()) return;
   thread_local std::string pad;    // cached repetition of `unit`
@@ -155,7 +220,19 @@ std::string EscapeString(const std::string& s) {
       case '\n': result += "\\n"; break;
       case '\r': result += "\\r"; break;
       case '\t': result += "\\t"; break;
-      default:   result += c; break;
+      default: {
+        // Match the value printer: \xNN-escape control bytes.
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc == 0x7f) {
+          static const char* hexd = "0123456789abcdef";
+          result += "\\x";
+          result += hexd[uc >> 4];
+          result += hexd[uc & 0xf];
+        } else {
+          result += c;
+        }
+        break;
+      }
     }
   }
   result += '"';
@@ -209,24 +286,20 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + "comment = " + EscapeString(meta.comment));
   }
 
-  // Emit value-defaulted stage metadata when AUTHORED (`_set`) -- matching pxr
-  // usdcat, which prints an authored opinion even if it equals the schema
-  // fallback. The `|| value != default` keeps emitting for any code path that
-  // sets a non-default value without the flag (defensive).
   if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
-    lines.push_back(opts.indent + "metersPerUnit = " + format_g(meta.metersPerUnit, opts.double_precision));
+    lines.push_back(opts.indent + "metersPerUnit = " + dtos(meta.metersPerUnit));
   }
 
   if (meta.startTimeCode_set || meta.startTimeCode != 0.0) {
-    lines.push_back(opts.indent + "startTimeCode = " + format_g(meta.startTimeCode, opts.double_precision));
+    lines.push_back(opts.indent + "startTimeCode = " + dtos(meta.startTimeCode));
   }
 
   if (meta.endTimeCode_set || meta.endTimeCode != 0.0) {
-    lines.push_back(opts.indent + "endTimeCode = " + format_g(meta.endTimeCode, opts.double_precision));
+    lines.push_back(opts.indent + "endTimeCode = " + dtos(meta.endTimeCode));
   }
 
   if (meta.timeCodesPerSecond_set || meta.timeCodesPerSecond != 24.0) {
-    lines.push_back(opts.indent + "timeCodesPerSecond = " + format_g(meta.timeCodesPerSecond, opts.double_precision));
+    lines.push_back(opts.indent + "timeCodesPerSecond = " + dtos(meta.timeCodesPerSecond));
   }
 
   if (meta.upAxis_set || meta.upAxis != "Y") {
@@ -234,16 +307,16 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if (meta.framesPerSecond_set) {
-    lines.push_back(opts.indent + "framesPerSecond = " + format_g(meta.framesPerSecond, opts.double_precision));
+    lines.push_back(opts.indent + "framesPerSecond = " + dtos(meta.framesPerSecond));
   }
 
   if (meta.kilogramsPerUnit_set) {
-    lines.push_back(opts.indent + "kilogramsPerUnit = " + format_g(meta.kilogramsPerUnit, opts.double_precision));
+    lines.push_back(opts.indent + "kilogramsPerUnit = " + dtos(meta.kilogramsPerUnit));
   }
 
   if (!meta.colorConfiguration.empty()) {
-    lines.push_back(opts.indent + "colorConfiguration = @" +
-                    meta.colorConfiguration + "@");
+    lines.push_back(opts.indent + "colorConfiguration = " +
+                    FormatAssetPathForUsda(meta.colorConfiguration));
   }
 
   if (!meta.colorManagementSystem.empty()) {
@@ -260,8 +333,22 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
 
   if (!meta.subLayers.empty()) {
     std::string s = opts.indent + "subLayers = [\n";
-    for (const auto& layer : meta.subLayers) {
-      s += opts.indent + opts.indent + "@" + layer + "@,\n";
+    for (size_t i = 0; i < meta.subLayers.size(); ++i) {
+      s += opts.indent + opts.indent + FormatAssetPathForUsda(meta.subLayers[i]);
+      if (i < meta.subLayerOffsets.size()) {
+        const double off = meta.subLayerOffsets[i].first;
+        const double scl = meta.subLayerOffsets[i].second;
+        if (off != 0.0 || scl != 1.0) {
+          s += " (";
+          if (off != 0.0) {
+            s += "offset = " + dtos(off);
+            if (scl != 1.0) s += "; ";
+          }
+          if (scl != 1.0) s += "scale = " + dtos(scl);
+          s += ")";
+        }
+      }
+      s += ",\n";
     }
     s += opts.indent + "]";
     lines.push_back(std::move(s));
@@ -287,6 +374,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   const int md = depth + 1;
   os << " (\n";
   auto kv = [&](const std::string& s) {
+    if (s.empty()) return;  // e.g. DictMetaLine of an empty dict
     WriteIndent(os, md, opts.indent);
     os << s << "\n";
   };
@@ -317,7 +405,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   if (m->authored & PropMeta::kKind)
     kv("kind = " + EscapeString(m->kind));
   if (m->authored & PropMeta::kWeight) {
-    kv("weight = " + format_g(m->weight, opts.double_precision));
+    kv("weight = " + dtos(m->weight));
   }
   if (m->authored & PropMeta::kUnauthoredIdx)
     kv("unauthoredValuesIndex = " + IntToStr(static_cast<long long>(m->unauthoredValuesIndex)));
@@ -370,7 +458,7 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
   for (size_t i = 0; i < samples->size(); ++i) {
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
-    os << format_g(sample.first, opts.double_precision) << ": ";
+    os << dtos(sample.first) << ": ";
 
     const Value* val = spec.time_sample_value(sample.second);
     if (val && val->is_block()) {
@@ -399,12 +487,8 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
 
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
-    // USDA forbids metadata after a `.timeSamples` block. If the attribute has
-    // authored metadata, emit it on a bare declaration line FIRST (usdcat form):
-    //   <type> <name> ( ...meta... )
-    //   <type> <name>.timeSamples = { ... }
-    const PropMeta* pm = spec.property_meta(slot.name_id);
-    if (pm && !pm->empty()) {
+    // Shared `<qualifiers><type> <name>` prefix for the statements below.
+    auto emit_ts_decl = [&]() {
       WriteIndent(os, depth, opts.indent);
       if (opts.emit_custom && slot.is_custom()) os << "custom ";
       if (slot.is_uniform()) os << "uniform ";
@@ -416,6 +500,30 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
         if (slot.is_array()) os << "[]";
       }
       os << " " << name;
+    };
+    // An authored DEFAULT coexists with time samples as an independent
+    // field (pxr keeps both; dropping it loses the value used outside the
+    // sampled range / by consumers that ignore samples). Emit it first.
+    const Value* def_val = spec.property_value(slot.name_id);
+    const PropMeta* pm = spec.property_meta(slot.name_id);
+    if (def_val && !def_val->is_empty()) {
+      emit_ts_decl();
+      if (def_val->is_block()) {
+        os << " = None";
+      } else {
+        os << " = ";
+        PrintOptions po;
+        po.float_precision = opts.float_precision;
+        po.double_precision = opts.double_precision;
+        po.indent = opts.indent;
+        PrintValue(os, *def_val, po);
+      }
+      WritePropMeta(os, spec, slot.name_id, depth, opts);
+      os << "\n";
+    } else if (pm && !pm->empty()) {
+      // USDA forbids metadata after a `.timeSamples` block: emit authored
+      // metadata on a bare declaration line first (usdcat form).
+      emit_ts_decl();
       WritePropMeta(os, spec, slot.name_id, depth, opts);
       os << "\n";
     }
@@ -453,7 +561,9 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   // value (a connection-only attr has no authored default). A property may also
   // carry BOTH a value and a connection -> emit them as separate statements.
   const std::vector<Path>* conns = spec.connection(name);
-  const bool has_conn = conns && !conns->empty();
+  // A present-but-empty entry is an authored connection BLOCK
+  // (`.connect = None`); absent means no connection opinion.
+  const bool has_conn = conns != nullptr;
 
   // Value statement (authored default).
   if (has_value && value->is_block()) {
@@ -488,7 +598,9 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   if (has_conn) {
     emit_decl();
     os << ".connect = ";
-    if (conns->size() == 1) {
+    if (conns->empty()) {
+      os << "None";
+    } else if (conns->size() == 1) {
       os << "<" << (*conns)[0].str() << ">";
     } else {
       os << "[";
@@ -518,21 +630,71 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
                        const std::vector<Path>& targets, const PrimSpec& spec,
                        PropNameId name_id, int depth,
                        const USDAWriteOptions& opts) {
-  WriteIndent(os, depth, opts.indent);
-  os << "rel " << name;
-
-  if (targets.empty()) {
-    os << " = None";
-  } else if (targets.size() == 1) {
-    os << " = <" << targets[0].str() << ">";
-  } else {
-    os << " = [\n";
-    for (const auto& target : targets) {
-      WriteIndent(os, depth + 1, opts.indent);
-      os << "<" << target.str() << ">,\n";
-    }
+  const bool is_custom =
+      (spec.relationship_flags(name) & PropSlot::kFlagCustom) != 0;
+  auto head = [&]() {
     WriteIndent(os, depth, opts.indent);
-    os << "]";
+    if (opts.emit_custom && is_custom) os << "custom ";
+    os << "rel " << name;
+  };
+  auto targets_text = [&](const std::vector<std::string>& tgts) {
+    if (tgts.size() == 1) {
+      os << " = <" << tgts[0] << ">";
+    } else {
+      os << " = [\n";
+      for (const auto& t : tgts) {
+        WriteIndent(os, depth + 1, opts.indent);
+        os << "<" << t << ">,\n";
+      }
+      WriteIndent(os, depth, opts.indent);
+      os << "]";
+    }
+  };
+
+  // Authored list-op edits re-emit their qualifiers (a bare explicit list
+  // changes composition semantics for delete/prepend against weaker layers).
+  const ArcEdit* re = nullptr;
+  {
+    const auto& edits = spec.relationship_edits();
+    auto it = edits.find(name);
+    if (it != edits.end() && it->second.authored && !it->second.is_explicit) {
+      re = &it->second;
+    }
+  }
+  if (re) {
+    bool first = true;
+    auto qual_line = [&](const char* qual,
+                         const std::vector<std::string>& items) {
+      if (items.empty()) return;
+      WriteIndent(os, depth, opts.indent);
+      if (opts.emit_custom && is_custom && first) os << "custom ";
+      os << qual << "rel " << name;
+      targets_text(items);
+      if (first) WritePropMeta(os, spec, name_id, depth, opts);
+      os << "\n";
+      first = false;
+    };
+    qual_line("prepend ", re->prepended);
+    qual_line("append ", re->appended);
+    qual_line("delete ", re->deleted);
+    qual_line("reorder ", re->ordered);
+    if (first) {  // authored but empty edit: keep the declaration
+      head();
+      WritePropMeta(os, spec, name_id, depth, opts);
+      os << "\n";
+    }
+    return;
+  }
+
+  head();
+  if (targets.empty()) {
+    // Declared-only relationship: bare `rel name` (pxr re-parses it as a
+    // declaration; `= None` would author a block instead).
+  } else {
+    std::vector<std::string> tgts;
+    tgts.reserve(targets.size());
+    for (const auto& t : targets) tgts.push_back(t.str());
+    targets_text(tgts);
   }
   WritePropMeta(os, spec, name_id, depth, opts);
   os << "\n";
@@ -542,6 +704,235 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
                    SegmentSink* segsink = nullptr);
+
+// Emit `variantSet "name" = { "opt" (meta) { body } ... }` blocks at `depth`.
+// Bodies merge two representations: inline VariantData (USDA parse /
+// authoring: properties, relationships, arcs, nested sets, content sub-layer)
+// and bracketed holder prims in `layer` (crate representation). When both
+// exist (MergeVariantData pattern), inline opinions win and the holder
+// contributes only what the inline data lacks.
+void WriteVariantSets(StreamWriter& os,
+                      const std::vector<VariantSetData>& sets,
+                      const Layer& layer, const std::string& owner_path,
+                      int depth, const USDAWriteOptions& opts,
+                      SegmentSink* segsink) {
+  for (const VariantSetData& vs : sets) {
+    os << "\n";
+    WriteIndent(os, depth, opts.indent);
+    os << "variantSet " << EscapeString(vs.name) << " = {\n";
+    for (const VariantData& var : vs.variants) {
+      const std::string holder_path =
+          owner_path + "/{" + vs.name + "=" + var.name + "}";
+      const PrimSpec* holder = layer.prim_at_path(holder_path);
+
+      WriteIndent(os, depth + 1, opts.indent);
+      os << EscapeString(var.name);
+
+      // Variant OPTION metadata: composition arcs / active / hidden / doc
+      // authored on the option itself (inline or on the holder prim).
+      const PrimSpecMeta* hmeta = holder ? &holder->meta() : nullptr;
+      auto pick_arcs = [&](const std::vector<std::string>& inline_arcs,
+                           const std::vector<std::string>* holder_arcs)
+          -> const std::vector<std::string>& {
+        static const std::vector<std::string> kEmpty;
+        if (!inline_arcs.empty()) return inline_arcs;
+        return holder_arcs ? *holder_arcs : kEmpty;
+      };
+      const std::vector<std::string>& o_refs =
+          pick_arcs(var.references, hmeta ? &hmeta->references : nullptr);
+      const std::vector<std::string>& o_pls =
+          pick_arcs(var.payloads, hmeta ? &hmeta->payloads : nullptr);
+      const std::vector<std::string>& o_inh =
+          pick_arcs(var.inherits, hmeta ? &hmeta->inherits : nullptr);
+      const std::vector<std::string>& o_spz =
+          pick_arcs(var.specializes, hmeta ? &hmeta->specializes : nullptr);
+      const bool o_inactive = !var.active || (hmeta && !hmeta->active);
+      const bool o_hidden = var.hidden || (hmeta && hmeta->hidden);
+      const std::string& o_doc =
+          !var.doc.empty() ? var.doc : (hmeta ? hmeta->doc() : var.doc);
+      // Nested variant SELECTIONS: authored on the option's own metadata
+      // (`"o1" ( variants = { string inner = "i2" } )`). Gather from the
+      // inline nested sets, or the holder's meta for crate-loaded layers.
+      std::vector<std::pair<std::string, std::string>> o_sels;
+      {
+        const std::vector<VariantSetData>& nsets =
+            !var.variantSets.empty()
+                ? var.variantSets
+                : (hmeta ? hmeta->variantSets() : var.variantSets);
+        for (const VariantSetData& nvs : nsets) {
+          if (!nvs.selected.empty()) o_sels.emplace_back(nvs.name, nvs.selected);
+        }
+        if (hmeta) {
+          for (const auto& kv : hmeta->variantSelections()) {
+            bool have = false;
+            for (auto& e : o_sels) {
+              if (e.first == kv.first) { have = true; break; }
+            }
+            if (!have && !kv.second.empty()) o_sels.push_back(kv);
+          }
+        }
+      }
+      const bool has_opt_meta = !o_refs.empty() || !o_pls.empty() ||
+                                !o_inh.empty() || !o_spz.empty() ||
+                                o_inactive || o_hidden || !o_sels.empty() ||
+                                (!o_doc.empty() && opts.include_comments);
+      if (has_opt_meta) {
+        os << " (\n";
+        auto arc_line = [&](const char* keyword,
+                            const std::vector<std::string>& arcs) {
+          for (const std::string& a : arcs) {
+            WriteIndent(os, depth + 2, opts.indent);
+            os << "prepend " << keyword << " = " << FormatArcRef(a) << "\n";
+          }
+        };
+        arc_line("references", o_refs);
+        arc_line("payload", o_pls);
+        arc_line("inherits", o_inh);
+        arc_line("specializes", o_spz);
+        if (o_inactive) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "active = false\n";
+        }
+        if (o_hidden) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "hidden = true\n";
+        }
+        if (!o_doc.empty() && opts.include_comments) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "doc = " << EscapeString(o_doc) << "\n";
+        }
+        if (!o_sels.empty()) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "variants = {\n";
+          for (const auto& kv : o_sels) {
+            WriteIndent(os, depth + 3, opts.indent);
+            os << "string " << kv.first << " = " << EscapeString(kv.second)
+               << "\n";
+          }
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "}\n";
+        }
+        WriteIndent(os, depth + 1, opts.indent);
+        os << ")";
+      }
+      os << " {\n";
+
+      PrintOptions vpopts;
+      vpopts.float_precision = opts.float_precision;
+      vpopts.double_precision = opts.double_precision;
+      for (const VariantProperty& vp : var.properties) {
+        if (vp.value.is_empty()) continue;  // unknown-typed placeholder
+        WriteIndent(os, depth + 2, opts.indent);
+        if (opts.emit_custom && (vp.flags & PropSlot::kFlagCustom)) {
+          os << "custom ";
+        }
+        if (vp.flags & PropSlot::kFlagUniform) os << "uniform ";
+        const char* tn = GetTypeName(vp.value.type_id());
+        os << (tn ? tn : "token");
+        if (vp.value.is_array()) os << "[]";
+        os << " " << vp.name << " = ";
+        PrintValue(os, vp.value, vpopts);
+        os << "\n";
+      }
+      for (const auto& rel : var.relationships) {
+        WriteIndent(os, depth + 2, opts.indent);
+        os << "rel " << rel.first;
+        if (rel.second.size() == 1) {
+          os << " = <" << rel.second[0].str() << ">";
+        } else if (!rel.second.empty()) {
+          os << " = [";
+          for (size_t t = 0; t < rel.second.size(); ++t) {
+            if (t) os << ", ";
+            os << "<" << rel.second[t].str() << ">";
+          }
+          os << "]";
+        }
+        os << "\n";
+      }
+
+      // Nested variant sets authored on this option.
+      if (!var.variantSets.empty()) {
+        WriteVariantSets(os, var.variantSets, layer, holder_path, depth + 2,
+                         opts, segsink);
+      }
+
+      // Variant CHILD prims + holder extras. Inline content sub-layer first
+      // (USDA representation), then holder contributions not already covered
+      // by the inline data (crate representation / merged pattern).
+      if (var.content) {
+        if (const PrimSpec* self = var.content->prim_at_path("/__self__")) {
+          // The content root's OWN opinions (time-sampled attributes routed
+          // here by the parser, connections, ...) belong in the option body
+          // too — only its non-time-sampled defaults are already covered by
+          // the inline VariantProperty list.
+          auto has_inline = [&](const std::string& name) {
+            for (const VariantProperty& vp : var.properties) {
+              if (vp.name == name) return true;
+            }
+            return false;
+          };
+          PropNameTable& stable = GetPropNameTable();
+          for (const PropSlot& sslot : self->properties().slots()) {
+            if (sslot.is_relationship()) continue;
+            if (!sslot.is_time_sampled() &&
+                has_inline(stable.get(sslot.name_id))) {
+              continue;
+            }
+            WriteProperty(os, sslot, *self, depth + 2, opts, segsink);
+          }
+          for (uint32_t ci : self->child_indices()) {
+            const PrimSpec* child = var.content->prim(ci);
+            if (!child) continue;
+            os << "\n";
+            WritePrimSpec(os, *child, *var.content, depth + 2, opts, segsink);
+          }
+        }
+      }
+      if (holder) {
+        auto has_inline_prop = [&](const std::string& name) {
+          for (const VariantProperty& vp : var.properties) {
+            if (vp.name == name) return true;
+          }
+          return false;
+        };
+        PropNameTable& htable = GetPropNameTable();
+        for (const PropSlot& hslot : holder->properties().slots()) {
+          if (hslot.is_relationship()) continue;
+          if (has_inline_prop(htable.get(hslot.name_id))) continue;
+          WriteProperty(os, hslot, *holder, depth + 2, opts, segsink);
+        }
+        for (const std::string& rel_name : holder->relationship_names()) {
+          if (var.relationships.find(rel_name) != var.relationships.end()) {
+            continue;
+          }
+          const std::vector<Path>* targets = holder->relationship(rel_name);
+          if (!targets) continue;
+          WriteRelationship(os, rel_name, *targets, *holder,
+                            htable.find(rel_name), depth + 2, opts);
+        }
+        // Holder-side nested sets (crate representation).
+        if (var.variantSets.empty() && !holder->meta().variantSets().empty()) {
+          WriteVariantSets(os, holder->meta().variantSets(), layer,
+                           holder_path, depth + 2, opts, segsink);
+        }
+        for (uint32_t ci : holder->child_indices()) {
+          const PrimSpec* child = layer.prim(ci);
+          if (!child) continue;
+          const std::string& cn = child->name();
+          if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') {
+            continue;  // nested holder: emitted via variantSets above
+          }
+          os << "\n";
+          WritePrimSpec(os, *child, layer, depth + 2, opts, segsink);
+        }
+      }
+      WriteIndent(os, depth + 1, opts.indent);
+      os << "}\n";
+    }
+    WriteIndent(os, depth, opts.indent);
+    os << "}\n";
+  }
+}
 
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
@@ -576,17 +967,21 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                   !meta.references.empty() || !meta.payloads.empty() ||
                   !meta.inherits.empty() || !meta.specializes.empty() ||
                   !meta.variantSelections().empty() ||
-                  !meta.variantSelection.empty();
+                  !meta.variantSelection.empty() ||
+                  !meta.variantSets().empty();
 
   if (has_meta) {
     const int md = depth + 1;
     os << " (\n";
     auto kv = [&](const std::string& s) {
+      if (s.empty()) return;  // e.g. DictMetaLine of an empty dict
       WriteIndent(os, md, opts.indent);
       os << s << "\n";
     };
     if (!meta.active) kv("active = false");
+    else if (meta.active_authored) kv("active = true");
     if (meta.hidden) kv("hidden = true");
+    else if (meta.hidden_authored) kv("hidden = false");
     if (meta.instanceable) kv("instanceable = true");
     if (!meta.kind().empty()) kv("kind = " + EscapeString(meta.kind()));
     if (!meta.displayName().empty())
@@ -594,7 +989,12 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     if (has_doc) kv("doc = " + EscapeString(meta.doc()));
     if (has_comment) kv("comment = " + EscapeString(meta.comment()));
     if (!meta.apiSchemas().empty()) {
-      std::string s = "apiSchemas = [";
+      std::string s;
+      if (!meta.apiSchemasQualifier().empty() &&
+          meta.apiSchemasQualifier() != "delete") {
+        s += meta.apiSchemasQualifier() + " ";
+      }
+      s += "apiSchemas = [";
       for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
         if (i > 0) s += ", ";
         s += "\"" + meta.apiSchemas()[i] + "\"";
@@ -620,20 +1020,19 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         os << qual << field << " = [\n";
         for (const auto& a : items) {
           WriteIndent(os, md + 1, opts.indent);
-          // `a` is a composed arc string: "@asset@</prim>" (external),
-          // "</prim>" (internal reference, no asset), or a bare asset path.
-          // Emit external/internal forms as-is; only a bare asset path is
-          // wrapped in @...@.
-          if (!a.empty() && (a[0] == '@' || a[0] == '<'))
-            os << a << ",\n";
-          else
-            os << "@" << a << "@,\n";
+          os << FormatArcRef(a) << ",\n";
         }
         WriteIndent(os, md, opts.indent);
         os << "]\n";
       };
       if (!e || !e->authored || e->is_explicit) {
-        emit("", inl);  // bare/explicit list
+        if (e && e->authored && e->is_explicit && inl.empty()) {
+          // Authored explicit-clear (`references = None`).
+          WriteIndent(os, md, opts.indent);
+          os << field << " = None\n";
+        } else {
+          emit("", inl);  // bare/explicit list
+        }
       } else {
         emit("prepend ", e->prepended);
         emit("append ", e->appended);
@@ -658,14 +1057,42 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       WriteIndent(os, md, opts.indent);
       os << "}\n";
     };
-    if (!meta.variantSelections().empty()) {
-      write_variants(meta.variantSelections());
-    } else if (!meta.variantSelection.empty()) {
-      auto eq = meta.variantSelection.find('=');
-      if (eq != std::string::npos) {
-        write_variants({{meta.variantSelection.substr(0, eq),
-                         meta.variantSelection.substr(eq + 1)}});
+    {
+      // Merge every selection source (per-set `selected` is authoritative,
+      // then the plural list, then the legacy single string): a crate-read
+      // multi-set prim may carry only ONE set in the legacy string, and a
+      // USDA-parsed prim carries selections only in the plural list.
+      std::vector<std::pair<std::string, std::string>> sels;
+      auto add_sel = [&sels](const std::string& set, const std::string& v) {
+        if (set.empty() || v.empty()) return;
+        for (auto& kv : sels) {
+          if (kv.first == set) return;  // first writer wins
+        }
+        sels.emplace_back(set, v);
+      };
+      for (const auto& vs : meta.variantSets()) add_sel(vs.name, vs.selected);
+      for (const auto& kv : meta.variantSelections()) {
+        add_sel(kv.first, kv.second);
       }
+      if (!meta.variantSelection.empty()) {
+        auto eq = meta.variantSelection.find('=');
+        if (eq != std::string::npos) {
+          add_sel(meta.variantSelection.substr(0, eq),
+                  meta.variantSelection.substr(eq + 1));
+        }
+      }
+      if (!sels.empty()) write_variants(sels);
+    }
+
+    // Variant set declaration: `prepend variantSets = ["lod", ...]`.
+    if (!meta.variantSets().empty()) {
+      WriteIndent(os, md, opts.indent);
+      os << "prepend variantSets = [";
+      for (size_t i = 0; i < meta.variantSets().size(); ++i) {
+        if (i) os << ", ";
+        os << EscapeString(meta.variantSets()[i].name);
+      }
+      os << "]\n";
     }
 
     WriteIndent(os, depth, opts.indent);
@@ -710,11 +1137,20 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     WriteRelationship(os, rel_name, *targets, spec, rid, content_depth, opts);
   }
 
+  // Write variant set bodies (recursive: options may carry nested sets).
+  WriteVariantSets(os, spec.meta().variantSets(), layer, spec.path().str(),
+                   content_depth, opts, segsink);
+
   // Write children. When `segsink` is active (the parallel build walk), the same
   // sink propagates so each child's large array values are offloaded too.
+  // Bracketed variant HOLDER prims ("{set=var}", crate representation) are not
+  // real children: their names/selections are emitted via the variantSets
+  // metadata + bodies above, and printing them as defs would be invalid USDA.
   for (uint32_t child_idx : spec.child_indices()) {
     const PrimSpec* child = layer.prim(child_idx);
     if (child) {
+      const std::string& cn = child->name();
+      if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') continue;
       os << "\n";
       WritePrimSpec(os, *child, layer, content_depth, opts, segsink);
     }
@@ -825,6 +1261,12 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
     if (t.kind == WriteTask::Kind::Chunk) return scalar_bytes(*t.value, t.hi - t.lo);
     return scalar_bytes(*t.value, ArrayElementCount(*t.value));  // WholeValue
   };
+  auto direct_stream_task = [&](const WriteTask& t) -> bool {
+    constexpr uint64_t kDirectStreamBytes = 64ull << 20;
+    return t.kind == WriteTask::Kind::WholeValue && t.value &&
+           IsCompressedLazyIntArray(*t.value) &&
+           task_bytes(t) >= kDirectStreamBytes;
+  };
   uint64_t total_bytes = 0;
   for (const auto& t : tasks) total_bytes += task_bytes(t);
   const size_t k_target = std::max<size_t>(1, static_cast<size_t>(nthreads) * 64);
@@ -833,6 +1275,12 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   seg_begin.push_back(0);
   uint64_t acc = 0;
   for (size_t i = 0; i < m; ++i) {
+    if (direct_stream_task(tasks[i])) {
+      if (seg_begin.back() != i) seg_begin.push_back(i);
+      seg_begin.push_back(i + 1);
+      acc = 0;
+      continue;
+    }
     acc += task_bytes(tasks[i]);
     if (acc >= seg_target && seg_begin.back() != i + 1) {
       seg_begin.push_back(i + 1);
@@ -841,6 +1289,14 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   }
   if (seg_begin.back() != m) seg_begin.push_back(m);
   const size_t K = seg_begin.size() - 1;
+  std::vector<uint8_t> direct_segment(K, 0);
+  for (size_t k = 0; k < K; ++k) {
+    direct_segment[k] =
+        (seg_begin[k + 1] == seg_begin[k] + 1 &&
+         direct_stream_task(tasks[seg_begin[k]]))
+            ? 1
+            : 0;
+  }
 
   // Per-segment list of decoded-buffer holder indices to free once that segment is
   // written. A buffer's freeing flag sits on its last chunk; by the time that
@@ -856,9 +1312,12 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   }
 
   // Phase 2: workers format whole segments; the main thread writes segment buffers
-  // in order. Lock-free: each segment is claimed once via `next`, produced into
-  // results[k], published via ready[k]; the consumer spins (yielding) on ready[s]
-  // and advances `consumed`, back-pressuring workers past W segments ahead.
+  // in order. Very large compressed int arrays are marked direct and formatted by
+  // the consumer into the final stream so they do not allocate a full text buffer.
+  // Lock-free: each segment is claimed once via `next`, produced into results[k]
+  // (or marked direct), published via ready[k]; the consumer spins (yielding) on
+  // ready[s] and advances `consumed`, back-pressuring workers past W segments
+  // ahead.
   std::vector<std::string> results(K);
   std::vector<std::atomic<uint8_t>> ready(K);
   for (size_t i = 0; i < K; ++i) ready[i].store(0, std::memory_order_relaxed);
@@ -866,9 +1325,7 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   std::atomic<size_t> consumed{0};
   const size_t W = static_cast<size_t>(nthreads) * 2 + 2;
 
-  auto format_segment = [&](size_t k, std::string& buf) {
-    buf.clear();
-    StreamWriter sw(&buf);
+  auto format_segment_to = [&](size_t k, StreamWriter& sw) {
     for (size_t i = seg_begin[k]; i < seg_begin[k + 1]; ++i) {
       WriteTask& t = tasks[i];
       switch (t.kind) {
@@ -885,6 +1342,11 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
       }
     }
   };
+  auto format_segment = [&](size_t k, std::string& buf) {
+    buf.clear();
+    StreamWriter sw(&buf);
+    format_segment_to(k, sw);
+  };
 
   auto worker = [&]() {
     std::string buf;
@@ -893,6 +1355,10 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
       if (k >= K) break;
       while (k >= consumed.load(std::memory_order_acquire) + W) {
         std::this_thread::yield();
+      }
+      if (direct_segment[k]) {
+        ready[k].store(2, std::memory_order_release);
+        continue;
       }
       format_segment(k, buf);
       results[k] = std::move(buf);
@@ -906,9 +1372,16 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
   for (int t = 0; t < nw; ++t) pool.emplace_back(worker);
 
   for (size_t s = 0; s < K; ++s) {
-    while (ready[s].load(std::memory_order_acquire) == 0) std::this_thread::yield();
-    os.write(results[s].data(), results[s].size());
-    std::string().swap(results[s]);  // free as we go
+    uint8_t state = 0;
+    while ((state = ready[s].load(std::memory_order_acquire)) == 0) {
+      std::this_thread::yield();
+    }
+    if (state == 2) {
+      format_segment_to(s, os);
+    } else {
+      os.write(results[s].data(), results[s].size());
+      std::string().swap(results[s]);  // free as we go
+    }
     for (int idx : seg_free[s]) holder[idx] = Value{};  // release decoded buffers
     consumed.store(s + 1, std::memory_order_release);
   }
@@ -959,10 +1432,12 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.colorManagementSystem = stage_meta.colorManagementSystem;
   meta.doc = stage_meta.doc;
   meta.comment = stage_meta.comment;
-  // Dictionary-valued stage metadata is not mirrored on StageMeta; take it from
-  // the composed root layer directly.
+  // Dictionary-valued stage metadata and sublayer paths are not mirrored on
+  // StageMeta; take them from the composed root layer directly.
   meta.customLayerData = root_layer->meta().customLayerData;
   meta.expressionVariables = root_layer->meta().expressionVariables;
+  meta.subLayers = root_layer->meta().subLayers;
+  meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);

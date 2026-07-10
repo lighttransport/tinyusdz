@@ -427,6 +427,9 @@ web/build_64
 web/js/assets/*
 !web/js/assets/physics-robot-arm.usda
 
+# vite build output
+web/js/dist/
+
 # fuzzer
 tests/fuzzer/corpus/
 
@@ -447,6 +450,8 @@ aousd/spec/
 # Build directories (CMake / ninja / pip editable extension)
 build_py/
 build_py_ext/
+build_py_ext_next/
+build-next/
 build_test/
 web/build_ninja/
 web/build_64_ninja/
@@ -469,3 +474,5 @@ python/tinyusdz/_version.py
 priv/
 resume.md
 gpu-task.md
+python/tinyusdz.egg-info/
+python/tinyusdz/_core.*.so

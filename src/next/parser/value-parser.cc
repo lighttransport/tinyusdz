@@ -8,6 +8,7 @@
 #include "../strfmt.hh"
 #include "lexer.hh"
 #include "../crate/crate-format.hh"
+#include "../crate/lazy-array.hh"
 #include "../types/type-info.hh"
 
 #include <algorithm>
@@ -33,6 +34,9 @@ namespace {
 // ============================================================
 
 using value_parser_detail::DecimalToI64;
+using value_parser_detail::DecimalToI32;
+using value_parser_detail::IsDecimalIntToken;
+using value_parser_detail::DecimalToU32;
 using value_parser_detail::DecimalToU64;
 using value_parser_detail::FastFloatParse;
 using value_parser_detail::FastFloatParseToken;

@@ -11,6 +11,8 @@ src/tinyusdz/*.wasm
 src/tinyusdz/*.wasm.zst
 src/tinyusdz/tinyusdz.js
 src/tinyusdz/tinyusdz_64.js
+src/tinyusdz/tinyusdz_next.js
+src/tinyusdz/tinyusdz_next_64.js
 
 # Patch scripts (temporary)
 apply-nodematerial-patch.sh

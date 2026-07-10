@@ -10,6 +10,9 @@
     const PrimSpec *spec = nullptr;
     const Layer *layer = nullptr;
     std::string layer_id;
+    // Time offset of the owning layer within its stack (sublayer offsets),
+    // relative to the stack root. Identity for the root layer.
+    LayerOffset layer_offset;
   };
 
   // Memoized spec resolution. The same (stack, site) is resolved 3-5x per
@@ -54,6 +57,7 @@
         r.spec = s;
         r.layer = lp.get();
         if (i < st.layer_identifiers.size()) r.layer_id = st.layer_identifiers[i];
+        if (i < st.layer_offsets.size()) r.layer_offset = st.layer_offsets[i];
         refs.push_back(std::move(r));
       }
     }

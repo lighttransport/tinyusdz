@@ -6,21 +6,64 @@
  */
 
 import createTinyUSDZ from './tinyusdz.js';
+import { NextRenderSceneAdapter } from './TinyUSDZLoader.js';
 
 let tinyusdz = null;
+let tinyusdzLegacy = null;
+let tinyusdzNext = null;
+let tinyusdzBackend = '';
 let loader = null;
+
+function wantsNextBackend(options = {}) {
+    return options.backend === 'next' ||
+        options.useNextOnlyWasm === true ||
+        options.nextOnlyWasm === true ||
+        options.wasm === 'next';
+}
+
+function postNextProgress(info = {}) {
+    self.postMessage({
+        type: 'progress',
+        phase: info.stage || info.backend || 'next',
+        progress: Number.isFinite(info.percentage) ? info.percentage / 100 : 0,
+        message: info.message || 'Loading next scene...'
+    });
+}
 
 /**
  * Initialize the WASM module
  */
-async function init() {
-    if (tinyusdz) return true;
+async function init(options = {}) {
+    const nextBackend = wantsNextBackend(options);
+    if (nextBackend && tinyusdzNext) {
+        tinyusdz = tinyusdzNext;
+        tinyusdzBackend = 'next';
+        return true;
+    }
+    if (!nextBackend && tinyusdzLegacy) {
+        tinyusdz = tinyusdzLegacy;
+        tinyusdzBackend = 'legacy';
+        return true;
+    }
 
     try {
-        tinyusdz = await createTinyUSDZ();
+        if (nextBackend) {
+            const useMemory64 = options.useMemory64 === true;
+            const moduleUrl = new URL(useMemory64 ? './tinyusdz_next_64.js' : './tinyusdz_next.js',
+                import.meta.url).href;
+            const module = await import(/* @vite-ignore */ moduleUrl);
+            tinyusdzNext = await module.default();
+            tinyusdz = tinyusdzNext;
+            tinyusdzBackend = 'next';
+            return true;
+        }
+
+        tinyusdzLegacy = await createTinyUSDZ();
+        tinyusdz = tinyusdzLegacy;
+        tinyusdzBackend = 'legacy';
 
         // Set up Tydra progress callback on Module
-        tinyusdz.onTydraProgress = (info) => {
+        tinyusdzLegacy.onTydraProgress = (info) => {
             self.postMessage({
                 type: 'tydra_progress',
                 meshCurrent: info.meshCurrent,
@@ -31,12 +74,20 @@ async function init() {
             });
         };
 
-        tinyusdz.onTydraComplete = (info) => {
+        tinyusdzLegacy.onTydraComplete = (info) => {
             self.postMessage({
                 type: 'tydra_complete',
                 meshCount: info.meshCount,
                 materialCount: info.materialCount,
-                textureCount: info.textureCount
+                textureCount: info.textureCount,
+                animationCount: info.animationCount || info.animations || 0,
+                nodeCount: info.nodeCount || 0,
+                lightCount: info.lightCount || 0,
+                cameraCount: info.cameraCount || 0,
+                pointInstancerCount: info.pointInstancerCount || 0,
+                pointInstanceDrawCount: info.pointInstanceDrawCount || 0,
+                skeletonCount: info.skeletonCount || 0,
+                unsupportedRenderableCount: info.unsupportedRenderableCount || 0
             });
         };
 
@@ -51,12 +102,28 @@ async function init() {
  * Load USD from binary data
  */
 async function loadFromBinary(binary, filename, options = {}) {
-    if (!tinyusdz) {
-        const ok = await init();
-        if (!ok) return;
-    }
+    const ok = await init(options);
+    if (!ok) return;
 
     try {
+        if (wantsNextBackend(options)) {
+            self.postMessage({ type: 'progress', phase: 'parsing', progress: 0.1 });
+            loader = await NextRenderSceneAdapter.create(tinyusdz, binary, filename, {
+                ...options,
+                backend: 'next',
+                onProgress: postNextProgress
+            });
+            self.postMessage({ type: 'progress', phase: 'extracting', progress: 0.8 });
+            const sceneData = extractSceneData(loader);
+            self.postMessage({ type: 'progress', phase: 'complete', progress: 1.0 });
+            const transferables = collectTransferables(sceneData);
+            self.postMessage({
+                type: 'complete',
+                data: sceneData
+            }, transferables);
+            return;
+        }
+
         loader = new tinyusdz.TinyUSDZLoaderNative();
 
         // Apply options
@@ -100,16 +167,53 @@ async function loadFromBinary(binary, filename, options = {}) {
  */
 function extractSceneData(loader) {
     const numMeshes = loader.numMeshes();
+    const numPoints = typeof loader.numPoints === 'function'
+        ? loader.numPoints()
+        : 0;
+    const numCurves = typeof loader.numCurves === 'function'
+        ? loader.numCurves()
+        : 0;
     const numMaterials = loader.numMaterials();
     const numTextures = loader.numTextures();
     const numLights = loader.numLights();
+    const numNodes = typeof loader.numNodes === 'function'
+        ? loader.numNodes()
+        : 0;
+    const numCameras = typeof loader.numCameras === 'function'
+        ? loader.numCameras()
+        : 0;
+    const numPointInstancers = typeof loader.numPointInstancers === 'function'
+        ? loader.numPointInstancers()
+        : 0;
+    const numPointInstanceDraws = typeof loader.numPointInstanceDraws === 'function'
+        ? loader.numPointInstanceDraws()
+        : 0;
+    const numSkeletons = typeof loader.numSkeletons === 'function'
+        ? loader.numSkeletons()
+        : 0;
+    const numAnimations = typeof loader.numAnimations === 'function'
+        ? loader.numAnimations()
+        : 0;
+    const numUnsupportedRenderables = typeof loader.numUnsupportedRenderables === 'function'
+        ? loader.numUnsupportedRenderables()
+        : 0;
     const numImages = typeof loader.numImages === 'function' ? loader.numImages() : 0;
 
     const meshes = [];
+    const points = [];
+    const curves = [];
     const materials = [];
     const textures = [];
     const images = [];
     const lights = [];
+    const nodes = [];
+    const cameras = [];
+    const pointInstancers = [];
+    const pointInstanceDraws = [];
+    const skeletons = [];
+    const animations = [];
+    let animationInfos = [];
+    let unsupportedRenderables = [];
 
     // Extract meshes
     for (let i = 0; i < numMeshes; i++) {
@@ -127,6 +231,23 @@ function extractSceneData(loader) {
                 message: `Extracting mesh ${i + 1}/${numMeshes}`
             });
         }
+    }
+
+    // Extract materials using getMaterialWithFormat for full OpenPBR data
+    for (let i = 0; i < numPoints; i++) {
+        const pointCloud = typeof loader.getPoints === 'function'
+            ? loader.getPoints(i)
+            : null;
+        if (pointCloud) {
+            points.push(extractPointsData(pointCloud));
+        }
+    }
+
+    for (let i = 0; i < numCurves; i++) {
+        const curveSet = typeof loader.getCurves === 'function'
+            ? loader.getCurves(i)
+            : null;
+        if (curveSet) curves.push(extractCurvesData(curveSet));
     }
 
     // Extract materials using getMaterialWithFormat for full OpenPBR data
@@ -181,6 +302,81 @@ function extractSceneData(loader) {
         }
     }
 
+    // Extract nodes
+    for (let i = 0; i < numNodes; i++) {
+        const node = loader.getNode(i);
+        if (node) {
+            nodes.push(deepCloneNode(node));
+        }
+    }
+
+    // Extract cameras
+    for (let i = 0; i < numCameras; i++) {
+        const camera = loader.getCamera(i);
+        if (camera) {
+            cameras.push(deepClone(camera));
+        }
+    }
+
+    // Extract point instancers
+    for (let i = 0; i < numPointInstancers; i++) {
+        const instancer = loader.getPointInstancer(i);
+        if (instancer) {
+            pointInstancers.push(deepClone(instancer));
+        }
+    }
+
+    // Extract point instance draws
+    for (let i = 0; i < numPointInstanceDraws; i++) {
+        const draw = loader.getPointInstanceDraw(i);
+        if (draw) {
+            pointInstanceDraws.push(deepClone(draw));
+        }
+    }
+
+    // Extract skeletons
+    for (let i = 0; i < numSkeletons; i++) {
+        const skeleton = loader.getSkeleton(i);
+        if (skeleton) {
+            skeletons.push(deepClone(skeleton));
+        }
+    }
+
+    // Extract animations and animation infos
+    for (let i = 0; i < numAnimations; i++) {
+        const animation = typeof loader.getAnimation === 'function'
+            ? loader.getAnimation(i)
+            : null;
+        if (animation) {
+            animations.push(deepClone(animation));
+        }
+    }
+    if (typeof loader.getAllAnimationInfos === 'function') {
+        animationInfos = loader.getAllAnimationInfos();
+        if (Array.isArray(animationInfos)) {
+            animationInfos = animationInfos.map((item) => deepClone(item));
+        }
+    }
+    if (!Array.isArray(animationInfos) || animationInfos.length === 0) {
+        animationInfos = [];
+        for (let i = 0; i < numAnimations; i++) {
+            const item = typeof loader.getAnimationInfo === 'function'
+                ? loader.getAnimationInfo(i)
+                : null;
+            if (item) {
+                animationInfos.push(deepClone(item));
+            }
+        }
+    }
+
+    // Extract unsupported renderables (non-fatal if unavailable)
+    if (typeof loader.getUnsupportedRenderables === 'function') {
+        unsupportedRenderables = loader.getUnsupportedRenderables();
+        if (Array.isArray(unsupportedRenderables)) {
+            unsupportedRenderables = unsupportedRenderables.map((item) => deepClone(item));
+        }
+    }
+
     // Get root node (deep clone the entire tree)
     const rawRootNode = loader.getDefaultRootNode();
     const rootNode = rawRootNode ? deepCloneNode(rawRootNode) : null;
@@ -192,6 +388,8 @@ function extractSceneData(loader) {
 
     return {
         meshes,
+        points,
+        curves,
         materials,
         textures,
         images,
@@ -200,10 +398,27 @@ function extractSceneData(loader) {
         upAxis,
         metadata,
         numMeshes,
+        numPoints,
+        numCurves,
         numMaterials,
         numTextures,
+        numNodes,
+        numCameras,
+        numPointInstancers,
+        numPointInstanceDraws,
+        numSkeletons,
+        numAnimations,
+        numUnsupportedRenderables,
         numImages,
-        numLights
+        numLights,
+        animations,
+        animationInfos,
+        nodes,
+        cameras,
+        pointInstancers,
+        pointInstanceDraws,
+        skeletons,
+        unsupportedRenderables
     };
 }
 
@@ -221,6 +436,9 @@ function extractMeshData(mesh) {
     if (mesh.normals && mesh.normals.buffer) {
         data.normals = new Float32Array(mesh.normals);
     }
+    if (mesh.tangents && mesh.tangents.buffer) {
+        data.tangents = new Float32Array(mesh.tangents);
+    }
     if (mesh.uvs && mesh.uvs.buffer) {
         data.uvs = new Float32Array(mesh.uvs);
     }
@@ -228,6 +446,34 @@ function extractMeshData(mesh) {
         data.indices = new Uint32Array(mesh.indices);
     }
 
+    return data;
+}
+
+/**
+ * Extract point cloud data, converting typed arrays to transferable format.
+ */
+function extractPointsData(points) {
+    const data = deepClone(points);
+    if (points.points && points.points.buffer) {
+        data.points = new Float32Array(points.points);
+    }
+    if (points.widths && points.widths.buffer) {
+        data.widths = new Float32Array(points.widths);
+    }
+    if (points.colors && points.colors.buffer) {
+        data.colors = new Float32Array(points.colors);
+    }
+    return data;
+}
+
+function extractCurvesData(curves) {
+    const data = deepClone(curves);
+    for (const key of ['points', 'widths', 'colors', 'tessellatedPoints',
+        'tessellatedWidths', 'tessellatedColors']) {
+        if (curves[key] && curves[key].buffer) {
+            data[key] = new Float32Array(curves[key]);
+        }
+    }
     return data;
 }
 
@@ -384,11 +630,36 @@ function collectTransferables(sceneData) {
         if (mesh.normals && mesh.normals.buffer) {
             transferables.push(mesh.normals.buffer);
         }
+        if (mesh.tangents && mesh.tangents.buffer) {
+            transferables.push(mesh.tangents.buffer);
+        }
         if (mesh.uvs && mesh.uvs.buffer) {
             transferables.push(mesh.uvs.buffer);
         }
         if (mesh.indices && mesh.indices.buffer) {
             transferables.push(mesh.indices.buffer);
+        }
+    }
+
+    for (const points of sceneData.points || []) {
+        if (points.points && points.points.buffer) {
+            transferables.push(points.points.buffer);
+        }
+        if (points.widths && points.widths.buffer) {
+            transferables.push(points.widths.buffer);
+        }
+        if (points.colors && points.colors.buffer) {
+            transferables.push(points.colors.buffer);
+        }
+    }
+
+
+    for (const curves of sceneData.curves || []) {
+        for (const key of ['points', 'widths', 'colors', 'tessellatedPoints',
+            'tessellatedWidths', 'tessellatedColors']) {
+            if (curves[key] && curves[key].buffer) {
+                transferables.push(curves[key].buffer);
+            }
         }
     }
 
@@ -453,7 +724,7 @@ self.onmessage = async function(e) {
 
     switch (type) {
         case 'init':
-            const ok = await init();
+            const ok = await init(params.options || {});
             self.postMessage({ type: 'init_complete', success: ok });
             break;
 
@@ -471,6 +742,9 @@ self.onmessage = async function(e) {
 
         case 'dispose':
             if (loader) {
+                if (typeof loader.end === 'function') {
+                    try { loader.end(); } catch (_) {}
+                }
                 loader = null;
             }
             self.postMessage({ type: 'disposed' });

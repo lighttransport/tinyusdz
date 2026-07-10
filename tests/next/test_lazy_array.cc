@@ -16,6 +16,7 @@
 
 #include "next/composition/composition.hh"
 #include "next/crate/crate-data-source.hh"
+#include "next/crate/crate-format.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/crate/lazy-array.hh"
 #include "next/layer/layer.hh"
@@ -24,6 +25,8 @@
 #include "next/stage/stage.hh"
 #include "next/types/value.hh"
 #include "next/types/value-view.hh"
+#include "next/writer/stream-writer.hh"
+#include "next/writer/value-printer.hh"
 #include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
@@ -42,6 +45,24 @@ int main() {
     std::vector<float> copied(view.begin(), view.end());
     assert(copied.empty());
     assert(view.size_bytes() == 0);
+  }
+
+  // Capacity-hinted crate blob decompression should grow from an undersized
+  // initial buffer and still reproduce the exact delta payload.
+  {
+    std::vector<uint32_t> values(4096);
+    for (size_t i = 0; i < values.size(); ++i) {
+      values[i] = static_cast<uint32_t>((i * 251u) ^ (i >> 1));
+    }
+    std::vector<uint8_t> delta = EncodeDeltaU32(values.data(), values.size());
+    CompressResult cr = CompressCrateBlob(delta.data(), delta.size());
+    assert(cr.success);
+    DecompressResult dr = DecompressCrateBlobWithCapacityHint(
+        cr.data.data(), cr.data.size(), delta.size(), 8);
+    assert(dr.success);
+    assert(dr.data == delta);
+    std::cout << "  capacity-hinted crate blob decompression grows correctly"
+              << std::endl;
   }
 
   // ---- Build a stage with numeric POD arrays --------------------------------
@@ -199,11 +220,91 @@ int main() {
     assert(GetFloatArrayView(*pv, &scratch, &view));
     assert(view.borrowed);
     assert(view.size == points.size());
-    assert(scratch.storage.empty());
+    assert(scratch.materialized.is_empty());
     for (size_t i = 0; i < points.size(); i++) assert(view[i] == points[i]);
     assert(pv->is_lazy());
     assert(!pv->is_dirty());
     std::cout << "  points borrowed view reads without materializing" << std::endl;
+  }
+
+  // Large borrowable lazy arrays should use the serial range printer, so source
+  // pages can be discarded per chunk without changing text or materializing the
+  // original Value.
+  {
+    std::vector<float> big_points((64u * 1024u + 17u) * 3u);
+    for (size_t i = 0; i < big_points.size(); ++i) {
+      big_points[i] = static_cast<float>(i % 257) * 0.25f;
+    }
+
+    StageBuilder big_sb;
+    big_sb.SetDefaultPrim("BigMesh");
+    LayerBuilder& big_lb = big_sb.GetLayerBuilder();
+    big_lb.begin_prim("BigMesh", "Mesh");
+    big_lb.add_property("points", Value::MakeFloat3Array(big_points));
+    big_lb.end_prim();
+    big_lb.finalize();
+
+    std::vector<uint8_t> big_buf;
+    USDCWriteResult big_wr = WriteUSDCToMemory(big_buf, big_sb.Build());
+    assert(big_wr.success);
+    USDCLoadResult big_lr = LoadUSDCFromMemory(big_buf.data(), big_buf.size());
+    assert(big_lr.success);
+    UsdPrim big_mesh = big_lr.stage.GetPrimAtPath("/BigMesh");
+    assert(big_mesh.IsValid());
+    const Value* lazy_points = big_mesh.GetPropertyValue("points");
+    assert(lazy_points && lazy_points->is_lazy());
+
+    Value eager = lazy_points->materialized_copy();
+    const std::string expected = PrintValue(eager);
+    std::string actual;
+    {
+      StreamWriter sw(&actual);
+      PrintValue(sw, *lazy_points);
+    }
+    assert(actual == expected);
+    assert(lazy_points->is_lazy());
+    assert(!lazy_points->is_dirty());
+    std::cout << "  serial range printer preserves lazy array text" << std::endl;
+  }
+
+  // Compressed lazy int arrays should print without materializing a decoded
+  // int vector into the source Value.
+  {
+    std::vector<int32_t> big_indices(96u * 1024u);
+    for (size_t i = 0; i < big_indices.size(); ++i) {
+      big_indices[i] = static_cast<int32_t>((i * 17u) % 1009u) - 503;
+    }
+
+    StageBuilder big_sb;
+    big_sb.SetDefaultPrim("BigInts");
+    LayerBuilder& big_lb = big_sb.GetLayerBuilder();
+    big_lb.begin_prim("BigInts", "Mesh");
+    big_lb.add_property("faceVertexIndices", Value::MakeIntArray(big_indices));
+    big_lb.end_prim();
+    big_lb.finalize();
+
+    std::vector<uint8_t> big_buf;
+    USDCWriteResult big_wr = WriteUSDCToMemory(big_buf, big_sb.Build());
+    assert(big_wr.success);
+    USDCLoadResult big_lr = LoadUSDCFromMemory(big_buf.data(), big_buf.size());
+    assert(big_lr.success);
+    UsdPrim big_mesh = big_lr.stage.GetPrimAtPath("/BigInts");
+    assert(big_mesh.IsValid());
+    const Value* lazy_indices = big_mesh.GetPropertyValue("faceVertexIndices");
+    assert(lazy_indices && lazy_indices->is_lazy());
+    assert(lazy_indices->lazy_ref() && lazy_indices->lazy_ref()->is_compressed);
+
+    Value eager = lazy_indices->materialized_copy();
+    const std::string expected = PrintValue(eager);
+    std::string actual;
+    {
+      StreamWriter sw(&actual);
+      PrintValue(sw, *lazy_indices);
+    }
+    assert(actual == expected);
+    assert(lazy_indices->is_lazy());
+    assert(!lazy_indices->is_dirty());
+    std::cout << "  compressed lazy int printer preserves text" << std::endl;
   }
 
   // Materialize the original via accessor; verify contents byte-for-byte.
@@ -263,9 +364,12 @@ int main() {
               << (view.borrowed ? " (borrowed)" : " (scratch)") << std::endl;
   }
 
-  // ---- orientations / xforms: newly supported vector/matrix array laziness --
+  // ---- orientations / xforms: vector/matrix array laziness ------------------
+  // Quat arrays decode EAGERLY by design: the crate stores components
+  // imaginary-first while the internal layout is real-first, so a lazy byte
+  // view would surface the wrong component order. The values still round-trip.
   const Value* qv = ps->property_value("orientations");
-  assert(qv && qv->is_array() && qv->is_lazy());
+  assert(qv && qv->is_array() && !qv->is_lazy());
   const std::vector<float>* qa = qv->as_float_array();
   assert(qa && *qa == quats);
   const Value* mv = ps->property_value("xforms");
@@ -295,7 +399,7 @@ int main() {
     assert(sps);
     const Value* sv = sps->property_value("points");
     assert(sv && sv->is_lazy());
-    const CrateDataSource* src = sv->lazy_ref()->source.get();
+    const auto* src = sv->lazy_ref()->source.get();
     long uc0 = sv->lazy_ref()->source.use_count();
 
     // PrimSpec::Clone() preserves laziness and shares the source buffer.
@@ -337,9 +441,11 @@ int main() {
     CrateWriteResult wres = writer.WriteLayerToMemory(out, *layer);
     assert(wres.success);
     // Numeric arrays (points Vec3f, indices Int, ids UInt, hashes UInt64,
-    // orientations Quatf, xforms Matrix4d, tangents Vec4f, extent Vec2d, and
-    // two velocities TimeSamples) copied verbatim.
-    assert(wres.arrays_passed_through >= 10);
+    // xforms Matrix4d, tangents Vec4f, extent Vec2d, and two velocities
+    // TimeSamples) copied verbatim. Quat arrays (orientations) are no longer
+    // lazy (component swizzle on decode), so they re-encode rather than
+    // pass through.
+    assert(wres.arrays_passed_through >= 9);
     assert(wres.arrays_reencoded == 0);
     std::cout << "  writer passed through " << wres.arrays_passed_through
               << " arrays (" << wres.arrays_reencoded << " reencoded)" << std::endl;
@@ -395,7 +501,7 @@ int main() {
     bool ok = pipeline::FlattenUSDCToUSDC(buf.data(), buf.size(), fout, fopts,
                                           &fstats, &ferr);
     assert(ok);
-    assert(fstats.arrays_passed_through >= 10);
+    assert(fstats.arrays_passed_through >= 9);  // quats re-encode (swizzle)
     assert(fstats.arrays_reencoded == 0);
     std::cout << "  FlattenUSDCToUSDC: " << fstats.input_bytes << " -> "
               << fstats.output_bytes << " bytes, passthrough="

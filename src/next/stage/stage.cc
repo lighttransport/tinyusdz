@@ -202,10 +202,15 @@ UsdPrim UsdPrim::GetParent() const {
   if (last_slash == std::string::npos) return UsdPrim();
 
   std::string parent_path = path_str.substr(0, last_slash);
+  // O(1) via the path index when available.
+  uint32_t pidx = layer_->index_at_path(parent_path);
+  if (pidx != UINT32_MAX) {
+    return UsdPrim(layer_->prim(pidx), layer_, pidx);
+  }
   const PrimSpec* parent = layer_->prim_at_path(parent_path);
   if (!parent) return UsdPrim();
 
-  // Find parent index (inefficient but works)
+  // Fallback linear scan (path index not built yet)
   for (size_t i = 0; i < layer_->prim_count(); ++i) {
     if (layer_->prim(static_cast<uint32_t>(i)) == parent) {
       return UsdPrim(parent, layer_, static_cast<uint32_t>(i));
@@ -244,6 +249,16 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
 size_t UsdPrim::GetChildCount() const {
   if (!spec_) return 0;
   return ChildSourceSpec()->child_count();
+}
+
+UsdPrim UsdPrim::GetChildAt(size_t index) const {
+  if (!spec_ || !layer_) return UsdPrim();
+  const auto& indices = ChildSourceSpec()->child_indices();
+  if (index >= indices.size()) return UsdPrim();
+  uint32_t idx = indices[index];
+  const PrimSpec* child = layer_->prim(idx);
+  if (!child) return UsdPrim();
+  return UsdPrim(child, layer_, idx);
 }
 
 UsdPrim UsdPrim::GetChild(const std::string& name) const {
