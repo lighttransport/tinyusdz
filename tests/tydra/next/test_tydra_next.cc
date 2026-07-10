@@ -894,6 +894,82 @@ def Xform "World"
   std::cout << "  RenderConverter materials: PASSED\n";
 }
 
+// Regression: a material whose `outputs:surface` connects to a path that is
+// absent from the composed stage (Unreal USD exports connect to a
+// reference-SOURCE path that vanishes after composition), but which carries
+// the real UsdPreviewSurface as a child. The converter must fall back to the
+// child shader and must NOT fail the whole scene load. An unsupported custom
+// shader child is placed first to exercise candidate iteration.
+void TestRenderConverterUnrealSurfaceFallback() {
+  std::cout << "Testing RenderConverter Unreal-style surface fallback...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Material "UnrealMat"
+    {
+        token outputs:surface.connect = </MI_Missing_Source/SurfaceShader.outputs:surface>
+
+        def Shader "UnrealShader"
+        {
+            uniform token info:id = "UnrealCustomSurface"
+            token outputs:surface
+        }
+
+        def Shader "SurfaceShader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.3, 0.1)
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+
+    def Mesh "M"
+    {
+        rel material:binding = </World/UnrealMat>
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse Unreal-fallback USDA)\n";
+    return;
+  }
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(load_result.stage);
+
+  // The broken outputs:surface connection must not abort the scene load.
+  assert(result.success);
+
+  auto it = result.scene.material_by_path.find("/World/UnrealMat");
+  assert(it != result.scene.material_by_path.end());
+  const RenderMaterial& mat = result.scene.materials[it->second];
+
+  // Fell back to the child UsdPreviewSurface (not the broken connection, not
+  // the unsupported UnrealShader child that iterates first).
+  assert(mat.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+  assert(mat.preview_surface);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.x - 0.5f) < 0.001f);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.y - 0.3f) < 0.001f);
+  assert(std::abs(mat.preview_surface->diffuse_color.value.z - 0.1f) < 0.001f);
+  assert(std::abs(mat.preview_surface->roughness.value.x - 0.4f) < 0.001f);
+
+  std::cout << "  RenderConverter Unreal surface fallback: PASSED\n";
+}
+
 void TestRenderConverterPointInstancerWarnings() {
   std::cout << "Testing RenderConverter PointInstancer diagnostics...\n";
 
@@ -2456,6 +2532,7 @@ int main() {
   // Converter tests
   TestRenderConverter();
   TestRenderConverterMaterials();
+  TestRenderConverterUnrealSurfaceFallback();
   TestRenderConverterPointInstancerWarnings();
   TestRenderConverterPointInstancerIndexVisibility();
   TestRenderConverterPointInstancerInvalidArrays();
