@@ -414,7 +414,10 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		});
 		const built = buildNextThreeNode(usdScene, {
 			skipTextures: false,
-			lazyTextures: true
+			lazyTextures: true,
+			// Animations/skinning are extracted from the adapter AFTER the
+			// build; the default releaseBuildData would wipe them.
+			releaseBuildData: false
 		});
 		if (built.textureManager) {
 			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
