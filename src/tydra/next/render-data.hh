@@ -302,6 +302,11 @@ struct RenderMesh {
   // kept in the topology so uniform/faceVarying primvar alignment holds).
   std::vector<uint32_t> hole_faces;
 
+  // Release the chunk-allocation slack of every chunked member (exact-size
+  // tail chunks). Called once after conversion: scenes with thousands of
+  // small meshes otherwise pay the 64KB minimum chunk per non-empty array.
+  void compact();
+
   // Authored winding: `orientation = "leftHanded"`. Triangulation emits
   // reversed (rightHanded) winding for these meshes so consumers can treat
   // triangulated_indices as CCW uniformly; computed normals follow.

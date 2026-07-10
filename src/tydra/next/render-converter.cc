@@ -35,6 +35,17 @@ using ::tinyusdz::next::Value;
 namespace {
 
 constexpr float kAlphaEpsilon = 1.0e-6f;
+// 2GB is the typical hard limit for legacy WebAssembly linear memory growth in
+// non-shared-memory builds. Keep a conservative per-mesh budget for temporary
+// triangulation artifacts to avoid allocator abort on pathological data.
+constexpr size_t kMaxTriangulationCornerCount = 150'000'000u;
+constexpr uint32_t kEarcutMaxVertices = 16384;
+constexpr size_t kMaxTempAllocBytes = 256u * 1024u * 1024u;
+
+bool WouldOverflowSizeMul(size_t a, size_t b) {
+  if (a == 0 || b == 0) return false;
+  return a > (std::numeric_limits<size_t>::max() / b);
+}
 
 std::string SourcePrimPathFromConnection(const std::string& connection_path) {
   size_t dot_pos = connection_path.find(".outputs:");
@@ -1477,6 +1488,9 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
               ? ConvertMesh(stage, mesh_prim, &mesh)
               : ConvertGeomPrimitive(mesh_prim, &mesh);
       if (converted) {
+        // Release chunk-allocation slack before retaining: thousands of small
+        // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
+        mesh.compact();
         int32_t mesh_id = static_cast<int32_t>(result.scene.meshes.size());
         result.scene.mesh_by_path[mesh.prim_path] = mesh_id;
         result.scene.meshes.push_back(std::move(mesh));
@@ -2237,9 +2251,15 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     out->blend_shapes.push_back(std::move(shape));
   }
 
-  // Triangulate if requested
+  // Triangulate if requested. A mesh whose faces were all sanitized away is
+  // still a valid (empty) render mesh; only meshes with real topology that
+  // cannot be triangulated (e.g. over the temp-allocation budget) are dropped.
   if (config_.mesh.triangulate && !out->is_triangulated) {
-    TriangulateMesh(out);
+    if (!TriangulateMesh(out) && !out->face_vertex_counts.empty()) {
+      warnings_.push_back("Failed to triangulate mesh '" + out->prim_path +
+                          "'; skipping it to avoid conversion abort");
+      return false;
+    }
   }
 
   // Compute normals if needed
@@ -3560,6 +3580,12 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   if (all_triangles && !mesh->left_handed && mesh->hole_faces.empty()) {
     // Just copy indices; corner remap is identity.
     const size_t n = mesh->face_vertex_indices.size();
+    if (WouldOverflowSizeMul(n, sizeof(uint32_t)) ||
+        (n * sizeof(uint32_t)) > kMaxTempAllocBytes * 4u) {
+      warnings_.push_back("Mesh '" + mesh->prim_path +
+                          "' triangulated index allocation too large; skipping");
+      return false;
+    }
     mesh->triangulated_indices.resize(n);
     mesh->triangulated_face_vertex_indices.resize(n);
     for (size_t i = 0; i < n; ++i) {
@@ -3574,6 +3600,20 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   for (size_t i = 0; i < mesh->face_vertex_counts.size(); ++i) {
     uint32_t nverts = mesh->face_vertex_counts[i];
     if (nverts >= 3) tri_count += nverts - 2;
+  }
+  const size_t tri_corner_count = tri_count * 3;
+  if (tri_count >= kMaxTriangulationCornerCount) {
+    warnings_.push_back("Mesh '" + mesh->prim_path +
+                        "' has too many triangulated corners (" +
+                        std::to_string(tri_corner_count) +
+                        "); skipping");
+    return false;
+  }
+  if (WouldOverflowSizeMul(tri_corner_count, sizeof(uint32_t)) ||
+      (tri_corner_count * sizeof(uint32_t)) > kMaxTempAllocBytes * 4u) {
+    warnings_.push_back("Mesh '" + mesh->prim_path +
+                        "' triangulated index allocation too large; skipping");
+    return false;
   }
 
   mesh->triangulated_indices.reserve(tri_count * 3);
@@ -3600,6 +3640,12 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
       if (config_.mesh.triangulation_method ==
               MeshConfig::TriangulationMethod::Earcut &&
           nverts > 4) {
+        if (nverts > kEarcutMaxVertices) {
+          // Extremely large polygons are safer with fan triangulation in this
+          // converter to avoid temporary O(nverts) geometry explosions in
+          // earcut allocation paths.
+          used_earcut = false;
+        } else {
         using Point2 = std::array<double, 2>;
         std::vector<std::vector<Point2>> polygon(1);
         polygon[0].reserve(nverts);
@@ -3648,6 +3694,7 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
           warnings_.push_back("Earcut failed for face " + std::to_string(f) +
                               " of " + mesh->prim_path +
                               "; using triangle fan fallback");
+        }
         }
       }
 

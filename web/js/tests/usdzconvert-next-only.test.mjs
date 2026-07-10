@@ -91,6 +91,12 @@ def Xform "World"
         point3f[] points = [(0, 0, 0), (0, 1, 0)]
     }
 
+    def HermiteCurves "Hermite"
+    {
+        int[] curveVertexCounts = [2]
+        point3f[] points = [(0, 0, 0), (0, 1, 0)]
+    }
+
     def Material "Mat"
     {
         token outputs:surface.connect = </World/Mat/Surface.outputs:surface>
@@ -242,8 +248,14 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
 
     const unsupported = stream.getUnsupportedRenderables();
     assert.ok(Array.isArray(unsupported), `${label}: unsupported renderables should be an array`);
-    assert.ok(unsupported.some((item) => item.type === 'BasisCurves' || /BasisCurves/i.test(item.reason || '')),
-      `${label}: unsupported diagnostics should include BasisCurves`);
+    // BasisCurves converts now; HermiteCurves stays reported-unsupported.
+    assert.ok(unsupported.some((item) => item.type === 'HermiteCurves' || /HermiteCurves/i.test(item.reason || '')),
+      `${label}: unsupported diagnostics should include HermiteCurves`);
+    assert.ok(!unsupported.some((item) => item.type === 'BasisCurves'),
+      `${label}: BasisCurves should no longer be reported unsupported`);
+    if (typeof stream.numCurves === 'function') {
+      assert.ok(stream.numCurves() >= 1, `${label}: BasisCurves should convert to render curves`);
+    }
 
     const animationCount = stream.numAnimations();
     assert.equal(typeof animationCount, 'number', `${label}: animation count should be numeric`);
