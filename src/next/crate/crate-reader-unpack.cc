@@ -250,12 +250,12 @@ bool CrateReader::Impl::UnpackVec3f(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
     // pxrUSD inlines integer-valued vectors/matrices as int8 components
     // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    // Reconstruct as Float3 — the rep type is Vec3f; producing Half3 here
+    // broke every as_float3() consumer (identity xformOp:scale/rotateXYZ).
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    uint16_t hv[3];
-    for (int i = 0; i < 3; ++i) hv[i] = FloatToHalf(float(b[i]));
-    out = Value::MakeFromRaw(TypeId::Half3, hv);
+    out = Value::MakeFloat3(float(b[0]), float(b[1]), float(b[2]));
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
@@ -269,12 +269,11 @@ bool CrateReader::Impl::UnpackVec4f(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
     // pxrUSD inlines integer-valued vectors/matrices as int8 components
     // packed in the low payload bytes (e.g. (1,0,0), identity matrix).
+    // Reconstruct as Float4 (rep type is Vec4f), not Half4 — see UnpackVec3f.
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    uint16_t hv[4];
-    for (int i = 0; i < 4; ++i) hv[i] = FloatToHalf(float(b[i]));
-    out = Value::MakeFromRaw(TypeId::Half4, hv);
+    out = Value::MakeFloat4(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;

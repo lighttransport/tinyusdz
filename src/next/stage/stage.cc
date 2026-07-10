@@ -55,12 +55,25 @@ bool UsdPrim::HasProperty(const std::string& name) const {
 
 const Value* UsdPrim::GetPropertyValue(const std::string& name) const {
   if (!spec_) return nullptr;
-  return spec_->property_value(name);
+  if (const Value* value = spec_->property_value(name)) return value;
+  return EarliestTimeSampleValue(GetPropNameTable().find(name));
 }
 
 const Value* UsdPrim::GetPropertyValue(PropNameId name_id) const {
   if (!spec_) return nullptr;
-  return spec_->property_value(name_id);
+  if (const Value* value = spec_->property_value(name_id)) return value;
+  return EarliestTimeSampleValue(name_id);
+}
+
+// Default-time value resolution matches OpenUSD (and legacy tydra): when a
+// property has no authored default but does have timeSamples, the samples are
+// consulted — use the earliest one. Without this, timeSamples-only xformOps
+// evaluate as missing and static transforms collapse to identity components.
+const Value* UsdPrim::EarliestTimeSampleValue(PropNameId name_id) const {
+  if (!spec_ || !name_id.is_valid()) return nullptr;
+  const auto* samples = spec_->time_samples(name_id);
+  if (!samples || samples->empty()) return nullptr;
+  return spec_->time_sample_value(samples->front().second);
 }
 
 std::vector<std::string> UsdPrim::GetPropertyNames() const {
