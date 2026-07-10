@@ -1430,7 +1430,9 @@ async function processUSDScene(usd_scene, filename) {
 	}
 
 	let nextBuiltNode = null;
+	let nextNodeIndexMap = null;
 	let nextTextureManager = null;
+	let nextTextureLoadPromise = null;
 	if (isNextScene(usd_scene)) {
 		const built = buildNextThreeNode(usd_scene, {
 			skipTextures: false,
@@ -1438,9 +1440,10 @@ async function processUSDScene(usd_scene, filename) {
 			releaseBuildData: false
 		});
 		nextBuiltNode = built.node;
+		nextNodeIndexMap = built.nodeIndexMap || null;
 		nextTextureManager = built.textureManager || null;
 		if (nextTextureManager) {
-			nextTextureManager.startLoading({
+			nextTextureLoadPromise = nextTextureManager.startLoading({
 				concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
 				yieldInterval: 16,
 				onTextureLoaded: (material) => { material.needsUpdate = true; }
@@ -1562,7 +1565,9 @@ async function processUSDScene(usd_scene, filename) {
 	// Build node index map BEFORE bones are added to the hierarchy.
 	// Adding bones changes the DFS traversal order, which would break
 	// the mapping from USD node indices to Three.js objects.
-	const nodeIndexMap = buildNodeIndexMap(threeNode);
+	// Next scenes use the RenderScene node-table map from buildNextThreeNode:
+	// animation target_node is a table index, not a DFS index.
+	const nodeIndexMap = nextNodeIndexMap || buildNodeIndexMap(threeNode);
 
 	// Set Z-up to Y-up conversion based on file metadata.
 	animationParams.convertZUp = (fileUpAxis.toUpperCase() === 'Z');
@@ -1739,15 +1744,27 @@ async function processUSDScene(usd_scene, filename) {
 	// BEFORE this point. The C++ destructor frees render_scene_ vectors, invalidating
 	// all typed_memory_view references (mesh.points, sampler.times/values, etc.).
 	// Keeping it alive retains the entire parsed USD scene in WASM heap memory.
-	if (usd_scene && typeof usd_scene.delete === 'function') {
-		usd_scene.delete();
-	}
-	window.usd_scene = null;
+	// Exception: next-backend lazy textures read archive bytes from the adapter
+	// asynchronously; adapter.delete() clears that archive map, so it must wait
+	// for texture loading to settle.
+	const releaseUSDScene = () => {
+		if (usd_scene && typeof usd_scene.delete === 'function') {
+			usd_scene.delete();
+		}
+		if (window.usd_scene === usd_scene) {
+			window.usd_scene = null;
+		}
 
-	// Hint GC after scene loading — processUSDScene creates many transient objects
-	// (WASM data copies, temporary matrices, skeleton building intermediaries) that
-	// should be collected before the animation loop starts allocating.
-	hintGC();
+		// Hint GC after scene loading — processUSDScene creates many transient objects
+		// (WASM data copies, temporary matrices, skeleton building intermediaries) that
+		// should be collected before the animation loop starts allocating.
+		hintGC();
+	};
+	if (nextTextureLoadPromise) {
+		nextTextureLoadPromise.then(releaseUSDScene);
+	} else {
+		releaseUSDScene();
+	}
 }
 
 /**

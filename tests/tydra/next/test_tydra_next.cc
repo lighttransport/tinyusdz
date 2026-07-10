@@ -737,9 +737,12 @@ def Xform "World"
   assert(rotate_clip->channels.size() == 1);
   assert(rotate_clip->channels[0].target_path == AnimationChannel::TargetPath::Rotation);
   assert(rotate_clip->channels[0].keyframes.size() == 2);
+  // Euler rotate ops are emitted as xyzw quaternions: 90 deg about Y ->
+  // (0, sin45, 0, cos45).
   assert(std::abs(rotate_clip->channels[0].keyframes[1].value.x) < 0.001f);
-  assert(std::abs(rotate_clip->channels[0].keyframes[1].value.y - 90.0f) < 0.001f);
+  assert(std::abs(rotate_clip->channels[0].keyframes[1].value.y - 0.70711f) < 0.001f);
   assert(std::abs(rotate_clip->channels[0].keyframes[1].value.z) < 0.001f);
+  assert(std::abs(rotate_clip->channels[0].keyframes[1].value.w - 0.70711f) < 0.001f);
 
   auto assert_custom_clip = [](const AnimationClip* clip,
                                const char* prop_name,

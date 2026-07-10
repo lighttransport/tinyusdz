@@ -898,11 +898,23 @@ export function buildNextThreeNode(adapter, {
     group.userData.localBoundsBox = sceneBox;
   }
 
+  // Animation channels address nodes by RenderScene node-table index
+  // (channel.target_node), NOT by DFS order over the three.js hierarchy —
+  // the built tree inserts wrapper groups and attaches renderables as extra
+  // children, so a generic buildNodeIndexMap(built.node) DFS would bind
+  // tracks to the wrong objects. Map table index -> group by prim path.
+  const nodeIndexMap = new Map();
+  for (const node of adapter.nodes || []) {
+    if (!node || node.error || !Number.isFinite(node.index)) continue;
+    const nodeGroup = nodeGroupByPath.get(node.primPath);
+    if (nodeGroup) nodeIndexMap.set(node.index, nodeGroup);
+  }
+
   if (releaseBuildData && adapter && typeof adapter.releaseBuildData === 'function') {
     adapter.releaseBuildData();
   }
 
-  return { node: group, textureManager };
+  return { node: group, textureManager, nodeIndexMap };
 }
 
 export function readNextSceneMeta(usd) {
