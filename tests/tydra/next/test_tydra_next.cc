@@ -2979,6 +2979,60 @@ def Xform "World"
   std::cout << "  Light linking + dome texture format: PASSED\n";
 }
 
+
+// Regression: a material whose surface shader is a MaterialX
+// standard_surface (unconvertible by both ConvertMaterial and the
+// standalone MaterialX path) used to mutually recurse
+// ConvertMaterial <-> ConvertUsdMtlxMaterial until stack overflow.
+void TestStandardSurfaceNoRecursion() {
+  std::cout << "Testing standard_surface conversion does not recurse...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Mat>
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/SS.outputs:out>
+
+        def Shader "SS"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.8, 0.2, 0.1)
+            token outputs:out
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  // Must terminate (no stack overflow) and keep the mesh; the material may be
+  // a fallback until a real standard_surface mapping lands.
+  assert(result.success);
+  assert(result.scene.meshes.size() == 1);
+
+  std::cout << "  standard_surface no-recursion: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -3024,6 +3078,7 @@ int main() {
   TestHalfPrecisionXformOps();
   TestMultiSkeletonJointRemap();
   TestLightLinkingAndDomeFormat();
+  TestStandardSurfaceNoRecursion();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

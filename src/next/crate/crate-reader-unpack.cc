@@ -51,7 +51,23 @@ bool CrateReader::Impl::UnpackUInt(ValueRep rep, Value& out) {
 
 bool CrateReader::Impl::UnpackInt64(ValueRep rep, Value& out) {
   if (rep.is_inlined()) {
-    out = Value(static_cast<int64_t>(rep.payload_as_offset()));
+    // pxr inlines int64 as an exact int32 in the low payload bits: a
+    // negative value has all-ones low 32 bits with ZERO high bits, so
+    // sign-extending from bit 47 (payload_as_offset) would decode -1 as
+    // +4294967295. Reinterpret the low 32 bits as int32 when the high
+    // payload bits are clear; keep the old-TinyUSDZ 48-bit sign extension
+    // only when they are set.
+    const uint64_t payload48 = rep.payload();
+    int64_t value = 0;
+    if ((payload48 >> 32) == 0) {
+      int32_t low32 = 0;
+      const uint32_t bits = static_cast<uint32_t>(payload48);
+      std::memcpy(&low32, &bits, sizeof(low32));
+      value = static_cast<int64_t>(low32);
+    } else {
+      value = rep.payload_as_offset();  // 48-bit sign extension
+    }
+    out = Value(value);
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
@@ -583,7 +599,11 @@ bool CrateReader::Impl::UnpackVec3h(ValueRep rep, Value& out) {
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeFloat3(float(b[0]), float(b[1]), float(b[2]));
+    // Keep the declared type: emit Half3 (raw half-bit lanes), not Float3 —
+    // the same attribute must not change TypeId based on whether pxr
+    // happened to inline it.
+    for (int i = 0; i < 3; ++i) raw[i] = FloatToHalf(float(b[i]));
+    out = Value::MakeFromRaw(TypeId::Half3, raw);
     return true;
   }
   {
@@ -600,7 +620,10 @@ bool CrateReader::Impl::UnpackVec4h(ValueRep rep, Value& out) {
     uint64_t p = rep.payload();
     int8_t b[8];
     for (int i = 0; i < 8; ++i) b[i] = static_cast<int8_t>((p >> (8 * i)) & 0xFF);
-    out = Value::MakeFloat4(float(b[0]), float(b[1]), float(b[2]), float(b[3]));
+    // Keep the declared type: emit Half4 (raw half-bit lanes), not Float4.
+    uint16_t half_bits[4];
+    for (int i = 0; i < 4; ++i) half_bits[i] = FloatToHalf(float(b[i]));
+    out = Value::MakeFromRaw(TypeId::Half4, half_bits);
     return true;
   }
   if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;

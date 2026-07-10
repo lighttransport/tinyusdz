@@ -551,7 +551,8 @@ bool MtlxConverter::ConvertFileToRenderMaterial(const std::string& filename,
 
 bool MtlxConverter::ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
                                             const tinyusdz::next::UsdPrim& material_prim,
-                                            RenderMaterial* out) {
+                                            RenderMaterial* out,
+                                            bool allow_converter_delegation) {
   if (!out) {
     error_ = "Output material is null";
     return false;
@@ -587,7 +588,10 @@ bool MtlxConverter::ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
   // Prefer the shared next render converter when the shader is material-local.
   // It already handles UsdPreviewSurface, MaterialX UsdPreviewSurface, and
   // OpenPBR inputs consistently with tusdview/tusdrender extraction.
-  if (shader_prim.GetParent().IsValid() &&
+  // Guarded: ConvertMaterial itself falls back to ConvertUsdMtlxMaterial when
+  // it cannot convert the shader, so delegating back from that path would
+  // recurse until stack overflow.
+  if (allow_converter_delegation && shader_prim.GetParent().IsValid() &&
       shader_prim.GetParent().GetPath().str() == material_prim.GetPath().str()) {
     RenderSceneConverter converter;
     if (converter.ConvertMaterial(stage, material_prim, out)) {
