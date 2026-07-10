@@ -3363,28 +3363,71 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     }
   }
   if (has_surface_connection) {
-    const Prim *shaderPrim{nullptr};
-    if (!env.stage.find_prim_at_path(
-            Path(surfacePath.prim_part(), /* prop part */ ""), shaderPrim,
-            &err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "{}'s outputs:surface isn't connected to exising Prim path.\n",
+    // Resolve the authored `outputs:surface` target to a Shader Prim.
+    const Shader *shader{nullptr};
+    {
+      const Prim *p{nullptr};
+      if (env.stage.find_prim_at_path(
+              Path(surfacePath.prim_part(), /* prop part */ ""), p, &err) &&
+          p) {
+        shader = p->as<Shader>();
+      }
+    }
+
+    auto is_supported_surface = [](const Shader *s) -> bool {
+      return s && (s->value.as<UsdPreviewSurface>() ||
+                   s->value.as<OpenPBRSurface>() ||
+                   s->value.as<MtlxOpenPBRSurface>() ||
+                   s->value.as<MtlxAutodeskStandardSurface>());
+    };
+
+    // Fallback for exporters (notably Unreal's USD export) that author
+    // `outputs:surface` as a connection to a reference-SOURCE prim path
+    // (e.g. `/MI_Foo/SurfaceShader`) which is not a standalone prim after
+    // composition, and/or to a custom shader whose info:id we don't
+    // recognize. The real UsdPreviewSurface is still composed in as a child
+    // of the Material, so recover by using the first supported surface-shader
+    // child under the Material prim instead of failing the whole material
+    // (which otherwise cascades to fail the ENTIRE scene load).
+    if (!is_supported_surface(shader)) {
+      const Prim *matPrim{nullptr};
+      std::string ferr;
+      if (env.stage.find_prim_at_path(Path(mat_abs_path.prim_part(), ""),
+                                      matPrim, &ferr) &&
+          matPrim) {
+        for (const Prim &child : matPrim->children()) {
+          const Shader *cs = child.as<Shader>();
+          if (is_supported_surface(cs)) {
+            shader = cs;
+            surfacePath = Path(mat_abs_path.prim_part() + std::string("/") +
+                                   child.element_name(),
+                               "outputs:surface");
+            PushWarn(fmt::format(
+                "{}'s outputs:surface did not resolve to a supported surface "
+                "shader; falling back to child shader `{}`.",
+                mat_abs_path.full_path_name(), child.element_name()));
+            break;
+          }
+        }
+      }
+    }
+
+    if (!is_supported_surface(shader)) {
+      // No usable surface shader. Match the unauthored-`outputs:surface`
+      // policy: fail only under strict checking, otherwise degrade to an
+      // unshaded material rather than aborting the whole scene load.
+      if (env.material_config.strict_material_check) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "{}'s outputs:surface isn't connected to a resolvable, supported "
+            "Shader Prim.\n",
+            mat_abs_path.full_path_name()));
+      }
+      PushWarn(fmt::format(
+          "{}'s outputs:surface isn't resolvable to a supported surface "
+          "shader; producing an unshaded material. (set "
+          "material_config.strict_material_check=true to make this an error.)",
           mat_abs_path.full_path_name()));
-    }
-
-    if (!shaderPrim) {
-      // this should not happen though.
-      PUSH_ERROR_AND_RETURN("[InternalError] invalid Shader Prim.\n");
-    }
-
-    const Shader *shader = shaderPrim->as<Shader>();
-
-    if (!shader) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("{}'s outputs:surface must be connected to Shader Prim, "
-                      "but connected to `{}` Prim.\n",
-                      shaderPrim->prim_type_name()));
-    }
+    } else {
 
     // Check for UsdPreviewSurface, OpenPBRSurface, MtlxOpenPBRSurface, or MtlxAutodeskStandardSurface
     const UsdPreviewSurface *psurface = shader->value.as<UsdPreviewSurface>();
@@ -3655,6 +3698,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         DCOUT("No MaterialX OpenPBR shader found for material with MaterialXConfigAPI");
       }
     }
+    }  // close: supported surface-shader dispatch (else of the fallback guard)
   }
 
   //
@@ -3774,11 +3818,28 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       const auto material_start = TydraPerfClock::now();
       if (!conv->ConvertMaterial(*visitorEnv->env, bound_material_path,
                                  *bound_material, &rmat)) {
-        if (err) {
-          (*err) += fmt::format("Material conversion failed: {}",
-                                bound_material_path);
+        // A material whose shader graph can't be fully converted (e.g. Unreal
+        // USD exports whose shader connections reference an un-composed
+        // reference-source path absent from the flattened stage) should not
+        // abort the ENTIRE scene load. Match the `strict_material_check`
+        // policy used for unresolved surfaces: fail only when strict,
+        // otherwise warn and substitute a default (unshaded) material so the
+        // rest of the scene still loads.
+        if (visitorEnv->env->material_config.strict_material_check) {
+          if (err) {
+            (*err) += fmt::format("Material conversion failed: {}",
+                                  bound_material_path);
+          }
+          return false;
         }
-        return false;
+        conv->PushWarn(fmt::format(
+            "Material conversion failed for `{}`; substituting a default "
+            "unshaded material. (set material_config.strict_material_check="
+            "true to make this fatal.)",
+            bound_material_path.full_path_name()));
+        rmat = RenderMaterial();
+        rmat.abs_path = bound_material_path.prim_part();
+        rmat.name = bound_material_path.element_name();
       }
       visitorEnv->convert_material_ns += ElapsedNs(material_start);
       visitorEnv->material_cache_misses++;
