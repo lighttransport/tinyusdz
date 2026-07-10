@@ -1907,7 +1907,12 @@ def "Root"
         assert(ch.value_stride == 4);
         assert(ch.element_count == 2);
         assert(ch.array_values.size() == 16);
-        assert(std::fabs(ch.array_values[15] - 1.0f) < 1e-4f);
+        // Channels are xyzw (three.js quaternion order); authored USDA quats
+        // are real-first. Frame 0 joint 0 = identity -> (0,0,0,1); frame 1
+        // joint 1 authored (0,0,0,1) [180deg about Z] -> (0,0,1,0).
+        assert(std::fabs(ch.array_values[3] - 1.0f) < 1e-4f);
+        assert(std::fabs(ch.array_values[14] - 1.0f) < 1e-4f);
+        assert(std::fabs(ch.array_values[15]) < 1e-4f);
       } else if (ch.property_name == "scales") {
         saw_scales = true;
         assert(ch.value_stride == 3);

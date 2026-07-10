@@ -64,16 +64,18 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // bindTransforms (uniform matrix4d[]) - stored as float array, convert to double
+  // bindTransforms (uniform matrix4d[]). Authored directly on the Skeleton
+  // prim (NOT primvar-namespaced — only mesh-side skel data like
+  // primvars:skel:jointIndices uses the primvars: prefix). matrix4d[] holds
+  // doubles; accept a float-backed Value as a fallback.
   {
-    const Value* val = prim.GetPropertyValue("primvars:skel:bindTransforms");
+    const Value* val = prim.GetPropertyValue("bindTransforms");
+    if (!val) val = prim.GetPropertyValue("primvars:skel:bindTransforms");
     if (val && val->is_array()) {
-      const std::vector<float>* farray = val->as_float_array();
-      if (farray) {
-        out->bindTransforms.resize(farray->size());
-        for (size_t i = 0; i < farray->size(); ++i) {
-          out->bindTransforms[i] = static_cast<double>((*farray)[i]);
-        }
+      if (const std::vector<double>* darray = val->as_double_array()) {
+        out->bindTransforms = *darray;
+      } else if (const std::vector<float>* farray = val->as_float_array()) {
+        out->bindTransforms.assign(farray->begin(), farray->end());
       }
     }
   }
@@ -93,16 +95,15 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // restTransforms (uniform matrix4d[]) - stored as float array, convert to double
+  // restTransforms (uniform matrix4d[]) — same addressing as bindTransforms.
   {
-    const Value* val = prim.GetPropertyValue("primvars:skel:restTransforms");
+    const Value* val = prim.GetPropertyValue("restTransforms");
+    if (!val) val = prim.GetPropertyValue("primvars:skel:restTransforms");
     if (val && val->is_array()) {
-      const std::vector<float>* farray = val->as_float_array();
-      if (farray) {
-        out->restTransforms.resize(farray->size());
-        for (size_t i = 0; i < farray->size(); ++i) {
-          out->restTransforms[i] = static_cast<double>((*farray)[i]);
-        }
+      if (const std::vector<double>* darray = val->as_double_array()) {
+        out->restTransforms = *darray;
+      } else if (const std::vector<float>* farray = val->as_float_array()) {
+        out->restTransforms.assign(farray->begin(), farray->end());
       }
     }
   }
@@ -138,13 +139,20 @@ bool ReadFloat3Array(const Value* val, std::vector<float>* out) {
 
 bool ReadQuatArray(const Value* val, std::vector<float>* out) {
   if (!val || !out) return false;
-  // quatf[] stored as float4[] in Value (xyzw)
+  // next-core Values keep quats REAL-FIRST (w, x, y, z): the crate reader
+  // swizzles GfQuat's imaginary-first layout on read, and USDA text authors
+  // quats real-first. SkelAnimationData's contract is xyzw (GPU / three.js
+  // quaternion order), so swizzle each element here.
   const std::vector<float>* arr = val->as_float_array();
-  if (arr) {
-    *out = *arr;
-    return true;
+  if (!arr || (arr->size() % 4) != 0) return false;
+  out->resize(arr->size());
+  for (size_t i = 0; i < arr->size(); i += 4) {
+    (*out)[i + 0] = (*arr)[i + 1];  // x
+    (*out)[i + 1] = (*arr)[i + 2];  // y
+    (*out)[i + 2] = (*arr)[i + 3];  // z
+    (*out)[i + 3] = (*arr)[i + 0];  // w (real)
   }
-  return false;
+  return true;
 }
 
 } // namespace
