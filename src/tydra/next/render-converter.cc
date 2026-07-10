@@ -275,7 +275,18 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
     return true;
   }
 
-  return ValueToFloat4(value, out);
+  if (!ValueToFloat4(value, out)) return false;
+
+  // next-core Values keep quats real-first (w, x, y, z); render animation
+  // channels use xyzw (three.js quaternion order). xformOp:orient is the
+  // quat-valued xform op.
+  const ::tinyusdz::next::TypeId tid = value.type_id();
+  if (tid == ::tinyusdz::next::TypeId::Quatf ||
+      tid == ::tinyusdz::next::TypeId::Quatd ||
+      tid == ::tinyusdz::next::TypeId::Quath) {
+    *out = Float4(out->y, out->z, out->w, out->x);
+  }
+  return true;
 }
 
 void AssignNodeDataId(RenderScene* scene,
