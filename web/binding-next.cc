@@ -1647,6 +1647,12 @@ class RenderStream {
     out.set("lightLinkTargets", VectorToArray(light.light_link_targets));
     out.set("shadowLinkTargets", VectorToArray(light.shadow_link_targets));
     out.set("filterTargets", VectorToArray(light.filter_targets));
+    // Resolved CollectionAPI membership: when *LinksAll is false, the
+    // *LinkMeshIndices arrays list the affected RenderScene mesh ids.
+    out.set("lightLinksAll", light.light_links_all);
+    out.set("lightLinkMeshIndices", VectorToArray(light.light_link_mesh_indices));
+    out.set("shadowLinksAll", light.shadow_links_all);
+    out.set("shadowLinkMeshIndices", VectorToArray(light.shadow_link_mesh_indices));
     out.set("enableShadow", light.enable_shadow);
     out.set("color", Float3Value(light.color));
     out.set("transform", MatrixValue(MatrixToArray(light.transform)));
@@ -1668,9 +1674,21 @@ class RenderStream {
       case tr::LightType::Spot:
         out.set("angle", light.params.spot.angle);
         break;
-      case tr::LightType::Dome:
+      case tr::LightType::Dome: {
         out.set("textureId", light.params.dome.texture_id);
+        const char* format = "automatic";
+        switch (light.params.dome.texture_format) {
+          case tr::RenderLight::DomeTextureFormat::Latlong:
+            format = "latlong"; break;
+          case tr::RenderLight::DomeTextureFormat::MirroredBall:
+            format = "mirroredBall"; break;
+          case tr::RenderLight::DomeTextureFormat::Angular:
+            format = "angular"; break;
+          default: break;
+        }
+        out.set("domeTextureFormat", std::string(format));
         break;
+      }
       case tr::LightType::Cylinder:
         out.set("radius", light.params.cylinder.radius);
         out.set("length", light.params.cylinder.length);

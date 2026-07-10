@@ -71,6 +71,19 @@ bool GetLightData(const Stage& stage, const UsdPrim& prim,
     out->color[2] = color[2];
   }
 
+  // ShadowAPI
+  out->shadow_enable = eval.EvalOr(prim, "inputs:shadow:enable", true);
+  float shadow_color[3] = {0.0f, 0.0f, 0.0f};
+  if (eval.EvalFloat3(prim, "inputs:shadow:color", shadow_color)) {
+    out->shadow_color[0] = shadow_color[0];
+    out->shadow_color[1] = shadow_color[1];
+    out->shadow_color[2] = shadow_color[2];
+  }
+  out->shadow_distance = eval.EvalOr(prim, "inputs:shadow:distance", -1.0f);
+  out->shadow_falloff = eval.EvalOr(prim, "inputs:shadow:falloff", -1.0f);
+  out->shadow_falloff_gamma =
+      eval.EvalOr(prim, "inputs:shadow:falloffGamma", 1.0f);
+
   return true;
 }
 
@@ -125,6 +138,15 @@ bool GetDomeLightData(const Stage& stage, const UsdPrim& prim,
 
   auto tex = eval.EvalAssetPath(prim, "inputs:texture:file");
   if (tex) out->texture_file = *tex;
+
+  // inputs:texture:format token -> 0=automatic, 1=latlong, 2=mirroredBall,
+  // 3=angular (matches the DomeLightData field comment).
+  if (auto format = eval.EvalToken(prim, "inputs:texture:format")) {
+    if (*format == "latlong") out->texture_format = 1;
+    else if (*format == "mirroredBall") out->texture_format = 2;
+    else if (*format == "angular") out->texture_format = 3;
+    else out->texture_format = 0;
+  }
 
   return true;
 }

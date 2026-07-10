@@ -1303,6 +1303,81 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
   }
 }
 
+bool PathIsAtOrUnder(const std::string& path, const std::string& root) {
+  if (root.empty() || path.empty()) return false;
+  if (path == root) return true;
+  return path.size() > root.size() &&
+         path.compare(0, root.size(), root) == 0 && path[root.size()] == '/';
+}
+
+// Resolve one CollectionAPI instance (collection:<name>:*) on a light prim
+// to RenderScene mesh indices, mirroring legacy ResolveLightLinking:
+// excludes take hierarchical precedence, includeRoot adds the light prim's
+// subtree, explicitOnly matches exact paths, expandPrims (default) and
+// expandPrimsAndProperties match descendants. Unauthored collections keep
+// *links_all = true (light affects everything); membershipExpression
+// collections are not evaluated (no path-expression parser in next) and
+// also keep the links-all default.
+void ResolveLightLinkInstance(const UsdPrim& prim, const RenderScene& scene,
+                              const std::string& instance_name,
+                              bool* links_all,
+                              std::vector<int32_t>* mesh_indices) {
+  const std::string base = "collection:" + instance_name + ":";
+  if (prim.HasProperty(base + "membershipExpression")) return;
+
+  const std::vector<::tinyusdz::next::Path>* includes =
+      prim.GetRelationship(base + "includes");
+  const std::vector<::tinyusdz::next::Path>* excludes =
+      prim.GetRelationship(base + "excludes");
+  if (!includes && !excludes) return;  // unauthored -> links all
+
+  bool include_root = false;
+  GetBool(prim, base + "includeRoot", &include_root);
+  std::string rule = "expandPrims";
+  GetToken(prim, base + "expansionRule", &rule);
+  const bool explicit_only = (rule == "explicitOnly");
+  const std::string& owner_path = prim.GetPath().str();
+
+  *links_all = false;
+  mesh_indices->clear();
+  for (size_t mi = 0; mi < scene.meshes.size(); ++mi) {
+    const std::string& mesh_path = scene.meshes[mi].prim_path;
+    bool excluded = false;
+    if (excludes) {
+      for (const ::tinyusdz::next::Path& p : *excludes) {
+        if (PathIsAtOrUnder(mesh_path, p.str())) { excluded = true; break; }
+      }
+    }
+    if (excluded) continue;
+
+    bool included = include_root && PathIsAtOrUnder(mesh_path, owner_path);
+    if (!included && includes) {
+      for (const ::tinyusdz::next::Path& p : *includes) {
+        if (explicit_only ? (mesh_path == p.str())
+                          : PathIsAtOrUnder(mesh_path, p.str())) {
+          included = true;
+          break;
+        }
+      }
+    }
+    if (included) mesh_indices->push_back(static_cast<int32_t>(mi));
+  }
+}
+
+void ResolveLightLinking(const Stage& stage, RenderScene* scene) {
+  if (!scene) return;
+  for (RenderLight& light : scene->lights) {
+    UsdPrim prim = stage.GetPrimAtPath(light.prim_path);
+    if (!prim.IsValid()) continue;
+    ResolveLightLinkInstance(prim, *scene, "lightLink",
+                             &light.light_links_all,
+                             &light.light_link_mesh_indices);
+    ResolveLightLinkInstance(prim, *scene, "shadowLink",
+                             &light.shadow_links_all,
+                             &light.shadow_link_mesh_indices);
+  }
+}
+
 std::vector<std::string> ReadRelationshipTargets(const UsdPrim& prim,
                                                  const std::string& name) {
   std::vector<std::string> out;
@@ -1761,6 +1836,8 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
 
     ResolveSkeletalAnimationTargets(&result.scene);
+
+    ResolveLightLinking(stage, &result.scene);
 
     if (config_.progress_callback) {
       config_.progress_callback(1.0f, "Conversion complete");
@@ -4459,6 +4536,25 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
     case LightType::Directional:
       GetFloat(prim, "inputs:angle", &out->params.distant.angle);
       break;
+    case LightType::Dome: {
+      std::string format;
+      if (GetToken(prim, "inputs:texture:format", &format)) {
+        if (format == "latlong") {
+          out->params.dome.texture_format =
+              RenderLight::DomeTextureFormat::Latlong;
+        } else if (format == "mirroredBall") {
+          out->params.dome.texture_format =
+              RenderLight::DomeTextureFormat::MirroredBall;
+        } else if (format == "angular") {
+          out->params.dome.texture_format =
+              RenderLight::DomeTextureFormat::Angular;
+        } else {
+          out->params.dome.texture_format =
+              RenderLight::DomeTextureFormat::Automatic;
+        }
+      }
+      break;
+    }
     default:
       break;
   }

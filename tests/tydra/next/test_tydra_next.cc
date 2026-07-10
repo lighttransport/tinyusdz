@@ -2866,6 +2866,119 @@ def Xform "World"
   std::cout << "  Multi-skeleton joint-order remap: PASSED\n";
 }
 
+// UsdLux depth: DomeLight inputs:texture:format token and CollectionAPI
+// light/shadow-link resolution to RenderScene mesh index sets.
+void TestLightLinkingAndDomeFormat() {
+  std::cout << "Testing light linking + dome texture format...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "GroundPlane"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
+    }
+
+    def Xform "Props"
+    {
+        def Mesh "Crate"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        }
+
+        def Mesh "Barrel"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)]
+        }
+    }
+
+    def SphereLight "KeyLight"
+    {
+        float inputs:intensity = 5
+        rel collection:lightLink:includes = [</World/Props>]
+        rel collection:lightLink:excludes = [</World/Props/Barrel>]
+        uniform token collection:lightLink:expansionRule = "expandPrims"
+        rel collection:shadowLink:includes = [</World/GroundPlane>]
+        uniform token collection:shadowLink:expansionRule = "explicitOnly"
+    }
+
+    def SphereLight "FillLight"
+    {
+        float inputs:intensity = 1
+    }
+
+    def DomeLight "Sky"
+    {
+        asset inputs:texture:file = @sky.exr@
+        token inputs:texture:format = "latlong"
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.meshes.size() == 3);
+
+  int ground = -1;
+  int crate = -1;
+  int barrel = -1;
+  for (size_t mi = 0; mi < result.scene.meshes.size(); ++mi) {
+    const std::string& path = result.scene.meshes[mi].prim_path;
+    if (path == "/World/GroundPlane") ground = static_cast<int>(mi);
+    if (path == "/World/Props/Crate") crate = static_cast<int>(mi);
+    if (path == "/World/Props/Barrel") barrel = static_cast<int>(mi);
+  }
+  assert(ground >= 0 && crate >= 0 && barrel >= 0);
+
+  const RenderLight* key = nullptr;
+  const RenderLight* fill = nullptr;
+  const RenderLight* sky = nullptr;
+  for (const RenderLight& light : result.scene.lights) {
+    if (light.prim_path == "/World/KeyLight") key = &light;
+    if (light.prim_path == "/World/FillLight") fill = &light;
+    if (light.prim_path == "/World/Sky") sky = &light;
+  }
+  assert(key && fill && sky);
+
+  // KeyLight: lightLink includes /World/Props subtree minus Barrel.
+  assert(!key->light_links_all);
+  assert(key->light_link_mesh_indices.size() == 1);
+  assert(key->light_link_mesh_indices[0] == crate);
+  // shadowLink explicitOnly: only the exact GroundPlane path matches.
+  assert(!key->shadow_links_all);
+  assert(key->shadow_link_mesh_indices.size() == 1);
+  assert(key->shadow_link_mesh_indices[0] == ground);
+
+  // FillLight: no collections authored -> links everything.
+  assert(fill->light_links_all);
+  assert(fill->shadow_links_all);
+
+  // DomeLight format token.
+  assert(sky->type == LightType::Dome);
+  assert(sky->params.dome.texture_format ==
+         RenderLight::DomeTextureFormat::Latlong);
+
+  std::cout << "  Light linking + dome texture format: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -2910,6 +3023,7 @@ int main() {
   TestMeshParityCleanups();
   TestHalfPrecisionXformOps();
   TestMultiSkeletonJointRemap();
+  TestLightLinkingAndDomeFormat();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

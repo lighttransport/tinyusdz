@@ -718,6 +718,24 @@ struct RenderLight {
   std::vector<std::string> shadow_link_targets;
   std::vector<std::string> filter_targets;
 
+  // Light/shadow linking resolved to RenderScene mesh indices (CollectionAPI
+  // collection:lightLink / collection:shadowLink relationship form). When the
+  // collection is unauthored the light links everything and *_links_all stays
+  // true; membershipExpression collections are not evaluated (no path
+  // expression parser in next) and also keep *_links_all = true.
+  bool light_links_all = true;
+  std::vector<int32_t> light_link_mesh_indices;
+  bool shadow_links_all = true;
+  std::vector<int32_t> shadow_link_mesh_indices;
+
+  // DomeLight inputs:texture:format token (matches UsdLux).
+  enum class DomeTextureFormat : uint8_t {
+    Automatic = 0,
+    Latlong,
+    MirroredBall,
+    Angular,
+  };
+
   // Transform
   Matrix4 transform;
 
@@ -727,7 +745,7 @@ struct RenderLight {
     struct { float width, height; } rect;
     struct { float radius; } disk;
     struct { float angle; } spot;  // Cone angle in radians
-    struct { int32_t texture_id; } dome;
+    struct { int32_t texture_id; DomeTextureFormat texture_format; } dome;
     struct { float radius, length; } cylinder;
     struct { float angle; } distant;  // Angular size in degrees
   } params = {};
