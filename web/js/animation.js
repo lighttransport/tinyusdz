@@ -3101,7 +3101,10 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		});
 		const built = buildNextThreeNode(usd_scene, {
 			skipTextures: false,
-			lazyTextures: true
+			lazyTextures: true,
+			// Animations/skinning are extracted from the adapter AFTER the
+			// build; the default releaseBuildData would wipe them.
+			releaseBuildData: false
 		});
 		if (built.textureManager) {
 			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
