@@ -1,0 +1,29 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "root"
+{
+    # Integer-valued float3/float4: pxr's crate writer inlines these as packed
+    # int8 components in the value rep. Regression: the reader must reconstruct
+    # them as Float3/Float4 (not Half3/Half4) so as_float3()/as_float4() work.
+    float3 xformOp:rotateXYZ = (0, 0, -64)
+    float3 xformOp:scale = (1, 1, 1)
+    double3 xformOp:translate = (22.5, 19.25, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+
+    def Mesh "quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        # Inlined (integer-valued) vec4 and a non-integer float3 control that
+        # takes the regular (non-inlined) payload path.
+        float4 primvars:testInlinedVec4 = (1, -2, 3, 4)
+        float3 primvars:testControlVec3 = (0.5, 1.5, -2.5)
+        float4 primvars:testControlVec4 = (0.25, 1.75, -3.5, 8.125)
+    }
+}

@@ -302,6 +302,79 @@ void test_openusd_compressed_value_reps_equal_raw_size() {
 }
 
 // ============================================================
+// Regression: pxr inlines integer-valued Vec3f/Vec4f as packed int8s in the
+// value rep. The reader must reconstruct them as Float3/Float4 — they were
+// unpacked as Half3/Half4, which no as_float3()/as_float4() consumer accepts
+// (xformOp:scale = (1,1,1) evaluated as identity). Fixture authored via pxr
+// usdcat from tests/usda/inlined-intvec-001.usda.
+// ============================================================
+
+void test_inlined_int_vec_reconstruction() {
+  std::cout << "Testing inlined integer-valued Vec3f/Vec4f reconstruction..." << std::endl;
+
+  const char* candidates[] = {
+    "../../../tests/usdc/inlined-intvec-001.usdc",
+    "../../tests/usdc/inlined-intvec-001.usdc",
+    "../tests/usdc/inlined-intvec-001.usdc",
+    "./tests/usdc/inlined-intvec-001.usdc",
+  };
+  const char* fixture = nullptr;
+  for (const char* path : candidates) {
+    std::ifstream f(path);
+    if (f.good()) { fixture = path; break; }
+  }
+  if (!fixture) {
+    std::cout << "  Skipping (tests/usdc/inlined-intvec-001.usdc not found from cwd)" << std::endl;
+    return;
+  }
+
+  USDCLoadResult result = LoadUSDCFromFile(fixture);
+  assert(result.success);
+
+  UsdPrim root = result.stage.GetPrimAtPath("/root");
+  assert(root.IsValid());
+
+  // Inlined (integer-valued) float3s must come back as Float3.
+  const Value* rot = root.GetPropertyValue("xformOp:rotateXYZ");
+  assert(rot && rot->type_id() == TypeId::Float3);
+  const float* rf = rot->as_float3();
+  assert(rf && rf[0] == 0.0f && rf[1] == 0.0f && rf[2] == -64.0f);
+
+  const Value* scale = root.GetPropertyValue("xformOp:scale");
+  assert(scale && scale->type_id() == TypeId::Float3);
+  const float* sf = scale->as_float3();
+  assert(sf && sf[0] == 1.0f && sf[1] == 1.0f && sf[2] == 1.0f);
+
+  // Non-integer double3 takes the regular payload path.
+  const Value* tr = root.GetPropertyValue("xformOp:translate");
+  assert(tr);
+  const double* td = tr->as_double3();
+  assert(td && td[0] == 22.5 && td[1] == 19.25 && td[2] == 0.0);
+
+  UsdPrim quad = result.stage.GetPrimAtPath("/root/quad");
+  assert(quad.IsValid());
+
+  // Inlined (integer-valued) float4 must come back as Float4.
+  const Value* v4 = quad.GetPropertyValue("primvars:testInlinedVec4");
+  assert(v4 && v4->type_id() == TypeId::Float4);
+  const float* v4f = v4->as_float4();
+  assert(v4f && v4f[0] == 1.0f && v4f[1] == -2.0f && v4f[2] == 3.0f && v4f[3] == 4.0f);
+
+  // Non-integer float3/float4 controls (non-inlined payload path).
+  const Value* c3 = quad.GetPropertyValue("primvars:testControlVec3");
+  assert(c3);
+  const float* c3f = c3->as_float3();
+  assert(c3f && c3f[0] == 0.5f && c3f[1] == 1.5f && c3f[2] == -2.5f);
+
+  const Value* c4 = quad.GetPropertyValue("primvars:testControlVec4");
+  assert(c4);
+  const float* c4f = c4->as_float4();
+  assert(c4f && c4f[0] == 0.25f && c4f[1] == 1.75f && c4f[2] == -3.5f && c4f[3] == 8.125f);
+
+  std::cout << "  Inlined integer-valued vec reconstruction passed!" << std::endl;
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -318,6 +391,7 @@ int main() {
     test_crate_reader_invalid();
     test_read_usdc_file();
     test_openusd_compressed_value_reps_equal_raw_size();
+    test_inlined_int_vec_reconstruction();
 
     std::cout << std::endl;
     std::cout << "All USDC tests passed!" << std::endl;
