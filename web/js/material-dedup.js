@@ -1288,6 +1288,14 @@ async function rebuild() {
 		updateStatsUI(counts, info);
 		setStatus(describeOptions());
 		startLazyTextureLoading();
+		// Without queued textures nothing else finishes the progress display:
+		// the scene-build phase tops out below 100% (base+range mapping) and
+		// hideProgress() only hides at >= 100. (With textures, the texture
+		// loader emits 'Textures complete'.)
+		if (!textureManager || textureManager.total <= 0) {
+			showProgress('complete', 100, 'Update complete');
+			hideProgress();
+		}
 		updateDebugHandle();
 	} catch (err) {
 		if (result) {
@@ -1296,6 +1304,7 @@ async function rebuild() {
 		releaseCurrentUSDResources();
 		console.error(err);
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		showProgress('failed', 100, 'Update failed');
 		updateDebugHandle();
 	}
 }
