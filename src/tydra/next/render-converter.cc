@@ -4037,6 +4037,24 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     }
   }
 
+  if (!found_shader) {
+    // No convertible surface shader. This happens for materials that only
+    // reference an engine source asset and author no UsdPreviewSurface — e.g.
+    // Unreal Engine USD exports whose surface is `outputs:unreal:surface` ->
+    // an `info:implementationSource = "sourceAsset"` shader
+    // (`info:unreal:sourceAsset = @...uasset@`), as in MetaHuman face/body
+    // materials — or whose surface connection doesn't resolve after
+    // composition. Emit a neutral default material rather than dropping it, so
+    // the mesh keeps its material binding and still renders. Mirrors the
+    // legacy tydra graceful-degradation behavior.
+    out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
+    out->preview_surface = std::make_unique<PreviewSurfaceShader>();
+    warnings_.push_back(
+        "Material '" + out->prim_path +
+        "' has no convertible surface shader; using a default material.");
+    found_shader = true;
+  }
+
   return found_shader;
 }
 
