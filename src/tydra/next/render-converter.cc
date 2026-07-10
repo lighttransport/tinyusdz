@@ -1487,6 +1487,13 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           mesh_prim.GetTypeName() == "Mesh"
               ? ConvertMesh(stage, mesh_prim, &mesh)
               : ConvertGeomPrimitive(mesh_prim, &mesh);
+      if (converted && mesh.has_alloc_failure()) {
+        // ConvertGeomPrimitive does not run ConvertMesh's alloc check.
+        warnings_.push_back("Out of memory converting prim '" +
+                            mesh_prim.GetPath().str() +
+                            "'; the prim was skipped");
+        continue;
+      }
       if (converted) {
         // Release chunk-allocation slack before retaining: thousands of small
         // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
@@ -1505,6 +1512,12 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
       if (rec.type_name != "Points") continue;
       RenderPoints points;
       if (ConvertPoints(rec.prim, &points)) {
+        if (points.points.alloc_failed() || points.widths.alloc_failed() ||
+            points.colors.alloc_failed()) {
+          warnings_.push_back("Out of memory converting Points '" + rec.path +
+                              "'; the prim was skipped");
+          continue;
+        }
         int32_t points_id = static_cast<int32_t>(result.scene.points.size());
         result.scene.points_by_path[points.prim_path] = points_id;
         result.scene.points.push_back(std::move(points));
@@ -1517,6 +1530,15 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.curves) {
       RenderCurves curves;
       if (ConvertCurves(rec.prim, &curves)) {
+        if (curves.points.alloc_failed() || curves.widths.alloc_failed() ||
+            curves.colors.alloc_failed() ||
+            curves.tessellated_points.alloc_failed() ||
+            curves.tessellated_widths.alloc_failed() ||
+            curves.tessellated_colors.alloc_failed()) {
+          warnings_.push_back("Out of memory converting curves '" + rec.path +
+                              "'; the prim was skipped");
+          continue;
+        }
         int32_t curves_id = static_cast<int32_t>(result.scene.curves.size());
         result.scene.curves_by_path[curves.prim_path] = curves_id;
         result.scene.curves.push_back(std::move(curves));
@@ -2161,7 +2183,11 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
         std::vector<float> reduced_weights;
         if (config_.mesh.enable_bone_reduction &&
             config_.mesh.target_bone_count > 0 &&
-            config_.mesh.target_bone_count < influences) {
+            config_.mesh.target_bone_count < influences &&
+            // ~8B per point-influence pair of temporaries; on a nearly-full
+            // heap keep the authored influences instead of abort()ing.
+            !WouldOverflowSizeMul(point_count, output_influences * 8) &&
+            ProbeAlloc(point_count * config_.mesh.target_bone_count * 8)) {
           output_influences = config_.mesh.target_bone_count;
           reduced_indices.resize(point_count * output_influences, 0);
           reduced_weights.resize(point_count * output_influences, 0.0f);
@@ -2273,6 +2299,16 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     ComputeVertexTangents(out);
   }
 
+  // A chunk allocation may have failed anywhere above (nothrow growth): the
+  // mesh data is truncated, so report and drop the prim instead of rendering
+  // partial geometry (or aborting the module, as a throwing new would under
+  // -fno-exceptions).
+  if (out->has_alloc_failure()) {
+    warnings_.push_back("Out of memory converting mesh '" + out->prim_path +
+                        "'; the prim was skipped");
+    return false;
+  }
+
   return true;
 }
 
@@ -2306,6 +2342,23 @@ bool RenderSceneConverter::ComputeVertexTangents(RenderMesh* mesh) {
 
   if ((!vertex_normals && !facevarying_normals) ||
       (!vertex_uvs && !facevarying_uvs)) {
+    return false;
+  }
+
+  // Pre-flight the temporary buffers: the corner-expanded MikkTSpace path
+  // allocates ~64B per triangulated corner and the Lengyel path ~40B per
+  // point. A failed probe skips tangents for this mesh (they are optional)
+  // instead of abort()ing the module under -fno-exceptions.
+  const size_t probe_bytes =
+      (config_.mesh.tangent_method ==
+           MeshConfig::TangentComputationMethod::Lengyel &&
+       vertex_normals && vertex_uvs)
+          ? np * (3 + 3 + 4) * sizeof(float)
+          : tri_corner_count * 64;
+  if (WouldOverflowSizeMul(tri_corner_count, 64) ||
+      !ProbeAlloc(probe_bytes)) {
+    warnings_.push_back("Out of memory computing tangents for mesh '" +
+                        mesh->prim_path + "'; tangents skipped");
     return false;
   }
 
@@ -3586,8 +3639,12 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
                           "' triangulated index allocation too large; skipping");
       return false;
     }
-    mesh->triangulated_indices.resize(n);
-    mesh->triangulated_face_vertex_indices.resize(n);
+    if (!mesh->triangulated_indices.resize(n) ||
+        !mesh->triangulated_face_vertex_indices.resize(n)) {
+      warnings_.push_back("Out of memory triangulating mesh '" +
+                          mesh->prim_path + "'");
+      return false;
+    }
     for (size_t i = 0; i < n; ++i) {
       mesh->triangulated_indices[i] = mesh->face_vertex_indices[i];
       mesh->triangulated_face_vertex_indices[i] = static_cast<uint32_t>(i);
@@ -3616,7 +3673,12 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     return false;
   }
 
-  mesh->triangulated_indices.reserve(tri_count * 3);
+  if (!mesh->triangulated_indices.reserve(tri_count * 3) ||
+      !mesh->triangulated_face_vertex_indices.reserve(tri_count * 3)) {
+    warnings_.push_back("Out of memory triangulating mesh '" +
+                        mesh->prim_path + "'");
+    return false;
+  }
   size_t idx_offset = 0;
   for (size_t f = 0; f < mesh->face_vertex_counts.size(); ++f) {
     const uint32_t nverts = mesh->face_vertex_counts[f];
@@ -3771,7 +3833,11 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
   size_t num_tris = mesh->triangulated_indices.size() / 3;
 
   // Initialize normals to zero
-  mesh->normals.resize(num_points * 3, 0.0f);
+  if (!mesh->normals.resize(num_points * 3, 0.0f)) {
+    warnings_.push_back("Out of memory computing normals for mesh '" +
+                        mesh->prim_path + "'");
+    return false;
+  }
 
   // Accumulate face normals at each vertex
   for (size_t t = 0; t < num_tris; ++t) {

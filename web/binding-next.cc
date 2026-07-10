@@ -2574,6 +2574,11 @@ class RenderStream {
         s_uv_.size() != vertex_count * 2) {
       return false;
     }
+    // ~40B/vertex of temporaries; fail the (optional) tangents instead of
+    // abort()ing when the heap is nearly full.
+    if (!tr::ProbeAlloc(vertex_count * (3 + 3 + 4) * sizeof(float))) {
+      return false;
+    }
 
     std::vector<float> tan(vertex_count * 3, 0.0f);
     std::vector<float> bit(vertex_count * 3, 0.0f);
@@ -2866,6 +2871,14 @@ class RenderStream {
         b = advanceFaceBase(b, n);
       }
       const size_t corners = slots.size();
+      // Pre-flight the expanded-soup buffers (~44B per corner incl. this
+      // scratch) so a huge mesh in a nearly-full heap fails this mesh with an
+      // error instead of abort()ing the module (-fno-exceptions).
+      if (!tr::ProbeAlloc(corners * 44)) {
+        s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+        if (err) *err = "Out of memory expanding mesh corners";
+        return false;
+      }
       s_points_.resize(corners * 3);
       s_point_source_indices_.resize(corners, 0);
       if (!UV.empty()) s_uv_.assign(corners * 2, 0.0f);
@@ -2911,6 +2924,22 @@ class RenderStream {
       }
     };
     std::unordered_map<WeldKey, uint32_t, WeldHash> weld;
+    // Pre-flight a coarse budget for the weld structures: the index buffer is
+    // ~4B per corner and the weld map ~56B per unique vertex (worst case one
+    // per corner). This turns the realistic huge-mesh OOM into a per-mesh
+    // error instead of an allocator abort; the map still grows incrementally.
+    {
+      size_t weld_corners = 0;
+      for (int32_t nn : fvc) {
+        if (nn >= 3) weld_corners += static_cast<size_t>(nn - 2) * 3;
+      }
+      const size_t probe = weld_corners * 4 +
+                           std::min(weld_corners, vtxCount ? vtxCount * 2 : weld_corners) * 56;
+      if (!tr::ProbeAlloc(probe)) {
+        if (err) *err = "Out of memory welding mesh vertices";
+        return false;
+      }
+    }
     // Welded vertices are bounded below by the point count; reserve to cut
     // rehash spikes (which transiently inflate the peak).
     constexpr size_t kMaxInitialWeldReserve = size_t(1) << 20;
@@ -3220,11 +3249,21 @@ class RenderStream {
     acc->source_count = 0;
   }
 
-  void appendToAccumulator_(const tinyusdz::next::UsdPrim &prim,
+  bool appendToAccumulator_(const tinyusdz::next::UsdPrim &prim,
                             int32_t material_id,
                             bool soup,
                             MergeAccumulator *acc) {
-    if (!acc) return;
+    if (!acc) return false;
+    // Pre-flight the accumulator growth (vector doubling can transiently need
+    // ~2x): a failed probe keeps this mesh unmerged instead of abort()ing.
+    {
+      const size_t add_bytes =
+          (s_points_.size() + s_normals_.size() + s_uv_.size()) * sizeof(float) +
+          s_indices_.size() * sizeof(uint32_t);
+      if (!tr::ProbeAlloc(add_bytes * 2 + acc->mesh.points.size() * sizeof(float))) {
+        return false;
+      }
+    }
     const std::array<double, 16> world = worldMatrix_(prim);
     if (acc->source_count == 0) {
       acc->mesh.soup = soup;
@@ -3268,6 +3307,7 @@ class RenderStream {
     }
     acc->source_count++;
     stats_.merged_mesh_count++;
+    return true;
   }
 
   void buildOptimizedOutputs_() {
@@ -3321,7 +3361,15 @@ class RenderStream {
           (next_vertices > kMaxGroupVertices || next_indices > kMaxGroupIndices)) {
         flushAccumulator_(&acc);
       }
-      appendToAccumulator_(prim, material_id, soup, &acc);
+      if (!appendToAccumulator_(prim, material_id, soup, &acc)) {
+        // Heap too full to merge: flush the group and emit this mesh unmerged.
+        flushAccumulator_(&acc);
+        OutputMesh out;
+        out.merged = false;
+        out.source_index = static_cast<int>(i);
+        outputs_.push_back(out);
+        stats_.skipped_merge_count++;
+      }
     }
     for (auto &kv : groups) flushAccumulator_(&kv.second);
     stats_.source_material_count = source_material_keys_.size();

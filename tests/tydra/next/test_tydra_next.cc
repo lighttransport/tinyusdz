@@ -110,6 +110,38 @@ void TestChunkedArrayShrinkToFit() {
   std::cout << "  ChunkedArray shrink_to_fit: PASSED\n";
 }
 
+void TestChunkedArrayAllocFailure() {
+  std::cout << "Testing ChunkedArray allocation-failure semantics...\n";
+
+  // An impossible growth request must fail cleanly (nothrow) instead of
+  // aborting: false return, alloc_failed() latched, contents untouched.
+  ChunkedArray<float> arr;
+  for (size_t i = 0; i < 10; ++i) arr.push_back(static_cast<float>(i));
+  assert(!arr.alloc_failed());
+
+  const size_t impossible = (std::numeric_limits<size_t>::max)() / 8;
+  assert(!arr.resize(impossible));
+  assert(arr.alloc_failed());
+  assert(arr.size() == 10);
+  for (size_t i = 0; i < 10; ++i) {
+    assert(arr[i] == static_cast<float>(i));
+  }
+
+  // reserve/append on the same impossible scale also fail cleanly.
+  assert(!arr.reserve(impossible));
+  float dummy = 0.0f;
+  assert(arr.append(&dummy, 0));  // zero-count append is a no-op success
+
+  // Small growth still works after a failed attempt (failure is latched for
+  // inspection but does not poison the array).
+  const size_t idx = arr.push_back(10.0f);
+  assert(idx == 10);
+  assert(arr.size() == 11);
+  assert(arr[10] == 10.0f);
+
+  std::cout << "  ChunkedArray allocation failure: PASSED\n";
+}
+
 void TestChunkedArrayLarge() {
   std::cout << "Testing ChunkedArray with large data...\n";
 
@@ -2402,6 +2434,7 @@ int main() {
   // ChunkedArray tests
   TestChunkedArrayBasic();
   TestChunkedArrayShrinkToFit();
+  TestChunkedArrayAllocFailure();
   TestChunkedArrayLarge();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();

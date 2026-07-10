@@ -307,6 +307,11 @@ struct RenderMesh {
   // small meshes otherwise pay the 64KB minimum chunk per non-empty array.
   void compact();
 
+  // True when any chunked member failed a (nothrow) chunk allocation during
+  // conversion — the mesh is incomplete and must be dropped with an error
+  // instead of silently rendering truncated data.
+  bool has_alloc_failure() const;
+
   // Authored winding: `orientation = "leftHanded"`. Triangulation emits
   // reversed (rightHanded) winding for these meshes so consumers can treat
   // triangulated_indices as CCW uniformly; computed normals follow.
