@@ -1631,6 +1631,7 @@ async function processUSDScene(usd_scene, filename) {
 		const animationData = extractUSDSceneAnimations(usd_scene, {
 			boneMaps,
 			nodeIndexMap,
+			threeRoot: threeNode,
 			timeCodesPerSecond,
 			logger: console
 		});
