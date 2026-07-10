@@ -1654,7 +1654,7 @@ async function processUSDScene(usd_scene, filename) {
 
 		if (window.updateAnimationList) {
 			if (animationData.hasAnyAnimation) {
-				window.updateAnimationList(usdAnimations, animationData.animationInfos);
+				window.updateAnimationList(usdAnimations, animationData.animationInfos, timeCodesPerSecond);
 			} else {
 				window.updateAnimationList([], []);
 			}
