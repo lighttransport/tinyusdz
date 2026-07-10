@@ -101,6 +101,11 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # PCP-style lazy composition cache (native to next)
     pcp/layer-registry.cc
+    # MaterialX XML stack (dependency-free): layer-registry synthesizes
+    # /MaterialX layers from referenced .mtlx documents.
+    ../mtlx-xml-tokenizer.cc
+    ../mtlx-xml-parser.cc
+    ../mtlx-dom.cc
     pcp/load-rules.cc
     pcp/cache.cc
 
@@ -491,9 +496,6 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../external/mikktspace/mikktspace.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.cc
 )
 
 set(TYDRA_NEXT_HEADERS
