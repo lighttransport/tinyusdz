@@ -572,6 +572,7 @@ const loaderState = {
 // Scene state
 const sceneState = {
     root: null,
+    nextNodeIndexMap: null,
     materials: [],
     materialData: [],
     textureCache: new Map(),
@@ -1305,7 +1306,10 @@ function convertUSDAnimationsToThreeJS(usdLoader, root) {
 
     if (numAnimations === 0) return clips;
 
-    const nodeIndexMap = buildNodeIndexMap(root);
+    // Next animation target_node is a RenderScene node-table index; use the
+    // table map from buildNextThreeNode when present, not a DFS walk (the
+    // next tree inserts wrapper groups, so DFS indices drift).
+    const nodeIndexMap = sceneState.nextNodeIndexMap || buildNodeIndexMap(root);
 
     for (let i = 0; i < numAnimations; i++) {
         const usdAnimation = usdLoader.getAnimation(i);
@@ -2137,6 +2141,7 @@ async function loadUSDFromData(data, filename, stats = null) {
                 lazyTextures: !settings.skipTextures
             });
             sceneState.root = built.node;
+            sceneState.nextNodeIndexMap = built.nodeIndexMap || null;
             threeState.scene.add(sceneState.root);
             if (built.textureManager && !settings.skipTextures) {
                 startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
@@ -2349,6 +2354,7 @@ async function buildSceneGraph() {
 
     // Build Three.js scene graph from USD hierarchy
     traceLoadPhase('buildSceneGraph:buildThreeNode:start');
+    sceneState.nextNodeIndexMap = null;
     sceneState.root = await TinyUSDZLoaderUtils.buildThreeNode(
         usdRootNode,
         defaultMtl,
@@ -3306,6 +3312,7 @@ function clearScene() {
 
     sceneState.materials = [];
     sceneState.materialData = [];
+    sceneState.nextNodeIndexMap = null;
 
     // Dispose texture cache
     sceneState.textureCache.forEach(texture => {

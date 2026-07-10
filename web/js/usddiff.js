@@ -463,7 +463,7 @@ els.btnDiff.addEventListener('click', async () => {
     lastText = res.text || '';
     try { lastJson = res.json ? JSON.parse(res.json) : null; } catch (_) { lastJson = null; }
     render();
-    setStatus(res.hasDiffs ? 'Differences found.' : 'No differences.');
+    setStatus(res.hasDiffs ? 'Differences found.' : 'No differences found.');
   } catch (err) {
     els.raw.style.display = 'block'; els.report.style.display = 'none';
     els.raw.textContent = 'Error: ' + (err && err.message ? err.message : err);
@@ -475,3 +475,26 @@ els.btnDiff.addEventListener('click', async () => {
 
 setStatus('Pick two USD files to compare.');
 render();
+
+// URL-driven compare: ?left=<url>&right=<url> fetches both files and runs
+// the diff automatically (used by the browser regression suite).
+(async () => {
+  const params = new URLSearchParams(window.location.search);
+  const leftUrl = params.get('left');
+  const rightUrl = params.get('right');
+  if (!leftUrl || !rightUrl) return;
+  const fetchSide = async (slot, url) => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`fetch ${url}: HTTP ${res.status}`);
+    const name = decodeURIComponent(url.split('?')[0].split('#')[0].split('/').pop() || slot);
+    files[slot] = { name, data: new Uint8Array(await res.arrayBuffer()), readMs: 0 };
+  };
+  try {
+    setStatus('Fetching files from URL…');
+    await Promise.all([fetchSide('left', leftUrl), fetchSide('right', rightUrl)]);
+    refresh();
+    els.btnDiff.click();
+  } catch (err) {
+    setStatus('Failed to load URL inputs: ' + (err && err.message ? err.message : err));
+  }
+})();

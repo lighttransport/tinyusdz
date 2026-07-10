@@ -581,7 +581,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			const info = animationInfos[i];
 			const srcType = info?.sourceType || 'Unknown';
 			const joints = info?.numAnimatedJoints ?? 0;
-			console.log(`  Clip ${i}: "${clip.name}" — ${clip.duration.toFixed(2)}s, ${clip.tracks.length} tracks, source: ${srcType}, joints: ${joints}`);
+			console.log(`  Clip ${i}: "${clip.name}" — ${clip.duration.toFixed(0)} frames (${(clip.duration / sceneTimeCodesPerSecond).toFixed(2)}s), ${clip.tracks.length} tracks, source: ${srcType}, joints: ${joints}`);
 		});
 	} catch (err) {
 		console.error('Animation extraction failed:', err);
