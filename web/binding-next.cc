@@ -2524,7 +2524,7 @@ class RenderStream {
       }
     }
     out.set("localMatrix", matArray_(localMatrix_(prim)));
-    out.set("worldMatrix", matArray_(worldMatrix_(prim)));
+    out.set("worldMatrix", matArray_(worldMatrixForPrim_(prim)));
     const int32_t material_id = materialIdForBoundPrim_(prim);
     out.set("materialId", material_id);
     out.set("material", materialObject_(material_id));
@@ -3264,7 +3264,7 @@ class RenderStream {
         return false;
       }
     }
-    const std::array<double, 16> world = worldMatrix_(prim);
+    const std::array<double, 16> world = worldMatrixForPrim_(prim);
     if (acc->source_count == 0) {
       acc->mesh.soup = soup;
       acc->mesh.material_id = material_id;
@@ -3340,7 +3340,7 @@ class RenderStream {
       }
       const bool has_normals = !s_normals_.empty();
       const bool has_uv = !s_uv_.empty();
-      const std::array<double, 16> world = worldMatrix_(prim);
+      const std::array<double, 16> world = worldMatrixForPrim_(prim);
       std::ostringstream key;
       key << material_id << "|soup=" << soup << "|n=" << has_normals
           << "|uv=" << has_uv;
@@ -3566,6 +3566,28 @@ class RenderStream {
       world = multiplyMatrix_(local, world);
     }
     return world;
+  }
+
+  // World transform for a prim, preferring the RenderScene node table: its
+  // hierarchy traversal handles native instances correctly, while the plain
+  // GetParent() chain in worldMatrix_ drops the instance root's own xform.
+  std::array<double, 16> worldMatrixForPrim_(
+      const tinyusdz::next::UsdPrim &prim) const {
+    if (render_scene_valid_) {
+      const auto it = render_scene_.node_by_path.find(prim.GetPath().str());
+      if (it != render_scene_.node_by_path.end() && it->second >= 0 &&
+          static_cast<size_t>(it->second) < render_scene_.nodes.size()) {
+        const tr::SceneNode &node =
+            render_scene_.nodes[static_cast<size_t>(it->second)];
+        std::array<double, 16> world;
+        for (int i = 0; i < 16; ++i) {
+          world[static_cast<size_t>(i)] =
+              static_cast<double>(node.world_transform.m[i]);
+        }
+        return world;
+      }
+    }
+    return worldMatrix_(prim);
   }
 
   emscripten::val materialObjectForPrim_(

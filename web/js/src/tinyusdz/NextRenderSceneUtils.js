@@ -559,9 +559,12 @@ export function buildNextThreeNode(adapter, {
   // UsdSkel needs it: skeleton binding and mesh placement must share the
   // ancestor transforms (e.g. axis-correcting Z_UP xforms), and
   // findNodeByUSDPath walks nodes by prim name like the legacy tree.
-  // Renderables attach at their prim's node with IDENTITY local transform;
-  // anything without a node falls back to flat baked-world placement.
-  const contentGroupByTypeId = new Map();  // `${nodeType}:${contentId}` -> Group
+  // Renderables attach at their prim's node — matched by PRIM PATH, never by
+  // data id: the adapter indexes renderables by schema order while node
+  // dataId refers to RenderScene ids, and the two drift when the converter
+  // skips a prim. Anything without a node falls back to flat baked-world
+  // placement.
+  const nodeGroupByPath = new Map();
   const buildNodeGroup = (node, seen) => {
     if (!node || !node.absPath || seen.has(node.absPath)) return null;
     seen.add(node.absPath);
@@ -572,10 +575,7 @@ export function buildNextThreeNode(adapter, {
       applyUsdRowMajorMatrix(g, node.localMatrix);
     }
     if (node.visible === false) g.visible = false;
-    if (Number.isFinite(node.contentId) && node.contentId >= 0) {
-      const key = `${node.nodeType}:${node.contentId}`;
-      if (!contentGroupByTypeId.has(key)) contentGroupByTypeId.set(key, g);
-    }
+    nodeGroupByPath.set(node.absPath, g);
     for (const child of (node.children || [])) {
       const childGroup = buildNodeGroup(child, seen);
       if (childGroup) g.add(childGroup);
@@ -593,8 +593,8 @@ export function buildNextThreeNode(adapter, {
   // Attach a renderable under its prim's node (identity local: the node chain
   // carries the transform). Returns true when attached; false -> caller keeps
   // the flat baked-world placement.
-  const attachAtNode = (object3d, nodeType, contentId) => {
-    const parent = contentGroupByTypeId.get(`${nodeType}:${contentId}`);
+  const attachAtNode = (object3d, primPath) => {
+    const parent = primPath ? nodeGroupByPath.get(primPath) : null;
     if (!parent) return false;
     parent.add(object3d);
     return true;
@@ -747,7 +747,7 @@ export function buildNextThreeNode(adapter, {
         }))
       })) : []
     };
-    if (!attachAtNode(threeMesh, 'mesh', mesh.index)) {
+    if (!attachAtNode(threeMesh, mesh.primPath)) {
       applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);
       group.add(threeMesh);
     }
@@ -799,7 +799,7 @@ export function buildNextThreeNode(adapter, {
       hasColors
     };
     const pointNode = pointNodes.get(pointCloud.index);
-    if (!attachAtNode(threePoints, 'points', pointCloud.index)) {
+    if (!attachAtNode(threePoints, pointCloud.primPath)) {
       applyUsdRowMajorMatrix(threePoints, pointNode?.worldMatrix);
       group.add(threePoints);
     }
@@ -884,7 +884,7 @@ export function buildNextThreeNode(adapter, {
     }
 
     const curveNode = curveNodes.get(curveSet.index);
-    if (!attachAtNode(curveGroup, 'curves', curveSet.index)) {
+    if (!attachAtNode(curveGroup, curveSet.primPath)) {
       applyUsdRowMajorMatrix(curveGroup, curveNode?.worldMatrix);
       group.add(curveGroup);
     }
