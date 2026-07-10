@@ -548,7 +548,8 @@ const Value* PropAtTime(const UsdPrim& prim, const std::string& name,
 }
 
 // Read a 3-component op value (translate/scale/rotate) as double, trying
-// float3 then double3 (matches the legacy evaluator's exact-type promotion).
+// float3 then double3 (matches the legacy evaluator's exact-type promotion),
+// then the converting read for authored half3 (raw half-bit lanes).
 bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3],
                double time) {
   const Value* val = PropAtTime(prim, name, time);
@@ -561,6 +562,11 @@ bool ReadVec3D(const UsdPrim& prim, const std::string& name, double v[3],
     v[0] = d[0]; v[1] = d[1]; v[2] = d[2];
     return true;
   }
+  float h[3];
+  if (val->to_float3(h)) {
+    v[0] = double(h[0]); v[1] = double(h[1]); v[2] = double(h[2]);
+    return true;
+  }
   return false;
 }
 
@@ -570,6 +576,8 @@ bool ReadFloat1D(const UsdPrim& prim, const std::string& name, double* out,
   if (!val) return false;
   if (const float* f = val->as_float()) { *out = double(*f); return true; }
   if (const double* d = val->as_double()) { *out = *d; return true; }
+  float h = 0.0f;
+  if (val->to_float(&h)) { *out = double(h); return true; }
   return false;
 }
 
@@ -698,10 +706,13 @@ bool EvalLocalXformD(const UsdPrim& prim, double* out, bool* reset, double time)
       const Value* val = PropAtTime(prim, tok, time);
       double q[4] = {1, 0, 0, 0};  // w,x,y,z
       if (val) {
+        float h[4];
         if (const float* f = val->as_float4()) {
           q[0] = f[0]; q[1] = f[1]; q[2] = f[2]; q[3] = f[3];
         } else if (const double* d = val->as_double4()) {
           q[0] = d[0]; q[1] = d[1]; q[2] = d[2]; q[3] = d[3];
+        } else if (val->to_float4(h)) {  // authored quath (half-bit lanes)
+          q[0] = h[0]; q[1] = h[1]; q[2] = h[2]; q[3] = h[3];
         }
       }
       if (inverted) { q[1] = -q[1]; q[2] = -q[2]; q[3] = -q[3]; }

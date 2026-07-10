@@ -1058,6 +1058,114 @@ const double* Value::as_double3() const {
   return reinterpret_cast<const double*>(storage_);
 }
 
+// ============================================================
+// Converting scalar reads (to_float*): unlike the as_* accessors, these
+// widen raw-half SBO scalars (authored half/half3/... store half-bit lanes,
+// not floats) and narrow double-backed values. Lanes are copied in storage
+// order — quat conventions are the caller's concern, same as as_float4().
+// ============================================================
+
+namespace {
+
+// Same conversion as crate-format.hh HalfToFloat (kept local: the types
+// layer must not depend on the crate reader).
+inline float HalfBitsToFloat(uint16_t h) {
+  const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+  uint32_t exponent = (h >> 10) & 0x1Fu;
+  uint32_t mantissa = h & 0x3FFu;
+  uint32_t bits;
+  if (exponent == 0) {
+    if (mantissa == 0) {
+      bits = sign;  // +/- 0
+    } else {
+      // Subnormal half -> normalized float
+      exponent = 127 - 15 + 1;
+      while ((mantissa & 0x400u) == 0) {
+        mantissa <<= 1;
+        exponent--;
+      }
+      mantissa &= 0x3FFu;
+      bits = sign | (exponent << 23) | (mantissa << 13);
+    }
+  } else if (exponent == 0x1Fu) {
+    bits = sign | 0x7F800000u | (mantissa << 13);  // inf / nan
+  } else {
+    bits = sign | ((exponent - 15 + 127) << 23) | (mantissa << 13);
+  }
+  float f;
+  std::memcpy(&f, &bits, sizeof(f));
+  return f;
+}
+
+inline int HalfLaneCount(TypeId id) {
+  switch (id) {
+    case TypeId::Half: return 1;
+    case TypeId::Half2:
+    case TypeId::Texcoord2h: return 2;
+    case TypeId::Half3:
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+    case TypeId::Texcoord3h: return 3;
+    case TypeId::Half4:
+    case TypeId::Quath:
+    case TypeId::Color4h: return 4;
+    default: return 0;
+  }
+}
+
+}  // namespace
+
+bool Value::ToFloatLanes(int lanes, float* out) const {
+  if (!out || is_array_) return false;
+  if (HalfLaneCount(type_id_) == lanes) {
+    const uint16_t* bits = reinterpret_cast<const uint16_t*>(storage_);
+    for (int i = 0; i < lanes; ++i) out[i] = HalfBitsToFloat(bits[i]);
+    return true;
+  }
+  switch (lanes) {
+    case 1:
+      if (const float* f = as_float()) { out[0] = *f; return true; }
+      if (const double* d = as_double()) { out[0] = static_cast<float>(*d); return true; }
+      return false;
+    case 2:
+      if (const float* f = as_float2()) { out[0] = f[0]; out[1] = f[1]; return true; }
+      if (const double* d = as_double2()) {
+        for (int i = 0; i < 2; ++i) out[i] = static_cast<float>(d[i]);
+        return true;
+      }
+      return false;
+    case 3:
+      if (const float* f = as_float3()) {
+        for (int i = 0; i < 3; ++i) out[i] = f[i];
+        return true;
+      }
+      if (const double* d = as_double3()) {
+        for (int i = 0; i < 3; ++i) out[i] = static_cast<float>(d[i]);
+        return true;
+      }
+      return false;
+    case 4:
+      if (const float* f = as_float4()) {
+        for (int i = 0; i < 4; ++i) out[i] = f[i];
+        return true;
+      }
+      if (const double* d = as_double4()) {
+        for (int i = 0; i < 4; ++i) out[i] = static_cast<float>(d[i]);
+        return true;
+      }
+      return false;
+    default:
+      return false;
+  }
+}
+
+bool Value::to_float(float* out) const { return ToFloatLanes(1, out); }
+bool Value::to_float2(float* out) const { return ToFloatLanes(2, out); }
+bool Value::to_float3(float* out) const { return ToFloatLanes(3, out); }
+bool Value::to_float4(float* out) const { return ToFloatLanes(4, out); }
+
 const double* Value::as_double4() const {
   if (type_id_ != TypeId::Double4 && type_id_ != TypeId::Quatd &&
       type_id_ != TypeId::Color4d) return nullptr;
