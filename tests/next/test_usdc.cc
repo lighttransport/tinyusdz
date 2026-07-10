@@ -378,6 +378,64 @@ void test_inlined_int_vec_reconstruction() {
 // Main
 // ============================================================
 
+
+// Regression: pxr inlines int64 as an exact int32 in the low payload bits —
+// sign-extending from bit 47 decoded -1 as +4294967295. Also: inlined
+// integer-valued half3/half4 must keep TypeId::Half3/Half4 (they were
+// reconstructed as Float3/Float4, mutating the type based on whether pxr
+// happened to inline the value). Fixture authored via pxr usdcat from
+// tests/usda/inlined-scalar-001.usda.
+void test_inlined_scalar_reconstruction() {
+  std::cout << "Testing inlined int64 / half-vector reconstruction..." << std::endl;
+
+  const char* candidates[] = {
+    "../../../tests/usdc/inlined-scalar-001.usdc",
+    "../../tests/usdc/inlined-scalar-001.usdc",
+    "../tests/usdc/inlined-scalar-001.usdc",
+    "./tests/usdc/inlined-scalar-001.usdc",
+  };
+  const char* fixture = nullptr;
+  for (const char* path : candidates) {
+    std::ifstream f(path);
+    if (f.good()) { fixture = path; break; }
+  }
+  if (!fixture) {
+    std::cout << "  Skipping (tests/usdc/inlined-scalar-001.usdc not found from cwd)" << std::endl;
+    return;
+  }
+
+  USDCLoadResult result = LoadUSDCFromFile(fixture);
+  assert(result.success);
+  UsdPrim prim = result.stage.GetPrimAtPath("/T");
+  assert(prim.IsValid());
+
+  auto expect_i64 = [&prim](const char* name, int64_t expected) {
+    const Value* v = prim.GetPropertyValue(name);
+    assert(v);
+    const int64_t* iv = v->as_int64();
+    assert(iv && *iv == expected);
+  };
+  expect_i64("negOne", -1);          // inlined (int32-representable)
+  expect_i64("negBig", -2000000000); // inlined
+  expect_i64("posSmall", 42);        // inlined
+  expect_i64("nonInlined", 5000000000LL);
+
+  // Inlined half vectors keep their declared type and exact lanes.
+  const Value* hv = prim.GetPropertyValue("hv");
+  assert(hv && hv->type_id() == TypeId::Half3);
+  float h3[3];
+  assert(hv->to_float3(h3));
+  assert(h3[0] == 1.0f && h3[1] == 2.0f && h3[2] == 3.0f);
+
+  const Value* hv4 = prim.GetPropertyValue("hv4");
+  assert(hv4 && hv4->type_id() == TypeId::Half4);
+  float h4[4];
+  assert(hv4->to_float4(h4));
+  assert(h4[0] == 1.0f && h4[1] == -2.0f && h4[2] == 3.0f && h4[3] == 4.0f);
+
+  std::cout << "  Inlined int64 / half-vector reconstruction passed!" << std::endl;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Reader Tests ===" << std::endl;
   std::cout << std::endl;
@@ -392,6 +450,7 @@ int main() {
     test_read_usdc_file();
     test_openusd_compressed_value_reps_equal_raw_size();
     test_inlined_int_vec_reconstruction();
+    test_inlined_scalar_reconstruction();
 
     std::cout << std::endl;
     std::cout << "All USDC tests passed!" << std::endl;

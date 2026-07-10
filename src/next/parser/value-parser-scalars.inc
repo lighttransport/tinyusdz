@@ -179,7 +179,10 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
 
   for (size_t i = 0; i < count; i++) {
     const Token& tok = lexer.peek();
-    if (tok.type != TokenType::Number) {
+    if (tok.type != TokenType::Number ||
+        !IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
+      // DecimalToI32 stops at the first non-digit, so "1e3" would silently
+      // become 1 — reject non-integer tokens like the scalar path does.
       lexer.set_error("Expected integer in tuple");
       return false;
     }
@@ -206,6 +209,10 @@ bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
     }
     if (!tok.value.empty() && tok.value[0] == '-') {
       lexer.set_error("Expected non-negative unsigned integer in tuple");
+      return false;
+    }
+    if (!IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+      lexer.set_error("Expected unsigned integer in tuple");
       return false;
     }
     out[i] = DecimalToU32(tok.value.c_str());

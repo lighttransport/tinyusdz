@@ -1046,6 +1046,19 @@ bool ExtractTextureNodeData(const Stage& stage,
                             TextureNodeData* out) {
   if (!out || !texture_prim.IsValid()) return false;
 
+  // colorSpace asset metadata on inputs:file takes precedence over the
+  // sourceColorSpace attribute (legacy tydra resolution order). Applied on
+  // BOTH extraction branches — the UsdUVTexture fast path below returns
+  // early.
+  auto apply_file_meta_color_space = [&texture_prim, out]() {
+    if (const ::tinyusdz::next::PropMeta* file_meta =
+            texture_prim.GetPropertyMeta("inputs:file")) {
+      if (!file_meta->colorSpace.empty()) {
+        out->source_color_space = file_meta->colorSpace;
+      }
+    }
+  };
+
   ::tinyusdz::next::UVTextureData uv;
   if (::tinyusdz::next::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
     out->file = uv.file;
@@ -1054,6 +1067,7 @@ bool ExtractTextureNodeData(const Stage& stage,
     out->source_color_space = uv.source_color_space;
     std::memcpy(out->scale, uv.scale, sizeof(out->scale));
     std::memcpy(out->bias, uv.bias, sizeof(out->bias));
+    apply_file_meta_color_space();
     TraceTextureStChain(stage, texture_prim, out);
     return !out->file.empty();
   }
@@ -1085,14 +1099,7 @@ bool ExtractTextureNodeData(const Stage& stage,
   if (std::optional<std::string> cs = eval.EvalToken(texture_prim, "inputs:sourceColorSpace")) {
     out->source_color_space = *cs;
   }
-  // colorSpace asset metadata on inputs:file takes precedence over the
-  // sourceColorSpace attribute (matches legacy tydra resolution order).
-  if (const ::tinyusdz::next::PropMeta* file_meta =
-          texture_prim.GetPropertyMeta("inputs:file")) {
-    if (!file_meta->colorSpace.empty()) {
-      out->source_color_space = file_meta->colorSpace;
-    }
-  }
+  apply_file_meta_color_space();
   TraceTextureStChain(stage, texture_prim, out);
 
   return true;
@@ -4211,7 +4218,8 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // convert through the MaterialX -> PreviewSurface mapping.
     MtlxConverter mtlx;
     RenderMaterial mtlx_out;
-    if (mtlx.ConvertUsdMtlxMaterial(stage, prim, &mtlx_out)) {
+    if (mtlx.ConvertUsdMtlxMaterial(stage, prim, &mtlx_out,
+                                    /*allow_converter_delegation=*/false)) {
       if (mtlx_out.preview_surface) {
         out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
         out->preview_surface = std::move(mtlx_out.preview_surface);
