@@ -14,7 +14,11 @@ import {
     nextCountsFromScene,
     readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
-import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+    getAssetUriFromURL,
+    LOADER_BACKEND_CHOICES,
+    setBackendAndReload
+} from 'tinyusdz/LoaderConfigUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
 import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
 import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.js';
@@ -975,6 +979,10 @@ function setupGUI() {
     guiState.gui.domElement.style.right = '10px';
     guiState.gui.domElement.style.maxHeight = 'calc(100vh - 20px)';
     guiState.gui.domElement.style.overflowY = 'auto';
+
+    // Backend switch reloads the page: the loader binds its WASM module at init.
+    guiState.gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+        .name('Loader Backend').onChange(setBackendAndReload);
 
     setupSceneFolder();
     setupMaterialTypeFolder();

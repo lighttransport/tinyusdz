@@ -13,7 +13,9 @@ import {
 import {
 	getAssetUriFromURL,
 	getBackendFromURL,
-	makeStaticNextParseOptions
+	LOADER_BACKEND_CHOICES,
+	makeStaticNextParseOptions,
+	setBackendAndReload
 } from 'tinyusdz/LoaderConfigUtils.js';
 import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
 import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
@@ -2433,6 +2435,9 @@ const animationParams = {
 // GUI setup
 const gui = new GUI();
 gui.title('Animation Controls');
+// Backend switch reloads the page: the loader binds its WASM module at init.
+gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+	.name('Loader Backend').onChange(setBackendAndReload);
 
 // Store references to GUI controllers for dynamic updates
 let timelineController = null;
