@@ -2150,6 +2150,27 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     SkinBindingInfo sb;
     if (GetSkinBinding(prim, &sb) && !sb.joint_indices.empty() &&
         sb.joint_indices.size() == sb.joint_weights.size()) {
+      // UsdSkel binding inheritance: `skel:skeleton` may be authored on an
+      // ancestor (typically the enclosing SkelRoot) rather than on the mesh
+      // itself, in which case every descendant skinnable prim inherits it.
+      // GetSkinBinding only reads the mesh prim, so walk up to the nearest
+      // ancestor binding when the mesh doesn't author one directly. Without
+      // this, meshes that bind their skeleton at the SkelRoot (e.g. the
+      // MetaHuman standalone face/body exports) resolve no skeleton_id and
+      // render unskinned in bind pose.
+      if (sb.skeleton_path.empty()) {
+        UsdPrim anc = GetParent(stage, prim);
+        while (anc.IsValid()) {
+          std::string inherited = GetBoundSkeleton(anc);
+          if (!inherited.empty()) {
+            sb.skeleton_path = inherited;
+            break;
+          }
+          // Binding inheritance is scoped to the SkelRoot subtree.
+          if (::tinyusdz::tydra::next::IsSkelRoot(anc)) break;
+          anc = GetParent(stage, anc);
+        }
+      }
       const size_t point_count = out->point_count();
       size_t influences = sb.influences_per_vertex > 0
                               ? static_cast<size_t>(sb.influences_per_vertex)

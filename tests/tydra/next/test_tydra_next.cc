@@ -970,6 +970,82 @@ def Xform "World"
   std::cout << "  RenderConverter Unreal surface fallback: PASSED\n";
 }
 
+// Regression: UsdSkel binding inheritance. `skel:skeleton` may be authored on
+// an ancestor (the enclosing SkelRoot) rather than on the skinned mesh, in
+// which case the mesh inherits it. The converter must resolve the inherited
+// skeleton (skeleton_id >= 0) so the mesh skins instead of rendering in bind
+// pose. MetaHuman's standalone face/body exports bind this way.
+void TestRenderConverterInheritedSkelBinding() {
+  std::cout << "Testing RenderConverter inherited skel:skeleton binding...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "Root"
+)
+
+def Xform "Root"
+{
+    def SkelRoot "SR" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        rel skel:skeleton = </Root/SR/Skel>
+
+        def Skeleton "Skel"
+        {
+            uniform token[] joints = ["root", "root/child"]
+            uniform matrix4d[] bindTransforms = [
+                ( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1) ),
+                ( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1) ) ]
+            uniform matrix4d[] restTransforms = [
+                ( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1) ),
+                ( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1) ) ]
+        }
+
+        def Mesh "M" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] primvars:skel:jointIndices = [0, 0, 1] (
+                elementSize = 1
+                interpolation = "vertex"
+            )
+            float[] primvars:skel:jointWeights = [1, 1, 1] (
+                elementSize = 1
+                interpolation = "vertex"
+            )
+        }
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse inherited-skel USDA)\n";
+    return;
+  }
+
+  RenderSceneConverter converter;
+  ConvertResult result = converter.Convert(load_result.stage);
+  assert(result.success);
+  assert(result.scene.skeletons.size() == 1);
+
+  const RenderMesh* mesh = nullptr;
+  for (const auto& m : result.scene.meshes) {
+    if (m.skin) { mesh = &m; break; }
+  }
+  assert(mesh && "mesh with a skin binding should exist");
+  // The mesh authors no skel:skeleton of its own — it must inherit the one on
+  // the SkelRoot and resolve to a real skeleton id.
+  assert(mesh->skin->skeleton_id >= 0 &&
+         "inherited skel:skeleton must resolve to a skeleton_id");
+
+  std::cout << "  RenderConverter inherited skel binding: PASSED\n";
+}
+
 void TestRenderConverterPointInstancerWarnings() {
   std::cout << "Testing RenderConverter PointInstancer diagnostics...\n";
 
@@ -2533,6 +2609,7 @@ int main() {
   TestRenderConverter();
   TestRenderConverterMaterials();
   TestRenderConverterUnrealSurfaceFallback();
+  TestRenderConverterInheritedSkelBinding();
   TestRenderConverterPointInstancerWarnings();
   TestRenderConverterPointInstancerIndexVisibility();
   TestRenderConverterPointInstancerInvalidArrays();
