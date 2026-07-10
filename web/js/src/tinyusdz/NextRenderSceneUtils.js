@@ -163,6 +163,22 @@ export function textureColorRoleForMap(mapProperty) {
   return (mapProperty === 'map' || mapProperty === 'emissiveMap') ? 'color' : 'data';
 }
 
+/// Effective color role for a texture: an authored colorspace (colorSpace
+/// asset metadata or inputs:sourceColorSpace) wins over the map-role
+/// default; "auto"/unknown keeps the role-based heuristic (equivalent to
+/// the UsdPreviewSurface auto rule for typical 8-bit web textures).
+export function textureColorRole(mapProperty, authoredColorSpace) {
+  const authored = String(authoredColorSpace || '').toLowerCase();
+  if (authored === 'srgb' || authored === 'srgb_texture' || authored === 'srgb_displayp3') {
+    return 'color';
+  }
+  if (authored === 'raw' || authored === 'linear' || authored === 'lin_srgb' ||
+      authored === 'lin_rec709' || authored === 'scene-linear rec.709-srgb') {
+    return 'data';
+  }
+  return textureColorRoleForMap(mapProperty);
+}
+
 function isUnsupportedBrowserTexturePath(assetPath) {
   return /\.(psd|tga|dds|ktx2?)($|[?#])/i.test(String(assetPath || ''));
 }
@@ -467,10 +483,22 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     ? (rawData.hasUsdPreviewSurface ? 'OpenPBR + PreviewSurface' : 'OpenPBR')
     : (rawData.hasUsdPreviewSurface ? 'PreviewSurface' : 'Unknown');
 
+  // Authored colorspace lives in textureMetadata keyed by texture role.
+  const metadataRoleForMap = {
+    map: 'baseColor',
+    normalMap: 'normal',
+    roughnessMap: 'roughness',
+    metalnessMap: 'metallic',
+    aoMap: 'occlusion',
+    emissiveMap: 'emissive'
+  };
   const queue = (mapProperty, assetPath) => {
     if (!assetPath || skipTextures || !textureManager) return;
+    const meta = material.userData.nextTextureMetadata?.[metadataRoleForMap[mapProperty]];
+    const authored = meta?.sourceColorSpace || meta?.colorspace || '';
     textureManager.queueTexture(
-      material, mapProperty, adapter, assetPath, textureColorRoleForMap(mapProperty));
+      material, mapProperty, adapter, assetPath,
+      textureColorRole(mapProperty, authored));
   };
   queue('map', paths.baseColor);
   queue('normalMap', paths.normal);

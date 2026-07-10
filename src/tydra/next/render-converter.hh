@@ -16,6 +16,12 @@
 #include "next/stage/stage.hh"
 
 namespace tinyusdz {
+namespace next {
+class AssetResolver;
+}  // namespace next
+}  // namespace tinyusdz
+
+namespace tinyusdz {
 namespace tydra {
 namespace next {
 
@@ -109,6 +115,11 @@ struct ConverterConfig {
   // against it into TextureImage::resolved_path. Empty = leave paths as
   // authored.
   std::string asset_base_dir;
+
+  // Optional next-core AssetResolver (non-owning). When set it takes over
+  // texture asset-path resolution (anchor/working-dir/search paths +
+  // suffix fallback) instead of the plain asset_base_dir prefix above.
+  const ::tinyusdz::next::AssetResolver* asset_resolver = nullptr;
 
   // Progress callback
   using ProgressCallback = std::function<void(float progress, const std::string& message)>;

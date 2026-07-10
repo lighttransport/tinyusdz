@@ -664,6 +664,11 @@ struct RenderTexture {
   // Image reference
   int32_t image_id = -1;
 
+  // Authored colorspace: colorSpace asset metadata on inputs:file when
+  // present, else inputs:sourceColorSpace ("auto"/"sRGB"/"raw"/...). Web
+  // consumers decode in the browser and need the authored intent.
+  std::string source_color_space = "auto";
+
   // Which channel to use (for single-channel textures)
   enum class Channel : uint8_t { R = 0, G, B, A, RGB, RGBA };
   Channel output_channel = Channel::RGBA;

@@ -4,6 +4,7 @@
 // Tydra Next - Render Scene Converter Implementation
 
 #include "render-converter.hh"
+#include "next/resolver/asset-resolver.hh"
 #include "materialx.hh"
 #include "next/schema/usdPhysics.hh"
 #include "next/schema/usd-shade.hh"
@@ -1083,6 +1084,14 @@ bool ExtractTextureNodeData(const Stage& stage,
   }
   if (std::optional<std::string> cs = eval.EvalToken(texture_prim, "inputs:sourceColorSpace")) {
     out->source_color_space = *cs;
+  }
+  // colorSpace asset metadata on inputs:file takes precedence over the
+  // sourceColorSpace attribute (matches legacy tydra resolution order).
+  if (const ::tinyusdz::next::PropMeta* file_meta =
+          texture_prim.GetPropertyMeta("inputs:file")) {
+    if (!file_meta->colorSpace.empty()) {
+      out->source_color_space = file_meta->colorSpace;
+    }
   }
   TraceTextureStChain(stage, texture_prim, out);
 
@@ -4079,7 +4088,21 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
 
 std::string RenderSceneConverter::ResolveAssetPath(
     const std::string& file) const {
-  if (config_.asset_base_dir.empty() || file.empty() || file[0] == '/' ||
+  if (file.empty()) return file;
+  // A configured AssetResolver owns resolution (anchor/search paths +
+  // suffix fallback); asset_base_dir doubles as the anchor directory.
+  if (config_.asset_resolver) {
+    const std::string anchor = config_.asset_base_dir.empty()
+                                   ? std::string()
+                                   : config_.asset_base_dir + "/";
+    ::tinyusdz::next::ResolvedAsset resolved =
+        config_.asset_resolver->Resolve(file, anchor);
+    if (resolved.exists && !resolved.resolved_path.empty()) {
+      return resolved.resolved_path;
+    }
+    return file;
+  }
+  if (config_.asset_base_dir.empty() || file[0] == '/' ||
       file.find("://") != std::string::npos) {
     return file;
   }
@@ -4397,6 +4420,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       texture.bias = Float4(tex_data.bias[0], tex_data.bias[1],
                             tex_data.bias[2], tex_data.bias[3]);
       texture.image_id = image_id;
+      texture.source_color_space = tex_data.source_color_space;
       texture.output_channel = ChannelFromConnection(connection_path);
       // UsdTransform2d on the st chain (rotation is authored in degrees;
       // RenderTexture stores radians).

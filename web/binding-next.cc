@@ -402,6 +402,12 @@ std::string ShaderParamJson(const tr::RenderScene& scene,
   if (p.texture_id >= 0) {
     ss << ",\"texture\":\"" << JsonEscape(TexturePath(scene, p)) << "\"";
     ss << ",\"textureId\":" << p.texture_id;
+    if (static_cast<size_t>(p.texture_id) < scene.textures.size()) {
+      ss << ",\"colorspace\":\""
+         << JsonEscape(scene.textures[static_cast<size_t>(p.texture_id)]
+                           .source_color_space)
+         << "\"";
+    }
   }
   ss << "}";
   return ss.str();
@@ -3073,6 +3079,14 @@ class RenderStream {
       }
     };
     read_tokenish("inputs:sourceColorSpace", &meta.source_color_space);
+    // colorSpace asset metadata on inputs:file wins over sourceColorSpace
+    // (legacy tydra resolution order).
+    if (const tinyusdz::next::PropMeta *file_meta =
+            tex.GetPropertyMeta("inputs:file")) {
+      if (!file_meta->colorSpace.empty()) {
+        meta.source_color_space = file_meta->colorSpace;
+      }
+    }
     read_tokenish("inputs:wrapS", &meta.wrap_s);
     read_tokenish("inputs:wrapT", &meta.wrap_t);
     meta.is_udim = isUdimPath_(meta.path);
