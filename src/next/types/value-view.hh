@@ -25,7 +25,8 @@ struct ArrayView {
 
 template <typename T>
 struct ArrayScratch {
-  std::vector<T> storage;
+  // Keeps an unborrowable lazy array materialized for the lifetime of the view.
+  Value materialized;
 };
 
 /// True if `value` is a lazy array whose raw bytes can be aliased zero-copy from

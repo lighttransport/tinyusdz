@@ -468,6 +468,265 @@ const char* SnapElementBoundary(const char* t, const char* end) {
   return c ? c + 1 : end;
 }
 
+// ---------------------------------------------------------------------------
+// USDA lazy-array count helpers
+// ---------------------------------------------------------------------------
+
+// Forward declaration for lazy materialization path.
+ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
+                                    int nt_hint, TypeId element_type);
+
+template <class T, class ParseOne>
+bool CountScalarArray(const char* data, size_t len, size_t max_elements,
+                     size_t* out_count,
+                     ParseOne parse_one) {
+  if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
+  SliceParser sp{data, data + len};
+  size_t count = 0;
+  if (!sp.consume('[')) return false;
+  if (sp.at_array_end()) {
+    if (out_count) *out_count = 0;
+    return sp.finish_array();
+  }
+
+  while (true) {
+    T v{};
+    if (!parse_one(&sp, &v)) {
+      return false;
+    }
+    ++count;
+    if (count > max_elements) return false;
+    if (sp.maybe_consume(',')) {
+      continue;
+    }
+    return sp.finish_array() && (out_count != nullptr) &&
+           (*out_count = count, true);
+  }
+}
+
+template <class T, uint32_t N, class ParseOne>
+bool CountTupleArray(const char* data, size_t len, size_t max_elements,
+                     size_t* out_count, ParseOne parse_one) {
+  if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
+  SliceParser sp{data, data + len};
+  if (!sp.consume('[')) return false;
+  if (sp.at_array_end()) {
+    if (out_count) *out_count = 0;
+    return sp.finish_array();
+  }
+
+  size_t count = 0;
+  while (true) {
+    if (!sp.consume('(')) return false;
+    for (uint32_t i = 0; i < N; i++) {
+      T v{};
+      if (!parse_one(&sp, &v)) return false;
+      if (i + 1 < N && !sp.consume(',')) return false;
+    }
+    if (!sp.consume(')')) return false;
+    ++count;
+    if (count > max_elements) return false;
+    if (sp.maybe_consume(',')) {
+      continue;
+    }
+    return sp.finish_array() && (out_count != nullptr) && (*out_count = count, true);
+  }
+}
+
+template <class T, uint32_t N, class ParseOne>
+bool CountMatrixArray(const char* data, size_t len, size_t max_elements,
+                      size_t* out_count,
+                      ParseOne parse_one) {
+  if (len < 2 || data[0] != '[' || data[len - 1] != ']') return false;
+  SliceParser sp{data, data + len};
+  if (!sp.consume('[')) return false;
+  if (sp.at_array_end()) {
+    if (out_count) *out_count = 0;
+    return sp.finish_array();
+  }
+
+  size_t count = 0;
+  while (true) {
+    if (!sp.consume('(')) return false;
+    for (uint32_t r = 0; r < N; r++) {
+      if (!sp.consume('(')) return false;
+      for (uint32_t c = 0; c < N; c++) {
+        T v{};
+        if (!parse_one(&sp, &v)) return false;
+        if (c + 1 < N && !sp.consume(',')) return false;
+      }
+      if (!sp.consume(')')) return false;
+      if (r + 1 < N && !sp.consume(',')) return false;
+    }
+    if (!sp.consume(')')) return false;
+    ++count;
+    if (count > max_elements) return false;
+    if (sp.maybe_consume(',')) {
+      continue;
+    }
+    return sp.finish_array() && (out_count != nullptr) && (*out_count = count, true);
+  }
+}
+
+bool ParseUsdaArrayElementCount(const char* data, size_t len,
+                               size_t max_elements, TypeId element_type,
+                               size_t* out_count) {
+  if (!out_count) return false;
+  if (max_elements == 0) {
+    max_elements = std::numeric_limits<size_t>::max();
+  }
+  *out_count = 0;
+
+  auto parse_f = [](SliceParser* s, float* v) { return s->parse_float(v); };
+  auto parse_d = [](SliceParser* s, double* v) { return s->parse_double(v); };
+  auto parse_b = [](SliceParser* s, bool* v) { return s->parse_bool(v); };
+  auto parse_i32 = [](SliceParser* s, int32_t* v) {
+    int64_t tmp = 0;
+    if (!s->parse_i64(&tmp) || tmp < std::numeric_limits<int32_t>::min() ||
+        tmp > std::numeric_limits<int32_t>::max()) {
+      return false;
+    }
+    *v = static_cast<int32_t>(tmp);
+    return true;
+  };
+  auto parse_u32 = [](SliceParser* s, uint32_t* v) {
+    uint64_t tmp = 0;
+    if (!s->parse_u64(&tmp) || tmp > std::numeric_limits<uint32_t>::max()) {
+      return false;
+    }
+    *v = static_cast<uint32_t>(tmp);
+    return true;
+  };
+  auto parse_i64 = [](SliceParser* s, int64_t* v) { return s->parse_i64(v); };
+  auto parse_u64 = [](SliceParser* s, uint64_t* v) { return s->parse_u64(v); };
+
+  switch (element_type) {
+    case TypeId::Float:
+    case TypeId::Half:
+    case TypeId::TimeCode:
+      return CountScalarArray<float>(data, len, max_elements, out_count,
+                                    parse_f);
+    case TypeId::Double:
+      return CountScalarArray<double>(data, len, max_elements, out_count,
+                                     parse_d);
+    case TypeId::Bool:
+      return CountScalarArray<bool>(data, len, max_elements, out_count,
+                                   parse_b);
+    case TypeId::Int:
+      return CountScalarArray<int32_t>(data, len, max_elements, out_count,
+                                      parse_i32);
+    case TypeId::UInt:
+      return CountScalarArray<uint32_t>(data, len, max_elements, out_count,
+                                       parse_u32);
+    case TypeId::Int64:
+      return CountScalarArray<int64_t>(data, len, max_elements, out_count,
+                                      parse_i64);
+    case TypeId::UInt64:
+      return CountScalarArray<uint64_t>(data, len, max_elements, out_count,
+                                       parse_u64);
+
+    case TypeId::Int2:
+    case TypeId::Int3:
+    case TypeId::Int4:
+      if (element_type == TypeId::Int2) {
+        return CountTupleArray<int32_t, 2>(data, len, max_elements, out_count,
+                                          parse_i32);
+      } else if (element_type == TypeId::Int3) {
+        return CountTupleArray<int32_t, 3>(data, len, max_elements, out_count,
+                                          parse_i32);
+      }
+      return CountTupleArray<int32_t, 4>(data, len, max_elements, out_count,
+                                        parse_i32);
+    case TypeId::UInt2:
+    case TypeId::UInt3:
+    case TypeId::UInt4:
+      if (element_type == TypeId::UInt2) {
+        return CountTupleArray<uint32_t, 2>(data, len, max_elements, out_count,
+                                           parse_u32);
+      } else if (element_type == TypeId::UInt3) {
+        return CountTupleArray<uint32_t, 3>(data, len, max_elements, out_count,
+                                           parse_u32);
+      }
+      return CountTupleArray<uint32_t, 4>(data, len, max_elements, out_count,
+                                         parse_u32);
+
+    case TypeId::Float2:
+    case TypeId::Float3:
+    case TypeId::Float4:
+    case TypeId::Half2:
+    case TypeId::Half3:
+    case TypeId::Half4:
+    case TypeId::Point3h:
+    case TypeId::Point3f:
+    case TypeId::Vector3h:
+    case TypeId::Vector3f:
+    case TypeId::Normal3h:
+    case TypeId::Normal3f:
+    case TypeId::Color3h:
+    case TypeId::Color3f:
+    case TypeId::Texcoord2h:
+    case TypeId::Texcoord2f:
+    case TypeId::Texcoord3h:
+    case TypeId::Texcoord3f:
+    case TypeId::Quath:
+    case TypeId::Quatf:
+    case TypeId::Color4h:
+    case TypeId::Color4f:
+      if (IsFloat2Like(element_type)) {
+        return CountTupleArray<float, 2>(data, len, max_elements, out_count,
+                                        parse_f);
+      }
+      if (IsFloat3Like(element_type)) {
+        return CountTupleArray<float, 3>(data, len, max_elements, out_count,
+                                        parse_f);
+      }
+      return CountTupleArray<float, 4>(data, len, max_elements, out_count,
+                                      parse_f);
+
+    case TypeId::Double2:
+    case TypeId::Double3:
+    case TypeId::Double4:
+    case TypeId::Point3d:
+    case TypeId::Vector3d:
+    case TypeId::Normal3d:
+    case TypeId::Color3d:
+    case TypeId::Texcoord2d:
+    case TypeId::Texcoord3d:
+    case TypeId::Quatd:
+      if (IsDouble2Like(element_type)) {
+        return CountTupleArray<double, 2>(data, len, max_elements, out_count,
+                                         parse_d);
+      }
+      if (IsDouble3Like(element_type)) {
+        return CountTupleArray<double, 3>(data, len, max_elements, out_count,
+                                         parse_d);
+      }
+      return CountTupleArray<double, 4>(data, len, max_elements, out_count,
+                                        parse_d);
+
+    case TypeId::Matrix2f:
+      return CountMatrixArray<float, 2>(data, len, max_elements, out_count,
+                                        parse_f);
+    case TypeId::Matrix3f:
+      return CountMatrixArray<float, 3>(data, len, max_elements, out_count,
+                                        parse_f);
+    case TypeId::Matrix4f:
+      return CountMatrixArray<float, 4>(data, len, max_elements, out_count,
+                                        parse_f);
+    case TypeId::Matrix2d:
+      return CountMatrixArray<double, 2>(data, len, max_elements, out_count,
+                                         parse_d);
+    case TypeId::Matrix3d:
+      return CountMatrixArray<double, 3>(data, len, max_elements, out_count,
+                                         parse_d);
+    case TypeId::Matrix4d:
+      return CountMatrixArray<double, 4>(data, len, max_elements, out_count,
+                                         parse_d);
+    default:
+      return false;
+  }
+}
+
 #if defined(TINYUSDZ_ENABLE_THREAD)
 
 // Resolve the worker count from a ParseOptions::num_threads hint (forwarded via
@@ -588,13 +847,8 @@ bool ParseTupleArrayMaybeParallel(const char* data, size_t len, bool simple,
   return ParseTupleArray<T, N>(&sp, out, parse_one);
 }
 
-ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
-  const char* data = nullptr;
-  size_t len = 0;
-  bool simple = false;
-  if (!lexer.capture_bracketed_literal(&data, &len, &simple)) {
-    return ParseResult::Error(lexer.error());
-  }
+ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
+                                    int nt_hint, TypeId element_type) {
   SliceParser sp{data, data + len};
 
   auto parse_float = [](SliceParser* s, float* v) { return s->parse_float(v); };
@@ -602,28 +856,32 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
 
   if (element_type == TypeId::Float) {
     std::vector<float> values;
-    if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, lexer.num_threads, &values, parse_float)) {
+    if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, nt_hint,
+                                             &values, parse_float)) {
       return ParseResult::Error("Failed to parse float array");
     }
     return ParseResult::Ok(Value::MakeFloatArray(std::move(values)));
   }
   if (element_type == TypeId::Double) {
     std::vector<double> values;
-    if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, lexer.num_threads, &values, parse_double)) {
+    if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, nt_hint,
+                                              &values, parse_double)) {
       return ParseResult::Error("Failed to parse double array");
     }
     return ParseResult::Ok(Value::MakeDoubleArray(std::move(values)));
   }
   if (element_type == TypeId::Half) {
     std::vector<float> values;
-    if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, lexer.num_threads, &values, parse_float)) {
+    if (!ParseScalarArrayMaybeParallel<float>(data, len, simple, nt_hint,
+                                             &values, parse_float)) {
       return ParseResult::Error("Failed to parse half array");
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 1));
   }
   if (element_type == TypeId::TimeCode) {
     std::vector<double> values;
-    if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, lexer.num_threads, &values, parse_double)) {
+    if (!ParseScalarArrayMaybeParallel<double>(data, len, simple, nt_hint,
+                                              &values, parse_double)) {
       return ParseResult::Error("Failed to parse timecode array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 1));
@@ -645,7 +903,8 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
       *v = static_cast<int32_t>(tmp);
       return true;
     };
-    if (!ParseScalarArrayMaybeParallel<int32_t>(data, len, simple, lexer.num_threads, &values, parse_i32)) {
+    if (!ParseScalarArrayMaybeParallel<int32_t>(data, len, simple, nt_hint,
+                                               &values, parse_i32)) {
       return ParseResult::Error("Failed to parse int array");
     }
     return ParseResult::Ok(Value::MakeIntArray(std::move(values)));
@@ -658,7 +917,8 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
       *v = static_cast<uint32_t>(tmp);
       return true;
     };
-    if (!ParseScalarArrayMaybeParallel<uint32_t>(data, len, simple, lexer.num_threads, &values, parse_u32)) {
+    if (!ParseScalarArrayMaybeParallel<uint32_t>(data, len, simple, nt_hint,
+                                                &values, parse_u32)) {
       return ParseResult::Error("Failed to parse uint array");
     }
     return ParseResult::Ok(Value::MakeUIntArray(std::move(values)));
@@ -666,7 +926,8 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
   if (element_type == TypeId::Int64) {
     std::vector<int64_t> values;
     auto parse_i64 = [](SliceParser* s, int64_t* v) { return s->parse_i64(v); };
-    if (!ParseScalarArrayMaybeParallel<int64_t>(data, len, simple, lexer.num_threads, &values, parse_i64)) {
+    if (!ParseScalarArrayMaybeParallel<int64_t>(data, len, simple, nt_hint,
+                                               &values, parse_i64)) {
       return ParseResult::Error("Failed to parse int64 array");
     }
     return ParseResult::Ok(Value::MakeInt64Array(std::move(values)));
@@ -674,7 +935,8 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
   if (element_type == TypeId::UInt64) {
     std::vector<uint64_t> values;
     auto parse_u64 = [](SliceParser* s, uint64_t* v) { return s->parse_u64(v); };
-    if (!ParseScalarArrayMaybeParallel<uint64_t>(data, len, simple, lexer.num_threads, &values, parse_u64)) {
+    if (!ParseScalarArrayMaybeParallel<uint64_t>(data, len, simple, nt_hint,
+                                               &values, parse_u64)) {
       return ParseResult::Error("Failed to parse uint64 array");
     }
     return ParseResult::Ok(Value::MakeUInt64Array(std::move(values)));
@@ -752,11 +1014,14 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
     std::vector<int32_t> values;
     bool ok = false;
     if (element_type == TypeId::Int2) {
-      ok = ParseTupleArrayMaybeParallel<int32_t, 2>(data, len, simple, lexer.num_threads, &values, parse_i32);
+      ok = ParseTupleArrayMaybeParallel<int32_t, 2>(
+          data, len, simple, nt_hint, &values, parse_i32);
     } else if (element_type == TypeId::Int3) {
-      ok = ParseTupleArrayMaybeParallel<int32_t, 3>(data, len, simple, lexer.num_threads, &values, parse_i32);
+      ok = ParseTupleArrayMaybeParallel<int32_t, 3>(
+          data, len, simple, nt_hint, &values, parse_i32);
     } else {
-      ok = ParseTupleArrayMaybeParallel<int32_t, 4>(data, len, simple, lexer.num_threads, &values, parse_i32);
+      ok = ParseTupleArrayMaybeParallel<int32_t, 4>(
+          data, len, simple, nt_hint, &values, parse_i32);
     }
     if (!ok) return ParseResult::Error("Failed to parse int-vector array");
     const uint32_t comps = (element_type == TypeId::Int2)   ? 2u
@@ -777,11 +1042,14 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
     std::vector<uint32_t> values;
     bool ok = false;
     if (element_type == TypeId::UInt2) {
-      ok = ParseTupleArrayMaybeParallel<uint32_t, 2>(data, len, simple, lexer.num_threads, &values, parse_u32);
+      ok = ParseTupleArrayMaybeParallel<uint32_t, 2>(
+          data, len, simple, nt_hint, &values, parse_u32);
     } else if (element_type == TypeId::UInt3) {
-      ok = ParseTupleArrayMaybeParallel<uint32_t, 3>(data, len, simple, lexer.num_threads, &values, parse_u32);
+      ok = ParseTupleArrayMaybeParallel<uint32_t, 3>(
+          data, len, simple, nt_hint, &values, parse_u32);
     } else {
-      ok = ParseTupleArrayMaybeParallel<uint32_t, 4>(data, len, simple, lexer.num_threads, &values, parse_u32);
+      ok = ParseTupleArrayMaybeParallel<uint32_t, 4>(
+          data, len, simple, nt_hint, &values, parse_u32);
     }
     if (!ok) return ParseResult::Error("Failed to parse uint-vector array");
     const uint32_t comps = (element_type == TypeId::UInt2)   ? 2u
@@ -792,42 +1060,48 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
 
   if (IsFloat2Like(element_type)) {
     std::vector<float> values;
-    if (!ParseTupleArrayMaybeParallel<float, 2>(data, len, simple, lexer.num_threads, &values, parse_float)) {
+    if (!ParseTupleArrayMaybeParallel<float, 2>(data, len, simple, nt_hint,
+                                               &values, parse_float)) {
       return ParseResult::Error("Failed to parse float2 array");
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 2));
   }
   if (IsFloat3Like(element_type)) {
     std::vector<float> values;
-    if (!ParseTupleArrayMaybeParallel<float, 3>(data, len, simple, lexer.num_threads, &values, parse_float)) {
+    if (!ParseTupleArrayMaybeParallel<float, 3>(data, len, simple, nt_hint,
+                                               &values, parse_float)) {
       return ParseResult::Error("Failed to parse float3 array");
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 3));
   }
   if (IsFloat4Like(element_type)) {
     std::vector<float> values;
-    if (!ParseTupleArrayMaybeParallel<float, 4>(data, len, simple, lexer.num_threads, &values, parse_float)) {
+    if (!ParseTupleArrayMaybeParallel<float, 4>(data, len, simple, nt_hint,
+                                               &values, parse_float)) {
       return ParseResult::Error("Failed to parse float4 array");
     }
     return ParseResult::Ok(Value::MakeFloatCompArray(std::move(values), element_type, 4));
   }
   if (IsDouble2Like(element_type)) {
     std::vector<double> values;
-    if (!ParseTupleArrayMaybeParallel<double, 2>(data, len, simple, lexer.num_threads, &values, parse_double)) {
+    if (!ParseTupleArrayMaybeParallel<double, 2>(data, len, simple, nt_hint,
+                                                &values, parse_double)) {
       return ParseResult::Error("Failed to parse double2 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 2));
   }
   if (IsDouble3Like(element_type)) {
     std::vector<double> values;
-    if (!ParseTupleArrayMaybeParallel<double, 3>(data, len, simple, lexer.num_threads, &values, parse_double)) {
+    if (!ParseTupleArrayMaybeParallel<double, 3>(data, len, simple, nt_hint,
+                                                &values, parse_double)) {
       return ParseResult::Error("Failed to parse double3 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 3));
   }
   if (IsDouble4Like(element_type)) {
     std::vector<double> values;
-    if (!ParseTupleArrayMaybeParallel<double, 4>(data, len, simple, lexer.num_threads, &values, parse_double)) {
+    if (!ParseTupleArrayMaybeParallel<double, 4>(data, len, simple, nt_hint,
+                                                &values, parse_double)) {
       return ParseResult::Error("Failed to parse double4 array");
     }
     return ParseResult::Ok(Value::MakeDoubleCompArray(std::move(values), element_type, 4));
@@ -878,37 +1152,29 @@ ParseResult ParseArrayValueOptimized(Lexer& lexer, TypeId element_type) {
   return ParseResult::Error("No optimized array parser for type");
 }
 
-ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
-  // USD allows array-valued attributes to author `None` as a blocked value.
-  // Preserve it as a block (not an empty placeholder) so the writer re-emits
-  // `= None` rather than collapsing it to a declared-only attribute.
-  if (lexer.peek().type == TokenType::None) {
-    lexer.next();
-    return ParseResult::Ok(Value::MakeBlock());
-  }
-
+bool IsUsdaArrayLazyCandidate(TypeId element_type) {
   switch (element_type) {
     case TypeId::Float:
     case TypeId::Double:
+    case TypeId::Half:
+    case TypeId::TimeCode:
+    case TypeId::Bool:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::Int64:
     case TypeId::UInt64:
-    case TypeId::Bool:
-    case TypeId::Half:
-    case TypeId::Half2:
-    case TypeId::Half3:
-    case TypeId::Half4:
     case TypeId::Int2:
     case TypeId::Int3:
     case TypeId::Int4:
     case TypeId::UInt2:
     case TypeId::UInt3:
     case TypeId::UInt4:
-    case TypeId::TimeCode:
     case TypeId::Float2:
     case TypeId::Float3:
     case TypeId::Float4:
+    case TypeId::Half2:
+    case TypeId::Half3:
+    case TypeId::Half4:
     case TypeId::Point3h:
     case TypeId::Point3f:
     case TypeId::Vector3h:
@@ -917,14 +1183,14 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
     case TypeId::Normal3f:
     case TypeId::Color3h:
     case TypeId::Color3f:
-    case TypeId::Color4h:
-    case TypeId::Color4f:
     case TypeId::Texcoord2h:
     case TypeId::Texcoord2f:
     case TypeId::Texcoord3h:
     case TypeId::Texcoord3f:
     case TypeId::Quath:
     case TypeId::Quatf:
+    case TypeId::Color4h:
+    case TypeId::Color4f:
     case TypeId::Double2:
     case TypeId::Double3:
     case TypeId::Double4:
@@ -942,15 +1208,74 @@ ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type) {
     case TypeId::Matrix2d:
     case TypeId::Matrix3d:
     case TypeId::Matrix4d:
-    // Token/String arrays use the same bracket-literal fast path; the slice
-    // parser handles quotes, triple-quotes and escapes and returns a real
-    // token array (see ParseArrayValueOptimized).
-    case TypeId::Token:
-    case TypeId::String:
-    case TypeId::AssetPath:
-      return ParseArrayValueOptimized(lexer, element_type);
+      return true;
     default:
-      break;
+      return false;
+  }
+}
+
+ParseResult ParseArrayValue(Lexer& lexer, TypeId element_type,
+                           const ParseArrayContext& context) {
+  // USD allows array-valued attributes to author `None` as a blocked value.
+  // Preserve it as a block (not an empty placeholder) so the writer re-emits
+  // `= None` rather than collapsing it to a declared-only attribute.
+  if (lexer.peek().type == TokenType::None) {
+    lexer.next();
+    return ParseResult::Ok(Value::MakeBlock());
+  }
+
+  const bool capture_optimized = IsUsdaArrayLazyCandidate(element_type) &&
+                                 context.enable_usda_lazy_arrays &&
+                                 context.source;
+
+  if (capture_optimized || IsUsdaArrayLazyCandidate(element_type)) {
+    const char* data = nullptr;
+    size_t len = 0;
+    bool simple = false;
+    if (!lexer.capture_bracketed_literal(&data, &len, &simple)) {
+      return ParseResult::Error(lexer.error());
+    }
+
+    if (capture_optimized && simple) {
+      size_t element_count = 0;
+      if (ParseUsdaArrayElementCount(
+              data, len, context.max_usda_lazy_array_elements,
+              element_type, &element_count)) {
+        const char* base =
+            reinterpret_cast<const char*>(context.source->base());
+        const char* end = base + context.source->size();
+        if (data >= base && data <= end && data + len <= end) {
+          const uint64_t begin =
+              static_cast<uint64_t>(data - base);
+          LazyArrayRef ref;
+          ref.source = context.source;
+          ref.rep = ValueRep{};
+          ref.block_offset = begin;
+          ref.block_len = static_cast<uint64_t>(len);
+          ref.element_count = static_cast<uint64_t>(element_count);
+          ref.src_elem_stride = static_cast<uint32_t>(GetTypeSize(element_type));
+          ref.value_type = element_type;
+          ref.is_compressed = false;
+          ref.crate_type = CrateTypeId::Invalid;
+          return ParseResult::Ok(Value::MakeLazyArray(ref));
+        }
+      }
+    }
+
+    return ParseArrayValueFromSlice(data, len, simple, context.num_threads,
+                                   element_type);
+  }
+
+  if (element_type == TypeId::Token || element_type == TypeId::String ||
+      element_type == TypeId::AssetPath) {
+    const char* data = nullptr;
+    size_t len = 0;
+    bool simple = false;
+    if (!lexer.capture_bracketed_literal(&data, &len, &simple)) {
+      return ParseResult::Error(lexer.error());
+    }
+    return ParseArrayValueFromSlice(data, len, simple, context.num_threads,
+                                   element_type);
   }
 
   if (!lexer.expect(TokenType::OpenBracket)) {

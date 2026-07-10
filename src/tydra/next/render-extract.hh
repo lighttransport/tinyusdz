@@ -31,6 +31,10 @@ enum class RenderPrimKind {
   Skeleton
 };
 
+bool IsAnalyticGeomTypeName(const std::string& type_name);
+bool IsMeshRenderableTypeName(const std::string& type_name);
+bool IsUnsupportedRenderableTypeName(const std::string& type_name);
+
 struct RenderPrimRecord {
   ::tinyusdz::next::UsdPrim prim;
   RenderPrimKind kind = RenderPrimKind::Other;

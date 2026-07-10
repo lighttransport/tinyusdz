@@ -53,6 +53,14 @@ const sceneState = {
     textureCount: 0,
     meshCount: 0,
     upAxis: 'Y',
+    lightsCount: 0,
+    camerasCount: 0,
+    nodesCount: 0,
+    pointInstancerCount: 0,
+    pointInstanceDrawCount: 0,
+    skeletonCount: 0,
+    animationCount: 0,
+    unsupportedRenderableCount: 0,
     textureLoadingManager: null  // For delayed texture loading
 };
 
@@ -839,6 +847,14 @@ function cleanupScene() {
     sceneState.materials = [];
     sceneState.meshCount = 0;
     sceneState.textureCount = 0;
+    sceneState.lightsCount = 0;
+    sceneState.camerasCount = 0;
+    sceneState.nodesCount = 0;
+    sceneState.pointInstancerCount = 0;
+    sceneState.pointInstanceDrawCount = 0;
+    sceneState.skeletonCount = 0;
+    sceneState.animationCount = 0;
+    sceneState.unsupportedRenderableCount = 0;
 
     // Abort and reset texture loading manager
     if (sceneState.textureLoadingManager) {
@@ -938,6 +954,13 @@ async function buildSceneWithProgress(usd, onProgress) {
     if (isNextScene(usd)) {
         sceneState.meshCount = 0;
         sceneState.textureCount = 0;
+        sceneState.lightsCount = 0;
+        sceneState.camerasCount = 0;
+        sceneState.nodesCount = 0;
+        sceneState.pointInstancerCount = 0;
+        sceneState.pointInstanceDrawCount = 0;
+        sceneState.skeletonCount = 0;
+        sceneState.unsupportedRenderableCount = 0;
         sceneState.materials = [];
         onProgress({
             stage: 'building',
@@ -961,6 +984,14 @@ async function buildSceneWithProgress(usd, onProgress) {
         const counts = nextCountsFromScene(usd);
         sceneState.meshCount = counts.meshes || 0;
         sceneState.textureCount = counts.textures || 0;
+        sceneState.lightsCount = counts.lights || 0;
+        sceneState.camerasCount = counts.cameras || 0;
+        sceneState.nodesCount = counts.nodes || 0;
+    sceneState.pointInstancerCount = counts.pointInstancers || 0;
+    sceneState.pointInstanceDrawCount = counts.pointInstanceDraws || 0;
+    sceneState.skeletonCount = counts.skeletons || 0;
+    sceneState.animationCount = counts.animations || 0;
+    sceneState.unsupportedRenderableCount = counts.unsupportedRenderables || 0;
         const materialSet = new Set();
         built.node.traverse((obj) => {
             if (!obj.isMesh || !obj.material) return;
@@ -983,6 +1014,14 @@ async function buildSceneWithProgress(usd, onProgress) {
 
     sceneState.meshCount = 0;
     sceneState.textureCount = 0;
+    sceneState.lightsCount = 0;
+    sceneState.camerasCount = 0;
+    sceneState.nodesCount = 0;
+    sceneState.pointInstancerCount = 0;
+    sceneState.pointInstanceDrawCount = 0;
+    sceneState.skeletonCount = 0;
+    sceneState.animationCount = 0;
+    sceneState.unsupportedRenderableCount = 0;
     sceneState.materials = [];
 
     // Create texture loading manager for delayed texture loading
@@ -992,6 +1031,18 @@ async function buildSceneWithProgress(usd, onProgress) {
     const totalMeshes = usd.numMeshes ? usd.numMeshes() : 0;
     const totalMaterials = usd.numMaterials ? usd.numMaterials() : 0;
     const totalTextures = usd.numTextures ? usd.numTextures() : 0;
+    sceneState.lightsCount = usd?.numLights ? usd.numLights() : 0;
+    sceneState.camerasCount = usd?.numCameras ? usd.numCameras() : 0;
+    sceneState.nodesCount = usd?.numNodes ? usd.numNodes() : 0;
+    sceneState.pointInstancerCount = usd?.numPointInstancers ? usd.numPointInstancers() : 0;
+    sceneState.pointInstanceDrawCount = usd?.numPointInstanceDraws ? usd.numPointInstanceDraws() : 0;
+    sceneState.skeletonCount = usd?.numSkeletons ? usd.numSkeletons() : 0;
+    sceneState.animationCount = usd?.numAnimations ? usd.numAnimations() : 0;
+    sceneState.unsupportedRenderableCount = typeof usd?.numUnsupportedRenderables === 'function'
+        ? usd.numUnsupportedRenderables()
+        : (typeof usd?.getUnsupportedRenderables === 'function'
+            ? usd.getUnsupportedRenderables().length || 0
+            : 0);
 
     // Phase 1: Building Three.js meshes with per-mesh progress
     // This is JS layer processing - progress WILL update in real-time!
@@ -1299,6 +1350,7 @@ async function loadWithWorker(source, isFile, stats) {
     }
 
     let usd;
+    const workerParseOptions = makeStaticNextParseOptions({ backend: settings.backend });
     const parseStart = performance.now();
     if (isFile) {
         // Load from File object
@@ -1308,10 +1360,10 @@ async function loadWithWorker(source, isFile, stats) {
         stats.readMs = performance.now() - readStart;
         stats.fileSize = arrayBuffer.byteLength;
         updateLoadStatsPanel(stats);
-        usd = await loaderState.workerLoader.parse(new Uint8Array(arrayBuffer), source.name);
+        usd = await loaderState.workerLoader.parse(new Uint8Array(arrayBuffer), source.name, workerParseOptions);
     } else {
         // Load from URL - worker handles download progress
-        usd = await loaderState.workerLoader.load(source);
+        usd = await loaderState.workerLoader.load(source, workerParseOptions);
     }
     stats.parseMs = performance.now() - parseStart;
     updateLoadStatsPanel(stats);
@@ -1407,13 +1459,12 @@ async function loadUSDWithProgress(source, isFile = false) {
     try {
         let usd;
 
-        // Use Web Worker for responsive UI during parsing
-        if (loaderState.useWorker && settings.backend === 'legacy') {
+        // Use Web Worker for responsive UI during parsing. TinyUSDZWorker
+        // handles both backends (it dynamically imports the next-only module
+        // when the load options request backend=next).
+        if (loaderState.useWorker) {
             usd = await loadWithWorker(source, isFile, stats);
         } else {
-            if (loaderState.useWorker && settings.backend !== 'legacy') {
-                console.log('[Progress Demo] next backend uses main-thread loader path');
-            }
             usd = await loadWithMainThread(source, isFile, stats);
         }
 
@@ -1630,6 +1681,14 @@ function updateModelInfo() {
     document.getElementById('mesh-count').textContent = sceneState.meshCount;
     document.getElementById('material-count').textContent = sceneState.materials.length;
     document.getElementById('texture-count').textContent = sceneState.textureCount;
+    document.getElementById('light-count').textContent = sceneState.lightsCount;
+    document.getElementById('camera-count').textContent = sceneState.camerasCount;
+    document.getElementById('node-count').textContent = sceneState.nodesCount;
+    document.getElementById('point-instancer-count').textContent = sceneState.pointInstancerCount;
+    document.getElementById('point-instance-draw-count').textContent = sceneState.pointInstanceDrawCount;
+    document.getElementById('skeleton-count').textContent = sceneState.skeletonCount;
+    document.getElementById('animation-count').textContent = sceneState.animationCount;
+    document.getElementById('unsupported-renderable-count').textContent = sceneState.unsupportedRenderableCount;
 
     // Update toolbar buttons visibility
     updateFitButton();

@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "../parser/ascii-parser.hh"
 #include "arc-types.hh"
 #include "namespace-mapping.hh"
 #include "../layer/layer.hh"
@@ -127,6 +128,11 @@ struct CompositionOptions {
   // Per-layer file/input memory cap for layers loaded by the compositor
   // (sublayers, references, payloads). 0 = no limit.
   size_t max_layer_memory = 0;
+
+  // USDA parser options for external USDA layers loaded by this compose path.
+  // Keep defaults aligned with next's parser defaults (non-lazy unless the
+  // caller enables it in LoadUSDOptions).
+  ParseOptions usda_parse_options = {};
 
   // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
   // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env

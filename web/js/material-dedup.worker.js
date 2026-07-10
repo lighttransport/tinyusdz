@@ -5,12 +5,18 @@ let loader = null;
 let activeBytes = null;
 let activeName = '';
 
+const IMAGE_RE = /\.(png|jpg|jpeg|webp|gif|bmp|tif|tiff|exr|hdr|avif)$/i;
+
 async function ensureLoader() {
 	if (loader) return loader;
 	loader = new TinyUSDZLoader(null, {
 		suppressNativeInfoLogs: true
 	});
-	await loader.init();
+	// Workers do not inherit the page's location query parameters, so
+	// backend=next/wasm=next cannot select the module implicitly here. This
+	// worker is exclusively the next conversion path; load the full next-only
+	// RenderStream explicitly instead of the legacy USDC-only shim.
+	await loader.init({ backend: 'next', useNextOnlyWasm: true });
 	return loader;
 }
 
@@ -22,6 +28,35 @@ function addTransferable(list, seen, value) {
 	list.push(buffer);
 }
 
+function normArchivePath(path) {
+	return String(path || '').replace(/\\/g, '/').replace(/^[./]+/, '').replace(/^\/+/, '');
+}
+
+function collectReferencedTexturePaths(meshes) {
+	const paths = new Set();
+	const addPath = (path) => {
+		const key = normArchivePath(path);
+		if (key) paths.add(key);
+	};
+	for (const mesh of meshes || []) {
+		for (const path of Object.values(mesh.texturePaths || {})) addPath(path);
+		for (const material of mesh.materials || []) {
+			for (const path of Object.values(material.texturePaths || {})) addPath(path);
+		}
+	}
+	return paths;
+}
+
+function isReferencedTextureEntry(name, referenced) {
+	const key = normArchivePath(name);
+	if (!key || !IMAGE_RE.test(key)) return false;
+	if (referenced.has(key)) return true;
+	for (const ref of referenced) {
+		if (key.endsWith('/' + ref) || ref.endsWith('/' + key)) return true;
+	}
+	return false;
+}
+
 function serializeNextScene(usd, includeArchiveEntries = false) {
 	if (!isNextScene(usd)) {
 		throw new Error('worker conversion only supports next render scenes');
@@ -29,15 +64,17 @@ function serializeNextScene(usd, includeArchiveEntries = false) {
 	const archiveEntries = [];
 	const transfer = [];
 	const seen = new Set();
+	const meshes = usd.meshes || [];
 	if (includeArchiveEntries) {
+		const referenced = collectReferencedTexturePaths(meshes);
 		for (const [name, bytes] of usd.archiveEntries || []) {
-			if (/\.(usd|usda|usdc)$/i.test(name)) continue;
+			if (!isReferencedTextureEntry(name, referenced)) continue;
 			const copy = new Uint8Array(bytes);
 			archiveEntries.push([name, copy]);
 			addTransferable(transfer, seen, copy);
 		}
 	}
-	for (const mesh of usd.meshes || []) {
+	for (const mesh of meshes) {
 		addTransferable(transfer, seen, mesh.points);
 		addTransferable(transfer, seen, mesh.indices);
 		addTransferable(transfer, seen, mesh.normals);
@@ -47,7 +84,7 @@ function serializeNextScene(usd, includeArchiveEntries = false) {
 		payload: {
 			__backend: 'next',
 			filename: usd.filename || '',
-			meshes: usd.meshes || [],
+			meshes,
 			stats: usd.getStats ? usd.getStats() : (usd.stats || {}),
 			sceneMetadata: usd.getSceneMetadata ? usd.getSceneMetadata() : (usd.sceneMetadata || {}),
 			archiveEntries

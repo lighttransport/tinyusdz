@@ -11,18 +11,20 @@ import {
 	readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
 import {
+	getAssetUriFromURL,
 	getBackendFromURL,
 	makeStaticNextParseOptions
 } from 'tinyusdz/LoaderConfigUtils.js';
+import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
+import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
+import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
+import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
+import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js';
 
 const LOADER_BACKEND = getBackendFromURL();
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
-	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
-		const value = params.get(key);
-		if (value) return value;
-	}
-	return null;
+	return getAssetUriFromURL(params, ['usd']);
 }
 
 function getDisplayNameFromURI(uri) {
@@ -1941,27 +1943,27 @@ function playAllUSDAnimations() {
 				// Track name format: "<uuid>.<property>"
 				const parts = track.name.split('.');
 				if (parts.length >= 2) {
-					const uuid = parts[0];
+					const targetName = parts[0];
 					let found = false;
 					// Check in usdContentNode which is the mixer root
 					if (usdContentNode) {
 						usdContentNode.traverse(obj => {
-							if (obj.uuid === uuid) {
+							if (obj.uuid === targetName || obj.name === targetName) {
 								found = true;
 							}
 						});
 					}
 					if (!found) {
 						allTracksValid = false;
-						invalidTracks.push({ track: track.name, uuid: uuid });
+						invalidTracks.push({ track: track.name, targetName: targetName });
 					}
 				}
 			});
 
 			if (!allTracksValid) {
-				console.warn(`⚠️ Clip ${clipIndex} "${clip.name}" has ${invalidTracks.length} track(s) with invalid UUIDs:`);
-				invalidTracks.forEach(({track, uuid}) => {
-					console.warn(`  - Track "${track}" references UUID ${uuid.slice(0, 8)} which doesn't exist in scene`);
+				console.warn(`⚠️ Clip ${clipIndex} "${clip.name}" has ${invalidTracks.length} track(s) with invalid targets:`);
+				invalidTracks.forEach(({track, targetName}) => {
+					console.warn(`  - Track "${track}" references target ${targetName.slice(0, 32)} which doesn't exist in scene`);
 				});
 				console.warn(`  Skipping this clip to avoid errors.`);
 				return; // Skip this clip
@@ -1978,16 +1980,16 @@ function playAllUSDAnimations() {
 				// Track name format: "<uuid>.<property>"
 				const parts = track.name.split('.');
 				if (parts.length >= 2) {
-					const uuid = parts[0];
+					const targetName = parts[0];
 					let found = false;
 					// Traverse usdContentNode which is the mixer root
 					if (usdContentNode) {
 						usdContentNode.traverse(obj => {
-							if (obj.uuid === uuid) {
+							if (obj.uuid === targetName || obj.name === targetName) {
 								found = true;
 								// Store action reference for this object
-								if (!objectAnimationActions.has(uuid)) {
-									objectAnimationActions.set(uuid, {
+								if (!objectAnimationActions.has(obj.uuid)) {
+									objectAnimationActions.set(obj.uuid, {
 										action: action,
 										enabled: true,
 										objectName: obj.name,
@@ -3067,42 +3069,104 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 	if (isNextScene(usd_scene)) {
 		const sceneMetadata = readNextSceneMeta(usd_scene);
 		const fileUpAxis = sceneMetadata.upAxis || "Y";
+		const rawSceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
+		const timeCodesPerSecond = rawSceneMetadata.timeCodesPerSecond || 24.0;
 		currentFileUpAxis = fileUpAxis;
 		currentSceneMetadata = {
 			upAxis: fileUpAxis,
 			metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
-			framesPerSecond: 24.0,
-			timeCodesPerSecond: 24.0,
-			startTimeCode: null,
-			endTimeCode: null,
+			framesPerSecond: rawSceneMetadata.framesPerSecond || timeCodesPerSecond,
+			timeCodesPerSecond,
+			startTimeCode: rawSceneMetadata.startTimeCode ?? null,
+			endTimeCode: rawSceneMetadata.endTimeCode ?? null,
 			autoPlay: false,
-			comment: "next backend static render",
+			comment: "next backend render",
 			copyright: ""
 		};
 		updateMetadataUI();
 
+		const {
+			hasSkinnedMeshData,
+			allSkinnedMeshUSDData,
+			skinnedMeshDataByName
+		} = extractSkinnedMeshData(usd_scene, { logger: console });
+		const skeletonBuild = buildSkeletonDataFromUSD(usd_scene, {
+			logger: console,
+			hasSkinnedMeshData
+		});
 		const built = buildNextThreeNode(usd_scene, {
 			skipTextures: false,
 			lazyTextures: true
 		});
-		usdContentNode = built.node;
-		usdSceneRoot.add(built.node);
 		if (built.textureManager) {
 			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
 		}
+		const nodeIndexMap = buildNodeIndexMap(built.node);
+		const skinningResult = applyUSDSceneSkinningPipeline({
+			threeNode: built.node,
+			characterGroup: usdSceneRoot,
+			helperScene: scene,
+			skeletonDataArray: skeletonBuild.skeletonDataArray,
+			allSkinnedMeshUSDData,
+			skinnedMeshDataByName,
+			usdScene: usd_scene,
+			showMesh: true,
+			showSkeleton: false,
+			useWASMBoneTexture: false,
+			logger: console
+		});
+		usdContentNode = built.node;
 
 		if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
 			usdSceneRoot.rotation.x = -Math.PI / 2;
 		}
 		animationParams.applySceneScale();
-		usdSceneRoot.traverse((child) => {
+		for (const child of skinningResult.allSceneMeshes || []) {
 			if (child.isMesh) {
 				child.castShadow = true;
 				child.receiveShadow = true;
 			}
-		});
-		console.log('[animation] next backend renders static geometry/materials only; animation extraction is legacy-only.');
-		buildSceneGraphUI();
+		}
+		try {
+			const animData = extractUSDSceneAnimations(usd_scene, {
+				boneMaps: skeletonBuild.boneMaps,
+				nodeIndexMap,
+				timeCodesPerSecond,
+				logger: console
+			});
+			usdAnimations = [
+				...animData.usdAnimations,
+				...animData.usdNodeAnimations
+			];
+			if (usdAnimations.length > 0) {
+				let beginTime = 0;
+				let endTime = 0;
+				if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined &&
+				    currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+					beginTime = currentSceneMetadata.startTimeCode;
+					endTime = currentSceneMetadata.endTimeCode;
+				} else {
+					for (const clip of usdAnimations) {
+						if (clip && clip.duration > endTime) endTime = clip.duration;
+					}
+				}
+				if (endTime > beginTime) {
+					animationParams.beginTime = beginTime;
+					animationParams.endTime = endTime;
+					animationParams.duration = endTime - beginTime;
+					animationParams.time = beginTime;
+					updateTimeRangeGUIControllers(endTime);
+				}
+				animationParams.speed = currentSceneMetadata.framesPerSecond || timeCodesPerSecond;
+				playAllUSDAnimations();
+				console.log(`[animation] next backend loaded ${usdAnimations.length} animation clip(s)`);
+			} else {
+				buildSceneGraphUI();
+			}
+		} catch (error) {
+			console.warn('[animation] next animation extraction failed:', error);
+			buildSceneGraphUI();
+		}
 		if (typeof usd_scene.releaseBuildData === 'function') {
 			usd_scene.releaseBuildData();
 		}

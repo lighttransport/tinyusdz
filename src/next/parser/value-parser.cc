@@ -8,6 +8,7 @@
 #include "../strfmt.hh"
 #include "lexer.hh"
 #include "../crate/crate-format.hh"
+#include "../crate/lazy-array.hh"
 #include "../types/type-info.hh"
 
 #include <algorithm>

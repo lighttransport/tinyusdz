@@ -424,6 +424,9 @@ web/build_64
 web/js/assets/*
 !web/js/assets/physics-robot-arm.usda
 
+# vite build output
+web/js/dist/
+
 # fuzzer
 tests/fuzzer/corpus/
 

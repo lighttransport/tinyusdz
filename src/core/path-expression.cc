@@ -190,7 +190,7 @@ class Parser {
       Fail("Unexpected trailing characters in path expression");
       return nullptr;
     }
-    return n;
+    return std::unique_ptr<Node>(std::move(n));
   }
 
   bool failed() const { return failed_; }
@@ -233,7 +233,7 @@ class Parser {
       bin->b = std::move(right);
       left = std::move(bin);
     }
-    return left;
+    return std::unique_ptr<Node>(std::move(left));
   }
 
   std::unique_ptr<Node> ParseFactor(size_t depth) {
@@ -253,7 +253,7 @@ class Parser {
       c->a = std::move(atom);
       return c;
     }
-    return atom;
+    return std::unique_ptr<Node>(std::move(atom));
   }
 
   std::unique_ptr<Node> ParseAtom(size_t depth) {
@@ -274,7 +274,7 @@ class Parser {
         return nullptr;
       }
       pos_++;
-      return e;
+      return std::unique_ptr<Node>(std::move(e));
     }
     if (c == '%') {
       return ParseRef();
@@ -312,7 +312,7 @@ class Parser {
     n->kind = Node::K::Ref;
     n->ref = std::move(ref);
     if (!NoteNode()) return nullptr;
-    return n;
+    return std::unique_ptr<Node>(std::move(n));
   }
 
   std::unique_ptr<Node> ParsePattern() {
@@ -348,7 +348,7 @@ class Parser {
     n->kind = Node::K::Pattern;
     n->pattern = DecomposePattern(raw);
     if (!NoteNode()) return nullptr;
-    return n;
+    return std::unique_ptr<Node>(std::move(n));
   }
 
   // Per OpenUSD grammar: OptSpaced<'+'|'&'|'-'> | implied-union(plus<blank>).
@@ -514,7 +514,7 @@ struct Serializer {
     if (needGroup) {
       return "(" + sub + ")";
     }
-    return sub;
+    return std::string(std::move(sub));
   }
 };
 

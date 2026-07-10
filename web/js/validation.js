@@ -442,7 +442,12 @@ function escapeHTML(text) {
 
 async function initWasm() {
   try {
-    const factory = (await import('./src/tinyusdz/tinyusdz.js')).default;
+    // backend=next / wasm=next load the next-only module (its
+    // validateFromBinary free function shares the legacy JSON contract).
+    const params = new URLSearchParams(window.location.search);
+    const useNext = params.get('backend') === 'next' || params.get('wasm') === 'next';
+    const glue = useNext ? './src/tinyusdz/tinyusdz_next.js' : './src/tinyusdz/tinyusdz.js';
+    const factory = (await import(/* @vite-ignore */ new URL(glue, import.meta.url).href)).default;
     state.nativeModule = await factory();
     setStatus('Ready');
     validateBtn.disabled = !state.currentBytes;
@@ -468,11 +473,15 @@ function loadSample(index) {
 
 function validateCurrentInput() {
   if (!state.nativeModule || !state.currentBytes) return;
-  const native = new state.nativeModule.TinyUSDZLoaderNative();
+  // Legacy module: TinyUSDZLoaderNative member; next-only module: free function.
+  const native = typeof state.nativeModule.TinyUSDZLoaderNative === 'function'
+    ? new state.nativeModule.TinyUSDZLoaderNative() : null;
   try {
     setStatus('Validating...');
     const options = JSON.stringify({ groups: selectedGroups() });
-    const raw = native.validateFromBinary(state.currentBytes, state.currentName, options);
+    const raw = native
+      ? native.validateFromBinary(state.currentBytes, state.currentName, options)
+      : state.nativeModule.validateFromBinary(state.currentBytes, state.currentName, options);
     const result = JSON.parse(raw);
     renderResult(result);
     setStatus('Validation complete');
@@ -488,7 +497,7 @@ function validateCurrentInput() {
     });
     setStatus('Validation failed');
   } finally {
-    native.delete();
+    if (native) native.delete();
   }
 }
 

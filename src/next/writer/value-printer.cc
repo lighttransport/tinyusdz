@@ -5,6 +5,8 @@
 
 #include "value-printer.hh"
 #include "../crate/crate-format.hh"  // HalfToFloat
+#include "../crate/lazy-array.hh"
+#include "../../safe-arithmetic.hh"
 #include "stream-writer.hh"
 #include "../types/value-view.hh"
 #include "../types/type-id.hh"
@@ -12,6 +14,8 @@
 #include "dtoa.hh"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -242,9 +246,192 @@ void EmitCompRange(ChunkedStream& out, const T* data, TypeId type_id, size_t lo,
   if (close) out.append(']');
 }
 
+void DiscardLazyArrayRangePages(const Value& value, size_t elem_lo,
+                                size_t elem_hi) {
+  if (!value.is_lazy() || elem_hi <= elem_lo) return;
+  const LazyArrayRef* ref = value.lazy_ref();
+  if (!ref || !ref->source || ref->block_len == 0 ||
+      ref->crate_type == CrateTypeId::Invalid || ref->src_elem_stride == 0) {
+    return;
+  }
+  const uint64_t data_begin = ref->block_offset + 8u;
+  if (data_begin < ref->block_offset) return;
+  const uint64_t stride = uint64_t(ref->src_elem_stride);
+  if (uint64_t(elem_lo) > ((std::numeric_limits<uint64_t>::max)() - data_begin) /
+                              stride ||
+      uint64_t(elem_hi) > ((std::numeric_limits<uint64_t>::max)() - data_begin) /
+                              stride) {
+    return;
+  }
+  const uint64_t byte_begin =
+      data_begin + uint64_t(elem_lo) * stride;
+  const uint64_t byte_end =
+      data_begin + uint64_t(elem_hi) * stride;
+  if (byte_begin < data_begin || byte_end < byte_begin) return;
+  ref->source->DiscardRange(byte_begin, byte_end - byte_begin);
+}
+
+bool PrintCompressedIntLazyArrayToStream(StreamWriter& os, const Value& value,
+                                         const PrintOptions& opts) {
+  if (!value.is_lazy() || value.type_id() != TypeId::Int) return false;
+  const LazyArrayRef* ref = value.lazy_ref();
+  if (!ref || !ref->source || !ref->is_compressed ||
+      ref->crate_type != CrateTypeId::Int || ref->block_len < 16) {
+    return false;
+  }
+
+  const uint64_t count = ref->element_count;
+  if (count > uint64_t((std::numeric_limits<size_t>::max)())) return false;
+  if (opts.max_array_elements > 0 && count > opts.max_array_elements) {
+    return false;  // preview truncation is handled by the generic path.
+  }
+
+  const uint64_t block_begin = ref->block_offset;
+  const uint64_t block_end = block_begin + ref->block_len;
+  if (block_end < block_begin || block_end > ref->source->size()) return false;
+  const uint8_t* base = ref->source->base();
+  if (!base) return false;
+
+  uint64_t stored_count = 0;
+  std::memcpy(&stored_count, base + block_begin, sizeof(uint64_t));
+  const uint64_t count_hi = stored_count >> 32;
+  const uint64_t count_lo = stored_count & 0xffffffffull;
+  stored_count = (count_hi != 0 && count_lo != 0) ? count_lo : stored_count;
+  if (stored_count != count) return false;
+
+  uint64_t comp_size = 0;
+  std::memcpy(&comp_size, base + block_begin + 8, sizeof(uint64_t));
+  if (comp_size == 0 || comp_size > ref->block_len - 16 ||
+      comp_size > uint64_t((std::numeric_limits<size_t>::max)())) {
+    return false;
+  }
+
+  size_t code_bits = 0;
+  size_t code_bytes = 0;
+  size_t value_bytes = 0;
+  size_t hint_value_bytes = 0;
+  size_t initial_delta_size = 0;
+  size_t max_delta_size = 0;
+  if (!safe::mul(static_cast<size_t>(count), size_t(2), &code_bits) ||
+      !safe::add(code_bits, size_t(7), &code_bits) ||
+      !safe::mul(static_cast<size_t>(count), sizeof(int32_t), &value_bytes) ||
+      !safe::mul(static_cast<size_t>(count), size_t(2), &hint_value_bytes) ||
+      !safe::add(sizeof(int32_t), code_bits / 8, &code_bytes) ||
+      !safe::add(code_bytes, hint_value_bytes, &initial_delta_size) ||
+      !safe::add(code_bytes, value_bytes, &max_delta_size)) {
+    return false;
+  }
+  initial_delta_size = std::min(initial_delta_size, max_delta_size);
+
+  DecompressResult dr = DecompressCrateBlobWithCapacityHint(
+      base + block_begin + 16, static_cast<size_t>(comp_size), max_delta_size,
+      initial_delta_size);
+  if (!dr.success) return false;
+  const uint8_t* buffer = dr.data.data();
+  const size_t buffer_size = dr.data.size();
+  if (count == 0) {
+    os.write("[]", 2);
+    return true;
+  }
+  if (!buffer || buffer_size < sizeof(int32_t)) return false;
+
+  int32_t common_delta = 0;
+  std::memcpy(&common_delta, buffer, sizeof(int32_t));
+  const size_t codes_bytes = (static_cast<size_t>(count) * 2 + 7) / 8;
+  const size_t codes_start = sizeof(int32_t);
+  const size_t vints_start = codes_start + codes_bytes;
+  if (buffer_size < vints_start) return false;
+
+  size_t check_vints_pos = vints_start;
+  for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+    const uint8_t code_byte = buffer[codes_start + i / 4];
+    const uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
+    size_t step = 0;
+    switch (code) {
+      case 0:
+        step = 0;
+        break;
+      case 1:
+        step = sizeof(int8_t);
+        break;
+      case 2:
+        step = sizeof(int16_t);
+        break;
+      case 3:
+        step = sizeof(int32_t);
+        break;
+    }
+    if (step > buffer_size - check_vints_pos) return false;
+    check_vints_pos += step;
+  }
+
+  ChunkedStream out(os);
+  out.append('[');
+  int32_t prev = 0;
+  size_t vints_pos = vints_start;
+  for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+    const uint8_t code_byte = buffer[codes_start + i / 4];
+    const uint8_t code = (code_byte >> ((i % 4) * 2)) & 3;
+    int32_t delta = 0;
+    switch (code) {
+      case 0:
+        delta = common_delta;
+        break;
+      case 1: {
+        if (vints_pos + sizeof(int8_t) > buffer_size) return false;
+        int8_t v = 0;
+        std::memcpy(&v, buffer + vints_pos, sizeof(int8_t));
+        delta = static_cast<int32_t>(v);
+        vints_pos += sizeof(int8_t);
+        break;
+      }
+      case 2: {
+        if (vints_pos + sizeof(int16_t) > buffer_size) return false;
+        int16_t v = 0;
+        std::memcpy(&v, buffer + vints_pos, sizeof(int16_t));
+        delta = static_cast<int32_t>(v);
+        vints_pos += sizeof(int16_t);
+        break;
+      }
+      case 3: {
+        if (vints_pos + sizeof(int32_t) > buffer_size) return false;
+        std::memcpy(&delta, buffer + vints_pos, sizeof(int32_t));
+        vints_pos += sizeof(int32_t);
+        break;
+      }
+    }
+
+    const uint32_t value_u =
+        static_cast<uint32_t>(prev) + static_cast<uint32_t>(delta);
+    const int32_t value = static_cast<int32_t>(value_u);
+    if (i) out.append(", ");
+    out.append_int(value);
+    prev = value;
+  }
+  out.append(']');
+  return true;
+}
+
 bool PrintArrayToStream(StreamWriter& os, const Value& value,
                         const PrintOptions& opts) {
   if (!value.is_array()) return false;
+  if (PrintCompressedIntLazyArrayToStream(os, value, opts)) return true;
+  constexpr size_t kSerialRangeChunkElems = 64u * 1024u;
+  if (value.is_lazy() && value.array_size() >= kSerialRangeChunkElems &&
+      IsChunkableArray(value, opts)) {
+    const size_t n = value.array_size();
+    for (size_t lo = 0; lo < n; lo += kSerialRangeChunkElems) {
+      const size_t hi = (lo + kSerialRangeChunkElems < n)
+                            ? lo + kSerialRangeChunkElems
+                            : n;
+      if (!PrintArrayRangeToStream(os, value, opts, lo, hi,
+                                   /*open=*/lo == 0,
+                                   /*close=*/hi == n)) {
+        return false;
+      }
+    }
+    return true;
+  }
   ChunkedStream out(os);
   const size_t maxN = opts.max_array_elements;
   const TypeId type_id = value.type_id();
@@ -367,6 +554,15 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
       return false;
     }
   }
+}
+
+void DiscardLazyArraySourcePages(const Value& value) {
+  if (!value.is_lazy()) return;
+  const LazyArrayRef* ref = value.lazy_ref();
+  if (!ref || !ref->source || ref->block_len == 0) return;
+  constexpr uint64_t kMinDiscard = 1ull << 20;
+  if (ref->block_len < kMinDiscard) return;
+  ref->source->DiscardRange(ref->block_offset, ref->block_len);
 }
 
 }  // anonymous namespace
@@ -900,6 +1096,7 @@ std::string PrintValue(const Value& value, const PrintOptions& opts) {
 
 void PrintValue(StreamWriter& out, const Value& value, const PrintOptions& opts) {
   if (value.is_array() && PrintArrayToStream(out, value, opts)) {
+    DiscardLazyArraySourcePages(value);
     return;
   }
   std::string tmp;
@@ -975,6 +1172,10 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
   (void)opts;
   if (!value.is_array()) return false;
   ChunkedStream out(os);
+  auto done = [&]() {
+    DiscardLazyArrayRangePages(value, elem_lo, elem_hi);
+    return true;
+  };
   const TypeId type_id = value.type_id();
   switch (type_id) {
     case TypeId::Int: {
@@ -983,7 +1184,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       if (!GetIntArrayView(value, &scratch, &view)) return false;
       EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
                       [&](int32_t v) { out.append_int(v); });
-      return true;
+      return done();
     }
     case TypeId::UInt: {
       ArrayScratch<uint32_t> scratch;
@@ -991,7 +1192,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       if (!GetUIntArrayView(value, &scratch, &view)) return false;
       EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
                       [&](uint32_t v) { out.append_uint(v); });
-      return true;
+      return done();
     }
     case TypeId::Int64: {
       ArrayScratch<int64_t> scratch;
@@ -999,7 +1200,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       if (!GetInt64ArrayView(value, &scratch, &view)) return false;
       EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
                       [&](int64_t v) { out.append_int(v); });
-      return true;
+      return done();
     }
     case TypeId::UInt64: {
       ArrayScratch<uint64_t> scratch;
@@ -1007,7 +1208,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
       if (!GetUInt64ArrayView(value, &scratch, &view)) return false;
       EmitScalarRange(out, view.data, elem_lo, elem_hi, open, close,
                       [&](uint64_t v) { out.append_uint(v); });
-      return true;
+      return done();
     }
     default: {
       const TypeId component = GetComponentType(type_id);
@@ -1021,7 +1222,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
         if (!GetDoubleArrayView(value, &scratch, &view)) return false;
         EmitCompRange(out, view.data, type_id, elem_lo, elem_hi, open, close,
                       [&](double v) { out.append_double(v); });
-        return true;
+        return done();
       }
       if (flt) {
         ArrayScratch<float> scratch;
@@ -1029,7 +1230,7 @@ bool PrintArrayRangeToStream(StreamWriter& os, const Value& value,
         if (!GetFloatArrayView(value, &scratch, &view)) return false;
         EmitCompRange(out, view.data, type_id, elem_lo, elem_hi, open, close,
                       [&](float v) { out.append_float(v); });
-        return true;
+        return done();
       }
       return false;
     }

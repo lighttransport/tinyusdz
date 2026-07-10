@@ -20,12 +20,22 @@
 #include "next/crate/crate-writer.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/crate/lazy-array.hh"
 #include "next/tinyusdz-next.hh"
 #include "next/writer/usdc-writer.hh"
 #include "next/parser/ascii-parser.hh"
 #include "next/layer/property-index.hh"
+#include "next/pcp/prim-index.hh"
 
 using namespace tinyusdz::next;
+
+#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+    !defined(__wasi__) &&                                             \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
+constexpr bool kExpectUsdaLazyMmap = true;
+#else
+constexpr bool kExpectUsdaLazyMmap = false;
+#endif
 
 static const Value* DictFind(const Value& dv, const char* key) {
   if (!dv.is_dictionary() || !dv.as_dictionary()) return nullptr;
@@ -780,6 +790,96 @@ void test_high_level_memory_caps() {
   std::remove(asset_file);
   std::remove(root_file);
   std::cout << "  high-level memory caps passed!\n\n";
+}
+
+void test_load_usdcomposed_usda_parse_options() {
+  std::cout << "Testing composed USDA parse options passthrough...\n";
+
+  const char* root_file = "/tmp/next-ticket4-root.usda";
+  const char* ext_file = "/tmp/next-ticket4-ext.usda";
+
+  const std::string root_text =
+      "#usda 1.0\n(\n"
+      "  subLayers = [@./next-ticket4-ext.usda@]\n"
+      ")\n"
+      "def Xform \"Root\" {}\n";
+  const std::string ext_text =
+      "#usda 1.0\n"
+      "def Mesh \"AssetGeom\" {\n"
+      "  int[] small = [1, 2]\n"
+      "  int[] large = [1, 2, 3, 4]\n"
+      "  point3f[] points = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]\n"
+      "}\n";
+
+  {
+    std::ofstream f(root_file, std::ios::binary);
+    f << root_text;
+  }
+  {
+    std::ofstream f(ext_file, std::ios::binary);
+    f << ext_text;
+  }
+
+  {
+    Stage composed;
+    assert(LoadUSDComposed(root_file, &composed, nullptr, nullptr, nullptr));
+    UsdPrim mesh = composed.GetPrimAtPath("/AssetGeom");
+    assert(mesh.IsValid());
+    assert(!mesh.GetPropertyValue("small")->is_lazy());
+    assert(!mesh.GetPropertyValue("large")->is_lazy());
+    assert(!mesh.GetPropertyValue("points")->is_lazy());
+  }
+
+  LoadUSDOptions lo;
+  pcp::CompositionOptions co;
+  co.usda_parse_options.enable_usda_lazy_arrays = true;
+  co.usda_parse_options.max_usda_lazy_array_elements = 2;
+  {
+    Stage composed;
+    std::string warn, err;
+    assert(LoadUSDComposed(root_file, &composed, lo, &warn, &err, &co));
+    assert(warn.empty());
+    assert(err.empty());
+    UsdPrim mesh = composed.GetPrimAtPath("/AssetGeom");
+    assert(mesh.IsValid());
+    const Value* small = mesh.GetPropertyValue("small");
+    const Value* large = mesh.GetPropertyValue("large");
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(small && large && points);
+    assert(small->is_lazy());
+    assert(small->lazy_ref() && small->lazy_ref()->source);
+    if (kExpectUsdaLazyMmap) {
+      assert(small->lazy_ref()->source->is_mmapped());
+    }
+    assert(!large->is_lazy());
+    assert(!points->is_lazy());
+  }
+
+  co.usda_parse_options.max_usda_lazy_array_elements = 0;
+  {
+    Stage composed;
+    std::string warn, err;
+    assert(LoadUSDComposed(root_file, &composed, lo, &warn, &err, &co));
+    assert(warn.empty());
+    assert(err.empty());
+    UsdPrim mesh = composed.GetPrimAtPath("/AssetGeom");
+    assert(mesh.IsValid());
+    const Value* large = mesh.GetPropertyValue("large");
+    const Value* points = mesh.GetPropertyValue("points");
+    assert(large && points);
+    assert(large->is_lazy());
+    assert(points->is_lazy());
+    assert(large->lazy_ref() && large->lazy_ref()->source);
+    assert(points->lazy_ref() && points->lazy_ref()->source);
+    if (kExpectUsdaLazyMmap) {
+      assert(large->lazy_ref()->source->is_mmapped());
+      assert(points->lazy_ref()->source->is_mmapped());
+    }
+  }
+
+  std::remove(root_file);
+  std::remove(ext_file);
+  std::cout << "  composed USDA parse option passthrough passed!\n\n";
 }
 
 // HalfToFloat/FloatToHalf: every finite half bit pattern must survive
@@ -1679,6 +1779,7 @@ int main() {
     test_roundtrip_time_samples();
     test_roundtrip_vec_matrix_arrays();
     test_high_level_memory_caps();
+    test_load_usdcomposed_usda_parse_options();
     test_roundtrip_half_arrays();
     test_write_usdc_from_stage_api();
     test_roundtrip_variants();

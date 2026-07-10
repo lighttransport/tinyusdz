@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "tinyusdz-c.h"
 
@@ -249,6 +250,90 @@ static int test_file_load(const char* path) {
   return 0;
 }
 
+static int test_usda_lazy_load_options(void) {
+  const size_t count = 25000;
+  const char* prefix = "#usda 1.0\n\ndef Mesh \"Mesh\" {\n    int[] points = [";
+  const char* suffix = "]\n}\n";
+  const size_t max_chars_per_digit = 8; /* "-2147483648" */
+  size_t buf_cap = 64 + strlen(prefix) + strlen(suffix) + (count * max_chars_per_digit);
+  char* data = (char*)malloc(buf_cap);
+  if (!data) {
+    fprintf(stderr, "FAIL: OOM building lazy parse fixture\n");
+    return 1;
+  }
+
+  size_t len = strlen(prefix);
+  memcpy(data, prefix, len);
+  for (size_t i = 0; i < count; ++i) {
+    const int written = snprintf(
+        data + len,
+        buf_cap - len,
+        i == 0 ? "%zu" : ",%zu",
+        i);
+    if (written <= 0 || written >= (int)(buf_cap - len)) {
+      free(data);
+      fprintf(stderr, "FAIL: fixture build overflow\n");
+      return 1;
+    }
+    len += (size_t)written;
+  }
+  memcpy(data + len, suffix, strlen(suffix) + 1);
+  len += strlen(suffix);
+
+  printf("  built USDA fixture: %zu values (%zu bytes)\n", count, len);
+
+  /* Force eager parsing by shrinking the lazy cap to 1 element. */
+  tusd_load_options eager;
+  tusd_load_options_init(&eager);
+  eager.format = TUSD_FORMAT_USDA;
+  eager.enable_usda_lazy_arrays = 1;
+  eager.max_usda_lazy_array_elements = 1;
+  eager.usda_num_threads = 1;
+  tusd_stage* eager_stage = NULL;
+  CHECK_OK(tusd_stage_load_from_memory((const uint8_t*)data, len, &eager, &eager_stage));
+  tusd_stage_stats eager_before = {0}, eager_after = {0};
+  CHECK_OK(tusd_stage_get_stats(eager_stage, &eager_before));
+  {
+    tusd_prim mesh = tusd_stage_prim_at_path(eager_stage, "/Mesh");
+    CHECK(tusd_prim_is_valid(mesh));
+    tusd_value_view view = {0};
+    CHECK_OK(tusd_attr_get(mesh, "points", &view));
+    CHECK(view.is_array && view.count == count);
+  }
+  CHECK_OK(tusd_stage_get_stats(eager_stage, &eager_after));
+  tusd_stage_destroy(eager_stage);
+
+  /* Enable lazy path with a high per-array cap; should keep the array lazy until
+   * first materialization. */
+  tusd_load_options lazy;
+  tusd_load_options_init(&lazy);
+  lazy.format = TUSD_FORMAT_USDA;
+  lazy.enable_usda_lazy_arrays = 1;
+  lazy.max_usda_lazy_array_elements = (1ull << 60);
+  tusd_stage* lazy_stage = NULL;
+  CHECK_OK(tusd_stage_load_from_memory((const uint8_t*)data, len, &lazy, &lazy_stage));
+  tusd_stage_stats lazy_before = {0}, lazy_after = {0};
+  CHECK_OK(tusd_stage_get_stats(lazy_stage, &lazy_before));
+  {
+    tusd_prim mesh = tusd_stage_prim_at_path(lazy_stage, "/Mesh");
+    CHECK(tusd_prim_is_valid(mesh));
+    tusd_value_view view = {0};
+    CHECK_OK(tusd_attr_get(mesh, "points", &view));
+    CHECK(view.is_array && view.count == count);
+  }
+  CHECK_OK(tusd_stage_get_stats(lazy_stage, &lazy_after));
+  tusd_stage_destroy(lazy_stage);
+
+  /* If lazy parsing is threaded to the path, materializing from memory should grow
+   * peak memory after attribute read, while eager parsing allocates upfront. */
+  CHECK(lazy_before.memory_bytes <= eager_before.memory_bytes);
+  CHECK(lazy_after.memory_bytes >= lazy_before.memory_bytes);
+  CHECK(eager_after.memory_bytes <= eager_before.memory_bytes + 1024);
+
+  free(data);
+  return 0;
+}
+
 int main(int argc, char** argv) {
   CHECK(tusd_api_version() == ((1u << 16) | (0u << 8) | 0u));
   CHECK(strcmp(tusd_type_name(TUSD_TYPE_POINT3F), "point3f") == 0);
@@ -262,6 +347,8 @@ int main(int argc, char** argv) {
   if (argc > 1) {
     if (test_file_load(argv[1])) return 1;
   }
+  if (test_usda_lazy_load_options()) return 1;
+  printf("  usda lazy parse options: PASSED\n");
   printf("All C API tests PASSED\n");
   return 0;
 }

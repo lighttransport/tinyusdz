@@ -586,7 +586,7 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
     // TODO: Report warn.
     filepath.resize(2048);
   }
-  if (filepath.empty()) return filepath;
+  if (filepath.empty()) return std::string();
 
   // Step 1: environment-variable / tilde expansion (safe string transform;
   // replaces the deterministic part of the old wordexp() call).

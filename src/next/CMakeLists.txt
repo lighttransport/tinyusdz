@@ -93,6 +93,9 @@ set(TINYUSDZ_NEXT_SOURCES
     # Composition
     composition/composition.cc
 
+    # Layer / PrimSpec diff
+    diff/layer-diff.cc
+
     # Low-memory flatten pipeline
     pipeline/flatten.cc
 
@@ -100,6 +103,9 @@ set(TINYUSDZ_NEXT_SOURCES
     pcp/layer-registry.cc
     pcp/load-rules.cc
     pcp/cache.cc
+
+    # AOUSD Core validation
+    validation/usd-validation.cc
 
     # High-level API
     tinyusdz-next.cc
@@ -189,11 +195,17 @@ set(TINYUSDZ_NEXT_HEADERS
     # Composition
     composition/composition.hh
 
+    # Layer / PrimSpec diff
+    diff/layer-diff.hh
+
     # PCP-style lazy composition cache (native to next)
     pcp/arc-types.hh
     pcp/namespace-mapping.hh
     pcp/prim-index.hh
     pcp/layer-registry.hh
+
+    # AOUSD Core validation
+    validation/usd-validation.hh
     pcp/cache-arc-expansion.inc
     pcp/cache.hh
     pcp/cache-compose.inc
@@ -409,6 +421,21 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_load_rules PRIVATE tinyusdz_next)
 
+    add_executable(test_layer_diff
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_layer_diff.cc
+    )
+    target_link_libraries(test_layer_diff PRIVATE tinyusdz_next)
+
+    add_executable(test_memory_flatten
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_memory_flatten.cc
+    )
+    target_link_libraries(test_memory_flatten PRIVATE tinyusdz_next)
+
+    add_executable(test_validation
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_validation.cc
+    )
+    target_link_libraries(test_validation PRIVATE tinyusdz_next)
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -462,6 +489,8 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../external/mikktspace/mikktspace.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.cc
@@ -474,6 +503,8 @@ set(TYDRA_NEXT_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/urdf-payload.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.hh
@@ -624,6 +655,12 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_load_rules COMMAND test_load_rules
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_layer_diff COMMAND test_layer_diff
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_memory_flatten COMMAND test_memory_flatten
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_validation COMMAND test_validation
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_tydra COMMAND test_tydra_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
@@ -652,6 +689,9 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_crash_regressions
         next_test_usdc_malformed
         next_test_load_rules
+        next_test_layer_diff
+        next_test_memory_flatten
+        next_test_validation
         next_test_tydra)
     set_tests_properties(${TINYUSDZ_NEXT_SMOKE_TESTS}
         PROPERTIES LABELS "next")

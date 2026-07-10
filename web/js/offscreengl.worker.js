@@ -346,10 +346,11 @@ async function loadUSDFromData(data, filename) {
 
     fitCameraToScene();
 
-    const numMeshes  = loaderState.nativeLoader.numMeshes();
-    const numMats    = sceneState.materials.length;
+    const numMeshes = loaderState.nativeLoader.numMeshes();
+    const numMats = sceneState.materials.length;
+    const sceneEntityCounts = readSceneEntityCounts(loaderState.nativeLoader);
 
-    sendLoaded(numMeshes, numMats, sceneState.upAxis);
+    sendLoaded(numMeshes, numMats, sceneState.upAxis, sceneEntityCounts);
 }
 
 // ─── Scene graph construction ──────────────────────────────────────────────
@@ -580,7 +581,58 @@ function sendError(message) {
     self.postMessage({ type: 'error', message });
 }
 
-function sendLoaded(meshCount, materialCount, upAxis) {
-    console.log(`[Worker] Loaded: ${meshCount} meshes, ${materialCount} materials, upAxis=${upAxis}`);
-    self.postMessage({ type: 'loaded', meshCount, materialCount, upAxis });
+function readSceneEntityCounts(usd) {
+    const safeNumber = (fn) => {
+        if (typeof fn !== 'function') return 0;
+        try {
+            const value = fn();
+            return Number.isFinite(value) ? value : 0;
+        } catch {
+            return 0;
+        }
+    };
+    const safeArrayCount = (fn) => {
+        if (typeof fn !== 'function') return 0;
+        try {
+            const value = fn();
+            return Array.isArray(value) ? value.length : 0;
+        } catch {
+            return 0;
+        }
+    };
+    return {
+        lights: safeNumber(usd?.numLights && usd.numLights.bind(usd)),
+        cameras: safeNumber(usd?.numCameras && usd.numCameras.bind(usd)),
+        nodes: safeNumber(usd?.numNodes && usd.numNodes.bind(usd)),
+        pointInstancers: safeNumber(usd?.numPointInstancers && usd.numPointInstancers.bind(usd)),
+        pointInstanceDraws: safeNumber(usd?.numPointInstanceDraws && usd.numPointInstanceDraws.bind(usd)),
+        skeletons: safeNumber(usd?.numSkeletons && usd.numSkeletons.bind(usd)),
+        animations: safeNumber(usd?.numAnimations && usd.numAnimations.bind(usd)),
+        unsupportedRenderables: safeNumber(usd?.numUnsupportedRenderables && usd.numUnsupportedRenderables.bind(usd)) ||
+            safeArrayCount(usd?.getUnsupportedRenderables && usd.getUnsupportedRenderables.bind(usd))
+    };
+}
+
+function sendLoaded(meshCount, materialCount, upAxis, sceneEntityCounts = {}) {
+    console.log(
+        `[Worker] Loaded: ${meshCount} meshes, ${materialCount} materials, ` +
+        `lights=${sceneEntityCounts.lights || 0}, cameras=${sceneEntityCounts.cameras || 0}, nodes=${sceneEntityCounts.nodes || 0}, ` +
+        `pointInstancers=${sceneEntityCounts.pointInstancers || 0}, pointInstanceDraws=${sceneEntityCounts.pointInstanceDraws || 0}, ` +
+        `skeletons=${sceneEntityCounts.skeletons || 0}, animations=${sceneEntityCounts.animations || 0}, ` +
+        `unsupportedRenderables=${sceneEntityCounts.unsupportedRenderables || 0}, upAxis=${upAxis}`
+    );
+    self.postMessage({
+        type: 'loaded',
+        meshCount,
+        materialCount,
+        upAxis,
+        lights: sceneEntityCounts.lights || 0,
+        cameras: sceneEntityCounts.cameras || 0,
+        nodes: sceneEntityCounts.nodes || 0,
+        pointInstancers: sceneEntityCounts.pointInstancers || 0,
+        pointInstanceDraws: sceneEntityCounts.pointInstanceDraws || 0,
+        skeletons: sceneEntityCounts.skeletons || 0,
+        animations: sceneEntityCounts.animations || 0,
+        unsupportedRenderables: sceneEntityCounts.unsupportedRenderables || 0
+    });
 }

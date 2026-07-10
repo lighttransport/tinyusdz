@@ -12,6 +12,7 @@
 
 #include "crate-format.hh"      // CrateVersion, ValueRep, CrateTypeId
 #include "../types/type-id.hh"  // next::TypeId
+#include "lazy-array.hh"
 
 #include <cstdint>
 #include <memory>
@@ -22,9 +23,7 @@ namespace tinyusdz {
 namespace next {
 
 class Value;
-struct LazyArrayRef;
-
-class CrateDataSource {
+class CrateDataSource : public LazyArraySource {
  public:
   /// Adopt the crate bytes by move (no copy) together with the decoded
   /// tokens / string-index tables.
@@ -49,14 +48,20 @@ class CrateDataSource {
   ~CrateDataSource();
 
   /// Whether this source is backed by a memory mapping (vs an owned buffer).
-  bool is_mmapped() const { return mmap_base_ != nullptr; }
+  bool is_mmapped() const override { return mmap_base_ != nullptr; }
+  bool can_borrow() const override {
+    // Both owned buffer and mmap-backed buffers remain stable while the source
+    // object is alive, so array views can safely borrow from them.
+    return true;
+  }
 
-  const uint8_t* base() const {
+  const uint8_t* base() const override {
     return mmap_base_ ? mmap_base_
                       : reinterpret_cast<const uint8_t*>(bytes_.data());
   }
-  size_t size() const { return mmap_base_ ? mmap_size_ : bytes_.size(); }
-  CrateVersion version() const { return version_; }
+  size_t size() const override { return mmap_base_ ? mmap_size_ : bytes_.size(); }
+  CrateVersion version() const override { return version_; }
+  void DiscardRange(uint64_t offset, uint64_t length) const override;
 
   /// Set the crate version once it has been parsed from the bootstrap header.
   /// (The buffer is adopted before the header is read.)
@@ -75,7 +80,7 @@ class CrateDataSource {
   /// Decode a lazy array reference into a concrete Value. Returns false (and
   /// leaves `*out` empty) for array types that have no concrete Value storage
   /// yet, or on a malformed block.
-  bool MaterializeArray(const LazyArrayRef& ref, Value* out) const;
+  bool MaterializeArray(const LazyArrayRef& ref, Value* out) const override;
 
  private:
   CrateDataSource() = default;
