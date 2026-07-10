@@ -24,7 +24,7 @@ export class TinyUSDZWorkerLoader {
     /**
      * Initialize the worker
      */
-    async init() {
+    async init(options = {}) {
         if (this.worker) return;
 
         return new Promise((resolve, reject) => {
@@ -41,7 +41,7 @@ export class TinyUSDZWorkerLoader {
 
                     if (type === 'ready') {
                         // Worker script loaded, now init WASM
-                        this.worker.postMessage({ type: 'init' });
+                        this.worker.postMessage({ type: 'init', options });
                     } else if (type === 'init_complete') {
                         clearTimeout(initTimeout);
                         this.workerReady = true;
@@ -98,7 +98,15 @@ export class TinyUSDZWorkerLoader {
                     this.onTydraComplete({
                         meshCount: data.meshCount,
                         materialCount: data.materialCount,
-                        textureCount: data.textureCount
+                        textureCount: data.textureCount,
+                        animationCount: data.animationCount,
+                        nodeCount: data.nodeCount,
+                        lightCount: data.lightCount,
+                        cameraCount: data.cameraCount,
+                        pointInstancerCount: data.pointInstancerCount,
+                        pointInstanceDrawCount: data.pointInstanceDrawCount,
+                        skeletonCount: data.skeletonCount,
+                        unsupportedRenderableCount: data.unsupportedRenderableCount
                     });
                 }
                 break;
@@ -174,7 +182,7 @@ export class TinyUSDZWorkerLoader {
      * Parse USD binary data in worker
      */
     async parse(binary, filename = '', options = {}) {
-        await this.init();
+        await this.init(options);
 
         return new Promise((resolve, reject) => {
             this._loadResolve = resolve;
@@ -263,6 +271,18 @@ class WorkerLoadResult {
         return this._data.numMeshes;
     }
 
+    numPoints() {
+        return this._data.numPoints || 0;
+    }
+
+    numCurves() {
+        return this._data.numCurves || 0;
+    }
+
+    numNodes() {
+        return this._data.numNodes || 0;
+    }
+
     numMaterials() {
         return this._data.numMaterials;
     }
@@ -275,12 +295,48 @@ class WorkerLoadResult {
         return this._data.numLights;
     }
 
+    numCameras() {
+        return this._data.numCameras || 0;
+    }
+
+    numPointInstancers() {
+        return this._data.numPointInstancers || 0;
+    }
+
+    numPointInstanceDraws() {
+        return this._data.numPointInstanceDraws || 0;
+    }
+
+    numSkeletons() {
+        return this._data.numSkeletons || 0;
+    }
+
+    numUnsupportedRenderables() {
+        return this._data.numUnsupportedRenderables || 0;
+    }
+
+    numAnimations() {
+        return this._data.numAnimations || 0;
+    }
+
     numImages() {
         return this._data.numImages || 0;
     }
 
     getMesh(index) {
         return this._data.meshes[index];
+    }
+
+    getMeshCopy(index) {
+        return this.getMesh(index);
+    }
+
+    getPoints(index) {
+        return this._data.points ? this._data.points[index] : null;
+    }
+
+    getCurves(index) {
+        return this._data.curves ? this._data.curves[index] : null;
     }
 
     getMaterial(index) {
@@ -314,8 +370,64 @@ class WorkerLoadResult {
         return this._data.images ? this._data.images[index] : null;
     }
 
+    getImageCopy(index) {
+        return this.getImage(index);
+    }
+
     getLight(index) {
         return this._data.lights[index];
+    }
+
+    getNode(index) {
+        return this._data.nodes ? this._data.nodes[index] : null;
+    }
+
+    getCamera(index) {
+        return this._data.cameras ? this._data.cameras[index] : null;
+    }
+
+    getPointInstancer(index) {
+        return this._data.pointInstancers ? this._data.pointInstancers[index] : null;
+    }
+
+    getPointInstanceDraw(index) {
+        return this._data.pointInstanceDraws ? this._data.pointInstanceDraws[index] : null;
+    }
+
+    getSkeleton(index) {
+        return this._data.skeletons ? this._data.skeletons[index] : null;
+    }
+
+    getAnimation(index) {
+        return this._data.animations ? this._data.animations[index] : null;
+    }
+
+    getAnimationInfo(index) {
+        const infos = this.getAllAnimationInfos();
+        if (!Number.isFinite(index) || index < 0 || index >= infos.length) {
+            return null;
+        }
+        return infos[index];
+    }
+
+    getAllAnimationInfos() {
+        return this._data.animationInfos || [];
+    }
+
+    getAllAnimations() {
+        return this._data.animations || [];
+    }
+
+    getUnsupportedRenderables() {
+        return this._data.unsupportedRenderables || [];
+    }
+
+    numRootNodes() {
+        return this._data.rootNode ? 1 : 0;
+    }
+
+    getRootNode(index) {
+        return index === 0 ? this.getDefaultRootNode() : null;
     }
 
     getDefaultRootNode() {

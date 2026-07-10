@@ -48,6 +48,11 @@ enum class LightKind {
   SphereLight,
   CylinderLight,
   PointLight,  // Non-standard but common
+  GeometryLight,
+  PortalLight,
+  PluginLight,
+  LightFilter,
+  PluginLightFilter,
 };
 LightKind GetLightKind(const UsdPrim& prim);
 

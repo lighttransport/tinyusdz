@@ -160,6 +160,15 @@
             background: #7B1FA2;
         }
 
+        #backend-select {
+            background: #111;
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 5px;
+            padding: 7px 10px;
+            font-size: 12px;
+        }
+
         #file-input {
             display: none;
         }
@@ -603,9 +612,27 @@
         <h2>TinyUSDZ Progress Demo</h2>
         <div id="status">Initializing...</div>
         <div id="model-info">
+            <div>File: <span id="current-file">-</span></div>
+            <div>Backend: <span id="backend-name">legacy</span></div>
+            <div>FPS: <span id="fps-value">--</span></div>
+            <div>File size: <span id="file-size">--</span></div>
+            <div>Read/fetch: <span id="read-time">--</span></div>
+            <div>Parse/load: <span id="parse-time">--</span></div>
+            <div>Process/build: <span id="process-time">--</span></div>
+            <div>Total: <span id="total-time">--</span></div>
+            <div>JS heap: <span id="js-heap-stat">--</span></div>
+            <div>WASM heap: <span id="wasm-heap-stat">--</span></div>
             <div>Meshes: <span id="mesh-count">0</span></div>
             <div>Materials: <span id="material-count">0</span></div>
             <div>Textures: <span id="texture-count">0</span></div>
+            <div>Lights: <span id="light-count">0</span></div>
+            <div>Cameras: <span id="camera-count">0</span></div>
+            <div>Nodes: <span id="node-count">0</span></div>
+            <div>Point Instancers: <span id="point-instancer-count">0</span></div>
+            <div>Point Instance Draws: <span id="point-instance-draw-count">0</span></div>
+            <div>Skeletons: <span id="skeleton-count">0</span></div>
+            <div>Animations: <span id="animation-count">0</span></div>
+            <div>Unsupported Renderables: <span id="unsupported-renderable-count">0</span></div>
         </div>
     </div>
 
@@ -622,6 +649,11 @@
         <button class="btn secondary" onclick="loadSampleModel()">
             Sample Model
         </button>
+        <select id="backend-select" title="Backend">
+            <option value="legacy">legacy</option>
+            <option value="next">next</option>
+            <option value="auto">auto</option>
+        </select>
         <button class="btn toggle active" id="worker-btn" onclick="toggleWorkerMode()" title="Toggle Web Worker mode for responsive UI during loading">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>

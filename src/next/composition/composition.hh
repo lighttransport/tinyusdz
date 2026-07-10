@@ -8,6 +8,7 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 #include <string>
 #include <vector>
@@ -58,6 +59,14 @@ struct CompositionOptions {
   bool resolve_variants = true;           // Apply variant selections
   int max_depth = 100;                    // Max composition recursion depth
   std::vector<std::string> muted_layers;  // Layers to skip
+  // Flatten pipeline memory/parse policy for external USDA layers loaded by the
+  // low-memory compositing path.
+  size_t max_layer_memory = 0;
+  ParseOptions usda_parse_options = {};
+
+  // Strongest variant selections for flattening: set name -> variant name.
+  // Empty keeps authored selections.
+  std::map<std::string, std::string> variant_overrides;
 };
 
 /// Composition error
@@ -182,6 +191,17 @@ private:
   std::shared_ptr<std::map<std::string, std::shared_ptr<Layer>>>
       composed_ext_cache_;
   std::shared_ptr<std::set<std::string>> composing_ext_;
+  // Resolved sublayer paths currently being composed (cycle guard; shared
+  // across the recursion like composing_ext_).
+  std::shared_ptr<std::set<std::string>> composing_sublayers_;
+  // Arc strings deleted by STRONGER layers, per prim path. Consulted by
+  // ResolveArcsForPrim during the nested sublayer composition, where a weaker
+  // layer's reference would otherwise be resolved (baked) before the
+  // stronger layer's `delete references = ...` can remove it.
+  std::map<std::string, std::set<std::string>> pending_arc_deletes_;
+  void CollectArcDeletes(const Layer& layer);
+  bool ArcDeletedByStronger(const std::string& prim_path,
+                            const std::string& arc) const;
 
   // Composition state (for cycle detection)
   std::vector<std::string> composition_stack_;
@@ -220,10 +240,13 @@ private:
                      const std::string& anchor_path, int depth);
   // Graft the descendant subtree of `src_root` in `src` under `dst_root`.
   void GraftSubtree(const Layer& src, const std::string& src_anchor,
-                    const std::string& src_root,
-                    const std::string& dst_root);
+                    const std::string& src_root, const std::string& dst_root,
+                    double t_offset = 0.0, double t_scale = 1.0);
   bool ApplyVariants(PrimSpec& prim, const Layer& layer,
                      const std::string& anchor_path, int depth);
+  void ApplyOneVariant(PrimSpec& prim, const Layer& layer,
+                       const std::string& anchor_path, int depth,
+                       const VariantData& variant);
 
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,

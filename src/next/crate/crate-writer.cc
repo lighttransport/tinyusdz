@@ -7,6 +7,7 @@
 
 #include "crate-writer.hh"
 #include "crate-data-source.hh"
+#include "variant-holders.hh"
 #include "crate-writer-types.hh"
 #include "lazy-array.hh"
 #include "safe-arithmetic.hh"
@@ -107,9 +108,7 @@ CrateWriteResult CrateWriter::WriteToFile(const std::string& filename, const Sta
 CrateWriteResult CrateWriter::WriteToMemory(std::vector<uint8_t>& buffer, const Stage& stage) {
   const Layer* root_layer = stage.GetRootLayer();
   if (!root_layer) { CrateWriteResult r; r.error = "Stage has no root layer"; return r; }
-  CrateWriteResult result = impl_->Write(*root_layer);
-  if (result.success) buffer = impl_->take_buffer();
-  return result;
+  return WriteLayerToMemory(buffer, *root_layer);
 }
 
 CrateWriteResult CrateWriter::WriteToString(std::string& buffer, const Stage& stage) {
@@ -152,6 +151,14 @@ CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer
 }
 
 CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, const Layer& layer) {
+  // Inline-authored variants (VariantSetData without bracketed holder prims)
+  // must be materialized into holder prims or the crate drops them.
+  if (LayerNeedsVariantHolders(layer)) {
+    Layer materialized = MaterializeVariantHolders(layer);
+    CrateWriteResult result = impl_->Write(materialized);
+    if (result.success) buffer = impl_->take_buffer();
+    return result;
+  }
   CrateWriteResult result = impl_->Write(layer);
   if (result.success) buffer = impl_->take_buffer();
   return result;
@@ -169,6 +176,10 @@ CrateWriteResult CrateWriter::WriteLayerToString(std::string& buffer, const Laye
 CrateWriteResult CrateWriter::WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer) {
   // Impl::Write streams bootstrap/VALUE/structural/TOC to `sink` in file order
   // when a sink is supplied; buffer_ only ever holds the small structural tail.
+  if (LayerNeedsVariantHolders(layer)) {
+    Layer materialized = MaterializeVariantHolders(layer);
+    return impl_->Write(materialized, &sink);
+  }
   return impl_->Write(layer, &sink);
 }
 

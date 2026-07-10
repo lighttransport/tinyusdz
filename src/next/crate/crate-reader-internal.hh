@@ -12,13 +12,10 @@
 
 #include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace tinyusdz {
 namespace next {
-
-class Path;
 
 // TfToken-lite storage for the crate token table. The token section is one
 // contiguous run of NUL-separated strings; keeping one blob plus spans avoids a
@@ -37,19 +34,14 @@ class TokenPool {
   }
   size_t size() const { return spans_.size(); }
   bool empty() const { return spans_.empty(); }
-  std::string_view view(size_t i) const {
-    const Span& s = spans_[i];
-    return std::string_view(blob_.data() + s.off, s.len);
-  }
   std::string str(size_t i) const {
-    return std::string(view(i));
+    const Span& s = spans_[i];
+    return std::string(blob_.data() + s.off, s.len);
   }
   std::vector<std::string> to_vector() const {
     std::vector<std::string> out;
     out.reserve(spans_.size());
-    for (size_t i = 0; i < spans_.size(); ++i) {
-      out.emplace_back(view(i));
-    }
+    for (size_t i = 0; i < spans_.size(); ++i) out.push_back(str(i));
     return out;
   }
 
@@ -67,7 +59,6 @@ class CrateReader::Impl {
   explicit Impl(const CrateReadOptions& options) : options_(options) {}
 
   CrateReadResult Read(const uint8_t* data, size_t size);
-  CrateReadResult ReadBorrowed(const uint8_t* data, size_t size);
   CrateReadResult ReadOwned(std::string&& owned);
   CrateReadResult ReadFile(const char* filename);
 
@@ -80,24 +71,10 @@ class CrateReader::Impl {
   }
 
  private:
-  struct ArrayScratch {
-    std::vector<uint8_t> compressed_data;
-    std::vector<uint32_t> u32_indices;
-    std::vector<uint8_t> u8_values;
-    std::vector<uint64_t> u64_values;
-    std::vector<uint16_t> half_values;
-    std::vector<float> float_values;
-    std::vector<double> double_values;
-  };
-
   CrateReadOptions options_;
   std::unique_ptr<StreamReader> reader_;
   std::shared_ptr<CrateDataSource> source_;
   CrateReadResult result_;
-
-  // Reusable scratch buffers shared by hot paths (array/lookup decoding) to
-  // reduce repeated allocations while building layers for large scenes.
-  ArrayScratch array_scratch_;
 
   CrateVersion version_;
   CrateTOC toc_;
@@ -105,10 +82,7 @@ class CrateReader::Impl {
   std::vector<uint32_t> string_indices_;
   std::vector<CrateField> fields_;
   std::vector<uint32_t> fieldset_indices_;
-  std::vector<uint32_t> fieldset_offsets_;
-  std::vector<uint32_t> fieldset_counts_;
   std::vector<CrateSpec> specs_;
-  std::vector<uint32_t> fieldset_index_to_id_;
   std::vector<std::string> paths_;
 
   CrateReadResult ReadFromString(std::string&& bytes);
@@ -167,30 +141,24 @@ class CrateReader::Impl {
   bool CheckByteAllocation(uint64_t bytes, const char* what);
   bool CheckElementAllocation(uint64_t count, size_t elem_size,
                               const char* what);
-  bool GetToken(uint32_t index, std::string_view* out) const;
   bool GetToken(uint32_t index, std::string& out);
-  bool GetString(uint32_t index, std::string_view* out) const;
   bool GetString(uint32_t index, std::string& out);
-  bool ResolveFieldset(uint32_t fieldset_index,
-                       std::vector<std::pair<std::string_view, Value>>& out);
   bool ResolveFieldset(uint32_t fieldset_index,
                        std::vector<std::pair<std::string, Value>>& out);
   bool ResolveFieldsetRaw(uint32_t fieldset_index,
-                         std::vector<std::pair<std::string, ValueRep>>& out);
-  bool ResolveFieldsetRaw(uint32_t fieldset_index,
-                         std::vector<std::pair<std::string_view, ValueRep>>& out);
+                          std::vector<std::pair<std::string, ValueRep>>& out);
   bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out);
-  bool DecodePathTargets(ValueRep rep, std::vector<Path>& out);
+  bool DecodePathTargets(ValueRep rep, std::vector<std::string>& out,
+                         bool with_markers);
   bool DecodeReferenceListOp(ValueRep rep, bool is_payload,
                              std::vector<std::string>& out);
   bool DecodeVariantSelectionMap(
       ValueRep rep, std::vector<std::pair<std::string, std::string>>& out);
-  bool DecodeVariantSelectionMap(
-      ValueRep rep,
-      std::vector<std::pair<std::string_view, std::string_view>>* out);
   bool DecodeTokenListOp(ValueRep rep, std::vector<std::string>& out);
   bool DecodeDictionary(ValueRep rep, Value& out, int depth);
 
+  bool ReportProgress(const char* phase, size_t current = 0,
+                      size_t total = 0);
   void AddError(const std::string& msg);
   void AddWarning(const std::string& msg);
 };

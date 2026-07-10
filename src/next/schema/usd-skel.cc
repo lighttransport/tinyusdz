@@ -279,6 +279,32 @@ bool GetBlendShapeData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
+  // In-between shapes are namespaced vector3f[] attributes with authored
+  // `weight` metadata on the attribute.
+  const PrimSpec* spec = prim.GetPrimSpec();
+  if (spec) {
+    for (const std::string& property : prim.GetPropertyNames()) {
+      if (property.rfind("inbetweens:", 0) != 0) continue;
+      const Value* value = prim.GetPropertyValue(property);
+      const std::vector<float>* offsets =
+          value && value->is_array() ? value->as_float_array() : nullptr;
+      if (!offsets || offsets->empty()) continue;
+      BlendShapeData::Inbetween inbetween;
+      inbetween.name = property.substr(std::strlen("inbetweens:"));
+      inbetween.offsets = *offsets;
+      if (const PropMeta* meta = spec->property_meta(property)) {
+        if (meta->authored & PropMeta::kWeight) {
+          inbetween.weight = static_cast<float>(meta->weight);
+        }
+      }
+      out->inbetweens.push_back(std::move(inbetween));
+    }
+    std::stable_sort(out->inbetweens.begin(), out->inbetweens.end(),
+                     [](const auto& a, const auto& b) {
+                       return a.weight < b.weight;
+                     });
+  }
+
   return true;
 }
 

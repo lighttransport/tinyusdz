@@ -9,10 +9,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tinyusdz"
 dynamic = ["version"]
-description = "Tiny, dependency-free USD/USDA/USDC/USDZ loader + Tydra scene access, with NumPy-friendly zero-copy arrays (CPython abi3 wheel)."
+description = "Tiny, dependency-free USD/USDA/USDC/USDZ loader + Tydra render-scene access, with NumPy-friendly zero-copy arrays (CPython abi3 + free-threaded wheels)."
 readme = "python/README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [
     { name = "Syoyo Fujita", email = "syoyo@lighttransport.com" },
     { name = "Light Transport Entertainment, Inc.", email = "syoyo@lighttransport.com" },
@@ -27,9 +27,11 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
 ]
@@ -55,11 +57,12 @@ version_file = "python/tinyusdz/_version.py"
 # --------------------------------------------------------------------------
 # cibuildwheel configuration
 # --------------------------------------------------------------------------
+# Two wheels per platform:
+#   cp310-abi3 : Py_LIMITED_API=0x030A0000, covers CPython >= 3.10
+#   cp314t     : free-threaded CPython 3.14 (non-limited; Py_mod_gil declared)
 [tool.cibuildwheel]
-# One abi3 wheel per platform covers all supported CPython versions.
-# Build only on cp311 (lowest floor); resulting wheel is abi3, usable on
-# cp311/cp312/cp313/cp314+.
-build = "cp311-*"
+build = ["cp310-*", "cp314t-*"]
+enable = ["cpython-freethreading"]
 # No PyPy; tinyusdz is CPython-only.
 skip = [
     "pp*",
@@ -71,8 +74,6 @@ build-frontend = "build"
 archs = ["auto64"]
 test-requires = ["pytest", "numpy"]
 test-command = "pytest {project}/python/tests -q"
-
-# Run the test on every supported Python minor version to prove abi3 compat.
 test-extras = "test"
 
 [tool.cibuildwheel.linux]
@@ -87,3 +88,9 @@ environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
 
 [tool.cibuildwheel.windows]
 archs = ["AMD64", "ARM64"]
+
+# Free-threaded wheel: run the suite with the GIL forced off so a module
+# that silently re-enables it (missing Py_mod_gil) fails loudly.
+[[tool.cibuildwheel.overrides]]
+select = "cp314t-*"
+test-environment = { PYTHON_GIL = "0" }

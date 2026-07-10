@@ -59,6 +59,14 @@ void AppendDiagnostic(std::string *dst, const std::string &msg) {
 
 namespace {
 
+// Recursion-depth cap for the namespace-recursive composition passes
+// (variant / inherits / specializes / deferred-variant). The per-level guards
+// previously used 1024*1024 — three orders of magnitude above the native
+// stack, so they never fired. USD namespace depth never approaches this;
+// 1024 stops a crafted deep PrimSpec tree from overflowing the stack while
+// staying well above any real scene.
+constexpr uint32_t kMaxCompositionDepth = 1024;
+
 bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
                const std::string &name) {
   for (size_t i = 0; i < layer_names_stack.size(); i++) {
@@ -1352,6 +1360,20 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                              "> not found in this layer; skipped.\n";
                 }
                 src_ps = nullptr;
+              } else if (reference.prim_path.prim_part() ==
+                             dst_prim_path.prim_part() ||
+                         reference.prim_path.prim_part() ==
+                             primspec.name()) {
+                // Self internal reference (`</A>` on A): a cycle. The external
+                // branch guards cycles via `visited`; the internal branch did
+                // not, letting the driver's fixed-point loop churn on it.
+                // Reject the direct self-reference.
+                if (warn) {
+                  (*warn) += "Cyclic internal reference <" +
+                             reference.prim_path.prim_part() +
+                             "> targets its own prim; skipped.\n";
+                }
+                src_ps = nullptr;
               }
 
             } else {
@@ -1477,6 +1499,20 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                   (*warn) += "Internal reference target <" +
                              reference.prim_path.prim_part() +
                              "> not found in this layer; skipped.\n";
+                }
+                src_ps = nullptr;
+              } else if (reference.prim_path.prim_part() ==
+                             dst_prim_path.prim_part() ||
+                         reference.prim_path.prim_part() ==
+                             primspec.name()) {
+                // Self internal reference (`</A>` on A): a cycle. The external
+                // branch guards cycles via `visited`; the internal branch did
+                // not, letting the driver's fixed-point loop churn on it.
+                // Reject the direct self-reference.
+                if (warn) {
+                  (*warn) += "Cyclic internal reference <" +
+                             reference.prim_path.prim_part() +
+                             "> targets its own prim; skipped.\n";
                 }
                 src_ps = nullptr;
               }
@@ -1642,6 +1678,17 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
               if (!in_layer.find_primspec_at(pl.prim_path, &src_ps, err)) {
                 return false;
               }
+              if (pl.prim_path.prim_part() == dst_prim_path.prim_part() ||
+                  pl.prim_path.prim_part() == primspec.name()) {
+                // Self internal payload: a cycle (the external branch guards
+                // cycles via `visited`; the internal branch did not). Reject.
+                if (warn) {
+                  (*warn) += "Cyclic internal payload <" +
+                             pl.prim_path.prim_part() +
+                             "> targets its own prim; skipped.\n";
+                }
+                src_ps = nullptr;
+              }
 
             } else {
               PUSH_ERROR_AND_RETURN(
@@ -1745,6 +1792,17 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
               if (!in_layer.find_primspec_at(pl.prim_path, &src_ps, err)) {
                 return false;
               }
+              if (pl.prim_path.prim_part() == dst_prim_path.prim_part() ||
+                  pl.prim_path.prim_part() == primspec.name()) {
+                // Self internal payload: a cycle (the external branch guards
+                // cycles via `visited`; the internal branch did not). Reject.
+                if (warn) {
+                  (*warn) += "Cyclic internal payload <" +
+                             pl.prim_path.prim_part() +
+                             "> targets its own prim; skipped.\n";
+                }
+                src_ps = nullptr;
+              }
 
             } else {
               PUSH_ERROR_AND_RETURN(
@@ -1829,7 +1887,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
 
 bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
                          std::string *warn, std::string *err) {
-  if (depth > (1024 * 1024)) {
+  if (depth > kMaxCompositionDepth) {
     PUSH_ERROR_AND_RETURN("Too deep.");
   }
 
@@ -1967,7 +2025,7 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
                           PrimSpec &primspec /* [inout] */, std::string *warn,
                           std::string *err,
                           PathVisitedSet &visited) {
-  if (depth > (1024 * 1024)) {
+  if (depth > kMaxCompositionDepth) {
     PUSH_ERROR_AND_RETURN("Too deep.");
   }
 
@@ -2500,7 +2558,7 @@ static bool CompositeSpecializesRec(uint32_t depth, const Layer &layer,
                                     PrimSpec &primspec /* [inout] */,
                                     std::string *warn, std::string *err,
                                     PathVisitedSet &visited) {
-  if (depth > (1024 * 1024)) {
+  if (depth > kMaxCompositionDepth) {
     PUSH_ERROR_AND_RETURN("Too deep in CompositeSpecializesRec.");
   }
 
@@ -3153,7 +3211,7 @@ bool ApplyDeferredVariantSelectionsRec(
     PrimSpec &primspec,
     const std::map<std::string, VariantSelectionMap> &resolved_selections,
     std::string *warn, std::string *err) {
-  if (depth > (1024 * 1024)) {
+  if (depth > kMaxCompositionDepth) {
     if (err) { *err += "Too deep in ApplyDeferredVariantSelectionsRec.\n"; }
     return false;
   }
@@ -3534,7 +3592,7 @@ bool ApplyVariantSelectorRec(uint32_t depth,
                               const VariantSelectorMap &vsmap,
                               const std::string &path_prefix,
                               std::string *warn, std::string *err) {
-  if (depth > (1024 * 1024)) {
+  if (depth > kMaxCompositionDepth) {
     if (err) { (*err) += "Too deep in ApplyVariantSelectorRec.\n"; }
     return false;
   }

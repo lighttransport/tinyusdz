@@ -177,9 +177,20 @@ structure — **32,811 prims, 122 files parsed, 373 deferred payloads** — in
 **~1.7 GiB / ~3 s**, well within the 16 GB budget. `--load-some=N` streams the
 deferred proxy geometry on demand.
 
-**ALab** (`ALab/entry.usda`, the `mk020_0281` shot) composes **3,293 prims /
-1,271 deferred geometry payloads in ~120 MiB**; the set asset alone
-(`entity/alab_set01/alab_set01.usda`) composes **3,251 prims / 1,264 payloads**.
+**ALab** should be run from the extracted/merged tree when validating full-scene
+composition locally:
+
+```
+/mnt/disk1/data/alab/_merged_ALab/entry.usda
+/mnt/disk1/data/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
+```
+
+The packaged `ALab/entry.usda` path is valid, but in the local extracted
+directory it resolves to the small package layout rather than the full merged
+shot used by the large-scene measurements. The `mk020_0281` shot composes
+**3,293 prims / 1,271 deferred geometry payloads in ~120 MiB** in the legacy
+large-scene loader; the set asset alone composes **3,251 prims / 1,264
+payloads**.
 ALab's asset-centric structure needed three further composition fixes (§3.4):
 (a) composing a *referenced/payload* layer's own subLayers — ALab entity files
 just sublayer their department layers, so without this the referenced content is
@@ -1186,13 +1197,36 @@ still much slower and higher-memory than `next_usdcat`, but it no longer fails a
 `xgGroundCover.usd` solely because that layer is 683,530,559 bytes.
 
 The table above is the pre-optimization snapshot; the ASCII writer was then
-optimized substantially (§6.2). After that work `next_usdcat` streams the
-flattened USDA for Caldera at ~850–925 MB/s and for Island at ~1000 MB/s (auto
-threads), with the Island write phase dropping from 26.17 s to ~11.7 s and peak
-RSS from 9.67 GiB to ~8.0 GiB. The Island run completes with non-fatal warnings
-for several XGen USDC layers whose arrays exceed the current `max_array_elements`
-guard, so it is a large-scene stress result rather than a full-fidelity Island
-flatten.
+optimized substantially (§6.2). Current full-composition validation uses
+`next_usdcat -f -o /dev/null` so the scene is actually composed and flattened
+while keeping the output off disk:
+
+```sh
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/caldera/caldera.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/island/usd/island.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
+```
+
+Recent measurements on the local workstation:
+
+| Scene | load+compose | total incl. USDA write | max RSS | flattened bytes |
+|---|---:|---:|---:|---:|
+| Caldera `caldera.usda` | 12.43 s | 1:36.17 | 2.11 GiB | 4.26 GB |
+| Moana Island `island.usda` | 213.74 s | 7:44.93 | 7.40 GiB | 10.80 GB |
+| ALab `_merged_ALab/entry.usda` | 8.25 s | 1:50.80 | 1.31 GiB | 4.75 GB |
+| ALab set asset | 5.85 s | 38.67 s | 677 MiB | 1.62 GB |
+
+Island's large XGen arrays are kept lazy/mmap-backed during compose/write. The
+USDC reader decodes older packed array-count headers (low 32 bits = element
+count, high 32 bits = auxiliary metadata) before applying guards. It still
+rejects malformed over-cap arrays through file-size/addressability checks, but
+does not reject valid lazy POD arrays purely because their packed header exceeds
+the default eager-decode element guard.
 
 For a pure USDC reader comparison, the pre-flattened Caldera crate isolates parse
 memory from composition:
@@ -1295,6 +1329,32 @@ byte-identical) in `tests/next/test_writer.cc`.
 The remaining serial cost is the ~6 s Phase-1 build walk on Island (not yet
 overlapped with Phase 2) — the next available lever.
 
+### 6.3 USDA `/dev/null` write vs USDC crate write
+
+Do not compare the USDA `/dev/null` write numbers above with
+`next_usdcat -f -o out.usdc` timings as if they were the same writer path.
+They exercise different serializers:
+
+- `-o /dev/null` has no `.usdc` suffix, so `next_usdcat` writes flattened USDA
+  text through the optimized parallel ASCII writer. On the local 32-thread /
+  16-core workstation, Island writes ~10.8 GB of USDA text to `/dev/null` in
+  about **14 s** with `TINYUSDZ_NEXT_NUM_THREADS=16` and `--compose-threads 16`.
+- `-o out.usdc` uses the next crate writer. Island's crate output is only
+  ~2.5 GB, but the write phase is still about **36-40 s** even when the output
+  path is a `.usdc` symlink to `/dev/null` or a real file under `/dev/shm`.
+  Thus the time is not storage bandwidth.
+
+The remaining USDC cost is internal crate construction. As detailed in
+[`crate-writer.md`](crate-writer.md), the Island crate writer is dominated by the
+serial per-spec structural build and global interning/dedup tables over ~4.25M
+specs (paths, tokens/strings, fieldsets, value-block dedup). Final byte emission
+and array encoding are a smaller slice. Threaded crate writer paths help
+moderately: for Island, a `/dev/null`-symlink USDC write was ~47.6 s with
+`TINYUSDZ_NEXT_NUM_THREADS=1` and ~36.1 s with `TINYUSDZ_NEXT_NUM_THREADS=16`,
+but they do not remove the global-dedup floor. Writing the same USDC to
+`/dev/shm` remains ~40 s, confirming the bottleneck is CPU/structure building,
+not disk I/O.
+
 ## 7. Verification
 
 ```
@@ -1305,6 +1365,11 @@ cd build && ctest -R feat-large-scene --output-on-failure
 <build>/large-scene-load /mnt/disk1/data/caldera/caldera.usda --mode=none
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
 # --load-some=N streams deferred proxy geometry on demand.
+# full composition + USDA writer stress checks:
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/island/usd/island.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
 # suffix-fallback unit tests (§4):

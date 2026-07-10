@@ -921,7 +921,7 @@ static std::string MtlxTexcoordIndexName(const std::string &default_name,
                                          int index) {
   const std::string base = MtlxDefaultTexcoordName(default_name);
   if (index <= 0) {
-    return base;
+    return std::string(base);
   }
   if (base == "st") {
     return "st" + std::to_string(index);
@@ -1190,7 +1190,7 @@ static std::string ResolveMtlxTexcoordVarname(
     if (transform_out) {
       *transform_out = transform;
     }
-    return fallback;
+    return std::string(fallback);
   }
 
   std::string err;
@@ -1203,7 +1203,7 @@ static std::string ResolveMtlxTexcoordVarname(
       if (transform_out) {
         *transform_out = transform;
       }
-      return fallback;
+      return std::string(fallback);
     }
 
     if (startsWith(shader->info_id, "ND_geompropvalue_")) {
@@ -1213,12 +1213,12 @@ static std::string ResolveMtlxTexcoordVarname(
         if (transform_out) {
           *transform_out = transform;
         }
-        return geomprop;
+        return std::string(geomprop);
       }
       if (transform_out) {
         *transform_out = transform;
       }
-      return fallback;
+      return std::string(fallback);
     }
 
     if (shader->info_id == "ND_texcoord_vector2" ||
@@ -1240,7 +1240,7 @@ static std::string ResolveMtlxTexcoordVarname(
       if (transform_out) {
         *transform_out = transform;
       }
-      return fallback;
+      return std::string(fallback);
     }
 
     if (FindMtlxShaderConnection(*shader, "inputs:in", &current_path) ||
@@ -1251,7 +1251,7 @@ static std::string ResolveMtlxTexcoordVarname(
     if (transform_out) {
       *transform_out = transform;
     }
-    return fallback;
+    return std::string(fallback);
   }
 
   DCOUT("MaterialX texcoord chain exceeded max depth for "
@@ -1259,7 +1259,7 @@ static std::string ResolveMtlxTexcoordVarname(
   if (transform_out) {
     *transform_out = transform;
   }
-  return fallback;
+  return std::string(fallback);
 }
 
 template <typename T>

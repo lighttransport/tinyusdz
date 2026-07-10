@@ -12,12 +12,13 @@
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
 #include <string>
-#include <unordered_map>
 #include <vector>
+#include <deque>
 #include <memory>
-#include <functional>
 #include <map>
-#include <string_view>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <shared_mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
@@ -36,24 +37,13 @@ struct TypeNameId {
 };
 
 /// Type name interning table
+/// Thread-safe under TINYUSDZ_ENABLE_THREAD (authoring interns new type names
+/// at runtime, so concurrent readers need protection like PropNameTable).
 class TypeNameTable {
 public:
-  TypeNameId intern(std::string_view name);
-  TypeNameId intern_array(std::string_view base_name);
-  TypeNameId intern(const std::string& name) {
-    return intern(std::string_view(name));
-  }
-  TypeNameId intern(const char* name) {
-    return name ? intern(std::string_view(name)) : TypeNameId{};
-  }
+  TypeNameId intern(const std::string& name);
   const std::string& get(TypeNameId id) const;
-  TypeNameId find(std::string_view name) const;
-  TypeNameId find(const std::string& name) const {
-    return find(std::string_view(name));
-  }
-  TypeNameId find(const char* name) const {
-    return name ? find(std::string_view(name)) : TypeNameId{};
-  }
+  TypeNameId find(const std::string& name) const;
 
   // Pre-registered type IDs
   TypeNameId id_Xform;
@@ -80,25 +70,13 @@ public:
   void register_common_types();
 
 private:
-  std::vector<std::unique_ptr<std::string>> names_;
-
-  struct StringViewHash {
-    using is_transparent = void;
-    size_t operator()(std::string_view s) const noexcept {
-      return std::hash<std::string_view>{}(s);
-    }
-  };
-
-  struct StringViewEq {
-    using is_transparent = void;
-    bool operator()(std::string_view a, std::string_view b) const noexcept {
-      return a == b;
-    }
-  };
-
-  std::unordered_map<std::string_view, uint16_t, StringViewHash, StringViewEq>
-      name_to_id_;
-  std::unordered_map<uint16_t, uint16_t> base_to_array_type_id_;
+  // deque, not vector: get() returns a `const std::string&` that callers may
+  // hold after the lock is released; deque never relocates on push_back.
+  std::deque<std::string> names_;
+  std::unordered_map<std::string, uint16_t> name_to_id_;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  mutable std::shared_mutex mu_;
+#endif
 };
 
 TypeNameTable& GetTypeNameTable();
@@ -201,6 +179,9 @@ struct PrimSpecMetaExt {
   // children come from the prototype prim at this path (no duplicated subtree).
   std::string instance_prototype;
   std::vector<std::string> apiSchemas;
+  // Authored list-op qualifier for apiSchemas: "" (bare/explicit),
+  // "prepend", "append" or "delete" — pxr's own convention is prepend.
+  std::string apiSchemasQualifier;
   // Variant set definitions.
   std::vector<VariantSetData> variantSets;
   // Multiple variant selections (set -> selection); composed in addition to the
@@ -224,6 +205,7 @@ struct PrimSpecMetaExt {
         displayName(o.displayName),
         instance_prototype(o.instance_prototype),
         apiSchemas(o.apiSchemas),
+        apiSchemasQualifier(o.apiSchemasQualifier),
         variantSets(o.variantSets),
         variantSelections(o.variantSelections),
         relocates(o.relocates),
@@ -244,6 +226,12 @@ struct PrimSpecMetaExt {
 struct PrimSpecMeta {
   bool active = true;
   bool hidden = false;
+  // Authored-ness for the two bools above: plain bools cannot distinguish
+  // "authored true/false" from "default", and fill-absent composition needs
+  // to know (a weaker spec's DEFAULT active=true must not clobber a stronger
+  // authored active=false).
+  bool active_authored = false;
+  bool hidden_authored = false;
   bool instanceable = false;  // when true (with arcs), the prim is an instance
 
   // Composition arcs (stored as paths for lazy resolution).
@@ -266,6 +254,8 @@ struct PrimSpecMeta {
   PrimSpecMeta &operator=(const PrimSpecMeta &o) {
     active = o.active;
     hidden = o.hidden;
+    active_authored = o.active_authored;
+    hidden_authored = o.hidden_authored;
     instanceable = o.instanceable;
     references = o.references;
     payloads = o.payloads;
@@ -289,6 +279,10 @@ struct PrimSpecMeta {
   // inline arc vectors are then implicit explicit lists); mutable allocates.
   const ArcListOpEdits *arc_edits() const {
     return ext_ ? ext_->arc_edits.get() : nullptr;
+  }
+  /// Drop all arc list-op edits (used when composition consumes the arcs).
+  void clear_arc_edits() {
+    if (ext_) ext_->arc_edits.reset();
   }
   ArcListOpEdits &ensure_arc_edits() {
     ensure_ext();
@@ -343,6 +337,14 @@ struct PrimSpecMeta {
   std::vector<std::string> &apiSchemas() {
     ensure_ext();
     return ext_->apiSchemas;
+  }
+  const std::string &apiSchemasQualifier() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->apiSchemasQualifier : kEmpty;
+  }
+  std::string &apiSchemasQualifier() {
+    ensure_ext();
+    return ext_->apiSchemasQualifier;
   }
   const std::vector<VariantSetData> &variantSets() const {
     static const std::vector<VariantSetData> kEmpty;
@@ -494,6 +496,14 @@ public:
   /// If an identical value exists, reuses its offset
   uint32_t add_dedup(PropNameId name_id, double time, Value value);
 
+private:
+  /// Keep each property's (time, offset) vector sorted by time (consumers —
+  /// interpolation's FindBracket, the crate writer's times block — assume it),
+  /// with last-wins upsert for a re-authored time.
+  void insert_sample(PropNameId name_id, double time, uint32_t offset);
+
+public:
+
   /// Get time samples for a property
   /// Returns vector of (time, value_offset) pairs, sorted by time
   const std::vector<std::pair<double, uint32_t>>* get(PropNameId name_id) const;
@@ -506,6 +516,13 @@ public:
 
   /// Check if property has time samples
   bool has(PropNameId name_id) const;
+
+  /// Remove all time samples for a property. Returns true if any existed.
+  /// (Stored values remain in the value pool; they may be shared.)
+  bool remove(PropNameId name_id);
+
+  /// Remap every sample time t -> offset + scale * t (layer-offset baking).
+  void remap_times(double offset, double scale);
 
   /// Get interpolated value at a given time
   /// @param name_id Property name ID
@@ -563,8 +580,8 @@ private:
 class PrimSpec {
 public:
   PrimSpec();
-  explicit PrimSpec(std::string_view name);
-  PrimSpec(std::string_view name, std::string_view type_name);
+  explicit PrimSpec(const std::string& name);
+  PrimSpec(const std::string& name, const std::string& type_name);
   ~PrimSpec();
 
   // Move only (for efficiency)
@@ -588,7 +605,6 @@ public:
   const std::string& type_name() const;
   TypeNameId type_id() const { return type_id_; }
   void set_type_name(const std::string& name);
-  void set_type_name(std::string_view name);
 
   /// Get specifier
   PrimSpecifier specifier() const { return specifier_; }
@@ -605,15 +621,20 @@ public:
   /// Get property by name ID (fastest)
   const PropSlot* property(PropNameId name_id) const;
 
+  /// Mutable slot lookup (flag merges during composition).
+  PropSlot* property_mutable(PropNameId name_id) {
+    return props_.find_mutable(name_id);
+  }
+
   /// Get property by name string
-  const PropSlot* property(std::string_view name) const;
+  const PropSlot* property(const std::string& name) const;
 
   /// Get property value
   const Value* property_value(PropNameId name_id) const;
-  const Value* property_value(std::string_view name) const;
+  const Value* property_value(const std::string& name) const;
 
   /// Add a property
-  void add_property(std::string_view name, Value value, uint16_t flags = 0);
+  void add_property(const std::string& name, Value value, uint16_t flags = 0);
   void add_property(PropNameId name_id, Value value, uint16_t flags = 0);
 
   /// Add a property slot without value (for time-sampled properties)
@@ -637,6 +658,20 @@ public:
   /// Replace an existing property's authored default value. Returns false when
   /// the slot is absent or has no authored default value.
   bool set_property_value(PropNameId name_id, Value value);
+
+  /// Author a property value regardless of prior state: creates the slot if
+  /// absent, fills a value-less (declared-only) slot, or replaces the existing
+  /// default IN PLACE (no ValueStorage growth on re-authoring). `flags` are
+  /// OR'd onto an existing slot (kFlagArray is recomputed from the value).
+  void upsert_property(PropNameId name_id, Value value, uint16_t flags = 0);
+  void upsert_property(const std::string& name, Value value, uint16_t flags = 0);
+
+  /// Remove a property entirely: slot, connections, declared type name,
+  /// per-property metadata, and time samples. Returns true if anything was
+  /// removed. (The stored default Value stays in ValueStorage as an
+  /// unreferenced entry; storage is append-only.)
+  bool remove_property(PropNameId name_id);
+  bool remove_property(const std::string& name);
 
   /// Get property index (for iteration)
   const PropIndex& properties() const { return props_; }
@@ -662,6 +697,9 @@ public:
 
   /// Rewrite scalar asset paths stored in defaults and time samples.
   size_t remap_asset_paths(const std::map<std::string, std::string>& remap);
+
+  /// Remap every time sample's time by a layer offset (t -> offset+scale*t).
+  void remap_time_sample_times(double offset, double scale);
 
   /// Get all property names that have time samples
   std::vector<PropNameId> time_sampled_properties() const;
@@ -699,8 +737,30 @@ public:
   };
 
   /// Add a relationship target
-  void add_relationship(std::string_view name, const Path& target);
-  void add_relationship(std::string_view name, Path&& target);
+  void add_relationship(const std::string& name, const Path& target);
+
+  /// Replace a relationship's targets wholesale (creates it if absent).
+  /// An empty target list authors an explicit empty relationship.
+  void set_relationship_targets(const std::string& name,
+                                std::vector<Path> targets);
+
+  /// Remove a relationship (both the target list and its property slot, if a
+  /// kFlagRelationship slot was declared). Returns true if removed.
+  bool remove_relationship(const std::string& name);
+
+  /// Authored list-op edits for a relationship (prepend/append/delete
+  /// sublists, like ArcEdit for composition arcs). Keyed by relationship
+  /// name. Empty map = no relationship carries qualifiers.
+  const std::unordered_map<std::string, ArcEdit>& relationship_edits() const {
+    static const std::unordered_map<std::string, ArcEdit> kEmpty;
+    return rel_edits_ ? *rel_edits_ : kEmpty;
+  }
+  ArcEdit& ensure_relationship_edit(const std::string& name);
+
+  /// Per-relationship qualifier flags (PropSlot::kFlagCustom /
+  /// kFlagUniform). 0 when unauthored.
+  uint16_t relationship_flags(const std::string& name) const;
+  void set_relationship_flags(const std::string& name, uint16_t flags);
 
   /// Apply same-spec relationship list-op targets. Used by USDA body syntax
   /// such as `prepend rel prototypes = [...]`.
@@ -710,17 +770,6 @@ public:
 
   /// Get relationship targets
   const std::vector<Path>* relationship(const std::string& name) const;
-  const std::vector<Path>* relationship(PropNameId name_id) const;
-
-  /// Enumerate all relationships without allocating name strings.
-  template <typename Fn>
-  void ForEachRelationship(Fn&& fn) const {
-    for (const auto& kv : relationships_) {
-      fn(kv.first, kv.second);
-    }
-  }
-
-  size_t relationship_count() const { return relationships_.size(); }
 
   /// Get all relationship names
   std::vector<std::string> relationship_names() const;
@@ -731,10 +780,11 @@ public:
 
   /// Add an attribute connection target (e.g. inputs:x.connect = </path>).
   /// The property itself should also exist as a slot (kFlagConnection).
-  void add_connection(std::string_view prop_name, const Path& target);
-  void add_connection(std::string_view prop_name, Path&& target);
-  void add_connection(PropNameId prop_name_id, const Path& target);
-  void add_connection(PropNameId prop_name_id, Path&& target);
+  void add_connection(const std::string& prop_name, const Path& target);
+
+  /// Author a connection BLOCK (`attr.connect = None`): an empty entry in the
+  /// connection map (distinct from "no connection authored").
+  void set_connection_block(const std::string& prop_name);
 
   /// Get connection targets for an attribute (nullptr if none)
   const std::vector<Path>* connection(const std::string& prop_name) const;
@@ -751,14 +801,11 @@ public:
   /// "token", "float[]"). Needed to faithfully re-emit attributes that have
   /// no authored default value (connection-only / declared-only) and to
   /// round-trip the exact role type for valued attributes.
-  void set_property_type_name(std::string_view prop_name,
-                             std::string_view type_name);
-  void set_property_type_name(PropNameId prop_name_id,
-                             std::string_view type_name);
+  void set_property_type_name(const std::string& prop_name,
+                              const std::string& type_name);
 
   /// Get the declared type name of a property (nullptr if not recorded)
-  const std::string* property_type_name(std::string_view prop_name) const;
-  const std::string* property_type_name(PropNameId prop_name_id) const;
+  const std::string* property_type_name(const std::string& prop_name) const;
 
   // ============================================================
   // Per-property metadata (interpolation / customData / ...)
@@ -766,14 +813,10 @@ public:
 
   /// Get a property's metadata, or nullptr if none authored (never allocates).
   const PropMeta* property_meta(PropNameId name_id) const;
-  const PropMeta* property_meta(std::string_view prop_name) const;
-
-  /// Get connection targets by interned property-name id (never allocate lookup
-  /// string keys).
-  const std::vector<Path>* connection(PropNameId name_id) const;
+  const PropMeta* property_meta(const std::string& prop_name) const;
 
   /// Get (lazily allocating) a property's mutable metadata for population.
-  PropMeta& ensure_property_meta(std::string_view prop_name);
+  PropMeta& ensure_property_meta(const std::string& prop_name);
   PropMeta& ensure_property_meta(PropNameId name_id);
 
   // ============================================================
@@ -786,11 +829,21 @@ public:
   /// Add child index
   void add_child_index(uint32_t index);
 
+  /// Remove a single child index link (used by Layer::remove_prim_at_path).
+  /// Returns true if the index was found and removed.
+  bool remove_child_index(uint32_t index);
+
   /// Drop all child links (orphan the subtree). The child prims remain in the
   /// Layer but become unreachable from this prim — used by the extracted-
   /// prototype flatten to move an instance's inline subtree onto a
   /// `/Flattened_Prototype_N` root.
   void clear_child_indices() { child_indices_.clear(); }
+
+  /// Replace the child index list wholesale (namespace reordering; e.g. the
+  /// crate reader restoring authored order from primChildren).
+  void set_child_indices(std::vector<uint32_t>&& idx) {
+    child_indices_ = std::move(idx);
+  }
 
   /// Get child count
   size_t child_count() const { return child_indices_.size(); }
@@ -824,6 +877,9 @@ private:
 
   // Relationships: name -> targets
   std::unordered_map<std::string, std::vector<Path>> relationships_;
+  // Lazily allocated (rare): authored rel list-op edits + qualifier flags.
+  std::unique_ptr<std::unordered_map<std::string, ArcEdit>> rel_edits_;
+  std::unordered_map<std::string, uint16_t> rel_flags_;
 
   // Attribute connections: interned property-name id -> connection targets.
   // (Keyed by PropNameId.id rather than a string to avoid a key string per

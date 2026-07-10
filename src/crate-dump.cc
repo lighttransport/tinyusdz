@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <vector>
 #include <cstring>
+#include <algorithm>
 
 #include "stream-reader.hh"
 #include "crate-format.hh"
@@ -62,6 +63,23 @@ static std::string EscapeYAML(const std::string& s) {
     else result += c;
   }
   return result;
+}
+
+static bool ContainsFilter(const std::string& value, const std::string& filter) {
+  return filter.empty() || (value.find(filter) != std::string::npos);
+}
+
+template <typename PathLike>
+static std::string CratePathString(const PathLike& path) {
+  std::string full_path = path.full_path_name();
+  if (!path.prop_part().empty()) {
+    const std::string suffix = "." + path.prop_part();
+    if (full_path.size() < suffix.size() ||
+        full_path.compare(full_path.size() - suffix.size(), suffix.size(), suffix) != 0) {
+      full_path += suffix;
+    }
+  }
+  return full_path;
 }
 
 // Helper for indented output
@@ -225,18 +243,26 @@ static void DumpTokensYAML(const CrateReader& reader, const DumpOptions& opts, I
     io.out() << "values:" << std::endl;
     io.indent();
 
-    int limit = (opts.max_tokens > 0) ? std::min(opts.max_tokens, static_cast<int>(tokens.size()))
-                                      : tokens.size();
+    int emitted = 0;
+    int limit = (opts.max_tokens > 0) ? opts.max_tokens : static_cast<int>(tokens.size());
 
-    for (int i = 0; i < limit; i++) {
+    for (size_t i = 0; i < tokens.size() && emitted < limit; i++) {
+      if (!ContainsFilter(tokens[i].str(), opts.token_filter)) {
+        continue;
+      }
       io.out() << "- index: " << i << std::endl;
       io.indent();
       io.out() << "value: \"" << EscapeYAML(tokens[i].str()) << "\"" << std::endl;
       io.dedent();
+      emitted++;
     }
 
-    if (opts.max_tokens > 0 && tokens.size() > static_cast<size_t>(opts.max_tokens)) {
-      io.out() << "# ... (" << (tokens.size() - opts.max_tokens) << " more)" << std::endl;
+    if (opts.max_tokens > 0 && emitted >= opts.max_tokens) {
+      io.out() << "# ... (token output limited";
+      if (!opts.token_filter.empty()) {
+        std::cout << ", filter=\"" << EscapeYAML(opts.token_filter) << "\"";
+      }
+      std::cout << ")" << std::endl;
     }
 
     io.dedent();
@@ -290,17 +316,24 @@ static void DumpFieldsYAML(const CrateReader& reader, const DumpOptions& opts, I
     io.out() << "values:" << std::endl;
     io.indent();
 
-    int limit = (opts.max_fields > 0) ? std::min(opts.max_fields, static_cast<int>(fields.size()))
-                                      : fields.size();
+    int emitted = 0;
+    int limit = (opts.max_fields > 0) ? opts.max_fields : static_cast<int>(fields.size());
 
-    for (int i = 0; i < limit; i++) {
+    for (size_t i = 0; i < fields.size() && emitted < limit; i++) {
       const auto& field = fields[i];
+      std::string field_name;
+      if (field.token_index.value < reader.GetTokens().size()) {
+        field_name = reader.GetTokens()[field.token_index.value].str();
+      }
+      if (!ContainsFilter(field_name, opts.token_filter)) {
+        continue;
+      }
       io.out() << "- index: " << i << std::endl;
       io.indent();
 
       io.out() << "token_index: " << field.token_index.value << std::endl;
-      if (field.token_index.value < reader.GetTokens().size()) {
-        io.out() << "name: \"" << EscapeYAML(reader.GetTokens()[field.token_index.value].str()) << "\"" << std::endl;
+      if (!field_name.empty()) {
+        io.out() << "name: \"" << EscapeYAML(field_name) << "\"" << std::endl;
       }
 
       io.out() << "value_rep:" << std::endl;
@@ -309,10 +342,15 @@ static void DumpFieldsYAML(const CrateReader& reader, const DumpOptions& opts, I
       io.dedent();
 
       io.dedent();
+      emitted++;
     }
 
-    if (opts.max_fields > 0 && fields.size() > static_cast<size_t>(opts.max_fields)) {
-      io.out() << "# ... (" << (fields.size() - opts.max_fields) << " more)" << std::endl;
+    if (opts.max_fields > 0 && emitted >= opts.max_fields) {
+      io.out() << "# ... (field output limited";
+      if (!opts.token_filter.empty()) {
+        std::cout << ", filter=\"" << EscapeYAML(opts.token_filter) << "\"";
+      }
+      std::cout << ")" << std::endl;
     }
 
     io.dedent();
@@ -389,11 +427,15 @@ static void DumpPathsYAML(const CrateReader& reader, const DumpOptions& opts, In
     io.out() << "values:" << std::endl;
     io.indent();
 
-    int limit = (opts.max_paths > 0) ? std::min(opts.max_paths, static_cast<int>(paths.size()))
-                                     : paths.size();
+    int emitted = 0;
+    int limit = (opts.max_paths > 0) ? opts.max_paths : static_cast<int>(paths.size());
 
-    for (int i = 0; i < limit; i++) {
+    for (size_t i = 0; i < paths.size() && emitted < limit; i++) {
       const auto& path = paths[i];
+      std::string full_path = CratePathString(path);
+      if (!ContainsFilter(full_path, opts.path_filter)) {
+        continue;
+      }
       io.out() << "- index: " << i << std::endl;
       io.indent();
       io.out() << "prim: \"" << EscapeYAML(path.full_path_name()) << "\"" << std::endl;
@@ -401,10 +443,15 @@ static void DumpPathsYAML(const CrateReader& reader, const DumpOptions& opts, In
         io.out() << "property: \"" << EscapeYAML(path.prop_part()) << "\"" << std::endl;
       }
       io.dedent();
+      emitted++;
     }
 
-    if (opts.max_paths > 0 && paths.size() > static_cast<size_t>(opts.max_paths)) {
-      io.out() << "# ... (" << (paths.size() - opts.max_paths) << " more)" << std::endl;
+    if (opts.max_paths > 0 && emitted >= opts.max_paths) {
+      io.out() << "# ... (path output limited";
+      if (!opts.path_filter.empty()) {
+        std::cout << ", filter=\"" << EscapeYAML(opts.path_filter) << "\"";
+      }
+      std::cout << ")" << std::endl;
     }
 
     io.dedent();
@@ -424,18 +471,26 @@ static void DumpSpecsYAML(const CrateReader& reader, const DumpOptions& opts, In
     io.out() << "values:" << std::endl;
     io.indent();
 
-    int limit = (opts.max_specs > 0) ? std::min(opts.max_specs, static_cast<int>(specs.size()))
-                                     : specs.size();
+    int emitted = 0;
+    int limit = (opts.max_specs > 0) ? opts.max_specs : static_cast<int>(specs.size());
 
-    for (int i = 0; i < limit; i++) {
+    for (size_t i = 0; i < specs.size() && emitted < limit; i++) {
       const auto& spec = specs[i];
+      std::string full_path;
+      if (spec.path_index.value < reader.GetPaths().size()) {
+        const auto& path = reader.GetPaths()[spec.path_index.value];
+        full_path = CratePathString(path);
+      }
+      if (!ContainsFilter(full_path, opts.path_filter)) {
+        continue;
+      }
       io.out() << "- index: " << i << std::endl;
       io.indent();
 
       io.out() << "path_index: " << spec.path_index.value << std::endl;
       if (spec.path_index.value < reader.GetPaths().size()) {
         const auto& path = reader.GetPaths()[spec.path_index.value];
-        io.out() << "path: \"" << EscapeYAML(path.full_path_name()) << "\"" << std::endl;
+        io.out() << "path: \"" << EscapeYAML(CratePathString(path)) << "\"" << std::endl;
       }
 
       io.out() << "fieldset_index: " << spec.fieldset_index.value << std::endl;
@@ -443,10 +498,15 @@ static void DumpSpecsYAML(const CrateReader& reader, const DumpOptions& opts, In
       io.out() << "spec_type_name: \"" << GetSpecTypeName(spec.spec_type) << "\"" << std::endl;
 
       io.dedent();
+      emitted++;
     }
 
-    if (opts.max_specs > 0 && specs.size() > static_cast<size_t>(opts.max_specs)) {
-      io.out() << "# ... (" << (specs.size() - opts.max_specs) << " more)" << std::endl;
+    if (opts.max_specs > 0 && emitted >= opts.max_specs) {
+      io.out() << "# ... (spec output limited";
+      if (!opts.path_filter.empty()) {
+        std::cout << ", filter=\"" << EscapeYAML(opts.path_filter) << "\"";
+      }
+      std::cout << ")" << std::endl;
     }
 
     io.dedent();

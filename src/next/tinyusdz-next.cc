@@ -266,12 +266,18 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
                          comp_opts);
 }
 
-bool LoadUSDComposed(const std::string& filename, Stage* stage,
-                     const LoadUSDOptions& load_options,
-                     std::string* warn, std::string* err,
-                     const pcp::CompositionOptions* comp_opts) {
-  // Lazy single-layer load first (keeps arrays as lazy ValueRefs).
-  if (!LoadUSD(filename, stage, load_options, warn, err)) {
+bool StageNeedsComposition(const Stage& stage) {
+  const Layer* root = stage.GetRootLayer();
+  return root && RootNeedsComposition(*root);
+}
+
+bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
+                        const std::string& anchor_label,
+                        const LoadUSDOptions& load_options,
+                        std::string* warn, std::string* err,
+                        const pcp::CompositionOptions* comp_opts) {
+  if (!stage) {
+    if (err) *err = "composition failed: null stage";
     return false;
   }
   Layer* root = stage->GetRootLayer();
@@ -280,6 +286,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
     // the byte-identical fast path for pre-flattened / self-contained scenes.
     return true;
   }
+  const std::string& filename = anchor_label;
 
   // The root has composition arcs. Resolve them through the full PCP composition
   // engine (sublayers + references + payloads + inherits/specializes + variants
@@ -295,9 +302,6 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   // the composed STAGE keeps just one copy per prototype. (Inline expansion via
   // detect_instances=false instead duplicates every instance's geometry into the
   // stage and OOMs on large scenes like Caldera beachhead/capital.)
-  AssetResolver resolver;
-  resolver.SetWorkingDirectory(DirOfPath(filename));
-
   pcp::CompositionOptions copts;
   copts.load_payloads = true;
   // Diagnostics: TINYUSDZ_NEXT_TIMING emits [next_build]/[next_compose] phase
@@ -312,6 +316,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   copts.num_threads = 1;
 #endif
   copts.max_layer_memory = load_options.max_memory;
+  copts.usda_parse_options = load_options.usda_options.parse_options;
   if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
     int n = std::atoi(ct);
 #if defined(TINYUSDZ_ENABLE_THREAD)
@@ -337,6 +342,7 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
     if (comp_opts->payload_policy) copts.payload_policy = comp_opts->payload_policy;
     if (!comp_opts->variant_overrides.empty())
       copts.variant_overrides = comp_opts->variant_overrides;
+    copts.usda_parse_options = comp_opts->usda_parse_options;
     copts.max_layer_memory =
         MinNonZero(copts.max_layer_memory, comp_opts->max_layer_memory);
   }
@@ -362,6 +368,189 @@ bool LoadUSDComposed(const std::string& filename, Stage* stage,
   }
   *stage = std::move(composed);
   return true;
+}
+
+bool ComposeLoadedStage(Stage* stage, std::string* warn, std::string* err,
+                        const pcp::CompositionOptions* comp_opts,
+                        const std::string& anchor_label) {
+  // Memory-rooted stages have no anchor directory; external arcs resolve
+  // through the resolver's custom callbacks only (or surface as warnings).
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("");
+  return ComposeLoadedStage(stage, resolver, anchor_label, LoadUSDOptions{},
+                            warn, err, comp_opts);
+}
+
+bool LoadUSDComposed(const std::string& filename, Stage* stage,
+                     const LoadUSDOptions& load_options,
+                     std::string* warn, std::string* err,
+                     const pcp::CompositionOptions* comp_opts) {
+  // Lazy single-layer load first (keeps arrays as lazy ValueRefs).
+  if (!LoadUSD(filename, stage, load_options, warn, err)) {
+    return false;
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory(DirOfPath(filename));
+  return ComposeLoadedStage(stage, resolver, filename, load_options, warn, err,
+                            comp_opts);
+}
+
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       std::string* warn, std::string* err) {
+  return LoadUSDFromMemory(data, size, stage, LoadUSDOptions{}, warn, err);
+}
+
+bool LoadUSDFromMemory(const uint8_t* data, size_t size, Stage* stage,
+                       const LoadUSDOptions& options,
+                       std::string* warn, std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+  if (!data || size == 0) {
+    if (err) *err = "input buffer is empty";
+    return false;
+  }
+
+  switch (DetectFormat(data, size)) {
+    case FileFormat::USDA: {
+      LoadResult result =
+          LoadUSDAFromString(reinterpret_cast<const char*>(data), size,
+                             EffectiveUSDAOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDC: {
+      USDCLoadResult result =
+          LoadUSDCFromMemory(data, size, EffectiveUSDCOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDZ: {
+      USDZReader usdz;
+      if (!usdz.Open(data, size, EffectiveUSDZOptions(options))) {
+        if (err) {
+          *err = usdz.Error().empty() ? "Failed to open USDZ archive"
+                                      : usdz.Error();
+        }
+        return false;
+      }
+      int idx = usdz.FindUSDCFile();
+      bool inner_is_usdc = true;
+      if (idx < 0) {
+        idx = usdz.FindUSDAFile();
+        inner_is_usdc = false;
+      }
+      if (idx < 0) {
+        if (err) *err = "No .usdc or .usda entry found in USDZ archive";
+        return false;
+      }
+      const uint8_t* entry_data = usdz.EntryData(idx);
+      size_t entry_size = usdz.EntrySize(idx);
+      if (!entry_data || entry_size == 0) {
+        if (err) *err = "Empty USD entry in USDZ";
+        return false;
+      }
+      if (inner_is_usdc) {
+        USDCLoadResult result = LoadUSDCFromMemory(entry_data, entry_size,
+                                                   EffectiveUSDCOptions(options));
+        if (!result.success) {
+          if (err) *err = result.error_summary;
+          return false;
+        }
+        if (warn && !result.warnings.empty()) {
+          for (const auto& w : result.warnings) *warn += w + "\n";
+        }
+        *stage = std::move(result.stage);
+      } else {
+        LoadResult result = LoadUSDAFromString(
+            reinterpret_cast<const char*>(entry_data), entry_size,
+            EffectiveUSDAOptions(options));
+        if (!result.success) {
+          if (err) *err = result.error_summary;
+          return false;
+        }
+        if (warn && !result.warnings.empty()) {
+          for (const auto& w : result.warnings) *warn += w + "\n";
+        }
+        *stage = std::move(result.stage);
+      }
+      return true;
+    }
+
+    default:
+      if (err) *err = "Unknown data format (not USDA/USDC/USDZ)";
+      return false;
+  }
+}
+
+bool LoadUSDFromMemoryOwned(std::string&& data, Stage* stage,
+                            const LoadUSDOptions& options,
+                            std::string* warn, std::string* err) {
+  if (!stage) {
+    if (err) *err = "stage is null";
+    return false;
+  }
+  if (data.empty()) {
+    if (err) *err = "input buffer is empty";
+    return false;
+  }
+
+  const FileFormat format = DetectFormat(
+      reinterpret_cast<const uint8_t*>(data.data()), data.size());
+  switch (format) {
+    case FileFormat::USDA: {
+      LoadResult result =
+          LoadUSDAFromStringOwned(std::move(data), EffectiveUSDAOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDC: {
+      USDCLoadResult result =
+          LoadUSDCFromMemoryOwned(std::move(data), EffectiveUSDCOptions(options));
+      if (!result.success) {
+        if (err) *err = result.error_summary;
+        return false;
+      }
+      if (warn && !result.warnings.empty()) {
+        for (const auto& w : result.warnings) *warn += w + "\n";
+      }
+      *stage = std::move(result.stage);
+      return true;
+    }
+
+    case FileFormat::USDZ:
+      return LoadUSDFromMemory(reinterpret_cast<const uint8_t*>(data.data()),
+                               data.size(), stage, options, warn, err);
+
+    default:
+      if (err) *err = "Unknown file format";
+      return false;
+  }
 }
 
 bool LoadUSDA(const std::string& filename, Stage* stage,

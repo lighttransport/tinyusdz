@@ -1339,7 +1339,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
       // model (no literals are packed to derive it from).
       aerep.SetType(ae->element_type_id);
       aerep.SetPayload(0);
-      return aerep;
+      return crate::ValueRep(aerep.GetData());
     }
     last_array_edit_elem_type_ = 0;
     bool is_compressed = false;
@@ -1352,19 +1352,19 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     aerep.SetType(last_array_edit_elem_type_ ? last_array_edit_elem_type_
                                              : ae->element_type_id);
     aerep.SetPayload(static_cast<uint64_t>(offset));
-    return aerep;
+    return crate::ValueRep(aerep.GetData());
   }
 
   if (value.as<Reference>()) {
     if (err) {
       *err = "Standalone Reference values are not representable in Crate; use ReferenceListOp.";
     }
-    return rep;
+    return crate::ValueRep(rep.GetData());
   }
 
   // Try to inline the value
   if (!value.IsUnregisteredValue() && TryInlineValue(value, &rep)) {
-    return rep;
+    return crate::ValueRep(rep.GetData());
   }
 
   bool dedup_candidate = false;
@@ -1383,7 +1383,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
         dedup_wire_tag);
     if (LookupDeduplicatedValue(dedup_bytes, dedup_element_size,
                                 dedup_is_float, dedup_wire_tag, &rep)) {
-      return rep;
+      return crate::ValueRep(rep.GetData());
     }
     dedup_candidate = true;
   }
@@ -1392,8 +1392,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   bool is_compressed = false;
   int64_t offset = WriteValueData(value, &is_compressed, err);
   if (offset < 0 || (err && !err->empty())) {
-    rep = crate::ValueRep();
-    return rep;
+    return crate::ValueRep();
   }
 
   // Create ValueRep with offset and proper type
@@ -1560,7 +1559,7 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
                             dedup_wire_tag, rep);
   }
 
-  return rep;
+  return crate::ValueRep(rep.GetData());
 }
 
 

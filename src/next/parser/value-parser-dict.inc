@@ -17,6 +17,34 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
   Value v = Value::MakeDictionary();
   Dict* d = v.as_dictionary();
 
+  // Dictionary keys/type names may collide with lexer keywords ("add",
+  // "custom", "delete", "true", ...): accept any keyword-ish token as a name
+  // in key/type position, mirroring IsNameToken in the prim parser.
+  auto is_dict_name = [](const Token& tk) {
+    switch (tk.type) {
+      case TokenType::Identifier:
+      case TokenType::Def:
+      case TokenType::Over:
+      case TokenType::Class:
+      case TokenType::True:
+      case TokenType::False:
+      case TokenType::None:
+      case TokenType::TimeSamples:
+      case TokenType::Custom:
+      case TokenType::Uniform:
+      case TokenType::Varying:
+      case TokenType::Prepend:
+      case TokenType::Append:
+      case TokenType::Delete:
+      case TokenType::Add:
+      case TokenType::Reorder:
+      case TokenType::Rel:
+        return true;
+      default:
+        return false;
+    }
+  };
+
   while (lexer.peek().type != TokenType::CloseBrace &&
          lexer.peek().type != TokenType::Eof) {
     std::string type_name, key;
@@ -26,11 +54,11 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
     if (t.type == TokenType::String) {
       key = t.value;
       lexer.next();
-    } else if (t.type == TokenType::Identifier) {
+    } else if (is_dict_name(t)) {
       std::string first = t.value;
       lexer.next();
       const Token& t2 = lexer.peek();
-      if (t2.type == TokenType::Identifier || t2.type == TokenType::String ||
+      if (is_dict_name(t2) || t2.type == TokenType::String ||
           t2.type == TokenType::OpenBracket) {
         // `first` was the type name; the key (after an optional []) follows.
         type_name = first;
@@ -41,7 +69,7 @@ static ParseResult ParseDictDepth(Lexer& lexer, int depth) {
           type_name += "[]";
         }
         const Token& kt = lexer.peek();
-        if (kt.type == TokenType::String || kt.type == TokenType::Identifier) {
+        if (kt.type == TokenType::String || is_dict_name(kt)) {
           key = kt.value;
           lexer.next();
         } else {

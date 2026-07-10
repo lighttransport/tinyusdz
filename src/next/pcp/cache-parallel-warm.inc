@@ -70,6 +70,10 @@
 
     out->finalize();
     out->meta() = root->meta();
+    // Sublayer opinions are baked into the flattened output; keeping the
+    // subLayers list would re-apply (now stale) layers when the exported
+    // layer is read back.
+    out->meta().subLayers.clear();
     stage->SetRootLayer(std::move(*out));
     return true;
   }
@@ -499,8 +503,11 @@
             size_t i = next_idx.fetch_add(1);
             if (i >= assets.size()) break;
             std::string w, e;
+            LayerLoadOptions load_opts;
+            load_opts.max_memory = options.max_layer_memory;
+            load_opts.usda_parse_options = options.usda_parse_options;
             reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w,
-                            &e, MakeLayerLoadOptions());
+                            &e, load_opts);
           }
         };
         ts.reserve(static_cast<size_t>(pf));

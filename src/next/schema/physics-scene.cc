@@ -20,14 +20,17 @@ bool GetPhysicsSceneData(const Stage& stage, const UsdPrim& prim,
   eval.SetTime(time);
 
   out->gravityMagnitude =
-      eval.EvalOr(prim, "physics:gravityMagnitude", -9.81f);
+      eval.EvalOr(prim, "physics:gravityMagnitude", 9.81f);
 
   float dir[3] = {0.0f, -1.0f, 0.0f};
-  if (eval.EvalFloat3(prim, "physics:gravityDirection", dir)) {
-    out->gravityDirection[0] = dir[0];
-    out->gravityDirection[1] = dir[1];
-    out->gravityDirection[2] = dir[2];
+  if (stage.GetUpAxis() == "Z") {
+    dir[1] = 0.0f;
+    dir[2] = -1.0f;
   }
+  (void)eval.EvalFloat3(prim, "physics:gravityDirection", dir);
+  out->gravityDirection[0] = dir[0];
+  out->gravityDirection[1] = dir[1];
+  out->gravityDirection[2] = dir[2];
 
   return true;
 }

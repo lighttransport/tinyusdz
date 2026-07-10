@@ -1,0 +1,91 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    doc = "Anonymous USDZ conversion regression fixture."
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Material "MatA"
+    {
+        token outputs:surface.connect = </Root/MatA/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </Root/MatA/Texture.outputs:rgb>
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+
+        def Shader "Texture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @Texture.png@
+            token inputs:sourceColorSpace = "sRGB"
+            float2 inputs:st.connect = </Root/MatA/ST.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "ST"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    def Material "MatB"
+    {
+        token outputs:surface.connect = </Root/MatB/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </Root/MatB/Texture.outputs:rgb>
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+
+        def Shader "Texture"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @Texture.png@
+            token inputs:sourceColorSpace = "sRGB"
+            float2 inputs:st.connect = </Root/MatB/ST.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "ST"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    def Mesh "MeshA"
+    {
+        rel material:binding = </Root/MatA>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Mesh "MeshB"
+    {
+        rel material:binding = </Root/MatB>
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+}

@@ -257,14 +257,15 @@ void PropNameTable::register_common_names() {
   intern("primvars:skel:geomBindTransform");
 }
 
-// Global singleton
+// Global singleton. Registration happens inside the (thread-safe) static
+// local initialization, so concurrent first callers cannot observe a
+// half-registered table.
 PropNameTable& GetPropNameTable() {
-  static PropNameTable table;
-  static bool initialized = false;
-  if (!initialized) {
-    table.register_common_names();
-    initialized = true;
-  }
+  static PropNameTable& table = []() -> PropNameTable& {
+    static PropNameTable t;
+    t.register_common_names();
+    return t;
+  }();
   return table;
 }
 
@@ -323,6 +324,17 @@ const PropSlot* PropIndex::find(const std::string& name) const {
     return nullptr;
   }
   return find(id);
+}
+
+bool PropIndex::remove(PropNameId name_id) {
+  if (!name_id.is_valid()) return false;
+  for (auto it = slots_.begin(); it != slots_.end(); ++it) {
+    if (it->name_id == name_id) {
+      slots_.erase(it);  // preserves order, so sorted_ stays valid
+      return true;
+    }
+  }
+  return false;
 }
 
 void PropIndex::sort() {

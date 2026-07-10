@@ -25,7 +25,8 @@ template <typename T>
 bool BorrowLazyFlatArray(const Value& value, TypeId component_type,
                          ArrayView<T>* out) {
   const LazyArrayRef* ref = value.lazy_ref();
-  if (!ref || !ref->source || ref->is_compressed) return false;
+  if (!ref || !ref->source || ref->is_compressed || !ref->source->can_borrow())
+    return false;
   if (ScalarComponent(ref->value_type) != component_type) return false;
   const size_t comps = GetComponentCount(ref->value_type);
   if (comps == 0) return false;
@@ -74,10 +75,10 @@ size_t ScalarByteSize(TypeId comp) {
 }
 
 template <typename T>
-bool FinishOwnedView(std::vector<T>* storage, ArrayView<T>* out) {
+bool FinishBorrowedView(const std::vector<T>* storage, ArrayView<T>* out) {
   if (!storage) return false;
   *out = ArrayView<T>{storage->empty() ? nullptr : storage->data(),
-                      storage->size(), false};
+                      storage->size(), true};
   return true;
 }
 
@@ -89,7 +90,8 @@ bool CanBorrowLazyFlat(const Value& value) {
   // (so independent element ranges can be formatted concurrently, with no decode).
   if (!value.is_lazy()) return false;
   const LazyArrayRef* ref = value.lazy_ref();
-  if (!ref || !ref->source || ref->is_compressed) return false;
+  if (!ref || !ref->source || ref->is_compressed || !ref->source->can_borrow())
+    return false;
   const size_t ts = ScalarByteSize(ScalarComponent(ref->value_type));
   if (ts == 0) return false;
   const size_t comps = GetComponentCount(ref->value_type);
@@ -125,11 +127,8 @@ bool GetFloatArrayView(const Value& value, ArrayScratch<float>* scratch,
     *out = ArrayView<float>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
   }
-  Value tmp = value.materialized_copy();
-  const std::vector<float>* arr = tmp.as_float_array();
-  if (!arr) return false;
-  scratch->storage = *arr;
-  return FinishOwnedView(&scratch->storage, out);
+  scratch->materialized = value.materialized_copy();
+  return FinishBorrowedView(scratch->materialized.as_float_array(), out);
 }
 
 bool GetDoubleArrayView(const Value& value, ArrayScratch<double>* scratch,
@@ -145,11 +144,8 @@ bool GetDoubleArrayView(const Value& value, ArrayScratch<double>* scratch,
     *out = ArrayView<double>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
   }
-  Value tmp = value.materialized_copy();
-  const std::vector<double>* arr = tmp.as_double_array();
-  if (!arr) return false;
-  scratch->storage = *arr;
-  return FinishOwnedView(&scratch->storage, out);
+  scratch->materialized = value.materialized_copy();
+  return FinishBorrowedView(scratch->materialized.as_double_array(), out);
 }
 
 bool GetIntArrayView(const Value& value, ArrayScratch<int32_t>* scratch,
@@ -165,11 +161,8 @@ bool GetIntArrayView(const Value& value, ArrayScratch<int32_t>* scratch,
     *out = ArrayView<int32_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
   }
-  Value tmp = value.materialized_copy();
-  const std::vector<int32_t>* arr = tmp.as_int_array();
-  if (!arr) return false;
-  scratch->storage = *arr;
-  return FinishOwnedView(&scratch->storage, out);
+  scratch->materialized = value.materialized_copy();
+  return FinishBorrowedView(scratch->materialized.as_int_array(), out);
 }
 
 bool GetInt64ArrayView(const Value& value, ArrayScratch<int64_t>* scratch,
@@ -185,11 +178,8 @@ bool GetInt64ArrayView(const Value& value, ArrayScratch<int64_t>* scratch,
     *out = ArrayView<int64_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
   }
-  Value tmp = value.materialized_copy();
-  const std::vector<int64_t>* arr = tmp.as_int64_array();
-  if (!arr) return false;
-  scratch->storage = *arr;
-  return FinishOwnedView(&scratch->storage, out);
+  scratch->materialized = value.materialized_copy();
+  return FinishBorrowedView(scratch->materialized.as_int64_array(), out);
 }
 
 bool GetUIntArrayView(const Value& value, ArrayScratch<uint32_t>* scratch,
@@ -205,11 +195,8 @@ bool GetUIntArrayView(const Value& value, ArrayScratch<uint32_t>* scratch,
     *out = ArrayView<uint32_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
   }
-  Value tmp = value.materialized_copy();
-  const std::vector<uint32_t>* arr = tmp.as_uint_array();
-  if (!arr) return false;
-  scratch->storage = *arr;
-  return FinishOwnedView(&scratch->storage, out);
+  scratch->materialized = value.materialized_copy();
+  return FinishBorrowedView(scratch->materialized.as_uint_array(), out);
 }
 
 bool GetUInt64ArrayView(const Value& value, ArrayScratch<uint64_t>* scratch,
@@ -225,11 +212,8 @@ bool GetUInt64ArrayView(const Value& value, ArrayScratch<uint64_t>* scratch,
     *out = ArrayView<uint64_t>{arr->empty() ? nullptr : arr->data(), arr->size(), true};
     return true;
   }
-  Value tmp = value.materialized_copy();
-  const std::vector<uint64_t>* arr = tmp.as_uint64_array();
-  if (!arr) return false;
-  scratch->storage = *arr;
-  return FinishOwnedView(&scratch->storage, out);
+  scratch->materialized = value.materialized_copy();
+  return FinishBorrowedView(scratch->materialized.as_uint64_array(), out);
 }
 
 }  // namespace next

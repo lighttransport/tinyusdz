@@ -229,6 +229,7 @@ async function buildScene() {
     const usd = state.usdData;
     const numMeshes = usd.numMeshes();
     const numMaterials = usd.numMaterials();
+    const counts = readSceneEntityCounts(usd);
 
     updateStatus(`Processing ${numMeshes} meshes, ${numMaterials} materials...`);
 
@@ -296,7 +297,18 @@ async function buildScene() {
     fitCameraToObject(root);
 
     // Update UI
-    updateModelInfo(numMeshes, numMaterials);
+    updateModelInfo({
+        meshCount: numMeshes,
+        materialCount: numMaterials,
+        lightCount: counts.lightCount,
+        cameraCount: counts.cameraCount,
+        nodeCount: counts.nodeCount,
+        animationCount: counts.animations,
+        pointInstancerCount: counts.pointInstancerCount,
+        pointInstanceDrawCount: counts.pointInstanceDrawCount,
+        skeletonCount: counts.skeletonCount,
+        unsupportedRenderableCount: counts.unsupportedRenderableCount
+    });
     updateNodeGraphInfo();
 
     updateStatus('Model loaded');
@@ -424,9 +436,68 @@ function updateStatus(text) {
     document.getElementById('status').textContent = text;
 }
 
-function updateModelInfo(meshCount, materialCount) {
+function readSceneEntityCounts(usd) {
+    const safeCount = (getter) => {
+        if (typeof getter !== 'function') return 0;
+        try {
+            const value = getter();
+            return Number.isFinite(value) ? value : 0;
+        } catch {
+            return 0;
+        }
+    };
+
+    let unsupportedRenderables = safeCount(
+        usd?.numUnsupportedRenderables && usd.numUnsupportedRenderables.bind(usd)
+    );
+    if (!Number.isFinite(unsupportedRenderables) || unsupportedRenderables < 0) {
+        unsupportedRenderables = 0;
+    }
+    if (unsupportedRenderables === 0 && typeof usd?.getUnsupportedRenderables === 'function') {
+        try {
+            const list = usd.getUnsupportedRenderables();
+            if (Array.isArray(list)) {
+                unsupportedRenderables = list.length;
+            }
+        } catch {
+            unsupportedRenderables = 0;
+        }
+    }
+
+    return {
+        lightCount: safeCount(usd?.numLights && usd.numLights.bind(usd)),
+        cameraCount: safeCount(usd?.numCameras && usd.numCameras.bind(usd)),
+        nodeCount: safeCount(usd?.numNodes && usd.numNodes.bind(usd)),
+        animations: safeCount(usd?.numAnimations && usd.numAnimations.bind(usd)),
+        pointInstancerCount: safeCount(usd?.numPointInstancers && usd.numPointInstancers.bind(usd)),
+        pointInstanceDrawCount: safeCount(usd?.numPointInstanceDraws && usd.numPointInstanceDraws.bind(usd)),
+        skeletonCount: safeCount(usd?.numSkeletons && usd.numSkeletons.bind(usd)),
+        unsupportedRenderableCount: unsupportedRenderables
+    };
+}
+
+function updateModelInfo({
+    meshCount = 0,
+    materialCount = 0,
+    lightCount = 0,
+    cameraCount = 0,
+    nodeCount = 0,
+    animationCount = 0,
+    pointInstancerCount = 0,
+    pointInstanceDrawCount = 0,
+    skeletonCount = 0,
+    unsupportedRenderableCount = 0
+} = {}) {
     document.getElementById('mesh-count').textContent = meshCount;
     document.getElementById('material-count').textContent = materialCount;
+    document.getElementById('light-count').textContent = lightCount;
+    document.getElementById('camera-count').textContent = cameraCount;
+    document.getElementById('node-count').textContent = nodeCount;
+    document.getElementById('animation-count').textContent = animationCount;
+    document.getElementById('point-instancer-count').textContent = pointInstancerCount;
+    document.getElementById('point-instance-draw-count').textContent = pointInstanceDrawCount;
+    document.getElementById('skeleton-count').textContent = skeletonCount;
+    document.getElementById('unsupported-renderable-count').textContent = unsupportedRenderableCount;
     document.getElementById('model-info').style.display = 'block';
 }
 
@@ -554,7 +625,17 @@ window.loadSample = async function() {
         }];
 
         fitCameraToObject(mesh);
-        updateModelInfo(1, 1);
+        updateModelInfo({
+            meshCount: 1,
+            materialCount: 1,
+            lightCount: 0,
+            cameraCount: 0,
+            nodeCount: 0,
+            pointInstancerCount: 0,
+            pointInstanceDrawCount: 0,
+            skeletonCount: 0,
+            unsupportedRenderableCount: 0
+        });
         updateNodeGraphInfo();
         updateStatus('Sample loaded - double invert demo');
         showToast('Sample cube loaded with node evaluation demo');

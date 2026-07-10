@@ -12,12 +12,22 @@
 // DOM references (mutable: canvas is replaced on worker respawn)
 // ============================================================================
 
+import { getAssetUriFromURL } from './src/tinyusdz/LoaderConfigUtils.js';
+
 let canvas = document.getElementById('gl');
 const statusEl = document.getElementById('status');
 const modelInfoEl = document.getElementById('model-info');
 const meshCountEl = document.getElementById('mesh-count');
 const materialCountEl = document.getElementById('material-count');
 const textureCountEl = document.getElementById('texture-count');
+const lightCountEl = document.getElementById('light-count');
+const cameraCountEl = document.getElementById('camera-count');
+const nodeCountEl = document.getElementById('node-count');
+const pointInstancerCountEl = document.getElementById('point-instancer-count');
+const pointInstanceDrawCountEl = document.getElementById('point-instance-draw-count');
+const skeletonCountEl = document.getElementById('skeleton-count');
+const animationCountEl = document.getElementById('animation-count');
+const unsupportedRenderableCountEl = document.getElementById('unsupported-renderable-count');
 const currentFileEl = document.getElementById('current-file');
 const fpsValueEl = document.getElementById('fps-value');
 const loadStatsEl = document.getElementById('load-stats');
@@ -29,11 +39,14 @@ const fileInput = document.getElementById('file-input');
 const unsupportedOverlay = document.getElementById('unsupported-overlay');
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
-    for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
-        const value = params.get(key);
-        if (value) return value;
-    }
-    return null;
+    return getAssetUriFromURL(params, ['usd']);
+}
+
+function getBackendFromURL(params = new URLSearchParams(window.location.search)) {
+    const backend = params.get('backend');
+    return (backend === 'next' || backend === 'auto' || backend === 'legacy')
+        ? backend
+        : 'legacy';
 }
 
 function getDisplayNameFromURI(uri) {
@@ -693,6 +706,14 @@ function onWorkerMessage(e) {
             meshCountEl.textContent = msg.meshCount;
             materialCountEl.textContent = msg.materialCount;
             textureCountEl.textContent = msg.textureCount || 0;
+            if (lightCountEl) lightCountEl.textContent = msg.lights || 0;
+            if (cameraCountEl) cameraCountEl.textContent = msg.cameras || 0;
+            if (nodeCountEl) nodeCountEl.textContent = msg.nodes || 0;
+            if (pointInstancerCountEl) pointInstancerCountEl.textContent = msg.pointInstancers || 0;
+            if (pointInstanceDrawCountEl) pointInstanceDrawCountEl.textContent = msg.pointInstanceDraws || 0;
+            if (skeletonCountEl) skeletonCountEl.textContent = msg.skeletons || 0;
+            if (animationCountEl) animationCountEl.textContent = msg.animations || 0;
+            if (unsupportedRenderableCountEl) unsupportedRenderableCountEl.textContent = msg.unsupportedRenderables || 0;
             modelInfoEl.style.display = 'block';
 
             sceneState.hasModel = true;
@@ -701,9 +722,10 @@ function onWorkerMessage(e) {
             updateUpAxisButton();
             updateFitButton();
 
-            finishLoadStats();
-            hideProgress();
-            break;
+			finishLoadStats();
+			hideProgress();
+			window.renderComplete = true;
+			break;
 
         case 'fps':
             if (fpsValueEl) fpsValueEl.textContent = msg.fps.toFixed(1);
@@ -826,7 +848,7 @@ async function sendFileToWorker(file) {
 
         startLoadingWatchdog();
         worker.postMessage(
-            { type: 'loadFile', data: arrayBuffer, filename: file.name },
+            { type: 'loadFile', data: arrayBuffer, filename: file.name, backend: getBackendFromURL() },
             [arrayBuffer]
         );
     } catch (err) {
@@ -888,7 +910,7 @@ async function loadModelFromURL(url) {
 
         startLoadingWatchdog();
         worker.postMessage(
-            { type: 'loadFile', data: binary.buffer, filename: url },
+            { type: 'loadFile', data: binary.buffer, filename: url, backend: getBackendFromURL() },
             [binary.buffer]
         );
     } catch (err) {

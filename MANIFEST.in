@@ -1,32 +1,83 @@
 # sdist contents for the tinyusdz PyPI package.
 # Everything needed to run `python -m build --wheel` from a fresh checkout.
+# The wheel builds ONLY the "next" core (src/next + src/tydra/next), the C API
+# (src/c-api) and the extension sources (src/python); the legacy core is not
+# part of the package.
 
-include CMakeLists.txt
 include LICENSE
 include README.md
 include pyproject.toml
 include setup.py
 
-# CMake helpers used by the build.
-recursive-include cmake *.cmake *.toolchain *.txt
-
-# Core tinyusdz C++ sources and all headers.
-recursive-include src *.cc *.c *.cpp *.h *.hh *.hpp *.inc
-recursive-include src/external *.cc *.c *.cpp *.h *.hh *.hpp *.inc *.def *.license
+# next core + tydra-next + C API + extension sources.
+recursive-include src/next *.cc *.c *.h *.hh *.inc *.txt
+recursive-include src/tydra/next *.cc *.hh *.txt
+recursive-include src/c-api *.cc *.h *.hh
+recursive-include src/python *.c *.h
+include src/lz4/lz4.c src/lz4/lz4.h
+recursive-include src/external/fast_float/include *.h
+include src/external/dragonbox/dragonbox.h
+include src/mtlx-xml-tokenizer.cc src/mtlx-xml-tokenizer.hh
+include src/mtlx-xml-parser.cc src/mtlx-xml-parser.hh
+include src/mtlx-dom.cc src/mtlx-dom.hh
 
 # Python package + tests.
 recursive-include python *.py *.pyi py.typed README.md
-recursive-include python/tests *
+recursive-include python/tests *.py
 
-# Strip heavy/build artefacts.
-global-exclude *.pyc *.pyo __pycache__
+# Small USDA assets used by the pytest suite (skip-if-missing otherwise).
+recursive-include tests/usda *.usda
+
+# setuptools_scm's git file-finder would otherwise include every tracked
+# file; prune everything the wheel build does not need.
+prune examples
+prune web
+prune models
+prune sandbox
+prune doc
+prune benchmark
+prune benchmarks
+prune blender
+prune aousd
+prune schema
+prune data
+prune container
+prune cmake
+prune android
+prune ios
+prune tests/usdc
+prune tests/feat
+prune tests/unit
+prune tests/fuzzer
+prune tests/next
+prune tests/tydra
+prune tests/c-api
+prune tests/composition
+prune src/external
+prune src/blender
+prune src/core
+prune src/tsd
+prune src/osd
+prune src/tydra/mcp
+prune tools
+prune subprojects
+prune scripts
+exclude src/*.cc src/*.cpp
+# Root-level headers resolved via the -Isrc include path by next sources.
+include src/safe-arithmetic.hh
+include src/stream-reader.hh src/stream-writer.hh
+include src/namespace-mapping.hh
+include src/mtlx-xml-tokenizer.cc src/mtlx-xml-tokenizer.hh
+include src/mtlx-xml-parser.cc src/mtlx-xml-parser.hh
+include src/mtlx-dom.cc src/mtlx-dom.hh
+recursive-include src/external/fast_float/include *.h
+include src/external/dragonbox/dragonbox.h
+
+# Strip build artefacts.
+global-exclude *.pyc *.pyo *.so *.pyd __pycache__
 prune build
-prune build_py_ext
+prune build_py_ext_next
+prune build-next
 prune dist
 prune .git
 prune .github
-prune doc
-prune examples
-prune tests
-prune sandbox
-prune web

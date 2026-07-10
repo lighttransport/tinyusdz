@@ -12,6 +12,7 @@
 
 #include "crate-format.hh"      // CrateVersion, ValueRep, CrateTypeId
 #include "../types/type-id.hh"  // next::TypeId
+#include "lazy-array.hh"
 
 #include <cstdint>
 #include <memory>
@@ -22,21 +23,13 @@ namespace tinyusdz {
 namespace next {
 
 class Value;
-struct LazyArrayRef;
-
-class CrateDataSource {
+class CrateDataSource : public LazyArraySource {
  public:
   /// Adopt the crate bytes by move (no copy) together with the decoded
   /// tokens / string-index tables.
   static std::shared_ptr<CrateDataSource> Adopt(
       std::string&& bytes, CrateVersion version, std::vector<std::string>&& tokens,
       std::vector<uint32_t>&& string_indices);
-
-  /// Adopt a borrowed crate buffer (no copy). The caller must keep `bytes`
-  /// alive until all lazy arrays/materialized values derived from this source are
-  /// destroyed (typically stage lifetime).
-  static std::shared_ptr<CrateDataSource> AdoptBorrowed(
-      const uint8_t* bytes, size_t size, CrateVersion version);
 
   /// Adopt just the byte buffer (tables empty). Useful for callers that only
   /// need verbatim block access (e.g. write-time pass-through).
@@ -55,18 +48,20 @@ class CrateDataSource {
   ~CrateDataSource();
 
   /// Whether this source is backed by a memory mapping (vs an owned buffer).
-  bool is_mmapped() const { return mmap_base_ != nullptr; }
+  bool is_mmapped() const override { return mmap_base_ != nullptr; }
+  bool can_borrow() const override {
+    // Both owned buffer and mmap-backed buffers remain stable while the source
+    // object is alive, so array views can safely borrow from them.
+    return true;
+  }
 
-  const uint8_t* base() const {
-    if (mmap_base_) return mmap_base_;
-    if (borrowed_base_) return borrowed_base_;
-    return reinterpret_cast<const uint8_t*>(bytes_.data());
+  const uint8_t* base() const override {
+    return mmap_base_ ? mmap_base_
+                      : reinterpret_cast<const uint8_t*>(bytes_.data());
   }
-  size_t size() const {
-    if (mmap_base_) return mmap_size_;
-    return borrowed_base_ ? borrowed_size_ : bytes_.size();
-  }
-  CrateVersion version() const { return version_; }
+  size_t size() const override { return mmap_base_ ? mmap_size_ : bytes_.size(); }
+  CrateVersion version() const override { return version_; }
+  void DiscardRange(uint64_t offset, uint64_t length) const override;
 
   /// Set the crate version once it has been parsed from the bootstrap header.
   /// (The buffer is adopted before the header is read.)
@@ -85,24 +80,20 @@ class CrateDataSource {
   /// Decode a lazy array reference into a concrete Value. Returns false (and
   /// leaves `*out` empty) for array types that have no concrete Value storage
   /// yet, or on a malformed block.
-  bool MaterializeArray(const LazyArrayRef& ref, Value* out) const;
+  bool MaterializeArray(const LazyArrayRef& ref, Value* out) const override;
 
  private:
   CrateDataSource() = default;
   CrateDataSource(const CrateDataSource&) = delete;
   CrateDataSource& operator=(const CrateDataSource&) = delete;
 
-  // Backing is one of:
-  //   - owned byte string (bytes_)
-  //   - mmap-backed read-only mapping (mmap_base_)
-  //   - borrowed, non-owning buffer (borrowed_base_)
-  // base()/size() abstract over all three so every reader stays backing-agnostic.
+  // Backing is exactly one of: an owned byte string (mmap_base_ == nullptr) or
+  // a read-only memory mapping (mmap_base_ != nullptr). base()/size() abstract
+  // over both so every reader stays backing-agnostic.
   std::string bytes_;       // owned mode: the retained crate (never reallocated)
   const uint8_t* mmap_base_ = nullptr;  // mmap mode: mapped region start
   size_t mmap_size_ = 0;                // mmap mode: mapped length (== file size)
   void* mmap_addr_ = nullptr;           // region to munmap in the destructor
-  const uint8_t* borrowed_base_ = nullptr;  // borrowed mode: non-owning base
-  size_t borrowed_size_ = 0;  // borrowed mode: borrowed buffer length
 
   CrateVersion version_{};  // value-initialized to 0.0.0
   std::vector<std::string> tokens_;
@@ -119,8 +110,18 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 /// Bytes per element of an array CrateTypeId as stored on disk (0 if unknown).
 uint32_t CrateArrayElemStride(CrateTypeId id);
 
+/// Decode the element-count word at a crate array payload. Some older pxrUSD
+/// crates pack auxiliary data in the high 32 bits and the element count in the
+/// low 32 bits.
+uint64_t CrateArrayElementCount(uint64_t raw_count);
+
 /// next::TypeId that materialize() would surface for an array CrateTypeId.
 TypeId CrateArrayValueType(CrateTypeId id);
+
+/// Whether an array type can be represented as a lazy byte reference without
+/// changing its logical value. Unsupported and swizzled-on-read types must be
+/// decoded eagerly, so they keep the normal element-count guard.
+bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed);
 
 }  // namespace next
 }  // namespace tinyusdz

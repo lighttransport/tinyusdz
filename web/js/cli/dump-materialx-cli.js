@@ -18,7 +18,10 @@ function parseArgs() {
     meshId: null, // null means no mesh dump, number means dump specific mesh
     dumpMesh: false, // dump mesh vertex data
     pretty: true,
-    verbose: false
+    verbose: false,
+    summary: false,
+    backend: 'legacy',
+    maxMemoryMB: 500
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -45,6 +48,20 @@ function parseArgs() {
       }
     } else if (arg === '--no-pretty') {
       options.pretty = false;
+    } else if (arg === '--summary') {
+      options.summary = true;
+    } else if (arg === '--backend') {
+      options.backend = args[++i];
+      if (!['legacy', 'next', 'auto'].includes(options.backend)) {
+        console.error('Error: Backend must be "legacy", "next", or "auto"');
+        process.exit(1);
+      }
+    } else if (arg === '--max-memory-mb') {
+      options.maxMemoryMB = Number(args[++i]);
+      if (!Number.isFinite(options.maxMemoryMB) || options.maxMemoryMB < 0) {
+        console.error('Error: --max-memory-mb must be a non-negative number');
+        process.exit(1);
+      }
     } else if (arg === '-v' || arg === '--verbose') {
       options.verbose = true;
     } else if (!options.inputFile) {
@@ -76,6 +93,9 @@ Options:
   -m, --material <id>     Dump only specific material by ID (default: all)
   --mesh [id]             Dump mesh vertex data (all meshes or specific mesh by ID)
   --no-pretty             Disable pretty-printing for JSON/YAML
+  --summary               Print counts/timing only; do not dump material payloads
+  --backend <name>        Loader backend: legacy, next, or auto (default: legacy)
+  --max-memory-mb <n>     Native loader memory limit, 0 disables (default: 500)
   -v, --verbose           Enable verbose logging
   -h, --help              Show this help message
 
@@ -258,6 +278,16 @@ function dumpMeshData(mesh, meshId) {
 }
 
 async function dumpMaterials(options) {
+  const timings = {
+    start: performance.now(),
+    initMs: 0,
+    readMs: 0,
+    parseMs: 0,
+    countMs: 0,
+    materialMs: 0,
+    totalMs: 0
+  };
+
   if (options.verbose) {
     console.error(`Loading USD file: ${options.inputFile}`);
   }
@@ -269,28 +299,38 @@ async function dumpMaterials(options) {
   }
 
   // Initialize loader
+  const initStart = performance.now();
   const loader = new TinyUSDZLoader();
   await loader.init({ useMemory64: false });
-  loader.setMaxMemoryLimitMB(500);
+  if (options.maxMemoryMB > 0) {
+    loader.setMaxMemoryLimitMB(options.maxMemoryMB);
+  }
+  timings.initMs = performance.now() - initStart;
 
   if (options.verbose) {
     console.error('Loader initialized');
   }
 
   // Load file
-  const file = loadFile(options.inputFile);
-  if (!file) {
-    process.exit(1);
-  }
+  const readStart = performance.now();
 
   // Read file as ArrayBuffer
   const data = fs.readFileSync(options.inputFile);
   const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  timings.readMs = performance.now() - readStart;
 
   // Parse USD file with proper conversion to RenderScene
+  const parseStart = performance.now();
   const usd = await new Promise((resolve, reject) => {
-    loader.parse(arrayBuffer, options.inputFile, resolve, reject);
+    loader.parse(arrayBuffer, options.inputFile, resolve, reject, {
+      backend: options.backend,
+      materialDedup: false,
+      mergeMeshes: false,
+      mergeMeshesBakeTransform: false,
+      flattenRenderTree: false
+    });
   });
+  timings.parseMs = performance.now() - parseStart;
 
   if (!usd) {
     console.error('Error: Failed to load USD file');
@@ -302,8 +342,29 @@ async function dumpMaterials(options) {
   }
 
   // Get number of materials and meshes
-  const numMaterials = usd.numMaterials();
-  const numMeshes = usd.numMeshes();
+  const countStart = performance.now();
+  const numMaterials = usd.numMaterials ? usd.numMaterials() : 0;
+  const numMeshes = usd.numMeshes ? usd.numMeshes() : 0;
+  const numTextures = usd.numTextures ? usd.numTextures() : 0;
+  const actualBackend = usd.__backend || options.backend;
+  timings.countMs = performance.now() - countStart;
+
+  if (options.summary) {
+    timings.totalMs = performance.now() - timings.start;
+    const summary = {
+      file: options.inputFile,
+      fileSizeBytes: data.byteLength,
+      backend: actualBackend,
+      requestedBackend: options.backend,
+      fallbackReason: usd.__backendFallbackReason || null,
+      numMeshes,
+      numMaterials,
+      numTextures,
+      timings
+    };
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
 
   if (options.verbose) {
     console.error(`Found ${numMaterials} material(s), ${numMeshes} mesh(es)`);
@@ -386,6 +447,7 @@ async function dumpMaterials(options) {
     : Array.from({ length: numMaterials }, (_, i) => i);
 
   // Dump materials
+  const materialStart = performance.now();
   for (const matId of materialIds) {
     if (matId >= numMaterials) {
       console.error(`Warning: Material ID ${matId} out of range (0-${numMaterials - 1})`);
@@ -436,6 +498,7 @@ async function dumpMaterials(options) {
       console.error(`Error processing material ${matId}: ${err.message}`);
     }
   }
+  timings.materialMs = performance.now() - materialStart;
 
   // Output results
   let output;
@@ -491,6 +554,8 @@ async function dumpMaterials(options) {
   }
 
   if (options.verbose) {
+    timings.totalMs = performance.now() - timings.start;
+    console.error(`Timing: init=${timings.initMs.toFixed(1)} ms read=${timings.readMs.toFixed(1)} ms parse=${timings.parseMs.toFixed(1)} ms materials=${timings.materialMs.toFixed(1)} ms total=${timings.totalMs.toFixed(1)} ms`);
     console.error('\nDone!');
   }
 }
