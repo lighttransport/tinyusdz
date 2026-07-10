@@ -242,6 +242,21 @@ bool ValueToFloat4(const Value& value, Float4* out) {
                   static_cast<float>(v[2]), static_cast<float>(v[3]));
     return true;
   }
+  // Authored half-precision scalars (half3 rotate/scale, quath orient, ...)
+  // store raw half-bit lanes; the converting reads widen them.
+  float h[4];
+  if (value.to_float3(h)) {
+    *out = Float4(h[0], h[1], h[2], 0.0f);
+    return true;
+  }
+  if (value.to_float4(h)) {
+    *out = Float4(h[0], h[1], h[2], h[3]);
+    return true;
+  }
+  if (value.to_float(h)) {
+    *out = Float4(h[0], 0.0f, 0.0f, 0.0f);
+    return true;
+  }
   return false;
 }
 

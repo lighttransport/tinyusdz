@@ -2651,6 +2651,221 @@ def Xform "World"
   std::cout << "  Mesh parity cleanups: PASSED\n";
 }
 
+// Regression: authored half-precision xformOps (raw half-bit SBO scalars)
+// must evaluate through the converting to_float* reads — as_float3() cannot
+// see them, which used to collapse scale/rotate to identity.
+void TestHalfPrecisionXformOps() {
+  std::cout << "Testing half-precision xformOps...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Xform "HalfScaled"
+    {
+        half3 xformOp:scale = (2, 3, 4)
+        uniform token[] xformOpOrder = ["xformOp:scale"]
+    }
+
+    def Xform "HalfOriented"
+    {
+        # 180 degrees about Z: diag(-1, -1, 1) regardless of convention.
+        quath xformOp:orient = (0, 0, 0, 1)
+        uniform token[] xformOpOrder = ["xformOp:orient"]
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  UsdPrim scaled = lr.stage.GetPrimAtPath("/World/HalfScaled");
+  assert(scaled.IsValid());
+  double m[16];
+  assert(ComputeLocalTransform(scaled, m, 0.0));
+  assert(std::fabs(m[0] - 2.0) < 0.001);
+  assert(std::fabs(m[5] - 3.0) < 0.001);
+  assert(std::fabs(m[10] - 4.0) < 0.001);
+
+  UsdPrim oriented = lr.stage.GetPrimAtPath("/World/HalfOriented");
+  assert(oriented.IsValid());
+  assert(ComputeLocalTransform(oriented, m, 0.0));
+  assert(std::fabs(m[0] + 1.0) < 0.001);
+  assert(std::fabs(m[5] + 1.0) < 0.001);
+  assert(std::fabs(m[10] - 1.0) < 0.001);
+
+  std::cout << "  Half-precision xformOps: PASSED\n";
+}
+
+// Multi-skeleton joint-order remap: two skeletons whose SkelAnimations
+// author `joints` in an order DIFFERENT from the skeleton's own joint order.
+// Channels must target the right skeleton and joint_remap must map each
+// animation-order token back to the skeleton's joint index.
+void TestMultiSkeletonJointRemap() {
+  std::cout << "Testing multi-skeleton joint-order remap...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 1
+    endTimeCode = 2
+)
+
+def Xform "World"
+{
+    def SkelRoot "CharA"
+    {
+        def Skeleton "SkelA"
+        {
+            uniform token[] joints = ["A_root", "A_root/A_mid", "A_root/A_mid/A_tip"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(2,0,0,1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))
+            ]
+            rel skel:animationSource = </World/CharA/SkelA/AnimA>
+
+            def SkelAnimation "AnimA"
+            {
+                # Reversed relative to SkelA's joint order.
+                uniform token[] joints = ["A_root/A_mid/A_tip", "A_root/A_mid", "A_root"]
+                float3[] translations.timeSamples = {
+                    1: [(30, 0, 0), (20, 0, 0), (10, 0, 0)],
+                    2: [(31, 0, 0), (21, 0, 0), (11, 0, 0)],
+                }
+                quatf[] rotations.timeSamples = {
+                    1: [(1,0,0,0), (1,0,0,0), (1,0,0,0)],
+                }
+                half3[] scales.timeSamples = {
+                    1: [(1,1,1), (1,1,1), (1,1,1)],
+                }
+            }
+        }
+    }
+
+    def SkelRoot "CharB"
+    {
+        def Skeleton "SkelB"
+        {
+            uniform token[] joints = ["B_root", "B_root/B_tip"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1))
+            ]
+            rel skel:animationSource = </World/CharB/SkelB/AnimB>
+
+            def SkelAnimation "AnimB"
+            {
+                uniform token[] joints = ["B_root/B_tip", "B_root"]
+                float3[] translations.timeSamples = {
+                    1: [(200, 0, 0), (100, 0, 0)],
+                }
+            }
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+
+  assert(result.scene.skeletons.size() == 2);
+  int skel_a = -1;
+  int skel_b = -1;
+  for (size_t si = 0; si < result.scene.skeletons.size(); ++si) {
+    const std::string& path = result.scene.skeletons[si].prim_path;
+    if (path == "/World/CharA/SkelA") skel_a = static_cast<int>(si);
+    if (path == "/World/CharB/SkelB") skel_b = static_cast<int>(si);
+  }
+  assert(skel_a >= 0 && skel_b >= 0);
+
+  const AnimationClip* clip_a = nullptr;
+  const AnimationClip* clip_b = nullptr;
+  for (const AnimationClip& clip : result.scene.animations) {
+    if (clip.prim_path == "/World/CharA/SkelA/AnimA") clip_a = &clip;
+    if (clip.prim_path == "/World/CharB/SkelB/AnimB") clip_b = &clip;
+  }
+  assert(clip_a && clip_b);
+
+  auto find_channel = [](const AnimationClip* clip,
+                         AnimationChannel::TargetPath path) -> const AnimationChannel* {
+    for (const AnimationChannel& ch : clip->channels) {
+      if (ch.target_path == path && ch.is_skeletal) return &ch;
+    }
+    return nullptr;
+  };
+
+  // AnimA: translation channel targets SkelA; remap reverses the order
+  // (animation joint 0 = A_tip = skeleton joint 2, ...).
+  const AnimationChannel* trans_a =
+      find_channel(clip_a, AnimationChannel::TargetPath::Translation);
+  assert(trans_a);
+  assert(trans_a->target_skeleton == skel_a);
+  assert(trans_a->joint_order.size() == 3);
+  assert(trans_a->joint_remap.size() == 3);
+  assert(trans_a->joint_remap[0] == 2);
+  assert(trans_a->joint_remap[1] == 1);
+  assert(trans_a->joint_remap[2] == 0);
+  // Values stay in ANIMATION joint order: frame 0, joint 0 (A_tip) = 30.
+  assert(trans_a->value_stride == 3);
+  assert(trans_a->element_count == 3);
+  assert(trans_a->array_values.size() >= 2u * 3u * 3u);
+  assert(std::fabs(trans_a->array_values[0] - 30.0f) < 0.001f);
+  assert(std::fabs(trans_a->array_values[3] - 20.0f) < 0.001f);
+  assert(std::fabs(trans_a->array_values[6] - 10.0f) < 0.001f);
+  // Frame 1 continues after all frame-0 elements.
+  assert(std::fabs(trans_a->array_values[9] - 31.0f) < 0.001f);
+
+  // half3[] scales must survive as a skeletal channel too (array half
+  // materializes to float).
+  const AnimationChannel* scale_a =
+      find_channel(clip_a, AnimationChannel::TargetPath::Scale);
+  assert(scale_a);
+  assert(scale_a->target_skeleton == skel_a);
+  assert(std::fabs(scale_a->array_values[0] - 1.0f) < 0.001f);
+
+  // AnimB: targets SkelB (not SkelA), reversed remap for 2 joints.
+  const AnimationChannel* trans_b =
+      find_channel(clip_b, AnimationChannel::TargetPath::Translation);
+  assert(trans_b);
+  assert(trans_b->target_skeleton == skel_b);
+  assert(trans_b->joint_remap.size() == 2);
+  assert(trans_b->joint_remap[0] == 1);
+  assert(trans_b->joint_remap[1] == 0);
+  assert(std::fabs(trans_b->array_values[0] - 200.0f) < 0.001f);
+
+  // Each skeleton is linked to its own animation.
+  assert(result.scene.skeletons[static_cast<size_t>(skel_a)].animation_id >= 0);
+  assert(result.scene.skeletons[static_cast<size_t>(skel_b)].animation_id >= 0);
+  assert(result.scene.skeletons[static_cast<size_t>(skel_a)].animation_id !=
+         result.scene.skeletons[static_cast<size_t>(skel_b)].animation_id);
+
+  std::cout << "  Multi-skeleton joint-order remap: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -2693,6 +2908,8 @@ int main() {
   TestRenderConverterCurves();
   TestValueClipBaking();
   TestMeshParityCleanups();
+  TestHalfPrecisionXformOps();
+  TestMultiSkeletonJointRemap();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
