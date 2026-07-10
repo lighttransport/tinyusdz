@@ -11,7 +11,7 @@
 
 import { loadWasm } from './src/usdzconvert.js';
 import { McpFetchClient, toBase64 } from './src/mcp-fetch-client.js';
-import { basenameFromUri } from './src/tinyusdz/LoaderConfigUtils.js';
+import { basenameFromUri, mountBackendSelector } from './src/tinyusdz/LoaderConfigUtils.js';
 
 // ---------------------------------------------------------------------------
 // UI
@@ -80,6 +80,10 @@ container.innerHTML = `
 `;
 document.body.style.background = '#0d0d1a';
 document.body.appendChild(container);
+
+// Backend switch reloads the page (the WASM module is chosen at startup);
+// mounted into the options bar next to ULPs/eps.
+mountBackendSelector(container.querySelector('.bar'), { append: true });
 
 const styleEl = document.createElement('style');
 styleEl.textContent = `

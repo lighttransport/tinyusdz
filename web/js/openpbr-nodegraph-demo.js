@@ -11,7 +11,7 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 // import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';    // Available for EXR env presets
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
-import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import { getAssetUriFromURL, mountBackendSelector } from 'tinyusdz/LoaderConfigUtils.js';
 import {
     buildNextThreeNode,
     isNextScene,
@@ -5195,6 +5195,9 @@ window.toggleNodeGraphCollapse = toggleNodeGraphCollapse;
 
 async function init() {
     updateStatus('Initializing...');
+
+    // Backend switch reloads the page (the loader binds its WASM module at init).
+    mountBackendSelector(document.querySelector('.viewer-info'), { append: true });
 
     // Init Three.js
     initThreeJS();

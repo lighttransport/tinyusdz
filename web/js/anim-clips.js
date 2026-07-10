@@ -15,6 +15,7 @@ import {
 	getBackendFromURL,
 	loadUSDSceneFromURL,
 	makeStaticNextParseOptions,
+	mountBackendSelector,
 	parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
 import {
@@ -1189,6 +1190,9 @@ async function initLoader() {
 	loader = await createConfiguredTinyUSDZLoader();
 	console.log('TinyUSDZ loader initialized');
 }
+
+// Backend switch reloads the page (the loader binds its WASM module at init).
+mountBackendSelector(document.getElementById('file-controls'));
 
 async function loadFromURL(url) {
 	if (!loader) await initLoader();

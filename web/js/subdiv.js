@@ -2,6 +2,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 
+import {
+	getBackendFromURL,
+	LOADER_BACKEND_CHOICES,
+	setBackendAndReload
+} from './src/tinyusdz/LoaderConfigUtils.js';
+
 // WASM module selection: backend=next / wasm=next load the next-only module
 // (both export SubdivStreamer); default stays the legacy module.
 async function importTinyUSDZModule() {
@@ -454,6 +460,9 @@ function updateStats(refined) {
 // ===========================================================================
 
 const gui = new GUI();
+// Backend switch reloads the page: the WASM module is chosen at startup.
+gui.add({ backend: getBackendFromURL() }, 'backend', LOADER_BACKEND_CHOICES)
+	.name('WASM Backend').onChange(setBackendAndReload);
 gui.add(state, 'subdivisionLevel', 0, 5, 1).name('Subdivision Level').onChange(updateMesh);
 gui.add(state, 'scheme', ['catmullclark', 'loop', 'bilinear']).name('Scheme').onChange(updateMesh);
 gui.add(state, 'boundary', ['edgeAndCorner', 'edgeOnly', 'none']).name('Boundary').onChange(updateMesh);

@@ -7,8 +7,10 @@ import {
 	createConfiguredTinyUSDZLoader,
 	getAssetUriFromURL,
 	getBackendFromURL,
+	LOADER_BACKEND_CHOICES,
 	makeStaticNextParseOptions,
-	parseUSDSceneFromArrayBuffer
+	parseUSDSceneFromArrayBuffer,
+	setBackendAndReload
 } from 'tinyusdz/LoaderConfigUtils.js';
 import {
 	buildNextThreeNode,
@@ -2328,6 +2330,9 @@ animationParams = {
 // GUI setup
 const gui = new GUI();
 gui.title('Skeletal Animation Controls');
+// Backend switch reloads the page: the loader binds its WASM module at init.
+gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+	.name('Loader Backend').onChange(setBackendAndReload);
 
 // Wire up the GUI toggle button
 document.getElementById('gui-toggle')?.addEventListener('click', () => {
