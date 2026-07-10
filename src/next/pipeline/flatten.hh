@@ -14,6 +14,7 @@
 #include "../composition/composition.hh"
 #include "../crate/crate-reader.hh"
 #include "../crate/crate-writer.hh"
+#include "../pcp/layer-registry.hh"
 
 #include <cstdint>
 #include <map>
@@ -74,6 +75,18 @@ struct FlattenOptions {
 /// Crate-backed layers keep their source bytes alive via the crate data source,
 /// so arrays still pass through verbatim.
 LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts = {});
+LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts,
+                                     const pcp::LayerLoadOptions& layer_load_opts);
+
+/// Resolver-backed LayerLoader: reads the resolved path's bytes through
+/// `resolver->ReadAsset()` (custom byte-reader first, filesystem fallback) and
+/// parses them by content sniff (crate magic / ZIP header / USDA text). This is
+/// the loader for environments where layers are not plain files — e.g. wasm
+/// asset caches or HTTP-fetched buffers installed via SetAssetReader().
+/// `resolver` must outlive the returned loader.
+LayerLoader MakeResolverLayerLoader(const AssetResolver* resolver,
+                                    const CrateReadOptions& read_opts = {},
+                                    const pcp::LayerLoadOptions& layer_load_opts = {});
 
 /// Load a root USD file (.usda/.usd/.usdc/.usdz), optionally flatten it through
 /// filesystem-resolved dependencies, and write a USDC buffer. This is the native
@@ -120,6 +133,40 @@ bool FlattenUSDCToUSDCOwned(std::string&& data, std::vector<uint8_t>& out,
 /// buffer, with VALUE bytes streamed straight from their source. Output bytes
 /// are identical to the buffer form. `sink` returns false to abort.
 bool FlattenUSDCToUSDCOwnedToSink(std::string&& data, const CrateWriteSink& sink,
+                                  const FlattenOptions& opts = {},
+                                  FlattenStats* stats = nullptr,
+                                  std::string* err = nullptr);
+
+/// Format-agnostic memory-root flatten: content-sniffs `data` (crate magic /
+/// ZIP header / USDA text) and routes crate roots through the lazy
+/// FlattenUSDCToUSDCOwned path and USDA/USDZ roots through the parsed-layer
+/// path. `key` labels diagnostics and selects a USDZ entry when it is a
+/// package path ("pkg.usdz[entry]"). Adopts the input bytes by move.
+bool FlattenUSDMemoryToUSDCOwned(const std::string& key, std::string&& data,
+                                 std::vector<uint8_t>& out,
+                                 const FlattenOptions& opts = {},
+                                 FlattenStats* stats = nullptr,
+                                 std::string* err = nullptr);
+
+/// Streaming-sink form of FlattenUSDMemoryToUSDCOwned.
+bool FlattenUSDMemoryToUSDCOwnedToSink(const std::string& key,
+                                       std::string&& data,
+                                       const CrateWriteSink& sink,
+                                       const FlattenOptions& opts = {},
+                                       FlattenStats* stats = nullptr,
+                                       std::string* err = nullptr);
+
+/// Non-owned forms for callers that must retain the root bytes (e.g. resumable
+/// need-layer sessions that retry the flatten). The caller must keep `data`
+/// alive until the call returns.
+bool FlattenUSDMemoryToUSDC(const std::string& key, const uint8_t* data,
+                            size_t size, std::vector<uint8_t>& out,
+                            const FlattenOptions& opts = {},
+                            FlattenStats* stats = nullptr,
+                            std::string* err = nullptr);
+
+bool FlattenUSDMemoryToUSDCToSink(const std::string& key, const uint8_t* data,
+                                  size_t size, const CrateWriteSink& sink,
                                   const FlattenOptions& opts = {},
                                   FlattenStats* stats = nullptr,
                                   std::string* err = nullptr);

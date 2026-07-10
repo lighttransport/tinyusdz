@@ -20,6 +20,22 @@ static bool HasAPISchema(const UsdPrim& prim, const std::string& name) {
   return false;
 }
 
+static bool GetStringOrToken(const UsdPrim& prim, const std::string& prop_name,
+                             std::string* out) {
+  if (!out) return false;
+  const Value* val = prim.GetPropertyValue(prop_name);
+  if (!val) return false;
+  if (const std::string* s = val->as_string()) {
+    *out = *s;
+    return true;
+  }
+  if (const std::string* tok = val->as_token()) {
+    *out = *tok;
+    return true;
+  }
+  return false;
+}
+
 // ============================================================
 // PhysicsRigidBodyAPI
 // ============================================================
@@ -152,12 +168,9 @@ bool GetPhysicsMeshCollisionData(const UsdPrim& prim,
   if (!HasPhysicsMeshCollisionAPI(prim) || !out) return false;
 
   {
-    const Value* val = prim.GetPropertyValue("physics:approximation");
-    if (val) {
-      const std::string* s = val->as_string();
-      if (s) out->approximation = *s;
-      const std::string* tok = val->as_token();
-      if (tok) out->approximation = *tok;
+    std::string token;
+    if (GetStringOrToken(prim, "physics:approximation", &token)) {
+      out->approximation = token;
     }
   }
 
@@ -256,11 +269,8 @@ bool GetPhysicsDriveData(const UsdPrim& prim, const std::string& dof,
   const std::string prefix = "physics:drive:" + dof + ":";
 
   {
-    const Value* val = prim.GetPropertyValue(prefix + "type");
-    if (val) {
-      const std::string* s = val->as_string();
-      if (s) out->type = *s;
-    }
+    std::string token;
+    if (GetStringOrToken(prim, prefix + "type", &token)) out->type = token;
   }
 
   {

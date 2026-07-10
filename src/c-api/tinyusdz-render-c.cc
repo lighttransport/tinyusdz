@@ -239,6 +239,8 @@ size_t tusd_render_count(const tusd_render_scene* scene, uint8_t kind) {
       return s.point_instancers.size();
     case TUSD_RENDER_ROOT_NODE:
       return s.root_nodes.size();
+    case TUSD_RENDER_UNSUPPORTED:
+      return s.unsupported_renderables.size();
     default:
       return 0;
   }
@@ -537,6 +539,21 @@ tusd_status tusd_render_material_get_info(const tusd_render_scene* scene,
   return TUSD_OK;
 }
 
+tusd_status tusd_render_material_mtlx_config(
+    const tusd_render_scene* scene, int32_t id,
+    tusd_render_materialx_config_info* out) {
+  if (!scene || !out) return Fail(TUSD_ERR_INVALID_ARG, "scene/out is null");
+  const td::RenderMaterial* mat = scene->scene.get_material(id);
+  if (!mat) return Fail(TUSD_ERR_NOT_FOUND, "material id out of range");
+  std::memset(out, 0, sizeof(*out));
+  out->authored = mat->mtlx_config.authored ? 1 : 0;
+  out->version = SV(mat->mtlx_config.version);
+  out->name_space = SV(mat->mtlx_config.name_space);
+  out->colorspace = SV(mat->mtlx_config.colorspace);
+  out->source_uri = SV(mat->mtlx_config.source_uri);
+  return TUSD_OK;
+}
+
 tusd_status tusd_render_material_param(const tusd_render_scene* scene,
                                        int32_t id, const char* param,
                                        int32_t* texture_id, float value[4]) {
@@ -766,9 +783,35 @@ tusd_status tusd_render_instancer_buffer(tusd_render_scene* scene, int32_t id,
       return ViewFromMatrixVector(pi->transforms, out);
     case TUSD_INST_BUF_VISIBLE:
       return ViewFromVector(pi->instance_visible, TUSD_COMP_UINT8, 1, out);
+    case TUSD_INST_BUF_VELOCITIES:
+      return ViewFromVector(pi->velocities, TUSD_COMP_FLOAT32, 3, out);
+    case TUSD_INST_BUF_ANGULAR_VELOCITIES:
+      return ViewFromVector(pi->angular_velocities, TUSD_COMP_FLOAT32, 3, out);
+    case TUSD_INST_BUF_IDS:
+      return ViewFromVector(pi->ids, TUSD_COMP_INT64, 1, out);
+    case TUSD_INST_BUF_INVISIBLE_IDS:
+      return ViewFromVector(pi->invisible_ids, TUSD_COMP_INT64, 1, out);
+    case TUSD_INST_BUF_INACTIVE_IDS:
+      return ViewFromVector(pi->inactive_ids, TUSD_COMP_INT64, 1, out);
     default:
       return Fail(TUSD_ERR_INVALID_ARG, "unknown instancer buffer kind");
   }
+}
+
+tusd_status tusd_render_unsupported_get_info(
+    const tusd_render_scene* scene, int32_t id,
+    tusd_render_unsupported_info* out) {
+  if (!scene || !out) return Fail(TUSD_ERR_INVALID_ARG, "scene/out is null");
+  if (id < 0 ||
+      static_cast<size_t>(id) >= scene->scene.unsupported_renderables.size()) {
+    return Fail(TUSD_ERR_NOT_FOUND, "unsupported renderable id out of range");
+  }
+  const td::UnsupportedRenderable& rec =
+      scene->scene.unsupported_renderables[static_cast<size_t>(id)];
+  out->prim_path = SV(rec.prim_path);
+  out->type_name = SV(rec.type_name);
+  out->reason = SV(rec.reason);
+  return TUSD_OK;
 }
 
 }  // extern "C"

@@ -54,7 +54,7 @@ export function extractUSDSceneAnimations(usdScene, options = {}) {
       if (!usdAnim || !usdAnim.channels) continue;
       const skelIdsInAnim = new Set();
       for (const channel of usdAnim.channels) {
-        if (channel.target_type === 'SkeletonJoint') {
+        if (channel.target_type === 'SkeletonJoint' || channel.isSkeletal) {
           const skelId =
             channel.skeleton_id !== undefined ? channel.skeleton_id : 0;
           skelIdsInAnim.add(skelId);

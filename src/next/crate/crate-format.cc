@@ -9,6 +9,7 @@
 // Include LZ4 from existing TinyUSDZ
 #include "../../lz4/lz4.h"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -388,6 +389,67 @@ DecompressResult DecompressCrateBlob(const uint8_t* src, size_t src_size,
   result.data.resize(out_pos);
   result.success = true;
   return result;
+}
+
+DecompressResult DecompressCrateBlobWithCapacityHint(
+    const uint8_t* src, size_t src_size, size_t uncompressed_size_limit,
+    size_t initial_capacity) {
+  DecompressResult result;
+  if (!src || src_size == 0) {
+    result.success = (uncompressed_size_limit == 0);
+    return result;
+  }
+
+  if (src_size < 1) {
+    result.error = "Crate blob too small (missing n_chunks)";
+    return result;
+  }
+
+  if (uncompressed_size_limit == 0) {
+    result.success = true;
+    return result;
+  }
+
+  if (uncompressed_size_limit > 1024 * 1024 * 1024) {
+    result.error = "Uncompressed size too large";
+    return result;
+  }
+
+  const uint8_t n_chunks = src[0];
+  if (n_chunks != 0) {
+    return DecompressCrateBlob(src, src_size, uncompressed_size_limit);
+  }
+
+  const uint8_t* data_start = src + 1;
+  const size_t data_size = src_size - 1;
+  size_t capacity =
+      std::min(uncompressed_size_limit,
+               (std::max)(size_t(1), initial_capacity));
+
+  for (;;) {
+    result.data.resize(capacity);
+    const int decoded = LZ4_decompress_safe(
+        reinterpret_cast<const char*>(data_start),
+        reinterpret_cast<char*>(result.data.data()),
+        static_cast<int>(data_size), static_cast<int>(capacity));
+
+    if (decoded >= 0) {
+      result.data.resize(static_cast<size_t>(decoded));
+      result.success = true;
+      return result;
+    }
+
+    if (capacity >= uncompressed_size_limit) {
+      result.data.clear();
+      result.error = "LZ4 decompression failed";
+      return result;
+    }
+    const size_t next_capacity =
+        (capacity > uncompressed_size_limit / 2)
+            ? uncompressed_size_limit
+            : capacity * 2;
+    capacity = (std::max)(next_capacity, capacity + size_t(1));
+  }
 }
 
 // USD Integer compression encoder based on pxrUSD's Usd_IntegerCompression
@@ -868,18 +930,25 @@ DecompressResult DecompressCompressedU32(const uint8_t* data, size_t data_size,
   size_t code_bits = 0;
   size_t code_bytes = 0;
   size_t value_bytes = 0;
+  size_t hint_value_bytes = 0;
+  size_t initial_delta_size = 0;
   size_t max_delta_size = 0;
   if (!safe::mul(count, size_t(2), &code_bits) ||
       !safe::add(code_bits, size_t(7), &code_bits) ||
       !safe::mul(count, sizeof(int32_t), &value_bytes) ||
+      !safe::mul(count, size_t(2), &hint_value_bytes) ||
       !safe::add(sizeof(int32_t), code_bits / 8, &code_bytes) ||
+      !safe::add(code_bytes, hint_value_bytes, &initial_delta_size) ||
       !safe::add(code_bytes, value_bytes, &max_delta_size)) {
     result.error = "Compressed integer decoded size overflow";
     return result;
   }
+  initial_delta_size = std::min(initial_delta_size, max_delta_size);
 
   // Decompress the n_chunks LZ4 blob
-  DecompressResult dr = DecompressCrateBlob(data + 8, static_cast<size_t>(comp_size), max_delta_size);
+  DecompressResult dr = DecompressCrateBlobWithCapacityHint(
+      data + 8, static_cast<size_t>(comp_size), max_delta_size,
+      initial_delta_size);
   if (!dr.success) {
     result.error = "Failed to decompress compressed integers: " + dr.error;
     return result;

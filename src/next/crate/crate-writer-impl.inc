@@ -45,7 +45,7 @@ private:
   struct DataBlock {
     TypeId type;
     std::vector<uint8_t> data;
-    std::shared_ptr<const CrateDataSource> src;  // null => inline `data`
+    std::shared_ptr<const LazyArraySource> src;  // null => inline `data`
     uint64_t src_offset = 0;
     uint64_t src_len = 0;
     DataBlock() : type(TypeId::Invalid) {}

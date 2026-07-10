@@ -479,6 +479,11 @@ void ApplyLoadOptions(const tusd_load_options* opts, n::LoadUSDOptions* lo,
                       tinyusdz::next::pcp::CompositionOptions* co) {
   if (!opts) return;
   lo->max_memory = static_cast<size_t>(opts->max_memory);
+  lo->usda_options.parse_options.enable_usda_lazy_arrays =
+      opts->enable_usda_lazy_arrays != 0;
+  lo->usda_options.parse_options.max_usda_lazy_array_elements =
+      static_cast<size_t>(opts->max_usda_lazy_array_elements);
+  lo->usda_options.parse_options.num_threads = opts->usda_num_threads;
   if (co) {
     co->load_payloads = opts->load_payloads != 0;
     if (opts->max_depth) co->max_depth = opts->max_depth;
@@ -600,6 +605,9 @@ void tusd_load_options_init(tusd_load_options* opts) {
   opts->format = TUSD_FORMAT_AUTO;
   opts->composed = 1;
   opts->load_payloads = 1;
+  opts->enable_usda_lazy_arrays = 0;
+  opts->max_usda_lazy_array_elements = (static_cast<size_t>(1) << 30);
+  opts->usda_num_threads = 0;
 }
 
 void tusd_save_options_init(tusd_save_options* opts) {
@@ -795,6 +803,14 @@ tusd_status tusd_flatten_file_to_usdc(const char* in_filename,
   if (!fp) {
     return Fail(TUSD_ERR_IO,
                 std::string("failed to open for write: ") + out_filename);
+  }
+  if (opts) {
+    fo.composition.max_layer_memory = static_cast<size_t>(opts->max_memory);
+    fo.composition.usda_parse_options.enable_usda_lazy_arrays =
+        opts->enable_usda_lazy_arrays != 0;
+    fo.composition.usda_parse_options.max_usda_lazy_array_elements =
+        static_cast<size_t>(opts->max_usda_lazy_array_elements);
+    fo.composition.usda_parse_options.num_threads = opts->usda_num_threads;
   }
   auto sink = [fp](const uint8_t* data, size_t size) -> bool {
     return std::fwrite(data, 1, size, fp) == size;

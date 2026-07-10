@@ -2840,6 +2840,35 @@ class Application {
         const numMeshes = this.nativeLoader.numMeshes();
         const numMaterials = this.nativeLoader.numMaterials();
         const numTextures = this.nativeLoader.numTextures ? this.nativeLoader.numTextures() : 0;
+        const safeCount = (getter) => {
+            if (typeof getter !== 'function') return 0;
+            try {
+                const value = getter.call(this.nativeLoader);
+                return Number.isFinite(value) ? value : 0;
+            } catch {
+                return 0;
+            }
+        };
+        const sceneCounts = {
+            lights: safeCount(this.nativeLoader.numLights),
+            cameras: safeCount(this.nativeLoader.numCameras),
+            nodes: safeCount(this.nativeLoader.numNodes),
+            animations: safeCount(this.nativeLoader.numAnimations),
+            pointInstancers: safeCount(this.nativeLoader.numPointInstancers),
+            pointInstanceDraws: safeCount(this.nativeLoader.numPointInstanceDraws),
+            skeletons: safeCount(this.nativeLoader.numSkeletons),
+            unsupportedRenderables: safeCount(this.nativeLoader.numUnsupportedRenderables)
+        };
+        if (!sceneCounts.unsupportedRenderables && typeof this.nativeLoader.getUnsupportedRenderables === 'function') {
+            try {
+                const list = this.nativeLoader.getUnsupportedRenderables();
+                if (Array.isArray(list)) {
+                    sceneCounts.unsupportedRenderables = list.length;
+                }
+            } catch {
+                // ignore
+            }
+        }
 
         this.updateStatus(`Processing: ${numMeshes} meshes, ${numMaterials} materials, ${numTextures} textures...`);
 
@@ -2973,6 +3002,14 @@ class Application {
         document.getElementById('model-info').style.display = 'block';
         document.getElementById('mesh-count').textContent = numMeshes;
         document.getElementById('material-count').textContent = numMaterials;
+        document.getElementById('light-count').textContent = sceneCounts.lights;
+        document.getElementById('camera-count').textContent = sceneCounts.cameras;
+        document.getElementById('node-count').textContent = sceneCounts.nodes;
+        document.getElementById('animation-count').textContent = sceneCounts.animations;
+        document.getElementById('point-instancer-count').textContent = sceneCounts.pointInstancers;
+        document.getElementById('point-instance-draw-count').textContent = sceneCounts.pointInstanceDraws;
+        document.getElementById('skeleton-count').textContent = sceneCounts.skeletons;
+        document.getElementById('unsupported-renderable-count').textContent = sceneCounts.unsupportedRenderables;
         document.getElementById('draw-call-count').textContent = this.renderer.meshes.length;
         document.getElementById('triangle-count').textContent = this.renderer.stats.triangles;
 
@@ -3151,6 +3188,14 @@ class Application {
         document.getElementById('model-info').style.display = 'block';
         document.getElementById('mesh-count').textContent = '1';
         document.getElementById('material-count').textContent = '1';
+        document.getElementById('light-count').textContent = '0';
+        document.getElementById('camera-count').textContent = '0';
+        document.getElementById('node-count').textContent = '0';
+        document.getElementById('animation-count').textContent = '0';
+        document.getElementById('point-instancer-count').textContent = '0';
+        document.getElementById('point-instance-draw-count').textContent = '0';
+        document.getElementById('skeleton-count').textContent = '0';
+        document.getElementById('unsupported-renderable-count').textContent = '0';
 
         this.updateStatus('Fallback scene loaded');
     }

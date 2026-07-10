@@ -77,9 +77,11 @@
                  "Sublayer cycle detected (skipped): " + sub_id, warn);
         continue;
       }
+      LayerLoadOptions load_opts;
+      load_opts.max_memory = options.max_layer_memory;
+      load_opts.usda_parse_options = options.usda_parse_options;
       std::shared_ptr<Layer> sl =
-          reg_->GetOrLoad(*resolver, sub, anchor, warn, err,
-                          LayerLoadOptions{options.max_layer_memory, 0});
+          reg_->GetOrLoad(*resolver, sub, anchor, warn, err, load_opts);
       if (sl) {
         if (visiting) visiting->insert(sub_id);
         if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,

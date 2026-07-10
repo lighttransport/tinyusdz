@@ -1150,7 +1150,7 @@ nonstd::expected<bool, std::string> GetBoundableLightPropertyImpl(
   {
     auto ret = GetLightAPIPropertyImpl(light, prop_name, out_prop);
     if (!ret) {
-      return ret;
+      return nonstd::make_unexpected(std::move(ret.error()));
     }
     if (ret.value()) {
       return true;
@@ -1180,7 +1180,7 @@ nonstd::expected<bool, std::string> GetNonboundableLightPropertyImpl(
   {
     auto ret = GetLightAPIPropertyImpl(light, prop_name, out_prop);
     if (!ret) {
-      return ret;
+      return nonstd::make_unexpected(std::move(ret.error()));
     }
     if (ret.value()) {
       return true;

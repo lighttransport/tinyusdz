@@ -503,8 +503,11 @@
             size_t i = next_idx.fetch_add(1);
             if (i >= assets.size()) break;
             std::string w, e;
+            LayerLoadOptions load_opts;
+            load_opts.max_memory = options.max_layer_memory;
+            load_opts.usda_parse_options = options.usda_parse_options;
             reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w,
-                            &e, LayerLoadOptions{options.max_layer_memory, 0});
+                            &e, load_opts);
           }
         };
         ts.reserve(static_cast<size_t>(pf));

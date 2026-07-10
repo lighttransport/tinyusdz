@@ -35,6 +35,7 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { dedupMaterialsByContent, batchByMaterial } from 'tinyusdz/MeshBatching.js';
+import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
 import {
 	buildNextThreeNode,
 	isNextScene,
@@ -94,11 +95,7 @@ const frameState = {
 };
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
-	for (const key of ['uri', 'url', 'src', 'model', 'usd']) {
-		const value = params.get(key);
-		if (value) return value;
-	}
-	return null;
+	return getAssetUriFromURL(params, ['usd']);
 }
 
 function getDisplayNameFromURI(uri) {
@@ -618,7 +615,8 @@ async function parseWithOptions(bytes, name, options, progressOptions = {}) {
 		try {
 			return await parseNextInWorker(bytes, name, options, progressOptions, report);
 		} catch (error) {
-			console.warn('[material-dedup] next worker conversion failed; falling back to main thread', error);
+			if (error?.workerConversionError) throw error;
+			console.warn('[material-dedup] next worker unavailable; falling back to main thread', error);
 			conversionWorkerActiveBytes = null;
 		}
 	}
@@ -775,7 +773,9 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 		const onError = (event) => {
 			cleanup();
 			conversionWorkerActiveBytes = null;
-			reject(new Error(event.message || 'conversion worker failed'));
+			const error = new Error(event.message || 'conversion worker failed');
+			error.workerStartupError = true;
+			reject(error);
 		};
 		const onMessage = (event) => {
 			const msg = event.data || {};
@@ -787,7 +787,9 @@ function parseNextInWorker(bytes, name, options, progressOptions, report) {
 				resolve(makeWorkerNextScene(msg.payload));
 			} else if (msg.type === 'error') {
 				cleanup();
-				reject(new Error(msg.error || 'worker conversion failed'));
+				const error = new Error(msg.error || 'worker conversion failed');
+				error.workerConversionError = true;
+				reject(error);
 			}
 		};
 		worker.addEventListener('message', onMessage);
@@ -984,9 +986,7 @@ function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
 async function convertScene(bytes, name, opts) {
 	await ensureLoader();
 	const requestedBackend = opts.backend || params.backend || 'legacy';
-	const backend = currentIsGeneratedSample && requestedBackend === 'next'
-		? 'legacy'
-		: requestedBackend;
+	const backend = requestedBackend;
 	const usd = await parseWithOptions(bytes, name, {
 		backend,
 		materialDedup: !!opts.materialDedup,
@@ -1121,8 +1121,9 @@ function startLazyTextureLoading() {
 	mgr.startLoading({
 		concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
 		yieldInterval: 16,
-			onTextureLoaded: (material) => { material.needsUpdate = true; },
-			onProgress: (info) => {
+		onTextureLoaded: (material) => { material.needsUpdate = true; },
+		onProgress: (info) => {
+			if (textureManager !== mgr) return;
 				updateTextureLoadStats(info);
 				const localPct = Number.isFinite(info.percentage)
 					? info.percentage
@@ -1136,15 +1137,16 @@ function startLazyTextureLoading() {
 				setStatus(`${describeOptions()} · textures ${info.loaded}/${info.total}` +
 					(info.failed ? ` (${info.failed} failed)` : ''));
 			}
-	}).then(() => {
-		const elapsed = performance.now() - textureStart;
+		}).then(() => {
+			if (textureManager !== mgr) return;
+			const elapsed = performance.now() - textureStart;
 		updateTextureLoadStats({
 			loaded: mgr.loaded || 0,
 			failed: mgr.failed || 0,
 			total: mgr.total || 0,
 			complete: true,
-			ms: elapsed
-		});
+				ms: elapsed
+			});
 			setStatus(`${describeOptions()} · textures complete ${mgr.loaded}/${mgr.total}` +
 				(mgr.failed ? ` (${mgr.failed} failed)` : '') +
 				` in ${formatDurationMs(elapsed)}`);
@@ -1153,10 +1155,11 @@ function startLazyTextureLoading() {
 			updateDebugHandle();
 		})
 			.catch((err) => {
+				if (textureManager !== mgr) return;
 				console.warn('[material-dedup] texture loading:', err);
 				showProgress('failed', 100, 'Texture loading failed');
 			});
-	}
+}
 
 // Deterministically measure the built USD scene by walking usdSceneRoot. This
 // avoids relying on renderer.info (which only reflects the last drawn frame and
@@ -1285,6 +1288,14 @@ async function rebuild() {
 		updateStatsUI(counts, info);
 		setStatus(describeOptions());
 		startLazyTextureLoading();
+		// Without queued textures nothing else finishes the progress display:
+		// the scene-build phase tops out below 100% (base+range mapping) and
+		// hideProgress() only hides at >= 100. (With textures, the texture
+		// loader emits 'Textures complete'.)
+		if (!textureManager || textureManager.total <= 0) {
+			showProgress('complete', 100, 'Update complete');
+			hideProgress();
+		}
 		updateDebugHandle();
 	} catch (err) {
 		if (result) {
@@ -1293,6 +1304,7 @@ async function rebuild() {
 		releaseCurrentUSDResources();
 		console.error(err);
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		showProgress('failed', 100, 'Update failed');
 		updateDebugHandle();
 	}
 }

@@ -5,6 +5,7 @@
 
 #include "ascii-parser-internal.hh"
 #include "../strfmt.hh"
+#include "usda-lazy-source.hh"
 #include "value-parser.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
@@ -12,9 +13,25 @@
 #include <unordered_set>
 #include <fstream>
 #include <system_error>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
+namespace {
+
+ParseOptions NormalizeParseOptions(const ParseOptions& options) {
+  ParseOptions normalized = options;
+  if (normalized.max_usda_lazy_array_elements == 0) {
+    normalized.max_usda_lazy_array_elements =
+        std::numeric_limits<size_t>::max();
+  }
+  if (normalized.num_threads < 0) {
+    normalized.num_threads = 0;
+  }
+  return normalized;
+}
+
+}  // namespace
 
 bool IsNameToken(const Token& tok) {
   switch (tok.type) {
@@ -41,10 +58,12 @@ bool IsNameToken(const Token& tok) {
   }
 }
 
-bool AsciiParser::Impl::Parse(const char* data, size_t length) {
+bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
+                                       std::shared_ptr<LazyArraySource> source) {
   errors_.clear();
   warnings_.clear();
   depth_ = 0;
+  source_ = std::move(source);
 
   if (options_.max_file_size > 0 && length > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
@@ -55,7 +74,14 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   layer_ = std::make_unique<Layer>();
   builder_ = std::make_unique<LayerBuilder>(*layer_);
 
-  lexer_ = std::make_unique<Lexer>(data, length);
+  if (source_) {
+    // Keep a shared ownership of the full USDA source while parsing so any lazy
+    // array source slices stay valid until the parse/build graph drops them.
+    lexer_ = std::make_unique<Lexer>(
+        reinterpret_cast<const char*>(source_->base()), length);
+  } else {
+    lexer_ = std::make_unique<Lexer>(data, length);
+  }
   lexer_->num_threads = options_.num_threads;
 
   // Parse stage metadata (header block)
@@ -93,6 +119,27 @@ bool AsciiParser::Impl::Parse(const char* data, size_t length) {
   return errors_.empty();
 }
 
+bool AsciiParser::Impl::Parse(const char* data, size_t length) {
+  if (options_.enable_usda_lazy_arrays) {
+    auto source = UsdaLazyArraySource::AdoptString(
+        data ? std::string(data, data + length) : std::string());
+    const char* src_data = reinterpret_cast<const char*>(source->base());
+    return ParseWithSource(src_data, length, std::move(source));
+  }
+  return ParseWithSource(data, length, nullptr);
+}
+
+bool AsciiParser::Impl::ParseOwned(std::string&& data) {
+  const size_t length = data.size();
+  if (options_.enable_usda_lazy_arrays) {
+    auto source = UsdaLazyArraySource::AdoptString(std::move(data));
+    const char* src_data = reinterpret_cast<const char*>(source->base());
+    return ParseWithSource(src_data, length, std::move(source));
+  }
+  const char* src_data = data.empty() ? nullptr : data.data();
+  return ParseWithSource(src_data, length, nullptr);
+}
+
 bool AsciiParser::Impl::ParseFile(const char* filename) {
   std::ifstream file(filename, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
@@ -105,6 +152,25 @@ bool AsciiParser::Impl::ParseFile(const char* filename) {
   if (options_.max_file_size > 0 && size > options_.max_file_size) {
     AddError("File size exceeds maximum allowed");
     return false;
+  }
+
+  if (options_.enable_usda_lazy_arrays) {
+    std::string mmap_error;
+    auto mapped = UsdaLazyArraySource::MmapFile(filename, &mmap_error);
+    if (mapped) {
+      const char* data = reinterpret_cast<const char*>(mapped->base());
+      const size_t mapped_size = mapped->size();
+      return ParseWithSource(data, mapped_size, std::move(mapped));
+    }
+
+    std::string content(size ? size : 0, '\0');
+    if (size && !file.read(content.data(), static_cast<std::streamsize>(size))) {
+      AddError("Failed to read file contents");
+      return false;
+    }
+    auto src = UsdaLazyArraySource::AdoptString(std::move(content));
+    const char* data = reinterpret_cast<const char*>(src->base());
+    return ParseWithSource(data, size, std::move(src));
   }
 
   // Default-init (NOT value-init) the buffer: `new char[]` leaves the bytes
@@ -543,7 +609,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 // ============================================================
 
 AsciiParser::AsciiParser(const ParseOptions& options)
-    : impl_(std::make_unique<Impl>(options)) {}
+    : impl_(std::make_unique<Impl>(NormalizeParseOptions(options))) {}
 
 AsciiParser::~AsciiParser() = default;
 
@@ -552,6 +618,10 @@ AsciiParser& AsciiParser::operator=(AsciiParser&&) noexcept = default;
 
 bool AsciiParser::Parse(const char* data, size_t length) {
   return impl_->Parse(data, length);
+}
+
+bool AsciiParser::ParseOwned(std::string&& data) {
+  return impl_->ParseOwned(std::move(data));
 }
 
 bool AsciiParser::ParseFile(const char* filename) {

@@ -36,7 +36,7 @@ in each entry.
 | pystring | BSD 3-Clause | `src/external/pystring.LICENSE` |
 | fpng | Unlicense | `src/external/fpng.h`, `src/external/fpng.cpp` |
 | Wuffs unsupported snapshot | Apache 2.0 | `src/external/wuffs-unsupported-snapshot.c` |
-| MikkTSpace | zlib-like | `src/external/mikktspace/` |
+| MikkTSpace | zlib | `src/external/mikktspace/LICENSE` |
 | sRGB transform by Project Nayuki | MIT | `src/image-util.cc` |
 | OpenSubdiv | Modified Apache 2.0 | `src/osd/LICENSE.txt` |
 | MaterialX data | Apache 2.0 | `data/materialx/LICENSE` |

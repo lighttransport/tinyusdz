@@ -2,6 +2,7 @@
 // Copyright 2026 - Present Light Transport Entertainment Inc.
 
 #include "tydra/urdf-to-usd.hh"
+#include "tydra/urdf-payload.hh"
 
 #include <cctype>
 #include <cmath>
@@ -1980,6 +1981,19 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
                "Skipping mesh `" + fallback_name + "`: indices must be triangles.\n");
     return true;
   }
+  const size_t point_count = positions->size() / 3;
+  bool identity_indices = indices.size() == point_count;
+  for (size_t i = 0; i < indices.size(); i++) {
+    const int32_t idx = indices[i];
+    if (idx < 0 || static_cast<size_t>(idx) >= point_count) {
+      AppendWarn(warn, "Skipping mesh `" + fallback_name +
+                           "`: index out of range.\n");
+      return true;
+    }
+    if (identity_indices && static_cast<size_t>(idx) != i) {
+      identity_indices = false;
+    }
+  }
 
   const std::string mesh_name = SanitizeUSDIdentifier(
       JsonString(mesh_json, "name", fallback_name), fallback_name);
@@ -2002,23 +2016,42 @@ bool AddMeshFromJson(Prim &link_prim, const nlohmann::json &mesh_json,
 
   if (normals && normals->size() == positions->size()) {
     std::vector<value::normal3f> ns;
-    ns.reserve(normals->size() / 3);
-    for (size_t i = 0; i + 2 < normals->size(); i += 3) {
-      ns.push_back({(*normals)[i + 0], (*normals)[i + 1], (*normals)[i + 2]});
+    if (identity_indices) {
+      ns.reserve(normals->size() / 3);
+      for (size_t i = 0; i + 2 < normals->size(); i += 3) {
+        ns.push_back({(*normals)[i + 0], (*normals)[i + 1], (*normals)[i + 2]});
+      }
+      mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
+    } else {
+      ns.reserve(indices.size());
+      for (int32_t idx : indices) {
+        const size_t src = static_cast<size_t>(idx) * 3;
+        ns.push_back({(*normals)[src + 0], (*normals)[src + 1],
+                      (*normals)[src + 2]});
+      }
+      mesh.normals.metas().set_interpolation_enum(Interpolation::FaceVarying);
     }
     mesh.normals.set_value(std::move(ns));
-    mesh.normals.metas().set_interpolation_enum(Interpolation::Vertex);
   }
 
-  if (uvs && uvs->size() == (positions->size() / 3) * 2) {
+  if (uvs && uvs->size() == point_count * 2) {
     Attribute uv_attr;
     std::vector<value::texcoord2f> st;
-    st.reserve(uvs->size() / 2);
-    for (size_t i = 0; i + 1 < uvs->size(); i += 2) {
-      st.push_back({(*uvs)[i + 0], (*uvs)[i + 1]});
+    if (identity_indices) {
+      st.reserve(uvs->size() / 2);
+      for (size_t i = 0; i + 1 < uvs->size(); i += 2) {
+        st.push_back({(*uvs)[i + 0], (*uvs)[i + 1]});
+      }
+      uv_attr.metas().set_interpolation_enum(Interpolation::Vertex);
+    } else {
+      st.reserve(indices.size());
+      for (int32_t idx : indices) {
+        const size_t src = static_cast<size_t>(idx) * 2;
+        st.push_back({(*uvs)[src + 0], (*uvs)[src + 1]});
+      }
+      uv_attr.metas().set_interpolation_enum(Interpolation::FaceVarying);
     }
     uv_attr.set_value(std::move(st));
-    uv_attr.metas().set_interpolation_enum(Interpolation::Vertex);
     mesh.props.emplace("primvars:st", Property(std::move(uv_attr), false));
   }
 
@@ -2181,43 +2214,19 @@ bool ConvertURDFJsonToUSDStage(
     err->clear();
   }
 
-  nlohmann::json root = nlohmann::json::parse(robot_json, nullptr, false);
-  if (root.is_discarded() || !root.is_object()) {
-    SetErr(err, "URDF export JSON parse failed");
+  detail::URDFPayload payload;
+  if (!detail::URDFPayload::Parse(robot_json, &payload, err)) {
     return false;
   }
-
-  const nlohmann::json empty_array = nlohmann::json::array();
-  const nlohmann::json &links_json =
-      (root.contains("links") && root["links"].is_array()) ? root["links"]
-                                                            : empty_array;
-  const nlohmann::json &joints_json =
-      (root.contains("joints") && root["joints"].is_array())
-          ? root["joints"]
-          : empty_array;
-  const nlohmann::json &actuators_json =
-      (root.contains("actuators") && root["actuators"].is_array())
-          ? root["actuators"]
-          : empty_array;
-  const nlohmann::json &tendons_json =
-      (root.contains("tendons") && root["tendons"].is_array())
-          ? root["tendons"]
-          : empty_array;
-  const nlohmann::json &equalities_json =
-      (root.contains("equalities") && root["equalities"].is_array())
-          ? root["equalities"]
-          : empty_array;
-  const nlohmann::json &sites_json =
-      (root.contains("sites") && root["sites"].is_array()) ? root["sites"]
-                                                           : empty_array;
-  const std::string source_format = JsonString(root, "sourceFormat");
-  const bool mjcf_source = (source_format == "mjcf" ||
-                            source_format == "MJCF" ||
-                            JsonString(root, "inputFormat") == "mjcf");
-  if (links_json.empty()) {
-    SetErr(err, "URDF export JSON has no links");
-    return false;
-  }
+  const nlohmann::json &root = payload.root;
+  const nlohmann::json &empty_array = payload.empty_array;
+  const nlohmann::json &links_json = payload.Array("links");
+  const nlohmann::json &joints_json = payload.Array("joints");
+  const nlohmann::json &actuators_json = payload.Array("actuators");
+  const nlohmann::json &tendons_json = payload.Array("tendons");
+  const nlohmann::json &equalities_json = payload.Array("equalities");
+  const nlohmann::json &sites_json = payload.Array("sites");
+  const bool mjcf_source = payload.mjcf_source;
 
   Stage stage;
   stage.metas().defaultPrim = value::token("World");

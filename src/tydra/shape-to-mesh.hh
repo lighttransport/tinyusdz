@@ -20,6 +20,27 @@ namespace tydra {
 namespace {
 constexpr double kPI = 3.14159265358979323846;
 constexpr double kPI_2 = 1.57079632679489661923;  // PI / 2
+
+template <typename T>
+inline void ExpandIndexedVertexDataToFaceVarying(
+    const std::vector<int> &faceVertexIndices,
+    const std::vector<T> &vertex_data,
+    std::vector<T> *facevarying_data) {
+  if (!facevarying_data) {
+    return;
+  }
+
+  std::vector<T> expanded;
+  expanded.reserve(faceVertexIndices.size());
+  for (int idx : faceVertexIndices) {
+    if ((idx >= 0) && (static_cast<size_t>(idx) < vertex_data.size())) {
+      expanded.push_back(vertex_data[static_cast<size_t>(idx)]);
+    } else {
+      expanded.push_back(T{});
+    }
+  }
+  *facevarying_data = std::move(expanded);
+}
 }
 
 ///
@@ -446,6 +467,9 @@ inline void GenerateCylinderMesh(
     faceVertexIndices.push_back(v0);
     faceVertexCounts.push_back(3);
   }
+
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, normals, &normals);
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, uvs, &uvs);
 }
 
 ///
@@ -532,6 +556,9 @@ inline void GenerateConeMesh(
     faceVertexIndices.push_back(v0);
     faceVertexCounts.push_back(3);
   }
+
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, normals, &normals);
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, uvs, &uvs);
 }
 
 ///
@@ -638,6 +665,9 @@ inline void GenerateCapsuleMesh(
       faceVertexCounts.push_back(4);
     }
   }
+
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, normals, &normals);
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, uvs, &uvs);
 }
 
 ///
@@ -702,6 +732,9 @@ inline void GeneratePlaneMesh(
       faceVertexCounts.push_back(4);
     }
   }
+
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, normals, &normals);
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, uvs, &uvs);
 }
 
 }  // namespace tydra

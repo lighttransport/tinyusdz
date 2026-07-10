@@ -82,6 +82,11 @@ bool GetSkelAnimationDataAtTime(const Stage& stage, const UsdPrim& prim,
 // ============================================================
 
 struct BlendShapeData {
+  struct Inbetween {
+    std::string name;
+    float weight = 0.0f;
+    std::vector<float> offsets;
+  };
   // Offsets (vector3f[])
   std::vector<float> offsets;       // xyz interleaved
   std::vector<float> normalOffsets; // xyz interleaved
@@ -91,6 +96,7 @@ struct BlendShapeData {
 
   bool hasNormalOffsets = false;
   bool hasPointIndices = false;
+  std::vector<Inbetween> inbetweens;
 };
 
 /// Get BlendShape data

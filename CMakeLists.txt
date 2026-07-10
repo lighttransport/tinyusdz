@@ -797,7 +797,7 @@ set(TINYUSDZ_DEP_SOURCES
     #${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
 )
 
-# MikkTSpace tangent computation (public domain, by Morten S. Mikkelsen)
+# MikkTSpace tangent computation (zlib license, by Morten S. Mikkelsen)
 if(TINYUSDZ_WITH_TYDRA)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/mikktspace/mikktspace.c)
 endif()
@@ -1272,20 +1272,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
   endif()
 
-  # clang21's -Weverything enables -Wnrvo, which fires on any function with
-  # multiple return paths returning different objects (e.g. an early `return {}`
-  # plus a final `return named`). It is pedantic informational noise, not a bug;
-  # suppress it. Detect support directly rather than by compiler version: vendor
-  # forks (e.g. the Android NDK clang) can report a high version yet lack -Wnrvo,
-  # and under -Weverything an unknown -Wno- option is *not* silently ignored — it
-  # is promoted to an error via -Wunknown-warning-option. Probe the positive form
-  # (`-Wno-<unknown>` is accepted leniently, so it would not detect the gap).
   include(CheckCXXCompilerFlag)
-  check_cxx_compiler_flag("-Wnrvo" TINYUSDZ_HAS_WNRVO)
-  if (TINYUSDZ_HAS_WNRVO)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-nrvo")
-  endif()
-
   # clang 21+ (e.g. llvm-mingw clang 22) also tightens
   # -Wthread-safety-negative under -Weverything. Suppress it when supported
   # rather than requiring negative-capability annotations throughout the code.
@@ -2488,6 +2475,13 @@ if(TINYUSDZ_BUILD_TESTS)
                COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-variant-chain.sh
                        $<TARGET_FILE:tusdcat> ${PROJECT_SOURCE_DIR}
                        ${_vchain_tusdzconvert})
+    endif()
+
+    if(UNIX AND TARGET tusdzconvert AND TARGET tusdcat)
+      add_test(NAME tusdzconvert-regression-driver
+               COMMAND bash ${PROJECT_SOURCE_DIR}/tests/run-tusdzconvert-regression.sh
+                       $<TARGET_FILE:tusdzconvert> $<TARGET_FILE:tusdcat>
+                       ${PROJECT_SOURCE_DIR})
     endif()
 
     # PointInstancer instancing (compute API + Tydra expansion)
