@@ -3141,6 +3141,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 			const animData = extractUSDSceneAnimations(usd_scene, {
 				boneMaps: skeletonBuild.boneMaps,
 				nodeIndexMap,
+				threeRoot: built.node,
 				timeCodesPerSecond,
 				logger: console
 			});

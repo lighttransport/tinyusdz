@@ -448,6 +448,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			const animData = extractUSDSceneAnimations(usdScene, {
 				boneMaps: skeletonBuild.boneMaps,
 				nodeIndexMap,
+				threeRoot: built.node,
 				timeCodesPerSecond: sceneTimeCodesPerSecond,
 				logger: console
 			});
@@ -562,6 +563,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		const animData = extractUSDSceneAnimations(usdScene, {
 			boneMaps,
 			nodeIndexMap,
+			threeRoot: threeNode,
 			timeCodesPerSecond,
 			logger: console
 		});
