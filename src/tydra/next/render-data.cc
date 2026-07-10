@@ -30,6 +30,39 @@ size_t StringVectorBytes(const std::vector<std::string>& v) {
 // RenderMesh
 //
 
+void RenderMesh::compact() {
+  face_vertex_counts.shrink_to_fit();
+  face_vertex_indices.shrink_to_fit();
+  points.shrink_to_fit();
+  normals.shrink_to_fit();
+  tangents.shrink_to_fit();
+  texcoords_0.shrink_to_fit();
+  texcoords_1.shrink_to_fit();
+  colors.shrink_to_fit();
+  triangulated_indices.shrink_to_fit();
+  triangulated_face_vertex_indices.shrink_to_fit();
+
+  for (auto& pv : primvars) {
+    pv.float_data.shrink_to_fit();
+    pv.int_data.shrink_to_fit();
+    pv.uint_data.shrink_to_fit();
+    pv.indices.shrink_to_fit();
+  }
+
+  if (skin) {
+    skin->joint_indices.shrink_to_fit();
+    skin->joint_weights.shrink_to_fit();
+  }
+
+  for (auto& bs : blend_shapes) {
+    bs.point_offsets.shrink_to_fit();
+    bs.normal_offsets.shrink_to_fit();
+    for (auto& inbetween : bs.inbetweens) {
+      inbetween.point_offsets.shrink_to_fit();
+    }
+  }
+}
+
 size_t RenderMesh::memory_usage() const {
   size_t total = sizeof(*this);
   total += face_vertex_counts.memory_usage();

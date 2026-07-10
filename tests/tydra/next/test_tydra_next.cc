@@ -54,6 +54,62 @@ void TestChunkedArrayBasic() {
   std::cout << "  ChunkedArray basic: PASSED\n";
 }
 
+void TestChunkedArrayShrinkToFit() {
+  std::cout << "Testing ChunkedArray shrink_to_fit (exact-size tail)...\n";
+
+  // Small array: the 64KB minimum chunk must compact to the exact size.
+  // (Thousands of small meshes each paying full chunks OOM'd wasm32.)
+  ChunkedArray<float> small;
+  for (size_t i = 0; i < 100; ++i) small.push_back(static_cast<float>(i));
+  assert(small.memory_usage() >= 64 * 1024);
+  small.shrink_to_fit();
+  assert(small.memory_usage() < 100 * sizeof(float) + 2 * sizeof(small));
+  assert(small.size() == 100);
+  for (size_t i = 0; i < 100; ++i) {
+    assert(small[i] == static_cast<float>(i));
+  }
+
+  // Appending after shrink transparently re-expands the tail chunk.
+  small.push_back(100.0f);
+  assert(small.size() == 101);
+  for (size_t i = 0; i <= 100; ++i) {
+    assert(small[i] == static_cast<float>(i));
+  }
+
+  // Multi-chunk array: full chunks stay, only the tail compacts; data intact.
+  constexpr size_t kPerChunk = ChunkedArray<float>::kElementsPerChunk;
+  const size_t n = kPerChunk * 2 + 7;
+  ChunkedArray<float> big;
+  for (size_t i = 0; i < n; ++i) big.push_back(static_cast<float>(i));
+  big.shrink_to_fit();
+  assert(big.size() == n);
+  assert(big.chunk_count() == 3);
+  assert(big.memory_usage() <
+         2 * 64 * 1024 + 7 * sizeof(float) + 2 * sizeof(big));
+  for (size_t i = 0; i < n; ++i) {
+    assert(big[i] == static_cast<float>(i));
+  }
+  std::vector<float> flat = big.flatten();
+  assert(flat.size() == n);
+  assert(flat[n - 1] == static_cast<float>(n - 1));
+
+  // Exact multiple of the chunk size: nothing to compact, nothing lost.
+  ChunkedArray<float> exact;
+  exact.resize(kPerChunk, 3.0f);
+  exact.shrink_to_fit();
+  assert(exact.size() == kPerChunk);
+  assert(exact[kPerChunk - 1] == 3.0f);
+
+  // Empty array: shrink frees everything.
+  ChunkedArray<float> reserved;
+  reserved.reserve(kPerChunk * 4);
+  reserved.shrink_to_fit();
+  assert(reserved.memory_usage() <= sizeof(reserved));
+  assert(reserved.empty());
+
+  std::cout << "  ChunkedArray shrink_to_fit: PASSED\n";
+}
+
 void TestChunkedArrayLarge() {
   std::cout << "Testing ChunkedArray with large data...\n";
 
@@ -2345,6 +2401,7 @@ int main() {
 
   // ChunkedArray tests
   TestChunkedArrayBasic();
+  TestChunkedArrayShrinkToFit();
   TestChunkedArrayLarge();
   TestChunkedArrayAppend();
   TestChunkedArrayIterator();

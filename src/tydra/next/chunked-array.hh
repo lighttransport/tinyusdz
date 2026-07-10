@@ -46,12 +46,7 @@ class ChunkedArray {
   ChunkedArray& operator=(const ChunkedArray&) = delete;
 
   // Reserve space for n elements (pre-allocates chunks)
-  void reserve(size_t n) {
-    size_t needed_chunks = (n + kElementsPerChunk - 1) / kElementsPerChunk;
-    while (chunks_.size() < needed_chunks) {
-      chunks_.push_back(std::unique_ptr<T[]>(new T[kElementsPerChunk]));
-    }
-  }
+  void reserve(size_t n) { ensure_capacity(n); }
 
   // Add element, returns index
   size_t push_back(const T& value) {
@@ -112,10 +107,29 @@ class ChunkedArray {
     // Keep chunks allocated for reuse
   }
 
+  // Release excess memory: drop whole chunks past the logical size and
+  // reallocate the final partial chunk to its exact element count. Scenes with
+  // thousands of SMALL meshes would otherwise pay the full 64KB minimum chunk
+  // for every non-empty array (~450KB per RenderMesh), which alone OOMs the
+  // 2GB wasm32 heap on large prop scenes. Appending after shrink re-expands
+  // the tail chunk transparently.
   void shrink_to_fit() {
-    size_t needed_chunks = (size_ + kElementsPerChunk - 1) / kElementsPerChunk;
+    const size_t needed_chunks =
+        (size_ + kElementsPerChunk - 1) / kElementsPerChunk;
     while (chunks_.size() > needed_chunks) {
       chunks_.pop_back();
+    }
+    if (chunks_.empty()) {
+      tail_capacity_ = 0;
+      return;
+    }
+    tail_capacity_ = kElementsPerChunk;  // dropped chunks restore full tails
+    const size_t used_in_tail = size_ - (chunks_.size() - 1) * kElementsPerChunk;
+    if (used_in_tail < kElementsPerChunk) {
+      std::unique_ptr<T[]> exact(new T[used_in_tail]);
+      std::memcpy(exact.get(), chunks_.back().get(), used_in_tail * sizeof(T));
+      chunks_.back() = std::move(exact);
+      tail_capacity_ = used_in_tail;
     }
   }
 
@@ -161,7 +175,10 @@ class ChunkedArray {
   bool empty() const { return size_ == 0; }
 
   size_t chunk_count() const { return chunks_.size(); }
-  size_t capacity() const { return chunks_.size() * kElementsPerChunk; }
+  size_t capacity() const {
+    if (chunks_.empty()) return 0;
+    return (chunks_.size() - 1) * kElementsPerChunk + tail_capacity_;
+  }
 
   // True when the data already lives in one contiguous block (fits in the
   // first chunk), i.e. chunk_data(0) can be handed out directly without
@@ -170,7 +187,9 @@ class ChunkedArray {
 
   // Memory usage in bytes
   size_t memory_usage() const {
-    return chunks_.size() * ChunkBytes + sizeof(*this);
+    if (chunks_.empty()) return sizeof(*this);
+    return (chunks_.size() - 1) * ChunkBytes + tail_capacity_ * sizeof(T) +
+           sizeof(*this);
   }
 
   // Get pointer to chunk data (for direct GPU upload)
@@ -289,13 +308,27 @@ class ChunkedArray {
 
  private:
   void ensure_capacity(size_t n) {
+    if (capacity() >= n) return;
+    // A shrunken (exact-size) tail chunk must grow back to full capacity
+    // before more chunks are appended, so only the LAST chunk is ever short.
+    if (!chunks_.empty() && tail_capacity_ < kElementsPerChunk) {
+      std::unique_ptr<T[]> full(new T[kElementsPerChunk]);
+      std::memcpy(full.get(), chunks_.back().get(),
+                  tail_capacity_ * sizeof(T));
+      chunks_.back() = std::move(full);
+      tail_capacity_ = kElementsPerChunk;
+    }
     while (capacity() < n) {
       chunks_.push_back(std::unique_ptr<T[]>(new T[kElementsPerChunk]));
+      tail_capacity_ = kElementsPerChunk;
     }
   }
 
   std::vector<std::unique_ptr<T[]>> chunks_;
   size_t size_ = 0;
+  // Element capacity of the LAST chunk (all others are kElementsPerChunk).
+  // 0 when no chunks are allocated.
+  size_t tail_capacity_ = 0;
 };
 
 // Type aliases for common vertex data

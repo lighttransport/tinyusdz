@@ -2348,7 +2348,22 @@ class TinyUSDZLoader extends Loader {
      */
     async parseAsync(binary /* ArrayBuffer */, filePath /* optional */, options = {}) {
         if (!this.native_) {
-            await this.init();
+            await this.init(options);
+        }
+
+        // backend=next (or a next-only module, which has no legacy
+        // TinyUSDZLoaderNative) routes through the promise-based parse path,
+        // which already dispatches to NextRenderSceneAdapter.
+        const wantsNext = options.backend === 'next' || options.backend === 'auto';
+        if (wantsNext || this.nextOnlyNative_ ||
+            typeof this.native_.TinyUSDZLoaderNative !== 'function') {
+            const backendOptions = {
+                ...options,
+                backend: options.backend || (this.nextOnlyNative_ ? 'next' : 'legacy')
+            };
+            return new Promise((resolve, reject) => {
+                this.parse(binary, filePath, resolve, reject, backendOptions);
+            });
         }
 
         const usd = new this.native_.TinyUSDZLoaderNative();
