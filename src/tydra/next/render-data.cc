@@ -63,6 +63,36 @@ void RenderMesh::compact() {
   }
 }
 
+bool RenderMesh::has_alloc_failure() const {
+  if (face_vertex_counts.alloc_failed() || face_vertex_indices.alloc_failed() ||
+      points.alloc_failed() || normals.alloc_failed() ||
+      tangents.alloc_failed() || texcoords_0.alloc_failed() ||
+      texcoords_1.alloc_failed() || colors.alloc_failed() ||
+      triangulated_indices.alloc_failed() ||
+      triangulated_face_vertex_indices.alloc_failed()) {
+    return true;
+  }
+  for (const auto& pv : primvars) {
+    if (pv.float_data.alloc_failed() || pv.int_data.alloc_failed() ||
+        pv.uint_data.alloc_failed() || pv.indices.alloc_failed()) {
+      return true;
+    }
+  }
+  if (skin && (skin->joint_indices.alloc_failed() ||
+               skin->joint_weights.alloc_failed())) {
+    return true;
+  }
+  for (const auto& bs : blend_shapes) {
+    if (bs.point_offsets.alloc_failed() || bs.normal_offsets.alloc_failed()) {
+      return true;
+    }
+    for (const auto& inbetween : bs.inbetweens) {
+      if (inbetween.point_offsets.alloc_failed()) return true;
+    }
+  }
+  return false;
+}
+
 size_t RenderMesh::memory_usage() const {
   size_t total = sizeof(*this);
   total += face_vertex_counts.memory_usage();
