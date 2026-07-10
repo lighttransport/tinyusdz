@@ -3109,7 +3109,9 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		if (built.textureManager) {
 			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
 		}
-		const nodeIndexMap = buildNodeIndexMap(built.node);
+		// Next animation target_node is a RenderScene node-table index; use the
+		// table map from buildNextThreeNode, not a DFS walk of the built tree.
+		const nodeIndexMap = built.nodeIndexMap || buildNodeIndexMap(built.node);
 		const skinningResult = applyUSDSceneSkinningPipeline({
 			threeNode: built.node,
 			characterGroup: usdSceneRoot,

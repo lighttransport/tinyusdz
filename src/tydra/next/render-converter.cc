@@ -245,6 +245,59 @@ bool ValueToFloat4(const Value& value, Float4* out) {
   return false;
 }
 
+// Closed-form Euler-degrees -> quaternion (xyzw) for all six USD rotation
+// orders (rotateXYZ means apply X first: Q = Qz * Qy * Qx). Ported from the
+// legacy tydra converter so Rotation channels always carry quaternions.
+Float4 EulerDegreesToQuatXYZW(float xdeg, float ydeg, float zdeg,
+                              const std::string& order) {
+  const double kHalfDegToRad = 3.14159265358979323846 / 360.0;
+  const float sx = static_cast<float>(std::sin(double(xdeg) * kHalfDegToRad));
+  const float cx = static_cast<float>(std::cos(double(xdeg) * kHalfDegToRad));
+  const float sy = static_cast<float>(std::sin(double(ydeg) * kHalfDegToRad));
+  const float cy = static_cast<float>(std::cos(double(ydeg) * kHalfDegToRad));
+  const float sz = static_cast<float>(std::sin(double(zdeg) * kHalfDegToRad));
+  const float cz = static_cast<float>(std::cos(double(zdeg) * kHalfDegToRad));
+
+  if (order == "XZY") {  // Q = Qy * Qz * Qx
+    return Float4(cy*cz*sx + sy*sz*cx, cy*sz*sx + sy*cz*cx,
+                  cy*sz*cx - sy*cz*sx, cy*cz*cx - sy*sz*sx);
+  }
+  if (order == "YXZ") {  // Q = Qz * Qx * Qy
+    return Float4(cz*sx*cy - sz*cx*sy, cz*cx*sy + sz*sx*cy,
+                  cz*sx*sy + sz*cx*cy, cz*cx*cy - sz*sx*sy);
+  }
+  if (order == "YZX") {  // Q = Qx * Qz * Qy
+    return Float4(sx*cz*cy - cx*sz*sy, cx*cz*sy - sx*sz*cy,
+                  cx*sz*cy + sx*cz*sy, cx*cz*cy + sx*sz*sy);
+  }
+  if (order == "ZXY") {  // Q = Qy * Qx * Qz
+    return Float4(cy*sx*cz + sy*cx*sz, sy*cx*cz - cy*sx*sz,
+                  cy*cx*sz - sy*sx*cz, cy*cx*cz + sy*sx*sz);
+  }
+  if (order == "ZYX") {  // Q = Qx * Qy * Qz
+    return Float4(cx*sy*sz + sx*cy*cz, cx*sy*cz - sx*cy*sz,
+                  cx*cy*sz + sx*sy*cz, cx*cy*cz - sx*sy*sz);
+  }
+  // XYZ (and fallback): Q = Qz * Qy * Qx
+  return Float4(cz*cy*sx - sz*sy*cx, cz*sy*cx + sz*cy*sx,
+                sz*cy*cx - cz*sy*sx, cz*cy*cx + sz*sy*sx);
+}
+
+// Extracts the axis order ("XYZ", "ZYX", ...) from an xformOp:rotate<ORDER>
+// property name. Returns false for single-axis rotateX/Y/Z and non-rotate ops.
+bool EulerRotationOrderFromPropName(const std::string& prop_name,
+                                    std::string* out_order) {
+  const size_t pos = prop_name.find("rotate");
+  if (pos == std::string::npos) return false;
+  const std::string tail = prop_name.substr(pos + 6, 3);
+  if (tail == "XYZ" || tail == "XZY" || tail == "YXZ" || tail == "YZX" ||
+      tail == "ZXY" || tail == "ZYX") {
+    *out_order = tail;
+    return true;
+  }
+  return false;
+}
+
 bool ValueToAnimationFloat4(const std::string& prop_name,
                             const Value& value,
                             Float4* out) {
@@ -261,12 +314,14 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
   }
 
   if (is_scalar) {
+    // Single-axis rotations become quaternions: Rotation channels are
+    // consumed as xyzw quats by the render layer, never as raw degrees.
     if (prop_name.find("rotateX") != std::string::npos) {
-      *out = Float4(scalar, 0.0f, 0.0f, 0.0f);
+      *out = EulerDegreesToQuatXYZW(scalar, 0.0f, 0.0f, "XYZ");
     } else if (prop_name.find("rotateY") != std::string::npos) {
-      *out = Float4(0.0f, scalar, 0.0f, 0.0f);
+      *out = EulerDegreesToQuatXYZW(0.0f, scalar, 0.0f, "XYZ");
     } else if (prop_name.find("rotateZ") != std::string::npos) {
-      *out = Float4(0.0f, 0.0f, scalar, 0.0f);
+      *out = EulerDegreesToQuatXYZW(0.0f, 0.0f, scalar, "XYZ");
     } else if (prop_name.find("scale") != std::string::npos) {
       *out = Float4(scalar, scalar, scalar, 0.0f);
     } else {
@@ -285,6 +340,13 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
       tid == ::tinyusdz::next::TypeId::Quatd ||
       tid == ::tinyusdz::next::TypeId::Quath) {
     *out = Float4(out->y, out->z, out->w, out->x);
+    return true;
+  }
+
+  // Three-axis Euler rotate ops (float3 degrees) also convert to quats.
+  std::string rot_order;
+  if (EulerRotationOrderFromPropName(prop_name, &rot_order)) {
+    *out = EulerDegreesToQuatXYZW(out->x, out->y, out->z, rot_order);
   }
   return true;
 }

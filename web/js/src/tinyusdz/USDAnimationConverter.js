@@ -359,6 +359,17 @@ export function convertUSDNodeAnimationsToThreeJS(usdLoader, nodeIndexMap) {
 				continue;
 			}
 
+			// Matrix-driven nodes (next backend groups set matrix +
+			// matrixAutoUpdate=false) ignore the position/quaternion/scale
+			// that AnimationMixer writes. Decompose once and switch the
+			// target back to TRS-driven updates so tracks take effect.
+			if (targetObject.matrixAutoUpdate === false) {
+				targetObject.matrix.decompose(
+					targetObject.position, targetObject.quaternion, targetObject.scale
+				);
+				targetObject.matrixAutoUpdate = true;
+			}
+
 			// Use UUID for reliable hierarchical animation targeting
 			const targetUUID = targetObject.uuid;
 			const interpolation = getUSDInterpolationMode(sampler.interpolation);
