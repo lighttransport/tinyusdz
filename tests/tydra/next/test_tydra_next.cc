@@ -970,6 +970,69 @@ def Xform "World"
   std::cout << "  RenderConverter Unreal surface fallback: PASSED\n";
 }
 
+// Regression: a Material whose only surface is an Unreal `sourceAsset` shader
+// (info:implementationSource = "sourceAsset", no UsdPreviewSurface child) must
+// not be dropped. UE MetaHuman exports bind such materials; the converter emits
+// a neutral default PreviewSurface so the binding survives and the mesh keeps a
+// material slot instead of rendering unmaterialed.
+void TestRenderConverterUnrealSourceAssetFallback() {
+  std::cout << "Testing RenderConverter Unreal source-asset default material...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Material "M_Hide"
+    {
+        token outputs:unreal:surface.connect = </World/M_Hide/UnrealShader.outputs:out>
+
+        def Shader "UnrealShader"
+        {
+            uniform token info:implementationSource = "sourceAsset"
+            uniform asset info:unreal:sourceAsset = @/Game/Materials/M_Hide.M_Hide@
+            token outputs:out
+        }
+    }
+
+    def Mesh "M"
+    {
+        rel material:binding = </World/M_Hide>
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}
+)";
+
+  LoadResult load_result = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!load_result.success) {
+    std::cout << "  SKIPPED (failed to parse Unreal source-asset USDA)\n";
+    return;
+  }
+
+  ConverterConfig config;
+  config.material.load_textures = false;
+
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(load_result.stage);
+
+  // A source-asset-only material must not abort or vanish.
+  assert(result.success);
+
+  auto it = result.scene.material_by_path.find("/World/M_Hide");
+  assert(it != result.scene.material_by_path.end());
+  const RenderMaterial& mat = result.scene.materials[it->second];
+
+  // Neutral default PreviewSurface (no convertible shader was found).
+  assert(mat.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+  assert(mat.preview_surface);
+
+  std::cout << "  RenderConverter Unreal source-asset default material: PASSED\n";
+}
+
 // Regression: UsdSkel binding inheritance. `skel:skeleton` may be authored on
 // an ancestor (the enclosing SkelRoot) rather than on the skinned mesh, in
 // which case the mesh inherits it. The converter must resolve the inherited
@@ -2609,6 +2672,7 @@ int main() {
   TestRenderConverter();
   TestRenderConverterMaterials();
   TestRenderConverterUnrealSurfaceFallback();
+  TestRenderConverterUnrealSourceAssetFallback();
   TestRenderConverterInheritedSkelBinding();
   TestRenderConverterPointInstancerWarnings();
   TestRenderConverterPointInstancerIndexVisibility();
