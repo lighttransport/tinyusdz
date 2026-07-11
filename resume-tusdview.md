@@ -8,8 +8,11 @@
 
 ## 0. Current session (2026-07-11): `--next` primvars / texturing / texture VRAM
 
-Branch `tusdview`, on top of the merge `68d008abe`. **All of this is
-UNCOMMITTED** in the worktree (alongside the pre-existing large-scene WIP).
+Branch `tusdview`. **All of §0 is now COMMITTED AND PUSHED** (through
+`d0d3ac6ca`), along with a repair of the `physics-2026-fix2` merge (`68d008abe`
+was a false-clean merge: it duplicated blocks in `layer.hh` / `value.cc` and
+mixed both sides' APIs, so the branch tip did not compile) and a merge of
+`origin/tusdview` (the KTX2 / texture-compression line). The worktree is clean.
 
 Goal: the large-scene WIP bounded *geometry* only. Two gaps made `--next` render
 large scenes as untextured/flat-shaded soup, and left texture VRAM unbounded.
@@ -379,6 +382,41 @@ gone.
   binding/anchoring fixes below). Full suite **41/42**; the only failure is the
   known pre-existing `tusdview-skinning-screenshot-diff`.
 
+### Re-verification after the merge repair — DONE (2026-07-11, Xvfb + RTX 5060 Ti)
+
+Run again from the pushed tip, because repairing the `physics-2026-fix2` merge
+rewrote a large part of `src/next` and the unit tests cannot see a weld or
+budget regression. No regression: every number is at or below its baseline.
+
+Deferred-payload profiles (`run-large-scene-profiles.sh`, all PASS; peak RSS via
+`/usr/bin/time -v`, so it includes process startup):
+
+| scene | peak RSS | baseline | wall |
+|---|---|---|---|
+| Island | 0.45 GB | 0.49 GB | 2.9 s |
+| Caldera | 2.06 GB | 2.18 GB | 6.5 s |
+| ALab | 0.52 GB | 0.55 GB | 3.0 s |
+
+All three resolve `backend=vk --next=on --raster-lod=on --rt-lod=on
+--max-gpu-mem=8.0` (8 GiB is `ComputeResourceBudget`'s half-of-16-GiB, not a
+hardcode — the two GPU render scripts still asserted the old 10 GiB and were
+fixed in `d0d3ac6ca`).
+
+Full-payload loads (these have no published baseline; they are what actually
+exercises the weld and the texture cap):
+
+| scene | weld ratio | textures | wall | peak RSS |
+|---|---|---|---|---|
+| Island | **1.04x** (21 159 184 verts / 20 437 898 points) | 0 | 72 s | 18.7 GB |
+| Caldera | **1.48x** (31 905 889 / 21 547 797) | 0 | 32 s | 10.8 GB |
+| ALab | **1.29x** (6 726 046 / 5 193 895) | 343, 1372 MB decoded (budget 1920 MB, **0 downscaled**) | 17 s | 5.3 GB |
+
+The weld ratios are the thing to watch: all far from the ~4-6x corners-per-point
+figure a broken (over-strict) weld key would produce, so the memory win holds.
+Island composes 40.9 M instances / 11.7 G effective tris and still fits the
+30 GiB host headroom. `tool-tusdrender-smoke`, `-legacy-texture`,
+`-autoframe-flat` and both skinning tests pass; full suite **46/46**.
+
 ---
 
 ## Older workstream (material evaluation) — sections 1-9
@@ -680,11 +718,11 @@ primvars / texturing / texture-VRAM work):
 
 ```text
 Continue the tusdview `--next` primvars/texturing/VRAM work in this repo,
-branch `tusdview`, on top of merge 68d008abe.
+branch `tusdview`.
 Read resume-tusdview.md SECTION 0 first (that is the in-flight work; sections 1-9
-are an older material-eval workstream). The worktree is a dirty WIP with my
-changes UNCOMMITTED and NOT pushed — do not revert unrelated edits, do not
-`git add -A` (build_textools_off/ is not gitignored), and do not push.
+are an older material-eval workstream). §0 is COMMITTED AND PUSHED through
+d0d3ac6ca and the worktree is clean. Do not `git add -A` (build_textools_off/ is
+not gitignored) and do not push without asking each time.
 
 Already done and verified (see §0 for detail): faceVarying/all-interpolation
 primvar resolver + vertex welding + the missing V-flip in FillFlatGeometry
@@ -697,15 +735,17 @@ per-opacity material variants. Build is green; ctest is 39/40.
 
 Do NOT re-litigate those. The remaining work, in order:
 
-1. VERIFY (highest value). Rerun the large-scene memory matrix under Xvfb/NVIDIA
-   per doc/tusdview.md, assets at /mnt/disk1/data/{island/usd/island.usda,
-   alab/_merged_ALab/entry.usda,caldera/caldera.usda}. Baseline to beat/hold:
-   Island 1.36 s / 488 MB, Caldera 8.29 s / 2.18 GB, ALab 1.97 s / 554 MB. Watch
-   the new log lines `next: weld N vertices from M points (Kx)` and
-   `next: textures N, decoded X MB (cap ...)`. A weld ratio near the
-   corners-per-point count means the weld key is too strict and the memory win is
-   gone. Also re-run tool-tusdrender-smoke (tusdrender now decodes through the
-   shared decoder).
+1. VERIFY: DONE (2026-07-11, re-run from the pushed tip after the merge repair —
+   see "Re-verification" in §0). Island 0.45 GB, Caldera 2.06 GB, ALab 0.52 GB,
+   all at/under baseline; weld ratios 1.04x / 1.48x / 1.29x on full-payload
+   loads; ALab decodes 343 textures to 1372 MB inside its 1920 MB budget with 0
+   downscaled; tusdrender smoke green; suite 46/46. To repeat it:
+   CALDERA=/mnt/disk1/data/caldera/caldera.usda
+   ISLAND=/mnt/disk1/data/island/usd/island.usda
+   ALAB=/mnt/disk1/data/alab/_merged_ALab/entry.usda
+   bash examples/tusdview/tests/run-large-scene-profiles.sh
+   (that path defers payloads and decodes 0 textures — add --load-payloads to a
+   direct tusdview run to exercise the weld and the texture cap).
 
 2. DECIDE on geometry tangents (§0 "Not done"). They are currently dormant and
    free. Enabling them means a 2nd converter for normal-mapped meshes, tangent
@@ -716,9 +756,10 @@ Do NOT re-litigate those. The remaining work, in order:
    UVs, cost ~16 B/vertex, and touch mesh.frag, which the separate
    sophisticated-texturing branch owns. ASK THE USER before building this.
 
-3. --next GPU skinning: FIXED (see the section above). ctest is now 44/44.
-   Remaining next-path skinning gaps: instanced prototypes still don't skin, and
-   RT/CUDA/HIP keep the load-time CPU bake.
+3. --next GPU skinning: FIXED, and so is INSTANCED-prototype skinning (both GL
+   and Vulkan instanced shaders now carry a bone path). ctest is 46/46. The one
+   remaining next-path skinning gap: RT/CUDA/HIP still keep the load-time CPU
+   bake.
 
 Build: cd build && make -j16 tusdview tusdrender && ctest --output-on-failure.
 Note: tydra-next sources must be listed in BOTH src/tydra/next/CMakeLists.txt and
