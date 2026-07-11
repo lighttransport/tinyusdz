@@ -556,13 +556,15 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         }
       }
       // Apply per the authored qualifier: `delete apiSchemas = [...]` must
-      // REMOVE the schemas (appending them would invert the opinion). The
-      // qualifier itself is recorded so it round-trips (pxr authors applied
-      // schemas as `prepend apiSchemas`).
+      // REMOVE the schemas (appending them would invert the opinion). Record
+      // only the ADDITIVE qualifier: next collapses the sublists into a single
+      // resolved list, so that list must be written as prepend/append/explicit
+      // and NEVER as `delete` — a delete list-op would re-subtract the resolved
+      // items on read (dropping e.g. a `prepend [3]` + `delete [1]` prim's two
+      // remaining schemas entirely). The authored delete is applied here.
       switch (arc_qual) {
         case ArcQual::Prepend: prim->meta().apiSchemasQualifier() = "prepend"; break;
         case ArcQual::Append: prim->meta().apiSchemasQualifier() = "append"; break;
-        case ArcQual::Delete: prim->meta().apiSchemasQualifier() = "delete"; break;
         default: break;
       }
       std::vector<std::string>& applied = prim->meta().apiSchemas();
