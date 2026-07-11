@@ -196,3 +196,62 @@ tc_result tc_bc1_compress_rgba8(const uint8_t *rgba, uint32_t width,
     }
     return TC_SUCCESS;
 }
+
+/* --- decode ------------------------------------------------------------- */
+
+/* Expand an 8-byte colour block to 16 RGBA8 texels. In BC1 (dxt1 != 0) an
+ * endpoint order of c0 <= c1 selects the 3-colour mode, where index 3 is a
+ * transparent black punch-through; a BC3 colour sub-block is always 4-colour. */
+void tc_decode_bc1_color_block(const uint8_t in[8], int dxt1,
+                               uint8_t px[16][4]) {
+    uint16_t c0 = (uint16_t)((uint32_t)in[0] | ((uint32_t)in[1] << 8));
+    uint16_t c1 = (uint16_t)((uint32_t)in[2] | ((uint32_t)in[3] << 8));
+    uint32_t bits = (uint32_t)in[4] | ((uint32_t)in[5] << 8) |
+                    ((uint32_t)in[6] << 16) | ((uint32_t)in[7] << 24);
+    int p0[3], p1[3];
+    uint8_t pal[4][4];
+    uint32_t i, k;
+    int three = (dxt1 && c0 <= c1);
+    tc_rgb565_unpack(c0, p0);
+    tc_rgb565_unpack(c1, p1);
+    for (k = 0; k < 3u; ++k) {
+        pal[0][k] = (uint8_t)p0[k];
+        pal[1][k] = (uint8_t)p1[k];
+        if (three) {
+            pal[2][k] = (uint8_t)((p0[k] + p1[k]) / 2); /* S3TC: truncating */
+            pal[3][k] = 0;
+        } else {
+            pal[2][k] = (uint8_t)((2 * p0[k] + p1[k] + 1) / 3);
+            pal[3][k] = (uint8_t)((p0[k] + 2 * p1[k] + 1) / 3);
+        }
+    }
+    pal[0][3] = pal[1][3] = pal[2][3] = 255u;
+    pal[3][3] = three ? 0u : 255u;
+    for (i = 0; i < 16u; ++i) {
+        uint32_t idx = (bits >> (2u * i)) & 3u;
+        for (k = 0; k < 4u; ++k) px[i][k] = pal[idx][k];
+    }
+}
+
+tc_result tc_bc1_decompress_rgba8(const uint8_t *bc1, uint32_t width,
+                                  uint32_t height, size_t stride,
+                                  uint8_t *out_rgba, size_t out_size) {
+    uint32_t bxc, bx, by, xx, yy;
+    if (!bc1 || !out_rgba || !width || !height) return TC_ERROR_INVALID_ARGUMENT;
+    if (stride < (size_t)width * 4u) return TC_ERROR_INVALID_ARGUMENT;
+    if (out_size < (size_t)(height - 1u) * stride + (size_t)width * 4u)
+        return TC_ERROR_INVALID_ARGUMENT;
+    bxc = (width + 3u) / 4u;
+    for (by = 0; by < height; by += 4u)
+        for (bx = 0; bx < width; bx += 4u) {
+            uint8_t px[16][4];
+            size_t bi = ((size_t)(by / 4u) * bxc + bx / 4u) * 8u;
+            tc_decode_bc1_color_block(bc1 + bi, 1, px);
+            for (yy = 0; yy < 4u && by + yy < height; ++yy)
+                for (xx = 0; xx < 4u && bx + xx < width; ++xx)
+                    memcpy(out_rgba + (size_t)(by + yy) * stride +
+                               (size_t)(bx + xx) * 4u,
+                           px[yy * 4u + xx], 4u);
+        }
+    return TC_SUCCESS;
+}

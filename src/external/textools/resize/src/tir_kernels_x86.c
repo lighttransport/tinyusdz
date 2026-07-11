@@ -150,6 +150,56 @@ static void h_dot4_sse2(float *dst, const float *src, const int32_t *start,
 }
 
 TIR_TGT("sse2")
+static void h_dot2_sse2(float *dst, const float *src, const int32_t *start,
+                        const int32_t *count, const float *w, int padded,
+                        int x0, int x1) {
+    int x;
+    for (x = x0; x < x1; ++x) {
+        const float *wr = w + (size_t)x * (size_t)padded;
+        const float *sp = src + (size_t)start[x] * 2;
+        int nblk = (count[x] + 3) & ~3;
+        int t;
+        __m128 acc0 = _mm_setzero_ps(), acc1 = _mm_setzero_ps();
+        for (t = 0; t < nblk; t += 4) {
+            __m128 wv = _mm_loadu_ps(wr + t);
+            __m128 w01 = _mm_unpacklo_ps(wv, wv);
+            __m128 w23 = _mm_unpackhi_ps(wv, wv);
+            __m128 s01 = _mm_loadu_ps(sp + (size_t)t * 2);
+            __m128 s23 = _mm_loadu_ps(sp + (size_t)(t + 2) * 2);
+            acc0 = _mm_add_ps(acc0, _mm_mul_ps(w01, s01));
+            acc1 = _mm_add_ps(acc1, _mm_mul_ps(w23, s23));
+        }
+        {   /* sum: acc[0]+acc[2] = ch0, acc[1]+acc[3] = ch1 */
+            __m128 s = _mm_add_ps(acc0, acc1);
+            __m128 r = _mm_add_ps(s, _mm_shuffle_ps(s, s, _MM_SHUFFLE(1,0,3,2)));
+            _mm_storel_pi((__m64 *)(dst + (size_t)x * 2), r);
+        }
+    }
+}
+
+TIR_TGT("sse2")
+static void h_dot3_sse2(float *dst, const float *src, const int32_t *start,
+                        const int32_t *count, const float *w, int padded,
+                        int x0, int x1) {
+    int x;
+    for (x = x0; x < x1; ++x) {
+        const float *wr = w + (size_t)x * (size_t)padded;
+        const float *sp = src + (size_t)start[x] * 3;
+        int nblk = (count[x] + 1) & ~1;
+        int t;
+        __m128 acc0 = _mm_setzero_ps(), acc1 = _mm_setzero_ps();
+        for (t = 0; t < nblk; t += 2) {
+            acc0 = _mm_add_ps(acc0, _mm_mul_ps(_mm_loadu_ps(sp + (size_t)t * 3),
+                                               _mm_set1_ps(wr[t])));
+            acc1 = _mm_add_ps(acc1, _mm_mul_ps(_mm_loadu_ps(sp + (size_t)(t + 1) * 3),
+                                               _mm_set1_ps(wr[t + 1])));
+        }
+        /* writes 4 floats: +4 slack on staging/ring rows makes this safe */
+        _mm_storeu_ps(dst + (size_t)x * 3, _mm_add_ps(acc0, acc1));
+    }
+}
+
+TIR_TGT("sse2")
 static void minmax_combine_sse2(float *mn, float *mx, const float *rmn,
                                 const float *rmx, size_t n) {
     size_t i = 0;
@@ -197,6 +247,27 @@ static void clamp_range_sse2(float *dst, float lo, float hi, size_t n) {
         if (v < lo) v = lo;
         if (v > hi) v = hi;
         dst[i] = v;
+    }
+}
+
+TIR_TGT("sse2")
+static void normalize3_sse2(float *xyz, float *len_out_or_null, size_t npix) {
+    size_t i;
+    for (i = 0; i < npix; ++i) {
+        size_t off = (size_t)i * 3;
+        float x = xyz[off], y = xyz[off + 1], z = xyz[off + 2];
+        float l2 = x * x + y * y + z * z;
+        if (len_out_or_null) len_out_or_null[i] = sqrtf(l2);
+        if (l2 > 1e-8f) {
+            float inv = 1.0f / sqrtf(l2);
+            xyz[off] = x * inv;
+            xyz[off + 1] = y * inv;
+            xyz[off + 2] = z * inv;
+        } else {
+            xyz[off] = 0.0f;
+            xyz[off + 1] = 0.0f;
+            xyz[off + 2] = 1.0f;
+        }
     }
 }
 
@@ -270,11 +341,14 @@ void tir__kernels_set_sse2(tir_kernels *k) {
     k->v_fma = v_fma_sse2;
     k->v_fma4 = v_fma4_sse2;
     k->h_dot[0] = h_dot1_sse2;
+    k->h_dot[1] = h_dot2_sse2;
+    k->h_dot[2] = h_dot3_sse2;
     k->h_dot[3] = h_dot4_sse2;
     k->h_minmax = h_minmax_sse2;
     k->minmax_combine = minmax_combine_sse2;
     k->antiring_apply = antiring_apply_sse2;
     k->clamp_range = clamp_range_sse2;
+    k->normalize3 = normalize3_sse2;
     k->premult4 = premult4_sse2;
     k->unpremult4 = unpremult4_sse2;
 }

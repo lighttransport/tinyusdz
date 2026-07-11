@@ -323,7 +323,7 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
                             const tir_allocator *a, tp_zstd_decompress_fn zdec,
                             void *user, tp_ktx2_image *out) {
     uint32_t vk, layer_count, face_count, level_count, scheme;
-    uint32_t dfd_off, dfd_len;
+    uint32_t dfd_off, dfd_len, kvd_off, kvd_len;
     int nlev, l;
     if (!data || !out) return TP_ERROR_INVALID_ARGUMENT;
     if (size < 80u || memcmp(data, tp_ktx2_id, 12) != 0)
@@ -339,6 +339,8 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
     scheme = tp_rd_u32(data + 44);
     dfd_off = tp_rd_u32(data + 48);
     dfd_len = tp_rd_u32(data + 52);
+    kvd_off = tp_rd_u32(data + 56);
+    kvd_len = tp_rd_u32(data + 60);
     out->supercompression = scheme;
     if (scheme == 1u) return TP_ERROR_UNSUPPORTED;          /* BasisLZ */
     if (scheme == 2u && !zdec) return TP_ERROR_UNSUPPORTED; /* need a decompressor */
@@ -370,6 +372,17 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
          dfd_off < 80u + (uint64_t)nlev * 24u))
         return TP_ERROR_INVALID_ARGUMENT;
 
+    /* Key/value data: bounds-checked here, walked lazily by tp_ktx2_kv_lookup.
+     * It is stored uncompressed even in a supercompressed file, so it aliases
+     * the source for both schemes. */
+    if (kvd_len != 0u) {
+        if ((uint64_t)kvd_off + (uint64_t)kvd_len > (uint64_t)size ||
+            kvd_off < 80u + (uint64_t)nlev * 24u)
+            return TP_ERROR_INVALID_ARGUMENT;
+        out->kvd = data + kvd_off;
+        out->kvd_size = (size_t)kvd_len;
+    }
+
     if (vk == 0u) {
         out->is_uni = 1;              /* UASTC transcodable intermediate */
         out->block_w = 4;
@@ -384,6 +397,7 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
         out->codec = c;
         out->srgb = srgb;
         out->is_hdr = d.is_hdr;
+        out->is_signed = d.is_signed;
         out->block_w = d.block_w;
         out->block_h = d.block_h;
         out->block_bytes = d.block_bytes;
@@ -464,25 +478,125 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
     }
 }
 
-tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
-                                     uint8_t *out_rgba, size_t out_size) {
+/* Walk the KVD block: a sequence of {u32 keyAndValueByteLength, key NUL value,
+ * padding to a 4-byte boundary}. Keys are unique and sorted in a valid file,
+ * but a linear scan is both simpler and tolerant of files that are not. */
+tp_result tp_ktx2_kv_lookup(const tp_ktx2_image *img, const char *key,
+                            const uint8_t **value, size_t *value_size) {
+    size_t pos = 0, klen;
+    if (!img || !key || !value || !value_size) return TP_ERROR_INVALID_ARGUMENT;
+    if (!img->kvd || img->kvd_size == 0u) return TP_ERROR_NOT_FOUND;
+    klen = strlen(key);
+    while (pos + 4u <= img->kvd_size) {
+        uint32_t kv_len = tp_rd_u32(img->kvd + pos);
+        const uint8_t *kv = img->kvd + pos + 4u;
+        size_t i, keyz = 0;
+        if (kv_len == 0u || kv_len > img->kvd_size - pos - 4u)
+            return TP_ERROR_INVALID_ARGUMENT; /* entry runs past the block */
+        /* The key is NUL-terminated inside the entry; without a NUL the entry is
+         * malformed (and a strcmp here would read past it). */
+        for (i = 0; i < kv_len; ++i)
+            if (kv[i] == 0u) { keyz = i; break; }
+        if (i == kv_len) return TP_ERROR_INVALID_ARGUMENT;
+        if (keyz == klen && memcmp(kv, key, klen) == 0) {
+            *value = kv + keyz + 1u;
+            *value_size = kv_len - keyz - 1u;
+            return TP_SUCCESS;
+        }
+        pos = tp_align_up(pos + 4u + kv_len, 4u);
+    }
+    return TP_ERROR_NOT_FOUND;
+}
+
+/* Validate (level, layer, face) and locate that slice's blocks. `texel_bytes` is
+ * the size of one decoded output texel, so the caller's destination is checked
+ * with the same 64-bit arithmetic in both the 8-bit and the float path. */
+static tp_result tp_ktx2_slice(const tp_ktx2_image *img, int level, int layer,
+                               int face, size_t texel_bytes, size_t out_size,
+                               const uint8_t **out_blocks, uint32_t *out_w,
+                               uint32_t *out_h) {
     uint32_t w, h;
-    size_t need;
-    const uint8_t *blocks;
-    if (!img || !out_rgba) return TP_ERROR_INVALID_ARGUMENT;
+    size_t img_bytes, slice;
+    int nlayers;
+    if (!img) return TP_ERROR_INVALID_ARGUMENT;
     if (level < 0 || level >= img->num_levels) return TP_ERROR_INVALID_ARGUMENT;
-    if (img->num_faces != 1 || img->num_layers > 1)
-        return TP_ERROR_UNSUPPORTED; /* single-face / non-array only for now */
+    nlayers = img->num_layers ? img->num_layers : 1; /* 0 = non-array */
+    if (layer < 0 || layer >= nlayers) return TP_ERROR_INVALID_ARGUMENT;
+    if (face < 0 || face >= img->num_faces) return TP_ERROR_INVALID_ARGUMENT;
     w = img->levels[level].width;
     h = img->levels[level].height;
     if (!w || !h) return TP_ERROR_INVALID_ARGUMENT;
-    /* w*h*4 is computed in 64 bits first: on a 32-bit size_t the RGBA8 surface
-     * for a large level wraps, which would let the out_size check pass. */
-    if ((uint64_t)w * (uint64_t)h * 4u > (uint64_t)(size_t)-1)
+    /* The surface size is computed in 64 bits first: on a 32-bit size_t it
+     * wraps for a large level, which would let the out_size check pass. */
+    if ((uint64_t)w * (uint64_t)h * (uint64_t)texel_bytes > (uint64_t)(size_t)-1)
         return TP_ERROR_UNSUPPORTED;
-    need = (size_t)w * (size_t)h * 4u;
-    if (out_size < need) return TP_ERROR_INVALID_ARGUMENT;
-    blocks = img->levels[level].data;
+    if (out_size < (size_t)w * (size_t)h * texel_bytes)
+        return TP_ERROR_INVALID_ARGUMENT;
+
+    /* A level holds its slices in KTX2 order (layer, face), each one a tightly
+     * packed block image of the level's dimensions. */
+    img_bytes = (size_t)(((uint64_t)w + (uint64_t)img->block_w - 1u) /
+                         (uint64_t)img->block_w) *
+                (size_t)(((uint64_t)h + (uint64_t)img->block_h - 1u) /
+                         (uint64_t)img->block_h) *
+                (size_t)img->block_bytes;
+    slice = ((size_t)layer * (size_t)img->num_faces + (size_t)face) * img_bytes;
+    /* The reader's level-size check covers all slices, but a hand-built
+     * tp_ktx2_image (or a level whose declared size we merely lower-bounded)
+     * could still come up short -- decoders read img_bytes without a length. */
+    if (img->levels[level].size < slice + img_bytes)
+        return TP_ERROR_INVALID_ARGUMENT;
+    *out_blocks = img->levels[level].data + slice;
+    *out_w = w;
+    *out_h = h;
+    return TP_SUCCESS;
+}
+
+tp_result tp_ktx2_decode_level_rgbaf(const tp_ktx2_image *img, int level,
+                                     float *out_rgba, size_t out_size) {
+    return tp_ktx2_decode_slice_rgbaf(img, level, 0, 0, out_rgba, out_size);
+}
+
+tp_result tp_ktx2_decode_slice_rgbaf(const tp_ktx2_image *img, int level,
+                                     int layer, int face, float *out_rgba,
+                                     size_t out_size) {
+    uint32_t w, h;
+    const uint8_t *blocks;
+    tp_result r;
+    if (!img || !out_rgba) return TP_ERROR_INVALID_ARGUMENT;
+    r = tp_ktx2_slice(img, level, layer, face, 4u * sizeof(float), out_size,
+                      &blocks, &w, &h);
+    if (!TP_OK(r)) return r;
+    if (img->is_uni) return TP_ERROR_UNSUPPORTED;
+    switch (img->codec) {
+    case TP_CODEC_BC6H:
+        return tp_from_tc(tc_bc6h_decompress_rgbaf(blocks, w, h, img->is_signed,
+                                                   (size_t)w * 4u * sizeof(float),
+                                                   out_rgba, out_size));
+    case TP_CODEC_ASTC_HDR:
+        return tp_from_tc(tc_astc_hdr_decompress_rgbaf(
+            blocks, w, h, (uint32_t)img->block_w, (uint32_t)img->block_h,
+            (size_t)w * 4u * sizeof(float), out_rgba, out_size));
+    default:
+        /* The LDR codecs stay on the RGBA8 path rather than being widened. */
+        return TP_ERROR_UNSUPPORTED;
+    }
+}
+
+tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
+                                     uint8_t *out_rgba, size_t out_size) {
+    return tp_ktx2_decode_slice_rgba8(img, level, 0, 0, out_rgba, out_size);
+}
+
+tp_result tp_ktx2_decode_slice_rgba8(const tp_ktx2_image *img, int level,
+                                     int layer, int face, uint8_t *out_rgba,
+                                     size_t out_size) {
+    uint32_t w, h;
+    const uint8_t *blocks;
+    tp_result r;
+    if (!img || !out_rgba) return TP_ERROR_INVALID_ARGUMENT;
+    r = tp_ktx2_slice(img, level, layer, face, 4u, out_size, &blocks, &w, &h);
+    if (!TP_OK(r)) return r;
 
     if (img->is_uni)
         return tp_from_tc(tc_uni_decompress_rgba8(blocks, w, h, (size_t)w * 4u,
@@ -492,13 +606,33 @@ tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
     case TP_CODEC_BC7:
         return tp_from_tc(tc_bc7_decompress_rgba8(blocks, w, h, (size_t)w * 4u,
                                                   out_rgba, out_size));
+    case TP_CODEC_BC1:
+        return tp_from_tc(tc_bc1_decompress_rgba8(blocks, w, h, (size_t)w * 4u,
+                                                  out_rgba, out_size));
+    case TP_CODEC_BC3:
+        return tp_from_tc(tc_bc3_decompress_rgba8(blocks, w, h, (size_t)w * 4u,
+                                                  out_rgba, out_size));
+    case TP_CODEC_BC5:
+        return tp_from_tc(tc_bc5_decompress_rgba8(blocks, w, h, img->is_signed,
+                                                  (size_t)w * 4u, out_rgba,
+                                                  out_size));
+    case TP_CODEC_ETC2_RGB:
+    case TP_CODEC_ETC2_RGBA:
+        return tp_from_tc(tc_etc2_decompress_rgba8(
+            blocks, w, h, img->codec == TP_CODEC_ETC2_RGBA, (size_t)w * 4u,
+            out_rgba, out_size));
+    case TP_CODEC_EAC_R11:
+    case TP_CODEC_EAC_RG11:
+        return tp_from_tc(tc_eac_decompress_rgba8(
+            blocks, w, h, img->codec == TP_CODEC_EAC_RG11, (size_t)w * 4u,
+            out_rgba, out_size));
     case TP_CODEC_ASTC:
         return tp_from_tc(tc_astc_decompress_rgba8(
             blocks, w, h, (uint32_t)img->block_w, (uint32_t)img->block_h,
             out_rgba, out_size));
     default:
-        /* BC1/3/5/6H, ETC2/EAC: no library decoder — upload blocks directly or
-         * transcode a uni source instead. */
+        /* BC6H is HDR: decode it with tp_ktx2_decode_slice_rgbaf instead.
+         * ASTC HDR has no decoder yet. */
         return TP_ERROR_UNSUPPORTED;
     }
 }
