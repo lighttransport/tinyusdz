@@ -566,14 +566,9 @@ class USDAReader::Impl {
           _stage.metas().comment = metas.comment;
 
           if (metas.subLayers.size()) {
-            // TODO subLayer offset.
-            std::vector<SubLayer> sublayers;
-            for (size_t i = 0; i < metas.subLayers.size(); i++) {
-              SubLayer sublayer;
-              sublayer.assetPath = metas.subLayers[i];
-              sublayers.push_back(sublayer);
-            }
-            _stage.metas().subLayers = sublayers;
+            // subLayers items carry an optional LayerOffset (parsed by the
+            // custom subLayers loop in ascii-parser.cc).
+            _stage.metas().subLayers = metas.subLayers;
           }
 
           _stage.metas().defaultPrim = metas.defaultPrim;

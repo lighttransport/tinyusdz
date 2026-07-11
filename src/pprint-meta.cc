@@ -55,11 +55,12 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
     return ofs;
   }
 
-  // TODO: Do not print scale when it is 1.0
-  ofs << "(";
+  // Print in pxr USDA form: ` (offset = X; scale = Y)`
+  // (space before paren, `;` separator).
+  ofs << " (";
   if (print_offset && print_scale) {
     ofs << "offset = " << tinyusdz::dtos(v._offset)
-        << ", scale = " << tinyusdz::dtos(v._scale);
+        << "; scale = " << tinyusdz::dtos(v._scale);
   } else if (print_offset) {
     ofs << "offset = " << tinyusdz::dtos(v._offset);
   } else {  // print_scale

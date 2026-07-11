@@ -665,8 +665,10 @@ static bool parse_quoted_string_literal(const char **p, const char *end,
     const char c = **p;
     if (c == '\n' || c == '\r') return false;
 
-    if (unescape_regular && c == '\\' && (*p + 1) < end &&
-        ((*p)[1] == '\'' || (*p)[1] == '"')) {
+    // Consume the escape pair atomically: \" and \' must not terminate
+    // the literal, and the second char of \\ must not arm a fresh escape
+    // (`"a\\"` is the token `a\`, not an unterminated literal).
+    if (unescape_regular && c == '\\' && (*p + 1) < end) {
       *p += 2;
       continue;
     }
@@ -736,15 +738,30 @@ static bool parse_token_literal(const char **p, const char *end,
   }
 
   const char *content_start = *p;
+  bool saw_escape = false;
   while (*p < end) {
     if (size_t(*p - content_start) > kMaxStringLiteralLen) return false;
 
     const char c = **p;
     if (c == '\n' || c == '\r') return false;
 
+    // Escape pair (\" \' \\ \t ...): consume atomically so an escaped
+    // quote does not terminate the token literal. Previously this loop had
+    // NO escape handling and `token[] a = ["mix\"match"]` failed to parse.
+    if (c == '\\' && (*p + 1) < end) {
+      saw_escape = true;
+      *p += 2;
+      continue;
+    }
+
     if (c == quote) {
-      out->start = content_start;
-      out->end = *p;
+      if (saw_escape) {
+        assign_unescaped_control_range(content_start, *p, &out->unescaped);
+        out->use_unescaped = true;
+      } else {
+        out->start = content_start;
+        out->end = *p;
+      }
       (*p)++;
       return true;
     }

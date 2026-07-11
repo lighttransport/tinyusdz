@@ -1763,7 +1763,11 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
     bool sourceColorSpaceSet = false;
     if (inferColorSpaceFailed || !has_file || !texture.file.metas().has_colorSpace()) {
-      if (texture.sourceColorSpace.authored()) {
+      // NOTE: Apply `inputs:sourceColorSpace` resolution even when the
+      // attribute is not authored: its fallback value is `auto`
+      // (UsdPreviewSurface spec), which must resolve from the texture's
+      // bit depth/channel count instead of assuming sRGB.
+      {
         UsdUVTexture::SourceColorSpace cs;
         std::string source_color_space_err;
         if (ResolveSourceColorSpace(env.stage, texture.sourceColorSpace,
