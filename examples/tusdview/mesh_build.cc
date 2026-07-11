@@ -958,6 +958,39 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
   EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed);
 }
 
+}  // namespace  (the texture post-passes below are shared with the --next loader)
+
+// GPU block-compression pass over already-decoded DrawScene textures. Split out
+// of ApplyTextureRuntimeOptions so the `--next` loader — which does its own size
+// cap / byte budget inside its texture decoder and must not re-run those passes —
+// can still honor `--texture-compress`. Declared in mesh_build.hh, so these three
+// live outside the anonymous namespace (external linkage).
+void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
+  if (!out || opt.compression == TextureCompressionMode::Off) return;
+  size_t n = 0, raw = 0, comp = 0;
+  for (DrawTextureCPU& tex : out->textures) {
+    if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
+    tex.requestedCompressed = true;
+    CompressTexture(&tex, opt.compression, opt.caps);
+    if (!tex.compressed.data.empty()) {
+      ++n;
+      raw += tex.image.data.size();
+      comp += tex.compressed.data.size();
+    }
+  }
+  if (n) {
+    std::fprintf(stderr,
+                 "[tusdview] texture-compress: %zu texture(s) -> fmt %d, "
+                 "%.1f MB -> %.1f MB (%.1fx)\n",
+                 n, static_cast<int>(out->textures.empty()
+                                         ? DrawCompressedFormat::None
+                                         : out->textures[0].compressed.format),
+                 double(raw) / (1024.0 * 1024.0),
+                 double(comp) / (1024.0 * 1024.0),
+                 comp ? double(raw) / double(comp) : 0.0);
+  }
+}
+
 void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out) {
   if (!out) return;
   if (opt.maxTextureSize > 0) {
@@ -1014,13 +1047,7 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
     }
   }
 
-  if (opt.compression != TextureCompressionMode::Off) {
-    for (DrawTextureCPU& tex : out->textures) {
-      if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
-      tex.requestedCompressed = true;
-      CompressTexture(&tex, opt.compression, opt.caps);
-    }
-  }
+  ApplyTextureCompression(opt, out);
 }
 
 // Classify texture usage from the built materials, then (with --texture-mips)
@@ -1124,6 +1151,8 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
     }
   }
 }
+
+namespace {  // (resume the file-local helpers)
 
 // --- Shared per-element builders (used by both BuildDrawScene and the
 // streaming path so the two produce identical output) ---------------------
