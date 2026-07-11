@@ -284,6 +284,57 @@ void TestSchemaFallbackAndValueClips() {
   assert(!strict_missing_loader.success &&
          strict_missing_loader.error.find("clip_stage_loader") !=
              std::string::npos);
+
+  // Manifest gating + interpolateMissingClipValues: clipB has no opinion
+  // for x, so the value comes from the neighboring clipA; y is NOT
+  // declared in the manifest so it must not resolve through clips.
+  LoadResult manifest_result = Parse(
+      "def Xform \"Root\" (\n"
+      "  clips = {\n"
+      "    dictionary default = {\n"
+      "      double2[] active = [(0, 0), (10, 1)]\n"
+      "      asset[] assetPaths = [@clipA.usda@, @clipB.usda@]\n"
+      "      string primPath = \"/Root\"\n"
+      "      asset manifestAssetPath = @manifest.usda@\n"
+      "      bool interpolateMissingClipValues = true\n"
+      "      double2[] times = [(0, 0), (20, 20)]\n"
+      "    }\n"
+      "  }\n"
+      ") { float x\n  float y\n }\n");
+  assert(manifest_result.success);
+  AttributeEval m_eval(&manifest_result.stage);
+  EvalOptions m_opts;
+  m_opts.time = 12.0;  // clipB active
+  m_opts.clip_stage_loader =
+      [](const std::string& asset, Stage* out, std::string*, std::string*) {
+        const char* text = nullptr;
+        if (asset == "clipA.usda") {
+          text = "def Xform \"Root\" {\n"
+                 "  float x.timeSamples = { 0: 7, 20: 7 }\n"
+                 "  float y.timeSamples = { 0: 9, 20: 9 }\n"
+                 "}\n";
+        } else if (asset == "clipB.usda") {
+          text = "def Xform \"Root\" { }\n";  // no opinion for x
+        } else if (asset == "manifest.usda") {
+          text = "def Xform \"Root\" { float x }\n";  // declares x only
+        } else {
+          return false;
+        }
+        LoadResult clip = Parse(text);
+        if (!clip.success || !out) return false;
+        *out = std::move(clip.stage);
+        return true;
+      };
+  EvalResult from_neighbor = m_eval.EvalWith(
+      manifest_result.stage.GetPrimAtPath("/Root"), "x", m_opts);
+  assert(from_neighbor.success && from_neighbor.source_asset == "clipA.usda");
+  assert(from_neighbor.value.as_float() &&
+         *from_neighbor.value.as_float() == 7.0f);
+  // y is not in the manifest: no clip resolution (falls back to no value).
+  EvalResult gated = m_eval.EvalWith(
+      manifest_result.stage.GetPrimAtPath("/Root"), "y", m_opts);
+  assert(!(gated.success && gated.source_asset == "clipA.usda") &&
+         "manifest must gate undeclared properties out of clip resolution");
 }
 
 }  // namespace
