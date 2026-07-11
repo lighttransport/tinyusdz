@@ -863,11 +863,22 @@ bool CrateReader::Impl::BuildStage() {
           }
           continue;
         }
-        if (field.first == "variantSets") {
-          // Writer stores the variant-set names only; reconstruct name entries.
+        if (field.first == "variantSets" ||
+            field.first == "variantSetNames") {
+          // The AUTHORED `variantSets` declaration (`variantSetNames` is pxr's
+          // StringListOp form). Reconstruct name-only entries; the selection /
+          // holder content is grafted on later. Strip any list-op markers a
+          // StringListOp carries so a bare set name survives. Skip sets already
+          // present (e.g. from holder specs) to avoid duplicates.
           std::vector<std::string> names;
           append_token_list(field.second, names, "variantSets");
           for (auto& n : names) {
+            if (!n.empty() && n[0] == '\x01') continue;  // list-op marker
+            bool have = false;
+            for (const VariantSetData& evs : ps->meta().variantSets()) {
+              if (evs.name == n) { have = true; break; }
+            }
+            if (have) continue;
             VariantSetData vsd;
             vsd.name = std::move(n);
             ps->meta().variantSets().push_back(std::move(vsd));
@@ -1057,9 +1068,15 @@ bool CrateReader::Impl::BuildStage() {
       }
       if (sel != variant_sel.end()) {
         for (const auto& kv : sel->second) {
-          VariantSetData& vsd = sets[kv.first];
-          vsd.name = kv.first;
-          vsd.selected = kv.second;
+          // Only stamp the selection onto a variant set that is actually
+          // DEFINED here (present in variant_opts / an existing set). A
+          // dangling selection — `variants = {set=sel}` with no local
+          // variantSet definition (the variant set lives in a referenced
+          // layer) — must NOT synthesize a variantSets declaration or an empty
+          // `variantSet` block; it is recorded only in variantSelections()
+          // below. pxr emits neither for such a prim.
+          auto it = sets.find(kv.first);
+          if (it != sets.end()) it->second.selected = kv.second;
         }
       }
       for (auto& kv : sets) {

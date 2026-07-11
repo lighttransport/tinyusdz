@@ -706,6 +706,24 @@ void TestMetadataAndListOpFidelity() {
       "def \"P\" ( prepend apiSchemas = [\"SkelBindingAPI\"] ) {}\n");
   assert(prep.find("prepend apiSchemas") != std::string::npos &&
          "authored prepend apiSchemas must stay prepend through USDC");
+
+  // Variant declaration vs dangling selection through USDC:
+  // - a prim that only SELECTS a variant (no `prepend variantSets`) must NOT
+  //   gain a synthesized variantSets declaration / empty variantSet block;
+  // - a prim that DECLARES `prepend variantSets` must keep it.
+  const std::string dangling = roundtrip_api(
+      "def Xform \"H\" ( variants = { string v = \"a\" } ) {}\n");
+  assert(dangling.find("variants = {") != std::string::npos &&
+         "dangling variant selection must survive USDC");
+  assert(dangling.find("variantSets") == std::string::npos &&
+         "a dangling selection must not synthesize a variantSets declaration");
+  const std::string declared = roundtrip_api(
+      "def Xform \"H\" (\n"
+      "  variants = { string v = \"a\" }\n"
+      "  prepend variantSets = \"v\"\n"
+      ") {}\n");
+  assert(declared.find("prepend variantSets") != std::string::npos &&
+         "authored prepend variantSets must survive USDC");
 }
 
 }  // namespace

@@ -353,20 +353,38 @@
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
           fields_.push_back(vf);
         }
-        // variantSetChildren: the set names on this prim (so pxr enumerates the
-        // sets). Derived from the variant holder prims present in the layer.
+        // variantSetChildren: sets that have CONTENT (holder prims present in
+        // the layer) — pxr enumerates the child specs from it.
         auto oit = variant_names.find(prim.path().str());
-        if (oit != variant_names.end() && !oit->second.empty()) {
-          std::vector<std::string> set_names;
-          set_names.reserve(oit->second.size());
-          for (const auto& kv : oit->second) set_names.push_back(kv.first);
+        std::vector<std::string> content_sets;
+        if (oit != variant_names.end()) {
+          content_sets.reserve(oit->second.size());
+          for (const auto& kv : oit->second) content_sets.push_back(kv.first);
+        }
+        if (!content_sets.empty()) {
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-          fields_.push_back(MakeTokenVectorField("variantSetChildren", set_names));
-          // variantSetNames (StringListOp): required by pxr's Pcp to create
-          // the variant arcs — without it usdcat opens the layer but a
-          // flatten/compose drops all variant content.
+          fields_.push_back(
+              MakeTokenVectorField("variantSetChildren", content_sets));
+        }
+        // variantSetNames (StringListOp): the AUTHORED `variantSets`
+        // declaration — the union of content sets and sets declared without
+        // local content (meta().variantSets() carries the parsed
+        // `prepend variantSets` names). Emitting it for declaration-only prims
+        // keeps `prepend variantSets` through a crate round trip AND is what
+        // pxr's Pcp needs to create the variant arcs. A prim that only SELECTS
+        // a variant (`variants = {...}` with no declaration) has an empty
+        // variantSets(), so nothing is emitted here — the reader then treats it
+        // as a dangling selection rather than synthesizing a phantom set.
+        std::vector<std::string> decl_sets = content_sets;
+        for (const auto& vs : prim.meta().variantSets()) {
+          if (std::find(decl_sets.begin(), decl_sets.end(), vs.name) ==
+              decl_sets.end()) {
+            decl_sets.push_back(vs.name);
+          }
+        }
+        if (!decl_sets.empty()) {
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-          fields_.push_back(MakeStringListOpField("variantSetNames", set_names));
+          fields_.push_back(MakeStringListOpField("variantSetNames", decl_sets));
         }
       }
 
