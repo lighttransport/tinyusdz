@@ -4,6 +4,7 @@
 //
 // Material and texture conversion routines split from render-data.cc
 //
+#include <cctype>
 #include <chrono>
 #include <numeric>
 #include <set>
@@ -15,6 +16,11 @@
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+// KTX2 reader for the keep-compressed texture path (RenderSceneConverterConfig::
+// keep_compressed_textures). Pulls in texcomp.h too.
+#include "texpipe.h"
+#endif
 #include "io-util.hh"
 #include "linear-algebra.hh"
 #include "math-util.inc"
@@ -1969,6 +1975,80 @@ bool RenderSceneConverter::GetOrCreateDefaultMaterial(
 //
 // - UsdUVTexture -> UsdPrimvarReader
 // - UsdUVTexture -> UsdTransform2d -> UsdPrimvarReader
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+namespace {
+
+// Case-insensitive ".ktx2" suffix test.
+static bool EndsWithKtx2(const std::string &s) {
+  if (s.size() < 5) return false;
+  std::string ext = s.substr(s.size() - 5);
+  for (char &c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+  return ext == ".ktx2";
+}
+
+// Map a parsed KTX2 codec (or the uni intermediate) to a TextureBlockFormat.
+static TextureBlockFormat Ktx2ToBlockFormat(const tp_ktx2_image &k) {
+  if (k.is_uni) return TextureBlockFormat::UNI;
+  switch (k.codec) {
+    case TP_CODEC_BC1: return TextureBlockFormat::BC1;
+    case TP_CODEC_BC3: return TextureBlockFormat::BC3;
+    case TP_CODEC_BC5: return TextureBlockFormat::BC5;
+    case TP_CODEC_BC6H: return TextureBlockFormat::BC6H;
+    case TP_CODEC_BC7: return TextureBlockFormat::BC7;
+    case TP_CODEC_ETC2_RGB: return TextureBlockFormat::ETC2_RGB;
+    case TP_CODEC_ETC2_RGBA: return TextureBlockFormat::ETC2_RGBA;
+    case TP_CODEC_EAC_R11: return TextureBlockFormat::EAC_R11;
+    case TP_CODEC_EAC_RG11: return TextureBlockFormat::EAC_RG11;
+    case TP_CODEC_ASTC: return TextureBlockFormat::ASTC_4x4;
+    default: return TextureBlockFormat::None;
+  }
+}
+
+// Load the level-0 compressed block payload of a `.ktx2` asset without decoding.
+// On success fills `texImage` (blockFormat / block dims / width / height /
+// channels) and `out_bytes` (the raw blocks), and returns true. Returns false
+// (leaving blockFormat == None) so the caller falls back to the normal decode.
+static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
+                                     const value::AssetPath &assetPath,
+                                     TextureImage *texImage,
+                                     std::vector<uint8_t> *out_bytes,
+                                     std::string *warn, std::string *err) {
+  const std::string resolved = resolver.resolve(assetPath.GetAssetPath());
+  if (resolved.empty()) {
+    if (err) (*err) += "keep-compressed: asset did not resolve.\n";
+    return false;
+  }
+  Asset asset;
+  if (!resolver.open_asset(resolved, assetPath.GetAssetPath(), &asset, warn, err))
+    return false;
+  if (asset.size() > security_policy::GetMaxAssetReadBytes()) {
+    if (err) (*err) += "keep-compressed: asset exceeds max read bytes.\n";
+    return false;
+  }
+  tp_ktx2_image k;
+  if (!TP_OK(tp_ktx2_read(asset.data(), asset.size(), &k))) {
+    if (err) (*err) += "keep-compressed: tp_ktx2_read failed.\n";
+    return false;
+  }
+  if (k.num_faces != 1 || k.num_layers > 1) return false;  // 2D non-array only
+  const TextureBlockFormat bf = Ktx2ToBlockFormat(k);
+  if (bf == TextureBlockFormat::None) return false;
+  const tp_ktx2_level &l0 = k.levels[0];
+  out_bytes->assign(l0.data, l0.data + l0.size);
+  texImage->blockFormat = bf;
+  texImage->blockWidth = k.block_w;
+  texImage->blockHeight = k.block_h;
+  texImage->width = int(k.width);
+  texImage->height = int(k.height);
+  texImage->channels = 4;
+  texImage->assetTexelComponentType = ComponentType::UInt8;
+  texImage->texelComponentType = ComponentType::UInt8;
+  return true;
+}
+
+}  // namespace
+#endif  // TINYUSDZ_WITH_TEXTOOLS
+
 bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                                             const Path &tex_abs_path,
                                             const AssetInfo &assetInfo,
@@ -2232,11 +2312,30 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           tex_loaded = false;
         }
       } else {
-        tex_loaded = tex_loader_fun(
-            assetPath, assetInfo, env.asset_resolver, &texImage,
-            &assetImageBuffer.data,
-            env.material_config.texture_image_loader_function_userdata, &warn,
-            &err);
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+        // Keep-compressed KTX2 fast path: store the GPU block payload verbatim
+        // (blockFormat set) instead of decoding to RGBA8. Falls through to the
+        // normal decode when disabled, when the asset is not a .ktx2, or on any
+        // parse failure.
+        if (env.scene_config.keep_compressed_textures &&
+            EndsWithKtx2(assetPath.GetAssetPath())) {
+          std::string kc_warn;
+          if (LoadKTX2CompressedBlocks(env.asset_resolver, assetPath, &texImage,
+                                       &assetImageBuffer.data, &kc_warn, &err)) {
+            tex_loaded = true;
+          } else if (kc_warn.size()) {
+            PushWarn(kc_warn);
+          }
+        }
+        if (texImage.blockFormat == TextureBlockFormat::None)
+#endif
+        {
+          tex_loaded = tex_loader_fun(
+              assetPath, assetInfo, env.asset_resolver, &texImage,
+              &assetImageBuffer.data,
+              env.material_config.texture_image_loader_function_userdata, &warn,
+              &err);
+        }
       }
 
       if (warn.size()) {
@@ -2350,6 +2449,15 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     if (tex_loaded) {
       BufferData imageBuffer;
 
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+      // Keep-compressed: the buffer holds GPU block bytes, not texels. Skip all
+      // color-space linearization / bit-depth widening and pass the blocks
+      // through unchanged.
+      if (texImage.blockFormat != TextureBlockFormat::None) {
+        imageBuffer = std::move(assetImageBuffer);
+        texImage.colorSpace = texImage.usdColorSpace;
+      } else
+#endif
       // Linearlization and widen texel bit depth if required.
       if (env.material_config.linearize_color_space) {
         DCOUT("linearlize colorspace.");

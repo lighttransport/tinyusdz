@@ -1016,6 +1016,7 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
 
   if (opt.compression != TextureCompressionMode::Off) {
     for (DrawTextureCPU& tex : out->textures) {
+      if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
       tex.requestedCompressed = true;
       CompressTexture(&tex, opt.compression, opt.caps);
     }
@@ -1083,6 +1084,10 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
     return true;
   };
   for (DrawTextureCPU& tex : out->textures) {
+    // Kept-compressed KTX2 passthrough: the compressed payload is final and
+    // `image` is empty, so there is nothing to build a mip chain from (the KTX2
+    // level 0 is uploaded directly; multi-level KTX2 mips are a follow-up).
+    if (tex.compressedFinal) continue;
     TexUsage usage;
     usage.srgb = tex.srgb;
     usage.normalMap = tex.isNormalMap;
@@ -1125,6 +1130,75 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
 
 // Build the renderable textures (dedup by texture_image_id) and a mapping
 // drawTexMap[uvTextureIndex] -> DrawScene texture index (-1 if skipped).
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+// Map a tydra block format to the tusdview draw format (UNI is handled via the
+// srcIsUni flag, not this map). Returns None for formats with no draw mapping.
+static DrawCompressedFormat MapTydraBlockFormat(tydra::TextureBlockFormat f) {
+  switch (f) {
+    case tydra::TextureBlockFormat::BC1: return DrawCompressedFormat::BC1;
+    case tydra::TextureBlockFormat::BC3: return DrawCompressedFormat::BC3;
+    case tydra::TextureBlockFormat::BC5: return DrawCompressedFormat::BC5;
+    case tydra::TextureBlockFormat::BC6H: return DrawCompressedFormat::BC6H;
+    case tydra::TextureBlockFormat::BC7: return DrawCompressedFormat::BC7;
+    case tydra::TextureBlockFormat::ETC2_RGB: return DrawCompressedFormat::ETC2_RGB;
+    case tydra::TextureBlockFormat::ETC2_RGBA: return DrawCompressedFormat::ETC2_RGBA;
+    case tydra::TextureBlockFormat::ASTC_4x4: return DrawCompressedFormat::ASTC_4x4;
+    case tydra::TextureBlockFormat::UNI: return DrawCompressedFormat::ASTC_4x4;  // uni ~ astc4x4
+    default: return DrawCompressedFormat::None;  // EAC_R11/RG11, None
+  }
+}
+
+// Kept-compressed KTX2 passthrough: a tydra image whose blockFormat != None
+// carries GPU block bytes. Adapt them to the device (upload as-is / transcode
+// uni / decode fallback) instead of decoding-then-re-encoding. Only engages when
+// no size cap / budget resize is requested (those need decoded texels). Returns
+// true if the texture was populated (compressed or RGBA fallback).
+static bool TryKeepCompressedTexture(const tydra::RenderScene& rs,
+                                     const tydra::TextureImage& img,
+                                     const TextureRuntimeOptions& opt,
+                                     DrawTextureCPU* tex) {
+  if (img.blockFormat == tydra::TextureBlockFormat::None) return false;
+  if (opt.maxTextureSize > 0 || opt.textureBudgetMB > 0) return false;
+  if (img.buffer_id < 0 ||
+      static_cast<size_t>(img.buffer_id) >= rs.buffers.size())
+    return false;
+  if (img.width <= 0 || img.height <= 0) return false;
+  const std::vector<uint8_t>& buf =
+      rs.buffers[static_cast<size_t>(img.buffer_id)].data;
+  if (buf.empty()) return false;
+
+  const bool isUni = img.blockFormat == tydra::TextureBlockFormat::UNI;
+  const DrawCompressedFormat srcFmt = MapTydraBlockFormat(img.blockFormat);
+  DrawCompressedImageCPU comp;
+  light3d::Image rgba;
+  if (!TexToolsAdaptCompressed(buf.data(), buf.size(), isUni, srcFmt,
+                               static_cast<uint32_t>(img.width),
+                               static_cast<uint32_t>(img.height), opt.caps,
+                               &comp, &rgba)) {
+    return false;
+  }
+  if (!comp.data.empty()) {
+    std::fprintf(stderr,
+                 "[tusdview] kept-compressed KTX2: %s (block fmt %d) -> draw fmt "
+                 "%d, %dx%d, %zu bytes (no re-encode)\n",
+                 isUni ? "uni" : "block", static_cast<int>(img.blockFormat),
+                 static_cast<int>(comp.format), comp.width, comp.height,
+                 comp.data.size());
+    tex->compressed = std::move(comp);
+    tex->requestedCompressed = true;
+    tex->compressedFinal = true;
+    // Metadata only; the compressed payload is uploaded directly.
+    tex->image.width = img.width;
+    tex->image.height = img.height;
+    tex->image.channels = 4;
+    tex->image.data.clear();
+  } else {
+    tex->image = std::move(rgba);  // uncompressed fallback
+  }
+  return true;
+}
+#endif  // TUSDVIEW_WITH_TEXTOOLS
+
 void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
                        std::vector<int>* drawTexMap,
                        const TextureRuntimeOptions& textureOptions) {
@@ -1214,7 +1288,13 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
     }
     const tydra::TextureImage& img = rs.images[static_cast<size_t>(imgId)];
     DrawTextureCPU tex;
-    if (!DecodeToRGBA8(rs, img, &tex.image)) {
+    bool built = false;
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+    // Kept-compressed KTX2 passthrough (blockFormat != None): upload/transcode
+    // the GPU blocks directly instead of decoding + re-encoding.
+    built = TryKeepCompressedTexture(rs, img, textureOptions, &tex);
+#endif
+    if (!built && !DecodeToRGBA8(rs, img, &tex.image)) {
       out->skipped.push_back("texture '" + uv.prim_name +
                              "': undecoded/unsupported image");
       continue;
