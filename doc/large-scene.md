@@ -839,6 +839,54 @@ raster LOD for *non-instanced* meshes (the island `--raster-lod` frame is
 bound by 55 M non-instanced drawn tris — the instanced side is already
 solved).
 
+### 2.9 Host-memory matrix: weld ratio + texture cap (`--next`, 2026-07-11)
+
+Companion to §2.8, measuring a different thing: these are **host peak RSS**
+(`/usr/bin/time -v`, so process startup is included), not device VRAM. They
+exist to catch two `--next` regressions no unit test can see — a weld key that
+over-splits (the memory win silently evaporates) and a texture cap that stops
+bounding decode. Xvfb + NVIDIA RTX 5060 Ti.
+
+Deferred-payload profiles (`examples/tusdview/tests/run-large-scene-profiles.sh`,
+all three PASS). Each resolves `backend=vk --next=on --raster-lod=on --rt-lod=on
+--max-gpu-mem=8.0` — the 8 GiB is `ComputeResourceBudget`'s half-of-16-GiB, not
+a hardcode:
+
+| Scene | Peak RSS | Prior baseline | Wall |
+|---|---|---|---|
+| Island | 0.45 GB | 0.49 GB | 2.9 s |
+| Caldera | 2.06 GB | 2.18 GB | 6.5 s |
+| ALab | 0.52 GB | 0.55 GB | 3.0 s |
+
+**These profiles defer payloads and therefore decode 0 textures** — they do not
+exercise the texture cap, and their weld ratios cover only the proxy geometry.
+Add `--load-payloads` for the runs that do:
+
+| Scene | Weld ratio | Textures | Wall | Peak RSS |
+|---|---|---|---|---|
+| Island | **1.04x** (21 159 184 verts / 20 437 898 points) | 0 | 72 s | 18.7 GB |
+| Caldera | **1.48x** (31 905 889 / 21 547 797) | 0 | 32 s | 10.8 GB |
+| ALab | **1.29x** (6 726 046 / 5 193 895) | 343, 1372 MB decoded (budget 1920 MB, **0 downscaled**) | 17 s | 5.3 GB |
+
+The weld ratio is the number to watch: a ratio drifting toward the
+corners-per-point count (~4-6x) means the weld key is too strict and the
+deduplication is gone. Island composes 40.9 M instances / 11.7 G effective tris
+in this configuration and still fits the 30 GiB host headroom.
+
+```bash
+CALDERA=/mnt/disk1/data/caldera/caldera.usda \
+ISLAND=/mnt/disk1/data/island/usd/island.usda \
+ALAB=/mnt/disk1/data/alab/_merged_ALab/entry.usda \
+  bash examples/tusdview/tests/run-large-scene-profiles.sh
+
+# The full-payload run (weld + texture cap), per scene:
+/usr/bin/time -v ./build/tusdview --headless --large-scene-profile alab \
+  --load-payloads --frames 1 --screenshot alab.ppm \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+# watch: 'next: weld N vertices from M points (Kx)'
+#        'next: textures N, decoded X MB (cap ..., budget ..., K downscaled)'
+```
+
 ---
 
 ## 3. Roadmap (remaining implementation)
