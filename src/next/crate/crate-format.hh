@@ -227,6 +227,11 @@ public:
   bool is_array() const { return (data_ >> 63) & 1; }
   bool is_inlined() const { return (data_ >> 62) & 1; }
   bool is_compressed() const { return (data_ >> 61) & 1; }
+  /// VtArrayEdit flag (crate >= 0.14). The type byte holds the ELEMENT type
+  /// and is_array() is false, so an unhandled array-edit rep looks like a
+  /// plain scalar whose payload points at the edit tuple — it must be
+  /// detected explicitly or it decodes to garbage.
+  bool is_array_edit() const { return (data_ >> 60) & 1; }
 
   /// Get type ID
   CrateTypeId type_id() const {

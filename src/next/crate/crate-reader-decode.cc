@@ -145,6 +145,11 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   if ((bits & kHasAppended) && !marked_run("\x01" "A")) return false;
   if ((bits & kHasDeleted) && !(mark ? marked_run("\x01" "D") : read_run())) return false;
   if ((bits & kHasOrdered) && !(mark ? marked_run("\x01" "O") : read_run())) return false;
+  // Explicit-clear (`inherits = None` / `rel r = None`): surface as the E
+  // marker so arc/relationship consumers record an authored empty edit.
+  if (with_markers && (bits & kIsExplicit) && out.empty()) {
+    out.push_back("\x01" "E");
+  }
   return true;
 }
 
@@ -239,10 +244,6 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
                 kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
                 kHasAppended = 0x40;
   const bool mark = !(bits & kIsExplicit) && !(bits & kHasExplicit);
-  if ((bits & kIsExplicit) && !(bits & kHasExplicit)) {
-    out.push_back("\x01" "E");  // explicit-clear (no items)
-    return true;
-  }
   auto marked_run = [&](const char* marker, bool keep) -> bool {
     if (mark && keep) out.push_back(marker);
     return read_run(keep);
@@ -253,6 +254,12 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
   if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
   if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;
   if ((bits & kHasOrdered) && !marked_run("\x01" "O", mark)) return false;
+  // Explicit-clear: IsExplicit with no items — either header 0x01 alone
+  // (pxr) or 0x03 with a zero-item run (next's own writer). Emit the E
+  // marker so BuildStage records an authored explicit-empty edit.
+  if ((bits & kIsExplicit) && out.empty()) {
+    out.push_back("\x01" "E");
+  }
   return true;
 }
 
@@ -316,10 +323,6 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
                 kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
                 kHasAppended = 0x40;
   const bool mark = !(bits & kIsExplicit) && !(bits & kHasExplicit);
-  if ((bits & kIsExplicit) && !(bits & kHasExplicit)) {
-    out.push_back("\x01" "E");  // explicit-clear (no items)
-    return true;
-  }
   auto marked_run = [&](const char* marker, bool keep) -> bool {
     if (mark && keep) out.push_back(marker);
     return read_run(keep);
@@ -330,6 +333,9 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
   if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
   if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;
   if ((bits & kHasOrdered) && !marked_run("\x01" "O", mark)) return false;
+  if ((bits & kIsExplicit) && out.empty()) {
+    out.push_back("\x01" "E");  // explicit-clear (0x01 alone or empty run)
+  }
   return true;
 }
 

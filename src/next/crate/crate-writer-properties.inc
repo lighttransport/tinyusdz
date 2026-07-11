@@ -101,8 +101,15 @@
       block.data = std::move(blob);
       return InternBlock(std::move(block));
     }
-    blob.push_back(0x03);  // IsExplicit | HasExplicitItems
-    put_items(arcs);
+    if (arcs.empty()) {
+      // Explicit-clear (`references = None`): pxr's form is IsExplicit with
+      // NO items sublist. Writing 0x03 + a zero-item run made the re-read
+      // look like a no-opinion listop and dropped the clear.
+      blob.push_back(0x01);  // IsExplicit only
+    } else {
+      blob.push_back(0x03);  // IsExplicit | HasExplicitItems
+      put_items(arcs);
+    }
     DataBlock block;
     block.type = TypeId::Invalid;
     block.data = std::move(blob);
@@ -196,8 +203,13 @@
       if (!del.empty()) put_run(del);
       if (!ord.empty()) put_run(ord);
     } else {
-      blob.push_back(0x03);  // IsExplicit | HasExplicitItems
-      put_run(strip(arcs));
+      std::vector<std::string> items = strip(arcs);
+      if (items.empty()) {
+        blob.push_back(0x01);  // explicit-clear: IsExplicit, no items (pxr form)
+      } else {
+        blob.push_back(0x03);  // IsExplicit | HasExplicitItems
+        put_run(items);
+      }
     }
     DataBlock block;
     block.type = TypeId::Invalid;
@@ -412,6 +424,7 @@
       tok_field("outputName", pm.outputName);
     if (pm.authored & PropMeta::kBindMaterialAs)
       tok_field("bindMaterialAs", pm.bindMaterialAs);
+    if (pm.authored & PropMeta::kKind) tok_field("kind", pm.kind);
     if (pm.authored & PropMeta::kDisplayName)
       str_field("displayName", pm.displayName);
     if (pm.authored & PropMeta::kDisplayGroup)
@@ -435,7 +448,14 @@
       flds.push_back(f);
     }
     if ((pm.authored & PropMeta::kAllowedTokens) && !pm.allowedTokens.empty()) {
-      flds.push_back(MakeTokenVectorField("allowedTokens", pm.allowedTokens));
+      // pxr's schema type is VtTokenArray (a Token rep with the array bit),
+      // NOT TokenVector — pxr eagerly unpacks a TokenVector to a held type
+      // its typed metadata APIs cannot extract, and even fails to re-read
+      // its own usda print of it.
+      CrateField f;
+      f.token_index.value = InternToken("allowedTokens");
+      f.value_rep = EncodeValue(Value::MakeTokenArray(pm.allowedTokens));
+      flds.push_back(f);
     }
     if (pm.authored & PropMeta::kCustomData) dict_field("customData", pm.customData);
     if (pm.authored & PropMeta::kAssetInfo) dict_field("assetInfo", pm.assetInfo);

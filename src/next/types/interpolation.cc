@@ -244,6 +244,16 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       break;
     }
 
+    case TypeId::TimeCode: {  // same 8-byte double storage; keep the type
+      const double* va = a.as_double();
+      const double* vb = b.as_double();
+      if (va && vb) {
+        const double r = LerpDouble(*va, *vb, t);
+        return Value::MakeFromRaw(TypeId::TimeCode, &r);
+      }
+      break;
+    }
+
     // Integer types - use held (can't interpolate meaningfully)
     case TypeId::Int:
     case TypeId::UInt:
