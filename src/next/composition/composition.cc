@@ -662,7 +662,12 @@ void Compositor::CopyLocalOpinions(
     target.meta().hidden = source.meta().hidden;
     target.meta().hidden_authored = true;
   }
-  if (source.meta().instanceable) target.meta().instanceable = true;
+  if ((source.meta().instanceable || source.meta().instanceable_authored) &&
+      !target.meta().instanceable_authored && !target.meta().instanceable) {
+    target.meta().instanceable = source.meta().instanceable;
+    target.meta().instanceable_authored =
+        source.meta().instanceable_authored || source.meta().instanceable;
+  }
   if (!source.meta().comment().empty() && target.meta().comment().empty()) {
     target.meta().comment() = source.meta().comment();
   }

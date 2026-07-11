@@ -28,6 +28,13 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Int2: return CrateTypeId::Vec2i;
     case TypeId::Int3: return CrateTypeId::Vec3i;
     case TypeId::Int4: return CrateTypeId::Vec4i;
+    // pxr's Sdf has no unsigned vector types; encode as the signed twin
+    // (same 32-bit lanes, bit-exact round-trip; the declared type name
+    // "uintN" restores the USDA-facing type). Previously these mapped to
+    // Invalid and the VALUE was silently dropped.
+    case TypeId::UInt2: return CrateTypeId::Vec2i;
+    case TypeId::UInt3: return CrateTypeId::Vec3i;
+    case TypeId::UInt4: return CrateTypeId::Vec4i;
     case TypeId::Float2: return CrateTypeId::Vec2f;
     case TypeId::Float3:
     case TypeId::Point3f:

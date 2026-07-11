@@ -472,6 +472,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       ParseResult result = ParseValue(*lexer_, TypeId::Bool);
       if (result.success && result.value.as_bool()) {
         prim->meta().instanceable = *result.value.as_bool();
+        prim->meta().instanceable_authored = true;
       }
     } else if (key == "apiSchemas") {
       std::vector<std::string> schemas;

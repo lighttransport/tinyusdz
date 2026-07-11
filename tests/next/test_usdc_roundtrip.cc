@@ -1762,6 +1762,81 @@ def Xform "Alpha"
   std::cout << "  deferred-gap crate roundtrips passed!\n\n";
 }
 
+
+// 2026-07 audit crate-writer cluster: instanceable=false, prim comment /
+// displayName as String reps, layer color management, uint2/3/4 values,
+// delete-apiSchemas header bit.
+void test_roundtrip_writer_audit_cluster() {
+  std::cout << "Testing crate-writer audit cluster roundtrip...\n";
+  Layer layer;
+  layer.meta().colorConfiguration = "./ocio/config.ocio";
+  layer.meta().colorManagementSystem = "ocio";
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Scope");
+  b.current()->meta().instanceable = false;
+  b.current()->meta().instanceable_authored = true;
+  b.current()->meta().comment() = "a comment";
+  b.current()->meta().displayName() = "Pretty P";
+  {
+    uint32_t v[3] = {1, 2, 4294967295u};
+    b.current()->add_property("ids", Value::MakeFromRaw(TypeId::UInt3, v), 0);
+    b.current()->set_property_type_name("ids", "uint3");
+  }
+  b.end_prim();
+  b.finalize();
+
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  CrateWriteResult wr = writer.WriteLayerToMemory(buf, layer);
+  assert(wr.success);
+
+  CrateReader reader;
+  CrateReadResult rr = reader.Read(buf.data(), buf.size());
+  assert(rr.success);
+  const Layer* rl = rr.stage.GetRootLayer();
+  assert(rl);
+  assert(rl->meta().colorConfiguration == "./ocio/config.ocio");
+  assert(rl->meta().colorManagementSystem == "ocio");
+  const PrimSpec* p = rl->prim_at_path("/P");
+  assert(p);
+  assert(!p->meta().instanceable);
+  assert(p->meta().instanceable_authored &&
+         "authored instanceable=false must survive the crate roundtrip");
+  assert(p->meta().comment() == "a comment");
+  assert(p->meta().displayName() == "Pretty P");
+  // uint3 previously encoded to CrateTypeId::Invalid and the value vanished.
+  const Value* ids = p->property_value("ids");
+  assert(ids && "uint3 value must survive the crate roundtrip");
+  const std::string* tn = p->property_type_name("ids");
+  assert(tn && *tn == "uint3");
+
+  // delete-apiSchemas: the writer used to emit the delete-qualified list
+  // with the PREPENDED header bit — the opinion came back inverted (the
+  // deleted schema re-applied). Now it round-trips as a deleted sublist,
+  // which the reader applies as an in-place removal (net: no schema).
+  {
+    Layer l2;
+    LayerBuilder b2(l2);
+    b2.begin_prim("Q", "Scope");
+    b2.current()->meta().apiSchemas().push_back("PhysicsRigidBodyAPI");
+    b2.current()->meta().apiSchemasQualifier() = "delete";
+    b2.end_prim();
+    b2.finalize();
+    std::vector<uint8_t> buf2;
+    CrateWriter w2;
+    assert(w2.WriteLayerToMemory(buf2, l2).success);
+    CrateReader r2;
+    CrateReadResult rr2 = r2.Read(buf2.data(), buf2.size());
+    assert(rr2.success);
+    const PrimSpec* q = rr2.stage.GetRootLayer()->prim_at_path("/Q");
+    assert(q);
+    assert(q->meta().apiSchemas().empty() &&
+           "deleted apiSchemas must not come back as applied");
+  }
+
+  std::cout << "  crate-writer audit cluster roundtrip passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
@@ -1772,6 +1847,7 @@ int main() {
     test_roundtrip_arc_listops();
     test_roundtrip_arc_metadata_dicts();
     test_roundtrip_custom_qualifier();
+    test_roundtrip_writer_audit_cluster();
     test_roundtrip_api_schemas();
     test_comprehensive_usdc_fixture();
     test_roundtrip_schema_types();

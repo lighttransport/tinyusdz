@@ -232,6 +232,7 @@ struct PrimSpecMeta {
   // authored active=false).
   bool active_authored = false;
   bool hidden_authored = false;
+  bool instanceable_authored = false;  // instanceable=false is a real opinion
   bool instanceable = false;  // when true (with arcs), the prim is an instance
 
   // Composition arcs (stored as paths for lazy resolution).
@@ -256,6 +257,7 @@ struct PrimSpecMeta {
     hidden = o.hidden;
     active_authored = o.active_authored;
     hidden_authored = o.hidden_authored;
+    instanceable_authored = o.instanceable_authored;
     instanceable = o.instanceable;
     references = o.references;
     payloads = o.payloads;
