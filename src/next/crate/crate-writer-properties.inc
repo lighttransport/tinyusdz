@@ -365,6 +365,83 @@
     specs_.push_back(spec);
   }
 
+  // Emit every authored PropMeta field as a property-spec crate field, with
+  // pxr's schema value types (String for displayName/displayGroup/doc, Bool
+  // for hidden, Token for the token-ish strings, Double weight, Int indices,
+  // token[] allowedTokens, dictionaries for customData/assetInfo/sdrMetadata).
+  void EmitPropMetaFields(const PropMeta& pm, std::vector<CrateField>& flds) {
+    auto tok_field = [&](const char* name, const std::string& v) {
+      CrateField f;
+      f.token_index.value = InternToken(name);
+      f.value_rep =
+          ValueRep::Make(CrateTypeId::Token, InternToken(v), false, true);
+      flds.push_back(f);
+    };
+    auto str_field = [&](const char* name, const std::string& v) {
+      CrateField f;
+      f.token_index.value = InternToken(name);
+      f.value_rep =
+          ValueRep::Make(CrateTypeId::String, InternString(v), false, true);
+      flds.push_back(f);
+    };
+    auto int_field = [&](const char* name, int32_t v) {
+      CrateField f;
+      f.token_index.value = InternToken(name);
+      f.value_rep = ValueRep::Make(
+          CrateTypeId::Int, static_cast<uint64_t>(static_cast<uint32_t>(v)),
+          false, true);
+      flds.push_back(f);
+    };
+    auto dict_field = [&](const char* name, const Value& v) {
+      if (!v.is_dictionary()) return;
+      CrateField f;
+      f.token_index.value = InternToken(name);
+      f.value_rep = EncodeValue(v);
+      flds.push_back(f);
+    };
+
+    if (pm.authored & PropMeta::kInterpolation)
+      tok_field("interpolation", pm.interpolation);
+    if (pm.authored & PropMeta::kColorSpace)
+      tok_field("colorSpace", pm.colorSpace);
+    if (pm.authored & PropMeta::kRenderType)
+      tok_field("renderType", pm.renderType);
+    if (pm.authored & PropMeta::kConnectability)
+      tok_field("connectability", pm.connectability);
+    if (pm.authored & PropMeta::kOutputName)
+      tok_field("outputName", pm.outputName);
+    if (pm.authored & PropMeta::kBindMaterialAs)
+      tok_field("bindMaterialAs", pm.bindMaterialAs);
+    if (pm.authored & PropMeta::kDisplayName)
+      str_field("displayName", pm.displayName);
+    if (pm.authored & PropMeta::kDisplayGroup)
+      str_field("displayGroup", pm.displayGroup);
+    if (pm.authored & PropMeta::kDoc) str_field("documentation", pm.doc);
+    if (pm.authored & PropMeta::kElementSize)
+      int_field("elementSize", pm.elementSize);
+    if (pm.authored & PropMeta::kUnauthoredIdx)
+      int_field("unauthoredValuesIndex", pm.unauthoredValuesIndex);
+    if (pm.authored & PropMeta::kWeight) {
+      CrateField f;
+      f.token_index.value = InternToken("weight");
+      f.value_rep = EncodeValue(Value(pm.weight));
+      flds.push_back(f);
+    }
+    if (pm.authored & PropMeta::kHidden) {
+      CrateField f;
+      f.token_index.value = InternToken("hidden");
+      f.value_rep = ValueRep::Make(CrateTypeId::Bool, pm.hidden ? 1 : 0,
+                                   false, true);
+      flds.push_back(f);
+    }
+    if ((pm.authored & PropMeta::kAllowedTokens) && !pm.allowedTokens.empty()) {
+      flds.push_back(MakeTokenVectorField("allowedTokens", pm.allowedTokens));
+    }
+    if (pm.authored & PropMeta::kCustomData) dict_field("customData", pm.customData);
+    if (pm.authored & PropMeta::kAssetInfo) dict_field("assetInfo", pm.assetInfo);
+    if (pm.authored & PropMeta::kSdrMetadata) dict_field("sdrMetadata", pm.sdrMetadata);
+  }
+
   std::vector<std::string> EmitPrimProperties(const PrimSpec& prim) {
     std::vector<std::string> prop_names;
     PropNameTable& name_table = GetPropNameTable();
@@ -434,33 +511,7 @@
       if (has_ts) flds.push_back(BuildTimeSamplesField(prim, slot.name_id));
 
       if (const PropMeta* pm = prim.property_meta(slot.name_id)) {
-        auto tok_field = [&](const char* name, const std::string& v) {
-          CrateField f;
-          f.token_index.value = InternToken(name);
-          f.value_rep =
-              ValueRep::Make(CrateTypeId::Token, InternToken(v), false, true);
-          flds.push_back(f);
-        };
-        if (pm->authored & PropMeta::kInterpolation)
-          tok_field("interpolation", pm->interpolation);
-        if (pm->authored & PropMeta::kColorSpace)
-          tok_field("colorSpace", pm->colorSpace);
-        if (pm->authored & PropMeta::kElementSize) {
-          CrateField f;
-          f.token_index.value = InternToken("elementSize");
-          f.value_rep = ValueRep::Make(
-              CrateTypeId::Int,
-              static_cast<uint64_t>(static_cast<uint32_t>(pm->elementSize)),
-              false, true);
-          flds.push_back(f);
-        }
-        if ((pm->authored & PropMeta::kCustomData) &&
-            pm->customData.is_dictionary()) {
-          CrateField f;
-          f.token_index.value = InternToken("customData");
-          f.value_rep = EncodeValue(pm->customData);
-          flds.push_back(f);
-        }
+        EmitPropMetaFields(*pm, flds);
       }
 
       EmitPropertySpec(base + "." + prop_name, SpecType::Attribute, flds);
@@ -482,6 +533,9 @@
           ValueRep::Make(CrateTypeId::Token, InternToken(tn), false, true);
       flds.push_back(tf);
       flds.push_back(BuildTimeSamplesField(prim, prop_id));
+      if (const PropMeta* pm = prim.property_meta(prop_id)) {
+        EmitPropMetaFields(*pm, flds);
+      }
       EmitPropertySpec(base + "." + prop_name, SpecType::Attribute, flds);
       prop_names.push_back(prop_name);
       emitted.insert(prop_name);
@@ -529,6 +583,11 @@
               ValueRep::Make(CrateTypeId::PathListOp, blk, false, false);
           flds.push_back(rf);
         }
+      }
+      // Relationships carry property metadata too (previously dropped).
+      if (const PropMeta* pm =
+              prim.property_meta(GetPropNameTable().intern(rel_name))) {
+        EmitPropMetaFields(*pm, flds);
       }
       EmitPropertySpec(base + "." + rel_name, SpecType::Relationship, flds);
       prop_names.push_back(rel_name);
