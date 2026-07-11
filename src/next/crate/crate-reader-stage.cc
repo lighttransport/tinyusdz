@@ -258,10 +258,15 @@ bool CrateReader::Impl::BuildStage() {
             for (size_t i = p; i < colon; ++i) {
               if ((*s)[i] < '0' || (*s)[i] > '9') return false;
               len = len * 10 + static_cast<size_t>((*s)[i] - '0');
+              // A chunk cannot exceed the blob; capping here also prevents the
+              // accumulation and the bounds check below from overflowing on a
+              // hostile length (which would wrap past the check and re-parse the
+              // same colon forever -> DoS on a crafted crate).
+              if (len > s->size()) return false;
             }
-            if (colon + 1 + len > s->size()) return false;
+            if (len > s->size() - (colon + 1)) return false;  // cannot wrap
             out = s->substr(colon + 1, len);
-            p = colon + 1 + len;
+            p = colon + 1 + len;  // colon >= p, so p strictly increases
             return true;
           };
           std::string key, val;
@@ -925,10 +930,14 @@ bool CrateReader::Impl::BuildStage() {
               for (size_t i = p; i < colon; ++i) {
                 if ((*blob)[i] < '0' || (*blob)[i] > '9') return false;
                 len = len * 10 + static_cast<size_t>((*blob)[i] - '0');
+                // Cap: a chunk cannot exceed the blob. Prevents the multiply and
+                // the bounds check from overflowing on a hostile length (which
+                // would wrap past the check and re-parse forever -> DoS).
+                if (len > blob->size()) return false;
               }
-              if (colon + 1 + len > blob->size()) return false;
+              if (len > blob->size() - (colon + 1)) return false;  // cannot wrap
               out = blob->substr(colon + 1, len);
-              p = colon + 1 + len;
+              p = colon + 1 + len;  // colon >= p, so p strictly increases
               return true;
             };
             std::string key, val;

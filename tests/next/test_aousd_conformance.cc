@@ -738,6 +738,9 @@ void TestMetadataAndListOpFidelity() {
       ") {}\n");
   assert(declared.find("prepend variantSets") != std::string::npos &&
          "authored prepend variantSets must survive USDC");
+  assert(declared.find("variantSet \"v\"") == std::string::npos &&
+         "a declaration-only variant set must NOT emit an empty variantSet "
+         "block (matches pxr)");
 
   // A relocate-to-nothing target `<>` (the empty SdfPath) must survive USDC as
   // `<>`, not `</>`, and must NOT be written as a PATHS tree node (pxr rejects
