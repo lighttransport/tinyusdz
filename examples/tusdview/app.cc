@@ -6,11 +6,13 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -1290,11 +1292,22 @@ void App::updateGpuSkinningFrameIfNeeded() {
   }
 
   // Node/xform animation alongside skinning: re-evaluate the animated mesh world
-  // transforms (no geometry re-pack) and push them to the renderer.
+  // transforms (no geometry re-pack) and push them to the renderer. All renderer
+  // uploads here go through postGpu(): on the threaded path the render thread
+  // owns the GL context (the main thread has released it), so a direct GL call
+  // from this main-thread function would hit no current context / race the
+  // render thread. postGpu runs inline when single-threaded (no behavior change).
   if (idxOk && mixed && UpdateAnimatedMeshWorlds(loaded_.stage, &draw_, animTime_)) {
+    std::vector<std::pair<int, std::array<float, 16>>> worldUploads;
+    worldUploads.reserve(draw_.meshes.size());
     for (size_t i = 0; i < draw_.meshes.size(); ++i) {
-      renderer_->updateMeshWorld(static_cast<int>(i), draw_.meshes[i].world);
+      std::array<float, 16> w;
+      std::memcpy(w.data(), draw_.meshes[i].world, sizeof(w));
+      worldUploads.push_back({static_cast<int>(i), w});
     }
+    postGpu([this, ups = std::move(worldUploads)]() {
+      for (const auto& u : ups) renderer_->updateMeshWorld(u.first, u.second.data());
+    });
   }
 
   if (renderer_->rayTracingActive()) {
@@ -1303,9 +1316,11 @@ void App::updateGpuSkinningFrameIfNeeded() {
     if (BuildRtSkinnedMeshVertices(loaded_.stage, loaded_.render, &draw_,
                                    animTime_, gui_.blendOverrides(),
                                    gui_.showSkeletonOverlay(), &uploads)) {
-      for (const RtSkinnedMeshUpload& upload : uploads) {
-        renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
-      }
+      postGpu([this, ups = std::move(uploads)]() {
+        for (const RtSkinnedMeshUpload& upload : ups) {
+          renderer_->updateMeshVertices(upload.meshIndex, upload.vertices);
+        }
+      });
     }
     skinFrameTime_ = animTime_;
     return;
@@ -1315,7 +1330,7 @@ void App::updateGpuSkinningFrameIfNeeded() {
   // (GPU morph, via updateMorphWeights below), not by CPU-morphing the VBO.
   if (BuildGpuSkinningFrame(loaded_.render, &draw_, animTime_, &skinFrame_,
                             gui_.showSkeletonOverlay())) {
-    renderer_->uploadSkinningFrame(skinFrame_);
+    postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
   }
   // GPU blendshape morph: upload only the tiny per-channel coefficient array per
   // morphed mesh (the vertex shader sums coeff*delta). No VBO re-upload, no GPU
@@ -1324,9 +1339,9 @@ void App::updateGpuSkinningFrameIfNeeded() {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
     BuildMorphChannelWeights(loaded_.stage, draw_, animTime_,
                              gui_.blendOverrides(), &coeffs);
-    for (auto& mc : coeffs) {
-      renderer_->updateMorphWeights(mc.first, mc.second);
-    }
+    postGpu([this, mc = std::move(coeffs)]() {
+      for (const auto& c : mc) renderer_->updateMorphWeights(c.first, c.second);
+    });
   }
   skinFrameTime_ = animTime_;
 }
@@ -1347,15 +1362,20 @@ void App::updateNextDeformFrameIfNeeded() {
   // keep both on one clock so a partially-streamed frame is never half-posed.)
   if (renderer_->meshCount() != static_cast<int>(draw_.meshes.size())) return;
 
+  // Renderer uploads go through postGpu() so they run on the render thread when
+  // it owns the context (threaded path); inline otherwise. See the note in
+  // updateGpuSkinningFrameIfNeeded.
   if (hasSkin && BuildNextSkinningFrame(nextSession_->GetStage(), &draw_,
                                         animTime_, &skinFrame_)) {
-    renderer_->uploadSkinningFrame(skinFrame_);
+    postGpu([this, sf = skinFrame_]() { renderer_->uploadSkinningFrame(sf); });
   }
   if (hasNextMorph_) {
     std::vector<std::pair<int, std::vector<float>>> coeffs;
     BuildNextMorphWeights(nextSession_->GetStage(), draw_, animTime_,
                           gui_.blendOverrides(), &coeffs);
-    for (auto& mc : coeffs) renderer_->updateMorphWeights(mc.first, mc.second);
+    postGpu([this, mc = std::move(coeffs)]() {
+      for (const auto& c : mc) renderer_->updateMorphWeights(c.first, c.second);
+    });
   }
   skinFrameTime_ = animTime_;
 }
