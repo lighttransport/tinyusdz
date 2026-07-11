@@ -35,6 +35,37 @@ bool IsBlendShape(const UsdPrim& prim) {
 // Skeleton data
 // ============================================================
 
+namespace {
+
+// A Skeleton's bind/rest transforms: `matrix4d[]`, i.e. a flat DOUBLE array of
+// 16 scalars per joint. Two traps this centralizes:
+//   - UsdSkel authors them PLAIN on the Skeleton (`bindTransforms`), not under
+//     the `primvars:skel:` prefix -- that prefix belongs on the skinned MESH.
+//     Reading only the prefixed name left every skeleton with an identity bind
+//     pose, which silently skews every skinning matrix.
+//   - they are doubles; asking for a float array yields nothing.
+// The prefixed name is still accepted as a fallback for scenes that author it.
+void ReadMatrix4dArray(const UsdPrim& prim, const char* name,
+                       std::vector<double>* out) {
+  const Value* val = prim.GetPropertyValue(name);
+  if (!val) {
+    val = prim.GetPropertyValue(std::string("primvars:skel:") + name);
+  }
+  if (!val || !val->is_array()) return;
+  if (const std::vector<double>* darray = val->as_double_array()) {
+    *out = *darray;
+    return;
+  }
+  if (const std::vector<float>* farray = val->as_float_array()) {
+    out->resize(farray->size());
+    for (size_t i = 0; i < farray->size(); ++i) {
+      (*out)[i] = static_cast<double>((*farray)[i]);
+    }
+  }
+}
+
+}  // namespace
+
 bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
                      SkeletonData* out) {
   if (!IsSkeleton(prim) || !out) return false;
@@ -64,18 +95,9 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // bindTransforms (uniform matrix4d[]) - stored as float array, convert to double
+  // bindTransforms (uniform matrix4d[]).
   {
-    const Value* val = prim.GetPropertyValue("primvars:skel:bindTransforms");
-    if (val && val->is_array()) {
-      const std::vector<float>* farray = val->as_float_array();
-      if (farray) {
-        out->bindTransforms.resize(farray->size());
-        for (size_t i = 0; i < farray->size(); ++i) {
-          out->bindTransforms[i] = static_cast<double>((*farray)[i]);
-        }
-      }
-    }
+    ReadMatrix4dArray(prim, "bindTransforms", &out->bindTransforms);
   }
 
   // jointNames (uniform token[])
@@ -93,18 +115,9 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // restTransforms (uniform matrix4d[]) - stored as float array, convert to double
+  // restTransforms (uniform matrix4d[]).
   {
-    const Value* val = prim.GetPropertyValue("primvars:skel:restTransforms");
-    if (val && val->is_array()) {
-      const std::vector<float>* farray = val->as_float_array();
-      if (farray) {
-        out->restTransforms.resize(farray->size());
-        for (size_t i = 0; i < farray->size(); ++i) {
-          out->restTransforms[i] = static_cast<double>((*farray)[i]);
-        }
-      }
-    }
+    ReadMatrix4dArray(prim, "restTransforms", &out->restTransforms);
   }
 
   // animationSource (rel skel:animationSource)
@@ -138,7 +151,9 @@ bool ReadFloat3Array(const Value* val, std::vector<float>* out) {
 
 bool ReadQuatArray(const Value* val, std::vector<float>* out) {
   if (!val || !out) return false;
-  // quatf[] stored as float4[] in Value (xyzw)
+  // quatf[] is stored as a flat float4[] in REAL-FIRST order (w, x, y, z) --
+  // next's canonical quat layout, which the crate reader swizzles disk's
+  // imaginary-first order into (CrateReader::Impl::UnpackQuatf).
   const std::vector<float>* arr = val->as_float_array();
   if (arr) {
     *out = *arr;
@@ -160,11 +175,12 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   {
     const Value* val = prim.GetPropertyValue("blendShapes");
     if (val) {
-      if (const std::vector<std::string>* toks = val->as_token_array()) {
-        out->blendShapes = *toks;
-      } else if (const std::string* s = val->as_string()) {
+      const std::string* s = val->as_string();
+      if (s) {
         out->blendShapes.push_back(*s);
-      } else if (const std::string* tok = val->as_token()) {
+      }
+      const std::string* tok = val->as_token();
+      if (tok) {
         out->blendShapes.push_back(*tok);
       }
     }
@@ -182,16 +198,14 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // joints (uniform token[])
+  // joints (uniform token[]). An ARRAY -- reading it with the scalar token
+  // accessors leaves it empty, which silently drops the whole animation (every
+  // joint keeps its rest transform).
   {
     const Value* val = prim.GetPropertyValue("joints");
     if (val) {
       if (const std::vector<std::string>* toks = val->as_token_array()) {
         out->joints = *toks;
-      } else if (const std::string* s = val->as_string()) {
-        out->joints.push_back(*s);
-      } else if (const std::string* tok = val->as_token()) {
-        out->joints.push_back(*tok);
       }
     }
   }

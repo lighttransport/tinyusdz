@@ -24,6 +24,7 @@ set(TINYUSDZ_NEXT_SOURCES
     layer/property-index.cc
     layer/prim-spec.cc
     layer/layer.cc
+    layer/asset-anchor.cc
 
     # Stage (composed scene)
     stage/stage.cc
@@ -488,6 +489,7 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/scene-access.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-extract.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/render-converter.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/texture-cache.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../external/mikktspace/mikktspace.c

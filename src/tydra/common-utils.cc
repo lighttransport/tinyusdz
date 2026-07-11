@@ -256,6 +256,17 @@ std::string SanitizeAssetPath(const std::string& path, bool allow_parent_refs) {
   std::string normalized = path;
   std::replace(normalized.begin(), normalized.end(), '\\', '/');
 
+  // Remember the leading slash(es): the split/rejoin below works on path
+  // SEGMENTS and would otherwise turn an absolute "/a/b" into a relative "a/b"
+  // (and a UNC "//host/share" into "host/share"), which then resolves against
+  // the wrong base — or not at all.
+  std::string root;
+  if (normalized.size() >= 2 && normalized[0] == '/' && normalized[1] == '/') {
+    root = "//";  // UNC
+  } else if (!normalized.empty() && normalized[0] == '/') {
+    root = "/";
+  }
+
   std::vector<std::string> parts;
   parts.reserve(16);
 
@@ -290,7 +301,7 @@ std::string SanitizeAssetPath(const std::string& path, bool allow_parent_refs) {
     begin = end + 1;
   }
 
-  std::string result;
+  std::string result = root;
   for (size_t i = 0; i < parts.size(); i++) {
     if (i > 0) {
       result.push_back('/');

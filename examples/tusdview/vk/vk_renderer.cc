@@ -2355,16 +2355,17 @@ bool VulkanRenderer::createDescriptorInfra(std::string* err) {
     }
   }
 
-  // Set 6 of the INSTANCED pipeline: per-draw metadata SSBO (DrawMeta[]), read in
-  // the fragment stage via (baseDraw + gl_DrawIDARB). The layout/pool/set are fixed
-  // at init; the backing buffer is (re)built by ensureDrawMeta() once meshes exist.
+  // Set 6 of the INSTANCED pipeline: per-draw metadata SSBO (DrawMeta[]), read via
+  // (baseDraw + gl_DrawIDARB) in the fragment stage AND -- for the skin joint/weight
+  // device addresses -- in the vertex stage. The layout/pool/set are fixed at init;
+  // the backing buffer is (re)built by ensureDrawMeta() once meshes exist.
   // (The main mesh pipeline keeps dispMatSet_ at set 6 -- separate pipeline layout.)
   {
     VkDescriptorSetLayoutBinding db{};
     db.binding = 0;
     db.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     db.descriptorCount = 1;
-    db.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    db.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo dlci{};
     dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     dlci.bindingCount = 1;
@@ -4302,17 +4303,20 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   // Joints/weights double as the SkinWeights AOV source in the RT path, so when RT
   // is supported they also get a device address (raytrace.comp reads them via
   // MeshDesc.jointAddr / weightAddr and derives the dominant joint per vertex).
+  // A skinned mesh also needs device addresses without RT: the INSTANCED vertex
+  // shader reads joints/weights by address (DrawMeta), not as vertex attributes.
+  const bool skinAddressable = rtSupported_ || gm.skinned;
   const VkBufferUsageFlags skinUsage =
       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-      (rtSupported_ ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
+      (skinAddressable ? VK_BUFFER_USAGE_STORAGE_BUFFER_BIT : 0);
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(uint32_t), skinUsage, joints,
-                        &gm.jointVbo, &gm.jointVboMem, rtSupported_, pool)) {
+                        &gm.jointVbo, &gm.jointVboMem, skinAddressable, pool)) {
     vkDestroyBuffer(device_, gm.vbo, nullptr);
     vkFreeMemory(device_, gm.vboMem, nullptr);
     return;
   }
   if (!createHostBuffer(sm.vertices.size() * 4 * sizeof(float), skinUsage, weights,
-                        &gm.weightVbo, &gm.weightVboMem, rtSupported_, pool)) {
+                        &gm.weightVbo, &gm.weightVboMem, skinAddressable, pool)) {
     vkDestroyBuffer(device_, gm.jointVbo, nullptr);
     vkFreeMemory(device_, gm.jointVboMem, nullptr);
     vkDestroyBuffer(device_, gm.vbo, nullptr);
@@ -4512,12 +4516,16 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     if (gm.morphInflVbo) gm.inflAddr = bufferDeviceAddress(gm.morphInflVbo);
     // faceBuf was created above (always); take its device address for the RT path.
     if (gm.faceBuf) gm.faceAddr = bufferDeviceAddress(gm.faceBuf);
-    // Skin joint/weight buffers (device address taken above) for the SkinWeights AOV.
-    if (gm.skinned) {
-      gm.jointAddr = bufferDeviceAddress(gm.jointVbo);
-      gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
-    }
     tlasDirty_ = true;  // BLAS built lazily in rebuildTlas() before the next trace
+  }
+
+  // Skin joint/weight device addresses. NOT gated on RT: besides the SkinWeights
+  // AOV, the INSTANCED vertex shader fetches joints/weights by address (DrawMeta)
+  // instead of through vertex-input state -- that is what lets a skinned prototype
+  // stay instanced without adding vertex bindings the merged MDI path can't supply.
+  if (gm.skinned) {
+    gm.jointAddr = bufferDeviceAddress(gm.jointVbo);
+    gm.weightAddr = bufferDeviceAddress(gm.weightVbo);
   }
 
   // Raster GPU instancing buffers (flat --next path; independent of RT support).
@@ -4567,7 +4575,9 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     // the cull path writes the visible subset into this mesh's slice. Morph
     // prototypes (MDI can't switch morph descriptor sets per draw) keep the legacy
     // per-mesh buffers below and are drawn by the per-mesh fallback loop.
-    if (mdiSupported_ && !gm.hasMorph && !gm.hasTranslucentInstances) {
+    // Skinned prototypes are excluded: MDI merges geometry into one shared VBO, so
+    // gl_VertexIndex would no longer index the mesh's own joint/weight arrays.
+    if (mdiSupported_ && !gm.hasMorph && !gm.hasTranslucentInstances && !gm.skinned) {
       gm.mdiEligible = true;
       gm.mdiInstFirst = mdiInstTotal_;
       gm.mdiVertBase = mdiVertTotal_;
@@ -5860,6 +5870,8 @@ void VulkanRenderer::ensureDrawMeta() {
     meta[mi].ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
                       ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
     meta[mi].ids[2] = meta[mi].ids[3] = 0;
+    meta[mi].jointAddr = m.jointAddr;  // 0 = unskinned
+    meta[mi].weightAddr = m.weightAddr;
   }
   mdiMeshMetaBase_ = 0;  // per-mesh loop pushes baseDraw = mesh index directly
   boxMetaSlot_ = static_cast<uint32_t>(meshes_.size());
@@ -6082,15 +6094,22 @@ void VulkanRenderer::buildInstMdi() {
   mdiMeshMetaBase_ = mdiDrawCount_;
   const uint32_t nmesh = static_cast<uint32_t>(meshes_.size());
   std::vector<DrawMetaCPU> meta(mdiDrawCount_ + nmesh + 1u);
-  auto meshIds = [&](size_t mi, DrawMetaCPU& d) {
+  auto meshIds = [&](size_t mi, DrawMetaCPU& d, bool skinnable) {
     const auto& m = meshes_[mi];
     d.ids[0] = static_cast<int32_t>(mi);
     d.ids[1] = (m.geometricNormal ? 1 : 0) | (m.doubleSided ? 2 : 0) |
                ((m.purposeId & 3) << 2) | ((m.kindId & 7) << 4);
     d.ids[2] = d.ids[3] = 0;
+    // MDI draws read a MERGED vertex buffer, so gl_VertexIndex would not index the
+    // mesh's own skin arrays: leave those draws unskinned (skinned prototypes are
+    // never MDI-eligible, so this only ever zeroes what is already zero).
+    d.jointAddr = skinnable ? m.jointAddr : 0;
+    d.weightAddr = skinnable ? m.weightAddr : 0;
   };
-  for (uint32_t i = 0; i < mdiDrawCount_; ++i) meshIds(mdiCmds_[i].meshIndex, meta[i]);
-  for (uint32_t mi = 0; mi < nmesh; ++mi) meshIds(mi, meta[mdiDrawCount_ + mi]);
+  for (uint32_t i = 0; i < mdiDrawCount_; ++i)
+    meshIds(mdiCmds_[i].meshIndex, meta[i], /*skinnable=*/false);
+  for (uint32_t mi = 0; mi < nmesh; ++mi)
+    meshIds(mi, meta[mdiDrawCount_ + mi], /*skinnable=*/true);
   boxMetaSlot_ = mdiDrawCount_ + nmesh;
   meta[boxMetaSlot_].ids[0] = -1;
   meta[boxMetaSlot_].ids[1] = 1;
@@ -6602,6 +6621,14 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
     if (anyInstanced && instPipeline_) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
+      // Set 1: the scene-wide bone rows, so a skinned prototype poses in the
+      // instanced vertex shader (same buffer the mesh pass binds). Absent when the
+      // scene has no skinning -- every draw then carries jointAddr == 0 and the
+      // shader never touches the binding.
+      if (boneDesc_ != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                instPipelineLayout_, 1, 1, &boneDesc_, 0, nullptr);
+      }
       // Set 0: dome IBL irradiance cube (black fallback) for the flat ambient.
       {
         VkDescriptorSet irrDs =

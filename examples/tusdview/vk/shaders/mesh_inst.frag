@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 // Instanced flat-shaded prototype fragment shader. Mirrors the GL kInstancedFS
 // AOV ladder + headlight so instanced geometry looks identical across backends.
@@ -15,7 +16,9 @@ layout(location = 5) flat in int vDrawSlot;
 // the old per-draw push constant so a whole multi-draw-indirect batch shares one
 // binding: each draw's meshId + flag bits come from meta[vDrawSlot]. Instanced
 // prototypes are never selection-highlighted, so there is no emissive term.
-struct DrawMeta { ivec4 ids; };  // .x meshId, .y flags (as before)
+// Must match DrawMetaCPU / mesh_inst.vert: the skin addresses are unused here but
+// are part of the layout.
+struct DrawMeta { ivec4 ids; uint64_t jointAddr; uint64_t weightAddr; };
 layout(set = 6, binding = 0, std430) readonly buffer DrawMetaB { DrawMeta meta[]; };
 
 // Frame UBO (set 5): camera / scene bbox / renderMode (frame-constant).

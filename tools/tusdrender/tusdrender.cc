@@ -171,28 +171,54 @@ static void ApplyLargeSceneProfile(Options *opt) {
   }
   if (p == Options::LargeSceneProfile::Off) return;
 
+  const uint64_t host_available = MemBudget::AvailableSystemMemory();
+  const uint64_t host_capacity =
+      host_available
+          ? std::min<uint64_t>(host_available,
+                               tinyusdz::tydra::next::GiB(32))
+          : tinyusdz::tydra::next::GiB(32);
+  const tinyusdz::tydra::next::ResourceBudget budget =
+      tinyusdz::tydra::next::ComputeResourceBudget(
+          host_capacity, QueryDeviceLocalVRAMBytes());
+  const double host_gib = double(budget.host_limit) /
+                          double(tinyusdz::tydra::next::GiB(1));
+  const double vram_gib = double(budget.vram_limit) /
+                          double(tinyusdz::tydra::next::GiB(1));
+
   if (!opt->backend_explicit) {
     opt->vulkan = true;
-    opt->vulkan_rt = true;
-    opt->vulkan_instanced = true;
   }
   if (!opt->rt_lod_explicit) opt->rt_lod = true;
   if (!opt->rt_lod_full_px_explicit) opt->rt_lod_full_px = 64.0f;
   if (!opt->rt_lod_cull_px_explicit) opt->rt_lod_cull_px = 2.0f;
+
+  // Bound texture residency the way geometry already is. -texMaxSize /
+  // -texBudgetMb still win; these only fill in the profile defaults.
+  {
+    const tinyusdz::tydra::next::TextureBudget texture_budget =
+        tinyusdz::tydra::next::DeriveTextureBudget(budget);
+    if (opt->texture_max_size == 0 && texture_budget.max_edge > 0) {
+      opt->texture_max_size = int(texture_budget.max_edge);
+    }
+    if (opt->texture_budget_mb == 0 && texture_budget.budget_bytes > 0) {
+      opt->texture_budget_mb =
+          int(texture_budget.budget_bytes / (1024ull * 1024ull));
+    }
+  }
 
   if (p == Options::LargeSceneProfile::Caldera) {
     if (!opt->camera_explicit && opt->camera.empty()) {
       opt->camera = "phospate_mine_overview";
     }
     if (!opt->lod_stream_explicit) opt->lod_stream = true;
-    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
-    if (!opt->max_vram_explicit) opt->max_vram_gib = 8.0;
+    if (!opt->max_mem_explicit) opt->max_mem_gib = host_gib;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = vram_gib;
   } else if (p == Options::LargeSceneProfile::Island) {
-    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
-    if (!opt->max_vram_explicit) opt->max_vram_gib = 10.0;
+    if (!opt->max_mem_explicit) opt->max_mem_gib = host_gib;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = vram_gib;
   } else if (p == Options::LargeSceneProfile::ALab) {
-    if (!opt->max_mem_explicit) opt->max_mem_gib = 32.0;
-    if (!opt->max_vram_explicit) opt->max_vram_gib = 10.0;
+    if (!opt->max_mem_explicit) opt->max_mem_gib = host_gib;
+    if (!opt->max_vram_explicit) opt->max_vram_gib = vram_gib;
   }
 
   std::cerr << "largeSceneProfile " << LargeSceneProfileName(p)
@@ -800,10 +826,17 @@ int main(int argc, char **argv) {
     PrepareLodStream(&opt, &lod_wrapper);
   }
 
-  // RT preview backend: the `next` lazy loader (fast, low-memory compose +
-  // mmap USDC; also handles .usdz + .usda). Falls back to the legacy eager
-  // loader for other inputs or when -legacyLoad is requested.
-  if (opt.rt_preview && !opt.legacy_load) {
+  // Use the `next` streaming CPU path when requested, and by default for USDC
+  // where mmap-backed arrays provide the largest memory win. Ordinary USDA/USDZ
+  // stays on the schema-rich converter for direct lights/primitives and uniform
+  // subdivision until those paths have full streaming parity.
+  const std::string lower_input = LowerAscii(opt.input);
+  const bool default_next_usdc =
+      lower_input.size() >= 5 &&
+      lower_input.compare(lower_input.size() - 5, 5, ".usdc") == 0;
+  if (!opt.legacy_load && opt.subdivision_level == 0 &&
+      (opt.rt_preview || default_next_usdc) && !opt.vulkan && !opt.use_d3d &&
+      !opt.hip) {
     return RunRTPreviewNext(opt);
   }
 
@@ -818,11 +851,7 @@ int main(int argc, char **argv) {
     // Load through next loader.
     tinyusdz::next::Stage stage;
     std::string warn, err;
-    tinyusdz::next::pcp::CompositionOptions comp_opts;
-    if (!opt.variant_overrides.empty())
-      comp_opts.variant_overrides = opt.variant_overrides;
-    if (!tinyusdz::next::LoadUSDComposed(opt.input, &stage, &warn, &err,
-                                         &comp_opts)) {
+    if (!LoadNextStageBudgeted(opt, &stage, &warn, &err)) {
       if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
       std::cerr << "Failed to load USD: " << err << "\n";
       return EXIT_FAILURE;
@@ -1239,7 +1268,10 @@ int main(int argc, char **argv) {
     load_options.progress_callback = LoadProgress;
   }
   const auto load_t0 = std::chrono::steady_clock::now();
-  if (!tinyusdz::LoadUSDFromFile(opt.input, &stage, &warn, &err, load_options)) {
+  // Composes references / payloads / sublayers / inherits / variants; plain
+  // LoadUSDFromFile expands no arcs, so anything they contribute (a Material in a
+  // referenced look layer, payload-gated geometry) was missing from the render.
+  if (!LoadStageComposedLegacy(opt.input, load_options, &stage, &warn, &err)) {
     if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
     std::cerr << "Failed to load USD: " << err << "\n";
     return EXIT_FAILURE;
@@ -1433,9 +1465,24 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
   }
+  // Decode the materials' UsdUVTextures (tydra already resolved them) and bind
+  // them per triangle. Without this the legacy path flattens every material to a
+  // constant base color, so .usda/.usdz — which do not route to the `next` path —
+  // render untextured.
+  std::vector<tusdr::Texture> legacy_textures;
+  const std::vector<LegacyMaterialTex> legacy_mat_tex =
+      BuildLegacyTextures(render_scene, &legacy_textures);
+  std::vector<float> tri_uvs;
+  const bool want_uvs = !legacy_textures.empty();
+  if (want_uvs) {
+    // tri_uvs must stay parallel to `tris`; any triangles the direct-primitive
+    // builder already emitted carry no UVs (and no texture), so pad them.
+    tri_uvs.assign(tris.size() * 6, 0.0f);
+  }
   CollectAllGeometry(render_scene, &vertices, &tris, &bounds,
                      opt.direct_prims ? &direct_scene.direct_paths : nullptr,
-                     &light_cache);
+                     &light_cache, want_uvs ? &tri_uvs : nullptr,
+                     want_uvs ? &legacy_mat_tex : nullptr);
   const bool has_direct = direct_scene.spheres || direct_scene.round_curves ||
                           direct_scene.flat_curves || direct_scene.points ||
                           direct_scene.bez_curves || direct_scene.tets ||
@@ -1541,7 +1588,8 @@ int main(int argc, char **argv) {
   tinyusdz::Image img =
       RenderImage(lrt_scene, &direct_scene, flat_tris, flat_mats, light_cache,
                   ibl_cache.valid ? &ibl_cache : nullptr, camera, opt, height,
-                  /*textures*/ nullptr, /*tri_uvs*/ nullptr, /*tlas*/ nullptr,
+                  legacy_textures.empty() ? nullptr : &legacy_textures,
+                  tri_uvs.empty() ? nullptr : &tri_uvs, /*tlas*/ nullptr,
                   /*blas*/ nullptr, /*instances*/ nullptr, /*tri_colors*/ nullptr,
                   /*tri_normals*/ nullptr, &volumes);
   const auto render_t1 = std::chrono::steady_clock::now();

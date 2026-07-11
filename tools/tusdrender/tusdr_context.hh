@@ -573,6 +573,11 @@ std::string SubstituteFrame(const std::string &path, long frame);
 
 int RunRTPreviewNext(const Options &opt);
 
+// Compose through the persistent next-core session with aggregate accounting,
+// then release transient PCP caches before returning the retained Stage.
+bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
+                           std::string *warn, std::string *err);
+
 // ---- tusdr_lod.cc (view-dependent district LOD pre-pass) ----
 // Largest DEVICE_LOCAL Vulkan heap (VRAM) in bytes; 0 if no Vulkan/device.
 size_t QueryDeviceLocalVRAMBytes();
@@ -601,23 +606,68 @@ void MergeBounds(Bounds *dst, const Bounds &src);
 inline const Vec3 kCurveColor{0.62f, 0.50f, 0.34f};
 
 // ---- tusdr_legacy.cc (legacy loader + shared utils) ----
+
+// Load `path` into `stage` WITH composition (sublayers / references / payloads /
+// inherits / variants / specializes composed to a fixed point).
+// `tinyusdz::LoadUSDFromFile` alone parses a single layer and expands no arcs, so
+// anything contributed by a reference or payload — a Material in a look layer,
+// payload-gated geometry — was simply absent from the legacy render. Falls back to
+// the direct parser for .usdz and for layers with no arcs (which keeps zero-copy
+// USDC storage and the schemas LayerToStage does not carry).
+bool LoadStageComposedLegacy(const std::string &path,
+                             const tinyusdz::USDLoadOptions &load_options,
+                             tinyusdz::Stage *stage, std::string *warn,
+                             std::string *err);
+
 std::vector<int> FaceMaterialIds(const RenderMesh &mesh);
 
+// Textures bound by one legacy RenderMaterial, as indices into the `Texture`
+// table filled by BuildLegacyTextures. -1 = not textured.
+struct LegacyMaterialTex {
+  int32_t diffuse{-1};
+  int32_t emissive{-1};
+  int32_t normal{-1};
+  int32_t roughness{-1};
+  int32_t metallic{-1};
+  int32_t occlusion{-1};
+  int32_t opacity{-1};
+  uint8_t roughness_ch{0};  // scalar source channel: 0=r,1=g,2=b,3=a
+  uint8_t metallic_ch{0};
+  uint8_t occlusion_ch{0};
+  uint8_t opacity_ch{0};
+};
+
+// Decode tydra's already-resolved UsdUVTextures into renderer `Texture`s and
+// return the per-material bindings, indexed by RenderScene material id. The
+// legacy path previously ignored these entirely, so .usda/.usdz rendered with a
+// flat constant base color.
+std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
+                                                   std::vector<Texture> *out);
+
+// `tri_uvs` (when non-null) receives 6 floats per emitted triangle — the raw USD
+// per-corner UVs, parallel to *tris, as the integrator expects. Textures are
+// bound per triangle from `mat_tex` (null = untextured, the old behavior).
 void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       const matrix4d &world, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
-                      LightCache *lights = nullptr);
+                      LightCache *lights = nullptr,
+                      std::vector<float> *tri_uvs = nullptr,
+                      const std::vector<LegacyMaterialTex> *mat_tex = nullptr);
 
 void CollectGeometry(const RenderScene &scene, const Node &node,
                      std::vector<float> *vertices, std::vector<TriInfo> *tris,
                      Bounds *bounds,
                      const std::unordered_set<std::string> *skip_paths,
-                     LightCache *lights);
+                     LightCache *lights,
+                     std::vector<float> *tri_uvs = nullptr,
+                     const std::vector<LegacyMaterialTex> *mat_tex = nullptr);
 
 void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         std::vector<TriInfo> *tris, Bounds *bounds,
                         const std::unordered_set<std::string> *skip_paths,
-                        LightCache *lights);
+                        LightCache *lights,
+                        std::vector<float> *tri_uvs = nullptr,
+                        const std::vector<LegacyMaterialTex> *mat_tex = nullptr);
 
 matrix4d LocalMatrixOrIdentity(const tinyusdz::Xformable *xformable, double time,
                                bool *reset);
