@@ -63,6 +63,14 @@ camera -- geometry only, no shading, no framing. An earlier silhouette-IoU check
 was vacuous: the luma>25 mask covered the whole frame, because the background grid
 is brighter than that.
 
+That same GPU-deform-vs-CPU-bake comparison now runs over three fixtures the suite
+had no coverage for at all (`tests/tusdview/check-deform-parity.py`,
+`examples/tusdview/tests/deform-*.usda`): skinning under a rotated/scaled parent,
+a morphed mesh split into two batches by material-bind GeomSubsets, and a mesh
+that is blendshaped AND skinned at the same time code. The last two found live
+bugs (a morph applied in the wrong space, and the CPU bake skinning before it
+morphed). Anything else that deforms geometry belongs in that harness.
+
 ### 4. usd-assets regression harness
 
 Partial: the batch harness runs both tools over usd-wg/assets. Remaining is

@@ -3189,10 +3189,37 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     int wholeMat = resolveMeshMaterial(mp, m.texcoords_0_name, m.texcoords_1_name);
     double mw16[16];
     tydn::ComputeWorldTransform(stage, mp, mw16, time);
+    // Blendshapes, BEFORE skinning: a blendshape deforms the bind-space points and
+    // the skeleton then poses the RESULT (deform.glsl morphs, then runs LBS on the
+    // morphed position, and the instanced prototype path bakes in that order too).
+    // Baking the skin first and the morph second -- as this used to -- adds the
+    // bind-space offsets to already-posed points, so a mesh that is blendshaped AND
+    // skinned at the same time code lands somewhere neither path intended.
+    //
+    // This ran ONLY on the instanced-prototype path, so an ordinary (non-instanced)
+    // blendshaped mesh never morphed at all under --next -- it rendered its rest
+    // shape at every time code. Same choice as there: bake the pose in
+    // (TUSDVIEW_NEXT_MORPH_BAKE=1) or build GPU-morph channels the shader applies
+    // per frame. CPU skinning forces the bake: the shader's morph is applied to
+    // whatever position it is handed, which for a CPU-skinned mesh is the POSED
+    // one -- the wrong order again, and not fixable in the shader (the delta would
+    // have to be carried into pose space per frame). Baking both keeps them ordered.
+    // A CPU-skinning run re-converts on every time change anyway, so the baked morph
+    // still animates.
+    static const bool kBakeMorphStatic = [] {
+      const char* e = std::getenv("TUSDVIEW_NEXT_MORPH_BAKE");
+      return e && e[0] == '1';
+    }();
+    if (kBakeMorphStatic || !opts.gpuSkinning) {
+      BakeBlendShapes(stage, mp, time, &loc, vertexToPoint, m.point_count());
+    } else {
+      BuildMorphChannelsNext(stage, mp, time, &loc, vertexToPoint,
+                             m.point_count());
+    }
     // Skeletal skinning, before the vertices are world-baked into the batch.
-    // GPU: keep the rest pose and emit per-vertex joint attributes (the shader
-    // poses every frame). CPU: bake the static pose at `time` into the geometry.
-    // Both no-op for unskinned meshes.
+    // GPU: keep the (morphed) bind pose and emit per-vertex joint attributes (the
+    // shader poses every frame). CPU: bake the static pose at `time` into the
+    // geometry. Both no-op for unskinned meshes.
     bool cpuSkinned = false;
     if (opts.gpuSkinning) {
       SetupGpuSkinNext(stage, mp, time, &loc, vertexToPoint, m.point_count(),
@@ -3200,21 +3227,6 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     } else {
       cpuSkinned =
           BakeSkinning(stage, mp, time, &loc, vertexToPoint, m.point_count());
-    }
-    // Blendshapes. This ran ONLY on the instanced-prototype path, so an ordinary
-    // (non-instanced) blendshaped mesh never morphed at all under --next -- it
-    // rendered its rest shape at every time code. Same choice as there: bake the
-    // pose in (TUSDVIEW_NEXT_MORPH_BAKE=1) or build GPU-morph channels the shader
-    // applies per frame.
-    static const bool kBakeMorphStatic = [] {
-      const char* e = std::getenv("TUSDVIEW_NEXT_MORPH_BAKE");
-      return e && e[0] == '1';
-    }();
-    if (kBakeMorphStatic) {
-      BakeBlendShapes(stage, mp, time, &loc, vertexToPoint, m.point_count());
-    } else {
-      BuildMorphChannelsNext(stage, mp, time, &loc, vertexToPoint,
-                             m.point_count());
     }
     // A morphed mesh must not share a batch with anything else: its channel ids
     // and its bound animation are its own. 0 = poolable with other static meshes.

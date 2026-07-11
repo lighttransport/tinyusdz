@@ -1,0 +1,140 @@
+#usda 1.0
+(
+    doc = """A blendshaped mesh SPLIT by material-bind GeomSubsets.
+
+    Two bound materials mean the mesh is torn into two static batches, and each
+    batch re-indexes its share of the per-vertex sparse morph delta lists as the
+    vertices are appended (the CSR base/count pairs are rebuilt per batch). Get
+    that re-index wrong -- off-by-one base, a shared running offset, deltas copied
+    but the count left behind -- and a vertex picks up ANOTHER vertex's delta, or
+    none. Nothing else in the suite splits a morphed mesh, so all of that ran
+    unwitnessed.
+
+    Only the top half of the box carries offsets, and it is the half in its OWN
+    subset, so a mis-indexed delta bleeds into the other batch visibly.
+
+    Also under a rotated parent, so the world-space delta bake is exercised on
+    both batches."""
+    defaultPrim = "root"
+    endTimeCode = 20
+    startTimeCode = 1
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    def Camera "Cam"
+    {
+        float2 clippingRange = (0.1, 1000)
+        float focalLength = 24
+        float horizontalAperture = 20.955
+        float verticalAperture = 15.2908
+        double3 xformOp:translate = (0, 1, 15)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def SphereLight "Key"
+    {
+        float inputs:intensity = 900
+        float inputs:radius = 0.5
+        double3 xformOp:translate = (6, 8, 10)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Scope "_materials"
+    {
+        def Material "Red"
+        {
+            token outputs:surface.connect = </root/_materials/Red/S.outputs:surface>
+
+            def Shader "S"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.8, 0.15, 0.15)
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+        }
+
+        def Material "Blue"
+        {
+            token outputs:surface.connect = </root/_materials/Blue/S.outputs:surface>
+
+            def Shader "S"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.15, 0.2, 0.8)
+                float inputs:roughness = 0.5
+                token outputs:surface
+            }
+        }
+    }
+
+    def SkelRoot "Rig" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        double3 xformOp:rotateXYZ = (0, 0, 25)
+        double3 xformOp:scale = (1.5, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Split" (
+            prepend apiSchemas = ["MaterialBindingAPI", "SkelBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 1, 3, 2, 4, 6, 7, 5, 0, 4, 5, 1, 2, 3, 7, 6, 0, 2, 6, 4, 1, 5, 7, 3]
+            point3f[] points = [(-1, -1, 1), (1, -1, 1), (-1, -1, -1), (1, -1, -1), (-1, 1, 1), (1, 1, 1), (-1, 1, -1), (1, 1, -1)]
+            uniform token[] skel:blendShapes = ["Lift"]
+            rel skel:blendShapeTargets = </root/Rig/Split/Lift>
+            prepend rel skel:skeleton = </root/Rig/Skel>
+            uniform token subdivisionScheme = "none"
+
+            def BlendShape "Lift"
+            {
+                uniform vector3f[] offsets = [(0, 2.5, 0), (0, 2.5, 0), (0, 2.5, 0), (0, 2.5, 0)]
+                uniform int[] pointIndices = [4, 5, 6, 7]
+            }
+
+            def GeomSubset "TopFace" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                uniform token elementType = "face"
+                uniform token familyName = "materialBind"
+                int[] indices = [1]
+                rel material:binding = </root/_materials/Red>
+            }
+
+            def GeomSubset "Rest" (
+                prepend apiSchemas = ["MaterialBindingAPI"]
+            )
+            {
+                uniform token elementType = "face"
+                uniform token familyName = "materialBind"
+                int[] indices = [0, 2, 3, 4, 5]
+                rel material:binding = </root/_materials/Blue>
+            }
+        }
+
+        def Skeleton "Skel" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform matrix4d[] bindTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )]
+            uniform token[] joints = ["joint1"]
+            uniform matrix4d[] restTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )]
+            prepend rel skel:animationSource = </root/Rig/Skel/Anim>
+
+            def SkelAnimation "Anim"
+            {
+                uniform token[] blendShapes = ["Lift"]
+                float[] blendShapeWeights.timeSamples = {
+                    1: [0],
+                    20: [1],
+                }
+            }
+        }
+    }
+}
