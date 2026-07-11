@@ -2799,6 +2799,11 @@ class TinyUSDZLoaderNative {
 
     loaded_as_layer_ = true;
     filename_ = filename;
+    // Layer-only load: no render conversion runs, so extractPhysicsSceneJSON can
+    // safely re-derive from the (uncorrupted) layer. Drop any stale snapshot from
+    // a prior stage load so it doesn't shadow this layer's physics scene.
+    has_stage_ = false;
+    physics_scene_json_cache_.clear();
 
     return true;
   }
@@ -2843,6 +2848,14 @@ class TinyUSDZLoaderNative {
     filename_ = filename;
     export_stage_ = stage;
     has_stage_ = true;
+    // Cache the physics-scene JSON from the freshly-parsed, pristine stage
+    // BEFORE the Tydra RenderSceneConverter runs below. The converter mutates
+    // the source stage in place (const_cast + BuildInstancePrototypes and the
+    // low-memory mesh takeover), which strips custom `props` off GeomMesh prims
+    // — so extracting physics after conversion loses per-mesh mjc:* collider
+    // attributes. Primitive colliders (Cube/Sphere/…) are untouched by the mesh
+    // converter, which is why only mesh colliders regressed.
+    physics_scene_json_cache_ = BuildPhysicsSceneJSON(stage);
 
     //std::cout << "[tusd:loadFromBinary] loaded << " filename << "\n";
 #if 0
@@ -3022,6 +3035,9 @@ class TinyUSDZLoaderNative {
     filename_ = filename;
     export_stage_ = stage;
     has_stage_ = true;
+    // Snapshot physics JSON before the Tydra converter mutates the meshes
+    // (see loadFromBinary for the rationale).
+    physics_scene_json_cache_ = BuildPhysicsSceneJSON(stage);
 
     // Yield after parsing to allow UI update
     co_await yieldToEventLoop();
@@ -6546,6 +6562,7 @@ class TinyUSDZLoaderNative {
     // Clear export state
     export_stage_ = tinyusdz::Stage();
     has_stage_ = false;
+    physics_scene_json_cache_.clear();
     // (USDC export no longer retains a wasm-side buffer; it copies straight to a
     // JS-owned Uint8Array — see toOwnedUint8Array().)
     usdz_export_buf_.clear();
@@ -7757,12 +7774,10 @@ class TinyUSDZLoaderNative {
 
   /// Extract a compact JSON view of UsdPhysics/MuJoCo prims and geometry.
   /// This is intentionally shaped for JS-side URDF conversion and testing.
-  std::string extractPhysicsSceneJSON() {
-    tinyusdz::Stage stage;
-    if (!getStageFromLayer(stage)) {
-      return std::string();
-    }
-
+  // Build the physics-scene JSON from a specific Stage. Kept separate from
+  // extractPhysicsSceneJSON() so the load paths can snapshot it from the
+  // pristine parsed stage before the Tydra converter mutates the meshes.
+  std::string BuildPhysicsSceneJSON(const tinyusdz::Stage &stage) {
     json root;
     root["upAxis"] = AxisName(stage.metas().upAxis.get_value());
     root["metersPerUnit"] = stage.metas().metersPerUnit.get_value();
@@ -7774,6 +7789,22 @@ class TinyUSDZLoaderNative {
     }
 
     return root.dump();
+  }
+
+  std::string extractPhysicsSceneJSON() {
+    // Prefer the snapshot captured at load time from the pristine stage. The
+    // in-memory `export_stage_`/`layer_` may have had custom GeomMesh `props`
+    // (e.g. per-mesh mjc:* collider params) stripped by the Tydra render
+    // conversion that runs during load, so re-deriving here would drop them.
+    if (!physics_scene_json_cache_.empty()) {
+      return physics_scene_json_cache_;
+    }
+
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return std::string();
+    }
+    return BuildPhysicsSceneJSON(stage);
   }
 
   /// Structured metahuman-usd-1.0 (mh:*) profile: one entry per Skeleton /
@@ -8939,6 +8970,9 @@ class TinyUSDZLoaderNative {
     filename_ = filename;
     export_stage_ = stage;
     has_stage_ = true;
+    // Snapshot physics JSON before the Tydra converter mutates the meshes
+    // (see loadFromBinary for the rationale).
+    physics_scene_json_cache_ = BuildPhysicsSceneJSON(stage);
 
     // Now convert to render scene
     parsing_progress_.setStage(ParsingProgress::Stage::Converting);
@@ -9240,6 +9274,10 @@ class TinyUSDZLoaderNative {
   // Export state
   tinyusdz::Stage export_stage_;
   bool has_stage_{false};
+  // Physics-scene JSON snapshotted from the pristine parsed stage at load time,
+  // before the Tydra render conversion strips custom GeomMesh props. Empty when
+  // no USD stage load path populated it (e.g. layer-only load).
+  std::string physics_scene_json_cache_;
   std::vector<uint8_t> usdz_export_buf_;
   std::vector<uint8_t> image_export_buf_;
   // Optional USDC writer resource-limit overrides (bytes; 0 = built-in default).
