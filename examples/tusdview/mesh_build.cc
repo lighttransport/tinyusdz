@@ -847,7 +847,51 @@ void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
 }
 #endif  // !TUSDVIEW_WITH_TEXTOOLS
 
-bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
+// Resolve a requested compression mode to a concrete block format the device
+// can actually sample, given its capabilities. `opaque` only affects the BCn
+// (BC1 vs BC3) auto choice; ASTC/ETC2/BC7 carry alpha regardless. Falls back
+// gracefully (e.g. Astc on a BC-only desktop GPU -> BC7) and returns None when
+// nothing is available so the caller keeps the texture uncompressed.
+DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
+                                            const TextureCompressCaps& caps,
+                                            bool opaque) {
+  const DrawCompressedFormat bcn =
+      opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
+  switch (mode) {
+    case TextureCompressionMode::Off:
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::BCn:
+      if (caps.bc) return bcn;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::BC7:
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Astc:
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Etc2:
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Auto:
+      // Prefer the highest-quality format available on the platform.
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+  }
+  return DrawCompressedFormat::None;
+}
+
+bool EncodeBCn(const light3d::Image& img, bool srgb,
+               TextureCompressionMode mode, const TextureCompressCaps& caps,
                DrawCompressedImageCPU* out) {
   if (!out || img.width <= 0 || img.height <= 0 || img.channels != 4 ||
       img.data.empty()) {
@@ -861,14 +905,13 @@ bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
     }
   }
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
-  const DrawCompressedFormat format =
-      preferBc7 ? DrawCompressedFormat::BC7
-                : (opaque ? DrawCompressedFormat::BC1
-                          : DrawCompressedFormat::BC3);
+  const DrawCompressedFormat format = ChooseCompressedFormat(mode, caps, opaque);
+  if (format == DrawCompressedFormat::None) return false;
   return TexToolsCompress(img, srgb, format, out);
 #else
   (void)srgb;
-  (void)preferBc7;  // BC7 needs the vendored texcomp encoder.
+  (void)mode;
+  (void)caps;  // ASTC/ETC2/BC7 need the vendored texcomp encoder.
   out->format = opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
   out->width = img.width;
   out->height = img.height;
@@ -904,14 +947,15 @@ bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
 #endif  // TUSDVIEW_WITH_TEXTOOLS
 }
 
-void CompressTexture(DrawTextureCPU* tex, bool preferBc7) {
+void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
+                     const TextureCompressCaps& caps) {
   if (!tex) return;
   if (tex->isUdim) {
     for (DrawUdimTileCPU& tile : tex->udimTiles) {
-      EncodeBCn(tile.image, tex->srgb, preferBc7, &tile.compressed);
+      EncodeBCn(tile.image, tex->srgb, mode, caps, &tile.compressed);
     }
   }
-  EncodeBCn(tex->image, tex->srgb, preferBc7, &tex->compressed);
+  EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed);
 }
 
 void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out) {
@@ -971,10 +1015,10 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
   }
 
   if (opt.compression != TextureCompressionMode::Off) {
-    const bool preferBc7 = opt.compression == TextureCompressionMode::BC7;
     for (DrawTextureCPU& tex : out->textures) {
+      if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
       tex.requestedCompressed = true;
-      CompressTexture(&tex, preferBc7);
+      CompressTexture(&tex, opt.compression, opt.caps);
     }
   }
 }
@@ -1040,6 +1084,10 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
     return true;
   };
   for (DrawTextureCPU& tex : out->textures) {
+    // Kept-compressed KTX2 passthrough: the compressed payload is final and
+    // `image` is empty, so there is nothing to build a mip chain from (the KTX2
+    // level 0 is uploaded directly; multi-level KTX2 mips are a follow-up).
+    if (tex.compressedFinal) continue;
     TexUsage usage;
     usage.srgb = tex.srgb;
     usage.normalMap = tex.isNormalMap;
@@ -1082,6 +1130,133 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
 
 // Build the renderable textures (dedup by texture_image_id) and a mapping
 // drawTexMap[uvTextureIndex] -> DrawScene texture index (-1 if skipped).
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+// Map a tydra block format to the tusdview draw format (UNI is handled via the
+// srcIsUni flag, not this map). Returns None for formats with no draw mapping.
+static DrawCompressedFormat MapTydraBlockFormat(tydra::TextureBlockFormat f) {
+  switch (f) {
+    case tydra::TextureBlockFormat::BC1: return DrawCompressedFormat::BC1;
+    case tydra::TextureBlockFormat::BC3: return DrawCompressedFormat::BC3;
+    case tydra::TextureBlockFormat::BC5: return DrawCompressedFormat::BC5;
+    case tydra::TextureBlockFormat::BC6H: return DrawCompressedFormat::BC6H;
+    case tydra::TextureBlockFormat::BC7: return DrawCompressedFormat::BC7;
+    case tydra::TextureBlockFormat::ETC2_RGB: return DrawCompressedFormat::ETC2_RGB;
+    case tydra::TextureBlockFormat::ETC2_RGBA: return DrawCompressedFormat::ETC2_RGBA;
+    case tydra::TextureBlockFormat::ASTC_4x4: return DrawCompressedFormat::ASTC_4x4;
+    case tydra::TextureBlockFormat::UNI: return DrawCompressedFormat::ASTC_4x4;  // uni ~ astc4x4
+    default: return DrawCompressedFormat::None;  // EAC_R11/RG11, None
+  }
+}
+
+// Bytes per 4x4 (or codec-native) block, for splitting a packed mip chain.
+static int BlockFormatBytes(tydra::TextureBlockFormat f) {
+  switch (f) {
+    case tydra::TextureBlockFormat::BC1:
+    case tydra::TextureBlockFormat::ETC2_RGB:
+    case tydra::TextureBlockFormat::EAC_R11: return 8;
+    default: return 16;  // BC3/5/6H/7, ETC2_RGBA, EAC_RG11, ASTC_4x4, UNI
+  }
+}
+
+// Kept-compressed KTX2 passthrough: a tydra image whose blockFormat != None
+// carries GPU block bytes. Adapt them to the device (upload as-is / transcode
+// uni / decode fallback) instead of decoding-then-re-encoding. Only engages when
+// no size cap / budget resize is requested (those need decoded texels). Returns
+// true if the texture was populated (compressed or RGBA fallback).
+static bool TryKeepCompressedTexture(const tydra::RenderScene& rs,
+                                     const tydra::TextureImage& img,
+                                     const TextureRuntimeOptions& opt,
+                                     DrawTextureCPU* tex) {
+  if (img.blockFormat == tydra::TextureBlockFormat::None) return false;
+  if (opt.maxTextureSize > 0 || opt.textureBudgetMB > 0) return false;
+  if (img.buffer_id < 0 ||
+      static_cast<size_t>(img.buffer_id) >= rs.buffers.size())
+    return false;
+  if (img.width <= 0 || img.height <= 0) return false;
+  const std::vector<uint8_t>& buf =
+      rs.buffers[static_cast<size_t>(img.buffer_id)].data;
+  if (buf.empty()) return false;
+
+  const bool isUni = img.blockFormat == tydra::TextureBlockFormat::UNI;
+  const DrawCompressedFormat srcFmt = MapTydraBlockFormat(img.blockFormat);
+  const int blockBytes = BlockFormatBytes(img.blockFormat);
+  const int bw = img.blockWidth > 0 ? img.blockWidth : 4;
+  const int bh = img.blockHeight > 0 ? img.blockHeight : 4;
+  auto levelBytes = [&](int lw, int lh) -> size_t {
+    return static_cast<size_t>((lw + bw - 1) / bw) *
+           static_cast<size_t>((lh + bh - 1) / bh) *
+           static_cast<size_t>(blockBytes);
+  };
+
+  // Split the tightly-packed buffer into mip levels (largest-first), deriving
+  // each level's size from its dimensions + block geometry.
+  struct Lvl { size_t off; size_t size; int w; int h; };
+  std::vector<Lvl> levels;
+  size_t off = 0;
+  int lw = img.width, lh = img.height;
+  for (int l = 0; l < 24 && off < buf.size(); ++l) {
+    const size_t sz = levelBytes(lw, lh);
+    if (sz == 0 || off + sz > buf.size()) break;
+    levels.push_back({off, sz, lw, lh});
+    off += sz;
+    if (lw == 1 && lh == 1) break;
+    lw = std::max(1, lw >> 1);
+    lh = std::max(1, lh >> 1);
+  }
+  if (levels.empty()) return false;
+
+  // Level 0 decides the device target (compressed format or RGBA fallback).
+  DrawCompressedImageCPU comp;
+  light3d::Image rgba;
+  if (!TexToolsAdaptCompressed(buf.data() + levels[0].off, levels[0].size, isUni,
+                               srcFmt, static_cast<uint32_t>(levels[0].w),
+                               static_cast<uint32_t>(levels[0].h), opt.caps,
+                               &comp, &rgba)) {
+    return false;
+  }
+
+  if (comp.data.empty()) {
+    tex->image = std::move(rgba);  // uncompressed fallback (level 0 only)
+    return true;
+  }
+
+  // Compressed: carry the precomputed mip chain (levels 1..N) to the same
+  // target format by copy/transcode. On any failure, fall back to base-only.
+  for (size_t l = 1; l < levels.size(); ++l) {
+    std::vector<uint8_t> mipBytes;
+    if (!TexToolsAdaptCompressedLevel(buf.data() + levels[l].off, levels[l].size,
+                                      isUni, srcFmt, comp.format,
+                                      static_cast<uint32_t>(levels[l].w),
+                                      static_cast<uint32_t>(levels[l].h),
+                                      &mipBytes)) {
+      comp.mips.clear();
+      break;
+    }
+    DrawCompressedMipCPU m;
+    m.width = levels[l].w;
+    m.height = levels[l].h;
+    m.data = std::move(mipBytes);
+    comp.mips.push_back(std::move(m));
+  }
+
+  std::fprintf(stderr,
+               "[tusdview] kept-compressed KTX2: %s (block fmt %d) -> draw fmt "
+               "%d, %dx%d, %zu levels, %zu base bytes (no re-encode)\n",
+               isUni ? "uni" : "block", static_cast<int>(img.blockFormat),
+               static_cast<int>(comp.format), comp.width, comp.height,
+               1 + comp.mips.size(), comp.data.size());
+  tex->compressed = std::move(comp);
+  tex->requestedCompressed = true;
+  tex->compressedFinal = true;
+  // Metadata only; the compressed payload (+ mips) is uploaded directly.
+  tex->image.width = img.width;
+  tex->image.height = img.height;
+  tex->image.channels = 4;
+  tex->image.data.clear();
+  return true;
+}
+#endif  // TUSDVIEW_WITH_TEXTOOLS
+
 void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
                        std::vector<int>* drawTexMap,
                        const TextureRuntimeOptions& textureOptions) {
@@ -1171,7 +1346,13 @@ void BuildDrawTextures(const tydra::RenderScene& rs, DrawScene* out,
     }
     const tydra::TextureImage& img = rs.images[static_cast<size_t>(imgId)];
     DrawTextureCPU tex;
-    if (!DecodeToRGBA8(rs, img, &tex.image)) {
+    bool built = false;
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+    // Kept-compressed KTX2 passthrough (blockFormat != None): upload/transcode
+    // the GPU blocks directly instead of decoding + re-encoding.
+    built = TryKeepCompressedTexture(rs, img, textureOptions, &tex);
+#endif
+    if (!built && !DecodeToRGBA8(rs, img, &tex.image)) {
       out->skipped.push_back("texture '" + uv.prim_name +
                              "': undecoded/unsupported image");
       continue;

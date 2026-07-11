@@ -369,8 +369,25 @@ int main(int argc, char** argv) {
         textureOptions.compression = tusdview::TextureCompressionMode::BCn;
       } else if (std::strcmp(mode, "bc7") == 0) {
         textureOptions.compression = tusdview::TextureCompressionMode::BC7;
+      } else if (std::strcmp(mode, "astc") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::Astc;
+      } else if (std::strcmp(mode, "etc2") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::Etc2;
+      } else if (std::strcmp(mode, "auto") == 0) {
+        textureOptions.compression = tusdview::TextureCompressionMode::Auto;
       } else {
-        LOGE("--texture-compress must be off, bc or bc7");
+        LOGE("--texture-compress must be off, bc, bc7, astc, etc2 or auto");
+        return 1;
+      }
+    } else if (std::strcmp(argv[i], "--texture-keep-compressed") == 0 &&
+               (i + 1) < argc) {
+      const char* mode = argv[++i];
+      if (std::strcmp(mode, "on") == 0) {
+        textureOptions.keepCompressed = true;
+      } else if (std::strcmp(mode, "off") == 0) {
+        textureOptions.keepCompressed = false;
+      } else {
+        LOGE("--texture-keep-compressed must be on or off");
         return 1;
       }
     } else if (std::strcmp(argv[i], "--texture-mips") == 0 && (i + 1) < argc) {

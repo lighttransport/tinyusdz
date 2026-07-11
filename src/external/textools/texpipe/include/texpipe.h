@@ -249,6 +249,104 @@ tp_result tp_write_ktx2_array(const tp_blocks *layers, int num_layers,
                               size_t out_size, size_t *written);
 
 /* ===========================================================================
+ * KTX2 reading / transcode-on-load (the consumer side of the writers above)
+ * ========================================================================= */
+
+#define TP_KTX2_MAX_LEVELS 32
+/* Sanity bounds on the header fields of a parsed (untrusted) KTX2: dimensions
+ * and layer count beyond these are rejected, which also keeps the level-size
+ * arithmetic in the reader well clear of a 64-bit overflow. */
+#define TP_KTX2_MAX_DIM 65536
+#define TP_KTX2_MAX_LAYERS 2048
+
+/* One mip level of a parsed KTX2. `data` points into the caller's source buffer
+ * (no copy); `size` is the level byte length (all faces/layers of that level).
+ * `width`/`height` are the level dimensions. */
+typedef struct tp_ktx2_level {
+    const uint8_t *data;
+    size_t size;
+    uint32_t width;
+    uint32_t height;
+} tp_ktx2_level;
+
+/* A parsed KTX2 image header + level index. All level `data` pointers alias the
+ * source buffer passed to tp_ktx2_read (which must outlive this struct). */
+typedef struct tp_ktx2_image {
+    uint32_t vk_format;      /* 0 = UNDEFINED (the tinyexr uni intermediate)   */
+    tp_codec codec;          /* mapped block codec (valid only when !is_uni)   */
+    int is_uni;              /* 1 = uni/UASTC transcodable intermediate        */
+    int is_hdr;
+    int srgb;
+    int block_w, block_h, block_bytes;
+    uint32_t width, height;  /* base (level 0) dimensions                      */
+    int num_levels;
+    int num_faces;           /* 1 (2D) or 6 (cube)                             */
+    int num_layers;          /* 0 or 1 = non-array                             */
+    uint32_t supercompression; /* 0 = none, 2 = Zstd (via tp_ktx2_read_zstd)    */
+    tp_ktx2_level levels[TP_KTX2_MAX_LEVELS]; /* level 0 = largest             */
+    /* Internal: allocation backing the decompressed levels for a supercompressed
+     * read (NULL for a zero-copy scheme-0 read). Release with tp_ktx2_image_free. */
+    void *_owned;
+} tp_ktx2_image;
+
+/* Parse a KTX2 blob (identifier + header + level index + DFD). Fills `out` with
+ * pointers into `data` (no allocation). Supports supercompressionScheme 0 only
+ * (Zstd/BasisLZ return TP_ERROR_UNSUPPORTED — use tp_ktx2_read_zstd for Zstd).
+ * vk_format == 0 is interpreted as the uni intermediate (is_uni = 1). Returns
+ * TP_ERROR_INVALID_ARGUMENT on a bad identifier / out-of-bounds level index,
+ * TP_ERROR_UNSUPPORTED for an unrecognized vk_format or supercompression. */
+tp_result tp_ktx2_read(const uint8_t *data, size_t size, tp_ktx2_image *out);
+
+/* Zstd decompressor callback: decompress `src_size` bytes at `src` into `dst`
+ * (capacity `dst_cap`); return the number of bytes written, or 0 on error.
+ * Wrap the host's ZSTD_decompress (this library carries no zstd dependency). */
+typedef size_t (*tp_zstd_decompress_fn)(void *user, uint8_t *dst, size_t dst_cap,
+                                        const uint8_t *src, size_t src_size);
+
+/* Like tp_ktx2_read, but also supports supercompressionScheme 2 (Zstd) when
+ * `zdec` is non-NULL: each level's compressed payload is decompressed into a
+ * single buffer allocated with `a` (tir_allocator; NULL = malloc). On success
+ * with a Zstd input, `out->_owned` holds that buffer and MUST be released with
+ * tp_ktx2_image_free(a, out); the level `data` pointers alias it. For scheme 0
+ * this is identical to tp_ktx2_read (zero-copy, `_owned` == NULL). Returns
+ * TP_ERROR_UNSUPPORTED for scheme 2 when zdec is NULL, or for BasisLZ.
+ * Each level's uncompressedByteLength must match the level's block-data size
+ * exactly, so `zdec` is never handed a destination capacity larger than the
+ * buffer behind it (a decompressor is trusted to honour `dst_cap`, so this is
+ * checked here rather than left to the callback). */
+tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
+                            const tir_allocator *a, tp_zstd_decompress_fn zdec,
+                            void *user, tp_ktx2_image *out);
+
+/* Release the buffer allocated by a supercompressed tp_ktx2_read_zstd (no-op
+ * when `_owned` is NULL). Use the same allocator passed to the read. */
+void tp_ktx2_image_free(const tir_allocator *a, tp_ktx2_image *img);
+
+/* Decode one level of a parsed KTX2 to RGBA8 (width*height*4 bytes, tightly
+ * packed, top-to-bottom). Handles the tinyexr-native decodable set: uni,
+ * BC7, and ASTC LDR. Other codecs (BC1/3/5/6H, ETC2/EAC) return
+ * TP_ERROR_UNSUPPORTED (upload their blocks directly instead, or transcode a uni
+ * source via texcomp's tc_uni_transcode_*). Single-face/non-array only. */
+tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
+                                     uint8_t *out_rgba, size_t out_size);
+
+/* Serialize pre-encoded uni (UASTC) mip levels as a KTX2 (vkFormat = UNDEFINED,
+ * supercompressionScheme = 0, KHR_DF UASTC descriptor). This is the Basis-free
+ * transcodable carrier: the reader reports is_uni = 1 and a consumer transcodes
+ * per device with tc_uni_transcode_{bc7,bc1,astc,etc2} or decodes with
+ * tc_uni_decompress_rgba8. `uni_levels[l]`/`uni_sizes[l]` are the level-l uni
+ * bytes (from tc_uni_compress_rgba8), level 0 = largest. Only level_w[0] /
+ * level_h[0] reach the header: levels 1..num_levels-1 must be the standard
+ * halving pyramid (max(1, w >> l)), which is how the reader re-derives them.
+ * tp_ktx2_uni_size returns the required output size, or 0 if num_levels is out
+ * of range or the level sizes would overflow the layout. */
+size_t tp_ktx2_uni_size(const size_t *uni_sizes, int num_levels);
+tp_result tp_ktx2_write_uni(const uint8_t *const *uni_levels,
+                            const size_t *uni_sizes, const uint32_t *level_w,
+                            const uint32_t *level_h, int num_levels,
+                            uint8_t *out, size_t out_size, size_t *written);
+
+/* ===========================================================================
  * Leaf helpers (also the Phase 1 test surface)
  * ========================================================================= */
 

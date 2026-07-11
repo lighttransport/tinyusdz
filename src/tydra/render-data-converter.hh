@@ -446,6 +446,14 @@ struct RenderSceneConverterConfig {
   // App/User must setup TextureImage manually after the conversion.
   bool load_texture_assets{true};
 
+  // Keep GPU-compressed KTX2 textures compressed instead of decoding them to
+  // RGBA8. When a resolved `inputs:file` (or its `customData ktx2` companion)
+  // is a `.ktx2`, the level-0 block payload is stored verbatim in the buffer
+  // and `TextureImage::blockFormat` is set, so a GPU consumer (e.g. tusdview)
+  // can upload/transcode the blocks directly instead of re-encoding decoded
+  // texels. Requires TINYUSDZ_WITH_TEXTOOLS; ignored otherwise. Non-UDIM only.
+  bool keep_compressed_textures{false};
+
   //
   // Merge meshes with the same material for performant rendering.
   //

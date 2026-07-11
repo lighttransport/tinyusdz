@@ -1,0 +1,309 @@
+// usd-texcomp — author GPU-compressed texture companions for a USD layer.
+//
+// For every `UsdUVTexture.inputs:file` that points at an ordinary image
+// (png/jpg/...), compress it to a `.ktx2` carrying the tinyexr `uni`
+// (UASTC-subset) intermediate with a full mip chain, write it next to the
+// output, and record it on the attribute as a *legacy-safe hint*:
+//
+//     asset inputs:file = @diffuse.png@ ( customData = { asset ktx2 = @diffuse.ktx2@ } )
+//
+// `inputs:file` is left untouched, so the asset still opens in stock USD tools
+// and stays USDZ-legal; tinyusdz-aware consumers (tusdview
+// --texture-keep-compressed on) find the companion and upload/transcode its GPU
+// blocks directly. This is the producer side of doc/texcomp.md.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "image-loader.hh"
+#include "io-util.hh"
+#include "pprinter.hh"
+#include "tinyusdz.hh"
+
+extern "C" {
+#include "texpipe.h"  // tp_ktx2_write_uni / tp_ktx2_uni_size (pulls in texcomp.h)
+#include "tir.h"      // tir_resize (mip chain)
+}
+
+namespace {
+
+bool HasImageExt(const std::string &p) {
+  const std::string e = tinyusdz::io::GetFileExtension(p);
+  std::string lo;
+  for (char c : e) lo += char(std::tolower(static_cast<unsigned char>(c)));
+  return lo == "png" || lo == "jpg" || lo == "jpeg" || lo == "bmp" || lo == "tga";
+}
+
+std::string ReplaceExtWithKtx2(const std::string &p) {
+  const size_t dot = p.find_last_of('.');
+  return (dot == std::string::npos ? p : p.substr(0, dot)) + ".ktx2";
+}
+
+// Load an image and normalize it to tightly-packed 8-bit RGBA.
+bool LoadRGBA8(const std::string &path, std::vector<uint8_t> *out, int *w, int *h,
+               std::string *err) {
+  auto r = tinyusdz::image::LoadImageFromFile(path);
+  if (!r) {
+    if (err) *err = r.error();
+    return false;
+  }
+  const tinyusdz::Image &im = r.value().image;
+  if (im.bpp != 8 || im.width <= 0 || im.height <= 0) {
+    if (err) *err = "not an 8-bit image (uni is LDR RGBA8 only)";
+    return false;
+  }
+  const size_t n = size_t(im.width) * size_t(im.height);
+  out->assign(n * 4u, 255);
+  const int ch = im.channels;
+  if (ch < 1 || ch > 4) {
+    if (err) *err = "unsupported channel count";
+    return false;
+  }
+  for (size_t i = 0; i < n; ++i) {
+    for (int c = 0; c < 4; ++c) {
+      if (c < ch) {
+        (*out)[i * 4 + size_t(c)] = im.data[i * size_t(ch) + size_t(c)];
+      } else if (c == 3) {
+        (*out)[i * 4 + 3] = 255;  // opaque when the source has no alpha
+      } else {
+        (*out)[i * 4 + size_t(c)] = (ch == 1) ? im.data[i] : 0;  // splat gray
+      }
+    }
+  }
+  *w = im.width;
+  *h = im.height;
+  return true;
+}
+
+// RGBA8 -> uni mip chain -> KTX2 bytes.
+bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
+                   std::vector<uint8_t> *out, int *levels_out,
+                   std::string *err) {
+  std::vector<std::vector<uint8_t>> uni;
+  std::vector<uint32_t> lw, lh;
+  int cw = w, ch = h;
+  for (int l = 0;; ++l) {
+    std::vector<uint8_t> level;
+    if (l == 0) {
+      level = rgba;
+    } else {
+      level.resize(size_t(cw) * size_t(ch) * 4u);
+      tir_image_view src{const_cast<uint8_t *>(rgba.data()), w, h, 4, TIR_U8, 0};
+      tir_image_view dst{level.data(), cw, ch, 4, TIR_U8, 0};
+      tir_options o;
+      tir_options_init(&o);
+      if (!TIR_OK(tir_resize(nullptr, &src, &dst, &o))) {
+        if (err) *err = "tir_resize failed";
+        return false;
+      }
+    }
+    const size_t usz = tc_uni_compressed_size(uint32_t(cw), uint32_t(ch));
+    std::vector<uint8_t> u(usz);
+    if (tc_uni_compress_rgba8(level.data(), uint32_t(cw), uint32_t(ch),
+                              size_t(cw) * 4u, u.data(), usz) != TC_SUCCESS) {
+      if (err) *err = "uni compress failed";
+      return false;
+    }
+    uni.push_back(std::move(u));
+    lw.push_back(uint32_t(cw));
+    lh.push_back(uint32_t(ch));
+    if (!mips || (cw == 1 && ch == 1)) break;
+    cw = cw > 1 ? cw / 2 : 1;
+    ch = ch > 1 ? ch / 2 : 1;
+  }
+  std::vector<const uint8_t *> lp;
+  std::vector<size_t> ls;
+  for (auto &u : uni) {
+    lp.push_back(u.data());
+    ls.push_back(u.size());
+  }
+  const int n = int(uni.size());
+  const size_t ksz = tp_ktx2_uni_size(ls.data(), n);
+  if (ksz == 0) {
+    if (err) *err = "ktx2 layout overflow";
+    return false;
+  }
+  out->resize(ksz);
+  if (!TP_OK(tp_ktx2_write_uni(lp.data(), ls.data(), lw.data(), lh.data(), n,
+                               out->data(), ksz, nullptr))) {
+    if (err) *err = "tp_ktx2_write_uni failed";
+    return false;
+  }
+  *levels_out = n;
+  return true;
+}
+
+// Record `src -> ktx2` on every asset-valued attribute whose value is `src`,
+// as a customData "ktx2" hint. `inputs:file` itself is left unchanged.
+size_t AddKtx2Hints(tinyusdz::PrimSpec &ps,
+                    const std::map<std::string, std::string> &hint,
+                    int depth = 0) {
+  if (depth > 512) return 0;
+  size_t n = 0;
+  for (auto &item : ps.props()) {
+    tinyusdz::Attribute *attr = item.second.get_attribute_or_null();
+    if (!attr || !attr->has_value()) continue;
+    tinyusdz::value::AssetPath ap;
+    if (!attr->get_value(&ap)) continue;
+    const auto it = hint.find(ap.GetAssetPath());
+    if (it == hint.end()) continue;
+
+    tinyusdz::Dictionary cd;
+    if (attr->metas().has_customData()) cd = attr->metas().get_customData();
+    tinyusdz::MetaVariable mv;
+    mv.set_value("ktx2", tinyusdz::value::AssetPath(it->second));
+    cd["ktx2"] = mv;
+    attr->metas().set_customData(cd);
+    ++n;
+  }
+  for (tinyusdz::PrimSpec &child : ps.children()) {
+    n += AddKtx2Hints(child, hint, depth + 1);
+  }
+  return n;
+}
+
+void CollectAssetPaths(const tinyusdz::PrimSpec &ps, std::vector<std::string> *out,
+                       int depth = 0) {
+  if (depth > 512) return;
+  for (const auto &item : ps.props()) {
+    const tinyusdz::Attribute *attr = item.second.get_attribute_or_null();
+    if (!attr || !attr->has_value()) continue;
+    tinyusdz::value::AssetPath ap;
+    if (!attr->get_value(&ap)) continue;
+    const std::string p = ap.GetAssetPath();
+    if (!p.empty() && HasImageExt(p)) out->push_back(p);
+  }
+  for (const auto &child : ps.children()) CollectAssetPaths(child, out, depth + 1);
+}
+
+void Usage() {
+  std::printf(
+      "usd-texcomp — author GPU-compressed (.ktx2) texture companions\n"
+      "\n"
+      "usage: usd-texcomp <input.usd[a|c]> -o <output.usda> [--mips on|off]\n"
+      "\n"
+      "For each UsdUVTexture inputs:file image, writes <name>.ktx2 (uni/UASTC,\n"
+      "mipped) next to the output and adds a legacy-safe hint on the attribute:\n"
+      "  asset inputs:file = @t.png@ ( customData = { asset ktx2 = @t.ktx2@ } )\n"
+      "inputs:file is unchanged, so stock USD tools and USDZ are unaffected.\n"
+      "Consume with: tusdview <output.usda> --texture-keep-compressed on\n");
+}
+
+}  // namespace
+
+int main(int argc, char **argv) {
+  std::string in_path, out_path;
+  bool mips = true;
+  for (int i = 1; i < argc; ++i) {
+    if (!std::strcmp(argv[i], "-o") && (i + 1) < argc) {
+      out_path = argv[++i];
+    } else if (!std::strcmp(argv[i], "--mips") && (i + 1) < argc) {
+      mips = !std::strcmp(argv[++i], "on");
+    } else if (!std::strcmp(argv[i], "-h") || !std::strcmp(argv[i], "--help")) {
+      Usage();
+      return 0;
+    } else if (in_path.empty()) {
+      in_path = argv[i];
+    }
+  }
+  if (in_path.empty() || out_path.empty()) {
+    Usage();
+    return 1;
+  }
+
+  tinyusdz::Layer layer;
+  std::string warn, err;
+  if (!tinyusdz::LoadLayerFromFile(in_path, &layer, &warn, &err)) {
+    std::fprintf(stderr, "failed to load %s: %s\n", in_path.c_str(), err.c_str());
+    return 1;
+  }
+  if (!warn.empty()) std::fprintf(stderr, "warn: %s\n", warn.c_str());
+
+  const std::string in_dir = tinyusdz::io::GetBaseDir(in_path);
+  const std::string out_dir = tinyusdz::io::GetBaseDir(out_path);
+
+  // Collect the referenced image assets.
+  std::vector<std::string> assets;
+  for (const auto &item : layer.primspecs()) {
+    CollectAssetPaths(item.second, &assets);
+  }
+  std::sort(assets.begin(), assets.end());
+  assets.erase(std::unique(assets.begin(), assets.end()), assets.end());
+  if (assets.empty()) {
+    std::fprintf(stderr, "no image textures found in %s\n", in_path.c_str());
+    return 1;
+  }
+
+  std::map<std::string, std::string> hint;  // src asset path -> ktx2 asset path
+  size_t total_src = 0, total_ktx = 0;
+  for (const std::string &a : assets) {
+    const std::string src = in_dir.empty() ? a : tinyusdz::io::JoinPath(in_dir, a);
+    std::vector<uint8_t> rgba;
+    int w = 0, h = 0;
+    std::string lerr;
+    if (!LoadRGBA8(src, &rgba, &w, &h, &lerr)) {
+      std::fprintf(stderr, "skip %s: %s\n", a.c_str(), lerr.c_str());
+      continue;
+    }
+    std::vector<uint8_t> ktx;
+    int levels = 0;
+    if (!EncodeUniKtx2(rgba, w, h, mips, &ktx, &levels, &lerr)) {
+      std::fprintf(stderr, "skip %s: %s\n", a.c_str(), lerr.c_str());
+      continue;
+    }
+    const std::string rel = ReplaceExtWithKtx2(a);
+    const std::string dst = out_dir.empty() ? rel : tinyusdz::io::JoinPath(out_dir, rel);
+    std::ofstream f(dst, std::ios::binary);
+    if (!f) {
+      std::fprintf(stderr, "skip %s: cannot write %s\n", a.c_str(), dst.c_str());
+      continue;
+    }
+    f.write(reinterpret_cast<const char *>(ktx.data()),
+            std::streamsize(ktx.size()));
+    if (!f) {
+      std::fprintf(stderr, "skip %s: write failed\n", a.c_str());
+      continue;
+    }
+    f.close();
+
+    const size_t src_bytes = size_t(w) * size_t(h) * 4u;
+    total_src += src_bytes;
+    total_ktx += ktx.size();
+    hint[a] = rel;
+    std::printf("  %s -> %s (%dx%d, %d level(s), %zu KiB uni-KTX2 vs %zu KiB RGBA8)\n",
+                a.c_str(), rel.c_str(), w, h, levels, ktx.size() / 1024,
+                src_bytes / 1024);
+  }
+
+  if (hint.empty()) {
+    std::fprintf(stderr, "no textures compressed\n");
+    return 1;
+  }
+
+  size_t nhint = 0;
+  for (auto &item : layer.primspecs()) {
+    nhint += AddKtx2Hints(item.second, hint);
+  }
+
+  const std::string usda = tinyusdz::to_string(layer);
+  std::ofstream o(out_path);
+  if (!o) {
+    std::fprintf(stderr, "cannot write %s\n", out_path.c_str());
+    return 1;
+  }
+  o << usda;
+  o.close();
+
+  std::printf(
+      "wrote %s (%zu texture(s), %zu hint(s)); GPU blocks %zu KiB vs %zu KiB "
+      "RGBA8 (%.1fx)\n",
+      out_path.c_str(), hint.size(), nhint, total_ktx / 1024, total_src / 1024,
+      total_ktx ? double(total_src) / double(total_ktx) : 0.0);
+  return 0;
+}

@@ -26,7 +26,8 @@ typedef enum tc_result {
 
 typedef enum tc_bc7_quality {
     TC_BC7_QUALITY_FAST = 0,
-    TC_BC7_QUALITY_QUICKBC7 = 1
+    TC_BC7_QUALITY_QUICKBC7 = 1,
+    TC_BC7_QUALITY_MEDIUM = 2
 } tc_bc7_quality;
 
 typedef struct tc_bc7_options {
@@ -136,8 +137,9 @@ void tc_astc_options_init(tc_astc_options *opt);
 void tc_astc_hdr_options_init(tc_astc_hdr_options *opt);
 
 size_t tc_bc7_compressed_size(uint32_t width, uint32_t height);
-/* "uni": compact universal transcodable intermediate (16 bytes/block). Encode
- * once, then transcode cheaply (no re-encode) to a GPU block format. */
+/* "uni": universal intermediate using UASTC blocks (16 bytes/block). Encode
+ * once, then transcode: ASTC 4x4 is a byte-copy (the stored blocks ARE valid
+ * ASTC); bc7, bc1, etc2 go through decode+re-encode. */
 size_t tc_uni_compressed_size(uint32_t width, uint32_t height);
 size_t tc_bc1_compressed_size(uint32_t width, uint32_t height);
 size_t tc_bc3_compressed_size(uint32_t width, uint32_t height);
@@ -160,10 +162,22 @@ tc_result tc_bc7_compress_rgba8(const uint8_t *rgba, uint32_t width,
                                 uint32_t height, size_t stride,
                                 const tc_bc7_options *opt, uint8_t *out_bc7,
                                 size_t out_size);
+/* Encode float [0,1] RGBA to BC7. A convenience wrapper that clamps float
+ * to uint8 and delegates to tc_bc7_compress_rgba8. stride_bytes is the row
+ * pitch in bytes for the float source (typically width*4*sizeof(float)). */
+tc_result tc_bc7_compress_rgbaf(const float *rgba, uint32_t width,
+                                uint32_t height, size_t stride_bytes,
+                                const tc_bc7_options *opt, uint8_t *out_bc7,
+                                size_t out_size);
 /* Decode a BC7 block stream to RGBA8 (all 8 BPTC modes). */
 tc_result tc_bc7_decompress_rgba8(const uint8_t *bc7, uint32_t width,
                                   uint32_t height, size_t stride,
                                   uint8_t *out_rgba, size_t out_size);
+/* Decode BC7 to float [0,1] RGBA. stride_bytes is row pitch in bytes
+ * for the float output (typically width*4*sizeof(float)). */
+tc_result tc_bc7_decompress_rgbaf(const uint8_t *bc7, uint32_t width,
+                                  uint32_t height, size_t stride_bytes,
+                                  float *out_rgba, size_t out_size);
 /* Encode RGBA8 to the universal intermediate. */
 tc_result tc_uni_compress_rgba8(const uint8_t *rgba, uint32_t width,
                                 uint32_t height, size_t stride, uint8_t *out,
@@ -172,16 +186,16 @@ tc_result tc_uni_compress_rgba8(const uint8_t *rgba, uint32_t width,
 tc_result tc_uni_decompress_rgba8(const uint8_t *uni, uint32_t width,
                                   uint32_t height, size_t stride, uint8_t *out,
                                   size_t out_size);
-/* Cheap transcodes to final GPU formats (no decode+re-encode search). Output
- * sizes are the usual tc_bc7/bc1 sizes. */
+/* Transcodes to final GPU formats. ASTC 4x4 is a byte-copy (the stored blocks
+ * ARE valid ASTC blocks). BC7, BC1, and ETC2 decode the UASTC block and
+ * re-encode to the target format. Output sizes are the usual sizes. */
 tc_result tc_uni_transcode_bc7(const uint8_t *uni, uint32_t width,
                                uint32_t height, uint8_t *out, size_t out_size);
 tc_result tc_uni_transcode_bc1(const uint8_t *uni, uint32_t width,
                                uint32_t height, uint8_t *out, size_t out_size);
-/* Mobile targets. ASTC/ETC don't share uni's endpoint-line, so these are
- * re-encode transcoders (decode + encode) rather than cheap bit-repacks;
- * output is conformant. ASTC is 4x4 single-subset (UASTC LDR); out sizes are the
- * usual tc_astc/etc2 sizes. */
+/* Mobile targets. ASTC is a byte-copy (the stored blocks are valid ASTC 4x4).
+ * ETC2 decodes the UASTC block and re-encodes to the target format. Out sizes
+ * are the usual tc_astc/etc2 sizes. */
 tc_result tc_uni_transcode_astc(const uint8_t *uni, uint32_t width,
                                 uint32_t height, uint8_t *out, size_t out_size);
 tc_result tc_uni_transcode_etc2(const uint8_t *uni, uint32_t width,
@@ -230,6 +244,16 @@ tc_result tc_astc_hdr_compress_rgbaf(const float *rgba, uint32_t width,
                                      uint32_t height, size_t stride_bytes,
                                      const tc_astc_hdr_options *opt,
                                      uint8_t *out_astc, size_t out_size);
+
+/* Decode an ASTC LDR block stream (footprint block_x x block_y) to RGBA8.
+ * out_rgba must hold width*height*4 bytes. Rows top-to-bottom, tightly packed.
+ * Companion to the BC7 (tc_bc7_decompress_rgba8) and uni (tc_uni_decompress_rgba8)
+ * decoders; together they cover the tinyexr-native transcodable carrier set
+ * (uni / ASTC 4x4 / BC7). */
+tc_result tc_astc_decompress_rgba8(const uint8_t *astc, uint32_t width,
+                                   uint32_t height, uint32_t block_x,
+                                   uint32_t block_y, uint8_t *out_rgba,
+                                   size_t out_size);
 
 size_t tc_dds_bc7_size(uint32_t width, uint32_t height);
 size_t tc_dds_bc1_size(uint32_t width, uint32_t height);

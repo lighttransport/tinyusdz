@@ -12,6 +12,7 @@
     "dev:lux": "vite --open /usdlux.html",
     "dev:subdiv": "vite --open /subdiv.html",
     "dev:tangent": "vite --open /tangent.html",
+    "dev:texcomp": "vite --open /texcomp.html",
     "dev:nodegraph": "vite --open /openpbr-nodegraph-demo.html",
     "dev:offscreengl": "vite --open /offscreengl.html",
     "dev:progress": "vite --open /progress-demo.html",
