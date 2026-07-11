@@ -707,6 +707,20 @@ void TestMetadataAndListOpFidelity() {
   assert(prep.find("prepend apiSchemas") != std::string::npos &&
          "authored prepend apiSchemas must stay prepend through USDC");
 
+  // `prepend apiSchemas = [A,B,C]` + `delete apiSchemas = [C]` resolves to
+  // [A,B]; those two must SURVIVE USDC. (Regression: the trailing delete used
+  // to leave the qualifier as `delete`, so the crate wrote a delete list-op
+  // that re-subtracted the resolved schemas on read, dropping them entirely.)
+  const std::string del = roundtrip_api(
+      "def \"P\" (\n"
+      "  prepend apiSchemas = [\"AAPI\", \"BAPI\", \"CAPI\"]\n"
+      "  delete apiSchemas = [\"CAPI\"]\n"
+      ") {}\n");
+  assert(del.find("\"AAPI\"") != std::string::npos &&
+         del.find("\"BAPI\"") != std::string::npos &&
+         del.find("\"CAPI\"") == std::string::npos &&
+         "prepend+delete apiSchemas must resolve to [A,B] and survive USDC");
+
   // Variant declaration vs dangling selection through USDC:
   // - a prim that only SELECTS a variant (no `prepend variantSets`) must NOT
   //   gain a synthesized variantSets declaration / empty variantSet block;
