@@ -877,6 +877,109 @@ static vk_pipeline *trace_get_pipeline(lrt_vk_engine *e, uint32_t w,
     return slot;
 }
 
+static VkCommandBuffer vk_cmd_begin(lrt_vk_engine *e);
+static int vk_cmd_end_submit(lrt_vk_engine *e, VkCommandBuffer cb);
+
+/* DEVICE-LOCAL storage buffer filled through a staging copy. The BVH nodes and
+ * blocks are re-read at every traversal step, in an access pattern that is by
+ * nature scattered; keeping them in host-visible memory means every one of those
+ * reads crosses PCIe. They are written once and read billions of times, which is
+ * exactly the case device-local memory exists for.
+ *
+ * Returns 0 without touching *out on failure, so the caller can fall back to a
+ * host-visible buffer (an integrated GPU may have no device-local-only heap, and
+ * a discrete one can simply be out of VRAM). */
+static int vk_buffer_create_device_filled(lrt_vk_engine *e, VkDeviceSize size,
+                                          const void *src, size_t bytes,
+                                          vk_buffer *out) {
+    vk_buffer dev, stage;
+    memset(&stage, 0, sizeof(stage));
+    if (!vk_buffer_create_ex(e, size,
+                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                             0, 0, &dev))
+        return 0;
+    if (!vk_buffer_create_ex(e, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1, 0,
+                             &stage)) {
+        vk_buffer_destroy(e, &dev);
+        return 0;
+    }
+    if (!vk_buffer_write(e, &stage, src, bytes)) goto fail;
+
+    VkCommandBuffer cb = vk_cmd_begin(e);
+    if (cb == VK_NULL_HANDLE) goto fail;
+    VkBufferCopy region;
+    memset(&region, 0, sizeof(region));
+    region.size = size;
+    vkCmdCopyBuffer(cb, stage.buf, dev.buf, 1, &region);
+    /* The copy runs in its own submit; without this the trace dispatch may read
+     * the buffer before the transfer writes are available to shader reads.
+     * (vkew exposes VkMemoryBarrier but not VkBufferMemoryBarrier; a global
+     * barrier is stricter than needed and equally correct here.) */
+    VkMemoryBarrier mb;
+    memset(&mb, 0, sizeof(mb));
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0,
+                         NULL, 0, NULL);
+    if (!vk_cmd_end_submit(e, cb)) goto fail;
+
+    vk_buffer_destroy(e, &stage);
+    *out = dev;
+    return 1;
+fail:
+    vk_buffer_destroy(e, &stage);
+    vk_buffer_destroy(e, &dev);
+    return 0;
+}
+
+/* Nodes/blocks buffer. OPT-IN device-local (LRT_VK_DEVICE_LOCAL=1).
+ *
+ * Device-local was the obvious optimization and it does not pay off, so it is
+ * not the default. Measured on ALab (29.2 M tris; 297 MiB of nodes + 1.6 GiB of
+ * blocks, both confirmed device-local), RTX 5060 Ti:
+ *
+ *   per-ray trace cost   0.144 us host-visible   0.144 us device-local
+ *   trace, 16.7 M rays   4.65 s                  4.92 s  (the staging copy)
+ *
+ * i.e. traversal is not bound by where the BVH lives -- and moving it into VRAM
+ * costs ~1.9 GiB of the very budget this work exists to reclaim. Kept behind the
+ * flag because the reasoning still holds for a GPU whose traversal IS bandwidth
+ * bound; measure before turning it on. */
+static int vk_bvh_buffer(lrt_vk_engine *e, VkDeviceSize size, const void *src,
+                         size_t bytes, vk_buffer *out) {
+    const char *ev = getenv("LRT_VK_DEVICE_LOCAL");
+    if (ev && ev[0] == '1' &&
+        vk_buffer_create_device_filled(e, size, src, bytes, out)) {
+        if (getenv("LRT_VK_VERBOSE"))
+            fprintf(stderr, "[lrt_vk] BVH buffer %.1f MiB device-local\n",
+                    (double)size / (1024.0 * 1024.0));
+        return 1;
+    }
+    if (getenv("LRT_VK_VERBOSE"))
+        fprintf(stderr, "[lrt_vk] BVH buffer %.1f MiB host-visible\n",
+                (double)size / (1024.0 * 1024.0));
+    return vk_buffer_create(e, size, out) && vk_buffer_write(e, out, src, bytes);
+}
+
+/* Rays traced per dispatch. The whole frame used to be one dispatch, so the ray
+ * + hit buffers alone were 48 B * width * height * spp -- 6.3 GB of VRAM for a
+ * 1920x1080x64spp frame, on top of the BVH. Tracing in tiles bounds that to a
+ * fixed working set (default 4 M rays = 128 MiB rays + 64 MiB hits) at no cost:
+ * the rays in a tile are independent, so the results are identical.
+ * LRT_VK_RAY_TILE overrides (0 = no tiling, the old whole-frame dispatch). */
+static uint32_t vk_ray_tile_size(void) {
+    const char *ev = getenv("LRT_VK_RAY_TILE");
+    if (ev) {
+        char *end = NULL;
+        unsigned long v = strtoul(ev, &end, 10);
+        if (end != ev) return v > 0xffffffffUL ? 0xffffffffu : (uint32_t)v;
+    }
+    return 4u << 20;
+}
+
 int lrt_vk_trace_scene(lrt_vk_engine *e, const lrt_tri_scene *s,
                        const lrt_ray *rays, uint32_t n, lrt_hit *out,
                        lrt_result *err) {
@@ -928,19 +1031,25 @@ int lrt_vk_trace_scene(lrt_vk_engine *e, const lrt_tri_scene *s,
 
     size_t nodes_bytes = (size_t)h->node_count * h->node_stride;
     size_t blocks_bytes = (size_t)h->block_count * h->block_stride;
+    uint32_t tile = vk_ray_tile_size();
+    if (tile == 0 || tile > n) tile = n;
     vk_buffer b_nodes, b_blocks, b_rays, b_hits;
-    int ok = vk_buffer_create(e, nodes_bytes, &b_nodes) &&
-             vk_buffer_create(e, blocks_bytes, &b_blocks) &&
-             vk_buffer_create(e, (VkDeviceSize)n * sizeof(lrt_ray), &b_rays) &&
-             vk_buffer_create(e, (VkDeviceSize)n * sizeof(lrt_hit), &b_hits);
+    memset(&b_nodes, 0, sizeof(b_nodes));
+    memset(&b_blocks, 0, sizeof(b_blocks));
+    memset(&b_rays, 0, sizeof(b_rays));
+    memset(&b_hits, 0, sizeof(b_hits));
+    int ok = vk_bvh_buffer(e, nodes_bytes,
+                           (const char *)blob + h->node_offset, nodes_bytes,
+                           &b_nodes) &&
+             vk_bvh_buffer(e, blocks_bytes,
+                           (const char *)blob + h->block_offset, blocks_bytes,
+                           &b_blocks) &&
+             /* Rays and hits stay host-visible: each is touched exactly once by
+              * the shader, so a staging round-trip would only add a copy. Only
+              * the tile is resident, not the frame. */
+             vk_buffer_create(e, (VkDeviceSize)tile * sizeof(lrt_ray), &b_rays) &&
+             vk_buffer_create(e, (VkDeviceSize)tile * sizeof(lrt_hit), &b_hits);
     if (!ok) goto fail_buffers;
-
-    if (!vk_buffer_write(e, &b_nodes, (const char *)blob + h->node_offset,
-                         nodes_bytes) ||
-        !vk_buffer_write(e, &b_blocks, (const char *)blob + h->block_offset,
-                         blocks_bytes) ||
-        !vk_buffer_write(e, &b_rays, rays, (size_t)n * sizeof(lrt_ray)))
-        goto fail_buffers;
 
     {
         vk_buffer set_bufs[4] = {b_nodes, b_blocks, b_rays, b_hits};
@@ -948,18 +1057,26 @@ int lrt_vk_trace_scene(lrt_vk_engine *e, const lrt_tri_scene *s,
         VkDescriptorSet set;
         if (!vk_descriptors_bind(e, pipe->dsl, set_bufs, 4, &pool, &set))
             goto fail_buffers;
-        trace_push pc;
-        pc.root = h->root;
-        pc.node_count = h->node_count;
-        pc.block_count = h->block_count;
-        pc.ray_count = n;
-        uint32_t groups = (n + 63u) / 64u;
-        int run_ok =
-            vk_dispatch(e, pipe, set, &pc, (uint32_t)sizeof(pc), groups);
+        int run_ok = 1;
+        for (uint32_t off = 0; off < n && run_ok; off += tile) {
+            uint32_t cnt = n - off < tile ? n - off : tile;
+            if (!vk_buffer_write(e, &b_rays, rays + off,
+                                 (size_t)cnt * sizeof(lrt_ray))) {
+                run_ok = 0;
+                break;
+            }
+            trace_push pc;
+            pc.root = h->root;
+            pc.node_count = h->node_count;
+            pc.block_count = h->block_count;
+            pc.ray_count = cnt;
+            uint32_t groups = (cnt + 63u) / 64u;
+            run_ok = vk_dispatch(e, pipe, set, &pc, (uint32_t)sizeof(pc), groups) &&
+                     vk_buffer_read(e, &b_hits, out + off,
+                                    (size_t)cnt * sizeof(lrt_hit));
+        }
         vkDestroyDescriptorPool(e->device, pool, NULL);
         if (!run_ok) goto fail_buffers;
-        if (!vk_buffer_read(e, &b_hits, out, (size_t)n * sizeof(lrt_hit)))
-            goto fail_buffers;
     }
 
     vk_buffer_destroy(e, &b_nodes);

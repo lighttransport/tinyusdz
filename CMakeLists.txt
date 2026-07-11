@@ -2214,7 +2214,8 @@ if(TINYUSDZ_BUILD_TESTS)
         timecode-points-animation
         timecode-transform-animation
         transparency
-        usdz-texture-equivalence)
+        usdz-texture-equivalence
+        vk-ray-tiling)
     foreach(t ${TUSDR_SHELL_TESTS})
       add_test(
         NAME tool-tusdrender-${t}

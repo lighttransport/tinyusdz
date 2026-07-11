@@ -889,6 +889,60 @@ ALAB=/mnt/disk1/data/alab/_merged_ALab/entry.usda \
 
 ---
 
+### 2.10 Raster LOD reaches non-instanced geometry (2026-07-11)
+
+`--raster-lod` classified only instanced prototypes, so Island's unique geometry
+was drawn in full no matter how small it was on screen. It now runs the same
+Cull / Proxy / Full classification over non-instanced meshes.
+
+The prerequisite was a loader bug: the `--next` static-batch path copied the
+running **scene**-bounds accumulator into every batch as its AABB, so no unique
+mesh could ever be outside the frustum or small on screen — the per-mesh frustum
+cull was a no-op too. Each batch now carries its own world bounds (skinned
+batches keep the conservative scene box, since their vertices are a single pose).
+
+| Island, `--next`, 1456×1264 headless | drawn tris | meshes drawn |
+|---|---|---|
+| `--raster-lod` off | 21 646 M (43.2 M instances) | 100 801 / 100 801 |
+| `--raster-lod` on, before | 40.3 M | 100 801 / 100 801 |
+| `--raster-lod` on, after | **15.2 M** | 84 400 / 100 801 |
+
+Regression test: `tusdview-noninstanced-lod`.
+
+### 2.11 tusdrender `-vk` compute trace: ray tiling, and the device-local BVH
+that did not pay (2026-07-11)
+
+`lrt_vk_trace_scene` allocated the whole frame's rays and hits up front —
+48 B × w × h × spp, i.e. **6.3 GB of VRAM for 1920×1080 at 64 spp**, on top of
+the BVH — and dispatched them as one job. It now traces in fixed tiles
+(`LRT_VK_RAY_TILE`, default 4 M rays = a 192 MiB working set). Rays are
+independent, so this is exactly image-neutral, and it is also *faster*:
+
+| Suzanne, 1024×1024 × 32 spp (33.5 M rays), RTX 5060 Ti | trace | ray+hit VRAM |
+|---|---|---|
+| one whole-frame dispatch | 3.61 s | ~1.6 GiB |
+| tiled, 4 M rays | **2.83 s** | **192 MiB** |
+
+Device-local node/block buffers (`LRT_VK_DEVICE_LOCAL=1`) were the other half of
+the §2.8 plan, and they do **not** pay off — left implemented but off by default.
+Measured on ALab (29.2 M tris; 297 MiB nodes + 1.6 GiB blocks, verified resident
+in VRAM):
+
+| | per-ray trace | 16.7 M-ray trace |
+|---|---|---|
+| host-visible BVH | 0.144 µs | 4.65 s |
+| device-local BVH | 0.144 µs | 4.92 s (the staging copy) |
+
+Traversal is simply not bound by where the BVH lives on this GPU, and moving it
+into VRAM spends ~1.9 GiB of the budget this work exists to reclaim. The
+reasoning still holds for a GPU whose traversal *is* bandwidth-bound, hence the
+flag — but measure before enabling it.
+
+Regression test: `tool-tusdrender-vk-ray-tiling` (4 tiles must be byte-identical
+to one whole-frame dispatch).
+
+---
+
 ## 3. Roadmap (remaining implementation)
 
 The loader bounds memory and streams payloads. Cross-directory cwp anchoring

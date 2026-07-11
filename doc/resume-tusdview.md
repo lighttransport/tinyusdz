@@ -41,8 +41,15 @@ From the §2.8 review in [large-scene.md](large-scene.md), all unimplemented:
   (caldera `-vkInstanced` 1051→525 MiB; island 7153→5408 MiB). tusdview's own RT
   path does not: island RT sits at 4.2 GiB, estimated ~2.7 GiB compacted. Best
   value of the five.
-- **Device-local node/block buffers** for the `-vk` compute path.
-- **Tiled ray/hit dispatch.**
+- ~~**Device-local node/block buffers**~~ — implemented, measured, left OFF
+  (`LRT_VK_DEVICE_LOCAL=1` opts in). Traversal is not bound by where the BVH
+  lives on this GPU (identical 0.144 µs/ray either way) and moving it into VRAM
+  spends ~1.9 GiB of the budget we are trying to reclaim. See large-scene.md
+  §2.11 before revisiting.
+- ~~**Tiled ray/hit dispatch**~~ — DONE. The `-vk` compute trace ran the whole
+  frame in one dispatch (48 B × w × h × spp — 6.3 GB of VRAM at 1080p/64 spp);
+  it now tiles at 4 M rays (192 MiB), which is byte-identical and 22 % faster.
+  Test `tool-tusdrender-vk-ray-tiling`.
 - **TLAS `PREFER_FAST_BUILD`** for settle rebuilds.
 - **`--vram-budget <GiB>` umbrella flag** deriving `--max-gpu-mem`, texture
   budgets and auto `--rt-lod` from the memory-budget query (today each is a
