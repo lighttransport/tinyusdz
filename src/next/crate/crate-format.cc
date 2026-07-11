@@ -78,6 +78,7 @@ const char* CrateTypeIdName(CrateTypeId id) {
     case CrateTypeId::TimeCode: return "TimeCode";
     case CrateTypeId::PathExpression: return "PathExpression";
     case CrateTypeId::Spline: return "Spline";
+    case CrateTypeId::Relocates: return "Relocates";
   }
   return "Unknown";
 }

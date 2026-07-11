@@ -760,6 +760,11 @@ void WriteVariantSets(StreamWriter& os,
                       int depth, const USDAWriteOptions& opts,
                       SegmentSink* segsink) {
   for (const VariantSetData& vs : sets) {
+    // A declaration-only variant set (`prepend variantSets = "v"` with no local
+    // content / options) is emitted only as the `variantSets` declaration, not
+    // as an empty `variantSet "v" = {}` block — matching pxr, which never emits
+    // the empty block.
+    if (vs.variants.empty()) continue;
     os << "\n";
     WriteIndent(os, depth, opts.indent);
     os << "variantSet " << EscapeString(vs.name) << " = {\n";

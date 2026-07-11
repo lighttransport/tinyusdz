@@ -28,9 +28,9 @@ namespace next {
 // Forward declarations
 //
 class RenderScene;
-class RenderMesh;
-class RenderMaterial;
-class RenderTexture;
+struct RenderMesh;
+struct RenderMaterial;
+struct RenderTexture;
 
 //
 // Enums
@@ -545,24 +545,24 @@ struct ShaderParam {
 // PreviewSurface shader parameters
 //
 struct PreviewSurfaceShader {
-  ShaderParam diffuse_color = {{-1}, {0.18f, 0.18f, 0.18f, 1.0f}};
-  ShaderParam emissive_color = {{-1}, {0, 0, 0, 1}};
+  ShaderParam diffuse_color = {-1, {0.18f, 0.18f, 0.18f, 1.0f}};
+  ShaderParam emissive_color = {-1, {0, 0, 0, 1}};
   // UsdPreviewSurface spec fallback is (0,0,0) — only meaningful when
   // useSpecularWorkflow is on.
-  ShaderParam specular_color = {{-1}, {0, 0, 0, 1}};
+  ShaderParam specular_color = {-1, {0, 0, 0, 1}};
 
-  ShaderParam metallic = {{-1}, {0, 0, 0, 0}};
-  ShaderParam roughness = {{-1}, {0.5f, 0, 0, 0}};
-  ShaderParam clearcoat = {{-1}, {0, 0, 0, 0}};
-  ShaderParam clearcoat_roughness = {{-1}, {0.01f, 0, 0, 0}};
+  ShaderParam metallic = {-1, {0, 0, 0, 0}};
+  ShaderParam roughness = {-1, {0.5f, 0, 0, 0}};
+  ShaderParam clearcoat = {-1, {0, 0, 0, 0}};
+  ShaderParam clearcoat_roughness = {-1, {0.01f, 0, 0, 0}};
 
-  ShaderParam opacity = {{-1}, {1, 0, 0, 0}};
-  ShaderParam opacity_threshold = {{-1}, {0, 0, 0, 0}};
-  ShaderParam ior = {{-1}, {1.5f, 0, 0, 0}};
+  ShaderParam opacity = {-1, {1, 0, 0, 0}};
+  ShaderParam opacity_threshold = {-1, {0, 0, 0, 0}};
+  ShaderParam ior = {-1, {1.5f, 0, 0, 0}};
 
-  ShaderParam normal = {{-1}, {0, 0, 1, 0}};
-  ShaderParam displacement = {{-1}, {0, 0, 0, 0}};
-  ShaderParam occlusion = {{-1}, {1, 0, 0, 0}};
+  ShaderParam normal = {-1, {0, 0, 1, 0}};
+  ShaderParam displacement = {-1, {0, 0, 0, 0}};
+  ShaderParam occlusion = {-1, {1, 0, 0, 0}};
 
   bool use_specular_workflow = false;
 };
@@ -572,48 +572,48 @@ struct PreviewSurfaceShader {
 //
 struct OpenPBRSurfaceShader {
   // Base
-  ShaderParam base_weight = {{-1}, {1, 0, 0, 0}};
-  ShaderParam base_color = {{-1}, {0.8f, 0.8f, 0.8f, 1}};
-  ShaderParam base_roughness = {{-1}, {0, 0, 0, 0}};
-  ShaderParam base_metalness = {{-1}, {0, 0, 0, 0}};
+  ShaderParam base_weight = {-1, {1, 0, 0, 0}};
+  ShaderParam base_color = {-1, {0.8f, 0.8f, 0.8f, 1}};
+  ShaderParam base_roughness = {-1, {0, 0, 0, 0}};
+  ShaderParam base_metalness = {-1, {0, 0, 0, 0}};
 
   // Specular
-  ShaderParam specular_weight = {{-1}, {1, 0, 0, 0}};
-  ShaderParam specular_color = {{-1}, {1, 1, 1, 1}};
-  ShaderParam specular_roughness = {{-1}, {0.3f, 0, 0, 0}};
-  ShaderParam specular_ior = {{-1}, {1.5f, 0, 0, 0}};
-  ShaderParam specular_anisotropy = {{-1}, {0, 0, 0, 0}};
-  ShaderParam specular_rotation = {{-1}, {0, 0, 0, 0}};
+  ShaderParam specular_weight = {-1, {1, 0, 0, 0}};
+  ShaderParam specular_color = {-1, {1, 1, 1, 1}};
+  ShaderParam specular_roughness = {-1, {0.3f, 0, 0, 0}};
+  ShaderParam specular_ior = {-1, {1.5f, 0, 0, 0}};
+  ShaderParam specular_anisotropy = {-1, {0, 0, 0, 0}};
+  ShaderParam specular_rotation = {-1, {0, 0, 0, 0}};
 
   // Transmission
-  ShaderParam transmission_weight = {{-1}, {0, 0, 0, 0}};
-  ShaderParam transmission_color = {{-1}, {1, 1, 1, 1}};
-  ShaderParam transmission_depth = {{-1}, {0, 0, 0, 0}};
+  ShaderParam transmission_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam transmission_color = {-1, {1, 1, 1, 1}};
+  ShaderParam transmission_depth = {-1, {0, 0, 0, 0}};
 
   // Subsurface
-  ShaderParam subsurface_weight = {{-1}, {0, 0, 0, 0}};
-  ShaderParam subsurface_color = {{-1}, {0.8f, 0.8f, 0.8f, 1}};
-  ShaderParam subsurface_radius = {{-1}, {1, 1, 1, 0}};
+  ShaderParam subsurface_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam subsurface_color = {-1, {0.8f, 0.8f, 0.8f, 1}};
+  ShaderParam subsurface_radius = {-1, {1, 1, 1, 0}};
 
   // Coat
-  ShaderParam coat_weight = {{-1}, {0, 0, 0, 0}};
-  ShaderParam coat_color = {{-1}, {1, 1, 1, 1}};
-  ShaderParam coat_roughness = {{-1}, {0, 0, 0, 0}};
-  ShaderParam coat_ior = {{-1}, {1.5f, 0, 0, 0}};
+  ShaderParam coat_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam coat_color = {-1, {1, 1, 1, 1}};
+  ShaderParam coat_roughness = {-1, {0, 0, 0, 0}};
+  ShaderParam coat_ior = {-1, {1.5f, 0, 0, 0}};
 
   // Sheen
-  ShaderParam sheen_weight = {{-1}, {0, 0, 0, 0}};
-  ShaderParam sheen_color = {{-1}, {1, 1, 1, 1}};
-  ShaderParam sheen_roughness = {{-1}, {0.3f, 0, 0, 0}};
+  ShaderParam sheen_weight = {-1, {0, 0, 0, 0}};
+  ShaderParam sheen_color = {-1, {1, 1, 1, 1}};
+  ShaderParam sheen_roughness = {-1, {0.3f, 0, 0, 0}};
 
   // Emission
-  ShaderParam emission_luminance = {{-1}, {0, 0, 0, 0}};
-  ShaderParam emission_color = {{-1}, {1, 1, 1, 1}};
+  ShaderParam emission_luminance = {-1, {0, 0, 0, 0}};
+  ShaderParam emission_color = {-1, {1, 1, 1, 1}};
 
   // Geometry
-  ShaderParam opacity = {{-1}, {1, 0, 0, 0}};
-  ShaderParam normal = {{-1}, {0, 0, 1, 0}};
-  ShaderParam tangent = {{-1}, {1, 0, 0, 0}};
+  ShaderParam opacity = {-1, {1, 0, 0, 0}};
+  ShaderParam normal = {-1, {0, 0, 1, 0}};
+  ShaderParam tangent = {-1, {1, 0, 0, 0}};
 
   // MaterialX node graph as JSON (optional)
   std::string nodegraph_json;

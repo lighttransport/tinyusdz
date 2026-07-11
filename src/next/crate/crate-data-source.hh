@@ -93,7 +93,11 @@ class CrateDataSource : public LazyArraySource {
   std::string bytes_;       // owned mode: the retained crate (never reallocated)
   const uint8_t* mmap_base_ = nullptr;  // mmap mode: mapped region start
   size_t mmap_size_ = 0;                // mmap mode: mapped length (== file size)
+#if !defined(TINYUSDZ_NEXT_NO_MMAP) && !defined(__EMSCRIPTEN__) && \
+    !defined(__wasi__) &&                                         \
+    (defined(__unix__) || defined(__APPLE__) || defined(__linux__))
   void* mmap_addr_ = nullptr;           // region to munmap in the destructor
+#endif
 
   CrateVersion version_{};  // value-initialized to 0.0.0
   std::vector<std::string> tokens_;
