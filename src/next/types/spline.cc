@@ -360,11 +360,26 @@ bool ParseSplineText(const std::string& text, SplineData* out,
               while (!sc.eof() && *sc.p != '\n') sc.p++;
             } else if (cc == '"' || cc == '\'') {
               const char quote = cc;
-              while (!sc.eof() && *sc.p != quote) {
-                if (*sc.p == '\\' && (sc.p + 1) < sc.end) sc.p++;  // skip escape
-                sc.p++;
+              // Triple-quoted string (`"""..."""` / `'''...'''`): only a run of
+              // three quotes closes it, so a lone quote inside (and any braces
+              // around it) must not end the scan.
+              const bool triple = (sc.p + 1) < sc.end && sc.p[0] == quote &&
+                                  sc.p[1] == quote;
+              if (triple) {
+                sc.p += 2;  // consume the opening triple's other two quotes
+                while (sc.p + 2 < sc.end &&
+                       !(sc.p[0] == quote && sc.p[1] == quote &&
+                         sc.p[2] == quote)) {
+                  sc.p++;
+                }
+                sc.p = (sc.p + 3 <= sc.end) ? sc.p + 3 : sc.end;  // closing """
+              } else {
+                while (!sc.eof() && *sc.p != quote) {
+                  if (*sc.p == '\\' && (sc.p + 1) < sc.end) sc.p++;  // skip escape
+                  sc.p++;
+                }
+                if (!sc.eof()) sc.p++;  // closing quote
               }
-              if (!sc.eof()) sc.p++;  // closing quote
             } else if (cc == '{') {
               depth++;
             } else if (cc == '}') {

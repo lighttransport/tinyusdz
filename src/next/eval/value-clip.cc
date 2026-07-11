@@ -264,29 +264,14 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
         }
       }
 
-      auto lerp_value = [](const Value& lo, const Value& hi,
-                           double alpha) -> Value {
-        if (const float* a = lo.as_float()) {
-          if (const float* b = hi.as_float())
-            return Value(static_cast<float>(*a + (*b - *a) * alpha));
-        }
-        if (const double* a = lo.as_double()) {
-          if (const double* b = hi.as_double())
-            return Value(*a + (*b - *a) * alpha);
-        }
-        return Value();  // not linearly interpolatable
-      };
-
       if (!v_lo.is_empty() && !v_hi.is_empty() && t_hi > t_lo) {
         const double alpha = (stage_time - t_lo) / (t_hi - t_lo);
-        Value interp = lerp_value(v_lo, v_hi, alpha);
-        if (!interp.is_empty()) {
-          value = std::move(interp);
-          asset = a_lo;
-        } else {  // non-numeric: hold the earlier neighbor
-          value = std::move(v_lo);
-          asset = a_lo;
-        }
+        // LerpValue interpolates every linearly-interpolatable type (scalars,
+        // vectors, colors, matrices, quats, half, and their arrays) and HOLDS
+        // (returns the earlier value) for non-interpolatable types or a
+        // cross-clip type mismatch — exactly pxr's clip-value semantics.
+        value = LerpValue(v_lo, v_hi, alpha);
+        asset = a_lo;
       } else if (!v_lo.is_empty()) {
         value = std::move(v_lo);
         asset = a_lo;
