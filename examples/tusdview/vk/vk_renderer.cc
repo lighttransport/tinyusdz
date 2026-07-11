@@ -5530,10 +5530,21 @@ void VulkanRenderer::rebuildTlas() {
   geom.geometry.instances.data.deviceAddress = bufferDeviceAddress(instBuf_);
 
   const uint32_t instCount = static_cast<uint32_t>(insts.size());
+  // PREFER_FAST_BUILD for settle rebuilds was on the large-scene.md 2.8 list. It
+  // is NOT worth taking: on Island the TLAS build itself is 0.7-4.6 ms of a
+  // 600-8400 ms rebuild (which is dominated by the BLAS builds and the instance
+  // array), so trading trace speed -- paid on every accumulation frame after the
+  // camera settles -- to save ~1 ms of a rebuild that only happens on settle is a
+  // straight loss. Kept as a lever (TUSDVIEW_TLAS_FAST_BUILD=1) for a GPU or scene
+  // where the balance differs; measure the "AS build" line below before flipping it.
+  static const bool kTlasFastBuild =
+      std::getenv("TUSDVIEW_TLAS_FAST_BUILD") != nullptr;
   VkAccelerationStructureBuildGeometryInfoKHR bgi{};
   bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
   bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-  bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  bgi.flags = kTlasFastBuild
+                  ? VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR
+                  : VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
   bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
   bgi.geometryCount = 1;
   bgi.pGeometries = &geom;
@@ -5569,17 +5580,24 @@ void VulkanRenderer::rebuildTlas() {
   VkAccelerationStructureBuildRangeInfoKHR range{};
   range.primitiveCount = instCount;
   const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+  auto asT0 = std::chrono::steady_clock::now();
   VkCommandBuffer cb = beginOneShot();
   pfnCmdBuildAS_(cb, 1, &bgi, &pRange);
   endOneShot(cb);
+  const double asMs =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                asT0)
+          .count();
   vkDestroyBuffer(device_, scratch, nullptr);
   vkFreeMemory(device_, scratchMem, nullptr);
   if (rtTiming) {
     auto tt = std::chrono::steady_clock::now();
     std::fprintf(stderr,
-                 "[vk_rt] TLAS: storage %.2f GB, scratch %.2f GB, total build %.1f ms\n",
+                 "[vk_rt] TLAS: storage %.2f GB, scratch %.2f GB, AS build %.1f ms "
+                 "(%s), total build %.1f ms\n",
                  double(sizes.accelerationStructureSize) / 1e9,
-                 double(sizes.buildScratchSize) / 1e9,
+                 double(sizes.buildScratchSize) / 1e9, asMs,
+                 kTlasFastBuild ? "fast-build" : "fast-trace",
                  std::chrono::duration<double, std::milli>(tt - tlasT0).count());
     uint64_t used = 0, budget = 0;
     if (memoryBudget(&used, &budget)) {

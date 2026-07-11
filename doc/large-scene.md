@@ -941,6 +941,19 @@ flag — but measure before enabling it.
 Regression test: `tool-tusdrender-vk-ray-tiling` (4 tiles must be byte-identical
 to one whole-frame dispatch).
 
+### 2.12 TLAS `PREFER_FAST_BUILD`: measured, rejected (2026-07-12)
+
+The last item of the §2.8 list, and it does not pay. On Island (`--rt --rt-lod`,
+36 k TLAS instances) the TLAS acceleration-structure build is **0.7–4.6 ms of a
+600–8400 ms rebuild** — the rebuild is dominated by the BLAS builds and the
+instance array, not the TLAS. `PREFER_FAST_BUILD` would save ~1 ms of a rebuild
+that only happens when the camera settles, and charge for it on every
+accumulation frame afterwards.
+
+Left as a lever (`TUSDVIEW_TLAS_FAST_BUILD=1`) for a GPU or scene where the
+balance differs. `TUSDVIEW_RT_TIMING=1` now prints the AS-build time on its own
+line, so the trade can be re-measured rather than re-argued.
+
 ---
 
 ## 3. Roadmap (remaining implementation)
