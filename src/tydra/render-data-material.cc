@@ -1990,6 +1990,17 @@ static size_t KTX2ZstdDecompress(void * /*user*/, uint8_t *dst, size_t dst_cap,
 }
 #endif
 
+// Budget-capped allocator for the KTX2 reader: a supercompressed KTX2 inflates
+// into a reader-owned buffer sized from the header, so a small crafted file may
+// legally declare dimensions whose block payload is multiple GiB. Bound it by
+// the same ceiling used for asset reads.
+static void *KTX2BudgetAlloc(void *user, size_t size) {
+  const size_t cap = *static_cast<const size_t *>(user);
+  if (size == 0 || size > cap) return nullptr;
+  return std::malloc(size);
+}
+static void KTX2BudgetFree(void * /*user*/, void *ptr) { std::free(ptr); }
+
 // Case-insensitive ".ktx2" suffix test.
 static bool EndsWithKtx2(const std::string &s) {
   if (s.size() < 5) return false;
@@ -2040,9 +2051,11 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
   tp_ktx2_image k;
   // Handles uncompressed (scheme 0) and, where zstd is available, Zstd (scheme
   // 2) KTX2; the reader owns any decompressed buffer, released via
-  // tp_ktx2_image_free below.
+  // tp_ktx2_image_free below (with the same allocator).
+  size_t alloc_cap = security_policy::GetMaxAssetReadBytes();
+  const tir_allocator kalloc{&alloc_cap, &KTX2BudgetAlloc, &KTX2BudgetFree};
 #if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
-  const tp_result kr = tp_ktx2_read_zstd(asset.data(), asset.size(), nullptr,
+  const tp_result kr = tp_ktx2_read_zstd(asset.data(), asset.size(), &kalloc,
                                          &KTX2ZstdDecompress, nullptr, &k);
 #else
   const tp_result kr = tp_ktx2_read(asset.data(), asset.size(), &k);
@@ -2052,12 +2065,12 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
     return false;
   }
   if (k.num_faces != 1 || k.num_layers > 1) {  // 2D non-array only
-    tp_ktx2_image_free(nullptr, &k);
+    tp_ktx2_image_free(&kalloc, &k);
     return false;
   }
   const TextureBlockFormat bf = Ktx2ToBlockFormat(k);
   if (bf == TextureBlockFormat::None) {
-    tp_ktx2_image_free(nullptr, &k);
+    tp_ktx2_image_free(&kalloc, &k);
     return false;
   }
   // Store every mip level, largest-first (level 0 .. level N-1), tightly packed.
@@ -2071,7 +2084,7 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
     const tp_ktx2_level &lv = k.levels[l];
     out_bytes->insert(out_bytes->end(), lv.data, lv.data + lv.size);
   }
-  tp_ktx2_image_free(nullptr, &k);  // blocks copied into out_bytes
+  tp_ktx2_image_free(&kalloc, &k);  // blocks copied into out_bytes
   texImage->blockFormat = bf;
   texImage->blockWidth = k.block_w;
   texImage->blockHeight = k.block_h;

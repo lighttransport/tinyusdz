@@ -1040,16 +1040,30 @@ static size_t KTX2ZstdDecompress(void * /*user*/, uint8_t *dst, size_t dst_cap,
 }
 #endif
 
+// Budget-capped allocator for the KTX2 reader. A supercompressed (Zstd) KTX2
+// inflates into a reader-owned buffer sized from the *header*: a small crafted
+// file may legally declare dimensions whose block payload is multiple GiB. Cap
+// the reader's allocation the same way the decoders here cap decoded images, so
+// a hostile asset fails cleanly instead of exhausting memory.
+static void *KTX2BudgetAlloc(void *user, size_t size) {
+  const size_t cap = *static_cast<const size_t *>(user);
+  if (size == 0 || size > cap) return nullptr;
+  return std::malloc(size);
+}
+static void KTX2BudgetFree(void * /*user*/, void *ptr) { std::free(ptr); }
+
 static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
                             const std::string &uri, Image *image,
                             std::string *err) {
   tp_ktx2_image kimg;
   // Support uncompressed (scheme 0) and, when zstd is available, Zstd-super-
   // compressed (scheme 2) KTX2; the reader owns any decompressed buffer, freed
-  // via tp_ktx2_image_free.
+  // via tp_ktx2_image_free (with the same allocator).
+  size_t alloc_cap = kMaxDecodedImageBytes;
+  const tir_allocator kalloc{&alloc_cap, &KTX2BudgetAlloc, &KTX2BudgetFree};
 #if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
-  tp_result r = tp_ktx2_read_zstd(addr, sz, nullptr, &KTX2ZstdDecompress, nullptr,
-                                  &kimg);
+  tp_result r =
+      tp_ktx2_read_zstd(addr, sz, &kalloc, &KTX2ZstdDecompress, nullptr, &kimg);
 #else
   tp_result r = tp_ktx2_read(addr, sz, &kimg);
 #endif
@@ -1070,7 +1084,26 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
   } else {
     const uint32_t w = kimg.levels[0].width;
     const uint32_t h = kimg.levels[0].height;
-    const size_t need = size_t(w) * size_t(h) * 4u;
+    // The KTX2 parser bounds dimensions (TP_KTX2_MAX_DIM), but a spec-legal
+    // 65536x65536 still decodes to 16 GiB of RGBA8 -- and w*h*4 wraps a 32-bit
+    // size_t. Use the checked multiply and the same decoded-size ceiling the
+    // other decoders in this file enforce.
+    size_t need = 0;
+    if (!safe::mul3(size_t(w), size_t(h), size_t(4), &need)) {
+      if (err) {
+        (*err) += "KTX2: decoded size overflows size_t for: " + uri + "\n";
+      }
+      tp_ktx2_image_free(&kalloc, &kimg);
+      return false;
+    }
+    if (need > kMaxDecodedImageBytes) {
+      if (err) {
+        (*err) += "KTX2: decoded image exceeds the maximum allowed size for: " +
+                  uri + "\n";
+      }
+      tp_ktx2_image_free(&kalloc, &kimg);
+      return false;
+    }
     image->data.resize(need);
     r = tp_ktx2_decode_level_rgba8(&kimg, 0, image->data.data(), need);
     if (!TP_OK(r)) {
@@ -1094,7 +1127,7 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
       ok = true;
     }
   }
-  tp_ktx2_image_free(nullptr, &kimg);  // no-op unless a Zstd buffer was owned
+  tp_ktx2_image_free(&kalloc, &kimg);  // no-op unless a Zstd buffer was owned
   return ok;
 }
 #endif  // TINYUSDZ_WITH_TEXTOOLS
