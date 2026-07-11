@@ -164,13 +164,15 @@ bool AsciiParser::Impl::ParseStageMetadata() {
               }
               Match(TokenType::CloseParen);
             }
-            if (sl_scale <= 0.0) {
+            // `!(scale > 0)` also rejects NaN, which `scale <= 0` would let
+            // through to poison every time-mapped sample of the sublayer.
+            if (!(sl_scale > 0.0)) {
               if (options_.strict_aousd_conformance) {
                 AddError("AOUSD layer-offset scale must be greater than zero");
                 return false;
               }
               // pxr warns and substitutes NO offset (identity) — retaining a
-              // negative scale would time-reverse the sublayer's samples.
+              // negative/NaN scale would time-reverse or destroy the samples.
               AddWarning(
                   "Invalid sublayer offset (non-positive scale); using no "
                   "offset instead");
