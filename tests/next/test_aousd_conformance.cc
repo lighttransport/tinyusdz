@@ -11,6 +11,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include "next/schema/schema-registry.hh"
 
 using namespace tinyusdz::next;
 
@@ -93,6 +94,48 @@ void TestLosslessUnsupportedValues() {
     assert(rew.find("pathExpression expr = \"/World//Mesh*\"") !=
            std::string::npos);
   }
+}
+
+void TestSchemaRegistryBreadth() {
+  // Fallbacks expanded from pxr's generated schemas: Imageable purpose /
+  // visibility, camera clippingRange, common light inputs, curve basis,
+  // GeomSubset elementType, ShadowAPI defaults.
+  const std::string usda =
+      "def Mesh \"M\" { }\n"
+      "def Camera \"C\" { }\n"
+      "def SphereLight \"L\" { }\n"
+      "def BasisCurves \"B\" { }\n";
+  LoadResult r = Parse("#usda 1.0\n" + usda, false);
+  assert(r.success);
+  auto expect_tok = [&](const char* prim, const char* attr,
+                        const char* want) {
+    UsdPrim p = r.stage.GetPrimAtPath(prim);
+    assert(p.IsValid());
+    const SchemaPropertyDefinition* def =
+        GetSchemaRegistry().FindProperty(*p.GetPrimSpec(), attr);
+    assert(def && def->has_fallback);
+    const std::string* t = def->fallback.as_token();
+    assert(t && *t == want);
+  };
+  expect_tok("/M", "purpose", "default");
+  expect_tok("/M", "visibility", "inherited");
+  expect_tok("/B", "basis", "bezier");
+  {
+    UsdPrim c = r.stage.GetPrimAtPath("/C");
+    const SchemaPropertyDefinition* def =
+        GetSchemaRegistry().FindProperty(*c.GetPrimSpec(), "clippingRange");
+    assert(def && def->has_fallback);
+  }
+  {
+    UsdPrim l = r.stage.GetPrimAtPath("/L");
+    const SchemaPropertyDefinition* def = GetSchemaRegistry().FindProperty(
+        *l.GetPrimSpec(), "inputs:intensity");
+    assert(def && def->fallback.as_float() && *def->fallback.as_float() == 1.0f);
+    def = GetSchemaRegistry().FindProperty(*l.GetPrimSpec(), "inputs:radius");
+    assert(def && def->fallback.as_float() && *def->fallback.as_float() == 0.5f);
+  }
+
+  std::cout << "  Schema registry breadth: PASSED\n";
 }
 
 void TestDictionaryAndRelationshipComposition() {
@@ -252,5 +295,6 @@ int main() {
   TestNamespaceOrdering();
   TestSchemaFallbackAndValueClips();
   std::cout << "AOUSD conformance regressions: PASSED\n";
+  TestSchemaRegistryBreadth();
   return 0;
 }

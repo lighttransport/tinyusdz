@@ -30,6 +30,8 @@ bool HasAppliedSchema(const PrimSpec& prim, const std::string& schema) {
 SchemaRegistry::SchemaRegistry() {
   parents_ = {
       {"Xform", "Xformable"}, {"Xformable", "Imageable"},
+      {"Curves", "PointBased"}, {"BasisCurves", "Curves"},
+      {"NurbsCurves", "Curves"}, {"Plane", "Gprim"},
       {"Scope", "Imageable"},
       {"Boundable", "Xformable"}, {"Gprim", "Boundable"},
       {"Mesh", "Gprim"}, {"Points", "PointBased"},
@@ -98,6 +100,64 @@ SchemaRegistry::SchemaRegistry() {
   add("PhysicsCollisionAPI", "physics:collisionEnabled", "bool", Value(true));
   add("PhysicsMassAPI", "physics:mass", "float", Value(0.0f));
   add("PhysicsMassAPI", "physics:density", "float", Value(0.0f));
+
+  // UsdGeom Imageable/Camera/curves/subset fallbacks (values verified
+  // against pxr's generated usdGeom schema.usda).
+  add("Imageable", "visibility", "token", Token("inherited"));
+  add("Imageable", "purpose", "token", Token("default"));
+  add("Camera", "clippingRange", "float2", Value::MakeFloat2(1.0f, 1000000.0f));
+  add("Camera", "horizontalApertureOffset", "float", Value(0.0f));
+  add("Camera", "verticalApertureOffset", "float", Value(0.0f));
+  add("Camera", "shutter:open", "double", Value(0.0));
+  add("Camera", "shutter:close", "double", Value(0.0));
+  add("Camera", "stereoRole", "token", Token("mono"));
+  add("BasisCurves", "type", "token", Token("cubic"));
+  add("BasisCurves", "basis", "token", Token("bezier"));
+  add("BasisCurves", "wrap", "token", Token("nonperiodic"));
+  add("Plane", "width", "double", Value(2.0));
+  add("Plane", "length", "double", Value(2.0));
+  add("Plane", "axis", "token", Token("Z"));
+  add("GeomSubset", "elementType", "token", Token("face"));
+  add("GeomSubset", "familyName", "token", Token(""));
+
+  // UsdLux common light inputs (each concrete light carries them; values
+  // from pxr's usdLux schema.usda). DistantLight overrides intensity.
+  {
+    const char* kLights[] = {"DistantLight", "DomeLight",  "RectLight",
+                             "DiskLight",    "SphereLight", "CylinderLight"};
+    for (const char* lt : kLights) {
+      add(lt, "inputs:intensity", "float",
+          Value(std::string(lt) == "DistantLight" ? 50000.0f : 1.0f));
+      add(lt, "inputs:exposure", "float", Value(0.0f));
+      add(lt, "inputs:diffuse", "float", Value(1.0f));
+      add(lt, "inputs:specular", "float", Value(1.0f));
+      add(lt, "inputs:normalize", "bool", Value(false));
+      add(lt, "inputs:color", "color3f", Value::MakeColor3f(1.0f, 1.0f, 1.0f));
+      add(lt, "inputs:enableColorTemperature", "bool", Value(false));
+      add(lt, "inputs:colorTemperature", "float", Value(6500.0f));
+    }
+  }
+  add("DistantLight", "inputs:angle", "float", Value(0.53f));
+  add("DomeLight", "inputs:texture:format", "token", Token("automatic"));
+  add("SphereLight", "inputs:radius", "float", Value(0.5f));
+  add("SphereLight", "treatAsPoint", "bool", Value(false));
+  add("RectLight", "inputs:width", "float", Value(1.0f));
+  add("RectLight", "inputs:height", "float", Value(1.0f));
+  add("DiskLight", "inputs:radius", "float", Value(0.5f));
+  add("CylinderLight", "inputs:length", "float", Value(1.0f));
+  add("CylinderLight", "inputs:radius", "float", Value(0.5f));
+  add("CylinderLight", "treatAsLine", "bool", Value(false));
+
+  // UsdLux applied APIs.
+  add("ShapingAPI", "inputs:shaping:cone:angle", "float", Value(90.0f));
+  add("ShapingAPI", "inputs:shaping:cone:softness", "float", Value(0.0f));
+  add("ShapingAPI", "inputs:shaping:focus", "float", Value(0.0f));
+  add("ShadowAPI", "inputs:shadow:enable", "bool", Value(true));
+  add("ShadowAPI", "inputs:shadow:color", "color3f",
+      Value::MakeColor3f(0.0f, 0.0f, 0.0f));
+  add("ShadowAPI", "inputs:shadow:distance", "float", Value(-1.0f));
+  add("ShadowAPI", "inputs:shadow:falloff", "float", Value(-1.0f));
+  add("ShadowAPI", "inputs:shadow:falloffGamma", "float", Value(1.0f));
 }
 
 const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
