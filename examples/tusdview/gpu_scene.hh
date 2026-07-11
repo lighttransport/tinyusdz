@@ -238,13 +238,35 @@ inline int KindId(const std::string& k) {
 enum class AlphaMode : int { Opaque = 0, Mask = 1, Blend = 2 };
 
 enum class UdimMode : int { Sparse = 0, Atlas = 1 };
-enum class TextureCompressionMode : int { Off = 0, BCn = 1, BC7 = 2 };
+// Requested texture compression. Astc/Etc2 are mobile formats; Auto picks the
+// best available for the device (BC7 desktop, ASTC/ETC2 mobile, else BCn/off).
+// The requested mode is cap-gated against RendererCaps before CPU encoding.
+enum class TextureCompressionMode : int {
+  Off = 0,
+  BCn = 1,
+  BC7 = 2,
+  Astc = 3,
+  Etc2 = 4,
+  Auto = 5,
+};
+
+// GPU compressed-format capabilities, mirrored from RendererCaps so the CPU-side
+// texture build (ApplyTextureRuntimeOptions) can cap-gate the requested format
+// without a renderer dependency. Default = BC-only desktop assumption.
+struct TextureCompressCaps {
+  bool bc{true};
+  bool astc{false};
+  bool etc2{false};
+  bool bc5{false};
+  bool bc6h{false};
+};
 
 struct TextureRuntimeOptions {
   int maxTextureSize{0};       // longest edge cap in texels; 0 = no cap
   int textureBudgetMB{0};      // decoded/upload budget; 0 = no budget
   UdimMode udimMode{UdimMode::Sparse};
   TextureCompressionMode compression{TextureCompressionMode::Off};
+  TextureCompressCaps caps{};  // populated from renderer->caps() before build
   // Build content-aware CPU mip chains (sRGB/alpha-coverage/normal-map aware;
   // needs the vendored textools; no-op otherwise). Backends upload the
   // precomputed levels instead of glGenerateMipmap (GL) / no mips (VK).
@@ -345,7 +367,17 @@ struct DrawMaterialCPU {
 
 // Wrap modes (match light3d / GL semantics).
 enum class WrapMode : int { ClampToEdge = 0, Repeat = 1, Mirror = 2, ClampToBorder = 3 };
-enum class DrawCompressedFormat : int { None = 0, BC1 = 1, BC3 = 3, BC7 = 7 };
+enum class DrawCompressedFormat : int {
+  None = 0,
+  BC1 = 1,
+  BC3 = 3,
+  BC5 = 5,       // RGTC two-channel (normal maps)
+  BC6H = 6,      // BPTC float (HDR) — reserved; encode path is RGBA8-only for now
+  BC7 = 7,
+  ETC2_RGB = 10,
+  ETC2_RGBA = 11,
+  ASTC_4x4 = 20,
+};
 
 struct DrawCompressedMipCPU {
   int width{0};

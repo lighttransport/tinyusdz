@@ -37,6 +37,32 @@ void SetUvUniform(GLint loc0, GLint loc1, const DrawUvXformCPU& uv) {
   glUniform3f(loc1, uv.m10, uv.m11, uv.ty);
 }
 
+// Compressed-format enum values that may be absent from older glad headers.
+#ifndef GL_COMPRESSED_RG_RGTC2
+#define GL_COMPRESSED_RG_RGTC2 0x8DBD
+#endif
+#ifndef GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT
+#define GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT 0x8E8F
+#endif
+#ifndef GL_COMPRESSED_RGB8_ETC2
+#define GL_COMPRESSED_RGB8_ETC2 0x9274
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ETC2
+#define GL_COMPRESSED_SRGB8_ETC2 0x9275
+#endif
+#ifndef GL_COMPRESSED_RGBA8_ETC2_EAC
+#define GL_COMPRESSED_RGBA8_ETC2_EAC 0x9278
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC
+#define GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC 0x9279
+#endif
+#ifndef GL_COMPRESSED_RGBA_ASTC_4x4_KHR
+#define GL_COMPRESSED_RGBA_ASTC_4x4_KHR 0x93B0
+#endif
+#ifndef GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR
+#define GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR 0x93D0
+#endif
+
 GLenum GLCompressedFormat(DrawCompressedFormat format, bool srgb) {
   switch (format) {
     case DrawCompressedFormat::BC1:
@@ -45,10 +71,24 @@ GLenum GLCompressedFormat(DrawCompressedFormat format, bool srgb) {
     case DrawCompressedFormat::BC3:
       return srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
                   : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    case DrawCompressedFormat::BC5:
+      // GL_ARB_texture_compression_rgtc (core since GL 3.0). No sRGB variant.
+      return GL_COMPRESSED_RG_RGTC2;
+    case DrawCompressedFormat::BC6H:
+      // GL_ARB_texture_compression_bptc float (HDR). No sRGB variant.
+      return GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT;
     case DrawCompressedFormat::BC7:
       // GL_ARB_texture_compression_bptc (core since GL 4.2).
       return srgb ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM
                   : GL_COMPRESSED_RGBA_BPTC_UNORM;
+    case DrawCompressedFormat::ETC2_RGB:
+      return srgb ? GL_COMPRESSED_SRGB8_ETC2 : GL_COMPRESSED_RGB8_ETC2;
+    case DrawCompressedFormat::ETC2_RGBA:
+      return srgb ? GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC
+                  : GL_COMPRESSED_RGBA8_ETC2_EAC;
+    case DrawCompressedFormat::ASTC_4x4:
+      return srgb ? GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR
+                  : GL_COMPRESSED_RGBA_ASTC_4x4_KHR;
     case DrawCompressedFormat::None:
     default:
       return 0;
@@ -110,6 +150,25 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   }
   caps_.api_info = version ? reinterpret_cast<const char*>(version) : "OpenGL";
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize_);
+
+  // Compressed-texture format support (extension strings + core versions).
+  {
+    std::string exts;
+    GLint next = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &next);
+    exts.reserve(static_cast<size_t>(next) * 24);
+    for (GLint i = 0; i < next; ++i) {
+      const GLubyte* e = glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i));
+      if (e) { exts += reinterpret_cast<const char*>(e); exts += ' '; }
+    }
+    auto has = [&](const char* s) { return exts.find(s) != std::string::npos; };
+    const bool bptc = has("texture_compression_bptc") || GLAD_GL_VERSION_4_2;
+    caps_.supportsBC = has("GL_EXT_texture_compression_s3tc") || bptc;  // BC1/3/7
+    caps_.supportsBC5 = has("texture_compression_rgtc") || GLAD_GL_VERSION_3_0;
+    caps_.supportsBC6H = bptc;
+    caps_.supportsASTC = has("GL_KHR_texture_compression_astc_ldr");
+    caps_.supportsETC2 = has("GL_ARB_ES3_compatibility") || GLAD_GL_VERSION_4_3;
+  }
 
   program_ = glutil::CompileProgram(light3d::getMaterialVertexShaderGL330(),
                                     light3d::getMaterialFragmentShaderGL330(), err);

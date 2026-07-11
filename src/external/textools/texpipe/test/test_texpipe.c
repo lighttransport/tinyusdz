@@ -1078,6 +1078,109 @@ static void test_kaiser(void) {
     free(img);
 }
 
+/* ------------------------------------------------- KTX2 read / decode / uni */
+
+static void test_ktx2_read_roundtrip(void) {
+    tir_image_view v;
+    tp_options opt;
+    uint8_t *ref = make_gradient(64, 64);
+    uint8_t *ktx = NULL, *dec = NULL;
+    size_t ktx_n = 0;
+    tp_ktx2_image img;
+    double p;
+    const size_t npix = 64u * 64u;
+    view_u8(&v, ref, 64, 64);
+    dec = (uint8_t *)malloc(npix * 4u);
+
+    /* --- BC7 KTX2: write -> read -> decode level 0 --- */
+    tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_BC7);
+    opt.container = TP_CONTAINER_KTX2;
+    CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)), "process bc7 ktx2");
+    CHECK(TP_OK(tp_ktx2_read(ktx, ktx_n, &img)), "read bc7 ktx2");
+    CHECK(!img.is_uni && img.codec == TP_CODEC_BC7, "bc7 codec mapped");
+    CHECK(img.width == 64 && img.height == 64, "bc7 dims");
+    CHECK(img.num_levels == 7 && img.num_faces == 1, "bc7 levels/faces");
+    CHECK(img.levels[0].width == 64 && img.levels[1].width == 32, "bc7 level dims");
+    CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)), "decode bc7 l0");
+    p = psnr_rgba(ref, dec, npix);
+    printf("    bc7 ktx2 read+decode level0 PSNR=%.2f dB\n", p);
+    CHECK(p >= 30.0, "bc7 ktx2 decode PSNR >= 30 dB");
+    tp_free(NULL, ktx); ktx = NULL;
+
+    /* --- ASTC 4x4 KTX2: exercises the newly-exposed ASTC decoder --- */
+    tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_ASTC);
+    opt.container = TP_CONTAINER_KTX2;
+    opt.astc.block_x = 4; opt.astc.block_y = 4;
+    CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)), "process astc ktx2");
+    CHECK(TP_OK(tp_ktx2_read(ktx, ktx_n, &img)), "read astc ktx2");
+    CHECK(!img.is_uni && img.codec == TP_CODEC_ASTC, "astc codec mapped");
+    CHECK(img.block_w == 4 && img.block_h == 4, "astc block 4x4");
+    CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)), "decode astc l0");
+    p = psnr_rgba(ref, dec, npix);
+    printf("    astc ktx2 read+decode level0 PSNR=%.2f dB\n", p);
+    CHECK(p >= 30.0, "astc ktx2 decode PSNR >= 30 dB");
+    tp_free(NULL, ktx); ktx = NULL;
+
+    /* --- uni (UASTC) KTX2: write_uni -> read -> decode + transcode --- */
+    {
+        size_t usz = tc_uni_compressed_size(64, 64);
+        uint8_t *uni = (uint8_t *)malloc(usz);
+        const uint8_t *levels[1]; size_t sizes[1]; uint32_t lw[1], lh[1];
+        uint8_t *ubuf = NULL; size_t ktx_size;
+        CHECK(tc_uni_compress_rgba8(ref, 64, 64, (size_t)64 * 4u, uni, usz) == TC_SUCCESS,
+              "uni compress");
+        levels[0] = uni; sizes[0] = usz; lw[0] = 64; lh[0] = 64;
+        ktx_size = tp_ktx2_uni_size(sizes, 1);
+        ubuf = (uint8_t *)malloc(ktx_size);
+        CHECK(TP_OK(tp_ktx2_write_uni(levels, sizes, lw, lh, 1, ubuf, ktx_size, NULL)),
+              "write uni ktx2");
+        CHECK(TP_OK(tp_ktx2_read(ubuf, ktx_size, &img)), "read uni ktx2");
+        CHECK(img.is_uni && img.vk_format == 0u, "uni marker");
+        CHECK(img.width == 64 && img.num_levels == 1, "uni header");
+        CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)), "decode uni l0");
+        p = psnr_rgba(ref, dec, npix);
+        printf("    uni ktx2 read+decode level0 PSNR=%.2f dB\n", p);
+        CHECK(p >= 25.0, "uni ktx2 decode PSNR >= 25 dB");
+        /* transcode uni -> BC7, decode, and confirm it survives the transcode */
+        {
+            size_t bsz = tc_bc7_compressed_size(64, 64);
+            uint8_t *bc7 = (uint8_t *)malloc(bsz);
+            CHECK(tc_uni_transcode_bc7(img.levels[0].data, 64, 64, bc7, bsz) == TC_SUCCESS,
+                  "uni->bc7 transcode");
+            CHECK(tc_bc7_decompress_rgba8(bc7, 64, 64, (size_t)64 * 4u, dec, npix * 4u) == TC_SUCCESS,
+                  "decode transcoded bc7");
+            p = psnr_rgba(ref, dec, npix);
+            printf("    uni->bc7 transcode PSNR=%.2f dB\n", p);
+            CHECK(p >= 25.0, "uni->bc7 PSNR >= 25 dB");
+            free(bc7);
+        }
+        free(ubuf); free(uni);
+    }
+
+    /* --- malformed guards --- */
+    {
+        uint8_t bad[80];
+        tp_ktx2_image bimg;
+        memset(bad, 0, sizeof(bad));
+        CHECK(tp_ktx2_read(bad, sizeof(bad), &bimg) == TP_ERROR_INVALID_ARGUMENT,
+              "reject bad identifier");
+        CHECK(tp_ktx2_read(NULL, 0, &bimg) == TP_ERROR_INVALID_ARGUMENT,
+              "reject null");
+    }
+    /* corrupt a valid BC7 KTX2's level-0 offset -> out-of-bounds rejected */
+    tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_BC7);
+    opt.container = TP_CONTAINER_KTX2;
+    CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)), "process bc7 ktx2 (2)");
+    ktx[80] = 0xFF; ktx[81] = 0xFF; ktx[82] = 0xFF; ktx[83] = 0xFF; /* huge offset */
+    CHECK(tp_ktx2_read(ktx, ktx_n, &img) == TP_ERROR_INVALID_ARGUMENT,
+          "reject out-of-bounds level offset");
+    tp_free(NULL, ktx);
+
+    free(dec);
+    free(ref);
+    printf("  ktx2 read + decode (bc7 / astc / uni) + transcode: ok\n");
+}
+
 int main(void) {
     printf("texpipe unit tests\n");
     test_octa_seam();
@@ -1097,6 +1200,7 @@ int main(void) {
     test_alpha_scale_helper();
     test_alpha_coverage();
     test_containers();
+    test_ktx2_read_roundtrip();
     test_cube_seam_fixup();
     test_cube_split();
     test_cube_container();

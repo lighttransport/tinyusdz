@@ -249,6 +249,67 @@ tp_result tp_write_ktx2_array(const tp_blocks *layers, int num_layers,
                               size_t out_size, size_t *written);
 
 /* ===========================================================================
+ * KTX2 reading / transcode-on-load (the consumer side of the writers above)
+ * ========================================================================= */
+
+#define TP_KTX2_MAX_LEVELS 32
+
+/* One mip level of a parsed KTX2. `data` points into the caller's source buffer
+ * (no copy); `size` is the level byte length (all faces/layers of that level).
+ * `width`/`height` are the level dimensions. */
+typedef struct tp_ktx2_level {
+    const uint8_t *data;
+    size_t size;
+    uint32_t width;
+    uint32_t height;
+} tp_ktx2_level;
+
+/* A parsed KTX2 image header + level index. All level `data` pointers alias the
+ * source buffer passed to tp_ktx2_read (which must outlive this struct). */
+typedef struct tp_ktx2_image {
+    uint32_t vk_format;      /* 0 = UNDEFINED (the tinyexr uni intermediate)   */
+    tp_codec codec;          /* mapped block codec (valid only when !is_uni)   */
+    int is_uni;              /* 1 = uni/UASTC transcodable intermediate        */
+    int is_hdr;
+    int srgb;
+    int block_w, block_h, block_bytes;
+    uint32_t width, height;  /* base (level 0) dimensions                      */
+    int num_levels;
+    int num_faces;           /* 1 (2D) or 6 (cube)                             */
+    int num_layers;          /* 0 or 1 = non-array                             */
+    uint32_t supercompression; /* only 0 (none) is supported                   */
+    tp_ktx2_level levels[TP_KTX2_MAX_LEVELS]; /* level 0 = largest             */
+} tp_ktx2_image;
+
+/* Parse a KTX2 blob (identifier + header + level index + DFD). Fills `out` with
+ * pointers into `data` (no allocation). Supports supercompressionScheme 0 only
+ * (Zstd/BasisLZ return TP_ERROR_UNSUPPORTED). vk_format == 0 is interpreted as
+ * the uni intermediate (is_uni = 1). Returns TP_ERROR_INVALID_ARGUMENT on a bad
+ * identifier / out-of-bounds level index, TP_ERROR_UNSUPPORTED for an
+ * unrecognized vk_format or supercompression. */
+tp_result tp_ktx2_read(const uint8_t *data, size_t size, tp_ktx2_image *out);
+
+/* Decode one level of a parsed KTX2 to RGBA8 (width*height*4 bytes, tightly
+ * packed, top-to-bottom). Handles the tinyexr-native decodable set: uni,
+ * BC7, and ASTC LDR. Other codecs (BC1/3/5/6H, ETC2/EAC) return
+ * TP_ERROR_UNSUPPORTED (upload their blocks directly instead, or transcode a uni
+ * source via texcomp's tc_uni_transcode_*). Single-face/non-array only. */
+tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
+                                     uint8_t *out_rgba, size_t out_size);
+
+/* Serialize pre-encoded uni (UASTC) mip levels as a KTX2 (vkFormat = UNDEFINED,
+ * supercompressionScheme = 0, KHR_DF UASTC descriptor). This is the Basis-free
+ * transcodable carrier: the reader reports is_uni = 1 and a consumer transcodes
+ * per device with tc_uni_transcode_{bc7,bc1,astc,etc2} or decodes with
+ * tc_uni_decompress_rgba8. `uni_levels[l]`/`uni_sizes[l]` are the level-l uni
+ * bytes (from tc_uni_compress_rgba8), level 0 = largest. */
+size_t tp_ktx2_uni_size(const size_t *uni_sizes, int num_levels);
+tp_result tp_ktx2_write_uni(const uint8_t *const *uni_levels,
+                            const size_t *uni_sizes, const uint32_t *level_w,
+                            const uint32_t *level_h, int num_levels,
+                            uint8_t *out, size_t out_size, size_t *written);
+
+/* ===========================================================================
  * Leaf helpers (also the Phase 1 test surface)
  * ========================================================================= */
 

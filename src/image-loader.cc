@@ -32,6 +32,13 @@ extern "C" {
 #endif
 #endif
 
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+// KTX2 / GPU-compressed texture reader (pure-C11 texpipe + texcomp). Decodes a
+// KTX2 (uni / BC7 / ASTC LDR) to uncompressed RGBA8 at load. See
+// src/external/textools/README.tinyusdz.md.
+#include "texpipe.h"  // pulls in texcomp.h; tp_ktx2_read / tp_ktx2_decode_level_rgba8
+#endif
+
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
 
 #ifndef TINYUSDZ_NO_WUFFS_IMPLEMENTATION
@@ -1004,10 +1011,84 @@ static inline bool ExrIsEXR(const uint8_t *addr, size_t sz) {
 }
 #endif
 
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+// KTX2 container magic (identifier bytes, KTX 2.0 spec).
+static inline bool IsKTX2FromMemory(const uint8_t *addr, size_t sz) {
+  static const uint8_t id[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
+                                 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
+  return addr && sz >= 12 && std::memcmp(addr, id, 12) == 0;
+}
+
+// Decode level 0 of a KTX2 to uncompressed RGBA8. Handles the tinyexr-native
+// transcodable/decodable set (uni / BC7 / ASTC LDR) via the texpipe reader;
+// other block formats (BC1/3/5, ETC2/EAC) and HDR (BC6H/ASTC-HDR) are reported
+// as an error here (upload the blocks directly instead, or keep them
+// compressed). This is the legacy-friendly path: a .ktx2 asset becomes an
+// ordinary RGBA8 Image, so every existing consumer (software renderers,
+// re-encode to png/jpg for USDZ, web fallback) works unchanged.
+static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
+                            const std::string &uri, Image *image,
+                            std::string *err) {
+  tp_ktx2_image kimg;
+  tp_result r = tp_ktx2_read(addr, sz, &kimg);
+  if (!TP_OK(r)) {
+    if (err) {
+      (*err) += "KTX2: failed to parse: " + std::string(tp_result_string(r)) +
+                "\n";
+    }
+    return false;
+  }
+  if (kimg.is_hdr) {
+    if (err) {
+      (*err) +=
+          "KTX2: HDR block formats (BC6H / ASTC-HDR) are not CPU-decoded to "
+          "RGBA8; upload the blocks directly or keep them compressed.\n";
+    }
+    return false;
+  }
+  const uint32_t w = kimg.levels[0].width;
+  const uint32_t h = kimg.levels[0].height;
+  const size_t need = size_t(w) * size_t(h) * 4u;
+  image->data.resize(need);
+  r = tp_ktx2_decode_level_rgba8(&kimg, 0, image->data.data(), need);
+  if (!TP_OK(r)) {
+    image->data.clear();
+    if (err) {
+      (*err) +=
+          "KTX2: level 0 decode/transcode is unsupported for this format "
+          "(only uni / BC7 / ASTC LDR are CPU-decodable): " +
+          std::string(tp_result_string(r)) + "\n";
+    }
+    return false;
+  }
+  image->uri = uri;
+  image->width = int(w);
+  image->height = int(h);
+  image->channels = 4;
+  image->bpp = 8;
+  image->format = Image::PixelFormat::UInt;
+  // KTX2 DFD transfer function -> colorspace hint (Auto/sourceColorSpace still
+  // applies downstream; empty = let the caller decide).
+  image->colorspace = kimg.srgb ? "sRGB" : "";
+  return true;
+}
+#endif  // TINYUSDZ_WITH_TEXTOOLS
+
 nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
     const uint8_t *addr, size_t sz, const std::string &uri) {
   image::ImageResult ret;
   std::string err;
+
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+  // KTX2 (GPU-compressed / uni). Distinct 12-byte magic, checked first.
+  if (IsKTX2FromMemory(addr, sz)) {
+    bool ok = DecodeImageKTX2(addr, sz, uri, &ret.image, &err);
+    if (!ok) {
+      return nonstd::make_unexpected(err);
+    }
+    return std::move(ret);
+  }
+#endif
 
 #if defined(TINYUSDZ_WITH_EXR)
   if (ExrIsEXR(addr, sz)) {
