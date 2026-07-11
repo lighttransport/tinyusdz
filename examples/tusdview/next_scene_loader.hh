@@ -19,6 +19,7 @@
 #include "gpu_scene.hh"      // DrawScene
 #include "load_control.hh"   // LoadControl
 #include "scene_loader.hh"   // LoadOptions
+#include "skinning.hh"       // RtSkinnedMeshUpload
 
 namespace tinyusdz { namespace next { class Stage; class StageSession; } }
 
@@ -80,5 +81,21 @@ void BuildNextMorphWeights(
 // Returns false when the scene has no next-path skinning.
 bool BuildNextSkinningFrame(const tinyusdz::next::Stage& stage, DrawScene* draw,
                             double time, SkinningFrameCPU* frame);
+
+// Ray tracing cannot use the raster vertex shader's deform: the BLAS is built
+// from actual vertex buffers, so the geometry itself has to move. Re-pose the
+// retained REST vertices of every skinned/morphed mesh at `time` (morph first,
+// then linear-blend skinning -- deform.glsl's order, from the same bone rows
+// BuildNextSkinningFrame packs) and hand the caller per-mesh vertex buffers to
+// upload. This replaces re-running the whole converter for each new time code,
+// which is what the RT path used to do.
+//
+// Meshes whose CPU geometry was freed after upload are skipped; the RT path
+// therefore has to retain it for deformable meshes (see App::freeCpuGeometry).
+// Returns false when nothing deformed.
+bool BuildNextRtDeformedVertices(
+    const tinyusdz::next::Stage& stage, const DrawScene& draw, double time,
+    const std::unordered_map<std::string, float>* blendOverride,
+    std::vector<RtSkinnedMeshUpload>* out);
 
 }  // namespace tusdview

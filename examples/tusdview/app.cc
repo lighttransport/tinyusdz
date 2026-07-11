@@ -482,6 +482,15 @@ bool App::initImGui(std::string* err) {
 // animation re-pose, GPU skinning, or meaningful per-mesh pick on batched
 // geometry). Halves resident RAM for large scenes. Keeps small metadata
 // (name/purpose/world/aabb/submeshes) the GUI's visibility mask still reads.
+// A mesh the RT path has to be able to re-pose: its rest vertices and skin/morph
+// attributes are the ONLY inputs to BuildNextRtDeformedVertices, so freeing them
+// would leave the ray tracer stuck on whatever pose the BLAS was built with.
+// (The raster path can free them freely -- it deforms in the vertex shader from
+// the GPU-side copies.)
+static bool MeshIsDeformable(const DrawMeshCPU& m) {
+  return !m.jointIdx.empty() || !m.morphDeltaHalf.empty();
+}
+
 static void FreeMeshGeometryCPU(DrawMeshCPU& m) {
   std::vector<DrawVertex>().swap(m.vertices);
   std::vector<uint32_t>().swap(m.indices);
@@ -676,8 +685,11 @@ void App::applyLoaded(bool ok, bool progressive) {
       postGpu([this, freeCpu] {
         std::string uerr;
         renderer_->uploadScene(draw_, &uerr);
+        // Deformable meshes keep their CPU geometry: RT re-poses from it every
+        // frame (and RT can be toggled on at any time).
         if (freeCpu)
-          for (DrawMeshCPU& m : draw_.meshes) FreeMeshGeometryCPU(m);
+          for (DrawMeshCPU& m : draw_.meshes)
+            if (!MeshIsDeformable(m)) FreeMeshGeometryCPU(m);
       });
     }
     if (ok) {
@@ -836,7 +848,9 @@ void App::stepProgressiveUpload() {
   // Geometry first so meshes appear, ~4ms/frame.
   while (nextMesh_ < draw_.meshes.size()) {
     renderer_->appendMesh(draw_.meshes[nextMesh_]);
-    if (useNextLoader_ && !cudaRt_ && !hipRt_) FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
+    if (useNextLoader_ && !cudaRt_ && !hipRt_ &&
+        !MeshIsDeformable(draw_.meshes[nextMesh_]))
+      FreeMeshGeometryCPU(draw_.meshes[nextMesh_]);
     ++nextMesh_;
     if (elapsedMs() > 4.0) break;
   }
@@ -1181,14 +1195,20 @@ bool App::wantsGpuSkinningLoad() const {
 
 // Should the --next loader emit GPU skinning attributes instead of baking the
 // pose into the geometry at load? (LoadOptions::gpuSkinning; the Tydra path
-// always emits them and decides in updateSkinningEffective.) The ray tracers --
-// CPU (CUDA/HIP) and GPU (BLAS from actual vertex buffers) alike -- read the
-// baked DrawScene geometry, so they need the CPU bake; RT toggled on later
-// re-loads through the same predicate (see the rayTracingActive check in run()).
+// always emits them and decides in updateSkinningEffective.)
+//
+// The Vulkan ray tracer keeps the rest pose too: it cannot run the raster vertex
+// shader (its BLAS is built from vertex buffers), but it re-poses those retained
+// rest vertices per frame and rebuilds the BLAS -- far cheaper than what it used
+// to do, which was re-run the entire converter for every new time code. See
+// updateNextDeformFrameIfNeeded.
+//
+// The CUDA/HIP tracers still need the load-time bake: they read draw_ geometry
+// directly and free it once their own BVH is built, and they only ever render a
+// one-shot screenshot, where the load-time bake IS the cheapest path.
 bool App::wantsNextGpuSkinning() const {
   return useNextLoader_ && wantsGpuSkinningLoad() && renderer_ &&
-         renderer_->caps().supportsGpuSkinning && !cudaRt_ && !hipRt_ &&
-         !rtPath_ && !renderer_->rayTracingActive();
+         renderer_->caps().supportsGpuSkinning && !cudaRt_ && !hipRt_;
 }
 
 void App::updateSkinningEffective() {
@@ -1346,6 +1366,23 @@ void App::updateNextDeformFrameIfNeeded() {
   // (The bone texture is scene-wide, so it is safe to upload before then -- but
   // keep both on one clock so a partially-streamed frame is never half-posed.)
   if (renderer_->meshCount() != static_cast<int>(draw_.meshes.size())) return;
+
+  // Ray tracing traces the vertex buffers themselves, so the raster shader's
+  // deform never reaches it: re-pose the retained rest vertices on the CPU and
+  // hand them to the renderer, which refills the RT vertex buffer and rebuilds
+  // that mesh's BLAS. The alternative -- what this path did before -- was to
+  // re-run the whole converter at every time code.
+  if (renderer_->rayTracingActive()) {
+    std::vector<RtSkinnedMeshUpload> uploads;
+    if (BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, animTime_,
+                                    gui_.blendOverrides(), &uploads)) {
+      for (const RtSkinnedMeshUpload& up : uploads) {
+        renderer_->updateMeshVertices(up.meshIndex, up.vertices);
+      }
+    }
+    skinFrameTime_ = animTime_;
+    return;
+  }
 
   if (hasSkin && BuildNextSkinningFrame(nextSession_->GetStage(), &draw_,
                                         animTime_, &skinFrame_)) {
