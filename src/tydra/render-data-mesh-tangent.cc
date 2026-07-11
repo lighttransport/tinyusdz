@@ -653,7 +653,8 @@ bool ComputeTangentsAndBinormals(
 bool ComputeNormals(const std::vector<vec3> &vertices,
                            const std::vector<uint32_t> &faceVertexCounts,
                            const std::vector<uint32_t> &faceVertexIndices,
-                           std::vector<vec3> &normals, std::string *err) {
+                           std::vector<vec3> &normals, std::string *err,
+                           const bool flip_normals) {
   normals.assign(vertices.size(), {0.0f, 0.0f, 0.0f});
 
   size_t faceVertexIndexOffset{0};
@@ -694,6 +695,12 @@ bool ComputeNormals(const std::vector<vec3> &vertices,
     if (area < 1.0e-20f) {
       faceVertexIndexOffset += nv;
       continue;
+    }
+
+    if (flip_normals) {
+      Nf[0] = -Nf[0];
+      Nf[1] = -Nf[1];
+      Nf[2] = -Nf[2];
     }
 
     for (size_t v = 0; v < nv; v++) {

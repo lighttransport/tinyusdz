@@ -5,6 +5,7 @@
 
 #include "stage.hh"
 #include "../composition/composition.hh"
+#include "../schema/schema-registry.hh"
 #include <algorithm>
 
 namespace tinyusdz {
@@ -50,17 +51,44 @@ bool UsdPrim::IsDefined() const {
 
 bool UsdPrim::HasProperty(const std::string& name) const {
   if (!spec_) return false;
-  return spec_->property(name) != nullptr;
+  return spec_->property(name) != nullptr ||
+         GetSchemaRegistry().FindProperty(*spec_, name) != nullptr;
 }
 
 const Value* UsdPrim::GetPropertyValue(const std::string& name) const {
   if (!spec_) return nullptr;
-  return spec_->property_value(name);
+  if (const Value* value = spec_->property_value(name)) {
+    if (!value->is_block()) return value;
+  }
+  if (const SchemaPropertyDefinition* def =
+          GetSchemaRegistry().FindProperty(*spec_, name)) {
+    if (def->has_fallback) return &def->fallback;
+  }
+  return EarliestTimeSampleValue(GetPropNameTable().find(name));
 }
 
 const Value* UsdPrim::GetPropertyValue(PropNameId name_id) const {
   if (!spec_) return nullptr;
-  return spec_->property_value(name_id);
+  if (const Value* value = spec_->property_value(name_id)) {
+    if (!value->is_block()) return value;
+  }
+  const std::string& name = GetPropNameTable().get(name_id);
+  if (const SchemaPropertyDefinition* def =
+          GetSchemaRegistry().FindProperty(*spec_, name)) {
+    if (def->has_fallback) return &def->fallback;
+  }
+  return EarliestTimeSampleValue(name_id);
+}
+
+// Default-time value resolution matches OpenUSD (and legacy tydra): when a
+// property has no authored default but does have timeSamples, the samples are
+// consulted — use the earliest one. Without this, timeSamples-only xformOps
+// evaluate as missing and static transforms collapse to identity components.
+const Value* UsdPrim::EarliestTimeSampleValue(PropNameId name_id) const {
+  if (!spec_ || !name_id.is_valid()) return nullptr;
+  const auto* samples = spec_->time_samples(name_id);
+  if (!samples || samples->empty()) return nullptr;
+  return spec_->time_sample_value(samples->front().second);
 }
 
 std::vector<std::string> UsdPrim::GetPropertyNames() const {
@@ -73,6 +101,30 @@ std::vector<std::string> UsdPrim::GetPropertyNames() const {
   PropNameTable& table = GetPropNameTable();
   for (const auto& slot : props.slots()) {
     names.push_back(table.get(slot.name_id));
+  }
+  for (const std::string& built_in :
+       GetSchemaRegistry().PropertyNames(*spec_)) {
+    if (std::find(names.begin(), names.end(), built_in) == names.end()) {
+      names.push_back(built_in);
+    }
+  }
+  const std::vector<std::string>& authored_order =
+      spec_->meta().propertyOrder();
+  if (!authored_order.empty()) {
+    std::vector<std::string> ordered;
+    ordered.reserve(names.size());
+    for (const std::string& wanted : authored_order) {
+      if (std::find(names.begin(), names.end(), wanted) != names.end() &&
+          std::find(ordered.begin(), ordered.end(), wanted) == ordered.end()) {
+        ordered.push_back(wanted);
+      }
+    }
+    for (const std::string& name : names) {
+      if (std::find(ordered.begin(), ordered.end(), name) == ordered.end()) {
+        ordered.push_back(name);
+      }
+    }
+    names = std::move(ordered);
   }
   return names;
 }

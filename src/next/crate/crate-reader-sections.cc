@@ -19,14 +19,21 @@
 namespace tinyusdz {
 namespace next {
 
-namespace {
-
-uint64_t CrateValueRepMinPayloadBytes(ValueRep rep) {
-  if (rep.is_array()) return 8;  // array element count header.
+uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version) {
+  // Array element count header: uint32 for crate < 0.7.0, uint64 for >= 0.7.0
+  // (pxr crateFile.cpp _Write/_ReadUncompressedArray).
+  if (rep.is_array()) return CrateArrayCountHeaderBytes(version);
   switch (rep.type_id()) {
     case CrateTypeId::Bool: return 1;
     case CrateTypeId::UChar: return 1;
     case CrateTypeId::Half: return 2;
+    // Half vectors are stored as 2-byte lanes (GfVec{2,3,4}h = 4/6/8 bytes);
+    // these entries used to reuse the float-vector sizes (8/12/16), rejecting
+    // valid files whose half payload sits near EOF as "truncated".
+    case CrateTypeId::Vec2h: return 4;
+    case CrateTypeId::Vec3h: return 6;
+    case CrateTypeId::Vec4h:
+    case CrateTypeId::Quath: return 8;  // 4 half lanes, not 4 float lanes
     case CrateTypeId::Int:
     case CrateTypeId::UInt:
     case CrateTypeId::Float: return 4;
@@ -35,16 +42,12 @@ uint64_t CrateValueRepMinPayloadBytes(ValueRep rep) {
     case CrateTypeId::Double:
     case CrateTypeId::TimeCode: return 8;
     case CrateTypeId::Vec2i:
-    case CrateTypeId::Vec2f:
-    case CrateTypeId::Vec2h: return 8;
+    case CrateTypeId::Vec2f: return 8;
     case CrateTypeId::Vec3i:
-    case CrateTypeId::Vec3f:
-    case CrateTypeId::Vec3h: return 12;
+    case CrateTypeId::Vec3f: return 12;
     case CrateTypeId::Vec4i:
     case CrateTypeId::Vec4f:
-    case CrateTypeId::Vec4h:
-    case CrateTypeId::Quatf:
-    case CrateTypeId::Quath: return 16;
+    case CrateTypeId::Quatf: return 16;
     case CrateTypeId::Vec2d: return 16;
     case CrateTypeId::Vec3d: return 24;
     case CrateTypeId::Vec4d:
@@ -71,8 +74,6 @@ uint64_t CrateValueRepMinPayloadBytes(ValueRep rep) {
       return 0;
   }
 }
-
-}  // namespace
 
 bool CrateReader::Impl::ReadBootstrap() {
   // Check magic
@@ -429,7 +430,7 @@ bool CrateReader::Impl::ReadFields() {
         return false;
       }
       if (rep.payload() != 0) {
-        const uint64_t min_bytes = CrateValueRepMinPayloadBytes(rep);
+        const uint64_t min_bytes = CrateValueRepMinPayloadBytes(rep, version_);
         const uint64_t file_size = static_cast<uint64_t>(reader_->size());
         if (min_bytes > 0 &&
             (min_bytes > file_size ||
@@ -445,11 +446,10 @@ bool CrateReader::Impl::ReadFields() {
           return false;
         }
         uint64_t count = 0;
-        if (!reader_->read_u64(count)) {
+        if (!ReadCrateArrayCount(*reader_, version_, &count)) {
           AddError("Failed to read array ValueRep element count");
           return false;
         }
-        count = CrateArrayElementCount(count);
         if (!reader_->seek(saved)) {
           AddError("Failed to restore FIELDS reader position");
           return false;

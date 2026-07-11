@@ -449,8 +449,44 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
             result = ParseValue(*lexer_, tid);
           }
           if (result.success) {
-            out->properties.push_back(
-                {prop_name, std::move(result.value), vflags});
+            if (Check(TokenType::OpenParen)) {
+              // Trailing property metadata (`( interpolation = "constant" )`):
+              // VariantProperty cannot carry PropMeta, so author value + meta
+              // on the content "__self__" prim instead — both graft onto the
+              // host prim on selection (CopyLocalOpinions merges PropMeta),
+              // and the writer emits __self__ properties back into the body.
+              if (!content_layer) {
+                content_layer.reset(new Layer());
+                content_builder.reset(new LayerBuilder(*content_layer));
+                content_builder->begin_prim("__self__", "",
+                                            PrimSpecifier::Over);
+              }
+              PrimSpec* self = content_builder->current();
+              if (self) {
+                self->add_property(prop_name, std::move(result.value), vflags);
+                const bool has_sfx =
+                    type_name.size() >= 2 &&
+                    type_name.compare(type_name.size() - 2, 2, "[]") == 0;
+                self->set_property_type_name(
+                    prop_name,
+                    (is_array && !has_sfx) ? type_name + "[]" : type_name);
+                std::unique_ptr<Layer> host_layer = std::move(layer_);
+                std::unique_ptr<LayerBuilder> host_builder = std::move(builder_);
+                layer_ = std::move(content_layer);
+                builder_ = std::move(content_builder);
+                ParsePropertyMetadata(prop_name);
+                content_layer = std::move(layer_);
+                content_builder = std::move(builder_);
+                layer_ = std::move(host_layer);
+                builder_ = std::move(host_builder);
+              } else {
+                out->properties.push_back(
+                    {prop_name, std::move(result.value), vflags});
+              }
+            } else {
+              out->properties.push_back(
+                  {prop_name, std::move(result.value), vflags});
+            }
           }
         }
         SkipPropertyMetadata();

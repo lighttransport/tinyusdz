@@ -12,6 +12,7 @@ set(TINYUSDZ_NEXT_SOURCES
     # Type system
     types/type-info.cc
     types/value.cc
+    types/spline.cc
     types/value-view.cc
     types/interpolation.cc
 
@@ -70,6 +71,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Schema convenience APIs
     schema/geom-mesh.cc
+    schema/schema-registry.cc
     schema/geom-point-instancer.cc
     schema/geom-xform.cc
     schema/usd-lux.cc
@@ -86,6 +88,7 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # Attribute evaluation
     eval/attribute-eval.cc
+    eval/value-clip.cc
 
     # Asset resolution
     resolver/asset-resolver.cc
@@ -101,6 +104,11 @@ set(TINYUSDZ_NEXT_SOURCES
 
     # PCP-style lazy composition cache (native to next)
     pcp/layer-registry.cc
+    # MaterialX XML stack (dependency-free): layer-registry synthesizes
+    # /MaterialX layers from referenced .mtlx documents.
+    ../mtlx-xml-tokenizer.cc
+    ../mtlx-xml-parser.cc
+    ../mtlx-dom.cc
     pcp/load-rules.cc
     pcp/cache.cc
 
@@ -122,6 +130,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Prim types
     prim/path.hh
+    prim/identifier.hh
     prim/attribute.hh
     prim/prim.hh
 
@@ -171,6 +180,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Schema convenience APIs
     schema/geom-mesh.hh
+    schema/schema-registry.hh
     schema/geom-point-instancer.hh
     schema/geom-xform.hh
     schema/usd-lux.hh
@@ -188,6 +198,7 @@ set(TINYUSDZ_NEXT_HEADERS
 
     # Attribute evaluation
     eval/attribute-eval.hh
+    eval/value-clip.hh
 
     # Asset resolution
     resolver/asset-resolver.hh
@@ -436,6 +447,11 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_validation PRIVATE tinyusdz_next)
 
+    add_executable(test_aousd_conformance
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_aousd_conformance.cc
+    )
+    target_link_libraries(test_aousd_conformance PRIVATE tinyusdz_next)
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -491,9 +507,6 @@ set(TYDRA_NEXT_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/materialx.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../tydra/next/urdf-to-usd.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../external/mikktspace/mikktspace.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-tokenizer.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-xml-parser.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../mtlx-dom.cc
 )
 
 set(TYDRA_NEXT_HEADERS
@@ -661,6 +674,8 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_validation COMMAND test_validation
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_test(NAME next_test_aousd_conformance COMMAND test_aousd_conformance
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_test_tydra COMMAND test_tydra_next
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     add_test(NAME next_benchmark COMMAND benchmark_next
@@ -692,6 +707,7 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         next_test_layer_diff
         next_test_memory_flatten
         next_test_validation
+        next_test_aousd_conformance
         next_test_tydra)
     set_tests_properties(${TINYUSDZ_NEXT_SMOKE_TESTS}
         PROPERTIES LABELS "next")

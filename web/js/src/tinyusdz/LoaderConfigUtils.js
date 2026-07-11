@@ -7,6 +7,52 @@ export function getBackendFromURL(params = new URLSearchParams(window.location.s
     : fallback;
 }
 
+export const LOADER_BACKEND_CHOICES = ['legacy', 'next', 'auto'];
+
+/**
+ * Rewrite ?backend= in the page URL and reload.
+ *
+ * A reload (rather than a live re-parse) is the correct backend switch: the
+ * loader picks its WASM module at init() time (backend=next selects the
+ * next-only module), so switching in place would keep running on the module
+ * chosen for the previous backend.
+ */
+export function setBackendAndReload(backend) {
+  const value = LOADER_BACKEND_CHOICES.includes(backend) ? backend : 'legacy';
+  const url = new URL(window.location.href);
+  url.searchParams.set('backend', value);
+  window.location.href = url.toString();
+}
+
+/**
+ * Mount a small "Backend" <select> reflecting the current URL backend into
+ * `container` (prepended). Switching rewrites ?backend= and reloads the page.
+ * For lil-gui pages prefer a gui dropdown wired to setBackendAndReload().
+ */
+export function mountBackendSelector(container, options = {}) {
+  if (!container) return null;
+  const current = options.current || getBackendFromURL();
+  const wrap = document.createElement('label');
+  wrap.style.cssText = options.style ||
+    'display:inline-flex;gap:6px;align-items:center;font-size:13px;margin:2px 0';
+  const caption = document.createElement('span');
+  caption.textContent = options.label || 'Backend';
+  const select = document.createElement('select');
+  for (const value of LOADER_BACKEND_CHOICES) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    if (value === current) opt.selected = true;
+    select.appendChild(opt);
+  }
+  select.addEventListener('change', () => setBackendAndReload(select.value));
+  wrap.appendChild(caption);
+  wrap.appendChild(select);
+  if (options.append) container.appendChild(wrap);
+  else container.prepend(wrap);
+  return select;
+}
+
 /**
  * Read a USD asset URI from URL query parameters.
  *

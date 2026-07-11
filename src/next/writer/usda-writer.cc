@@ -314,6 +314,18 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + "kilogramsPerUnit = " + dtos(meta.kilogramsPerUnit));
   }
 
+  for (const auto& um : meta.unknownMeta) {
+    lines.push_back(opts.indent + um.first + " = " + um.second);
+  }
+  if (!meta.relocates.empty()) {
+    std::string s = opts.indent + "relocates = {\n";
+    for (const auto& r : meta.relocates) {
+      s += opts.indent + opts.indent + "<" + r.first + ">: <" + r.second +
+           ">,\n";
+    }
+    s += opts.indent + "}";
+    lines.push_back(s);
+  }
   if (!meta.colorConfiguration.empty()) {
     lines.push_back(opts.indent + "colorConfiguration = " +
                     FormatAssetPathForUsda(meta.colorConfiguration));
@@ -422,6 +434,11 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     kv(DictMetaLine("assetInfo", m->assetInfo, md, opts));
   if (m->authored & PropMeta::kSdrMetadata)
     kv(DictMetaLine("sdrMetadata", m->sdrMetadata, md, opts));
+  if (m->authored & PropMeta::kUnknownMeta) {
+    for (const auto& um : m->unknownMeta) {
+      kv(um.first + " = " + um.second);  // verbatim raw source text
+    }
+  }
   WriteIndent(os, depth, opts.indent);
   os << ")";
   return true;
@@ -484,6 +501,32 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
                    SegmentSink* segsink = nullptr) {
   PropNameTable& name_table = GetPropNameTable();
   const std::string& name = name_table.get(slot.name_id);
+
+  if (const std::string* raw = spec.raw_default_source(slot.name_id)) {
+    WriteIndent(os, depth, opts.indent);
+    if (opts.emit_custom && slot.is_custom()) os << "custom ";
+    if (slot.is_uniform()) os << "uniform ";
+    const std::string* decl = spec.property_type_name(name);
+    os << (decl ? *decl : std::string("opaque")) << " " << name << " = "
+       << *raw;
+    WritePropMeta(os, spec, slot.name_id, depth, opts);
+    os << "\n";
+    return;
+  }
+
+  if (const std::string* spline = spec.spline_source(slot.name_id)) {
+    WriteIndent(os, depth, opts.indent);
+    if (opts.emit_custom && slot.is_custom()) os << "custom ";
+    if (slot.is_uniform()) os << "uniform ";
+    if (const std::string* decl = spec.property_type_name(name)) {
+      os << *decl;
+    } else {
+      const char* tn = GetTypeName(static_cast<TypeId>(slot.value_type));
+      os << (tn ? tn : "double");
+    }
+    os << " " << name << ".spline = " << *spline << "\n";
+    return;
+  }
 
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
@@ -960,15 +1003,26 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   const bool has_assetInfo = has_dict(meta.assetInfo());
   const bool has_sdr = has_dict(meta.sdrMetadata());
   const bool has_clips = has_dict(meta.clips());
+  // An authored arc EDIT with empty inline lists still needs the metadata
+  // block: explicit-clear (`references = None`) has no items but is a real
+  // opinion.
+  const ArcListOpEdits* arc_edits = meta.arc_edits();
+  const bool has_arc_edits =
+      arc_edits && (arc_edits->references.has_authored_opinion() ||
+                    arc_edits->payloads.has_authored_opinion() ||
+                    arc_edits->inherits.has_authored_opinion() ||
+                    arc_edits->specializes.has_authored_opinion());
   bool has_meta = !meta.active || meta.hidden || meta.instanceable ||
+                  meta.instanceable_authored ||
                   !meta.kind().empty() || !meta.displayName().empty() ||
                   has_doc || has_comment || !meta.apiSchemas().empty() ||
                   has_customData || has_assetInfo || has_sdr || has_clips ||
                   !meta.references.empty() || !meta.payloads.empty() ||
                   !meta.inherits.empty() || !meta.specializes.empty() ||
+                  has_arc_edits || !meta.relocates().empty() ||
                   !meta.variantSelections().empty() ||
                   !meta.variantSelection.empty() ||
-                  !meta.variantSets().empty();
+                  !meta.variantSets().empty() || !meta.unknownMeta().empty();
 
   if (has_meta) {
     const int md = depth + 1;
@@ -983,6 +1037,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     if (meta.hidden) kv("hidden = true");
     else if (meta.hidden_authored) kv("hidden = false");
     if (meta.instanceable) kv("instanceable = true");
+    else if (meta.instanceable_authored) kv("instanceable = false");
     if (!meta.kind().empty()) kv("kind = " + EscapeString(meta.kind()));
     if (!meta.displayName().empty())
       kv("displayName = " + EscapeString(meta.displayName()));
@@ -1002,10 +1057,25 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       s += "]";
       kv(s);
     }
+    if (!meta.relocates().empty()) {
+      WriteIndent(os, md, opts.indent);
+      os << "relocates = {\n";
+      for (const auto& r : meta.relocates()) {
+        WriteIndent(os, md + 1, opts.indent);
+        os << "<" << r.first << ">: <" << r.second << ">,\n";
+      }
+      WriteIndent(os, md, opts.indent);
+      os << "}\n";
+    }
     if (has_customData) kv(DictMetaLine("customData", meta.customData(), md, opts));
     if (has_assetInfo) kv(DictMetaLine("assetInfo", meta.assetInfo(), md, opts));
     if (has_sdr) kv(DictMetaLine("sdrMetadata", meta.sdrMetadata(), md, opts));
     if (has_clips) kv(DictMetaLine("clips", meta.clips(), md, opts));
+    // Unknown (unmodeled) metadata preserved by the parser: re-emit the raw
+    // authored value text verbatim (it re-parses back into unknownMeta).
+    for (const auto& um : meta.unknownMeta()) {
+      kv(um.first + " = " + um.second);
+    }
 
     // Composition arcs, re-emitting the authored list-op qualifier (Phase 7 S5):
     // a bare/explicit list as `references = [...]`, otherwise the
@@ -1105,6 +1175,20 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 
   int content_depth = depth + 1;
 
+  auto write_order = [&](const char* field,
+                         const std::vector<std::string>& names) {
+    if (names.empty()) return;
+    WriteIndent(os, content_depth, opts.indent);
+    os << "reorder " << field << " = [";
+    for (size_t i = 0; i < names.size(); ++i) {
+      if (i) os << ", ";
+      os << EscapeString(names[i]);
+    }
+    os << "]\n";
+  };
+  write_order("properties", meta.propertyOrder());
+  write_order("nameChildren", meta.primOrder());
+
   // Get property slots
   std::vector<const PropSlot*> prop_slots;
   for (const auto& slot : spec.properties().slots()) {
@@ -1160,11 +1244,22 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   os << "}\n";
 }
 
+void WriteRootPrimOrder(StreamWriter& os, const LayerMeta& meta) {
+  if (meta.rootPrimOrder.empty()) return;
+  os << "reorder rootPrims = [";
+  for (size_t i = 0; i < meta.rootPrimOrder.size(); ++i) {
+    if (i) os << ", ";
+    os << EscapeString(meta.rootPrimOrder[i]);
+  }
+  os << "]\n\n";
+}
+
 // Serialize the layer-stage header metadata + all root prims serially (the
 // classic streaming path). Shared by the serial entry and as a fallback.
 void WriteStageBodySerial(StreamWriter& os, const Layer& layer,
                           const LayerMeta& meta, const USDAWriteOptions& opts) {
   WriteLayerMeta(os, meta, opts);
+  WriteRootPrimOrder(os, meta);
   for (uint32_t root_idx : layer.root_indices()) {
     const PrimSpec* root = layer.prim(root_idx);
     if (root) {
@@ -1233,6 +1328,7 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
     sink.po = &po;
     sink.holder = &holder;
     WriteLayerMeta(sw, meta, opts);
+    WriteRootPrimOrder(sw, meta);
     for (uint32_t root_idx : layer.root_indices()) {
       const PrimSpec* root = layer.prim(root_idx);
       if (!root) continue;
@@ -1438,6 +1534,9 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.expressionVariables = root_layer->meta().expressionVariables;
   meta.subLayers = root_layer->meta().subLayers;
   meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
+  meta.relocates = root_layer->meta().relocates;
+  meta.unknownMeta = root_layer->meta().unknownMeta;
+  meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);

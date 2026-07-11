@@ -1709,6 +1709,42 @@ int main(int argc, char **argv) {
       src_layer = std::move(composited_layer);
     }
 
+    // When the full set of arc features is enabled (default --flatten), use
+    // CompositeAllArcs which implements the correct LIVRPS strength ordering
+    // (L > I > V > R > P > S) with deferred variant evaluation. The legacy
+    // per-feature loop below applies R -> P -> I -> V, which inverts LIVRPS
+    // (references win over inherits/variants).
+    const bool full_livrps = comp_features.inherits &&
+                             comp_features.variantSets &&
+                             comp_features.references && comp_features.payload;
+
+    if (full_livrps) {
+      for (int i = 0; i < kMaxIteration; i++) {
+        bool has_unresolved = src_layer.check_unresolved_references() ||
+                              src_layer.check_unresolved_payload() ||
+                              src_layer.check_unresolved_inherits() ||
+                              src_layer.check_unresolved_variant() ||
+                              src_layer.check_unresolved_specializes();
+
+        if (!has_unresolved) {
+          break;
+        }
+
+        tinyusdz::Layer composited_layer;
+        if (!tinyusdz::CompositeAllArcs(resolver, src_layer, &composited_layer,
+                                        &warn, &err)) {
+          std::cerr << "Failed to composite arcs: " << err << "\n";
+          return -1;
+        }
+
+        if (warn.size()) {
+          std::cerr << "WARN: " << warn << "\n";
+          warn.clear();
+        }
+
+        src_layer = std::move(composited_layer);
+      }
+    } else {
     // TODO: Find more better way to Recursively resolve references/payload/variants
     for (int i = 0; i < kMaxIteration; i++) {
 
@@ -1842,6 +1878,7 @@ int main(int argc, char **argv) {
       }
 
     }
+    }  // !full_livrps
 
     if (has_extract_variants) {
       std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";

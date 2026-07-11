@@ -14,7 +14,11 @@ import {
     nextCountsFromScene,
     readNextSceneMeta
 } from 'tinyusdz/NextRenderSceneUtils.js';
-import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+    getAssetUriFromURL,
+    LOADER_BACKEND_CHOICES,
+    setBackendAndReload
+} from 'tinyusdz/LoaderConfigUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
 import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
 import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.js';
@@ -568,6 +572,7 @@ const loaderState = {
 // Scene state
 const sceneState = {
     root: null,
+    nextNodeIndexMap: null,
     materials: [],
     materialData: [],
     textureCache: new Map(),
@@ -871,7 +876,7 @@ async function loadUSDFromURI(uri, autoRender = false) {
         window.renderComplete = true;
     } catch (error) {
         failLoadStats(stats);
-        console.error(`Failed to load USD file (${uri}):`, error);
+        console.error(`Failed to load USD file (${uri}):`, error, error?.stack || '');
         updateStatus(`Error: ${error.message}`);
         if (autoRender) {
             window.renderComplete = true;
@@ -975,6 +980,10 @@ function setupGUI() {
     guiState.gui.domElement.style.right = '10px';
     guiState.gui.domElement.style.maxHeight = 'calc(100vh - 20px)';
     guiState.gui.domElement.style.overflowY = 'auto';
+
+    // Backend switch reloads the page: the loader binds its WASM module at init.
+    guiState.gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+        .name('Loader Backend').onChange(setBackendAndReload);
 
     setupSceneFolder();
     setupMaterialTypeFolder();
@@ -1297,7 +1306,10 @@ function convertUSDAnimationsToThreeJS(usdLoader, root) {
 
     if (numAnimations === 0) return clips;
 
-    const nodeIndexMap = buildNodeIndexMap(root);
+    // Next animation target_node is a RenderScene node-table index; use the
+    // table map from buildNextThreeNode when present, not a DFS walk (the
+    // next tree inserts wrapper groups, so DFS indices drift).
+    const nodeIndexMap = sceneState.nextNodeIndexMap || buildNodeIndexMap(root);
 
     for (let i = 0; i < numAnimations; i++) {
         const usdAnimation = usdLoader.getAnimation(i);
@@ -2129,6 +2141,7 @@ async function loadUSDFromData(data, filename, stats = null) {
                 lazyTextures: !settings.skipTextures
             });
             sceneState.root = built.node;
+            sceneState.nextNodeIndexMap = built.nodeIndexMap || null;
             threeState.scene.add(sceneState.root);
             if (built.textureManager && !settings.skipTextures) {
                 startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
@@ -2341,6 +2354,7 @@ async function buildSceneGraph() {
 
     // Build Three.js scene graph from USD hierarchy
     traceLoadPhase('buildSceneGraph:buildThreeNode:start');
+    sceneState.nextNodeIndexMap = null;
     sceneState.root = await TinyUSDZLoaderUtils.buildThreeNode(
         usdRootNode,
         defaultMtl,
@@ -3298,6 +3312,7 @@ function clearScene() {
 
     sceneState.materials = [];
     sceneState.materialData = [];
+    sceneState.nextNodeIndexMap = null;
 
     // Dispose texture cache
     sceneState.textureCache.forEach(texture => {
@@ -3599,12 +3614,20 @@ function addSpecularWeightControl(folder, mat) {
     let specularWeightValue;
     const rawData = mat.userData?.rawData;
 
-    if (rawData?.specular_weight !== undefined) {
-        specularWeightValue = rawData.specular_weight;
-    } else if (rawData?.openPBR?.specular_weight !== undefined) {
-        specularWeightValue = rawData.openPBR.specular_weight;
-    } else if (rawData?.openPBRShader?.specular_weight !== undefined) {
-        specularWeightValue = rawData.openPBRShader.specular_weight;
+    // Next-backend OpenPBR params are objects ({value, texture, ...}) or
+    // vectors; unwrap to the scalar lil-gui needs.
+    const unwrapScalar = (v) => {
+        if (v && typeof v === 'object' && !Array.isArray(v)) v = v.value;
+        if (Array.isArray(v)) v = v[0];
+        return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    };
+
+    if (unwrapScalar(rawData?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.specular_weight);
+    } else if (unwrapScalar(rawData?.openPBR?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.openPBR.specular_weight);
+    } else if (unwrapScalar(rawData?.openPBRShader?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.openPBRShader.specular_weight);
     }
 
     // Default to 1.0 if OpenPBR material but no specular_weight specified

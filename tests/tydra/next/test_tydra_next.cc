@@ -21,6 +21,7 @@
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/reader/usda-reader.hh"
+#include "next/schema/usd-skel.hh"
 
 using namespace tinyusdz::tydra::next;
 using namespace tinyusdz::next;
@@ -737,9 +738,12 @@ def Xform "World"
   assert(rotate_clip->channels.size() == 1);
   assert(rotate_clip->channels[0].target_path == AnimationChannel::TargetPath::Rotation);
   assert(rotate_clip->channels[0].keyframes.size() == 2);
+  // Euler rotate ops are emitted as xyzw quaternions: 90 deg about Y ->
+  // (0, sin45, 0, cos45).
   assert(std::abs(rotate_clip->channels[0].keyframes[1].value.x) < 0.001f);
-  assert(std::abs(rotate_clip->channels[0].keyframes[1].value.y - 90.0f) < 0.001f);
+  assert(std::abs(rotate_clip->channels[0].keyframes[1].value.y - 0.70711f) < 0.001f);
   assert(std::abs(rotate_clip->channels[0].keyframes[1].value.z) < 0.001f);
+  assert(std::abs(rotate_clip->channels[0].keyframes[1].value.w - 0.70711f) < 0.001f);
 
   auto assert_custom_clip = [](const AnimationClip* clip,
                                const char* prop_name,
@@ -1551,6 +1555,13 @@ def Xform "Root"
         def GeomSubset "SubA"
         {
             uniform token familyName = "materialBind"
+            int[] indices = [0]
+            rel material:binding = </Root/Mat2>
+        }
+
+        def GeomSubset "SubHole"
+        {
+            uniform token familyName = "materialBind"
             int[] indices = [1]
             rel material:binding = </Root/Mat2>
         }
@@ -1651,9 +1662,12 @@ def Xform "Root"
     assert(m.normals.size() == 6 &&
            m.normals_interp == Interpolation::Uniform);
     assert(m.material_id >= 0);  // purpose binding (material:binding:preview)
+    // Subsets are TRIANGLE ranges after triangulation: authored face 0 (a
+    // quad -> 2 triangles) covers triangles [0, 2); the subset on the HOLE
+    // face 1 contributes no renderable triangles and is dropped.
     assert(m.material_subsets.size() == 1);
-    assert(m.material_subsets[0].face_start == 1 &&
-           m.material_subsets[0].face_count == 1);
+    assert(m.material_subsets[0].face_start == 0 &&
+           m.material_subsets[0].face_count == 2);
     assert(m.material_subsets[0].material_id != m.material_id);
     assert(m.primvars.size() == 1 && m.primvars[0].name == "heat");
     assert(m.primvars[0].indices.size() == 6);
@@ -1907,7 +1921,12 @@ def "Root"
         assert(ch.value_stride == 4);
         assert(ch.element_count == 2);
         assert(ch.array_values.size() == 16);
-        assert(std::fabs(ch.array_values[15] - 1.0f) < 1e-4f);
+        // Channels are xyzw (three.js quaternion order); authored USDA quats
+        // are real-first. Frame 0 joint 0 = identity -> (0,0,0,1); frame 1
+        // joint 1 authored (0,0,0,1) [180deg about Z] -> (0,0,1,0).
+        assert(std::fabs(ch.array_values[3] - 1.0f) < 1e-4f);
+        assert(std::fabs(ch.array_values[14] - 1.0f) < 1e-4f);
+        assert(std::fabs(ch.array_values[15]) < 1e-4f);
       } else if (ch.property_name == "scales") {
         saw_scales = true;
         assert(ch.value_stride == 3);
@@ -2643,6 +2662,1544 @@ def Xform "World"
   std::cout << "  Mesh parity cleanups: PASSED\n";
 }
 
+// Regression: authored half-precision xformOps (raw half-bit SBO scalars)
+// must evaluate through the converting to_float* reads — as_float3() cannot
+// see them, which used to collapse scale/rotate to identity.
+void TestHalfPrecisionXformOps() {
+  std::cout << "Testing half-precision xformOps...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Xform "HalfScaled"
+    {
+        half3 xformOp:scale = (2, 3, 4)
+        uniform token[] xformOpOrder = ["xformOp:scale"]
+    }
+
+    def Xform "HalfOriented"
+    {
+        # 180 degrees about Z: diag(-1, -1, 1) regardless of convention.
+        quath xformOp:orient = (0, 0, 0, 1)
+        uniform token[] xformOpOrder = ["xformOp:orient"]
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  UsdPrim scaled = lr.stage.GetPrimAtPath("/World/HalfScaled");
+  assert(scaled.IsValid());
+  double m[16];
+  assert(ComputeLocalTransform(scaled, m, 0.0));
+  assert(std::fabs(m[0] - 2.0) < 0.001);
+  assert(std::fabs(m[5] - 3.0) < 0.001);
+  assert(std::fabs(m[10] - 4.0) < 0.001);
+
+  UsdPrim oriented = lr.stage.GetPrimAtPath("/World/HalfOriented");
+  assert(oriented.IsValid());
+  assert(ComputeLocalTransform(oriented, m, 0.0));
+  assert(std::fabs(m[0] + 1.0) < 0.001);
+  assert(std::fabs(m[5] + 1.0) < 0.001);
+  assert(std::fabs(m[10] - 1.0) < 0.001);
+
+  std::cout << "  Half-precision xformOps: PASSED\n";
+}
+
+// Multi-skeleton joint-order remap: two skeletons whose SkelAnimations
+// author `joints` in an order DIFFERENT from the skeleton's own joint order.
+// Channels must target the right skeleton and joint_remap must map each
+// animation-order token back to the skeleton's joint index.
+void TestMultiSkeletonJointRemap() {
+  std::cout << "Testing multi-skeleton joint-order remap...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 1
+    endTimeCode = 2
+)
+
+def Xform "World"
+{
+    def SkelRoot "CharA"
+    {
+        def Skeleton "SkelA"
+        {
+            uniform token[] joints = ["A_root", "A_root/A_mid", "A_root/A_mid/A_tip"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(2,0,0,1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(1,0,0,1))
+            ]
+            rel skel:animationSource = </World/CharA/SkelA/AnimA>
+
+            def SkelAnimation "AnimA"
+            {
+                # Reversed relative to SkelA's joint order.
+                uniform token[] joints = ["A_root/A_mid/A_tip", "A_root/A_mid", "A_root"]
+                float3[] translations.timeSamples = {
+                    1: [(30, 0, 0), (20, 0, 0), (10, 0, 0)],
+                    2: [(31, 0, 0), (21, 0, 0), (11, 0, 0)],
+                }
+                quatf[] rotations.timeSamples = {
+                    1: [(1,0,0,0), (1,0,0,0), (1,0,0,0)],
+                }
+                half3[] scales.timeSamples = {
+                    1: [(1,1,1), (1,1,1), (1,1,1)],
+                }
+            }
+        }
+    }
+
+    def SkelRoot "CharB"
+    {
+        def Skeleton "SkelB"
+        {
+            uniform token[] joints = ["B_root", "B_root/B_tip"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1))
+            ]
+            uniform matrix4d[] restTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,1,0,1))
+            ]
+            rel skel:animationSource = </World/CharB/SkelB/AnimB>
+
+            def SkelAnimation "AnimB"
+            {
+                uniform token[] joints = ["B_root/B_tip", "B_root"]
+                float3[] translations.timeSamples = {
+                    1: [(200, 0, 0), (100, 0, 0)],
+                }
+            }
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+
+  assert(result.scene.skeletons.size() == 2);
+  int skel_a = -1;
+  int skel_b = -1;
+  for (size_t si = 0; si < result.scene.skeletons.size(); ++si) {
+    const std::string& path = result.scene.skeletons[si].prim_path;
+    if (path == "/World/CharA/SkelA") skel_a = static_cast<int>(si);
+    if (path == "/World/CharB/SkelB") skel_b = static_cast<int>(si);
+  }
+  assert(skel_a >= 0 && skel_b >= 0);
+
+  const AnimationClip* clip_a = nullptr;
+  const AnimationClip* clip_b = nullptr;
+  for (const AnimationClip& clip : result.scene.animations) {
+    if (clip.prim_path == "/World/CharA/SkelA/AnimA") clip_a = &clip;
+    if (clip.prim_path == "/World/CharB/SkelB/AnimB") clip_b = &clip;
+  }
+  assert(clip_a && clip_b);
+
+  auto find_channel = [](const AnimationClip* clip,
+                         AnimationChannel::TargetPath path) -> const AnimationChannel* {
+    for (const AnimationChannel& ch : clip->channels) {
+      if (ch.target_path == path && ch.is_skeletal) return &ch;
+    }
+    return nullptr;
+  };
+
+  // AnimA: translation channel targets SkelA; remap reverses the order
+  // (animation joint 0 = A_tip = skeleton joint 2, ...).
+  const AnimationChannel* trans_a =
+      find_channel(clip_a, AnimationChannel::TargetPath::Translation);
+  assert(trans_a);
+  assert(trans_a->target_skeleton == skel_a);
+  assert(trans_a->joint_order.size() == 3);
+  assert(trans_a->joint_remap.size() == 3);
+  assert(trans_a->joint_remap[0] == 2);
+  assert(trans_a->joint_remap[1] == 1);
+  assert(trans_a->joint_remap[2] == 0);
+  // Values stay in ANIMATION joint order: frame 0, joint 0 (A_tip) = 30.
+  assert(trans_a->value_stride == 3);
+  assert(trans_a->element_count == 3);
+  assert(trans_a->array_values.size() >= 2u * 3u * 3u);
+  assert(std::fabs(trans_a->array_values[0] - 30.0f) < 0.001f);
+  assert(std::fabs(trans_a->array_values[3] - 20.0f) < 0.001f);
+  assert(std::fabs(trans_a->array_values[6] - 10.0f) < 0.001f);
+  // Frame 1 continues after all frame-0 elements.
+  assert(std::fabs(trans_a->array_values[9] - 31.0f) < 0.001f);
+
+  // half3[] scales must survive as a skeletal channel too (array half
+  // materializes to float).
+  const AnimationChannel* scale_a =
+      find_channel(clip_a, AnimationChannel::TargetPath::Scale);
+  assert(scale_a);
+  assert(scale_a->target_skeleton == skel_a);
+  assert(std::fabs(scale_a->array_values[0] - 1.0f) < 0.001f);
+
+  // AnimB: targets SkelB (not SkelA), reversed remap for 2 joints.
+  const AnimationChannel* trans_b =
+      find_channel(clip_b, AnimationChannel::TargetPath::Translation);
+  assert(trans_b);
+  assert(trans_b->target_skeleton == skel_b);
+  assert(trans_b->joint_remap.size() == 2);
+  assert(trans_b->joint_remap[0] == 1);
+  assert(trans_b->joint_remap[1] == 0);
+  assert(std::fabs(trans_b->array_values[0] - 200.0f) < 0.001f);
+
+  // Each skeleton is linked to its own animation.
+  assert(result.scene.skeletons[static_cast<size_t>(skel_a)].animation_id >= 0);
+  assert(result.scene.skeletons[static_cast<size_t>(skel_b)].animation_id >= 0);
+  assert(result.scene.skeletons[static_cast<size_t>(skel_a)].animation_id !=
+         result.scene.skeletons[static_cast<size_t>(skel_b)].animation_id);
+
+  std::cout << "  Multi-skeleton joint-order remap: PASSED\n";
+}
+
+// UsdLux depth: DomeLight inputs:texture:format token and CollectionAPI
+// light/shadow-link resolution to RenderScene mesh index sets.
+void TestLightLinkingAndDomeFormat() {
+  std::cout << "Testing light linking + dome texture format...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "GroundPlane"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 0, 1), (-1, 0, 1)]
+    }
+
+    def Xform "Props"
+    {
+        def Mesh "Crate"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        }
+
+        def Mesh "Barrel"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)]
+        }
+    }
+
+    def SphereLight "KeyLight"
+    {
+        float inputs:intensity = 5
+        rel collection:lightLink:includes = [</World/Props>]
+        rel collection:lightLink:excludes = [</World/Props/Barrel>]
+        uniform token collection:lightLink:expansionRule = "expandPrims"
+        rel collection:shadowLink:includes = [</World/GroundPlane>]
+        uniform token collection:shadowLink:expansionRule = "explicitOnly"
+    }
+
+    def SphereLight "FillLight"
+    {
+        float inputs:intensity = 1
+    }
+
+    def DomeLight "Sky"
+    {
+        asset inputs:texture:file = @sky.exr@
+        token inputs:texture:format = "latlong"
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.meshes.size() == 3);
+
+  int ground = -1;
+  int crate = -1;
+  int barrel = -1;
+  for (size_t mi = 0; mi < result.scene.meshes.size(); ++mi) {
+    const std::string& path = result.scene.meshes[mi].prim_path;
+    if (path == "/World/GroundPlane") ground = static_cast<int>(mi);
+    if (path == "/World/Props/Crate") crate = static_cast<int>(mi);
+    if (path == "/World/Props/Barrel") barrel = static_cast<int>(mi);
+  }
+  assert(ground >= 0 && crate >= 0 && barrel >= 0);
+
+  const RenderLight* key = nullptr;
+  const RenderLight* fill = nullptr;
+  const RenderLight* sky = nullptr;
+  for (const RenderLight& light : result.scene.lights) {
+    if (light.prim_path == "/World/KeyLight") key = &light;
+    if (light.prim_path == "/World/FillLight") fill = &light;
+    if (light.prim_path == "/World/Sky") sky = &light;
+  }
+  assert(key && fill && sky);
+
+  // KeyLight: lightLink includes /World/Props subtree minus Barrel.
+  assert(!key->light_links_all);
+  assert(key->light_link_mesh_indices.size() == 1);
+  assert(key->light_link_mesh_indices[0] == crate);
+  // shadowLink explicitOnly: only the exact GroundPlane path matches.
+  assert(!key->shadow_links_all);
+  assert(key->shadow_link_mesh_indices.size() == 1);
+  assert(key->shadow_link_mesh_indices[0] == ground);
+
+  // FillLight: no collections authored -> links everything.
+  assert(fill->light_links_all);
+  assert(fill->shadow_links_all);
+
+  // DomeLight format token.
+  assert(sky->type == LightType::Dome);
+  assert(sky->params.dome.texture_format ==
+         RenderLight::DomeTextureFormat::Latlong);
+
+  std::cout << "  Light linking + dome texture format: PASSED\n";
+}
+
+
+// Regression: a material whose surface shader is a MaterialX
+// standard_surface (unconvertible by both ConvertMaterial and the
+// standalone MaterialX path) used to mutually recurse
+// ConvertMaterial <-> ConvertUsdMtlxMaterial until stack overflow.
+void TestStandardSurfaceNoRecursion() {
+  std::cout << "Testing standard_surface conversion does not recurse...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/Mat>
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/SS.outputs:out>
+
+        def Shader "SS"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.8, 0.2, 0.1)
+            float inputs:specular_roughness = 0.35
+            float inputs:metalness = 0.9
+            token outputs:out
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  // Must terminate (no stack overflow), keep the mesh, and now convert the
+  // standard_surface through the OpenPBR mapping (not the gray fallback).
+  assert(result.success);
+  assert(result.scene.meshes.size() == 1);
+  const auto mat_it = result.scene.material_by_path.find("/World/Mat");
+  assert(mat_it != result.scene.material_by_path.end());
+  const RenderMaterial& mat =
+      result.scene.materials[static_cast<size_t>(mat_it->second)];
+  assert(mat.shader_type == RenderMaterial::ShaderType::OpenPBR);
+  assert(mat.openpbr);
+  assert(std::fabs(mat.openpbr->base_color.value.x - 0.8f) < 0.001f);
+  assert(std::fabs(mat.openpbr->base_color.value.y - 0.2f) < 0.001f);
+  assert(std::fabs(mat.openpbr->base_color.value.z - 0.1f) < 0.001f);
+
+  std::cout << "  standard_surface no-recursion: PASSED\n";
+}
+
+
+// UsdSkel P0 parity fixes: sparse joint topology, mesh-local skel:joints
+// remap, SkelRoot-containment skeleton fallback, rest-from-bind derivation,
+// and skel:animationSource authored on the SkelRoot.
+void TestUsdSkelParityFixes() {
+  std::cout << "Testing UsdSkel parity fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 1
+    endTimeCode = 2
+)
+
+def Xform "World"
+{
+    def SkelRoot "Char" (
+    )
+    {
+        rel skel:animationSource = </World/Char/Anim>
+
+        # Sparse joint list: Spine's parent is Root (nearest listed
+        # ancestor), not the unlisted "Root/Pelvis". No restTransforms:
+        # rest must derive from bind * inverse(parentBind).
+        def Skeleton "Skel"
+        {
+            uniform token[] joints = ["Root", "Root/Pelvis/Spine"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,3,0,1))
+            ]
+        }
+
+        def SkelAnimation "Anim"
+        {
+            uniform token[] joints = ["Root"]
+            float3[] translations.timeSamples = { 1: [(0, 1, 0)], }
+        }
+
+        # Mesh: no skel:skeleton rel anywhere (containment fallback), and a
+        # REVERSED mesh-local skel:joints list — jointIndices are local.
+        def Mesh "Body"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            uniform token[] skel:joints = ["Root/Pelvis/Spine", "Root"]
+            int[] primvars:skel:jointIndices = [0, 0, 0, 0] (elementSize = 1)
+            float[] primvars:skel:jointWeights = [1, 1, 1, 1] (elementSize = 1)
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.skeletons.size() == 1);
+  const Skeleton& skel = result.scene.skeletons[0];
+
+  // Sparse topology: Spine's parent is Root (index 0), not a flattened root.
+  assert(skel.joints.size() == 2);
+  assert(skel.joints[1].parent_id == 0);
+
+  // Rest-from-bind: Spine rest = bind(Spine) * inverse(bind(Root)) ->
+  // translation (0, 3, 0), NOT identity.
+  assert(std::fabs(skel.joints[1].rest_transform.m[13] - 3.0f) < 0.001f);
+
+  // animationSource authored on the SkelRoot resolves onto the skeleton.
+  assert(skel.animation_source_path == "/World/Char/Anim");
+
+  // Containment fallback: the mesh binds the SkelRoot's skeleton with no
+  // authored rel...
+  assert(result.scene.meshes.size() == 1);
+  const RenderMesh& mesh = result.scene.meshes[0];
+  assert(mesh.skin);
+  assert(mesh.skin->skeleton_id == 0);
+
+  // ...and the mesh-local reversed skel:joints remaps: local index 0 =
+  // "Root/Pelvis/Spine" = skeleton joint 1.
+  assert(mesh.skin->joint_indices.size() == 4);
+  for (size_t i = 0; i < 4; ++i) {
+    assert(mesh.skin->joint_indices[i] == 1);
+  }
+
+  std::cout << "  UsdSkel parity fixes: PASSED\n";
+}
+
+
+// 2026-07 audit UsdSkel cluster: quat-array slerp between keys, indexed skin
+// primvar expansion, token-array joints/blendShapes in GetSkelAnimationData,
+// and count/width validation warnings.
+void TestUsdSkelClusterFixes() {
+  std::cout << "Testing UsdSkel cluster fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 1
+    endTimeCode = 3
+)
+
+def Xform "World"
+{
+    def SkelRoot "Char"
+    {
+        rel skel:animationSource = </World/Char/Anim>
+
+        # 2 joints but only 1 bindTransform: must WARN (silent identity
+        # fill collapses the limb with no hint why).
+        def Skeleton "Skel"
+        {
+            uniform token[] joints = ["Root", "Root/Spine"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
+            ]
+        }
+
+        # 2 declared blendShapes but 3 weights per sample: must WARN.
+        # rotations: identity -> 90deg about X; t=2 must SLERP to 45deg.
+        def SkelAnimation "Anim"
+        {
+            uniform token[] joints = ["Root", "Root/Spine"]
+            uniform token[] blendShapes = ["smile", "frown"]
+            float[] blendShapeWeights.timeSamples = {
+                1: [0, 0, 0],
+                3: [1, 1, 1],
+            }
+            quatf[] rotations.timeSamples = {
+                1: [(1, 0, 0, 0), (1, 0, 0, 0)],
+                3: [(0.70710678, 0.70710678, 0, 0), (1, 0, 0, 0)],
+            }
+        }
+
+        # Indexed skin primvars: values are 2 ELEMENTS of elementSize 2;
+        # :indices addresses elements, expansion is per-group.
+        def Mesh "Body"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            rel skel:skeleton = </World/Char/Skel>
+            int[] primvars:skel:jointIndices = [0, 1, 1, 0] (elementSize = 2)
+            int[] primvars:skel:jointIndices:indices = [0, 1, 0, 1]
+            float[] primvars:skel:jointWeights = [0.75, 0.25, 0.5, 0.5] (elementSize = 2)
+            int[] primvars:skel:jointWeights:indices = [0, 1, 0, 1]
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary
+              << ")\n";
+    return;
+  }
+
+  // Quat ARRAY slerp between keys (was: empty/held). Internal quat lane
+  // order is real-first (w, x, y, z); midpoint of identity->90degX is 45degX.
+  {
+    UsdPrim anim = lr.stage.GetPrimAtPath("/World/Char/Anim");
+    assert(anim.IsValid());
+    Value mid = anim.GetInterpolatedValue("rotations", 2.0);
+    const std::vector<float>* lanes = mid.as_float_array();
+    assert(lanes && lanes->size() == 8);
+    assert(std::fabs((*lanes)[0] - 0.9238795f) < 1e-4f);  // cos(22.5deg)
+    assert(std::fabs((*lanes)[1] - 0.3826834f) < 1e-4f);  // sin(22.5deg)
+    assert(std::fabs((*lanes)[2]) < 1e-6f);
+    assert(std::fabs((*lanes)[3]) < 1e-6f);
+    // Second element stays identity.
+    assert(std::fabs((*lanes)[4] - 1.0f) < 1e-4f);
+    // The slerped value keeps its array element type.
+    assert(mid.type_id() == TypeId::Quatf);
+  }
+
+  // GetSkelAnimationData: token[] joints/blendShapes must populate (the old
+  // reader only handled scalar string/token authoring).
+  {
+    UsdPrim anim = lr.stage.GetPrimAtPath("/World/Char/Anim");
+    ::tinyusdz::next::SkelAnimationData data;
+    assert(::tinyusdz::next::GetSkelAnimationData(lr.stage, anim, &data, 1.0));
+    assert(data.joints.size() == 2);
+    assert(data.joints[0] == "Root");
+    assert(data.joints[1] == "Root/Spine");
+    assert(data.blendShapes.size() == 2);
+    assert(data.blendShapes[0] == "smile");
+  }
+
+  // Indexed skin primvars expand per elementSize group.
+  {
+    UsdPrim mesh = lr.stage.GetPrimAtPath("/World/Char/Body");
+    SkinBindingInfo sb;
+    assert(GetSkinBinding(mesh, &sb));
+    const std::vector<int32_t> want_idx = {0, 1, 1, 0, 0, 1, 1, 0};
+    assert(sb.joint_indices == want_idx);
+    assert(sb.joint_weights.size() == 8);
+    assert(std::fabs(sb.joint_weights[0] - 0.75f) < 1e-6f);
+    assert(std::fabs(sb.joint_weights[2] - 0.5f) < 1e-6f);
+    assert(std::fabs(sb.joint_weights[4] - 0.75f) < 1e-6f);
+  }
+
+  // Validation warnings from the converter.
+  {
+    ConverterConfig config;
+    RenderSceneConverter converter(config);
+    ConvertResult result = converter.Convert(lr.stage);
+    assert(result.success);
+    bool warned_bind = false, warned_weights = false;
+    for (const std::string& w : result.warnings) {
+      if (w.find("bindTransforms") != std::string::npos) warned_bind = true;
+      if (w.find("blendShapeWeights") != std::string::npos) {
+        warned_weights = true;
+      }
+    }
+    assert(warned_bind);
+    assert(warned_weights);
+  }
+
+  std::cout << "  UsdSkel cluster fixes: PASSED\n";
+}
+
+
+// Material-driven UV primvar promotion: a texture sampling a
+// UsdPrimvarReader with varname "uv" (not "st") must surface that primvar
+// as texcoords_0.
+void TestMaterialUVPrimvarPromotion() {
+  std::cout << "Testing material-driven UV primvar promotion...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:uv = [(0, 0), (0.25, 0), (0.25, 0.5), (0, 0.5)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Mat>
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/Mat/Tex.outputs:rgb>
+            token outputs:surface
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @wood.png@
+            float2 inputs:st.connect = </World/Mat/Reader.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "uv"
+            float2 outputs:result
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.meshes.size() == 1);
+  const RenderMesh& mesh = result.scene.meshes[0];
+
+  // The texture records the authored varname...
+  assert(!result.scene.textures.empty());
+  assert(result.scene.textures[0].uv_primvar == "uv");
+
+  // ...and the "uv" primvar is promoted into texcoords_0.
+  assert(mesh.texcoords_0.size() == 8);
+  assert(std::fabs(mesh.texcoords_0[2] - 0.25f) < 0.001f);
+  assert(std::fabs(mesh.texcoords_0[5] - 0.5f) < 0.001f);
+  // The promoted primvar no longer duplicates in the generic channel.
+  for (const VertexAttribute& attr : mesh.primvars) {
+    assert(attr.name != "uv");
+  }
+
+  std::cout << "  Material UV primvar promotion: PASSED\n";
+}
+
+
+// Materials P1 fixes: dangling leaf binding must not shadow a valid
+// ancestor binding; inputs:varname authored as a connection resolves;
+// a texture behind a compute node (input-side connection) still resolves;
+// transmissive OpenPBR marks the blend path.
+void TestMaterialParityFixes() {
+  std::cout << "Testing material parity fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    rel material:binding = </World/GoodMat>
+
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:customUV = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/MissingMat>
+    }
+
+    def Mesh "Glass"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2)]
+        rel material:binding = </World/GlassMat>
+    }
+
+    def Material "GoodMat"
+    {
+        token inputs:frame:stPrimvarName = "customUV"
+        token outputs:surface.connect = </World/GoodMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/GoodMat/Convert.outputs:out>
+            token outputs:surface
+        }
+
+        def Shader "Convert"
+        {
+            uniform token info:id = "ND_convert_color4_color3"
+            color4f inputs:in.connect = </World/GoodMat/Tex.outputs:rgba>
+            color3f outputs:out
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @albedo.png@
+            float2 inputs:st.connect = </World/GoodMat/Reader.outputs:result>
+            float4 outputs:rgba
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname.connect = </World/GoodMat.inputs:frame:stPrimvarName>
+            float2 outputs:result
+        }
+    }
+
+    def Material "GlassMat"
+    {
+        token outputs:surface.connect = </World/GlassMat/PBR.outputs:out>
+
+        def Shader "PBR"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            float inputs:transmission_weight = 1.0
+            token outputs:out
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+
+  // Dangling </World/MissingMat> on the mesh must not shadow the valid
+  // ancestor binding.
+  int quad = -1;
+  int glass = -1;
+  for (size_t mi = 0; mi < result.scene.meshes.size(); ++mi) {
+    if (result.scene.meshes[mi].prim_path == "/World/Quad") quad = static_cast<int>(mi);
+    if (result.scene.meshes[mi].prim_path == "/World/Glass") glass = static_cast<int>(mi);
+  }
+  assert(quad >= 0 && glass >= 0);
+  const RenderMesh& quad_mesh = result.scene.meshes[static_cast<size_t>(quad)];
+  assert(quad_mesh.material_id >= 0);
+  assert(result.scene.materials[static_cast<size_t>(quad_mesh.material_id)]
+             .prim_path == "/World/GoodMat");
+
+  // The texture behind the ND_convert node resolves, with the varname
+  // followed through the connection to the material interface attribute.
+  assert(!result.scene.textures.empty());
+  bool found_texture = false;
+  for (const RenderTexture& tex : result.scene.textures) {
+    if (tex.asset_path == "albedo.png") {
+      found_texture = true;
+      assert(tex.uv_primvar == "customUV");
+    }
+  }
+  assert(found_texture);
+
+  // ...and the customUV primvar is promoted into texcoords_0.
+  assert(quad_mesh.texcoords_0.size() == 8);
+
+  // Transmissive OpenPBR takes the blend path.
+  const RenderMesh& glass_mesh = result.scene.meshes[static_cast<size_t>(glass)];
+  assert(glass_mesh.material_id >= 0);
+  const RenderMaterial& glass_mat =
+      result.scene.materials[static_cast<size_t>(glass_mesh.material_id)];
+  assert(glass_mat.alpha_mode == RenderMaterial::AlphaMode::Blend);
+
+  std::cout << "  Material parity fixes: PASSED\n";
+}
+
+
+// Regressions for the pre-push review round: ND_mix input priority,
+// factor-input skip, dangling purpose-specific binding fall-through, and
+// the jointIndices/jointWeights desync warning.
+void TestAuditReviewFixes() {
+  std::cout << "Testing audit review fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "MixQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/MixMat>
+    }
+
+    def Mesh "MaskQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+        rel material:binding = </World/MaskMat>
+    }
+
+    def Mesh "PurposeQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2)]
+        rel material:binding:preview = </World/DoesNotExist>
+        rel material:binding = </World/PlainMat>
+    }
+
+    def Mesh "DesyncQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 3), (1, 0, 3), (1, 1, 3), (0, 1, 3)]
+        rel skel:skeleton = </World/Skel>
+        int[] primvars:skel:jointIndices = [0, 0, 0, 0] (elementSize = 1)
+        float[] primvars:skel:jointWeights = [1] (elementSize = 1)
+        int[] primvars:skel:jointWeights:indices = [9]
+    }
+
+    def Skeleton "Skel"
+    {
+        uniform token[] joints = ["Root"]
+    }
+
+    def Material "MixMat"
+    {
+        token outputs:surface.connect = </World/MixMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/MixMat/Mix.outputs:out>
+            token outputs:surface
+        }
+
+        # bg authored BEFORE fg (what alphabetized crate flattening
+        # produces): the fallback must still follow fg.
+        def Shader "Mix"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:bg.connect = </World/MixMat/TexB.outputs:rgb>
+            color3f inputs:fg.connect = </World/MixMat/TexA.outputs:rgb>
+            color3f outputs:out
+        }
+
+        def Shader "TexA"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @base.png@
+            float3 outputs:rgb
+        }
+
+        def Shader "TexB"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @dirt.png@
+            float3 outputs:rgb
+        }
+    }
+
+    def Material "MaskMat"
+    {
+        token outputs:surface.connect = </World/MaskMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/MaskMat/Mix.outputs:out>
+            token outputs:surface
+        }
+
+        # Only the mix FACTOR is connected: the mask must never be bound as
+        # the base color texture.
+        def Shader "Mix"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:fg = (1, 0, 0)
+            color3f inputs:bg = (0, 1, 0)
+            float inputs:mix.connect = </World/MaskMat/MaskTex.outputs:r>
+            color3f outputs:out
+        }
+
+        def Shader "MaskTex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @mask.png@
+            float outputs:r
+        }
+    }
+
+    def Material "PlainMat"
+    {
+        token outputs:surface.connect = </World/PlainMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.2, 0.4, 0.6)
+            token outputs:surface
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary
+              << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+
+  // ND_mix: the fg texture wins even though bg is authored first.
+  bool has_base = false, has_dirt = false, has_mask = false;
+  for (const RenderTexture& tex : result.scene.textures) {
+    if (tex.asset_path == "base.png") has_base = true;
+    if (tex.asset_path == "dirt.png") has_dirt = true;
+    if (tex.asset_path == "mask.png") has_mask = true;
+  }
+  assert(has_base && "fg texture must be followed through ND_mix");
+  assert(!has_dirt && "bg texture must not shadow fg");
+  // Factor-only connection: the blend mask must not become a base color.
+  assert(!has_mask && "a mix FACTOR input must never bind as a texture");
+
+  // Dangling material:binding:preview falls through to the valid
+  // all-purpose binding on the same prim.
+  int purpose = -1, desync = -1;
+  for (size_t mi = 0; mi < result.scene.meshes.size(); ++mi) {
+    if (result.scene.meshes[mi].prim_path == "/World/PurposeQuad")
+      purpose = static_cast<int>(mi);
+    if (result.scene.meshes[mi].prim_path == "/World/DesyncQuad")
+      desync = static_cast<int>(mi);
+  }
+  assert(purpose >= 0 && desync >= 0);
+  const RenderMesh& pq = result.scene.meshes[static_cast<size_t>(purpose)];
+  assert(pq.material_id >= 0);
+  assert(result.scene.materials[static_cast<size_t>(pq.material_id)]
+             .prim_path == "/World/PlainMat");
+
+  // Desynced jointIndices/jointWeights (a malformed :indices left the pair
+  // at different sizes): mesh renders unskinned WITH a warning.
+  assert(!result.scene.meshes[static_cast<size_t>(desync)].skin);
+  bool warned = false;
+  for (const std::string& w : result.warnings) {
+    if (w.find("Mismatched skin jointIndices/jointWeights") !=
+        std::string::npos) {
+      warned = true;
+    }
+  }
+  assert(warned);
+
+  // Hostile indexed skin primvar: indices x elementSize requesting ~1e9
+  // lanes must NOT be expanded (this TU builds without exceptions, so an
+  // unbounded reserve would abort the process). The authored arrays are
+  // kept as-is instead.
+  {
+    std::string hostile =
+        "#usda 1.0\n"
+        "def Mesh \"M\"\n"
+        "{\n"
+        "    int[] primvars:skel:jointIndices = [";
+    for (int i = 0; i < 1000; ++i) hostile += (i ? ",0" : "0");
+    hostile +=
+        "] (elementSize = 1000)\n"
+        "    int[] primvars:skel:jointIndices:indices = [";
+    for (int i = 0; i < 300000; ++i) hostile += (i ? ",0" : "0");
+    hostile +=
+        "]\n"
+        "    float[] primvars:skel:jointWeights = [1] (elementSize = 1)\n"
+        "}\n";
+    LoadResult hr = LoadUSDAFromString(hostile.c_str(), hostile.size());
+    assert(hr.success);
+    UsdPrim m = hr.stage.GetPrimAtPath("/M");
+    assert(m.IsValid());
+    SkinBindingInfo sb;
+    GetSkinBinding(m, &sb);
+    // Kept authored (1000 entries), not expanded to 3e8.
+    assert(sb.joint_indices.size() == 1000);
+  }
+
+  std::cout << "  Audit review fixes: PASSED\n";
+}
+
+// P2 audit fixes: blendshape sparse OOB parallel-array drop, weightless
+// in-between skip, hole/subset face remap across topology sanitize, spec
+// `constant` primvar-interpolation default (with size inference), quad
+// shorter-diagonal split, earcut winding vs projected ring orientation,
+// analytic prim axis as rotation (not mirror), displayOpacity channel,
+// default material for unbound geometry, chained UsdTransform2d composition,
+// displacement/volume terminal metadata.
+void TestP2AuditFixes() {
+  std::cout << "Testing P2 audit fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    # Sparse blendshape with an out-of-range point index (9) and one
+    # in-between without an authored weight.
+    def Mesh "Sparse"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token[] skel:blendShapes = ["sparse"]
+        prepend rel skel:blendShapeTargets = </World/Sparse/BS>
+
+        def BlendShape "BS"
+        {
+            uniform vector3f[] offsets = [(1, 0, 0), (2, 0, 0), (3, 0, 0)]
+            uniform vector3f[] normalOffsets = [(0, 1, 0), (0, 2, 0), (0, 3, 0)]
+            uniform int[] pointIndices = [0, 9, 2]
+            uniform vector3f[] inbetweens:half = [(10, 0, 0), (20, 0, 0), (30, 0, 0)] (
+                weight = 0.5
+            )
+            uniform vector3f[] inbetweens:noweight = [(0, 0, 1), (0, 0, 2), (0, 0, 3)]
+        }
+    }
+
+    # Face 1 has an out-of-range vertex index and is dropped by sanitize;
+    # the GeomSubset references AUTHORED face 2, which becomes face 1.
+    def Mesh "SubsetRemap"
+    {
+        int[] faceVertexCounts = [4, 3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 3, 0, 1, 9, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/MatA>
+
+        def GeomSubset "S"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [2]
+            rel material:binding = </World/MatB>
+        }
+    }
+
+    # Authored face 0 is dropped by sanitize; the authored hole face 2
+    # becomes face 1.
+    def Mesh "HoleRemap"
+    {
+        int[] faceVertexCounts = [3, 3, 3]
+        int[] faceVertexIndices = [0, 1, 9, 0, 1, 2, 0, 2, 3]
+        int[] holeIndices = [2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    }
+
+    # Primvars WITHOUT authored interpolation: per-point arrays infer
+    # vertex; single elements keep the spec default (constant).
+    def Mesh "InterpInfer"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 1)]
+        float[] primvars:displayOpacity = [0.1, 0.2, 0.3, 0.4]
+        float[] primvars:myconst = [7.5]
+    }
+
+    # Non-square quad: diagonal 1-3 (len^2 = 2) is shorter than 0-2
+    # (len^2 = 10) and must be the split edge.
+    def Mesh "Kite"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (2, 0, 0), (3, 1, 0), (1, 1, 0)]
+    }
+
+    # Concave pentagons handled by earcut: winding of the emitted triangles
+    # must follow the authored ring winding for BOTH +z and -z dominant
+    # normals (the old unconditional reverse flipped one of them).
+    def Mesh "PentPosZ"
+    {
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4]
+        point3f[] points = [(0, 0, 0), (2, 0, 0), (2, 2, 0), (1, 1, 0), (0, 2, 0)]
+    }
+
+    def Mesh "PentNegZ"
+    {
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [4, 3, 2, 1, 0]
+        point3f[] points = [(0, 0, 0), (2, 0, 0), (2, 2, 0), (1, 1, 0), (0, 2, 0)]
+    }
+
+    # y-dominant projection (the earcut drop-axis pair (x,z) mirrors the
+    # ring): winding must still follow the authored ring.
+    def Mesh "PentPosY"
+    {
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4]
+        point3f[] points = [(0, 0, 0), (0, 0, -2), (2, 0, -2), (1, 0, -1), (2, 0, 0)]
+    }
+
+    # Analytic prims: the axis transform must be a proper rotation, not a
+    # mirror (a mirror turns the mesh inside out).
+    def Capsule "CapX"
+    {
+        token axis = "X"
+    }
+    def Capsule "CapZ"
+    {
+    }
+    def Cylinder "CylX"
+    {
+        token axis = "X"
+    }
+    def Sphere "BallY"
+    {
+    }
+
+    def Material "MatA"
+    {
+        token outputs:surface.connect = </World/MatA/PS.outputs:surface>
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 0, 0)
+            token outputs:surface
+        }
+    }
+
+    def Material "MatB"
+    {
+        token outputs:surface.connect = </World/MatB/PS.outputs:surface>
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 1, 0)
+            token outputs:surface
+        }
+    }
+
+    # Chained UsdTransform2d: Outer(translate) o Inner(scale+translate)
+    # must COMPOSE (the old code overwrote fields per hop).
+    def Mesh "ChainQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 5), (1, 0, 5), (1, 1, 5), (0, 1, 5)]
+        rel material:binding = </World/ChainMat>
+    }
+
+    def Material "ChainMat"
+    {
+        token outputs:surface.connect = </World/ChainMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/ChainMat/Tex.outputs:rgb>
+            token outputs:surface
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @chain.png@
+            float2 inputs:st.connect = </World/ChainMat/Outer.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "Outer"
+        {
+            uniform token info:id = "UsdTransform2d"
+            float2 inputs:in.connect = </World/ChainMat/Inner.outputs:result>
+            float2 inputs:translation = (0.1, 0)
+            float2 outputs:result
+        }
+
+        def Shader "Inner"
+        {
+            uniform token info:id = "UsdTransform2d"
+            float2 inputs:in.connect = </World/ChainMat/Reader.outputs:result>
+            float2 inputs:scale = (2, 2)
+            float2 inputs:translation = (0.2, 0.3)
+            float2 outputs:result
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    # Displacement/volume terminals recorded as metadata.
+    def Material "DispMat"
+    {
+        token outputs:surface.connect = </World/DispMat/PS.outputs:surface>
+        token outputs:displacement.connect = </World/DispMat/Disp.outputs:displacement>
+        token outputs:volume.connect = </World/DispMat/Vol.outputs:volume>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:surface
+        }
+        def Shader "Disp"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:displacement
+        }
+        def Shader "Vol"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:volume
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  RenderScene& scene = result.scene;
+
+  auto find_mesh = [&scene](const char* path) -> RenderMesh& {
+    auto it = scene.mesh_by_path.find(path);
+    assert(it != scene.mesh_by_path.end());
+    return scene.meshes[static_cast<size_t>(it->second)];
+  };
+
+  // --- Item 1 + 4: sparse blendshape parallel arrays + weightless
+  // in-between.
+  {
+    RenderMesh& m = find_mesh("/World/Sparse");
+    assert(m.blend_shapes.size() == 1);
+    const RenderMesh::BlendShape& bs = m.blend_shapes[0];
+    // The OOB entry (pointIndices[1] == 9) drops from EVERY parallel array.
+    assert(bs.point_indices == std::vector<uint32_t>({0, 2}));
+    assert(bs.point_offsets.size() == 6);
+    assert(std::fabs(bs.point_offsets[0] - 1.0f) < 1e-6f);
+    assert(std::fabs(bs.point_offsets[3] - 3.0f) < 1e-6f);
+    assert(bs.normal_offsets.size() == 6);
+    assert(std::fabs(bs.normal_offsets[1] - 1.0f) < 1e-6f);
+    assert(std::fabs(bs.normal_offsets[4] - 3.0f) < 1e-6f);
+    // The weightless in-between is skipped (0.0 collides with the base
+    // shape); the weighted one is kept and filtered consistently.
+    assert(bs.inbetweens.size() == 1);
+    assert(bs.inbetweens[0].name == "half");
+    assert(std::fabs(bs.inbetweens[0].weight - 0.5f) < 1e-6f);
+    assert(bs.inbetweens[0].point_offsets.size() == 6);
+    assert(std::fabs(bs.inbetweens[0].point_offsets[0] - 10.0f) < 1e-6f);
+    assert(std::fabs(bs.inbetweens[0].point_offsets[3] - 30.0f) < 1e-6f);
+  }
+
+  // --- Item 2: GeomSubset indices survive sanitize via the face remap.
+  {
+    RenderMesh& m = find_mesh("/World/SubsetRemap");
+    assert(m.sanitize_dropped_faces == 1);
+    assert(m.face_count() == 2);  // quad + valid tri
+    // Authored subset face 2 -> post-sanitize face 1 -> triangle range
+    // [2, 3) (the quad becomes triangles 0-1).
+    assert(m.material_subsets.size() == 1);
+    assert(m.material_subsets[0].face_start == 2);
+    assert(m.material_subsets[0].face_count == 1);
+    assert(m.material_subsets[0].material_id >= 0);
+    assert(m.material_subsets[0].material_id != m.material_id);
+    assert(scene.materials[static_cast<size_t>(
+               m.material_subsets[0].material_id)].prim_path == "/World/MatB");
+  }
+
+  // --- Item 2: holeIndices survive sanitize via the face remap.
+  {
+    RenderMesh& m = find_mesh("/World/HoleRemap");
+    assert(m.sanitize_dropped_faces == 1);
+    assert(m.face_count() == 2);
+    assert(m.hole_faces == std::vector<uint32_t>({1}));
+    // Only the non-hole surviving triangle is emitted.
+    assert(m.triangulated_indices.size() == 3);
+    assert(m.triangulated_indices[0] == 0 && m.triangulated_indices[1] == 1 &&
+           m.triangulated_indices[2] == 2);
+    // Unbound geometry keeps material_id == -1 with the default config.
+    assert(m.material_id == -1);
+  }
+
+  // --- Item 3 + 8: unauthored interpolation inference + displayOpacity
+  // channel.
+  {
+    RenderMesh& m = find_mesh("/World/InterpInfer");
+    assert(m.colors.size() == 12);
+    assert(m.colors_interp == Interpolation::Vertex);
+    assert(m.has_opacities());
+    assert(m.opacities.size() == 4);
+    assert(m.opacities_interp == Interpolation::Vertex);
+    assert(std::fabs(m.opacities[2] - 0.3f) < 1e-6f);
+    bool saw_const = false;
+    for (const VertexAttribute& pv : m.primvars) {
+      if (pv.name == "myconst") {
+        saw_const = true;
+        // 1 element, unauthored interpolation: USD spec default (constant).
+        assert(pv.interpolation == Interpolation::Constant);
+      }
+    }
+    assert(saw_const);
+  }
+
+  // --- Item 5: quad split along the SHORTER diagonal (1-3 here).
+  {
+    RenderMesh& m = find_mesh("/World/Kite");
+    assert(m.triangulated_indices.size() == 6);
+    assert(m.triangulated_indices[0] == 0 && m.triangulated_indices[1] == 1 &&
+           m.triangulated_indices[2] == 3);
+    assert(m.triangulated_indices[3] == 1 && m.triangulated_indices[4] == 2 &&
+           m.triangulated_indices[5] == 3);
+  }
+
+  // --- Item 6: earcut triangles follow the authored ring winding.
+  {
+    auto check_winding = [&](const char* path) {
+      RenderMesh& m = find_mesh(path);
+      assert(m.face_count() == 1);
+      assert(m.triangulated_indices.size() == 9);  // pentagon -> 3 triangles
+      // Newell normal of the authored ring.
+      double nx = 0, ny = 0, nz = 0;
+      const size_t nv = m.face_vertex_indices.size();
+      for (size_t i = 0; i < nv; ++i) {
+        const size_t a = size_t(m.face_vertex_indices[i]) * 3;
+        const size_t b = size_t(m.face_vertex_indices[(i + 1) % nv]) * 3;
+        nx += (double(m.points[a + 1]) - m.points[b + 1]) *
+              (double(m.points[a + 2]) + m.points[b + 2]);
+        ny += (double(m.points[a + 2]) - m.points[b + 2]) *
+              (double(m.points[a]) + m.points[b]);
+        nz += (double(m.points[a]) - m.points[b]) *
+              (double(m.points[a + 1]) + m.points[b + 1]);
+      }
+      for (size_t t = 0; t < m.triangulated_indices.size(); t += 3) {
+        const size_t ia = size_t(m.triangulated_indices[t]) * 3;
+        const size_t ib = size_t(m.triangulated_indices[t + 1]) * 3;
+        const size_t ic = size_t(m.triangulated_indices[t + 2]) * 3;
+        const double e1x = double(m.points[ib]) - m.points[ia];
+        const double e1y = double(m.points[ib + 1]) - m.points[ia + 1];
+        const double e1z = double(m.points[ib + 2]) - m.points[ia + 2];
+        const double e2x = double(m.points[ic]) - m.points[ia];
+        const double e2y = double(m.points[ic + 1]) - m.points[ia + 1];
+        const double e2z = double(m.points[ic + 2]) - m.points[ia + 2];
+        const double tx = e1y * e2z - e1z * e2y;
+        const double ty = e1z * e2x - e1x * e2z;
+        const double tz = e1x * e2y - e1y * e2x;
+        // Triangle normal must point the same way as the face normal.
+        assert(nx * tx + ny * ty + nz * tz > 1e-9);
+      }
+    };
+    check_winding("/World/PentPosZ");
+    check_winding("/World/PentNegZ");
+    check_winding("/World/PentPosY");
+  }
+
+  // --- Item 7: analytic prim axis is a rotation; meshes stay outward
+  // (positive signed volume) for every axis.
+  {
+    auto signed_volume = [&](const char* path) -> double {
+      RenderMesh& m = find_mesh(path);
+      assert(m.is_triangulated);
+      double vol = 0.0;
+      for (size_t t = 0; t < m.triangulated_indices.size(); t += 3) {
+        const size_t ia = size_t(m.triangulated_indices[t]) * 3;
+        const size_t ib = size_t(m.triangulated_indices[t + 1]) * 3;
+        const size_t ic = size_t(m.triangulated_indices[t + 2]) * 3;
+        const double ax = m.points[ia], ay = m.points[ia + 1],
+                     az = m.points[ia + 2];
+        const double bx = m.points[ib], by = m.points[ib + 1],
+                     bz = m.points[ib + 2];
+        const double cx = m.points[ic], cy = m.points[ic + 1],
+                     cz = m.points[ic + 2];
+        vol += (ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) +
+                az * (bx * cy - by * cx)) /
+               6.0;
+      }
+      return vol;
+    };
+    // Baseline: the generators themselves are outward (+Y sphere).
+    assert(signed_volume("/World/BallY") > 0.01);
+    // A mirror would flip these negative.
+    assert(signed_volume("/World/CapX") > 0.01);
+    assert(signed_volume("/World/CapZ") > 0.01);
+    assert(signed_volume("/World/CylX") > 0.01);
+    // The rotated capsule/cylinder axes really lie along the authored axis.
+    RenderMesh& capx = find_mesh("/World/CapX");
+    assert((capx.bbox_max.x - capx.bbox_min.x) >
+           (capx.bbox_max.y - capx.bbox_min.y) + 0.5f);
+    RenderMesh& capz = find_mesh("/World/CapZ");
+    assert((capz.bbox_max.z - capz.bbox_min.z) >
+           (capz.bbox_max.y - capz.bbox_min.y) + 0.5f);
+  }
+
+  // --- Item 10: chained UsdTransform2d composes.
+  // Outer(translate (0.1,0)) o Inner(scale (2,2), translate (0.2,0.3)):
+  // uv' = 2*uv + (0.3, 0.3).
+  {
+    bool saw_chain_tex = false;
+    for (const RenderTexture& tex : scene.textures) {
+      if (tex.asset_path != "chain.png") continue;
+      saw_chain_tex = true;
+      assert(std::fabs(tex.scale.x - 2.0f) < 1e-5f);
+      assert(std::fabs(tex.scale.y - 2.0f) < 1e-5f);
+      assert(std::fabs(tex.offset.x - 0.3f) < 1e-5f);
+      assert(std::fabs(tex.offset.y - 0.3f) < 1e-5f);
+      assert(std::fabs(tex.rotation) < 1e-5f);
+      assert(tex.uv_primvar == "st");
+    }
+    assert(saw_chain_tex);
+  }
+
+  // --- Item 11: displacement/volume terminal metadata.
+  {
+    auto it = scene.material_by_path.find("/World/DispMat");
+    assert(it != scene.material_by_path.end());
+    const RenderMaterial& mat =
+        scene.materials[static_cast<size_t>(it->second)];
+    assert(mat.has_displacement);
+    assert(mat.displacement_shader_path == "/World/DispMat/Disp");
+    assert(mat.has_volume);
+    assert(mat.volume_shader_path == "/World/DispMat/Vol");
+    auto ita = scene.material_by_path.find("/World/MatA");
+    assert(ita != scene.material_by_path.end());
+    assert(!scene.materials[static_cast<size_t>(ita->second)].has_displacement);
+  }
+
+  // --- Item 9: default material for unbound geometry (config-gated).
+  {
+    ConverterConfig def_config;
+    def_config.material.assign_default_material = true;
+    RenderSceneConverter def_converter(def_config);
+    ConvertResult def_result = def_converter.Convert(lr.stage);
+    assert(def_result.success);
+    RenderScene& def_scene = def_result.scene;
+    auto it = def_scene.mesh_by_path.find("/World/HoleRemap");
+    assert(it != def_scene.mesh_by_path.end());
+    const RenderMesh& unbound =
+        def_scene.meshes[static_cast<size_t>(it->second)];
+    assert(unbound.material_id >= 0);
+    const RenderMaterial& dm =
+        def_scene.materials[static_cast<size_t>(unbound.material_id)];
+    assert(dm.name == "defaultMaterial");
+    assert(dm.prim_path == "/__tinyusdz_default_material__");
+    assert(dm.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+    assert(dm.preview_surface);
+    // Bound geometry keeps its authored material.
+    auto bit = def_scene.mesh_by_path.find("/World/SubsetRemap");
+    assert(bit != def_scene.mesh_by_path.end());
+    const RenderMesh& bound =
+        def_scene.meshes[static_cast<size_t>(bit->second)];
+    assert(bound.material_id >= 0);
+    assert(def_scene.materials[static_cast<size_t>(bound.material_id)]
+               .prim_path == "/World/MatA");
+  }
+
+  std::cout << "  P2 audit fixes: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -2685,6 +4242,16 @@ int main() {
   TestRenderConverterCurves();
   TestValueClipBaking();
   TestMeshParityCleanups();
+  TestHalfPrecisionXformOps();
+  TestMultiSkeletonJointRemap();
+  TestLightLinkingAndDomeFormat();
+  TestStandardSurfaceNoRecursion();
+  TestUsdSkelParityFixes();
+  TestUsdSkelClusterFixes();
+  TestMaterialUVPrimvarPromotion();
+  TestMaterialParityFixes();
+  TestAuditReviewFixes();
+  TestP2AuditFixes();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

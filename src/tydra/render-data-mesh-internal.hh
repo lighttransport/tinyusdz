@@ -28,10 +28,14 @@ bool ComputeTangentsAndBinormals(
     std::vector<uint32_t> *out_vertex_indices, std::string *err,
     uint32_t max_vertex_valence = 16, float dedup_eps = 0.0f);
 
+// flip_normals: negate the computed geometric normal. Set for `leftHanded`
+// orientation meshes (faces wind clockwise, so the CCW cross product points
+// the wrong way).
 bool ComputeNormals(const std::vector<vec3> &vertices,
                            const std::vector<uint32_t> &faceVertexCounts,
                            const std::vector<uint32_t> &faceVertexIndices,
-                           std::vector<vec3> &normals, std::string *err);
+                           std::vector<vec3> &normals, std::string *err,
+                           bool flip_normals = false);
 
 bool QuantizeMeshTangents(
     RenderMesh &mesh,

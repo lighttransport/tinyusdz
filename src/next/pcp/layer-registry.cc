@@ -5,9 +5,11 @@
 
 #include "layer-registry.hh"
 
+#include "../layer/layer.hh"
 #include "../reader/usda-reader.hh"
 #include "../reader/usdc-reader.hh"
 #include "../reader/usdz-reader.hh"
+#include "../../mtlx-dom.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -88,6 +90,9 @@ std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
 
 ParseOptions MakeUSDAParseOptions(const LayerLoadOptions &options) {
   ParseOptions popts = options.usda_parse_options;
+  if (options.strict_aousd_conformance) {
+    popts.strict_aousd_conformance = true;
+  }
   popts.num_threads = options.parse_num_threads > 0 ? options.parse_num_threads
                                                     : popts.num_threads;
   popts.max_file_size = MinNonZero(popts.max_file_size, options.max_memory);
@@ -139,6 +144,8 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
   if (is_usdc) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
   }
   if (is_usda) {
@@ -217,6 +224,8 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
 
   if (ext == "usdc") {
     USDCLoadOptions lopts;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     lopts.crate_options.max_memory = options.max_memory;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
                              resolved_path, err);
@@ -241,6 +250,159 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   return LoadLayerFromFile(resolved_path, warn, err, options);
 }
 
+
+// ============================================================
+// MaterialX (.mtlx) layers
+// ============================================================
+//
+// A reference like @mat.mtlx@</MaterialX/Materials/Foo> composes against a
+// skeletal /MaterialX prim tree synthesized from the MaterialX XML (the same
+// shape legacy usdMtlx ToPrimSpec produces):
+//
+//   /MaterialX/Materials/<mat>       Material  (config:mtlx:version,
+//                                    outputs:mtlx:surface source shader name)
+//   /MaterialX/Shaders/<node>        Shader    (info:id + scalar inputs)
+//   /MaterialX/NodeGraphs/<ng>/<n>   Shader    (info:id = mtlx category)
+
+bool LooksLikeMtlxXML(const uint8_t *data, size_t size) {
+  size_t pos = 0;
+  while (pos < size &&
+         (data[pos] == ' ' || data[pos] == '\t' || data[pos] == '\r' ||
+          data[pos] == '\n')) {
+    pos++;
+  }
+  if (pos + 5 < size && std::memcmp(data + pos, "<?xml", 5) == 0) {
+    // XML prolog: look for a materialx root element in the head of the file.
+    const size_t scan = size - pos < 512 ? size - pos : 512;
+    const char *head = reinterpret_cast<const char *>(data + pos);
+    for (size_t i = 0; i + 10 < scan; ++i) {
+      if (std::memcmp(head + i, "<materialx", 10) == 0) return true;
+    }
+    return false;
+  }
+  return pos + 10 < size && std::memcmp(data + pos, "<materialx", 10) == 0;
+}
+
+namespace {
+
+Value MtlxValueToNextValue(const mtlx::MtlxValue &v) {
+  switch (v.type) {
+    case mtlx::MtlxValue::TYPE_BOOL: return Value(v.bool_val);
+    case mtlx::MtlxValue::TYPE_INT: return Value(static_cast<int32_t>(v.int_val));
+    case mtlx::MtlxValue::TYPE_FLOAT: return Value(v.float_val);
+    case mtlx::MtlxValue::TYPE_STRING: return Value::MakeToken(v.string_val);
+    case mtlx::MtlxValue::TYPE_FLOAT_VECTOR: {
+      const std::vector<float> &f = v.float_vec;
+      if (f.size() == 2) return Value::MakeFloat2(f[0], f[1]);
+      if (f.size() == 3) return Value::MakeFloat3(f[0], f[1], f[2]);
+      if (f.size() == 4) return Value::MakeFloat4(f[0], f[1], f[2], f[3]);
+      return Value();
+    }
+    default: return Value();
+  }
+}
+
+const char *MtlxShaderInfoId(const std::string &category) {
+  if (category == "standard_surface") return "MtlxAutodeskStandardSurface";
+  if (category == "open_pbr_surface") return "MtlxOpenPBRSurface";
+  if (category == "UsdPreviewSurface") return "UsdPreviewSurface";
+  return nullptr;
+}
+
+void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
+                      const char *forced_info_id) {
+  lb.begin_prim(node.GetName().empty() ? std::string("node") : node.GetName(),
+                "Shader");
+  const char *info_id = forced_info_id ? forced_info_id
+                                       : MtlxShaderInfoId(node.GetCategory());
+  lb.add_property("info:id", Value::MakeToken(
+      info_id ? std::string(info_id) : node.GetCategory()));
+  for (const mtlx::MtlxInputPtr &input : node.GetInputs()) {
+    if (!input) continue;
+    Value value = MtlxValueToNextValue(input->GetValue());
+    if (!value.is_empty()) {
+      lb.add_property("inputs:" + input->GetName(), std::move(value));
+    }
+  }
+  lb.end_prim();
+}
+
+}  // namespace
+
+std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
+                                               const uint8_t *data,
+                                               size_t size, std::string *warn,
+                                               std::string *err) {
+  mtlx::MtlxDocument doc;
+  if (!doc.ParseFromXML(
+          std::string(reinterpret_cast<const char *>(data), size))) {
+    if (err) {
+      *err += "Failed to parse MaterialX layer: " + key +
+              (doc.GetError().empty() ? std::string()
+                                      : " : " + doc.GetError()) +
+              "\n";
+    }
+    return nullptr;
+  }
+  if (warn && !doc.GetWarning().empty()) {
+    *warn += "MaterialX layer " + key + ": " + doc.GetWarning() + "\n";
+  }
+
+  auto layer = std::make_shared<Layer>();
+  LayerBuilder lb(*layer);
+
+  lb.begin_prim("MaterialX", "");
+
+  lb.begin_prim("Materials", "");
+  for (const mtlx::MtlxMaterialPtr &mat : doc.GetMaterials()) {
+    if (!mat || mat->GetName().empty()) continue;
+    lb.begin_prim(mat->GetName(), "Material");
+    if (!doc.GetVersion().empty()) {
+      lb.add_property("config:mtlx:version",
+                      Value::MakeToken(doc.GetVersion()));
+    }
+    if (!doc.GetColorSpace().empty()) {
+      lb.add_property("config:mtlx:colorspace",
+                      Value::MakeToken(doc.GetColorSpace()));
+    }
+    if (!mat->GetSurfaceShader().empty()) {
+      lb.add_relationship(
+          "mtlx:surface:source",
+          Path("/MaterialX/Shaders/" + mat->GetSurfaceShader()));
+    }
+    lb.end_prim();
+  }
+  lb.end_prim();  // Materials
+
+  lb.begin_prim("Shaders", "");
+  for (const mtlx::MtlxNodePtr &node : doc.GetNodes()) {
+    if (!node || node->GetName().empty()) continue;
+    // surfacematerial nodes are represented under /MaterialX/Materials.
+    if (node->GetCategory() == "surfacematerial") continue;
+    EmitMtlxNodePrim(lb, *node, nullptr);
+  }
+  lb.end_prim();  // Shaders
+
+  if (!doc.GetNodeGraphs().empty()) {
+    lb.begin_prim("NodeGraphs", "");
+    for (const mtlx::MtlxNodeGraphPtr &graph : doc.GetNodeGraphs()) {
+      if (!graph || graph->GetName().empty()) continue;
+      lb.begin_prim(graph->GetName(), "NodeGraph");
+      for (const mtlx::MtlxNodePtr &node : graph->GetNodes()) {
+        if (!node || node->GetName().empty()) continue;
+        EmitMtlxNodePrim(lb, *node, nullptr);
+      }
+      lb.end_prim();
+    }
+    lb.end_prim();  // NodeGraphs
+  }
+
+  lb.end_prim();  // MaterialX
+  lb.finalize();
+  layer->build_path_index();
+  return layer;
+}
+
 std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
                                            const uint8_t *data, size_t size,
                                            std::string *warn, std::string *err,
@@ -259,6 +421,8 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
   if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, err);
   }
 
@@ -283,6 +447,10 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
       return nullptr;
     }
     return LoadLayerFromUSDZEntry(reader, key, entry_name, options, warn, err);
+  }
+
+  if (LooksLikeMtlxXML(data, size)) {
+    return LoadLayerFromMtlxMemory(key, data, size, warn, err);
   }
 
   LoadOptions lopts;
@@ -311,6 +479,8 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
   if (data.size() >= 8 && std::memcmp(data.data(), "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemoryOwned(std::move(data), lopts),
                              key, err);
   }

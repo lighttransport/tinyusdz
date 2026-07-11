@@ -75,11 +75,17 @@ public:
   /// Check if prim has a property
   bool HasProperty(const std::string& name) const;
 
-  /// Get property value
+  /// Get property value. Default-time resolution matches OpenUSD: when no
+  /// default is authored but the property has timeSamples, returns the
+  /// earliest sample's value.
   const Value* GetPropertyValue(const std::string& name) const;
 
   /// Get property value by pre-registered ID (faster)
   const Value* GetPropertyValue(PropNameId name_id) const;
+
+  /// Earliest time sample's value, or nullptr when the property has no
+  /// samples. Used as the default-time fallback for GetPropertyValue.
+  const Value* EarliestTimeSampleValue(PropNameId name_id) const;
 
   /// Get all property names
   std::vector<std::string> GetPropertyNames() const;

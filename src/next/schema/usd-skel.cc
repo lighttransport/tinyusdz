@@ -64,16 +64,18 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // bindTransforms (uniform matrix4d[]) - stored as float array, convert to double
+  // bindTransforms (uniform matrix4d[]). Authored directly on the Skeleton
+  // prim (NOT primvar-namespaced — only mesh-side skel data like
+  // primvars:skel:jointIndices uses the primvars: prefix). matrix4d[] holds
+  // doubles; accept a float-backed Value as a fallback.
   {
-    const Value* val = prim.GetPropertyValue("primvars:skel:bindTransforms");
+    const Value* val = prim.GetPropertyValue("bindTransforms");
+    if (!val) val = prim.GetPropertyValue("primvars:skel:bindTransforms");
     if (val && val->is_array()) {
-      const std::vector<float>* farray = val->as_float_array();
-      if (farray) {
-        out->bindTransforms.resize(farray->size());
-        for (size_t i = 0; i < farray->size(); ++i) {
-          out->bindTransforms[i] = static_cast<double>((*farray)[i]);
-        }
+      if (const std::vector<double>* darray = val->as_double_array()) {
+        out->bindTransforms = *darray;
+      } else if (const std::vector<float>* farray = val->as_float_array()) {
+        out->bindTransforms.assign(farray->begin(), farray->end());
       }
     }
   }
@@ -93,16 +95,15 @@ bool GetSkeletonData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // restTransforms (uniform matrix4d[]) - stored as float array, convert to double
+  // restTransforms (uniform matrix4d[]) — same addressing as bindTransforms.
   {
-    const Value* val = prim.GetPropertyValue("primvars:skel:restTransforms");
+    const Value* val = prim.GetPropertyValue("restTransforms");
+    if (!val) val = prim.GetPropertyValue("primvars:skel:restTransforms");
     if (val && val->is_array()) {
-      const std::vector<float>* farray = val->as_float_array();
-      if (farray) {
-        out->restTransforms.resize(farray->size());
-        for (size_t i = 0; i < farray->size(); ++i) {
-          out->restTransforms[i] = static_cast<double>((*farray)[i]);
-        }
+      if (const std::vector<double>* darray = val->as_double_array()) {
+        out->restTransforms = *darray;
+      } else if (const std::vector<float>* farray = val->as_float_array()) {
+        out->restTransforms.assign(farray->begin(), farray->end());
       }
     }
   }
@@ -138,13 +139,20 @@ bool ReadFloat3Array(const Value* val, std::vector<float>* out) {
 
 bool ReadQuatArray(const Value* val, std::vector<float>* out) {
   if (!val || !out) return false;
-  // quatf[] stored as float4[] in Value (xyzw)
+  // next-core Values keep quats REAL-FIRST (w, x, y, z): the crate reader
+  // swizzles GfQuat's imaginary-first layout on read, and USDA text authors
+  // quats real-first. SkelAnimationData's contract is xyzw (GPU / three.js
+  // quaternion order), so swizzle each element here.
   const std::vector<float>* arr = val->as_float_array();
-  if (arr) {
-    *out = *arr;
-    return true;
+  if (!arr || (arr->size() % 4) != 0) return false;
+  out->resize(arr->size());
+  for (size_t i = 0; i < arr->size(); i += 4) {
+    (*out)[i + 0] = (*arr)[i + 1];  // x
+    (*out)[i + 1] = (*arr)[i + 2];  // y
+    (*out)[i + 2] = (*arr)[i + 3];  // z
+    (*out)[i + 3] = (*arr)[i + 0];  // w (real)
   }
-  return false;
+  return true;
 }
 
 } // namespace
@@ -156,16 +164,15 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
   AttributeEval eval(&stage);
   eval.SetTime(time);
 
-  // blendShapes (uniform token[])
+  // blendShapes (uniform token[]; accept scalar string/token authoring too)
   {
     const Value* val = prim.GetPropertyValue("blendShapes");
     if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->blendShapes = *toks;
+      } else if (const std::string* s = val->as_string()) {
         out->blendShapes.push_back(*s);
-      }
-      const std::string* tok = val->as_token();
-      if (tok) {
+      } else if (const std::string* tok = val->as_token()) {
         out->blendShapes.push_back(*tok);
       }
     }
@@ -183,16 +190,15 @@ bool GetSkelAnimationData(const Stage& stage, const UsdPrim& prim,
     }
   }
 
-  // joints (uniform token[])
+  // joints (uniform token[]; accept scalar string/token authoring too)
   {
     const Value* val = prim.GetPropertyValue("joints");
     if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
+      if (const std::vector<std::string>* toks = val->as_token_array()) {
+        out->joints = *toks;
+      } else if (const std::string* s = val->as_string()) {
         out->joints.push_back(*s);
-      }
-      const std::string* tok = val->as_token();
-      if (tok) {
+      } else if (const std::string* tok = val->as_token()) {
         out->joints.push_back(*tok);
       }
     }
@@ -297,6 +303,7 @@ bool GetBlendShapeData(const Stage& stage, const UsdPrim& prim,
       if (const PropMeta* meta = spec->property_meta(property)) {
         if (meta->authored & PropMeta::kWeight) {
           inbetween.weight = static_cast<float>(meta->weight);
+          inbetween.has_weight = true;
         }
       }
       out->inbetweens.push_back(std::move(inbetween));
@@ -370,24 +377,30 @@ bool BuildSkelTopology(const std::vector<std::string>& joints,
       continue;
     }
 
-    std::string parentPath = path.substr(0, lastSlash);
-
-    // Find parent index
+    // Find the nearest ANCESTOR present in the joint list: UsdSkel allows
+    // sparse joint lists (e.g. ["Root", "Root/Pelvis/Spine"]), where the
+    // parent is the closest listed ancestor, not necessarily the immediate
+    // path prefix (pxr UsdSkelTopology semantics).
     bool found = false;
-    for (size_t j = 0; j < joints.size(); ++j) {
-      if (joints[j] == parentPath) {
-        dst[i] = static_cast<int>(j);
-        found = true;
-        break;
+    std::string parentPath = path.substr(0, lastSlash);
+    while (!parentPath.empty()) {
+      for (size_t j = 0; j < joints.size(); ++j) {
+        if (joints[j] == parentPath) {
+          dst[i] = static_cast<int>(j);
+          found = true;
+          break;
+        }
       }
+      if (found) break;
+      const size_t up = parentPath.rfind('/');
+      if (up == std::string::npos || up == 0) break;
+      parentPath = parentPath.substr(0, up);
     }
 
     if (!found) {
-      if (err) {
-        *err = "Parent joint not found: " + parentPath +
-               " for joint: " + path;
-      }
-      return false;
+      // No listed ancestor at all: treat the joint as an extra root (pxr
+      // tolerates this rather than failing the topology).
+      dst[i] = -1;
     }
   }
 

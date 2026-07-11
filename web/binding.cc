@@ -3593,6 +3593,35 @@ class TinyUSDZLoaderNative {
         src_layer = std::move(composited_layer);
       }
 
+      // Full-arc requests route through CompositeAllArcs, which implements
+      // the correct LIVRPS strength ordering (L > I > V > R > P > S) with
+      // deferred variant evaluation and cross-iteration selection
+      // persistence (the tusdcat driver uses the same routing). The
+      // per-feature loop below is kept for feature-subset requests; it
+      // applies R -> P -> I -> V, which inverts LIVRPS.
+      const bool full_livrps = comp_features.inherits &&
+                               comp_features.variantSets &&
+                               comp_features.references &&
+                               comp_features.payload;
+      if (full_livrps) {
+        for (int i = 0; i < kMaxIteration; i++) {
+          const bool has_unresolved =
+              src_layer.check_unresolved_references() ||
+              src_layer.check_unresolved_payload() ||
+              src_layer.check_unresolved_inherits() ||
+              src_layer.check_unresolved_variant() ||
+              src_layer.check_unresolved_specializes();
+          if (!has_unresolved) break;
+
+          tinyusdz::Layer composited_layer;
+          if (!tinyusdz::CompositeAllArcs(resolver, src_layer,
+                                          &composited_layer, &warn_,
+                                          &error_)) {
+            return false;
+          }
+          src_layer = std::move(composited_layer);
+        }
+      } else {
       // TODO: Find more better way to Recursively resolve references/payload/variants
       for (int i = 0; i < kMaxIteration; i++) {
 
@@ -3678,6 +3707,7 @@ class TinyUSDZLoaderNative {
         }
 
       }
+      }  // !full_livrps
 
       tinyusdz::Stage comp_stage;
       ret = LayerToStage(src_layer, &comp_stage, &warn_, &error_);

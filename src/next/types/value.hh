@@ -165,6 +165,9 @@ public:
   /// AssetPath); same storage as MakeTokenArray.
   static Value MakeStringLikeArray(std::vector<std::string>&& data,
                                    TypeId elem_type);
+  /// Scalar string-family value with an explicit type (Token / String /
+  /// AssetPath / PathExpression).
+  static Value MakeStringLike(const std::string& s, TypeId type);
 
   // ============================================================
   // Type queries
@@ -246,6 +249,7 @@ public:
   const uint64_t* as_uint64() const;
   const float* as_float() const;
   const double* as_double() const;
+  const uint8_t* as_uchar() const;
   const std::string* as_string() const;
 
   // Mutable accessors
@@ -256,6 +260,7 @@ public:
   uint64_t* as_uint64();
   float* as_float();
   double* as_double();
+  uint8_t* as_uchar();
   std::string* as_string();
 
   // Vector accessors (return pointer to first element)
@@ -268,6 +273,16 @@ public:
   const double* as_double2() const;
   const double* as_double3() const;
   const double* as_double4() const;
+
+  /// Converting scalar reads: also widen raw-half SBO scalars (authored
+  /// half/half2/half3/half4 and their role types store half-bit lanes that
+  /// as_float*() cannot see) and narrow double-backed values. Lanes are
+  /// copied in storage order (quats stay real-first like as_float4()).
+  /// Return false when the value is not a matching-arity scalar.
+  bool to_float(float* out) const;
+  bool to_float2(float* out) const;   // out[2]
+  bool to_float3(float* out) const;   // out[3]
+  bool to_float4(float* out) const;   // out[4]
 
   // Matrix accessors (return pointer to first element)
   const float* as_matrix2f() const;
@@ -330,6 +345,9 @@ public:
   const uint8_t* raw_bytes(size_t* out_size) const;
 
 private:
+  // Shared implementation for the to_float* converting reads.
+  bool ToFloatLanes(int lanes, float* out) const;
+
   TypeId type_id_ = TypeId::Invalid;
   bool is_array_ = false;
   bool is_lazy_ = false;  // array payload not decoded; storage_ holds LazyArrayRef*

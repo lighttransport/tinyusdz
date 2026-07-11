@@ -4,8 +4,12 @@
 // TinyUSDZ Next - Attribute Evaluation Implementation
 
 #include "attribute-eval.hh"
+#include "value-clip.hh"
+#include "../crate/crate-format.hh"  // FloatToHalf (spline value cast)
+#include "../types/spline.hh"
 #include "../layer/property-index.hh"
 #include "../pcp/cache.hh"  // EvalAttributeLazy: cache-backed lazy evaluation
+#include "../schema/schema-registry.hh"
 #include <cstring>
 
 namespace tinyusdz {
@@ -74,6 +78,28 @@ EvalResult AttributeEval::EvalInternal(const UsdPrim& prim, const std::string& a
 
   // Try to get value from prim spec
   result = EvalFromPrimSpec(spec, attr_name, opts);
+  // AOUSD precedence is timeSamples -> spline -> default -> clips -> schema
+  // fallback. EvalFromPrimSpec may already have produced the fallback; clips
+  // get one chance to replace only that final fallback (never authored data).
+  if (!opts.default_time &&
+      (!result.success || result.from_schema_fallback) &&
+      spec->meta().clips().is_dictionary()) {
+    Value clipped;
+    std::string asset;
+    std::string clip_error;
+    if (ResolveValueClip(prim, attr_name, opts.time, opts.clip_stage_loader,
+                         &clipped, &asset, &clip_error)) {
+      result = EvalResult();
+      result.value = std::move(clipped);
+      result.success = true;
+      result.from_time_sample = true;
+      result.source_asset = std::move(asset);
+    } else if (opts.strict_aousd_conformance && !clip_error.empty()) {
+      result = EvalResult();
+      result.error = std::move(clip_error);
+      return result;
+    }
+  }
   if (result.success) {
     result.source_path = prim.GetPath().str();
   }
@@ -88,7 +114,8 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
   PropNameId name_id = GetPropNameTable().find(attr_name);
 
   // Try time samples first (if time is specified)
-  if (name_id.is_valid() && spec->has_time_samples(name_id)) {
+  if (!opts.default_time && name_id.is_valid() &&
+      spec->has_time_samples(name_id)) {
     SampleResult sample = spec->interpolate_time_sample(name_id, opts.time, opts.interp);
     if (sample.success) {
       result.value = std::move(sample.value);
@@ -99,9 +126,39 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
     }
   }
 
+  // Spline (AOUSD 12.3 precedence: timeSamples > spline > default). The
+  // authored text parses on demand; the result is cast to the attribute's
+  // declared scalar type.
+  if (!opts.default_time && name_id.is_valid()) {
+    if (const std::string* spline_text = spec->spline_source(name_id)) {
+      SplineData sd;
+      if (ParseSplineText(*spline_text, &sd, nullptr)) {
+        double v = 0.0;
+        if (EvaluateSplineData(sd, opts.time, &v)) {
+          const std::string* tn = spec->property_type_name(attr_name);
+          if (tn && *tn == "float") {
+            result.value = Value(static_cast<float>(v));
+          } else if (tn && *tn == "half") {
+            uint16_t bits = FloatToHalf(static_cast<float>(v));
+            result.value = Value::MakeFromRaw(TypeId::Half, &bits);
+          } else {
+            result.value = Value(v);
+          }
+          result.success = true;
+          result.from_time_sample = true;
+          result.interpolated = true;
+          return result;
+        }
+        // Spline yields no value at this time (a `none` segment or
+        // extrapolation): fall through to the weaker value sources, matching
+        // how an uncovered timeSamples query degrades.
+      }
+    }
+  }
+
   // Fall back to default value
   const Value* default_val = spec->property_value(attr_name);
-  if (default_val && !default_val->is_empty()) {
+  if (default_val && !default_val->is_empty() && !default_val->is_block()) {
     result.value = *default_val;
     result.success = true;
     result.from_default = true;
@@ -111,10 +168,20 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
   // Try by name_id if string lookup failed
   if (name_id.is_valid()) {
     default_val = spec->property_value(name_id);
-    if (default_val && !default_val->is_empty()) {
+    if (default_val && !default_val->is_empty() && !default_val->is_block()) {
       result.value = *default_val;
       result.success = true;
       result.from_default = true;
+      return result;
+    }
+  }
+
+  if (const SchemaPropertyDefinition* def =
+          GetSchemaRegistry().FindProperty(*spec, attr_name)) {
+    if (def->has_fallback) {
+      result.value = def->fallback;
+      result.success = true;
+      result.from_schema_fallback = true;
       return result;
     }
   }

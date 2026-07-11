@@ -1,3 +1,5 @@
+import { mountBackendSelector } from './src/tinyusdz/LoaderConfigUtils.js';
+
 const samples = [
   {
     name: 'Clean Xform',
@@ -551,4 +553,6 @@ dropzone.addEventListener('drop', (event) => {
 
 updateGroupsSummary();
 loadSample(0);
+// Backend switch reloads the page (the WASM module is chosen at startup).
+mountBackendSelector(document.querySelector('.controls'), { append: true });
 initWasm();
