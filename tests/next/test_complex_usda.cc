@@ -676,6 +676,27 @@ def Xform "W"
     assert(w.HasProperty("after"));
   }
 
+  // Scalar timecode timeSamples interpolate (typed TimeCode result) instead
+  // of snapping to the held sample.
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W"
+{
+    timecode t.timeSamples = {
+        1: 10,
+        3: 30,
+    }
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    Value mid = w.GetInterpolatedValue("t", 2.0);
+    assert(mid.type_id() == TypeId::TimeCode);
+    const double* d = mid.as_double();
+    assert(d && *d == 20.0);
+  }
+
   std::cout << "  Parser audit regressions passed!" << std::endl;
 }
 

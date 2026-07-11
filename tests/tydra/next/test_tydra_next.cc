@@ -3502,6 +3502,227 @@ def Xform "World"
   std::cout << "  Material parity fixes: PASSED\n";
 }
 
+
+// Regressions for the pre-push review round: ND_mix input priority,
+// factor-input skip, dangling purpose-specific binding fall-through, and
+// the jointIndices/jointWeights desync warning.
+void TestAuditReviewFixes() {
+  std::cout << "Testing audit review fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "MixQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/MixMat>
+    }
+
+    def Mesh "MaskQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+        rel material:binding = </World/MaskMat>
+    }
+
+    def Mesh "PurposeQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2)]
+        rel material:binding:preview = </World/DoesNotExist>
+        rel material:binding = </World/PlainMat>
+    }
+
+    def Mesh "DesyncQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 3), (1, 0, 3), (1, 1, 3), (0, 1, 3)]
+        rel skel:skeleton = </World/Skel>
+        int[] primvars:skel:jointIndices = [0, 0, 0, 0] (elementSize = 1)
+        float[] primvars:skel:jointWeights = [1] (elementSize = 1)
+        int[] primvars:skel:jointWeights:indices = [9]
+    }
+
+    def Skeleton "Skel"
+    {
+        uniform token[] joints = ["Root"]
+    }
+
+    def Material "MixMat"
+    {
+        token outputs:surface.connect = </World/MixMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/MixMat/Mix.outputs:out>
+            token outputs:surface
+        }
+
+        # bg authored BEFORE fg (what alphabetized crate flattening
+        # produces): the fallback must still follow fg.
+        def Shader "Mix"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:bg.connect = </World/MixMat/TexB.outputs:rgb>
+            color3f inputs:fg.connect = </World/MixMat/TexA.outputs:rgb>
+            color3f outputs:out
+        }
+
+        def Shader "TexA"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @base.png@
+            float3 outputs:rgb
+        }
+
+        def Shader "TexB"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @dirt.png@
+            float3 outputs:rgb
+        }
+    }
+
+    def Material "MaskMat"
+    {
+        token outputs:surface.connect = </World/MaskMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/MaskMat/Mix.outputs:out>
+            token outputs:surface
+        }
+
+        # Only the mix FACTOR is connected: the mask must never be bound as
+        # the base color texture.
+        def Shader "Mix"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:fg = (1, 0, 0)
+            color3f inputs:bg = (0, 1, 0)
+            float inputs:mix.connect = </World/MaskMat/MaskTex.outputs:r>
+            color3f outputs:out
+        }
+
+        def Shader "MaskTex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @mask.png@
+            float outputs:r
+        }
+    }
+
+    def Material "PlainMat"
+    {
+        token outputs:surface.connect = </World/PlainMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.2, 0.4, 0.6)
+            token outputs:surface
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary
+              << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+
+  // ND_mix: the fg texture wins even though bg is authored first.
+  bool has_base = false, has_dirt = false, has_mask = false;
+  for (const RenderTexture& tex : result.scene.textures) {
+    if (tex.asset_path == "base.png") has_base = true;
+    if (tex.asset_path == "dirt.png") has_dirt = true;
+    if (tex.asset_path == "mask.png") has_mask = true;
+  }
+  assert(has_base && "fg texture must be followed through ND_mix");
+  assert(!has_dirt && "bg texture must not shadow fg");
+  // Factor-only connection: the blend mask must not become a base color.
+  assert(!has_mask && "a mix FACTOR input must never bind as a texture");
+
+  // Dangling material:binding:preview falls through to the valid
+  // all-purpose binding on the same prim.
+  int purpose = -1, desync = -1;
+  for (size_t mi = 0; mi < result.scene.meshes.size(); ++mi) {
+    if (result.scene.meshes[mi].prim_path == "/World/PurposeQuad")
+      purpose = static_cast<int>(mi);
+    if (result.scene.meshes[mi].prim_path == "/World/DesyncQuad")
+      desync = static_cast<int>(mi);
+  }
+  assert(purpose >= 0 && desync >= 0);
+  const RenderMesh& pq = result.scene.meshes[static_cast<size_t>(purpose)];
+  assert(pq.material_id >= 0);
+  assert(result.scene.materials[static_cast<size_t>(pq.material_id)]
+             .prim_path == "/World/PlainMat");
+
+  // Desynced jointIndices/jointWeights (a malformed :indices left the pair
+  // at different sizes): mesh renders unskinned WITH a warning.
+  assert(!result.scene.meshes[static_cast<size_t>(desync)].skin);
+  bool warned = false;
+  for (const std::string& w : result.warnings) {
+    if (w.find("Mismatched skin jointIndices/jointWeights") !=
+        std::string::npos) {
+      warned = true;
+    }
+  }
+  assert(warned);
+
+  // Hostile indexed skin primvar: indices x elementSize requesting ~1e9
+  // lanes must NOT be expanded (this TU builds without exceptions, so an
+  // unbounded reserve would abort the process). The authored arrays are
+  // kept as-is instead.
+  {
+    std::string hostile =
+        "#usda 1.0\n"
+        "def Mesh \"M\"\n"
+        "{\n"
+        "    int[] primvars:skel:jointIndices = [";
+    for (int i = 0; i < 1000; ++i) hostile += (i ? ",0" : "0");
+    hostile +=
+        "] (elementSize = 1000)\n"
+        "    int[] primvars:skel:jointIndices:indices = [";
+    for (int i = 0; i < 300000; ++i) hostile += (i ? ",0" : "0");
+    hostile +=
+        "]\n"
+        "    float[] primvars:skel:jointWeights = [1] (elementSize = 1)\n"
+        "}\n";
+    LoadResult hr = LoadUSDAFromString(hostile.c_str(), hostile.size());
+    assert(hr.success);
+    UsdPrim m = hr.stage.GetPrimAtPath("/M");
+    assert(m.IsValid());
+    SkinBindingInfo sb;
+    GetSkinBinding(m, &sb);
+    // Kept authored (1000 entries), not expanded to 3e8.
+    assert(sb.joint_indices.size() == 1000);
+  }
+
+  std::cout << "  Audit review fixes: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -3552,6 +3773,7 @@ int main() {
   TestUsdSkelClusterFixes();
   TestMaterialUVPrimvarPromotion();
   TestMaterialParityFixes();
+  TestAuditReviewFixes();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
