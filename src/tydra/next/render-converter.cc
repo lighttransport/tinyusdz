@@ -937,6 +937,9 @@ std::vector<double> ValueClipSampleTimes(const Stage& stage,
 
 struct TextureNodeData {
   std::string file;
+  // `inputs:file` customData { asset ktx2 = @...@ } — the legacy-safe compressed
+  // companion hint (doc/texcomp.md). Empty when unauthored.
+  std::string ktx2_hint;
   std::string wrap_s = "useMetadata";
   std::string wrap_t = "useMetadata";
   float scale[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -1007,6 +1010,24 @@ bool ExtractTextureNodeData(const Stage& stage,
                             double time_code,
                             TextureNodeData* out) {
   if (!out || !texture_prim.IsValid()) return false;
+
+  // Legacy-safe compressed-companion hint, read straight off the attribute's
+  // metadata so BOTH extraction paths below pick it up:
+  //   asset inputs:file = @t.png@ ( customData = { asset ktx2 = @t.ktx2@ } )
+  // `inputs:file` keeps pointing at the plain image (unaware consumers are
+  // unaffected); a GPU consumer loads the .ktx2 blocks instead.
+  if (const ::tinyusdz::next::PropMeta* pm =
+          texture_prim.GetPropertyMeta("inputs:file")) {
+    if (const ::tinyusdz::next::Dict* cd = pm->customData.as_dictionary()) {
+      if (const ::tinyusdz::next::Value* v = cd->find("ktx2")) {
+        if (const std::string* s = v->as_asset_path()) {
+          out->ktx2_hint = *s;
+        } else if (const std::string* t = v->as_string()) {
+          out->ktx2_hint = *t;
+        }
+      }
+    }
+  }
 
   ::tinyusdz::next::UVTextureData uv;
   if (::tinyusdz::next::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
@@ -4956,6 +4977,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       texture.name = texture_prim.IsValid() ? texture_prim.GetName() : param_name;
       texture.prim_path = texture_prim_path;
       texture.asset_path = tex_data.file;
+      texture.ktx2_hint = tex_data.ktx2_hint;
       texture.wrap_s = ParseWrapMode(tex_data.wrap_s);
       texture.wrap_t = ParseWrapMode(tex_data.wrap_t);
       texture.scale_value = Float4(tex_data.scale[0], tex_data.scale[1],

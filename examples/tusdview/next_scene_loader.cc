@@ -1681,7 +1681,29 @@ bool FindNextCameraRec(const tnext::Stage& stage, const tnext::UsdPrim& prim,
 struct NextTexCache {
   std::unordered_map<std::string, int> byKey;  // key -> draw->textures index (-1 miss)
   std::unique_ptr<tydn::TextureDecoder> decoder;
+  // Texture runtime options (keepCompressed + device caps) for the kept-
+  // compressed KTX2 passthrough. Null = plain decode.
+  const TextureRuntimeOptions* opt = nullptr;
 };
+
+// ".ktx2" suffix (case-insensitive).
+bool EndsWithKtx2(const std::string& s) {
+  if (s.size() < 5) return false;
+  std::string e = s.substr(s.size() - 5);
+  for (char& c : e) c = char(std::tolower(static_cast<unsigned char>(c)));
+  return e == ".ktx2";
+}
+
+// Resolve `rel` (a companion named relative to the same layer as the texture)
+// against an already-resolved sibling asset path.
+std::string ResolveSiblingAsset(const std::string& resolved,
+                                const std::string& rel) {
+  if (rel.empty()) return std::string();
+  if (rel[0] == '/') return rel;
+  const size_t p = resolved.find_last_of('/');
+  if (p == std::string::npos) return rel;
+  return resolved.substr(0, p + 1) + rel;
+}
 
 // Decode an asset into an RGBA8 light3d::Image through the shared decoder.
 bool DecodeNextImage(NextTexCache& tc, const std::string& asset,
@@ -1844,11 +1866,34 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   }
 
   DrawTextureCPU dt;
-  if (!DecodeNextImage(tc, asset, srgb, &dt.image)) {
+  bool built = false;
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+  // Kept-compressed KTX2 passthrough. The compressed companion is named by the
+  // `inputs:file` customData `ktx2` hint (RenderTexture::ktx2_hint), or the
+  // asset itself may already be a .ktx2. Upload/transcode its GPU blocks instead
+  // of decoding + re-encoding.
+  if (tc.opt && tc.opt->keepCompressed && tc.decoder) {
+    std::string ktxAsset;
+    if (EndsWithKtx2(asset)) {
+      ktxAsset = asset;
+    } else if (!rt.ktx2_hint.empty()) {
+      ktxAsset = ResolveSiblingAsset(asset, rt.ktx2_hint);
+    }
+    if (!ktxAsset.empty()) {
+      std::vector<uint8_t> bytes;
+      if (tc.decoder->ReadAssetBytes(ktxAsset, &bytes) &&
+          BuildKeptCompressedFromKtx2(bytes.data(), bytes.size(), *tc.opt, &dt)) {
+        dt.assetIdentifier = ktxAsset;
+        built = true;
+      }
+    }
+  }
+#endif
+  if (!built && !DecodeNextImage(tc, asset, srgb, &dt.image)) {
     tc.byKey[key] = -1;  // negative-cache the miss
     return -1;
   }
-  dt.assetIdentifier = asset;
+  if (!built) dt.assetIdentifier = asset;
   dt.srgb = srgb;
   dt.wrapS = NextWrapToDraw(rt.wrap_s);
   dt.wrapT = NextWrapToDraw(rt.wrap_t);
@@ -2747,6 +2792,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // cap and byte budget are applied while decoding, so a large scene never
   // materializes every texture at full resolution.
   NextTexCache texCache;
+  texCache.opt = &opts.textureOptions;  // kept-compressed KTX2 passthrough
   tydn::TextureDecodeOptions texOpts;
   texOpts.base_dir = tinyusdz::io::GetBaseDir(path);
   texOpts.max_edge = opts.textureOptions.maxTextureSize > 0
