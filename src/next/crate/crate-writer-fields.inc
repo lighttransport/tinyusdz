@@ -209,19 +209,6 @@
         prop_names = std::move(ordered);
       }
 
-      // Metadata fields from reference/payload/etc strings
-      // (stored as regular attributes for now, matching reader behavior)
-      auto add_string_field = [&](const std::string& name,
-                                  const std::string& value) {
-        if (value.empty()) return;
-        CrateField f;
-        f.token_index.value = InternToken(name);
-        uint32_t tok_idx = InternToken(value);
-        f.value_rep = ValueRep::Make(CrateTypeId::Token, tok_idx, false, true);
-        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
-        fields_.push_back(f);
-      };
-
       // Composition arcs in pxr-native encodings (pxr rejects the whole layer
       // when a known field like `references` holds a token[] instead of its
       // schema type). The effective (composed) list is written explicitly;

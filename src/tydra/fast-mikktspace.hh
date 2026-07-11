@@ -173,13 +173,13 @@ struct VertexKey {
 struct VertexKeyHash {
   size_t operator()(const VertexKey &k) const {
     // FNV-1a on raw bytes
-    size_t h = 14695981039346656037ULL;
+    uint64_t h = 14695981039346656037ULL;
     const uint8_t *p = reinterpret_cast<const uint8_t *>(k.data);
     for (size_t i = 0; i < sizeof(k.data); i++) {
       h ^= p[i];
       h *= 1099511628211ULL;
     }
-    return h;
+    return static_cast<size_t>(h);
   }
 };
 
