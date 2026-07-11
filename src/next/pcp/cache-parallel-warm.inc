@@ -70,6 +70,14 @@
 
     out->finalize();
     out->meta() = root->meta();
+    // Stage metadata resolves through the whole root layer stack: fields the
+    // root leaves unauthored fill from the strongest sublayer that authors
+    // them (upAxis/metersPerUnit/... — pxr's UsdStage semantics).
+    for (size_t li = 1; li < layer_stacks[0].layers.size(); ++li) {
+      if (layer_stacks[0].layers[li]) {
+        out->meta().FillAbsentStageMetaFrom(layer_stacks[0].layers[li]->meta());
+      }
+    }
     // Sublayer opinions are baked into the flattened output; keeping the
     // subLayers list would re-apply (now stale) layers when the exported
     // layer is read back.

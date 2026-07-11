@@ -1099,6 +1099,73 @@ static void test_audit_2026_07() {
   }
 }
 
+
+// 2026-07 composition audit: sublayer stage-metadata gap-fill (root wins,
+// strongest sublayer fills unauthored fields) and prim-scoped variant
+// overrides ("<primPath>{<set>}" beats the bare-set key).
+static void test_audit_stage_meta_and_variant_overrides() {
+  std::cout << "[stage-meta gap-fill + prim-scoped variant overrides]\n";
+  auto loader = [&](const std::string& path,
+                    std::string*) -> std::unique_ptr<Layer> {
+    if (path.find("sub.usda") != std::string::npos) {
+      return ParseLayer(
+          "#usda 1.0\n(\n    upAxis = \"Z\"\n"
+          "    metersPerUnit = 0.01\n    timeCodesPerSecond = 30\n)\n"
+          "def Xform \"FromSub\" { }\n");
+    }
+    return nullptr;
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n(\n    upAxis = \"Y\"\n"
+      "    subLayers = [@./sub.usda@]\n)\n"
+      "def Xform \"A\" (variants = { string shape = \"s1\" } "
+      "prepend variantSets = [\"shape\"]) {\n"
+      "    variantSet \"shape\" = { \"s1\" { int v = 1 } "
+      "\"s2\" { int v = 2 } }\n"
+      "}\n"
+      "def Xform \"B\" (variants = { string shape = \"s1\" } "
+      "prepend variantSets = [\"shape\"]) {\n"
+      "    variantSet \"shape\" = { \"s1\" { int v = 1 } "
+      "\"s2\" { int v = 2 } }\n"
+      "}\n");
+
+  // Root-authored upAxis wins; sublayer fills mPU/tCPS. Prim-scoped
+  // override flips only /B to s2.
+  CompositionOptions opts;
+  opts.variant_overrides["/B{shape}"] = "s2";
+  Compositor comp;
+  comp.SetOptions(opts);
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  CHECK(out->meta().upAxis == "Y" && out->meta().upAxis_set,
+        "root upAxis wins over sublayer");
+  CHECK(out->meta().timeCodesPerSecond == 30.0 &&
+            out->meta().timeCodesPerSecond_set,
+        "sublayer tCPS gap-fills");
+  CHECK(out->meta().metersPerUnit_set, "sublayer mPU gap-fills");
+  const Value* va = PropOf(*out, "/A", "v");
+  CHECK(va && va->as_int() && *va->as_int() == 1,
+        "/A keeps authored selection (s1)");
+  const Value* vb = PropOf(*out, "/B", "v");
+  CHECK(vb && vb->as_int() && *vb->as_int() == 2,
+        "/B prim-scoped override applies (s2)");
+
+  // Bare-set key still applies stage-wide.
+  CompositionOptions opts2;
+  opts2.variant_overrides["shape"] = "s2";
+  Compositor comp2;
+  comp2.SetOptions(opts2);
+  comp2.SetLayerLoader(loader);
+  auto out2 = comp2.Compose(*root);
+  CHECK(out2 != nullptr, "compose 2 succeeds");
+  const Value* va2 = PropOf(*out2, "/A", "v");
+  const Value* vb2 = PropOf(*out2, "/B", "v");
+  CHECK(va2 && va2->as_int() && *va2->as_int() == 2 && vb2 &&
+            vb2->as_int() && *vb2->as_int() == 2,
+        "bare-set override applies to both prims");
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -1123,6 +1190,7 @@ int main() {
   test_active_authored();
   test_cross_layer_arc_merge();
   test_audit_2026_07();
+  test_audit_stage_meta_and_variant_overrides();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";
