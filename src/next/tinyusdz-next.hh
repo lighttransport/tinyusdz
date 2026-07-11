@@ -17,6 +17,9 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
+#include <memory>
+#include <vector>
 
 // Core types
 #include "types/type-id.hh"
@@ -24,8 +27,8 @@
 #include "types/value.hh"
 #include "types/interpolation.hh"
 
-// PCP composition options (for --variant support)
-#include "pcp/prim-index.hh"
+// Persistent PCP composition/cache APIs.
+#include "pcp/cache.hh"
 
 // Prim types
 #include "prim/path.hh"
@@ -103,6 +106,109 @@ struct LoadUSDOptions {
 
   /// Format-specific USDZ options.
   USDZReadOptions usdz_options;
+};
+
+enum class DiagnosticSeverity : uint8_t { Info, Warning, Error };
+enum class DiagnosticDomain : uint8_t { Load, Resolve, Compose, Convert };
+
+struct Diagnostic {
+  DiagnosticSeverity severity = DiagnosticSeverity::Info;
+  DiagnosticDomain domain = DiagnosticDomain::Load;
+  std::string code;
+  std::string message;
+  std::string path;
+  std::string asset_path;
+};
+
+enum class ProgressPhase : uint8_t { RootLoad, Compose, Recompose };
+
+struct ProgressEvent {
+  ProgressPhase phase = ProgressPhase::RootLoad;
+  float progress = 0.0f;
+  std::string message;
+  size_t estimated_resident_bytes = 0;
+};
+
+enum class CacheRetention : uint8_t { Full, LayersOnly };
+
+struct StageSessionMemoryStats {
+  size_t source_layer_bytes = 0;
+  size_t transient_cache_bytes = 0;
+  size_t composed_stage_bytes = 0;
+  size_t estimated_total_bytes = 0;
+  size_t peak_estimated_total_bytes = 0;
+  size_t layer_count = 0;
+  size_t prim_index_count = 0;
+  size_t composed_prim_count = 0;
+};
+
+struct StageSessionOptions {
+  LoadUSDOptions load;
+  pcp::CompositionOptions composition;
+  ResolverConfig resolver;
+  bool compose = true;
+  // Aggregate logical residency cap for parsed layers, composition caches and
+  // the composed Stage. Unlike LoadUSDOptions::max_memory this is not a
+  // per-file input limit. Zero means unlimited.
+  size_t max_total_memory = 0;
+  CacheRetention cache_retention = CacheRetention::Full;
+  using ProgressCallback = std::function<bool(const ProgressEvent&)>;
+  ProgressCallback progress_callback;
+};
+
+/// Persistent next-core document. It keeps the resolver and PCP cache alive so
+/// payload and variant edits reuse parsed dependency layers.
+class StageSession {
+ public:
+  StageSession();
+  ~StageSession();
+  StageSession(StageSession&&) noexcept;
+  StageSession& operator=(StageSession&&) noexcept;
+  StageSession(const StageSession&) = delete;
+  StageSession& operator=(const StageSession&) = delete;
+
+  bool OpenFile(const std::string& filename,
+                const StageSessionOptions& options = {});
+
+  const Stage& GetStage() const;
+  // Transfer the composed Stage out of a one-shot session and release its PCP
+  // cache. The session becomes closed; payload/variant edits are no longer
+  // available. This avoids copying Stage, which is intentionally move-only.
+  Stage TakeStage();
+  const StageSessionOptions& GetOptions() const;
+  const std::string& GetRootIdentifier() const;
+  bool IsOpen() const;
+  bool IsComposed() const;
+
+  bool Rebuild();
+  bool LoadPayload(const Path& prim_path,
+                   pcp::Cache::LoadPolicy policy =
+                       pcp::Cache::LoadPolicy::WithDescendants);
+  bool UnloadPayload(const Path& prim_path);
+  bool LoadPayloads(const std::vector<Path>& prim_paths,
+                    pcp::Cache::LoadPolicy policy =
+                        pcp::Cache::LoadPolicy::WithDescendants);
+  bool SetVariantSelection(const Path& prim_path,
+                           const std::string& variant_set,
+                           const std::string& selection);
+  bool ClearVariantSelection(const Path& prim_path,
+                             const std::string& variant_set);
+  bool SetVariantSelections(
+      const pcp::CompositionOptions::VariantSelectionMap& selections);
+
+  pcp::CompositionOptions::VariantSelectionMap GetVariantSelections() const;
+  std::vector<Path> GetDeferredPayloadPaths() const;
+  std::vector<pcp::Cache::CompositionIssue> GetCompositionIssues() const;
+  const std::vector<Diagnostic>& GetDiagnostics() const;
+  StageSessionMemoryStats GetMemoryStats() const;
+  void TrimCaches();
+  const std::string& GetWarning() const;
+  const std::string& GetError() const;
+
+  struct Impl;
+
+ private:
+  std::unique_ptr<Impl> impl_;
 };
 
 /// Load a USD file (auto-detects format: USDA, USDC)

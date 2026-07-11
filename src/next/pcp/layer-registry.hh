@@ -92,6 +92,18 @@ class LayerRegistry {
     return parse_count_;
   }
 
+  size_t memory_usage() const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    std::lock_guard<std::mutex> lk(*mu_);
+#endif
+    size_t bytes = 0;
+    for (const auto &entry : by_resolved_) {
+      bytes += entry.first.capacity();
+      if (entry.second) bytes += entry.second->memory_usage();
+    }
+    return bytes;
+  }
+
  private:
   std::unordered_map<std::string, std::shared_ptr<Layer>> by_resolved_;
   size_t parse_count_ = 0;

@@ -73,7 +73,6 @@
     block.src = lr->source;  // pins the source buffer alive until the write
     block.src_offset = lr->block_offset;
     block.src_len = lr->block_len;
-    CacheBlockHash(&block);
     uint64_t idx = InternBlock(std::move(block));
 
     *out_rep = ValueRep::Make(lr->crate_type, idx, /*array=*/true,

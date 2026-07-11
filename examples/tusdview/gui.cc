@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "gui.hh"
+#include "next/tinyusdz-next.hh"
+#include "tydra/next/scene-access.hh"
 
 #include <algorithm>
 #include <chrono>
@@ -1305,6 +1307,190 @@ void Gui::rebuildInspectorCache() {
   }
 }
 
+bool Gui::drawNextPrimTree(const tinyusdz::next::UsdPrim& prim) {
+  if (!prim.IsValid()) return false;
+  const std::string path = prim.GetPath().str();
+  const std::string label = prim.GetName() + "  " + prim.GetTypeName();
+  const bool matches = hierFilter_.PassFilter(label.c_str()) ||
+                       hierFilter_.PassFilter(path.c_str());
+  bool descendant_matches = false;
+  for (size_t i = 0; i < prim.GetChildCount() && !descendant_matches; ++i) {
+    const tinyusdz::next::UsdPrim child = prim.GetChildAt(i);
+    const std::string child_label =
+        child.GetName() + "  " + child.GetTypeName() + "  " +
+        child.GetPath().str();
+    descendant_matches = hierFilter_.PassFilter(child_label.c_str());
+  }
+  if (!matches && !descendant_matches && hierFilter_.IsActive()) return false;
+
+  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth |
+                             ImGuiTreeNodeFlags_OpenOnArrow;
+  if (prim.GetChildCount() == 0) flags |= ImGuiTreeNodeFlags_Leaf;
+  if (path == selPath_) flags |= ImGuiTreeNodeFlags_Selected;
+  if (revealSelectionInHierarchy_ && !selPath_.empty() &&
+      selPath_.compare(0, path.size(), path) == 0) {
+    ImGui::SetNextItemOpen(true);
+  }
+  ImGui::PushID(path.c_str());
+  const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+  if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+    selectByPath(path, -1);
+  }
+  if (!prim.IsActive()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("inactive");
+  } else if (!prim.GetMeta().payloads.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("payload");
+  }
+  if (ImGui::BeginPopupContextItem("next_prim_context")) {
+    if (!prim.GetMeta().payloads.empty() && ImGui::MenuItem("Load payload")) {
+      payloadLoadRequests_.push_back(path);
+    }
+    if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(path.c_str());
+    ImGui::EndPopup();
+  }
+  if (open) {
+    for (size_t i = 0; i < prim.GetChildCount(); ++i) {
+      drawNextPrimTree(prim.GetChildAt(i));
+    }
+    ImGui::TreePop();
+  }
+  ImGui::PopID();
+  return matches || descendant_matches;
+}
+
+namespace {
+
+std::string NextValueSummary(const tinyusdz::next::Value& value) {
+  if (value.is_array()) {
+    const char* type = tinyusdz::next::GetTypeName(value.type_id());
+    return std::string(type ? type : "value") + "[" +
+           std::to_string(value.array_size()) + "]";
+  }
+  if (const bool* v = value.as_bool()) return *v ? "true" : "false";
+  if (const int32_t* v = value.as_int()) return std::to_string(*v);
+  if (const int64_t* v = value.as_int64()) return std::to_string(*v);
+  if (const float* v = value.as_float()) return std::to_string(*v);
+  if (const double* v = value.as_double()) return std::to_string(*v);
+  if (const std::string* v = value.as_string()) return *v;
+  if (const std::string* v = value.as_token()) return *v;
+  if (const std::string* v = value.as_asset_path()) return "@" + *v + "@";
+  const char* type = tinyusdz::next::GetTypeName(value.type_id());
+  return type ? type : "value";
+}
+
+}  // namespace
+
+void Gui::drawNextInspector() {
+  if (!nextStage_ || selPath_.empty()) {
+    HintWrapped("Select a prim to inspect it.");
+    return;
+  }
+  const tinyusdz::next::UsdPrim prim = nextStage_->GetPrimAtPath(selPath_);
+  if (!prim.IsValid()) {
+    HintWrapped("The selected prim is not present in the composed stage.");
+    return;
+  }
+
+  drawSelectionBreadcrumbs("##next-inspector-breadcrumbs");
+  ImGui::TextWrapped("%s", selPath_.c_str());
+  if (ImGui::SmallButton("Copy path")) ImGui::SetClipboardText(selPath_.c_str());
+  ImGui::TextDisabled("Type: %s", prim.GetTypeName().c_str());
+  ImGui::Text("Specifier: %s", prim.GetSpecifier() == tinyusdz::next::PrimSpecifier::Def
+                                   ? "def"
+                                   : prim.GetSpecifier() ==
+                                             tinyusdz::next::PrimSpecifier::Over
+                                         ? "over"
+                                         : "class");
+  ImGui::Text("Active: %s", prim.IsActive() ? "true" : "false");
+
+  const tinyusdz::next::PrimSpecMeta& meta = prim.GetMeta();
+  if (!meta.variantSets().empty() &&
+      ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
+    for (const tinyusdz::next::VariantSetData& set : meta.variantSets()) {
+      std::string selected = set.selected;
+      for (const auto& authored : meta.variantSelections()) {
+        if (authored.first == set.name) selected = authored.second;
+      }
+      if (selected.empty()) selected = "(default)";
+      const std::string id = set.name + "##next_variant";
+      if (ImGui::BeginCombo(id.c_str(), selected.c_str())) {
+        for (const tinyusdz::next::VariantData& variant : set.variants) {
+          const bool current = variant.name == selected;
+          if (ImGui::Selectable(variant.name.c_str(), current) && !current) {
+            std::map<std::string, std::string> selections;
+            for (const auto& authored : meta.variantSelections()) {
+              selections[authored.first] = authored.second;
+            }
+            selections[set.name] = variant.name;
+            requestVariantSwitch(selPath_, selections);
+          }
+          if (current) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+    }
+  }
+
+  if ((!meta.references.empty() || !meta.payloads.empty() ||
+       !meta.inherits.empty() || !meta.specializes.empty()) &&
+      ImGui::CollapsingHeader("Composition arcs",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Text("References: %zu", meta.references.size());
+    ImGui::Text("Payloads: %zu", meta.payloads.size());
+    ImGui::Text("Inherits: %zu", meta.inherits.size());
+    ImGui::Text("Specializes: %zu", meta.specializes.size());
+    if (!meta.payloads.empty() && ImGui::SmallButton("Load payload")) {
+      payloadLoadRequests_.push_back(selPath_);
+    }
+  }
+
+  const std::string material = tinyusdz::tydra::next::GetBoundMaterial(prim);
+  if (!material.empty() &&
+      ImGui::CollapsingHeader("Material binding",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::SmallButton(material.c_str())) selectByPath(material, -1);
+  }
+
+  if (ImGui::CollapsingHeader("Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::BeginTable("##next_properties", 3,
+                          ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_Resizable)) {
+      ImGui::TableSetupColumn("Name");
+      ImGui::TableSetupColumn("Type");
+      ImGui::TableSetupColumn("Value");
+      ImGui::TableHeadersRow();
+      for (const std::string& name : prim.GetPropertyNames()) {
+        const tinyusdz::next::Value* value = prim.GetPropertyValue(name);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(name.c_str());
+        ImGui::TableNextColumn();
+        const char* type = value ? tinyusdz::next::GetTypeName(value->type_id())
+                                 : "relationship";
+        ImGui::TextUnformatted(type ? type : "value");
+        ImGui::TableNextColumn();
+        const std::string summary = value ? NextValueSummary(*value) : "";
+        ImGui::TextUnformatted(summary.c_str());
+      }
+      for (const std::string& name : prim.GetRelationshipNames()) {
+        const std::vector<tinyusdz::next::Path>* targets =
+            prim.GetRelationship(name);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(name.c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("relationship");
+        ImGui::TableNextColumn();
+        ImGui::Text("%zu target(s)", targets ? targets->size() : 0);
+      }
+      ImGui::EndTable();
+    }
+  }
+}
+
 void Gui::drawHierarchy() {
   ImGui::Begin("Hierarchy");
   if (loaded_ && loaded_->ok) {
@@ -1351,6 +1537,10 @@ void Gui::drawHierarchy() {
     ImGui::Separator();
     if (showRenderNodes_) {
       for (const auto& n : loaded_->render.nodes) drawNodeTree(n);
+    } else if (nextStage_) {
+      for (const tinyusdz::next::UsdPrim& root : nextStage_->GetRootPrims()) {
+        drawNextPrimTree(root);
+      }
     } else {
       for (const auto& root : loaded_->stage.root_prims()) drawPrimTree(root);
     }
@@ -1363,6 +1553,11 @@ void Gui::drawHierarchy() {
 
 void Gui::drawInspector() {
   ImGui::Begin("Inspector");
+  if (nextStage_) {
+    drawNextInspector();
+    ImGui::End();
+    return;
+  }
   if (selPrim_) {
     rebuildInspectorCache();
     drawSelectionBreadcrumbs("##inspector-breadcrumbs");
@@ -1901,6 +2096,49 @@ void Gui::drawCameraPanel() {
 
 void Gui::drawPayloads() {
   ImGui::Begin("Payloads");
+  if (nextStage_) {
+    std::vector<std::pair<std::string, std::string>> payloads;
+    nextStage_->Traverse([&](const tinyusdz::next::UsdPrim& prim) {
+      for (const std::string& payload : prim.GetMeta().payloads) {
+        payloads.emplace_back(prim.GetPath().str(), payload);
+      }
+      return true;
+    });
+    if (payloads.empty()) {
+      ImGui::TextDisabled("No authored payload arcs.");
+      ImGui::End();
+      return;
+    }
+    if (ImGui::Button("Load All") && !loadStatus_.active) {
+      wantLoadAllPayloads_ = true;
+    }
+    ImGui::Separator();
+    if (ImGui::BeginTable("##next_payloads", 3,
+                          ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerV |
+                              ImGuiTableFlags_Resizable)) {
+      ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+      ImGui::TableSetupColumn("Prim");
+      ImGui::TableSetupColumn("Asset");
+      ImGui::TableHeadersRow();
+      for (size_t i = 0; i < payloads.size(); ++i) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::SmallButton("Load") && !loadStatus_.active) {
+          payloadLoadRequests_.push_back(payloads[i].first);
+        }
+        ImGui::PopID();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(payloads[i].first.c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(payloads[i].second.c_str());
+      }
+      ImGui::EndTable();
+    }
+    ImGui::End();
+    return;
+  }
   if (!loaded_ || !loaded_->comp.composed) {
     ImGui::TextDisabled(loaded_ && loaded_->ok
                             ? "Scene has no composition arcs."
@@ -3935,7 +4173,6 @@ void Gui::drawStageMeta() {
   ImGui::Begin("Stage");
   if (loaded_ && loaded_->ok) {
     const auto& meta = loaded_->render.meta;
-    const auto& smeta = loaded_->stage.metas();
     metaFilter_.Draw("Search##meta", -1.0f);  // key / value
     if (ImGui::BeginTable("##stagemeta", 2,
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
@@ -3955,33 +4192,44 @@ void Gui::drawStageMeta() {
         ImGui::TableSetColumnIndex(1);
         ImGui::TextWrapped("%s", v.c_str());
       };
-      row("upAxis", meta.upAxis);
-      row("metersPerUnit", std::to_string(meta.metersPerUnit));
-      row("framesPerSecond", std::to_string(meta.framesPerSecond));
-      row("timeCodesPerSecond", std::to_string(meta.timeCodesPerSecond));
-      if (meta.startTimeCode.has_value())
-        row("startTimeCode", std::to_string(*meta.startTimeCode));
-      if (meta.endTimeCode.has_value())
-        row("endTimeCode", std::to_string(*meta.endTimeCode));
-      if (!smeta.defaultPrim.str().empty()) row("defaultPrim", smeta.defaultPrim.str());
-      if (!meta.copyright.empty()) row("copyright", meta.copyright);
-      if (!meta.comment.empty()) row("comment", meta.comment);
-      if (!smeta.doc.value.empty()) row("documentation", smeta.doc.value);
-      if (!smeta.subLayers.empty()) {
-        std::string s;
-        for (const auto& sl : smeta.subLayers) {
-          if (!s.empty()) s += "\n";
-          s += sl.assetPath.GetAssetPath();
+      if (nextStage_) {
+        const tinyusdz::next::StageMeta& next_meta = nextStage_->GetMeta();
+        row("upAxis", next_meta.upAxis);
+        row("metersPerUnit", std::to_string(next_meta.metersPerUnit));
+        row("framesPerSecond", std::to_string(next_meta.framesPerSecond));
+        row("timeCodesPerSecond",
+            std::to_string(next_meta.timeCodesPerSecond));
+        if (next_meta.startTimeCode_set)
+          row("startTimeCode", std::to_string(next_meta.startTimeCode));
+        if (next_meta.endTimeCode_set)
+          row("endTimeCode", std::to_string(next_meta.endTimeCode));
+        if (!next_meta.defaultPrim.empty()) row("defaultPrim", next_meta.defaultPrim);
+        if (!next_meta.comment.empty()) row("comment", next_meta.comment);
+        if (!next_meta.doc.empty()) row("documentation", next_meta.doc);
+        const tinyusdz::next::Layer* layer = nextStage_->GetRootLayer();
+        if (layer && !layer->meta().subLayers.empty()) {
+          std::string sublayers;
+          for (const std::string& sublayer : layer->meta().subLayers) {
+            if (!sublayers.empty()) sublayers += "\n";
+            sublayers += sublayer;
+          }
+          row("subLayers", sublayers);
         }
-        row("subLayers", s);
-      }
-      if (!smeta.customLayerData.empty()) {
-        std::string s;
-        for (const auto& kv : smeta.customLayerData) {
-          if (!s.empty()) s += ", ";
-          s += kv.first;
-        }
-        row("customLayerData", s);
+      } else {
+        const auto& smeta = loaded_->stage.metas();
+        row("upAxis", meta.upAxis);
+        row("metersPerUnit", std::to_string(meta.metersPerUnit));
+        row("framesPerSecond", std::to_string(meta.framesPerSecond));
+        row("timeCodesPerSecond", std::to_string(meta.timeCodesPerSecond));
+        if (meta.startTimeCode.has_value())
+          row("startTimeCode", std::to_string(*meta.startTimeCode));
+        if (meta.endTimeCode.has_value())
+          row("endTimeCode", std::to_string(*meta.endTimeCode));
+        if (!smeta.defaultPrim.str().empty())
+          row("defaultPrim", smeta.defaultPrim.str());
+        if (!meta.copyright.empty()) row("copyright", meta.copyright);
+        if (!meta.comment.empty()) row("comment", meta.comment);
+        if (!smeta.doc.value.empty()) row("documentation", smeta.doc.value);
       }
       ImGui::EndTable();
     }

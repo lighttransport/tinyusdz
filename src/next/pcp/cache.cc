@@ -20,6 +20,7 @@
 #include <map>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
 #include <thread>
@@ -259,6 +260,87 @@ bool Cache::BuildStage(Stage *stage, std::string *warn, std::string *err) {
   return impl_->BuildStage(stage, warn, err);
 }
 
+Cache::MemoryStats Cache::GetMemoryStats() const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  MemoryStats stats;
+  std::unordered_set<const Layer *> layers;
+  for (const LayerStack &stack : impl_->layer_stacks) {
+    for (const std::shared_ptr<Layer> &layer : stack.layers) {
+      if (layer && layers.insert(layer.get()).second) {
+        stats.source_layer_bytes += layer->memory_usage();
+      }
+    }
+    stats.transient_cache_bytes += stack.identifier.capacity();
+    stats.transient_cache_bytes +=
+        stack.layers.capacity() * sizeof(stack.layers[0]);
+    stats.transient_cache_bytes +=
+        stack.layer_identifiers.capacity() * sizeof(stack.layer_identifiers[0]);
+    for (const std::string &id : stack.layer_identifiers) {
+      stats.transient_cache_bytes += id.capacity();
+    }
+    stats.transient_cache_bytes +=
+        stack.layer_offsets.capacity() * sizeof(stack.layer_offsets[0]);
+  }
+  stats.layer_count = layers.size();
+  stats.prim_index_count = impl_->index_cache.size();
+  stats.composed_prim_count = impl_->composed_cache_.size();
+
+  for (const std::string &path : impl_->path_table) {
+    stats.transient_cache_bytes += sizeof(path) + path.capacity();
+  }
+  for (const auto &entry : impl_->index_cache) {
+    stats.transient_cache_bytes += sizeof(entry) + entry.first.capacity();
+    if (!entry.second) continue;
+    const std::vector<CompNode> &nodes = entry.second->GetNodes();
+    stats.transient_cache_bytes += nodes.capacity() * sizeof(CompNode);
+    for (const CompNode &node : nodes) {
+      stats.transient_cache_bytes +=
+          node.children.capacity() * sizeof(node.children[0]);
+    }
+    stats.transient_cache_bytes +=
+        entry.second->GetStrengthOrder().capacity() * sizeof(uint16_t);
+  }
+  for (const auto &entry : impl_->sources_cache) {
+    stats.transient_cache_bytes += sizeof(entry) + entry.first.capacity();
+    stats.transient_cache_bytes += entry.second.capacity() * sizeof(Src);
+    for (const Src &source : entry.second) {
+      stats.transient_cache_bytes += source.site.capacity();
+    }
+  }
+  for (const auto &entry : impl_->composed_cache_) {
+    stats.transient_cache_bytes += sizeof(entry) + entry.first.capacity();
+    if (entry.second) stats.transient_cache_bytes += entry.second->memory_usage();
+  }
+  for (const auto &entry : impl_->composed_children_) {
+    stats.transient_cache_bytes += sizeof(entry) + entry.first.capacity();
+    stats.transient_cache_bytes +=
+        entry.second.capacity() * sizeof(entry.second[0]);
+    for (const std::string &child : entry.second) {
+      stats.transient_cache_bytes += child.capacity();
+    }
+  }
+  return stats;
+}
+
+void Cache::TrimTransientCaches() {
+  NEXT_PCP_WRITE_LOCK(impl_->api_mu_);
+  impl_->index_cache.clear();
+  impl_->sources_cache.clear();
+  impl_->composed_cache_.clear();
+  impl_->composed_children_.clear();
+  impl_->site_to_indices.clear();
+  impl_->index_to_sites.clear();
+  impl_->spec_cache_.clear();
+  impl_->prototype_by_key.clear();
+  impl_->prototype_of.clear();
+  impl_->instances_by_prototype.clear();
+  impl_->path_table.clear();
+  impl_->path_intern.clear();
+  impl_->nm_pool_.clear();
+  impl_->nm_pool_.push_back(NamespaceMapping{});
+  std::vector<std::pair<uint32_t, std::string>>().swap(impl_->fill_);
+}
+
 const PrimSpec *Cache::ComposePrim(const Path &prim_path, std::string *warn,
                                    std::string *err) {
 #if defined(TINYUSDZ_ENABLE_THREAD) && defined(TINYUSDZ_NEXT_FINE_LOCKS)
@@ -329,6 +411,14 @@ void Cache::SetLoadRules(const LoadRules &rules) { impl_->SetLoadRules(rules); }
 LoadRules Cache::GetLoadRules() const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);
   return impl_->load_rules_;
+}
+void Cache::SetVariantSelections(
+    const CompositionOptions::VariantSelectionMap &selections) {
+  impl_->SetVariantSelections(selections);
+}
+CompositionOptions::VariantSelectionMap Cache::GetVariantSelections() const {
+  NEXT_PCP_READ_LOCK(impl_->api_mu_);
+  return impl_->options.variant_overrides_by_path;
 }
 bool Cache::HasDeferredPayload(const Path &p) const {
   NEXT_PCP_READ_LOCK(impl_->api_mu_);

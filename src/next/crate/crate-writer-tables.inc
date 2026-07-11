@@ -8,57 +8,45 @@
   // Table building
   // ============================================================
 
-  uint32_t InternToken(std::string_view s) {
-    if (frozen_tok_) {
+  uint32_t InternToken(const std::string& s) {
+    if (frozen_tok_) {  // parallel worker: read-only lookup in the shared table
       auto it = frozen_tok_->find(s);
-      if (it != frozen_tok_->end()) return *it;
-      frozen_miss_ = true;
+      if (it != frozen_tok_->end()) return it->second;
+      frozen_miss_ = true;  // pre-pass incomplete -> driver falls back to serial
       return 0;
     }
     auto it = token_to_index_.find(s);
-    if (it != token_to_index_.end()) return *it;
-
+    if (it != token_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(tokens_.size());
-    token_storage_.emplace_back(s);
-    const std::string_view key(token_storage_.back());
-    tokens_.push_back(key);
-    token_to_index_.set(key, idx);
+    tokens_.push_back(s);
+    token_to_index_[s] = idx;
     return idx;
   }
 
-  uint32_t InternString(std::string_view s) {
-    if (frozen_str_) {
+  uint32_t InternString(const std::string& s) {
+    if (frozen_str_) {  // parallel worker: read-only lookup
       auto it = frozen_str_->find(s);
-      if (it != frozen_str_->end()) return *it;
+      if (it != frozen_str_->end()) return it->second;
       frozen_miss_ = true;
       return 0;
     }
     auto it = string_to_index_.find(s);
-    if (it != string_to_index_.end()) return *it;
-
+    if (it != string_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(string_indices_.size());
-    string_storage_.emplace_back(s);
-    const std::string_view key(string_storage_.back());
 
-    uint32_t token_idx = InternToken(key);
+    // String values in USDC: index into string_indices, which maps to tokens
+    uint32_t token_idx = InternToken(s);
     string_indices_.push_back(token_idx);
-    string_to_index_.set(key, idx);
+    string_to_index_[s] = idx;
     return idx;
   }
 
   uint32_t InternPath(const std::string& path) {
-    std::string_view key(path);
-    if (frozen_path_) {
-      auto it = frozen_path_->find(key);
-      if (it != frozen_path_->end()) return *it;
-      frozen_miss_ = true;
-      return 0;
-    }
-    auto it = path_to_index_.find(key);
-    if (it != path_to_index_.end()) return *it;
+    auto it = path_to_index_.find(path);
+    if (it != path_to_index_.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(paths_.size());
     paths_.push_back(path);
-    path_to_index_.set(std::string_view(paths_.back()), idx);
+    path_to_index_[path] = idx;
     return idx;
   }
 

@@ -13,7 +13,6 @@
 #include <cstring>
 #include <limits>
 #include <map>
-#include <unordered_map>
 
 namespace tinyusdz {
 namespace next {
@@ -626,18 +625,18 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   std::vector<uint8_t> result;
   if (count == 0) return result;
 
-  // Find most common delta. The writer calls this on multi-million-entry
-  // structural streams; an ordered map makes that pass O(n log unique). Keep
-  // the original tie-break (smaller delta wins) with an unordered counter. Do
-  // this directly from the input to avoid a second multi-MB deltas buffer.
-  std::unordered_map<int32_t, size_t> freq;
-  freq.reserve((std::min)(count, size_t(65536)));
+  // Compute deltas
+  std::vector<int32_t> deltas(count);
   int32_t prev = 0;
   for (size_t i = 0; i < count; i++) {
-    int32_t d = static_cast<int32_t>(
-        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
+    deltas[i] = static_cast<int32_t>(static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
     prev = static_cast<int32_t>(values[i]);
-    ++freq[d];
+  }
+
+  // Find most common delta
+  std::map<int32_t, size_t> freq;
+  for (size_t i = 0; i < count; i++) {
+    freq[deltas[i]]++;
   }
   int32_t common_delta = 0;
   size_t max_freq = 0;
@@ -660,11 +659,8 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   // Variable-length integer data appended at end
   std::vector<uint8_t> vints;
 
-  prev = 0;
   for (size_t i = 0; i < count; i++) {
-    int32_t d = static_cast<int32_t>(
-        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
-    prev = static_cast<int32_t>(values[i]);
+    int32_t d = deltas[i];
     uint8_t code;
     if (d == common_delta) {
       code = 0;
@@ -690,53 +686,6 @@ std::vector<uint8_t> EncodeDeltaU32(const uint32_t* values, size_t count) {
   }
 
   // Append variable-length integers
-  result.insert(result.end(), vints.begin(), vints.end());
-  return result;
-}
-
-std::vector<uint8_t> EncodeDeltaU32WithCommon(const uint32_t* values,
-                                              size_t count,
-                                              int32_t common_delta) {
-  std::vector<uint8_t> result;
-  if (count == 0) return result;
-
-  result.resize(sizeof(int32_t));
-  std::memcpy(result.data(), &common_delta, sizeof(int32_t));
-
-  size_t codes_bytes = (count * 2 + 7) / 8;
-  size_t codes_start = result.size();
-  result.resize(codes_start + codes_bytes, 0);
-
-  std::vector<uint8_t> vints;
-  int32_t prev = 0;
-  for (size_t i = 0; i < count; i++) {
-    int32_t d = static_cast<int32_t>(
-        static_cast<int64_t>(values[i]) - static_cast<int64_t>(prev));
-    prev = static_cast<int32_t>(values[i]);
-
-    uint8_t code;
-    if (d == common_delta) {
-      code = 0;
-    } else if (d >= INT8_MIN && d <= INT8_MAX) {
-      code = 1;
-      int8_t v = static_cast<int8_t>(d);
-      vints.push_back(*reinterpret_cast<const uint8_t*>(&v));
-    } else if (d >= INT16_MIN && d <= INT16_MAX) {
-      code = 2;
-      int16_t v = static_cast<int16_t>(d);
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int16_t));
-      std::memcpy(vints.data() + pos, &v, sizeof(int16_t));
-    } else {
-      code = 3;
-      size_t pos = vints.size();
-      vints.resize(pos + sizeof(int32_t));
-      std::memcpy(vints.data() + pos, &d, sizeof(int32_t));
-    }
-
-    result[codes_start + i / 4] |= (code << ((i % 4) * 2));
-  }
-
   result.insert(result.end(), vints.begin(), vints.end());
   return result;
 }

@@ -449,8 +449,7 @@ void test_roundtrip_schema_types() {
 
   // Write to file for external inspection
   const char* test_file = "/tmp/test_roundtrip_schema.usdc";
-  CrateWriter file_writer;
-  CrateWriteResult file_result = file_writer.WriteToFile(test_file, stage);
+  CrateWriteResult file_result = writer.WriteToFile(test_file, stage);
   assert(file_result.success);
   std::cout << "  Wrote to " << test_file << " ("
             << file_result.bytes_written << " bytes)\n";
@@ -460,12 +459,7 @@ void test_roundtrip_schema_types() {
   assert(ifs.is_open());
   size_t file_size = static_cast<size_t>(ifs.tellg());
   ifs.close();
-  if (file_size != buffer.size()) {
-    std::cerr << "  file_size=" << file_size << " buffer_size=" << buffer.size()
-              << "\n";
-    std::cerr.flush();
-    assert(file_size == buffer.size());
-  }
+  assert(file_size == buffer.size());
 
   std::cout << "  roundtrip schema types test passed!\n\n";
 }
@@ -1036,16 +1030,9 @@ void test_roundtrip_arc_metadata_dicts() {
   assert(p);
 
   assert(p->meta().references.size() == 1);
-  if (p->meta().references[0] != "@asset.usda@</Model>") {
-    std::cout << "  ref=" << p->meta().references[0] << "\n";
-    assert(p->meta().references[0] == "@asset.usda@</Model>");
-  }
+  assert(p->meta().references[0] == "@asset.usda@</Model>");
   assert(p->meta().payloads.size() == 1);
-  if (p->meta().payloads[0] != "@payload.usda@</Payload>") {
-    std::cerr << "  payload=" << p->meta().payloads[0] << "\n";
-    std::cerr.flush();
-    assert(p->meta().payloads[0] == "@payload.usda@</Payload>");
-  }
+  assert(p->meta().payloads[0] == "@payload.usda@</Payload>");
 
   const Value& cd = p->meta().customData();
   assert(cd.is_dictionary());
@@ -1302,18 +1289,7 @@ void test_comprehensive_usdc_fixture() {
   PropNameId xform_op = GetPropNameTable().find("xformOp:translate");
   assert(xform_op.is_valid() && world->has_time_samples(xform_op));
   const auto* xform_samples = world->time_samples(xform_op);
-  if (!xform_samples) {
-    std::cerr << "xformOp:translate has no time samples\n";
-    std::abort();
-  }
-  if (xform_samples->size() != 2) {
-    std::cerr << "xformOp:translate sample count = " << xform_samples->size()
-              << "\n";
-    for (const auto& s : *xform_samples) {
-      std::cerr << "  t=" << s.first << " value_index=" << s.second << "\n";
-    }
-    std::abort();
-  }
+  assert(xform_samples && xform_samples->size() == 2);
 
   const PrimSpec* mesh = MustPrim(rl, "/Mesh");
   CheckFloatArray(MustProp(mesh, "points"), TypeId::Float3, points);

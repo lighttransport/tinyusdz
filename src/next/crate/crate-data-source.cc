@@ -46,15 +46,6 @@ std::shared_ptr<CrateDataSource> CrateDataSource::Adopt(
   return ds;
 }
 
-std::shared_ptr<CrateDataSource> CrateDataSource::AdoptBorrowed(
-    const uint8_t* bytes, size_t size, CrateVersion version) {
-  std::shared_ptr<CrateDataSource> ds(new CrateDataSource());
-  ds->borrowed_base_ = bytes;
-  ds->borrowed_size_ = size;
-  ds->version_ = version;
-  return ds;
-}
-
 std::shared_ptr<CrateDataSource> CrateDataSource::Adopt(std::string&& bytes,
                                                         CrateVersion version) {
   std::shared_ptr<CrateDataSource> ds(new CrateDataSource());
@@ -607,7 +598,9 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
       if (compressed) return false;
       std::vector<uint8_t> bytes(static_cast<size_t>(count));
       if (!read_raw(bytes.data(), sizeof(uint8_t))) return false;
-      *out = Value::MakeBoolArrayFromBytes(std::move(bytes));
+      std::vector<bool> out_bool(static_cast<size_t>(count));
+      for (size_t i = 0; i < count; i++) out_bool[i] = (bytes[i] != 0);
+      *out = Value::MakeBoolArray(out_bool);
       return true;
     }
     case CrateTypeId::Token: {

@@ -24,6 +24,10 @@
 
 namespace tinyusdz {
 class Prim;
+namespace next {
+class Stage;
+class UsdPrim;
+}
 namespace tydra {
 struct Node;
 }
@@ -71,6 +75,7 @@ class Gui {
   };
 
   void setScene(const LoadedScene* loaded, const DrawScene* draw);
+  void setNextStage(const tinyusdz::next::Stage* stage) { nextStage_ = stage; }
   void setLoadStatus(const LoadStatus& s) { loadStatus_ = s; }
   void setUploadStatus(const UploadStatus& s) { upload_ = s; }
   void setTimeline(const TimelineInfo& t) { timeline_ = t; }
@@ -216,6 +221,8 @@ class Gui {
   void buildDefaultLayout(unsigned int dockId);
   void drawHierarchy();
   bool drawPrimTree(const tinyusdz::Prim& prim);
+  bool drawNextPrimTree(const tinyusdz::next::UsdPrim& prim);
+  void drawNextInspector();
   bool drawNodeTree(const tinyusdz::tydra::Node& node);
   void drawInspector();
   // Maya-like blendshape weight editor for the selected prim (shown when the
@@ -274,6 +281,7 @@ class Gui {
   };
 
   const tinyusdz::Prim* selPrim_{nullptr};
+  const tinyusdz::next::Stage* nextStage_{nullptr};
   std::string selPath_;
   int selMeshIndex_{-1};
   // When the selection is a GeomSubset, the triangle vertex indices of its faces

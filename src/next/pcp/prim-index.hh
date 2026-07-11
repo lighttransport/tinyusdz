@@ -86,6 +86,8 @@ enum class PrototypeNumbering { Deterministic, UsdcatCompatible };
 
 /// Composition options.
 struct CompositionOptions {
+  using VariantSelectionMap =
+      std::map<std::string, std::map<std::string, std::string>>;
   bool load_payloads = true;       // default policy when payload_policy is null.
   uint32_t max_depth = 256;        // arc recursion limit / cycle backstop.
   uint32_t max_namespace_depth = 1024;  // composed prim-tree depth backstop
@@ -152,6 +154,11 @@ struct CompositionOptions {
   ///   {{"districtLod", "full"}} selects the "full" variant on every prim that
   ///   defines a "districtLod" variantSet.
   std::map<std::string, std::string> variant_overrides;
+
+  /// Path-scoped variant overrides. The outer key is an absolute prim path;
+  /// the inner map is variantSet -> selection. An exact path-scoped override
+  /// wins over the global variant_overrides entry for the same set.
+  VariantSelectionMap variant_overrides_by_path;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the

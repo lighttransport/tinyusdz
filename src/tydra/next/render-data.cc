@@ -180,9 +180,8 @@ size_t RenderPointInstancer::memory_usage() const {
   total += VectorBytes(invisible_ids);
   total += VectorBytes(inactive_ids);
   total += VectorBytes(transforms);
-  total += VectorBytes(display_colors);
-  total += VectorBytes(display_opacities);
   total += VectorBytes(instance_visible);
+  total += VectorBytes(compact_instances);
   total += name.capacity();
   total += prim_path.capacity();
   total += validation_error.capacity();
@@ -209,6 +208,13 @@ bool RenderPointInstancer::has_valid_prototype_mesh_bindings() const {
 }
 
 size_t RenderPointInstancer::visible_instance_count() const {
+  if (instance_visible.empty() && !compact_instances.empty()) {
+    size_t total = 0;
+    for (const CompactInstance& instance : compact_instances) {
+      if ((instance.flags & 1u) != 0) ++total;
+    }
+    return total;
+  }
   if (instance_visible.empty()) return instance_count();
   size_t total = 0;
   for (uint8_t visible : instance_visible) {

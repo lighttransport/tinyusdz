@@ -296,26 +296,22 @@ void PrintLayerMeta(StreamWriter& os, const LayerMeta& meta, const PrimPrintOpti
     os << opts.indent << "defaultPrim = \"" << meta.defaultPrim << "\"";
     first = false;
   }
-  // Emit authored (`_set`) value-defaulted metadata even when it equals the
-  // schema fallback (matches pxr usdcat); `|| value != default` is defensive for
-  // values set without the flag.
-  if (meta.upAxis_set || meta.upAxis != "Y") {
+  if (meta.upAxis != "Y") {
     if (!first) os << "\n";
     os << opts.indent << "upAxis = \"" << meta.upAxis << "\"";
     first = false;
   }
-  if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
+  if (meta.metersPerUnit != 0.01) {
     if (!first) os << "\n";
     os << opts.indent << "metersPerUnit = " << G6(meta.metersPerUnit);
     first = false;
   }
-  if (meta.timeCodesPerSecond_set || meta.timeCodesPerSecond != 24.0) {
+  if (meta.timeCodesPerSecond != 24.0) {
     if (!first) os << "\n";
     os << opts.indent << "timeCodesPerSecond = " << G6(meta.timeCodesPerSecond);
     first = false;
   }
-  if (meta.startTimeCode_set || meta.endTimeCode_set ||
-      meta.startTimeCode != 0.0 || meta.endTimeCode != 0.0) {
+  if (meta.startTimeCode != 0.0 || meta.endTimeCode != 0.0) {
     if (!first) os << "\n";
     os << opts.indent << "startTimeCode = " << G6(meta.startTimeCode);
     os << "\n" << opts.indent << "endTimeCode = " << G6(meta.endTimeCode);
