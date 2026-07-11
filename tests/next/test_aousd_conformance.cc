@@ -745,6 +745,28 @@ void TestMetadataAndListOpFidelity() {
   const std::string relo_usda = WriteUSDAToString(rback.stage);
   assert(relo_usda.find("</W/drop>: <>") != std::string::npos &&
          "empty relocate target must round-trip as <>, not </>");
+
+  // Unmodeled (unknown) prim- AND layer-level metadata must survive USDC
+  // verbatim (encoded in a tinyusdz-private field). Parsed non-strict since
+  // strict AOUSD mode rejects unknown metadata.
+  LoadResult um = LoadUSDAFromString(
+      "#usda 1.0\n"
+      "(\n  customStageKey = 42\n)\n"
+      "def Xform \"P\" (\n  customPrimKey = \"hi\"\n) {\n}\n",
+      LoadOptions{});
+  assert(um.success);
+  USDCWriteOptions umwo;
+  std::vector<uint8_t> umcrate;
+  assert(WriteUSDCToMemory(umcrate, um.stage, umwo).success);
+  USDCLoadOptions umlo;
+  USDCLoadResult umback =
+      LoadUSDCFromMemory(umcrate.data(), umcrate.size(), umlo);
+  assert(umback.success);
+  const std::string um_usda = WriteUSDAToString(umback.stage);
+  assert(um_usda.find("customStageKey = 42") != std::string::npos &&
+         "unknown layer metadata must survive USDC");
+  assert(um_usda.find("customPrimKey = \"hi\"") != std::string::npos &&
+         "unknown prim metadata must survive USDC");
 }
 
 }  // namespace

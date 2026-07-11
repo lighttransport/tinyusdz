@@ -309,6 +309,26 @@
       add_dict_field("assetInfo", prim.meta().assetInfo());
       add_dict_field("sdrMetadata", prim.meta().sdrMetadata());
       add_dict_field("clips", prim.meta().clips());
+      // Unknown (unmodeled) prim metadata the parser preserved verbatim
+      // (`aa = a`, `autoPlay = false`, custom pipeline keys, ...). Serialize the
+      // (key, raw-value-text) pairs into a single length-prefixed string field
+      // so they survive USDC; a length prefix keeps keys/values that contain
+      // ':' / newlines / quotes exact. Stored under a tinyusdz-private field
+      // name so pxr treats it as (harmless) unregistered metadata rather than
+      // misreading a phantom typed field.
+      if (!prim.meta().unknownMeta().empty()) {
+        std::string blob;
+        for (const auto& um : prim.meta().unknownMeta()) {
+          blob += std::to_string(um.first.size()) + ":" + um.first;
+          blob += std::to_string(um.second.size()) + ":" + um.second;
+        }
+        CrateField f;
+        f.token_index.value = InternToken("__tinyusdz_unknownMeta");
+        uint32_t str_idx = InternString(blob);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
       // variantSelection: a VariantSelectionMap of each set's selected variant.
       // The reader rebuilds the VariantSetData from this plus the bracketed
       // holder prims, so no separate variantSets token field is emitted. (The
@@ -566,6 +586,23 @@
         CrateField f;
         f.token_index.value = InternToken("comment");
         uint32_t str_idx = InternString(layer.meta().comment);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // Unknown (unmodeled) LAYER metadata preserved verbatim by the parser
+      // (`autoPlay = false`, custom stage keys). Same length-prefixed encoding
+      // as the prim-level field (see EmitPrimSpec).
+      if (!layer.meta().unknownMeta.empty()) {
+        std::string blob;
+        for (const auto& um : layer.meta().unknownMeta) {
+          blob += std::to_string(um.first.size()) + ":" + um.first;
+          blob += std::to_string(um.second.size()) + ":" + um.second;
+        }
+        CrateField f;
+        f.token_index.value = InternToken("__tinyusdz_unknownMeta");
+        uint32_t str_idx = InternString(blob);
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
