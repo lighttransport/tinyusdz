@@ -2460,6 +2460,21 @@ if(TINYUSDZ_BUILD_TESTS)
         set_tests_properties(tusdview-deform-${deform_case}
                              PROPERTIES SKIP_RETURN_CODE 77)
       endforeach()
+
+      # The CUDA tracer builds its BVH from draw_ geometry, so it takes the deform
+      # through poseNextDrawForTracer instead of the vertex shader. It used to be
+      # pinned to the load-time CPU bake -- a second deform implementation, free to
+      # disagree with the shader's, and it did. Skips (77) where CUDA is absent.
+      add_test(
+        NAME tusdview-deform-cuda
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-morph-skin.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-cuda"
+                cuda
+        )
+      set_tests_properties(tusdview-deform-cuda PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()

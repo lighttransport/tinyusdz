@@ -280,6 +280,13 @@ class App
   // prototypes from the retained next stage at animTime_. Runs independently of
   // the Tydra-path GPU-skinning gate (which --next does not engage).
   void updateNextDeformFrameIfNeeded();
+  // Does the --next scene carry deform data (skeleton bone rows / morph channels)?
+  bool sceneIsNextDeformable() const;
+  // Write the pose at `time` into draw_ geometry, for the CUDA/HIP tracers: they
+  // build their BVH from draw_ meshes, not from renderer-owned vertex buffers, so
+  // they cannot be fed the way Vulkan RT is. Restores the retained rest pose
+  // first, so it is idempotent across time codes. True when draw_ now holds `time`.
+  bool poseNextDrawForTracer(double time);
   // Non-GPU (ray-traced / CPU-skinned) path: when manual blendshape weights
   // change, re-bake the deformed geometry + BLAS via an async reconvert.
   void maybeReconvertForManualBlend();
@@ -424,6 +431,10 @@ class App
   std::string skinningReason_{"CPU path"};
   SkinningFrameCPU skinFrame_;
   double skinFrameTime_{std::numeric_limits<double>::quiet_NaN()};
+  // CUDA/HIP tracer re-pose (poseNextDrawForTracer): the retained rest vertices of
+  // the deformable meshes, and the time code draw_ currently holds.
+  std::unordered_map<int, std::vector<DrawVertex>> nextRestVerts_;
+  double nextTracerPosedTime_{std::numeric_limits<double>::quiet_NaN()};
   bool lastRtActiveForSkinning_{false};
   bool warnedMeshIndexMismatch_{false};
 
