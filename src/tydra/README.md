@@ -120,8 +120,10 @@ See [doc/tydra-tangent.md](../../doc/tydra-tangent.md) for details.
 - Data structure suited for realtime DCC.
 - Data structure suited for Ray tracing
 - ValueClip support (clip scheduling, time remapping)
-- Material parameter timeSamples animation
 - Vertex animation (points timeSamples)
-- Camera/Light parameter timeSamples animation
+- Dedicated typed material/camera/light animation targets and exporter mappings
+  beyond the current generic `CustomProperty` tracks.
+- Keep current Tydra and `tydra/next` render extraction behavior aligned for
+  material, texture, skeleton, and animation data.
 
 EoL.

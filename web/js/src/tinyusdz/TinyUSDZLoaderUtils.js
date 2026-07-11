@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RGBELoader as HDRLoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
 import { LoaderUtils } from "three"
@@ -28,7 +28,9 @@ import { decodeEXR as decodeEXRWithFallback } from './EXRDecoder.js';
 class TextureLoadingManager {
     constructor() {
         this.queue = [];           // Pending texture tasks
+        this.taskMap = new Map();  // texture key -> task with material bindings
         this.promiseCache = new Map(); // textureId -> in-flight/completed Promise
+        this.textureSignatureCache = new Map(); // textureId -> sampler/image signature
         this.loaded = 0;           // Number of loaded textures
         this.failed = 0;           // Number of failed textures
         this.total = 0;            // Total textures to load
@@ -45,14 +47,24 @@ class TextureLoadingManager {
      * @param {Object} options - Additional options (e.g., normalScale)
      */
     queueTexture(material, mapProperty, textureId, usdScene, options = {}) {
-        this.queue.push({
-            material,
-            mapProperty,
-            textureId,
-            usdScene,
-            options,
-            status: 'pending'
-        });
+        const cacheKey = TinyUSDZLoaderUtils.textureCacheKey(
+            textureId, usdScene, mapProperty, this.textureSignatureCache);
+        const key = `${cacheKey}:${options.sourceFileName || ''}`;
+        let task = this.taskMap.get(key);
+        if (!task) {
+            task = {
+                cacheKey,
+                mapProperty,
+                textureId,
+                usdScene,
+                options,
+                bindings: [],
+                status: 'pending'
+            };
+            this.taskMap.set(key, task);
+            this.queue.push(task);
+        }
+        task.bindings.push({ material, options });
         this.total = this.queue.length;
     }
 
@@ -65,7 +77,7 @@ class TextureLoadingManager {
             loaded: this.loaded,
             failed: this.failed,
             pending: this.total - this.loaded - this.failed,
-            percentage: this.total > 0 ? (this.loaded / this.total) * 100 : 0,
+            percentage: this.total > 0 ? ((this.loaded + this.failed) / this.total) * 100 : 100,
             isLoading: this.isLoading,
             isComplete: this.loaded + this.failed >= this.total && !this.isLoading
         };
@@ -83,7 +95,9 @@ class TextureLoadingManager {
      */
     reset() {
         this.queue = [];
+        this.taskMap.clear();
         this.promiseCache.clear();
+        this.textureSignatureCache.clear();
         this.loaded = 0;
         this.failed = 0;
         this.total = 0;
@@ -104,7 +118,7 @@ class TextureLoadingManager {
         const {
             onProgress = null,
             onTextureLoaded = null,
-            concurrency = 1,
+            concurrency = TinyUSDZLoaderUtils.defaultTextureConcurrency(),
             yieldInterval = 16
         } = options;
 
@@ -121,9 +135,13 @@ class TextureLoadingManager {
         if (onProgress) {
             onProgress({
                 loaded: 0,
+                failed: 0,
                 total: this.total,
+                pending: this.total,
                 percentage: 0,
-                currentTexture: null
+                currentTexture: null,
+                isStart: true,
+                isComplete: this.total === 0
             });
         }
 
@@ -138,10 +156,11 @@ class TextureLoadingManager {
             if (this.aborted) return;
 
             task.status = 'loading';
-            const { material, mapProperty, textureId, usdScene, options: taskOptions } = task;
+            const { mapProperty, textureId, usdScene, options: taskOptions } = task;
 
             try {
-                const cacheKey = String(textureId);
+                const cacheKey = task.cacheKey ||
+                    TinyUSDZLoaderUtils.textureCacheKey(textureId, usdScene, mapProperty, this.textureSignatureCache);
                 let promise = this.promiseCache.get(cacheKey);
                 if (!promise) {
                     promise = TinyUSDZLoaderUtils.getTextureFromUSD(usdScene, textureId);
@@ -150,23 +169,40 @@ class TextureLoadingManager {
                 const texture = await promise;
 
                 if (texture && !this.aborted) {
-                    material[mapProperty] = texture;
+                    TinyUSDZLoaderUtils.applyTextureMapDefaults(texture, mapProperty);
+                    for (const binding of task.bindings) {
+                        const { material, options: bindingOptions } = binding;
+                        material[mapProperty] = texture;
 
-                    // Apply special options (e.g., normal map scale)
-                    if (taskOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
-                        material.normalScale.set(taskOptions.normalScale, taskOptions.normalScale);
+                        // Apply special options (e.g., normal map scale)
+                        if (bindingOptions.normalScale !== undefined && mapProperty === 'normalMap' && material.normalScale) {
+                            material.normalScale.set(bindingOptions.normalScale, bindingOptions.normalScale);
+                        }
+
+                        material.needsUpdate = true;
+                        if (onTextureLoaded) {
+                            onTextureLoaded(material, mapProperty, texture);
+                        }
                     }
-
-                    material.needsUpdate = true;
                     task.status = 'loaded';
                     this.loaded++;
-
-                    if (onTextureLoaded) {
-                        onTextureLoaded(material, mapProperty, texture);
-                    }
                 }
             } catch (err) {
-                console.warn(`Failed to load texture ${textureId} for ${mapProperty}:`, err.message);
+                const isUnsupportedUDIM = err?.name === 'UnsupportedUDIMTextureError';
+                const isUnsupportedFormat = err?.name === 'UnsupportedTextureFormatError';
+                const detail = {
+                    ...TinyUSDZLoaderUtils.textureDebugInfo(
+                        textureId, usdScene, mapProperty, taskOptions.sourceFileName || ''),
+                    error: TinyUSDZLoaderUtils.textureLoadErrorInfo(err)
+                };
+                console.warn(
+                    isUnsupportedUDIM ?
+                        `Unsupported UDIM texture for ${mapProperty}; skipping texture fetch` :
+                        isUnsupportedFormat ?
+                            `Unsupported texture format for ${mapProperty}; skipping texture fetch` :
+                            `Failed to load texture ${textureId} for ${mapProperty}`,
+                    JSON.stringify(detail)
+                );
                 task.status = 'failed';
                 this.failed++;
             }
@@ -177,8 +213,10 @@ class TextureLoadingManager {
                     loaded: this.loaded,
                     failed: this.failed,
                     total: this.total,
-                    percentage: (this.loaded / this.total) * 100,
-                    currentTexture: `${mapProperty} (${textureId})`
+                    pending: this.total - this.loaded - this.failed,
+                    percentage: this.total > 0 ? ((this.loaded + this.failed) / this.total) * 100 : 100,
+                    currentTexture: `${mapProperty} (${textureId})`,
+                    isComplete: this.loaded + this.failed >= this.total
                 });
             }
 
@@ -217,6 +255,7 @@ class TextureLoadingManager {
                 loaded: this.loaded,
                 failed: this.failed,
                 total: this.total,
+                pending: 0,
                 percentage: 100,
                 currentTexture: null,
                 isComplete: true
@@ -237,6 +276,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     // Yield interval for UI updates (ms)
     static YIELD_INTERVAL_MS = 250;
+
+    static defaultTextureConcurrency() {
+        const cores = (typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency))
+            ? navigator.hardwareConcurrency
+            : 8;
+        return Math.max(4, Math.min(16, cores || 8));
+    }
 
     constructor() {
         super();
@@ -351,6 +397,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return mimeTypes[extension.toLowerCase()] || null;
     }
 
+    static isUnsupportedBrowserTextureExtension(extension) {
+        return new Set([
+            'psd',
+            'tga',
+            'dds',
+            'ktx',
+            'ktx2'
+        ]).has(String(extension || '').toLowerCase());
+    }
+
     // Helper method to determine MIME type
     static getMimeType(texImage) {
 
@@ -397,6 +453,25 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const tex = usdScene.getTexture(textureId);
 
         const texImage = usdScene.getImageCopy(tex.textureImageId);
+        const uri = texImage.uri || '';
+        const isUDIMTexture = !!tex.isUDIM || /<UDIM>|%3CUDIM%3E|\.1\d{3}\./i.test(uri);
+
+        if (isUDIMTexture) {
+            const err = new Error(`UDIM texture is not supported in this demo: ${uri || `texture ${textureId}`}`);
+            err.name = 'UnsupportedUDIMTextureError';
+            err.textureId = textureId;
+            err.textureAssetPath = uri || undefined;
+            return Promise.reject(err);
+        }
+        const extension = this.getFileExtension(uri);
+        if (this.isUnsupportedBrowserTextureExtension(extension)) {
+            const err = new Error(`Texture format ".${extension}" is not supported by this browser demo: ${uri || `texture ${textureId}`}`);
+            err.name = 'UnsupportedTextureFormatError';
+            err.textureId = textureId;
+            err.textureAssetPath = uri || undefined;
+            err.extension = extension;
+            return Promise.reject(err);
+        }
 
         // there are 3 states for texture:
         // 1. URI only. Need to fetch texture(file) from URI in JS layer.
@@ -405,17 +480,20 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         if (texImage.uri && (texImage.bufferId == -1)) {
             // Case 1: URI only
-            const lowerUri = texImage.uri.toLowerCase();
+            const lowerUri = uri.toLowerCase();
 
             if (lowerUri.endsWith('.exr')) {
                 // EXR: Use EXRLoader
-                return new EXRLoader().loadAsync(texImage.uri);
+                return new EXRLoader().loadAsync(uri)
+                    .then((texture) => this.applyTextureSampler(texture, tex));
             } else if (lowerUri.endsWith('.hdr')) {
                 // HDR: Use HDRLoader
-                return new HDRLoader().loadAsync(texImage.uri);
+                return new HDRLoader().loadAsync(uri)
+                    .then((texture) => this.applyTextureSampler(texture, tex));
             } else {
                 // Standard image
-                return new THREE.TextureLoader().loadAsync(texImage.uri);
+                return new THREE.TextureLoader().loadAsync(uri)
+                    .then((texture) => this.applyTextureSampler(texture, tex));
             }
 
         } else if (texImage.bufferId >= 0 && texImage.data) {
@@ -439,7 +517,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 texture.flipY = true;
                 texture.needsUpdate = true;
 
-                return Promise.resolve(texture);
+                return Promise.resolve(this.applyTextureSampler(texture, tex));
 
             } else {
                 // Case 2: Embedded but not decoded - check format
@@ -452,12 +530,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                         const texture = this.decodeEXRFromBuffer(texImage.data, 'float16');
                         if (texture) {
                             texture.flipY = true;
-                            return Promise.resolve(texture);
+                            return Promise.resolve(this.applyTextureSampler(texture, tex));
                         }
                         // Fallback to Three.js EXRLoader with blob URL
                         const blob = new Blob([texImage.data], { type: mimeType });
                         const blobUrl = URL.createObjectURL(blob);
-                        return new EXRLoader().loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                        return new EXRLoader().loadAsync(blobUrl)
+                            .then((texture) => this.applyTextureSampler(texture, tex))
+                            .finally(() => URL.revokeObjectURL(blobUrl));
                     } else if (mimeType === 'image/vnd.radiance') {
                         // HDR: Use TinyUSDZ decoder (faster)
                         const tinyusdz = TinyUSDZLoaderUtils._tinyusdz;
@@ -478,19 +558,23 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                                 texture.magFilter = THREE.LinearFilter;
                                 texture.flipY = true;
                                 texture.needsUpdate = true;
-                                return Promise.resolve(texture);
+                                return Promise.resolve(this.applyTextureSampler(texture, tex));
                             }
                         }
                         // Fallback to Three.js HDRLoader
                         const blob = new Blob([texImage.data], { type: mimeType });
                         const blobUrl = URL.createObjectURL(blob);
-                        return new HDRLoader().loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                        return new HDRLoader().loadAsync(blobUrl)
+                            .then((texture) => this.applyTextureSampler(texture, tex))
+                            .finally(() => URL.revokeObjectURL(blobUrl));
                     } else {
                         // Standard image format
                         const blob = new Blob([texImage.data], { type: mimeType });
                         const blobUrl = URL.createObjectURL(blob);
                         const loader = new THREE.TextureLoader();
-                        return loader.loadAsync(blobUrl).finally(() => URL.revokeObjectURL(blobUrl));
+                        return loader.loadAsync(blobUrl)
+                            .then((texture) => this.applyTextureSampler(texture, tex))
+                            .finally(() => URL.revokeObjectURL(blobUrl));
                     }
                 } catch (error) {
                     console.error("Failed to decode texture data:", error);
@@ -501,6 +585,75 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         } else {
             return Promise.reject(new Error("Invalid USD texture info"));
         }
+    }
+
+    static textureColorRole(mapProperty) {
+        switch (mapProperty) {
+            case 'map':
+            case 'emissiveMap':
+            case 'specularColorMap':
+            case 'sheenColorMap':
+            case 'attenuationColorMap':
+                return 'color';
+            default:
+                return 'data';
+        }
+    }
+
+    static threeWrapMode(wrap) {
+        switch (String(wrap || '').toLowerCase()) {
+            case 'repeat':
+            case 'tile':
+            case 'tileforever':
+                return THREE.RepeatWrapping;
+            case 'mirror':
+            case 'mirroredrepeat':
+                return THREE.MirroredRepeatWrapping;
+            case 'clamp_to_edge':
+            case 'clamp':
+            case 'black':
+            case 'clamp_to_border':
+            default:
+                return THREE.ClampToEdgeWrapping;
+        }
+    }
+
+    static applyTextureSampler(texture, texData = null) {
+        if (!texture || !texData) return texture;
+
+        texture.wrapS = this.threeWrapMode(texData.wrapS);
+        texture.wrapT = this.threeWrapMode(texData.wrapT);
+
+        if (texData.hasTransform2d) {
+            const scaleU = Number.isFinite(texData.txScaleU) ? texData.txScaleU : 1;
+            const scaleV = Number.isFinite(texData.txScaleV) ? texData.txScaleV : 1;
+            const translateU = Number.isFinite(texData.txTranslationU) ? texData.txTranslationU : 0;
+            const translateV = Number.isFinite(texData.txTranslationV) ? texData.txTranslationV : 0;
+            const rotation = Number.isFinite(texData.txRotation) ? texData.txRotation : 0;
+            texture.repeat.set(scaleU, scaleV);
+            texture.offset.set(translateU, translateV);
+            texture.rotation = rotation;
+            texture.center.set(0, 0);
+            texture.matrixAutoUpdate = true;
+        }
+
+        texture.needsUpdate = true;
+        return texture;
+    }
+
+    static textureCacheKey(textureId, usdScene, mapProperty = '', textureSignatureCache = null) {
+        const role = this.textureColorRole(mapProperty);
+        const signature = this.textureSignature(textureId, usdScene, textureSignatureCache);
+        return `${role}:${JSON.stringify(signature)}`;
+    }
+
+    static applyTextureMapDefaults(texture, mapProperty) {
+        if (!texture) return texture;
+        texture.colorSpace = this.textureColorRole(mapProperty) === 'color'
+            ? THREE.SRGBColorSpace
+            : THREE.NoColorSpace;
+        texture.needsUpdate = true;
+        return texture;
     }
 
     static createDefaultMaterial() {
@@ -531,6 +684,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     imageId: texture.textureImageId,
                     wrapS: texture.wrapS,
                     wrapT: texture.wrapT,
+                    hasTransform2d: !!texture.hasTransform2d,
+                    txRotation: texture.txRotation,
+                    txScaleU: texture.txScaleU,
+                    txScaleV: texture.txScaleV,
+                    txTranslationU: texture.txTranslationU,
+                    txTranslationV: texture.txTranslationV,
                     isUDIM: !!texture.isUDIM,
                     udimTextureId: texture.udimTextureId,
                     udimUvScaleU: texture.udimUvScaleU,
@@ -546,6 +705,68 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             textureSignatureCache.set(textureId, signature);
         }
         return signature;
+    }
+
+    static textureDebugInfo(textureId, usdScene, mapProperty = '', sourceFileName = '') {
+        const info = {
+            sourceFileName: sourceFileName || undefined,
+            mapProperty,
+            textureId
+        };
+        if (textureId === undefined || textureId === null || textureId < 0 ||
+            !usdScene || typeof usdScene.getTexture !== 'function') {
+            return info;
+        }
+        try {
+            const texture = usdScene.getTexture(textureId);
+            if (texture) {
+                info.textureImageId = texture.textureImageId;
+                info.wrapS = texture.wrapS;
+                info.wrapT = texture.wrapT;
+                info.isUDIM = !!texture.isUDIM;
+                if (texture.udimTextureId !== undefined) {
+                    info.udimTextureId = texture.udimTextureId;
+                }
+            }
+            if (texture && texture.textureImageId !== undefined &&
+                typeof usdScene.getImageCopy === 'function') {
+                const image = usdScene.getImageCopy(texture.textureImageId);
+                if (image) {
+                    info.textureAssetPath = image.uri || undefined;
+                    if (info.textureAssetPath &&
+                        /<UDIM>|%3CUDIM%3E|\.1\d{3}\./i.test(info.textureAssetPath)) {
+                        info.isUDIM = true;
+                        info.udimUnsupported = true;
+                    }
+                    info.bufferId = image.bufferId;
+                    info.decoded = !!image.decoded;
+                    info.width = image.width;
+                    info.height = image.height;
+                    info.channels = image.channels;
+                    info.colorSpace = image.colorSpace;
+                    info.hasData = !!image.data;
+                    info.dataBytes = image.data?.byteLength ?? image.data?.length;
+                }
+            }
+        } catch (error) {
+            info.inspectError = error?.message || String(error);
+        }
+        return info;
+    }
+
+    static textureLoadErrorInfo(error) {
+        const out = {
+            message: error?.message || error?.type || String(error)
+        };
+        const target = error?.target || error?.currentTarget;
+        if (target) {
+            out.eventType = error?.type;
+            out.requestedSrc = target.src || undefined;
+            out.currentSrc = target.currentSrc || undefined;
+            out.naturalWidth = target.naturalWidth;
+            out.naturalHeight = target.naturalHeight;
+        }
+        return out;
     }
 
     static stableMaterialStringify(value, usdScene = null, textureSignatureCache = null) {
@@ -659,6 +880,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     static convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene, options = {}) {
         const material = new THREE.MeshPhysicalMaterial();
         const textureManager = options.textureLoadingManager || null;
+        const materialName = usdMaterial?.name || usdMaterial?.primName ||
+            usdMaterial?.displayName || usdMaterial?.absPath ||
+            usdMaterial?.abs_path || usdMaterial?.display_name;
 
         // Helper to load texture immediately or queue for later
         const loadOrQueueTexture = (mapProperty, textureId, textureOptions = {}) => {
@@ -670,10 +894,19 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
             if (textureManager) {
                 // Delayed mode: queue texture for later loading
-                textureManager.queueTexture(material, mapProperty, textureId, usdScene, textureOptions);
+                textureManager.queueTexture(material, mapProperty, textureId, usdScene, {
+                    ...textureOptions,
+                    sourceFileName: options.sourceFileName || ''
+                });
             } else {
                 // Immediate mode: load texture now (original behavior)
+                const textureInfo = this.textureDebugInfo(
+                    textureId, usdScene, mapProperty, options.sourceFileName);
+                if (materialName) {
+                    textureInfo.materialName = materialName;
+                }
                 this.getTextureFromUSD(usdScene, textureId).then((texture) => {
+                    this.applyTextureMapDefaults(texture, mapProperty);
                     material[mapProperty] = texture;
                     material.needsUpdate = true;
                 }).catch((err) => {
@@ -681,12 +914,28 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                     // texture thousands of times (and re-convert on every option
                     // toggle), which floods the console. Log each unique failure
                     // once.
-                    const key = `${mapProperty}:${err && err.message ? err.message : String(err)}`;
+                    const errorInfo = this.textureLoadErrorInfo(err);
+                    const key = JSON.stringify({
+                        mapProperty,
+                        textureAssetPath: textureInfo.textureAssetPath,
+                        requestedSrc: errorInfo.requestedSrc,
+                        message: errorInfo.message,
+                        name: err?.name
+                    });
                     const seen = (TinyUSDZLoaderUtils._textureErrorSeen ||
                         (TinyUSDZLoaderUtils._textureErrorSeen = new Set()));
                     if (!seen.has(key)) {
                         seen.add(key);
-                        console.warn(`failed to load ${mapProperty} texture (further identical errors suppressed):`, err);
+                        const isUnsupportedUDIM = err?.name === 'UnsupportedUDIMTextureError';
+                        console.warn(
+                            isUnsupportedUDIM ?
+                                `unsupported UDIM ${mapProperty} texture; skipping texture fetch (further identical warnings suppressed)` :
+                                `failed to load ${mapProperty} texture (further identical errors suppressed)`,
+                            {
+                                ...textureInfo,
+                                error: errorInfo
+                            }
+                        );
                     }
                 });
             }
@@ -700,6 +949,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'diffuseColorTextureId')) {
+            material.color = new THREE.Color(1, 1, 1);
             loadOrQueueTexture('map', usdMaterial.diffuseColorTextureId);
         }
 
@@ -907,12 +1157,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         try {
             // Use the TinyUSDZMaterialX converter (Loaded version waits for textures(if textureLoadingManager is null))
-            const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(parsedMaterial, usdScene, {
-                envMap: options.envMap || null,
-                envMapIntensity: options.envMapIntensity || 1.0,
-                textureCache: options.textureCache || new Map(),
-                textureLoadingManager: options.textureLoadingManager || null
-            });
+	            const material = await convertOpenPBRToMeshPhysicalMaterialLoaded(parsedMaterial, usdScene, {
+	                envMap: options.envMap || null,
+	                envMapIntensity: options.envMapIntensity || 1.0,
+	                textureCache: options.textureCache || new Map(),
+	                textureLoadingManager: options.textureLoadingManager || null,
+	                skipTextures: options.skipTextures || false
+	            });
 
             // Apply sideness based on USD doubleSided attribute
             if (options.doubleSided !== undefined) {
@@ -1127,10 +1378,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // existing views' backing buffer is detached (byteLength becomes 0).
         // Detect this and re-fetch the mesh from WASM if needed.
         const meshName = mesh.primName || mesh.absPath || '(unknown)';
-        if (mesh.points && mesh.points.buffer && mesh.points.buffer.byteLength === 0) {
+        const expectedPointsLength = mesh.pointsLength ?? mesh.points?.length ?? 0;
+        const expectedIndicesLength = mesh.faceVertexIndicesLength ?? mesh.faceVertexIndices?.length ?? 0;
+        if (expectedPointsLength > 0 && mesh.points && mesh.points.buffer && mesh.points.buffer.byteLength === 0) {
           console.error(`[WASM] DETACHED buffer for mesh "${meshName}" points! WASM heap likely grew.`);
         }
-        if (mesh.faceVertexIndices && mesh.faceVertexIndices.buffer && mesh.faceVertexIndices.buffer.byteLength === 0) {
+        if (expectedIndicesLength > 0 && mesh.faceVertexIndices && mesh.faceVertexIndices.buffer && mesh.faceVertexIndices.buffer.byteLength === 0) {
           console.error(`[WASM] DETACHED buffer for mesh "${meshName}" faceVertexIndices! WASM heap likely grew.`);
         }
 
@@ -1210,6 +1463,70 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return geometry;
     }
 
+    static compactIndexedMaterialGroups(geometry, submeshes, materialIdToIndex, materials = null) {
+        if (!geometry?.index || !Array.isArray(submeshes) || submeshes.length < 2) {
+            return false;
+        }
+        if (Array.isArray(materials) && materials.some((mat) => mat?.transparent)) {
+            return false;
+        }
+
+        const indexArray = geometry.index.array;
+        if (!indexArray || !Number.isFinite(indexArray.length) || indexArray.length === 0) {
+            return false;
+        }
+
+        const buckets = new Map();
+        let copiedCount = 0;
+        for (const submesh of submeshes) {
+            const start = submesh.start | 0;
+            const count = submesh.count | 0;
+            if (count <= 0 || start < 0 || start + count > indexArray.length) {
+                return false;
+            }
+            const matIndex = materialIdToIndex.get(submesh.materialId);
+            if (matIndex === undefined) {
+                return false;
+            }
+            if (!buckets.has(matIndex)) {
+                buckets.set(matIndex, []);
+            }
+            buckets.get(matIndex).push({ start, count });
+            copiedCount += count;
+        }
+
+        if (copiedCount !== indexArray.length || buckets.size >= submeshes.length) {
+            return false;
+        }
+
+        const reordered = new indexArray.constructor(indexArray.length);
+        const groups = [];
+        let offset = 0;
+        for (const [matIndex, ranges] of buckets.entries()) {
+            const groupStart = offset;
+            for (const range of ranges) {
+                reordered.set(indexArray.subarray(range.start, range.start + range.count), offset);
+                offset += range.count;
+            }
+            groups.push({
+                start: groupStart,
+                count: offset - groupStart,
+                materialIndex: matIndex
+            });
+        }
+
+        geometry.setIndex(new THREE.BufferAttribute(reordered, 1));
+        geometry.clearGroups();
+        for (const group of groups) {
+            geometry.addGroup(group.start, group.count, group.materialIndex);
+        }
+        geometry.userData.compactedMaterialGroups = {
+            before: submeshes.length,
+            after: groups.length
+        };
+        return true;
+    }
+
     static async setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
 
         const geometryStart = performance.now();
@@ -1217,7 +1534,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             this.convertUsdMeshPtrToThreeMesh(mesh, options) :
             this.convertUsdMeshToThreeMesh(mesh, options);
         if (!geometry) {
-            throw new Error('Failed to build Three.js geometry');
+            const meshName = mesh?.primName || mesh?.absPath || '(unknown mesh)';
+            const pointCount = mesh?.vertexCount ?? mesh?.points?.count ?? (mesh?.points?.length ? mesh.points.length / 3 : 0);
+            const indexCount = mesh?.indices?.length ?? mesh?.faceVertexIndices?.length ?? 0;
+            throw new Error(`Failed to build Three.js geometry for "${meshName}" (points=${pointCount}, indices=${indexCount})`);
         }
         if (options._debugState) {
             options._debugState.geometryMs += performance.now() - geometryStart;
@@ -1300,7 +1620,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 textureCache: options.textureCache || new Map(),
                 doubleSided,
                 textureLoadingManager: options.textureLoadingManager || null,
-                skipTextures: options.skipTextures || false
+                skipTextures: options.skipTextures || false,
+                sourceFileName: options.sourceFileName || ''
             });
             if (options._debugState) {
                 options._debugState.materialConvertMs += performance.now() - convertStart;
@@ -1399,16 +1720,33 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 }
             }
 
-            // Third pass: add geometry groups using pre-computed submesh data (from C++)
-            for (const submesh of submeshes) {
-                const matIndex = materialIdToIndex.get(submesh.materialId);
-                geometry.addGroup(submesh.start, submesh.count, matIndex);
+            // Third pass: add geometry groups using pre-computed submesh data
+            // (from C++). Many USD files author one GeomSubset per face, which
+            // would otherwise become one Three.js draw call per face. For indexed
+            // geometry, reorder the index buffer by material and emit one group
+            // per material.
+            const compactedGroups = options.compactMaterialGroups !== false &&
+                this.compactIndexedMaterialGroups(geometry, submeshes, materialIdToIndex, materials);
+            if (compactedGroups && options._debugState) {
+                const compact = geometry.userData.compactedMaterialGroups;
+                options._debugState.compactedGroupMeshes++;
+                options._debugState.compactedGroupsBefore += compact.before;
+                options._debugState.compactedGroupsAfter += compact.after;
+            }
+            if (!compactedGroups) {
+                for (const submesh of submeshes) {
+                    const matIndex = materialIdToIndex.get(submesh.materialId);
+                    geometry.addGroup(submesh.start, submesh.count, matIndex);
+                }
             }
 
 
             // Create mesh with multi-material array
             const meshCreateStart = performance.now();
             const threeMesh = new THREE.Mesh(geometry, materials);
+            if (mesh.materialId !== undefined) {
+                threeMesh.userData.materialId = mesh.materialId;
+            }
             if (options._debugState) {
                 options._debugState.meshCreateMs += performance.now() - meshCreateStart;
             }
@@ -1420,6 +1758,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
             const meshCreateStart = performance.now();
             const threeMesh = new THREE.Mesh(geometry, mtl);
+            if (mesh.materialId !== undefined) {
+                threeMesh.userData.materialId = mesh.materialId;
+            }
             if (options._debugState) {
                 options._debugState.meshCreateMs += performance.now() - meshCreateStart;
             }
@@ -1497,6 +1838,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 singleMaterialMeshes: 0,
                 multiMaterialMeshes: 0,
                 subsetMaterialRefs: 0,
+                compactedGroupMeshes: 0,
+                compactedGroupsBefore: 0,
+                compactedGroupsAfter: 0,
                 aggregateMs: 0,
                 aggregateInputMeshes: 0,
                 aggregateOutputMeshes: 0,
@@ -1554,7 +1898,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const state = options._debugState;
         const totalMs = performance.now() - state.startMs;
         this._debugBuild(options, 'build:summary',
-            `total=${totalMs.toFixed(1)}ms count=${state.countMs.toFixed(1)}ms meshCopy=${state.meshCopyMs.toFixed(1)}ms geometry=${state.geometryMs.toFixed(1)}ms material=${state.materialMs.toFixed(1)}ms materialSignature=${state.materialSignatureMs.toFixed(1)}ms materialConvert=${state.materialConvertMs.toFixed(1)}ms meshCreate=${state.meshCreateMs.toFixed(1)}ms transform=${state.transformMs.toFixed(1)}ms userData=${state.userDataMs.toFixed(1)}ms childAdd=${state.childAddMs.toFixed(1)}ms aggregate=${state.aggregateMs.toFixed(1)}ms/${state.aggregateInputMeshes}->${state.aggregateOutputMeshes} skipped=${state.aggregateSkippedMeshes} yield=${state.yieldMs.toFixed(1)}ms/${state.yieldCount} materialCache=${state.materialCacheHits}/${state.materialCacheMisses} materialSignatureCache=${state.materialSignatureCacheHits}/${state.materialSignatureCacheMisses} meshPtr=${state.meshPtrHits}/${state.meshPtrFallbacks} single=${state.singleMaterialMeshes} multi=${state.multiMaterialMeshes} subsetRefs=${state.subsetMaterialRefs}`);
+            `total=${totalMs.toFixed(1)}ms count=${state.countMs.toFixed(1)}ms meshCopy=${state.meshCopyMs.toFixed(1)}ms geometry=${state.geometryMs.toFixed(1)}ms material=${state.materialMs.toFixed(1)}ms materialSignature=${state.materialSignatureMs.toFixed(1)}ms materialConvert=${state.materialConvertMs.toFixed(1)}ms meshCreate=${state.meshCreateMs.toFixed(1)}ms transform=${state.transformMs.toFixed(1)}ms userData=${state.userDataMs.toFixed(1)}ms childAdd=${state.childAddMs.toFixed(1)}ms aggregate=${state.aggregateMs.toFixed(1)}ms/${state.aggregateInputMeshes}->${state.aggregateOutputMeshes} skipped=${state.aggregateSkippedMeshes} yield=${state.yieldMs.toFixed(1)}ms/${state.yieldCount} materialCache=${state.materialCacheHits}/${state.materialCacheMisses} materialSignatureCache=${state.materialSignatureCacheHits}/${state.materialSignatureCacheMisses} meshPtr=${state.meshPtrHits}/${state.meshPtrFallbacks} single=${state.singleMaterialMeshes} multi=${state.multiMaterialMeshes} subsetRefs=${state.subsetMaterialRefs} compactGroups=${state.compactedGroupMeshes}/${state.compactedGroupsBefore}->${state.compactedGroupsAfter}`);
     }
 
     static _geometryAttributeSignature(geometry) {
@@ -1882,7 +2226,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 usdScene && typeof usdScene.getMeshPtr === 'function';
             if (useMeshPtr) {
                 const ptrMesh = usdScene.getMeshPtr(usdNode.contentId);
-                if (ptrMesh && ptrMesh.points &&
+                if (ptrMesh && ptrMesh.points && ptrMesh.points.length > 0 &&
                     (!ptrMesh.hasSubmeshes || ptrMesh.submeshes)) {
                     mesh = ptrMesh;
                     mesh._meshPtr = true;

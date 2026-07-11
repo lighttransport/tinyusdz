@@ -1,4 +1,5 @@
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
+import { parseUSDZEntries } from '../usdzconvert.js';
 
 // tinyusdz module are dynamically imported at TinyUSDZLoader
 
@@ -136,6 +137,1243 @@ class FetchAssetResolver {
 
 }
 
+function nextHeapView(native, desc) {
+    const buf = native.HEAPU8.buffer;
+    const ptr = Number(desc.ptr);
+    const n = desc.length;
+    switch (desc.dtype) {
+        case 'f32': return new Float32Array(buf, ptr, n);
+        case 'u32': return new Uint32Array(buf, ptr, n);
+        case 'i32': return new Int32Array(buf, ptr, n);
+        case 'u16': return new Uint16Array(buf, ptr, n);
+        default: return new Uint8Array(buf, ptr, desc.byteLength);
+    }
+}
+
+function nextAnimationFrame() {
+    return new Promise((resolve) => {
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => resolve());
+        } else {
+            setTimeout(resolve, 0);
+        }
+    });
+}
+
+function nextCrateProgressLocalPercentage(info = {}) {
+    const phase = String(info.phase || '');
+    const ratio = Number.isFinite(info.percentage)
+        ? Math.max(0, Math.min(100, info.percentage)) / 100
+        : 0;
+    const ranged = (base, span) => base + ratio * span;
+    switch (phase) {
+        case 'bootstrap': return 24;
+        case 'toc': return 26;
+        case 'tokens': return 28;
+        case 'strings': return 30;
+        case 'fields': return 32;
+        case 'fieldsets': return 34;
+        case 'specs': return 36;
+        case 'paths': return 38;
+        case 'stage': return 40;
+        case 'stage.prims': return ranged(40, 3);
+        case 'stage.properties': return ranged(43, 3);
+        case 'stage.hierarchy': return ranged(46, 2);
+        case 'complete': return 48;
+        default: return ranged(24, 24);
+    }
+}
+
+export class NextRenderSceneAdapter {
+    constructor(native, renderStream, options = {}) {
+        this.__backend = 'next';
+        this.native = native;
+        this.renderStream = renderStream;
+        this.filename = options.filename || '';
+        this.archiveEntries = options.archiveEntries || new Map();
+        this.meshes = options.meshes || [];
+        this.points = options.points || [];
+        this.curves = options.curves || [];
+        this.nodes = options.nodes || [];
+        this.lights = options.lights || [];
+        this.cameras = options.cameras || [];
+        this.pointInstancers = options.pointInstancers || [];
+        this.pointInstanceDraws = options.pointInstanceDraws || [];
+        this.skeletons = options.skeletons || [];
+        this.unsupportedRenderables = options.unsupportedRenderables || [];
+        this.animations = options.animations || [];
+        this.animationInfos = options.animationInfos || [];
+        this.stats = options.stats || {};
+        this.materialKeys = new Set();
+        this.textureKeys = new Set();
+        this.materials = [];
+        this.textures = [];
+        this._rootNodes = null;
+        this.meshCountValue = this.meshes.length;
+        this.pointsCountValue = Number.isFinite(options.pointsCount)
+            ? options.pointsCount
+            : this.points.length;
+        this.curvesCountValue = Number.isFinite(options.curvesCount)
+            ? options.curvesCount
+            : this.curves.length;
+        this.nodeCountValue = Number.isFinite(options.nodeCount)
+            ? options.nodeCount
+            : this.nodes.length;
+        this.lightCountValue = Number.isFinite(options.lightCount)
+            ? options.lightCount
+            : this.lights.length;
+        this.cameraCountValue = Number.isFinite(options.cameraCount)
+            ? options.cameraCount
+            : this.cameras.length;
+        this.pointInstancerCountValue = Number.isFinite(options.pointInstancerCount)
+            ? options.pointInstancerCount
+            : this.pointInstancers.length;
+        this.pointInstanceDrawCountValue = Number.isFinite(options.pointInstanceDrawCount)
+            ? options.pointInstanceDrawCount
+            : this.pointInstanceDraws.length;
+        this.skeletonCountValue = Number.isFinite(options.skeletonCount)
+            ? options.skeletonCount
+            : this.skeletons.length;
+        this.animationCountValue = Number.isFinite(options.animationCount)
+            ? options.animationCount
+            : this.animations.length;
+        this.unsupportedRenderableCountValue = Number.isFinite(options.unsupportedRenderableCount)
+            ? options.unsupportedRenderableCount
+            : this.unsupportedRenderables.length;
+        this.sceneMetadata = {
+            upAxis: options.upAxis || 'Y',
+            metersPerUnit: options.metersPerUnit || 1.0,
+            framesPerSecond: Number.isFinite(options.framesPerSecond) && options.framesPerSecond > 0
+                ? options.framesPerSecond : undefined,
+            timeCodesPerSecond: Number.isFinite(options.timeCodesPerSecond) && options.timeCodesPerSecond > 0
+                ? options.timeCodesPerSecond : undefined,
+            startTimeCode: Number.isFinite(options.startTimeCode) ? options.startTimeCode : undefined,
+            endTimeCode: Number.isFinite(options.endTimeCode) ? options.endTimeCode : undefined
+        };
+        this.fallbackReason = options.fallbackReason || '';
+
+        const materialByKey = new Map();
+        const textureByKey = new Map();
+        const addTexturePath = (path, role = '') => {
+            if (!path) return;
+            const key = this._normTexPath(path);
+            if (!key) return;
+            this.textureKeys.add(key);
+            if (!textureByKey.has(key)) {
+                textureByKey.set(key, {
+                    index: textureByKey.size,
+                    name: key.split('/').pop() || key,
+                    assetPath: key,
+                    uri: path,
+                    role
+                });
+            }
+        };
+        const addMaterial = (entry) => {
+            if (!entry) return;
+            const material = entry.material || entry;
+            const texturePaths = entry.texturePaths || {};
+            const key = entry.materialKey || material.key ||
+                (Number.isFinite(entry.materialId) && entry.materialId >= 0 ? `id:${entry.materialId}` : '');
+            const materialKey = key || JSON.stringify({ material, texturePaths });
+            this.materialKeys.add(materialKey);
+            if (!materialByKey.has(materialKey)) {
+                materialByKey.set(materialKey, {
+                    index: materialByKey.size,
+                    id: Number.isFinite(entry.materialId) ? entry.materialId :
+                        (Number.isFinite(material.id) ? material.id : -1),
+                    key: materialKey,
+                    primPath: material.primPath || '',
+                    name: material.name || material.primPath || materialKey,
+                    material: { ...material },
+                    texturePaths: { ...texturePaths }
+                });
+            }
+            for (const [role, path] of Object.entries(texturePaths)) {
+                addTexturePath(path, role);
+            }
+        };
+
+        for (const mesh of this.meshes) {
+            addMaterial({
+                material: mesh.material,
+                texturePaths: mesh.texturePaths || {},
+                materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : -1,
+                materialKey: mesh.materialKey || ''
+            });
+            for (const path of Object.values(mesh.texturePaths || {})) {
+                addTexturePath(path);
+            }
+            for (const material of mesh.materials || []) {
+                addMaterial(material);
+                for (const path of Object.values(material.texturePaths || {})) {
+                    addTexturePath(path);
+                }
+            }
+        }
+        this.materials = Array.from(materialByKey.values());
+        this.textures = Array.from(textureByKey.values());
+        this.materialCountValue = this.materialKeys.size || this.meshCountValue;
+        this.textureCountValue = this.textureKeys.size;
+    }
+
+    static _isUsdName(name) {
+        return /\.(usd|usda|usdc)$/i.test(name || '');
+    }
+
+    static _rootEntry(entries) {
+        return entries.find((entry) => /\.usdc$/i.test(entry.name)) ||
+            entries.find((entry) => this._isUsdName(entry.name));
+    }
+
+    static async create(native, bytes, filename = 'scene.usdz', options = {}) {
+        if (!native || typeof native.RenderStream !== 'function') {
+            throw new Error('TinyUSDZ next backend is unavailable in this WASM module.');
+        }
+
+        const onProgress = typeof options.onProgress === 'function'
+            ? options.onProgress
+            : null;
+        const progressBase = Number.isFinite(options.progressBase)
+            ? options.progressBase
+            : 0;
+        const progressRange = Number.isFinite(options.progressRange)
+            ? options.progressRange
+            : 100;
+        const report = (stage, localPercentage, message, extra = {}) => {
+            if (!onProgress) return;
+            const p = Math.max(0, Math.min(100, Number(localPercentage) || 0));
+            onProgress({
+                backend: 'next',
+                stage,
+                percentage: progressBase + (p / 100) * progressRange,
+                localPercentage: p,
+                message,
+                ...extra
+            });
+        };
+        const yieldForProgress = onProgress ? nextAnimationFrame : async () => {};
+        const previousNextCrateProgress = native.onNextCrateProgress;
+        if (onProgress) {
+            native.onNextCrateProgress = (info = {}) => {
+                const phase = info.phase || 'crate';
+                const total = Number(info.total);
+                const current = Number(info.current);
+                const count = Number.isFinite(total) && total > 0
+                    ? ` ${Math.min(current, total)}/${total}`
+                    : '';
+                report('native-load',
+                    nextCrateProgressLocalPercentage(info),
+                    `Loading USD crate: ${phase}${count}`,
+                    { cratePhase: phase, crateCurrent: current, crateTotal: total });
+            };
+        }
+
+        const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        let crate = u8;
+        const archiveEntries = new Map();
+
+        report('archive', 0, 'Preparing next backend input...');
+        await yieldForProgress();
+
+        if (/\.usdz$/i.test(filename)) {
+            report('archive', 4, 'Reading USDZ archive...');
+            const entries = parseUSDZEntries(u8);
+            const root = this._rootEntry(entries);
+            if (!root) {
+                throw new Error('TinyUSDZ next backend could not find a USD root layer in the USDZ archive.');
+            }
+            // Prefer the owned USDC root path for crate-reader progress and
+            // lower native memory pressure. USDA-root USDZ files are passed as
+            // the full archive so next-core can detect and load them.
+            if (/\.usdc$/i.test(root.name)) {
+                crate = root.data;
+            }
+            let copiedEntries = 0;
+            for (const entry of entries) {
+                if (!entry.name.endsWith('/')) {
+                    archiveEntries.set(this._normTexPathStatic(entry.name), entry.data);
+                }
+                copiedEntries++;
+                if ((copiedEntries & 255) === 0) {
+                    report('archive', 4 + Math.min(16, (copiedEntries / Math.max(1, entries.length)) * 16),
+                        `Indexing USDZ assets ${copiedEntries}/${entries.length}`,
+                        { archiveCurrent: copiedEntries, archiveTotal: entries.length });
+                    await yieldForProgress();
+                }
+            }
+            report('archive', 20, `Indexed USDZ assets ${entries.length}/${entries.length}`,
+                { archiveCurrent: entries.length, archiveTotal: entries.length });
+        }
+
+        const renderStream = new native.RenderStream();
+        let beginResult;
+        try {
+            if (options.materialDedup !== undefined &&
+                typeof renderStream.setMaterialDedup === 'function') {
+                renderStream.setMaterialDedup(!!options.materialDedup);
+            }
+            if (options.mergeMeshes !== undefined &&
+                typeof renderStream.setMeshMerge === 'function') {
+                renderStream.setMeshMerge(!!options.mergeMeshes);
+            }
+            if (options.mergeMeshesBakeTransform !== undefined &&
+                typeof renderStream.setMeshMergeBakeTransform === 'function') {
+                renderStream.setMeshMergeBakeTransform(!!options.mergeMeshesBakeTransform);
+            }
+            if (options.flattenRenderTree !== undefined &&
+                typeof renderStream.setFlattenRenderTree === 'function') {
+                renderStream.setFlattenRenderTree(!!options.flattenRenderTree);
+            }
+            if (options.computeTangents !== undefined &&
+                typeof renderStream.setComputeTangents === 'function') {
+                renderStream.setComputeTangents(!!options.computeTangents);
+            }
+            if (options.buildVertexIndices !== undefined &&
+                typeof renderStream.setBuildVertexIndices === 'function') {
+                renderStream.setBuildVertexIndices(!!options.buildVertexIndices);
+            }
+            if (options.tangentMethod !== undefined &&
+                typeof renderStream.setTangentMethod === 'function') {
+                renderStream.setTangentMethod(String(options.tangentMethod));
+            }
+            // Value-clip layers are ordinary USD files in the package. Supply
+            // them before conversion so tydra-next can bake clips without
+            // depending on a filesystem inside WASM.
+            if (typeof renderStream.provideAsset === 'function') {
+                for (const [assetName, assetBytes] of archiveEntries) {
+                    if (this._isUsdName(assetName)) {
+                        renderStream.provideAsset(assetName, assetBytes);
+                    }
+                }
+            }
+            // Variant selection: the next compositor keys overrides by variant
+            // SET name (applies to every prim carrying that set).
+            if (options.variantSelection && options.variantSelection.variantSet &&
+                typeof renderStream.setVariantOverride === 'function') {
+                renderStream.setVariantOverride(
+                    String(options.variantSelection.variantSet),
+                    String(options.variantSelection.variantName ?? ''));
+            }
+            report('native-load', 24, 'Starting USD crate reader...');
+            await yieldForProgress();
+            beginResult = renderStream.begin(crate);
+            if (!beginResult || !beginResult.success) {
+                const error = beginResult?.error || renderStream.error?.() || 'RenderStream begin failed';
+                throw new Error(error);
+            }
+            report('native-load', 48, 'Constructed render stream.');
+            await yieldForProgress();
+
+            // Surface authored variant sets in the legacy extractVariants()
+            // shape: [{primPath, variantSets: [{name, selection, options}]}].
+            if (typeof options.onVariants === 'function' &&
+                typeof renderStream.listVariants === 'function') {
+                const byPrim = new Map();
+                for (const entry of renderStream.listVariants()) {
+                    if (!entry || !entry.primPath) continue;
+                    if (!byPrim.has(entry.primPath)) {
+                        byPrim.set(entry.primPath, { primPath: entry.primPath, variantSets: [] });
+                    }
+                    byPrim.get(entry.primPath).variantSets.push({
+                        name: entry.setName,
+                        selection: entry.selected || '',
+                        options: Array.from(entry.variants || [])
+                    });
+                }
+                options.onVariants(Array.from(byPrim.values()));
+            }
+
+            const metadata = typeof renderStream.getSceneMetadata === 'function'
+                ? renderStream.getSceneMetadata()
+                : {};
+            const meshCount = beginResult.meshCount ?? renderStream.meshCount();
+            const nodeCount = Number.isFinite(beginResult.nodeCount)
+                ? beginResult.nodeCount
+                : (typeof renderStream.nodeCount === 'function'
+                    ? renderStream.nodeCount()
+                    : 0);
+            const lightCount = Number.isFinite(beginResult.lightCount)
+                ? beginResult.lightCount
+                : (typeof renderStream.lightCount === 'function'
+                    ? renderStream.lightCount()
+                    : 0);
+            const pointsCount = Number.isFinite(beginResult.pointsCount)
+                ? beginResult.pointsCount
+                : (typeof beginResult.points === 'number' ? beginResult.points
+                    : (typeof renderStream.numPoints === 'function'
+                        ? renderStream.numPoints()
+                        : 0));
+            const curvesCount = Number.isFinite(beginResult.curvesCount)
+                ? beginResult.curvesCount
+                : (typeof beginResult.curves === 'number' ? beginResult.curves
+                    : (typeof renderStream.numCurves === 'function'
+                        ? renderStream.numCurves()
+                        : 0));
+            const cameraCount = Number.isFinite(beginResult.cameraCount)
+                ? beginResult.cameraCount
+                : (typeof renderStream.cameraCount === 'function'
+                    ? renderStream.cameraCount()
+                    : 0);
+            const animationCount = Number.isFinite(beginResult.animationCount)
+                ? beginResult.animationCount
+                : (typeof beginResult.animations === 'number' ? beginResult.animations
+                    : (typeof renderStream.numAnimations === 'function'
+                        ? renderStream.numAnimations()
+                        : 0));
+            const pointInstancerCount = Number.isFinite(beginResult.pointInstancerCount)
+                ? beginResult.pointInstancerCount
+                : (typeof renderStream.pointInstancerCount === 'function'
+                    ? renderStream.pointInstancerCount()
+                    : 0);
+            const skeletonCount = Number.isFinite(beginResult.skeletonCount)
+                ? beginResult.skeletonCount
+                : (typeof renderStream.skeletonCount === 'function'
+                    ? renderStream.skeletonCount()
+                : 0);
+            const unsupportedRenderableCount = Number.isFinite(
+                beginResult.unsupportedRenderableCount)
+                ? beginResult.unsupportedRenderableCount
+                : (typeof renderStream.unsupportedRenderableCount === 'function'
+                    ? renderStream.unsupportedRenderableCount()
+                    : 0);
+            const pointInstanceDrawCount = Number.isFinite(
+                beginResult.pointInstanceDrawCount)
+                ? beginResult.pointInstanceDrawCount
+                : (typeof renderStream.pointInstanceDrawCount === 'function'
+                    ? renderStream.pointInstanceDrawCount()
+                    : 0);
+
+            const animations = [];
+            for (let i = 0; i < animationCount; i++) {
+                if (typeof renderStream.getAnimation === 'function') {
+                    const item = renderStream.getAnimation(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getAnimation(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    animations[i] = item;
+                }
+            }
+
+            const animationInfos = [];
+            if (typeof renderStream.getAllAnimationInfos === 'function') {
+                const items = renderStream.getAllAnimationInfos();
+                if (Array.isArray(items)) {
+                    for (let i = 0; i < items.length; ++i) {
+                        if (items[i]) animationInfos[i] = items[i];
+                    }
+                }
+            }
+            if (animationInfos.length === 0 &&
+                typeof renderStream.getAnimationInfo === 'function') {
+                for (let i = 0; i < animationCount; i++) {
+                    const item = renderStream.getAnimationInfo(i);
+                    if (!item || item.error) {
+                        continue;
+                    }
+                    animationInfos[i] = item;
+                }
+            }
+
+            const nodes = [];
+            for (let i = 0; i < nodeCount; i++) {
+                if (typeof renderStream.getNode === 'function') {
+                    const item = renderStream.getNode(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getNode(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    nodes[i] = item;
+                }
+            }
+            const lights = [];
+            for (let i = 0; i < lightCount; i++) {
+                if (typeof renderStream.getLight === 'function') {
+                    const item = renderStream.getLight(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getLight(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    lights[i] = item;
+                }
+            }
+            const points = [];
+            for (let i = 0; i < pointsCount; i++) {
+                if (typeof renderStream.getPoints === 'function') {
+                    const item = renderStream.getPoints(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getPoints(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    points[i] = this._copyPoints(native, item, i);
+                }
+            }
+            const curves = [];
+            for (let i = 0; i < curvesCount; i++) {
+                if (typeof renderStream.getCurves === 'function') {
+                    const item = renderStream.getCurves(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getCurves(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    curves[i] = this._copyCurves(native, item, i);
+                }
+            }
+            const cameras = [];
+            for (let i = 0; i < cameraCount; i++) {
+                if (typeof renderStream.getCamera === 'function') {
+                    const item = renderStream.getCamera(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getCamera(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    cameras[i] = item;
+                }
+            }
+            const pointInstancers = [];
+            for (let i = 0; i < pointInstancerCount; i++) {
+                if (typeof renderStream.getPointInstancer === 'function') {
+                    const item = renderStream.getPointInstancer(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getPointInstancer(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    pointInstancers[i] = item;
+                }
+            }
+            const pointInstanceDraws = [];
+            for (let i = 0; i < pointInstanceDrawCount; i++) {
+                if (typeof renderStream.getPointInstanceDraw === 'function') {
+                    const item = renderStream.getPointInstanceDraw(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getPointInstanceDraw(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    pointInstanceDraws[i] = item;
+                }
+            }
+            const skeletons = [];
+            for (let i = 0; i < skeletonCount; i++) {
+                if (typeof renderStream.getSkeleton === 'function') {
+                    const item = renderStream.getSkeleton(i);
+                    if (!item || item.error) {
+                        if (item?.error) {
+                            console.warn(`NextRenderSceneAdapter: getSkeleton(${i}) returned ${item.error}`);
+                        }
+                        continue;
+                    }
+                    skeletons[i] = item;
+                }
+            }
+            const unsupportedRenderables = typeof renderStream.getUnsupportedRenderables === 'function'
+                ? renderStream.getUnsupportedRenderables()
+                : [];
+            const meshes = [];
+            for (let i = 0; i < meshCount; i++) {
+                if (i === 0 || (i & 31) === 0) {
+                    report('mesh-copy',
+                        50 + Math.min(45, (i / Math.max(1, meshCount)) * 45),
+                        `Materializing meshes ${i}/${meshCount}`,
+                        { meshCurrent: i, meshTotal: meshCount });
+                    await yieldForProgress();
+                }
+                const mesh = renderStream.getMesh(i);
+                if (!mesh || mesh.error) {
+                    throw new Error(mesh?.error || `RenderStream mesh ${i} failed`);
+                }
+                const copiedMesh = this._copyMesh(native, mesh, i);
+                this._applyUDIMLayout(copiedMesh, archiveEntries);
+                meshes.push(copiedMesh);
+            }
+            report('mesh-copy', 95, `Materialized meshes ${meshCount}/${meshCount}`,
+                { meshCurrent: meshCount, meshTotal: meshCount });
+            await yieldForProgress();
+            const stats = typeof renderStream.getStats === 'function'
+                ? renderStream.getStats()
+                : {};
+            try { renderStream.end(); } catch (_) {}
+            try { renderStream.delete(); } catch (_) {}
+            return new NextRenderSceneAdapter(native, null, {
+                filename,
+                archiveEntries,
+                meshes,
+                points,
+                curves,
+                nodes,
+                lights,
+                cameras,
+                pointInstancers,
+                pointInstanceDraws,
+                skeletons,
+                unsupportedRenderables,
+                nodeCount,
+                pointsCount,
+                curvesCount,
+                lightCount,
+                cameraCount,
+                pointInstancerCount,
+                pointInstanceDrawCount,
+                skeletonCount,
+                unsupportedRenderableCount,
+                animationCount,
+                animations,
+                animationInfos,
+                stats,
+                upAxis: metadata.upAxis || 'Y',
+                metersPerUnit: (typeof metadata.metersPerUnit === 'number' && metadata.metersPerUnit > 0)
+                    ? metadata.metersPerUnit
+                    : 1.0,
+                framesPerSecond: metadata.framesPerSecond,
+                timeCodesPerSecond: metadata.timeCodesPerSecond,
+                startTimeCode: metadata.startTimeCode,
+                endTimeCode: metadata.endTimeCode
+            });
+        } catch (error) {
+            try { renderStream.end(); } catch (_) {}
+            try { renderStream.delete(); } catch (_) {}
+            throw error;
+        } finally {
+            if (onProgress) {
+                native.onNextCrateProgress = previousNextCrateProgress;
+            }
+        }
+    }
+
+    static _copyMesh(native, mesh, index) {
+        const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
+        const normalizeMaterial = (source) => {
+            const material = source || {};
+            const texturePaths = {
+                baseColor: material.baseColorTexture || '',
+                normal: material.normalTexture || '',
+                roughness: material.roughnessTexture || '',
+                metallic: material.metallicTexture || '',
+                occlusion: material.occlusionTexture || '',
+                emissive: material.emissiveTexture || ''
+            };
+            const textureMetadata = material.textureMetadata || {};
+            return {
+                material: {
+                    id: Number.isFinite(material.id) ? material.id : -1,
+                    key: material.key || '',
+                    primPath: material.primPath || '',
+                    baseColor: Array.isArray(material.baseColor) ? material.baseColor : [0.8, 0.8, 0.8],
+                    metallic: typeof material.metallic === 'number' ? material.metallic : 0,
+                    roughness: typeof material.roughness === 'number' ? material.roughness : 0.5,
+                    opacity: typeof material.opacity === 'number' ? material.opacity : 1,
+                    emissive: Array.isArray(material.emissive) ? material.emissive : [0, 0, 0],
+                    occlusion: typeof material.occlusion === 'number' ? material.occlusion : 1,
+                    opacityThreshold: typeof material.opacityThreshold === 'number' ? material.opacityThreshold : -1,
+                    textureMetadata,
+                    shaderType: material.shaderType || '',
+                    materialXConfig: material.materialXConfig || null,
+                    materialXJson: material.materialXJson || '',
+                    openPBRNodeGraphJson: material.openPBRNodeGraphJson || ''
+                },
+                texturePaths,
+                materialId: Number.isFinite(material.id) ? material.id : -1,
+                materialKey: material.key || JSON.stringify({ material, texturePaths, textureMetadata }),
+                textureMetadata
+            };
+        };
+        const primary = normalizeMaterial(mesh.material);
+        const subsetMaterials = Array.isArray(mesh.materials)
+            ? mesh.materials.map((material) => normalizeMaterial(material))
+            : [];
+        const submeshes = Array.isArray(mesh.submeshes)
+            ? mesh.submeshes
+                .map((g) => ({
+                    start: Number.isFinite(g?.start) ? g.start : 0,
+                    count: Number.isFinite(g?.count) ? g.count : 0,
+                    materialIndex: Number.isFinite(g?.materialIndex) ? g.materialIndex : 0
+                }))
+                .filter((g) => g.count > 0)
+            : [];
+        const blendShapes = Array.isArray(mesh.blendShapes)
+            ? mesh.blendShapes.map((shape) => ({
+                name: shape?.name || '',
+                weight: Number(shape?.weight) || 0,
+                pointOffsets: new Float32Array(shape?.pointOffsets || []),
+                normalOffsets: new Float32Array(shape?.normalOffsets || []),
+                pointIndices: new Uint32Array(shape?.pointIndices || []),
+                inbetweens: Array.isArray(shape?.inbetweens)
+                    ? shape.inbetweens.map((entry) => ({
+                        name: entry?.name || '',
+                        weight: Number(entry?.weight) || 0,
+                        pointOffsets: new Float32Array(entry?.pointOffsets || [])
+                    })) : []
+            })) : [];
+        return {
+            index,
+            primName: mesh.primName || `mesh_${index}`,
+            primPath: mesh.primPath || '',
+            points: copy(mesh.points, Float32Array),
+            indices: copy(mesh.indices, Uint32Array),
+            normals: copy(mesh.normals, Float32Array),
+            tangents: copy(mesh.tangents, Float32Array),
+            tangentMethod: mesh.tangentMethod || '',
+            uv0: copy(mesh.uv0, Float32Array),
+            jointIndices: copy(mesh.jointIndices, Uint16Array),
+            jointWeights: copy(mesh.jointWeights, Float32Array),
+            skel_id: Number.isFinite(mesh.skel_id) ? mesh.skel_id : -1,
+            skeletonPath: mesh.skeletonPath || '',
+            elementSize: Number.isFinite(mesh.elementSize) ? mesh.elementSize : 0,
+            absPath: mesh.primPath || '',
+            hasGeomBindTransform: !!mesh.hasGeomBindTransform,
+            geomBindTransform: Array.isArray(mesh.geomBindTransform)
+                ? mesh.geomBindTransform.slice(0, 16)
+                : null,
+            localMatrix: Array.isArray(mesh.localMatrix) ? mesh.localMatrix.slice(0, 16) : null,
+            worldMatrix: Array.isArray(mesh.worldMatrix) ? mesh.worldMatrix.slice(0, 16) : null,
+            material: primary.material,
+            texturePaths: primary.texturePaths,
+            materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : primary.materialId,
+            materialKey: primary.materialKey,
+            materials: subsetMaterials,
+            submeshes,
+            blendShapes
+        };
+    }
+
+    static _copyPoints(native, points, index) {
+        const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
+        return {
+            index,
+            name: points.name || `points_${index}`,
+            primPath: points.primPath || '',
+            pointCount: Number.isFinite(points.pointCount) ? points.pointCount : 0,
+            materialId: Number.isFinite(points.materialId) ? points.materialId : -1,
+            points: copy(points.points, Float32Array),
+            widths: copy(points.widths, Float32Array),
+            colors: copy(points.colors, Float32Array),
+            hasBounds: !!points.hasBounds,
+            bboxMin: Array.isArray(points.bboxMin) ? points.bboxMin.slice(0, 3) : null,
+            bboxMax: Array.isArray(points.bboxMax) ? points.bboxMax.slice(0, 3) : null
+        };
+    }
+
+    static _copyCurves(native, curves, index) {
+        const copy = (desc, Type) => desc && desc.length ? new Type(nextHeapView(native, desc)) : null;
+        return {
+            index,
+            name: curves.name || `curves_${index}`,
+            primPath: curves.primPath || '',
+            curveCount: Number.isFinite(curves.curveCount) ? curves.curveCount : 0,
+            controlPointCount: Number.isFinite(curves.controlPointCount) ? curves.controlPointCount : 0,
+            tessellatedPointCount: Number.isFinite(curves.tessellatedPointCount)
+                ? curves.tessellatedPointCount : 0,
+            type: curves.type || 'cubic',
+            basis: curves.basis || 'bezier',
+            wrap: curves.wrap || 'nonperiodic',
+            isNurbs: !!curves.isNurbs,
+            materialId: Number.isFinite(curves.materialId) ? curves.materialId : -1,
+            widthsInterpolation: curves.widthsInterpolation || 'constant',
+            colorsInterpolation: curves.colorsInterpolation || 'constant',
+            curveVertexCounts: Array.from(curves.curveVertexCounts || []),
+            tessellatedVertexCounts: Array.from(curves.tessellatedVertexCounts || []),
+            points: copy(curves.points, Float32Array),
+            widths: copy(curves.widths, Float32Array),
+            colors: copy(curves.colors, Float32Array),
+            tessellatedPoints: copy(curves.tessellatedPoints, Float32Array),
+            tessellatedWidths: copy(curves.tessellatedWidths, Float32Array),
+            tessellatedColors: copy(curves.tessellatedColors, Float32Array),
+            hasBounds: !!curves.hasBounds,
+            bboxMin: Array.isArray(curves.bboxMin) ? curves.bboxMin.slice(0, 3) : null,
+            bboxMax: Array.isArray(curves.bboxMax) ? curves.bboxMax.slice(0, 3) : null
+        };
+    }
+
+    static _normTexPathStatic(path) {
+        return String(path || '').replace(/^[./]+/, '');
+    }
+
+    static _isUDIMPath(path) {
+        return /<udim>|%\(udim\)d/i.test(String(path || ''));
+    }
+
+    static _udimTilePath(path, tileId) {
+        return String(path || '')
+            .replace(/<udim>/ig, String(tileId))
+            .replace(/%\(udim\)d/ig, String(tileId));
+    }
+
+    static _findArchiveEntry(entries, path) {
+        const key = this._normTexPathStatic(path);
+        if (entries.has(key)) return { path: key, bytes: entries.get(key) };
+        for (const [candidate, bytes] of entries) {
+            if (candidate.endsWith('/' + key) || key.endsWith('/' + candidate)) {
+                return { path: candidate, bytes };
+            }
+        }
+        return null;
+    }
+
+    static _udimLayout(entries, pattern) {
+        if (!this._isUDIMPath(pattern)) return null;
+        const tiles = [];
+        let maxU = 0;
+        let maxV = 0;
+        for (let id = 1001; id <= 1100; ++id) {
+            const found = this._findArchiveEntry(entries, this._udimTilePath(pattern, id));
+            if (!found) continue;
+            const u = (id - 1001) % 10;
+            const v = Math.floor((id - 1001) / 10);
+            maxU = Math.max(maxU, u);
+            maxV = Math.max(maxV, v);
+            tiles.push({ id, u, v, path: found.path, bytes: found.bytes });
+        }
+        if (!tiles.length) return null;
+        return { pattern, tiles, columns: maxU + 1, rows: maxV + 1 };
+    }
+
+    static _applyUDIMLayout(mesh, archiveEntries) {
+        if (!mesh?.uv0?.length) return;
+        const paths = [
+            ...Object.values(mesh.texturePaths || {}),
+            ...(mesh.materials || []).flatMap((entry) =>
+                Object.values(entry?.texturePaths || {}))
+        ];
+        const pattern = paths.find((path) => this._isUDIMPath(path));
+        const layout = pattern ? this._udimLayout(archiveEntries, pattern) : null;
+        if (!layout) return;
+        for (let i = 0; i + 1 < mesh.uv0.length; i += 2) {
+            const sourceU = mesh.uv0[i];
+            const sourceV = mesh.uv0[i + 1];
+            const tileU = Math.floor(sourceU);
+            const tileV = Math.floor(sourceV);
+            mesh.uv0[i] = (tileU + (sourceU - tileU)) / layout.columns;
+            mesh.uv0[i + 1] = (tileV + (sourceV - tileV)) / layout.rows;
+        }
+        mesh.udimLayout = {
+            pattern: layout.pattern,
+            columns: layout.columns,
+            rows: layout.rows,
+            tileIds: layout.tiles.map((tile) => tile.id)
+        };
+    }
+
+    _normTexPath(path) {
+        return NextRenderSceneAdapter._normTexPathStatic(path);
+    }
+
+    getArchiveTextureBytes(path) {
+        const key = this._normTexPath(path);
+        if (this.archiveEntries.has(key)) return this.archiveEntries.get(key);
+        for (const [candidate, bytes] of this.archiveEntries) {
+            if (candidate.endsWith('/' + key) || key.endsWith('/' + candidate)) {
+                return bytes;
+            }
+        }
+        return null;
+    }
+
+    getArchiveUDIMTiles(path) {
+        return NextRenderSceneAdapter._udimLayout(this.archiveEntries, path);
+    }
+
+    releaseArchiveTextureBytes() {
+        this.archiveEntries.clear();
+    }
+
+    releaseBuildData() {
+        this.meshes = [];
+        this.points = [];
+        this.curves = [];
+        this.nodes = [];
+        this.lights = [];
+        this.cameras = [];
+        this.pointInstancers = [];
+        this.pointInstanceDraws = [];
+        this.skeletons = [];
+        this.unsupportedRenderables = [];
+        this.animations = [];
+        this.animationInfos = [];
+        this.materials = [];
+        this.textures = [];
+        this._rootNodes = null;
+        this.materialKeys.clear();
+        this.textureKeys.clear();
+    }
+
+    getSceneMetadata() {
+        return this.sceneMetadata;
+    }
+
+    getUpAxis() {
+        return this.sceneMetadata?.upAxis || 'Y';
+    }
+
+    numMeshes() {
+        return this.stats?.optimizedMeshes ?? this.meshCountValue;
+    }
+
+    numPoints() {
+        return this.pointsCountValue || 0;
+    }
+
+    numCurves() {
+        return this.curvesCountValue || 0;
+    }
+
+    numMaterials() {
+        return this.stats?.optimizedMaterials ?? this.materialCountValue;
+    }
+
+    numTextures() {
+        return this.stats?.optimizedTextures ?? this.textureCountValue;
+    }
+
+    numImages() {
+        return 0;
+    }
+
+    numNodes() {
+        return this.nodeCountValue || 0;
+    }
+
+    numLights() {
+        return this.lightCountValue || 0;
+    }
+
+    numCameras() {
+        return this.cameraCountValue || 0;
+    }
+
+    numPointInstancers() {
+        return this.pointInstancerCountValue || 0;
+    }
+
+    numPointInstanceDraws() {
+        return this.pointInstanceDrawCountValue || 0;
+    }
+
+    numSkeletons() {
+        return this.skeletonCountValue || 0;
+    }
+
+    numUnsupportedRenderables() {
+        return this.unsupportedRenderableCountValue || 0;
+    }
+
+    numAnimations() {
+        return this.animationCountValue || 0;
+    }
+
+    getMesh(index) {
+        return this.getMeshCopy(index);
+    }
+
+    getMeshCopy(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.meshCountValue) {
+            return null;
+        }
+        const mesh = this.meshes[index];
+        if (!mesh) return null;
+        return {
+            ...mesh,
+            points: mesh.points ? new Float32Array(mesh.points) : null,
+            vertices: mesh.points ? new Float32Array(mesh.points) : null,
+            indices: mesh.indices ? new Uint32Array(mesh.indices) : null,
+            normals: mesh.normals ? new Float32Array(mesh.normals) : null,
+            uv0: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
+            uvs: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
+            texcoords: mesh.uv0 ? new Float32Array(mesh.uv0) : null,
+            jointIndices: mesh.jointIndices ? new Uint16Array(mesh.jointIndices) : null,
+            jointWeights: mesh.jointWeights ? new Float32Array(mesh.jointWeights) : null,
+            skel_id: Number.isFinite(mesh.skel_id) ? mesh.skel_id : -1,
+            skeletonPath: mesh.skeletonPath || '',
+            elementSize: Number.isFinite(mesh.elementSize) ? mesh.elementSize : 0,
+            absPath: mesh.absPath || mesh.primPath || '',
+            hasGeomBindTransform: !!mesh.hasGeomBindTransform,
+            geomBindTransform: Array.isArray(mesh.geomBindTransform)
+                ? mesh.geomBindTransform.slice(0, 16)
+                : null,
+            faceVertexIndices: mesh.indices ? new Uint32Array(mesh.indices) : null,
+            materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : -1
+        };
+    }
+
+    getPoints(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.pointsCountValue) {
+            return null;
+        }
+        const points = this.points[index];
+        if (!points) return null;
+        return {
+            ...points,
+            points: points.points ? new Float32Array(points.points) : null,
+            widths: points.widths ? new Float32Array(points.widths) : null,
+            colors: points.colors ? new Float32Array(points.colors) : null
+        };
+    }
+
+    getCurves(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.curvesCountValue) {
+            return null;
+        }
+        const curves = this.curves[index];
+        if (!curves) return null;
+        return {
+            ...curves,
+            curveVertexCounts: Array.from(curves.curveVertexCounts || []),
+            tessellatedVertexCounts: Array.from(curves.tessellatedVertexCounts || []),
+            points: curves.points ? new Float32Array(curves.points) : null,
+            widths: curves.widths ? new Float32Array(curves.widths) : null,
+            colors: curves.colors ? new Float32Array(curves.colors) : null,
+            tessellatedPoints: curves.tessellatedPoints
+                ? new Float32Array(curves.tessellatedPoints) : null,
+            tessellatedWidths: curves.tessellatedWidths
+                ? new Float32Array(curves.tessellatedWidths) : null,
+            tessellatedColors: curves.tessellatedColors
+                ? new Float32Array(curves.tessellatedColors) : null
+        };
+    }
+
+    getMaterial(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.materialCountValue) {
+            return null;
+        }
+        const record = this.materials[index];
+        return record ? { ...record.material, id: record.id, key: record.key, primPath: record.primPath } : null;
+    }
+
+    getMaterialWithFormat(index, format = 'json') {
+        const material = this.getMaterial(index);
+        if (!material) {
+            return { data: null, error: `Material ${index} not found` };
+        }
+        if (format !== 'json') {
+            return { data: null, error: `Unsupported format: ${format}` };
+        }
+        return { data: JSON.stringify(material), error: null };
+    }
+
+    getTexture(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.textureCountValue) {
+            return null;
+        }
+        const texture = this.textures[index];
+        return texture ? { ...texture } : null;
+    }
+
+    getImageCopy() {
+        return null;
+    }
+
+    _nodeToLegacyTree(nodeId, seen = new Set()) {
+        if (!Number.isInteger(nodeId) || nodeId < 0 || nodeId >= this.nodeCountValue) {
+            return null;
+        }
+        if (seen.has(nodeId)) return null;
+        seen.add(nodeId);
+        const node = this.nodes[nodeId];
+        if (!node || node.error) return null;
+        const children = [];
+        if (Array.isArray(node.children)) {
+            for (const childId of node.children) {
+                const child = this._nodeToLegacyTree(childId, seen);
+                if (child) children.push(child);
+            }
+        }
+        const nodeType = node.type === 'pointInstancer' ? 'pointinstancer' : (node.type || 'xform');
+        return {
+            index: node.index ?? nodeId,
+            primName: node.name || '',
+            displayName: node.name || '',
+            absPath: node.primPath || '',
+            primPath: node.primPath || '',
+            nodeType,
+            nodeCategory: node.type || nodeType,
+            contentId: Number.isFinite(node.dataId) ? node.dataId : -1,
+            materialId: Number.isFinite(node.materialId) ? node.materialId : -1,
+            localMatrix: Array.isArray(node.localMatrix) ? node.localMatrix.slice(0, 16) : null,
+            worldMatrix: Array.isArray(node.worldMatrix) ? node.worldMatrix.slice(0, 16) : null,
+            visible: node.visible !== false,
+            children
+        };
+    }
+
+    _computeRootNodes() {
+        if (this._rootNodes) return this._rootNodes;
+        const roots = [];
+        for (let i = 0; i < this.nodeCountValue; ++i) {
+            const node = this.nodes[i];
+            if (!node || node.error) continue;
+            if (!Number.isFinite(node.parentId) || node.parentId < 0) {
+                const root = this._nodeToLegacyTree(i);
+                if (root) roots.push(root);
+            }
+        }
+        this._rootNodes = roots;
+        return roots;
+    }
+
+    numRootNodes() {
+        return this._computeRootNodes().length;
+    }
+
+    getRootNode(index) {
+        return this._computeRootNodes()[index] || null;
+    }
+
+    getDefaultRootNode() {
+        return this.getRootNode(0);
+    }
+
+    getAnimation(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.animationCountValue) {
+            return { error: 'invalid animation index' };
+        }
+        const item = this.animations[index];
+        if (!item) {
+            return { error: 'missing animation data' };
+        }
+        return item;
+    }
+
+    getAnimationInfo(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.animationCountValue) {
+            return { error: 'invalid animation index' };
+        }
+        const item = this.animationInfos[index];
+        if (!item) {
+            return { error: 'missing animation info' };
+        }
+        return item;
+    }
+
+    getAllAnimations() {
+        return Array.isArray(this.animations) ? this.animations : [];
+    }
+
+    getAllAnimationInfos() {
+        return Array.isArray(this.animationInfos) ? this.animationInfos : [];
+    }
+
+    getNode(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.nodeCountValue) {
+            return { error: 'invalid node index' };
+        }
+        const item = this.nodes[index];
+        if (!item) {
+            return { error: 'missing node data' };
+        }
+        return item;
+    }
+
+    getLight(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.lightCountValue) {
+            return { error: 'invalid light index' };
+        }
+        const item = this.lights[index];
+        if (!item) {
+            return { error: 'missing light data' };
+        }
+        return item;
+    }
+
+    getCamera(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.cameraCountValue) {
+            return { error: 'invalid camera index' };
+        }
+        const item = this.cameras[index];
+        if (!item) {
+            return { error: 'missing camera data' };
+        }
+        return item;
+    }
+
+    getPointInstancer(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.pointInstancerCountValue) {
+            return { error: 'invalid point instancer index' };
+        }
+        const item = this.pointInstancers[index];
+        if (!item) {
+            return { error: 'missing point instancer data' };
+        }
+        return item;
+    }
+
+    getPointInstanceDraw(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.pointInstanceDrawCountValue) {
+            return { error: 'invalid point instance draw index' };
+        }
+        const item = this.pointInstanceDraws[index];
+        if (!item) {
+            return { error: 'missing point instance draw data' };
+        }
+        return item;
+    }
+
+    getSkeleton(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.skeletonCountValue) {
+            return { error: 'invalid skeleton index' };
+        }
+        const item = this.skeletons[index];
+        if (!item) {
+            return { error: 'missing skeleton data' };
+        }
+        return item;
+    }
+
+    getUnsupportedRenderables() {
+        return Array.isArray(this.unsupportedRenderables)
+            ? this.unsupportedRenderables
+            : [];
+    }
+
+    getStats() {
+        return this.stats || {};
+    }
+
+    delete() {
+        this.end();
+    }
+
+    end() {
+        if (this.renderStream) {
+            try { this.renderStream.end(); } catch (_) {}
+            try { this.renderStream.delete(); } catch (_) {}
+            this.renderStream = null;
+        }
+        this.meshes = [];
+        this.points = [];
+        this.curves = [];
+        this.nodes = [];
+        this.lights = [];
+        this.cameras = [];
+        this.pointInstancers = [];
+        this.pointInstanceDraws = [];
+        this.skeletons = [];
+        this.unsupportedRenderables = [];
+        this.animations = [];
+        this.animationInfos = [];
+        this.materials = [];
+        this.textures = [];
+        this._rootNodes = null;
+        this.archiveEntries.clear();
+        this.materialKeys.clear();
+        this.textureKeys.clear();
+    }
+}
+
 // TODO
 //
 // Polish API
@@ -159,6 +1397,7 @@ class TinyUSDZLoader extends Loader {
         super(manager);
 
         this.native_ = null;
+        this.nextOnlyNative_ = false;
 
         this.assetResolver_ = null;
 
@@ -357,15 +1596,32 @@ class TinyUSDZLoader extends Loader {
         if (!this.native_) {
           
             // WASM module of TinyUSDZ.
-            const url = new URL(import.meta.url);
+            const moduleUrl = new URL(import.meta.url);
+            const pageParams = (typeof window !== 'undefined' && window.location)
+                ? new URLSearchParams(window.location.search)
+                : new URLSearchParams();
+            const getParam = (key) => moduleUrl.searchParams.get(key) ?? pageParams.get(key);
 
             //let initTinyUSDZNative = null;
           
 
             let use_memory64 = this.useMemory64_;
-            if (url.searchParams.get("memory64") == "true") {
+            if (getParam("memory64") == "true") {
               use_memory64 = true;
             }
+            // backend=next selects the next-only WASM module so the page runs
+            // on the full next RenderStream surface (the legacy module's
+            // RenderStream is a reduced legacy shim). `wasm=` stays the
+            // explicit override in both directions.
+            const wasmParam = getParam("wasm");
+            const backendWantsNext = options.backend === 'next' ||
+                getParam("backend") === "next";
+            const use_next_only_wasm = wasmParam === "legacy"
+                ? false
+                : (options.useNextOnlyWasm === true ||
+                   wasmParam === "next" ||
+                   getParam("nextWasm") === "true" ||
+                   backendWantsNext);
 
 
             let initTinyUSDZNative = null;
@@ -373,20 +1629,39 @@ class TinyUSDZLoader extends Loader {
             // Use dynamic import based on memory64 parameter.
             // Build the 64-bit module path via URL so Vite's static import
             // analysis does not fail when tinyusdz_64.js is absent.
-            if (use_memory64) {
+            if (use_next_only_wasm) {
+                const nextUrl = new URL(use_memory64 ? './tinyusdz_next_64.js' : './tinyusdz_next.js',
+                    import.meta.url).href;
+                const module = await import(/* @vite-ignore */ nextUrl);
+                initTinyUSDZNative = module.default;
+                this.nextOnlyNative_ = true;
+            } else if (use_memory64) {
                 try {
                     const wasm64Url = new URL('./tinyusdz_64.js', import.meta.url).href;
                     const module = await import(/* @vite-ignore */ wasm64Url);
                     initTinyUSDZNative = module.default;
+                    this.nextOnlyNative_ = false;
                 } catch (e) {
                     console.warn('[TinyUSDZLoader] WASM64 module (tinyusdz_64.js) not found, falling back to 32-bit module.', e.message);
                     use_memory64 = false;
-                    const module = await import('./tinyusdz.js');
+                    const wasm32Url = new URL('./tinyusdz.js', import.meta.url).href;
+                    const module = await import(/* @vite-ignore */ wasm32Url);
                     initTinyUSDZNative = module.default;
+                    this.nextOnlyNative_ = false;
                 }
             } else {
-                const module = await import('./tinyusdz.js');
-                initTinyUSDZNative = module.default;
+                try {
+                    const wasm32Url = new URL('./tinyusdz.js', import.meta.url).href;
+                    const module = await import(/* @vite-ignore */ wasm32Url);
+                    initTinyUSDZNative = module.default;
+                    this.nextOnlyNative_ = false;
+                } catch (e) {
+                    const nextUrl = new URL('./tinyusdz_next.js', import.meta.url).href;
+                    const module = await import(/* @vite-ignore */ nextUrl);
+                    initTinyUSDZNative = module.default;
+                    this.nextOnlyNative_ = true;
+                    console.info('[TinyUSDZLoader] Legacy WASM module not found; using next-only WASM module.');
+                }
             }
 
             let wasmBinary = null;
@@ -789,6 +2064,8 @@ class TinyUSDZLoader extends Loader {
      * @param {number} options.maxMemoryLimitMB - Override memory limit for this parse
      * @param {boolean} options.debugMemory - Print native heap debug events for this parse
      * @param {Function} options.onTinyUSDZDebug - Per-parse native debug callback
+     * @param {Object} options.variantSelection - Optional variant override {primPath, variantSet, variantName}
+     * @param {Function} options.onVariants - Optional callback receiving discovered variant info
      */
     parse(binary /* ArrayBuffer */, filePath /* optional */, onLoad, onError, options = {}) {
 
@@ -814,7 +2091,35 @@ class TinyUSDZLoader extends Loader {
             _onError(new Error('TinyUSDZLoader: Native module is not initialized.'));
         }
 
+        const backend = options.backend || 'legacy';
+        if (this.nextOnlyNative_ && backend !== 'next' && backend !== 'auto') {
+            _onError(new Error('TinyUSDZLoader: next-only WASM module supports backend=next only.'));
+            return;
+        }
+        if (backend === 'next' || backend === 'auto') {
+            NextRenderSceneAdapter.create(this.native_, binary, filePath, options)
+                .then(onLoad)
+                .catch((error) => {
+                    if (backend === 'auto') {
+                        const legacyOptions = {
+                            ...options,
+                            backend: 'legacy'
+                        };
+                        this.parse(binary, filePath, (usd) => {
+                            usd.__backend = 'legacy';
+                            usd.__backendFallbackReason = error?.message || String(error);
+                            onLoad(usd);
+                        }, onError, legacyOptions);
+                    } else {
+                        this._logFailedUSDInput(binary, filePath, error?.message || String(error));
+                        _onError(error instanceof Error ? error : new Error(String(error)));
+                    }
+                });
+            return;
+        }
+
         const usd = new this.native_.TinyUSDZLoaderNative();
+        usd.__backend = 'legacy';
 
         // Set memory limit before loading if specified (otherwise use native default)
         const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
@@ -843,28 +2148,71 @@ class TinyUSDZLoader extends Loader {
                 this.native_.onTinyUSDZDebug = previousDebugCallback;
             };
         }
+        const tydraProgressCallback = options.onTydraProgress || null;
+        let restoreTydraProgressCallback = () => {};
+        if (tydraProgressCallback) {
+            const previousTydraProgressCallback = this.native_.onTydraProgress;
+            this.native_.onTydraProgress = tydraProgressCallback;
+            restoreTydraProgressCallback = () => {
+                this.native_.onTydraProgress = previousTydraProgressCallback;
+            };
+        }
+        const restoreCallbacks = () => {
+            restoreDebugCallback();
+            restoreTydraProgressCallback();
+        };
 
         let ok;
         try {
-            this._logNativeMemory(usd, 'before-loadFromBinary', debugMemory);
-            ok = usd.loadFromBinary(binary, filePath);
-            this._logNativeMemory(usd, 'after-loadFromBinary', debugMemory);
+            const useVariantLayerPath = !!options.variantSelection ||
+                typeof options.onVariants === 'function';
+
+            if (useVariantLayerPath) {
+                this._logNativeMemory(usd, 'before-loadAsLayerFromBinary', debugMemory);
+                ok = usd.loadAsLayerFromBinary(binary, filePath);
+                this._logNativeMemory(usd, 'after-loadAsLayerFromBinary', debugMemory);
+
+                if (ok && typeof options.onVariants === 'function' &&
+                    typeof usd.extractVariants === 'function') {
+                    options.onVariants(usd.extractVariants());
+                }
+
+                if (ok && options.variantSelection) {
+                    const selection = options.variantSelection;
+                    ok = usd.applyVariantSelection(
+                        selection.primPath,
+                        selection.variantSet,
+                        selection.variantName
+                    );
+                } else if (ok && usd.hasVariants && usd.hasVariants()) {
+                    ok = usd.composeVariants();
+                }
+
+                if (ok) {
+                    ok = usd.layerToRenderScene();
+                }
+                this._logNativeMemory(usd, 'after-layerToRenderScene', debugMemory);
+            } else {
+                this._logNativeMemory(usd, 'before-loadFromBinary', debugMemory);
+                ok = usd.loadFromBinary(binary, filePath);
+                this._logNativeMemory(usd, 'after-loadFromBinary', debugMemory);
+            }
         } catch (e) {
             // Catch WASM traps (e.g. Emscripten OOM abort, unreachable instruction)
             this._logNativeMemory(usd, 'loadFromBinary-trap', debugMemory);
-            restoreDebugCallback();
+            restoreCallbacks();
             this._logFailedUSDInput(binary, filePath, e instanceof Error ? e.message : String(e));
             _onError(e instanceof Error ? e : new Error(String(e)));
             return;
         }
         if (!ok) {
             this._logNativeMemory(usd, 'loadFromBinary-failed', debugMemory);
-            restoreDebugCallback();
+            restoreCallbacks();
             this._logFailedUSDInput(binary, filePath, usd.error());
             const fileInfo = filePath ? ` (file: ${filePath})` : '';
             _onError(new Error(`TinyUSDZLoader: Failed to load USD from binary data${fileInfo}.`, {cause: usd.error()}));
         } else {
-            restoreDebugCallback();
+            restoreCallbacks();
             onLoad(usd);
         }
     }
@@ -1000,7 +2348,22 @@ class TinyUSDZLoader extends Loader {
      */
     async parseAsync(binary /* ArrayBuffer */, filePath /* optional */, options = {}) {
         if (!this.native_) {
-            await this.init();
+            await this.init(options);
+        }
+
+        // backend=next (or a next-only module, which has no legacy
+        // TinyUSDZLoaderNative) routes through the promise-based parse path,
+        // which already dispatches to NextRenderSceneAdapter.
+        const wantsNext = options.backend === 'next' || options.backend === 'auto';
+        if (wantsNext || this.nextOnlyNative_ ||
+            typeof this.native_.TinyUSDZLoaderNative !== 'function') {
+            const backendOptions = {
+                ...options,
+                backend: options.backend || (this.nextOnlyNative_ ? 'next' : 'legacy')
+            };
+            return new Promise((resolve, reject) => {
+                this.parse(binary, filePath, resolve, reject, backendOptions);
+            });
         }
 
         const usd = new this.native_.TinyUSDZLoaderNative();
@@ -1013,7 +2376,16 @@ class TinyUSDZLoader extends Loader {
 
         this._applySkinningLoadOptions(usd);
         this._applyConversionLoadOptions(usd, options);
+        if (options.loadTextureInNative && typeof usd.setLoadTextureInNative === 'function') {
+            usd.setLoadTextureInNative(true);
+        }
 
+        const previousTydraProgressCallback = this.native_.onTydraProgress;
+        if (options.onTydraProgress) {
+            this.native_.onTydraProgress = options.onTydraProgress;
+        }
+
+        const previousAsyncPhaseStart = this.native_.onAsyncPhaseStart;
         // Set up async phase callback on Module if provided
         if (options.onPhaseStart) {
             this.native_.onAsyncPhaseStart = options.onPhaseStart;
@@ -1041,9 +2413,12 @@ class TinyUSDZLoader extends Loader {
 
             return usd;
         } finally {
-            // Clean up callback
+            // Clean up callbacks
             if (options.onPhaseStart) {
-                this.native_.onAsyncPhaseStart = null;
+                this.native_.onAsyncPhaseStart = previousAsyncPhaseStart;
+            }
+            if (options.onTydraProgress) {
+                this.native_.onTydraProgress = previousTydraProgressCallback;
             }
         }
     }

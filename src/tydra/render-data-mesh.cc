@@ -6,7 +6,6 @@
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
@@ -20,6 +19,8 @@
 //
 // Mesh conversion routines split from render-data.cc
 //
+#include <algorithm>
+#include <limits>
 #include <numeric>
 #include <set>
 
@@ -46,10 +47,8 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
-#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
-#include "subdiv.hh"
-#endif
 #include "safe-arithmetic.hh"
+#include "tsd/tsd-tinyusdz.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -102,125 +101,16 @@ namespace {
 
 #define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
 
-#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
-static subdiv::SubdivisionScheme ToSubdivScheme(
-    GeomMesh::SubdivisionScheme scheme) {
-  switch (scheme) {
-    case GeomMesh::SubdivisionScheme::CatmullClark:
-      return subdiv::SubdivisionScheme::CatmullClark;
-    case GeomMesh::SubdivisionScheme::Loop:
-      return subdiv::SubdivisionScheme::Loop;
-    case GeomMesh::SubdivisionScheme::Bilinear:
-      return subdiv::SubdivisionScheme::Bilinear;
-    case GeomMesh::SubdivisionScheme::SubdivisionSchemeNone:
-      return subdiv::SubdivisionScheme::CatmullClark;
-  }
-
-  return subdiv::SubdivisionScheme::CatmullClark;
-}
-
-static bool RemapSubdivisionMaterialSubsets(
-    const std::vector<uint32_t> &src_face_vertex_counts,
-    GeomMesh::SubdivisionScheme scheme, int32_t subdivision_level,
-    std::map<std::string, MaterialSubset> *material_subset_map,
-    std::string *err) {
-  if (!material_subset_map) {
-    if (err) {
-      (*err) += "material_subset_map is null.\n";
-    }
+bool SizeToU32(size_t n, uint32_t *out) {
+#if !defined(__EMSCRIPTEN__) || defined(__wasm64__)
+  if (n > size_t((std::numeric_limits<uint32_t>::max)())) {
     return false;
   }
-
-  // pow4(level) overflows uint64_t at level >= 32. Reject extreme levels.
-  if (subdivision_level < 0 || subdivision_level > 30) {
-    if (err) {
-      (*err) += "subdivision_level out of range [0, 30]: " +
-                std::to_string(subdivision_level) + "\n";
-    }
-    return false;
-  }
-
-  auto pow4 = [](int32_t level) -> uint64_t {
-    uint64_t value = 1;
-    for (int32_t i = 0; i < level; ++i) {
-      value *= 4;
-    }
-    return value;
-  };
-
-  std::vector<std::vector<int>> triangulated_faces(src_face_vertex_counts.size());
-  size_t tri_face_offset = 0;
-  for (size_t src_face = 0; src_face < src_face_vertex_counts.size(); ++src_face) {
-    uint32_t src_count = src_face_vertex_counts[src_face];
-    uint64_t tri_face_count = 0;
-
-    switch (scheme) {
-      case GeomMesh::SubdivisionScheme::Loop:
-        tri_face_count = pow4(subdivision_level);
-        break;
-      case GeomMesh::SubdivisionScheme::CatmullClark:
-        tri_face_count = uint64_t(src_count) * 2u * pow4(subdivision_level - 1);
-        break;
-      case GeomMesh::SubdivisionScheme::Bilinear:
-        if (src_count == 3) {
-          tri_face_count = pow4(subdivision_level);
-        } else {
-          tri_face_count = uint64_t(src_count) * 2u * pow4(subdivision_level - 1);
-        }
-        break;
-      case GeomMesh::SubdivisionScheme::SubdivisionSchemeNone:
-        tri_face_count = 0;
-        break;
-    }
-
-    if (tri_face_count > size_t((std::numeric_limits<int>::max)())) {
-      if (err) {
-        (*err) += fmt::format(
-            "Subdivision generated too many triangles ({}) for source face {}.\n",
-            tri_face_count, src_face);
-      }
-      return false;
-    }
-
-    triangulated_faces[src_face].reserve(size_t(tri_face_count));
-    for (uint64_t i = 0; i < tri_face_count; ++i) {
-      triangulated_faces[src_face].push_back(int(tri_face_offset + i));
-    }
-    tri_face_offset += size_t(tri_face_count);
-  }
-
-  for (auto &it : *material_subset_map) {
-    std::vector<int> remapped_indices;
-    for (int src_face_index : it.second.usdIndices) {
-      if (src_face_index < 0) {
-        if (err) {
-          (*err) += fmt::format(
-              "MaterialSubset `{}` contains negative face index {}.\n",
-              it.first, src_face_index);
-        }
-        return false;
-      }
-
-      size_t src_face = size_t(src_face_index);
-      if (src_face >= triangulated_faces.size()) {
-        if (err) {
-          (*err) += fmt::format(
-              "MaterialSubset `{}` face index {} exceeds source face count {}.\n",
-              it.first, src_face_index, src_face_vertex_counts.size());
-        }
-        return false;
-      }
-
-      remapped_indices.insert(remapped_indices.end(),
-                              triangulated_faces[src_face].begin(),
-                              triangulated_faces[src_face].end());
-    }
-    it.second.triangulatedIndices = std::move(remapped_indices);
-  }
-
+#endif
+  *out = uint32_t(n);
   return true;
 }
-#endif
+
 
 
 //
@@ -267,8 +157,18 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
         num_uniforms, faceVertexCounts.size()));
   }
 
-  const uint32_t num_vertices =
-      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
+  // max_element on an empty range is UB, and `max + 1` on uint32 wraps to 0
+  // for a 0xFFFFFFFF index (a source -1), making dst.resize(0) then OOB writes
+  // below. The sole live caller validates indices first, but guard here too.
+  if (faceVertexIndices.empty()) {
+    return nonstd::make_unexpected("faceVertexIndices is empty.");
+  }
+  const uint32_t max_index =
+      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend());
+  if (max_index == (std::numeric_limits<uint32_t>::max)()) {
+    return nonstd::make_unexpected("faceVertexIndices contains an invalid (max-uint32) index.");
+  }
+  const size_t num_vertices = size_t(max_index) + 1;
 
   size_t resize_size;
   if (!safe::mul(num_vertices, stride_bytes, &resize_size)) {
@@ -443,8 +343,15 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
                     faceVertexIndices.size()));
   }
 
-  const uint32_t num_vertices =
-      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
+  if (faceVertexIndices.empty()) {
+    return nonstd::make_unexpected("faceVertexIndices is empty.");
+  }
+  const uint32_t max_index =
+      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend());
+  if (max_index == (std::numeric_limits<uint32_t>::max)()) {
+    return nonstd::make_unexpected("faceVertexIndices contains an invalid (max-uint32) index.");
+  }
+  const size_t num_vertices = size_t(max_index) + 1;
 
   std::vector<uint8_t> dst;
 
@@ -2244,6 +2151,17 @@ static bool ReorderVertexVaryingAttributes(
       std::vector<value::float3> tmpNormalOffsets;
       std::vector<uint32_t> tmpPointIndices;
 
+      // In-between offsets are parallel to the primary `pointIndices`, so they
+      // are splatted with the same remap to stay aligned after reordering. Only
+      // pointOffsets are carried (the converter does not store in-between
+      // normalOffsets -- morphed meshes shade with recomputed normals).
+      std::vector<InbetweenShapeTarget *> ibTargets;
+      std::vector<std::vector<value::float3>> ibTmpPointOffsets;
+      for (auto &ib : target.second.inbetweens) {
+        ibTargets.push_back(&ib.second);
+        ibTmpPointOffsets.emplace_back();
+      }
+
       for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
 
         uint32_t orgPointIdx = target.second.pointIndices[i];
@@ -2267,6 +2185,15 @@ static bool ReorderVertexVaryingAttributes(
             tmpNormalOffsets.push_back(target.second.normalOffsets[i]);
           }
 
+          for (size_t b = 0; b < ibTargets.size(); b++) {
+            if (ibTargets[b]->pointOffsets.size()) {
+              if (i >= ibTargets[b]->pointOffsets.size()) {
+                PUSH_ERROR_AND_RETURN("Invalid in-between pointOffsets.size.");
+              }
+              ibTmpPointOffsets[b].push_back(ibTargets[b]->pointOffsets[i]);
+            }
+          }
+
           tmpPointIndices.push_back(dstPointIndices[k]);
         }
       }
@@ -2275,9 +2202,11 @@ static bool ReorderVertexVaryingAttributes(
       target.second.pointOffsets.swap(tmpPointOffsets);
       target.second.normalOffsets.swap(tmpNormalOffsets);
 
-    }
+      for (size_t b = 0; b < ibTargets.size(); b++) {
+        ibTargets[b]->pointOffsets.swap(ibTmpPointOffsets[b]);
+      }
 
-    // TODO: Inbetween BlendShapes
+    }
 
   }
 
@@ -2898,98 +2827,27 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  const uint32_t src_num_faces = uint32_t(dst.usdFaceVertexCounts.size());
-  bool subdivision_applied{false};
-  std::vector<uint32_t> src_face_vertex_counts;
-  src_face_vertex_counts = dst.usdFaceVertexCounts;
-#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
-  GeomMesh::SubdivisionScheme subdivision_scheme =
-      GeomMesh::SubdivisionScheme::SubdivisionSchemeNone;
-
-  if (env.mesh_config.subdivision_level > 0) {
-    GeomMesh::SubdivisionScheme scheme = mesh.subdivisionScheme.get_value();
-    if (scheme != GeomMesh::SubdivisionScheme::SubdivisionSchemeNone) {
-      subdivision_scheme = scheme;
-      if (mesh.has_primvar("displayColor") ||
-          mesh.has_primvar("displayOpacity")) {
-        PUSH_ERROR_AND_RETURN(
-            "Subdivision is not yet supported for meshes with authored "
-            "`displayColor` or `displayOpacity` primvars in Tydra conversion.");
-      }
-
-      if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name) ||
-          mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
-        PUSH_ERROR_AND_RETURN(
-            "Subdivision is not yet supported for meshes with authored tangent "
-            "or binormal primvars in Tydra conversion.");
-      }
-
-      if (mesh.has_primvar("skel:jointIndices") ||
-          mesh.has_primvar("skel:jointWeights")) {
-        PUSH_ERROR_AND_RETURN(
-            "Subdivision is not yet supported for skinned meshes in Tydra "
-            "conversion.");
-      }
-
-      if (!blendshapes.empty()) {
-        PUSH_ERROR_AND_RETURN(
-            "Subdivision is not yet supported for meshes with BlendShapes in "
-            "Tydra conversion.");
-      }
-
-      if (mesh.has_primvar("normals") || mesh.normals.authored()) {
-        PUSH_WARN(
-            "Subdivision currently ignores authored normals and recomputes "
-            "normals from the subdivided topology.");
-      }
-
-      ControlQuadMesh control_mesh;
-      control_mesh.vertices.resize(dst.points.size() * 3);
-      memcpy(control_mesh.vertices.data(), dst.points.data(),
-             dst.points.size() * sizeof(value::float3));
-
-      control_mesh.indices.reserve(dst.usdFaceVertexIndices.size());
-      for (uint32_t idx : dst.usdFaceVertexIndices) {
-        control_mesh.indices.push_back(int(idx));
-      }
-
-      control_mesh.verts_per_faces.reserve(dst.usdFaceVertexCounts.size());
-      for (uint32_t count : dst.usdFaceVertexCounts) {
-        control_mesh.verts_per_faces.push_back(int(count));
-      }
-
-      SubdividedMesh subdivided_mesh;
-      std::string subdiv_err;
-      if (!subdivide(env.mesh_config.subdivision_level, control_mesh,
-                     &subdivided_mesh, &subdiv_err, ToSubdivScheme(scheme))) {
-        PUSH_ERROR_AND_RETURN("Subdivision failed: " + subdiv_err);
-      }
-
-      if ((subdivided_mesh.vertices.size() % 3) != 0) {
-        PUSH_ERROR_AND_RETURN(
-            "Subdivision produced invalid vertex buffer length.");
-      }
-      if ((subdivided_mesh.triangulated_indices.size() % 3) != 0) {
-        PUSH_ERROR_AND_RETURN(
-            "Subdivision produced invalid triangle index buffer length.");
-      }
-      if (subdivided_mesh.face_ids.size() !=
-          (subdivided_mesh.triangulated_indices.size() / 3)) {
-        PUSH_ERROR_AND_RETURN(
-            "Subdivision produced inconsistent face provenance data.");
-      }
-
-      dst.points.resize(subdivided_mesh.vertices.size() / 3);
-      memcpy(dst.points.data(), subdivided_mesh.vertices.data(),
-             subdivided_mesh.vertices.size() * sizeof(float));
-
-      dst.usdFaceVertexIndices = std::move(subdivided_mesh.triangulated_indices);
-      dst.usdFaceVertexCounts.assign(dst.usdFaceVertexIndices.size() / 3, 3);
-
-      subdivision_applied = true;
-    }
+  uint32_t src_num_faces = 0;
+  if (!SizeToU32(dst.usdFaceVertexCounts.size(), &src_num_faces)) {
+    PUSH_ERROR_AND_RETURN("Mesh face count exceeds 32-bit index space.");
   }
-#endif
+  bool subdivision_applied{false};
+  // Base-face id per refined face when subdivision is applied (used to
+  // remap GeomSubset face indices).
+  std::vector<uint32_t> subdiv_face_source;
+  const bool want_subdivision =
+      (env.mesh_config.subdivision_level > 0) &&
+      (mesh.subdivisionScheme.get_value() !=
+       GeomMesh::SubdivisionScheme::SubdivisionSchemeNone);
+
+  // Authored normals cannot survive refinement meaningfully; they are
+  // recomputed from the subdivided topology.
+  if (want_subdivision &&
+      (mesh.has_primvar("normals") || mesh.normals.authored())) {
+    PUSH_WARN(
+        "Subdivision currently ignores authored normals and recomputes "
+        "normals from the subdivided topology.");
+  }
 
 
   //
@@ -3004,11 +2862,15 @@ bool RenderSceneConverter::ConvertMesh(
   if (auto it = rmaterial_map.find(material_path.material_path);
       it != rmaterial_map.s_end()) {
     dst.material_id = int(it->second);
+  } else {
+    dst.material_id = material_path.default_material_id;
   }
 
   if (auto it = rmaterial_map.find(material_path.backface_material_path);
       it != rmaterial_map.s_end()) {
     dst.backface_material_id = int(it->second);
+  } else {
+    dst.backface_material_id = material_path.default_backface_material_id;
   }
 
   if (env.mesh_config.validate_geomsubset) {
@@ -3060,12 +2922,16 @@ bool RenderSceneConverter::ConvertMesh(
         ms.material_id = int(mat_it->second);
         DCOUT("MaterialSubset " << psubset->name << " : material_id "
                                 << ms.material_id);
+      } else {
+        ms.material_id = mp.default_material_id;
       }
       if (auto backface_it = rmaterial_map.find(mp.backface_material_path);
           backface_it != rmaterial_map.s_end()) {
         ms.backface_material_id = int(backface_it->second);
         DCOUT("MaterialSubset " << psubset->name << " : backface_material_id "
                                 << ms.backface_material_id);
+      } else {
+        ms.backface_material_id = mp.default_backface_material_id;
       }
     }
 
@@ -3073,21 +2939,14 @@ bool RenderSceneConverter::ConvertMesh(
     dst.material_subsetMap[ms.prim_name] = ms;
   }
 
-  if (subdivision_applied) {
-#if defined(TINYUSDZ_WITH_OPENSUBDIV) || defined(TINYUSDZ_WITH_TINYSUBDIV)
-    if (!dst.material_subsetMap.empty() &&
-        !RemapSubdivisionMaterialSubsets(src_face_vertex_counts,
-                                        subdivision_scheme,
-                                        env.mesh_config.subdivision_level,
-                                        &dst.material_subsetMap, &_err)) {
-      return false;
-    }
-#endif
+  uint32_t num_vertices = 0;
+  uint32_t num_faces = 0;
+  uint32_t num_face_vertex_indices = 0;
+  if (!SizeToU32(dst.points.size(), &num_vertices) ||
+      !SizeToU32(dst.usdFaceVertexCounts.size(), &num_faces) ||
+      !SizeToU32(dst.usdFaceVertexIndices.size(), &num_face_vertex_indices)) {
+    PUSH_ERROR_AND_RETURN("Mesh counts exceed 32-bit index space.");
   }
-
-  uint32_t num_vertices = uint32_t(dst.points.size());
-  uint32_t num_faces = uint32_t(dst.usdFaceVertexCounts.size());
-  uint32_t num_face_vertex_indices = uint32_t(dst.usdFaceVertexIndices.size());
 
   //
   // List up texcoords in this mesh.
@@ -3228,16 +3087,76 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  if (subdivision_applied && !uvAttrs.empty()) {
-    PUSH_ERROR_AND_RETURN(
-        "Subdivision is not yet supported for meshes requiring UV primvars in "
-        "Tydra conversion.");
+  // Optionally expose EVERY authored texCoord2f[] primvar as a UV slot (secondary
+  // UV sets that no shader references), for multi-UV tools. Off by default so the
+  // standard slot assignment is untouched.
+  if (env.mesh_config.extract_all_texcoords) {
+    std::set<std::string> have_uv_names;
+    uint32_t next_uv_slot = 0;
+    for (const auto &kv : uvAttrs) {
+      have_uv_names.insert(kv.second.name);
+      next_uv_slot = (std::max)(next_uv_slot, kv.first + 1u);
+    }
+    for (const GeomPrimvar &pv : mesh.get_primvars()) {
+      if (pv.type_name() != "texCoord2f[]") continue;  // strict UV role only
+      const std::string pv_name = pv.name();
+      if (have_uv_names.count(pv_name)) continue;
+      auto ret = GetTextureCoordinate(env.stage, mesh, pv_name, env.timecode,
+                                      env.tinterp, prim_path_str, &_warn);
+      if (ret) {
+        have_uv_names.insert(pv_name);
+        uvAttrs.emplace(next_uv_slot++, std::move(ret.value()));
+      }
+    }
   }
 
-  //TUSDZ_LOG_I("done uvAttr");
+  //
+  // Gather displayColor/displayOpacity primvars (validated against the base
+  // topology) so they can refine through subdivision together with the
+  // geometry and UVs. Without subdivision they convert exactly as before.
+  //
+  constexpr auto kDisplayColor = "displayColor";
+  constexpr auto kDisplayOpacity = "displayOpacity";
+  VertexAttribute vcolor;
+  VertexAttribute vopacity;
+  if (mesh.has_primvar(kDisplayColor)) {
+    GeomPrimvar pvar;
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err,
+                        &_warn)) {
+      return false;
+    }
+    std::string warn_msg;
+    if (!ToVertexAttribute(pvar, kDisplayColor, num_vertices, num_faces,
+                           num_face_vertex_indices, vcolor, &_err,
+                           env.timecode, env.tinterp, &warn_msg)) {
+      return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
+    }
+  }
+  if (mesh.has_primvar(kDisplayOpacity)) {
+    GeomPrimvar pvar;
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err,
+                        &_warn)) {
+      return false;
+    }
+    std::string warn_msg;
+    if (!ToVertexAttribute(pvar, kDisplayOpacity, num_vertices, num_faces,
+                           num_face_vertex_indices, vopacity, &_err,
+                           env.timecode, env.tinterp, &warn_msg)) {
+      return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
+    }
+  }
 
-  if (!subdivision_applied &&
-      mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
+  //
+  // Gather tangent/binormal primvars (validated against the base topology)
+  // so they refine through subdivision with the geometry.
+  //
+  if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
 
     if (!GetGeomPrimvar(env.stage, &mesh,
@@ -3258,8 +3177,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  if (!subdivision_applied &&
-      mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
+  if (mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
     GeomPrimvar pvar;
 
     if (!GetGeomPrimvar(env.stage, &mesh,
@@ -3280,25 +3198,628 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  constexpr auto kDisplayColor = "displayColor";
-  if (!subdivision_applied && mesh.has_primvar(kDisplayColor)) {
-    GeomPrimvar pvar;
+  // Refined skin weights / blendshape offsets produced by the subdivision
+  // block below and consumed by the skinning / BlendShape conversion steps.
+  std::vector<int> subdiv_skin_joint_indices;
+  std::vector<float> subdiv_skin_joint_weights;
+  bool subdiv_skin_refined = false;
+  // Per BlendShape: compacted refined point indices, primary xyz offsets and
+  // optional in-between xyz offsets keyed by their authored weight.
+  struct RefinedBlendShapeOffsets {
+    std::vector<uint32_t> indices;
+    std::vector<float> point_offsets;
+    std::map<float, std::vector<float>> inbetween_offsets;
+  };
+  std::map<const BlendShape *, RefinedBlendShapeOffsets> subdiv_bs_offsets;
 
-    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err, &_warn)) {
-      return false;
+  //
+  // Apply subdivision: geometry plus the gathered UV, display, tangent,
+  // skin-weight and blendshape-offset primvars, which refine in lockstep
+  // through tinysubdiv (faceVarying channels through the seam-split fvar
+  // path, vertex/varying as per-point primvars, uniform via face_source
+  // replication, constant untouched).
+  //
+  if (want_subdivision) {
+    std::vector<float> control_points(dst.points.size() * 3);
+    memcpy(control_points.data(), dst.points.data(),
+           dst.points.size() * sizeof(value::float3));
+
+    // Float-typed attributes that refine with the geometry. Direction-like
+    // attributes (tangents/binormals) are renormalized after refinement.
+    std::vector<VertexAttribute *> subdiv_attrs;
+    std::vector<uint8_t> subdiv_attr_normalize;
+    for (auto &uv : uvAttrs) {
+      subdiv_attrs.push_back(&uv.second);
+      subdiv_attr_normalize.push_back(0);
+    }
+    if (!vcolor.get_data().empty()) {
+      subdiv_attrs.push_back(&vcolor);
+      subdiv_attr_normalize.push_back(0);
+    }
+    if (!vopacity.get_data().empty()) {
+      subdiv_attrs.push_back(&vopacity);
+      subdiv_attr_normalize.push_back(0);
+    }
+    if (!dst.tangents.get_data().empty()) {
+      subdiv_attrs.push_back(&dst.tangents);
+      subdiv_attr_normalize.push_back(1);
+    }
+    if (!dst.binormals.get_data().empty()) {
+      subdiv_attrs.push_back(&dst.binormals);
+      subdiv_attr_normalize.push_back(1);
     }
 
-    VertexAttribute vcolor;
-    std::string warn_msg;
-    if (!ToVertexAttribute(pvar, kDisplayColor, num_vertices, num_faces,
-                           num_face_vertex_indices, vcolor, &_err, env.timecode,
-                           env.tinterp, &warn_msg)) {
-      return false;
-    }
-    if (!warn_msg.empty()) {
-      _warn += warn_msg;
+    // Floats per item, for the float32 formats tinysubdiv refines.
+    auto attr_components = [](const VertexAttribute &a) -> uint32_t {
+      switch (a.format) {
+        case VertexAttributeFormat::Float:
+          return 1;
+        case VertexAttributeFormat::Vec2:
+          return 2;
+        case VertexAttributeFormat::Vec3:
+          return 3;
+        case VertexAttributeFormat::Vec4:
+          return 4;
+        default:
+          return 0;
+      }
+    };
+
+    std::vector<tsd::FVarChannelView> fvar_channels;
+    std::vector<VertexAttribute *> fvar_attrs;
+    std::vector<uint8_t> fvar_normalize;
+    std::vector<tsd::VertexPrimvarView> vertex_primvars;
+    std::vector<VertexAttribute *> vertex_attrs;
+    std::vector<uint8_t> vertex_normalize;
+    std::vector<VertexAttribute *> uniform_attrs;
+
+    for (size_t ai = 0; ai < subdiv_attrs.size(); ai++) {
+      VertexAttribute *vattr = subdiv_attrs[ai];
+      const uint32_t components = attr_components(*vattr);
+      if (components == 0 || vattr->element_size() != 1 ||
+          !vattr->indices.empty()) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Subdivision requires flattened float1/2/3/4 primvars with "
+            "elementSize 1 (primvar `{}`).",
+            vattr->name));
+      }
+      if (vattr->variability == VertexVariability::FaceVarying) {
+        tsd::FVarChannelView ch;
+        ch.values = reinterpret_cast<const float *>(vattr->get_data().data());
+        if (!SizeToU32(vattr->vertex_count(), &ch.num_values)) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Subdivision primvar `{}` exceeds 32-bit value count.", vattr->name));
+        }
+        ch.indices = nullptr;  // flattened; seams recovered by value equality
+        ch.stride = components;
+        fvar_channels.push_back(ch);
+        fvar_attrs.push_back(vattr);
+        fvar_normalize.push_back(subdiv_attr_normalize[ai]);
+      } else if (vattr->variability == VertexVariability::Vertex ||
+                 vattr->variability == VertexVariability::Varying) {
+        tsd::VertexPrimvarView pv;
+        pv.values = reinterpret_cast<const float *>(vattr->get_data().data());
+        pv.stride = components;
+        pv.varying = (vattr->variability == VertexVariability::Varying);
+        vertex_primvars.push_back(pv);
+        vertex_attrs.push_back(vattr);
+        vertex_normalize.push_back(subdiv_attr_normalize[ai]);
+      } else if (vattr->variability == VertexVariability::Uniform) {
+        uniform_attrs.push_back(vattr);
+      }
+      // Constant: unaffected by refinement.
     }
 
+    //
+    // Skin weights: expand the sparse per-vertex (jointIndex, weight) pairs
+    // into dense per-joint columns over the joints actually used, refine
+    // them like any other per-point primvar, then re-sparsify back to the
+    // authored influence count below.
+    //
+    const bool has_skin = mesh.has_primvar("skel:jointIndices") &&
+                          mesh.has_primvar("skel:jointWeights");
+    std::vector<int> skin_used_joints;          // dense column -> joint id
+    std::vector<std::vector<float>> skin_chan;  // per-channel column data
+    uint32_t skin_K = 0;
+    const size_t skin_channel_begin = vertex_primvars.size();
+    if (has_skin) {
+      GeomPrimvar ji;
+      GeomPrimvar jw;
+      if (!GetGeomPrimvar(env.stage, &mesh, "skel:jointIndices", &ji, &_err) ||
+          !GetGeomPrimvar(env.stage, &mesh, "skel:jointWeights", &jw, &_err)) {
+        return false;
+      }
+      if (!ji.has_interpolation() || !jw.has_interpolation()) {
+        PUSH_ERROR_AND_RETURN(
+            "`skel:jointIndices`/`skel:jointWeights` primvars must author "
+            "`interpolation` metadata.");
+      }
+      if ((ji.get_interpolation() != Interpolation::Vertex) &&
+          (ji.get_interpolation() != Interpolation::Varying)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "`skel:jointIndices` primvar must use `vertex` or `varying` "
+            "interpolation before subdivision, but got `{}`.",
+            to_string(ji.get_interpolation())));
+      }
+      if ((jw.get_interpolation() != Interpolation::Vertex) &&
+          (jw.get_interpolation() != Interpolation::Varying)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "`skel:jointWeights` primvar must use `vertex` or `varying` "
+            "interpolation before subdivision, but got `{}`.",
+            to_string(jw.get_interpolation())));
+      }
+      skin_K = ji.get_elementSize();
+      if (skin_K == 0 || skin_K != jw.get_elementSize()) {
+        PUSH_ERROR_AND_RETURN(
+            "`elementSize` of skel:jointIndices/skel:jointWeights must be "
+            "equal and non-zero.");
+      }
+      if (skin_K > env.mesh_config.max_skin_elementSize) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "`elementSize` {} of skel:jointIndices/skel:jointWeights too "
+            "large for subdivision. Max allowed is {}.",
+            skin_K, env.mesh_config.max_skin_elementSize));
+      }
+      std::vector<int> jidx;
+      std::vector<float> jwts;
+      if (!ji.flatten_with_indices(env.timecode, &jidx, env.tinterp) ||
+          !jw.flatten_with_indices(env.timecode, &jwts, env.tinterp)) {
+        PUSH_ERROR_AND_RETURN(
+            "Failed to flatten skel:jointIndices/skel:jointWeights.");
+      }
+      size_t expected_skin_count = 0;
+      if (!safe::mul(size_t(num_vertices), size_t(skin_K),
+                     &expected_skin_count)) {
+        PUSH_ERROR_AND_RETURN("skel:jointIndices/skel:jointWeights size overflow.");
+      }
+      if (jidx.size() != jwts.size() || jidx.size() != expected_skin_count) {
+        PUSH_ERROR_AND_RETURN(
+            "skel:jointIndices/skel:jointWeights must hold elementSize "
+            "entries per vertex.");
+      }
+
+      constexpr size_t kMaxSubdivSkinJoints = 256;
+      tinyusdz::HashMap<int, uint32_t> joint_column;
+      joint_column.reserve(std::min<size_t>(jidx.size(), kMaxSubdivSkinJoints));
+      for (size_t i = 0; i < jidx.size(); i++) {
+        if (jwts[i] == 0.0f) {
+          continue;
+        }
+        if (jidx[i] < 0) {
+          PUSH_ERROR_AND_RETURN("Negative index in skel:jointIndices.");
+        }
+        const auto inserted =
+            joint_column.emplace(jidx[i], uint32_t(skin_used_joints.size()));
+        if (inserted.second) {
+          if (skin_used_joints.size() >= kMaxSubdivSkinJoints) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Subdivision of skinned meshes supports up to {} distinct "
+                "influencing joints.",
+                kMaxSubdivSkinJoints));
+          }
+          skin_used_joints.push_back(jidx[i]);
+        }
+      }
+      // Bound the dense expansion (memory: refined_points * used_joints).
+      if (skin_used_joints.size() > kMaxSubdivSkinJoints) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Subdivision of skinned meshes supports up to {} distinct "
+            "influencing joints, but the mesh uses {}.",
+            kMaxSubdivSkinJoints, skin_used_joints.size()));
+      }
+
+      const size_t J = skin_used_joints.size();
+      const bool skin_varying =
+          (jw.get_interpolation() == Interpolation::Varying);
+      // Pack columns into stride-4 channels (the dense matrix is row-major
+      // per point, so each channel gets its own contiguous buffer).
+      const size_t num_chan = (J + 3) / 4;
+      skin_chan.resize(num_chan);
+      for (size_t c = 0; c < num_chan; c++) {
+        const uint32_t stride = uint32_t(std::min<size_t>(4, J - c * 4));
+        size_t channel_count = 0;
+        if (!safe::mul(size_t(num_vertices), size_t(stride), &channel_count)) {
+          PUSH_ERROR_AND_RETURN("Subdivision skin channel size overflow.");
+        }
+        skin_chan[c].assign(channel_count, 0.0f);
+      }
+      for (uint32_t v = 0; v < num_vertices; v++) {
+        for (uint32_t k = 0; k < skin_K; k++) {
+          const float w = jwts[size_t(v) * skin_K + k];
+          if (w == 0.0f) {
+            continue;
+          }
+          const auto col_it = joint_column.find(jidx[size_t(v) * skin_K + k]);
+          if (col_it == joint_column.end()) {
+            PUSH_ERROR_AND_RETURN("Internal error: missing subdivision skin joint column.");
+          }
+          const uint32_t col = col_it->second;
+          const size_t c = col / 4;
+          const uint32_t stride = uint32_t(std::min<size_t>(4, J - c * 4));
+          skin_chan[c][size_t(v) * stride + (col % 4)] += w;
+        }
+      }
+      for (size_t c = 0; c < num_chan; c++) {
+        tsd::VertexPrimvarView pv;
+        pv.values = skin_chan[c].data();
+        pv.stride = uint32_t(std::min<size_t>(4, J - c * 4));
+        pv.varying = skin_varying;
+        vertex_primvars.push_back(pv);
+      }
+    }
+
+    //
+    // BlendShape point offsets: subdivision is linear in the point data, so
+    // refining the (densified) offset field with the same smooth weights
+    // yields exactly the offsets of the refined blended mesh.
+    //
+    std::vector<const BlendShape *> bs_refined;
+    std::vector<std::vector<float>> bs_dense;
+    const size_t bs_channel_begin = vertex_primvars.size();
+    struct RefinedBlendShapeInbetween {
+      const BlendShape *blendshape{nullptr};
+      float weight{0.0f};
+    };
+    std::vector<RefinedBlendShapeInbetween> bs_ib_refined;
+    std::vector<std::vector<float>> bs_ib_dense;
+    for (const auto &bs_it : blendshapes) {
+      const BlendShape *bs = bs_it.second;
+      if (!bs) {
+        continue;
+      }
+      std::vector<int> bs_indices;
+      std::vector<value::vector3f> bs_point_offsets;
+      std::vector<value::vector3f> bs_normal_offsets;
+      bs->pointIndices.get_value(&bs_indices);
+      bs->offsets.get_value(&bs_point_offsets);
+      bs->normalOffsets.get_value(&bs_normal_offsets);
+      if (bs_indices.empty() || bs_point_offsets.size() != bs_indices.size()) {
+        continue;  // the BlendShape conversion step warns and skips these
+      }
+      if (!bs_normal_offsets.empty()) {
+        PUSH_WARN(fmt::format(
+            "BlendShape `{}` normalOffsets are ignored under subdivision "
+            "(normals are recomputed from the refined topology).",
+            bs->name));
+      }
+      std::vector<float> dense(size_t(num_vertices) * 3, 0.0f);
+      for (size_t i = 0; i < bs_indices.size(); i++) {
+        if (bs_indices[i] < 0 || uint32_t(bs_indices[i]) >= num_vertices) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "pointIndices[{}] {} in BlendShape `{}` is out of range.", i,
+              bs_indices[i], bs->name));
+        }
+        dense[size_t(bs_indices[i]) * 3 + 0] = bs_point_offsets[i][0];
+        dense[size_t(bs_indices[i]) * 3 + 1] = bs_point_offsets[i][1];
+        dense[size_t(bs_indices[i]) * 3 + 2] = bs_point_offsets[i][2];
+      }
+      bs_dense.push_back(std::move(dense));
+      bs_refined.push_back(bs);
+
+      for (const auto &pkv : bs->props) {
+        if (pkv.first.rfind("inbetweens:", 0) != 0) {
+          continue;
+        }
+        const Property &p = pkv.second;
+        if (!p.is_attribute()) {
+          continue;
+        }
+        const Attribute &a = p.get_attribute();
+        if (!a.metas().has_weight()) {
+          PUSH_WARN(fmt::format(
+              "In-between BlendShape `{}` has no `weight` metadata. Skipping.",
+              pkv.first));
+          continue;
+        }
+        std::vector<value::vector3f> ib_offsets;
+        if (!a.get_value(&ib_offsets)) {
+          continue;
+        }
+        if (ib_offsets.size() != bs_indices.size()) {
+          PUSH_WARN(fmt::format(
+              "In-between BlendShape `{}` offset count {} differs from "
+              "pointIndices count {}. Skipping.",
+              pkv.first, ib_offsets.size(), bs_indices.size()));
+          continue;
+        }
+
+        std::vector<float> ib_dense(size_t(num_vertices) * 3, 0.0f);
+        for (size_t i = 0; i < bs_indices.size(); i++) {
+          ib_dense[size_t(bs_indices[i]) * 3 + 0] = ib_offsets[i][0];
+          ib_dense[size_t(bs_indices[i]) * 3 + 1] = ib_offsets[i][1];
+          ib_dense[size_t(bs_indices[i]) * 3 + 2] = ib_offsets[i][2];
+        }
+        bs_ib_refined.push_back(
+            RefinedBlendShapeInbetween{bs, float(a.metas().get_weight())});
+        bs_ib_dense.push_back(std::move(ib_dense));
+      }
+    }
+    for (const std::vector<float> &dense : bs_dense) {
+      tsd::VertexPrimvarView pv;
+      pv.values = dense.data();
+      pv.stride = 3;
+      pv.varying = false;  // offsets follow the surface (smooth weights)
+      vertex_primvars.push_back(pv);
+    }
+    const size_t bs_ib_channel_begin = vertex_primvars.size();
+    for (const std::vector<float> &dense : bs_ib_dense) {
+      tsd::VertexPrimvarView pv;
+      pv.values = dense.data();
+      pv.stride = 3;
+      pv.varying = false;
+      vertex_primvars.push_back(pv);
+    }
+
+    tsd::RefinedMesh refined;
+    std::string subdiv_err;
+    uint32_t subdiv_fvar_count = 0;
+    uint32_t subdiv_vertex_pv_count = 0;
+    if (!SizeToU32(fvar_channels.size(), &subdiv_fvar_count) ||
+        !SizeToU32(vertex_primvars.size(), &subdiv_vertex_pv_count)) {
+      PUSH_ERROR_AND_RETURN("Subdivision primvar channel count exceeds 32-bit index space.");
+    }
+    if (!tsd::RefineGeomMesh(
+            mesh, env.mesh_config.subdivision_level, control_points,
+            dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
+            fvar_channels.empty() ? nullptr : fvar_channels.data(),
+            subdiv_fvar_count,
+            vertex_primvars.empty() ? nullptr : vertex_primvars.data(),
+            subdiv_vertex_pv_count, &refined, &subdiv_err)) {
+      PUSH_ERROR_AND_RETURN("Subdivision failed: " + subdiv_err);
+    }
+
+    dst.points.resize(refined.points.size() / 3);
+    memcpy(dst.points.data(), refined.points.data(),
+           refined.points.size() * sizeof(float));
+    dst.usdFaceVertexCounts = std::move(refined.face_vertex_counts);
+    dst.usdFaceVertexIndices = std::move(refined.face_vertex_indices);
+    subdiv_face_source = std::move(refined.face_source);
+
+    // Renormalizes direction-like refined tuples (first 3 components).
+    auto renormalize3 = [](std::vector<float> &vals, uint32_t stride) {
+      if (stride < 3) {
+        return;
+      }
+      for (size_t i = 0; i + stride <= vals.size(); i += stride) {
+        const float len =
+            std::sqrt(vals[i] * vals[i] + vals[i + 1] * vals[i + 1] +
+                      vals[i + 2] * vals[i + 2]);
+        if (len > 0.0f) {
+          vals[i] /= len;
+          vals[i + 1] /= len;
+          vals[i + 2] /= len;
+        }
+      }
+    };
+
+    // Write refined values back (faceVarying: per refined corner;
+    // vertex/varying: per refined point).
+    for (size_t i = 0; i < fvar_attrs.size(); i++) {
+      std::vector<float> vals = std::move(refined.fvar[i]);
+      if (fvar_normalize[i]) {
+        renormalize3(vals, attr_components(*fvar_attrs[i]));
+      }
+      size_t bytes = 0;
+      if (!safe::mul(vals.size(), sizeof(float), &bytes)) {
+        PUSH_ERROR_AND_RETURN("Subdivision faceVarying primvar byte size overflow.");
+      }
+      fvar_attrs[i]->get_data().resize(bytes);
+      memcpy(fvar_attrs[i]->get_data().data(), vals.data(),
+             bytes);
+    }
+    for (size_t i = 0; i < vertex_attrs.size(); i++) {
+      std::vector<float> vals = std::move(refined.vertex_primvars[i]);
+      if (vertex_normalize[i]) {
+        renormalize3(vals, attr_components(*vertex_attrs[i]));
+      }
+      size_t bytes = 0;
+      if (!safe::mul(vals.size(), sizeof(float), &bytes)) {
+        PUSH_ERROR_AND_RETURN("Subdivision vertex primvar byte size overflow.");
+      }
+      vertex_attrs[i]->get_data().resize(bytes);
+      memcpy(vertex_attrs[i]->get_data().data(), vals.data(),
+             bytes);
+    }
+
+    const size_t refined_points = dst.points.size();
+
+    // Re-sparsify refined skin weights: per refined point, clamp negative
+    // (smooth) contributions, keep the strongest K influences, renormalize.
+    if (has_skin) {
+      const size_t J = skin_used_joints.size();
+      size_t skin_out_count = 0;
+      if (!safe::mul(refined_points, size_t(skin_K), &skin_out_count)) {
+        PUSH_ERROR_AND_RETURN("Refined skin output size overflow.");
+      }
+      subdiv_skin_joint_indices.assign(skin_out_count, 0);
+      subdiv_skin_joint_weights.assign(skin_out_count, 0.0f);
+      std::vector<float> top_w(skin_K, 0.0f);
+      std::vector<uint32_t> top_j(skin_K, 0);
+      for (size_t v = 0; v < refined_points && J > 0; v++) {
+        // Top-K selection over the dense per-joint weights.
+        const uint32_t K = skin_K;
+        uint32_t used = 0;
+        for (uint32_t col = 0; col < J; col++) {
+          const size_t c = col / 4;
+          const uint32_t stride = uint32_t(std::min<size_t>(4, J - c * 4));
+          float w = refined.vertex_primvars[skin_channel_begin + c]
+                           [v * stride + (col % 4)];
+          if (w <= 0.0f) {
+            continue;  // clamp slight negative smooth overshoot
+          }
+          // Insertion into the descending top-K list.
+          uint32_t pos = used < K ? used : K;
+          while (pos > 0 && top_w[pos - 1] < w) {
+            if (pos < K) {
+              top_w[pos] = top_w[pos - 1];
+              top_j[pos] = top_j[pos - 1];
+            }
+            pos--;
+          }
+          if (pos < K) {
+            top_w[pos] = w;
+            top_j[pos] = col;
+            if (used < K) {
+              used++;
+            }
+          }
+        }
+        float sum = 0.0f;
+        for (uint32_t k = 0; k < used; k++) {
+          sum += top_w[k];
+        }
+        if (sum > 0.0f) {
+          const size_t dst_base = v * size_t(skin_K);
+          for (uint32_t k = 0; k < used; k++) {
+            subdiv_skin_joint_indices[dst_base + k] =
+                skin_used_joints[top_j[k]];
+            subdiv_skin_joint_weights[dst_base + k] = top_w[k] / sum;
+          }
+        }
+      }
+      subdiv_skin_refined = true;
+    }
+
+    // Compact refined blendshape offsets. Include points touched by either the
+    // primary shape or any in-between so all compacted offset arrays remain
+    // parallel.
+    for (size_t i = 0; i < bs_refined.size(); i++) {
+      const BlendShape *bs = bs_refined[i];
+      const std::vector<float> &vals =
+          refined.vertex_primvars[bs_channel_begin + i];
+      std::vector<uint32_t> indices;
+      std::vector<float> offsets;
+      std::vector<size_t> ib_channels;
+      for (size_t ib_i = 0; ib_i < bs_ib_refined.size(); ib_i++) {
+        if (bs_ib_refined[ib_i].blendshape == bs) {
+          ib_channels.push_back(ib_i);
+        }
+      }
+      std::map<float, std::vector<float>> inbetween_offsets;
+      for (size_t v = 0; v < refined_points; v++) {
+        const float x = vals[3 * v];
+        const float y = vals[3 * v + 1];
+        const float z = vals[3 * v + 2];
+        bool keep = (x != 0.0f || y != 0.0f || z != 0.0f);
+        for (size_t ib_i : ib_channels) {
+          const std::vector<float> &ib_vals =
+              refined.vertex_primvars[bs_ib_channel_begin + ib_i];
+          if (ib_vals[3 * v] != 0.0f || ib_vals[3 * v + 1] != 0.0f ||
+              ib_vals[3 * v + 2] != 0.0f) {
+            keep = true;
+            break;
+          }
+        }
+        if (keep) {
+          indices.push_back(uint32_t(v));
+          offsets.push_back(x);
+          offsets.push_back(y);
+          offsets.push_back(z);
+          for (size_t ib_i : ib_channels) {
+            const std::vector<float> &ib_vals =
+                refined.vertex_primvars[bs_ib_channel_begin + ib_i];
+            std::vector<float> &ib_out =
+                inbetween_offsets[bs_ib_refined[ib_i].weight];
+            ib_out.push_back(ib_vals[3 * v]);
+            ib_out.push_back(ib_vals[3 * v + 1]);
+            ib_out.push_back(ib_vals[3 * v + 2]);
+          }
+        }
+      }
+      RefinedBlendShapeOffsets refined_bs;
+      refined_bs.indices = std::move(indices);
+      refined_bs.point_offsets = std::move(offsets);
+      refined_bs.inbetween_offsets = std::move(inbetween_offsets);
+      subdiv_bs_offsets[bs] = std::move(refined_bs);
+    }
+    // Uniform (per-face) attributes replicate through face_source.
+    for (VertexAttribute *vattr : uniform_attrs) {
+      const uint32_t components = attr_components(*vattr);
+      const float *src_vals =
+          reinterpret_cast<const float *>(vattr->get_data().data());
+      size_t value_count = 0;
+      if (!safe::mul(subdiv_face_source.size(), size_t(components),
+                     &value_count)) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision uniform primvar value count overflow.");
+      }
+      std::vector<float> vals(value_count);
+      for (size_t rf = 0; rf < subdiv_face_source.size(); rf++) {
+        const size_t dst_base = rf * size_t(components);
+        const size_t src_base = size_t(components) * subdiv_face_source[rf];
+        for (uint32_t c = 0; c < components; c++) {
+          vals[dst_base + c] = src_vals[src_base + c];
+        }
+      }
+      size_t bytes = 0;
+      if (!safe::mul(vals.size(), sizeof(float), &bytes)) {
+        PUSH_ERROR_AND_RETURN(
+            "Subdivision uniform primvar byte size overflow.");
+      }
+      vattr->get_data().resize(bytes);
+      memcpy(vattr->get_data().data(), vals.data(), bytes);
+    }
+
+    subdivision_applied = true;
+
+    // Remap material subset face indices onto the refined mesh: a base face
+    // maps to every refined face whose face_source points back at it. The
+    // remapped ids land in `triangulatedIndices` (the effective index set);
+    // the triangulation pass below remaps them again when enabled.
+    if (!dst.material_subsetMap.empty()) {
+      // Invert face_source: base face -> contiguous run of refined faces.
+      std::vector<uint32_t> counts(src_num_faces, 0);
+      for (uint32_t srcf : subdiv_face_source) {
+        if (srcf >= src_num_faces) {
+          PUSH_ERROR_AND_RETURN(
+              "Subdivision produced invalid face provenance.");
+        }
+        counts[srcf]++;
+      }
+      std::vector<uint32_t> offsets(size_t(src_num_faces) + 1, 0);
+      for (uint32_t f = 0; f < src_num_faces; f++) {
+        offsets[f + 1] = offsets[f] + counts[f];
+      }
+      std::vector<uint32_t> refined_ids(subdiv_face_source.size());
+      {
+        std::vector<uint32_t> cursor(offsets.begin(), offsets.end() - 1);
+        for (uint32_t rf = 0; rf < uint32_t(subdiv_face_source.size());
+             rf++) {
+          refined_ids[cursor[subdiv_face_source[rf]]++] = rf;
+        }
+      }
+
+      for (auto &sit : dst.material_subsetMap) {
+        std::vector<int> remapped;
+        for (int src_face : sit.second.usdIndices) {
+          if (src_face < 0 || uint32_t(src_face) >= src_num_faces) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "MaterialSubset `{}` face index {} exceeds source face count "
+                "{}.",
+                sit.first, src_face, src_num_faces));
+          }
+          for (uint32_t k = offsets[uint32_t(src_face)];
+               k < offsets[uint32_t(src_face) + 1]; k++) {
+            remapped.push_back(int(refined_ids[k]));
+          }
+        }
+        sit.second.triangulatedIndices = std::move(remapped);
+      }
+    }
+
+    // Refresh topology-derived counts for the refined mesh.
+    if (!SizeToU32(dst.points.size(), &num_vertices) ||
+        !SizeToU32(dst.usdFaceVertexCounts.size(), &num_faces) ||
+        !SizeToU32(dst.usdFaceVertexIndices.size(), &num_face_vertex_indices)) {
+      PUSH_ERROR_AND_RETURN("Refined mesh counts exceed 32-bit index space.");
+    }
+  }
+
+  //TUSDZ_LOG_I("done uvAttr");
+
+  // displayColor/displayOpacity were gathered above (and refined when
+  // subdivision ran); single constant values become the mesh-level color.
+  if (!vcolor.get_data().empty()) {
     if ((vcolor.elementSize == 1) && (vcolor.vertex_count() == 1) &&
         (vcolor.stride_bytes() == 3 * 4)) {
       memcpy(&dst.displayColor, vcolor.data.data(), vcolor.stride_bytes());
@@ -3307,24 +3828,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  constexpr auto kDisplayOpacity = "displayOpacity";
-  if (!subdivision_applied && mesh.has_primvar(kDisplayOpacity)) {
-    GeomPrimvar pvar;
-    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err, &_warn)) {
-      return false;
-    }
-
-    VertexAttribute vopacity;
-    std::string warn_msg;
-    if (!ToVertexAttribute(pvar, kDisplayOpacity, num_vertices, num_faces,
-                           num_face_vertex_indices, vopacity, &_err,
-                           env.timecode, env.tinterp, &warn_msg)) {
-      return false;
-    }
-    if (!warn_msg.empty()) {
-      _warn += warn_msg;
-    }
-
+  if (!vopacity.get_data().empty()) {
     if ((vopacity.elementSize == 1) && (vopacity.vertex_count() == 1) &&
         (vopacity.stride_bytes() == 4)) {
       memcpy(&dst.displayOpacity, vopacity.data.data(),
@@ -3650,7 +4154,7 @@ bool RenderSceneConverter::ConvertMesh(
   ///  - Triangulate vertex attributes(normals, uvcoords, vertex
   ///  colors/opacities).
   ///
-  bool triangulate = env.mesh_config.triangulate && !subdivision_applied;
+  bool triangulate = env.mesh_config.triangulate;
   if (triangulate) {
     DCOUT("Triangulate mesh");
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
@@ -3719,8 +4223,14 @@ bool RenderSceneConverter::ConvertMesh(
       for (auto &it : dst.material_subsetMap) {
         std::vector<int> triangulated_indices;
 
-        for (size_t i = 0; i < it.second.usdIndices.size(); i++) {
-          int32_t srcIndex = it.second.usdIndices[i];
+        // When subdivision ran, the effective face ids were remapped into
+        // triangulatedIndices above (refined face ids); otherwise the
+        // authored usdIndices apply.
+        const std::vector<int> effective_indices =
+            subdivision_applied ? it.second.triangulatedIndices
+                                : it.second.usdIndices;
+        for (size_t i = 0; i < effective_indices.size(); i++) {
+          int32_t srcIndex = effective_indices[i];
           if (srcIndex < 0 || size_t(srcIndex) >= faceIndexOffsets.size()) {
             PUSH_ERROR_AND_RETURN(fmt::format(
                 "GeomSubset '{}': index {} out of range [0, {}).",
@@ -3806,10 +4316,13 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   // Free triangulation intermediates — only needed during attribute
-  // triangulation above. Safe to free unconditionally since nothing
-  // downstream reads these vectors.
+  // triangulation above. Tools that map triangles back to source faces can ask
+  // to keep triangulatedFaceCounts via keep_triangulation_intermediates.
   { std::vector<uint32_t> tmp; dst.triangulatedToOrigFaceVertexIndexMap.swap(tmp); }
-  { std::vector<uint32_t> tmp; dst.triangulatedFaceCounts.swap(tmp); }
+  if (!env.mesh_config.keep_triangulation_intermediates) {
+    std::vector<uint32_t> tmp;
+    dst.triangulatedFaceCounts.swap(tmp);
+  }
 
   // Free pre-triangulation topology under lowmem guard.
   // faceVertexIndices()/faceVertexCounts() accessors return the triangulated
@@ -3945,8 +4458,15 @@ bool RenderSceneConverter::ConvertMesh(
 
     // TODO: Validate jointIndex.
 
-    dst.joint_and_weights.jointIndices = jointIndicesArray;
-    dst.joint_and_weights.jointWeights = jointWeightsArray;
+    if (subdivision_applied && subdiv_skin_refined) {
+      // Weights were refined through subdivision (dense per-joint columns,
+      // re-sparsified to elementSize influences per refined point).
+      dst.joint_and_weights.jointIndices = std::move(subdiv_skin_joint_indices);
+      dst.joint_and_weights.jointWeights = std::move(subdiv_skin_joint_weights);
+    } else {
+      dst.joint_and_weights.jointIndices = jointIndicesArray;
+      dst.joint_and_weights.jointWeights = jointWeightsArray;
+    }
     dst.joint_and_weights.elementSize = int(jointIndicesElementSize);
 
     // Helper lambda to round up bone count to standard GPU skinning values
@@ -4216,10 +4736,6 @@ bool RenderSceneConverter::ConvertMesh(
       continue;
     }
 
-    //
-    // TODO: in-between attribs
-    //
-
     std::vector<int> vertex_indices;
     std::vector<value::vector3f> normal_offsets;
     std::vector<value::vector3f> vertex_offsets;
@@ -4232,6 +4748,37 @@ bool RenderSceneConverter::ConvertMesh(
     shapeTarget.abs_path = bs_path;
     shapeTarget.prim_name = bs->name;
     shapeTarget.display_name = bs->metas().has_displayName() ? bs->metas().get_displayName() : "";
+
+    if (subdivision_applied) {
+      // Offsets were refined through subdivision (exact: refinement is
+      // linear in the point data). normalOffsets were dropped with a
+      // warning; normals are recomputed from the refined topology.
+      auto sit = subdiv_bs_offsets.find(bs);
+      if (sit == subdiv_bs_offsets.end()) {
+        PUSH_WARN(fmt::format(
+            "`pointIndices` in BlendShape `{}` is not authored or empty. "
+            "Skipping.",
+            bs->name));
+        continue;
+      }
+      shapeTarget.pointIndices = std::move(sit->second.indices);
+      const std::vector<float> &flat = sit->second.point_offsets;
+      shapeTarget.pointOffsets.resize(flat.size() / 3);
+      memcpy(shapeTarget.pointOffsets.data(), flat.data(),
+             flat.size() * sizeof(float));
+      for (auto &ib_kv : sit->second.inbetween_offsets) {
+        InbetweenShapeTarget ibt;
+        ibt.weight = ib_kv.first;
+        const std::vector<float> &ib_flat = ib_kv.second;
+        ibt.pointOffsets.resize(ib_flat.size() / 3);
+        memcpy(ibt.pointOffsets.data(), ib_flat.data(),
+               ib_flat.size() * sizeof(float));
+        shapeTarget.inbetweens[ibt.weight] = std::move(ibt);
+      }
+      dst.targets[bs->name] = shapeTarget;
+      DCOUT("Converted refined blendshape target: " << bs->name);
+      continue;
+    }
 
     if (vertex_indices.empty()) {
       PUSH_WARN(
@@ -4272,7 +4819,43 @@ bool RenderSceneConverter::ConvertMesh(
              sizeof(value::normal3f) * normal_offsets.size());
     }
 
-    // TODO inbetweens
+    // In-between BlendShape attributes (`inbetweens:<name>`). Their offsets are
+    // parallel to `pointIndices`, same as the primary `offsets`. Stored
+    // un-reordered here; ReorderVertexVaryingAttributes splats them alongside
+    // the primary offsets so they stay aligned after single-indexable build.
+    for (const auto &pkv : bs->props) {
+      if (pkv.first.rfind("inbetweens:", 0) != 0) {  // namespace prefix
+        continue;
+      }
+      const Property &p = pkv.second;
+      if (!p.is_attribute()) {
+        continue;
+      }
+      const Attribute &a = p.get_attribute();
+      if (!a.metas().has_weight()) {
+        PUSH_WARN(fmt::format(
+            "In-between BlendShape `{}` has no `weight` metadata. Skipping.",
+            pkv.first));
+        continue;
+      }
+      std::vector<value::vector3f> ib_offsets;
+      if (!a.get_value(&ib_offsets)) {
+        continue;
+      }
+      if (ib_offsets.size() != vertex_indices.size()) {
+        PUSH_WARN(fmt::format(
+            "In-between BlendShape `{}` offset count {} differs from "
+            "pointIndices count {}. Skipping.",
+            pkv.first, ib_offsets.size(), vertex_indices.size()));
+        continue;
+      }
+      InbetweenShapeTarget ibt;
+      ibt.weight = float(a.metas().get_weight());
+      ibt.pointOffsets.resize(ib_offsets.size());
+      memcpy(ibt.pointOffsets.data(), ib_offsets.data(),
+             sizeof(value::vector3f) * ib_offsets.size());
+      shapeTarget.inbetweens[ibt.weight] = std::move(ibt);
+    }
 
     // TODO: key duplicate check
     dst.targets[bs->name] = shapeTarget;

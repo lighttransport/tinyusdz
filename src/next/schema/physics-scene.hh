@@ -14,7 +14,7 @@ namespace next {
 bool IsPhysicsScene(const UsdPrim& prim);
 
 struct PhysicsSceneData {
-  float gravityMagnitude = -9.81f;  // physics:gravityMagnitude
+  float gravityMagnitude = 9.81f;  // physics:gravityMagnitude
   float gravityDirection[3] = {0.0f, -1.0f, 0.0f};  // physics:gravityDirection
 };
 

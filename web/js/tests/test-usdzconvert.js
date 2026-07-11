@@ -523,6 +523,62 @@ def Xform "fromSub"
     assert.ok(!entries.has('unused.usdc'), 'unused USD layer should not be packed');
   });
 
+  await testAsync('stream-next can include unused textures on request', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const source = makeFixtureSource(repoRoot, {
+      'root.usdc': 'models/texturedcube.usdc',
+      'textures/01.jpg': 'models/textures/01.jpg',
+      'textures/unused.jpg': 'models/textures/texture-cat.jpg',
+      'unused.usdc': 'models/cube.usdc',
+    });
+    const mem = makeMemoryZipSink();
+    const { stats } = await convertSourceToUSDZStreaming(native, source, {
+      rootPath: 'root.usdc',
+      pipeline: 'next',
+      includeUnusedTextures: true,
+      reencode: false,
+      textureFormat: 'keep',
+      zipSink: mem.sink,
+    });
+    assert.equal(stats.pipeline, 'next');
+    assert.equal(stats.textures, 2);
+    assert.equal(stats.unusedTexturesIncluded, 1);
+    const entries = zipEntries(mem.bytes());
+    assert.ok(entries.has('root.usdc'), 'flattened root should be written');
+    assert.ok(entries.has('textures/01.jpg'), 'referenced texture should be packed');
+    assert.ok(entries.has('textures/unused.jpg'), 'unused texture should be packed when requested');
+    assert.ok(!entries.has('unused.usdc'), 'unused USD layer should still not be packed');
+  });
+
+  await testAsync('stream-next remaps texture format changes without falling back', async () => {
+    const native = await loadWasm(() => import(wasmGlue));
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const source = makeFixtureSource(repoRoot, {
+      'root.usdc': 'models/texturedcube.usdc',
+      'textures/01.jpg': 'models/textures/01.jpg',
+      'textures/unused.jpg': 'models/textures/texture-cat.jpg',
+    });
+    const mem = makeMemoryZipSink();
+    const { stats } = await convertSourceToUSDZStreaming(native, source, {
+      rootPath: 'root.usdc',
+      pipeline: 'next',
+      reencode: false,
+      textureFormat: 'png',
+      zipSink: mem.sink,
+    });
+    assert.equal(stats.pipeline, 'next');
+    assert.ok(stats.assetPathsRemapped > 0,
+      `expected next flatten to remap texture references, got ${stats.assetPathsRemapped}`);
+    assert.equal(stats.textures, 1);
+    assert.equal(stats.reencoded, 1);
+    const entries = zipEntries(mem.bytes());
+    assert.ok(entries.has('root.usdc'), 'flattened root should be written');
+    assert.ok(entries.has('textures/01.png'), 'referenced texture should be packed under renamed PNG path');
+    assert.ok(!entries.has('textures/01.jpg'), 'old texture path should not be packed after remap');
+    assert.ok(!entries.has('textures/unused.png'), 'unused renamed texture should not be packed');
+  });
+
   // Regression: a texture that fails to fetch during the bounded prefetch must
   // surface as a clean rejection, not a process-killing unhandledRejection. The
   // pump launches up to `width` processOne() promises before awaiting them FIFO,

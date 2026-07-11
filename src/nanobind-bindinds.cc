@@ -11,12 +11,21 @@ namespace nb = nanobind;
 
 using namespace nb::literals;  // to bring in the `_a` literal
 
+#if defined(__clang__) || defined(__GNUC__)
+#pragma message("DEPRECATED: nanobind-bindinds.cc binding is deprecated. Use the main Python binding implementation instead.")
+#elif defined(_MSC_VER)
+#pragma message("DEPRECATED: nanobind-bindinds.cc binding is deprecated. Use the main Python binding implementation instead.")
+#endif
+
+[[deprecated(
+    "deprecated: nanobind-bindinds.cc binding is retained for compatibility only.")]]
 static double test_api() {
   // TODO: Implement
   return 4.14;
 }
 
 // stub classes
+[[deprecated("deprecated: placeholder Stage type in deprecated nanobind binding.")]]
 struct Stage
 {
   std::string filepath;

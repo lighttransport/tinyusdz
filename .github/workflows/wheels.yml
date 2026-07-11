@@ -33,7 +33,10 @@ jobs:
           fetch-depth: 0   # setuptools_scm
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.19
+        # v3.x is required for cp314t (free-threaded) targets; the build
+        # matrix (cp310-abi3 + cp314t) comes from [tool.cibuildwheel] in
+        # pyproject.toml.
+        uses: pypa/cibuildwheel@v3.2
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BUILD_VERBOSITY: 1

@@ -18,10 +18,14 @@ def Xform "Geom" (
     }
     variantSet "LOD" = {
         "LODa" {
-            def Mesh "LODa" { int[] faceVertexCounts = [3] }
+            def Mesh "LODa" {
+              int[] faceVertexCounts = [3]
+            }
         }
         "LODb" {
-            def Mesh "LODb" { int[] faceVertexCounts = [4] }
+            # Pixar/OpenUSD usdcat requires a semicolon before `}` when a
+            # property is authored on the same line as the prim body.
+            def Mesh "LODb" { int[] faceVertexCounts = [4]; }
         }
     }
 }

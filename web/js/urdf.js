@@ -7,9 +7,18 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import URDFLoader from 'urdf-loader';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
+  basenameFromUri,
   createConfiguredTinyUSDZLoader,
+  getAssetUriFromURL,
+  getBackendFromURL,
+  makeStaticNextParseOptions,
   parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+  buildNextThreeNode,
+  isNextScene,
+  nextCountsFromScene
+} from 'tinyusdz/NextRenderSceneUtils.js';
 
 const state = {
   robot: null,
@@ -34,6 +43,7 @@ const state = {
   objectUrls: new Map(),
   meshCache: new Map(),
   nativeMeshBuffers: new Map(),
+  generatedTextureAssets: new Map(),
   tinyLoader: null,
   nativeExporter: null,
   joints: {},
@@ -44,6 +54,11 @@ const state = {
   muscleObjects: [],
   usdMuscleObjects: [],
   muscleLineData: null,
+  sensorObjects: [],
+  usdSensorObjects: [],
+  sensorVisualData: null,
+  sensorPreviewCameras: [],
+  sensorPreviewIndex: 0,
   settings: {
     upAxis: 'Z',
     showVisuals: true,
@@ -62,9 +77,14 @@ const state = {
     showJointArrows: false,
     showLinkNames: false,
     showJointNames: false,
+    labelScale: 1.0,
     jointsCollapsed: false,
     applyHomePose: false,
     showMuscles: true,
+    showTendons: true,
+    showSensors: true,
+    renderSensorView: true,
+    backend: getBackendFromURL(new URLSearchParams(window.location.search), 'legacy'),
     // Per-MuJoCo-geom-group visibility for the source view (groups 0-5), mirroring
     // the MuJoCo viewer's group toggles. Default: 0-2 shown, 3-5 hidden (the usual
     // visual/auxiliary split). Geoms with no group fall back to showVisuals/
@@ -74,6 +94,14 @@ const state = {
 };
 
 const USD_MESH_EXTENSIONS = new Set(['.usd', '.usda', '.usdc', '.usdz']);
+const SOURCE_EXTENSIONS = new Set(['.urdf', '.xml']);
+
+const loadStats = {
+  current: null,
+  fps: 0,
+  frames: 0,
+  fpsLast: 0
+};
 
 function createViewScene() {
   const scene = new THREE.Scene();
@@ -108,8 +136,30 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
+
+const sensorPreviewPanel = document.createElement('div');
+sensorPreviewPanel.style.cssText = [
+  'position:fixed', 'right:12px', 'bottom:12px', 'z-index:8',
+  'background:rgba(18,20,24,0.86)', 'border:1px solid rgba(255,255,255,0.16)',
+  'border-radius:6px', 'padding:8px', 'color:#e7e9ee',
+  'font:12px system-ui,sans-serif', 'display:none',
+  'box-shadow:0 8px 24px rgba(0,0,0,0.28)'
+].join(';');
+const sensorPreviewLabel = document.createElement('div');
+sensorPreviewLabel.style.cssText = 'margin-bottom:6px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+const sensorPreviewCanvas = document.createElement('canvas');
+sensorPreviewCanvas.width = 256;
+sensorPreviewCanvas.height = 160;
+sensorPreviewCanvas.style.cssText = 'display:block;width:256px;height:160px;background:#111;border-radius:4px;cursor:pointer';
+sensorPreviewPanel.append(sensorPreviewLabel, sensorPreviewCanvas);
+document.body.appendChild(sensorPreviewPanel);
+sensorPreviewPanel.addEventListener('click', () => {
+  if (state.sensorPreviewCameras.length < 2) return;
+  state.sensorPreviewIndex = (state.sensorPreviewIndex + 1) % state.sensorPreviewCameras.length;
+  updateSensorPreviewPanel();
+});
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.6, 0);
@@ -163,6 +213,7 @@ const sourceExportButton = document.getElementById('exportSource');
 const convertToUSDButton = document.getElementById('convertToUSD');
 const convertToSourceButton = document.getElementById('convertToSource');
 const fitViewButton = document.getElementById('fitView');
+const backendSelect = document.getElementById('backendSelect');
 const exportButtons = [
   document.getElementById('exportUSDA'),
   document.getElementById('exportUSDC'),
@@ -170,6 +221,24 @@ const exportButtons = [
 ];
 const DEFAULT_USDC_EXPORT_LIMIT_MB = 2048;
 const DEFAULT_MEM_EXPORT_LIMIT_MB = 4096;
+const DEFAULT_SAMPLE_URDF = `<?xml version="1.0"?>
+<robot name="tinyusdz_sample">
+  <link name="base">
+    <visual>
+      <geometry><box size="1 1 0.3"/></geometry>
+      <material name="blue"><color rgba="0.2 0.45 0.9 1"/></material>
+    </visual>
+    <collision><geometry><box size="1 1 0.3"/></geometry></collision>
+    <inertial><mass value="1"/><inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/></inertial>
+  </link>
+  <link name="arm">
+    <visual><origin xyz="0 0 0.6"/><geometry><cylinder radius="0.12" length="1.2"/></geometry></visual>
+  </link>
+  <joint name="shoulder" type="revolute">
+    <parent link="base"/><child link="arm"/><origin xyz="0 0 0.15"/>
+    <axis xyz="0 1 0"/><limit lower="-1.2" upper="1.2" effort="10" velocity="2"/>
+  </joint>
+</robot>`;
 
 function parsePositiveInt(value) {
   const n = Number(value);
@@ -197,6 +266,107 @@ function resolveUSDCExportCapsFromRuntime() {
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '--';
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = Math.abs(bytes);
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${bytes < 0 ? '-' : ''}${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatMs(ms) {
+  return Number.isFinite(ms) ? `${Math.round(ms)} ms` : '--';
+}
+
+function jsHeapBytes() {
+  return performance.memory ? performance.memory.usedJSHeapSize : 0;
+}
+
+function wasmHeapBytes() {
+  try {
+    return state.tinyLoader?.native_?.HEAPU8?.buffer?.byteLength || 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function captureMemoryStats() {
+  return {
+    jsHeap: jsHeapBytes(),
+    wasmHeap: wasmHeapBytes()
+  };
+}
+
+function updateLoadStatsPanel(stats = loadStats.current) {
+  if (!stats) return;
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  const jsDelta = (stats.memoryAfter?.jsHeap || 0) - (stats.memoryBefore?.jsHeap || 0);
+  const wasmDelta = (stats.memoryAfter?.wasmHeap || 0) - (stats.memoryBefore?.wasmHeap || 0);
+  setText('currentFile', stats.filename || '-');
+  setText('backendName', stats.backend || state.settings.backend);
+  setText('fpsValue', loadStats.fps ? String(loadStats.fps) : '--');
+  setText('fileSize', formatBytes(stats.fileSize));
+  setText('readTime', formatMs(stats.readMs));
+  setText('parseTime', formatMs(stats.parseMs));
+  setText('processTime', formatMs(stats.processMs));
+  setText('totalTime', formatMs(stats.totalMs));
+  setText('jsHeapStat', `${formatBytes(stats.memoryAfter?.jsHeap || 0)} (${jsDelta >= 0 ? '+' : ''}${formatBytes(jsDelta)})`);
+  setText('wasmHeapStat', `${formatBytes(stats.memoryAfter?.wasmHeap || 0)} (${wasmDelta >= 0 ? '+' : ''}${formatBytes(wasmDelta)})`);
+}
+
+function beginLoadStats(filename, fileSize = 0) {
+  const memory = captureMemoryStats();
+  const stats = {
+    filename,
+    backend: state.settings.backend,
+    fileSize,
+    startTime: performance.now(),
+    readMs: NaN,
+    parseMs: NaN,
+    processMs: NaN,
+    totalMs: NaN,
+    memoryBefore: memory,
+    memoryAfter: memory
+  };
+  loadStats.current = stats;
+  updateLoadStatsPanel(stats);
+  return stats;
+}
+
+function finishLoadStats(stats) {
+  stats.totalMs = performance.now() - stats.startTime;
+  stats.memoryAfter = captureMemoryStats();
+  updateLoadStatsPanel(stats);
+}
+
+function urlParam(params) {
+  return getAssetUriFromURL(params) || '';
+}
+
+function basenameFromUrl(url) {
+  return basenameFromUri(url);
+}
+
+function isNextSceneObject(object) {
+  return !!object?.userData && Number.isFinite(object.userData.usdMeshCount);
+}
+
+function countMeshes(root) {
+  let count = 0;
+  root?.traverse((obj) => {
+    if (obj.isMesh) count++;
+  });
+  return count;
 }
 
 function updateButtonStates() {
@@ -262,6 +432,7 @@ function clearRobot() {
   state.sourceRestLinkMatrices.clear();
   state.usdLinkBindings = [];
   state.nativeMeshBuffers.clear();
+  state.generatedTextureAssets.clear();
   state.joints = {};
   state.jointValues = {};
   state.collisionMeshes = [];
@@ -269,6 +440,12 @@ function clearRobot() {
   for (const obj of state.muscleObjects) clearObjectFromGroup(robotGroup, obj);
   state.muscleObjects = [];
   state.muscleLineData = null;
+  for (const obj of state.sensorObjects) clearObjectFromGroup(robotGroup, obj);
+  state.sensorObjects = [];
+  state.sensorVisualData = null;
+  state.sensorPreviewCameras = [];
+  state.sensorPreviewIndex = 0;
+  updateSensorPreviewPanel();
   jointControlsEl.innerHTML = '';
   updateButtonStates();
   clearGhosts();
@@ -284,6 +461,8 @@ function clearUSD() {
   }
   for (const obj of state.usdMuscleObjects) clearObjectFromGroup(usdGroup, obj);
   state.usdMuscleObjects = [];
+  for (const obj of state.usdSensorObjects) clearObjectFromGroup(usdGroup, obj);
+  state.usdSensorObjects = [];
   state.usdObject = null;
   state.usdRestObject = null;
   state.usdArticulation = null;
@@ -378,7 +557,14 @@ function extension(path) {
 async function ensureTinyLoader() {
   if (!state.tinyLoader) {
     setStatus('Loading TinyUSDZ WASM...');
-    state.tinyLoader = await createConfiguredTinyUSDZLoader();
+    state.tinyLoader = await createConfiguredTinyUSDZLoader({
+      initOptions: {
+        useZstdCompressedWasm: false,
+        useMemory64: false,
+        backend: state.settings.backend,
+        useNextOnlyWasm: state.settings.backend === 'next'
+      }
+    });
     TinyUSDZLoaderUtils.setTinyUSDZ(state.tinyLoader.native_);
   }
   return state.tinyLoader;
@@ -395,14 +581,36 @@ async function loadUSDMeshFromFile(file) {
 async function loadUSDObjectFromBytes(bytes, filename) {
   const loader = await ensureTinyLoader();
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const parseStart = performance.now();
   const sceneData = await parseUSDSceneFromArrayBuffer(
     loader,
     data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
     filename,
     // Decode in-package textures (e.g. an embedded-texture USDZ) in the native
     // loader so the converted-USD view shows materials instead of a flat color.
-    { loadTextureInNative: true }
+    makeStaticNextParseOptions({
+      backend: state.settings.backend,
+      loadTextureInNative: true
+    })
   );
+  const stats = loadStats.current;
+  if (stats) {
+    stats.parseMs = performance.now() - parseStart;
+    updateLoadStatsPanel(stats);
+  }
+  if (isNextScene(sceneData)) {
+    const built = buildNextThreeNode(sceneData, {
+      skipTextures: false,
+      lazyTextures: false
+    });
+    const object = built.node;
+    object.name = filename.replace(/\.[^.]+$/, '') || 'usd_scene';
+    const counts = nextCountsFromScene(sceneData);
+    object.userData.usdMeshCount = counts.meshes || 0;
+    object.userData.usdMaterialCount = counts.materials || 0;
+    object.userData.usdTextureCount = counts.textures || 0;
+    return object;
+  }
   const rootNode = sceneData.getDefaultRootNode();
   const defaultMaterial = TinyUSDZLoaderUtils.createDefaultMaterial();
   const object = await TinyUSDZLoaderUtils.buildThreeNode(rootNode, defaultMaterial, sceneData, { overrideMaterial: false });
@@ -421,10 +629,22 @@ async function extractUSDPhysicsJSONFromBytes(bytes, filename) {
   return JSON.parse(jsonText);
 }
 
-async function loadUSDFile(file) {
+async function loadUSDFile(file, existingStats = null) {
   clearUSD();
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  const stats = existingStats || beginLoadStats(file.name, file.size || 0);
+  let bytes;
+  if (existingStats?.bytes) {
+    bytes = existingStats.bytes;
+  } else {
+    const readStart = performance.now();
+    bytes = new Uint8Array(await file.arrayBuffer());
+    stats.readMs = performance.now() - readStart;
+  }
+  stats.fileSize = bytes.byteLength;
+  updateLoadStatsPanel(stats);
+  const processStart = performance.now();
   const object = await loadUSDObjectFromBytes(bytes, file.name);
+  stats.processMs = Math.max(0, performance.now() - processStart - (stats.parseMs || 0));
   state.usdObject = object;
   state.usdRestObject = object;
   state.usdName = file.name;
@@ -432,6 +652,7 @@ async function loadUSDFile(file) {
   state.latestUSDFormat = extension(file.name).slice(1) || 'usd';
   usdGroup.add(object);
   applySceneOrientation();
+  let updatedInfoFromPhysics = false;
   try {
     const extracted = await extractUSDPhysicsJSONFromBytes(bytes, file.name);
     annotateUSDRenderableClasses(object, extracted);
@@ -453,16 +674,26 @@ async function loadUSDFile(file) {
         joints: model.joints,
         meshes: (extracted.prims || []).filter((prim) => prim.geometry).length
       });
+      updatedInfoFromPhysics = true;
     }
   } catch (err) {
     console.warn('USD Physics extraction skipped:', err);
+  }
+  if (!updatedInfoFromPhysics) {
+    updateRobotInfo({
+      name: object.name || file.name,
+      links: new Map(),
+      joints: [],
+      meshes: object.userData.usdMeshCount ?? countMeshes(object)
+    });
   }
   updateButtonStates();
   rebuildGhosts();
   updateLabels();
   applyVisibility();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
-  setStatus(`Loaded USD ${file.name}`);
+  finishLoadStats(stats);
+  setStatus(`Loaded USD ${file.name} (${isNextSceneObject(object) ? 'next' : 'legacy'} backend)`);
 }
 
 async function loadOBJMeshFromFile(file) {
@@ -526,23 +757,69 @@ function makeCanvas2D(size) {
   return { canvas, ctx: canvas.getContext('2d') };
 }
 
+function drawCheckerTexture(ctx, def, size = 256, repeat = [1, 1]) {
+  ctx.fillStyle = _rgbCss(def.rgb1);
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = _rgbCss(def.rgb2);
+  const repeatX = Math.max(1, Math.round(Number(repeat[0]) || 1));
+  const repeatY = Math.max(1, Math.round(Number(repeat[1]) || 1));
+  const cellsX = repeatX * 2;
+  const cellsY = repeatY * 2;
+  const cellW = size / cellsX;
+  const cellH = size / cellsY;
+  for (let y = 0; y < cellsY; y++) {
+    for (let x = 0; x < cellsX; x++) {
+      if (((x + y) & 1) === 0) ctx.fillRect(x * cellW, y * cellH, cellW + 0.5, cellH + 0.5);
+    }
+  }
+}
+
+function drawGradientTexture(ctx, def, size = 256) {
+  const g = ctx.createLinearGradient(0, 0, 0, size);
+  g.addColorStop(0, _rgbCss(def.rgb1));
+  g.addColorStop(1, _rgbCss(def.rgb2));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+}
+
 // MuJoCo builtin "checker": a 2x2 checkerboard of rgb1/rgb2 (material texrepeat
 // tiles it). Returns a THREE.CanvasTexture.
 function makeCheckerTexture(def) {
   const { canvas, ctx } = makeCanvas2D(256);
-  ctx.fillStyle = _rgbCss(def.rgb1); ctx.fillRect(0, 0, 256, 256);
-  ctx.fillStyle = _rgbCss(def.rgb2);
-  ctx.fillRect(0, 0, 128, 128); ctx.fillRect(128, 128, 128, 128);
+  drawCheckerTexture(ctx, def);
   return new THREE.CanvasTexture(canvas);
 }
 
 // MuJoCo builtin "gradient": vertical rgb1 (top) -> rgb2 (bottom).
 function makeGradientTexture(def) {
   const { canvas, ctx } = makeCanvas2D(256);
-  const g = ctx.createLinearGradient(0, 0, 0, 256);
-  g.addColorStop(0, _rgbCss(def.rgb1)); g.addColorStop(1, _rgbCss(def.rgb2));
-  ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+  drawGradientTexture(ctx, def);
   return new THREE.CanvasTexture(canvas);
+}
+
+async function canvasPNGBytes(canvas) {
+  const blob = canvas.convertToBlob
+    ? await canvas.convertToBlob({ type: 'image/png' })
+    : await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas PNG encode failed'))), 'image/png');
+    });
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function generatedMujocoTextureAsset(textureName, def, texrepeat = [1, 1]) {
+  if (!def || (def.builtin !== 'checker' && def.builtin !== 'gradient')) return '';
+  const safeName = sanitizeUSDIdentifier(textureName || def.builtin, 'texture');
+  const repeatX = Math.max(1, Math.round(Number(texrepeat[0]) || 1));
+  const repeatY = Math.max(1, Math.round(Number(texrepeat[1]) || 1));
+  const path = `textures/mjcf_builtin_${safeName}_${repeatX}x${repeatY}.png`;
+  if (state.generatedTextureAssets.has(path)) return path;
+  const size = 256;
+  const canvas = Object.assign(document.createElement('canvas'), { width: size, height: size });
+  const ctx = canvas.getContext('2d');
+  if (def.builtin === 'checker') drawCheckerTexture(ctx, def, size, texrepeat);
+  else drawGradientTexture(ctx, def, size);
+  state.generatedTextureAssets.set(path, await canvasPNGBytes(canvas));
+  return path;
 }
 
 function makeMissingMesh(path) {
@@ -922,6 +1199,8 @@ const labelSpriteCache = new Map();
 const LABEL_CACHE_LIMIT = 512;
 const LABEL_MAX_CHARS = 160;
 const LABEL_MAX_CANVAS_WIDTH = 2048;
+const LABEL_HEIGHT_RATIO = 0.035;
+const LABEL_MIN_HEIGHT = 0.024;
 
 function labelTextForSprite(text) {
   const raw = String(text ?? '');
@@ -985,10 +1264,19 @@ function labelSpriteAssets(text, color) {
   return assets;
 }
 
-function makeTextSprite(text, color) {
+function objectLabelHeight(object) {
+  if (!object) return LABEL_MIN_HEIGHT * state.settings.labelScale;
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) return LABEL_MIN_HEIGHT * state.settings.labelScale;
+  const size = box.getSize(new THREE.Vector3());
+  const diagonal = size.length();
+  const base = Math.max(LABEL_MIN_HEIGHT, diagonal * LABEL_HEIGHT_RATIO);
+  return base * state.settings.labelScale;
+}
+
+function makeTextSprite(text, color, height) {
   const { material, aspect } = labelSpriteAssets(text, color);
   const sprite = new THREE.Sprite(material);
-  const height = 0.018;
   sprite.scale.set(height * aspect, height, 1);
   sprite.renderOrder = 20;
   return sprite;
@@ -999,11 +1287,14 @@ function disposeLabelSpriteCache() {
   labelSpriteCache.clear();
 }
 
-function addLabel(root, text, position, color, offsetY = 0.035) {
+function addLabel(root, text, position, color, labelHeight, offsetFactor = 1.8) {
   if (!text || !position) return;
-  const label = makeTextSprite(text, color);
+  const height = Number.isFinite(labelHeight) && labelHeight > 0
+    ? labelHeight
+    : LABEL_MIN_HEIGHT * state.settings.labelScale;
+  const label = makeTextSprite(text, color, height);
   label.position.copy(position);
-  label.position.y += offsetY;
+  label.position.y += height * offsetFactor;
   root.add(label);
 }
 
@@ -1062,11 +1353,12 @@ function makeJointArrow(position, direction, material) {
   return arrow;
 }
 
-function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, jointMaterial, labelColor) {
+function buildSkeletonDebug(root, targetObject, linkEntries, joints, lineMaterial, jointMaterial, labelColor) {
   clearDebugRoot(root);
   if (!debugVisualizationEnabled()) return;
 
   const segments = makeLinkSegments(linkEntries, joints);
+  const labelHeight = objectLabelHeight(targetObject);
 
   if (state.settings.showLinkLines) {
     const points = [];
@@ -1083,7 +1375,7 @@ function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, jointMateri
   if (state.settings.showLinkNames) {
     for (const segment of segments) {
       const midpoint = new THREE.Vector3().addVectors(segment.start, segment.end).multiplyScalar(0.5);
-      addLabel(root, segment.linkName, midpoint, labelColor);
+      addLabel(root, segment.linkName, midpoint, labelColor, labelHeight, 1.6);
     }
   }
 
@@ -1100,7 +1392,7 @@ function buildSkeletonDebug(root, linkEntries, joints, lineMaterial, jointMateri
   if (state.settings.showJointNames) {
     for (const joint of joints) {
       const pos = jointPosition(joint, linkEntries);
-      addLabel(root, joint.name || joint.jointName || 'joint', pos, labelColor, 0.055);
+      addLabel(root, joint.name || joint.jointName || 'joint', pos, labelColor, labelHeight, 2.4);
     }
   }
 }
@@ -1111,8 +1403,8 @@ function updateSkeletonDebugVisualizations() {
     return;
   }
   const joints = Object.values(state.joints || {});
-  buildSkeletonDebug(sourceView.debugRoot, sourceLinkDebugEntries(), joints, sourceLinkLineMaterial, sourceJointMaterial, sourceLabelColor);
-  buildSkeletonDebug(usdView.debugRoot, usdLinkDebugEntries(), joints, usdLinkLineMaterial, usdJointMaterial, usdLabelColor);
+  buildSkeletonDebug(sourceView.debugRoot, state.robot, sourceLinkDebugEntries(), joints, sourceLinkLineMaterial, sourceJointMaterial, sourceLabelColor);
+  buildSkeletonDebug(usdView.debugRoot, state.usdObject || state.usdArticulation, usdLinkDebugEntries(), joints, usdLinkLineMaterial, usdJointMaterial, usdLabelColor);
 }
 
 async function parseURDFWithMeshes(urdfText, filename) {
@@ -2161,23 +2453,6 @@ function applyMujocoObjectDisplayTransform(object, geomAttrs, meshAssets) {
   applyMatrixToObject(object, matrix);
 }
 
-// MuJoCo features with no UsdPhysics analog in this converter. We don't model
-// them, but they should be visible rather than silently dropped.
-function warnUnsupportedMujocoElements(root) {
-  const unsupported = [
-    ['tendon', 'tendons (cable/spatial constraints)'],
-    ['equality', 'equality constraints'],
-    ['contact', 'explicit contact pairs/exclusions']
-  ];
-  for (const [tag, label] of unsupported) {
-    const count = root.querySelectorAll(tag).length;
-    if (count) {
-      console.warn(`MJCF: ${count} <${tag}> element(s) — ${label} are not converted to USD.`);
-      setStatus(`Note: MJCF ${label} are not converted.`);
-    }
-  }
-}
-
 function buildMujocoActuators(root) {
   const actuators = [];
   for (const actuatorRoot of childElements(root, 'actuator')) {
@@ -2186,6 +2461,10 @@ function buildMujocoActuators(root) {
       const joint = attrs.joint || '';
       const name = attrs.name || `${actNode.localName || 'actuator'}_${joint || actuators.length}`;
       if (!joint) {
+        if (attrs.tendon || attrs.site || attrs.body || ['muscle', 'general', 'adhesion',
+            'cylinder', 'intvelocity', 'damper', 'plugin'].includes(actNode.localName)) {
+          continue;
+        }
         console.warn(`MJCF actuator "${name}" has no joint target; it is not converted to USD.`);
         setStatus('Note: MJCF non-joint actuators are not converted.');
         continue;
@@ -2221,17 +2500,149 @@ function buildMujocoActuators(root) {
   return actuators;
 }
 
-// Compute merged line-segment data for MuJoCo spatial tendons (muscles, e.g.
-// ms_human_700 / iit_softfoot): each <tendon><spatial> routes through an
-// ordered sequence of <site>s (and optional wrap <geom sidesite=...>), so we
-// emit a polyline through the resolved site world positions, colored by the
-// tendon's rgba (resolved from <default><tendon rgba=...>). All segments merge
-// into one buffer (one draw call) so thousands of muscles stay cheap.
-// `sitesByName` maps site name -> { pos: THREE.Vector3 (model-space) }.
+function parseMujocoTendons(root) {
+  const tendonRoot = firstChildElement(root, 'tendon');
+  if (!tendonRoot) return [];
+  const out = [];
+  for (const node of childElements(tendonRoot)) {
+    if (node.localName !== 'fixed' && node.localName !== 'spatial') continue;
+    const range = parseNumbers(node.getAttribute('range'), []);
+    const frcRange = parseNumbers(node.getAttribute('actuatorfrcrange'), []);
+    const tendon = {
+      name: node.getAttribute('name') || `tendon_${out.length}`,
+      type: node.localName
+    };
+    if (node.localName === 'fixed') {
+      const joints = [];
+      for (const j of childElements(node, 'joint')) {
+        const joint = j.getAttribute('joint');
+        if (!joint) continue;
+        joints.push({ joint, coef: numberAttr(j, 'coef', 1) });
+      }
+      if (!joints.length) continue;
+      tendon.joints = joints;
+    } else {
+      const path = [];
+      const sideSites = [];
+      for (const w of childElements(node)) {
+        if (w.localName === 'site' && w.getAttribute('site')) {
+          path.push({ site: w.getAttribute('site') });
+        } else if (w.localName === 'geom') {
+          const wp = { geom: w.getAttribute('geom') || '' };
+          if (w.getAttribute('sidesite')) {
+            wp.sidesite = w.getAttribute('sidesite');
+            sideSites.push({ site: w.getAttribute('sidesite') });
+          }
+          path.push(wp);
+        } else if (w.localName === 'pulley') {
+          const divisor = numberAttr(w, 'divisor');
+          if (Number.isFinite(divisor)) {
+            if (!tendon.routeDivisors) tendon.routeDivisors = [];
+            tendon.routeDivisors.push(divisor);
+          }
+        }
+      }
+      if (!path.length) continue;
+      tendon.path = path;
+      if (sideSites.length) tendon.sideSites = sideSites;
+    }
+
+    const setNum = (attr, key = attr) => {
+      const value = numberAttr(node, attr);
+      if (Number.isFinite(value)) tendon[key] = value;
+    };
+    setNum('stiffness');
+    setNum('damping');
+    setNum('armature');
+    setNum('frictionloss');
+    setNum('margin');
+    setNum('width');
+    if (node.getAttribute('group') !== null) tendon.group = Math.round(numberAttr(node, 'group'));
+    if (node.getAttribute('limited') !== null) tendon.limited = node.getAttribute('limited');
+    if (node.getAttribute('actuatorfrclimited') !== null) tendon.actuatorfrclimited = node.getAttribute('actuatorfrclimited');
+    if (range.length >= 2) tendon.range = [range[0], range[1]];
+    if (frcRange.length >= 2) tendon.actuatorfrcrange = [frcRange[0], frcRange[1]];
+    const rgba = parseNumbers(node.getAttribute('rgba'), []);
+    if (rgba.length >= 4) tendon.rgba = rgba.slice(0, 4);
+    for (const key of ['springlength', 'solreflimit', 'solimplimit', 'solreffriction', 'solimpfriction']) {
+      const values = parseNumbers(node.getAttribute(key), []);
+      if (values.length) tendon[key] = values;
+    }
+    out.push(tendon);
+  }
+  return out;
+}
+
+function parseMujocoMJCActuators(root) {
+  const actRoot = firstChildElement(root, 'actuator');
+  if (!actRoot) return [];
+  const out = [];
+  for (const node of childElements(actRoot)) {
+    const type = node.localName;
+    const tendon = node.getAttribute('tendon') || '';
+    const site = node.getAttribute('site') || '';
+    const joint = node.getAttribute('joint') || '';
+    const body = node.getAttribute('body') || '';
+    const isMjc = type === 'muscle' || type === 'general' || type === 'adhesion'
+      || type === 'cylinder' || type === 'intvelocity' || type === 'damper'
+      || type === 'plugin' || tendon || site || body;
+    if (!isMjc) continue;
+    const a = {
+      name: node.getAttribute('name') || `${type}_${joint || tendon || site || body}`,
+      actuatorType: type
+    };
+    if (joint) a.targetJoint = joint;
+    if (tendon) a.targetTendon = tendon;
+    if (site) a.targetSite = site;
+    if (body) a.targetBody = body;
+    for (const [attr, key] of [
+      ['gainprm', 'gainPrm'], ['biasprm', 'biasPrm'],
+      ['dynprm', 'dynPrm'], ['gear', 'gear']
+    ]) {
+      const values = parseNumbers(node.getAttribute(attr), []);
+      if (values.length) a[key] = values;
+    }
+    if (!a.gainPrm && node.getAttribute('gain') !== null) a.gainPrm = [numberAttr(node, 'gain')];
+    for (const [attr, key] of [
+      ['lengthrange', 'lengthRange'], ['ctrlrange', 'ctrlRange'],
+      ['forcerange', 'forceRange'], ['actrange', 'actRange']
+    ]) {
+      const values = parseNumbers(node.getAttribute(attr), []);
+      if (values.length >= 2) a[key] = [values[0], values[1]];
+    }
+    for (const [attr, key] of [
+      ['gaintype', 'gainType'], ['biastype', 'biasType'], ['dyntype', 'dynType'],
+      ['ctrllimited', 'ctrlLimited'], ['forcelimited', 'forceLimited'],
+      ['actlimited', 'actLimited'], ['plugin', 'plugin'], ['instance', 'instance']
+    ]) {
+      if (node.getAttribute(attr) !== null) a[key] = node.getAttribute(attr);
+    }
+    for (const [attr, key] of [
+      ['group', 'group'], ['actdim', 'actDim'], ['cranklength', 'crankLength'],
+      ['inheritrange', 'inheritRange']
+    ]) {
+      const value = numberAttr(node, attr);
+      if (Number.isFinite(value)) a[key] = value;
+    }
+    for (const [attr, key] of [['jointinparent', 'jointInParent'], ['actearly', 'actEarly']]) {
+      if (node.getAttribute(attr) !== null) a[key] = mjcBoolAttr(node.getAttribute(attr));
+    }
+    if (node.getAttribute('refsite') !== null) a.refSite = node.getAttribute('refsite');
+    if (node.getAttribute('slidersite') !== null) a.sliderSite = node.getAttribute('slidersite');
+    out.push(a);
+  }
+  return out;
+}
+
+// Compute merged line-segment data for MuJoCo tendon primitives. Spatial
+// tendons route through <site>s / geom sidesites; fixed tendons route through
+// their referenced joint positions. All segments merge into one buffer so large
+// muscle models stay cheap.
+// `sitesByName` maps site name -> { pos, matrix } in model space.
 // Returns { positions, colors, tendonCount } (model-space) or null. The data is
-// reused to draw the muscles on BOTH the MJCF source and the converted-USD
+// reused to draw tendons on BOTH the MJCF source and the converted-USD
 // view, which share the same model coordinate space.
-function computeMuscleLineData(root, sitesByName) {
+function computeMuscleLineData(root, sitesByName, jointPositionsByName = new Map()) {
   // Tendon default rgba/width from <default><tendon ...> (collectMujocoDefaults
   // only tracks geom/joint, so read the tendon default directly here). MuJoCo's
   // tendon `width` is the rendered tube RADIUS.
@@ -2251,6 +2662,16 @@ function computeMuscleLineData(root, sitesByName) {
   const rgba = [];
   const radii = [];
   let tendonCount = 0;
+  const pushSegments = (pts, col, width) => {
+    if (pts.length < 2) return false;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      positions.push(pts[i].x, pts[i].y, pts[i].z,
+                     pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
+      rgba.push(col[0], col[1], col[2], col[3] ?? 1);
+      radii.push(width);
+    }
+    return true;
+  };
   for (const tendonRoot of childElements(root, 'tendon')) {
     for (const spatial of childElements(tendonRoot, 'spatial')) {
       const col = spatial.getAttribute('rgba')
@@ -2268,14 +2689,23 @@ function computeMuscleLineData(root, sitesByName) {
         const site = sitesByName.get(ref);
         if (site) pts.push(site.pos);
       }
-      if (pts.length < 2) continue;
-      for (let i = 0; i + 1 < pts.length; i++) {
-        positions.push(pts[i].x, pts[i].y, pts[i].z,
-                       pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
-        rgba.push(col[0], col[1], col[2], col[3] ?? 1);
-        radii.push(width);
+      if (pushSegments(pts, col, width)) tendonCount++;
+    }
+    for (const fixed of childElements(tendonRoot, 'fixed')) {
+      const col = fixed.getAttribute('rgba')
+        ? parseNumbers(fixed.getAttribute('rgba'), defRgba) : [0.25, 0.85, 1.0, 1];
+      const width = fixed.getAttribute('width')
+        ? (Number(fixed.getAttribute('width')) || defWidth) : defWidth;
+      const pts = [];
+      for (const child of childElements(fixed, 'joint')) {
+        const ref = child.getAttribute('joint');
+        const pos = ref ? jointPositionsByName.get(ref) : null;
+        if (pos) pts.push(pos);
       }
-      tendonCount++;
+      if (pts.length === 1) {
+        pts.push(pts[0].clone().add(new THREE.Vector3(0, 0, Math.max(width * 8, 0.04))));
+      }
+      if (pushSegments(pts, col, width)) tendonCount++;
     }
   }
   if (!positions.length) return null;
@@ -2334,12 +2764,134 @@ function makeMuscleGroup(data) {
     depthWrite: !anyTransparent
   });
   const mesh = new THREE.Mesh(merged, material);
-  mesh.name = 'mjcf_muscles';
+  mesh.name = 'mjcf_tendons';
   const muscleGroup = new THREE.Group();
-  muscleGroup.name = 'muscles';
+  muscleGroup.name = 'tendons';
   muscleGroup.add(mesh);
   muscleGroup.userData.tendonCount = data.tendonCount;
   return muscleGroup;
+}
+
+function makeSensorVisualData(sensors, sitesByName, bodiesByName, cameras) {
+  const cameraByName = new Map((cameras || []).map((cam) => [cam.name, {
+    matrix: matrixFromUSDArray(cam.matrix),
+    fovy: Number.isFinite(cam.fovy) ? cam.fovy : 45
+  }]));
+  const resolveFrame = (type, name) => {
+    if (!name) return null;
+    if (type === 'camera' && cameraByName.has(name)) return cameraByName.get(name);
+    if (type === 'site' && sitesByName.has(name)) return { matrix: sitesByName.get(name).matrix, fovy: 45 };
+    if ((type === 'body' || type === 'xbody') && bodiesByName.has(name)) return { matrix: bodiesByName.get(name), fovy: 45 };
+    return null;
+  };
+
+  const entries = [];
+  for (const sensor of sensors || []) {
+    const frame = resolveFrame(sensor.objtype, sensor.objname);
+    if (!frame) continue;
+    const canRender = ['camera', 'site', 'body', 'xbody'].includes(sensor.objtype)
+      && ['rangefinder', 'camprojection', 'framepos', 'framequat', 'framexaxis',
+          'frameyaxis', 'framezaxis', 'user'].includes(sensor.type);
+    entries.push({
+      name: sensor.name || `${sensor.type}_${entries.length}`,
+      type: sensor.type || 'sensor',
+      objtype: sensor.objtype || '',
+      objname: sensor.objname || '',
+      matrix: frame.matrix.clone(),
+      fovy: frame.fovy || 45,
+      canRender
+    });
+  }
+  return entries.length ? entries : null;
+}
+
+function makeSensorHelperGroup(sensorData, { makePreviewCameras = false } = {}) {
+  if (!sensorData?.length) return null;
+  const group = new THREE.Group();
+  group.name = 'mjc_sensors';
+  const markerGeo = new THREE.SphereGeometry(0.018, 12, 8);
+  const markerMat = new THREE.MeshStandardMaterial({
+    color: 0x4ade80,
+    emissive: 0x082a14,
+    roughness: 0.45,
+    depthTest: false
+  });
+  const rayMat = new THREE.LineBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.9, depthTest: false });
+  for (const entry of sensorData) {
+    const marker = new THREE.Mesh(markerGeo, markerMat);
+    marker.name = `sensor_${entry.name}`;
+    applyMatrixToObject(marker, entry.matrix);
+    marker.renderOrder = 40;
+    group.add(marker);
+
+    const localRay = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, -0.25)
+    ]);
+    const ray = new THREE.Line(localRay, rayMat);
+    ray.name = `sensor_ray_${entry.name}`;
+    applyMatrixToObject(ray, entry.matrix);
+    ray.renderOrder = 40;
+    group.add(ray);
+
+    if (entry.canRender) {
+      const cam = new THREE.PerspectiveCamera(entry.fovy, 1, 0.01, 50);
+      cam.name = `sensor_camera_${entry.name}`;
+      applyMatrixToObject(cam, entry.matrix);
+      group.add(cam);
+      const helper = new THREE.CameraHelper(cam);
+      helper.name = `sensor_frustum_${entry.name}`;
+      helper.visible = state.settings.showSensors;
+      group.add(helper);
+      if (makePreviewCameras) {
+        state.sensorPreviewCameras.push({ name: entry.name, type: entry.type, camera: cam });
+      }
+    }
+  }
+  group.traverse((obj) => { obj.visible = state.settings.showSensors; });
+  return group;
+}
+
+let sensorRenderTarget = null;
+function updateSensorPreviewPanel() {
+  const active = state.sensorPreviewCameras[state.sensorPreviewIndex] || state.sensorPreviewCameras[0] || null;
+  const visible = Boolean(active && state.settings.showSensors && state.settings.renderSensorView);
+  sensorPreviewPanel.style.display = visible ? 'block' : 'none';
+  if (active) {
+    const suffix = state.sensorPreviewCameras.length > 1
+      ? ` (${state.sensorPreviewIndex + 1}/${state.sensorPreviewCameras.length})`
+      : '';
+    sensorPreviewLabel.textContent = `${active.type}: ${active.name}${suffix}`;
+  }
+}
+
+function renderSensorPreview() {
+  const active = state.sensorPreviewCameras[state.sensorPreviewIndex] || state.sensorPreviewCameras[0] || null;
+  if (!active || !state.settings.showSensors || !state.settings.renderSensorView) return;
+  const w = sensorPreviewCanvas.width;
+  const h = sensorPreviewCanvas.height;
+  if (!sensorRenderTarget || sensorRenderTarget.width !== w || sensorRenderTarget.height !== h) {
+    sensorRenderTarget?.dispose();
+    sensorRenderTarget = new THREE.WebGLRenderTarget(w, h);
+  }
+  active.camera.aspect = w / h;
+  active.camera.updateProjectionMatrix();
+  sourceView.scene.updateMatrixWorld(true);
+  renderer.setRenderTarget(sensorRenderTarget);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, w, h);
+  renderer.render(sourceView.scene, active.camera);
+  const pixels = new Uint8Array(w * h * 4);
+  renderer.readRenderTargetPixels(sensorRenderTarget, 0, 0, w, h, pixels);
+  renderer.setRenderTarget(null);
+  const ctx = sensorPreviewCanvas.getContext('2d');
+  const image = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const src = (h - 1 - y) * w * 4;
+    const dst = y * w * 4;
+    image.data.set(pixels.subarray(src, src + w * 4), dst);
+  }
+  ctx.putImageData(image, 0, 0);
 }
 
 // MuJoCo boolean/flag attr: <flag x="enable|disable">, <compiler x="true|false">.
@@ -2458,8 +3010,6 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   // Dissolve <frame> grouping transforms (needs the angle ctx above).
   for (const worldbody of childElements(root, 'worldbody')) flattenMujocoFrames(worldbody);
 
-  warnUnsupportedMujocoElements(root);
-
   const meshAssets = collectMujocoAssets(root);
   const defaults = collectMujocoDefaults(root);
   // <asset><material name rgba emission>: name -> {rgba, emission}, to color
@@ -2565,8 +3115,11 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   const joints = [];
   let visualCount = 0;
   let collisionCount = 0;
-  // site name -> { pos: THREE.Vector3 in model space } for muscle/tendon routing.
+  // Site/body/joint maps in model space for tendon routing and sensor frames.
   const sitesByName = new Map();
+  const bodiesByName = new Map();
+  const jointPositionsByName = new Map();
+  const sitesPayload = [];
   state.muscleObjects = [];
 
   // Bake one <geom> into a link's THREE object + its payload. Shared by the
@@ -2660,6 +3213,7 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     const bodyLocalMatrix = matrixFromPoseAttrs(bodyAttrs);
     const bodyWorldMatrix = new THREE.Matrix4().copy(parentWorldMatrix).multiply(bodyLocalMatrix);
     const linkName = bodyAttrs.name || `body_${links.length}`;
+    bodiesByName.set(linkName, bodyWorldMatrix.clone());
     // <freejoint>/<joint type="free"> -> 6-DOF floating base (not joined to its
     // parent); marked so the converter emits a free articulation root.
     const hasFree = !!firstChildElement(bodyNode, 'freejoint')
@@ -2717,6 +3271,8 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const jointPos = parseNumbers(jointAttrs.pos, [0, 0, 0]);
       const localPos0 = transformPointArray(bodyLocalMatrix, jointPos);
       const localPos1 = jointPos;
+      const jointWorldPos = vectorFromArray(jointPos).applyMatrix4(bodyWorldMatrix);
+      jointPositionsByName.set(jointName, jointWorldPos);
       const localRot0 = quaternionToUSDArray(bodyPose.quaternion);
       const localRot1 = [1, 0, 0, 0];
       const jointInfo = {
@@ -2781,8 +3337,14 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const siteLocal = matrixFromPoseAttrs(siteAttrs);
       const siteWorld = new THREE.Matrix4().copy(bodyWorldMatrix).multiply(siteLocal);
       sitesByName.set(siteName, {
-        pos: new THREE.Vector3().setFromMatrixPosition(siteWorld)
+        pos: new THREE.Vector3().setFromMatrixPosition(siteWorld),
+        matrix: siteWorld.clone()
       });
+      const sitePayload = { name: siteName, matrix: matrixToUSDArray(siteWorld) };
+      if (siteAttrs.group !== undefined) sitePayload.group = parseInt(siteAttrs.group, 10) || 0;
+      const size = parseNumbers(siteAttrs.size, []);
+      if (size.length) sitePayload.size = size[0];
+      sitesPayload.push(sitePayload);
     }
 
     for (const childBody of childElements(bodyNode, 'body')) {
@@ -2818,11 +3380,11 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   // line data is stashed in state so the converted-USD view can draw the same
   // muscles (it shares the model coordinate space).
   let muscleTendonCount = 0;
-  const muscleData = computeMuscleLineData(root, sitesByName);
+  const muscleData = computeMuscleLineData(root, sitesByName, jointPositionsByName);
   state.muscleLineData = muscleData;
   const muscleGroup = makeMuscleGroup(muscleData);
   if (muscleGroup) {
-    muscleGroup.visible = state.settings.showMuscles;
+    muscleGroup.visible = state.settings.showMuscles && state.settings.showTendons;
     group.add(muscleGroup);
     state.muscleObjects.push(muscleGroup);
     muscleTendonCount = muscleGroup.userData.tendonCount || 0;
@@ -2849,8 +3411,11 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
   }
 
   const mjcSceneOptions = parseMujocoSceneOptions(root);
-  // <texture name file=...> -> file path, so a material's texture becomes a
-  // UsdUVTexture in the converted USD (builtin/file-less textures skipped).
+  const tendonsPayload = parseMujocoTendons(root);
+  const mjcActuatorsPayload = parseMujocoMJCActuators(root);
+  // <texture name file=...> -> file path, and built-in checker/gradient textures
+  // -> generated PNG paths. A material's texture then becomes a UsdUVTexture in
+  // the converted USD.
   const texFiles = new Map();
   for (const t of root.querySelectorAll('asset texture')) {
     const tn = t.getAttribute('name'); const tf = t.getAttribute('file');
@@ -2867,7 +3432,12 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       if (v !== null) mat[k] = Number(v);
     }
     const texRef = m.getAttribute('texture');
+    const texrepeat = parseNumbers(m.getAttribute('texrepeat'), [1, 1]);
     if (texRef && texFiles.has(texRef)) mat.texture = texFiles.get(texRef);
+    else if (texRef && textureDefs.has(texRef)) {
+      const generated = await generatedMujocoTextureAsset(texRef, textureDefs.get(texRef), texrepeat);
+      if (generated) mat.texture = generated;
+    }
     materialsPayload.push(mat);
   }
   const sensorsPayload = [];
@@ -2877,18 +3447,41 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
       const type = node.localName;
       if (!type) continue;
       const s = { type, name: node.getAttribute('name') || `${type}_${sensorsPayload.length}` };
+      const targetAliases = ['site', 'joint', 'actuator', 'tendon', 'body', 'xbody',
+        'geom', 'camera', 'light', 'sensor', 'numeric', 'text', 'tuple', 'key',
+        'plugin'];
       if (node.getAttribute('objtype') !== null) {
         s.objtype = node.getAttribute('objtype');
         if (node.getAttribute('objname') !== null) s.objname = node.getAttribute('objname');
       } else {
-        for (const k of ['site', 'joint', 'actuator', 'tendon', 'body', 'geom']) {
+        for (const k of targetAliases) {
           if (node.getAttribute(k) !== null) { s.objtype = k; s.objname = node.getAttribute(k); break; }
         }
       }
-      if (node.getAttribute('reftype') !== null) s.reftype = node.getAttribute('reftype');
-      if (node.getAttribute('refname') !== null) s.refname = node.getAttribute('refname');
+      if (node.getAttribute('reftype') !== null) {
+        s.reftype = node.getAttribute('reftype');
+        if (node.getAttribute('refname') !== null) s.refname = node.getAttribute('refname');
+      } else {
+        for (const k of targetAliases) {
+          const refKey = `ref${k}`;
+          const camelRefKey = `ref${k[0].toUpperCase()}${k.slice(1)}`;
+          if (node.getAttribute(refKey) !== null) {
+            s.reftype = k;
+            s.refname = node.getAttribute(refKey);
+            break;
+          }
+          if (node.getAttribute(camelRefKey) !== null) {
+            s.reftype = k;
+            s.refname = node.getAttribute(camelRefKey);
+            break;
+          }
+        }
+      }
+      if (node.getAttribute('group') !== null) s.group = Math.round(Number(node.getAttribute('group')));
       if (node.getAttribute('cutoff') !== null) s.cutoff = Number(node.getAttribute('cutoff'));
       if (node.getAttribute('noise') !== null) s.noise = Number(node.getAttribute('noise'));
+      const user = parseNumbers(node.getAttribute('user'), []);
+      if (user.length) s.user = user;
       sensorsPayload.push(s);
     }
   }
@@ -2955,6 +3548,16 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     lightsPayload.push(...lc.lights);
     camerasPayload.push(...lc.cameras);
   }
+  state.sensorPreviewCameras = [];
+  const sensorVisualData = makeSensorVisualData(sensorsPayload, sitesByName, bodiesByName, camerasPayload);
+  state.sensorVisualData = sensorVisualData;
+  const sensorHelpers = makeSensorHelperGroup(sensorVisualData, { makePreviewCameras: true });
+  if (sensorHelpers) {
+    sensorHelpers.visible = state.settings.showSensors;
+    group.add(sensorHelpers);
+    state.sensorObjects.push(sensorHelpers);
+  }
+  updateSensorPreviewPanel();
   // All <keyframe><key> -> payload keyframes (-> MjcKeyframe prims). Separate
   // from group.homeKeyframe above, which is only used to pose the source view.
   const keyframesPayload = [];
@@ -2975,6 +3578,9 @@ async function parseMJCFWithMeshes(xmlText, filename, baseDir = '') {
     joints,
     actuators,
     ...(Object.keys(mjcSceneOptions).length ? { mjcScene: mjcSceneOptions } : {}),
+    ...(sitesPayload.length ? { sites: sitesPayload } : {}),
+    ...(tendonsPayload.length ? { tendons: tendonsPayload } : {}),
+    ...(mjcActuatorsPayload.length ? { mjcActuators: mjcActuatorsPayload } : {}),
     ...(keyframesPayload.length ? { keyframes: keyframesPayload } : {}),
     ...(lightsPayload.length ? { lights: lightsPayload } : {}),
     ...(camerasPayload.length ? { cameras: camerasPayload } : {}),
@@ -3045,9 +3651,17 @@ function applyPosePreset() {
   if (!robot?.joints) return;
   if (state.settings.applyHomePose && robot.homeKeyframe) poseFromKeyframe(robot);
   else poseToRest(robot);
+  syncUSDArticulationToJointValues();
   rebuildJointControls();
   syncConvertedUSDToSourcePose();
   syncGhosts();
+}
+
+function syncUSDArticulationToJointValues() {
+  if (!state.usdArticulation?.setJointValue || state.usdArticulation === state.robot) return;
+  for (const [name, value] of Object.entries(state.jointValues)) {
+    state.usdArticulation.setJointValue(name, value);
+  }
 }
 
 function classifyRobotMeshes(robot) {
@@ -3093,13 +3707,17 @@ function classifyRobotMeshes(robot) {
   applyVisibility();
 }
 
-// A geom mesh's visibility: MuJoCo-tagged source geoms follow their group's
-// toggle; everything else (URDF / converted-USD meshes) follows the coarse
-// visual/collision toggles.
+// A geom mesh's visibility: visual MuJoCo-tagged source geoms follow their
+// group toggle. Collision meshes follow the coarse collision toggle so enabling
+// "Collision meshes" reliably shows colliders even when MuJoCo groups 3-5 are
+// hidden by default.
 function geomMeshVisible(mesh, isVisualList) {
   const g = mesh.userData?.mujocoGroup;
-  if (g !== undefined && g !== null) return state.settings.geomGroups[g] !== false;
-  return isVisualList ? state.settings.showVisuals : state.settings.showCollisions;
+  if (isVisualList) {
+    if (g !== undefined && g !== null && state.settings.geomGroups[g] === false) return false;
+    return state.settings.showVisuals;
+  }
+  return state.settings.showCollisions;
 }
 
 function applyVisibility() {
@@ -3112,8 +3730,12 @@ function applyVisibility() {
 }
 
 function applyMuscleVisibility() {
-  for (const obj of state.muscleObjects) obj.visible = state.settings.showMuscles;
-  for (const obj of state.usdMuscleObjects) obj.visible = state.settings.showMuscles;
+  const tendonVisible = state.settings.showMuscles && state.settings.showTendons;
+  for (const obj of state.muscleObjects) obj.visible = tendonVisible;
+  for (const obj of state.usdMuscleObjects) obj.visible = tendonVisible;
+  for (const obj of state.sensorObjects) obj.visible = state.settings.showSensors;
+  for (const obj of state.usdSensorObjects) obj.visible = state.settings.showSensors;
+  updateSensorPreviewPanel();
 }
 
 function currentFitObjects() {
@@ -3202,6 +3824,9 @@ function buildGUI() {
   gui.add(state.settings, 'showVisuals').name('Visual meshes').onChange(applyVisibility);
   gui.add(state.settings, 'showCollisions').name('Collision meshes').onChange(applyVisibility);
   gui.add(state.settings, 'showMuscles').name('Muscles').onChange(applyMuscleVisibility);
+  gui.add(state.settings, 'showTendons').name('Tendons').onChange(applyMuscleVisibility);
+  gui.add(state.settings, 'showSensors').name('Sensors').onChange(applyMuscleVisibility);
+  gui.add(state.settings, 'renderSensorView').name('Sensor view').onChange(updateSensorPreviewPanel);
   // Per-MuJoCo-geom-group visibility (mirrors the MuJoCo viewer's group toggles).
   // Applies to MJCF source geoms tagged with a group; e.g. enable Group 4 to see
   // iit_softfoot's virtual-pulley tubes. Spatial tendons (the yellow streamlines)
@@ -3225,6 +3850,7 @@ function buildGUI() {
   gui.add(state.settings, 'showJointArrows').name('Joint arrows').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'showLinkNames').name('Link names').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'showJointNames').name('Joint names').onChange(updateSkeletonDebugVisualizations);
+  gui.add(state.settings, 'labelScale', 0.25, 6.0, 0.05).name('Label scale').onChange(updateSkeletonDebugVisualizations);
   gui.add(state.settings, 'ghostUSDInSource').name('USD ghost on left').onChange(rebuildGhosts);
   gui.add(state.settings, 'ghostSourceInUSD').name('Source ghost on right').onChange(rebuildGhosts);
   gui.add(state.settings, 'ghostOpacity', 0.05, 0.75, 0.01).name('Ghost opacity').onChange(() => {
@@ -3332,17 +3958,29 @@ function toggleJointPanelFold() {
   updateJointPanelFold();
 }
 
-async function loadRobotFile(file) {
+async function loadRobotFile(file, existingStats = null) {
   clearRobot();
   rememberAssetFile(file);
-  state.inputText = await file.text();
+  const stats = existingStats || beginLoadStats(file.name, file.size || 0);
+  if (existingStats?.text !== undefined) {
+    state.inputText = existingStats.text;
+  } else {
+    const readStart = performance.now();
+    state.inputText = await file.text();
+    stats.readMs = performance.now() - readStart;
+  }
+  stats.fileSize = state.inputText.length;
   state.inputName = file.name;
+  const parseStart = performance.now();
   state.inputFormat = detectInputFormat(state.inputText);
+  stats.parseMs = performance.now() - parseStart;
   setStatus(`Parsing ${state.inputFormat.toUpperCase()} ${file.name}...`);
   const baseDir = dirname(file.webkitRelativePath || file.name);
+  const processStart = performance.now();
   const robot = state.inputFormat === 'mjcf'
     ? await parseMJCFWithMeshes(state.inputText, file.name, baseDir)
     : await parseURDFWithMeshes(state.inputText, file.name);
+  stats.processMs = performance.now() - processStart;
   state.robot = robot;
   robotGroup.add(robot);
   applySceneOrientation();
@@ -3366,6 +4004,7 @@ async function loadRobotFile(file) {
   rebuildGhosts();
   updateLabels();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
+  finishLoadStats(stats);
   setStatus(`Loaded ${state.inputFormat.toUpperCase()} ${file.name}`);
 }
 
@@ -3650,6 +4289,7 @@ function usdPhysicsToSourceModel(extracted) {
       const axisToken = prim.properties?.['physics:axis'] || 'X';
       const lower = prim.properties?.['physics:lowerLimit'];
       const upper = prim.properties?.['physics:upperLimit'];
+      const ref = Number(prim.properties?.['mjc:ref']);
       return {
         name: prim.name || basenameFromPath(prim.path),
         type,
@@ -3664,6 +4304,9 @@ function usdPhysicsToSourceModel(extracted) {
         localPos1: prim.properties?.['physics:localPos1'],
         localRot0: prim.properties?.['physics:localRot0'],
         localRot1: prim.properties?.['physics:localRot1'],
+        refRad: Number.isFinite(ref)
+          ? (type === 'revolute' ? ref * DEG_TO_RAD : ref)
+          : 0,
         limit: lower !== undefined || upper !== undefined
           ? {
             lower: type === 'revolute' ? Number(lower || 0) * DEG_TO_RAD : Number(lower || 0),
@@ -4004,6 +4647,69 @@ function meshRestWorldByLinkPath(sourceObject, linkPaths, collisionPaths) {
   return restByLinkPath;
 }
 
+function articulationModelFromSourcePayload(payload, sourceObject) {
+  const linksScope = findObjectByName(sourceObject, 'Links');
+  const pathByLinkName = new Map();
+  if (linksScope) {
+    for (const child of linksScope.children) {
+      const path = usdPathForObject(child);
+      if (path) pathByLinkName.set(child.name, path);
+    }
+  }
+  const linkPath = (name) => {
+    const usdName = sanitizeUSDIdentifier(name, 'link');
+    return pathByLinkName.get(usdName) || `/World/Links/${usdName}`;
+  };
+  const links = (payload?.links || []).map((link) => ({
+    name: link.name,
+    path: linkPath(link.name),
+    inertial: link.inertial || {}
+  }));
+  const pathByName = new Map(links.map((link) => [link.name, link.path]));
+  const collisionPaths = new Set();
+  for (const link of payload?.links || []) {
+    const base = pathByName.get(link.name);
+    if (!base) continue;
+    for (const collision of link.collisions || []) {
+      collisionPaths.add(`${base}/${sanitizeUSDIdentifier(collision.name, 'collision')}`);
+    }
+  }
+  const joints = (payload?.joints || [])
+    .map((joint) => ({
+      ...joint,
+      type: joint.type || joint.jointType || 'fixed',
+      parentPath: pathByName.get(joint.parent) || '',
+      childPath: pathByName.get(joint.child) || '',
+      axis: joint.axis || [1, 0, 0],
+      origin: joint.origin || joint.localPos0 || [0, 0, 0],
+      localPos0: joint.localPos0,
+      localPos1: joint.localPos1,
+      localRot0: joint.localRot0,
+      localRot1: joint.localRot1,
+      refRad: joint.refRad || 0
+    }))
+    .filter((joint) => joint.parentPath && joint.childPath);
+  return {
+    name: payload?.name || 'ConvertedFromSource',
+    upAxis: payload?.upAxis || state.settings.upAxis || 'Z',
+    links,
+    joints,
+    collisionPaths
+  };
+}
+
+function sourceRestWorldByLinkPath(model) {
+  const rest = new Map();
+  if (!state.robot?.links) return rest;
+  state.robot.updateWorldMatrix(true, true);
+  for (const link of model.links || []) {
+    const sourceLink = state.robot.links[link.name];
+    if (!sourceLink) continue;
+    rest.set(link.path, matrixInSceneRoot(sourceLink, state.robot));
+  }
+  return rest;
+}
+
 function jointHasAuthoredRotations(joint) {
   return Array.isArray(joint?.localRot0) && Array.isArray(joint?.localRot1);
 }
@@ -4060,6 +4766,11 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
     childJointsByParent,
     sourceObject
   );
+  if (options.restWorldByLinkPath instanceof Map) {
+    for (const [path, matrix] of options.restWorldByLinkPath) {
+      restWorldByLinkPath.set(path, matrix.clone());
+    }
+  }
   if (options.inferMissingJointFrames && modelNeedsJointFrameInference(model)) {
     const meshRestFrames = meshRestWorldByLinkPath(sourceObject, linkPaths, model.collisionPaths);
     for (const [path, matrix] of meshRestFrames) {
@@ -4117,17 +4828,17 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
   // Localize each mesh against the SAME rest world used to place its link node
   // (the joint chain above), not the loaded USD's link-Xform world. The link
   // node sits at `restWorldByLinkPath`, so a mesh placed with
-  //   meshLocal = restWorld⁻¹ · meshWorld(loaded)
-  // lands back at meshWorld(loaded) in the rest pose — the rig reproduces the
+  //   meshLocal = inverse(restWorld) * meshWorld(loaded)
+  // lands back at meshWorld(loaded) in the rest pose; the rig reproduces the
   // loaded USD exactly, then articulates from there.
   //
   // This is robust to where the writer parks the body-world transform:
-  //   • baked into the link Xform (link world == restWorld): equivalent to the
+  //   - baked into the link Xform (link world == restWorld): equivalent to the
   //     old loaded-Xform math, and
-  //   • baked into the geoms with the link Xform left at identity (the current
+  //   - baked into the geoms with the link Xform left at identity (the current
   //     tinyusdz URDF/MJCF converter, MuJoCo-style): the old code used the
   //     identity link Xform, so meshLocal == full kinematic world, which the
-  //     joint-positioned link node then double-applied — exploding the rig.
+  //     joint-positioned link node then double-applied, exploding the rig.
   // Falls back to the loaded link world, then identity, when a link has no
   // rest-world entry.
   const linkInverseWorld = new Map();
@@ -4166,13 +4877,14 @@ function buildArticulatedRobotFromUSD(model, sourceObject, options = {}) {
   group.setJointValue = (jointName, value) => {
     const joint = group.joints[jointName];
     if (!joint?.pivot) return;
+    const displacement = value - (joint.refRad || 0);
     if (joint.jointType === 'prismatic') {
-      const offset = axisVector(joint.axis).normalize().applyQuaternion(joint.originQuat).multiplyScalar(value);
+      const offset = axisVector(joint.axis).normalize().applyQuaternion(joint.originQuat).multiplyScalar(displacement);
       joint.pivot.position.copy(joint.origin).add(offset);
     } else if (joint.jointType !== 'fixed' && joint.jointType !== 'spherical') {
       // Spherical (3-DOF) joints can't be driven by a single scalar; leave at rest.
       joint.pivot.quaternion.copy(joint.originQuat)
-        .multiply(new THREE.Quaternion().setFromAxisAngle(axisVector(joint.axis).normalize(), value));
+        .multiply(new THREE.Quaternion().setFromAxisAngle(axisVector(joint.axis).normalize(), displacement));
     }
   };
 
@@ -4190,7 +4902,12 @@ function buildGeneratedSourceFromUSD(model) {
 async function ensureNativeExporter() {
   const loader = await ensureTinyLoader();
   if (!state.nativeExporter) {
-    state.nativeExporter = new loader.native_.TinyUSDZLoaderNative();
+    const Exporter = loader.native_.TinyUSDZLoaderNative ||
+      loader.native_.NextUSDZConverterNative;
+    if (typeof Exporter !== 'function') {
+      throw new Error('The selected TinyUSDZ backend does not provide the URDF/MJCF exporter.');
+    }
+    state.nativeExporter = new Exporter();
     const { maxUsdcMb, maxMemMb } = resolveUSDCExportCapsFromRuntime();
     // Raise the USDC writer's conservative WASM size caps so mesh-dense scenes
     // (e.g. robot_soccer_kit ~104MB, apptronik_apollo ~111MB) can export past
@@ -4415,6 +5132,11 @@ async function registerTextureAssets(native, payload) {
   if (!native.setAsset) return;
   for (const m of payload.materials || []) {
     if (!m.texture) continue;
+    const generated = state.generatedTextureAssets.get(m.texture);
+    if (generated) {
+      native.setAsset(m.texture, generated);
+      continue;
+    }
     const file = resolveAssetEntry(m.texture)?.file;
     if (!file) continue;
     try {
@@ -4469,11 +5191,12 @@ async function convertSourceToUSD(format = 'usdc') {
   const result = await createUSDBytesFromSource(format, { autoEmbedTextures: true });
   clearUSD();
   const object = await loadUSDObjectFromBytes(result.bytes, result.filename);
+  const resultFormat = extension(result.filename).slice(1) || format;
   state.usdObject = object;
   state.usdRestObject = object;
   state.usdName = result.filename;
   state.latestUSDBytes = result.bytes;
-  state.latestUSDFormat = format;
+  state.latestUSDFormat = resultFormat;
   usdGroup.add(object);
   applySceneOrientation();
   // Articulate from the *exported USD's* own physics, exactly like the import
@@ -4482,27 +5205,45 @@ async function convertSourceToUSD(format = 'usdc') {
   // that path dropped links on URDF input (the inverseSourceRest correction was
   // MJCF-only) and stopped following joints once the source and USD views no
   // longer shared a frame. Driving the USD's own joints is robust to both.
+  let didArticulate = false;
   try {
     const extracted = await extractUSDPhysicsJSONFromBytes(result.bytes, result.filename);
     annotateUSDRenderableClasses(object, extracted);
     const model = usdPhysicsToSourceModel(extracted);
     if (model.links.length && model.joints.length) {
-      const articulated = buildArticulatedRobotFromUSD(model, object, {
+      const articulatedObject = buildArticulatedRobotFromUSD(model, object, {
         name: object.name,
         resetMeshLists: false,
         inferMissingJointFrames: true
       });
       usdGroup.remove(object);
-      state.usdObject = articulated;
-      state.usdArticulation = articulated;
-      usdGroup.add(articulated);
+      state.usdObject = articulatedObject;
+      state.usdArticulation = articulatedObject;
+      usdGroup.add(articulatedObject);
       // Match the USD articulation to the source's current joint pose.
       for (const [name, value] of Object.entries(state.jointValues)) {
-        articulated.setJointValue?.(name, value);
+        articulatedObject.setJointValue?.(name, value);
       }
+      didArticulate = true;
     }
   } catch (err) {
     console.warn('USD Physics articulation skipped:', err);
+  }
+  if (!didArticulate && state.exportPayload?.joints?.length) {
+    const model = articulationModelFromSourcePayload(state.exportPayload, object);
+    if (model.links.length && model.joints.length) {
+      const articulatedObject = buildArticulatedRobotFromUSD(model, object, {
+        name: object.name,
+        resetMeshLists: false,
+        inferMissingJointFrames: false,
+        restWorldByLinkPath: sourceRestWorldByLinkPath(model)
+      });
+      usdGroup.remove(object);
+      state.usdObject = articulatedObject;
+      state.usdArticulation = articulatedObject;
+      usdGroup.add(articulatedObject);
+      syncUSDArticulationToJointValues();
+    }
   }
   // Draw the muscle/spatial-tendon polylines on the USD view too. The converted
   // USD carries the muscle topology (MjcTendon + MjcSite prims), but the site
@@ -4511,9 +5252,17 @@ async function convertSourceToUSD(format = 'usdc') {
   if (state.muscleLineData) {
     const usdMuscle = makeMuscleGroup(state.muscleLineData);
     if (usdMuscle) {
-      usdMuscle.visible = state.settings.showMuscles;
+      usdMuscle.visible = state.settings.showMuscles && state.settings.showTendons;
       usdGroup.add(usdMuscle);
       state.usdMuscleObjects.push(usdMuscle);
+    }
+  }
+  if (state.sensorVisualData) {
+    const usdSensors = makeSensorHelperGroup(state.sensorVisualData);
+    if (usdSensors) {
+      usdSensors.visible = state.settings.showSensors;
+      usdGroup.add(usdSensors);
+      state.usdSensorObjects.push(usdSensors);
     }
   }
   state.usdIsConverted = true;
@@ -4522,7 +5271,7 @@ async function convertSourceToUSD(format = 'usdc') {
   updateLabels();
   applyVisibility();
   if (state.settings.autocenter) fitCamera(currentFitObjects());
-  setStatus(`Converted ${state.inputFormat.toUpperCase()} to ${format.toUpperCase()} for comparison.`);
+  setStatus(`Converted ${state.inputFormat.toUpperCase()} to ${resultFormat.toUpperCase()} for comparison.`);
 }
 
 async function convertUSDToSource() {
@@ -4581,9 +5330,96 @@ async function exportRobot(format) {
   }
 }
 
+async function loadInputFile(file, existingStats = null) {
+  const ext = extension(file?.name || '');
+  if (SOURCE_EXTENSIONS.has(ext)) {
+    await loadRobotFile(file, existingStats);
+  } else if (USD_MESH_EXTENSIONS.has(ext)) {
+    await loadUSDFile(file, existingStats);
+  } else {
+    throw new Error(`Unsupported file extension ${ext || '(none)'}. Expected URDF, XML, or USD.`);
+  }
+}
+
+async function loadURL(url) {
+  const filename = basenameFromUrl(url);
+  const ext = extension(filename);
+  if (!SOURCE_EXTENSIONS.has(ext) && !USD_MESH_EXTENSIONS.has(ext)) {
+    throw new Error(`Unsupported URL extension ${ext || '(none)'}. Expected URDF, XML, or USD.`);
+  }
+  const stats = beginLoadStats(filename, 0);
+  setStatus(`Fetching ${filename}...`);
+  const fetchStart = performance.now();
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok && response.status !== 206) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  stats.readMs = performance.now() - fetchStart;
+  stats.fileSize = bytes.byteLength;
+  updateLoadStatsPanel(stats);
+  const file = new File([bytes], filename, { type: SOURCE_EXTENSIONS.has(ext) ? 'text/xml' : 'application/octet-stream' });
+  if (SOURCE_EXTENSIONS.has(ext)) {
+    stats.text = new TextDecoder().decode(bytes);
+  } else {
+    stats.bytes = bytes;
+  }
+  try {
+    await loadInputFile(file, stats);
+  } finally {
+    delete stats.text;
+    delete stats.bytes;
+  }
+}
+
+function setupDragAndDrop() {
+  const onEnter = (event) => {
+    event.preventDefault();
+    document.body.classList.add('drag-over');
+  };
+  const onLeave = (event) => {
+    event.preventDefault();
+    if (event.target === document.body || event.target === renderer.domElement) {
+      document.body.classList.remove('drag-over');
+    }
+  };
+  window.addEventListener('dragover', onEnter);
+  window.addEventListener('dragleave', onLeave);
+  window.addEventListener('drop', (event) => {
+    event.preventDefault();
+    document.body.classList.remove('drag-over');
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    loadInputFile(file).catch((err) => {
+      console.error(err);
+      setStatus(`Drop load failed: ${err.message}`);
+    });
+  });
+}
+
+function setupURLAutoload() {
+  const params = new URLSearchParams(window.location.search);
+  const url = urlParam(params);
+  window.renderComplete = false;
+  window.renderError = null;
+  const load = url
+    ? loadURL(url)
+    : loadRobotFile(new File([DEFAULT_SAMPLE_URDF], 'sample.urdf', {
+        type: 'text/xml'
+      }));
+  load.then(() => {
+    window.renderComplete = true;
+  }).catch((err) => {
+    console.error(err);
+    setStatus(`${url ? 'URL' : 'Sample'} load failed: ${err.message}`);
+    window.renderError = err?.message || String(err);
+    window.renderComplete = true;
+  });
+}
+
 document.getElementById('urdfInput').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
-  if (file) loadRobotFile(file).catch((err) => {
+  if (file) loadInputFile(file).catch((err) => {
     console.error(err);
     setStatus(`Load failed: ${err.message}`);
   });
@@ -4596,7 +5432,7 @@ document.getElementById('assetInput').addEventListener('change', (event) => {
 
 document.getElementById('usdInput').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
-  if (file) loadUSDFile(file).catch((err) => {
+  if (file) loadInputFile(file).catch((err) => {
     console.error(err);
     setStatus(`USD load failed: ${err.message}`);
   });
@@ -4654,7 +5490,14 @@ window.__viewerStats = () => {
   return {
     links: Object.keys(state.robot?.links || state.usdArticulation?.links || {}).length,
     sourceVisibleMeshes: countVisible(robotGroup),
-    usdVisibleMeshes: countVisible(usdGroup)
+    usdVisibleMeshes: countVisible(usdGroup),
+    tendonSegments: state.muscleLineData?.radii?.length || 0,
+    sensors: state.sensorVisualData?.length || 0,
+    sensorPreviewCameras: state.sensorPreviewCameras.length,
+    payloadSites: state.exportPayload?.sites?.length || 0,
+    payloadTendons: state.exportPayload?.tendons?.length || 0,
+    payloadMjcActuators: state.exportPayload?.mjcActuators?.length || 0,
+    payloadSensors: state.exportPayload?.sensors?.length || 0
   };
 };
 
@@ -4672,7 +5515,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-const clock = new THREE.Clock();
+const animationStartTime = performance.now();
 function renderSplitView() {
   const width = renderer.domElement.clientWidth;
   const height = renderer.domElement.clientHeight;
@@ -4693,11 +5536,21 @@ function renderSplitView() {
   renderer.render(usdView.scene, camera);
 
   renderer.setScissorTest(false);
+  renderSensorPreview();
 }
 
 function animate() {
   requestAnimationFrame(animate);
-  const elapsed = clock.getElapsedTime();
+  const now = performance.now();
+  if (!loadStats.fpsLast) loadStats.fpsLast = now;
+  loadStats.frames++;
+  if (now - loadStats.fpsLast >= 500) {
+    loadStats.fps = Math.round((loadStats.frames * 1000) / (now - loadStats.fpsLast));
+    loadStats.frames = 0;
+    loadStats.fpsLast = now;
+    updateLoadStatsPanel();
+  }
+  const elapsed = (performance.now() - animationStartTime) / 1000;
   if ((state.robot || state.usdArticulation) && state.settings.animateJoints) {
     for (const [name, joint] of Object.entries(state.joints)) {
       const type = joint.jointType || joint.type || 'fixed';
@@ -4718,7 +5571,23 @@ function animate() {
 }
 
 buildGUI();
+if (backendSelect) {
+  backendSelect.value = state.settings.backend;
+  backendSelect.addEventListener('change', () => {
+    state.nativeExporter?.delete?.();
+    state.tinyLoader?.dispose?.();
+    state.nativeExporter = null;
+    state.tinyLoader = null;
+    state.settings.backend = backendSelect.value;
+    if (loadStats.current) loadStats.current.backend = state.settings.backend;
+    updateLoadStatsPanel();
+    setStatus(`USD backend set to ${state.settings.backend}.`);
+  });
+}
 updateButtonStates();
 updateLabels();
 updateJointPanelFold();
+updateLoadStatsPanel(beginLoadStats('-', 0));
+setupDragAndDrop();
+setupURLAutoload();
 animate();

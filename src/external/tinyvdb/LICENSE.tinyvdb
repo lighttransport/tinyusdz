@@ -1,0 +1,33 @@
+tinyvdb (tinyvdbio.h) — vendored into tinyusdz
+==============================================
+
+Source:  https://github.com/syoyo/tinyvdb
+License: Mozilla Public License Version 2.0 (MPL-2.0)
+
+Portions of the IO / Archive / Tree handling are derived from OpenVDB
+(DreamWorks Animation), which is licensed under the MPL-2.0 as well.
+
+Local modifications (applied on top of upstream, all marked "tinyusdz patch"
+in tinyvdbio.h):
+
+  * Debug `std::cout` traces routed through a TINYVDB_LOG null sink (enable with
+    TINYVDBIO_ENABLE_DEBUG_PRINT).
+  * `#include "miniz.h"` repointed to the repository's already-vendored
+    `../miniz.h` (no second copy of miniz).
+  * Bug fix: DecompressZip() cast the POINTER `uncompressed_size` to a size
+    instead of dereferencing it, crashing on every ZIP-compressed buffer.
+  * Bug fix: ReadMaskValues() reconstructed inactive voxels by memcpy'ing the
+    `Value` object header bytes instead of the typed float value.
+  * Transform: read the extra translation vector for ScaleTranslateMap /
+    UniformScaleTranslateMap, and accept the non-uniform ScaleMap /
+    ScaleTranslateMap types (upstream under-read the stream for translated
+    grids, misaligning the following tree data).
+  * Leaf decode: read leaf voxel buffers densely via ReadMaskValues() (correct
+    active-mask + selection-mask + inactive-value handling) instead of the
+    simplified inline path that corrupted active-mask-compressed leaves.
+  * Retain per-child origins (RootNode) and expose leaf data via accessors.
+  * New dense-extraction API: `DenseFloatGrid` + `ReadDenseGrids()`, which walk
+    the decoded Tree4<float,5,4,3> and produce a dense float array (active
+    voxels scattered in, inactive = background), with voxel size / world
+    translation / background captured. Supports float and half (save-float-as-
+    half) FloatTree grids with None / ZIP / ACTIVE_MASK compression.

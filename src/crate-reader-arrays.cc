@@ -99,13 +99,8 @@ bool CrateReader::ReadCompressedInts(Int *out,
     return false;
   }
 
-  // Track persistent decompression buffer budget (only reserve growth delta,
-  // never release — these buffers persist across calls)
-  if (_decomp_comp_buffer.size() < compBufferSize) {
-    size_t delta = compBufferSize - _decomp_comp_buffer_budget;
-    CHECK_MEMORY_USAGE(delta);
-    _decomp_comp_buffer_budget = compBufferSize;
-    _decomp_comp_buffer.resize(compBufferSize);
+  if (!ReserveDecompressionBuffers(compBufferSize, 0)) {
+    return false;
   }
 
   if (!_sr->read(size_t(compSize), size_t(compSize),
@@ -116,11 +111,8 @@ bool CrateReader::ReadCompressedInts(Int *out,
   // Get working space size for decompression
   size_t workingSpaceSize = Compressor::GetDecompressionWorkingSpaceSize(num_ints);
 
-  if (_decomp_working_buffer.size() < workingSpaceSize) {
-    size_t delta = workingSpaceSize - _decomp_working_buffer_budget;
-    CHECK_MEMORY_USAGE(delta);
-    _decomp_working_buffer_budget = workingSpaceSize;
-    _decomp_working_buffer.resize(workingSpaceSize);
+  if (!ReserveDecompressionBuffers(compBufferSize, workingSpaceSize)) {
+    return false;
   }
 
   bool ret = Compressor::DecompressFromBuffer(
@@ -183,7 +175,6 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
 
   if (!is_compressed) {
 
-    // TODO(syoyo): Zero-copy
     if (!_sr->read(byte_count, byte_count,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read integer array data.");
@@ -251,7 +242,6 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
   if (!is_compressed) {
 
 
-    // TODO(syoyo): Zero-copy
     if (!_sr->read(sizeof(uint16_t) * length, sizeof(uint16_t) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read half array data.\n";
@@ -399,7 +389,6 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
   if (!is_compressed) {
 
-    // TODO(syoyo): Zero-copy
     if (!_sr->read(sizeof(float) * length, sizeof(float) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read float array data.\n";
@@ -434,18 +423,19 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
     if (code == 'i') {
       // Compressed integers.
       size_t tmp_bytes = sizeof(int32_t) * length;
-      CHECK_MEMORY_USAGE(tmp_bytes);
+      auto tmp_budget = memory_manager_->ReserveScoped(tmp_bytes);
+      if (!tmp_budget.IsReserved()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for compressed float scratch buffer.");
+      }
       std::vector<int32_t> ints;
       ints.resize(length);
       if (!ReadCompressedInts(ints.data(), ints.size())) {
-        REDUCE_MEMORY_USAGE(tmp_bytes);
         _err += "Failed to read compressed ints in ReadFloatArray.\n";
         return false;
       }
       for (size_t i = 0; i < length; i++) {
         d->data()[i] = float(ints[i]);
       }
-      REDUCE_MEMORY_USAGE(tmp_bytes);
     } else if (code == 't') {
       // Lookup table & indexes.
       uint32_t lutSize;
@@ -461,13 +451,15 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
       size_t lut_bytes = sizeof(float) * lutSize;
       size_t idx_bytes = sizeof(uint32_t) * length;
-      CHECK_MEMORY_USAGE(lut_bytes + idx_bytes);
+      auto table_budget = memory_manager_->ReserveScoped(lut_bytes + idx_bytes);
+      if (!table_budget.IsReserved()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for compressed float lookup table.");
+      }
 
       std::vector<float> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
-        REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut table in ReadFloatArray.\n";
         return false;
       }
@@ -475,7 +467,6 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
       std::vector<uint32_t> indexes;
       indexes.resize(length);
       if (!ReadCompressedInts(indexes.data(), indexes.size())) {
-        REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut indices in ReadFloatArray.\n";
         return false;
       }
@@ -483,13 +474,11 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
       auto o = d->data();
       for (auto index : indexes) {
         if (index >= lutSize) {
-          REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
           _err += "LUT index out of bounds in ReadFloatArray.\n";
           return false;
         }
         *o++ = lut[index];
       }
-      REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
     } else {
       _err += "Invalid code. Data is currupted\n";
       return false;
@@ -550,7 +539,6 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
   if (!is_compressed) {
 
-    // TODO(syoyo): Zero-copy
     if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
                    reinterpret_cast<uint8_t *>(d->data()))) {
       _err += "Failed to read double array data.\n";
@@ -587,16 +575,17 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     if (code == 'i') {
       // Compressed integers.
       size_t tmp_bytes = sizeof(int32_t) * length;
-      CHECK_MEMORY_USAGE(tmp_bytes);
+      auto tmp_budget = memory_manager_->ReserveScoped(tmp_bytes);
+      if (!tmp_budget.IsReserved()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for compressed double scratch buffer.");
+      }
       std::vector<int32_t> ints;
       ints.resize(length);
       if (!ReadCompressedInts(ints.data(), ints.size())) {
-        REDUCE_MEMORY_USAGE(tmp_bytes);
         _err += "Failed to read compressed ints in ReadDoubleArray.\n";
         return false;
       }
       std::copy(ints.begin(), ints.end(), d->data());
-      REDUCE_MEMORY_USAGE(tmp_bytes);
     } else if (code == 't') {
       // Lookup table & indexes.
       uint32_t lutSize;
@@ -612,13 +601,15 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
       size_t lut_bytes = sizeof(double) * lutSize;
       size_t idx_bytes = sizeof(uint32_t) * length;
-      CHECK_MEMORY_USAGE(lut_bytes + idx_bytes);
+      auto table_budget = memory_manager_->ReserveScoped(lut_bytes + idx_bytes);
+      if (!table_budget.IsReserved()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Memory budget exceeded for compressed double lookup table.");
+      }
 
       std::vector<double> lut;
       lut.resize(lutSize);
       if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
                      reinterpret_cast<uint8_t *>(lut.data()))) {
-        REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut table in ReadDoubleArray.\n";
         return false;
       }
@@ -626,7 +617,6 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
       std::vector<uint32_t> indexes;
       indexes.resize(length);
       if (!ReadCompressedInts(indexes.data(), indexes.size())) {
-        REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
         _err += "Failed to read lut indices in ReadDoubleArray.\n";
         return false;
       }
@@ -634,13 +624,11 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
       auto o = d->data();
       for (auto index : indexes) {
         if (index >= lutSize) {
-          REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
           _err += "LUT index out of bounds in ReadDoubleArray.\n";
           return false;
         }
         *o++ = lut[index];
       }
-      REDUCE_MEMORY_USAGE(lut_bytes + idx_bytes);
     } else {
       _err += "Invalid code. Data is currupted\n";
       return false;

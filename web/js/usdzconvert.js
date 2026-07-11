@@ -10,9 +10,8 @@
 import {
   loadWasm,
   isImageName,
-  convertFolderToUSDZ,
-  outputFormatForImage,
   parseByteSize,
+  wasmHeapByteLength,
 } from './src/usdzconvert.js';
 
 // ---------------------------------------------------------------------------
@@ -71,11 +70,29 @@ container.innerHTML = `
         <option value="usda">USDA</option>
       </select>
 
+      <label>Flatten pipeline</label>
+      <select id="pipeline" style="padding:4px;width:160px"
+        title="Legacy is the stable in-memory path. Stream keeps textures lazy. Next is the experimental low-memory root flattener for supported USDC inputs.">
+        <option value="legacy">Legacy</option>
+        <option value="next">Next (low memory)</option>
+        <option value="stream">Stream</option>
+        <option value="stream-next">Stream + Next</option>
+      </select>
+
+      <label>Variant overrides</label>
+      <input id="variantSelections" type="text" placeholder="set=value, lod=high"
+             style="padding:4px;width:200px"
+             title="Variant set overrides for next flatten. Comma-separated set=value pairs.">
+
       <label>Flatten stage</label>
       <input id="flatten" type="checkbox" checked style="justify-self:start">
 
       <label>ARKit compatible</label>
       <input id="arkitCompatible" type="checkbox" style="justify-self:start">
+
+      <label>Include unused textures</label>
+      <input id="includeUnusedTextures" type="checkbox" style="justify-self:start"
+             title="For stream-next/next-capable conversion paths, also convert and package image files that are not referenced by the composed root.">
 
       <label>Target total texture size</label>
       <input id="targetSize" type="text" placeholder="e.g. 100MB (blank = off)" style="padding:4px;width:200px"
@@ -96,6 +113,10 @@ container.innerHTML = `
       <label>Max USDC size (MB)</label>
       <input id="maxUsdcMb" type="number" min="0" step="64" value="0" style="padding:4px;width:120px"
              title="0 = conservative default (~100 MB). Raise for large scenes whose flattened USDC root exceeds it. 2048 (2 GB) is the cross-browser-safe ceiling (Firefox/Safari ArrayBuffer limit + wasm32 2 GB heap); Chrome allows up to ~4096.">
+
+      <label>Max WASM heap (MB)</label>
+      <input id="maxWasmHeapMb" type="number" min="0" step="64" value="1024" style="padding:4px;width:120px"
+             title="0 = off. Browser conversion uses this cap to avoid WASM heap growth aborts; large folder conversions auto-switch to the streaming path before bulk texture assets enter WASM.">
     </div>
     <p style="color:#888;font-size:12px;margin:10px 0 0">
       Set a <b>target total texture size</b> to auto-fit all textures to a budget — choose the lever:
@@ -129,6 +150,28 @@ container.innerHTML = `
     <button id="btnConvert" class="btn primary" disabled>Convert</button>
     <button id="btnDownload" class="btn" disabled>Download USDZ</button>
     <span id="status" style="color:#aaa;font-size:13px"></span>
+  </div>
+
+  <div id="progressPanel" style="display:none;background:#111;border:1px solid #30304a;border-radius:6px;padding:12px;margin:12px 0 8px">
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px">
+      <div>
+        <div id="progressStage" style="font-size:13px;color:#d7ddff">Preparing conversion...</div>
+        <div id="progressDetails" style="font-size:12px;color:#8f94aa;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:650px"></div>
+      </div>
+      <div id="progressPercent" style="font-variant-numeric:tabular-nums;color:#d7ddff;font-size:13px">0%</div>
+    </div>
+    <div style="height:8px;background:#222338;border-radius:999px;overflow:hidden">
+      <div id="progressBar" style="height:100%;width:0%;background:#4a6ef0;transition:width 120ms linear"></div>
+    </div>
+    <div id="textureProgress" style="display:none;margin-top:10px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#8f94aa;margin-bottom:5px">
+        <span id="textureProgressLabel">Textures</span>
+        <span id="textureProgressCount" style="font-variant-numeric:tabular-nums">0 / 0</span>
+      </div>
+      <div style="height:5px;background:#222338;border-radius:999px;overflow:hidden">
+        <div id="textureProgressBar" style="height:100%;width:0%;background:#28b8a8;transition:width 120ms linear"></div>
+      </div>
+    </div>
   </div>
 
   <details style="margin-top:18px">
@@ -170,17 +213,30 @@ const els = {
   resizeColorspace: document.getElementById('resizeColorspace'),
   textureFormat: document.getElementById('textureFormat'),
   rootLayerFormat: document.getElementById('rootLayerFormat'),
+  pipeline: document.getElementById('pipeline'),
+  variantSelections: document.getElementById('variantSelections'),
   flatten: document.getElementById('flatten'),
   arkitCompatible: document.getElementById('arkitCompatible'),
+  includeUnusedTextures: document.getElementById('includeUnusedTextures'),
   reencode: document.getElementById('reencode'),
   jpegQuality: document.getElementById('jpegQuality'),
   maxUsdcMb: document.getElementById('maxUsdcMb'),
+  maxWasmHeapMb: document.getElementById('maxWasmHeapMb'),
   nameSuffix: document.getElementById('nameSuffix'),
   nameCustom: document.getElementById('nameCustom'),
   namePreview: document.getElementById('namePreview'),
   btnConvert: document.getElementById('btnConvert'),
   btnDownload: document.getElementById('btnDownload'),
   status: document.getElementById('status'),
+  progressPanel: document.getElementById('progressPanel'),
+  progressStage: document.getElementById('progressStage'),
+  progressDetails: document.getElementById('progressDetails'),
+  progressPercent: document.getElementById('progressPercent'),
+  progressBar: document.getElementById('progressBar'),
+  textureProgress: document.getElementById('textureProgress'),
+  textureProgressLabel: document.getElementById('textureProgressLabel'),
+  textureProgressCount: document.getElementById('textureProgressCount'),
+  textureProgressBar: document.getElementById('textureProgressBar'),
   repackSlots: document.getElementById('repackSlots'),
   repackChannels: document.getElementById('repackChannels'),
   btnRepack: document.getElementById('btnRepack'),
@@ -193,6 +249,91 @@ function log(msg) {
 }
 
 function setStatus(s) { els.status.textContent = s; }
+
+const PROGRESS_LABELS = {
+  preparing: 'Preparing files...',
+  wasm: 'Loading TinyUSDZ WASM...',
+  layers: 'Reading USD layers...',
+  flatten: 'Composing and flattening...',
+  textures: 'Processing textures...',
+  assets: 'Packaging assets...',
+  package: 'Writing USDZ...',
+  complete: 'Complete',
+};
+
+const PROGRESS_BASE = {
+  preparing: 2,
+  wasm: 8,
+  layers: 18,
+  flatten: 38,
+  textures: 52,
+  assets: 86,
+  package: 94,
+  complete: 100,
+};
+
+const PROGRESS_SPAN = {
+  preparing: 5,
+  wasm: 8,
+  layers: 18,
+  flatten: 14,
+  textures: 32,
+  assets: 6,
+  package: 6,
+  complete: 0,
+};
+
+let visibleProgressPct = 0;
+let lastProgressUpdateMs = 0;
+
+function showProgress() {
+  visibleProgressPct = 0;
+  lastProgressUpdateMs = 0;
+  els.progressPanel.style.display = 'block';
+  els.progressBar.style.width = '0%';
+  els.progressPercent.textContent = '0%';
+  els.progressStage.textContent = PROGRESS_LABELS.preparing;
+  els.progressDetails.textContent = '';
+  els.textureProgress.style.display = 'none';
+  els.textureProgressBar.style.width = '0%';
+  els.textureProgressCount.textContent = '0 / 0';
+}
+
+function updateTextureProgress(current, total, detail) {
+  if (!total) {
+    els.textureProgress.style.display = 'none';
+    return;
+  }
+  const cur = Math.max(0, Math.min(total, current || 0));
+  els.textureProgress.style.display = 'block';
+  els.textureProgressLabel.textContent = detail ? `Textures: ${detail}` : 'Textures';
+  els.textureProgressCount.textContent = `${cur.toLocaleString()} / ${total.toLocaleString()}`;
+  els.textureProgressBar.style.width = `${Math.round((cur / total) * 100)}%`;
+}
+
+function updateProgress(info = {}) {
+  const stage = info.stage || 'preparing';
+  const total = Number(info.total || 0);
+  const current = Number(info.current || 0);
+  let pct = PROGRESS_BASE[stage] ?? visibleProgressPct;
+  if (total > 0 && PROGRESS_SPAN[stage]) {
+    pct += Math.max(0, Math.min(1, current / total)) * PROGRESS_SPAN[stage];
+  }
+  if (stage === 'complete') pct = 100;
+
+  const now = performance.now();
+  const rounded = Math.max(visibleProgressPct, Math.min(100, Math.round(pct)));
+  if (now - lastProgressUpdateMs < 80 && rounded < 100 && stage !== 'textures') return;
+  lastProgressUpdateMs = now;
+  visibleProgressPct = rounded;
+
+  els.progressPanel.style.display = 'block';
+  els.progressBar.style.width = `${rounded}%`;
+  els.progressPercent.textContent = `${rounded}%`;
+  els.progressStage.textContent = PROGRESS_LABELS[stage] || stage;
+  els.progressDetails.textContent = info.message || info.path || '';
+  if (stage === 'textures') updateTextureProgress(current, total, info.path || info.message || '');
+}
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -208,6 +349,7 @@ function downloadBlob(blob, filename) {
 // ---------------------------------------------------------------------------
 
 let native = null;
+let conversionWorker = null;
 let uploaded = []; // [{ path, file }]
 let lastResult = null; // { usdz: Uint8Array, filename: string } after a successful convert
 
@@ -237,6 +379,19 @@ async function ensureWasm() {
   native = await loadWasm(() => import('./src/tinyusdz/tinyusdz.js'));
   log('WASM module loaded.');
   return native;
+}
+
+function releaseWasmModule(reason = '') {
+  if (!native) return;
+  native = null;
+  if (reason) log(`Released TinyUSDZ WASM module (${reason}).`);
+}
+
+function terminateConversionWorker(reason = '') {
+  if (!conversionWorker) return;
+  conversionWorker.terminate();
+  conversionWorker = null;
+  if (reason) log(`Stopped conversion worker (${reason}).`);
 }
 
 function refreshFileList() {
@@ -273,11 +428,17 @@ function invalidateResult() {
   els.btnDownload.disabled = true;
 }
 
+function releasePreviousConversion(reason) {
+  invalidateResult();
+  terminateConversionWorker(reason);
+  releaseWasmModule(reason);
+}
+
 // Remove all uploaded files and reset to the initial state. Clearing the file
 // inputs' .value lets the user re-pick the same folder/files afterwards.
 function clearFiles() {
   uploaded = [];
-  invalidateResult();
+  releasePreviousConversion('clear');
   els.folderInput.value = '';
   els.filesInput.value = '';
   refreshFileList();
@@ -287,6 +448,7 @@ function clearFiles() {
 }
 
 async function addFiles(fileEntries) {
+  invalidateResult();
   // fileEntries: array of { path, file }
   for (const e of fileEntries) {
     if (!uploaded.some(u => u.path === e.path)) uploaded.push(e);
@@ -356,11 +518,56 @@ function browserImageFormat(name) {
   return null;
 }
 
-function targetBrowserFormat(name, requested) {
-  const fmt = outputFormatForImage(name, requested);
-  if (fmt.format === 'jpeg') return { format: 'jpeg', mime: 'image/jpeg', ext: fmt.ext };
-  if (fmt.format === 'png') return { format: 'png', mime: 'image/png', ext: fmt.ext };
-  return null;
+function browserTextureConcurrency() {
+  const cores = navigator.hardwareConcurrency || 4;
+  return Math.max(1, Math.min(8, cores - 1 || 1));
+}
+
+function uploadedSizeSum(predicate) {
+  return uploaded.reduce((sum, entry) =>
+    predicate(entry.path) ? sum + (entry.file ? entry.file.size : 0) : sum, 0);
+}
+
+function shouldAutoStreamForWasmCap(opts, rootPath) {
+  const cap = Number(opts.wasmHeapLimitBytes || 0);
+  if (!cap || opts.pipeline === 'stream' || opts.pipeline === 'stream-next') return null;
+  if (!opts.flatten) return null;
+  if (!rootPath || /\.usdz$/i.test(rootPath)) return null;
+  if ((opts.targetTextureBytes || 0) > 0) return null;
+
+  const imageBytes = uploadedSizeSum(isImageName);
+  const usdBytes = uploadedSizeSum((path) => /\.(usd|usda|usdc)$/i.test(path));
+  const otherBytes = uploadedSizeSum((path) => !isImageName(path) && !/\.(usd|usda|usdc|usdz)$/i.test(path));
+  const currentHeap = wasmHeapByteLength(native);
+  const reserve = Math.max(128 * 1024 * 1024, Math.floor(cap * 0.25));
+  const availableBulkBudget = currentHeap > cap ? 0 : Math.max(0, cap - reserve);
+  // Bulk conversion mirrors textures/passthrough assets into the WASM resolver
+  // cache before export. USD layers also need transient composition memory, so
+  // count them twice as a conservative browser-side trigger.
+  const estimatedBulkBytes = imageBytes + otherBytes + usdBytes * 2;
+  if (estimatedBulkBytes <= availableBulkBudget) return null;
+  return {
+    pipeline: opts.pipeline === 'next' ? 'stream-next' : 'stream',
+    estimatedBulkBytes,
+    availableBulkBudget,
+    imageBytes,
+    usdBytes,
+    otherBytes,
+  };
+}
+
+function parseVariantSelections(text) {
+  const out = {};
+  for (const item of String(text || '').split(',')) {
+    const spec = item.trim();
+    if (!spec) continue;
+    const eq = spec.indexOf('=');
+    if (eq <= 0 || eq === spec.length - 1) continue;
+    const key = spec.slice(0, eq).trim();
+    const value = spec.slice(eq + 1).trim();
+    if (key && value) out[key] = value;
+  }
+  return out;
 }
 
 function encodeCanvas(canvas, mime, quality) {
@@ -380,35 +587,6 @@ async function imageBitmapFromBytes(data, name) {
   if (!fmt) return null;
   const mime = fmt === 'jpeg' ? 'image/jpeg' : 'image/png';
   return await createImageBitmap(new Blob([data], { type: mime }));
-}
-
-async function browserTextureProcessor({ name, data, maxTextureSize, reencode, textureFormat, jpegQuality }) {
-  const target = targetBrowserFormat(name, textureFormat);
-  if (!target) return null;
-  const mustTranscode = String(textureFormat || 'keep').toLowerCase() !== 'keep';
-  const wantResize = maxTextureSize > 0;
-  if (!wantResize && !reencode && !mustTranscode) return null;
-
-  const bitmap = await imageBitmapFromBytes(data, name);
-  if (!bitmap) return null;
-
-  const scale = wantResize ? Math.min(1, maxTextureSize / Math.max(bitmap.width, bitmap.height)) : 1;
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { alpha: target.format !== 'jpeg' });
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close?.();
-
-  const encoded = await encodeCanvas(canvas, target.mime, Math.max(0.01, Math.min(1, jpegQuality / 100)));
-  return {
-    data: encoded,
-    ext: target.ext,
-    resized: scale < 1,
-    reencoded: true,
-  };
 }
 
 async function imageDataFromSlot(slot) {
@@ -484,11 +662,43 @@ async function browserRepackChannels(slots, channels) {
 // Convert
 // ---------------------------------------------------------------------------
 
+function runConversionWorker(payload) {
+  terminateConversionWorker();
+  conversionWorker = new Worker(new URL('./usdzconvert.worker.js', import.meta.url), { type: 'module' });
+  return new Promise((resolve, reject) => {
+    const worker = conversionWorker;
+    worker.onmessage = (event) => {
+      const data = event.data || {};
+      if (data.type === 'log') {
+        log(data.message);
+      } else if (data.type === 'progress') {
+        updateProgress(data.info || {});
+      } else if (data.type === 'complete') {
+        if (conversionWorker === worker) conversionWorker = null;
+        worker.terminate();
+        resolve(data);
+      } else if (data.type === 'error') {
+        if (conversionWorker === worker) conversionWorker = null;
+        worker.terminate();
+        const err = new Error(data.message || 'Conversion worker failed');
+        if (data.stack) err.stack = data.stack;
+        reject(err);
+      }
+    };
+    worker.onerror = (event) => {
+      if (conversionWorker === worker) conversionWorker = null;
+      worker.terminate();
+      reject(new Error(event.message || 'Conversion worker failed'));
+    };
+    worker.postMessage({ type: 'convert', ...payload });
+  });
+}
+
 els.btnConvert.addEventListener('click', async () => {
   try {
     els.btnConvert.disabled = true;
-    invalidateResult();
-    await ensureWasm();
+    releasePreviousConversion('new conversion');
+    showProgress();
 
     const rootPath = els.rootSelect.value;
     const fitStrategy = (document.querySelector('input[name="fitStrategy"]:checked') || {}).value || 'size';
@@ -496,14 +706,7 @@ els.btnConvert.addEventListener('click', async () => {
     const maxTextureSize = parseInt(els.maxSize.value, 10) || 0;
     const textureFormat = els.textureFormat.value;
     const reencode = els.reencode.checked;
-    // Only attach the browser texture processor when textures actually need work
-    // (resize / re-encode / format change / size-fit). When they pass through
-    // unchanged, omitting it lets the low-heap flatten path engage for a single
-    // self-contained .usdz (streams the root USDC out of the wasm heap and
-    // repacks the zip in JS), so large scenes convert without exhausting the
-    // 2 GB wasm32 heap. ARKit + passthrough uses the faithful Layer->Layer
-    // flatten by default ('flatten-layer'); set lowHeapStageMode:'stage' to
-    // force the typed-Prim Stage reconstruction.
+    const maxWasmHeapMb = parseInt(els.maxWasmHeapMb.value, 10) || 0;
     const needsTextureWork = maxTextureSize > 0 || reencode ||
       String(textureFormat).toLowerCase() !== 'keep' || targetTextureBytes > 0;
     const opts = {
@@ -515,52 +718,73 @@ els.btnConvert.addEventListener('click', async () => {
       reencode,
       textureFormat,
       rootLayerFormat: els.rootLayerFormat.value,
+      pipeline: els.pipeline.value,
+      variantSelections: parseVariantSelections(els.variantSelections.value),
       flatten: els.flatten.checked,
       arkitCompatible: els.arkitCompatible.checked,
+      includeUnusedTextures: els.includeUnusedTextures.checked,
       jpegQuality: parseInt(els.jpegQuality.value, 10) || 90,
       // Raise the USDC writer's file-size AND working-memory caps together: a
       // raised file cap with the conservative default memory cap forces a slow
-      // low-memory writer path (and can abort near the wasm32 2 GB heap). On
-      // wasm32 the heap is bounded at 2 GB regardless, so mirroring is safe.
+      // low-memory writer path. On wasm32 the heap is bounded at 2 GB.
       maxUsdcMb: parseInt(els.maxUsdcMb.value, 10) || 0,
       maxMemMb: parseInt(els.maxUsdcMb.value, 10) || 0,
-      log,
+      wasmHeapLimitBytes: maxWasmHeapMb > 0 ? maxWasmHeapMb * 1024 * 1024 : 0,
     };
-    // The browser canvas resizes in gamma space (== "linear" filter). When the
-    // user asks for colorspace-aware resampling (auto/sRGB), route textures to
-    // TinyUSDZ WASM instead so convertImage can honor it (the canvas can't).
     const colorspaceAware = opts.resizeColorspace === 'auto' ||
                             opts.resizeColorspace === 'srgb';
-    if (needsTextureWork && !colorspaceAware) {
-      opts.textureProcessor = browserTextureProcessor;
-    }
     if (targetTextureBytes > 0) {
       log(`Fitting textures to ${(targetTextureBytes / 1048576).toFixed(1)} MB via "${fitStrategy}" strategy...`);
     }
-
-    // Read all files into memory.
-    const assetMap = new Map();
-    for (const { path, file } of uploaded) {
-      assetMap.set(path, new Uint8Array(await file.arrayBuffer()));
+    const autoStream = shouldAutoStreamForWasmCap(opts, rootPath);
+    if (autoStream) {
+      log(`WASM heap cap: estimated bulk asset load ` +
+          `${(autoStream.estimatedBulkBytes / 1048576).toFixed(1)} MiB exceeds ` +
+          `${(autoStream.availableBulkBudget / 1048576).toFixed(1)} MiB budget; ` +
+          `using ${autoStream.pipeline} pipeline.`);
+      opts.pipeline = autoStream.pipeline;
+      updateProgress({
+        stage: 'preparing',
+        current: 1,
+        total: 1,
+        message: `Auto-switched to ${autoStream.pipeline} for WASM heap cap`,
+      });
     }
 
-    // Convert-only: validate the conversion and report bytes/warnings/errors.
-    // The download is a separate, explicit step (Download button below).
     setStatus('Converting...');
-    const { usdz, stats } = await convertFolderToUSDZ(native, assetMap, opts);
-    log(`Converted OK. textures: ${stats.textures}, resized: ${stats.resized}, ` +
-        `reencoded: ${stats.reencoded}, audio: ${stats.audio || 0}, ` +
+    updateProgress({ stage: 'preparing', current: 1, total: 1, message: rootPath });
+    const result = await runConversionWorker({
+      files: uploaded.map(({ path, file }) => ({ path, file })),
+      opts,
+      needsTextureWork,
+      colorspaceAware,
+      textureConcurrency: browserTextureConcurrency(),
+    });
+    const usdz = result.usdz instanceof Uint8Array ? result.usdz : new Uint8Array(result.usdz);
+    const stats = result.stats || {};
+    log(`Converted OK. textures: ${stats.textures || 0}, resized: ${stats.resized || 0}, ` +
+        `reencoded: ${stats.reencoded || 0}, audio: ${stats.audio || 0}, ` +
         `other assets: ${stats.otherAssets || 0}. USDZ: ${usdz.length} bytes`);
+    if (result.textureStats) {
+      const tex = result.textureStats;
+      log(`Worker texture time: decode ${tex.decodeMs.toFixed(1)} ms, ` +
+          `raster ${tex.rasterMs.toFixed(1)} ms, encode ${tex.encodeMs.toFixed(1)} ms; ` +
+          `processed ${tex.processed}, skipped ${tex.skipped}`);
+    }
 
     lastResult = { usdz, filename: outputFilename() };
     els.btnDownload.disabled = false;
     refreshNamePreview();
+    updateProgress({ stage: 'complete', message: `${usdz.length.toLocaleString()} bytes` });
     setStatus(`✓ Converted — ${usdz.length.toLocaleString()} bytes. Ready to download.`);
   } catch (err) {
+    terminateConversionWorker('failed conversion');
     log('ERROR: ' + (err && err.message ? err.message : err));
+    els.progressStage.textContent = 'Conversion failed';
+    els.progressDetails.textContent = err && err.message ? err.message : String(err);
     setStatus('✗ Conversion failed — see log.');
   } finally {
-    els.btnConvert.disabled = false;
+    els.btnConvert.disabled = !uploaded.some(u => /\.(usd|usda|usdc|usdz)$/i.test(u.path));
   }
 });
 

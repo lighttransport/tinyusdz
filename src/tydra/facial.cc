@@ -68,7 +68,7 @@ constexpr std::array<const char *, 52> gARKitBlendShapeLocationKV = {
 std::string GetARKitBlendShapeLocationString(
     const ARKitBlendShapeLocation loc) {
   uint32_t i = static_cast<uint32_t>(loc);
-  if (loc > 51) {
+  if (static_cast<int>(loc) < 0 || loc > 51) {
     return "[[InvalidBlendShapeLocationName]]";
   }
 

@@ -1,0 +1,3436 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "gui.hh"
+
+#include <algorithm>
+#include <cmath>
+#include <string>
+#include <thread>
+#include <utility>
+
+#include "core/prim.hh"
+#include "gizmo_build.hh"
+#include "light3d/camera.h"  // light3d::Frustum (per-mesh frustum culling)
+#include "gui_stringify.hh"
+#include "imgui.h"
+#include "imgui_internal.h"  // DockBuilder*
+#include "pprint-enum.hh"
+#include "skinning.hh"
+#include "tinyusdz.hh"
+#include "tydra/render-data.hh"
+#include "tydra/scene-access.hh"
+#include "tydra/shader-network.hh"
+
+namespace tusdview {
+
+namespace tydra = tinyusdz::tydra;
+
+namespace {
+
+const char* NodeTypeName(tydra::NodeType t) {
+  switch (t) {
+    case tydra::NodeType::Xform: return "Xform";
+    case tydra::NodeType::Mesh: return "Mesh";
+    case tydra::NodeType::Camera: return "Camera";
+    case tydra::NodeType::SkelRoot: return "SkelRoot";
+    case tydra::NodeType::Skeleton: return "Skeleton";
+    case tydra::NodeType::PointLight: return "PointLight";
+    case tydra::NodeType::DirectionalLight: return "DirectionalLight";
+    case tydra::NodeType::EnvmapLight: return "EnvmapLight";
+    case tydra::NodeType::RectLight: return "RectLight";
+    case tydra::NodeType::DiskLight: return "DiskLight";
+    case tydra::NodeType::CylinderLight: return "CylinderLight";
+    case tydra::NodeType::GeometryLight: return "GeometryLight";
+    default: return "Node";
+  }
+}
+
+// Greyed, word-wrapped hint text (TextDisabled does not wrap and would clip in
+// a narrow panel).
+void HintWrapped(const char* s) {
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+  ImGui::TextWrapped("%s", s);
+  ImGui::PopStyleColor();
+}
+
+std::string TinyUsdVersionString() {
+  std::string v = std::to_string(tinyusdz::version_major) + "." +
+                  std::to_string(tinyusdz::version_minor) + "." +
+                  std::to_string(tinyusdz::version_micro);
+  if (tinyusdz::version_rev && tinyusdz::version_rev[0] != '\0') {
+    v += "-";
+    v += tinyusdz::version_rev;
+  }
+  return v;
+}
+
+const char* OperatingSystemString() {
+#if defined(_WIN32)
+  return "Windows";
+#elif defined(__APPLE__)
+  return "macOS";
+#elif defined(__linux__)
+  return "Linux";
+#elif defined(__FreeBSD__)
+  return "FreeBSD";
+#else
+  return "unknown OS";
+#endif
+}
+
+const char* CpuArchString() {
+#if defined(__x86_64__) || defined(_M_X64)
+  return "x86_64";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+  return "aarch64";
+#elif defined(__arm__) || defined(_M_ARM)
+  return "arm";
+#elif defined(__i386__) || defined(_M_IX86)
+  return "x86";
+#elif defined(__riscv)
+  return "riscv";
+#else
+  return "unknown arch";
+#endif
+}
+
+std::string CpuInfoString() {
+  const unsigned threads = std::thread::hardware_concurrency();
+  std::string s = CpuArchString();
+  if (threads > 0) {
+    s += ", ";
+    s += std::to_string(threads);
+    s += " logical threads";
+  }
+  return s;
+}
+
+const char* CompilerString() {
+#if defined(__clang__)
+  return "Clang " __clang_version__;
+#elif defined(__GNUC__)
+  return "GCC " __VERSION__;
+#elif defined(_MSC_VER)
+  return "MSVC";
+#else
+  return "unknown compiler";
+#endif
+}
+
+const tinyusdz::Prim* FindPrimByPath(const tinyusdz::Prim& prim,
+                                     const std::string& path) {
+  if (prim.absolute_path().full_path_name() == path) return &prim;
+  for (const auto& c : prim.children()) {
+    if (const tinyusdz::Prim* p = FindPrimByPath(c, path)) return p;
+  }
+  return nullptr;
+}
+
+// --- Hierarchy search predicates (name + type + abs path) ---
+bool PrimPasses(ImGuiTextFilter& f, const tinyusdz::Prim& prim) {
+  std::string typeName = prim.prim_type_name();
+  if (typeName.empty()) typeName = prim.type_name();
+  std::string s = prim.element_name() + " " + typeName + " " +
+                  prim.absolute_path().full_path_name();
+  return f.PassFilter(s.c_str());
+}
+bool PrimSubtreePasses(ImGuiTextFilter& f, const tinyusdz::Prim& prim) {
+  if (PrimPasses(f, prim)) return true;
+  for (const auto& c : prim.children()) {
+    if (PrimSubtreePasses(f, c)) return true;
+  }
+  return false;
+}
+bool NodePasses(ImGuiTextFilter& f, const tydra::Node& node) {
+  std::string s = node.prim_name + " " + node.abs_path + " " +
+                  NodeTypeName(node.nodeType);
+  return f.PassFilter(s.c_str());
+}
+bool NodeSubtreePasses(ImGuiTextFilter& f, const tydra::Node& node) {
+  if (NodePasses(f, node)) return true;
+  for (const auto& c : node.children) {
+    if (NodeSubtreePasses(f, c)) return true;
+  }
+  return false;
+}
+
+bool PathIsSameOrDescendant(const std::string& path, const std::string& ancestor) {
+  if (path.empty() || ancestor.empty()) return false;
+  if (path == ancestor) return true;
+  if (path.size() <= ancestor.size()) return false;
+  if (path.compare(0, ancestor.size(), ancestor) != 0) return false;
+  return ancestor == "/" || path[ancestor.size()] == '/';
+}
+
+std::vector<std::pair<std::string, std::string>> BuildBreadcrumbs(const std::string& path) {
+  std::vector<std::pair<std::string, std::string>> out;
+  if (path.empty()) return out;
+  if (path[0] != '/') {
+    out.emplace_back(path, path);
+    return out;
+  }
+
+  out.emplace_back("/", "/");
+  std::string accum;
+  size_t start = 1;
+  while (start < path.size()) {
+    const size_t end = path.find('/', start);
+    const size_t len = (end == std::string::npos) ? (path.size() - start) : (end - start);
+    if (len > 0) {
+      const std::string part = path.substr(start, len);
+      accum += "/" + part;
+      out.emplace_back(part, accum);
+    }
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  return out;
+}
+
+const char* NavModeLabel(int mode) {
+  switch (mode) {
+    case 1: return "Orbit";
+    case 2: return "Pan";
+    case 3: return "Dolly";
+    default: return "Ready";
+  }
+}
+
+const char* SkinningModeLabel(SkinningMode mode) {
+  switch (mode) {
+    case SkinningMode::CPU: return "CPU";
+    case SkinningMode::GPU: return "GPU";
+    case SkinningMode::Auto:
+    default: return "Auto";
+  }
+}
+
+}  // namespace
+
+void Gui::setScene(const LoadedScene* loaded, const DrawScene* draw) {
+  // The cull worker reads the current DrawScene; join it before draw_ changes so
+  // it never touches freed geometry.
+  joinCullWorker();
+  lastCullValid_ = false;  // force a re-cull for the new scene
+  loaded_ = loaded;
+  draw_ = draw;
+  selPrim_ = nullptr;
+  selPath_.clear();
+  selMeshIndex_ = -1;
+  selectionList_.clear();
+  selectionHistory_.clear();
+  selectionHistoryIndex_ = -1;
+  inspectorCachePrim_ = nullptr;
+  inspectorCachePath_.clear();
+  inspectorCacheRows_.clear();
+  // Reset per-mesh visibility to all-visible for the new scene.
+  meshVisible_.assign(draw_ ? draw_->meshes.size() : 0, uint8_t{1});
+  viewVisible_.clear();
+  revealSelectionInHierarchy_ = false;
+  // Start with nothing selected; the user selects via the viewport or hierarchy.
+}
+
+void Gui::frame(Renderer* renderer, OrbitCamera* camera) {
+  renderer_ = renderer;
+  cam_ = camera;
+  drawDockspaceAndMenu();
+  drawHierarchy();
+  drawInspector();
+  drawSelectionList();
+  drawCameraPanel();
+  drawStageMeta();
+  drawStats();
+  drawPayloads();
+  drawMaterialsPanel();
+  drawCompositionGraph();
+  drawViewport();
+  drawTimeline();
+  drawAboutModal();
+  drawLoadingModal();
+}
+
+void Gui::drawAboutModal() {
+  const char* kId = "About tusdview##about";
+  if (showAbout_) {
+    ImGui::OpenPopup(kId);
+    showAbout_ = false;
+  }
+
+  const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+  ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+  if (!ImGui::BeginPopupModal(kId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    return;
+  }
+
+  constexpr const char* kRepoUrl = "https://github.com/lighttransport/tinyusdz";
+  const RendererCaps* caps = renderer_ ? &renderer_->caps() : nullptr;
+  const std::string tinyVersion = TinyUsdVersionString();
+  const std::string cpuInfo = CpuInfoString();
+
+  ImGui::TextUnformatted("tusdview");
+  ImGui::Separator();
+  ImGui::Text("tusdview version: %s", "development build");
+  ImGui::Text("tinyusdz version: %s", tinyVersion.c_str());
+  ImGui::Text("Backend: %s", caps ? caps->backend_name : "?");
+  ImGui::Text("GPU: %s", (caps && !caps->gpu_name.empty()) ? caps->gpu_name.c_str() : "?");
+  ImGui::Text("Graphics API: %s",
+              (caps && !caps->api_info.empty()) ? caps->api_info.c_str() : "?");
+  ImGui::Text("GPU skinning: %s%s",
+              (caps && caps->supportsGpuSkinning) ? "yes" : "no",
+              (caps && caps->supportsExtendedGpuSkinning) ? " (extended influences)" : "");
+  ImGui::Text("Ray tracing: %s%s",
+              (caps && caps->supportsRayTracing) ? "available" : "unavailable",
+              (renderer_ && renderer_->rayTracingActive()) ? ", active" : "");
+  ImGui::Separator();
+  ImGui::Text("CPU: %s", cpuInfo.c_str());
+  ImGui::Text("OS: %s", OperatingSystemString());
+  ImGui::Text("Compiler: %s", CompilerString());
+  ImGui::Separator();
+  ImGui::TextUnformatted("Repository:");
+  ImGui::SameLine();
+  ImGui::TextUnformatted(kRepoUrl);
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Copy URL")) {
+    ImGui::SetClipboardText(kRepoUrl);
+  }
+  ImGui::Separator();
+  if (ImGui::Button("Close")) {
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::EndPopup();
+}
+
+void Gui::drawLoadingModal() {
+  const char* kId = "Loading USD##tusdview";
+  if (loadStatus_.active && !ImGui::IsPopupOpen(kId)) {
+    ImGui::OpenPopup(kId);
+  }
+  const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+  ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  if (ImGui::BeginPopupModal(kId, nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize |
+                                 ImGuiWindowFlags_NoMove)) {
+    ImGui::TextUnformatted("Loading on a background thread...");
+    ImGui::TextDisabled("%s", loadStatus_.path.c_str());
+    ImGui::Separator();
+    if (loadStatus_.meshesTotal > 0) {
+      const float frac = static_cast<float>(loadStatus_.meshesDone) /
+                         static_cast<float>(loadStatus_.meshesTotal);
+      ImGui::ProgressBar(frac, ImVec2(300, 0));
+      ImGui::Text("Converting meshes: %lld / %lld", loadStatus_.meshesDone,
+                  loadStatus_.meshesTotal);
+    } else {
+      ImGui::Text("Parsing / converting...");
+    }
+    ImGui::Text("Elapsed: %.1f s", loadStatus_.elapsed);
+    ImGui::Spacing();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+      wantCancelLoad_ = true;
+    }
+    if (!loadStatus_.active) {
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+}
+
+void Gui::buildDefaultLayout(unsigned int dockId) {
+  ImGui::DockBuilderRemoveNode(dockId);
+  ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
+  ImGui::DockBuilderSetNodeSize(dockId, ImGui::GetMainViewport()->WorkSize);
+
+  ImGuiID center = dockId;
+  ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
+  ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.28f, nullptr, &center);
+  ImGuiID rightBottom =
+      ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.40f, nullptr, &right);
+  // Timeline spans the bottom of the viewport column.
+  ImGuiID centerBottom =
+      ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.14f, nullptr, &center);
+
+  ImGui::DockBuilderDockWindow("Hierarchy", left);
+  ImGui::DockBuilderDockWindow("Stats", left);
+  ImGui::DockBuilderDockWindow("Inspector", right);
+  ImGui::DockBuilderDockWindow("Selection", right);
+  ImGui::DockBuilderDockWindow("Camera", right);
+  ImGui::DockBuilderDockWindow("Stage", rightBottom);
+  ImGui::DockBuilderDockWindow("Materials", rightBottom);
+  ImGui::DockBuilderDockWindow("Payloads", rightBottom);
+  ImGui::DockBuilderDockWindow("Viewport", center);
+  ImGui::DockBuilderDockWindow("Timeline", centerBottom);
+  ImGui::DockBuilderFinish(dockId);
+}
+
+void Gui::drawDockspaceAndMenu() {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(vp->WorkPos);
+  ImGui::SetNextWindowSize(vp->WorkSize);
+  ImGui::SetNextWindowViewport(vp->ID);
+
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                           ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                           ImGuiWindowFlags_NoBringToFrontOnFocus |
+                           ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking |
+                           ImGuiWindowFlags_MenuBar;
+
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::Begin("##TusdviewDockHost", nullptr, flags);
+  ImGui::PopStyleVar(3);
+
+  const ImGuiID dockId = ImGui::GetID("TusdviewDockspace");
+  ImGui::DockSpace(dockId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
+  if (!dockBuilt_) {
+    buildDefaultLayout(dockId);
+    dockBuilt_ = true;
+  }
+
+  if (ImGui::BeginMenuBar()) {
+    if (ImGui::BeginMenu("File")) {
+      if (ImGui::MenuItem("Open...", "Ctrl+O")) wantOpen_ = true;
+      if (ImGui::MenuItem("Reload", "Ctrl+R", false, loaded_ != nullptr)) wantReload_ = true;
+      {
+        const bool haveDeferred = loaded_ && !loaded_->comp.deferred.empty();
+        if (ImGui::MenuItem("Load All Payloads", nullptr, false, haveDeferred)) {
+          wantLoadAllPayloads_ = true;
+        }
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem("Quit", "Esc")) wantQuit_ = true;
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("View")) {
+      if (ImGui::MenuItem("Shaded", nullptr, mode_ == RenderMode::Shaded))
+        mode_ = RenderMode::Shaded;
+      if (ImGui::MenuItem("Wireframe", nullptr, mode_ == RenderMode::Wireframe))
+        mode_ = RenderMode::Wireframe;
+      // Debug AOV channels (grouped to keep the View menu tidy as they grow).
+      if (ImGui::BeginMenu("Debug AOV")) {
+        struct AovItem { const char* label; RenderMode m; };
+        static const AovItem kAovs[] = {
+            {"Material ID", RenderMode::MaterialId},
+            {"Normals (shading)", RenderMode::Normals},
+            {"Normals (geometric)", RenderMode::GeomNormal},
+            {"UV", RenderMode::Uv},
+            {"UV checker", RenderMode::UvChecker},
+            {"UDIM tile", RenderMode::UdimTile},
+            {"UV set 1", RenderMode::Uv1},
+            {"Blendshape influence", RenderMode::BlendInfluence},
+            {"Texel density", RenderMode::TexelDensity},
+            {"Source face id", RenderMode::SourceFaceId},
+            {"Depth", RenderMode::Depth},
+            {"Position", RenderMode::Position},
+            {"Albedo (unlit)", RenderMode::Albedo},
+            {"Facing", RenderMode::Facing},
+            {"Roughness", RenderMode::Roughness},
+            {"Metallic", RenderMode::Metallic},
+            {"Emissive", RenderMode::Emissive},
+            {"Opacity", RenderMode::Opacity},
+            {"Purpose", RenderMode::Purpose},
+            {"Kind", RenderMode::Kind},
+            {"Missing normals", RenderMode::MissingNormals},
+            {"Double-sided", RenderMode::DoubleSided},
+            {"Skin weights", RenderMode::SkinWeights},
+            {"Tangent", RenderMode::Tangent},
+            {"Curvature", RenderMode::Curvature},
+            {"Instance ID", RenderMode::InstanceId},
+            {"Ambient occlusion (RT)", RenderMode::AmbientOcclusion},
+            {"Soft shadow (RT)", RenderMode::SoftShadow},
+            {"BVH heatmap (CUDA)", RenderMode::BvhHeatmap},
+        };
+        for (const AovItem& a : kAovs)
+          if (ImGui::MenuItem(a.label, nullptr, mode_ == a.m)) mode_ = a.m;
+        ImGui::EndMenu();
+      }
+      ImGui::Separator();
+      // Ray tracing (Vulkan only; disabled when the device/build can't do it).
+      // The checkmark mirrors the renderer's actual technique.
+      const bool rtAvail = renderer_ && renderer_->rayTracingAvailable();
+      const bool rtOn = renderer_ && renderer_->rayTracingActive();
+      if (ImGui::MenuItem("Ray tracing (Vulkan)", nullptr, rtOn, rtAvail)) {
+        if (renderer_) renderer_->setRayTracing(!rtOn);
+      }
+      if (ImGui::BeginMenu("Skinning")) {
+        auto item = [&](SkinningMode mode, const char* label) {
+          if (ImGui::MenuItem(label, nullptr, skinning_.requested == mode)) {
+            hasSkinningModeRequest_ = true;
+            requestedSkinningMode_ = mode;
+          }
+        };
+        item(SkinningMode::Auto, "Auto");
+        item(SkinningMode::CPU, "CPU");
+        item(SkinningMode::GPU, "GPU");
+        ImGui::Separator();
+        ImGui::TextDisabled("Effective: %s", SkinningModeLabel(skinning_.effective));
+        if (!skinning_.reason.empty()) ImGui::TextDisabled("%s", skinning_.reason.c_str());
+        ImGui::EndMenu();
+      }
+      ImGui::Separator();
+      ImGui::MenuItem("Navigation help overlay", "F1", &showNavHelp_);
+      if (ImGui::BeginMenu("Camera")) {
+        const bool haveCam = cam_ != nullptr;
+        if (ImGui::MenuItem("Home", "0", false, haveCam)) homeView();
+        if (ImGui::MenuItem("Isometric", "5", false, haveCam))
+          applyViewPreset(CameraViewPreset::Isometric);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Front", "1", false, haveCam))
+          applyViewPreset(CameraViewPreset::Front);
+        if (ImGui::MenuItem("Back", "Shift+1", false, haveCam))
+          applyViewPreset(CameraViewPreset::Back);
+        if (ImGui::MenuItem("Right", "3", false, haveCam))
+          applyViewPreset(CameraViewPreset::Right);
+        if (ImGui::MenuItem("Left", "Shift+3", false, haveCam))
+          applyViewPreset(CameraViewPreset::Left);
+        if (ImGui::MenuItem("Top", "7", false, haveCam))
+          applyViewPreset(CameraViewPreset::Top);
+        if (ImGui::MenuItem("Bottom", "Shift+7", false, haveCam))
+          applyViewPreset(CameraViewPreset::Bottom);
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Bookmarks")) {
+          for (int slot = 0; slot < 3; ++slot) {
+            const int humanSlot = slot + 1;
+            std::string loadLabel = "Recall bookmark " + std::to_string(humanSlot);
+            std::string saveLabel = "Save bookmark " + std::to_string(humanSlot);
+            std::string loadShortcut = "Ctrl+" + std::to_string(humanSlot);
+            std::string saveShortcut = "Ctrl+Shift+" + std::to_string(humanSlot);
+            if (ImGui::MenuItem(loadLabel.c_str(), loadShortcut.c_str(), false,
+                                haveCam && hasCameraBookmark(slot))) {
+              loadCameraBookmark(slot);
+            }
+            if (ImGui::MenuItem(saveLabel.c_str(), saveShortcut.c_str(), false, haveCam)) {
+              saveCameraBookmark(slot);
+            }
+          }
+          ImGui::EndMenu();
+        }
+        ImGui::EndMenu();
+      }
+      ImGui::Separator();
+      const bool haveBounds = draw_ && draw_->hasBounds;
+      const bool haveMeshes = draw_ && !draw_->meshes.empty();
+      if (ImGui::MenuItem("Selection back", "Alt+Left", false, canGoSelectionBack())) {
+        goSelectionBack();
+      }
+      if (ImGui::MenuItem("Selection forward", "Alt+Right", false,
+                          canGoSelectionForward())) {
+        goSelectionForward();
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem("Previous selection", "[", false, haveMeshes)) {
+        selectAdjacentMesh(-1);
+      }
+      if (ImGui::MenuItem("Next selection", "]", false, haveMeshes)) {
+        selectAdjacentMesh(1);
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem("Frame selected", "F", false, haveBounds)) frameSelected();
+      if (ImGui::MenuItem("Frame all", "A", false, haveBounds)) frameAll();
+      ImGui::Separator();
+      // Hide family (Maya): also available via H / Ctrl+H / Shift+H / Alt+H.
+      const bool haveSel = selMeshIndex_ >= 0 &&
+                           static_cast<size_t>(selMeshIndex_) < meshVisible_.size();
+      if (ImGui::MenuItem("Hide selection", "Ctrl+H", false, haveSel)) {
+        meshVisible_[static_cast<size_t>(selMeshIndex_)] = 0;
+      }
+      if (ImGui::MenuItem("Isolate selection", "Alt+H", false, haveSel)) {
+        for (size_t i = 0; i < meshVisible_.size(); ++i)
+          meshVisible_[i] = (static_cast<int>(i) == selMeshIndex_) ? 1 : 0;
+      }
+      if (ImGui::MenuItem("Unhide all", nullptr, false, !meshVisible_.empty())) {
+        unhideAll();
+      }
+      if (ImGui::MenuItem("Show RenderScene nodes", nullptr, &showRenderNodes_)) {
+        if (!selPath_.empty()) revealSelectionInHierarchy_ = true;
+      }
+      ImGui::Separator();
+
+      ImGui::MenuItem("Grid", nullptr, &showGrid_);
+      ImGui::MenuItem("Axes", nullptr, &showAxes_);
+      ImGui::MenuItem("Scene bounds", nullptr, &showSceneBbox_);
+      ImGui::MenuItem("Selected bounds", nullptr, &showPrimBbox_);
+      ImGui::MenuItem("Skeleton", nullptr, &showSkeleton_);
+      ImGui::MenuItem("Frustum culling", nullptr, &cullEnabled_);
+      ImGui::Separator();
+      if (ImGui::BeginMenu("Purpose")) {
+        ImGui::MenuItem("default", nullptr, &showPurposeDefault_);
+        ImGui::MenuItem("render", nullptr, &showPurposeRender_);
+        ImGui::MenuItem("proxy", nullptr, &showPurposeProxy_);
+        ImGui::MenuItem("guide", nullptr, &showPurposeGuide_);
+        ImGui::EndMenu();
+      }
+      ImGui::Separator();
+      ImGui::MenuItem("Lights", nullptr, &showLights_);
+      ImGui::MenuItem("Cameras", nullptr, &showCameras_);
+      ImGui::MenuItem("Extent attribute", nullptr, &showExtent_);
+      ImGui::MenuItem("Prim labels", nullptr, &showPrimLabels_);
+      ImGui::Separator();
+      if (ImGui::BeginMenu("Transform")) {
+        bool tNone = xformMode_ == TransformMode::None;
+        bool tTrans = xformMode_ == TransformMode::Translate;
+        bool tRot = xformMode_ == TransformMode::Rotate;
+        bool tScale = xformMode_ == TransformMode::Scale;
+        if (ImGui::MenuItem("None", nullptr, tNone)) xformMode_ = TransformMode::None;
+        if (ImGui::MenuItem("Translate", "W", tTrans)) xformMode_ = TransformMode::Translate;
+        if (ImGui::MenuItem("Rotate", "E", tRot)) xformMode_ = TransformMode::Rotate;
+        if (ImGui::MenuItem("Scale", "R", tScale)) xformMode_ = TransformMode::Scale;
+        ImGui::EndMenu();
+      }
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SliderFloat("Tessellation", &tessQuality_, 0.25f, 4.0f, "%.2f");
+      ImGui::Separator();
+      ImGui::MenuItem("Displacement", nullptr, &displacementEnabled_);
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SliderFloat("Disp scale", &displacementScale_, 0.0f, 4.0f, "%.2f");
+      ImGui::SetNextItemWidth(80.0f);
+      ImGui::SliderInt("Max tess", &maxTessLevel_, 1, 16);
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Help")) {
+      ImGui::MenuItem("Navigation help overlay", "F1", &showNavHelp_);
+      ImGui::Separator();
+      ImGui::TextDisabled("Viewport");
+      ImGui::TextUnformatted("Alt+LMB  Orbit");
+      ImGui::TextUnformatted("Alt+MMB  Pan");
+      ImGui::TextUnformatted("Alt+RMB / Wheel  Dolly");
+      ImGui::Separator();
+      ImGui::TextDisabled("Selection");
+      ImGui::TextUnformatted("[ / ]  Previous / Next visible selection");
+      ImGui::TextUnformatted("Double-click hierarchy item  Frame subtree");
+      ImGui::Separator();
+      ImGui::TextDisabled("Camera");
+      ImGui::TextUnformatted("0 Home   5 Isometric");
+      ImGui::TextUnformatted("1/Shift+1 Front/Back");
+      ImGui::TextUnformatted("3/Shift+3 Right/Left");
+      ImGui::TextUnformatted("7/Shift+7 Top/Bottom");
+      ImGui::TextUnformatted("Ctrl+1..3 Recall bookmark");
+      ImGui::TextUnformatted("Ctrl+Shift+1..3 Save bookmark");
+      ImGui::Separator();
+      if (ImGui::MenuItem("About tusdview")) showAbout_ = true;
+      ImGui::EndMenu();
+    }
+    ImGui::EndMenuBar();
+  }
+  ImGui::End();
+}
+
+void Gui::selectByPath(const std::string& absPath, int meshIndex) {
+  applySelection(absPath, meshIndex, /*recordHistory=*/true);
+  setSelectionListSingle(selPath_, selMeshIndex_);
+}
+
+void Gui::pushSelectionHistory(const std::string& absPath) {
+  if (absPath.empty()) return;
+  if (selectionHistoryIndex_ >= 0 &&
+      selectionHistoryIndex_ < static_cast<int>(selectionHistory_.size()) &&
+      selectionHistory_[static_cast<size_t>(selectionHistoryIndex_)] == absPath) {
+    return;
+  }
+
+  if ((selectionHistoryIndex_ + 1) < static_cast<int>(selectionHistory_.size())) {
+    selectionHistory_.erase(selectionHistory_.begin() + selectionHistoryIndex_ + 1,
+                            selectionHistory_.end());
+  }
+  selectionHistory_.push_back(absPath);
+  selectionHistoryIndex_ = static_cast<int>(selectionHistory_.size()) - 1;
+}
+
+void Gui::applySelection(const std::string& absPath, int meshIndex, bool recordHistory) {
+  selPath_ = absPath;
+  selMeshIndex_ = meshIndex;
+  selPrim_ = nullptr;
+  revealSelectionInHierarchy_ = !absPath.empty();
+  if (loaded_) {
+    for (const auto& root : loaded_->stage.root_prims()) {
+      if (const tinyusdz::Prim* p = FindPrimByPath(root, absPath)) {
+        selPrim_ = p;
+        break;
+      }
+    }
+    // FindPrimByPath misses prims whose composed absolute_path is unset (e.g.
+    // GeomSubset children); fall back to the stage's path lookup.
+    if (!selPrim_ && !absPath.empty()) {
+      const tinyusdz::Prim* p = nullptr;
+      std::string err;
+      if (loaded_->stage.find_prim_at_path(tinyusdz::Path(absPath, ""), p, &err) && p) {
+        selPrim_ = p;
+      }
+    }
+  }
+  if (meshIndex < 0 && draw_) {
+    for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+      if (draw_->meshes[i].absPath == absPath) {
+        selMeshIndex_ = static_cast<int>(i);
+        break;
+      }
+    }
+  }
+  if (recordHistory && !absPath.empty()) pushSelectionHistory(absPath);
+  if (inspectorCachePrim_ != selPrim_ || inspectorCachePath_ != selPath_) {
+    inspectorCachePrim_ = nullptr;
+    inspectorCachePath_.clear();
+    inspectorCacheRows_.clear();
+  }
+  rebuildSubsetHighlight();
+}
+
+// Build the selection-highlight geometry: the GL backend draws a polygon-mode
+// wireframe (whole mesh via highlightMeshIndex, or a GeomSubset's triangles via
+// highlightSubsetIndices_); the Vulkan backend, lacking a wireframe pass, draws
+// world-space orange edge lines (highlightLinesData_). A selected GeomSubset
+// outlines exactly its faces (mapped through the mesh's sourceFaceId).
+void Gui::rebuildSubsetHighlight() {
+  highlightSubsetIndices_.clear();
+  highlightSubsetMesh_ = -1;
+  highlightLinesData_.clear();
+  if (!draw_) return;
+
+  // Resolve the highlighted mesh + the triangle vertex-index list to outline.
+  int mi = -1;
+  const std::vector<uint32_t>* tri = nullptr;  // index list (3 per triangle)
+
+  if (selPrim_) {
+    if (const auto* gs = selPrim_->as<tinyusdz::GeomSubset>()) {
+      if (gs->elementType.get_value() == tinyusdz::GeomSubset::ElementType::Face) {
+        std::set<uint32_t> faces;
+        if (auto opt = gs->indices.get_value()) {
+          std::vector<int32_t> fi;
+          if (opt.value().get_scalar(&fi))
+            for (int32_t f : fi)
+              if (f >= 0) faces.insert(static_cast<uint32_t>(f));
+        }
+        std::string meshPath = selPath_;
+        const size_t slash = meshPath.find_last_of('/');
+        if (!faces.empty() && slash != std::string::npos && slash != 0) {
+          meshPath.resize(slash);
+          for (size_t i = 0; i < draw_->meshes.size(); ++i)
+            if (draw_->meshes[i].absPath == meshPath) { mi = static_cast<int>(i); break; }
+          if (mi >= 0) {
+            const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
+            if (m.sourceFaceId.size() == m.indices.size() / 3) {
+              for (size_t t = 0; t < m.sourceFaceId.size(); ++t)
+                if (faces.count(m.sourceFaceId[t])) {
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 0]);
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 1]);
+                  highlightSubsetIndices_.push_back(m.indices[t * 3 + 2]);
+                }
+              if (!highlightSubsetIndices_.empty()) {
+                highlightSubsetMesh_ = mi;
+                tri = &highlightSubsetIndices_;
+              } else {
+                mi = -1;
+              }
+            } else {
+              mi = -1;
+            }
+          }
+        }
+      }
+    }
+  }
+  // No GeomSubset: a selected mesh highlights all its triangles.
+  if (mi < 0 && selMeshIndex_ >= 0 &&
+      static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+    mi = selMeshIndex_;
+    tri = &draw_->meshes[static_cast<size_t>(mi)].indices;
+  }
+  if (mi < 0 || !tri) return;
+
+  // World-space orange edge lines (for the Vulkan line-pipeline highlight).
+  const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(mi)];
+  const float* W = m.world;  // column-major
+  auto wpos = [&](uint32_t vi, float o[3]) {
+    const DrawVertex& v = m.vertices[vi];
+    o[0] = W[0] * v.px + W[4] * v.py + W[8] * v.pz + W[12];
+    o[1] = W[1] * v.px + W[5] * v.py + W[9] * v.pz + W[13];
+    o[2] = W[2] * v.px + W[6] * v.py + W[10] * v.pz + W[14];
+  };
+  const float orange[3] = {1.0f, 0.55f, 0.1f};
+  highlightLinesData_.reserve(tri->size() * 2);
+  const size_t nv = m.vertices.size();
+  for (size_t t = 0; t + 2 < tri->size(); t += 3) {
+    const uint32_t a = (*tri)[t], b = (*tri)[t + 1], c = (*tri)[t + 2];
+    if (a >= nv || b >= nv || c >= nv) continue;
+    HelperVertex va{}, vb{}, vc{};
+    wpos(a, va.pos); wpos(b, vb.pos); wpos(c, vc.pos);
+    for (int k = 0; k < 3; ++k) { va.col[k] = vb.col[k] = vc.col[k] = orange[k]; }
+    highlightLinesData_.push_back(va); highlightLinesData_.push_back(vb);
+    highlightLinesData_.push_back(vb); highlightLinesData_.push_back(vc);
+    highlightLinesData_.push_back(vc); highlightLinesData_.push_back(va);
+  }
+}
+
+void Gui::clearSelection() {
+  selPath_.clear();
+  selMeshIndex_ = -1;
+  selPrim_ = nullptr;
+  selectionList_.clear();
+  revealSelectionInHierarchy_ = false;
+  inspectorCachePrim_ = nullptr;
+  inspectorCachePath_.clear();
+  inspectorCacheRows_.clear();
+}
+
+void Gui::setSelectionListSingle(const std::string& absPath, int meshIndex) {
+  selectionList_.clear();
+  if (!absPath.empty()) selectionList_.push_back({absPath, meshIndex});
+}
+
+void Gui::setSelectionListFromMeshes(std::vector<int> meshIndices) {
+  selectionList_.clear();
+  if (!draw_) return;
+  selectionList_.reserve(meshIndices.size());
+  for (int meshIndex : meshIndices) {
+    if (meshIndex < 0 || static_cast<size_t>(meshIndex) >= draw_->meshes.size()) {
+      continue;
+    }
+    const DrawMeshCPU& mesh = draw_->meshes[static_cast<size_t>(meshIndex)];
+    if (mesh.absPath.empty()) continue;
+    selectionList_.push_back({mesh.absPath, meshIndex});
+  }
+  if (!selectionList_.empty()) {
+    focusSelectionListItem(0);
+  } else {
+    clearSelection();
+  }
+}
+
+void Gui::focusSelectionListItem(size_t index) {
+  if (index >= selectionList_.size()) return;
+  applySelection(selectionList_[index].first, selectionList_[index].second,
+                 /*recordHistory=*/true);
+}
+
+bool Gui::canGoSelectionBack() const {
+  return selectionHistoryIndex_ > 0 &&
+         selectionHistoryIndex_ <= static_cast<int>(selectionHistory_.size()) - 1;
+}
+
+bool Gui::canGoSelectionForward() const {
+  return selectionHistoryIndex_ >= 0 &&
+         (selectionHistoryIndex_ + 1) < static_cast<int>(selectionHistory_.size());
+}
+
+bool Gui::goSelectionBack() {
+  if (!canGoSelectionBack()) return false;
+  --selectionHistoryIndex_;
+  applySelection(selectionHistory_[static_cast<size_t>(selectionHistoryIndex_)], -1,
+                 /*recordHistory=*/false);
+  setSelectionListSingle(selPath_, selMeshIndex_);
+  return true;
+}
+
+bool Gui::goSelectionForward() {
+  if (!canGoSelectionForward()) return false;
+  ++selectionHistoryIndex_;
+  applySelection(selectionHistory_[static_cast<size_t>(selectionHistoryIndex_)], -1,
+                 /*recordHistory=*/false);
+  setSelectionListSingle(selPath_, selMeshIndex_);
+  return true;
+}
+
+void Gui::saveCameraBookmark(int slot) {
+  if (!cam_ || slot < 0 || slot >= static_cast<int>(cameraBookmarks_.size())) return;
+  CameraBookmark& bm = cameraBookmarks_[static_cast<size_t>(slot)];
+  bm.valid = true;
+  bm.target = cam_->target();
+  bm.yaw = cam_->yaw();
+  bm.pitch = cam_->pitch();
+  bm.distance = cam_->distance();
+  bm.selectedPath = selPath_;
+}
+
+bool Gui::loadCameraBookmark(int slot) {
+  if (!cam_ || slot < 0 || slot >= static_cast<int>(cameraBookmarks_.size())) return false;
+  const CameraBookmark& bm = cameraBookmarks_[static_cast<size_t>(slot)];
+  if (!bm.valid) return false;
+  cam_->setOrbit(bm.target, bm.yaw, bm.pitch, bm.distance);
+  if (!bm.selectedPath.empty()) {
+    selectByPath(bm.selectedPath, -1);
+  }
+  return true;
+}
+
+bool Gui::hasCameraBookmark(int slot) const {
+  return slot >= 0 && slot < static_cast<int>(cameraBookmarks_.size()) &&
+         cameraBookmarks_[static_cast<size_t>(slot)].valid;
+}
+
+void Gui::selectAdjacentMesh(int step) {
+  if (!draw_ || draw_->meshes.empty() || step == 0) return;
+
+  const int count = static_cast<int>(draw_->meshes.size());
+  int start = selMeshIndex_;
+  if (start < 0 || start >= count) start = (step > 0) ? -1 : count;
+
+  for (int i = 0; i < count; ++i) {
+    int idx = start + ((i + 1) * step);
+    while (idx < 0) idx += count;
+    while (idx >= count) idx -= count;
+    if (!meshVisibleForView(static_cast<size_t>(idx))) {
+      continue;
+    }
+    selectByPath(draw_->meshes[static_cast<size_t>(idx)].absPath, idx);
+    return;
+  }
+}
+
+void Gui::drawSelectionBreadcrumbs(const char* idSuffix) {
+  if (selPath_.empty()) return;
+
+  const auto crumbs = BuildBreadcrumbs(selPath_);
+  if (crumbs.empty()) return;
+
+  const float height = ImGui::GetTextLineHeightWithSpacing() * 1.8f;
+  if (ImGui::BeginChild(idSuffix, ImVec2(0, height), false,
+                        ImGuiWindowFlags_HorizontalScrollbar)) {
+    for (size_t i = 0; i < crumbs.size(); ++i) {
+      if (i > 0) {
+        ImGui::SameLine(0, 4.0f);
+        ImGui::TextDisabled(">");
+        ImGui::SameLine(0, 4.0f);
+      }
+
+      const bool selected = crumbs[i].second == selPath_;
+      if (selected) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ButtonHovered]);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImGui::GetStyle().Colors[ImGuiCol_ButtonActive]);
+      }
+      std::string label = crumbs[i].first + "##" + crumbs[i].second;
+      if (ImGui::SmallButton(label.c_str())) {
+        selectByPath(crumbs[i].second, -1);
+      }
+      if (selected) ImGui::PopStyleColor(2);
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", crumbs[i].second.c_str());
+    }
+  }
+  ImGui::EndChild();
+}
+
+bool Gui::framePath(const std::string& absPath) {
+  if (!cam_ || !draw_ || absPath.empty()) return false;
+
+  bool found = false;
+  float mn[3] = {0.0f, 0.0f, 0.0f};
+  float mx[3] = {0.0f, 0.0f, 0.0f};
+  for (const auto& mesh : draw_->meshes) {
+    if (!PathIsSameOrDescendant(mesh.absPath, absPath)) continue;
+    if (!found) {
+      for (int i = 0; i < 3; ++i) {
+        mn[i] = mesh.aabbMin[i];
+        mx[i] = mesh.aabbMax[i];
+      }
+      found = true;
+    } else {
+      for (int i = 0; i < 3; ++i) {
+        mn[i] = std::min(mn[i], mesh.aabbMin[i]);
+        mx[i] = std::max(mx[i], mesh.aabbMax[i]);
+      }
+    }
+  }
+
+  if (found) cam_->fitToScene(mn, mx);
+  return found;
+}
+
+bool Gui::drawPrimTree(const tinyusdz::Prim& prim) {
+  // When filtering, hide whole subtrees that contain no match; expand the rest
+  // so matches are visible in context.
+  const bool filtering = hierFilter_.IsActive();
+  if (filtering && !PrimSubtreePasses(hierFilter_, prim)) return false;
+
+  ImGui::PushID(static_cast<const void*>(&prim));
+  std::string typeName = prim.prim_type_name();
+  if (typeName.empty()) typeName = prim.type_name();
+  std::string label = prim.element_name();
+  if (label.empty()) label = "<root>";
+  if (!typeName.empty()) label += "  [" + typeName + "]";
+
+  std::string subd = SubdivisionSchemeName(prim);
+  std::string vis = VisibilityState(prim);
+  std::string badges;
+  if (!subd.empty() && subd != "none") badges += " [" + subd + "]";
+  if (vis == "invisible") badges += " [invisible]";
+  // Purpose badge
+  {
+    auto tryPurpose = [&](auto* gprim) -> std::string {
+      if (gprim->purpose.authored()) {
+        auto v = gprim->purpose.get_value();
+        if (v != tinyusdz::Purpose::Default) return tinyusdz::to_string(v);
+      }
+      return {};
+    };
+    std::string purpose;
+    if (auto* m = prim.as<tinyusdz::GeomMesh>()) purpose = tryPurpose(m);
+    else if (auto* s = prim.as<tinyusdz::GeomSphere>()) purpose = tryPurpose(s);
+    else if (auto* c = prim.as<tinyusdz::GeomCube>()) purpose = tryPurpose(c);
+    else if (auto* y = prim.as<tinyusdz::GeomCylinder>()) purpose = tryPurpose(y);
+    else if (auto* o = prim.as<tinyusdz::GeomCone>()) purpose = tryPurpose(o);
+    else if (auto* p = prim.as<tinyusdz::GeomCapsule>()) purpose = tryPurpose(p);
+    else if (auto* n = prim.as<tinyusdz::GeomPlane>()) purpose = tryPurpose(n);
+    else if (auto* b = prim.as<tinyusdz::GeomBasisCurves>()) purpose = tryPurpose(b);
+    else if (auto* pt = prim.as<tinyusdz::GeomPoints>()) purpose = tryPurpose(pt);
+    if (!purpose.empty()) badges += " [purpose:" + purpose + "]";
+  }
+  // Material badge
+  const std::string absPath = prim.absolute_path().full_path_name();
+  if (loaded_ && loaded_->ok &&
+      (prim.is<tinyusdz::GeomMesh>() || prim.is<tinyusdz::GeomBasisCurves>() ||
+       prim.is<tinyusdz::GeomPoints>())) {
+    tinyusdz::Path matPath;
+    const tinyusdz::Material* matPtr = nullptr;
+    std::string matErr;
+    if (tinyusdz::tydra::GetDirectlyBoundMaterial(
+            loaded_->stage, prim, "", &matPath, &matPtr, &matErr)) {
+      badges += " [mat:" + std::string(matPath.prim_part().c_str()) + "]";
+    }
+  }
+  // Instance / composition arc badges
+  if (!prim.IsActive()) badges += " [inactive]";
+  if (prim.specifier() == tinyusdz::Specifier::Over) badges += " [over]";
+  else if (prim.specifier() == tinyusdz::Specifier::Class) badges += " [class]";
+  if (prim.IsInstance()) badges += " [instance]";
+  if (prim.metas().get_instanceable()) badges += " [instanceable]";
+  {
+    const auto& m = prim.metas();
+    if (m.has_kind()) badges += " [" + tinyusdz::to_string(m.get_kind()) + "]";
+    if (m.references.has_value() && !m.references->empty()) {
+      size_t count = 0;
+      for (const auto& [qual, refs] : *m.references) count += refs.size();
+      if (count > 0) badges += " [ref:" + std::to_string(count) + "]";
+    }
+    if (m.payload.has_value()) {
+      bool isDeferred = false;
+      if (loaded_) {
+        for (const auto& da : loaded_->comp.deferred) {
+          if (da.primPath == absPath) { isDeferred = true; break; }
+        }
+      }
+      badges += isDeferred ? " [payload:defer]" : " [payload:loaded]";
+    }
+    if (m.inherits.has_value() && !m.inherits->empty()) badges += " [inherits]";
+  }
+  // Visibility indicator
+  {
+    bool anyHidden = false, anyVisible = false;
+    if (draw_) {
+      for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+        if (draw_->meshes[mi].absPath == absPath) {
+          if (mi < meshVisible_.size() && !meshVisible_[mi]) anyHidden = true;
+          else anyVisible = true;
+        }
+      }
+    }
+    if (anyHidden && !anyVisible) badges += " [hidden]";
+    else if (anyHidden) badges += " [mixed]";
+  }
+  label += badges;
+
+  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                             ImGuiTreeNodeFlags_OpenOnDoubleClick |
+                             ImGuiTreeNodeFlags_SpanAvailWidth;
+  const bool leaf = prim.children().empty();
+  if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet;
+  if (selPrim_ == &prim) flags |= ImGuiTreeNodeFlags_Selected;
+
+  if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+  else if (revealSelectionInHierarchy_ && !selPath_.empty() &&
+           PathIsSameOrDescendant(selPath_, absPath)) {
+    ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+  }
+  const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+  if (ImGui::IsItemHovered()) {
+    ImGui::SetTooltip("%s", absPath.c_str());
+  }
+  if (selPrim_ == &prim && revealSelectionInHierarchy_) {
+    ImGui::SetScrollHereY(0.35f);
+    revealSelectionInHierarchy_ = false;
+  }
+  if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+    selectByPath(absPath, -1);
+    selPrim_ = &prim;
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      if (!framePath(absPath)) frameSelected();
+    }
+  }
+  if (ImGui::BeginPopupContextItem()) {
+    if (ImGui::MenuItem("Copy path")) ImGui::SetClipboardText(absPath.c_str());
+    if (ImGui::MenuItem("Frame selection")) { if (!framePath(absPath)) frameSelected(); }
+    // Hide/show
+    bool hasDeferred = false;
+    if (loaded_) {
+      for (const auto& da : loaded_->comp.deferred) {
+        if (da.primPath == absPath) { hasDeferred = true; break; }
+      }
+    }
+    if (hasDeferred && ImGui::MenuItem("Load payload")) payloadLoadRequests_.push_back(absPath);
+    ImGui::Separator();
+    std::vector<size_t> primMeshIndices;
+    if (draw_) {
+      for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+        if (draw_->meshes[mi].absPath == absPath) primMeshIndices.push_back(mi);
+      }
+    }
+    if (!primMeshIndices.empty()) {
+      bool anyHidden = false;
+      for (size_t mi : primMeshIndices) {
+        if (mi < meshVisible_.size() && !meshVisible_[mi]) { anyHidden = true; break; }
+      }
+      if (anyHidden) {
+        if (ImGui::MenuItem("Show")) {
+          for (size_t mi : primMeshIndices) if (mi < meshVisible_.size()) meshVisible_[mi] = 1;
+        }
+      } else {
+        if (ImGui::MenuItem("Hide", "Ctrl+H")) {
+          for (size_t mi : primMeshIndices) if (mi < meshVisible_.size()) meshVisible_[mi] = 0;
+        }
+      }
+    }
+    ImGui::EndPopup();
+  }
+  if (open) {
+    for (const auto& c : prim.children()) drawPrimTree(c);
+    ImGui::TreePop();
+  }
+  ImGui::PopID();
+  return true;
+}
+
+bool Gui::drawNodeTree(const tydra::Node& node) {
+  const bool filtering = hierFilter_.IsActive();
+  if (filtering && !NodeSubtreePasses(hierFilter_, node)) return false;
+
+  ImGui::PushID(static_cast<const void*>(&node));
+  std::string label = node.prim_name.empty() ? "<node>" : node.prim_name;
+  label += "  {";
+  label += NodeTypeName(node.nodeType);
+  label += "}";
+
+  ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                             ImGuiTreeNodeFlags_OpenOnDoubleClick |
+                             ImGuiTreeNodeFlags_SpanAvailWidth;
+  const bool leaf = node.children.empty();
+  if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet;
+  if (!selPath_.empty() && selPath_ == node.abs_path) flags |= ImGuiTreeNodeFlags_Selected;
+
+  if (filtering) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+  else if (revealSelectionInHierarchy_ && !selPath_.empty() &&
+           PathIsSameOrDescendant(selPath_, node.abs_path)) {
+    ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+  }
+  const bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+  if (!selPath_.empty() && selPath_ == node.abs_path && revealSelectionInHierarchy_) {
+    ImGui::SetScrollHereY(0.35f);
+    revealSelectionInHierarchy_ = false;
+  }
+  if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+    const int meshIdx = (node.nodeType == tydra::NodeType::Mesh) ? node.id : -1;
+    selectByPath(node.abs_path, meshIdx);
+    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      if (!framePath(node.abs_path)) frameSelected();
+    }
+  }
+  if (open) {
+    for (const auto& c : node.children) drawNodeTree(c);
+    ImGui::TreePop();
+  }
+  ImGui::PopID();
+  return true;
+}
+
+void Gui::rebuildInspectorCache() {
+  if (!selPrim_) return;
+  if (inspectorCachePrim_ == selPrim_ && inspectorCachePath_ == selPath_) return;
+
+  inspectorCachePrim_ = selPrim_;
+  inspectorCachePath_ = selPath_;
+  inspectorCacheRows_.clear();
+  inspectorCacheError_.clear();
+  inspectorCacheType_ = selPrim_->prim_type_name();
+  if (inspectorCacheType_.empty()) inspectorCacheType_ = selPrim_->type_name();
+  inspectorCacheMeta_ = PrimMetaSummary(*selPrim_);
+
+  std::vector<std::string> names;
+  std::string err;
+  if (!tydra::GetPropertyNames(*selPrim_, &names, &err)) {
+    inspectorCacheError_ = err.empty() ? "No properties." : err;
+    return;
+  }
+
+  inspectorCacheRows_.reserve(names.size());
+  for (const std::string& name : names) {
+    InspectorPropRow row;
+    row.name = name;
+    tinyusdz::Property prop;
+    std::string perr;
+    row.gotProperty = tydra::GetProperty(*selPrim_, name, &prop, &perr);
+    if (row.gotProperty) {
+      row.value = PropertyToString(prop);
+      if (prop.is_attribute()) {
+        row.typeStr = prop.value_type_name();
+        const auto& a = prop.get_attribute();
+        if (a.is_connection()) row.typeStr += " (connect)";
+        else if (a.has_value() || a.has_timesamples()) row.typeStr += " (authored)";
+        else row.typeStr += " (default)";
+        row.attrMeta = AttrMetaSummary(a);
+        // Color swatch detection
+        const std::string& tn = prop.value_type_name();
+        if (a.has_value() && (tn == "color3f" || tn == "color4f" || tn == "color3d")) {
+          const auto& v = a.get_var().value_raw();
+          if (tn == "color3f") {
+            if (const auto* c = v.as<tinyusdz::value::color3f>()) {
+              row.hasColor = true;
+              row.color[0] = c->r; row.color[1] = c->g;
+              row.color[2] = c->b; row.color[3] = 1.0f;
+            }
+          } else if (tn == "color4f") {
+            if (const auto* c = v.as<tinyusdz::value::color4f>()) {
+              row.hasColor = true;
+              row.color[0] = c->r; row.color[1] = c->g;
+              row.color[2] = c->b; row.color[3] = c->a;
+            }
+          } else if (tn == "color3d") {
+            if (const auto* c = v.as<tinyusdz::value::color3d>()) {
+              row.hasColor = true;
+              row.color[0] = c->r; row.color[1] = c->g;
+              row.color[2] = c->b; row.color[3] = 1.0f;
+            }
+          }
+        }
+      } else if (prop.is_relationship()) {
+        row.typeStr = "rel";
+      }
+    } else {
+      row.value = perr.empty() ? "<error>" : perr;
+    }
+    inspectorCacheRows_.push_back(std::move(row));
+  }
+}
+
+void Gui::drawHierarchy() {
+  ImGui::Begin("Hierarchy");
+  if (loaded_ && loaded_->ok) {
+    if (!selPath_.empty()) {
+      ImGui::TextDisabled("Selected");
+      drawSelectionBreadcrumbs("##hierarchy-breadcrumbs");
+      ImGui::TextWrapped("%s", selPath_.c_str());
+      if (canGoSelectionBack()) {
+        if (ImGui::Button("Back")) goSelectionBack();
+      } else {
+        ImGui::BeginDisabled();
+        ImGui::Button("Back");
+        ImGui::EndDisabled();
+      }
+      ImGui::SameLine();
+      if (canGoSelectionForward()) {
+        if (ImGui::Button("Forward")) goSelectionForward();
+      } else {
+        ImGui::BeginDisabled();
+        ImGui::Button("Forward");
+        ImGui::EndDisabled();
+      }
+      ImGui::SameLine();
+      if (draw_ && !draw_->meshes.empty()) {
+        if (ImGui::Button("Prev")) selectAdjacentMesh(-1);
+        ImGui::SameLine();
+        if (ImGui::Button("Next")) selectAdjacentMesh(1);
+        ImGui::SameLine();
+      }
+      if (ImGui::Button("Frame selection")) {
+        if (!framePath(selPath_)) frameSelected();
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Reveal")) {
+        revealSelectionInHierarchy_ = true;
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Clear")) {
+        clearSelection();
+      }
+      ImGui::Separator();
+    }
+    hierFilter_.Draw("Search", -1.0f);  // name / type / path
+    ImGui::Separator();
+    if (showRenderNodes_) {
+      for (const auto& n : loaded_->render.nodes) drawNodeTree(n);
+    } else {
+      for (const auto& root : loaded_->stage.root_prims()) drawPrimTree(root);
+    }
+  } else {
+    HintWrapped("No scene loaded.");
+    HintWrapped("File > Open... to load a USD file.");
+  }
+  ImGui::End();
+}
+
+void Gui::drawInspector() {
+  ImGui::Begin("Inspector");
+  if (selPrim_) {
+    rebuildInspectorCache();
+    drawSelectionBreadcrumbs("##inspector-breadcrumbs");
+    ImGui::TextWrapped("%s", selPath_.c_str());
+    if (ImGui::SmallButton("Copy path")) {
+      ImGui::SetClipboardText(selPath_.c_str());
+    }
+    ImGui::SameLine();
+    if (canGoSelectionBack()) {
+      if (ImGui::SmallButton("Back")) goSelectionBack();
+    } else {
+      ImGui::BeginDisabled();
+      ImGui::SmallButton("Back");
+      ImGui::EndDisabled();
+    }
+    ImGui::SameLine();
+    if (canGoSelectionForward()) {
+      if (ImGui::SmallButton("Forward")) goSelectionForward();
+    } else {
+      ImGui::BeginDisabled();
+      ImGui::SmallButton("Forward");
+      ImGui::EndDisabled();
+    }
+    ImGui::TextDisabled("Type: %s", inspectorCacheType_.c_str());
+
+    // Blendshape editor (only renders when the selection has blendshape targets).
+    drawBlendShapeEditor();
+
+    // Prim metadata (kind/active/hidden/displayName/doc/...).
+    if (!inspectorCacheMeta_.empty() &&
+        ImGui::CollapsingHeader("Prim metadata", ImGuiTreeNodeFlags_DefaultOpen)) {
+      HintWrapped(inspectorCacheMeta_.c_str());
+    }
+
+    // GPrim properties (doubleSided, orientation, visibility, purpose)
+    {
+      std::string gprimSummary = GPrimPropertySummary(*selPrim_);
+      if (!gprimSummary.empty() &&
+          ImGui::CollapsingHeader("GPrim properties", ImGuiTreeNodeFlags_DefaultOpen)) {
+        HintWrapped(gprimSummary.c_str());
+      }
+    }
+
+    // Variant sets with combo boxes
+    {
+      const auto& vsMap = selPrim_->variantSets();
+      if (!vsMap.empty() &&
+          ImGui::CollapsingHeader("Variant sets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const auto& metas = selPrim_->metas();
+        const auto* curSel = metas.variants.has_value() ? &(*metas.variants) : nullptr;
+        for (const auto& [setName, vs] : vsMap) {
+          if (vs.variantSet.empty()) continue;
+          std::string preview = "(default)";
+          if (curSel) {
+            auto it = curSel->find(setName);
+            if (it != curSel->end()) preview = it->second;
+          }
+          std::string comboLabel = setName + "##variant";
+          if (ImGui::BeginCombo(comboLabel.c_str(), preview.c_str())) {
+            for (const auto& [vName, var] : vs.variantSet) {
+              bool selected = (vName == preview);
+              if (ImGui::Selectable(vName.c_str(), selected)) {
+                if (!curSel || preview != vName) {
+                  std::map<std::string, std::string> overrides;
+                  if (curSel) overrides = *curSel;
+                  overrides[setName] = vName;
+                  requestVariantSwitch(selPath_, overrides);
+                }
+              }
+              if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
+        }
+      }
+    }
+
+    // Composition sources / arcs
+    {
+      const auto& metas = selPrim_->metas();
+      bool hasArcs = false;
+      std::string compSummary;
+      auto addArc = [&](const char* k, const std::string& v) {
+        if (!compSummary.empty()) compSummary += "\n";
+        compSummary += k;
+        compSummary += ": ";
+        compSummary += v;
+        hasArcs = true;
+      };
+      if (metas.references.has_value() && !metas.references->empty()) {
+        size_t count = 0;
+        for (const auto& [qual, refs] : *metas.references) count += refs.size();
+        addArc("references", std::to_string(count) + " arc(s)");
+      }
+      if (metas.payload.has_value()) {
+        addArc("payload", "(authored)");
+      }
+      if (metas.inherits.has_value() && !metas.inherits->empty()) {
+        addArc("inherits", std::to_string(metas.inherits->size()) + " path(s)");
+      }
+      if (metas.specializes.has_value() && !metas.specializes->empty()) {
+        addArc("specializes", std::to_string(metas.specializes->size()) + " path(s)");
+      }
+      if (hasArcs &&
+          ImGui::CollapsingHeader("Composition arcs", ImGuiTreeNodeFlags_DefaultOpen)) {
+        HintWrapped(compSummary.c_str());
+      }
+    }
+
+    // Material binding
+    if (loaded_ && loaded_->ok &&
+        (selPrim_->is<tinyusdz::GeomMesh>() || selPrim_->is<tinyusdz::GeomBasisCurves>() ||
+         selPrim_->is<tinyusdz::GeomPoints>())) {
+      tinyusdz::Path matPath;
+      const tinyusdz::Material* matPtr = nullptr;
+      std::string matErr;
+      if (tinyusdz::tydra::GetDirectlyBoundMaterial(
+              loaded_->stage, *selPrim_, "", &matPath, &matPtr, &matErr)) {
+        const std::string matPathStr = matPath.full_path_name();
+        std::string matLabel = "Material: " + matPathStr;
+        if (ImGui::CollapsingHeader("Material binding", ImGuiTreeNodeFlags_DefaultOpen)) {
+          if (ImGui::SmallButton(matLabel.c_str())) {
+            selectByPath(matPathStr, -1);
+          }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to navigate");
+          (void)matPtr;
+        }
+      }
+    }
+
+    // Shader graph viewer (for Material/Shader prims).
+    if (loaded_ && loaded_->ok && selPrim_ && selPrim_->is<tinyusdz::Material>()) {
+      if (ImGui::CollapsingHeader("Shader graph", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Recursive lambda to trace shader connections.
+        std::function<void(const std::string&, int)> traceShader;
+        traceShader = [&](const std::string& shaderPath, int depth) {
+          if (depth > 4) { ImGui::TextDisabled("  ..."); return; }
+          const tinyusdz::Prim* sprim = nullptr;
+          std::function<void(const tinyusdz::Prim&, const std::string&)> findPrim;
+          findPrim = [&](const tinyusdz::Prim& p, const std::string& target) {
+            if (p.absolute_path().full_path_name() == target) { sprim = &p; return; }
+            for (const auto& c : p.children()) findPrim(c, target);
+          };
+          for (const auto& r : loaded_->stage.root_prims()) findPrim(r, shaderPath);
+          if (!sprim) { ImGui::TextDisabled("  %s", shaderPath.c_str()); return; }
+          ImGui::TextDisabled("  %s  %s", sprim->type_name().c_str(), shaderPath.c_str());
+          std::vector<std::string> names;
+          std::string perr;
+          if (tydra::GetPropertyNames(*sprim, &names, &perr)) {
+            for (const auto& n : names) {
+              tinyusdz::Property prop;
+              if (tydra::GetProperty(*sprim, n, &prop, &perr) &&
+                  prop.is_attribute() && prop.get_attribute().has_connections()) {
+                for (const auto& cpath : prop.get_attribute().connections()) {
+                  ImGui::TextDisabled("    %s ->", n.c_str());
+                  traceShader(cpath.full_path_name(), depth + 1);
+                }
+              }
+            }
+          }
+        };
+        // Trace from Material outputs.
+        std::vector<std::string> pnames;
+        std::string perr;
+        if (tydra::GetPropertyNames(*selPrim_, &pnames, &perr)) {
+          for (const auto& n : pnames) {
+            tinyusdz::Property prop;
+            if (tydra::GetProperty(*selPrim_, n, &prop, &perr) &&
+                prop.is_attribute() && prop.get_attribute().has_connections()) {
+              for (const auto& cp : prop.get_attribute().connections()) {
+                ImGui::TextDisabled("outputs:%s", n.c_str());
+                ImGui::Indent();
+                traceShader(cp.full_path_name(), 0);
+                ImGui::Unindent();
+              }
+            }
+          }
+        }
+      }
+    }
+
+    ImGui::Separator();
+    propFilter_.Draw("Search##props", -1.0f);  // property name / value / type
+
+    if (inspectorCacheError_.empty()) {
+      if (ImGui::BeginTable("##props", 3,
+                            ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
+                                ImGuiTableFlags_BordersInnerH |
+                                ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::GetFontSize() * 8.0f);
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::GetFontSize() * 6.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+        for (const InspectorPropRow& row : inspectorCacheRows_) {
+          // Filter rows by property name, type or value.
+          if (propFilter_.IsActive() && !propFilter_.PassFilter(row.name.c_str()) &&
+              !propFilter_.PassFilter(row.typeStr.c_str()) &&
+              !propFilter_.PassFilter(row.value.c_str()) &&
+              !propFilter_.PassFilter(row.attrMeta.c_str())) {
+            continue;
+          }
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextUnformatted(row.name.c_str());
+          ImGui::TableSetColumnIndex(1);
+          ImGui::TextUnformatted(row.typeStr.c_str());
+          ImGui::TableSetColumnIndex(2);
+          if (row.gotProperty) {
+            // Color swatch before value if applicable
+            if (row.hasColor) {
+              ImVec4 c(row.color[0], row.color[1], row.color[2], row.color[3]);
+              ImGui::ColorButton("##swatch", c,
+                                 ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
+                                 ImVec2(ImGui::GetFontSize(), ImGui::GetFontSize()));
+              ImGui::SameLine();
+            }
+            if (ImGui::BeginChild(("##val-" + row.name).c_str(),
+                                  ImVec2(0, ImGui::GetTextLineHeightWithSpacing()),
+                                  false, ImGuiWindowFlags_NoScrollbar)) {
+              ImGui::TextUnformatted(row.value.c_str());
+              if (ImGui::IsItemHovered() && !row.value.empty()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                  ImGui::SetClipboardText(row.value.c_str());
+                }
+              }
+            }
+            ImGui::EndChild();
+            if (!row.attrMeta.empty()) HintWrapped(row.attrMeta.c_str());
+          } else {
+            ImGui::TextDisabled("<error>");
+          }
+        }
+        ImGui::EndTable();
+      }
+    } else {
+      HintWrapped(inspectorCacheError_.c_str());
+    }
+  } else if (!selPath_.empty()) {
+    ImGui::TextWrapped("%s", selPath_.c_str());
+    if (ImGui::SmallButton("Copy path")) {
+      ImGui::SetClipboardText(selPath_.c_str());
+    }
+    HintWrapped("(RenderScene node; no matching Stage prim)");
+  } else {
+    HintWrapped("Select a prim in the Hierarchy.");
+  }
+  ImGui::End();
+}
+
+void Gui::drawBlendShapeEditor() {
+  if (!draw_ || selPath_.empty()) return;
+
+  // Gather blendshapes (by name, with their in-between weights) from meshes that
+  // are the selection itself, an ancestor of it (selecting a BlendShape child),
+  // or a descendant (selecting a SkelRoot/Xform above the mesh).
+  std::map<std::string, std::vector<float>> shapes;  // name -> inbetween weights
+  const std::string selSlash = selPath_ + "/";
+  for (const DrawMeshCPU& m : draw_->meshes) {
+    if (m.morphTargetChannels.empty()) continue;
+    const std::string meshSlash = m.absPath + "/";
+    const bool related = (m.absPath == selPath_) ||
+                         (m.absPath.rfind(selSlash, 0) == 0) ||
+                         (selPath_.rfind(meshSlash, 0) == 0);
+    if (!related) continue;
+    // morphTargetChannels carries name + ascending usdWeights = [inbetween
+    // weights..., 1.0]; the editor wants the in-between weights (drop the
+    // trailing 1.0 primary). The heavy per-vertex morphs are freed after load.
+    for (const MorphTargetChannelsCPU& tc : m.morphTargetChannels) {
+      std::vector<float>& ib = shapes[tc.name];
+      if (ib.empty() && tc.usdWeights.size() > 1) {
+        for (size_t k = 0; k + 1 < tc.usdWeights.size(); ++k) {
+          ib.push_back(tc.usdWeights[k]);
+        }
+      }
+    }
+  }
+  if (shapes.empty()) return;
+
+  if (!ImGui::CollapsingHeader("Blend Shapes", ImGuiTreeNodeFlags_DefaultOpen)) {
+    return;
+  }
+
+  if (ImGui::Checkbox("Manual weights", &blendActive_)) blendDirty_ = true;
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Reset")) {
+    for (auto& kv : blendWeights_) kv.second = 0.0f;
+    blendDirty_ = true;
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("%zu shape%s", shapes.size(), shapes.size() == 1 ? "" : "s");
+  if (!blendActive_) {
+    ImGui::TextDisabled("Enable 'Manual weights' to drive these (overrides anim).");
+  }
+
+  ImGui::BeginDisabled(!blendActive_);
+  for (auto& kv : shapes) {
+    const std::string& name = kv.first;
+    float& w = blendWeights_[name];  // default 0 (rest)
+    ImGui::PushID(name.c_str());
+    // 0..1 slider; ctrl+click to type an overdrive value (the morph eval
+    // extrapolates beyond the end shapes, Maya-style).
+    if (ImGui::SliderFloat(name.c_str(), &w, 0.0f, 1.0f, "%.3f")) {
+      blendDirty_ = true;
+    }
+    // In-between tick marks on the slider track (amber), so authored intermediate
+    // shapes are visible like Maya's target markers.
+    if (!kv.second.empty()) {
+      const ImVec2 mn = ImGui::GetItemRectMin();
+      const ImVec2 mx = ImGui::GetItemRectMax();
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      for (float iw : kv.second) {
+        const float c = iw < 0.0f ? 0.0f : (iw > 1.0f ? 1.0f : iw);
+        const float x = mn.x + (mx.x - mn.x) * c;
+        dl->AddLine(ImVec2(x, mn.y), ImVec2(x, mn.y + 3.0f),
+                    IM_COL32(255, 200, 60, 255), 1.5f);
+        dl->AddLine(ImVec2(x, mx.y - 3.0f), ImVec2(x, mx.y),
+                    IM_COL32(255, 200, 60, 255), 1.5f);
+      }
+    }
+    ImGui::PopID();
+  }
+  ImGui::EndDisabled();
+}
+
+void Gui::drawSelectionList() {
+  ImGui::Begin("Selection");
+  ImGui::Text("Selected: %zu", selectionList_.size());
+  if (!selectionList_.empty()) {
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear")) clearSelection();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Copy all")) {
+      std::string text;
+      for (const auto& item : selectionList_) {
+        text += item.first;
+        text += '\n';
+      }
+      ImGui::SetClipboardText(text.c_str());
+    }
+  }
+  ImGui::Separator();
+
+  if (selectionList_.empty()) {
+    HintWrapped("Drag a region in the viewport or click a prim/mesh.");
+    ImGui::End();
+    return;
+  }
+
+  if (ImGui::BeginChild("##selection-list", ImVec2(0, 0), false,
+                        ImGuiWindowFlags_HorizontalScrollbar)) {
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(selectionList_.size()));
+    while (clipper.Step()) {
+      for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+        const auto& item = selectionList_[static_cast<size_t>(i)];
+        ImGui::PushID(i);
+        const bool focused = item.first == selPath_;
+        if (ImGui::Selectable(item.first.c_str(), focused,
+                              ImGuiSelectableFlags_SpanAvailWidth)) {
+          focusSelectionListItem(static_cast<size_t>(i));
+        }
+        if (ImGui::BeginPopupContextItem("##selection-item-menu")) {
+          if (ImGui::MenuItem("Copy path")) {
+            ImGui::SetClipboardText(item.first.c_str());
+          }
+          if (ImGui::MenuItem("Frame")) {
+            focusSelectionListItem(static_cast<size_t>(i));
+            if (!framePath(item.first)) frameSelected();
+          }
+          ImGui::EndPopup();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", item.first.c_str());
+        ImGui::PopID();
+      }
+    }
+  }
+  ImGui::EndChild();
+  ImGui::End();
+}
+
+void Gui::drawCameraPanel() {
+  ImGui::Begin("Camera");
+  if (cam_) {
+    const light3d::Vec3 eye = cam_->eye();
+    const light3d::Vec3 target = cam_->target();
+    ImGui::Text("Eye:    %.3f %.3f %.3f", eye.x, eye.y, eye.z);
+    ImGui::Text("Target: %.3f %.3f %.3f", target.x, target.y, target.z);
+    ImGui::Text("Yaw/Pitch: %.3f / %.3f", cam_->yaw(), cam_->pitch());
+    ImGui::Text("Distance: %.3f", cam_->distance());
+    ImGui::Text("Aspect: %.5g", cam_->aspect());
+    ImGui::Text("Clip: %.5g / %.5g", cam_->nearPlane(), cam_->farPlane());
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Views");
+    if (ImGui::Button("Home")) homeView();
+    ImGui::SameLine();
+    if (ImGui::Button("Frame selected")) frameSelected();
+    ImGui::SameLine();
+    if (ImGui::Button("Frame all")) frameAll();
+    if (canGoSelectionBack()) {
+      if (ImGui::Button("Selection back")) goSelectionBack();
+    } else {
+      ImGui::BeginDisabled();
+      ImGui::Button("Selection back");
+      ImGui::EndDisabled();
+    }
+    ImGui::SameLine();
+    if (canGoSelectionForward()) {
+      if (ImGui::Button("Selection forward")) goSelectionForward();
+    } else {
+      ImGui::BeginDisabled();
+      ImGui::Button("Selection forward");
+      ImGui::EndDisabled();
+    }
+
+      if (ImGui::Button("Front")) applyViewPreset(CameraViewPreset::Front);
+    ImGui::SameLine();
+    if (ImGui::Button("Back")) applyViewPreset(CameraViewPreset::Back);
+    ImGui::SameLine();
+    if (ImGui::Button("Iso")) applyViewPreset(CameraViewPreset::Isometric);
+
+    if (ImGui::Button("Left")) applyViewPreset(CameraViewPreset::Left);
+    ImGui::SameLine();
+    if (ImGui::Button("Right")) applyViewPreset(CameraViewPreset::Right);
+    ImGui::SameLine();
+    if (ImGui::Button("Top")) applyViewPreset(CameraViewPreset::Top);
+    ImGui::SameLine();
+    if (ImGui::Button("Bottom")) applyViewPreset(CameraViewPreset::Bottom);
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Projection");
+    float fov = cam_->fovYDeg();
+    if (ImGui::SliderFloat("FOV Y", &fov, 5.0f, 175.0f, "%.1f deg")) {
+      cam_->setFovYDeg(fov);
+    }
+    bool aspectOverride = cam_->aspectOverrideEnabled();
+    if (ImGui::Checkbox("Aspect override", &aspectOverride)) {
+      cam_->setAspectOverrideEnabled(aspectOverride);
+    }
+    float aspectValue = cam_->aspectOverride();
+    if (!aspectOverride) ImGui::BeginDisabled();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    if (ImGui::InputFloat("Aspect", &aspectValue, 0.0f, 0.0f, "%.5g")) {
+      cam_->setAspectOverride(aspectValue);
+    }
+    if (!aspectOverride) ImGui::EndDisabled();
+    bool autoClip = cam_->autoClip();
+    if (ImGui::Checkbox("Auto clipping", &autoClip)) {
+      cam_->setAutoClip(autoClip);
+    }
+    float nearClip = cam_->manualNearPlane();
+    float farClip = cam_->manualFarPlane();
+    if (autoClip) ImGui::BeginDisabled();
+    bool clipChanged = false;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    clipChanged |= ImGui::InputFloat("Near", &nearClip, 0.0f, 0.0f, "%.5g");
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    clipChanged |= ImGui::InputFloat("Far", &farClip, 0.0f, 0.0f, "%.5g");
+    if (autoClip) ImGui::EndDisabled();
+    if (clipChanged) {
+      cam_->setClipPlanes(nearClip, farClip);
+    }
+    if (ImGui::SmallButton("Reset projection")) {
+      cam_->setFovYDeg(60.0f);
+      cam_->setAspectOverride(1.0f);
+      cam_->setAspectOverrideEnabled(false);
+      cam_->setClipPlanes(0.01f, 10000.0f);
+      cam_->setAutoClip(true);
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Bookmarks");
+    for (int slot = 0; slot < 3; ++slot) {
+      const int humanSlot = slot + 1;
+      ImGui::PushID(slot);
+      ImGui::Text("Slot %d", humanSlot);
+      ImGui::SameLine();
+      if (ImGui::Button("Save")) saveCameraBookmark(slot);
+      ImGui::SameLine();
+      const bool canLoad = hasCameraBookmark(slot);
+      if (!canLoad) ImGui::BeginDisabled();
+      if (ImGui::Button("Load")) loadCameraBookmark(slot);
+      if (!canLoad) ImGui::EndDisabled();
+      if (canLoad) {
+        const auto& bm = cameraBookmarks_[static_cast<size_t>(slot)];
+        if (!bm.selectedPath.empty()) {
+          ImGui::SameLine();
+          ImGui::TextDisabled("%s", bm.selectedPath.c_str());
+        }
+      } else {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(empty)");
+      }
+      ImGui::PopID();
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Navigation tuning");
+    float orbit = cam_->orbitSensitivity();
+    if (ImGui::SliderFloat("Orbit sensitivity", &orbit, 0.1f, 4.0f, "%.2f")) {
+      cam_->setOrbitSensitivity(orbit);
+    }
+    float pan = cam_->panSensitivity();
+    if (ImGui::SliderFloat("Pan sensitivity", &pan, 0.1f, 4.0f, "%.2f")) {
+      cam_->setPanSensitivity(pan);
+    }
+    float dolly = cam_->dollySensitivity();
+    if (ImGui::SliderFloat("Dolly sensitivity", &dolly, 0.1f, 4.0f, "%.2f")) {
+      cam_->setDollySensitivity(dolly);
+    }
+    bool invert = cam_->invertDolly();
+    if (ImGui::Checkbox("Invert dolly", &invert)) {
+      cam_->setInvertDolly(invert);
+    }
+    if (ImGui::Button("Reset tuning")) {
+      cam_->setOrbitSensitivity(1.0f);
+      cam_->setPanSensitivity(1.0f);
+      cam_->setDollySensitivity(1.0f);
+      cam_->setInvertDolly(false);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Persist via config.json if desired.");
+  } else {
+    HintWrapped("Camera controls appear here once the viewer is initialized.");
+  }
+  ImGui::End();
+}
+
+void Gui::drawPayloads() {
+  ImGui::Begin("Payloads");
+  if (!loaded_ || !loaded_->comp.composed) {
+    ImGui::TextDisabled(loaded_ && loaded_->ok
+                            ? "Scene has no composition arcs."
+                            : "No scene loaded.");
+    ImGui::End();
+    return;
+  }
+  const auto& comp = loaded_->comp;
+  if (comp.deferred.empty()) {
+    ImGui::TextDisabled("All payloads loaded (%zu).", comp.loadedPayloads.size());
+    ImGui::End();
+    return;
+  }
+
+  ImGui::Text("Deferred arcs: %zu", comp.deferred.size());
+  if (!comp.loadedPayloads.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%zu loaded)", comp.loadedPayloads.size());
+  }
+  const bool busy = loadStatus_.active;
+  if (ImGui::Button("Load All") && !busy) {
+    wantLoadAllPayloads_ = true;
+  }
+  ImGui::Separator();
+
+  if (ImGui::BeginTable("##payloads", 4,
+                        ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
+                            ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable)) {
+    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn("Arc", ImGuiTableColumnFlags_WidthFixed);
+    ImGui::TableSetupColumn("Prim");
+    ImGui::TableSetupColumn("Asset");
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableHeadersRow();
+    for (size_t i = 0; i < comp.deferred.size(); ++i) {
+      const DeferredArc& d = comp.deferred[i];
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::PushID(static_cast<int>(i));
+      if (ImGui::SmallButton("Load") && !busy) {
+        payloadLoadRequests_.push_back(d.primPath);
+      }
+      ImGui::PopID();
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(d.arc);
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(d.primPath.c_str());
+      ImGui::TableNextColumn();
+      ImGui::TextUnformatted(d.assetPath.empty() ? "(internal)"
+                                                 : d.assetPath.c_str());
+    }
+    ImGui::EndTable();
+  }
+  ImGui::End();
+}
+
+void Gui::drawMaterialsPanel() {
+  ImGui::Begin("Materials");
+  if (draw_ && !draw_->materials.empty()) {
+    ImGui::Text("Total: %zu materials", draw_->materials.size());
+    ImGui::Text("Textures: %zu", draw_->textures.size());
+    ImGui::Separator();
+    for (size_t i = 0; i < draw_->materials.size(); ++i) {
+      const auto& mat = draw_->materials[i];
+      ImGui::PushID(static_cast<int>(i));
+      std::string headerLabel = mat.name.empty()
+                                    ? ("Material " + std::to_string(i))
+                                    : mat.name;
+      if (ImGui::CollapsingHeader(headerLabel.c_str(),
+                                  ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Base color:  %.3f %.3f %.3f",
+                    mat.baseColor[0], mat.baseColor[1], mat.baseColor[2]);
+        ImGui::Text("Roughness:   %.3f", mat.roughness);
+        ImGui::Text("Metallic:    %.3f", mat.metallic);
+        ImGui::Text("Emissive:    %.3f %.3f %.3f",
+                    mat.emissive[0], mat.emissive[1], mat.emissive[2]);
+        ImGui::Text("Alpha:       %.3f", mat.alpha);
+        const char* alphaModeStr = "opaque";
+        if (mat.alphaMode == static_cast<int>(AlphaMode::Mask)) alphaModeStr = "mask";
+        else if (mat.alphaMode == static_cast<int>(AlphaMode::Blend)) alphaModeStr = "blend";
+        ImGui::Text("Alpha mode:  %s", alphaModeStr);
+        if (mat.alphaMode == static_cast<int>(AlphaMode::Mask)) {
+          ImGui::Text("Alpha cutoff: %.3f", mat.alphaCutoff);
+        }
+        if (mat.baseColorTex >= 0) ImGui::Text("Base color tex: %d", mat.baseColorTex);
+        if (mat.metalRoughTex >= 0) ImGui::Text("Metallic/roughness tex: %d", mat.metalRoughTex);
+        if (mat.normalTex >= 0) ImGui::Text("Normal tex: %d", mat.normalTex);
+        if (mat.emissiveTex >= 0) ImGui::Text("Emissive tex: %d", mat.emissiveTex);
+      }
+      ImGui::PopID();
+    }
+  } else {
+    ImGui::TextDisabled("No materials loaded.");
+  }
+  ImGui::End();
+}
+
+void Gui::drawCompositionGraph() {
+  ImGui::Begin("Composition Graph");
+  if (!selPrim_) {
+    ImGui::TextDisabled("Select a prim to see its composition arcs.");
+    ImGui::End();
+    return;
+  }
+  const auto& m = selPrim_->metas();
+
+  // Collect arcs into a simple data structure.
+  struct ArcNode {
+    std::string label;
+    std::string detail;
+    ImU32 color;
+  };
+  std::vector<ArcNode> arcs;
+
+  auto addArc = [&](const char* type, const std::string& detail, ImU32 color) {
+    arcs.push_back({type, detail, color});
+  };
+
+  if (m.references.has_value() && !m.references->empty()) {
+    for (const auto& [qual, refs] : *m.references) {
+      for (const auto& ref : refs) {
+        std::string qstr = tinyusdz::to_string(qual);
+        std::string detail = qstr + " " + ref.asset_path.GetAssetPath();
+        addArc("reference", detail, IM_COL32(100, 180, 255, 220));
+      }
+    }
+  }
+  if (m.payload.has_value() && !m.payload->empty()) {
+    for (const auto& [qual, pls] : *m.payload) {
+      for (const auto& pl : pls) {
+        addArc("payload", pl.asset_path.GetAssetPath(), IM_COL32(255, 180, 80, 220));
+      }
+    }
+  }
+  if (m.inherits.has_value() && !m.inherits->empty()) {
+    for (const auto& [qual, inh] : *m.inherits) {
+      for (const auto& p : inh) {
+        addArc("inherits", p.full_path_name(), IM_COL32(180, 255, 120, 220));
+      }
+    }
+  }
+  if (m.specializes.has_value() && !m.specializes->empty()) {
+    for (const auto& [qual, spec] : *m.specializes) {
+      for (const auto& p : spec) {
+        addArc("specializes", p.full_path_name(), IM_COL32(220, 140, 255, 220));
+      }
+    }
+  }
+  if (m.variantSets.has_value() && !m.variantSets->empty()) {
+    for (const auto& [qual, vs] : *m.variantSets) {
+      for (const auto& vsName : vs) {
+        addArc("variantSet", vsName, IM_COL32(255, 220, 100, 220));
+      }
+    }
+  }
+
+  if (arcs.empty()) {
+    ImGui::TextDisabled("No composition arcs on this prim.");
+    ImGui::End();
+    return;
+  }
+
+  // Draw the prim and its arcs as a simple graph.
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+  ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+  if (canvasSize.x < 10 || canvasSize.y < 10) { ImGui::End(); return; }
+
+  const float primBoxW = 200.0f;
+  const float primBoxH = 40.0f;
+  const float arcBoxW = 220.0f;
+  const float arcBoxH = 36.0f;
+  const float spacing = 16.0f;
+  const float topMargin = 20.0f;
+
+  // Center the prim node at the top.
+  float cx = canvasPos.x + canvasSize.x * 0.5f;
+  float primX = cx - primBoxW * 0.5f;
+  float primY = canvasPos.y + topMargin;
+
+  // Draw prim node.
+  ImVec2 primMin(primX, primY);
+  ImVec2 primMax(primX + primBoxW, primY + primBoxH);
+  dl->AddRectFilled(primMin, primMax, IM_COL32(70, 80, 110, 220), 6.0f);
+  dl->AddRect(primMin, primMax, IM_COL32(130, 150, 190, 255), 6.0f);
+  dl->AddText(ImVec2(primX + 8, primY + 10), IM_COL32(255, 255, 255, 255),
+              selPrim_->element_name().c_str());
+
+  // Layout arcs below in 2 columns.
+  int cols = std::min(static_cast<int>(arcs.size()), 2);
+  float totalWidth = cols * arcBoxW + (cols - 1) * spacing;
+  float startX = canvasPos.x + std::max(0.0f, (canvasSize.x - totalWidth) * 0.5f);
+
+  for (size_t i = 0; i < arcs.size(); ++i) {
+    int col = static_cast<int>(i) % cols;
+    int row = static_cast<int>(i) / cols;
+    float ax = startX + col * (arcBoxW + spacing);
+    float ay = primY + primBoxH + 50.0f + row * (arcBoxH + 10.0f);
+
+    // Connection line from prim bottom to arc top.
+    float primMidX = cx;
+    float arcMidX = ax + arcBoxW * 0.5f;
+    dl->AddLine(ImVec2(primMidX, primY + primBoxH),
+                ImVec2(arcMidX, ay), IM_COL32(180, 180, 200, 180), 1.5f);
+
+    // Arc node box.
+    ImVec2 arcMin(ax, ay);
+    ImVec2 arcMax(ax + arcBoxW, ay + arcBoxH);
+    dl->AddRectFilled(arcMin, arcMax, arcs[i].color, 4.0f);
+    dl->AddRect(arcMin, arcMax, IM_COL32(200, 200, 220, 180), 4.0f);
+
+    // Arc type label (e.g. "reference").
+    dl->AddText(ImVec2(ax + 6, ay + 2), IM_COL32(255, 255, 255, 255),
+                arcs[i].label.c_str());
+    // Arc detail (e.g. "prepend /path/to/file.usda").
+    std::string detail = arcs[i].detail;
+    if (detail.size() > 32) { detail.resize(29); detail += "..."; }
+    dl->AddText(ImVec2(ax + 6, ay + 18), IM_COL32(220, 220, 240, 200),
+                detail.c_str());
+
+    // Click handling: if mouse is over this node, select it.
+    if (ImGui::IsMouseHoveringRect(arcMin, arcMax) &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      // For refs/payloads with asset paths, try to open them; for others, no-op.
+      (void)0;
+    }
+  }
+
+  ImGui::Dummy(ImVec2(canvasSize.x, primY + primBoxH + 50.0f +
+                      ((arcs.size() + cols - 1) / cols) * (arcBoxH + 10.0f) +
+                      topMargin));
+  ImGui::End();
+}
+
+void Gui::drawTimeline() {
+  ImGui::Begin("Timeline");
+  if (!timeline_.hasAnimation) {
+    ImGui::TextDisabled(loaded_ && loaded_->ok
+                            ? "No animation (single time code)."
+                            : "No scene loaded.");
+    ImGui::End();
+    return;
+  }
+
+  // Transport: Play/Pause + Stop (reset to start).
+  if (ImGui::Button(timeline_.playing ? "Pause" : "Play", ImVec2(70, 0))) {
+    wantTogglePlay_ = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Stop", ImVec2(70, 0))) {
+    wantStop_ = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("|<", ImVec2(40, 0))) { wantStepBackward_ = true; }
+  ImGui::SameLine();
+  if (ImGui::Button(">|", ImVec2(40, 0))) { wantStepForward_ = true; }
+  ImGui::SameLine();
+  ImGui::Checkbox("Loop", &loop_);
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(90.0f);
+  if (ImGui::InputFloat("Speed", &speed_, 0.0f, 0.0f, "%.2fx")) {
+    if (speed_ < 0.01f) speed_ = 0.01f;
+    if (speed_ > 100.0f) speed_ = 100.0f;
+  }
+  if (timeline_.converting) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("(evaluating...)");
+  }
+
+  // Scrubber over [start, end] in time codes.
+  float cur = static_cast<float>(timeline_.current);
+  const float lo = static_cast<float>(timeline_.start);
+  const float hi = static_cast<float>(timeline_.end);
+  ImGui::SetNextItemWidth(-1.0f);  // full width
+  if (ImGui::SliderFloat("##timeline_scrub", &cur, lo, hi, "frame %.2f")) {
+    hasSeek_ = true;
+    seekTime_ = static_cast<double>(cur);
+  }
+
+  ImGui::Text("%.2f / [%.1f .. %.1f]  @ %.2f tps", timeline_.current,
+              timeline_.start, timeline_.end, timeline_.fps);
+  ImGui::End();
+}
+
+void Gui::drawStats() {
+  ImGui::Begin("Stats");
+  ImGui::Text("FPS: %.1f (%.2f ms)", ImGui::GetIO().Framerate,
+              1000.0f / ImGui::GetIO().Framerate);
+  ImGui::Text("Backend: %s", renderer_ ? renderer_->caps().backend_name : "?");
+  ImGui::Text("Skinning: %s requested, %s effective",
+              SkinningModeLabel(skinning_.requested),
+              SkinningModeLabel(skinning_.effective));
+  if (!skinning_.reason.empty()) ImGui::TextDisabled("%s", skinning_.reason.c_str());
+  ImGui::Separator();
+  if (draw_) {
+    ImGui::Text("Meshes: %zu", draw_->meshes.size());
+    {
+      size_t totalVerts = 0;
+      for (const auto& m : draw_->meshes) totalVerts += m.vertices.size();
+      ImGui::Text("Vertices: %zu", totalVerts);
+    }
+    ImGui::Text("Triangles: %zu", draw_->triangleCount);
+    // Frustum-cull stats (this frame). "visible" reflects per-mesh + per-instance
+    // culling; with culling disabled these equal the totals.
+    ImGui::Text("Visible meshes: %zu / %zu", statVisibleMeshes_,
+                draw_->meshes.size());
+    if (statTotalInstances_ > 0) {
+      ImGui::Text("Visible instances: %zu / %zu", statVisibleInstances_,
+                  statTotalInstances_);
+      if (cullRunning_.load()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.1f, 1.0f), "(culling\xE2\x80\xA6)");
+      }
+    }
+    ImGui::Text("Drawn triangles: %zu", statNonInstTris_ + statInstTris_);
+    ImGui::Text("Draw calls: %zu", statDrawCalls_);
+    ImGui::Text("Materials: %zu", draw_->materials.size());
+    ImGui::Text("Textures: %zu", draw_->textures.size());
+    if (draw_->hasBounds) {
+      ImGui::Text("Bounds: [%.2f %.2f %.2f] - [%.2f %.2f %.2f]", draw_->aabbMin[0],
+                  draw_->aabbMin[1], draw_->aabbMin[2], draw_->aabbMax[0],
+                  draw_->aabbMax[1], draw_->aabbMax[2]);
+    }
+    if (draw_->truncated) {
+      ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.25f, 1.0f),
+                         "Scene TRUNCATED to fit the render budget.");
+      ImGui::TextDisabled("(raise the budget below, then Reload)");
+    }
+    if (!draw_->skipped.empty()) {
+      ImGui::Separator();
+      ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Skipped (%zu):",
+                         draw_->skipped.size());
+      for (const std::string& s : draw_->skipped) ImGui::BulletText("%s", s.c_str());
+    }
+  }
+  if (loaded_ && !loaded_->warn.empty()) {
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Warnings:");
+    ImGui::TextWrapped("%s", loaded_->warn.c_str());
+  }
+  if (loaded_ && !loaded_->ok && !loaded_->err.empty()) {
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Load error:");
+    ImGui::TextWrapped("%s", loaded_->err.c_str());
+  }
+
+  if (budget_) {
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Render budget")) {
+      int triM = static_cast<int>(budget_->maxTriangles / 1000000ull);
+      if (ImGui::InputInt("Max triangles (M)", &triM)) {
+        budget_->maxTriangles = static_cast<size_t>(triM < 1 ? 1 : triM) * 1000000ull;
+      }
+      int vbMB = static_cast<int>(budget_->maxVertexBytes / (1024ull * 1024ull));
+      if (ImGui::InputInt("Max vertex mem (MB)", &vbMB)) {
+        budget_->maxVertexBytes =
+            static_cast<size_t>(vbMB < 16 ? 16 : vbMB) * 1024ull * 1024ull;
+      }
+      float t = static_cast<float>(budget_->convertTimeBudgetSec);
+      if (ImGui::InputFloat("Convert time budget (s, 0=off)", &t)) {
+        budget_->convertTimeBudgetSec = t < 0.0f ? 0.0f : t;
+      }
+      ImGui::TextDisabled("Applies to the next load (File > Reload).");
+    }
+  }
+  ImGui::End();
+}
+
+void Gui::handleNavigation() {
+  if (!cam_) return;
+  ImGuiIO& io = ImGui::GetIO();
+  const bool alt = io.KeyAlt;
+
+  if (ImGui::IsKeyPressed(ImGuiKey_F1)) showNavHelp_ = !showNavHelp_;
+  if (!io.WantTextInput && timeline_.hasAnimation &&
+      ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+    wantTogglePlay_ = true;
+  }
+
+  if (navMode_ == 0 && vpHovered_ && alt) {
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) navMode_ = 1;
+    else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) navMode_ = 2;
+    else if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) navMode_ = 3;
+  }
+  if (navMode_ != 0) {
+    const ImVec2 d = io.MouseDelta;
+    if (navMode_ == 1) cam_->orbit(d.x, d.y);
+    else if (navMode_ == 2) cam_->pan(d.x, d.y);
+    else if (navMode_ == 3) cam_->dolly((d.x - d.y) * 0.05f);
+    const bool anyDown = ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
+                         ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
+                         ImGui::IsMouseDown(ImGuiMouseButton_Right);
+    if (!anyDown) navMode_ = 0;
+  }
+
+  if (vpHovered_ && io.MouseWheel != 0.0f) cam_->dolly(io.MouseWheel);
+
+  // Maya-style hotkeys (viewport hovered, no text field focused).
+  if (vpHovered_ && !io.WantTextInput) {
+    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) goSelectionBack();
+    if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) goSelectionForward();
+    if (ImGui::IsKeyPressed(ImGuiKey_0)) homeView();
+    if (ImGui::IsKeyPressed(ImGuiKey_5)) applyViewPreset(CameraViewPreset::Isometric);
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) selectAdjacentMesh(-1);
+    if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) selectAdjacentMesh(1);
+    if (io.KeyCtrl) {
+      if (ImGui::IsKeyPressed(ImGuiKey_1)) {
+        if (io.KeyShift) saveCameraBookmark(0);
+        else loadCameraBookmark(0);
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_2)) {
+        if (io.KeyShift) saveCameraBookmark(1);
+        else loadCameraBookmark(1);
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_3)) {
+        if (io.KeyShift) saveCameraBookmark(2);
+        else loadCameraBookmark(2);
+      }
+    } else {
+      if (ImGui::IsKeyPressed(ImGuiKey_1)) {
+        applyViewPreset(io.KeyShift ? CameraViewPreset::Back : CameraViewPreset::Front);
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_3)) {
+        applyViewPreset(io.KeyShift ? CameraViewPreset::Left : CameraViewPreset::Right);
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_7)) {
+        applyViewPreset(io.KeyShift ? CameraViewPreset::Bottom : CameraViewPreset::Top);
+      }
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_F)) frameSelected();  // frame selection
+    if (ImGui::IsKeyPressed(ImGuiKey_A)) frameAll();        // frame all
+
+    // Hide family. Needs a valid selected mesh (except none is required for the
+    // plain toggle/show, but those are no-ops without a selection too).
+    if (ImGui::IsKeyPressed(ImGuiKey_H)) {
+      const int sel = selMeshIndex_;
+      const bool haveSel =
+          sel >= 0 && static_cast<size_t>(sel) < meshVisible_.size();
+      if (io.KeyAlt) {
+        // Alt+H: isolate the selection (hide everything else).
+        if (haveSel) {
+          for (size_t i = 0; i < meshVisible_.size(); ++i)
+            meshVisible_[i] = (static_cast<int>(i) == sel) ? 1 : 0;
+        }
+      } else if (io.KeyCtrl) {
+        if (haveSel) meshVisible_[static_cast<size_t>(sel)] = 0;  // hide selection
+      } else if (io.KeyShift) {
+        if (haveSel) meshVisible_[static_cast<size_t>(sel)] = 1;  // show selection
+      } else if (haveSel) {
+        // Plain H: toggle the selection's visibility.
+        meshVisible_[static_cast<size_t>(sel)] =
+            meshVisible_[static_cast<size_t>(sel)] ? 0 : 1;
+      }
+    }
+  }
+}
+
+void Gui::applyViewPreset(CameraViewPreset preset) {
+  if (cam_) cam_->setPreset(preset);
+}
+
+void Gui::homeView() {
+  if (!cam_) return;
+  cam_->setPreset(CameraViewPreset::Isometric);
+  if (draw_ && draw_->hasBounds) {
+    cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
+  }
+}
+
+void Gui::frameSelected() {
+  if (!cam_ || !draw_) return;
+  const int sel = selMeshIndex_;
+  if (sel >= 0 && static_cast<size_t>(sel) < draw_->meshes.size()) {
+    const DrawMeshCPU& m = draw_->meshes[static_cast<size_t>(sel)];
+    cam_->fitToScene(m.aabbMin, m.aabbMax);
+  } else if (draw_->hasBounds) {
+    cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
+  }
+}
+
+void Gui::frameAll() {
+  if (cam_ && draw_ && draw_->hasBounds) {
+    cam_->fitToScene(draw_->aabbMin, draw_->aabbMax);
+  }
+}
+
+void Gui::unhideAll() {
+  for (auto& v : meshVisible_) v = 1;
+}
+
+bool Gui::meshPurposeVisible(const std::string& purpose) const {
+  if (purpose == "render") return showPurposeRender_;
+  if (purpose == "proxy") return showPurposeProxy_;
+  if (purpose == "guide") return showPurposeGuide_;
+  return showPurposeDefault_;
+}
+
+bool Gui::meshVisibleForView(size_t meshIndex) const {
+  if (!draw_ || meshIndex >= draw_->meshes.size()) return false;
+  if (meshIndex < meshVisible_.size() && !meshVisible_[meshIndex]) return false;
+  return meshPurposeVisible(draw_->meshes[meshIndex].purpose);
+}
+
+void Gui::buildViewVisibilityMask() {
+  viewVisible_.clear();
+  if (!draw_ || draw_->meshes.empty()) return;
+  viewVisible_.resize(draw_->meshes.size(), uint8_t{1});
+
+  // Per-mesh frustum culling. Extract the frustum from the GL-convention P*V
+  // (Z in [-1,1]) regardless of backend: light3d's Gribb-Hartmann near-plane
+  // formula assumes that range, and the side/far planes are convention-neutral.
+  // Instanced prototypes carry a scene-spanning union AABB so they rarely cull
+  // here -- per-instance culling (A4) handles those; static-batched non-instanced
+  // meshes have tight world AABBs and cull well.
+  const bool doCull = cullEnabled_ && cam_;
+  light3d::Frustum fr;
+  if (doCull) {
+    const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+    fr = light3d::Frustum::fromViewProjection(vp);
+  }
+  // Per-mesh stats here; per-instance stats (visible instances + instanced tris)
+  // are owned by cullInstances (dirty-gated, so not recomputed every frame).
+  statVisibleMeshes_ = 0;
+  statTotalInstances_ = 0;
+  statNonInstTris_ = 0;
+  statDrawCalls_ = 0;
+  for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+    const DrawMeshCPU& m = draw_->meshes[i];
+    const size_t ninst = m.instanceCount();
+    statTotalInstances_ += ninst;
+    bool vis = meshVisibleForView(i);
+    if (vis && doCull) {
+      const light3d::Vec3 mn{m.aabbMin[0], m.aabbMin[1], m.aabbMin[2]};
+      const light3d::Vec3 mx{m.aabbMax[0], m.aabbMax[1], m.aabbMax[2]};
+      if (fr.testAABB(mn, mx) == light3d::CullResult::Outside) vis = false;
+    }
+    viewVisible_[i] = vis ? uint8_t{1} : uint8_t{0};
+    if (!vis) continue;
+    ++statVisibleMeshes_;
+    if (ninst > 0) {
+      ++statDrawCalls_;  // one instanced draw per visible prototype mesh
+    } else {
+      // Triangle count from submesh metadata (DrawMeshCPU.indices is freed after
+      // GPU upload, but submeshes survive).
+      for (const DrawSubmesh& s : m.submeshes) statNonInstTris_ += s.indexCount / 3;
+      statDrawCalls_ += m.submeshes.size();
+    }
+  }
+}
+
+Gui::~Gui() { joinCullWorker(); }
+
+void Gui::joinCullWorker() {
+  if (cullThread_.joinable()) cullThread_.join();
+  cullRunning_.store(false);
+  cullDone_.store(false);
+}
+
+// Frustum-test one instanced mesh; append visible instances' 12-float o2w (+ 3-float
+// color) to `out`. cullEnabled=false restores the full set. Static + snapshot-only,
+// so it is safe to run on the worker thread.
+void Gui::compactMeshInstances(const DrawMeshCPU& m, const light3d::Frustum& fr,
+                               bool cullEnabled, CullJobMesh* out) {
+  const size_t ninst = m.instanceCount();
+  out->hasColors = m.instanceColors.size() == ninst * 3;
+  out->xforms.clear();
+  out->colors.clear();
+  if (!cullEnabled) {
+    out->xforms = m.instanceXforms;  // full set (a prior cull may have compacted)
+    if (out->hasColors) out->colors = m.instanceColors;
+    out->count = static_cast<uint32_t>(ninst);
+    return;
+  }
+  const float* lo = m.protoAabbMin;
+  const float* hi = m.protoAabbMax;
+  for (size_t k = 0; k < ninst; ++k) {
+    const float* o2w = &m.instanceXforms[k * 12];
+    // Transform the 8 prototype-local AABB corners to world; take min/max.
+    float wmn[3] = {1e30f, 1e30f, 1e30f}, wmx[3] = {-1e30f, -1e30f, -1e30f};
+    for (int c = 0; c < 8; ++c) {
+      const float px = (c & 1) ? hi[0] : lo[0];
+      const float py = (c & 2) ? hi[1] : lo[1];
+      const float pz = (c & 4) ? hi[2] : lo[2];
+      for (int r = 0; r < 3; ++r) {
+        const float w = o2w[r * 4 + 0] * px + o2w[r * 4 + 1] * py +
+                        o2w[r * 4 + 2] * pz + o2w[r * 4 + 3];
+        wmn[r] = std::min(wmn[r], w);
+        wmx[r] = std::max(wmx[r], w);
+      }
+    }
+    if (fr.testAABB({wmn[0], wmn[1], wmn[2]}, {wmx[0], wmx[1], wmx[2]}) ==
+        light3d::CullResult::Outside) {
+      continue;
+    }
+    out->xforms.insert(out->xforms.end(), o2w, o2w + 12);
+    if (out->hasColors)
+      out->colors.insert(out->colors.end(), &m.instanceColors[k * 3],
+                         &m.instanceColors[k * 3] + 3);
+  }
+  out->count = static_cast<uint32_t>(out->xforms.size() / 12);
+}
+
+// Worker thread: compact every visible instanced mesh into cullJobResult_ from the
+// main-thread snapshots (cullJob*). No GPU calls, no live Gui/camera reads.
+void Gui::cullWorkerMain() {
+  const DrawScene* d = cullJobDraw_;
+  const light3d::Frustum fr = light3d::Frustum::fromViewProjection(cullJobVP_);
+  cullJobResult_.clear();
+  size_t visInstances = 0, instTris = 0;
+  for (size_t mi = 0; mi < d->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = d->meshes[mi];
+    if (m.instanceCount() == 0) continue;
+    const bool meshVisible =
+        mi >= cullJobViewVisible_.size() || cullJobViewVisible_[mi] != 0;
+    if (!meshVisible) continue;
+    size_t protoTris = 0;
+    for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
+    CullJobMesh r;
+    r.meshIndex = mi;
+    compactMeshInstances(m, fr, cullJobEnabled_, &r);
+    visInstances += r.count;
+    instTris += protoTris * r.count;
+    cullJobResult_.push_back(std::move(r));
+  }
+  cullJobVisInstances_ = visInstances;
+  cullJobInstTris_ = instTris;
+  cullDone_.store(true, std::memory_order_release);
+}
+
+// Synchronous path (headless / cullAsync_ off): compact + apply inline, exact
+// original behavior so screenshots stay deterministic.
+void Gui::cullInstancesSync() {
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
+                 draw_ != lastCullDraw_;
+  if (!changed)
+    for (int i = 0; i < 16; ++i)
+      if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
+  if (!changed) return;
+  std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
+  lastCullValid_ = true;
+  lastCullEnabled_ = cullEnabled_;
+  lastCullDraw_ = draw_;
+
+  const light3d::Frustum fr = light3d::Frustum::fromViewProjection(vp);
+  size_t visInstances = 0, instTris = 0;
+  CullJobMesh r;
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    if (m.instanceCount() == 0) continue;
+    const bool meshVisible = mi >= viewVisible_.size() || viewVisible_[mi] != 0;
+    if (!meshVisible) continue;
+    size_t protoTris = 0;
+    for (const DrawSubmesh& s : m.submeshes) protoTris += s.indexCount / 3;
+    compactMeshInstances(m, fr, cullEnabled_, &r);
+    // Route the GPU upload to the render thread when threaded (else inline).
+    uint32_t cnt = r.count;
+    bool hc = r.hasColors;
+    std::vector<float> xf = r.xforms, col = r.colors;
+    gpu([this, mi, cnt, hc, xf = std::move(xf), col = std::move(col)]() mutable {
+      renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr, cnt);
+    });
+    visInstances += r.count;
+    instTris += protoTris * r.count;
+  }
+  statVisibleInstances_ = visInstances;
+  statInstTris_ = instTris;
+}
+
+void Gui::cullInstances() {
+  if (!draw_ || !renderer_ || !cam_) return;
+  // Only instanced prototypes carry instanceXforms; nothing to do otherwise.
+  bool anyInstanced = false;
+  for (const auto& m : draw_->meshes) {
+    if (m.instanceCount() > 0) { anyInstanced = true; break; }
+  }
+  if (!anyInstanced) {
+    if (!cullRunning_.load()) { statVisibleInstances_ = 0; statInstTris_ = 0; }
+    return;
+  }
+  if (!cullAsync_) { cullInstancesSync(); return; }
+
+  // (1) Apply a finished worker result on the main thread (the GPU upload).
+  if (cullDone_.load(std::memory_order_acquire)) {
+    if (cullThread_.joinable()) cullThread_.join();
+    for (CullJobMesh& r : cullJobResult_) {
+      size_t mi = r.meshIndex;
+      uint32_t cnt = r.count;
+      bool hc = r.hasColors;
+      std::vector<float> xf = std::move(r.xforms), col = std::move(r.colors);
+      gpu([this, mi, cnt, hc, xf = std::move(xf), col = std::move(col)]() mutable {
+        renderer_->updateInstanceVisibility(mi, xf.data(), hc ? col.data() : nullptr, cnt);
+      });
+    }
+    statVisibleInstances_ = cullJobVisInstances_;
+    statInstTris_ = cullJobInstTris_;
+    cullDone_.store(false);
+    cullRunning_.store(false);
+  }
+
+  // (2) (Re)launch the worker when the view / cull toggle / scene changed. While a
+  // worker runs the renderer keeps the previous visible set, so the UI never blocks.
+  const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
+  bool changed = !lastCullValid_ || cullEnabled_ != lastCullEnabled_ ||
+                 draw_ != lastCullDraw_;
+  if (!changed)
+    for (int i = 0; i < 16; ++i)
+      if (vp.m[i] != lastCullVP_[i]) { changed = true; break; }
+  if (!changed || cullRunning_.load()) return;  // up to date, or worker busy
+  std::memcpy(lastCullVP_, vp.m, sizeof(lastCullVP_));
+  lastCullValid_ = true;
+  lastCullEnabled_ = cullEnabled_;
+  lastCullDraw_ = draw_;
+  // Snapshot worker inputs: instanceXforms/protoAabb are static after load,
+  // viewVisible_ is copied, so the worker races nothing the main thread mutates.
+  cullJobVP_ = vp;
+  cullJobViewVisible_ = viewVisible_;
+  cullJobEnabled_ = cullEnabled_;
+  cullJobDraw_ = draw_;
+  cullRunning_.store(true);
+  cullDone_.store(false);
+  cullThread_ = std::thread(&Gui::cullWorkerMain, this);
+}
+
+void Gui::drawNavigationOverlay(const ImVec2& imageMin, const ImVec2& imageMax) {
+  if (!showNavHelp_ && navMode_ == 0) return;
+
+  const char* title = "Viewport navigation";
+  const std::string modeLine = std::string("Mode: ") + NavModeLabel(navMode_);
+  const char* lineOrbit = "Alt+LMB Orbit";
+  const char* linePan = "Alt+MMB Pan";
+  const char* lineDolly = "Alt+RMB / Wheel Dolly";
+  const char* lineSelect = "[ / ] Prev/Next selection";
+  const char* lineHistory = "Alt+Left / Alt+Right Selection back/forward";
+  const char* lineFrame = "F Frame selected   A Frame all   0 Home";
+  const char* lineViews = "1/Shift+1 Front/Back   3/Shift+3 Right/Left";
+  const char* lineViews2 = "7/Shift+7 Top/Bottom   5 Isometric   F1 Toggle help";
+  const char* lineBookmarks = "Ctrl+1..3 Recall   Ctrl+Shift+1..3 Save";
+
+  float maxWidth = ImGui::CalcTextSize(title).x;
+  maxWidth = std::max(maxWidth, ImGui::CalcTextSize(modeLine.c_str()).x);
+  if (showNavHelp_) {
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineOrbit).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(linePan).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineDolly).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineSelect).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineHistory).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineFrame).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineViews).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineViews2).x);
+    maxWidth = std::max(maxWidth, ImGui::CalcTextSize(lineBookmarks).x);
+  }
+
+  const float pad = ImGui::GetStyle().FramePadding.x * 1.2f;
+  const float lineH = ImGui::GetTextLineHeightWithSpacing();
+  const int lines = showNavHelp_ ? 10 : 2;
+  const ImVec2 pos(imageMin.x + 12.0f, imageMin.y + 12.0f);
+  const ImVec2 boxSize(maxWidth + pad * 2.0f, lineH * static_cast<float>(lines) + pad * 2.0f);
+
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 boxMin = pos;
+  const ImVec2 boxMax(std::min(pos.x + boxSize.x, imageMax.x - 8.0f),
+                      std::min(pos.y + boxSize.y, imageMax.y - 8.0f));
+  dl->AddRectFilled(boxMin, boxMax, IM_COL32(18, 20, 24, 196), 8.0f);
+  dl->AddRect(boxMin, boxMax, IM_COL32(110, 120, 135, 220), 8.0f);
+
+  float y = boxMin.y + pad;
+  const float x = boxMin.x + pad;
+  dl->AddText(ImVec2(x, y), IM_COL32(245, 245, 245, 255), title);
+  y += lineH;
+  dl->AddText(ImVec2(x, y),
+              navMode_ != 0 ? IM_COL32(255, 220, 120, 255) : IM_COL32(180, 200, 220, 255),
+              modeLine.c_str());
+  y += lineH;
+  if (showNavHelp_) {
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineOrbit);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), linePan);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineDolly);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineSelect);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineHistory);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(220, 220, 220, 255), lineFrame);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(200, 215, 255, 255), lineViews);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(200, 215, 255, 255), lineViews2);
+    y += lineH;
+    dl->AddText(ImVec2(x, y), IM_COL32(190, 225, 205, 255), lineBookmarks);
+  }
+
+  // Axis indicator in bottom-right corner
+  {
+    const float axSize = 60.0f;
+    const float axPad = 12.0f;
+    const ImVec2 axOrigin(imageMax.x - axPad - axSize, imageMax.y - axPad - axSize);
+    if (cam_) {
+      const float L = axSize * 0.25f;
+      const float oX = axOrigin.x + axSize * 0.5f;
+      const float oY = axOrigin.y + axSize * 0.5f;
+      const ImU32 colX = IM_COL32(230, 50, 50, 220);
+      const ImU32 colY = IM_COL32(50, 220, 60, 220);
+      const ImU32 colZ = IM_COL32(80, 130, 255, 220);
+      dl->AddLine(ImVec2(oX, oY), ImVec2(oX + L, oY), colX, 2.5f);
+      dl->AddText(ImVec2(oX + L + 2, oY - 5), colX, "X");
+      dl->AddLine(ImVec2(oX, oY), ImVec2(oX, oY - L), colY, 2.5f);
+      dl->AddText(ImVec2(oX - 3, oY - L - 12), colY, "Y");
+      dl->AddLine(ImVec2(oX, oY), ImVec2(oX - L * 0.5f, oY + L * 0.5f), colZ, 2.5f);
+      dl->AddText(ImVec2(oX - L * 0.5f - 8, oY + L * 0.5f + 2), colZ, "Z");
+    }
+  }
+}
+
+int Gui::pickMesh(float px, float py, int vpW, int vpH) const {
+  if (!cam_ || !renderer_ || !draw_ || draw_->meshes.empty() || vpW <= 0 ||
+      vpH <= 0) {
+    return -1;
+  }
+
+  // Build a world-space ray through the clicked pixel. The displayed image is
+  // upright on both backends (GL flips via UVs, VK via a negative-height
+  // viewport), so screen-top maps to NDC y = +1 regardless of flipViewportV.
+  const bool z01 = renderer_->caps().usesZeroToOneDepth;
+  const light3d::Mat4 V = cam_->view();
+  const light3d::Mat4 P = cam_->proj(z01);
+  const light3d::Mat4 invVP = (P * V).inverse();
+
+  const float ndcx = 2.0f * (px / static_cast<float>(vpW)) - 1.0f;
+  const float ndcy = 1.0f - 2.0f * (py / static_cast<float>(vpH));
+
+  auto unproject = [&](float nz) -> light3d::Vec3 {
+    const float* m = invVP.m;  // column-major: m[col*4 + row]
+    const float ox = m[0] * ndcx + m[4] * ndcy + m[8] * nz + m[12];
+    const float oy = m[1] * ndcx + m[5] * ndcy + m[9] * nz + m[13];
+    const float oz = m[2] * ndcx + m[6] * ndcy + m[10] * nz + m[14];
+    const float ow = m[3] * ndcx + m[7] * ndcy + m[11] * nz + m[15];
+    const float inv = (ow != 0.0f) ? 1.0f / ow : 1.0f;
+    return {ox * inv, oy * inv, oz * inv};
+  };
+
+  const light3d::Vec3 nearW = unproject(z01 ? 0.0f : -1.0f);
+  const light3d::Vec3 farW = unproject(1.0f);
+  const light3d::Vec3 ro = cam_->eye();
+  const light3d::Vec3 rd = light3d::normalize(farW - nearW);
+
+  // Slab test against a world-space AABB; returns true if the ray hits within
+  // [0, tMax) and never starts the search past an already-closer hit.
+  const float invdx = (rd.x != 0.0f) ? 1.0f / rd.x : 1e30f;
+  const float invdy = (rd.y != 0.0f) ? 1.0f / rd.y : 1e30f;
+  const float invdz = (rd.z != 0.0f) ? 1.0f / rd.z : 1e30f;
+  auto hitAabb = [&](const float mn[3], const float mx[3], float tMax) -> bool {
+    float t1 = (mn[0] - ro.x) * invdx, t2 = (mx[0] - ro.x) * invdx;
+    float tmin = std::min(t1, t2), tmax = std::max(t1, t2);
+    t1 = (mn[1] - ro.y) * invdy; t2 = (mx[1] - ro.y) * invdy;
+    tmin = std::max(tmin, std::min(t1, t2));
+    tmax = std::min(tmax, std::max(t1, t2));
+    t1 = (mn[2] - ro.z) * invdz; t2 = (mx[2] - ro.z) * invdz;
+    tmin = std::max(tmin, std::min(t1, t2));
+    tmax = std::min(tmax, std::max(t1, t2));
+    return tmax >= std::max(tmin, 0.0f) && tmin < tMax;
+  };
+
+  // Moller-Trumbore ray/triangle in world space.
+  auto rayTri = [&](const light3d::Vec3& a, const light3d::Vec3& b,
+                    const light3d::Vec3& c, float& tOut) -> bool {
+    const light3d::Vec3 e1 = b - a, e2 = c - a;
+    const light3d::Vec3 pv = light3d::cross(rd, e2);
+    const float det = light3d::dot(e1, pv);
+    if (std::fabs(det) < 1e-9f) return false;  // parallel
+    const float invDet = 1.0f / det;
+    const light3d::Vec3 tv = ro - a;
+    const float u = light3d::dot(tv, pv) * invDet;
+    if (u < 0.0f || u > 1.0f) return false;
+    const light3d::Vec3 qv = light3d::cross(tv, e1);
+    const float vv = light3d::dot(rd, qv) * invDet;
+    if (vv < 0.0f || u + vv > 1.0f) return false;
+    const float t = light3d::dot(e2, qv) * invDet;
+    if (t <= 1e-5f) return false;  // behind the ray origin
+    tOut = t;
+    return true;
+  };
+
+  int best = -1;
+  float bestT = 1e30f;
+  for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+    // Skip hidden meshes (they aren't drawn, so they shouldn't be pickable).
+    if (!meshVisibleForView(mi)) continue;
+    const DrawMeshCPU& m = draw_->meshes[mi];
+    if (m.vertices.empty() || m.indices.size() < 3) continue;
+    if (!hitAabb(m.aabbMin, m.aabbMax, bestT)) continue;
+
+    light3d::Mat4 W;
+    for (int k = 0; k < 16; ++k) W.m[k] = m.world[k];
+    for (size_t i = 0; i + 2 < m.indices.size(); i += 3) {
+      const DrawVertex& va = m.vertices[m.indices[i + 0]];
+      const DrawVertex& vb = m.vertices[m.indices[i + 1]];
+      const DrawVertex& vc = m.vertices[m.indices[i + 2]];
+      const light3d::Vec3 a = light3d::transformPoint(W, {va.px, va.py, va.pz});
+      const light3d::Vec3 b = light3d::transformPoint(W, {vb.px, vb.py, vb.pz});
+      const light3d::Vec3 c = light3d::transformPoint(W, {vc.px, vc.py, vc.pz});
+      float t;
+      if (rayTri(a, b, c, t) && t < bestT) {
+        bestT = t;
+        best = static_cast<int>(mi);
+      }
+    }
+  }
+  return best;
+}
+
+void Gui::beginRegionSelection(const ImVec2& mouse) {
+  regionSelecting_ = true;
+  regionSelectionMoved_ = false;
+  regionStart_ = mouse;
+  regionEnd_ = mouse;
+}
+
+void Gui::updateRegionSelection(const ImVec2& mouse) {
+  if (!regionSelecting_) return;
+  regionEnd_ = mouse;
+  const float dx = regionEnd_.x - regionStart_.x;
+  const float dy = regionEnd_.y - regionStart_.y;
+  if ((dx * dx + dy * dy) > 16.0f) regionSelectionMoved_ = true;
+}
+
+bool Gui::meshIntersectsScreenRect(size_t meshIndex, const ImVec2& rectMin,
+                                   const ImVec2& rectMax, int vpW, int vpH) const {
+  if (!draw_ || !cam_ || !renderer_ || meshIndex >= draw_->meshes.size() ||
+      vpW <= 0 || vpH <= 0 || !meshVisibleForView(meshIndex)) {
+    return false;
+  }
+
+  const DrawMeshCPU& mesh = draw_->meshes[meshIndex];
+  const light3d::Mat4 VP =
+      cam_->proj(renderer_->caps().usesZeroToOneDepth) * cam_->view();
+  const float xs[2] = {mesh.aabbMin[0], mesh.aabbMax[0]};
+  const float ys[2] = {mesh.aabbMin[1], mesh.aabbMax[1]};
+  const float zs[2] = {mesh.aabbMin[2], mesh.aabbMax[2]};
+
+  ImVec2 bmin(1e30f, 1e30f);
+  ImVec2 bmax(-1e30f, -1e30f);
+  bool any = false;
+  for (int xi = 0; xi < 2; ++xi) {
+    for (int yi = 0; yi < 2; ++yi) {
+      for (int zi = 0; zi < 2; ++zi) {
+        const float x = xs[xi], y = ys[yi], z = zs[zi];
+        const float* m = VP.m;
+        const float cx = m[0] * x + m[4] * y + m[8] * z + m[12];
+        const float cy = m[1] * x + m[5] * y + m[9] * z + m[13];
+        const float cw = m[3] * x + m[7] * y + m[11] * z + m[15];
+        if (cw <= 1e-6f) continue;
+        const float invW = 1.0f / cw;
+        const float sx = (cx * invW * 0.5f + 0.5f) * static_cast<float>(vpW);
+        const float sy = (1.0f - (cy * invW * 0.5f + 0.5f)) * static_cast<float>(vpH);
+        bmin.x = std::min(bmin.x, sx);
+        bmin.y = std::min(bmin.y, sy);
+        bmax.x = std::max(bmax.x, sx);
+        bmax.y = std::max(bmax.y, sy);
+        any = true;
+      }
+    }
+  }
+  if (!any) return false;
+  return bmax.x >= rectMin.x && bmin.x <= rectMax.x &&
+         bmax.y >= rectMin.y && bmin.y <= rectMax.y;
+}
+
+std::vector<int> Gui::regionPickMeshes(const ImVec2& imageMin, int vpW, int vpH) const {
+  std::vector<int> hits;
+  if (!draw_ || !cam_ || !renderer_ || vpW <= 0 || vpH <= 0) return hits;
+
+  ImVec2 r0(std::min(regionStart_.x, regionEnd_.x) - imageMin.x,
+            std::min(regionStart_.y, regionEnd_.y) - imageMin.y);
+  ImVec2 r1(std::max(regionStart_.x, regionEnd_.x) - imageMin.x,
+            std::max(regionStart_.y, regionEnd_.y) - imageMin.y);
+  r0.x = std::max(0.0f, std::min(r0.x, static_cast<float>(vpW)));
+  r0.y = std::max(0.0f, std::min(r0.y, static_cast<float>(vpH)));
+  r1.x = std::max(0.0f, std::min(r1.x, static_cast<float>(vpW)));
+  r1.y = std::max(0.0f, std::min(r1.y, static_cast<float>(vpH)));
+  if ((r1.x - r0.x) < 1.0f || (r1.y - r0.y) < 1.0f) return hits;
+
+  for (size_t i = 0; i < draw_->meshes.size(); ++i) {
+    if (meshIntersectsScreenRect(i, r0, r1, vpW, vpH)) {
+      hits.push_back(static_cast<int>(i));
+    }
+  }
+  return hits;
+}
+
+void Gui::finishRegionSelection(const ImVec2& imageMin, int vpW, int vpH) {
+  if (!regionSelecting_) return;
+  const bool wasDrag = regionSelectionMoved_;
+  regionSelecting_ = false;
+  regionSelectionMoved_ = false;
+
+  if (wasDrag) {
+    setSelectionListFromMeshes(regionPickMeshes(imageMin, vpW, vpH));
+    return;
+  }
+
+  if (!draw_) return;
+  const float px = regionEnd_.x - imageMin.x;
+  const float py = regionEnd_.y - imageMin.y;
+  const int hit = pickMesh(px, py, vpW, vpH);
+  if (hit >= 0 && static_cast<size_t>(hit) < draw_->meshes.size()) {
+    selectByPath(draw_->meshes[static_cast<size_t>(hit)].absPath, hit);
+  } else {
+    clearSelection();
+  }
+}
+
+void Gui::drawViewport() {
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::Begin("Viewport");
+  ImGui::PopStyleVar();
+
+  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  const int w = static_cast<int>(avail.x);
+  const int h = static_cast<int>(avail.y);
+  viewportW_ = w;
+  viewportH_ = h;
+
+  if (renderer_ && cam_ && w > 0 && h > 0) {
+    // resizeViewport is a GL op (re-allocates the offscreen FBO textures); in the
+    // threaded path it must run on the render thread that owns the context, not
+    // here on the UI thread. gpu() routes it to the op-queue (inline when single
+    // threaded). viewportTexture()'s id is stable across resizes, so ImGui::Image
+    // can reference it now and the render thread fills it.
+    gpu([this, w, h] { renderer_->resizeViewport(w, h); });
+
+    const ImTextureID tex = static_cast<ImTextureID>(renderer_->viewportTexture());
+    const bool flip = renderer_->caps().flipViewportV;
+    const ImVec2 uv0 = flip ? ImVec2(0, 1) : ImVec2(0, 0);
+    const ImVec2 uv1 = flip ? ImVec2(1, 0) : ImVec2(1, 1);
+    // Only draw the viewport image once the backend has a real texture handle. On the
+    // threaded path the offscreen target (and its ImGui descriptor) is created on the
+    // render thread; before its first frame viewportTexture() can be 0, and emitting
+    // ImGui::Image(0) binds an empty descriptor set that the ImGui fragment shader then
+    // samples out-of-bounds -> GPU fault / device loss (VK). Skip it until it's ready.
+    if (tex) ImGui::Image(tex, avail, uv0, uv1);
+    else ImGui::Dummy(avail);
+    vpHovered_ = ImGui::IsItemHovered();
+    handleNavigation();
+    const ImVec2 imageMin = ImGui::GetItemRectMin();
+    const ImVec2 imageMax = ImGui::GetItemRectMax();
+    drawNavigationOverlay(imageMin, imageMax);
+
+    // Prim path labels overlay
+    if (showPrimLabels_ && draw_ && cam_ && renderer_) {
+      const bool z01 = renderer_->caps().usesZeroToOneDepth;
+      const light3d::Mat4 VP = cam_->proj(z01) * cam_->view();
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const float vpW_f = static_cast<float>(w);
+      const float vpH_f = static_cast<float>(h);
+      for (size_t mi = 0; mi < draw_->meshes.size(); ++mi) {
+        if (!meshVisibleForView(mi)) continue;
+        const DrawMeshCPU& m = draw_->meshes[mi];
+        // Project AABB center to screen
+        float cx = (m.aabbMin[0] + m.aabbMax[0]) * 0.5f;
+        float cy = (m.aabbMin[1] + m.aabbMax[1]) * 0.5f;
+        float cz = (m.aabbMin[2] + m.aabbMax[2]) * 0.5f;
+        const float* vp = VP.m;
+        float px = vp[0] * cx + vp[4] * cy + vp[8] * cz + vp[12];
+        float py = vp[1] * cx + vp[5] * cy + vp[9] * cz + vp[13];
+        float pw = vp[3] * cx + vp[7] * cy + vp[11] * cz + vp[15];
+        if (pw <= 1e-6f) continue;
+        float invW = 1.0f / pw;
+        float sx = (px * invW * 0.5f + 0.5f) * vpW_f + imageMin.x;
+        float sy = (1.0f - (py * invW * 0.5f + 0.5f)) * vpH_f + imageMin.y;
+        if (sx < imageMin.x || sx > imageMax.x || sy < imageMin.y || sy > imageMax.y) continue;
+        dl->AddText(ImVec2(sx + 4, sy - 8), IM_COL32(255, 255, 200, 200),
+                    m.absPath.c_str());
+      }
+    }
+
+    // Gizmo interaction (translate manipulator).
+    if (xformMode_ == TransformMode::Translate && draw_ && /*vpHovered_ &&*/
+        selMeshIndex_ >= 0 &&
+        static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+      ImGuiIO& io = ImGui::GetIO();
+      const bool plainLeft = navMode_ == 0 && !io.KeyAlt;
+      const float* W = draw_->meshes[static_cast<size_t>(selMeshIndex_)].world;
+      float tx = W[12], ty = W[13], tz = W[14];
+      float gizmoLen = 1.0f;
+      if (draw_->hasBounds) {
+        const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
+        const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
+        gizmoLen = std::max(light3d::length(smx - smn) * 0.15f, 0.5f);
+      }
+      const light3d::Mat4 viewM = cam_->view();
+      const light3d::Mat4 projM = cam_->proj(renderer_->caps().usesZeroToOneDepth);
+      const light3d::Mat4 vp = projM * viewM;
+      // Project a point to screen-space NDC.
+      auto project = [&](float x, float y, float z) -> ImVec2 {
+        float c[4];
+        for (int r = 0; r < 4; ++r)
+          c[r] = vp.m[0*4+r]*x + vp.m[1*4+r]*y + vp.m[2*4+r]*z + vp.m[3*4+r];
+        if (std::abs(c[3]) < 1e-10f) return ImVec2(-1e9,-1e9);
+        float nx = c[0]/c[3], ny = c[1]/c[3];
+        return ImVec2((nx*0.5f+0.5f)*w, (1.0f-(ny*0.5f+0.5f))*h);
+      };
+      ImVec2 origin2D = project(tx, ty, tz);
+      // Axis endpoints in screen space.
+      struct Axis2D { ImVec2 tip; float r,g,b; int idx; };
+      Axis2D axes2D[3] = {
+        {project(tx+gizmoLen, ty, tz), 0.9f,0.2f,0.2f, 0},
+        {project(tx, ty+gizmoLen, tz), 0.2f,0.9f,0.2f, 1},
+        {project(tx, ty, tz+gizmoLen), 0.2f,0.3f,0.9f, 2},
+      };
+      // For gizmo-active state, compute displacement along axis.
+      if (gizmoActive_ && gizmoAxis_ >= 0 && gizmoAxis_ < 3) {
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+          ImVec2 delta = io.MouseDelta;
+          float scale = 0.01f * cam_->distance();
+          float dir[3] = {0,0,0}; dir[gizmoAxis_] = 1.0f;
+          float d = (delta.x - delta.y) * 0.5f * scale;
+          gizmoStartPos_[0] += dir[0] * d;
+          gizmoStartPos_[1] += dir[1] * d;
+          gizmoStartPos_[2] += dir[2] * d;
+          auto& mesh = const_cast<DrawMeshCPU&>(draw_->meshes[static_cast<size_t>(selMeshIndex_)]);
+          mesh.world[12] = gizmoStartPos_[0];
+          mesh.world[13] = gizmoStartPos_[1];
+          mesh.world[14] = gizmoStartPos_[2];
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+          gizmoActive_ = false;
+          gizmoAxis_ = -1;
+        }
+      } else if (vpHovered_ && plainLeft && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // Screen-space pick: find closest axis to mouse cursor.
+        ImVec2 mouse = {io.MousePos.x - imageMin.x, io.MousePos.y - imageMin.y};
+        float bestDist = 1e10f;
+        int bestAxis = -1;
+        for (int i = 0; i < 3; ++i) {
+          if (axes2D[i].tip.x < -1e8f) continue;
+          // Distance from mouse to line segment (origin2D to tip).
+          ImVec2 d = {axes2D[i].tip.x - origin2D.x, axes2D[i].tip.y - origin2D.y};
+          float len2 = d.x*d.x + d.y*d.y;
+          if (len2 < 1e-6f) continue;
+          float t = ((mouse.x - origin2D.x)*d.x + (mouse.y - origin2D.y)*d.y) / len2;
+          t = std::max(0.0f, std::min(1.0f, t));
+          float px2 = origin2D.x + t*d.x - mouse.x;
+          float py2 = origin2D.y + t*d.y - mouse.y;
+          float dist2 = px2*px2 + py2*py2;
+          if (dist2 < bestDist) { bestDist = dist2; bestAxis = i; }
+        }
+        if (bestAxis >= 0 && bestDist < 400.0f) {  // 20px threshold squared
+          gizmoAxis_ = bestAxis;
+          gizmoMouseStart_ = io.MousePos;
+          gizmoStartPos_[0] = tx; gizmoStartPos_[1] = ty; gizmoStartPos_[2] = tz;
+          gizmoActive_ = true;
+        } else {
+          beginRegionSelection(io.MousePos);
+        }
+      } else if (vpHovered_ && !io.MouseDown[0]) {
+        // Hover: update gizmoAxis_ for highlighting.
+        ImVec2 mouse = {io.MousePos.x - imageMin.x, io.MousePos.y - imageMin.y};
+        float bestDist = 400.0f;
+        int bestAxis = -1;
+        for (int i = 0; i < 3; ++i) {
+          if (axes2D[i].tip.x < -1e8f) continue;
+          ImVec2 d = {axes2D[i].tip.x - origin2D.x, axes2D[i].tip.y - origin2D.y};
+          float len2 = d.x*d.x + d.y*d.y;
+          if (len2 < 1e-6f) continue;
+          float t = ((mouse.x - origin2D.x)*d.x + (mouse.y - origin2D.y)*d.y) / len2;
+          t = std::max(0.0f, std::min(1.0f, t));
+          float px2 = origin2D.x + t*d.x - mouse.x;
+          float py2 = origin2D.y + t*d.y - mouse.y;
+          float dist2 = px2*px2 + py2*py2;
+          if (dist2 < bestDist) { bestDist = dist2; bestAxis = i; }
+        }
+        gizmoAxis_ = bestAxis;
+      }
+    }
+
+    // Plain left click picks one mesh; plain left drag selects all visible mesh
+    // prims whose projected bounds intersect the drag rectangle. Alt+drag stays
+    // reserved for camera navigation.
+    {
+      ImGuiIO& io = ImGui::GetIO();
+      const bool plainLeft = navMode_ == 0 && !io.KeyAlt;
+      if (vpHovered_ && plainLeft && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+          !gizmoActive_) {
+        beginRegionSelection(io.MousePos);
+      }
+      if (regionSelecting_) {
+        updateRegionSelection(io.MousePos);
+        if (regionSelectionMoved_) {
+          const ImVec2 rmin(std::max(imageMin.x, std::min(regionStart_.x, regionEnd_.x)),
+                            std::max(imageMin.y, std::min(regionStart_.y, regionEnd_.y)));
+          const ImVec2 rmax(std::min(imageMax.x, std::max(regionStart_.x, regionEnd_.x)),
+                            std::min(imageMax.y, std::max(regionStart_.y, regionEnd_.y)));
+          ImDrawList* dl = ImGui::GetWindowDrawList();
+          dl->AddRectFilled(rmin, rmax, IM_COL32(80, 145, 255, 48), 0.0f);
+          dl->AddRect(rmin, rmax, IM_COL32(130, 180, 255, 220), 0.0f);
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+          finishRegionSelection(imageMin, w, h);
+        }
+      }
+    }
+
+    if (draw_ && draw_->empty()) {
+      // Center the message in the viewport (a fixed pixel offset clips under the
+      // tab bar at HiDPI scale).
+      const char* msg = (loaded_ && loaded_->ok)
+                            ? "No renderable meshes in this scene."
+                            : "No scene loaded. Use File > Open...";
+      const ImVec2 ts = ImGui::CalcTextSize(msg);
+      ImGui::SetCursorPos(ImVec2((avail.x - ts.x) * 0.5f, (avail.y - ts.y) * 0.5f));
+      ImGui::TextColored(ImVec4(1, 1, 1, 0.7f), "%s", msg);
+    }
+  } else {
+    vpHovered_ = false;
+  }
+  ImGui::End();
+}
+
+void Gui::renderViewportScene(FramePacket* packet) {
+  if (!renderer_ || !cam_ || viewportW_ <= 0 || viewportH_ <= 0) return;
+
+  cam_->setAspect(static_cast<float>(viewportW_) / static_cast<float>(viewportH_));
+  const int vpW = viewportW_, vpH = viewportH_;
+  gpu([this, vpW, vpH] { renderer_->resizeViewport(vpW, vpH); });
+
+  const light3d::Mat4 viewM = cam_->view();
+  const light3d::Mat4 projM = cam_->proj(renderer_->caps().usesZeroToOneDepth);
+  const light3d::Vec3 eye = cam_->eye();
+
+  RenderFrameParams p;
+  p.view = viewM.m;
+  p.proj = projM.m;
+  p.cameraPos[0] = eye.x;
+  p.cameraPos[1] = eye.y;
+  p.cameraPos[2] = eye.z;
+  p.mode = mode_;
+  p.displacement = displacementEnabled_;
+  p.displacementScale = displacementScale_;
+  p.maxTessLevel = maxTessLevel_;
+  // Don't outline a hidden selection.
+  const bool selHidden =
+      selMeshIndex_ >= 0 &&
+      !meshVisibleForView(static_cast<size_t>(selMeshIndex_));
+  p.highlightMeshIndex = selHidden ? -1 : selMeshIndex_;
+  // A selected GeomSubset highlights just its faces on the parent mesh (GL
+  // polygon-mode path).
+  if (highlightSubsetMesh_ >= 0 && !highlightSubsetIndices_.empty() &&
+      meshVisibleForView(static_cast<size_t>(highlightSubsetMesh_))) {
+    p.highlightMeshIndex = highlightSubsetMesh_;
+    p.highlightIndices = highlightSubsetIndices_.data();
+    p.highlightIndexCount = static_cast<int>(highlightSubsetIndices_.size());
+  }
+  // Vulkan highlight: world-space edge lines (whole mesh or subset).
+  if (p.highlightMeshIndex >= 0 && !highlightLinesData_.empty()) {
+    p.highlightLines = highlightLinesData_.data();
+    p.highlightLineVertexCount = static_cast<int>(highlightLinesData_.size());
+  }
+  for (int i = 0; i < 4; ++i) p.clearColor[i] = clearColor_[i];
+  // Scene bbox for the depth + position AOVs.
+  if (draw_ && draw_->hasBounds) {
+    float dx = draw_->aabbMax[0] - draw_->aabbMin[0];
+    float dy = draw_->aabbMax[1] - draw_->aabbMin[1];
+    float dz = draw_->aabbMax[2] - draw_->aabbMin[2];
+    p.depthScale = std::max(1e-3f, std::sqrt(dx * dx + dy * dy + dz * dz));
+    for (int i = 0; i < 3; ++i) {
+      p.sceneMin[i] = draw_->aabbMin[i];
+      p.sceneExtent[i] = std::max(1e-4f, draw_->aabbMax[i] - draw_->aabbMin[i]);
+    }
+  }
+  buildViewVisibilityMask();
+  cullInstances();  // per-instance frustum cull (updates renderer instance buffers)
+  if (!viewVisible_.empty()) {
+    p.meshVisible = viewVisible_.data();
+    p.meshVisibleCount = static_cast<int>(viewVisible_.size());
+  }
+  buildHelpers();
+  p.helperLines = helperLines_.empty() ? nullptr : helperLines_.data();
+  p.helperLineVertexCount = static_cast<int>(helperLines_.size());
+  p.overlayLines = overlayLines_.empty() ? nullptr : overlayLines_.data();
+  p.overlayLineVertexCount = static_cast<int>(overlayLines_.size());
+
+  if (!packet) {
+    renderer_->renderFrame(p);  // single-threaded: render inline
+    return;
+  }
+  // Threaded: copy everything the render thread needs into the owned packet.
+  std::memcpy(packet->view, viewM.m, sizeof(packet->view));
+  std::memcpy(packet->proj, projM.m, sizeof(packet->proj));
+  packet->cameraPos[0] = eye.x; packet->cameraPos[1] = eye.y; packet->cameraPos[2] = eye.z;
+  packet->mode = p.mode;
+  for (int i = 0; i < 4; ++i) packet->clearColor[i] = p.clearColor[i];
+  packet->depthScale = p.depthScale;
+  for (int i = 0; i < 3; ++i) { packet->sceneMin[i] = p.sceneMin[i]; packet->sceneExtent[i] = p.sceneExtent[i]; }
+  packet->highlightMeshIndex = p.highlightMeshIndex;
+  if (p.highlightIndices)
+    packet->highlightIndices.assign(p.highlightIndices, p.highlightIndices + p.highlightIndexCount);
+  if (p.highlightLines)
+    packet->highlightLines.assign(p.highlightLines, p.highlightLines + p.highlightLineVertexCount);
+  if (p.helperLines)
+    packet->helperLines.assign(p.helperLines, p.helperLines + p.helperLineVertexCount);
+  if (p.overlayLines)
+    packet->overlayLines.assign(p.overlayLines, p.overlayLines + p.overlayLineVertexCount);
+  if (p.meshVisible)
+    packet->meshVisible.assign(p.meshVisible, p.meshVisible + p.meshVisibleCount);
+  packet->viewportW = vpW;
+  packet->viewportH = vpH;
+  packet->hasParams = true;
+}
+
+void Gui::buildHelpers() {
+  helperLines_.clear();
+  overlayLines_.clear();
+  const bool zUp = loaded_ && loaded_->ok && loaded_->render.meta.upAxis == "Z";
+
+  auto addLine = [&](float ax, float ay, float az, float bx, float by, float bz,
+                     float r, float g, float b) {
+    helperLines_.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
+    helperLines_.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
+  };
+  auto addOverlay = [&](float ax, float ay, float az, float bx, float by, float bz,
+                        float r, float g, float b) {
+    overlayLines_.push_back(HelperVertex{{ax, ay, az}, {r, g, b}});
+    overlayLines_.push_back(HelperVertex{{bx, by, bz}, {r, g, b}});
+  };
+  auto addBox = [&](const float mn[3], const float mx[3], float r, float g, float b) {
+    const float xs[2] = {mn[0], mx[0]}, ys[2] = {mn[1], mx[1]}, zs[2] = {mn[2], mx[2]};
+    for (int yi = 0; yi < 2; ++yi)
+      for (int zi = 0; zi < 2; ++zi)
+        addLine(xs[0], ys[yi], zs[zi], xs[1], ys[yi], zs[zi], r, g, b);
+    for (int xi = 0; xi < 2; ++xi)
+      for (int zi = 0; zi < 2; ++zi)
+        addLine(xs[xi], ys[0], zs[zi], xs[xi], ys[1], zs[zi], r, g, b);
+    for (int xi = 0; xi < 2; ++xi)
+      for (int yi = 0; yi < 2; ++yi)
+        addLine(xs[xi], ys[yi], zs[0], xs[xi], ys[yi], zs[1], r, g, b);
+  };
+
+  // Grid/axes extent from scene bounds.
+  float half = 10.0f;
+  if (draw_ && draw_->hasBounds) {
+    float ex = 0.0f;
+    for (int i = 0; i < 3; ++i)
+      ex = std::max(ex, draw_->aabbMax[i] - draw_->aabbMin[i]);
+    if (ex > 1e-3f) half = std::max(1.0f, std::ceil(ex));
+  }
+
+  if (showGrid_) {
+    const int n = 10;
+    const float step = half / static_cast<float>(n);
+    const float gc = 0.32f;
+    for (int i = -n; i <= n; ++i) {
+      const float t = static_cast<float>(i) * step;
+      if (zUp) {  // ground = XY plane (z = 0)
+        addLine(-half, t, 0, half, t, 0, gc, gc, gc);
+        addLine(t, -half, 0, t, half, 0, gc, gc, gc);
+      } else {  // ground = XZ plane (y = 0)
+        addLine(-half, 0, t, half, 0, t, gc, gc, gc);
+        addLine(t, 0, -half, t, 0, half, gc, gc, gc);
+      }
+    }
+  }
+  if (showAxes_) {
+    const float L = half;
+    addLine(0, 0, 0, L, 0, 0, 0.90f, 0.20f, 0.20f);  // X red
+    addLine(0, 0, 0, 0, L, 0, 0.20f, 0.85f, 0.25f);  // Y green
+    addLine(0, 0, 0, 0, 0, L, 0.30f, 0.50f, 1.00f);  // Z blue
+  }
+  if (showSceneBbox_ && draw_ && draw_->hasBounds) {
+    addBox(draw_->aabbMin, draw_->aabbMax, 0.90f, 0.90f, 0.30f);
+  }
+  if (showPrimBbox_ && draw_ && selMeshIndex_ >= 0 &&
+      static_cast<size_t>(selMeshIndex_) < draw_->meshes.size() &&
+      meshVisibleForView(static_cast<size_t>(selMeshIndex_))) {
+    const auto& m = draw_->meshes[static_cast<size_t>(selMeshIndex_)];
+    addBox(m.aabbMin, m.aabbMax, 1.00f, 0.60f, 0.10f);
+  }
+
+  // Extent attribute bbox
+  if (showExtent_ && loaded_ && selPrim_) {
+    tinyusdz::Property extentProp;
+    std::string extentErr;
+    if (tydra::GetProperty(*selPrim_, "extent", &extentProp, &extentErr)) {
+      if (extentProp.is_attribute()) {
+        const auto& attr = extentProp.get_attribute();
+        if (attr.has_value()) {
+          const auto& v = attr.get_var().value_raw();
+          const float* vf = v.as<float>();
+          if (vf) {
+            // extent is typically vec3f[2] = {min, max}
+            float mn[3] = {vf[0], vf[1], vf[2]};
+            float mx[3] = {vf[3], vf[4], vf[5]};
+            addBox(mn, mx, 0.30f, 1.00f, 0.50f);
+          }
+        }
+      }
+    }
+  }
+
+  // Light and camera gizmos
+  if ((showLights_ || showCameras_) && loaded_ && loaded_->ok) {
+    std::unordered_map<int, std::array<float, 16>> lightXforms;
+    std::unordered_map<int, std::array<float, 16>> camXforms;
+    for (const auto& n : loaded_->render.nodes) {
+      CollectLightCameraTransforms(n, lightXforms, camXforms);
+    }
+    if (showLights_) {
+      BuildLightGizmos(loaded_->render, lightXforms, helperLines_);
+    }
+    if (showCameras_) {
+      BuildCameraGizmos(loaded_->render, camXforms, helperLines_);
+    }
+  }
+
+  // UsdSkel joint hierarchy as bone line segments + a small cross per joint.
+  // Draw the same animated joint hierarchy used for skinning, then apply the
+  // skinned mesh world matrix to match the rendered character placement.
+  if (showSkeleton_ && loaded_ && loaded_->ok) {
+    // World matrix of the mesh skinned by skeleton `si` (identity if none).
+    // Joint positions are in skeleton space. Skinning maps skinned positions
+    // back through inverse geomBind before the mesh world matrix, so the helper
+    // overlay uses the same space conversion.
+    auto skelWorld = [&](size_t si, bool densePointSamples) -> light3d::Mat4 {
+      for (const auto& rm : loaded_->render.meshes) {
+        if (rm.skel_id != static_cast<int>(si)) continue;
+        if (!draw_) break;
+        for (const auto& dm : draw_->meshes) {
+          if (dm.absPath == rm.abs_path) {
+            light3d::Mat4 W;
+            for (int k = 0; k < 16; ++k) W.m[k] = dm.world[k];
+            light3d::Mat4 G;
+            for (int k = 0; k < 16; ++k) G.m[k] = dm.skinGeomBind[k];
+            return densePointSamples ? (W * G) : (W * G.inverse());
+          }
+        }
+      }
+      return light3d::Mat4::identity();
+    };
+
+    const auto& skels = loaded_->render.skeletons;
+    for (size_t si = 0; si < skels.size(); ++si) {
+      const auto& skel = skels[si];
+      const size_t nj = skel.num_joints();
+      if (nj == 0 || skel.bind_transforms.size() != nj ||
+          skel.parent_joint_indices.size() != nj) {
+        continue;  // empty or malformed topology; skip
+      }
+      const bool densePointSamples = nj >= 1024;
+      if (densePointSamples && draw_) {
+        float sceneDiag = 1.0f;
+        if (draw_->hasBounds) {
+          const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
+          const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
+          sceneDiag = std::max(light3d::length(smx - smn), 1.0e-5f);
+        }
+        const float cs = std::max(sceneDiag * 0.0006f, 1e-5f);
+        bool drewDenseSamples = false;
+        for (const auto& dm : draw_->meshes) {
+          if (dm.skelId != static_cast<int>(si)) continue;
+          light3d::Mat4 W;
+          for (int k = 0; k < 16; ++k) W.m[k] = dm.world[k];
+          const bool hasSkinnedSamples =
+              !dm.skinnedHelperPoints.empty() && dm.skinnedHelperPoints.size() % 3 == 0;
+          const size_t count = hasSkinnedSamples ? (dm.skinnedHelperPoints.size() / 3)
+                                                 : dm.vertices.size();
+          for (size_t i = 0; i < count; ++i) {
+            light3d::Vec3 local;
+            if (hasSkinnedSamples) {
+              local = {dm.skinnedHelperPoints[i * 3 + 0],
+                       dm.skinnedHelperPoints[i * 3 + 1],
+                       dm.skinnedHelperPoints[i * 3 + 2]};
+            } else {
+              const DrawVertex& v = dm.vertices[i];
+              local = {v.px, v.py, v.pz};
+            }
+            const light3d::Vec3 p = light3d::transformPoint(W, local);
+            addOverlay(p.x - cs, p.y, p.z, p.x + cs, p.y, p.z, 0.20f, 0.95f, 0.95f);
+            drewDenseSamples = true;
+          }
+        }
+        if (drewDenseSamples) continue;
+      }
+      const light3d::Mat4 W = skelWorld(si, densePointSamples);
+      std::vector<tinyusdz::value::matrix4d> jointWorlds;
+      if (!BuildSkeletonJointWorlds(loaded_->render, static_cast<int>(si),
+                                    timeline_.applied, &jointWorlds) ||
+          jointWorlds.size() != nj) {
+        jointWorlds = skel.bind_transforms;
+      }
+
+      // World-space joint positions + this skeleton's own AABB.
+      std::vector<light3d::Vec3> jp(nj);
+      light3d::Vec3 mn{1e30f, 1e30f, 1e30f};
+      light3d::Vec3 mx{-1e30f, -1e30f, -1e30f};
+      for (size_t i = 0; i < nj; ++i) {
+        jp[i] = light3d::transformPoint(
+            W, {static_cast<float>(jointWorlds[i].m[3][0]),
+                static_cast<float>(jointWorlds[i].m[3][1]),
+                static_cast<float>(jointWorlds[i].m[3][2])});
+        mn.x = std::min(mn.x, jp[i].x); mn.y = std::min(mn.y, jp[i].y);
+        mn.z = std::min(mn.z, jp[i].z);
+        mx.x = std::max(mx.x, jp[i].x); mx.y = std::max(mx.y, jp[i].y);
+        mx.z = std::max(mx.z, jp[i].z);
+      }
+      // Stable marker size: dense point-joint rigs can have animated extents,
+      // so derive cross size from the scene bounds to avoid helper wobble.
+      float sceneDiag = light3d::length(mx - mn);
+      if (draw_ && draw_->hasBounds) {
+        const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
+        const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
+        sceneDiag = light3d::length(smx - smn);
+      }
+      const float cs = std::max(sceneDiag * (nj >= 1024 ? 0.002f : 0.02f), 1e-5f);
+
+      for (size_t i = 0; i < nj; ++i) {
+        const light3d::Vec3& p = jp[i];
+        // Small axis cross so leaf/isolated joints are visible too.
+        addOverlay(p.x - cs, p.y, p.z, p.x + cs, p.y, p.z, 0.20f, 0.95f, 0.95f);
+        addOverlay(p.x, p.y - cs, p.z, p.x, p.y + cs, p.z, 0.20f, 0.95f, 0.95f);
+        addOverlay(p.x, p.y, p.z - cs, p.x, p.y, p.z + cs, 0.20f, 0.95f, 0.95f);
+        const int par = skel.parent_joint_indices[i];
+        if (!densePointSamples && par >= 0 && static_cast<size_t>(par) < nj) {
+          const light3d::Vec3& pp = jp[static_cast<size_t>(par)];
+          addOverlay(pp.x, pp.y, pp.z, p.x, p.y, p.z, 0.10f, 0.80f, 0.90f);
+        }
+      }
+    }
+  }
+
+  // Translation gizmo at the selected mesh world position.
+  if (xformMode_ == TransformMode::Translate && draw_ && selMeshIndex_ >= 0 &&
+      static_cast<size_t>(selMeshIndex_) < draw_->meshes.size()) {
+    const float* W = draw_->meshes[static_cast<size_t>(selMeshIndex_)].world;
+    float tx = W[12], ty = W[13], tz = W[14];
+    float gizmoLen = 1.0f;
+    if (draw_->hasBounds) {
+      const light3d::Vec3 smn{draw_->aabbMin[0], draw_->aabbMin[1], draw_->aabbMin[2]};
+      const light3d::Vec3 smx{draw_->aabbMax[0], draw_->aabbMax[1], draw_->aabbMax[2]};
+      gizmoLen = std::max(light3d::length(smx - smn) * 0.15f, 0.5f);
+    }
+    const struct { float dx, dy, dz; float r, g, b; } axes[4] = {
+      {gizmoLen, 0, 0, 0.9f, 0.2f, 0.2f},
+      {0, gizmoLen, 0, 0.2f, 0.9f, 0.2f},
+      {0, 0, gizmoLen, 0.2f, 0.3f, 0.9f},
+      {-gizmoLen * 0.3f, 0, 0, 0.6f, 0.1f, 0.1f},
+    };
+    for (int i = 0; i < 4; ++i) {
+      float ex = tx + axes[i].dx, ey = ty + axes[i].dy, ez = tz + axes[i].dz;
+      float r = axes[i].r, g = axes[i].g, b = axes[i].b;
+      if (gizmoActive_ && i == gizmoAxis_) { r = 1.0f; g = 1.0f; b = 0.0f; }
+      else if (!gizmoActive_ && i == gizmoAxis_) {
+        r = std::min(1.0f, r * 1.5f); g = std::min(1.0f, g * 1.5f); b = std::min(1.0f, b * 1.5f);
+      }
+      addOverlay(tx, ty, tz, ex, ey, ez, r, g, b);
+      if (i < 3) {
+        float nx = axes[i].dx / gizmoLen, ny = axes[i].dy / gizmoLen, nz = axes[i].dz / gizmoLen;
+        float perpX = 1.0f - std::abs(nx), perpY = 1.0f - std::abs(ny), perpZ = 1.0f - std::abs(nz);
+        float plen = std::sqrt(perpX*perpX + perpY*perpY + perpZ*perpZ);
+        if (plen > 1e-6f) { perpX /= plen; perpY /= plen; perpZ /= plen; }
+        float coneLen = gizmoLen * 0.12f, coneW = gizmoLen * 0.06f;
+        for (int j = 0; j < 2; ++j) {
+          float sign = (j == 0) ? 1.0f : -1.0f;
+          addOverlay(ex, ey, ez,
+                     ex - nx * coneLen + perpX * sign * coneW,
+                     ey - ny * coneLen + perpY * sign * coneW,
+                     ez - nz * coneLen + perpZ * sign * coneW, r, g, b);
+        }
+      }
+    }
+  }
+}
+
+void Gui::drawStageMeta() {
+  ImGui::Begin("Stage");
+  if (loaded_ && loaded_->ok) {
+    const auto& meta = loaded_->render.meta;
+    const auto& smeta = loaded_->stage.metas();
+    metaFilter_.Draw("Search##meta", -1.0f);  // key / value
+    if (ImGui::BeginTable("##stagemeta", 2,
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerH)) {
+      ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed,
+                              ImGui::GetFontSize() * 9.0f);
+      ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableHeadersRow();
+      auto row = [&](const char* k, const std::string& v) {
+        if (metaFilter_.IsActive() && !metaFilter_.PassFilter(k) &&
+            !metaFilter_.PassFilter(v.c_str())) {
+          return;  // filtered out
+        }
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(k);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextWrapped("%s", v.c_str());
+      };
+      row("upAxis", meta.upAxis);
+      row("metersPerUnit", std::to_string(meta.metersPerUnit));
+      row("framesPerSecond", std::to_string(meta.framesPerSecond));
+      row("timeCodesPerSecond", std::to_string(meta.timeCodesPerSecond));
+      if (meta.startTimeCode.has_value())
+        row("startTimeCode", std::to_string(*meta.startTimeCode));
+      if (meta.endTimeCode.has_value())
+        row("endTimeCode", std::to_string(*meta.endTimeCode));
+      if (!smeta.defaultPrim.str().empty()) row("defaultPrim", smeta.defaultPrim.str());
+      if (!meta.copyright.empty()) row("copyright", meta.copyright);
+      if (!meta.comment.empty()) row("comment", meta.comment);
+      if (!smeta.doc.value.empty()) row("documentation", smeta.doc.value);
+      if (!smeta.subLayers.empty()) {
+        std::string s;
+        for (const auto& sl : smeta.subLayers) {
+          if (!s.empty()) s += "\n";
+          s += sl.assetPath.GetAssetPath();
+        }
+        row("subLayers", s);
+      }
+      if (!smeta.customLayerData.empty()) {
+        std::string s;
+        for (const auto& kv : smeta.customLayerData) {
+          if (!s.empty()) s += ", ";
+          s += kv.first;
+        }
+        row("customLayerData", s);
+      }
+      ImGui::EndTable();
+    }
+  } else {
+    HintWrapped("No stage loaded.");
+  }
+  ImGui::End();
+}
+
+}  // namespace tusdview

@@ -35,6 +35,13 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { dedupMaterialsByContent, batchByMaterial } from 'tinyusdz/MeshBatching.js';
+import { getAssetUriFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+	buildNextThreeNode,
+	isNextScene,
+	nextCountsFromScene,
+	readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -44,9 +51,13 @@ let renderer, scene, camera, controls, gui;
 let usdSceneRoot; // group that holds the converted USD scene (scaled/oriented)
 let loader = null; // reused TinyUSDZLoader instance
 let currentUsd = null; // current native scene (embind object)
+let raycaster, pointerNdc;
+let pickedObject = null;
+let legacyAsyncSupport = null;
 
 let rawBytes = null; // Uint8Array of the active model
 let currentName = 'sample scene';
+let currentIsGeneratedSample = true;
 
 // metersPerUnit / upAxis from the active model's stage metadata.
 let sceneMeta = { upAxis: 'Y', metersPerUnit: 1.0 };
@@ -63,11 +74,202 @@ let jsPostStats = null;
 
 // Background lazy texture loader for the currently displayed scene.
 let textureManager = null;
+let activeLoadStats = null;
+let conversionWorker = null;
+let conversionWorkerSeq = 0;
+let conversionWorkerActiveBytes = null;
+const CONVERSION_WORKER_URL = new URL('./material-dedup.worker.js', import.meta.url);
+let activeProgress = {
+	visible: false,
+	stage: '',
+	percentage: 0,
+	message: ''
+};
+const progressHistory = [];
+const MAX_PROGRESS_HISTORY = 8192;
 
 const textureCache = new Map();
+const frameState = {
+	lastFpsUpdateMs: performance.now(),
+	frameCount: 0
+};
+
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+	return getAssetUriFromURL(params, ['usd']);
+}
+
+function getDisplayNameFromURI(uri) {
+	try {
+		const parsed = new URL(uri, window.location.href);
+		return parsed.pathname.split('/').filter(Boolean).pop() || uri;
+	} catch {
+		return uri.split('/').pop() || uri;
+	}
+}
+
+function formatDurationMs(ms) {
+	if (!Number.isFinite(ms)) return 'n/a';
+	return ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+	if (!Number.isFinite(bytes)) return 'n/a';
+	const sign = bytes < 0 ? '-' : '';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	let value = Math.abs(bytes);
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${sign}${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+	const jsHeap = performance.memory?.usedJSHeapSize;
+	const wasmHeap = loader?.native?.HEAPU8?.buffer?.byteLength ||
+		loader?.native_?.HEAPU8?.buffer?.byteLength;
+	return {
+		jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+		wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+	};
+}
+
+function formatMemoryUse(before, after, key) {
+	const current = after?.[key];
+	if (!Number.isFinite(current)) return 'n/a';
+	const previous = before?.[key];
+	if (!Number.isFinite(previous)) return formatBytes(current);
+	const delta = current - previous;
+	return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
+}
+
+function showProgress(stage, percentage, message) {
+	const panel = document.getElementById('progressPanel');
+	const label = document.getElementById('progressLabel');
+	const bar = document.getElementById('progressBar');
+	if (!panel || !label || !bar) return;
+	const pct = Math.max(0, Math.min(100,
+		Number.isFinite(percentage) ? percentage : activeProgress.percentage || 0));
+	activeProgress = {
+		visible: true,
+		stage: stage || activeProgress.stage,
+		percentage: pct,
+		message: message || activeProgress.message
+	};
+	progressHistory.push({
+		timeMs: performance.now(),
+		stage: activeProgress.stage,
+		percentage: activeProgress.percentage,
+		message: activeProgress.message
+	});
+	if (progressHistory.length > MAX_PROGRESS_HISTORY) {
+		progressHistory.splice(0, progressHistory.length - MAX_PROGRESS_HISTORY);
+	}
+	panel.style.display = 'block';
+	label.textContent = message || stage || 'Loading...';
+	bar.style.transform = `scaleX(${pct / 100})`;
+}
+
+function hideProgress(delayMs = 1200) {
+	const panel = document.getElementById('progressPanel');
+	if (!panel) return;
+	if (delayMs > 0) {
+		setTimeout(() => {
+			if (activeProgress.percentage >= 100) panel.style.display = 'none';
+		}, delayMs);
+	} else {
+		panel.style.display = 'none';
+	}
+}
+
+function beginLoadStats(fileSize = null) {
+	const stats = {
+		startTime: performance.now(),
+		fileSize,
+		fetchMs: null,
+		parseMs: null,
+		processMs: null,
+		textureMs: null,
+		textureLoaded: 0,
+		textureFailed: 0,
+		textureTotal: 0,
+		textureComplete: false,
+		totalMs: null,
+		memoryBefore: captureMemorySnapshot(),
+		memoryAfter: null
+	};
+	activeLoadStats = stats;
+	updateLoadStatsPanel(stats, 'Loading...');
+	showProgress('start', 0, 'Preparing load...');
+	return stats;
+}
+
+function updateLoadStatsPanel(stats, overrideText = null) {
+	const el = document.getElementById('loadStats');
+	if (!el) return;
+	el.style.display = 'block';
+	if (overrideText) {
+		el.textContent = overrideText;
+		return;
+	}
+	el.textContent = [
+		`File: ${formatBytes(stats.fileSize)}`,
+		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
+		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Textures: ${formatTextureStats(stats)}`,
+		`Total: ${formatDurationMs(stats.totalMs)}`,
+		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+	].join('\n');
+}
+
+function formatTextureStats(stats) {
+	if (!stats || !Number.isFinite(stats.textureTotal) || stats.textureTotal <= 0) {
+		return params.loadTextures ? 'queued 0' : 'disabled';
+	}
+	const countText = `${stats.textureLoaded}/${stats.textureTotal}` +
+		(stats.textureFailed ? ` (${stats.textureFailed} failed)` : '');
+	if (stats.textureComplete && Number.isFinite(stats.textureMs)) {
+		return `${countText}, ${formatDurationMs(stats.textureMs)}`;
+	}
+	return `${countText}, loading`;
+}
+
+function finishLoadStats(stats) {
+	if (!stats) return;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats);
+}
+
+function failLoadStats(stats) {
+	if (!stats) return;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats, 'Failed');
+	showProgress('failed', 100, 'Load failed');
+}
+
+function updateTextureLoadStats(info = {}) {
+	const stats = activeLoadStats;
+	if (!stats) return;
+	stats.textureLoaded = Number.isFinite(info.loaded) ? info.loaded : stats.textureLoaded;
+	stats.textureFailed = Number.isFinite(info.failed) ? info.failed : stats.textureFailed;
+	stats.textureTotal = Number.isFinite(info.total) ? info.total : stats.textureTotal;
+	if (info.complete && Number.isFinite(info.ms)) {
+		stats.textureMs = info.ms;
+		stats.textureComplete = true;
+		stats.memoryAfter = captureMemorySnapshot();
+	}
+	updateLoadStatsPanel(stats);
+}
 
 // Optimization + scene-transform parameters (driven by lil-gui).
 const params = {
+	backend: 'legacy',
+
 	// Tydra render-scene optimizations.
 	materialDedup: true,
 	mergeMeshes: true,
@@ -87,6 +289,10 @@ const params = {
 	// the asset on demand by getImageCopy; the scene renders untextured first,
 	// then textures stream in). On by default.
 	loadTextures: true,
+
+	// Run next-backend native conversion in a dedicated Worker so crate-reader
+	// progress can repaint while synchronous WASM is busy.
+	useWorker: true,
 
 	// three.js-side post-process (applied after the scene is built, no
 	// re-conversion). Independent of the native Tydra optimizations above.
@@ -226,6 +432,9 @@ function initThree() {
 	renderer.setSize(window.innerWidth, window.innerHeight);
 	renderer.outputColorSpace = THREE.SRGBColorSpace;
 	document.body.appendChild(renderer.domElement);
+	raycaster = new THREE.Raycaster();
+	pointerNdc = new THREE.Vector2();
+	renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
 
 	controls = new OrbitControls(camera, renderer.domElement);
 	controls.enableDamping = true;
@@ -260,6 +469,15 @@ function onResize() {
 
 function animate() {
 	requestAnimationFrame(animate);
+	frameState.frameCount++;
+	const now = performance.now();
+	if (now - frameState.lastFpsUpdateMs >= 500) {
+		const fps = frameState.frameCount * 1000 / (now - frameState.lastFpsUpdateMs);
+		const fpsEl = document.getElementById('fpsValue');
+		if (fpsEl) fpsEl.textContent = fps.toFixed(1);
+		frameState.frameCount = 0;
+		frameState.lastFpsUpdateMs = now;
+	}
 	controls.update();
 	renderer.render(scene, camera);
 }
@@ -275,13 +493,313 @@ async function ensureLoader() {
 	return loader;
 }
 
-function parseWithOptions(bytes, name, options) {
+function hasLegacyAsyncSupport() {
+	if (legacyAsyncSupport !== null) return legacyAsyncSupport;
+	legacyAsyncSupport = false;
+	try {
+		const native = loader?.native_;
+		if (native && typeof native.TinyUSDZLoaderNative === 'function') {
+			const usd = new native.TinyUSDZLoaderNative();
+			legacyAsyncSupport = typeof usd.loadFromBinaryAsync === 'function';
+			if (typeof usd.delete === 'function') usd.delete();
+		}
+	} catch (_) {
+		legacyAsyncSupport = false;
+	}
+	return legacyAsyncSupport;
+}
+
+function formatNativeProgressMessage(label, info = {}) {
+	const stage = info.stage || info.phase || 'native';
+	const meshTotal = Number(info.meshTotal);
+	const meshCurrent = Number(info.meshCurrent);
+	if (Number.isFinite(meshTotal) && meshTotal > 0) {
+		return `${label}: ${stage} ${Math.min(meshCurrent, meshTotal)}/${meshTotal}`;
+	}
+	const materialTotal = Number(info.materialsTotal);
+	const materialCurrent = Number(info.materialsCurrent);
+	if (Number.isFinite(materialTotal) && materialTotal > 0) {
+		return `${label}: ${stage} materials ${Math.min(materialCurrent, materialTotal)}/${materialTotal}`;
+	}
+	return `${label}: ${stage}`;
+}
+
+function progressCountFromInfo(info = {}) {
+	const pairs = [
+		['crateCurrent', 'crateTotal'],
+		['archiveCurrent', 'archiveTotal'],
+		['meshCurrent', 'meshTotal'],
+		['materialsCurrent', 'materialsTotal'],
+		['builtMeshes', 'totalMeshes'],
+		['loaded', 'total'],
+		['current', 'total']
+	];
+	for (const [currentKey, totalKey] of pairs) {
+		const current = Number(info[currentKey]);
+		const total = Number(info[totalKey]);
+		if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+			return { current: Math.max(0, Math.min(current, total)), total };
+		}
+	}
+	return null;
+}
+
+function formatProgressPercent(value) {
+	if (!Number.isFinite(value)) return '0%';
+	const clamped = Math.max(0, Math.min(100, value));
+	return Math.abs(clamped - Math.round(clamped)) < 0.05
+		? `${Math.round(clamped)}%`
+		: `${clamped.toFixed(1)}%`;
+}
+
+function escapeRegExp(text) {
+	return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function cleanCountFromMessage(message, count) {
+	let text = String(message || '');
+	if (!count) return text;
+	const current = escapeRegExp(Math.round(count.current));
+	const total = escapeRegExp(Math.round(count.total));
+	text = text
+		.replace(new RegExp(`\\s*\\(${current}\\s*/\\s*${total}\\)`, 'g'), '')
+		.replace(new RegExp(`\\s+${current}\\s*/\\s*${total}`, 'g'), '')
+		.replace(/\s+([:,.])/g, '$1')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
+	return text;
+}
+
+function formatCountedProgressMessage(message, info = {}, localPct = null) {
+	const count = progressCountFromInfo(info);
+	if (!count) return message;
+	const countPct = (count.current / count.total) * 100;
+	const pct = Number.isFinite(countPct) ? countPct : Number(localPct);
+	const clean = cleanCountFromMessage(message, count);
+	return `${formatProgressPercent(pct)} (${Math.round(count.current)} / ${Math.round(count.total)}): ${clean}`;
+}
+
+async function parseWithOptions(bytes, name, options, progressOptions = {}) {
+	const label = progressOptions.label || 'Converting';
+	const base = Number.isFinite(progressOptions.base) ? progressOptions.base : 20;
+	const range = Number.isFinite(progressOptions.range) ? progressOptions.range : 30;
+	const backend = options.backend || params.backend || 'legacy';
+	let syntheticStep = 0;
+	const report = (info = {}) => {
+		let localPct = Number(info.localPercentage);
+		if (!Number.isFinite(localPct)) {
+			if (Number.isFinite(info.progress)) {
+				localPct = Math.max(0, Math.min(100, Number(info.progress) * 100));
+			} else if (Number.isFinite(info.percentage)) {
+				localPct = Math.max(0, Math.min(100, Number(info.percentage)));
+			} else if (Number.isFinite(info.meshCurrent) && Number.isFinite(info.meshTotal) &&
+					info.meshTotal > 0) {
+				localPct = Math.max(0, Math.min(100, (info.meshCurrent / info.meshTotal) * 100));
+			} else {
+				syntheticStep = Math.min(96, syntheticStep + 4);
+				localPct = syntheticStep;
+			}
+		}
+		const pct = base + (Math.max(0, Math.min(100, localPct)) / 100) * range;
+		const message = info.message
+			? (String(info.message).startsWith(label)
+				? info.message
+				: `${label}: ${info.message}`)
+			: formatNativeProgressMessage(label, info);
+		showProgress(info.stage || info.phase || 'native', pct,
+			formatCountedProgressMessage(message, info, localPct));
+	};
+
+	report({ stage: 'start', localPercentage: 0, message: `${label}: starting...` });
+	if (backend === 'next' && params.useWorker && typeof Worker !== 'undefined') {
+		try {
+			return await parseNextInWorker(bytes, name, options, progressOptions, report);
+		} catch (error) {
+			if (error?.workerConversionError) throw error;
+			console.warn('[material-dedup] next worker unavailable; falling back to main thread', error);
+			conversionWorkerActiveBytes = null;
+		}
+	}
+
+	if (backend === 'legacy' && typeof loader.parseAsync === 'function' &&
+			hasLegacyAsyncSupport()) {
+		return loader.parseAsync(bytes, name, {
+			...options,
+			onTinyUSDZDebug: report,
+			onTydraProgress: report,
+			onPhaseStart: (info = {}) => {
+				report({
+					stage: info.phase || 'native',
+					localPercentage: Math.max(0, Math.min(100, (Number(info.progress) || 0) * 100)),
+					message: `${label}: ${info.phase || 'native'}`
+				});
+			}
+		});
+	}
+
 	return new Promise((resolve, reject) => {
-		loader.parse(bytes, name, resolve, reject, options);
+		loader.parse(bytes, name, resolve, reject, {
+			...options,
+			onProgress: report,
+			onTinyUSDZDebug: report,
+			onTydraProgress: report,
+			progressBase: base,
+			progressRange: range
+		});
+	});
+}
+
+function getConversionWorker() {
+	if (conversionWorker) return conversionWorker;
+	conversionWorker = new Worker(CONVERSION_WORKER_URL, { type: 'module' });
+	conversionWorker.addEventListener('error', (event) => {
+		console.error('[material-dedup] conversion worker error:', event);
+		conversionWorkerActiveBytes = null;
+	});
+	return conversionWorker;
+}
+
+function resetConversionWorkerCache() {
+	conversionWorkerActiveBytes = null;
+	if (conversionWorker) {
+		try { conversionWorker.postMessage({ type: 'clear' }); } catch (_) {}
+	}
+}
+
+function makeWorkerNextScene(payload = {}) {
+	const archiveEntries = new Map(payload.archiveEntries || []);
+	const materialKeys = new Set();
+	const textureKeys = new Set();
+	for (const mesh of payload.meshes || []) {
+		if (mesh.materialKey) materialKeys.add(mesh.materialKey);
+		for (const path of Object.values(mesh.texturePaths || {})) {
+			if (path) textureKeys.add(normWorkerTexturePath(path));
+		}
+		for (const material of mesh.materials || []) {
+			if (material.materialKey) materialKeys.add(material.materialKey);
+			for (const path of Object.values(material.texturePaths || {})) {
+				if (path) textureKeys.add(normWorkerTexturePath(path));
+			}
+		}
+	}
+	return {
+		__backend: 'next',
+		__workerConverted: true,
+		filename: payload.filename || '',
+		meshes: payload.meshes || [],
+		stats: payload.stats || {},
+		sceneMetadata: {
+			upAxis: payload.sceneMetadata?.upAxis || 'Y',
+			metersPerUnit: (typeof payload.sceneMetadata?.metersPerUnit === 'number' &&
+				payload.sceneMetadata.metersPerUnit > 0)
+				? payload.sceneMetadata.metersPerUnit
+				: 1.0
+		},
+		archiveEntries,
+		materialKeys,
+		textureKeys,
+		getArchiveTextureBytes(path) {
+			const key = normWorkerTexturePath(path);
+			if (archiveEntries.has(key)) return archiveEntries.get(key);
+			for (const [candidate, bytes] of archiveEntries) {
+				if (candidate.endsWith('/' + key) || key.endsWith('/' + candidate)) {
+					return bytes;
+				}
+			}
+			return null;
+		},
+		releaseArchiveTextureBytes() {
+			archiveEntries.clear();
+		},
+		releaseBuildData() {
+			this.meshes = [];
+			materialKeys.clear();
+			textureKeys.clear();
+		},
+		getSceneMetadata() {
+			return this.sceneMetadata;
+		},
+		numMeshes() {
+			return this.stats?.optimizedMeshes ?? this.meshes.length;
+		},
+		numMaterials() {
+			return this.stats?.optimizedMaterials ?? materialKeys.size ?? this.meshes.length;
+		},
+		numTextures() {
+			return this.stats?.optimizedTextures ?? textureKeys.size;
+		},
+		getStats() {
+			return this.stats || {};
+		},
+		delete() {
+			this.end();
+		},
+		end() {
+			this.meshes = [];
+			archiveEntries.clear();
+			materialKeys.clear();
+			textureKeys.clear();
+		}
+	};
+}
+
+function normWorkerTexturePath(path) {
+	return String(path || '').replace(/^[./]+/, '');
+}
+
+function parseNextInWorker(bytes, name, options, progressOptions, report) {
+	const worker = getConversionWorker();
+	const id = ++conversionWorkerSeq;
+	const transfer = [];
+	const message = {
+		type: 'convert',
+		id,
+		name,
+		options,
+		progressBase: Number.isFinite(progressOptions.base) ? progressOptions.base : 0,
+		progressRange: Number.isFinite(progressOptions.range) ? progressOptions.range : 100
+	};
+	if (conversionWorkerActiveBytes !== bytes) {
+		const copy = bytes instanceof Uint8Array ? bytes.slice() : new Uint8Array(bytes).slice();
+		message.bytes = copy.buffer;
+		transfer.push(copy.buffer);
+		conversionWorkerActiveBytes = bytes;
+	}
+	return new Promise((resolve, reject) => {
+		const cleanup = () => {
+			worker.removeEventListener('message', onMessage);
+			worker.removeEventListener('error', onError);
+		};
+		const onError = (event) => {
+			cleanup();
+			conversionWorkerActiveBytes = null;
+			const error = new Error(event.message || 'conversion worker failed');
+			error.workerStartupError = true;
+			reject(error);
+		};
+		const onMessage = (event) => {
+			const msg = event.data || {};
+			if (msg.id !== id) return;
+			if (msg.type === 'progress') {
+				report(msg.info || {});
+			} else if (msg.type === 'result') {
+				cleanup();
+				resolve(makeWorkerNextScene(msg.payload));
+			} else if (msg.type === 'error') {
+				cleanup();
+				const error = new Error(msg.error || 'worker conversion failed');
+				error.workerConversionError = true;
+				reject(error);
+			}
+		};
+		worker.addEventListener('message', onMessage);
+		worker.addEventListener('error', onError);
+		worker.postMessage(message, transfer);
 	});
 }
 
 function countsFromUsd(usd) {
+	if (isNextScene(usd)) return nextCountsFromScene(usd);
 	return {
 		meshes: usd.numMeshes ? usd.numMeshes() : 0,
 		materials: usd.numMaterials ? usd.numMaterials() : 0,
@@ -291,6 +809,7 @@ function countsFromUsd(usd) {
 
 // Read scene metadata (upAxis / metersPerUnit) defensively.
 function readSceneMeta(usd) {
+	if (isNextScene(usd)) return readNextSceneMeta(usd);
 	const md = (usd.getSceneMetadata) ? usd.getSceneMetadata() : {};
 	return {
 		upAxis: md.upAxis || 'Y',
@@ -382,7 +901,51 @@ function frameCameraToScene() {
 	controls.update();
 }
 
+function collectMaterialTextures(material, textures) {
+	if (!material) return;
+	for (const key of Object.keys(material)) {
+		const value = material[key];
+		if (value && value.isTexture) {
+			textures.add(value);
+		}
+	}
+	if (material.uniforms) {
+		for (const uniform of Object.values(material.uniforms)) {
+			const value = uniform?.value;
+			if (value && value.isTexture) {
+				textures.add(value);
+			}
+		}
+	}
+}
+
+function disposeMaterial(material) {
+	if (!material) return;
+	const textures = new Set();
+	collectMaterialTextures(material, textures);
+	for (const texture of textures) {
+		if (texture.image && typeof texture.image.close === 'function') {
+			try { texture.image.close(); } catch (e) { /* ignore */ }
+		}
+		texture.dispose();
+	}
+	material.dispose();
+}
+
+function disposeTextureCache() {
+	for (const value of textureCache.values()) {
+		if (value && value.isTexture) {
+			if (value.image && typeof value.image.close === 'function') {
+				try { value.image.close(); } catch (e) { /* ignore */ }
+			}
+			value.dispose();
+		}
+	}
+	textureCache.clear();
+}
+
 function disposeSceneRoot() {
+	showPickedObject(null);
 	for (let i = usdSceneRoot.children.length - 1; i >= 0; i--) {
 		const child = usdSceneRoot.children[i];
 		usdSceneRoot.remove(child);
@@ -392,7 +955,7 @@ function disposeSceneRoot() {
 			if (o.geometry) o.geometry.dispose();
 			if (o.material) {
 				const mats = Array.isArray(o.material) ? o.material : [o.material];
-				mats.forEach((m) => m && m.dispose());
+				mats.forEach(disposeMaterial);
 			}
 		});
 	}
@@ -404,11 +967,28 @@ function freeUsd(usd) {
 	}
 }
 
+function releaseCurrentUSDResources({ clearRawBytes = false } = {}) {
+	abortTextureManager();
+	disposeSceneRoot();
+	disposeTextureCache();
+	freeUsd(currentUsd);
+	currentUsd = null;
+	currentCounts = null;
+	jsPostStats = null;
+	if (clearRawBytes) {
+		rawBytes = null;
+		resetConversionWorkerCache();
+	}
+}
+
 // Convert `bytes` with the given optimization options and return the native
 // scene + counts. Does NOT mount it into the Three.js scene.
 async function convertScene(bytes, name, opts) {
 	await ensureLoader();
+	const requestedBackend = opts.backend || params.backend || 'legacy';
+	const backend = requestedBackend;
 	const usd = await parseWithOptions(bytes, name, {
+		backend,
 		materialDedup: !!opts.materialDedup,
 		mergeMeshes: !!opts.mergeMeshes,
 		mergeMeshesBakeTransform: !!opts.mergeMeshesBakeTransform,
@@ -418,8 +998,9 @@ async function convertScene(bytes, name, opts) {
 		// heavy scenes on wasm32. Instead the JS layer pulls raw bytes per image
 		// on demand (getImageCopy → ensureImageBufferLoaded_) and decodes them
 		// lazily via TextureLoadingManager.
-		loadTextureInNative: false
-	});
+		loadTextureInNative: false,
+		returnArchiveEntries: !!opts.loadTextures
+	}, opts.progress || {});
 	return { usd, counts: countsFromUsd(usd) };
 }
 
@@ -450,16 +1031,42 @@ function applyJsPostProcess(node) {
 // `lazyTextures` queues textures for background decoding via a returned
 // TextureLoadingManager (the caller starts loading after the first render).
 async function mountScene(usd,
-		{ skipTextures = true, postProcess = false, lazyTextures = false } = {}) {
+		{ skipTextures = true, postProcess = false, lazyTextures = false, progressBase = 55, progressRange = 25 } = {}) {
 	abortTextureManager();
 	disposeSceneRoot();
+	disposeTextureCache();
+
+	const reportBuildProgress = (info = {}) => {
+		const localPct = Math.max(0, Math.min(100, Number(info.percentage) || 0));
+		const pct = progressBase + (localPct / 100) * progressRange;
+		const message = formatCountedProgressMessage(
+			info.message || 'Building scene...', info, localPct);
+		showProgress('building', pct, message);
+	};
+
+	if (isNextScene(usd)) {
+		const built = buildNextThreeNode(usd, {
+			skipTextures,
+			lazyTextures,
+			onProgress: reportBuildProgress
+		});
+		if (postProcess) {
+			applyJsPostProcess(built.node);
+		} else {
+			jsPostStats = null;
+		}
+		usdSceneRoot.add(built.node);
+		applySceneTransform();
+		applyDoubleSided();
+		textureManager = built.textureManager;
+		updateDebugHandle();
+		return;
+	}
 
 	const usdRootNode = usd.getDefaultRootNode();
 	const defaultMtl = new THREE.MeshStandardMaterial({
 		color: 0x888888, roughness: 0.6, metalness: 0.0
 	});
-	textureCache.clear();
-
 	// Lazy texture mode: queue textures instead of loading them inline, so the
 	// scene appears immediately and textures stream in afterwards.
 	const manager = (lazyTextures && !skipTextures) ? new TextureLoadingManager() : null;
@@ -470,6 +1077,7 @@ async function mountScene(usd,
 			preferredMaterialType: 'auto',
 			textureCache,
 			storeMaterialData: true,
+			onProgress: reportBuildProgress,
 			// When textures are disabled this is a geometry/count-focused view;
 			// skipping texture loads also avoids 404 spam from unresolved URIs.
 			skipTextures,
@@ -486,12 +1094,14 @@ async function mountScene(usd,
 	applySceneTransform();
 	applyDoubleSided();
 	textureManager = manager;
+	updateDebugHandle();
 }
 
 function abortTextureManager() {
 	if (textureManager) {
 		try { textureManager.abort(); textureManager.reset(); } catch (e) { /* ignore */ }
 		textureManager = null;
+		updateDebugHandle();
 	}
 }
 
@@ -501,16 +1111,54 @@ function abortTextureManager() {
 function startLazyTextureLoading() {
 	if (!textureManager || textureManager.total <= 0) return;
 	const mgr = textureManager;
+	const textureStart = performance.now();
+	updateTextureLoadStats({
+		loaded: mgr.loaded || 0,
+		failed: mgr.failed || 0,
+		total: mgr.total || 0
+	});
+	updateDebugHandle();
 	mgr.startLoading({
-		concurrency: 4,
+		concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
 		yieldInterval: 16,
 		onTextureLoaded: (material) => { material.needsUpdate = true; },
 		onProgress: (info) => {
-			setStatus(`${describeOptions()} · textures ${info.loaded}/${info.total}` +
-				(info.failed ? ` (${info.failed} failed)` : ''));
-		}
-	}).then(() => setStatus(describeOptions()))
-		.catch((err) => console.warn('[material-dedup] texture loading:', err));
+			if (textureManager !== mgr) return;
+				updateTextureLoadStats(info);
+				const localPct = Number.isFinite(info.percentage)
+					? info.percentage
+					: ((info.loaded + (info.failed || 0)) / Math.max(1, info.total || 1)) * 100;
+				showProgress('textures',
+					80 + Math.max(0, Math.min(100, localPct)) * 0.2,
+					formatCountedProgressMessage(
+						`Loading textures${info.failed ? ` (${info.failed} failed)` : ''}`,
+						info,
+						localPct));
+				setStatus(`${describeOptions()} · textures ${info.loaded}/${info.total}` +
+					(info.failed ? ` (${info.failed} failed)` : ''));
+			}
+		}).then(() => {
+			if (textureManager !== mgr) return;
+			const elapsed = performance.now() - textureStart;
+		updateTextureLoadStats({
+			loaded: mgr.loaded || 0,
+			failed: mgr.failed || 0,
+			total: mgr.total || 0,
+			complete: true,
+				ms: elapsed
+			});
+			setStatus(`${describeOptions()} · textures complete ${mgr.loaded}/${mgr.total}` +
+				(mgr.failed ? ` (${mgr.failed} failed)` : '') +
+				` in ${formatDurationMs(elapsed)}`);
+			showProgress('complete', 100, 'Textures complete');
+			hideProgress();
+			updateDebugHandle();
+		})
+			.catch((err) => {
+				if (textureManager !== mgr) return;
+				console.warn('[material-dedup] texture loading:', err);
+				showProgress('failed', 100, 'Texture loading failed');
+			});
 }
 
 // Deterministically measure the built USD scene by walking usdSceneRoot. This
@@ -543,24 +1191,35 @@ function measureSceneInfo() {
 
 // Full (re)load of a model: capture the all-optimizations-OFF baseline, then
 // build the scene with the currently selected options.
-async function loadModel(bytes, name) {
+async function loadModel(bytes, name, stats = null) {
+	window.renderComplete = false;
+	window.renderError = null;
+	updateDebugHandle();
+	releaseCurrentUSDResources({ clearRawBytes: true });
+	baseline = null;
 	rawBytes = bytes;
 	currentName = name;
 	document.getElementById('currentFile').textContent = name;
 	setStatus('Converting baseline (no optimizations)…');
+	showProgress('parsing', 20, 'Converting baseline...');
 
+	let baseResult = null;
 	try {
 		// Baseline: everything off (bake-transform is irrelevant when not merging).
-		const baseResult = await convertScene(bytes, name, {
+		const parseStart = performance.now();
+		baseResult = await convertScene(bytes, name, {
 			materialDedup: false,
 			mergeMeshes: false,
 			mergeMeshesBakeTransform: false,
-			flattenRenderTree: false
+			flattenRenderTree: false,
+			progress: { label: 'Converting baseline', base: 18, range: 20 }
 		});
+		if (stats) stats.parseMs = performance.now() - parseStart;
+		showProgress('building', 38, 'Building baseline scene...');
 		sceneMeta = readSceneMeta(baseResult.usd);
 		// Baseline is for counts only; never decode/apply its (undeduplicated)
 		// texture set — it can be enormous and is immediately replaced below.
-		await mountScene(baseResult.usd, { skipTextures: true });
+		await mountScene(baseResult.usd, { skipTextures: true, progressBase: 30, progressRange: 10 });
 		const baseInfo = measureSceneInfo();
 		baseline = {
 			meshes: baseResult.counts.meshes,
@@ -570,13 +1229,31 @@ async function loadModel(bytes, name) {
 			triangles: baseInfo.triangles
 		};
 		freeUsd(baseResult.usd);
+		baseResult = null;
 
 		// Now the current selection, then frame the camera once for this model.
+		const processStart = performance.now();
+		showProgress('processing', 45, 'Converting with current options...');
 		await rebuild();
+		if (stats) stats.processMs = performance.now() - processStart;
 		frameCameraToScene();
+		finishLoadStats(stats);
+		window.renderComplete = true;
+		if (!textureManager || textureManager.total <= 0) {
+			showProgress('complete', 100, 'Load complete');
+			hideProgress();
+		}
+		updateDebugHandle();
 	} catch (err) {
 		console.error(err);
+		failLoadStats(stats);
+		window.renderError = err && err.message ? err.message : String(err);
+		updateDebugHandle();
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		if (baseResult) {
+			freeUsd(baseResult.usd);
+		}
+		releaseCurrentUSDResources({ clearRawBytes: true });
 	}
 }
 
@@ -584,25 +1261,51 @@ async function loadModel(bytes, name) {
 async function rebuild() {
 	if (!rawBytes) return;
 	setStatus('Converting with current options…');
-	// Stop any in-flight lazy texture loads bound to the old native scene before
-	// we free it below.
-	abortTextureManager();
+	showProgress('processing', 45, 'Converting with current options...');
+	// Stop texture loads, dispose Three.js/GPU objects, and free the previous
+	// native scene before parsing the next variant. This keeps repeated reloads
+	// and optimization toggles from retaining multiple large USD scenes at once.
+	releaseCurrentUSDResources();
+	let result = null;
 	try {
-		const result = await convertScene(rawBytes, currentName, params);
-		sceneMeta = readSceneMeta(result.usd);
-		freeUsd(currentUsd);
-		currentUsd = result.usd;
-		currentCounts = result.counts;
-		await mountScene(result.usd, {
+		result = await convertScene(rawBytes, currentName, {
+			...params,
+			progress: { label: 'Converting current scene', base: 45, range: 10 }
+		});
+		const usd = result.usd;
+		const counts = result.counts;
+		sceneMeta = readSceneMeta(usd);
+		currentUsd = usd;
+		result = null;
+		currentCounts = counts;
+		updateDebugHandle();
+		await mountScene(usd, {
 			skipTextures: !params.loadTextures, postProcess: true,
-			lazyTextures: params.loadTextures });
+			lazyTextures: params.loadTextures,
+			progressBase: 55,
+			progressRange: params.loadTextures ? 25 : 40 });
 		const info = measureSceneInfo();
-		updateStatsUI(result.counts, info);
+		updateStatsUI(counts, info);
 		setStatus(describeOptions());
 		startLazyTextureLoading();
+		// Without queued textures nothing else finishes the progress display:
+		// the scene-build phase tops out below 100% (base+range mapping) and
+		// hideProgress() only hides at >= 100. (With textures, the texture
+		// loader emits 'Textures complete'.)
+		if (!textureManager || textureManager.total <= 0) {
+			showProgress('complete', 100, 'Update complete');
+			hideProgress();
+		}
+		updateDebugHandle();
 	} catch (err) {
+		if (result) {
+			freeUsd(result.usd);
+		}
+		releaseCurrentUSDResources();
 		console.error(err);
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		showProgress('failed', 100, 'Update failed');
+		updateDebugHandle();
 	}
 }
 
@@ -611,22 +1314,35 @@ async function rebuild() {
 async function reapplyThreePostProcess() {
 	if (!currentUsd || !currentCounts) return;
 	setStatus('Applying three.js post-process…');
+	showProgress('postprocess', 65, 'Applying three.js post-process...');
 	try {
 		await mountScene(currentUsd, {
 			skipTextures: !params.loadTextures, postProcess: true,
-			lazyTextures: params.loadTextures });
+			lazyTextures: params.loadTextures,
+			progressBase: 65,
+			progressRange: params.loadTextures ? 15 : 30 });
 		const info = measureSceneInfo();
 		updateStatsUI(currentCounts, info);
 		setStatus(describeOptions());
 		startLazyTextureLoading();
+		if (!textureManager || textureManager.total <= 0) {
+			showProgress('complete', 100, 'Update complete');
+			hideProgress();
+		}
 	} catch (err) {
 		console.error(err);
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		showProgress('failed', 100, 'Update failed');
 	}
 }
 
 function describeOptions() {
 	const on = [];
+	const backend = currentUsd?.__backend || params.backend || 'legacy';
+	const workerNote = currentUsd?.__workerConverted ? '/worker' : '';
+	const backendNote = `backend ${backend}` +
+		workerNote +
+		(currentUsd?.__backendFallbackReason ? ` (fallback: ${currentUsd.__backendFallbackReason})` : '');
 	if (params.materialDedup) on.push('material-dedup');
 	if (params.mergeMeshes) on.push(params.mergeMeshesBakeTransform ? 'merge-meshes(bake)' : 'merge-meshes');
 	if (params.flattenRenderTree) on.push('flatten-tree');
@@ -644,9 +1360,15 @@ function describeOptions() {
 		js.push(`batched ${b.batchedMeshCount} meshes → ${b.batchCount} BatchedMesh`);
 	}
 	const jsNote = js.length ? ` · three.js: ${js.join(', ')}` : '';
+	const nativeStats = currentCounts?.stats;
+	const nativeNote = nativeStats && backend === 'next'
+		? ` · native ${nativeStats.sourceMeshes ?? '?'}→${nativeStats.optimizedMeshes ?? '?'} meshes, ` +
+			`${nativeStats.sourceMaterials ?? '?'}→${nativeStats.optimizedMaterials ?? '?'} mats, ` +
+			`${nativeStats.sourceTextures ?? '?'}→${nativeStats.optimizedTextures ?? '?'} tex`
+		: '';
 
-	return (on.length ? on.join(', ') : 'no optimizations') +
-		` · upAxis ${sceneMeta.upAxis}${scaleNote}${jsNote}`;
+	return `${backendNote} · ` + (on.length ? on.join(', ') : 'no optimizations') +
+		` · upAxis ${sceneMeta.upAxis}${scaleNote}${nativeNote}${jsNote}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -655,6 +1377,170 @@ function describeOptions() {
 
 function setStatus(msg) {
 	document.getElementById('status').textContent = msg;
+}
+
+function updateDebugHandle() {
+	window.__materialDedupDebug = {
+		scene,
+		root: usdSceneRoot,
+		textureManager,
+		textureCache,
+		currentUsd,
+		currentCounts,
+		nativeStats: currentCounts?.stats || null,
+		loadStats: activeLoadStats,
+		progress: activeProgress,
+		progressHistory,
+		pickedObject,
+		params
+	};
+}
+
+function compactValue(value, max = 180) {
+	if (value === undefined || value === null || value === '') return '';
+	const text = typeof value === 'string' ? value : JSON.stringify(value);
+	return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function materialTextureLines(material) {
+	const lines = [];
+	const mapKeys = [
+		'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap',
+		'emissiveMap', 'alphaMap', 'specularColorMap', 'displacementMap'
+	];
+	for (const key of mapKeys) {
+		const texture = material?.[key];
+		if (texture?.isTexture) {
+			const image = texture.image;
+			const size = image && image.width && image.height
+				? ` ${image.width}x${image.height}` : '';
+			lines.push(`${key}: loaded${size}`);
+		}
+	}
+	const nextPaths = material?.userData?.nextTexturePaths;
+	if (nextPaths) {
+		for (const [key, path] of Object.entries(nextPaths)) {
+			if (path) lines.push(`${key} path: ${path}`);
+		}
+	}
+	return lines;
+}
+
+function materialSummary(material, fallbackEntry = null) {
+	const lines = [];
+	const entryMaterial = fallbackEntry?.material || null;
+	const nextMaterial = material?.userData?.nextMaterial || null;
+	const id = nextMaterial?.id ?? fallbackEntry?.materialId ?? material?.userData?.materialId;
+	const key = nextMaterial?.key ?? fallbackEntry?.materialKey;
+	const primPath = nextMaterial?.primPath ?? entryMaterial?.primPath;
+	lines.push(`material type: ${material?.type || '(none)'}`);
+	if (Number.isFinite(id)) lines.push(`material id: ${id}`);
+	if (key) lines.push(`material key: ${compactValue(key)}`);
+	if (primPath) lines.push(`material prim: ${primPath}`);
+	if (material?.color) {
+		lines.push(`color: #${material.color.getHexString()}`);
+	}
+	if (Number.isFinite(material?.metalness)) lines.push(`metalness: ${material.metalness}`);
+	if (Number.isFinite(material?.roughness)) lines.push(`roughness: ${material.roughness}`);
+	if (Number.isFinite(material?.opacity)) lines.push(`opacity: ${material.opacity}`);
+	const textureLines = materialTextureLines(material);
+	const entryPaths = fallbackEntry?.texturePaths;
+	if (entryPaths) {
+		for (const [slot, path] of Object.entries(entryPaths)) {
+			if (path && !textureLines.some((line) => line.includes(path))) {
+				textureLines.push(`${slot} path: ${path}`);
+			}
+		}
+	}
+	if (textureLines.length) {
+		lines.push('textures:');
+		for (const line of textureLines) lines.push(`  ${line}`);
+	}
+	const rawData = material?.userData?.rawData;
+	if (rawData) {
+		const rawName = rawData.name || rawData.primName || rawData.absPath ||
+			rawData.abs_path || rawData.displayName || rawData.display_name;
+		if (rawName) lines.push(`raw material: ${rawName}`);
+		if (rawData.typeString || material.userData.typeString) {
+			lines.push(`raw type: ${rawData.typeString || material.userData.typeString}`);
+		}
+	}
+	return lines;
+}
+
+function materialIndexForIntersection(object, hit) {
+	const groups = object.geometry?.groups || [];
+	if (!groups.length || !Number.isFinite(hit?.faceIndex)) return -1;
+	const triOffset = hit.faceIndex * 3;
+	for (const group of groups) {
+		if (triOffset >= group.start && triOffset < group.start + group.count) {
+			return group.materialIndex;
+		}
+	}
+	return -1;
+}
+
+function showPickedObject(object, hit = null) {
+	pickedObject = object || null;
+	const panel = document.getElementById('pickInfo');
+	const details = document.getElementById('pickDetails');
+	if (!panel || !details) return;
+	if (!object) {
+		panel.style.display = 'none';
+		details.textContent = 'Click a mesh to inspect material and texture bindings.';
+		updateDebugHandle();
+		return;
+	}
+
+	const usdMesh = object.userData?.usdMesh || {};
+	const geometry = object.geometry;
+	const position = geometry?.attributes?.position;
+	const index = geometry?.getIndex?.();
+	const materialIndex = materialIndexForIntersection(object, hit);
+	const material = Array.isArray(object.material)
+		? object.material[Math.max(0, materialIndex)]
+		: object.material;
+	const fallbackEntry = materialIndex >= 0 && Array.isArray(usdMesh.materials)
+		? usdMesh.materials[materialIndex]
+		: {
+			materialId: usdMesh.materialId,
+			materialKey: usdMesh.materialKey,
+			material: usdMesh.material || {},
+			texturePaths: usdMesh.texturePaths || {}
+		};
+	const triangleCount = index
+		? Math.floor(index.count / 3)
+		: Math.floor((position?.count || 0) / 3);
+	const lines = [
+		`object: ${object.name || '(unnamed)'}`,
+		`mesh index: ${Number.isFinite(usdMesh.index) ? usdMesh.index : '(unknown)'}`,
+		`mesh name: ${usdMesh.primName || object.name || '(unknown)'}`,
+		`mesh path: ${usdMesh.primPath || '(not exposed)'}`,
+		`vertices: ${position?.count ?? 0}`,
+		`triangles: ${triangleCount}`,
+		`groups: ${geometry?.groups?.length || 0}`,
+		`picked group material: ${materialIndex >= 0 ? materialIndex : '(single/default)'}`
+	];
+	lines.push('');
+	lines.push(...materialSummary(material, fallbackEntry));
+	panel.style.display = 'block';
+	details.textContent = lines.join('\n');
+	updateDebugHandle();
+}
+
+function onCanvasPointerDown(event) {
+	if (!raycaster || !pointerNdc || !camera || !usdSceneRoot) return;
+	const rect = renderer.domElement.getBoundingClientRect();
+	pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+	pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+	raycaster.setFromCamera(pointerNdc, camera);
+	const hits = raycaster.intersectObjects(usdSceneRoot.children, true);
+	const hit = hits.find((h) => h.object?.isMesh);
+	if (hit) {
+		showPickedObject(hit.object, hit);
+	} else {
+		showPickedObject(null);
+	}
 }
 
 function deltaText(base, cur) {
@@ -702,6 +1588,13 @@ function refreshGuiControllers() {
 function buildGui() {
 	gui = new GUI({ title: 'Dedup / Optimization' });
 
+	const backendFolder = gui.addFolder('Backend');
+	guiControllers.push(backendFolder.add(params, 'backend', ['legacy', 'next', 'auto'])
+		.name('Loader Backend').onChange(rebuild));
+	guiControllers.push(backendFolder.add(params, 'useWorker')
+		.name('Worker Conversion').onChange(rebuild));
+	backendFolder.open();
+
 	const optFolder = gui.addFolder('Tydra Optimizations');
 	guiControllers.push(optFolder.add(params, 'materialDedup').name('Material Dedup').onChange(rebuild));
 	guiControllers.push(optFolder.add(params, 'mergeMeshes').name('Merge Meshes').onChange(rebuild));
@@ -742,25 +1635,50 @@ function buildGui() {
 async function loadSampleScene() {
 	const usda = buildSampleUSDA(Math.max(2, Math.round(params.sampleGrid)));
 	const bytes = new TextEncoder().encode(usda);
-	await loadModel(bytes, `sample ${params.sampleGrid}×${params.sampleGrid} grid`);
+	const stats = beginLoadStats(bytes.byteLength);
+	stats.fetchMs = 0;
+	currentIsGeneratedSample = true;
+	showProgress('fetch', 10, 'Generated sample scene');
+	await loadModel(bytes, `sample ${params.sampleGrid}×${params.sampleGrid} grid`, stats);
 }
 
-// Load a USD asset served over HTTP (e.g. ?url=assets/foo.usdc).
-async function loadModelFromURL(url) {
+// Load a USD asset served over HTTP.
+async function loadModelFromURL(url, stats = null) {
 	setStatus('Fetching ' + url + ' …');
+	const localStats = stats || beginLoadStats();
+	showProgress('fetch', 5, 'Fetching USD file...');
+	const fetchStart = performance.now();
 	const resp = await fetch(url);
 	if (!resp.ok) throw new Error(`fetch ${url}: ${resp.status}`);
 	const buf = await resp.arrayBuffer();
-	const name = url.split('/').pop() || url;
-	await loadModel(new Uint8Array(buf), name);
+	localStats.fetchMs = performance.now() - fetchStart;
+	localStats.fileSize = buf.byteLength;
+	currentIsGeneratedSample = false;
+	showProgress('fetch', 15, 'USD file fetched');
+	await loadModel(new Uint8Array(buf), getDisplayNameFromURI(url), localStats);
 }
 
 function setupFileInput() {
 	document.getElementById('fileInput').addEventListener('change', async (event) => {
 		const file = event.target.files[0];
 		if (!file) return;
-		const buf = await file.arrayBuffer();
-		await loadModel(new Uint8Array(buf), file.name);
+		const stats = beginLoadStats();
+		try {
+			showProgress('fetch', 5, 'Reading USD file...');
+			const readStart = performance.now();
+			const buf = await file.arrayBuffer();
+			stats.fetchMs = performance.now() - readStart;
+			stats.fileSize = buf.byteLength;
+			currentIsGeneratedSample = false;
+			showProgress('fetch', 15, 'USD file read');
+			await loadModel(new Uint8Array(buf), file.name, stats);
+		} catch (err) {
+			console.error(err);
+			failLoadStats(stats);
+			setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		} finally {
+			event.target.value = '';
+		}
 	});
 
 	document.getElementById('loadSampleBtn').addEventListener('click', loadSampleScene);
@@ -778,6 +1696,43 @@ function setupFileInput() {
 	});
 }
 
+function setupDragAndDrop() {
+	document.body.addEventListener('dragover', (event) => {
+		event.preventDefault();
+		document.body.classList.add('drag-over');
+	});
+	document.body.addEventListener('dragleave', (event) => {
+		if (!event.relatedTarget || !document.body.contains(event.relatedTarget)) {
+			document.body.classList.remove('drag-over');
+		}
+	});
+	document.body.addEventListener('drop', async (event) => {
+		event.preventDefault();
+		document.body.classList.remove('drag-over');
+		const file = event.dataTransfer?.files?.[0];
+		if (!file) return;
+		if (!/\.(usd|usda|usdc|usdz)$/i.test(file.name)) {
+			setStatus('Please drop a USD file (.usd, .usda, .usdc, .usdz)');
+			return;
+		}
+		const stats = beginLoadStats();
+		try {
+			showProgress('fetch', 5, 'Reading dropped USD file...');
+			const readStart = performance.now();
+			const buf = await file.arrayBuffer();
+			stats.fetchMs = performance.now() - readStart;
+			stats.fileSize = buf.byteLength;
+			currentIsGeneratedSample = false;
+			showProgress('fetch', 15, 'USD file read');
+			await loadModel(new Uint8Array(buf), file.name, stats);
+		} catch (err) {
+			console.error(err);
+			failLoadStats(stats);
+			setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+		}
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
@@ -786,8 +1741,10 @@ async function main() {
 	initThree();
 	buildGui();
 	setupFileInput();
+	setupDragAndDrop();
 
-	// Allow ?url=<served-usd> to load an asset directly (handy for testing
+	// Allow ?uri= / ?url= / ?src= / ?model= / ?usd= to load an asset directly
+	// (handy for testing
 	// large external models without the file picker). Optional flags configure
 	// the initial state (avoids extra re-conversions when scripting tests):
 	//   textures=1  dedup=0/1  merge=0/1  bake=0/1  flatten=0/1  js=1
@@ -797,6 +1754,11 @@ async function main() {
 		return v == null ? cur : (v === '1' || v === 'true');
 	};
 	params.loadTextures = flag('textures', params.loadTextures);
+	params.useWorker = flag('worker', params.useWorker);
+	const backend = search.get('backend');
+	if (backend === 'legacy' || backend === 'next' || backend === 'auto') {
+		params.backend = backend;
+	}
 	params.materialDedup = flag('dedup', params.materialDedup);
 	params.mergeMeshes = flag('merge', params.mergeMeshes);
 	params.mergeMeshesBakeTransform = flag('bake', params.mergeMeshesBakeTransform);
@@ -806,14 +1768,14 @@ async function main() {
 		params.jsBatchByMaterial = true;
 	}
 	refreshGuiControllers();
-	const urlParam = search.get('url');
+	const urlParam = getStartupUSDModelURI(search);
 	if (urlParam) {
 		try {
 			await loadModelFromURL(urlParam);
 			return;
 		} catch (err) {
 			console.error(err);
-			setStatus('Error loading ?url: ' + (err && err.message ? err.message : String(err)));
+			setStatus('Error loading URL: ' + (err && err.message ? err.message : String(err)));
 		}
 	}
 	await loadSampleScene();

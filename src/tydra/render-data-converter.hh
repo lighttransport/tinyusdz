@@ -151,6 +151,18 @@ struct MeshConverterConfig {
   std::string default_texcoords_primvar_name{"st"};
   std::string default_texcoords1_primvar_name{
       "st1"};  // for multi texture(available from iOS 16/macOS 13)
+
+  // When true, additionally extract EVERY authored `texCoord2f[]` primvar into a
+  // RenderMesh.texcoords slot, not just the material-referenced ones. Lets tools
+  // expose secondary UV sets (multi-UV) even when no shader reads them. Off by
+  // default so the standard render path's slot assignment is unchanged.
+  bool extract_all_texcoords{false};
+
+  // When true, retain RenderMesh.triangulatedFaceCounts (per original face, the
+  // number of triangles it produced) instead of freeing it after triangulation.
+  // Lets tools map each output triangle back to its source USD face. Off by
+  // default (the data is freed as before).
+  bool keep_triangulation_intermediates{false};
   std::string default_tangents_primvar_name{"tangents"};
   std::string default_binormals_primvar_name{"binormals"};
 
@@ -328,6 +340,16 @@ struct MaterialConverterConfig {
   // purpose name for two-sided material mapping.
   // https://github.com/syoyo/tinyusdz/issues/120
   std::string default_backface_material_purpose_name{"back"};
+
+  // Assign a generated RenderMaterial to meshes that have no authored material
+  // binding. Disabled by default to preserve legacy `material_id == -1`
+  // behavior for callers that distinguish unbound geometry.
+  bool assign_default_material{false};
+  std::string default_material_name{"defaultMaterial"};
+  vec3 default_material_diffuse_color{0.18f, 0.18f, 0.18f};
+  float default_material_roughness{0.5f};
+  float default_material_metallic{0.0f};
+  float default_material_opacity{1.0f};
 
   // DefaultTextureImageLoader will be used when nullptr;
   TextureImageLoaderFunction texture_image_loader_function{nullptr};
@@ -822,6 +844,30 @@ class RenderSceneConverter {
                           const std::string& mesh_name, const std::string& message);
 
   ///
+  /// Streaming emit helpers (for use by MeshVisitor and the node builders during
+  /// ConvertToRenderSceneStreaming). Each returns true (continue) when no sink is
+  /// set or the corresponding slot is unset; otherwise it calls the slot and
+  /// returns its bool (false == cancel). They read the just-appended element from
+  /// this converter's member array by index.
+  ///
+  /// True while a streaming sink is active (inside ConvertToRenderSceneStreaming).
+  bool HasStreamingSink() const { return _sink != nullptr; }
+  bool EmitPhase(StreamPhase phase);
+  bool EmitImage(size_t index);
+  bool EmitBuffer(size_t index);
+  bool EmitTexture(size_t index, const std::string &abs_path);
+  bool EmitUdimTexture(size_t index);
+  bool EmitMaterial(size_t index, const std::string &abs_path);
+  bool EmitMesh(size_t index, const std::string &abs_path);
+  bool EmitLight(size_t index, const std::string &abs_path);
+  bool EmitCamera(size_t index, const std::string &abs_path);
+  bool EmitRootNode(size_t index);
+  bool EmitSkeleton(size_t index, const std::string &abs_path);
+  bool EmitAnimation(size_t index, const std::string &abs_path);
+  bool EmitInstance(size_t index, const std::string &abs_path);
+  bool EmitComplete(const RenderScene &scene);
+
+  ///
   /// All-in-one Stage to RenderScene conversion.
   ///
   /// Convert Stage to RenderScene.
@@ -829,10 +875,34 @@ class RenderSceneConverter {
   ///
   bool ConvertToRenderScene(const RenderSceneConverterEnv &env, RenderScene *scene);
 
+  ///
+  /// Streaming (progressive) variant of ConvertToRenderScene.
+  ///
+  /// Runs the SAME phases as ConvertToRenderScene and ALSO fully populates
+  /// `scene` (so callers get the complete result), while invoking `sink`
+  /// callbacks at each production point so a consumer can upload / display
+  /// meshes, materials and textures as they are produced.
+  ///
+  /// Any sink callback returning false cancels conversion: this function then
+  /// returns false and `*scene` is left unpopulated (the elements already
+  /// delivered via callbacks are the partial result). On success `*scene` is
+  /// populated identically to ConvertToRenderScene.
+  ///
+  /// All callbacks fire synchronously on the calling thread; keep them fast
+  /// (enqueue-only) if conversion runs on a worker thread. See `RenderSceneSink`.
+  ///
+  bool ConvertToRenderSceneStreaming(const RenderSceneConverterEnv &env,
+                                     const RenderSceneSink &sink,
+                                     RenderScene *scene);
+
   const std::string &GetInfo() const { return _info; }
   const std::string &GetWarning() const { return _warn; }
   const std::string &GetError() const { return _err; }
   const std::string &GetTimingInfo() const { return _timing_info; }
+
+  // Append a warning line. Public so free-function prim visitors (which hold a
+  // RenderSceneConverter*) can record non-fatal degradations.
+  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
 
   // Prim path <-> index for corresponding array
   // e.g. meshMap: primPath/index to `meshes`.
@@ -847,6 +917,7 @@ class RenderSceneConverter {
   StringAndIdMap imageMap;
   StringAndIdMap bufferMap;
   StringAndIdMap animationMap;
+  StringAndIdMap volumeMap;  ///< UsdVol Volume prim path -> volumes index
 
   // UDIM info cache, keyed by the (un-resolved) `<UDIM>` asset path. Used to
   // restore UDIM remap / sparse-texture linkage when a UDIM texture image is
@@ -874,6 +945,7 @@ class RenderSceneConverter {
   ChunkedVectorArray<SkelHierarchy> skeletons;
   ChunkedVectorArray<AnimationClip> animations;
   ChunkedVectorArray<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  ChunkedVectorArray<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
@@ -887,6 +959,7 @@ class RenderSceneConverter {
   std::vector<SkelHierarchy> skeletons;
   std::vector<AnimationClip> animations;
   std::vector<RenderInstance> instances;  ///< USD instancing (Spec 11.3.3)
+  std::vector<RenderVolume> volumes;      ///< UsdVol volumes (OpenVDB)
 #endif
 
   // Pre-discovered skeleton/animation prims for ancestor-based discovery
@@ -1003,6 +1076,46 @@ class RenderSceneConverter {
           &blendshapes,
       RenderMesh *dst);
 
+  bool ConvertCylinder(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
+      const tinyusdz::GeomCylinder &cylinder, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  bool ConvertCone(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
+      const tinyusdz::GeomCone &cone, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  bool ConvertCapsule(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
+      const tinyusdz::GeomCapsule &capsule, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  bool ConvertPlane(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &abs_path,
+      const tinyusdz::GeomPlane &plane, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
   bool ConvertMesh(
       const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
       const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
@@ -1013,6 +1126,16 @@ class RenderSceneConverter {
       const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
+
+  ///
+  /// Convert a UsdVol Volume prim into a RenderVolume: resolve each `field:*`
+  /// relationship to its field-asset prim, read that prim's `filePath` via the
+  /// env asset resolver, decode the referenced `.vdb` grid (usdVol loader) into
+  /// a dense float buffer (appended to `buffers`), and fill the RenderVolume.
+  ///
+  bool ConvertVolume(
+      const RenderSceneConverterEnv &env, const std::string &volume_abs_path,
+      const tinyusdz::Volume &volume, RenderVolume *dst);
 
   ///
   /// Compute tangents/binormals for a RenderMesh that had deferred tangent
@@ -1119,6 +1242,15 @@ class RenderSceneConverter {
                         const Path &abs_path,
                         const std::string &prim_name,
                         const Xformable &xformable,
+                        int32_t target_node_index,
+                        AnimationClip *anim_out);
+
+  /// Extract numeric non-xform attribute time samples from any render node prim
+  /// into CustomProperty channels. This covers camera, light, material/shader,
+  /// and schema-specific parameter animation when a node exists for the prim.
+  bool ExtractPrimPropertyAnimation(const RenderSceneConverterEnv &env,
+                        const Prim &prim,
+                        const Path &abs_path,
                         int32_t target_node_index,
                         AnimationClip *anim_out);
 
@@ -1250,6 +1382,8 @@ class RenderSceneConverter {
                                    int64_t *material_id) const;
   void RememberMaterialSourceSignature(const std::string &signature,
                                        int64_t material_id);
+  bool GetOrCreateDefaultMaterial(const RenderSceneConverterEnv &env,
+                                  int *material_id);
 
   // Wrapper around GetBoundMaterial with caching.
   // Avoids repeated ancestor walks for sibling prims.
@@ -1323,6 +1457,10 @@ class RenderSceneConverter {
   // and finding which Skeleton(s) reference each via their skel:animationSource relationship.
   bool ConvertAllSkelAnimations(const RenderSceneConverterEnv &env);
 
+  // Resolve SkelAnimation blendShapeWeights channels to mesh nodes after the
+  // render node hierarchy has stable node indices.
+  bool ResolveBlendShapeAnimationTargets();
+
   /// Process a single XformNode's data into a Node (no children).
   bool BuildSingleNode(
     const RenderSceneConverterEnv &env,
@@ -1345,7 +1483,6 @@ class RenderSceneConverter {
   bool IsMeshMergeable(const RenderMesh &mesh) const;
 
   void PushInfo(const std::string &msg) { _info += msg + "\n"; }
-  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
   void PushError(const std::string &msg) { _err += msg + "\n"; }
 
   ///
@@ -1362,6 +1499,16 @@ class RenderSceneConverter {
   ///
   bool CallDetailedProgressCallback(const DetailedProgressInfo &info);
 
+  ///
+  /// Shared implementation behind ConvertToRenderScene (sink == nullptr) and
+  /// ConvertToRenderSceneStreaming (sink != nullptr). With a null sink the
+  /// Emit* helpers are no-ops, so the code path and output are identical to the
+  /// legacy ConvertToRenderScene.
+  ///
+  bool ConvertToRenderSceneImpl(const RenderSceneConverterEnv &env,
+                                RenderScene *scene,
+                                const RenderSceneSink *sink);
+
   std::string _info;
   std::string _err;
   std::string _warn;
@@ -1376,6 +1523,10 @@ class RenderSceneConverter {
 
   // Progress state for detailed tracking
   mutable DetailedProgressInfo _progress_info;
+
+  // Streaming sink for ConvertToRenderSceneStreaming. Set for the duration of
+  // ConvertToRenderSceneImpl when streaming, nullptr otherwise. Not owned.
+  const RenderSceneSink *_sink{nullptr};
 
   // Reusable buffers for mesh conversion to avoid repeated allocation
   mutable std::vector<value::float3> _tmp_points_buffer;

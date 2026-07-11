@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
-#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -134,24 +133,10 @@ class TypedArray {
   const_reference operator[](size_type index) const { return data()[index]; }
 
   reference at(size_type index) {
-#if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-    // Exceptions disabled - just return element
-#else
-    if (index >= size()) {
-      throw std::out_of_range("TypedArray::at: index out of range");
-    }
-#endif
     return data()[index];
   }
 
   const_reference at(size_type index) const {
-#if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-    // Exceptions disabled - just return element
-#else
-    if (index >= size()) {
-      throw std::out_of_range("TypedArray::at: index out of range");
-    }
-#endif
     return data()[index];
   }
 
@@ -185,45 +170,15 @@ class TypedArray {
 
   nonstd::span<T> subspan(size_type offset,
                           size_type count = static_cast<size_type>(-1)) {
-#if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-    // Exceptions disabled - no bounds checking
-#else
-    if (offset > size()) {
-      throw std::out_of_range("TypedArray::subspan: offset out of range");
-    }
-#endif
     size_type actual_count =
         (count == static_cast<size_type>(-1)) ? (size() - offset) : count;
-#if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-    // Exceptions disabled - no bounds checking
-#else
-    if (offset + actual_count > size()) {
-      throw std::out_of_range(
-          "TypedArray::subspan: count exceeds array bounds");
-    }
-#endif
     return nonstd::span<T>(data() + offset, actual_count);
   }
 
   nonstd::span<const T> subspan(
       size_type offset, size_type count = static_cast<size_type>(-1)) const {
-#if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-    // Exceptions disabled - no bounds checking
-#else
-    if (offset > size()) {
-      throw std::out_of_range("TypedArray::subspan: offset out of range");
-    }
-#endif
     size_type actual_count =
         (count == static_cast<size_type>(-1)) ? (size() - offset) : count;
-#if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-    // Exceptions disabled - no bounds checking
-#else
-    if (offset + actual_count > size()) {
-      throw std::out_of_range(
-          "TypedArray::subspan: count exceeds array bounds");
-    }
-#endif
     return nonstd::span<const T>(data() + offset, actual_count);
   }
 
@@ -449,8 +404,6 @@ class TypedArray {
     double growth_ratio = static_cast<double>(required_bytes) /
                           static_cast<double>(current_bytes);
     if (growth_ratio > max_growth_factor) {
-      // throw std::runtime_error("transform_with_limit: required buffer growth
-      // exceeds limit");
       return result;
     }
 
@@ -683,13 +636,6 @@ class TypedArrayView {
   reference operator[](size_type index) const { return _span[index]; }
 
   reference at(size_type index) const {
-#if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-    // Exceptions disabled - just return element
-#else
-    if (index >= size()) {
-      throw std::out_of_range("TypedArrayView::at: index out of range");
-    }
-#endif
     return _span[index];
   }
 

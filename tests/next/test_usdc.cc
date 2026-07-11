@@ -178,7 +178,37 @@ void test_crate_reader_invalid() {
 void test_read_usdc_file() {
   std::cout << "Testing USDC file reading..." << std::endl;
 
-  // Try to find a test USDC file
+  const char* required_files[] = {
+    "../../../tests/usdc/simple.usdc",
+    "../../tests/usdc/simple.usdc",
+    "../tests/usdc/simple.usdc",
+    "./tests/usdc/simple.usdc",
+  };
+
+  const char* required_file = nullptr;
+  for (const char* path : required_files) {
+    std::ifstream f(path);
+    if (f.good()) {
+      required_file = path;
+      break;
+    }
+  }
+
+  if (required_file) {
+    USDCLoadResult result = LoadUSDCFromFile(required_file);
+    if (!result.success) {
+      std::cout << "  Required fixture parse failed: " << required_file << std::endl;
+      if (!result.errors.empty()) {
+        std::cout << "  Error: " << result.errors[0].message << std::endl;
+      }
+    }
+    assert(result.success);
+    assert(!result.stage.GetRootPrims().empty());
+  } else {
+    std::cout << "  Skipping required fixture assertion (tests/usdc/simple.usdc not found from cwd)" << std::endl;
+  }
+
+  // Try to find an optional larger model for diagnostic coverage.
   const char* test_files[] = {
     "../../../models/suzanne.usdc",
     "../../models/suzanne.usdc",
@@ -209,7 +239,6 @@ void test_read_usdc_file() {
     if (!result.errors.empty()) {
       std::cout << "  Error: " << result.errors[0].message << std::endl;
     }
-    // Don't assert - file might be unsupported version
   } else {
     std::cout << "  Version: " << result.version.to_string() << std::endl;
     auto roots = result.stage.GetRootPrims();
@@ -223,9 +252,189 @@ void test_read_usdc_file() {
   std::cout << "  USDC file reading test completed!" << std::endl;
 }
 
+void test_openusd_compressed_value_reps_equal_raw_size() {
+  std::cout << "Testing OpenUSD compressed ValueRep table edge case..." << std::endl;
+
+  const char* paths[] = {
+    "../../../tests/usdc/composition/references-001.usdc",
+    "../../tests/usdc/composition/references-001.usdc",
+    "../tests/usdc/composition/references-001.usdc",
+    "./tests/usdc/composition/references-001.usdc",
+  };
+
+  const char* found = nullptr;
+  for (const char* path : paths) {
+    std::ifstream f(path, std::ios::binary);
+    if (f.good()) {
+      found = path;
+      break;
+    }
+  }
+
+  if (!found) {
+    std::cout << "  Skipping (references-001.usdc fixture not found)" << std::endl;
+    return;
+  }
+
+  std::ifstream ifs(found, std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(ifs)),
+                    std::istreambuf_iterator<char>());
+  assert(!bytes.empty());
+
+  CrateReader reader;
+  CrateReadResult result = reader.ReadOwned(std::move(bytes));
+  if (!result.success) {
+    std::cout << "  Error: "
+              << (result.errors.empty() ? std::string("(none)")
+                                        : result.errors[0].message)
+              << std::endl;
+  }
+  assert(result.success);
+
+  const Layer* layer = result.stage.GetRootLayer();
+  assert(layer);
+  const PrimSpec* sphere = layer->prim_at_path("/sphere1");
+  assert(sphere);
+  assert(sphere->meta().references.size() == 1);
+  assert(sphere->meta().references[0].find("scene-001.usdc") != std::string::npos);
+
+  std::cout << "  OpenUSD compressed ValueRep edge case passed!" << std::endl;
+}
+
+// ============================================================
+// Regression: pxr inlines integer-valued Vec3f/Vec4f as packed int8s in the
+// value rep. The reader must reconstruct them as Float3/Float4 — they were
+// unpacked as Half3/Half4, which no as_float3()/as_float4() consumer accepts
+// (xformOp:scale = (1,1,1) evaluated as identity). Fixture authored via pxr
+// usdcat from tests/usda/inlined-intvec-001.usda.
+// ============================================================
+
+void test_inlined_int_vec_reconstruction() {
+  std::cout << "Testing inlined integer-valued Vec3f/Vec4f reconstruction..." << std::endl;
+
+  const char* candidates[] = {
+    "../../../tests/usdc/inlined-intvec-001.usdc",
+    "../../tests/usdc/inlined-intvec-001.usdc",
+    "../tests/usdc/inlined-intvec-001.usdc",
+    "./tests/usdc/inlined-intvec-001.usdc",
+  };
+  const char* fixture = nullptr;
+  for (const char* path : candidates) {
+    std::ifstream f(path);
+    if (f.good()) { fixture = path; break; }
+  }
+  if (!fixture) {
+    std::cout << "  Skipping (tests/usdc/inlined-intvec-001.usdc not found from cwd)" << std::endl;
+    return;
+  }
+
+  USDCLoadResult result = LoadUSDCFromFile(fixture);
+  assert(result.success);
+
+  UsdPrim root = result.stage.GetPrimAtPath("/root");
+  assert(root.IsValid());
+
+  // Inlined (integer-valued) float3s must come back as Float3.
+  const Value* rot = root.GetPropertyValue("xformOp:rotateXYZ");
+  assert(rot && rot->type_id() == TypeId::Float3);
+  const float* rf = rot->as_float3();
+  assert(rf && rf[0] == 0.0f && rf[1] == 0.0f && rf[2] == -64.0f);
+
+  const Value* scale = root.GetPropertyValue("xformOp:scale");
+  assert(scale && scale->type_id() == TypeId::Float3);
+  const float* sf = scale->as_float3();
+  assert(sf && sf[0] == 1.0f && sf[1] == 1.0f && sf[2] == 1.0f);
+
+  // Non-integer double3 takes the regular payload path.
+  const Value* tr = root.GetPropertyValue("xformOp:translate");
+  assert(tr);
+  const double* td = tr->as_double3();
+  assert(td && td[0] == 22.5 && td[1] == 19.25 && td[2] == 0.0);
+
+  UsdPrim quad = result.stage.GetPrimAtPath("/root/quad");
+  assert(quad.IsValid());
+
+  // Inlined (integer-valued) float4 must come back as Float4.
+  const Value* v4 = quad.GetPropertyValue("primvars:testInlinedVec4");
+  assert(v4 && v4->type_id() == TypeId::Float4);
+  const float* v4f = v4->as_float4();
+  assert(v4f && v4f[0] == 1.0f && v4f[1] == -2.0f && v4f[2] == 3.0f && v4f[3] == 4.0f);
+
+  // Non-integer float3/float4 controls (non-inlined payload path).
+  const Value* c3 = quad.GetPropertyValue("primvars:testControlVec3");
+  assert(c3);
+  const float* c3f = c3->as_float3();
+  assert(c3f && c3f[0] == 0.5f && c3f[1] == 1.5f && c3f[2] == -2.5f);
+
+  const Value* c4 = quad.GetPropertyValue("primvars:testControlVec4");
+  assert(c4);
+  const float* c4f = c4->as_float4();
+  assert(c4f && c4f[0] == 0.25f && c4f[1] == 1.75f && c4f[2] == -3.5f && c4f[3] == 8.125f);
+
+  std::cout << "  Inlined integer-valued vec reconstruction passed!" << std::endl;
+}
+
 // ============================================================
 // Main
 // ============================================================
+
+
+// Regression: pxr inlines int64 as an exact int32 in the low payload bits —
+// sign-extending from bit 47 decoded -1 as +4294967295. Also: inlined
+// integer-valued half3/half4 must keep TypeId::Half3/Half4 (they were
+// reconstructed as Float3/Float4, mutating the type based on whether pxr
+// happened to inline the value). Fixture authored via pxr usdcat from
+// tests/usda/inlined-scalar-001.usda.
+void test_inlined_scalar_reconstruction() {
+  std::cout << "Testing inlined int64 / half-vector reconstruction..." << std::endl;
+
+  const char* candidates[] = {
+    "../../../tests/usdc/inlined-scalar-001.usdc",
+    "../../tests/usdc/inlined-scalar-001.usdc",
+    "../tests/usdc/inlined-scalar-001.usdc",
+    "./tests/usdc/inlined-scalar-001.usdc",
+  };
+  const char* fixture = nullptr;
+  for (const char* path : candidates) {
+    std::ifstream f(path);
+    if (f.good()) { fixture = path; break; }
+  }
+  if (!fixture) {
+    std::cout << "  Skipping (tests/usdc/inlined-scalar-001.usdc not found from cwd)" << std::endl;
+    return;
+  }
+
+  USDCLoadResult result = LoadUSDCFromFile(fixture);
+  assert(result.success);
+  UsdPrim prim = result.stage.GetPrimAtPath("/T");
+  assert(prim.IsValid());
+
+  auto expect_i64 = [&prim](const char* name, int64_t expected) {
+    const Value* v = prim.GetPropertyValue(name);
+    assert(v);
+    const int64_t* iv = v->as_int64();
+    assert(iv && *iv == expected);
+  };
+  expect_i64("negOne", -1);          // inlined (int32-representable)
+  expect_i64("negBig", -2000000000); // inlined
+  expect_i64("posSmall", 42);        // inlined
+  expect_i64("nonInlined", 5000000000LL);
+
+  // Inlined half vectors keep their declared type and exact lanes.
+  const Value* hv = prim.GetPropertyValue("hv");
+  assert(hv && hv->type_id() == TypeId::Half3);
+  float h3[3];
+  assert(hv->to_float3(h3));
+  assert(h3[0] == 1.0f && h3[1] == 2.0f && h3[2] == 3.0f);
+
+  const Value* hv4 = prim.GetPropertyValue("hv4");
+  assert(hv4 && hv4->type_id() == TypeId::Half4);
+  float h4[4];
+  assert(hv4->to_float4(h4));
+  assert(h4[0] == 1.0f && h4[1] == -2.0f && h4[2] == 3.0f && h4[3] == 4.0f);
+
+  std::cout << "  Inlined int64 / half-vector reconstruction passed!" << std::endl;
+}
 
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Reader Tests ===" << std::endl;
@@ -239,6 +448,9 @@ int main() {
     test_lz4_decompression();
     test_crate_reader_invalid();
     test_read_usdc_file();
+    test_openusd_compressed_value_reps_equal_raw_size();
+    test_inlined_int_vec_reconstruction();
+    test_inlined_scalar_reconstruction();
 
     std::cout << std::endl;
     std::cout << "All USDC tests passed!" << std::endl;

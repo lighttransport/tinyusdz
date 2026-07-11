@@ -82,6 +82,34 @@ void path_expression_parse_test(void) {
   }
 }
 
+void path_expression_limits_test(void) {
+  {
+    std::string deeply_nested;
+    for (int i = 0; i < 300; i++) deeply_nested.push_back('(');
+    deeply_nested += "/A";
+    for (int i = 0; i < 300; i++) deeply_nested.push_back(')');
+    std::string err;
+    auto e = ParsedPathExpression::Parse(deeply_nested, &err);
+    TEST_CHECK(!e.valid());
+    TEST_CHECK(err.find("deep") != std::string::npos);
+  }
+
+  {
+    std::string many_nodes;
+    for (int i = 0; i < 3000; i++) {
+      if (i) many_nodes += " ";
+      many_nodes += "/A" + std::to_string(i);
+    }
+    std::string err;
+    auto e = ParsedPathExpression::Parse(many_nodes, &err);
+    TEST_CHECK(!e.valid());
+    TEST_CHECK(err.find("too many nodes") != std::string::npos);
+  }
+
+  // Stretch matching uses memoization and remains linear in the table size.
+  TEST_CHECK(Matches("/Root//Leaf", "/Root/A/B/C/D/E/F/G/H/I/J/Leaf"));
+}
+
 void path_expression_roundtrip_test(void) {
   // Exact canonical text round-trip for clean inputs.
   struct {

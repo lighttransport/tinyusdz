@@ -12,6 +12,10 @@ namespace tinyusdz {
 
 namespace {
 
+constexpr size_t kMaxPathExpressionBytes = size_t(1) << 20;  // 1 MiB
+constexpr size_t kMaxPathExpressionDepth = 256;
+constexpr size_t kMaxPathExpressionNodes = 4096;
+
 inline bool IsBlank(char c) { return c == ' ' || c == '\t'; }
 
 // Characters that can begin a path-expression factor (used to detect an
@@ -171,18 +175,22 @@ class Parser {
   explicit Parser(const std::string &s) : s_(s) {}
 
   std::unique_ptr<Node> ParseTop() {
+    if (s_.size() > kMaxPathExpressionBytes) {
+      Fail("Path expression is too large");
+      return nullptr;
+    }
     SkipBlanks();
     if (Eof()) {
       return nullptr;  // empty expression (valid)
     }
-    auto n = ParseExpr();
+    auto n = ParseExpr(0);
     if (failed_) return nullptr;
     SkipBlanks();
     if (!Eof()) {
       Fail("Unexpected trailing characters in path expression");
       return nullptr;
     }
-    return n;
+    return std::unique_ptr<Node>(std::move(n));
   }
 
   bool failed() const { return failed_; }
@@ -201,14 +209,23 @@ class Parser {
     }
   }
 
-  std::unique_ptr<Node> ParseExpr() {
-    auto left = ParseFactor();
+  bool NoteNode() {
+    if (++nodes_ > kMaxPathExpressionNodes) {
+      Fail("Path expression has too many nodes");
+      return false;
+    }
+    return true;
+  }
+
+  std::unique_ptr<Node> ParseExpr(size_t depth) {
+    auto left = ParseFactor(depth);
     if (failed_) return nullptr;
     while (true) {
       Op op;
       if (!ParseOperator(&op)) break;
-      auto right = ParseFactor();
+      auto right = ParseFactor(depth);
       if (failed_) return nullptr;
+      if (!NoteNode()) return nullptr;
       auto bin = std::make_unique<Node>();
       bin->kind = Node::K::BinOp;
       bin->binop = op;
@@ -216,10 +233,10 @@ class Parser {
       bin->b = std::move(right);
       left = std::move(bin);
     }
-    return left;
+    return std::unique_ptr<Node>(std::move(left));
   }
 
-  std::unique_ptr<Node> ParseFactor() {
+  std::unique_ptr<Node> ParseFactor(size_t depth) {
     SkipBlanks();
     bool complement = false;
     if (Peek() == '~') {
@@ -227,24 +244,29 @@ class Parser {
       pos_++;
       SkipBlanks();
     }
-    auto atom = ParseAtom();
+    auto atom = ParseAtom(depth);
     if (failed_) return nullptr;
     if (complement) {
+      if (!NoteNode()) return nullptr;
       auto c = std::make_unique<Node>();
       c->kind = Node::K::Complement;
       c->a = std::move(atom);
       return c;
     }
-    return atom;
+    return std::unique_ptr<Node>(std::move(atom));
   }
 
-  std::unique_ptr<Node> ParseAtom() {
+  std::unique_ptr<Node> ParseAtom(size_t depth) {
     SkipBlanks();
     char c = Peek();
     if (c == '(') {
+      if (depth >= kMaxPathExpressionDepth) {
+        Fail("Path expression nesting is too deep");
+        return nullptr;
+      }
       pos_++;
       SkipBlanks();
-      auto e = ParseExpr();
+      auto e = ParseExpr(depth + 1);
       if (failed_) return nullptr;
       SkipBlanks();
       if (Peek() != ')') {
@@ -252,7 +274,7 @@ class Parser {
         return nullptr;
       }
       pos_++;
-      return e;
+      return std::unique_ptr<Node>(std::move(e));
     }
     if (c == '%') {
       return ParseRef();
@@ -289,7 +311,8 @@ class Parser {
     auto n = std::make_unique<Node>();
     n->kind = Node::K::Ref;
     n->ref = std::move(ref);
-    return n;
+    if (!NoteNode()) return nullptr;
+    return std::unique_ptr<Node>(std::move(n));
   }
 
   std::unique_ptr<Node> ParsePattern() {
@@ -324,7 +347,8 @@ class Parser {
     auto n = std::make_unique<Node>();
     n->kind = Node::K::Pattern;
     n->pattern = DecomposePattern(raw);
-    return n;
+    if (!NoteNode()) return nullptr;
+    return std::unique_ptr<Node>(std::move(n));
   }
 
   // Per OpenUSD grammar: OptSpaced<'+'|'&'|'-'> | implied-union(plus<blank>).
@@ -357,6 +381,7 @@ class Parser {
 
   const std::string &s_;
   size_t pos_ = 0;
+  size_t nodes_ = 0;
   bool failed_ = false;
   std::string err_;
 };
@@ -366,24 +391,31 @@ void Flatten(const Node *n, std::vector<Op> *ops,
              std::vector<PathPattern> *patterns,
              std::vector<ExpressionReference> *refs) {
   if (!n) return;
-  switch (n->kind) {
-    case Node::K::Pattern:
-      ops->push_back(Op::Pattern);
-      patterns->push_back(n->pattern);
-      break;
-    case Node::K::Ref:
-      ops->push_back(Op::ExpressionRef);
-      refs->push_back(n->ref);
-      break;
-    case Node::K::Complement:
-      ops->push_back(Op::Complement);
-      Flatten(n->a.get(), ops, patterns, refs);
-      break;
-    case Node::K::BinOp:
-      ops->push_back(n->binop);
-      Flatten(n->a.get(), ops, patterns, refs);
-      Flatten(n->b.get(), ops, patterns, refs);
-      break;
+  std::vector<const Node *> stack;
+  stack.push_back(n);
+  while (!stack.empty()) {
+    const Node *cur = stack.back();
+    stack.pop_back();
+    if (!cur) continue;
+    switch (cur->kind) {
+      case Node::K::Pattern:
+        ops->push_back(Op::Pattern);
+        patterns->push_back(cur->pattern);
+        break;
+      case Node::K::Ref:
+        ops->push_back(Op::ExpressionRef);
+        refs->push_back(cur->ref);
+        break;
+      case Node::K::Complement:
+        ops->push_back(Op::Complement);
+        stack.push_back(cur->a.get());
+        break;
+      case Node::K::BinOp:
+        ops->push_back(cur->binop);
+        stack.push_back(cur->b.get());
+        stack.push_back(cur->a.get());
+        break;
+    }
   }
 }
 
@@ -482,7 +514,7 @@ struct Serializer {
     if (needGroup) {
       return "(" + sub + ")";
     }
-    return sub;
+    return std::string(std::move(sub));
   }
 };
 

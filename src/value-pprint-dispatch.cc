@@ -69,8 +69,22 @@ static void PrintArrayEditLiteral(std::ostream& os, const Value& lits,
   __FUNC(half2)                \
   __FUNC(half3)                \
   __FUNC(half4)                \
+  __FUNC(int16_t)              \
+  __FUNC(uint16_t)             \
   __FUNC(int32_t)              \
   __FUNC(uint32_t)             \
+  __FUNC(char2)                \
+  __FUNC(char3)                \
+  __FUNC(char4)                \
+  __FUNC(uchar2)               \
+  __FUNC(uchar3)               \
+  __FUNC(uchar4)               \
+  __FUNC(short2)               \
+  __FUNC(short3)               \
+  __FUNC(short4)               \
+  __FUNC(ushort2)              \
+  __FUNC(ushort3)              \
+  __FUNC(ushort4)              \
   __FUNC(int2)                 \
   __FUNC(int3)                 \
   __FUNC(int4)                 \
@@ -296,7 +310,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
     case TypeTraits<value::StringData>::type_id(): {
       auto p = v.as<value::StringData>();
       if (p) {
-        os << (*p);  // FIXME: Call buildEscapedAndQuotedStringForUSDA() here?
+        os << buildEscapedAndQuotedStringForUSDA(p->value);
       } else {
         os << "[InternalError: `string` type TypeId mismatch.]";
       }
@@ -325,6 +339,30 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
       break;
     }
     // uchar (uint8_t) needs special handling: os << uint8_t prints as char
+    case TypeTraits<char>::type_id(): {
+      auto p = v.as<char>();
+      if (p) {
+        os << static_cast<int>(*p);
+      } else {
+        os << "[InternalError: char TypeId mismatch.]";
+      }
+      break;
+    }
+    case TypeTraits<std::vector<char>>::type_id(): {
+      if (auto p = v.as<std::vector<char>>()) {
+        os << "[";
+        for (size_t i = 0; i < p->size(); ++i) {
+          if (i) {
+            os << ", ";
+          }
+          os << static_cast<int>((*p)[i]);
+        }
+        os << "]";
+      } else {
+        os << "[InternalError: char[] TypeId mismatch.]";
+      }
+      break;
+    }
     case TypeTraits<uint8_t>::type_id(): {
       auto p = v.as<uint8_t>();
       if (p) {

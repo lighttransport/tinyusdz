@@ -10,8 +10,10 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -23,6 +25,17 @@
 namespace tinyusdz {
 namespace next {
 namespace pcp {
+
+struct LayerLoadOptions {
+  /// Maximum file/input bytes for each loaded external layer (0 = no limit).
+  size_t max_memory = 0;
+
+  /// USDA parser options applied to each external USDA layer.
+  ParseOptions usda_parse_options = {};
+
+  /// USDA parser worker-thread hint (0 = auto/default, 1 = serial, >1 = fixed).
+  int parse_num_threads = 0;
+};
 
 class LayerRegistry {
  public:
@@ -43,7 +56,8 @@ class LayerRegistry {
   std::shared_ptr<Layer> GetOrLoad(AssetResolver &resolver,
                                    const std::string &asset_path,
                                    const std::string &anchor,
-                                   std::string *warn, std::string *err);
+                                   std::string *warn, std::string *err,
+                                   const LayerLoadOptions &options = {});
 
   /// Pre-register an in-memory layer under a resolved identifier (so a reference
   /// resolving to that id composes it without touching disk). Does not count as
@@ -98,15 +112,47 @@ class LayerRegistry {
 #endif
 };
 
-/// Load a layer from a resolved file path, dispatching by extension to the
-/// next USDA / USDC readers. Returns nullptr on failure. (USDZ: TODO.)
-/// `parse_num_threads` forwards to ParseOptions::num_threads for the USDA
-/// large-array parallel parse (0 = auto, 1 = serial, >1 = that many); ignored
-/// for crate. Lets a caller drive parse parallelism explicitly instead of via a
-/// process-environment variable.
+/// Load a layer from a resolved file/package path, dispatching by extension to
+/// the next USDA / USDC / USDZ readers. Returns nullptr on failure.
+/// `options.parse_num_threads` forwards to ParseOptions::num_threads for the
+/// USDA large-array parallel parse; `options.max_memory` caps USDA file size
+/// and USDC crate input/allocation checks.
+std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
+                                         std::string *warn, std::string *err,
+                                         const LayerLoadOptions &options);
+
+/// Back-compat overload for callers that only need USDA parse parallelism.
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
                                          int parse_num_threads = 0);
+
+/// Load a layer from an in-memory buffer, dispatching by content: the
+/// "PXR-USDC" magic selects the crate reader, a ZIP local-file header selects
+/// the USDZ reader (a package-path `key` like "pkg.usdz[entry.usdc]" selects
+/// that entry; otherwise the first .usdc/.usda entry), anything else parses as
+/// USDA text. `key` is used for diagnostics and package-entry selection only.
+/// Returns nullptr on failure.
+/// Synthesize a skeletal /MaterialX layer from MaterialX XML bytes (see
+/// layer-registry.cc for the produced prim shape). Used when a composition
+/// arc references a .mtlx document.
+std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
+                                               const uint8_t *data,
+                                               size_t size, std::string *warn,
+                                               std::string *err);
+
+/// Content sniff: true when the buffer looks like a MaterialX XML document.
+bool LooksLikeMtlxXML(const uint8_t *data, size_t size);
+
+std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
+                                           const uint8_t *data, size_t size,
+                                           std::string *warn, std::string *err,
+                                           const LayerLoadOptions &options = {});
+
+/// Owned-buffer variant: adopts `data` by move so USDC avoids a second copy
+/// and USDA lazy arrays can retain the source text.
+std::shared_ptr<Layer> LoadLayerFromMemoryOwned(
+    const std::string &key, std::string &&data, std::string *warn,
+    std::string *err, const LayerLoadOptions &options = {});
 
 }  // namespace pcp
 }  // namespace next

@@ -225,6 +225,14 @@ USDZWriteResult WriteUSDZToFile(const std::string& filename, const Stage& stage)
 USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
                                            const uint8_t* usdc_data,
                                            size_t usdc_size) {
+  const std::map<std::string, std::vector<uint8_t>> no_assets;
+  return WriteUSDZFromUSDCAndAssetsToMemory(buffer, usdc_data, usdc_size,
+                                            no_assets);
+}
+
+USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
+    std::vector<uint8_t>& buffer, const uint8_t* usdc_data, size_t usdc_size,
+    const std::map<std::string, std::vector<uint8_t>>& assets) {
   USDZWriteResult result;
 
   if (!usdc_data || usdc_size == 0) {
@@ -243,8 +251,32 @@ USDZWriteResult WriteUSDZFromUSDCToMemory(std::vector<uint8_t>& buffer,
     return result;
   }
 
-  // Write central directory
   std::vector<CentralDirEntry> entries = {entry};
+  for (const auto& asset : assets) {
+    const std::string& name = asset.first;
+    if (name.empty() || name == root_name || name[0] == '/' ||
+        name.find("..") != std::string::npos || name.find('\\') != std::string::npos) {
+      result.error = "Invalid USDZ asset path: " + name;
+      buffer.clear();
+      return result;
+    }
+    if (asset.second.size() > static_cast<size_t>(UINT32_MAX)) {
+      result.error = "USDZ asset exceeds ZIP32 size limit: " + name;
+      buffer.clear();
+      return result;
+    }
+    CentralDirEntry asset_entry;
+    const uint8_t* data = asset.second.empty() ? nullptr : asset.second.data();
+    if (!WriteLocalFileHeader(buffer, name, data, asset.second.size(),
+                              &asset_entry, &err)) {
+      result.error = err.empty() ? "Failed to write USDZ asset" : err;
+      buffer.clear();
+      return result;
+    }
+    entries.push_back(std::move(asset_entry));
+  }
+
+  // Write central directory
   WriteCentralDirectory(buffer, entries);
 
   result.bytes_written = buffer.size();

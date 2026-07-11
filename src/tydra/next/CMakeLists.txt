@@ -9,14 +9,20 @@ cmake_minimum_required(VERSION 3.10)
 set(TYDRA_NEXT_SOURCES
     render-data.cc
     scene-access.cc
+    render-extract.cc
     render-converter.cc
+    urdf-to-usd.cc
+    ../../external/mikktspace/mikktspace.c
 )
 
 set(TYDRA_NEXT_HEADERS
     chunked-array.hh
     render-data.hh
     scene-access.hh
+    render-extract.hh
     render-converter.hh
+    urdf-to-usd.hh
+    ../urdf-payload.hh
 )
 
 # Prepend source directory to all files
@@ -46,6 +52,24 @@ if(MSVC)
     target_compile_options(tydra_next PRIVATE /W4)
 else()
     target_compile_options(tydra_next PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# tydra_next uses no C++ RTTI and no C++ exceptions; disable both. The
+# TINYUSDZ_CXX_RTTI / _EXCEPTIONS variables are inherited from the parent project
+# when built as a subdirectory (undefined -> disabled when built standalone).
+if(NOT TINYUSDZ_CXX_RTTI)
+    if(MSVC)
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/GR->)
+    else()
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
+    endif()
+endif()
+if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/EHs-c->)
+    else()
+        target_compile_options(tydra_next PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>)
+    endif()
 endif()
 
 # Optional: Build test

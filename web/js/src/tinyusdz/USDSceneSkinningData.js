@@ -40,10 +40,14 @@ export function extractSkinnedMeshData(usdScene, options = {}) {
 
     const meshAbsPath = mesh.absPath || '';
     const meshName = meshAbsPath ? meshAbsPath.split('/').pop() : `mesh_${i}`;
+    let skelId = Number.isFinite(mesh.skel_id) ? mesh.skel_id : 0;
+    if (skelId < 0 && usdScene.numSkeletons && usdScene.numSkeletons() === 1) {
+      skelId = 0;
+    }
 
     const meshData = {
       meshId: i,
-      skel_id: mesh.skel_id !== undefined ? mesh.skel_id : 0,
+      skel_id: skelId,
       jointIndices: new Int32Array(mesh.jointIndices),
       jointWeights: toOwnedFloat32Array(mesh.jointWeights, 'mesh.jointWeights'),
       elementSize: mesh.elementSize || 4,
@@ -66,7 +70,7 @@ export function extractSkinnedMeshData(usdScene, options = {}) {
 
     if (verbose) {
       logger.log(`Mesh ${i}: ${meshAbsPath || '(no absPath)'} (name: ${meshName})`);
-      logger.log(`  - skel_id: ${mesh.skel_id}`);
+      logger.log(`  - skel_id: ${skelId}`);
       logger.log(`  - jointIndices: ${mesh.jointIndices ? mesh.jointIndices.length : 0} elements`);
       logger.log(`  - jointWeights: ${mesh.jointWeights ? mesh.jointWeights.length : 0} elements`);
       logger.log(`  - elementSize (influences per vertex): ${mesh.elementSize}`);
@@ -82,4 +86,3 @@ export function extractSkinnedMeshData(usdScene, options = {}) {
     skinnedMeshDataByName
   };
 }
-

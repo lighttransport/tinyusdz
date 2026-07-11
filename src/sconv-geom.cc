@@ -343,6 +343,15 @@ bool CrateWriter::ExtractMeshProperties(
     fields.push_back({"subdivisionScheme", crate_val});
   }
 
+  // triangleSubdivisionRule - TypedAttributeWithFallback<TriangleSubdivisionRule> (no Animatable!)
+  if (mesh->triangleSubdivisionRule.authored()) {
+    const auto& tri_rule = mesh->triangleSubdivisionRule.get_value();
+    crate::CrateValue crate_val;
+    value::token tok(to_string(tri_rule));
+    crate_val.Set(tok);
+    fields.push_back({"triangleSubdivisionRule", crate_val});
+  }
+
   // faceVaryingLinearInterpolation - TypedAttributeWithFallback<Animatable<FaceVaryingLinearInterpolation>>
   if (mesh->faceVaryingLinearInterpolation.authored()) {
     auto fv_interp_anim = mesh->faceVaryingLinearInterpolation.get_value();
@@ -453,6 +462,82 @@ bool CrateWriter::ExtractSphereProperties(
 
   if (sphere->radius.authored()) {
     if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius", fields, err)) return false;
+  }
+
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+// ============================================================================
+// UsdVol Property Extraction
+// ============================================================================
+
+// Emit one FieldAsset TypedAttribute<Animatable<T>> (get_value() yields an
+// optional<Animatable<T>>; unwrap before extracting).
+#define EXTRACT_FIELD_TYPED_ATTR(attr, attr_name)                              \
+  if ((attr).has_value()) {                                                    \
+    auto _anim = (attr).get_value();                                           \
+    if (_anim) {                                                               \
+      if (!ExtractAnimatableDefault(*_anim, attr_name, fields, err))           \
+        return false;                                                          \
+    }                                                                          \
+  }
+
+// Emit the common FieldAsset attributes (filePath / fieldName / fieldDataType /
+// fieldIndex). `field` may be an OpenVDBAsset/Field3DAsset bound as the base.
+#define EXTRACT_FIELD_ASSET_ATTRS(field)                  \
+  EXTRACT_FIELD_TYPED_ATTR((field).filePath, "filePath")  \
+  EXTRACT_FIELD_TYPED_ATTR((field).fieldName, "fieldName") \
+  EXTRACT_FIELD_TYPED_ATTR((field).fieldDataType, "fieldDataType") \
+  EXTRACT_FIELD_TYPED_ATTR((field).fieldIndex, "fieldIndex")
+
+bool CrateWriter::ExtractFieldAssetProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const FieldAsset* field = prim.data().as<FieldAsset>();
+  if (!field) { if (err) *err = "Failed to cast prim to FieldAsset"; return false; }
+  EXTRACT_FIELD_ASSET_ATTRS(*field)
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+bool CrateWriter::ExtractOpenVDBAssetProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const OpenVDBAsset* asset = prim.data().as<OpenVDBAsset>();
+  if (!asset) { if (err) *err = "Failed to cast prim to OpenVDBAsset"; return false; }
+  EXTRACT_FIELD_ASSET_ATTRS(*asset)
+  EXTRACT_FIELD_TYPED_ATTR(asset->fieldClass, "fieldClass")
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+bool CrateWriter::ExtractField3DAssetProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const Field3DAsset* asset = prim.data().as<Field3DAsset>();
+  if (!asset) { if (err) *err = "Failed to cast prim to Field3DAsset"; return false; }
+  EXTRACT_FIELD_ASSET_ATTRS(*asset)
+  EXTRACT_FIELD_TYPED_ATTR(asset->fieldPurpose, "fieldPurpose")
+  return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+#undef EXTRACT_FIELD_ASSET_ATTRS
+#undef EXTRACT_FIELD_TYPED_ATTR
+
+bool CrateWriter::ExtractVolumeProperties(
+  const Prim& prim, const Path& prim_path,
+  crate::FieldValuePairVector& fields, std::string* err
+) {
+  const Volume* volume = prim.data().as<Volume>();
+  if (!volume) { if (err) *err = "Failed to cast prim to Volume"; return false; }
+
+  // `field:<name>` relationships -> field-asset prim paths.
+  for (const auto& item : volume->fieldRelationships) {
+    const std::string rel_name = "field:" + item.first;
+    if (!ConvertRelationshipToFields(rel_name, item.second, prim_path, err)) {
+      return false;
+    }
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
@@ -1456,8 +1541,8 @@ bool CrateWriter::ExtractBlendShapeProperties(
     }
   }
 
-  // TODO: Handle inbetween blend shapes (stored in props with "inbetweens:" namespace)
-  // For now, just extract basic properties
+  // In-between blend shapes are namespaced attributes stored in BlendShape::props.
+  // ConvertSinglePrim emits them through the generic props-map path.
 
   return true;
 }

@@ -2,6 +2,7 @@
 #include <cstring>
 #include <algorithm>
 #include <fstream>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -27,23 +28,61 @@ struct LocalFileHeader {
 };
 #pragma pack(pop)
 
-bool USDZReader::OpenFile(const std::string& filename) {
-  std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
-  if (!ifs) return false;
-  size_t sz = static_cast<size_t>(ifs.tellg());
-  ifs.seekg(0);
-  file_data_.resize(sz);
-  ifs.read(reinterpret_cast<char*>(file_data_.data()), sz);
-  ifs.close();
-  return Open(file_data_.data(), sz);
+namespace {
+
+bool CheckedAdd(size_t a, size_t b, size_t* out) {
+  if (a > (std::numeric_limits<size_t>::max)() - b) return false;
+  *out = a + b;
+  return true;
 }
 
-bool USDZReader::Open(const uint8_t* data, size_t size) {
+}  // namespace
+
+bool USDZReader::OpenFile(const std::string& filename,
+                          const USDZReadOptions& options) {
+  error_.clear();
+  std::ifstream ifs(filename, std::ios::binary | std::ios::ate);
+  if (!ifs) {
+    error_ = "failed to open USDZ file: " + filename;
+    return false;
+  }
+  std::streampos end = ifs.tellg();
+  if (end < std::streampos(0)) {
+    error_ = "failed to determine USDZ file size: " + filename;
+    return false;
+  }
+  size_t sz = static_cast<size_t>(end);
+  if (options.max_archive_size > 0 && sz > options.max_archive_size) {
+    error_ = "USDZ archive exceeds maximum memory limit";
+    return false;
+  }
+  ifs.seekg(0);
+  file_data_.resize(sz);
+  if (sz && !ifs.read(reinterpret_cast<char*>(file_data_.data()),
+                      static_cast<std::streamsize>(sz))) {
+    error_ = "failed to read USDZ file: " + filename;
+    file_data_.clear();
+    return false;
+  }
+  ifs.close();
+  return Open(file_data_.data(), sz, options);
+}
+
+bool USDZReader::Open(const uint8_t* data, size_t size,
+                      const USDZReadOptions& options) {
+  error_.clear();
   data_ = data;
   data_size_ = size;
   entries_.clear();
 
-  if (!data || size < 4) return false;
+  if (!data || size < 4) {
+    error_ = "empty or truncated USDZ archive";
+    return false;
+  }
+  if (options.max_archive_size > 0 && size > options.max_archive_size) {
+    error_ = "USDZ archive exceeds maximum memory limit";
+    return false;
+  }
 
   size_t pos = 0;
   while (pos + sizeof(LocalFileHeader) <= size) {
@@ -52,29 +91,54 @@ bool USDZReader::Open(const uint8_t* data, size_t size) {
 
     if (hdr.signature != kLocalFileHeaderSig) break;
 
-    if (pos + sizeof(hdr) + hdr.filename_length + hdr.extra_field_length + hdr.compressed_size > size)
+    size_t name_pos = 0;
+    size_t extra_pos = 0;
+    size_t data_pos = 0;
+    size_t next_pos = 0;
+    if (!CheckedAdd(pos, sizeof(hdr), &name_pos) ||
+        !CheckedAdd(name_pos, static_cast<size_t>(hdr.filename_length), &extra_pos) ||
+        !CheckedAdd(extra_pos, static_cast<size_t>(hdr.extra_field_length), &data_pos) ||
+        !CheckedAdd(data_pos, static_cast<size_t>(hdr.compressed_size), &next_pos) ||
+        next_pos > size) {
+      error_ = "truncated USDZ local file header";
       break;
+    }
 
     // Check for 0xA serial number in extra field (64-byte alignment marker)
     // USDZ requires stored (uncompressed) entries
     if (hdr.compression != 0) {
       // Skip compressed entries (only stored entries supported)
-      pos += sizeof(hdr) + hdr.filename_length + hdr.extra_field_length + hdr.compressed_size;
+      pos = next_pos;
       continue;
     }
+    if (hdr.uncompressed_size != hdr.compressed_size) {
+      error_ = "invalid stored USDZ entry size";
+      return false;
+    }
+    if (options.max_entry_size > 0 &&
+        static_cast<size_t>(hdr.uncompressed_size) > options.max_entry_size) {
+      error_ = "USDZ entry exceeds maximum memory limit";
+      return false;
+    }
 
-    std::string name(reinterpret_cast<const char*>(data + pos + sizeof(hdr)), hdr.filename_length);
+    std::string name(reinterpret_cast<const char*>(data + name_pos),
+                     hdr.filename_length);
 
     Entry entry;
     entry.name = name;
-    entry.offset = pos + sizeof(hdr) + hdr.filename_length + hdr.extra_field_length;
+    entry.offset = data_pos;
     entry.size = static_cast<size_t>(hdr.uncompressed_size);
     entries_.push_back(entry);
 
-    pos += sizeof(hdr) + hdr.filename_length + hdr.extra_field_length + hdr.compressed_size;
+    pos = next_pos;
   }
 
-  return !entries_.empty();
+  if (entries_.empty()) {
+    if (error_.empty()) error_ = "no stored entries found in USDZ archive";
+    return false;
+  }
+  error_.clear();
+  return true;
 }
 
 const std::string& USDZReader::EntryName(size_t index) const {

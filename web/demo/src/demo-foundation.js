@@ -772,16 +772,60 @@ class DemoApp {
   }
 
   updateStats(usd, label) {
+    const countValue = (getter) => {
+      if (typeof getter !== 'function') {
+        return Number.isFinite(getter) ? getter : 0;
+      }
+      try {
+        return Number.isFinite(getter.call(usd)) ? getter.call(usd) : 0;
+      } catch {
+        return 0;
+      }
+    };
+
+    const arrayValue = (getter) => {
+      if (typeof getter !== 'function') {
+        return null;
+      }
+      try {
+        const value = getter.call(usd);
+        if (Array.isArray(value)) return value.length;
+        if (Number.isFinite(value)) return value;
+      } catch {
+        // ignore
+      }
+      return null;
+    };
+
+    const unsupportedCountFromNum = countValue(
+      usd?.numUnsupportedRenderables && usd.numUnsupportedRenderables.bind(usd)
+    );
+    const unsupportedRenderables = Number.isFinite(unsupportedCountFromNum)
+      ? unsupportedCountFromNum
+      : arrayValue(
+          usd?.getUnsupportedRenderables && usd.getUnsupportedRenderables.bind(usd)
+        ) || 0;
+
+    const countNumber = (getter) => {
+      const value = countValue(getter);
+      return Number.isFinite(value) ? value : 0;
+    };
+
     const stats = {
       Source: label,
       'Up axis': this.currentUpAxis || this.getSceneUpAxis(usd),
-      Meshes: usd.numMeshes ? usd.numMeshes() : 0,
-      Materials: usd.numMaterials ? usd.numMaterials() : 0,
-      Textures: usd.numTextures ? usd.numTextures() : 0,
-      Images: usd.numImages ? usd.numImages() : 0,
-      Lights: usd.numLights ? usd.numLights() : 0,
-      Skeletons: usd.numSkeletons ? usd.numSkeletons() : 0,
-      Animations: usd.numAnimations ? usd.numAnimations() : 0
+      Meshes: countNumber(usd?.numMeshes && usd.numMeshes.bind(usd)),
+      Materials: countNumber(usd?.numMaterials && usd.numMaterials.bind(usd)),
+      Textures: countNumber(usd?.numTextures && usd.numTextures.bind(usd)),
+      Images: countNumber(usd?.numImages && usd.numImages.bind(usd)),
+      Lights: countNumber(usd?.numLights && usd.numLights.bind(usd)),
+      Cameras: countNumber(usd?.numCameras && usd.numCameras.bind(usd)),
+      Nodes: countNumber(usd?.numNodes && usd.numNodes.bind(usd)),
+      PointInstancers: countNumber(usd?.numPointInstancers && usd.numPointInstancers.bind(usd)),
+      PointInstanceDraws: countNumber(usd?.numPointInstanceDraws && usd.numPointInstanceDraws.bind(usd)),
+      Skeletons: countNumber(usd?.numSkeletons && usd.numSkeletons.bind(usd)),
+      Animations: countNumber(usd?.numAnimations && usd.numAnimations.bind(usd)),
+      UnsupportedRenderables: unsupportedRenderables
     };
     this.statsEl.innerHTML = Object.entries(stats)
       .map(([key, value]) => `<dt>${escapeHTML(key)}</dt><dd>${escapeHTML(value)}</dd>`)

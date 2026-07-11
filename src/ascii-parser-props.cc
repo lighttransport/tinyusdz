@@ -199,7 +199,37 @@ extern template bool AsciiParser::ParseBasicTypeArray(
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<bool> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<char> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::char4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<uint8_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uchar4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<int16_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::short4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<uint16_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::ushort4> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<int32_t> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
@@ -2103,6 +2133,82 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
         if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, pattr)) {
           return false;
         }
+      } else if (type_name == value::kChar) {
+        if (!ParseBasicPrimAttr<char>(array_qual, primattr_name, pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kChar2) {
+        if (!ParseBasicPrimAttr<value::char2>(array_qual, primattr_name,
+                                              pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kChar3) {
+        if (!ParseBasicPrimAttr<value::char3>(array_qual, primattr_name,
+                                              pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kChar4) {
+        if (!ParseBasicPrimAttr<value::char4>(array_qual, primattr_name,
+                                              pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kUChar) {
+        if (!ParseBasicPrimAttr<uint8_t>(array_qual, primattr_name, pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kUChar2) {
+        if (!ParseBasicPrimAttr<value::uchar2>(array_qual, primattr_name,
+                                               pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kUChar3) {
+        if (!ParseBasicPrimAttr<value::uchar3>(array_qual, primattr_name,
+                                               pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kUChar4) {
+        if (!ParseBasicPrimAttr<value::uchar4>(array_qual, primattr_name,
+                                               pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kShort) {
+        if (!ParseBasicPrimAttr<int16_t>(array_qual, primattr_name, pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kShort2) {
+        if (!ParseBasicPrimAttr<value::short2>(array_qual, primattr_name,
+                                               pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kShort3) {
+        if (!ParseBasicPrimAttr<value::short3>(array_qual, primattr_name,
+                                               pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kShort4) {
+        if (!ParseBasicPrimAttr<value::short4>(array_qual, primattr_name,
+                                               pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kUShort) {
+        if (!ParseBasicPrimAttr<uint16_t>(array_qual, primattr_name, pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kUShort2) {
+        if (!ParseBasicPrimAttr<value::ushort2>(array_qual, primattr_name,
+                                                pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kUShort3) {
+        if (!ParseBasicPrimAttr<value::ushort3>(array_qual, primattr_name,
+                                                pattr)) {
+          return false;
+        }
+      } else if (type_name == value::kUShort4) {
+        if (!ParseBasicPrimAttr<value::ushort4>(array_qual, primattr_name,
+                                                pattr)) {
+          return false;
+        }
       } else if (type_name == value::kInt) {
         if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, pattr)) {
           return false;
@@ -2312,16 +2418,13 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
                                                  pattr)) {
           return false;
         }
-      // AOUSD Core Spec 6.2: uchar scalar type
-      } else if (type_name == value::kUChar) {
-        if (!ParseBasicPrimAttr<uint8_t>(array_qual, primattr_name, pattr)) {
-          return false;
-        }
       // AOUSD Core Spec 6.2: timecode scalar type (parsed as double)
       } else if (type_name == value::kTimeCode) {
         if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, pattr)) {
           return false;
         }
+        pattr->set_type_name(array_qual ? std::string(value::kTimeCode) + "[]"
+                                        : std::string(value::kTimeCode));
       // AOUSD Core Spec 6.5: Semantic aliases - half-precision variants
       } else if (type_name == value::kNormal3h) {
         if (!ParseBasicPrimAttr<value::normal3h>(array_qual, primattr_name,
@@ -2481,23 +2584,7 @@ bool AsciiParser::ParseProperties(std::map<std::string, Property> *props,
     return false;
   }
 
-  // rel?
-  {
-    uint64_t loc = CurrLoc();
-    std::string tok;
-
-    if (!ReadIdentifier(&tok)) {
-      return false;
-    }
-
-    if (tok == "rel") {
-      PUSH_ERROR_AND_RETURN("TODO: Parse rel");
-    } else {
-      SeekTo(loc);
-    }
-  }
-
-  // attribute
+  // Relationship or attribute.
   return ParsePrimProps(props, propNames);
 }
 

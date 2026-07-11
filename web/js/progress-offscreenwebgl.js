@@ -12,18 +12,51 @@
 // DOM references (mutable: canvas is replaced on worker respawn)
 // ============================================================================
 
+import { getAssetUriFromURL, mountBackendSelector } from './src/tinyusdz/LoaderConfigUtils.js';
+
 let canvas = document.getElementById('gl');
 const statusEl = document.getElementById('status');
 const modelInfoEl = document.getElementById('model-info');
 const meshCountEl = document.getElementById('mesh-count');
 const materialCountEl = document.getElementById('material-count');
 const textureCountEl = document.getElementById('texture-count');
+const lightCountEl = document.getElementById('light-count');
+const cameraCountEl = document.getElementById('camera-count');
+const nodeCountEl = document.getElementById('node-count');
+const pointInstancerCountEl = document.getElementById('point-instancer-count');
+const pointInstanceDrawCountEl = document.getElementById('point-instance-draw-count');
+const skeletonCountEl = document.getElementById('skeleton-count');
+const animationCountEl = document.getElementById('animation-count');
+const unsupportedRenderableCountEl = document.getElementById('unsupported-renderable-count');
+const currentFileEl = document.getElementById('current-file');
+const fpsValueEl = document.getElementById('fps-value');
+const loadStatsEl = document.getElementById('load-stats');
 const loadBtn = document.getElementById('load-btn');
 const sampleBtn = document.getElementById('sample-btn');
 const upAxisBtn = document.getElementById('upaxis-btn');
 const fitBtn = document.getElementById('fit-btn');
 const fileInput = document.getElementById('file-input');
 const unsupportedOverlay = document.getElementById('unsupported-overlay');
+
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+    return getAssetUriFromURL(params, ['usd']);
+}
+
+function getBackendFromURL(params = new URLSearchParams(window.location.search)) {
+    const backend = params.get('backend');
+    return (backend === 'next' || backend === 'auto' || backend === 'legacy')
+        ? backend
+        : 'legacy';
+}
+
+function getDisplayNameFromURI(uri) {
+    try {
+        const parsed = new URL(uri, window.location.href);
+        return parsed.pathname.split('/').filter(Boolean).pop() || uri;
+    } catch {
+        return uri.split('/').pop() || uri;
+    }
+}
 
 // Progress UI DOM elements (cached to avoid repeated lookups)
 const progressContainer = document.getElementById('progress-container');
@@ -55,6 +88,7 @@ let debugLoadOnInit = true;
 const SAMPLE_MODELS = [
     'assets/fancy-teapot-mtlx.usdz'
 ];
+const startupUSDURI = getStartupUSDModelURI();
 
 // Scene state (tracked on main thread for UI)
 const sceneState = {
@@ -384,11 +418,14 @@ function initMemoryGraph() {
 }
 
 function formatBytes(bytes) {
+    if (!Number.isFinite(bytes)) return 'n/a';
     if (bytes === 0) return '0 B';
+    const sign = bytes < 0 ? '-' : '';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    const value = Math.abs(bytes);
+    const i = Math.min(Math.floor(Math.log(value) / Math.log(k)), sizes.length - 1);
+    return sign + parseFloat((value / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 function getMemoryUsage() {
@@ -541,6 +578,61 @@ function resetMemoryTracking() {
     }
 }
 
+let currentLoadStats = null;
+
+function formatDurationMs(ms) {
+    if (!Number.isFinite(ms)) return 'n/a';
+    return ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function beginLoadStats(fileSize = null, filename = '-') {
+    currentLoadStats = {
+        startTime: performance.now(),
+        fileSize,
+        fetchMs: null,
+        totalMs: null,
+        memoryBefore: getMemoryUsage(),
+        memoryAfter: null
+    };
+    if (currentFileEl) currentFileEl.textContent = filename;
+    updateLoadStatsPanel('Loading...');
+    return currentLoadStats;
+}
+
+function updateLoadStatsPanel(overrideText = null) {
+    if (!loadStatsEl || !currentLoadStats) return;
+    if (overrideText) {
+        loadStatsEl.textContent = overrideText;
+        return;
+    }
+    const stats = currentLoadStats;
+    const before = stats.memoryBefore || {};
+    const after = stats.memoryAfter || {};
+    const jsDelta = Number.isFinite(after.used) && Number.isFinite(before.used)
+        ? ` (${after.used - before.used >= 0 ? '+' : ''}${formatBytes(after.used - before.used)})`
+        : '';
+    loadStatsEl.textContent = [
+        `File: ${formatBytes(stats.fileSize || 0)}`,
+        `Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+        `Worker total: ${formatDurationMs(stats.totalMs)}`,
+        `JS heap: ${Number.isFinite(after.used) ? formatBytes(after.used) + jsDelta : 'n/a'}`
+    ].join('\n');
+}
+
+function finishLoadStats() {
+    if (!currentLoadStats) return;
+    currentLoadStats.totalMs = performance.now() - currentLoadStats.startTime;
+    currentLoadStats.memoryAfter = getMemoryUsage();
+    updateLoadStatsPanel();
+}
+
+function failLoadStats() {
+    if (!currentLoadStats) return;
+    currentLoadStats.totalMs = performance.now() - currentLoadStats.startTime;
+    currentLoadStats.memoryAfter = getMemoryUsage();
+    updateLoadStatsPanel('Failed');
+}
+
 // ============================================================================
 // Toast
 // ============================================================================
@@ -590,7 +682,11 @@ function onWorkerMessage(e) {
             // Worker signals ready after WASM init + env load
             if (debugLoadOnInit && msg.message.startsWith('Ready')) {
                 debugLoadOnInit = false;  // Only auto-load once (not on respawn)
-                loadSampleModel();
+                if (startupUSDURI) {
+                    loadModelFromURL(startupUSDURI);
+                } else {
+                    loadSampleModel();
+                }
             }
             break;
 
@@ -610,6 +706,14 @@ function onWorkerMessage(e) {
             meshCountEl.textContent = msg.meshCount;
             materialCountEl.textContent = msg.materialCount;
             textureCountEl.textContent = msg.textureCount || 0;
+            if (lightCountEl) lightCountEl.textContent = msg.lights || 0;
+            if (cameraCountEl) cameraCountEl.textContent = msg.cameras || 0;
+            if (nodeCountEl) nodeCountEl.textContent = msg.nodes || 0;
+            if (pointInstancerCountEl) pointInstancerCountEl.textContent = msg.pointInstancers || 0;
+            if (pointInstanceDrawCountEl) pointInstanceDrawCountEl.textContent = msg.pointInstanceDraws || 0;
+            if (skeletonCountEl) skeletonCountEl.textContent = msg.skeletons || 0;
+            if (animationCountEl) animationCountEl.textContent = msg.animations || 0;
+            if (unsupportedRenderableCountEl) unsupportedRenderableCountEl.textContent = msg.unsupportedRenderables || 0;
             modelInfoEl.style.display = 'block';
 
             sceneState.hasModel = true;
@@ -618,7 +722,13 @@ function onWorkerMessage(e) {
             updateUpAxisButton();
             updateFitButton();
 
-            hideProgress();
+			finishLoadStats();
+			hideProgress();
+			window.renderComplete = true;
+			break;
+
+        case 'fps':
+            if (fpsValueEl) fpsValueEl.textContent = msg.fps.toFixed(1);
             break;
 
         case 'texture_progress':
@@ -635,6 +745,7 @@ function onWorkerMessage(e) {
             clearLoadingWatchdog();
             statusEl.textContent = `Error: ${msg.message}`;
             statusEl.className = 'error';
+            failLoadStats();
             hideProgress();
             showToast(`Failed to load: ${msg.message}`);
             console.error('[Worker error]', msg.message);
@@ -724,35 +835,42 @@ async function sendFileToWorker(file) {
         preserveStatus = false;
         showProgress();
         resetMemoryTracking();
+        const stats = beginLoadStats(null, file.name);
         updateProgressUI({ stage: 'downloading', percentage: 0, message: `Reading: ${file.name}...` });
 
+        const readStart = performance.now();
         const arrayBuffer = await file.arrayBuffer();
+        stats.fetchMs = performance.now() - readStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        updateLoadStatsPanel();
 
         updateProgressUI({ stage: 'downloading', percentage: 30, message: `Sending to worker...` });
 
         startLoadingWatchdog();
         worker.postMessage(
-            { type: 'loadFile', data: arrayBuffer, filename: file.name },
+            { type: 'loadFile', data: arrayBuffer, filename: file.name, backend: getBackendFromURL() },
             [arrayBuffer]
         );
     } catch (err) {
         clearLoadingWatchdog();
         statusEl.textContent = `Failed to read file: ${err.message}`;
         statusEl.className = 'error';
+        failLoadStats();
         hideProgress();
         console.error('[main] Failed to read file:', err);
     }
 }
 
-async function loadSampleModel() {
-    const url = SAMPLE_MODELS[Math.floor(Math.random() * SAMPLE_MODELS.length)];
-
+async function loadModelFromURL(url) {
     preserveStatus = false;
     showProgress();
     resetMemoryTracking();
+    const displayName = getDisplayNameFromURI(url);
+    const stats = beginLoadStats(null, displayName);
     updateProgressUI({ stage: 'downloading', percentage: 0, message: `Downloading ${url}...` });
 
     try {
+        const fetchStart = performance.now();
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -784,21 +902,30 @@ async function loadSampleModel() {
             binary.set(chunk, offset);
             offset += chunk.length;
         }
+        stats.fetchMs = performance.now() - fetchStart;
+        stats.fileSize = binary.byteLength;
+        updateLoadStatsPanel();
 
         updateProgressUI({ stage: 'downloading', percentage: 30, message: 'Sending to worker...' });
 
         startLoadingWatchdog();
         worker.postMessage(
-            { type: 'loadFile', data: binary.buffer, filename: url },
+            { type: 'loadFile', data: binary.buffer, filename: url, backend: getBackendFromURL() },
             [binary.buffer]
         );
     } catch (err) {
         clearLoadingWatchdog();
         statusEl.textContent = `Failed to download: ${err.message}`;
         statusEl.className = 'error';
+        failLoadStats();
         hideProgress();
         showToast(`Failed to load: ${err.message}`);
     }
+}
+
+async function loadSampleModel() {
+    const url = SAMPLE_MODELS[Math.floor(Math.random() * SAMPLE_MODELS.length)];
+    await loadModelFromURL(url);
 }
 
 // ============================================================================
@@ -903,4 +1030,6 @@ document.body.addEventListener('drop', async (e) => {
 initMemoryGraph();
 attachCanvasEvents(canvas);
 resizeObserver.observe(canvas);
+// Backend switch reloads the page (the worker binds its WASM module at init).
+mountBackendSelector(document.getElementById('info-panel'));
 spawnWorker();
