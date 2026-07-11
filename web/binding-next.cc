@@ -947,6 +947,7 @@ nlohmann::json NextValueJSON(const tn::Value& value) {
   if (const uint32_t* v = value.as_uint()) return *v;
   if (const int64_t* v = value.as_int64()) return *v;
   if (const uint64_t* v = value.as_uint64()) return *v;
+  if (const uint8_t* v = value.as_uchar()) return *v;
   if (const float* v = value.as_float()) return *v;
   if (const double* v = value.as_double()) return *v;
   if (const std::string* v = value.as_string()) return *v;
@@ -1000,6 +1001,7 @@ nlohmann::json NextValueJSON(const tn::Value& value) {
     case tn::TypeId::Matrix4f:
       return float_array(value.as_matrix4f(), 16);
     case tn::TypeId::Matrix4d:
+    case tn::TypeId::Frame4d:  // matrix4d role
       return double_array(value.as_matrix4d(), 16);
     default:
       break;
@@ -2226,6 +2228,9 @@ class RenderStream {
     const tinyusdz::next::StageMeta &meta = stage_.GetMeta();
     metadata.set("upAxis", meta.upAxis);
     metadata.set("metersPerUnit", meta.metersPerUnit);
+    // MassAPI SI conversion on the web/sim side (parity with the legacy
+    // binding's kilogramsPerUnit export).
+    metadata.set("kilogramsPerUnit", meta.kilogramsPerUnit);
     metadata.set("framesPerSecond", meta.framesPerSecond);
     metadata.set("timeCodesPerSecond", meta.timeCodesPerSecond);
     metadata.set("startTimeCode", meta.startTimeCode);
