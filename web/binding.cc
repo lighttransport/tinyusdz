@@ -1967,6 +1967,9 @@ json AttributeValueJson(const tinyusdz::Attribute &attr) {
   if (auto v = attr.get_value<tinyusdz::value::StringData>()) return v.value().value;
   if (auto v = attr.get_value<tinyusdz::value::token>()) return v.value().str();
   if (auto v = attr.get_value<tinyusdz::value::AssetPath>()) return v.value().GetAssetPath();
+  // SdfPathExpression (e.g. CollectionAPI membershipExpression) — serialize its
+  // text so the web collision-group evaluator can read the pattern.
+  if (auto v = attr.get_value<tinyusdz::value::PathExpression>()) return v.value().GetText();
   if (auto v = attr.get_value<tinyusdz::value::point3f>()) return Vec3Json(v.value());
   if (auto v = attr.get_value<tinyusdz::value::float3>()) return Vec3Json(v.value());
   if (auto v = attr.get_value<tinyusdz::value::vector3f>()) return Vec3Json(v.value());
