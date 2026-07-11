@@ -219,6 +219,7 @@ list(
   ${TINYUSDZ_NEXT_DIR}/types/value.cc
   ${TINYUSDZ_NEXT_DIR}/types/spline.cc
   ${TINYUSDZ_NEXT_DIR}/types/interpolation.cc
+  ${TINYUSDZ_NEXT_DIR}/writer/dtoa.cc
   ${TINYUSDZ_NEXT_DIR}/prim/path.cc
   ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
   ${TINYUSDZ_NEXT_DIR}/prim/prim.cc
