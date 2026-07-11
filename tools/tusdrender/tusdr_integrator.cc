@@ -363,6 +363,132 @@ float SphereLightPdf(const PreviewLight &light, const Vec3 &p, const Vec3 &wi) {
   return (solid_angle > 1.0e-8f) ? (1.0f / solid_angle) : 0.0f;
 }
 
+// --- Shaped area lights: Rect / Disk / Cylinder ------------------------------
+//
+// These were punctual: collapsed to their center, so a 10-unit rect cast exactly
+// the same razor-sharp shadow as a bare point. They are now sampled over their
+// SURFACE, with the same NEE + power-heuristic MIS the sphere gets.
+//
+// Radiance: the punctual path computed irradiance as
+//   E = radiance * cos_emit * max(1, area) / d^2,
+// and the area estimator integrates L * cos_emit * cos_theta / d^2 over the
+// surface, which for a distant light is L * area * cos_emit / d^2. So the surface
+// radiance L IS PreviewLight::radiance, and the far field is preserved -- except
+// for the max(1, area) clamp, which the area estimator drops. A light SMALLER than
+// one square unit therefore gets dimmer (correctly: the clamp was inventing energy
+// for it), while every light at or above unit area is unchanged at distance.
+
+// Does `wi` from `p` hit the light's surface? Fills the distance and the surface
+// normal at the hit, which the pdf and the shadow ray both need.
+bool IntersectAreaLight(const PreviewLight &light, const Vec3 &p, const Vec3 &wi,
+                        float *out_t, Vec3 *out_n) {
+  const Vec3 c = light.position;
+  if (light.kind == PreviewLight::Kind::Rect ||
+      light.kind == PreviewLight::Kind::Disk) {
+    const Vec3 nl = light.normal;
+    const float denom = Dot(wi, nl);
+    if (std::fabs(denom) < 1.0e-8f) return false;  // parallel to the plane
+    const float t = Dot(Sub(c, p), nl) / denom;
+    if (t <= 1.0e-5f) return false;
+    const Vec3 q = Sub(Add(p, Mul(wi, t)), c);
+    const float du = Dot(q, light.axis_u);
+    const float dv = Dot(q, light.axis_v);
+    if (light.kind == PreviewLight::Kind::Rect) {
+      if (std::fabs(du) > 0.5f * light.width ||
+          std::fabs(dv) > 0.5f * light.height) {
+        return false;
+      }
+    } else if (du * du + dv * dv > light.radius * light.radius) {
+      return false;
+    }
+    *out_t = t;
+    *out_n = nl;
+    return true;
+  }
+  if (light.kind == PreviewLight::Kind::Cylinder) {
+    // Lateral surface of a finite cylinder about axis_u, radius r, length L.
+    const Vec3 a = light.axis_u;
+    const float r = light.radius;
+    if (r <= 1.0e-5f) return false;
+    const Vec3 oc = Sub(p, c);
+    const Vec3 d_perp = Sub(wi, Mul(a, Dot(wi, a)));
+    const Vec3 o_perp = Sub(oc, Mul(a, Dot(oc, a)));
+    const float A = Dot(d_perp, d_perp);
+    if (A < 1.0e-12f) return false;  // travelling along the axis
+    const float B = 2.0f * Dot(o_perp, d_perp);
+    const float C = Dot(o_perp, o_perp) - r * r;
+    const float disc = B * B - 4.0f * A * C;
+    if (disc < 0.0f) return false;
+    const float sq = std::sqrt(disc);
+    for (const float t : {(-B - sq) / (2.0f * A), (-B + sq) / (2.0f * A)}) {
+      if (t <= 1.0e-5f) continue;
+      const Vec3 q = Sub(Add(p, Mul(wi, t)), c);
+      if (std::fabs(Dot(q, a)) > 0.5f * light.length) continue;  // past an end cap
+      const Vec3 radial = Sub(q, Mul(a, Dot(q, a)));
+      if (Length(radial) < 1.0e-8f) continue;
+      *out_t = t;
+      *out_n = Normalize(radial);
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+// Uniform-area sampling of the light's surface, converted to a solid-angle pdf
+// (pdf_A * d^2 / cos_emit) so it is directly comparable with the BSDF's pdf.
+bool SampleAreaLight(const PreviewLight &light, const Vec3 &p, float u1, float u2,
+                     LightSample *out) {
+  if (!(light.area > 1.0e-8f)) return false;
+  Vec3 q, nl;
+  if (light.kind == PreviewLight::Kind::Rect) {
+    q = Add(light.position,
+            Add(Mul(light.axis_u, (u1 - 0.5f) * light.width),
+                Mul(light.axis_v, (u2 - 0.5f) * light.height)));
+    nl = light.normal;
+  } else if (light.kind == PreviewLight::Kind::Disk) {
+    const float rr = light.radius * std::sqrt(std::max(0.0f, u1));
+    const float phi = 2.0f * MTLX_PI * u2;
+    q = Add(light.position,
+            Add(Mul(light.axis_u, rr * std::cos(phi)),
+                Mul(light.axis_v, rr * std::sin(phi))));
+    nl = light.normal;
+  } else if (light.kind == PreviewLight::Kind::Cylinder) {
+    Vec3 b1, b2;
+    OrthonormalBasis(light.axis_u, &b1, &b2);
+    const float phi = 2.0f * MTLX_PI * u2;
+    const Vec3 radial = Add(Mul(b1, std::cos(phi)), Mul(b2, std::sin(phi)));
+    q = Add(light.position, Add(Mul(light.axis_u, (u1 - 0.5f) * light.length),
+                                Mul(radial, light.radius)));
+    nl = radial;  // emits radially outward
+  } else {
+    return false;
+  }
+
+  const Vec3 d = Sub(q, p);
+  const float dist = Length(d);
+  if (dist <= 1.0e-5f) return false;
+  out->wi = Mul(d, 1.0f / dist);
+  const float cos_emit = Dot(nl, Mul(out->wi, -1.0f));
+  if (cos_emit <= 1.0e-6f) return false;  // shading point is behind the emitter
+  out->dist = dist;
+  out->pdf = (dist * dist) / (cos_emit * light.area);
+  out->radiance = light.radiance;
+  return out->pdf > 0.0f && std::isfinite(out->pdf);
+}
+
+// The solid-angle pdf SampleAreaLight would have had for `wi`; 0 if it misses.
+float AreaLightPdf(const PreviewLight &light, const Vec3 &p, const Vec3 &wi) {
+  if (!(light.area > 1.0e-8f)) return 0.0f;
+  float t = 0.0f;
+  Vec3 nl;
+  if (!IntersectAreaLight(light, p, wi, &t, &nl)) return 0.0f;
+  const float cos_emit = Dot(nl, Mul(wi, -1.0f));
+  if (cos_emit <= 1.0e-6f) return 0.0f;
+  const float pdf = (t * t) / (cos_emit * light.area);
+  return std::isfinite(pdf) ? pdf : 0.0f;
+}
+
 // Power heuristic (beta = 2). Both pdfs are in solid angle, so they are directly
 // comparable; a delta lobe (pdf_b reported as 1.0 with `specular`) must never
 // reach this -- the caller skips MIS entirely there.
@@ -1175,10 +1301,45 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     return !(e && std::atoi(e) == 0);
   }();
   auto is_area_sampled = [&](const PreviewLight &light) -> bool {
-    return kNeeEnabled && bsdf_mode &&
-           light.kind == PreviewLight::Kind::Sphere &&
-           light.radius > 1.0e-5f &&
-           Length(Sub(light.position, p)) > light.radius + 1.0e-5f;
+    if (!kNeeEnabled || !bsdf_mode) return false;
+    switch (light.kind) {
+      case PreviewLight::Kind::Sphere:
+        return light.radius > 1.0e-5f &&
+               Length(Sub(light.position, p)) > light.radius + 1.0e-5f;
+      case PreviewLight::Kind::Rect:
+      case PreviewLight::Kind::Disk:
+      case PreviewLight::Kind::Cylinder:
+        return light.area > 1.0e-8f;
+      default:
+        return false;  // Point / Distant are genuinely delta lights
+    }
+  };
+  // Light-side quantities for the BSDF-sampled MIS term: the pdf of having chosen
+  // `wi` by light sampling, the distance to the surface it hits (for the shadow
+  // ray), and the radiance there.
+  auto light_pdf_along = [&](const PreviewLight &light, const Vec3 &wi,
+                             float *hit_dist, Vec3 *radiance) -> float {
+    if (light.kind == PreviewLight::Kind::Sphere) {
+      const float pdf = SphereLightPdf(light, p, wi);
+      if (pdf <= 0.0f) return 0.0f;
+      const Vec3 d = Sub(light.position, p);
+      const float b = Dot(wi, d);
+      const float disc =
+          std::max(0.0f, b * b - (Dot(d, d) - light.radius * light.radius));
+      *hit_dist = std::max(0.0f, b - std::sqrt(disc));
+      *radiance = SphereLightRadiance(light);
+      return pdf;
+    }
+    float t = 0.0f;
+    Vec3 nl;
+    if (!IntersectAreaLight(light, p, wi, &t, &nl)) return 0.0f;
+    const float cos_emit = Dot(nl, Mul(wi, -1.0f));
+    if (cos_emit <= 1.0e-6f) return 0.0f;
+    const float pdf = (t * t) / (cos_emit * light.area);
+    if (!(pdf > 0.0f) || !std::isfinite(pdf)) return 0.0f;
+    *hit_dist = t;
+    *radiance = light.radiance;
+    return pdf;
   };
 
   auto sample_bsdf_bounce = [&]() -> Vec3 {
@@ -1220,19 +1381,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     // is what BsdfSample::specular is for.
     for (const PreviewLight &light : lights.finite) {
       if (!is_area_sampled(light)) continue;
-      const float pdf_l = SphereLightPdf(light, p, wi);
+      float hit_dist = 0.0f;
+      Vec3 L{0.0f, 0.0f, 0.0f};
+      const float pdf_l = light_pdf_along(light, wi, &hit_dist, &L);
       if (pdf_l <= 0.0f) continue;
-      const Vec3 d = Sub(light.position, p);
-      const float b = Dot(wi, d);
-      const float disc =
-          std::max(0.0f, b * b - (Dot(d, d) - light.radius * light.radius));
-      const float hit_dist = std::max(0.0f, b - std::sqrt(disc));
       if (opt.shadows &&
           occluded(p, n, wi, std::max(0.0f, hit_dist - 1.0e-3f))) {
         continue;
       }
       const float w = sample.specular ? 1.0f : PowerHeuristic(sample.pdf, pdf_l);
-      const Vec3 L = SphereLightRadiance(light);
       out = Add(out, Vec3{throughput.x * L.x * w, throughput.y * L.y * w,
                           throughput.z * L.z * w});
     }
@@ -1252,11 +1409,14 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   }
   // NEE: sample a point on the light, weigh the estimate against the chance the
   // BSDF sampler would have found the same direction on its own.
-  auto nee_sphere = [&](const PreviewLight &light, pcg32 *rng) {
+  auto nee_light = [&](const PreviewLight &light, pcg32 *rng) {
     LightSample ls;
     const float u1 = pcg32_f(rng);
     const float u2 = pcg32_f(rng);
-    if (!SampleSphereLight(light, p, u1, u2, &ls)) return;
+    const bool ok = (light.kind == PreviewLight::Kind::Sphere)
+                        ? SampleSphereLight(light, p, u1, u2, &ls)
+                        : SampleAreaLight(light, p, u1, u2, &ls);
+    if (!ok) return;
     const float ndotl = Dot(n, ls.wi);
     if (ndotl <= 0.0f || ls.pdf <= 0.0f) return;
     if (opt.shadows &&
@@ -1317,7 +1477,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   {
     pcg32 lrng = MakeBsdfRng(p, n, depth + 0x5eed);
     for (const PreviewLight &light : lights.finite) {
-      if (is_area_sampled(light)) nee_sphere(light, &lrng);
+      if (is_area_sampled(light)) nee_light(light, &lrng);
     }
   }
   c = Add(c, sample_bsdf_bounce());

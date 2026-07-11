@@ -423,7 +423,14 @@ struct PreviewLight {
   float radius{0.0f};
   float width{1.0f};
   float height{1.0f};
+  float length{1.0f};   // CylinderLight: extent along its axis (UsdLux: local +X)
   float area{0.0f};
+  // World-space local axes, needed to sample the SURFACE of a shaped light
+  // rather than collapsing it to its center. UsdLux puts a RectLight/DiskLight in
+  // the local XY plane emitting along -Z (so `normal` is local +Z... times -1 of
+  // `direction`), and runs a CylinderLight's axis along local +X.
+  Vec3 axis_u{1.0f, 0.0f, 0.0f};   // local +X in world space
+  Vec3 axis_v{0.0f, 1.0f, 0.0f};   // local +Y in world space
   float power{0.0f};
   float cdf{0.0f};
   int tri_id{-1};
