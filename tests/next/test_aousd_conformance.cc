@@ -724,6 +724,27 @@ void TestMetadataAndListOpFidelity() {
       ") {}\n");
   assert(declared.find("prepend variantSets") != std::string::npos &&
          "authored prepend variantSets must survive USDC");
+
+  // A relocate-to-nothing target `<>` (the empty SdfPath) must survive USDC as
+  // `<>`, not `</>`, and must NOT be written as a PATHS tree node (pxr rejects
+  // a crate with an empty spec path). Parsed in compatibility mode (pxr itself
+  // treats `<>` as ill-formed, so it is not a strict-conformant construct).
+  LoadResult relo = LoadUSDAFromString(
+      "#usda 1.0\n"
+      "def Xform \"W\" (\n"
+      "  relocates = { </W/keep>: </W/moved>, </W/drop>: <> }\n"
+      ") {\n}\n",
+      LoadOptions{});
+  assert(relo.success);
+  USDCWriteOptions rwo;
+  std::vector<uint8_t> rcrate;
+  assert(WriteUSDCToMemory(rcrate, relo.stage, rwo).success);
+  USDCLoadOptions rlo;
+  USDCLoadResult rback = LoadUSDCFromMemory(rcrate.data(), rcrate.size(), rlo);
+  assert(rback.success);
+  const std::string relo_usda = WriteUSDAToString(rback.stage);
+  assert(relo_usda.find("</W/drop>: <>") != std::string::npos &&
+         "empty relocate target must round-trip as <>, not </>");
 }
 
 }  // namespace
