@@ -122,11 +122,11 @@ def Xform "World" {
 }
 USDA
 
-# The two halves need different loaders, and that is not incidental:
-#   - the dome/IBL is only set up on the `next` rtPreview path (-rtPreview); and
-#   - mesh lights (LightCache::mesh) are only built by the LEGACY flatten
-#     (-legacyLoad, no -rtPreview). The next loader does not register emissive
-#     meshes as analytic lights at all, so it cannot double count them.
+# The dome/IBL is only set up on the `next` rtPreview path, so the furnace runs
+# there; the mesh-light half runs on BOTH loaders, since each builds
+# LightCache::mesh its own way (the next loader marks TriMat::area_light during the
+# flatten and collects the lights afterwards; the legacy flatten pushes them as it
+# emits triangles). The next loader used to register no mesh lights at all.
 render() {  # $1 = scene, $2 = out, $3 = shading, $4 = DOUBLE_COUNT, $5.. = flags
   local scene="$1" out="$2" shading="$3" dbl="$4"
   shift 4
@@ -146,6 +146,16 @@ render "$TMP/furnace.usda"   "$TMP/furnace_double.png" lightrt-bsdf 1 -rtPreview
 render "$TMP/furnace.usda"   "$TMP/furnace_legacy.png" legacy       0 -rtPreview || exit 1
 render "$TMP/meshlight.usda" "$TMP/mesh_bsdf.png"      lightrt-bsdf 0 -legacyLoad || exit 1
 render "$TMP/meshlight.usda" "$TMP/mesh_double.png"    lightrt-bsdf 1 -legacyLoad || exit 1
+render "$TMP/meshlight.usda" "$TMP/mesh_next.png"      lightrt-bsdf 0 -rtPreview -stats || exit 1
+
+# The next loader must register the emissive mesh as an analytic light too, not
+# just let a bounce stumble into it.
+if ! grep -q "rt mesh light triangles: 2" "$TMP/mesh_next.png.log"; then
+  echo "FAIL: the next loader registered no mesh lights for a MeshLightAPI mesh."
+  echo "      An emissive area-light mesh must LIGHT the scene, not merely glow."
+  grep -i "mesh light" "$TMP/mesh_next.png.log" || true
+  exit 1
+fi
 
 python3 - "$TMP" <<'PY'
 import struct, sys, zlib

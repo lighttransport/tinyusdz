@@ -152,6 +152,9 @@ std::vector<Vec3> ComputeBlendShapeOffsetsNext(
   return any ? offsets : std::vector<Vec3>();
 }
 
+float ReadCamFloatNext(const tinyusdz::next::UsdPrim &prim, const char *name,
+                       float fallback);
+
 // Templated on the output buffer type so the flat path can stream into plain
 // std::vector (ctx.tris) while the instanced path streams into the budget-tracked
 // Blas FloatVec/TriVec (so the big instanced geometry is capped/pooled).
@@ -195,11 +198,43 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           float disp_scale = 0.0f,
                           float displacement_tex_scale = 1.0f,
                           float displacement_tex_bias = 0.0f) {
+  // MeshLightAPI: this mesh is an AREA LIGHT, not just emissive geometry. The next
+  // loader used to ignore that entirely -- LightCache::mesh was only ever built by
+  // the legacy flatten -- so an emissive mesh lit nothing and was seen only by
+  // whatever a BSDF bounce happened to hit. Read the LightAPI inputs off the prim
+  // (the material carries no emission for these) and mark the material;
+  // CollectMeshLightsNext turns the marked triangles into analytic lights.
+  Vec3 mesh_emission = emission;
+  uint8_t mesh_area_light = 0;
+  {
+    bool mesh_light = false;
+    for (const std::string &api : prim.GetMeta().apiSchemas()) {
+      if (api == "MeshLightAPI") { mesh_light = true; break; }
+    }
+    if (mesh_light) {
+      const float li = ReadCamFloatNext(prim, "inputs:intensity", 1.0f);
+      const float lx = ReadCamFloatNext(prim, "inputs:exposure", 0.0f);
+      Vec3 lc{1.0f, 1.0f, 1.0f};
+      if (const tinyusdz::next::Value *v = prim.GetPropertyValue("inputs:color"))
+        if (const float *f = v->as_float3()) lc = Vec3{f[0], f[1], f[2]};
+      // Same convention as the legacy path (MeshLightEmission): the light color is
+      // TINTED by the material -- its emissive color if it has one, else its base
+      // color -- rather than emitting raw intensity. inputs:normalize is not
+      // honored (the mesh's total area is not known here), so a normalized mesh
+      // light comes out brighter than it should.
+      const Vec3 light_color = Mul(lc, li * std::pow(2.0f, lx));
+      const Vec3 tint = (Luminance(emission) > 1.0e-6f) ? emission : base_color;
+      mesh_emission = Mul(light_color, tint);
+      mesh_area_light = 1;
+    }
+  }
+
   // When the output is the slim TriStore (instanced BLAS), the per-mesh material
   // is emitted once into out_job_mat and each triangle stores only its mat_id.
   if (out_job_mat) {
     out_job_mat->base_color = base_color;
-    out_job_mat->emission = emission;
+    out_job_mat->emission = mesh_emission;
+    out_job_mat->area_light = mesh_area_light;
     out_job_mat->roughness = roughness;
     out_job_mat->metallic = metallic;
     out_job_mat->tex_id = tex_id;
@@ -510,8 +545,9 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   tmpl.metal_ch = metal_tex.ch;
   tmpl.metal_tex_scale = metal_tex.scale;
   tmpl.metal_tex_bias = metal_tex.bias;
-  tmpl.emission = emission;
+  tmpl.emission = mesh_emission;
   tmpl.emission_tex_id = emission_tex_id;
+  tmpl.area_light = mesh_area_light;
   tmpl.occlusion = occlusion;
   tmpl.occ_tex_id = occ_tex.id;
   tmpl.occ_ch = occ_tex.ch;
@@ -4236,6 +4272,57 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
 // DomeLights are handled separately as IBL (BuildNextIbl). Radiance is
 // color * intensity * 2^exposure; position/direction come from the world xform
 // (UsdLux lights emit along local -Z).
+// Emissive MeshLightAPI triangles -> analytic mesh lights, so an area-light mesh
+// actually LIGHTS the scene instead of merely glowing. The flatten marked their
+// material (TriMat::area_light); this pass is where they become lights, which also
+// makes the integrator suppress their emission on an indirect bounce -- otherwise
+// they would be counted twice.
+//
+// One light per triangle, as the legacy flatten does, and every shading point
+// loops over all of them: a large emissive mesh is therefore capped, brightest
+// first, rather than quietly making the render O(emissive triangles) per sample.
+void CollectMeshLightsNext(RenderContext &ctx) {
+  ctx.lights.mesh.clear();
+  ctx.lights.mesh_cdf.clear();
+  if (ctx.tris.empty() || ctx.flat_mats.empty()) return;
+
+  for (size_t i = 0; i < ctx.tris.size(); ++i) {
+    const FlatTri &ft = ctx.tris[i];
+    if (ft.mat_id >= ctx.flat_mats.size()) continue;
+    const TriMat &m = ctx.flat_mats[ft.mat_id];
+    if (!m.area_light || Luminance(m.emission) <= 1.0e-6f) continue;
+    const float area = TriangleArea(ft.p0, ft.p1, ft.p2);
+    if (!(area > 1.0e-10f)) continue;
+    PreviewLight ml;
+    ml.kind = PreviewLight::Kind::Mesh;
+    ml.position = Mul(Add(Add(ft.p0, ft.p1), ft.p2), 1.0f / 3.0f);
+    ml.normal = ft.n;                  // the OUTWARD normal of the emitting face
+    ml.direction = Mul(ft.n, -1.0f);
+    ml.radiance = m.emission;
+    ml.area = area;
+    ml.power = std::max(0.0f, Luminance(ml.radiance) * area);
+    ml.tri_id = int(i);
+    ctx.lights.mesh.push_back(ml);
+  }
+
+  constexpr size_t kMaxMeshLights = 1024;
+  if (ctx.lights.mesh.size() > kMaxMeshLights) {
+    const size_t dropped = ctx.lights.mesh.size() - kMaxMeshLights;
+    std::partial_sort(ctx.lights.mesh.begin(),
+                      ctx.lights.mesh.begin() + kMaxMeshLights,
+                      ctx.lights.mesh.end(),
+                      [](const PreviewLight &a, const PreviewLight &b) {
+                        return a.power > b.power;
+                      });
+    ctx.lights.mesh.resize(kMaxMeshLights);
+    std::cerr << "WARN: " << (dropped + kMaxMeshLights)
+              << " emissive mesh-light triangles; keeping the " << kMaxMeshLights
+              << " brightest (dropped " << dropped
+              << "). Direct lighting from the rest is lost.\n";
+  }
+  AppendPowerCdf(&ctx.lights.mesh, &ctx.lights.mesh_cdf);
+}
+
 void CollectLightsNext(const tinyusdz::next::Stage &stage,
                        const tinyusdz::next::UsdPrim &prim,
                        const matrix4d &parent_world, double time,
@@ -4499,6 +4586,10 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   AppendPowerCdf(&ctx.lights.finite, &ctx.lights.finite_cdf);
   if (opt.stats && !ctx.lights.finite.empty())
     std::cerr << "rt finite lights: " << ctx.lights.finite.size() << "\n";
+
+  CollectMeshLightsNext(ctx);
+  if (opt.stats && !ctx.lights.mesh.empty())
+    std::cerr << "rt mesh light triangles: " << ctx.lights.mesh.size() << "\n";
 
   return true;
 }
