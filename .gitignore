@@ -480,6 +480,7 @@ python/tinyusdz/_version.py
 # Private notes / scratch docs (may reference proprietary asset names) — never commit
 priv/
 resume.md
+resume-tusdview.md
 gpu-task.md
 python/tinyusdz.egg-info/
 python/tinyusdz/_core.*.so
