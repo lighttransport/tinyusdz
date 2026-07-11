@@ -2361,6 +2361,10 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-instanced-skinning"
         )
+      # It exits 77 when no usable GL display is present (it renders WINDOWED, to
+      # exercise the real context). Without this the skip is reported as a failure.
+      set_tests_properties(tusdview-instanced-prototype-skinning
+                           PROPERTIES SKIP_RETURN_CODE 77)
 
       # The large-scene budget tree must descend from the real device, not the
       # GiB(32)/GiB(16) literals it used to be fed, and --vram-budget must
@@ -2423,6 +2427,18 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-skinning"
         )
       set_tests_properties(tusdview-rt-skinning PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A non-instanced blendshaped mesh must morph: the static batch path used to
+      # build no morph channels at all, so it rendered its rest shape forever.
+      add_test(
+        NAME tusdview-blendshape-morph
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-blendshape-morph.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/blendshape-and-animation-test-001.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-blendshape-morph"
+        )
+      set_tests_properties(tusdview-blendshape-morph PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()

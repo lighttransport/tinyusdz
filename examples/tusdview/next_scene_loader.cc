@@ -2854,12 +2854,18 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // are one baked pose, so they do not bound the rig over the animation (the GPU
     // path signals the same thing through anySkin).
     bool anyCpuSkin = false;
+    // A morphed mesh gets a batch to ITSELF (the key carries a unique id), so the
+    // batch's channel ids and its bound SkelAnimation are unambiguous.
+    bool anyMorph = false;
     int matId = 0;
   };
-  // key = (purpose, geometricNormal, materialId) -> current batch. Keying by
-  // material keeps per-material draws distinct so each batch can reference its
-  // own DrawMaterialCPU instead of the single default gray material.
-  std::map<std::tuple<std::string, bool, int>, Batch> open;
+  // key = (purpose, geometricNormal, materialId, morphId) -> current batch. Keying
+  // by material keeps per-material draws distinct so each batch can reference its
+  // own DrawMaterialCPU instead of the single default gray material. morphId is 0
+  // for ordinary meshes and unique per BLENDSHAPED mesh: morph channel ids and the
+  // bound SkelAnimation are per-mesh, so two morphed meshes must not share a batch.
+  std::map<std::tuple<std::string, bool, int, int>, Batch> open;
+  int nextMorphBatchId = 0;
 
   // Texture cache for material building: resolve texture assets against the
   // source directory and, for a .usdz package, its embedded entries. The size
@@ -3195,6 +3201,25 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       cpuSkinned =
           BakeSkinning(stage, mp, time, &loc, vertexToPoint, m.point_count());
     }
+    // Blendshapes. This ran ONLY on the instanced-prototype path, so an ordinary
+    // (non-instanced) blendshaped mesh never morphed at all under --next -- it
+    // rendered its rest shape at every time code. Same choice as there: bake the
+    // pose in (TUSDVIEW_NEXT_MORPH_BAKE=1) or build GPU-morph channels the shader
+    // applies per frame.
+    static const bool kBakeMorphStatic = [] {
+      const char* e = std::getenv("TUSDVIEW_NEXT_MORPH_BAKE");
+      return e && e[0] == '1';
+    }();
+    if (kBakeMorphStatic) {
+      BakeBlendShapes(stage, mp, time, &loc, vertexToPoint, m.point_count());
+    } else {
+      BuildMorphChannelsNext(stage, mp, time, &loc, vertexToPoint,
+                             m.point_count());
+    }
+    // A morphed mesh must not share a batch with anything else: its channel ids
+    // and its bound animation are its own. 0 = poolable with other static meshes.
+    const int morphBatchId =
+        (loc.morphChannelCount > 0) ? ++nextMorphBatchId : 0;
     float Mf[16];
     for (int k = 0; k < 16; ++k) Mf[k] = static_cast<float>(mw16[k]);
     const float* M = Mf;  // row-major, p*M (same as the converter's node xform)
@@ -3255,13 +3280,49 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     };
 
+    // GPU morph. The channel metadata is per MESH, and a morphed mesh owns its
+    // batch (see the key), so the batch simply inherits it; the per-vertex delta
+    // lists are re-indexed as vertices are appended, since a GeomSubset split
+    // routes different vertices to different batches.
+    const bool hasMorph = loc.morphChannelCount > 0 &&
+                          loc.morphOffsetCount.size() == loc.vertices.size() * 2;
+    auto openMorph = [&](Batch& b) {
+      if (!hasMorph || b.anyMorph) return;
+      b.anyMorph = true;
+      b.dm.morphChannelCount = loc.morphChannelCount;
+      b.dm.morphTargetChannels = loc.morphTargetChannels;
+      b.dm.absPath = loc.absPath;  // BuildNextMorphWeights resolves weights by path
+      for (int k = 0; k < 3; ++k) b.dm.morphExtent[k] = loc.morphExtent[k];
+      // Vertices already in the batch (there are none for a fresh morph batch, but
+      // a flush can leave the slot reused) carry an empty delta list.
+      b.dm.morphOffsetCount.assign(b.dm.vertices.size() * 2, 0u);
+    };
+    auto pushMorph = [&](Batch& b, size_t i) {
+      if (!b.anyMorph) return;
+      const uint32_t base =
+          static_cast<uint32_t>(b.dm.morphDeltaHalf.size() / 4);
+      const uint32_t src = loc.morphOffsetCount[i * 2 + 0];
+      const uint32_t cnt = loc.morphOffsetCount[i * 2 + 1];
+      for (uint32_t k = 0; k < cnt; ++k) {
+        const size_t e = size_t(src + k);
+        if (e * 4 + 3 >= loc.morphDeltaHalf.size()) break;
+        for (int c = 0; c < 4; ++c)
+          b.dm.morphDeltaHalf.push_back(loc.morphDeltaHalf[e * 4 + size_t(c)]);
+        b.dm.morphChannelId.push_back(e < loc.morphChannelId.size()
+                                          ? loc.morphChannelId[e]
+                                          : uint16_t{0});
+      }
+      b.dm.morphOffsetCount.push_back(base);
+      b.dm.morphOffsetCount.push_back(cnt);
+    };
+
     // Per-triangle materials from face GeomSubsets (empty => uniform wholeMat).
     std::vector<int> triMat;
     buildTriMaterials(mp, m, loc.indices.size() / 3, wholeMat, &triMat);
 
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
-      Batch& b = open[{purpose, loc.geometricNormal, wholeMat}];
+      Batch& b = open[{purpose, loc.geometricNormal, wholeMat, morphBatchId}];
       b.matId = wholeMat;
       if (!b.dm.vertices.empty() &&
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
@@ -3277,12 +3338,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.anyColor = true;
       }
       openSkin(b);
+      openMorph(b);
       // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
       // reserve(size()+n) per mesh would reallocate the whole batch (O(N^2)).
       const uint32_t vbase = static_cast<uint32_t>(b.dm.vertices.size());
       for (size_t i = 0; i < loc.vertices.size(); ++i) {
         b.dm.vertices.push_back(loc.vertices[i]);
         pushSkin(b, i);
+        pushMorph(b, i);
         if (b.anyColor) {
           if (hasC) {
             b.dm.vertexColors.push_back(loc.vertexColors[3 * i + 0]);
@@ -3306,7 +3369,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const size_t numTris = loc.indices.size() / 3;
       bool firstGroup = true;
       for (int gm : groups) {
-        Batch& b = open[{purpose, loc.geometricNormal, gm}];
+        Batch& b = open[{purpose, loc.geometricNormal, gm, morphBatchId}];
         b.matId = gm;
         if (!b.dm.vertices.empty() &&
             b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
@@ -3319,12 +3382,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           b.anyColor = true;
         }
         openSkin(b);
+        openMorph(b);
         std::vector<int> remap(loc.vertices.size(), -1);
         auto vtx = [&](uint32_t vi) -> uint32_t {
           if (remap[vi] < 0) {
             remap[vi] = static_cast<int>(b.dm.vertices.size());
             b.dm.vertices.push_back(loc.vertices[vi]);
             pushSkin(b, vi);
+            pushMorph(b, vi);
             if (b.anyColor) {
               if (hasC) {
                 b.dm.vertexColors.push_back(loc.vertexColors[3 * vi + 0]);

@@ -47,10 +47,16 @@ Also: mesh lights are collected from the FLAT triangle list only, so an
 
 ### 3. Cross-backend blendshape screenshot parity
 
-Open in the broader visual-parity matrix. Note that no fixture in the tree
-animates a blendshape under `--time` in *either* loader (legacy or next), which
-is itself worth chasing — `models/blendshape-and-animation-test-001.usda` renders
-identically at every time code.
+Open in the broader visual-parity matrix. The `--next` half is fixed (a
+non-instanced blendshaped mesh now morphs; `tusdview-blendshape-morph`), but the
+LEGACY Tydra path still renders
+`models/blendshape-and-animation-test-001.usda` identically at every time code —
+same symptom, different loader, not yet diagnosed.
+
+Note also that the GPU morph path skins the REST normal (only positions are
+morphed), so it differs from the CPU bake in shading, not geometry. That is by
+design on both the instanced and the static path; the test compares silhouettes
+for exactly that reason.
 
 ### 4. usd-assets regression harness
 
