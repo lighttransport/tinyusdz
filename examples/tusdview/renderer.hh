@@ -391,6 +391,13 @@ class Renderer {
 std::unique_ptr<Renderer> CreateGLRenderer();
 #if defined(HAVE_VULKAN)
 std::unique_ptr<Renderer> CreateVulkanRenderer();
+
+// Total DEVICE_LOCAL heap bytes of the GPU we would render on, via a throwaway
+// VkInstance so it can be called BEFORE a renderer exists -- the large-scene
+// budgets are resolved during argument parsing, long before device creation.
+// Returns 0 if Vulkan is unavailable; callers need a fallback. Prefers a
+// discrete GPU, matching startup device selection.
+uint64_t QueryDeviceLocalVramBytes();
 #endif
 
 }  // namespace tusdview

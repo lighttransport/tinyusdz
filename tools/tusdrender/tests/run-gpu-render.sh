@@ -91,8 +91,10 @@ render_profile() {
     echo "$log"
     return 1
   fi
-  for expected in "backend=vk" "rtLod=on" "maxVram=8"; do
-    if ! echo "$log" | grep -q "$expected"; then
+  # maxVram is derived from the device's VRAM heap, so assert a positive budget
+  # rather than a value that only holds on this machine's card.
+  for expected in "backend=vk" "rtLod=on" "maxVram=[1-9]"; do
+    if ! echo "$log" | grep -Eq "$expected"; then
       echo "FAIL: largeSceneProfile island did not apply expected default: $expected"
       echo "$log"
       return 1

@@ -16,6 +16,7 @@
 #include <cstring>
 #include <cctype>
 #include <cstdint>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <string>
@@ -110,6 +111,26 @@ bool ParsePrimLevel(const std::string& text, std::string* prim, int* level) {
   return !prim->empty();
 }
 
+// Host memory the budget tree may plan against: MemAvailable, capped at the
+// 32 GiB the policy targets (planning against a 256 GiB workstation's full RAM
+// would size the stage/geometry limits far past anything sensible). Falls back
+// to 32 GiB where /proc/meminfo does not exist (macOS, Windows).
+uint64_t HostMemoryCapacityBytes() {
+  constexpr uint64_t kTarget = tinyusdz::tydra::next::GiB(32);
+  std::ifstream f("/proc/meminfo");
+  std::string tok;
+  while (f >> tok) {
+    if (tok == "MemAvailable:") {
+      uint64_t kb = 0;
+      f >> kb;
+      const uint64_t bytes = kb * 1024ull;
+      return bytes ? std::min(bytes, kTarget) : kTarget;
+    }
+    std::getline(f, tok);
+  }
+  return kTarget;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -126,6 +147,10 @@ int main(int argc, char** argv) {
   int maxFrames = -1;
   long long maxTris = 0;      // 0 = default budget
   double maxGpuMemGiB = 0.0;  // --max-gpu-mem: raster full-mesh VRAM cap (GiB)
+  // --vram-budget: the ONE number the whole budget tree descends from. Left at 0
+  // it is probed from the device (see QueryDeviceLocalVramBytes).
+  double vramBudgetGiB = 0.0;
+  bool vramBudgetExplicit = false;
   long long maxDrawMeshes = 0;  // --max-draw-meshes: raster full-mesh count cap
   bool robustFrame = true;      // trim outlier meshes from fit-all auto-frame
   bool rtLod = false;           // --rt-lod: view-dependent RT instance LOD
@@ -247,6 +272,9 @@ int main(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--max-gpu-mem") == 0 && (i + 1) < argc) {
       maxGpuMemGiB = std::atof(argv[++i]);
       maxGpuMemExplicit = true;
+    } else if (std::strcmp(argv[i], "--vram-budget") == 0 && (i + 1) < argc) {
+      vramBudgetGiB = std::atof(argv[++i]);
+      vramBudgetExplicit = true;
     } else if (std::strcmp(argv[i], "--max-draw-meshes") == 0 && (i + 1) < argc) {
       maxDrawMeshes = std::atoll(argv[++i]);
       maxDrawMeshesExplicit = true;
@@ -581,6 +609,10 @@ int main(int argc, char** argv) {
           "Vulkan realtime preset for public large scenes. Profiles set existing "
           "large-scene knobs only; explicit CLI flags win. No texture resize or "
           "compression behavior is changed.\n"
+          "  --vram-budget G  GPU memory the large-scene budgets may plan "
+          "against (GiB). Default: probed from the device. Everything else "
+          "(--max-gpu-mem, texture edge/byte caps, upload staging) is derived "
+          "from it, so lowering this one number rehearses a smaller card.\n"
           "  --max-asset-bytes N  Override the per-asset composition read cap "
           "(default 512M; accepts K/M/G suffix, e.g. 2G) for scenes with large "
           "single crates (e.g. Moore Lane's 896MB subLayer).\n"
@@ -654,9 +686,28 @@ int main(int argc, char** argv) {
   if (effectiveProfile == LargeSceneProfile::Auto) {
     effectiveProfile = DetectProfileFromPath(file);
   }
+  // Every large-scene budget -- --max-gpu-mem, the texture edge/byte caps, the
+  // upload-staging cap, the proxy threshold -- descends from these two numbers.
+  // They used to be the literals GiB(32) and GiB(16): the budget tree was
+  // computed for an imaginary 32 GiB / 16 GiB machine no matter what you ran on,
+  // so an 8 GiB card was handed a 8 GiB VRAM limit and a 24 GiB card left half
+  // its memory unused. Probe the real values; --vram-budget overrides the GPU
+  // side (useful to rehearse a smaller card, or when the probe is unavailable).
+  const uint64_t hostCapacity = HostMemoryCapacityBytes();
+  uint64_t vramCapacity = 0;
+  if (vramBudgetExplicit && vramBudgetGiB > 0.0) {
+    vramCapacity = static_cast<uint64_t>(
+        vramBudgetGiB * double(tinyusdz::tydra::next::GiB(1)));
+  } else {
+#if defined(HAVE_VULKAN)
+    vramCapacity = tusdview::QueryDeviceLocalVramBytes();
+#endif
+    // No Vulkan, or the probe failed: keep the historical 16 GiB assumption
+    // rather than collapsing every budget to zero.
+    if (vramCapacity == 0) vramCapacity = tinyusdz::tydra::next::GiB(16);
+  }
   const tinyusdz::tydra::next::ResourceBudget targetBudget =
-      tinyusdz::tydra::next::ComputeResourceBudget(
-          tinyusdz::tydra::next::GiB(32), tinyusdz::tydra::next::GiB(16));
+      tinyusdz::tydra::next::ComputeResourceBudget(hostCapacity, vramCapacity);
   const double targetVramGiB =
       double(targetBudget.vram_limit) / double(tinyusdz::tydra::next::GiB(1));
   const double targetHostGiB =
@@ -751,6 +802,13 @@ int main(int argc, char** argv) {
 #endif
 
   if (effectiveProfile != LargeSceneProfile::Off) {
+    LOGI("resource budget: vram capacity=%.1f GiB (%s) -> limit=%.1f GiB, "
+         "host capacity=%.1f GiB -> limit=%.1f GiB",
+         double(vramCapacity) / double(tinyusdz::tydra::next::GiB(1)),
+         vramBudgetExplicit ? "--vram-budget" : "probed",
+         targetVramGiB,
+         double(hostCapacity) / double(tinyusdz::tydra::next::GiB(1)),
+         targetHostGiB);
     LOGI("large-scene-profile %s resolved: backend=%s --next=%s "
          "--raster-lod=%s full=%.1f cull=%.1f --rt-lod=%s full=%.1f cull=%.1f "
          "--max-gpu-mem=%.1f --max-draw-meshes=%lld --max-tris=%lld",

@@ -205,10 +205,13 @@ run_asset_pass() {
     return $SKIP
   fi
   if [ "$label" = "profile" ]; then
+    # --max-gpu-mem is DERIVED from the device's VRAM (half of it, floor 8 GiB),
+    # so assert that a positive budget was resolved, not a number that only holds
+    # on a 16 GiB card.
     for expected in "large-scene-profile island resolved" "backend=vk" \
                     "--next=on" "--raster-lod=on" "--rt-lod=on" \
-                    "--max-gpu-mem=8.0"; do
-      if ! echo "$log" | grep -q -- "$expected"; then
+                    "--max-gpu-mem=[1-9][0-9]*\.[0-9]"; do
+      if ! echo "$log" | grep -Eq -- "$expected"; then
         echo "FAIL: profile pass did not apply expected default: $expected"
         return 1
       fi
