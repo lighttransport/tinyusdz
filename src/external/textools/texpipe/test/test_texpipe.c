@@ -1176,6 +1176,59 @@ static void test_ktx2_read_roundtrip(void) {
           "reject out-of-bounds level offset");
     tp_free(NULL, ktx);
 
+    /* Crafted header fields: each of these used to defeat one of the reader's
+     * own arithmetic guards (level-size product wrapping uint64_t, or a 32-bit
+     * count narrowing to a negative int and sailing past its limit). */
+    tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_BC7);
+    opt.container = TP_CONTAINER_KTX2;
+    CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)), "process bc7 ktx2 (3)");
+    {
+        /* 0xFFFFFFFF x 0xFFFFFFFF with 4x4/16B blocks makes bw*bh*block_bytes
+         * exactly 2^64, i.e. 0 -- the truncated-level check then accepts a
+         * level of any length. */
+        static const struct { size_t off; uint32_t val; const char *what; } bad_hdr[] = {
+            {20, 0xFFFFFFFFu, "reject absurd pixelWidth"},
+            {24, 0xFFFFFFFFu, "reject absurd pixelHeight"},
+            {32, 0xFFFFFFFFu, "reject absurd layerCount"},
+            {36, 0xFFFFFFFFu, "reject absurd faceCount"},
+            {40, 0xFFFFFFFFu, "reject absurd levelCount"},
+        };
+        size_t k;
+        for (k = 0; k < sizeof(bad_hdr) / sizeof(bad_hdr[0]); ++k) {
+            uint8_t save[4];
+            size_t o = bad_hdr[k].off;
+            uint32_t val = bad_hdr[k].val;
+            memcpy(save, ktx + o, 4);
+            ktx[o] = (uint8_t)val; ktx[o+1] = (uint8_t)(val >> 8);
+            ktx[o+2] = (uint8_t)(val >> 16); ktx[o+3] = (uint8_t)(val >> 24);
+            CHECK(tp_ktx2_read(ktx, ktx_n, &img) == TP_ERROR_UNSUPPORTED,
+                  bad_hdr[k].what);
+            memcpy(ktx + o, save, 4);
+        }
+        /* dfdByteOffset past the end of the blob. */
+        ktx[48] = 0xFF; ktx[49] = 0xFF; ktx[50] = 0xFF; ktx[51] = 0x7F;
+        CHECK(tp_ktx2_read(ktx, ktx_n, &img) == TP_ERROR_INVALID_ARGUMENT,
+              "reject out-of-bounds DFD range");
+    }
+    tp_free(NULL, ktx);
+
+    /* tp_ktx2_write_uni is public API: a level-size array whose layout wraps
+     * size_t must be rejected, not produce a short buffer we then memcpy into. */
+    {
+        const uint8_t *ulev[2];
+        size_t usz[2];
+        uint32_t uw[2], uh[2];
+        uint8_t dummy[16];
+        size_t wrote = 0;
+        ulev[0] = dummy; ulev[1] = dummy;
+        usz[0] = (size_t)-1 - 64u; usz[1] = 1024u; /* cursor + sizes[0] wraps */
+        uw[0] = 4; uh[0] = 4; uw[1] = 2; uh[1] = 2;
+        CHECK(tp_ktx2_uni_size(usz, 2) == 0, "uni layout overflow -> size 0");
+        CHECK(tp_ktx2_write_uni(ulev, usz, uw, uh, 2, dummy, sizeof(dummy),
+                                &wrote) == TP_ERROR_INVALID_ARGUMENT,
+              "reject uni write with overflowing level sizes");
+    }
+
     free(dec);
     free(ref);
     printf("  ktx2 read + decode (bc7 / astc / uni) + transcode: ok\n");
@@ -1244,6 +1297,41 @@ static void test_ktx2_zstd_scheme(void) {
               "reject scheme-2 out-of-bounds compressed length");
         memcpy(sc2 + 88, save, 8);
         (void)off; (void)len;
+    }
+
+    /* uncompressedByteLength is what zdec gets as its destination capacity, and
+     * the sum of them sizes the one buffer all levels are inflated into. Two
+     * levels declaring ~2^63 wrap that sum to 16, so the buffer used to be
+     * allocated 16 bytes wide and then handed to zdec with dst_cap = 2^63. */
+    {
+        uint8_t save0[8], save1[8];
+        int k;
+        memcpy(save0, sc2 + 96, 8);   /* level 0 uncompressedByteLength */
+        memcpy(save1, sc2 + 120, 8);  /* level 1 uncompressedByteLength */
+        for (k = 0; k < 8; ++k) { sc2[96 + k] = 0; sc2[120 + k] = 0; }
+        sc2[96] = 0x10; sc2[103] = 0x80;  /* 2^63 + 16 */
+        sc2[127] = 0x80;                  /* 2^63      -> sum wraps to 16 */
+        CHECK(tp_ktx2_read_zstd(sc2, ktx_n, NULL, passthrough_zdec, NULL, &img) ==
+                  TP_ERROR_INVALID_ARGUMENT,
+              "reject scheme-2 wrapping uncompressedByteLength sum");
+        memcpy(sc2 + 96, save0, 8);
+        memcpy(sc2 + 120, save1, 8);
+    }
+
+    /* A level claiming to inflate to more than its block-data size is a
+     * decompression bomb (huge allocation from a tiny file); require exactness. */
+    {
+        uint8_t save0[8];
+        memcpy(save0, sc2 + 96, 8);
+        sc2[100] = 0x10; /* level 0 uncompressedByteLength += 2^32 */
+        CHECK(tp_ktx2_read_zstd(sc2, ktx_n, NULL, passthrough_zdec, NULL, &img) ==
+                  TP_ERROR_INVALID_ARGUMENT,
+              "reject scheme-2 oversized uncompressedByteLength");
+        memcpy(sc2 + 96, save0, 8);
+        /* ...and the untouched stream still reads back cleanly. */
+        CHECK(TP_OK(tp_ktx2_read_zstd(sc2, ktx_n, NULL, passthrough_zdec, NULL, &img)),
+              "scheme-2 still valid after restore");
+        tp_ktx2_image_free(NULL, &img);
     }
 
     tp_free(NULL, ktx);

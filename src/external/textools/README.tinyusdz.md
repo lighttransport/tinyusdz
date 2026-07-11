@@ -9,10 +9,13 @@ fork, not a submodule). Initial import at upstream commit
 `8b89eea948b221321df19773968d38735a611257` on 2026-07-05.
 
 Re-synced 2026-07-11 from upstream branch `texcomp-ktx2-reader` commit
-`b113e0e` (adds the KTX2 reader / transcode-on-load API, the previously
-missing `texcomp/src/texcomp_astc_decode.c`, and KTX2 Zstd-supercompression
-read via `tp_ktx2_read_zstd` + a host decompressor callback; see "KTX2 reader"
-below). Earlier import: `1d6ad64`.
+`14a2c9d` (adds the KTX2 reader / transcode-on-load API, the previously
+missing `texcomp/src/texcomp_astc_decode.c`, KTX2 Zstd-supercompression read via
+`tp_ktx2_read_zstd` + a host decompressor callback, and the PR #258 hardening of
+the KTX2 parser against crafted headers — unsigned range checks on
+pixelWidth/Height, levelCount/layerCount/faceCount, an in-bounds DFD check, and
+64-bit `w*h*4` in the decoders. See "KTX2 reader" below).
+Earlier imports: `b113e0e`, `1d6ad64`.
 
 Keep it pristine: prefer fixing bugs upstream and re-syncing over patching
 here. If a local patch becomes unavoidable, list it under "tinyusdz-local

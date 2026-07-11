@@ -542,6 +542,10 @@ tc_result tc_astc_decompress_rgba8(const uint8_t *astc, uint32_t width,
     /* This decoder handles all 2D block modes; the block dimension is bounded
      * by the ASTC 2D footprint set (max 12x12). tmp[] holds bx*by*4 bytes. */
     if (block_x > 12u || block_y > 12u) return TC_ERROR_UNSUPPORTED;
+    /* Compute the RGBA8 size in 64 bits: on a 32-bit size_t, width*height*4 for
+     * a large surface wraps and the out_size check below would pass. */
+    if ((uint64_t)width * (uint64_t)height * 4u > (uint64_t)(size_t)-1)
+        return TC_ERROR_UNSUPPORTED;
     need = (size_t)width * (size_t)height * 4u;
     if (out_size < need) return TC_ERROR_INVALID_ARGUMENT;
     if (!tc_astc_decode_image_rgba8(astc, width, height, block_x, block_y, out_rgba))

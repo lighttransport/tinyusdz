@@ -98,14 +98,18 @@ int tp_level_count(int w, int h, int max_levels) {
 #define TP_VK_ASTC_4x4_UNORM 157u        /* LDR blocks step by 2 (unorm/srgb) */
 #define TP_VK_ASTC_4x4_SFLOAT 1000066000u/* HDR blocks step by 1 */
 
-/* ASTC block table in VkFormat order for the LDR base index. */
+/* ASTC block dimensions in VkFormat index order, shared by the codec -> VkFormat
+ * and VkFormat -> codec directions below. */
+#define TP_ASTC_NUM_BLOCKS 14
+static const uint8_t tp_astc_dims[TP_ASTC_NUM_BLOCKS][2] = {
+    {4, 4},  {5, 4},   {5, 5},   {6, 5},   {6, 6},   {8, 5},  {8, 6},
+    {8, 8},  {10, 5},  {10, 6},  {10, 8},  {10, 10}, {12, 10},{12, 12}};
+
 static uint32_t tp_astc_vk_format(uint32_t bx, uint32_t by, int srgb, int hdr) {
-    static const uint8_t dims[14][2] = {
-        {4, 4},  {5, 4},   {5, 5},   {6, 5},   {6, 6},   {8, 5},  {8, 6},
-        {8, 8},  {10, 5},  {10, 6},  {10, 8},  {10, 10}, {12, 10},{12, 12}};
     int i;
-    for (i = 0; i < 14; ++i) {
-        if ((uint32_t)dims[i][0] == bx && (uint32_t)dims[i][1] == by) {
+    for (i = 0; i < TP_ASTC_NUM_BLOCKS; ++i) {
+        if ((uint32_t)tp_astc_dims[i][0] == bx &&
+            (uint32_t)tp_astc_dims[i][1] == by) {
             if (hdr) return TP_VK_ASTC_4x4_SFLOAT + (uint32_t)i;
             return TP_VK_ASTC_4x4_UNORM + (uint32_t)(i * 2) + (srgb ? 1u : 0u);
         }
@@ -185,11 +189,6 @@ tp_result tp_codec_describe(tp_codec codec, const tp_options *opt,
     return TP_ERROR_UNSUPPORTED;
 }
 
-/* ASTC block dimensions in VkFormat index order (must match tp_astc_vk_format). */
-static const uint8_t tp_astc_dims[14][2] = {
-    {4, 4},  {5, 4},   {5, 5},   {6, 5},   {6, 6},   {8, 5},  {8, 6},
-    {8, 8},  {10, 5},  {10, 6},  {10, 8},  {10, 10}, {12, 10},{12, 12}};
-
 tp_result tp_vk_format_describe(uint32_t vk, tp_codec_desc *d,
                                 tp_codec *out_codec, int *out_srgb) {
     if (!d || !out_codec) return TP_ERROR_INVALID_ARGUMENT;
@@ -240,8 +239,9 @@ tp_result tp_vk_format_describe(uint32_t vk, tp_codec_desc *d,
         *out_codec = TP_CODEC_EAC_RG11; return TP_SUCCESS;
     default: break;
     }
-    /* ASTC LDR: base 157, unorm/srgb interleaved (step 2) over 14 block sizes. */
-    if (vk >= TP_VK_ASTC_4x4_UNORM && vk <= TP_VK_ASTC_4x4_UNORM + 27u) {
+    /* ASTC LDR: base 157, unorm/srgb interleaved (step 2) over the block sizes. */
+    if (vk >= TP_VK_ASTC_4x4_UNORM &&
+        vk < TP_VK_ASTC_4x4_UNORM + 2u * TP_ASTC_NUM_BLOCKS) {
         uint32_t rel = vk - TP_VK_ASTC_4x4_UNORM;
         uint32_t idx = rel / 2u;
         d->name = "astc"; d->block_bytes = 16; d->channels_in = 4;
@@ -250,8 +250,9 @@ tp_result tp_vk_format_describe(uint32_t vk, tp_codec_desc *d,
         if (out_srgb) *out_srgb = (int)(rel & 1u);
         *out_codec = TP_CODEC_ASTC; return TP_SUCCESS;
     }
-    /* ASTC HDR: base 1000066000, step 1 over 14 block sizes. */
-    if (vk >= TP_VK_ASTC_4x4_SFLOAT && vk < TP_VK_ASTC_4x4_SFLOAT + 14u) {
+    /* ASTC HDR: base 1000066000, step 1 over the block sizes. */
+    if (vk >= TP_VK_ASTC_4x4_SFLOAT &&
+        vk < TP_VK_ASTC_4x4_SFLOAT + TP_ASTC_NUM_BLOCKS) {
         uint32_t idx = vk - TP_VK_ASTC_4x4_SFLOAT;
         d->name = "astc_hdr"; d->block_bytes = 16; d->channels_in = 3; d->is_hdr = 1;
         d->block_w = tp_astc_dims[idx][0];
