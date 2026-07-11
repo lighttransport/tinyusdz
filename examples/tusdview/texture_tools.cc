@@ -323,7 +323,29 @@ bool TexToolsAdaptCompressed(const uint8_t* blocks, size_t nbytes, bool srcIsUni
                  dst, dsz) == TC_SUCCESS;
     case DrawCompressedFormat::ASTC_4x4:
       return tc_astc_decompress_rgba8(blocks, w, h, 4u, 4u, dst, dsz) == TC_SUCCESS;
-    case DrawCompressedFormat::BC6H:  // HDR: needs the float path, not RGBA8
+    case DrawCompressedFormat::BC6H: {
+      // HDR has no RGBA8 form. On a device that can't sample BC6H, decode to
+      // float and tone-map (Reinhard) so the texture is still usable.
+      std::vector<float> hdr(static_cast<size_t>(w) * h * 4u);
+      if (tc_bc6h_decompress_rgbaf(blocks, w, h, /*is_signed=*/0,
+                                   static_cast<size_t>(w) * 4u * sizeof(float),
+                                   hdr.data(),
+                                   hdr.size() * sizeof(float)) != TC_SUCCESS) {
+        outRGBA->data.clear();
+        return false;
+      }
+      for (size_t i = 0; i < static_cast<size_t>(w) * h; ++i) {
+        for (int c = 0; c < 3; ++c) {
+          const float v = hdr[i * 4 + static_cast<size_t>(c)];
+          const float t = v / (1.0f + v);  // Reinhard
+          const float s = t <= 0.0f ? 0.0f : (t >= 1.0f ? 1.0f : t);
+          dst[i * 4 + static_cast<size_t>(c)] =
+              static_cast<uint8_t>(s * 255.0f + 0.5f);
+        }
+        dst[i * 4 + 3] = 255;
+      }
+      return true;
+    }
     case DrawCompressedFormat::None:
     default:
       outRGBA->data.clear();
