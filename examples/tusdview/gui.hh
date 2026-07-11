@@ -398,6 +398,16 @@ class Gui {
   CullJobMesh proxyResult_;        // accumulated box proxies (sync path / applied)
   RtLodCamera cullJobLodCam_;      // snapshot for the worker
   CullJobMesh cullJobProxy_;       // worker-accumulated box proxies
+  // Box proxies for NON-instanced meshes. Built on the main thread in
+  // buildViewVisibilityMask (the instance cull never sees these meshes), and
+  // prepended to whichever proxy set cullInstances uploads.
+  CullJobMesh nonInstProxy_;
+  // Merge nonInstProxy_ with the instance-cull's proxies (consumed) and upload the
+  // union as the one shared box-proxy draw. Skips the upload when unchanged, since
+  // the non-instanced set is rebuilt every frame while the instance cull is gated.
+  void uploadProxies(CullJobMesh* instProxy);
+  std::vector<float> lastProxyXforms_, lastProxyColors_;
+  bool lastProxyValid_{false};
  public:
   void setRasterLod(bool on, float fullPx, float cullPx) {
     rasterLodEnabled_ = on;

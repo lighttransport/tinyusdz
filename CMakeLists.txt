@@ -2395,6 +2395,18 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-uv-set-routing"
         )
       set_tests_properties(tusdview-uv-set-routing PROPERTIES SKIP_RETURN_CODE 77)
+
+      # Raster LOD must reach NON-instanced meshes, which also requires each one
+      # to carry its own AABB (the next loader used to hand every static mesh the
+      # scene-spanning box, disabling the per-mesh frustum cull along with it).
+      add_test(
+        NAME tusdview-noninstanced-lod
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-noninst-lod.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-noninstanced-lod"
+        )
+      set_tests_properties(tusdview-noninstanced-lod PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()

@@ -47,9 +47,13 @@ From the §2.8 review in [large-scene.md](large-scene.md), all unimplemented:
 - **`--vram-budget <GiB>` umbrella flag** deriving `--max-gpu-mem`, texture
   budgets and auto `--rt-lod` from the memory-budget query (today each is a
   separate knob).
-- **Raster LOD for non-instanced meshes** — the island `--raster-lod` frame is
-  bound by 55 M drawn tris of non-instanced unique geometry (63 visible
-  instances). The instanced side is already solved.
+- ~~**Raster LOD for non-instanced meshes**~~ — DONE. Island `--raster-lod` now
+  draws 15.2 M tris instead of 40.3 M (84 400 of 100 801 meshes; the rest are
+  sub-pixel-culled or collapsed to box proxies). The prerequisite turned out to
+  be a loader bug: the next static-batch path handed every non-instanced mesh the
+  running *scene*-bounds accumulator as its AABB, so no unique mesh could ever be
+  outside the frustum or small on screen — the per-mesh frustum cull was a no-op
+  too. Regression test `tusdview-noninstanced-lod`.
 
 ## Open — not started
 
