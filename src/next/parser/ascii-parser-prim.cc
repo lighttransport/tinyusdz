@@ -5,6 +5,7 @@
 
 #include "ascii-parser-internal.hh"
 #include "../prim/identifier.hh"
+#include "../types/spline.hh"
 #include "value-parser.hh"
 
 namespace tinyusdz {
@@ -434,14 +435,9 @@ bool AsciiParser::Impl::ParseAttribute() {
         AddError("Expected '=' after spline");
         return false;
       }
-      if (options_.strict_aousd_conformance) {
-        AddError("AOUSD spline fields are not yet evaluable in next-core; "
-                 "strict mode refuses a partial stage");
-        return false;
-      }
-      // Compatibility mode is deliberately lossless: retain the complete raw
-      // specialized value and re-emit it. This is not a conformance claim—the
-      // field is not evaluated—but it removes the previous silent deletion.
+      // The raw authored text is the storage (lossless round-trip through
+      // composition and the USDA writer); the typed view (ParseSplineText)
+      // drives evaluation and crate encoding on demand.
       lexer_->peek();
       const size_t vstart = lexer_->token_start();
       if (!SkipValueLike()) {
@@ -456,16 +452,28 @@ bool AsciiParser::Impl::ParseAttribute() {
               base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
         --vend;
       }
+      std::string spline_text(base + vstart, vend - vstart);
+      // Validate the grammar up front so malformed splines fail at parse time
+      // instead of at first evaluation/crate write.
+      {
+        SplineData sd;
+        std::string serr;
+        if (!ParseSplineText(spline_text, &sd, &serr)) {
+          if (options_.strict_aousd_conformance) {
+            AddError("Malformed AOUSD spline value: " + serr);
+            return false;
+          }
+          AddWarning("Spline preserved as raw text but not evaluable: " +
+                     serr);
+        }
+      }
       if (PrimSpec* cur = builder_->current()) {
         const PropNameId nid = GetPropNameTable().intern(attr_name);
         if (!cur->property(nid)) {
           cur->add_property_slot(nid, type_id, flags);
         }
-        cur->set_spline_source(
-            attr_name, std::string(base + vstart, vend - vstart));
+        cur->set_spline_source(attr_name, std::move(spline_text));
       }
-      AddWarning("AOUSD spline preserved as raw authored data; evaluation is "
-                 "unavailable in compatibility mode");
     } else {
       // Unknown property suffix: never silently ignore it in strict mode.
       const std::string suffix = prop_tok.value;

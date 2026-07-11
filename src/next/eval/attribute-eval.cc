@@ -5,6 +5,8 @@
 
 #include "attribute-eval.hh"
 #include "value-clip.hh"
+#include "../crate/crate-format.hh"  // FloatToHalf (spline value cast)
+#include "../types/spline.hh"
 #include "../layer/property-index.hh"
 #include "../pcp/cache.hh"  // EvalAttributeLazy: cache-backed lazy evaluation
 #include "../schema/schema-registry.hh"
@@ -121,6 +123,36 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
       result.from_time_sample = true;
       result.interpolated = sample.interpolated;
       return result;
+    }
+  }
+
+  // Spline (AOUSD 12.3 precedence: timeSamples > spline > default). The
+  // authored text parses on demand; the result is cast to the attribute's
+  // declared scalar type.
+  if (!opts.default_time && name_id.is_valid()) {
+    if (const std::string* spline_text = spec->spline_source(name_id)) {
+      SplineData sd;
+      if (ParseSplineText(*spline_text, &sd, nullptr)) {
+        double v = 0.0;
+        if (EvaluateSplineData(sd, opts.time, &v)) {
+          const std::string* tn = spec->property_type_name(attr_name);
+          if (tn && *tn == "float") {
+            result.value = Value(static_cast<float>(v));
+          } else if (tn && *tn == "half") {
+            uint16_t bits = FloatToHalf(static_cast<float>(v));
+            result.value = Value::MakeFromRaw(TypeId::Half, &bits);
+          } else {
+            result.value = Value(v);
+          }
+          result.success = true;
+          result.from_time_sample = true;
+          result.interpolated = true;
+          return result;
+        }
+        // Spline yields no value at this time (a `none` segment or
+        // extrapolation): fall through to the weaker value sources, matching
+        // how an uncovered timeSamples query degrades.
+      }
     }
   }
 

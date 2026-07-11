@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC Crate Reader scalar/value unpackers
 
 #include "crate-reader-internal.hh"
+#include "../types/spline.hh"
 
 #include <cstdint>
 #include <cstring>
@@ -220,6 +221,33 @@ bool CrateReader::Impl::DecodeTimeSamples(
     UnpackValue(sample_reps[i], v);
     out->emplace_back((*times)[i], std::move(v));
   }
+  return true;
+}
+
+bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
+  if (!out) return false;
+  if (rep.is_inlined()) return false;  // splines are heap-stored
+  if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
+
+  uint64_t blob_size = 0;
+  if (!reader_->read_u64(blob_size)) return false;
+  // The blob is bounded by the file; guard the allocation against a bogus size.
+  if (blob_size > options_.max_array_elements || blob_size > 100000000ull)
+    return false;
+  if (blob_size > 0 && !reader_->has_elements(static_cast<size_t>(blob_size), 1))
+    return false;
+  std::vector<uint8_t> blob(static_cast<size_t>(blob_size));
+  if (blob_size > 0 && !reader_->read(blob.data(), static_cast<size_t>(blob_size)))
+    return false;
+
+  SplineData sd;
+  std::string serr;
+  if (!DecodeSplineBinary(blob.data(), blob.size(), &sd, &serr)) return false;
+
+  // Per-knot customData count follows; tinyusdz does not retain it, but a
+  // present-but-nonzero count is not an error (the entries live at their own
+  // offsets and do not disturb other value reads).
+  *out = FormatSplineText(sd, "");
   return true;
 }
 

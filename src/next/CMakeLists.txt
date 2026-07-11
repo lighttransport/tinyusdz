@@ -12,6 +12,7 @@ set(TINYUSDZ_NEXT_SOURCES
     # Type system
     types/type-info.cc
     types/value.cc
+    types/spline.cc
     types/value-view.cc
     types/interpolation.cc
 
