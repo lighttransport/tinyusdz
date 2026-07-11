@@ -54,9 +54,14 @@ LEGACY Tydra path still renders
 same symptom, different loader, not yet diagnosed.
 
 Note also that the GPU morph path skins the REST normal (only positions are
-morphed), so it differs from the CPU bake in shading, not geometry. That is by
-design on both the instanced and the static path; the test compares silhouettes
-for exactly that reason.
+morphed), so it differs from the CPU bake in SHADING, not geometry. That is by
+design on both the instanced and the static path. The two also frame the scene
+differently under auto-fit: the GPU path pads the mesh box by `morphExtent` (so a
+morphed mesh is never frustum-culled) while the bake's box is exact. So
+`tusdview-blendshape-morph` compares them in `--mode depth` through a fixed USD
+camera -- geometry only, no shading, no framing. An earlier silhouette-IoU check
+was vacuous: the luma>25 mask covered the whole frame, because the background grid
+is brighter than that.
 
 ### 4. usd-assets regression harness
 

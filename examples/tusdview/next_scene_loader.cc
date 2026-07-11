@@ -3238,6 +3238,43 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       if (nl > 1e-12f) { v.nx = wn[0] / nl; v.ny = wn[1] / nl; v.nz = wn[2] / nl; }
       else { v.nx = 0; v.ny = 0; v.nz = 0; }
     }
+    // The morph deltas are MESH-LOCAL (BlendShape offsets), but the vertices are
+    // now world-baked and every consumer -- the vertex shader (deform.glsl) and
+    // BuildNextRtDeformedVertices alike -- adds the delta straight onto the
+    // position it is handed. So the deltas have to be rotated/scaled into the same
+    // space, or a blendshaped mesh under a rotated or scaled parent morphs along
+    // the wrong axes. Skinning already does the equivalent (its bone rows are
+    // invW * (G*sm*invG) * W); the instanced prototype path needs none of this,
+    // because its vertices stay mesh-local and each instance applies its own o2w
+    // after the deform.
+    const bool linIdentity =
+        M[0] == 1.0f && M[1] == 0.0f && M[2] == 0.0f && M[4] == 0.0f &&
+        M[5] == 1.0f && M[6] == 0.0f && M[8] == 0.0f && M[9] == 0.0f &&
+        M[10] == 1.0f;
+    if (loc.morphChannelCount > 0 && !linIdentity) {
+      auto toHalf = [](float f) {
+        return tinyusdz::value::float_to_half_full(f).value;
+      };
+      for (size_t e = 0; e + 3 < loc.morphDeltaHalf.size(); e += 4) {
+        const float d[3] = {NextHalfToFloat(loc.morphDeltaHalf[e + 1]),
+                            NextHalfToFloat(loc.morphDeltaHalf[e + 2]),
+                            NextHalfToFloat(loc.morphDeltaHalf[e + 3])};
+        for (int c = 0; c < 3; ++c) {  // a direction: no translation row
+          loc.morphDeltaHalf[e + 1 + size_t(c)] =
+              toHalf(d[0] * M[0 * 4 + c] + d[1] * M[1 * 4 + c] +
+                     d[2] * M[2 * 4 + c]);
+        }
+      }
+      // The extent pads a world-space box, so carry it through |M| (each world
+      // axis takes the worst case over the local axes that feed it).
+      const float le[3] = {loc.morphExtent[0], loc.morphExtent[1],
+                           loc.morphExtent[2]};
+      for (int a = 0; a < 3; ++a) {
+        loc.morphExtent[a] = le[0] * std::fabs(M[0 * 4 + a]) +
+                             le[1] * std::fabs(M[1 * 4 + a]) +
+                             le[2] * std::fabs(M[2 * 4 + a]);
+      }
+    }
     // USD `primvars:displayOpacity`. No renderer here samples a per-vertex alpha
     // attribute, but the overwhelmingly common authoring is one opacity for the
     // whole mesh -- so when it does not actually vary, fold it into an
