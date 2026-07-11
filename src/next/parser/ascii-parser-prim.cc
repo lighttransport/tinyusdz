@@ -9,6 +9,35 @@
 namespace tinyusdz {
 namespace next {
 
+namespace {
+
+// Resolve a relative prim/property path (../Sibling, ./Child, Child.attr)
+// against the owning prim's absolute path. Crate files never hold relative
+// paths, and downstream lookups are absolute-only — resolve at parse time
+// (pxr does the same when building SdfPaths).
+std::string ResolveRelativeTargetPath(const ::tinyusdz::next::PrimSpec* prim,
+                                      const std::string& target) {
+  if (target.empty() || target[0] == '/' || !prim) return target;
+  std::string base = prim->path().str();
+  std::string rest = target;
+  while (!rest.empty()) {
+    if (rest.rfind("../", 0) == 0) {
+      const size_t up = base.rfind('/');
+      base = (up == std::string::npos || up == 0) ? "/" : base.substr(0, up);
+      rest = rest.substr(3);
+    } else if (rest.rfind("./", 0) == 0) {
+      rest = rest.substr(2);
+    } else {
+      break;
+    }
+  }
+  if (rest.empty()) return base;
+  if (base.empty() || base == "/") return "/" + rest;
+  return base + "/" + rest;
+}
+
+}  // namespace
+
 bool AsciiParser::Impl::ParsePrim() {
   if (depth_ >= options_.max_depth) {
     AddError("Maximum prim nesting depth exceeded");
@@ -119,8 +148,14 @@ bool AsciiParser::Impl::ParsePrimContents() {
           op = PrimSpec::RelationshipListOp::Add;
         }
         if (!ParseRelationship(op, /*explicit_list=*/false)) return false;
+        continue;
       }
-      continue;
+      // A list-edit qualifier before an ATTRIBUTE statement: silently
+      // continuing would parse `delete float x.connect = </A>` as an ADD —
+      // a semantic inversion. Attribute connection list-editing is not
+      // modeled here; error out like the legacy parser.
+      AddError("List-editing qualifier is not supported for attributes");
+      return false;
     }
 
     if (tok.type == TokenType::Identifier && tok.value == "variantSet") {
@@ -336,12 +371,19 @@ bool AsciiParser::Impl::ParseAttribute() {
           AddError("Expected path for connection");
           return false;
         }
-        if (cur) cur->add_connection(attr_name, Path(path));
+        if (cur) {
+          cur->add_connection(attr_name,
+                              Path(ResolveRelativeTargetPath(cur, path)));
+        }
       }
       ParsePropertyMetadata(attr_name);
     } else {
+      // Unknown property suffix (e.g. `.spline = { bezier: ... }`): consume
+      // the suffix AND its structured value with a balanced skip; consuming
+      // one token left `= { ... }` to derail the prim-content loop.
       AddWarning("Unknown attribute property: " + prop_tok.value);
       lexer_->next();
+      if (Match(TokenType::Equals)) SkipValueLike();
     }
   } else {
     // Bare declaration (`token outputs:out`): declared-only slot with no
@@ -354,6 +396,8 @@ bool AsciiParser::Impl::ParseAttribute() {
 
   return true;
 }
+
+
 
 bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
                                           bool explicit_list,
@@ -386,12 +430,13 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   }
 
   std::vector<Path> targets;
+  const ::tinyusdz::next::PrimSpec* owner = builder_->current();
   if (Check(TokenType::OpenBracket)) {
     lexer_->next();
     while (!Check(TokenType::CloseBracket) && !AtEnd()) {
       std::string target;
       if (lexer_->expect(TokenType::PathRef, target)) {
-        targets.emplace_back(target);
+        targets.emplace_back(ResolveRelativeTargetPath(owner, target));
       }
       if (!Check(TokenType::CloseBracket)) {
         Match(TokenType::Comma);
@@ -401,7 +446,7 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   } else if (Check(TokenType::PathRef)) {
     std::string target;
     lexer_->expect(TokenType::PathRef, target);
-    targets.emplace_back(target);
+    targets.emplace_back(ResolveRelativeTargetPath(owner, target));
   } else if (Check(TokenType::None)) {
     lexer_->next();
   }

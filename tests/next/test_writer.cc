@@ -1005,8 +1005,8 @@ def Scope "E" (
     custom rel material:binding
     rel none_rel = None
     rel empty_rel = []
-    int sat = 99999999999999999999999
-    uint usat = 99999999999999999999999
+    int sat = 2147483647
+    uint usat = 4294967295
 }
 )";
 

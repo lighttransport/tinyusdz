@@ -84,6 +84,24 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
   }
   lexer_->num_threads = options_.num_threads;
 
+  // Enforce the `#usda 1.0` magic on the raw bytes BEFORE lexing: the lexer
+  // treats '#' as a comment, so a token-level check is dead code and any
+  // text starting with `def "x" {}` would "parse" as USDA.
+  {
+    const char* raw = source_ ? reinterpret_cast<const char*>(source_->base())
+                              : data;
+    size_t pos = 0;
+    while (pos < length &&
+           (raw[pos] == ' ' || raw[pos] == '\t' || raw[pos] == '\r' ||
+            raw[pos] == '\n')) {
+      pos++;
+    }
+    if (pos + 8 > length || std::memcmp(raw + pos, "#usda 1.", 8) != 0) {
+      AddError("Missing or invalid '#usda 1.0' header");
+      return false;
+    }
+  }
+
   // Parse stage metadata (header block)
   if (!ParseStageMetadata()) {
     return false;
@@ -234,6 +252,11 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
           }
           if (k == "offset") off = v;
           else if (k == "scale") scl = v;
+        } else {
+          // Unknown key with a structured value (customData = { ... } may
+          // contain nested parens/braces): balanced skip, or the paren scan
+          // terminates INSIDE the value and desyncs the metadata block.
+          SkipValueLike();
         }
       } else {
         lexer_->next();  // skip unexpected token (avoid spinning)
@@ -466,6 +489,14 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           Match(TokenType::Comma);
         }
         Match(TokenType::CloseBracket);
+      } else if (Check(TokenType::String)) {
+        // Non-bracketed single value (`prepend apiSchemas = "FooAPI"`): must
+        // be consumed here, or the metadata loop's bare-string rule assigns
+        // it to the prim DOC (double corruption).
+        std::string schema;
+        if (lexer_->expect(TokenType::String, schema)) {
+          schemas.push_back(schema);
+        }
       }
       // Apply per the authored qualifier: `delete apiSchemas = [...]` must
       // REMOVE the schemas (appending them would invert the opinion). The
