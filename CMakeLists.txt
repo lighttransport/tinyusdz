@@ -2357,6 +2357,18 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-instanced-skinning"
         )
+
+      # The large-scene budget tree must descend from the real device, not the
+      # GiB(32)/GiB(16) literals it used to be fed, and --vram-budget must
+      # override the probe. Headless + tiny scene; skips without Vulkan.
+      add_test(
+        NAME tusdview-vram-budget
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-vram-budget.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-vram-budget"
+        )
+      set_tests_properties(tusdview-vram-budget PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()

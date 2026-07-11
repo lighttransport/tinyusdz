@@ -340,6 +340,69 @@ bool Mat4Inverse(const float m[16], float out[16]) {
 
 }  // namespace
 
+uint64_t QueryDeviceLocalVramBytes() {
+  // Deliberately standalone: this runs during argument parsing, before any
+  // renderer (or GLFW window) exists, so it stands up its own instance and tears
+  // it down. Any failure returns 0 and the caller falls back to a default.
+  //
+  // Every vk* name here is a volk function POINTER, null until volkInitialize().
+  // The renderer normally does that during init -- far too late for us -- so the
+  // probe must bootstrap volk itself, then load the instance-level entry points
+  // off its own instance before it can enumerate anything. The renderer re-runs
+  // both steps against its real instance later, which overwrites these.
+  if (volkInitialize() != VK_SUCCESS) return 0;
+
+  VkApplicationInfo app{};
+  app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+  app.pApplicationName = "tusdview-vram-probe";
+  app.apiVersion = VK_API_VERSION_1_1;
+
+  VkInstanceCreateInfo ici{};
+  ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+  ici.pApplicationInfo = &app;
+
+  VkInstance inst = VK_NULL_HANDLE;
+  if (vkCreateInstance(&ici, nullptr, &inst) != VK_SUCCESS) return 0;
+  volkLoadInstance(inst);
+
+  uint32_t count = 0;
+  vkEnumeratePhysicalDevices(inst, &count, nullptr);
+  if (count == 0) {
+    vkDestroyInstance(inst, nullptr);
+    return 0;
+  }
+  std::vector<VkPhysicalDevice> devices(count);
+  vkEnumeratePhysicalDevices(inst, &count, devices.data());
+
+  // Same preference as startup device selection: a discrete GPU if there is one,
+  // else the first device. Picking the largest heap instead would be wrong on a
+  // laptop whose iGPU reports all of system RAM as device-local.
+  VkPhysicalDevice chosen = devices[0];
+  for (VkPhysicalDevice d : devices) {
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(d, &props);
+    if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+      chosen = d;
+      break;
+    }
+  }
+
+  VkPhysicalDeviceMemoryProperties mp{};
+  vkGetPhysicalDeviceMemoryProperties(chosen, &mp);
+  // The LARGEST device-local heap, not the sum: a discrete GPU also exposes a
+  // small DEVICE_LOCAL|HOST_VISIBLE heap (the BAR / ReBAR window), which is a
+  // *view* into the same VRAM, not extra memory. Summing them reports ~16.2 GiB
+  // on a 16 GiB card and inflates every budget derived from it.
+  uint64_t bytes = 0;
+  for (uint32_t i = 0; i < mp.memoryHeapCount; ++i) {
+    if (mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+      bytes = std::max(bytes, uint64_t(mp.memoryHeaps[i].size));
+    }
+  }
+  vkDestroyInstance(inst, nullptr);
+  return bytes;
+}
+
 VulkanRenderer::~VulkanRenderer() { shutdown(); }
 
 uint32_t VulkanRenderer::findMemoryType(uint32_t typeBits,
