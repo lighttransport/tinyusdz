@@ -169,8 +169,13 @@ bool AsciiParser::Impl::ParseStageMetadata() {
                 AddError("AOUSD layer-offset scale must be greater than zero");
                 return false;
               }
-              AddWarning("Non-positive sublayer scale retained in compatibility "
-                         "mode");
+              // pxr warns and substitutes NO offset (identity) — retaining a
+              // negative scale would time-reverse the sublayer's samples.
+              AddWarning(
+                  "Invalid sublayer offset (non-positive scale); using no "
+                  "offset instead");
+              sl_offset = 0.0;
+              sl_scale = 1.0;
             }
             // Keep the offsets vector parallel to subLayers.
             auto& offs = layer_->meta().subLayerOffsets;
