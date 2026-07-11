@@ -34,8 +34,16 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
   switch (type_id) {
     case CrateTypeId::Bool: return UnpackBool(rep, out);
     case CrateTypeId::Int: return UnpackInt(rep, out);
-    case CrateTypeId::UInt:
-    case CrateTypeId::UChar: return UnpackUInt(rep, out);
+    case CrateTypeId::UInt: return UnpackUInt(rep, out);
+    case CrateTypeId::UChar: {
+      // Keep the uchar type identity (was mutated to uint).
+      if (!UnpackUInt(rep, out)) return false;
+      if (const uint32_t* u = out.as_uint()) {
+        const uint8_t b = static_cast<uint8_t>(*u & 0xFFu);
+        out = Value::MakeFromRaw(TypeId::UChar, &b);
+      }
+      return true;
+    }
     case CrateTypeId::Int64: return UnpackInt64(rep, out);
     case CrateTypeId::UInt64: return UnpackUInt64(rep, out);
     case CrateTypeId::Float: return UnpackFloat(rep, out);
@@ -184,6 +192,30 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
 
     case CrateTypeId::Dictionary:
       return DecodeDictionary(rep, out, 0);
+
+    case CrateTypeId::Relocates: {
+      // SdfRelocates (crate >= 0.11): [u64 count][(u32 src, u32 dst)*].
+      // Surface as a flat token array of [src, dst, ...] pairs; the stage
+      // builder folds them into PrimSpecMeta::relocates.
+      if (rep.payload() == 0) { out = Value::MakeTokenArray({}); return true; }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+        return false;
+      }
+      uint64_t n = 0;
+      if (!reader_->read_u64(n)) return false;
+      if (n > options_.max_array_elements) return false;
+      std::vector<std::string> pairs;
+      pairs.reserve(static_cast<size_t>(n) * 2);
+      for (uint64_t i = 0; i < n; ++i) {
+        uint32_t src = 0, dst = 0;
+        if (!reader_->read_u32(src) || !reader_->read_u32(dst)) return false;
+        if (src >= paths_.size() || dst >= paths_.size()) return false;
+        pairs.push_back(paths_[src]);
+        pairs.push_back(paths_[dst]);
+      }
+      out = Value::MakeTokenArray(std::move(pairs));
+      return true;
+    }
 
     default:
       AddWarning(std::string("Unsupported value type: ") + CrateTypeIdName(type_id));

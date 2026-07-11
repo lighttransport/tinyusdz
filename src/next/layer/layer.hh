@@ -49,6 +49,10 @@ struct LayerMeta {
   Value customLayerData;
   Value expressionVariables;
 
+  // Layer-level relocates (SdfRelocates, USD 24.11+): composed source path
+  // -> new path. Applied by pcp during stage build (cross-arc prims only).
+  std::vector<std::pair<std::string, std::string>> relocates;
+
   // Sublayer paths for composition
   std::vector<std::string> subLayers;
   // Per-sublayer layer offsets (offset, scale), parallel to subLayers.

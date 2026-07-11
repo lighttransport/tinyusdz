@@ -1166,6 +1166,34 @@ static void test_audit_stage_meta_and_variant_overrides() {
         "bare-set override applies to both prims");
 }
 
+
+// apiSchemas list-op merge across arcs: a prepend-qualified stronger list
+// composes IN FRONT of the weaker layer's schemas instead of replacing them.
+static void test_apischemas_cross_arc_merge() {
+  std::cout << "[apiSchemas cross-arc merge]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"M\" (prepend apiSchemas = [\"PhysicsRigidBodyAPI\"]) "
+        "{ }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"M\" (prepend references = @./base.usda@</M>\n"
+      "                 prepend apiSchemas = [\"PhysicsMassAPI\"]) { }\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const PrimSpec* m = out->prim_at_path("/M");
+  CHECK(m != nullptr, "prim exists");
+  const auto& schemas = m->meta().apiSchemas();
+  CHECK(schemas.size() == 2 && schemas[0] == "PhysicsMassAPI" &&
+            schemas[1] == "PhysicsRigidBodyAPI",
+        "stronger prepend merges in front of weaker schemas");
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -1191,6 +1219,7 @@ int main() {
   test_cross_layer_arc_merge();
   test_audit_2026_07();
   test_audit_stage_meta_and_variant_overrides();
+  test_apischemas_cross_arc_merge();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";

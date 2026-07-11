@@ -241,6 +241,9 @@ std::array<TypeInfo, kTypeCount> g_type_info = {{
   // Relationship types
   { TypeId::Relationship, "rel", "Relationship", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
   { TypeId::Reference, "reference", "Reference", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
+
+  // uchar (appended; keep in enum order)
+  POD_TYPE_INFO(UChar, "uchar", "uint8_t", uint8_t),
 }};
 
 #undef POD_TYPE_INFO
@@ -336,6 +339,7 @@ bool IsScalarType(TypeId id) {
     case TypeId::Float:
     case TypeId::Double:
     case TypeId::TimeCode:
+    case TypeId::UChar:
       return true;
     default:
       return false;
@@ -345,6 +349,7 @@ bool IsScalarType(TypeId id) {
 bool IsNumericType(TypeId id) {
   switch (id) {
     case TypeId::Bool:
+    case TypeId::UChar:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::Int64:
@@ -448,6 +453,7 @@ size_t GetComponentCount(TypeId id) {
   switch (id) {
     // Scalars
     case TypeId::Bool:
+    case TypeId::UChar:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::Int64:

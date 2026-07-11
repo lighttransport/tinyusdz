@@ -27,6 +27,7 @@ const TypeNameEntry kTypeNames[] = {
   {"bool", TypeId::Bool},
   {"int", TypeId::Int},
   {"uint", TypeId::UInt},
+  {"uchar", TypeId::UChar},
   {"int64", TypeId::Int64},
   {"uint64", TypeId::UInt64},
   {"half", TypeId::Half},

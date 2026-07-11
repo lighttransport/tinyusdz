@@ -20,6 +20,7 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Half3: return CrateTypeId::Vec3h;
     case TypeId::Half4: return CrateTypeId::Vec4h;
     case TypeId::Quath: return CrateTypeId::Quath;
+    case TypeId::UChar: return CrateTypeId::UChar;
     case TypeId::Float: return CrateTypeId::Float;
     case TypeId::Double: return CrateTypeId::Double;
     case TypeId::String: return CrateTypeId::String;
@@ -84,6 +85,7 @@ uint32_t ArrayComps(TypeId type_id) {
   switch (type_id) {
     case TypeId::Half:
     case TypeId::TimeCode:
+    case TypeId::UChar:
       return 1;
     case TypeId::Float2:
     case TypeId::Double2:

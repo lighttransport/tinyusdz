@@ -148,12 +148,15 @@ bool IsIntBackedArray(TypeId id) {
 }
 
 // UInt-vector element types share the flat uint32 array storage with UInt.
+// uchar[] is widened into the same storage (bit-exact; the crate writer
+// narrows back to tightly-packed uint8).
 bool IsUIntBackedArray(TypeId id) {
   switch (id) {
     case TypeId::UInt:
     case TypeId::UInt2:
     case TypeId::UInt3:
     case TypeId::UInt4:
+    case TypeId::UChar:
       return true;
     default:
       return false;
@@ -1002,6 +1005,7 @@ DEFINE_SCALAR_ACCESSOR(uint, UInt, uint32_t)
 DEFINE_SCALAR_ACCESSOR(int64, Int64, int64_t)
 DEFINE_SCALAR_ACCESSOR(uint64, UInt64, uint64_t)
 DEFINE_SCALAR_ACCESSOR(float, Float, float)
+DEFINE_SCALAR_ACCESSOR(uchar, UChar, uint8_t)
 
 #undef DEFINE_SCALAR_ACCESSOR
 

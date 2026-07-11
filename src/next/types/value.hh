@@ -246,6 +246,7 @@ public:
   const uint64_t* as_uint64() const;
   const float* as_float() const;
   const double* as_double() const;
+  const uint8_t* as_uchar() const;
   const std::string* as_string() const;
 
   // Mutable accessors
@@ -256,6 +257,7 @@ public:
   uint64_t* as_uint64();
   float* as_float();
   double* as_double();
+  uint8_t* as_uchar();
   std::string* as_string();
 
   // Vector accessors (return pointer to first element)

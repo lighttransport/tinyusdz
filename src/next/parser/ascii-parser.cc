@@ -483,6 +483,27 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         prim->meta().instanceable = *result.value.as_bool();
         prim->meta().instanceable_authored = true;
       }
+    } else if (key == "relocates") {
+      // relocates = { </old/path>: </new/path>, ... } — namespace renames
+      // consumed by pcp (SdfRelocates). Relative paths resolve against the
+      // owning prim.
+      if (Match(TokenType::OpenBrace)) {
+        while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+          std::string src, dst;
+          if (!lexer_->expect(TokenType::PathRef, src)) break;
+          if (!Match(TokenType::Colon)) break;
+          if (!lexer_->expect(TokenType::PathRef, dst)) break;
+          if (prim) {
+            auto abs = [&](const std::string& p) {
+              if (p.empty() || p[0] == '/') return p;
+              return prim->path().str() + "/" + p;
+            };
+            prim->meta().relocates().emplace_back(abs(src), abs(dst));
+          }
+          Match(TokenType::Comma);
+        }
+        Match(TokenType::CloseBrace);
+      }
     } else if (key == "apiSchemas") {
       std::vector<std::string> schemas;
       if (Match(TokenType::OpenBracket)) {

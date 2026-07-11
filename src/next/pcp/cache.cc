@@ -161,14 +161,28 @@ struct Cache::Impl {
   // Relocates: composed source path -> target path (collected from the root
   // layer stack at Open). Applied as a same-parent namespace rename in BuildStage.
   std::map<std::string, std::string> relocates_map;
+  // Cross-parent relocates: destination-parent path -> [(src, dst)] pulled
+  // in when the walk visits that parent (same-parent renames stay in
+  // relocates_map's in-place branch).
+  std::map<std::string, std::vector<std::pair<std::string, std::string>>>
+      relocate_arrivals;
 
   void CollectRelocates() {
     relocates_map.clear();
+    relocate_arrivals.clear();
+    auto add = [&](const std::string &src, const std::string &dst) {
+      relocates_map[src] = dst;
+      const Path sp(src), dp(dst);
+      if (sp.parent().str() != dp.parent().str()) {
+        relocate_arrivals[dp.parent().str()].emplace_back(src, dst);
+      }
+    };
     for (const auto &lp : layer_stacks[0].layers) {
+      // Layer-level relocates (USD 24.11+ form; what pxr's pcp consumes).
+      for (const auto &r : lp->meta().relocates) add(r.first, r.second);
+      // Legacy prim-level relocates.
       for (const PrimSpec &ps : lp->prims()) {
-        for (const auto &r : ps.meta().relocates()) {
-          relocates_map[r.first] = r.second;
-        }
+        for (const auto &r : ps.meta().relocates()) add(r.first, r.second);
       }
     }
   }

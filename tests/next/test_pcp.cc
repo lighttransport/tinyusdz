@@ -3312,6 +3312,60 @@ static void test_sublayer_offset_parses() {
   std::cout << "  OK" << std::endl;
 }
 
+
+// 2026-07 deferred audit items: layer-level relocates apply during
+// BuildStage (cross-parent move, matching pxr), and the applied list is
+// dropped from the flattened output metadata.
+static void test_layer_relocates() {
+  std::cout << "test_layer_relocates..." << std::endl;
+
+  auto asset = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*asset);
+    ab.begin_prim("CharRig", "Xform");
+    ab.begin_prim("Rig", "Xform");
+    ab.begin_prim("Anim", "Xform");
+    ab.add_property("v", Value(int32_t(7)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    rootL->meta().relocates.emplace_back("/Char/Rig/Anim", "/Char/Anim");
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("Char", "Xform");
+    rb.current()->meta().references.push_back("@mem_rig@</CharRig>");
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("mem_rig", asset);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim moved = stage.GetPrimAtPath("/Char/Anim");
+  assert(moved.IsValid() && "relocated prim must exist at the new path");
+  const Value* v = moved.GetPropertyValue("v");
+  assert(v && v->as_int() && *v->as_int() == 7);
+  UsdPrim old_loc = stage.GetPrimAtPath("/Char/Rig/Anim");
+  assert(!old_loc.IsValid() && "source location must be vacated");
+  UsdPrim rig = stage.GetPrimAtPath("/Char/Rig");
+  assert(rig.IsValid() && "unrelocated sibling structure intact");
+  // Applied relocates must not survive into the flattened metadata.
+  assert(stage.GetRootLayer()->meta().relocates.empty());
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
@@ -3353,6 +3407,7 @@ int main() {
   test_flatten_instances();
   test_relocates();
   test_implied_inherit();
+  test_layer_relocates();
   test_instance_proxy();
   test_parallel_prewarm();
   test_cross_source_variant();

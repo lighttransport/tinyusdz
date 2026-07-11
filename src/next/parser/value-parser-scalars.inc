@@ -115,6 +115,22 @@ ParseResult ParseDouble(Lexer& lexer) {
   return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value)));
 }
 
+ParseResult ParseUChar(Lexer& lexer) {
+  const Token& tok = lexer.peek();
+  if (tok.type != TokenType::Number ||
+      !IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+    return ParseResult::Error("Expected unsigned integer value");
+  }
+  lexer.next();
+  uint64_t wide = 0;
+  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &wide) ||
+      wide > 255) {
+    return ParseResult::Error("uchar value out of range");
+  }
+  const uint8_t b = static_cast<uint8_t>(wide);
+  return ParseResult::Ok(Value::MakeFromRaw(TypeId::UChar, &b));
+}
+
 ParseResult ParseTimeCode(Lexer& lexer) {
   // Same wire format as double, but the value keeps its TimeCode identity
   // (matches the crate reader; a rewrite must not mutate timecode -> double).
@@ -495,6 +511,7 @@ ParseFn GetParseFunction(TypeId type_id) {
     case TypeId::Bool: return &ParseBool;
     case TypeId::Int: return &ParseInt;
     case TypeId::UInt: return &ParseUInt;
+    case TypeId::UChar: return &ParseUChar;
     case TypeId::Int64: return &ParseInt64;
     case TypeId::UInt64: return &ParseUInt64;
     case TypeId::Half: return &ParseHalf;

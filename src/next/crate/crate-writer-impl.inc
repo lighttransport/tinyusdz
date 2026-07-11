@@ -92,6 +92,10 @@ private:
 
   // Lazy-array write accounting.
   size_t arrays_passed_through_ = 0;
+  // Highest crate minor version the authored content REQUIRES (pxr-style
+  // write-version upgrade): timecode values need 0.9, relocates 0.11.
+  // WriteBootstrap stamps max(options version, this).
+  uint8_t required_version_minor_ = 0;
   size_t arrays_reencoded_ = 0;
 
   // Parallel build: when these point at the main builder's COMPLETED token/string

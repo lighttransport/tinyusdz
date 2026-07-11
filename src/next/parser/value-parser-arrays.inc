@@ -934,6 +934,22 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
     }
     return ParseResult::Ok(Value::MakeUIntArray(std::move(values)));
   }
+  if (element_type == TypeId::UChar) {
+    // uchar[]: widened into the uint32 array storage (element type UChar).
+    std::vector<uint32_t> values;
+    auto parse_u8 = [](SliceParser* s, uint32_t* v) {
+      uint64_t tmp = 0;
+      if (!s->parse_u64(&tmp) || tmp > 255) return false;
+      *v = static_cast<uint32_t>(tmp);
+      return true;
+    };
+    if (!ParseScalarArrayMaybeParallel<uint32_t>(data, len, simple, nt_hint,
+                                                &values, parse_u8)) {
+      return ParseResult::Error("Failed to parse uchar array");
+    }
+    return ParseResult::Ok(
+        Value::MakeUIntCompArray(std::move(values), TypeId::UChar, 1));
+  }
   if (element_type == TypeId::Int64) {
     std::vector<int64_t> values;
     auto parse_i64 = [](SliceParser* s, int64_t* v) { return s->parse_i64(v); };
@@ -1172,6 +1188,7 @@ bool IsUsdaArrayLazyCandidate(TypeId element_type) {
     case TypeId::Bool:
     case TypeId::Int:
     case TypeId::UInt:
+    case TypeId::UChar:
     case TypeId::Int64:
     case TypeId::UInt64:
     case TypeId::Int2:

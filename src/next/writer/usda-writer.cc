@@ -314,6 +314,15 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + "kilogramsPerUnit = " + dtos(meta.kilogramsPerUnit));
   }
 
+  if (!meta.relocates.empty()) {
+    std::string s = opts.indent + "relocates = {\n";
+    for (const auto& r : meta.relocates) {
+      s += opts.indent + opts.indent + "<" + r.first + ">: <" + r.second +
+           ">,\n";
+    }
+    s += opts.indent + "}";
+    lines.push_back(s);
+  }
   if (!meta.colorConfiguration.empty()) {
     lines.push_back(opts.indent + "colorConfiguration = " +
                     FormatAssetPathForUsda(meta.colorConfiguration));
@@ -976,7 +985,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                   has_customData || has_assetInfo || has_sdr || has_clips ||
                   !meta.references.empty() || !meta.payloads.empty() ||
                   !meta.inherits.empty() || !meta.specializes.empty() ||
-                  has_arc_edits ||
+                  has_arc_edits || !meta.relocates().empty() ||
                   !meta.variantSelections().empty() ||
                   !meta.variantSelection.empty() ||
                   !meta.variantSets().empty();
@@ -1013,6 +1022,16 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       }
       s += "]";
       kv(s);
+    }
+    if (!meta.relocates().empty()) {
+      WriteIndent(os, md, opts.indent);
+      os << "relocates = {\n";
+      for (const auto& r : meta.relocates()) {
+        WriteIndent(os, md + 1, opts.indent);
+        os << "<" << r.first << ">: <" << r.second << ">,\n";
+      }
+      WriteIndent(os, md, opts.indent);
+      os << "}\n";
     }
     if (has_customData) kv(DictMetaLine("customData", meta.customData(), md, opts));
     if (has_assetInfo) kv(DictMetaLine("assetInfo", meta.assetInfo(), md, opts));
@@ -1450,6 +1469,7 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.expressionVariables = root_layer->meta().expressionVariables;
   meta.subLayers = root_layer->meta().subLayers;
   meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
+  meta.relocates = root_layer->meta().relocates;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);
