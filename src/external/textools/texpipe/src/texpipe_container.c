@@ -721,6 +721,91 @@ tp_result tp_ktx2_write_uni(const uint8_t *const *uni_levels,
     return TP_SUCCESS;
 }
 
+tp_result tp_ktx2_write_uni_zstd(const tir_allocator *a, tp_zstd_bound_fn zbound,
+                                 tp_zstd_compress_fn zenc, void *user,
+                                 const uint8_t *const *uni_levels,
+                                 const size_t *uni_sizes,
+                                 const uint32_t *level_w,
+                                 const uint32_t *level_h, int num_levels,
+                                 uint8_t **out, size_t *out_size) {
+    uint8_t *comp[TP_KTX2_MAX_LEVELS];
+    size_t clen[TP_KTX2_MAX_LEVELS];
+    uint64_t loff[TP_KTX2_MAX_LEVELS];
+    const size_t smax = (size_t)-1;
+    size_t dfd_off, cursor, total;
+    uint8_t *buf = NULL;
+    tp_result r = TP_SUCCESS;
+    int l;
+
+    if (!zbound || !zenc || !uni_levels || !uni_sizes || !level_w || !level_h ||
+        !out || !out_size)
+        return TP_ERROR_INVALID_ARGUMENT;
+    if (num_levels < 1 || num_levels > TP_KTX2_MAX_LEVELS)
+        return TP_ERROR_INVALID_ARGUMENT;
+    for (l = 0; l < num_levels; ++l) comp[l] = NULL;
+
+    /* Compress each level independently, so a reader can inflate one at a time. */
+    for (l = 0; l < num_levels; ++l) {
+        size_t bound;
+        if (uni_sizes[l] == 0) { r = TP_ERROR_INVALID_ARGUMENT; goto done; }
+        bound = zbound(user, uni_sizes[l]);
+        if (bound == 0) { r = TP_ERROR_UNSUPPORTED; goto done; }
+        comp[l] = (uint8_t *)tp_alloc(a, bound);
+        if (!comp[l]) { r = TP_ERROR_OUT_OF_MEMORY; goto done; }
+        clen[l] = zenc(user, comp[l], bound, uni_levels[l], uni_sizes[l]);
+        if (clen[l] == 0 || clen[l] > bound) { r = TP_ERROR_UNSUPPORTED; goto done; }
+    }
+
+    /* Layout: header + level index + DFD, then the compressed levels packed
+     * smallest-first. Supercompressed levels carry no mip padding. */
+    dfd_off = 80u + (size_t)num_levels * 24u;
+    cursor = dfd_off + 44u;
+    for (l = num_levels - 1; l >= 0; --l) {
+        if (clen[l] > smax - cursor) { r = TP_ERROR_INVALID_ARGUMENT; goto done; }
+        loff[l] = cursor;
+        cursor += clen[l];
+    }
+    total = cursor;
+
+    buf = (uint8_t *)tp_alloc(a, total);
+    if (!buf) { r = TP_ERROR_OUT_OF_MEMORY; goto done; }
+    memset(buf, 0, total);
+    memcpy(buf, tp_ktx2_id, 12);
+    tp_wr_u32(buf + 12, 0u);        /* vkFormat = UNDEFINED (uni)          */
+    tp_wr_u32(buf + 16, 1u);        /* typeSize                            */
+    tp_wr_u32(buf + 20, level_w[0]);
+    tp_wr_u32(buf + 24, level_h[0]);
+    tp_wr_u32(buf + 28, 0u);        /* pixelDepth                          */
+    tp_wr_u32(buf + 32, 0u);        /* layerCount                          */
+    tp_wr_u32(buf + 36, 1u);        /* faceCount                           */
+    tp_wr_u32(buf + 40, (uint32_t)num_levels);
+    tp_wr_u32(buf + 44, 2u);        /* supercompressionScheme = Zstd       */
+    tp_wr_u32(buf + 48, (uint32_t)dfd_off);
+    tp_wr_u32(buf + 52, 44u);
+    tp_wr_u32(buf + 56, 0u);        /* kvdByteOffset                       */
+    tp_wr_u32(buf + 60, 0u);        /* kvdByteLength                       */
+    tp_wr_u64(buf + 64, 0u);        /* sgdByteOffset                       */
+    tp_wr_u64(buf + 72, 0u);        /* sgdByteLength                       */
+    for (l = 0; l < num_levels; ++l) {
+        uint8_t *e = buf + 80u + (size_t)l * 24u;
+        tp_wr_u64(e + 0, loff[l]);
+        tp_wr_u64(e + 8, (uint64_t)clen[l]);       /* byteLength (compressed) */
+        tp_wr_u64(e + 16, (uint64_t)uni_sizes[l]); /* uncompressedByteLength  */
+    }
+    tp_write_uni_dfd(buf + dfd_off);
+    for (l = 0; l < num_levels; ++l)
+        memcpy(buf + (size_t)loff[l], comp[l], clen[l]);
+
+    *out = buf;
+    *out_size = total;
+    buf = NULL;
+
+done:
+    for (l = 0; l < num_levels; ++l) tp_dealloc(a, comp[l]);
+    if (buf) tp_dealloc(a, buf);
+    return r;
+}
+
 /* ---- KTX2 texture arrays (layerCount) ---- */
 
 static size_t tp_ktx2_array_layout(const tp_blocks *layers, int num_layers,

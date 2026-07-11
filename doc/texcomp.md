@@ -76,7 +76,7 @@ image it writes a `.ktx2` (uni/UASTC, full mip chain) next to the output and add
 the `customData ktx2` hint to the attribute — leaving `inputs:file` untouched:
 
 ```sh
-usd-texcomp scene.usda -o scene_ktx2.usda [--mips on|off]
+usd-texcomp scene.usda -o scene_ktx2.usda [--mips on|off] [--zstd on|off]
 #   diffuse.png -> diffuse.ktx2 (1024x1024, 11 level(s), ...)
 # then:
 tusdview scene_ktx2.usda --texture-keep-compressed on
@@ -85,6 +85,12 @@ tusdview scene_ktx2.usda --texture-keep-compressed on
 The output opens unchanged in stock USD tools (they see only the png and ignore
 `customData`), while tinyusdz-aware consumers pick up the compressed companion.
 Non-8-bit (HDR/EXR) sources are skipped — `uni` is LDR RGBA8 only.
+
+The `.ktx2` is **Zstd-supercompressed** by default (`supercompressionScheme = 2`,
+the form real KTX2/UASTC assets ship in) — typically an order of magnitude smaller
+on disk than the raw block payload (a 64x64 test texture: 5792 -> 501 bytes).
+`--zstd off` writes the uncompressed (scheme 0) form. Zstd needs
+`TINYUSDZ_WITH_ZSTD_COMPRESSION` (on by default).
 
 ## Core / tydra: loading a KTX2
 
@@ -202,7 +208,6 @@ The page reports the detected caps, the chosen GPU format, and the VRAM saving
 
 - **HDR compressed** decode-to-EXR (BC6H / ASTC-HDR); BC6H is the reliable HDR
   GPU-upload target.
-- **KTX2 Zstd** supercompression on the *writer* side (reading is supported).
 - **Basis Universal / `KHR_texture_basisu`** interop (ETC1S/UASTC) for glTF and
   three.js `KTX2Loader` — the "Basis later" seam; the current pipeline is
   intentionally Basis-free.
