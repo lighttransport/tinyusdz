@@ -261,13 +261,24 @@ struct RenderMesh {
   int32_t material_id = -1;  // -1 = no material
 
   // Per-face material (GeomSubset)
-  // Maps face range [start, end) to material_id
+  // Maps face range [start, start+count) to material_id. When the mesh is
+  // triangulated (face_triangle_offsets non-empty), the ranges are in
+  // TRIANGLE space (indexing triangulated_indices/3); otherwise they are
+  // authored polygon-face ranges.
   struct MaterialSubset {
     uint32_t face_start;
     uint32_t face_count;
     int32_t material_id;
   };
   std::vector<MaterialSubset> material_subsets;
+
+  // Prefix sums of triangles emitted per authored face (size = nfaces + 1);
+  // filled by triangulation. Holes/degenerate faces contribute 0 triangles.
+  std::vector<uint32_t> face_triangle_offsets;
+
+  // Faces dropped by topology sanitization: authored face numbering (and any
+  // GeomSubset indices referring to it) no longer aligns when > 0.
+  uint32_t sanitize_dropped_faces = 0;
 
   // Skinning data
   struct SkinBinding {
@@ -277,6 +288,10 @@ struct RenderMesh {
     int32_t skeleton_id = -1;
     std::string skeleton_path;    // bound Skeleton prim (resolves skeleton_id)
     Matrix4 geom_bind_transform;
+    // Mesh-local `skel:joints` order: when non-empty, joint_indices index
+    // into this list until the converter remaps them to skeleton joint
+    // order (done in the skeleton-resolve pass).
+    std::vector<std::string> mesh_joint_order;
   };
   std::unique_ptr<SkinBinding> skin;
 

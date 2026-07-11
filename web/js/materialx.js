@@ -876,7 +876,7 @@ async function loadUSDFromURI(uri, autoRender = false) {
         window.renderComplete = true;
     } catch (error) {
         failLoadStats(stats);
-        console.error(`Failed to load USD file (${uri}):`, error);
+        console.error(`Failed to load USD file (${uri}):`, error, error?.stack || '');
         updateStatus(`Error: ${error.message}`);
         if (autoRender) {
             window.renderComplete = true;
@@ -3614,12 +3614,20 @@ function addSpecularWeightControl(folder, mat) {
     let specularWeightValue;
     const rawData = mat.userData?.rawData;
 
-    if (rawData?.specular_weight !== undefined) {
-        specularWeightValue = rawData.specular_weight;
-    } else if (rawData?.openPBR?.specular_weight !== undefined) {
-        specularWeightValue = rawData.openPBR.specular_weight;
-    } else if (rawData?.openPBRShader?.specular_weight !== undefined) {
-        specularWeightValue = rawData.openPBRShader.specular_weight;
+    // Next-backend OpenPBR params are objects ({value, texture, ...}) or
+    // vectors; unwrap to the scalar lil-gui needs.
+    const unwrapScalar = (v) => {
+        if (v && typeof v === 'object' && !Array.isArray(v)) v = v.value;
+        if (Array.isArray(v)) v = v[0];
+        return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    };
+
+    if (unwrapScalar(rawData?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.specular_weight);
+    } else if (unwrapScalar(rawData?.openPBR?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.openPBR.specular_weight);
+    } else if (unwrapScalar(rawData?.openPBRShader?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.openPBRShader.specular_weight);
     }
 
     // Default to 1.0 if OpenPBR material but no specular_weight specified

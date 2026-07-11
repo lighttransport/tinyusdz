@@ -219,6 +219,10 @@ class RenderSceneConverter {
                              const UsdPrim& shader_prim,
                              PreviewSurfaceShader* out,
                              RenderScene* scene);
+  bool ExtractStandardSurfaceAsOpenPBR(const ::tinyusdz::next::Stage& stage,
+                                       const ::tinyusdz::next::UsdPrim& shader_prim,
+                                       OpenPBRSurfaceShader* out,
+                                       RenderScene* scene);
   bool ExtractOpenPBRSurface(const ::tinyusdz::next::Stage& stage,
                              const UsdPrim& shader_prim,
                              OpenPBRSurfaceShader* out,

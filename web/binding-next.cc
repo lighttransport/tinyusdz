@@ -320,27 +320,6 @@ uint32_t ChunkedU32At(const tr::UInt32Chunked& values, size_t i,
   return i < values.size() ? values[i] : fallback;
 }
 
-std::vector<uint32_t> CornerToFace(const tr::RenderMesh& mesh) {
-  std::vector<uint32_t> out(mesh.face_vertex_indices.size(), 0);
-  size_t corner = 0;
-  for (size_t face = 0; face < mesh.face_vertex_counts.size(); ++face) {
-    const uint32_t count = mesh.face_vertex_counts[face];
-    for (uint32_t i = 0; i < count && corner < out.size(); ++i, ++corner) {
-      out[corner] = static_cast<uint32_t>(face);
-    }
-  }
-  return out;
-}
-
-int32_t SubsetMaterialForFace(const tr::RenderMesh& mesh, uint32_t face) {
-  for (const tr::RenderMesh::MaterialSubset& subset : mesh.material_subsets) {
-    const uint32_t begin = subset.face_start;
-    const uint32_t end = begin + subset.face_count;
-    if (face >= begin && face < end) return subset.material_id;
-  }
-  return -1;
-}
-
 const tr::RenderTexture* TextureAt(const tr::RenderScene& scene, int32_t id) {
   if (id < 0 || static_cast<size_t>(id) >= scene.textures.size()) return nullptr;
   return &scene.textures[static_cast<size_t>(id)];
@@ -3760,6 +3739,57 @@ class RenderStream {
 
   void addGeomSubsetMaterials_(const tinyusdz::next::UsdPrim &prim,
                                emscripten::val &out) {
+    // Prefer the converter's triangle-space subset ranges: they account for
+    // holes, degenerate faces, earcut splits and topology sanitization,
+    // which the stage-side re-derivation below cannot.
+    if (render_scene_valid_) {
+      const auto mit = render_scene_.mesh_by_path.find(prim.GetPath().str());
+      if (mit != render_scene_.mesh_by_path.end() &&
+          static_cast<size_t>(mit->second) < render_scene_.meshes.size()) {
+        const tr::RenderMesh &rmesh =
+            render_scene_.meshes[static_cast<size_t>(mit->second)];
+        if (!rmesh.material_subsets.empty() &&
+            !rmesh.face_triangle_offsets.empty()) {
+          emscripten::val materials = emscripten::val::array();
+          emscripten::val groups = emscripten::val::array();
+          std::map<int32_t, int> mat_index_by_scene_id;
+          int group_index = 0;
+          for (const tr::RenderMesh::MaterialSubset &ms :
+               rmesh.material_subsets) {
+            if (ms.material_id < 0 ||
+                static_cast<size_t>(ms.material_id) >=
+                    render_scene_.materials.size()) {
+              continue;
+            }
+            int mat_index = -1;
+            const auto found = mat_index_by_scene_id.find(ms.material_id);
+            if (found == mat_index_by_scene_id.end()) {
+              const std::string &mat_path =
+                  render_scene_.materials[static_cast<size_t>(ms.material_id)]
+                      .prim_path;
+              tinyusdz::next::UsdPrim mat_prim = stage_.GetPrimAtPath(mat_path);
+              const int32_t record_id = registerMaterial_(mat_prim);
+              mat_index = static_cast<int>(mat_index_by_scene_id.size());
+              mat_index_by_scene_id.emplace(ms.material_id, mat_index);
+              materials.set(mat_index, materialObject_(record_id));
+            } else {
+              mat_index = found->second;
+            }
+            emscripten::val g = emscripten::val::object();
+            g.set("start", static_cast<int>(ms.face_start * 3u));
+            g.set("count", static_cast<int>(ms.face_count * 3u));
+            g.set("materialIndex", mat_index);
+            groups.set(group_index++, g);
+          }
+          if (group_index > 0) {
+            out.set("materials", materials);
+            out.set("submeshes", groups);
+          }
+          return;
+        }
+      }
+    }
+
     std::vector<int32_t> fvc = matIntStatic_(prim, "faceVertexCounts");
     if (fvc.empty()) return;
 

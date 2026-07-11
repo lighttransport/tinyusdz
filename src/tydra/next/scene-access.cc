@@ -347,6 +347,17 @@ std::vector<float> GetFloatArray(const UsdPrim& prim, const std::string& name) {
   return result;
 }
 
+std::vector<std::string> GetTokenArray(const UsdPrim& prim,
+                                       const std::string& name) {
+  std::vector<std::string> result;
+  const Value* val = GetAttribute(prim, name);
+  if (!val) return result;
+  if (const std::vector<std::string>* arr = val->as_token_array()) {
+    result = *arr;
+  }
+  return result;
+}
+
 std::vector<int32_t> GetIntArray(const UsdPrim& prim, const std::string& name) {
   std::vector<int32_t> result;
   const Value* val = GetAttribute(prim, name);
@@ -1114,6 +1125,9 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
   out->joint_indices = GetIntArray(mesh_prim, "primvars:skel:jointIndices");
   out->joint_weights = GetFloatArray(mesh_prim, "primvars:skel:jointWeights");
   if (!out->joint_indices.empty() || !out->joint_weights.empty()) any = true;
+
+  // Mesh-local joint order (subset/permutation of the skeleton's joints).
+  out->joint_order = GetTokenArray(mesh_prim, "skel:joints");
 
   // Influences per vertex = the jointIndices primvar's elementSize.
   out->influences_per_vertex = 0;
