@@ -180,20 +180,61 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
     const int index = ActiveIndex(set, stage_time);
     if (index < 0 || static_cast<size_t>(index) >= set.asset_paths.size())
       continue;
-    const std::string& asset = set.asset_paths[static_cast<size_t>(index)];
-    Stage clip_stage;
-    std::string warn, err;
-    if (!loader(asset, &clip_stage, &warn, &err)) {
-      if (error) *error = "Unable to load value clip '" + asset + "': " + err;
-      continue;
-    }
     const std::string clip_path =
         set.prim_path.empty() ? prim.GetPath().str() : set.prim_path;
-    const UsdPrim clip_prim = clip_stage.GetPrimAtPath(clip_path);
-    if (!clip_prim.IsValid() || !clip_prim.HasProperty(property)) continue;
-    Value value = clip_prim.GetInterpolatedValue(property,
-                                                  ClipTime(set, stage_time));
-    if (value.is_empty() || value.is_block()) continue;
+
+    // Manifest gating (pxr semantics): when a manifest is authored and
+    // loadable, only properties DECLARED in it resolve through clips.
+    if (!set.manifest_asset_path.empty()) {
+      Stage manifest_stage;
+      std::string mwarn, merr;
+      if (loader(set.manifest_asset_path, &manifest_stage, &mwarn, &merr)) {
+        const UsdPrim mprim = manifest_stage.GetPrimAtPath(clip_path);
+        if (!mprim.IsValid() || !mprim.HasProperty(property)) continue;
+      }
+      // Unloadable manifest: fall through without gating (pxr degrades the
+      // same way when the manifest layer cannot be opened).
+    }
+
+    // Sample one clip of this set at the mapped time; returns an empty
+    // Value when the clip is unloadable or carries no opinion.
+    auto sample_clip = [&](size_t clip_index, std::string* asset_out) {
+      Value none;
+      if (clip_index >= set.asset_paths.size()) return none;
+      const std::string& asset = set.asset_paths[clip_index];
+      Stage clip_stage;
+      std::string warn, err;
+      if (!loader(asset, &clip_stage, &warn, &err)) return none;
+      const UsdPrim clip_prim = clip_stage.GetPrimAtPath(clip_path);
+      if (!clip_prim.IsValid() || !clip_prim.HasProperty(property)) {
+        return none;
+      }
+      Value v = clip_prim.GetInterpolatedValue(property,
+                                               ClipTime(set, stage_time));
+      if (v.is_empty() || v.is_block()) return none;
+      if (asset_out) *asset_out = asset;
+      return v;
+    };
+
+    std::string asset;
+    Value value = sample_clip(static_cast<size_t>(index), &asset);
+
+    // interpolateMissingClipValues: when the ACTIVE clip has no opinion for
+    // the property, take the value from the nearest clip that does (earlier
+    // clips preferred, per pxr's hold-from-neighbors behavior).
+    if (value.is_empty() && set.interpolate_missing) {
+      const size_t n = set.asset_paths.size();
+      for (size_t dist = 1; dist < n && value.is_empty(); ++dist) {
+        if (static_cast<size_t>(index) >= dist) {
+          value = sample_clip(static_cast<size_t>(index) - dist, &asset);
+        }
+        if (value.is_empty() && static_cast<size_t>(index) + dist < n) {
+          value = sample_clip(static_cast<size_t>(index) + dist, &asset);
+        }
+      }
+    }
+
+    if (value.is_empty()) continue;
     *out = std::move(value);
     if (source_asset) *source_asset = asset;
     return true;
