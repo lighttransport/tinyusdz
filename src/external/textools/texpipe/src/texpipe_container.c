@@ -648,9 +648,28 @@ static void tp_write_uni_dfd(uint8_t *p) {
     p[13] = 1u;                            /* primaries BT709 */
     p[14] = 1u;                            /* transfer LINEAR */
     p[16] = 3u; p[17] = 3u;                /* texelBlockDimension = 4x4 */
+    /* The pre-deflation block size, kept as-is even under supercompression:
+     * KTX2 2.0.4 dropped the old "bytesPlane must be 0 if supercompressed" rule
+     * and now requires the real value (0 merely warns as deprecated). */
     p[20] = 16u;                           /* bytesPlane0 */
     p[30] = 127u;                          /* sample bitLength (128 bits) */
     tp_wr_u32(p + 40, 0xffffffffu);        /* sampleUpper */
+}
+
+/* Tightly-packed 4x4x16B payload of uni level `l`, sized off the base dimensions
+ * the same way the reader derives them (width >> l, clamped to 1) rather than
+ * off level_w[]/level_h[]. Computed in uint64 like the reader's
+ * tp_ktx2_level_expected: at the largest dimensions TP_KTX2_MAX_DIM admits the
+ * product is exactly 2^32, which a 32-bit size_t (the wasm build) would wrap to
+ * 0 -- and a 0 here would make the caller's size check accept a zero-length
+ * level. Such a level cannot fit in a 32-bit size_t anyway, so on those targets
+ * no uni_sizes[l] can match and the write is rejected, which is the point. */
+static uint64_t tp_uni_level_expected(uint32_t w0, uint32_t h0, int l) {
+    uint32_t w = w0 >> l, h = h0 >> l;
+    if (!w0 || !h0) return 0;
+    if (!w) w = 1u;
+    if (!h) h = 1u;
+    return (uint64_t)((w + 3u) / 4u) * (uint64_t)((h + 3u) / 4u) * 16u;
 }
 
 /* Total KTX2 byte size for `n` uni levels, filling loff[] with each level's
@@ -740,14 +759,37 @@ tp_result tp_ktx2_write_uni_zstd(const tir_allocator *a, tp_zstd_bound_fn zbound
     if (!zbound || !zenc || !uni_levels || !uni_sizes || !level_w || !level_h ||
         !out || !out_size)
         return TP_ERROR_INVALID_ARGUMENT;
+    /* Cleared before any other rejection: the contract is that a failed call
+     * leaves nothing for the caller to free. */
+    *out = NULL;
+    *out_size = 0;
     if (num_levels < 1 || num_levels > TP_KTX2_MAX_LEVELS)
         return TP_ERROR_INVALID_ARGUMENT;
+    /* The reader refuses dimensions past TP_KTX2_MAX_DIM, so writing them would
+     * only produce a file we cannot read back. */
+    if (level_w[0] == 0u || level_h[0] == 0u ||
+        level_w[0] > (uint32_t)TP_KTX2_MAX_DIM ||
+        level_h[0] > (uint32_t)TP_KTX2_MAX_DIM)
+        return TP_ERROR_INVALID_ARGUMENT;
+    /* levelCount past the pyramid the base dimensions imply is invalid KTX2:
+     * the extra levels would all clamp to 1x1 and a loader that trusts
+     * levelCount would bind mips that do not exist. */
+    if (num_levels > tp_level_count((int)level_w[0], (int)level_h[0], 0))
+        return TP_ERROR_INVALID_ARGUMENT;
     for (l = 0; l < num_levels; ++l) comp[l] = NULL;
+
+    /* A scheme-2 reader pins uncompressedByteLength to the exact block payload
+     * implied by the base dimensions, so a level whose size disagrees would
+     * produce a file our own reader rejects. Refuse it here instead. */
+    for (l = 0; l < num_levels; ++l)
+        if (!uni_levels[l] ||
+            (uint64_t)uni_sizes[l] !=
+                tp_uni_level_expected(level_w[0], level_h[0], l))
+            return TP_ERROR_INVALID_ARGUMENT;
 
     /* Compress each level independently, so a reader can inflate one at a time. */
     for (l = 0; l < num_levels; ++l) {
         size_t bound;
-        if (uni_sizes[l] == 0) { r = TP_ERROR_INVALID_ARGUMENT; goto done; }
         bound = zbound(user, uni_sizes[l]);
         if (bound == 0) { r = TP_ERROR_UNSUPPORTED; goto done; }
         comp[l] = (uint8_t *)tp_alloc(a, bound);

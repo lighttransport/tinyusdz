@@ -401,7 +401,8 @@ typedef size_t (*tp_zstd_compress_fn)(void *user, uint8_t *dst, size_t dst_cap,
  *
  * The output size is not known until the levels are compressed, so unlike
  * tp_ktx2_write_uni the buffer is *allocated* with `a` (NULL = malloc) and
- * returned via *out / *out_size; release it with tp_free(a, *out).
+ * returned via *out / *out_size; release it with tp_free(a, *out). On failure
+ * *out / *out_size are cleared to NULL / 0.
  *
  * Level rules match tp_ktx2_write_uni: only level_w[0] / level_h[0] reach the
  * header, levels 1.. must be the standard halving pyramid, and uni_sizes[l] must
