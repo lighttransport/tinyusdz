@@ -324,6 +324,27 @@ static void h_minmax_neon(float *mn, float *mx, const float *src,
     }
 }
 
+static void normalize3_neon(float *xyz, float *len_out_or_null, size_t npix) {
+    size_t i;
+    for (i = 0; i < npix; ++i) {
+        size_t off = (size_t)i * 3;
+        float32x4_t v = vld1q_f32(xyz + off);
+        float32x4_t sq = vmulq_f32(v, v);
+        float l2 = vgetq_lane_f32(sq, 0) + vgetq_lane_f32(sq, 1) + vgetq_lane_f32(sq, 2);
+        if (len_out_or_null) len_out_or_null[i] = sqrtf(l2);
+        if (l2 > 1e-8f) {
+            float inv = 1.0f / sqrtf(l2);
+            xyz[off] = vgetq_lane_f32(v, 0) * inv;
+            xyz[off + 1] = vgetq_lane_f32(v, 1) * inv;
+            xyz[off + 2] = vgetq_lane_f32(v, 2) * inv;
+        } else {
+            xyz[off] = 0.0f;
+            xyz[off + 1] = 0.0f;
+            xyz[off + 2] = 1.0f;
+        }
+    }
+}
+
 /* RGBA premultiply / un-premultiply (NEON lacked these -> was scalar on ARM).
  * Alpha (lane 3) is preserved; a==0 keeps the filtered RGB (matches scalar). */
 static void premult4_neon(float *rgba, size_t npix) {
@@ -360,6 +381,7 @@ void tir__kernels_set_neon(tir_kernels *k) {
     k->minmax_combine = minmax_combine_neon;
     k->antiring_apply = antiring_apply_neon;
     k->clamp_range = clamp_range_neon;
+    k->normalize3 = normalize3_neon;
     k->premult4 = premult4_neon;
     k->unpremult4 = unpremult4_neon;
     k->u8_to_f32 = u8_to_f32_neon;

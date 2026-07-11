@@ -111,8 +111,11 @@ tc_result tc_eac_compress_rgba8(const uint8_t *rgba, uint32_t width,
                     x = bx + xx;
                     if (x >= width) x = width - 1u;
                     src = rgba + (size_t)y * stride + (size_t)x * 4u;
-                    red[yy * 4u + xx] = src[0];
-                    green[yy * 4u + xx] = src[1];
+                    /* Column-major (index = x*4 + y), as EAC numbers its texels
+                     * and as the selector packing in tc_encode_eac_alpha
+                     * assumes; see the same note in texcomp_etc2.c. */
+                    red[xx * 4u + yy] = src[0];
+                    green[xx * 4u + yy] = src[1];
                 }
             }
             tc_wr_u64(out_eac + off, tc_encode_eac_alpha(red));

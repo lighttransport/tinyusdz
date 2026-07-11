@@ -300,18 +300,35 @@ bool TexToolsAdaptCompressed(const uint8_t* blocks, size_t nbytes, bool srcIsUni
   // Stored (non-uni) block format: upload as-is if the device supports it.
   if (CapsAllow(srcFmt, caps)) { keepBlocks(srcFmt); return true; }
 
-  // Otherwise decode the formats we have a decoder for; the rest are unhandled.
-  if (srcFmt == DrawCompressedFormat::BC7) {
-    DecodeToImage(w, h, outRGBA);
-    return tc_bc7_decompress_rgba8(blocks, w, h, rowBytes, outRGBA->data.data(),
-                                   outRGBA->data.size()) == TC_SUCCESS;
+  // Otherwise decode to RGBA8. texcomp now ships a decoder for every LDR block
+  // format, so any LDR payload can fall back to an uncompressed upload.
+  DecodeToImage(w, h, outRGBA);
+  uint8_t* dst = outRGBA->data.data();
+  const size_t dsz = outRGBA->data.size();
+  switch (srcFmt) {
+    case DrawCompressedFormat::BC7:
+      return tc_bc7_decompress_rgba8(blocks, w, h, rowBytes, dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::BC1:
+      return tc_bc1_decompress_rgba8(blocks, w, h, rowBytes, dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::BC3:
+      return tc_bc3_decompress_rgba8(blocks, w, h, rowBytes, dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::BC5:
+      return tc_bc5_decompress_rgba8(blocks, w, h, /*snorm=*/0, rowBytes, dst,
+                                     dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::ETC2_RGB:
+    case DrawCompressedFormat::ETC2_RGBA:
+      return tc_etc2_decompress_rgba8(
+                 blocks, w, h,
+                 /*alpha=*/srcFmt == DrawCompressedFormat::ETC2_RGBA, rowBytes,
+                 dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::ASTC_4x4:
+      return tc_astc_decompress_rgba8(blocks, w, h, 4u, 4u, dst, dsz) == TC_SUCCESS;
+    case DrawCompressedFormat::BC6H:  // HDR: needs the float path, not RGBA8
+    case DrawCompressedFormat::None:
+    default:
+      outRGBA->data.clear();
+      return false;
   }
-  if (srcFmt == DrawCompressedFormat::ASTC_4x4) {
-    DecodeToImage(w, h, outRGBA);
-    return tc_astc_decompress_rgba8(blocks, w, h, 4u, 4u, outRGBA->data.data(),
-                                    outRGBA->data.size()) == TC_SUCCESS;
-  }
-  return false;  // BC1/3/5/6H, ETC2/EAC on an unsupported device — no decoder
 }
 
 bool TexToolsAdaptCompressedLevel(const uint8_t* blocks, size_t nbytes,

@@ -69,6 +69,11 @@ typedef struct tc_bc3_options {
 } tc_bc3_options;
 
 typedef struct tc_bc5_options {
+    /* Store the two channels as BC5_SNORM (signed int8 endpoints) rather than
+     * BC5_UNORM, and tag the container to match. The encoder's input is still
+     * UNORM8: a byte u denotes x = 2*(u/255) - 1 in [-1,1] (the normal-map
+     * convention) and is stored as round(x * 127), which is exactly what a GPU
+     * sampling BC5_SNORM reads back. */
     int snorm;
 } tc_bc5_options;
 
@@ -173,6 +178,62 @@ tc_result tc_bc7_compress_rgbaf(const float *rgba, uint32_t width,
 tc_result tc_bc7_decompress_rgba8(const uint8_t *bc7, uint32_t width,
                                   uint32_t height, size_t stride,
                                   uint8_t *out_rgba, size_t out_size);
+/* Decode BC1/BC3/BC5 block streams to RGBA8. `stride` is the output row pitch
+ * in bytes (>= width*4). BC1 honours the 3-colour punch-through mode (index 3
+ * decodes to transparent black). BC5 stores only two channels, so it decodes to
+ * R=x, G=y, B=0, A=255 -- a normal-map consumer reconstructs z from x,y. */
+tc_result tc_bc1_decompress_rgba8(const uint8_t *bc1, uint32_t width,
+                                  uint32_t height, size_t stride,
+                                  uint8_t *out_rgba, size_t out_size);
+tc_result tc_bc3_decompress_rgba8(const uint8_t *bc3, uint32_t width,
+                                  uint32_t height, size_t stride,
+                                  uint8_t *out_rgba, size_t out_size);
+/* `snorm` must match how the blocks were encoded (tc_bc5_options.snorm): the
+ * signed form reinterprets the stored bytes as int8 and uses a different
+ * 6-value palette, so decoding one as the other is wrong. Input and output stay
+ * UNORM8 either way -- snorm selects the storage form, not the caller's
+ * convention (a unorm byte u denotes x = 2*(u/255) - 1, stored as x * 127). */
+tc_result tc_bc5_decompress_rgba8(const uint8_t *bc5, uint32_t width,
+                                  uint32_t height, int snorm, size_t stride,
+                                  uint8_t *out_rgba, size_t out_size);
+/* Decode an ETC2 block stream to RGBA8. `alpha` selects ETC2 RGBA (16-byte
+ * blocks: an EAC alpha block then the RGB block) over ETC2 RGB (8-byte blocks,
+ * alpha forced to 255). All five RGB modes are handled (individual,
+ * differential, T, H, planar). */
+tc_result tc_etc2_decompress_rgba8(const uint8_t *etc2, uint32_t width,
+                                   uint32_t height, int alpha, size_t stride,
+                                   uint8_t *out_rgba, size_t out_size);
+/* Decode an EAC R11 (or RG11, when `rg11`) block stream to RGBA8: the 11-bit
+ * channels are scaled to 8-bit and placed in R (and G); B is 0 and A is 255. */
+tc_result tc_eac_decompress_rgba8(const uint8_t *eac, uint32_t width,
+                                  uint32_t height, int rg11, size_t stride,
+                                  uint8_t *out_rgba, size_t out_size);
+/* Decode a BC6H block stream (all 14 modes). BC6H is HDR, so there is no RGBA8
+ * form: the natural output is FP16 (tc_bc6h_decompress_rgb16f, 3 channels), and
+ * tc_bc6h_decompress_rgbaf converts to float RGBA with alpha 1 (BC6H carries no
+ * alpha). `is_signed` selects the sf16 variant over uf16 -- it must match how
+ * the blocks were encoded, since the two disagree on endpoint unquantisation.
+ * `stride_bytes` is the output row pitch in bytes. */
+tc_result tc_bc6h_decompress_rgb16f(const uint8_t *bc6h, uint32_t width,
+                                    uint32_t height, int is_signed,
+                                    size_t stride_bytes, uint16_t *out_rgb,
+                                    size_t out_size);
+tc_result tc_bc6h_decompress_rgbaf(const uint8_t *bc6h, uint32_t width,
+                                   uint32_t height, int is_signed,
+                                   size_t stride_bytes, float *out_rgba,
+                                   size_t out_size);
+/* Decode an ASTC HDR block stream to float RGBA. `stride_bytes` is the output
+ * row pitch in bytes. Conformant over the whole 2D HDR format: all 16 endpoint
+ * modes (the HDR ones -- 2/3 luminance, 7 base+scale, 11 direct, 14 with LDR
+ * alpha, 15 with HDR alpha -- and the LDR ones, which are legal inside an HDR
+ * texture and decode through the UNORM16 path), mixed-CEM partitions, dual-plane
+ * blocks with any component as the second plane, and both HDR and LDR
+ * void-extent. texcomp-astc-hdr-gate cross-checks it against astcenc's decoder
+ * texel for texel on astcenc-encoded blocks and on mutated-CEM blocks. */
+tc_result tc_astc_hdr_decompress_rgbaf(const uint8_t *astc, uint32_t width,
+                                       uint32_t height, uint32_t block_x,
+                                       uint32_t block_y, size_t stride_bytes,
+                                       float *out_rgba, size_t out_size);
 /* Decode BC7 to float [0,1] RGBA. stride_bytes is row pitch in bytes
  * for the float output (typically width*4*sizeof(float)). */
 tc_result tc_bc7_decompress_rgbaf(const uint8_t *bc7, uint32_t width,
@@ -246,7 +307,9 @@ tc_result tc_astc_hdr_compress_rgbaf(const float *rgba, uint32_t width,
                                      uint8_t *out_astc, size_t out_size);
 
 /* Decode an ASTC LDR block stream (footprint block_x x block_y) to RGBA8.
- * out_rgba must hold width*height*4 bytes. Rows top-to-bottom, tightly packed.
+ * `astc` must hold ceil(width/block_x) * ceil(height/block_y) * 16 bytes (its
+ * length is not passed, so the caller owns that bound); out_rgba must hold
+ * width*height*4 bytes. Rows top-to-bottom, tightly packed.
  * Companion to the BC7 (tc_bc7_decompress_rgba8) and uni (tc_uni_decompress_rgba8)
  * decoders; together they cover the tinyexr-native transcodable carrier set
  * (uni / ASTC 4x4 / BC7). */

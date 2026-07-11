@@ -74,9 +74,9 @@ static const uint8_t tc_bc7_alpha_part_lut[8][12] = {
 void tc_bc7_options_init(tc_bc7_options *opt) {
     if (!opt) return;
     memset(opt, 0, sizeof(*opt));
-    opt->quality = TC_BC7_QUALITY_QUICKBC7;
+    opt->quality = TC_BC7_QUALITY_MEDIUM;
     opt->perceptual = 1;
-    opt->quick = 1;
+    opt->quick = 2;
     opt->threads = 1;
     opt->mode_mask = 0xffu;
 }
@@ -657,7 +657,19 @@ static void tc_encode_bc7_all_modes_block(const uint8_t pix[16][4],
     uint64_t best_err = UINT64_MAX;
     uint8_t best_block[16];
     uint32_t mask = opt && opt->mode_mask ? opt->mode_mask : 0xffu;
-    if (opt && opt->quick) mask = tc_block_quick_mask(pix, mask);
+    uint32_t is_quick = opt ? (uint32_t)opt->quick : 0u;
+    if (is_quick == 1u) {
+        mask = tc_block_quick_mask(pix, mask);
+    } else {
+        /* For non-quick modes, still exclude modes that can't encode alpha
+         * when the block has any translucent texel. Modes 0-3 are opaque-only;
+         * mode 4+ handle alpha. Without this filter the encoder would pick a
+         * mode that discards alpha, producing corrupt output. */
+        uint32_t i, has_alpha = 0;
+        for (i = 0; i < 16u; ++i)
+            if (pix[i][3] < 255u) { has_alpha = 1; break; }
+        if (has_alpha) mask &= ~0x0fu; /* drop modes 0-3 */
+    }
     memset(best_block, 0, sizeof(best_block));
     for (mode = 0; mode < 8u; ++mode) {
         tc_bc7_candidate cand;
@@ -666,7 +678,7 @@ static void tc_encode_bc7_all_modes_block(const uint8_t pix[16][4],
         err = tc_build_candidate(mode,
                                  (mode == 1u || mode == 7u)
                                      ? tc_select_partition2(pix, mode,
-                                                            opt && opt->quick)
+                                                            is_quick != 0u)
                                      : 0u,
                                  pix, &cand, opt && opt->pca_endpoints);
         if (err < best_err) {
@@ -840,7 +852,13 @@ static void tc_bc7_decode_block(const uint8_t blk[16], uint8_t out[16][4]) {
     uint64_t lo, hi;
     int mode, partition = 0, numPart = 1, numEp, rotation = 0, idxSelBit = 0;
     int ib, ib2, i, j, k;
-    int ep[6][4];
+    /* Zero-initialized: for the modes with no alpha bits (0/1/3) the alpha lane
+     * is never read from the block, yet the p-bit and expansion steps below run
+     * over all four lanes. Leaving it indeterminate meant shifting a garbage
+     * (possibly negative) int -- undefined behaviour, which UBSan trips on
+     * arbitrary blocks. The alpha lane is overwritten with 0xFF for those modes
+     * anyway, so this only fixes the UB, not the decoded output. */
+    int ep[6][4] = {{0}};
     signed char cidx[4][4];
     const int *w, *w2;
     memcpy(&lo, blk, 8);
@@ -959,6 +977,36 @@ tc_result tc_bc7_decompress_rgba8(const uint8_t *bc7, uint32_t width,
                 }
             }
         }
+    return TC_SUCCESS;
+}
+
+tc_result tc_bc7_decompress_rgbaf(const uint8_t *bc7, uint32_t width,
+                                  uint32_t height, size_t stride_bytes,
+                                  float *out_rgba, size_t out_size) {
+    uint32_t x, y;
+    uint8_t *u8;
+    size_t need, row_bytes;
+    tc_result ret;
+
+    if (!bc7 || !out_rgba || !width || !height) return TC_ERROR_INVALID_ARGUMENT;
+    if (out_size < (size_t)height * (size_t)width * 4u * sizeof(float))
+        return TC_ERROR_INVALID_ARGUMENT;
+    need = (size_t)height * (size_t)width * 4u;
+    u8 = (uint8_t *)malloc(need);
+    if (!u8) return TC_ERROR_OUT_OF_MEMORY;
+    row_bytes = (size_t)width * 4u;
+    ret = tc_bc7_decompress_rgba8(bc7, width, height, row_bytes, u8, need);
+    if (ret != TC_SUCCESS) { free(u8); return ret; }
+    for (y = 0; y < height; ++y) {
+        const uint8_t *src = u8 + (size_t)y * row_bytes;
+        float *dst = (float *)((uint8_t *)out_rgba + (size_t)y * stride_bytes);
+        for (x = 0; x < width; ++x) {
+            uint32_t c;
+            for (c = 0; c < 4u; ++c)
+                dst[x * 4u + c] = (float)src[x * 4u + c] / 255.0f;
+        }
+    }
+    free(u8);
     return TC_SUCCESS;
 }
 
@@ -1088,4 +1136,43 @@ tc_result tc_bc7_compress_rgba8(const uint8_t *rgba, uint32_t width,
         tc_bc7_rdo_pass(rgba, width, height, stride, opt->rdo, out_bc7);
 
     return TC_SUCCESS;
+}
+
+tc_result tc_bc7_compress_rgbaf(const float *rgba, uint32_t width,
+                                uint32_t height, size_t stride_bytes,
+                                const tc_bc7_options *opt, uint8_t *out_bc7,
+                                size_t out_size) {
+    uint32_t x, y;
+    uint8_t *u8;
+    size_t need, row_bytes;
+    tc_result ret;
+
+    if (!rgba || !out_bc7 || !width || !height) return TC_ERROR_INVALID_ARGUMENT;
+    if (stride_bytes < (size_t)width * 4u * sizeof(float))
+        return TC_ERROR_INVALID_ARGUMENT;
+
+    need = (size_t)height * (size_t)width * 4u;
+    u8 = (uint8_t *)malloc(need);
+    if (!u8) return TC_ERROR_OUT_OF_MEMORY;
+
+    row_bytes = (size_t)width * 4u;
+    for (y = 0; y < height; ++y) {
+        const float *src = (const float *)((const uint8_t *)rgba +
+                                           (size_t)y * stride_bytes);
+        uint8_t *dst = u8 + (size_t)y * row_bytes;
+        for (x = 0; x < width; ++x) {
+            uint32_t c;
+            for (c = 0; c < 4u; ++c) {
+                float v = src[x * 4u + c];
+                if (v < 0.0f) v = 0.0f;
+                if (v > 1.0f) v = 1.0f;
+                dst[x * 4u + c] = (uint8_t)(v * 255.0f + 0.5f);
+            }
+        }
+    }
+
+    ret = tc_bc7_compress_rgba8(u8, width, height, row_bytes, opt, out_bc7,
+                                out_size);
+    free(u8);
+    return ret;
 }

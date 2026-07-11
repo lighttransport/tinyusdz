@@ -38,7 +38,8 @@ typedef enum tp_result {
     TP_ERROR_INVALID_ARGUMENT = -1,
     TP_ERROR_OUT_OF_MEMORY = -2,
     TP_ERROR_UNSUPPORTED = -3,
-    TP_ERROR_IO = -4
+    TP_ERROR_IO = -4,
+    TP_ERROR_NOT_FOUND = -5 /* a lookup missed; the input is not malformed */
 } tp_result;
 
 #define TP_OK(r) ((int)(r) == 0)
@@ -277,12 +278,17 @@ typedef struct tp_ktx2_image {
     int is_uni;              /* 1 = uni/UASTC transcodable intermediate        */
     int is_hdr;
     int srgb;
+    int is_signed;           /* BC6H sf16 / BC5 snorm (vs the unsigned variant) */
     int block_w, block_h, block_bytes;
     uint32_t width, height;  /* base (level 0) dimensions                      */
     int num_levels;
     int num_faces;           /* 1 (2D) or 6 (cube)                             */
     int num_layers;          /* 0 or 1 = non-array                             */
     uint32_t supercompression; /* 0 = none, 2 = Zstd (via tp_ktx2_read_zstd)    */
+    /* Key/value data block, aliasing the source buffer (NULL when absent).
+     * Query it with tp_ktx2_kv_lookup. */
+    const uint8_t *kvd;
+    size_t kvd_size;
     tp_ktx2_level levels[TP_KTX2_MAX_LEVELS]; /* level 0 = largest             */
     /* Internal: allocation backing the decompressed levels for a supercompressed
      * read (NULL for a zero-copy scheme-0 read). Release with tp_ktx2_image_free. */
@@ -322,13 +328,46 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
  * when `_owned` is NULL). Use the same allocator passed to the read. */
 void tp_ktx2_image_free(const tir_allocator *a, tp_ktx2_image *img);
 
+/* Look up a NUL-terminated key in the parsed key/value data. On a hit, *value
+ * points into the source buffer and *value_size is the value's byte length
+ * (which includes the trailing NUL for the string-valued keys the spec defines,
+ * e.g. "KTXorientation" -> "rd\0"). Returns TP_ERROR_NOT_FOUND when the key is
+ * absent or the file carries no KVD, TP_ERROR_INVALID_ARGUMENT on a malformed
+ * KVD block. The KVD is not decompressed: for a Zstd file it is stored plain. */
+tp_result tp_ktx2_kv_lookup(const tp_ktx2_image *img, const char *key,
+                            const uint8_t **value, size_t *value_size);
+
 /* Decode one level of a parsed KTX2 to RGBA8 (width*height*4 bytes, tightly
- * packed, top-to-bottom). Handles the tinyexr-native decodable set: uni,
- * BC7, and ASTC LDR. Other codecs (BC1/3/5/6H, ETC2/EAC) return
- * TP_ERROR_UNSUPPORTED (upload their blocks directly instead, or transcode a uni
- * source via texcomp's tc_uni_transcode_*). Single-face/non-array only. */
+ * packed, top-to-bottom). Handles the whole LDR set: uni, BC7, BC1, BC3, BC5,
+ * ETC2 (RGB/RGBA), EAC (R11/RG11) and ASTC LDR. Only BC6H returns
+ * TP_ERROR_UNSUPPORTED — it is HDR, so RGBA8 is the wrong target: upload its
+ * blocks directly, or transcode a uni source via texcomp's tc_uni_transcode_*.
+ * EAC decodes its 11-bit channels into R (and G for RG11), with B = 0, A = 255.
+ * For a cube or array KTX2 this decodes the first slice (layer 0, face 0); use
+ * tp_ktx2_decode_slice_rgba8 to reach the others. */
 tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
                                      uint8_t *out_rgba, size_t out_size);
+
+/* Decode one slice of one level: `face` in [0, num_faces) and `layer` in
+ * [0, max(1, num_layers)). A level stores its slices in KTX2 order (layer,
+ * face), each a tightly packed block image of the level's dimensions, so this
+ * is what reads back a cubemap (faceCount 6) or an array (layerCount N) written
+ * by tp_write_ktx2 / tp_write_ktx2_array. Same codec support as above. */
+tp_result tp_ktx2_decode_slice_rgba8(const tp_ktx2_image *img, int level,
+                                     int layer, int face, uint8_t *out_rgba,
+                                     size_t out_size);
+
+/* Decode one level/slice to float RGBA (width*height*4 floats, tightly packed).
+ * This is the HDR path — BC6H and ASTC HDR have no meaningful RGBA8 form, so
+ * they are decodable only here. BC6H yields alpha 1.0 (it carries no alpha) and
+ * img->is_signed selects sf16 vs uf16; ASTC HDR decodes the full 2D HDR format
+ * (every endpoint mode, mixed-CEM partitions, both void-extent kinds). The LDR codecs stay on the RGBA8 path
+ * above rather than being widened here, and return TP_ERROR_UNSUPPORTED. */
+tp_result tp_ktx2_decode_level_rgbaf(const tp_ktx2_image *img, int level,
+                                     float *out_rgba, size_t out_size);
+tp_result tp_ktx2_decode_slice_rgbaf(const tp_ktx2_image *img, int level,
+                                     int layer, int face, float *out_rgba,
+                                     size_t out_size);
 
 /* Serialize pre-encoded uni (UASTC) mip levels as a KTX2 (vkFormat = UNDEFINED,
  * supercompressionScheme = 0, KHR_DF UASTC descriptor). This is the Basis-free

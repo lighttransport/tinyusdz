@@ -1109,10 +1109,8 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
     if (!TP_OK(r)) {
       image->data.clear();
       if (err) {
-        (*err) +=
-            "KTX2: level 0 decode/transcode is unsupported for this format "
-            "(only uni / BC7 / ASTC LDR are CPU-decodable): " +
-            std::string(tp_result_string(r)) + "\n";
+        (*err) += "KTX2: failed to decode level 0: " +
+                  std::string(tp_result_string(r)) + "\n";
       }
     } else {
       image->uri = uri;

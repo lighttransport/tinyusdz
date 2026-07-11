@@ -60,6 +60,19 @@ extern const uint32_t tc_bc7_weights4[16];
 void tc_encode_bc4_block(const uint8_t v[16], uint8_t out[8]);
 void tc_encode_bc1_color_block(const uint8_t px[16][4], int dxt1, uint8_t out[8]);
 
+/* Block decoders, same sharing: the BC1 colour block is BC3's second half and
+ * the BC4 block is BC3's alpha half / both halves of BC5. `dxt1` selects
+ * standalone-BC1 semantics (c0 <= c1 is the 3-colour + punch-through mode); in
+ * BC3 the colour block is always 4-colour regardless of endpoint order. */
+void tc_decode_bc1_color_block(const uint8_t in[8], int dxt1, uint8_t px[16][4]);
+void tc_decode_bc4_block(const uint8_t in[8], uint8_t v[16]);
+void tc_decode_bc4_block_snorm(const uint8_t in[8], int8_t v[16]);
+
+/* One BC6H block -> 16 texels of FP16 RGB (row-major). Defined in
+ * texcomp_bc6h_decode.c; the public float/half surface decoders wrap it. */
+void tc_bc6h_decode_block_half(const uint8_t blk[16], int is_signed,
+                               uint16_t out[16][3]);
+
 /* EAC alpha block (defined in texcomp_eac.c), reused by texcomp_etc2.c. */
 uint64_t tc_encode_eac_alpha(const uint8_t alpha[16]);
 
@@ -100,5 +113,22 @@ uint64_t tc_encode_astc_hdr_cem15_block(const int lns[16][4], uint8_t out[16]);
 /* Two-subset CEM 11 block; UINT64_MAX if no usable partition. */
 uint64_t tc_encode_astc_hdr_cem11_2subset_block(const int lns[16][3],
                                                 uint8_t out[16]);
+
+/* ---- ASTC block decoder (defined in texcomp_astc_decode.c) --------------- */
+/* Decode one ASTC 2D block with footprint bx x by to RGBA8 (row-major, 4 bytes
+ * per texel). bx,by are the block footprint (both <= 12). Returns 1 on success,
+ * 0 on an invalid or unsupported encoding (HDR, 3D, reserved modes). */
+int tc_astc_decode_block_rgba8(const uint8_t block[16], uint32_t bx,
+                               uint32_t by, uint8_t out_rgba[16*4]);
+/* Decode a full ASTC image; out_rgba must hold width*height*4 bytes. Returns 1
+ * on success, 0 on any decode error in any block. */
+int tc_astc_decode_image_rgba8(const uint8_t *blocks, uint32_t width,
+                               uint32_t height, uint32_t bx, uint32_t by,
+                               uint8_t *out_rgba);
+/* Decode one ASTC HDR block to float RGBA (bx*by texels, row-major). Returns 1
+ * on success, 0 for an encoding outside the supported HDR set (see
+ * tc_astc_hdr_decompress_rgbaf in texcomp.h). */
+int tc_astc_decode_block_hdr_rgbaf(const uint8_t block[16], uint32_t bx,
+                                   uint32_t by, float *out_rgba);
 
 #endif /* TINYEXR_TEXCOMP_INTERNAL_H_ */

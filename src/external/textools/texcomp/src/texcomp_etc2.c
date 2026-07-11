@@ -313,12 +313,18 @@ static uint64_t tc_encode_etc1_differential(const uint8_t block[16][4],
             err_total += best_tab_err;
         }
 
-        d |= (uint64_t)q[1][0] << 0;
-        d |= (uint64_t)(diff[0] & 7) << 3;
-        d |= (uint64_t)q[1][1] << 8;
-        d |= (uint64_t)(diff[1] & 7) << 11;
-        d |= (uint64_t)q[1][2] << 16;
-        d |= (uint64_t)(diff[2] & 7) << 19;
+        /* Per channel the byte is [base:5][delta:3] -- the 5-bit base occupies
+         * the HIGH bits and the 3-bit signed delta the low three. Packing the
+         * base at bit 0 and the delta at bit 3 (as this used to) overlaps them
+         * and shifts both, so every differential block decoded to a wrong base
+         * colour. The flat and individual paths pack correctly, which is why
+         * solid and some flat-ish blocks still looked fine. */
+        d |= (uint64_t)(diff[0] & 7) << 0;
+        d |= (uint64_t)q[1][0] << 3;
+        d |= (uint64_t)(diff[1] & 7) << 8;
+        d |= (uint64_t)q[1][1] << 11;
+        d |= (uint64_t)(diff[2] & 7) << 16;
+        d |= (uint64_t)q[1][2] << 19;
         d |= (uint64_t)table[0] << 26;
         d |= (uint64_t)table[1] << 29;
         for (i = 0; i < 16u; ++i) {
@@ -481,8 +487,13 @@ tc_result tc_etc2_compress_rgba8(const uint8_t *rgba, uint32_t width,
                     x = bx + xx;
                     if (x >= width) x = width - 1u;
                     src = rgba + (size_t)y * stride + (size_t)x * 4u;
-                    memcpy(block[yy * 4u + xx], src, 4u);
-                    alpha[yy * 4u + xx] = src[3];
+                    /* ETC numbers texels down columns first (index = x*4 + y),
+                     * which is what the bit packing below assumes: the selector
+                     * for texel i goes to bit i, and the flip/planar axes are
+                     * derived from i the same way. Gathering row-major here
+                     * transposed every block. */
+                    memcpy(block[xx * 4u + yy], src, 4u);
+                    alpha[xx * 4u + yy] = src[3];
                 }
             }
             if (opt->alpha) {
