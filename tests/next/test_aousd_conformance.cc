@@ -4,6 +4,7 @@
 #include "next/eval/attribute-eval.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/types/spline.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
@@ -447,6 +448,61 @@ void TestTypedSplines() {
   EvalResult fres =
       feval.EvalWith(fr.stage.GetPrimAtPath("/F"), "w", fo);
   assert(fres.success && fres.value.as_float());
+
+  // Review regressions:
+  // (a) half-typed spline values round to the nearest half (round-to-even),
+  // matching pxr — a truncating encoder would give 0.299805 for 0.3.
+  {
+    SplineData sd;
+    sd.value_desc = 3;  // half
+    SplineKnot k0;
+    k0.time = 0;
+    k0.value = 0.3;
+    k0.interp = 1;
+    sd.knots.push_back(k0);
+    std::vector<uint8_t> blob;
+    std::string err;
+    assert(EncodeSplineBinary(sd, &blob, &err));
+    SplineData rt;
+    assert(DecodeSplineBinary(blob.data(), blob.size(), &rt, &err));
+    assert(std::fabs(rt.knots[0].value - 0.300049) < 1e-5 &&
+           "half spline value must round to nearest, not truncate");
+  }
+  // (b) autoEase tangents are recomputed for evaluation (slope 0 at a local
+  // max), so the curve peaks exactly at the knot instead of overshooting with
+  // the authored placeholder tangents.
+  {
+    LoadResult ae = Parse(
+        "def Xform \"E\" {\n"
+        "  double v.spline = {\n"
+        "    bezier,\n"
+        "    0: 0; post curve (2, 3),\n"
+        "    5: 10; pre (2, 9, autoEase); post curve (2, 9, autoEase),\n"
+        "    10: 0; pre (2, 3),\n"
+        "  }\n"
+        "}\n",
+        true);
+    assert(ae.success);
+    AttributeEval aeval(&ae.stage);
+    EvalOptions aopts;
+    aopts.time = 5.0;
+    EvalResult apk = aeval.EvalWith(ae.stage.GetPrimAtPath("/E"), "v", aopts);
+    assert(apk.success && apk.value.as_double() &&
+           std::fabs(*apk.value.as_double() - 10.0) < 1e-6 &&
+           "autoEase knot at a local max must evaluate to its value, not "
+           "overshoot");
+  }
+  // (c) knot customData containing a brace inside a string must not desync the
+  // dictionary skip (strict parse must accept it).
+  {
+    LoadResult cd = Parse(
+        "def Xform \"C\" {\n"
+        "  double v.spline = { 0: 1; { string s = \"}\" }, 10: 2, }\n"
+        "}\n",
+        true);
+    assert(cd.success &&
+           "spline knot customData with a brace in a string must parse");
+  }
 }
 
 }  // namespace

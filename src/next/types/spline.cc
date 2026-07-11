@@ -5,6 +5,7 @@
 
 #include "spline.hh"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <limits>
 
 #include "../../spline-eval.hh"  // shared header-only evaluator (std-only)
+#include "../crate/crate-format.hh"  // FloatToHalf/HalfToFloat (round-to-even)
 #include "../writer/dtoa.hh"
 
 namespace tinyusdz {
@@ -19,56 +21,11 @@ namespace next {
 
 namespace {
 
-// Local IEEE half<->float converters (kept here so this module does not pull
-// in the crate headers; matches crate-format.hh semantics).
-float HalfBitsToFloat(uint16_t h) {
-  const uint32_t sign = (h & 0x8000u) << 16;
-  uint32_t exp = (h & 0x7C00u) >> 10;
-  uint32_t mant = h & 0x03FFu;
-  uint32_t bits;
-  if (exp == 0) {
-    if (mant == 0) {
-      bits = sign;  // +-0
-    } else {
-      // Subnormal: normalize.
-      exp = 127 - 15 + 1;
-      while ((mant & 0x0400u) == 0) {
-        mant <<= 1;
-        exp--;
-      }
-      mant &= 0x03FFu;
-      bits = sign | (exp << 23) | (mant << 13);
-    }
-  } else if (exp == 0x1F) {
-    bits = sign | 0x7F800000u | (mant << 13);  // inf/nan
-  } else {
-    bits = sign | ((exp - 15 + 127) << 23) | (mant << 13);
-  }
-  float f;
-  std::memcpy(&f, &bits, 4);
-  return f;
-}
-
-uint16_t FloatToHalfBits(float f) {
-  uint32_t bits;
-  std::memcpy(&bits, &f, 4);
-  const uint16_t sign = static_cast<uint16_t>((bits >> 16) & 0x8000u);
-  int32_t exp = static_cast<int32_t>((bits >> 23) & 0xFFu) - 127 + 15;
-  uint32_t mant = bits & 0x007FFFFFu;
-  if (exp >= 0x1F) {
-    // Overflow/inf/nan.
-    const bool is_nan = (((bits >> 23) & 0xFFu) == 0xFFu) && mant != 0;
-    return static_cast<uint16_t>(sign | 0x7C00u | (is_nan ? 0x0200u : 0));
-  }
-  if (exp <= 0) {
-    if (exp < -10) return sign;  // underflow to zero
-    // Subnormal.
-    mant |= 0x00800000u;
-    const uint32_t shift = static_cast<uint32_t>(14 - exp);
-    return static_cast<uint16_t>(sign | (mant >> shift));
-  }
-  return static_cast<uint16_t>(sign | (exp << 10) | (mant >> 13));
-}
+// Use the canonical half converters so spline-encoded halves are byte-identical
+// to pxr (round-to-nearest-even) and to next's own half evaluation cast; a
+// truncating local copy silently diverged from both.
+using tinyusdz::next::FloatToHalf;
+using tinyusdz::next::HalfToFloat;
 
 template <typename T>
 void Wr(std::vector<uint8_t>* buf, const T& v) {
@@ -91,7 +48,7 @@ void WrTyped(std::vector<uint8_t>* buf, int desc, double v) {
   if (desc == 2) {
     Wr<float>(buf, static_cast<float>(v));
   } else if (desc == 3) {
-    Wr<uint16_t>(buf, FloatToHalfBits(static_cast<float>(v)));
+    Wr<uint16_t>(buf, FloatToHalf(static_cast<float>(v)));
   } else {
     Wr<double>(buf, v);  // 0 (unspecified) and 1 (double)
   }
@@ -106,7 +63,7 @@ bool RdTyped(const uint8_t** p, size_t* remain, int desc, double* out) {
   } else if (desc == 3) {
     uint16_t h;
     if (!Rd<uint16_t>(p, remain, &h)) return false;
-    *out = double(HalfBitsToFloat(h));
+    *out = double(HalfToFloat(h));
   } else {
     double d;
     if (!Rd<double>(p, remain, &d)) return false;
@@ -389,7 +346,9 @@ bool ParseSplineText(const std::string& text, SplineData* out,
         sc.p++;
         sc.skip_ws();
         if (sc.peek() == '{') {
-          // Per-knot customData dictionary: consume (not retained).
+          // Per-knot customData dictionary: consume (not retained). Brace
+          // counting must ignore braces inside string literals and comments,
+          // else a value like `"}"` desyncs the depth and truncates early.
           int depth = 0;
           do {
             if (sc.eof()) {
@@ -397,8 +356,20 @@ bool ParseSplineText(const std::string& text, SplineData* out,
               return false;
             }
             char cc = *sc.p++;
-            if (cc == '{') depth++;
-            else if (cc == '}') depth--;
+            if (cc == '#') {  // comment to end of line
+              while (!sc.eof() && *sc.p != '\n') sc.p++;
+            } else if (cc == '"' || cc == '\'') {
+              const char quote = cc;
+              while (!sc.eof() && *sc.p != quote) {
+                if (*sc.p == '\\' && (sc.p + 1) < sc.end) sc.p++;  // skip escape
+                sc.p++;
+              }
+              if (!sc.eof()) sc.p++;  // closing quote
+            } else if (cc == '{') {
+              depth++;
+            } else if (cc == '}') {
+              depth--;
+            }
           } while (depth > 0);
           continue;
         }
@@ -675,12 +646,82 @@ bool DecodeSplineBinary(const uint8_t* data, size_t size, SplineData* out,
   return true;
 }
 
+namespace {
+
+// Recompute tangents for knots whose tangent algorithm is AutoEase (2). pxr
+// treats the authored slope/width on such knots as placeholders and derives
+// the real tangents from the neighbors (ts/knotData.cpp _UpdateTangentAutoEase):
+// slope 0 at any discontinuity/extremum, otherwise an ease-blend of the
+// neighbor slopes; width = 1/3 the distance to the adjacent knot. Done only for
+// evaluation — the crate blob keeps the authored placeholders + algorithm byte,
+// exactly as pxr stores them, so pxr recomputes on read too.
+void ComputeAutoEaseTangents(SplineData& sd) {
+  const std::vector<SplineKnot> in = sd.knots;  // recompute from authored values
+  const size_t n = in.size();
+  auto blend_slope = [&](size_t i) -> double {
+    const double prev_t = in[i - 1].time, next_t = in[i + 1].time, t = in[i].time;
+    const double prev_v = in[i - 1].value;
+    const double knot_v = in[i].value;
+    const double next_v = in[i + 1].dual ? in[i + 1].pre_value : in[i + 1].value;
+    const double prev_slope = (knot_v - prev_v) / (t - prev_t);
+    const double next_slope = (next_v - knot_v) / (next_t - t);
+    if (prev_slope * next_slope <= 0.0) return 0.0;  // extremum -> flat
+    const double f = (t - prev_t) / (next_t - prev_t);
+    const double u = f - 0.5;
+    const double g = 0.5 + u * (0.5 + 2.0 * u * u);
+    double slope = prev_slope + g * (next_slope - prev_slope);
+    if (next_slope > 0.0)
+      slope = std::min({slope, 3.0 * next_slope, 3.0 * prev_slope});
+    else
+      slope = std::max({slope, 3.0 * next_slope, 3.0 * prev_slope});
+    return slope;
+  };
+  for (size_t i = 0; i < n; ++i) {
+    const bool want_pre = (in[i].pre_algo == 2);
+    const bool want_post = (in[i].post_algo == 2);
+    if (!want_pre && !want_post) continue;
+    const bool has_prev = (i > 0);
+    const bool has_next = (i + 1 < n);
+    // Discontinuity: an endpoint, a dual-valued knot, or an adjacent value
+    // block (interp 0 == none) forces a flat tangent.
+    const bool disc = !has_prev || !has_next || in[i].dual ||
+                      in[i].interp == 0 || (has_prev && in[i - 1].interp == 0);
+    const double slope = disc ? 0.0 : blend_slope(i);
+    if (want_pre && has_prev) {
+      sd.knots[i].pre_tan_slope = slope;
+      sd.knots[i].pre_tan_width = (in[i].time - in[i - 1].time) / 3.0;
+    }
+    if (want_post && has_next) {
+      sd.knots[i].post_tan_slope = slope;
+      sd.knots[i].post_tan_width = (in[i + 1].time - in[i].time) / 3.0;
+    }
+  }
+}
+
+}  // namespace
+
 bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
   if (!out) return false;
 
+  // AutoEase knots carry placeholder tangents; derive the real ones first.
+  bool has_auto = false;
+  for (const SplineKnot& k : sd.knots) {
+    if (k.pre_algo == 2 || k.post_algo == 2) {
+      has_auto = true;
+      break;
+    }
+  }
+  SplineData work;
+  const SplineData* src = &sd;
+  if (has_auto) {
+    work = sd;
+    ComputeAutoEaseTangents(work);
+    src = &work;
+  }
+
   // Bridge to the shared evaluator.
   tinyusdz::Spline<double> sp;
-  sp.curveType = (sd.curve_type == 1) ? tinyusdz::SplineCurveType::Hermite
+  sp.curveType = (src->curve_type == 1) ? tinyusdz::SplineCurveType::Hermite
                                       : tinyusdz::SplineCurveType::Bezier;
   auto extrap = [](int m) {
     switch (m) {
@@ -693,18 +734,18 @@ bool EvaluateSplineData(const SplineData& sd, double time, double* out) {
       default: return tinyusdz::SplineExtrapolationMode::Held;
     }
   };
-  sp.preExtrapolation = extrap(sd.pre_extrap);
-  sp.postExtrapolation = extrap(sd.post_extrap);
-  sp.preExtrapolationSlope = sd.pre_slope;
-  sp.postExtrapolationSlope = sd.post_slope;
-  sp.loopParams.protoStart = sd.loop_start;
-  sp.loopParams.protoEnd = sd.loop_end;
-  sp.loopParams.numPreLoops = sd.loop_pre;
-  sp.loopParams.numPostLoops = sd.loop_post;
-  sp.loopParams.valueOffset = sd.loop_offset;
+  sp.preExtrapolation = extrap(src->pre_extrap);
+  sp.postExtrapolation = extrap(src->post_extrap);
+  sp.preExtrapolationSlope = src->pre_slope;
+  sp.postExtrapolationSlope = src->post_slope;
+  sp.loopParams.protoStart = src->loop_start;
+  sp.loopParams.protoEnd = src->loop_end;
+  sp.loopParams.numPreLoops = src->loop_pre;
+  sp.loopParams.numPostLoops = src->loop_post;
+  sp.loopParams.valueOffset = src->loop_offset;
 
-  sp.knots.reserve(sd.knots.size());
-  for (const SplineKnot& k : sd.knots) {
+  sp.knots.reserve(src->knots.size());
+  for (const SplineKnot& k : src->knots) {
     tinyusdz::SplineKnot<double> sk;
     sk.time = k.time;
     sk.value = k.value;
