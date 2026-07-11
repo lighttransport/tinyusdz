@@ -549,6 +549,25 @@ void test_crate_reader_audit_cluster() {
     assert(targets && targets->empty());  // declared, target-less
   }
 
+  // uchar / uchar[] (pxr-authored): both keep their type identity (scalar
+  // previously mutated to uint; arrays were dropped as unsupported).
+  {
+    std::string fx = FindUsdcFixture("uchar-001.usdc");
+    if (fx.empty()) { std::cout << "  Skipping (fixture missing)\n"; return; }
+    USDCLoadResult r = LoadUSDCFromFile(fx.c_str());
+    assert(r.success);
+    UsdPrim a = r.stage.GetPrimAtPath("/A");
+    assert(a.IsValid());
+    const Value* b = a.GetPropertyValue("b");
+    assert(b && b->type_id() == TypeId::UChar);
+    assert(b->as_uchar() && *b->as_uchar() == 255);
+    const Value* ba = a.GetPropertyValue("ba");
+    assert(ba && ba->is_array() && ba->type_id() == TypeId::UChar);
+    const std::vector<uint32_t>* lanes = ba->as_uint_array();
+    assert(lanes && lanes->size() == 4 && (*lanes)[2] == 128 &&
+           (*lanes)[3] == 255);
+  }
+
   std::cout << "  Crate-reader audit cluster passed!" << std::endl;
 }
 

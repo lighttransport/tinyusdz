@@ -193,7 +193,8 @@ enum class CrateTypeId : uint8_t {
   PayloadListOp = 55,
   TimeCode = 56,
   PathExpression = 57,  // SdfPathExpression (crate >= 0.10.0)
-  // 58 = Relocates (SdfRelocates) -- reserved, not yet implemented
+  Relocates = 58,       // SdfRelocates (crate >= 0.11.0):
+                        //   [u64 count][(u32 srcPathIdx, u32 dstPathIdx)*]
   Spline = 59,          // TsSpline (crate >= 0.12.0)
   // 60 = AnimationBlock (SdfAnimationBlock) -- reserved, not yet implemented
 };

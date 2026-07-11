@@ -220,6 +220,14 @@ bool CrateReader::Impl::BuildStage() {
           else
             layer.meta().expressionVariables = std::move(d);
         }
+      } else if (field.first == "layerRelocates" ||
+                 field.first == "relocates") {
+        if (const std::vector<std::string>* pairs =
+                field.second.as_token_array()) {
+          for (size_t i = 0; i + 1 < pairs->size(); i += 2) {
+            layer.meta().relocates.emplace_back((*pairs)[i], (*pairs)[i + 1]);
+          }
+        }
       } else if (field.first == "colorConfiguration") {
         if (const std::string* s = field.second.as_asset_path())
           layer.meta().colorConfiguration = *s;
@@ -808,6 +816,16 @@ bool CrateReader::Impl::BuildStage() {
             ps->meta().displayName() = *s;
           else if (const std::string* s = field.second.as_token())
             ps->meta().displayName() = *s;
+          continue;
+        }
+        if (field.first == "relocates") {
+          if (const std::vector<std::string>* pairs =
+                  field.second.as_token_array()) {
+            for (size_t i = 0; i + 1 < pairs->size(); i += 2) {
+              ps->meta().relocates().emplace_back((*pairs)[i],
+                                                  (*pairs)[i + 1]);
+            }
+          }
           continue;
         }
         if (field.first == "instanceable") {

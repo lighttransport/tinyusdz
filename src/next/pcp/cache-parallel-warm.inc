@@ -80,8 +80,10 @@
     }
     // Sublayer opinions are baked into the flattened output; keeping the
     // subLayers list would re-apply (now stale) layers when the exported
-    // layer is read back.
+    // layer is read back. Relocates are likewise already APPLIED by the
+    // stage-build walk — keeping them would re-relocate on re-read.
     out->meta().subLayers.clear();
+    out->meta().relocates.clear();
     stage->SetRootLayer(std::move(*out));
     return true;
   }

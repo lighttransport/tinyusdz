@@ -697,6 +697,48 @@ def Xform "W"
     assert(d && *d == 20.0);
   }
 
+  // uchar: full type identity (previously no such type); out-of-range errors.
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W"
+{
+    uchar b = 255
+    uchar[] ba = [0, 128, 255]
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    const Value* b = w.GetPropertyValue("b");
+    assert(b && b->type_id() == TypeId::UChar && b->as_uchar() &&
+           *b->as_uchar() == 255);
+    const Value* ba = w.GetPropertyValue("ba");
+    assert(ba && ba->is_array() && ba->type_id() == TypeId::UChar);
+  }
+  {
+    const char* input = "#usda 1.0\ndef Xform \"W\"\n{\n    uchar b = 256\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "uchar 256 must be a range error");
+  }
+
+  // Layer-level relocates parse + round-trip.
+  {
+    const char* input = R"(#usda 1.0
+(
+    relocates = {
+        </A/Old>: </A/New>,
+    }
+)
+def Xform "A"
+{
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("</A/Old>: </A/New>") != std::string::npos);
+  }
+
   std::cout << "  Parser audit regressions passed!" << std::endl;
 }
 

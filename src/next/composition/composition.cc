@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <system_error>
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace next {
@@ -677,9 +678,37 @@ void Compositor::CopyLocalOpinions(
       target.meta().displayName().empty()) {
     target.meta().displayName() = source.meta().displayName();
   }
-  if (target.meta().apiSchemas().empty() &&
-      !source.meta().apiSchemas().empty()) {
-    target.meta().apiSchemas() = source.meta().apiSchemas();
+  if (!source.meta().apiSchemas().empty()) {
+    std::vector<std::string>& tgt = target.meta().apiSchemas();
+    const std::string& tq = target.meta().apiSchemasQualifier();
+    if (tgt.empty()) {
+      tgt = source.meta().apiSchemas();
+      if (target.meta().apiSchemasQualifier().empty()) {
+        target.meta().apiSchemasQualifier() =
+            source.meta().apiSchemasQualifier();
+      }
+    } else if (tq == "prepend" || tq == "append") {
+      // List-op merge across arcs (pxr): a prepend-qualified stronger list
+      // goes IN FRONT of the weaker composed list (append: after), with
+      // stronger-wins dedup. Fill-absent alone dropped every weaker schema
+      // the moment the stronger spec authored any.
+      std::vector<std::string> merged;
+      merged.reserve(tgt.size() + source.meta().apiSchemas().size());
+      std::unordered_set<std::string> seen;
+      auto push = [&](const std::string& v) {
+        if (seen.insert(v).second) merged.push_back(v);
+      };
+      if (tq == "prepend") {
+        for (const auto& v : tgt) push(v);
+        for (const auto& v : source.meta().apiSchemas()) push(v);
+      } else {
+        for (const auto& v : source.meta().apiSchemas()) push(v);
+        for (const auto& v : tgt) push(v);
+      }
+      tgt = std::move(merged);
+    }
+    // Bare (explicit) stronger list: replaces the weaker one — pxr explicit
+    // list semantics; nothing to do.
   }
   // Dictionary-valued metadata (fill-absent). `ct` binds a const view so the
   // gap check never allocates the target's metadata ext.

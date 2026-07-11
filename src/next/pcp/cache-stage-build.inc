@@ -94,14 +94,27 @@
         Path child_src = w.src_path.append_child(cn);
         Path child_out;
         auto rit = relocates_map.find(child_src.str());
-        if (rit != relocates_map.end() &&
-            Path(rit->second).parent().str() == w.out_path.str()) {
-          child_out = Path(rit->second);
+        if (rit != relocates_map.end()) {
+          if (Path(rit->second).parent().str() == w.out_path.str()) {
+            child_out = Path(rit->second);  // same-parent rename
+          } else {
+            continue;  // departs; the destination parent's visit pulls it in
+          }
         } else {
           child_out = w.out_path.append_child(cn);
         }
         stack.push_back({child_src, child_out, idx, /*is_root=*/false,
                          w.depth + 1});
+      }
+      // Prims relocated INTO this prim from another parent.
+      {
+        auto ait = relocate_arrivals.find(w.out_path.str());
+        if (ait != relocate_arrivals.end()) {
+          for (const auto &a : ait->second) {
+            stack.push_back({Path(a.first), Path(a.second), idx,
+                             /*is_root=*/false, w.depth + 1});
+          }
+        }
       }
     }
   }

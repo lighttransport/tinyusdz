@@ -137,6 +137,11 @@ enum class TypeId : uint16_t {
   Relationship,
   Reference,
 
+  // uchar / uchar[] (pxr's UChar). Appended at the END so existing numeric
+  // TypeId values stay stable. Scalar storage is one byte in the SBO;
+  // arrays are widened into the UInt array storage (bit-exact lanes).
+  UChar,
+
   // Sentinel for array sizing
   Count
 };

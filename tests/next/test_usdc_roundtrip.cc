@@ -1972,6 +1972,86 @@ void test_roundtrip_writer_audit_cluster() {
   std::cout << "  crate-writer audit cluster roundtrip passed!\n\n";
 }
 
+
+// 2026-07 deferred items: uchar type identity through the crate, layer
+// relocates round-trip, and pxr-style write-version upgrades (timecode ->
+// 0.9, relocates -> 0.11; plain content stays 0.8).
+void test_roundtrip_deferred_items() {
+  std::cout << "Testing deferred-items crate roundtrip...\n";
+
+  // uchar scalar + array; no version bump needed (uchar is a 0.4 type).
+  {
+    Layer l;
+    LayerBuilder b(l);
+    b.begin_prim("U", "Scope");
+    {
+      const uint8_t bv = 200;
+      b.current()->add_property("b", Value::MakeFromRaw(TypeId::UChar, &bv), 0);
+      b.current()->set_property_type_name("b", "uchar");
+      std::vector<uint32_t> lanes = {0, 5, 255};
+      b.current()->add_property(
+          "ba", Value::MakeUIntCompArray(std::move(lanes), TypeId::UChar, 1), 0);
+      b.current()->set_property_type_name("ba", "uchar[]");
+    }
+    b.end_prim();
+    b.finalize();
+    std::vector<uint8_t> buf;
+    CrateWriter w;
+    assert(w.WriteLayerToMemory(buf, l).success);
+    assert(buf.size() > 10 && buf[9] == 8 && "uchar must not bump version");
+    CrateReader r;
+    CrateReadResult rr = r.Read(buf.data(), buf.size());
+    assert(rr.success);
+    const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/U");
+    assert(p);
+    const Value* bv2 = p->property_value("b");
+    assert(bv2 && bv2->type_id() == TypeId::UChar && bv2->as_uchar() &&
+           *bv2->as_uchar() == 200);
+    const Value* ba = p->property_value("ba");
+    assert(ba && ba->is_array() && ba->type_id() == TypeId::UChar);
+    const std::vector<uint32_t>* lanes = ba->as_uint_array();
+    assert(lanes && lanes->size() == 3 && (*lanes)[2] == 255);
+  }
+
+  // timecode value bumps the written crate to 0.9.
+  {
+    Layer l;
+    LayerBuilder b(l);
+    b.begin_prim("T", "Scope");
+    const double tv = 10.5;
+    b.current()->add_property("t", Value::MakeFromRaw(TypeId::TimeCode, &tv), 0);
+    b.current()->set_property_type_name("t", "timecode");
+    b.end_prim();
+    b.finalize();
+    std::vector<uint8_t> buf;
+    CrateWriter w;
+    assert(w.WriteLayerToMemory(buf, l).success);
+    assert(buf.size() > 10 && buf[9] == 9 && "timecode requires crate 0.9");
+  }
+
+  // Layer relocates round-trip and bump the crate to 0.11.
+  {
+    Layer l;
+    l.meta().relocates.emplace_back("/A/Old", "/A/New");
+    LayerBuilder b(l);
+    b.begin_prim("A", "Xform");
+    b.end_prim();
+    b.finalize();
+    std::vector<uint8_t> buf;
+    CrateWriter w;
+    assert(w.WriteLayerToMemory(buf, l).success);
+    assert(buf.size() > 10 && buf[9] == 11 && "relocates require crate 0.11");
+    CrateReader r;
+    CrateReadResult rr = r.Read(buf.data(), buf.size());
+    assert(rr.success);
+    const auto& rel = rr.stage.GetRootLayer()->meta().relocates;
+    assert(rel.size() == 1 && rel[0].first == "/A/Old" &&
+           rel[0].second == "/A/New");
+  }
+
+  std::cout << "  deferred-items crate roundtrip passed!\n\n";
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Roundtrip Tests ===\n\n";
 
@@ -1983,6 +2063,7 @@ int main() {
     test_roundtrip_arc_metadata_dicts();
     test_roundtrip_custom_qualifier();
     test_roundtrip_writer_audit_cluster();
+    test_roundtrip_deferred_items();
     test_roundtrip_api_schemas();
     test_comprehensive_usdc_fixture();
     test_roundtrip_schema_types();

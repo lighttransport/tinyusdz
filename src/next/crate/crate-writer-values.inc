@@ -70,6 +70,11 @@
     CrateTypeId crate_type = ToCrateTypeId(type_id);
     bool is_array = val.is_array();
 
+    // pxr-style write-version upgrade: timecode values require crate 0.9.
+    if (type_id == TypeId::TimeCode && required_version_minor_ < 9) {
+      required_version_minor_ = 9;
+    }
+
     if (crate_type == CrateTypeId::Invalid) {
       return ValueRep::Make(CrateTypeId::Invalid, 0, is_array, false);
     }
@@ -104,6 +109,11 @@
         }
         case TypeId::UInt: {
           const uint32_t* v = val.as_uint();
+          if (v) { payload = *v; can_inline = true; }
+          break;
+        }
+        case TypeId::UChar: {
+          const uint8_t* v = val.as_uchar();
           if (v) { payload = *v; can_inline = true; }
           break;
         }
@@ -381,6 +391,22 @@
           if (arr) {
             count = arr->size();
             if (!copy_counted_payload(count, arr->data(), sizeof(uint32_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+          }
+          break;
+        }
+        case TypeId::UChar: {
+          // uchar[]: narrow the widened uint32 storage back to the tightly
+          // packed uint8 wire form pxr writes/reads.
+          const std::vector<uint32_t>* arr = val.as_uint_array();
+          if (arr) {
+            std::vector<uint8_t> raw8(arr->size());
+            for (size_t k = 0; k < arr->size(); ++k) {
+              raw8[k] = static_cast<uint8_t>((*arr)[k] & 0xFFu);
+            }
+            count = raw8.size();
+            if (!copy_counted_payload(count, raw8.data(), sizeof(uint8_t))) {
               return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
             }
           }

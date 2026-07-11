@@ -90,6 +90,19 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           layer_->meta().kilogramsPerUnit = *result.value.as_double();
           layer_->meta().kilogramsPerUnit_set = true;
         }
+      } else if (key == "relocates") {
+        // Layer relocates: { </old/path>: </new/path>, ... }
+        if (Match(TokenType::OpenBrace)) {
+          while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+            std::string src, dst;
+            if (!lexer_->expect(TokenType::PathRef, src)) break;
+            if (!Match(TokenType::Colon)) break;
+            if (!lexer_->expect(TokenType::PathRef, dst)) break;
+            layer_->meta().relocates.emplace_back(src, dst);
+            Match(TokenType::Comma);
+          }
+          Match(TokenType::CloseBrace);
+        }
       } else if (key == "colorConfiguration") {
         // asset (`@path@`, lexed as String) or quoted string
         std::string value;
