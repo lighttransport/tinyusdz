@@ -2202,6 +2202,7 @@ if(TINYUSDZ_BUILD_TESTS)
         cmyk-jpeg-texture
         degraded-material
         instancer-invisible-ids
+        light-double-count
         material-shading-bsdf-sample
         mtlx-usdz-texture-equivalence
         mtlx-usdz-udim-equivalence
