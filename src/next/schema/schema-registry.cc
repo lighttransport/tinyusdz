@@ -35,7 +35,9 @@ SchemaRegistry::SchemaRegistry() {
       {"Scope", "Imageable"},
       {"Boundable", "Xformable"}, {"Gprim", "Boundable"},
       {"Mesh", "Gprim"}, {"Points", "PointBased"},
-      {"PointBased", "Boundable"}, {"BasisCurves", "Curves"},
+      // pxr: PointBased inherits Gprim (NOT Boundable directly), so curves and
+      // points must pick up Gprim's doubleSided/orientation fallbacks.
+      {"PointBased", "Gprim"}, {"BasisCurves", "Curves"},
       {"NurbsCurves", "Curves"}, {"Curves", "PointBased"},
       {"Sphere", "Gprim"}, {"Cube", "Gprim"},
       {"Cylinder", "Gprim"}, {"Cone", "Gprim"},

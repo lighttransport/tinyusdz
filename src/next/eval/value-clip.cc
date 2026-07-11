@@ -184,21 +184,27 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
         set.prim_path.empty() ? prim.GetPath().str() : set.prim_path;
 
     // Manifest gating (pxr semantics): when a manifest is authored and
-    // loadable, only properties DECLARED in it resolve through clips.
+    // loadable, a property resolves through clips only if it is DECLARED
+    // (authored as a spec) in the manifest. HasProperty() must NOT be used
+    // here — it also reports schema-fallback properties (visibility, radius,
+    // ...) that are not in the manifest, which would leak them into clips.
     if (!set.manifest_asset_path.empty()) {
       Stage manifest_stage;
       std::string mwarn, merr;
       if (loader(set.manifest_asset_path, &manifest_stage, &mwarn, &merr)) {
         const UsdPrim mprim = manifest_stage.GetPrimAtPath(clip_path);
-        if (!mprim.IsValid() || !mprim.HasProperty(property)) continue;
+        const PrimSpec* mspec = mprim.GetPrimSpec();
+        if (!mspec || !mspec->property(property)) continue;
       }
       // Unloadable manifest: fall through without gating (pxr degrades the
       // same way when the manifest layer cannot be opened).
     }
 
-    // Sample one clip of this set at the mapped time; returns an empty
-    // Value when the clip is unloadable or carries no opinion.
-    auto sample_clip = [&](size_t clip_index, std::string* asset_out) {
+    // Sample one clip of this set, mapping `at_time` through the set's time
+    // function. Returns an empty Value when the clip is unloadable or carries
+    // no opinion for the property.
+    auto sample_clip_at = [&](size_t clip_index, double at_time,
+                              std::string* asset_out) {
       Value none;
       if (clip_index >= set.asset_paths.size()) return none;
       const std::string& asset = set.asset_paths[clip_index];
@@ -210,27 +216,83 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
         return none;
       }
       Value v = clip_prim.GetInterpolatedValue(property,
-                                               ClipTime(set, stage_time));
+                                               ClipTime(set, at_time));
       if (v.is_empty() || v.is_block()) return none;
       if (asset_out) *asset_out = asset;
       return v;
     };
 
     std::string asset;
-    Value value = sample_clip(static_cast<size_t>(index), &asset);
+    Value value =
+        sample_clip_at(static_cast<size_t>(index), stage_time, &asset);
 
-    // interpolateMissingClipValues: when the ACTIVE clip has no opinion for
-    // the property, take the value from the nearest clip that does (earlier
-    // clips preferred, per pxr's hold-from-neighbors behavior).
-    if (value.is_empty() && set.interpolate_missing) {
-      const size_t n = set.asset_paths.size();
-      for (size_t dist = 1; dist < n && value.is_empty(); ++dist) {
-        if (static_cast<size_t>(index) >= dist) {
-          value = sample_clip(static_cast<size_t>(index) - dist, &asset);
+    // interpolateMissingClipValues: when the ACTIVE clip has no opinion, pxr
+    // treats all clips as one merged timeline and LINEARLY INTERPOLATES the
+    // property between the nearest earlier and nearest later clips that do
+    // carry a value (valueClips.md, "Interpolating Missing Values"). We anchor
+    // each bracketing clip at its own active stage-time (exact for the common
+    // one-sample-per-clip authoring); non-interpolatable types hold the
+    // earlier neighbor.
+    if (value.is_empty() && set.interpolate_missing && !set.active.empty()) {
+      // Index of the active entry selected for stage_time (active is sorted).
+      size_t cur = 0;
+      for (size_t i = 0; i < set.active.size(); ++i) {
+        if (set.active[i].first > stage_time) break;
+        cur = i;
+      }
+      double t_lo = 0.0, t_hi = 0.0;
+      std::string a_lo, a_hi;
+      Value v_lo, v_hi;
+      // Earlier neighbors: active entries cur-1, cur-2, ..., 0 (cur is the
+      // empty active clip that put us here, so it is skipped).
+      for (size_t i = cur; i-- > 0;) {
+        Value v = sample_clip_at(static_cast<size_t>(set.active[i].second),
+                                 set.active[i].first, &a_lo);
+        if (!v.is_empty()) {
+          v_lo = std::move(v);
+          t_lo = set.active[i].first;
+          break;
         }
-        if (value.is_empty() && static_cast<size_t>(index) + dist < n) {
-          value = sample_clip(static_cast<size_t>(index) + dist, &asset);
+      }
+      for (size_t i = cur + 1; i < set.active.size(); ++i) {  // later neighbors
+        Value v = sample_clip_at(static_cast<size_t>(set.active[i].second),
+                                 set.active[i].first, &a_hi);
+        if (!v.is_empty()) {
+          v_hi = std::move(v);
+          t_hi = set.active[i].first;
+          break;
         }
+      }
+
+      auto lerp_value = [](const Value& lo, const Value& hi,
+                           double alpha) -> Value {
+        if (const float* a = lo.as_float()) {
+          if (const float* b = hi.as_float())
+            return Value(static_cast<float>(*a + (*b - *a) * alpha));
+        }
+        if (const double* a = lo.as_double()) {
+          if (const double* b = hi.as_double())
+            return Value(*a + (*b - *a) * alpha);
+        }
+        return Value();  // not linearly interpolatable
+      };
+
+      if (!v_lo.is_empty() && !v_hi.is_empty() && t_hi > t_lo) {
+        const double alpha = (stage_time - t_lo) / (t_hi - t_lo);
+        Value interp = lerp_value(v_lo, v_hi, alpha);
+        if (!interp.is_empty()) {
+          value = std::move(interp);
+          asset = a_lo;
+        } else {  // non-numeric: hold the earlier neighbor
+          value = std::move(v_lo);
+          asset = a_lo;
+        }
+      } else if (!v_lo.is_empty()) {
+        value = std::move(v_lo);
+        asset = a_lo;
+      } else if (!v_hi.is_empty()) {
+        value = std::move(v_hi);
+        asset = a_hi;
       }
     }
 

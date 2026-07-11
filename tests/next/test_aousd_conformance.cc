@@ -339,6 +339,48 @@ void TestSchemaFallbackAndValueClips() {
       manifest_result.stage.GetPrimAtPath("/Root"), "y", m_opts);
   assert(!(gated.success && gated.source_asset == "clipA.usda") &&
          "manifest must gate undeclared properties out of clip resolution");
+
+  // interpolateMissingClipValues must INTERPOLATE (not hold) between the
+  // nearest earlier and later clips that carry a value. Three clips, empty
+  // middle: A holds 0 at t=0, C holds 20 at t=20; querying t=12 (empty B
+  // active) must yield 12.0 (pxr valueClips.md worked example), not 0.0.
+  LoadResult interp_result = Parse(
+      "def Xform \"Root\" (\n"
+      "  clips = {\n"
+      "    dictionary default = {\n"
+      "      double2[] active = [(0, 0), (10, 1), (20, 2)]\n"
+      "      asset[] assetPaths = [@a.usda@, @b.usda@, @c.usda@]\n"
+      "      string primPath = \"/Root\"\n"
+      "      bool interpolateMissingClipValues = true\n"
+      "      double2[] times = [(0, 0), (30, 30)]\n"
+      "    }\n"
+      "  }\n"
+      ") { double v }\n");
+  assert(interp_result.success);
+  AttributeEval i_eval(&interp_result.stage);
+  EvalOptions i_opts;
+  i_opts.time = 12.0;  // clip b (empty) active
+  i_opts.clip_stage_loader =
+      [](const std::string& asset, Stage* out, std::string*, std::string*) {
+        const char* text = nullptr;
+        if (asset == "a.usda")
+          text = "def Xform \"Root\" { double v.timeSamples = { 0: 0 } }\n";
+        else if (asset == "b.usda")
+          text = "def Xform \"Root\" { }\n";  // empty
+        else if (asset == "c.usda")
+          text = "def Xform \"Root\" { double v.timeSamples = { 20: 20 } }\n";
+        else
+          return false;
+        LoadResult clip = Parse(text);
+        if (!clip.success || !out) return false;
+        *out = std::move(clip.stage);
+        return true;
+      };
+  EvalResult interp = i_eval.EvalWith(
+      interp_result.stage.GetPrimAtPath("/Root"), "v", i_opts);
+  assert(interp.success && interp.value.as_double());
+  assert(std::fabs(*interp.value.as_double() - 12.0) < 1e-9 &&
+         "missing clip value must interpolate to 12.0, not hold 0.0");
 }
 
 void TestTypedSplines() {
