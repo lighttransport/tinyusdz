@@ -267,6 +267,9 @@ struct TextureRuntimeOptions {
   UdimMode udimMode{UdimMode::Sparse};
   TextureCompressionMode compression{TextureCompressionMode::Off};
   TextureCompressCaps caps{};  // populated from renderer->caps() before build
+  // Keep already-compressed .ktx2 textures compressed (upload/transcode the GPU
+  // blocks directly instead of decoding + re-encoding). Requires textools.
+  bool keepCompressed{false};
   // Build content-aware CPU mip chains (sRGB/alpha-coverage/normal-map aware;
   // needs the vendored textools; no-op otherwise). Backends upload the
   // precomputed levels instead of glGenerateMipmap (GL) / no mips (VK).
@@ -418,6 +421,9 @@ struct DrawTextureCPU {
   int wrapS{static_cast<int>(WrapMode::Repeat)};
   int wrapT{static_cast<int>(WrapMode::Repeat)};
   bool requestedCompressed{false};
+  // The compressed payload is already final (kept-compressed KTX2 passthrough):
+  // skip re-encoding and mip generation from `image`. `image` may be empty.
+  bool compressedFinal{false};
   DrawCompressedImageCPU compressed;
   bool isUdim{false};
   std::vector<DrawUdimTileCPU> udimTiles;

@@ -28,6 +28,21 @@ bool TexToolsResizeRGBA8(light3d::Image* img, int dstW, int dstH, bool srgb,
 bool TexToolsCompress(const light3d::Image& img, bool srgb,
                       DrawCompressedFormat format, DrawCompressedImageCPU* out);
 
+// Adapt a pre-compressed KTX2 block payload to what the device supports, without
+// re-encoding from decoded texels. `srcIsUni` = the blocks are the tinyexr uni
+// intermediate (valid ASTC 4x4, transcodable to BC7/ETC2, decodable to RGBA8);
+// otherwise `srcFmt` names the stored block format for a direct upload.
+// On success fills exactly one of `*outCompressed` (device GPU blocks — upload
+// as-is) or `*outRGBA` (uncompressed fallback where no compressed format fits),
+// leaving the other empty. Returns false if the format cannot be adapted
+// (e.g. a BC1/ETC2 payload on a device that supports neither and has no
+// decoder). See DrawCompressedFormat for `srcFmt`.
+bool TexToolsAdaptCompressed(const uint8_t* blocks, size_t nbytes, bool srcIsUni,
+                             DrawCompressedFormat srcFmt, uint32_t w, uint32_t h,
+                             const TextureCompressCaps& caps,
+                             DrawCompressedImageCPU* outCompressed,
+                             light3d::Image* outRGBA);
+
 // How a texture is consumed by the materials; drives the content-aware mip
 // build (sRGB filtering, alpha-coverage preservation, normal renormalize,
 // packed-channel rules, wrap-aware filter edges).

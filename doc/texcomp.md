@@ -120,6 +120,26 @@ tusdview <scene.usd[z]> --texture-mips on|off
 BC6H (HDR) is reserved in the format enum but not yet wired into the RGBA8
 compress-on-load path (it needs the float/EXR texture route).
 
+### Kept-compressed KTX2 passthrough
+
+When the texture asset is already a `.ktx2`, tusdview can upload its GPU blocks
+directly instead of decoding to RGBA8 and re-encoding:
+
+```
+tusdview <scene> --texture-keep-compressed on
+```
+
+- Core/tydra loads the `.ktx2` block payload without decoding
+  (`RenderSceneConverterConfig::keep_compressed_textures`), tagging the tydra
+  `TextureImage` with its `TextureBlockFormat`.
+- tusdview adapts the blocks to the device (`TexToolsAdaptCompressed`): the `uni`
+  intermediate is a byte-copy to ASTC where supported, a cheap transcode to BC7
+  or ETC2 otherwise, or a decode to RGBA8 as a last resort; a stored BC7/ASTC/BCn
+  payload is uploaded as-is when the device supports it. This skips the expensive
+  re-encode (and its quality loss).
+- Disabled by default; only level 0 is used today (multi-level KTX2 mips are a
+  follow-up). Size-cap / budget resize falls back to the normal decode path.
+
 ## Web demo
 
 `web/js/texcomp.{html,js}` demonstrates the same strategy in the browser,
@@ -156,9 +176,7 @@ The page reports the detected caps, the chosen GPU format, and the VRAM saving
 
 ## Not yet supported / follow-ups
 
-- **Kept-compressed GPU passthrough**: upload `.ktx2` blocks without re-encoding
-  (the `TextureImage.blockFormat` field exists; the loader keep-compressed mode
-  and the tusdview upload branch are not wired yet).
+- **Multi-level KTX2 mips** in the kept-compressed passthrough (level 0 only today).
 - **HDR compressed** decode-to-EXR (BC6H / ASTC-HDR); BC6H is the reliable HDR
   GPU-upload target.
 - **KTX2 Zstd** supercompression (scheme 2) in the reader/writer.
