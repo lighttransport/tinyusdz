@@ -37,12 +37,13 @@ MAX_MEAN_DIFF = 0.5   # GPU deform vs CPU bake: same geometry, bar raster edges
 MIN_POSE_DIFF = 1.0   # rest vs posed: the deform must actually move something
 
 
-def render(binary, scene, out, time, camera, extra=(), env=None):
+def render(binary, scene, out, time, camera, extra=(), env=None, backend=()):
     e = dict(os.environ)
     if env:
         e.update(env)
     cmd = [binary, "--next", "--headless", "--mode", "depth", "--camera", camera,
-           "--frames", "3", "--time", str(time), "--screenshot", out, *extra, scene]
+           "--frames", "3", "--time", str(time), "--screenshot", out,
+           *backend, *extra, scene]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    env=e, timeout=600)
     return os.path.exists(out) and os.path.getsize(out) > 0
@@ -99,31 +100,40 @@ def mean_diff(a_path, b_path):
 def main():
     if len(sys.argv) < 4:
         print("usage: check-deform-parity.py <tusdview> <scene.usda> <work_dir> "
-              "[camera] [rest_time] [pose_time]")
+              "[backend] [camera] [rest_time] [pose_time]")
         return SKIP
     binary, scene, work = sys.argv[1:4]
-    camera = sys.argv[4] if len(sys.argv) > 4 else "Cam"
-    rest_t = sys.argv[5] if len(sys.argv) > 5 else "1"
-    pose_t = sys.argv[6] if len(sys.argv) > 6 else "20"
+    which = sys.argv[4] if len(sys.argv) > 4 else "raster"
+    camera = sys.argv[5] if len(sys.argv) > 5 else "Cam"
+    rest_t = sys.argv[6] if len(sys.argv) > 6 else "1"
+    pose_t = sys.argv[7] if len(sys.argv) > 7 else "20"
+    # The CUDA/HIP tracers build their BVH from draw_ geometry, so they take the
+    # deform through poseNextDrawForTracer rather than the vertex shader. Same
+    # claim, different plumbing -- and until that landed they were pinned to the
+    # load-time CPU bake, a SECOND deform implementation free to disagree with the
+    # shader's (it did: it skinned before it morphed).
+    backend = [] if which == "raster" else [f"--{which}"]
     for p in (binary, scene):
         if not os.path.exists(p):
             print(f"SKIP: missing {p}")
             return SKIP
     os.makedirs(work, exist_ok=True)
 
-    tag = os.path.splitext(os.path.basename(scene))[0]
+    tag = f"{os.path.splitext(os.path.basename(scene))[0]}_{which}"
     rest = os.path.join(work, f"{tag}_rest.png")
     gpu = os.path.join(work, f"{tag}_gpu.png")
     cpu = os.path.join(work, f"{tag}_cpu.png")
 
-    if not render(binary, scene, rest, rest_t, camera):
-        print("SKIP: headless render produced no image (no usable GPU?)")
+    if not render(binary, scene, rest, rest_t, camera, backend=backend):
+        print(f"SKIP: the {which} backend produced no image (unavailable here?)")
         return SKIP
-    if not render(binary, scene, gpu, pose_t, camera):
-        print("SKIP: headless render produced no image (no usable GPU?)")
+    if not render(binary, scene, gpu, pose_t, camera, backend=backend):
+        print(f"SKIP: the {which} backend produced no image (unavailable here?)")
         return SKIP
-    # The reference: every deform baked on the CPU, in mesh-local space.
-    if not render(binary, scene, cpu, pose_t, camera, extra=["--skinning", "cpu"],
+    # The reference: every deform baked on the CPU, in mesh-local space -- through
+    # the SAME backend, so this compares deforms and not backends.
+    if not render(binary, scene, cpu, pose_t, camera, backend=backend,
+                  extra=["--skinning", "cpu"],
                   env={"TUSDVIEW_NEXT_MORPH_BAKE": "1"}):
         print("SKIP: the CPU-bake reference did not render")
         return SKIP

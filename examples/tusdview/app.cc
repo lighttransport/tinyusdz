@@ -619,6 +619,9 @@ void App::applyLoaded(bool ok, bool progressive) {
       reconvApplied_ = animTime_;
     }
     updateSkinningEffective();
+    // The tracer re-pose cache indexes draw_.meshes; this is a different scene.
+    nextRestVerts_.clear();
+    nextTracerPosedTime_ = std::numeric_limits<double>::quiet_NaN();
     // Robust auto-frame bounds: compute from the full per-mesh set NOW, before
     // the LOD merge collapses 80k meshes into one 42M-instance proxy (whose mass
     // would otherwise swamp the weighting). Cached for the framing step below.
@@ -1203,12 +1206,15 @@ bool App::wantsGpuSkinningLoad() const {
 // to do, which was re-run the entire converter for every new time code. See
 // updateNextDeformFrameIfNeeded.
 //
-// The CUDA/HIP tracers still need the load-time bake: they read draw_ geometry
-// directly and free it once their own BVH is built, and they only ever render a
-// one-shot screenshot, where the load-time bake IS the cheapest path.
+// The CUDA/HIP tracers read draw_ geometry directly rather than owning vertex
+// buffers, so they cannot run the raster vertex shader either -- but they can
+// take the same re-posed vertices, written back into draw_ before their BVH is
+// built (poseNextDrawForTracer). They used to be pinned to the load-time CPU
+// bake, which meant a converter re-run for every new time code and, worse, a
+// SECOND deform implementation that could (and did) disagree with the shader's.
 bool App::wantsNextGpuSkinning() const {
   return useNextLoader_ && wantsGpuSkinningLoad() && renderer_ &&
-         renderer_->caps().supportsGpuSkinning && !cudaRt_ && !hipRt_;
+         renderer_->caps().supportsGpuSkinning;
 }
 
 void App::updateSkinningEffective() {
@@ -1236,14 +1242,15 @@ void App::updateSkinningEffective() {
     skinningReason_ = "scene has no skeletal skinning or blendshapes";
     return;
   }
-  // The CUDA/HIP ray tracers read CPU-side draw_ geometry directly, so GPU
-  // (vertex-shader) skinning never reaches them: they would trace the rest
-  // pose. Force CPU skinning so the reconvert path bakes the posed geometry
-  // into draw_ before the tracer builds its BLAS. (Also avoids the spurious
-  // "renderer mesh count 0 != draw mesh count" warning, since the raster
-  // renderer holds no meshes on the tracer-owned screenshot path.)
-  if (cudaRt_ || hipRt_) {
-    skinningReason_ = "CPU skinning (CUDA/HIP tracer reads CPU geometry)";
+  // The CUDA/HIP ray tracers read CPU-side draw_ geometry directly, so the raster
+  // vertex shader's deform never reaches them: they would trace the rest pose.
+  // Under the LEGACY loader the only way to pose them is the CPU bake, which the
+  // reconvert path writes into draw_ before the tracer builds its BVH. The next
+  // loader instead re-poses the retained rest vertices straight into draw_
+  // (poseNextDrawForTracer), so it keeps the GPU deform data -- one deform
+  // implementation for every backend, and no converter re-run per time code.
+  if ((cudaRt_ || hipRt_) && !useNextLoader_) {
+    skinningReason_ = "CPU skinning (legacy loader + CUDA/HIP tracer reads CPU geometry)";
     return;
   }
   // The next loader renormalizes onto the 4 strongest influences per vertex, so
@@ -1395,6 +1402,52 @@ void App::updateNextDeformFrameIfNeeded() {
     for (auto& mc : coeffs) renderer_->updateMorphWeights(mc.first, mc.second);
   }
   skinFrameTime_ = animTime_;
+}
+
+bool App::sceneIsNextDeformable() const {
+  return useNextLoader_ && nextSession_ && loaded_.ok &&
+         (hasNextMorph_ || draw_.boneMatrixCount > 0);
+}
+
+// Write the pose at `time` into draw_ geometry, for the CUDA/HIP tracers -- which
+// build their BVH from draw_ meshes rather than from renderer-owned vertex
+// buffers, and so cannot be fed the way Vulkan RT is (updateMeshVertices).
+//
+// The rest pose is snapshotted on first use and restored before every re-pose, so
+// this is idempotent and can run at any time code in any order. Only deformable
+// meshes are copied. Returns true when draw_ now holds the pose at `time`.
+bool App::poseNextDrawForTracer(double time) {
+  if (!sceneIsNextDeformable()) return false;
+  if (nextRestVerts_.empty()) {
+    for (size_t i = 0; i < draw_.meshes.size(); ++i) {
+      const DrawMeshCPU& m = draw_.meshes[i];
+      if (m.vertices.empty()) continue;
+      if (m.jointIdx.empty() && m.morphDeltaHalf.empty()) continue;
+      nextRestVerts_[static_cast<int>(i)] = m.vertices;
+    }
+    if (nextRestVerts_.empty()) return false;
+  }
+  // BuildNextRtDeformedVertices deforms whatever is in draw_, so it must see the
+  // REST pose -- not the pose we left behind at the previous time code.
+  for (const auto& kv : nextRestVerts_) {
+    const size_t i = static_cast<size_t>(kv.first);
+    if (i < draw_.meshes.size()) draw_.meshes[i].vertices = kv.second;
+  }
+  std::vector<RtSkinnedMeshUpload> uploads;
+  if (!BuildNextRtDeformedVertices(nextSession_->GetStage(), draw_, time,
+                                   gui_.blendOverrides(), &uploads)) {
+    return false;
+  }
+  for (RtSkinnedMeshUpload& up : uploads) {
+    if (up.meshIndex < 0 ||
+        static_cast<size_t>(up.meshIndex) >= draw_.meshes.size()) {
+      continue;
+    }
+    draw_.meshes[static_cast<size_t>(up.meshIndex)].vertices =
+        std::move(up.vertices);
+  }
+  nextTracerPosedTime_ = time;
+  return true;
 }
 
 void App::maybeReconvertForManualBlend() {
@@ -1682,8 +1735,10 @@ bool App::renderHipViewport() {
       hipBuildStarted_ = true;
       hipBuildStart_ = std::chrono::steady_clock::now();
       const float dispScale = gui_.displacementScale();  // read on the main thread
-      // The worker reads draw_ (stable while building: no reload/anim on the HIP
-      // path) and builds + uploads on the device (hipSetDevice runs in build()).
+      poseNextDrawForTracer(animTime_);  // on the main thread, before the worker reads draw_
+      // The worker reads draw_ (stable while building: the re-pose below only runs
+      // once the build has completed) and builds + uploads on the device
+      // (hipSetDevice runs in build()).
       hipBuildThread_ = std::thread([this, dispScale] {
         std::string e;
         const bool ok = hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
@@ -1706,8 +1761,11 @@ bool App::renderHipViewport() {
     hipInteractiveBuilt_ = true;
     LOGI("HIP interactive: %zu tris%s on %s", hipTracer_.triangleCount(),
          hipTracer_.truncated() ? " [truncated]" : "", hipTracer_.deviceName());
-    // The scene now lives entirely in the GPU BVH; reclaim the (large) CPU
-    // geometry -- the interactive trace never reads draw_ geometry again.
+    // A deformable scene keeps its CPU geometry: the timeline re-poses it and
+    // rebuilds the BVH below, so draw_ is read again on every new time code.
+    if (sceneIsNextDeformable()) return true;
+    // Otherwise the scene now lives entirely in the GPU BVH; reclaim the (large)
+    // CPU geometry -- the interactive trace never reads draw_ geometry again.
     auto rssMB = [] {
       FILE* f = std::fopen("/proc/self/statm", "r");
       if (!f) return size_t(0);
@@ -1725,6 +1783,22 @@ bool App::renderHipViewport() {
     const size_t after = rssMB();
     if (before > after)
       LOGI("freed CPU geometry after RT build: %zu -> %zu MB host RSS", before, after);
+  }
+
+  // Animation. The BVH is built from vertex positions, so a new time code means a
+  // re-pose and a rebuild -- but a rebuild only, not the whole-converter re-run
+  // this path used to need (it had none: the HIP scene was simply frozen at the
+  // load time code). Synchronous: the timeline should not run ahead of what is on
+  // screen, and a rebuild is a fraction of the initial build (no conversion, no
+  // material/texture work).
+  if (sceneIsNextDeformable() && animTime_ != nextTracerPosedTime_) {
+    if (poseNextDrawForTracer(animTime_)) {
+      std::string e;
+      if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &e,
+                            gui_.displacementScale())) {
+        LOGW("HIP re-pose rebuild failed: %s", e.c_str());
+      }
+    }
   }
 
   int w = 0, h = 0;
@@ -2510,6 +2584,9 @@ int App::run(const std::string& initialFile, int maxFrames,
   // loaded at runtime via cuew) and write it in place of the rasterized capture.
   if (cudaRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
+    // The tracer builds from draw_ geometry, which the next loader hands over in
+    // its REST pose (the deform lives in the GPU skin/morph channels). Pose it.
+    poseNextDrawForTracer(animTime_);
     if (!cudaTracer_.init(&cerr)) {
       LOGW("CUDA ray tracing unavailable: %s", cerr.c_str());
     } else if (!cudaTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
@@ -2570,6 +2647,7 @@ int App::run(const std::string& initialFile, int maxFrames,
   // hiprtc loaded at runtime via hipew). Same scene flatten / BVH / kernel.
   if (hipRt_ && !screenshot.empty() && !draw_.empty()) {
     std::string cerr;
+    poseNextDrawForTracer(animTime_);  // as CUDA above
     if (!hipTracer_.init(&cerr)) {
       LOGW("HIP ray tracing unavailable: %s", cerr.c_str());
     } else if (!hipTracer_.build(draw_, cudaMaxTris_, rtMaxInstances_, &cerr,
