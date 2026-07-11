@@ -38,6 +38,8 @@ struct MaterialTexParam {
   vec4 emissiveScale; vec4 emissiveBias;
   vec4 scalar0;
   vec4 scalar1;
+  vec4 uvSets;  // per-slot UV set (see mesh.frag); unused here, but every stage's
+                // copy of this struct must stay byte-identical.
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 

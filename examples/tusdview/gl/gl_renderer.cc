@@ -223,6 +223,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uNormalUv1_ = glGetUniformLocation(program_, "uNormalUv1");
   uEmissiveUv0_ = glGetUniformLocation(program_, "uEmissiveUv0");
   uEmissiveUv1_ = glGetUniformLocation(program_, "uEmissiveUv1");
+  uUvSet_ = glGetUniformLocation(program_, "uUvSet");
   uBaseColorTexScale_ = glGetUniformLocation(program_, "uBaseColorTexScale");
   uBaseColorTexBias_ = glGetUniformLocation(program_, "uBaseColorTexBias");
   uNormalTexScale_ = glGetUniformLocation(program_, "uNormalTexScale");
@@ -2386,6 +2387,13 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         SetUvUniform(uMetalRoughUv0_, uMetalRoughUv1_, mat.metalRoughSample.uv);
         SetUvUniform(uNormalUv0_, uNormalUv1_, mat.normalSample.uv);
         SetUvUniform(uEmissiveUv0_, uEmissiveUv1_, mat.emissiveSample.uv);
+        {
+          const GLint uvSets[4] = {mat.baseColorSample.uvSet,
+                                   mat.metalRoughSample.uvSet,
+                                   mat.normalSample.uvSet,
+                                   mat.emissiveSample.uvSet};
+          glUniform4iv(uUvSet_, 1, uvSets);
+        }
         glUniform4fv(uBaseColorTexScale_, 1, mat.baseColorSample.scale);
         glUniform4fv(uBaseColorTexBias_, 1, mat.baseColorSample.bias);
         glUniform4fv(uNormalTexScale_, 1, mat.normalSample.scale);

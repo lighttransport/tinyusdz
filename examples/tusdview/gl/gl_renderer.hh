@@ -181,6 +181,7 @@ class GLRenderer final : public Renderer {
   GLint uMetalRoughUv0_{-1}, uMetalRoughUv1_{-1};
   GLint uNormalUv0_{-1}, uNormalUv1_{-1};
   GLint uEmissiveUv0_{-1}, uEmissiveUv1_{-1};
+  GLint uUvSet_{-1};  // per-slot UV set (base, metal/rough, normal, emissive)
   GLint uBaseColorTexScale_{-1}, uBaseColorTexBias_{-1};
   GLint uNormalTexScale_{-1}, uNormalTexBias_{-1};
   GLint uEmissiveTexScale_{-1}, uEmissiveTexBias_{-1};

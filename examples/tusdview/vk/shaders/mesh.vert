@@ -46,6 +46,8 @@ struct MaterialTexParam {
   vec4 emissiveScale; vec4 emissiveBias;
   vec4 scalar0;  // metallicChannel, roughnessChannel, metallicScale, metallicBias
   vec4 scalar1;  // roughnessScale, roughnessBias, displacementScale, displacementBias
+  vec4 uvSets;   // per-slot UV set (see mesh.frag); unused here but the struct
+                 // layout must stay byte-identical across every stage.
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 

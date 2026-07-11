@@ -398,6 +398,7 @@ CMakeUserPresets.json
 # models/*.usda, which would also catch scratch scenes dropped in that directory.
 !models/tusdview-material-binding-inheritance.usda
 !models/skintest-instanced.usda
+!models/multi-uv-quad.usda
 !models/nested-look-texture/root.usda
 !models/nested-look-texture/look/look.usda
 !tests/usda/validation/invalid/*.usda

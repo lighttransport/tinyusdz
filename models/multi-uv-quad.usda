@@ -1,0 +1,57 @@
+#usda 1.0
+(
+    doc = "Two UV sets on one mesh. `primvars:st` is the full [0,1] quad; `primvars:uvSet1` covers only the lower-left quarter, so a texture routed to it samples a ZOOMED region and looks obviously different from one routed to st. The base-color texture reads uvSet1 through its UsdPrimvarReader. Regression fixture for per-texture UV-set selection: the secondary set used to be hard-coded as <primary>+'1' (st1/UVMap1), so a set named `uvSet1` was never extracted and the texture silently sampled st."
+    defaultPrim = "Root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Mesh "Quad" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        texCoord2f[] primvars:uvSet1 = [(0, 0), (0.25, 0), (0.25, 0.25), (0, 0.25)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </Root/Mat>
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </Root/Mat/PBR.outputs:surface>
+
+        def Shader "PBR"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </Root/Mat/Base.outputs:rgb>
+            float inputs:metallic = 0
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+
+        def Shader "Reader1"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "uvSet1"
+            float2 outputs:result
+        }
+
+        def Shader "Base"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/checkerboard.png@
+            float2 inputs:st.connect = </Root/Mat/Reader1.outputs:result>
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+        }
+    }
+}

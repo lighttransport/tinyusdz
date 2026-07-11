@@ -2381,6 +2381,19 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-blas-compaction"
         )
       set_tests_properties(tusdview-blas-compaction PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A texture must sample the UV set its UsdPrimvarReader names. The secondary
+      # set used to be hard-coded as <primary>+"1" (so `uvSet1` was never
+      # extracted), and nothing routed it even when it existed.
+      add_test(
+        NAME tusdview-uv-set-routing
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-uv-set-routing.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/multi-uv-quad.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-uv-set-routing"
+        )
+      set_tests_properties(tusdview-uv-set-routing PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()

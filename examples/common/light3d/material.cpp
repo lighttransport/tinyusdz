@@ -388,6 +388,9 @@ uniform sampler2DArray uEmissiveUdimTex;
 uniform isampler1D uEmissiveUdimLut;
 uniform bool uHasEmissiveTex;
 uniform bool uEmissiveTexIsUdim;
+// Per-slot UV set: 0 = vUV (texcoords_0), 1 = vUV1 (texcoords_1).
+// x = base color, y = metal/rough, z = normal, w = emissive.
+uniform ivec4 uUvSet;
 uniform vec3 uBaseColorUv0;   // m00,m01,tx
 uniform vec3 uBaseColorUv1;   // m10,m11,ty
 uniform vec3 uMetalRoughUv0;
@@ -480,7 +483,7 @@ void main() {
     float opacity = clamp(uAlpha, 0.0, 1.0);
 
     if (uHasBaseColorTex) {
-        vec2 uv = xformUv(vUV, uBaseColorUv0, uBaseColorUv1);
+        vec2 uv = xformUv(uUvSet.x == 1 ? vUV1 : vUV, uBaseColorUv0, uBaseColorUv1);
         vec4 texel = uBaseColorTexIsUdim
                          ? sampleUdim(uBaseColorUdimTex, uBaseColorUdimLut, uv)
                          : texture(uBaseColorTex, uv);
@@ -489,7 +492,7 @@ void main() {
         opacity *= clamp(sample.a, 0.0, 1.0);
     }
     if (uHasMetalRoughTex) {
-        vec2 uv = xformUv(vUV, uMetalRoughUv0, uMetalRoughUv1);
+        vec2 uv = xformUv(uUvSet.y == 1 ? vUV1 : vUV, uMetalRoughUv0, uMetalRoughUv1);
         vec4 mr = uMetalRoughTexIsUdim
                       ? sampleUdim(uMetalRoughUdimTex, uMetalRoughUdimLut, uv)
                       : texture(uMetalRoughTex, uv);
@@ -497,7 +500,7 @@ void main() {
         metallic *= channelOf(mr, uMetallicChannel) * uMetallicTexScale + uMetallicTexBias;
     }
     if (uHasEmissiveTex) {
-        vec2 uv = xformUv(vUV, uEmissiveUv0, uEmissiveUv1);
+        vec2 uv = xformUv(uUvSet.w == 1 ? vUV1 : vUV, uEmissiveUv0, uEmissiveUv1);
         vec4 texel = uEmissiveTexIsUdim
                          ? sampleUdim(uEmissiveUdimTex, uEmissiveUdimLut, uv)
                          : texture(uEmissiveTex, uv);
@@ -508,7 +511,7 @@ void main() {
                  ? normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)))
                  : normalize(vNormal);
     if (uHasNormalTex) {
-        vec2 uv = xformUv(vUV, uNormalUv0, uNormalUv1);
+        vec2 uv = xformUv(uUvSet.z == 1 ? vUV1 : vUV, uNormalUv0, uNormalUv1);
         vec3 tangentNormal = ((uNormalTexIsUdim
                                   ? sampleUdim(uNormalUdimTex, uNormalUdimLut, uv)
                                   : texture(uNormalTex, uv)) * uNormalTexScale +

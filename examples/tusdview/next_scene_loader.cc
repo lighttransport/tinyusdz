@@ -1858,8 +1858,23 @@ int LoadNextTexture(NextTexCache& tc, DrawScene* draw,
   return idx;
 }
 
+// Which UV set a texture samples. RenderTexture::uv_primvar carries the name the
+// texture's UsdPrimvarReader asked for; the mesh reports the names it actually
+// extracted into slots 0 and 1. Anything that is not the secondary set -- the
+// usual case, and any unresolvable name -- falls back to slot 0, which is what
+// the renderer did unconditionally before.
+int ResolveUvSet(const tydn::RenderTexture& rt, const std::string& uv0Name,
+                 const std::string& uv1Name) {
+  if (uv1Name.empty() || rt.uv_primvar.empty()) return 0;
+  if (rt.uv_primvar == uv1Name && uv1Name != uv0Name) return 1;
+  return 0;
+}
+
 // Fill a DrawTexSampleCPU's UV affine + value scale/bias from a RenderTexture.
-void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp) {
+void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp,
+                    const std::string& uv0Name = std::string(),
+                    const std::string& uv1Name = std::string()) {
+  smp->uvSet = ResolveUvSet(rt, uv0Name, uv1Name);
   const float c = std::cos(rt.rotation), s = std::sin(rt.rotation);
   smp->uv.m00 = c * rt.scale.x; smp->uv.m01 = -s * rt.scale.y;
   smp->uv.m10 = s * rt.scale.x; smp->uv.m11 =  c * rt.scale.y;
@@ -1879,7 +1894,8 @@ void FillNextSample(const tydn::RenderTexture& rt, DrawTexSampleCPU* smp) {
 // usable surface shader (caller then keeps the default gray material, index 0).
 int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& conv,
                       const tnext::UsdPrim& matPrim, DrawScene* draw,
-                      NextTexCache& texCache) {
+                      NextTexCache& texCache, const std::string& uv0Name,
+                      const std::string& uv1Name) {
   tydn::RenderScene scratch;  // texture/image metadata (pixels decoded by us)
   tydn::RenderMaterial rm;
   if (!conv.ConvertMaterial(stage, matPrim, &rm, &scratch)) return -1;
@@ -1895,7 +1911,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     int t = LoadNextTexture(texCache, draw, scratch, sp.texture_id, srgb);
     if (t < 0) return;
     *texField = t;
-    FillNextSample(scratch.textures[static_cast<size_t>(sp.texture_id)], smp);
+    FillNextSample(scratch.textures[static_cast<size_t>(sp.texture_id)], smp,
+                   uv0Name, uv1Name);
     if (neutralize3) { neutralize3[0] = neutralize3[1] = neutralize3[2] = 1.0f; }
   };
 
@@ -1911,7 +1928,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     if (t < 0) return;
     dm.normalTex = t;
     const tydn::RenderTexture& rt = scratch.textures[static_cast<size_t>(sp.texture_id)];
-    FillNextSample(rt, &dm.normalSample);
+    FillNextSample(rt, &dm.normalSample, uv0Name, uv1Name);
     const bool defScale = rt.scale_value.x == 1.0f && rt.scale_value.y == 1.0f &&
                           rt.scale_value.z == 1.0f;
     const bool defBias = rt.bias.x == 0.0f && rt.bias.y == 0.0f && rt.bias.z == 0.0f;
@@ -1935,7 +1952,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(roughness.texture_id)];
         dm.roughnessChannel = NextScalarChannel(rt.output_channel);
-        FillNextSample(rt, &dm.metalRoughSample);
+        FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
       }
     }
     if (metallic.texture_id >= 0) {
@@ -1945,7 +1962,7 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
             scratch.textures[static_cast<size_t>(metallic.texture_id)];
         if (dm.metalRoughTex < 0) {
           dm.metalRoughTex = t;
-          FillNextSample(rt, &dm.metalRoughSample);
+          FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
         }
         dm.metallic = 1.0f;
         dm.metallicChannel = NextScalarChannel(rt.output_channel);
@@ -2749,16 +2766,35 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // Resolve a material prim path to a DrawScene material index (cached by path).
   // Unbound / unconvertible -> 0 (default gray material).
   std::unordered_map<std::string, int> matIndexByPath;
-  auto resolveMaterialPath = [&](const std::string& mpath) -> int {
+  // A material is built ONCE and shared by every mesh that binds it, but the
+  // UV-set names are the MESH's. Resolve the texture->UV-set routing at the first
+  // mesh that binds the material, and warn if a later mesh would have resolved it
+  // differently (two meshes binding one material with differently-named secondary
+  // sets cannot both be satisfied without splitting the material -- rare enough
+  // that reporting beats silently rendering one of them with the wrong UVs).
+  std::unordered_map<std::string, std::string> matUv1ByPath;
+  auto resolveMaterialPath = [&](const std::string& mpath,
+                                 const std::string& uv0Name,
+                                 const std::string& uv1Name) -> int {
     if (mpath.empty()) return 0;
     auto it = matIndexByPath.find(mpath);
-    if (it != matIndexByPath.end()) return it->second;
+    if (it != matIndexByPath.end()) {
+      const auto uit = matUv1ByPath.find(mpath);
+      if (uit != matUv1ByPath.end() && uit->second != uv1Name) {
+        LOGW("material '%s' is bound by meshes with different secondary UV sets "
+             "('%s' vs '%s'); keeping the first. Textures routed to the second "
+             "UV set may sample the wrong coordinates on the later mesh.",
+             mpath.c_str(), uit->second.c_str(), uv1Name.c_str());
+      }
+      return it->second;
+    }
     tnext::UsdPrim matPrim = stage.GetPrimAtPath(mpath);
-    int idx = matPrim.IsValid()
-                  ? BuildNextMaterial(stage, conv, matPrim, draw, texCache)
-                  : -1;
+    int idx = matPrim.IsValid() ? BuildNextMaterial(stage, conv, matPrim, draw,
+                                                    texCache, uv0Name, uv1Name)
+                                : -1;
     if (idx < 0) idx = 0;
     matIndexByPath[mpath] = idx;
+    matUv1ByPath[mpath] = uv1Name;
     return idx;
   };
   // Full UsdShade binding semantics: the purpose fallback chain
@@ -2767,9 +2803,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   // an ancestor Xform and never author a plain `material:binding` on the Mesh —
   // reading only the Mesh's own `material:binding` dropped every material (and
   // so every texture) on those scenes.
-  auto resolveMeshMaterial = [&](const tnext::UsdPrim& mp) -> int {
+  auto resolveMeshMaterial = [&](const tnext::UsdPrim& mp,
+                                 const std::string& uv0Name = std::string(),
+                                 const std::string& uv1Name = std::string()) -> int {
     return resolveMaterialPath(
-        tnext::GetInheritedBoundMaterialPath(stage, mp.GetPath().str()));
+        tnext::GetInheritedBoundMaterialPath(stage, mp.GetPath().str()), uv0Name,
+        uv1Name);
   };
 
   // A clone of material `base` with its alpha replaced, made once per distinct
@@ -2819,7 +2858,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       if (bind.empty()) continue;
       std::vector<int32_t> faces = ReadInts(c, "indices", time);
       if (faces.empty()) continue;
-      subs.push_back({std::move(faces), resolveMaterialPath(bind)});
+      subs.push_back({std::move(faces),
+                      resolveMaterialPath(bind, m.texcoords_0_name,
+                                          m.texcoords_1_name)});
     }
     if (subs.empty()) return;
 
@@ -2996,7 +3037,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         loc.tangents.size() * sizeof(float) +
         loc.binormals.size() * sizeof(float);
     const std::string purpose = ResolveNextPurpose(stage, mp.GetPath().str());
-    int wholeMat = resolveMeshMaterial(mp);
+    int wholeMat = resolveMeshMaterial(mp, m.texcoords_0_name, m.texcoords_1_name);
     double mw16[16];
     tydn::ComputeWorldTransform(stage, mp, mw16, time);
     // Skeletal skinning, before the vertices are world-baked into the batch.

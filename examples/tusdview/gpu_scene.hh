@@ -300,6 +300,10 @@ struct DrawTexSampleCPU {
   DrawUvXformCPU uv;
   float scale[4]{1.0f, 1.0f, 1.0f, 1.0f};
   float bias[4]{0.0f, 0.0f, 0.0f, 0.0f};
+  // Which UV set this texture samples: 0 = texcoords_0, 1 = texcoords_1. Resolved
+  // from the texture's UsdPrimvarReader varname against the bound mesh's UV-set
+  // names. Meshes with one UV set (the overwhelming majority) always leave it 0.
+  int uvSet{0};
 };
 
 enum class DrawMaterialParamType : int { Float = 0, Vec2 = 1, Vec3 = 2, Vec4 = 3 };
