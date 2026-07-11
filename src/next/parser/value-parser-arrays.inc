@@ -178,10 +178,21 @@ struct SliceParser {
       *out = false;
       return true;
     }
-    double v = 0.0;
-    if (!parse_double(&v)) return false;
-    *out = (v != 0.0);
-    return true;
+    // pxr accepts ONLY the integer literals 0 and 1 for bool (no numeric
+    // truthiness). Match the scalar ParseBool: a bare '0'/'1' digit not
+    // followed by more number characters.
+    if (p < end && (*p == '0' || *p == '1')) {
+      const char* q = p + 1;
+      const bool more_number =
+          q < end && ((*q >= '0' && *q <= '9') || *q == '.' || *q == 'e' ||
+                      *q == 'E');
+      if (!more_number) {
+        *out = (*p == '1');
+        p = q;
+        return true;
+      }
+    }
+    return false;
   }
 
   bool parse_string(std::string* out) {

@@ -11,17 +11,38 @@
 
 The vendored Markdown and [license](../aousd/core/1.0.1/LICENSE) are exact copies from that checkout. Their SHA-256 digests are `b2feeb2c900befe224a372b2d60d0ddcc6e35048ab54c32c17d5c085b44c642d` and `9cc97638cf0185884ac800144b6246c7772f94ff2cc70686afa9574aaea4fa2b`, respectively.
 
+## Implementation update
+
+The gaps selected for the 2026-07-11 remediation pass now have code and focused regression coverage. This update supersedes the original baseline statements below where a finding is marked fixed or mitigated.
+
+| Requested area | Current status | Implementation |
+|---|---|---|
+| Unicode identifiers | **Fixed** | `next` reuses TinyUSDZ's generated Unicode XID tables for UTF-8 lexing and prim-name validation. |
+| Invalid paths | **Fixed in strict mode** | `ParseOptions::strict_aousd_conformance` and `next_usdcat --aousd-strict` enforce the AOUSD §8 path grammar. Compatibility mode retains permissive legacy ingestion. |
+| Silent spline loss | **Mitigated; typed spline support remains** | Compatibility mode preserves and rewrites the complete authored `.spline` text with a warning. Strict mode fails atomically because typed evaluation and USDC type-59 support are not complete. |
+| Unsupported typed-value loss | **Mitigated** | Undecoded extension/foundational defaults are preserved as raw authored values. Strict mode rejects known unsupported normative types such as `frame4d`. |
+| Recursive dictionaries | **Fixed for next composition paths** | Prim and property dictionary metadata now recursively fill missing weaker keys. |
+| Relationship list operations | **Fixed for composed target lists** | Strength-ordered opinion stacks apply explicit/prepend/append/delete/reorder operations across two or more sites and emit the resolved explicit list. |
+| Namespace ordering | **Fixed for USDA and next USDC paths** | Root, prim-child, and property order are stored, composed, applied to traversal, emitted to USDA, and transferred through Crate children fields. |
+| Schema fallback/population | **Implemented for the next-supported schema registry** | A shared compact registry supplies built-in property names and fallbacks for implemented geometry, camera, physics, and applied physics APIs. Registry breadth remains smaller than OpenUSD's generated schemas. |
+| Core value clips | **Implemented subset** | Core `AttributeEval` resolves explicit and template clip sets through a caller-supplied stage loader before schema fallback. Advanced manifest/missing-value behavior still needs the official supplemental suite. |
+| Strict versus compatibility policy | **Implemented** | USDA, USDC, composition, and evaluation expose `strict_aousd_conformance`; USDC strict reads promote lossy warnings to errors and strict writes reject raw/spline fields that Crate cannot encode. |
+
+The dedicated [`test_aousd_conformance.cc`](../tests/next/test_aousd_conformance.cc) regression covers Unicode, strict paths, spline/value preservation, dictionary and multi-site relationship composition, namespace order, schema fallback/population, explicit value clips, and strict missing-loader behavior.
+
+TinyUSDZ still must not claim full AOUSD Core 1.0.1 compliance. Strict rejection prevents partial or silently corrupted stages, but rejection is not format implementation compliance. The remaining blockers are typed spline parsing/evaluation and USDC 0.12 spline encoding, full foundational-type coverage, complete generated schema definitions, and the advanced value-clip cases.
+
 ## Executive conclusion
 
-TinyUSDZ `next` is a substantial, security-conscious USD implementation, and its tested USDA, USDC, USDZ, composition, validation, and Tydra conversion surfaces are much broader than a minimal reader. It is nevertheless **not currently conformant with AOUSD Core Specification 1.0.1** under the specification's section 4 compliance definition.
+TinyUSDZ `next` is a substantial, security-conscious USD implementation, and its tested USDA, USDC, USDZ, composition, validation, and Tydra conversion surfaces are much broader than a minimal reader. After the remediation above, it is safer and materially closer to the normative behavior, but it is still **not fully conformant with AOUSD Core Specification 1.0.1** under the specification's section 4 compliance definition.
 
 That conclusion is not based merely on missing OpenUSD APIs. It follows from confirmed normative behavior differences in each of the three mandatory compliance areas:
 
-- **Composed Stage Population:** recursive dictionary composition, relationship list-op composition, property/child ordering, and some specifier/custom-field rules differ from the normative result.
-- **Value Resolution:** core value-clip resolution and schema fallbacks are absent, default-time behavior differs, and interpolation coverage is incomplete.
-- **Format Implementations:** syntactically valid Unicode identifiers and splines are not supported; unsupported spline syntax is silently discarded; some foundational values are lost; invalid paths are accepted; and USDC 0.12 spline values are not implemented.
+- **Composed Stage Population:** the confirmed dictionary, relationship list-op, and property/child ordering differences are fixed; complete schema breadth and some specifier/field rules remain.
+- **Value Resolution:** core value clips and registry-driven fallbacks now exist for the supported subset; advanced clip behavior, full registry coverage, default-time compatibility behavior, and interpolation breadth remain.
+- **Format Implementations:** Unicode identifiers are fixed and unsupported USDA values are no longer silently lost. Typed spline support and USDC 0.12 spline values remain conformance blockers; invalid paths are rejected under strict mode.
 
-The most urgent problem is not feature breadth but **silent semantic or authored-data loss**. Loading and rewriting a valid layer can currently succeed while dropping spline properties or a `frame4d` value. Composition can succeed while dropping weaker dictionary entries or relationship targets. Until unsupported normative constructs either round-trip correctly or fail closed with a clear error, `next` should not be described as a general lossless USD editor or an AOUSD-conformant implementation.
+The most urgent baseline problem was **silent semantic or authored-data loss**. The remediated paths now either preserve authored USDA text, compose the missing opinions, or fail closed under strict mode. Compatibility mode remains intentionally permissive and must not be confused with a conformance run.
 
 The review also found strong foundations worth preserving: bounded parsing, no-exception error paths, broad Crate structure support, disciplined USDZ writing, meaningful composition coverage, extensive differential tests, and Tydra diagnostics that generally expose renderer-level degradation instead of hiding it.
 
@@ -47,9 +68,9 @@ The findings below are grounded primarily in these implementation areas:
 |---|---|
 | USDA property parsing and unsupported suffix handling | [`ascii-parser-prim.cc`](../src/next/parser/ascii-parser-prim.cc) |
 | Foundational type registry and values | [`type-id.hh`](../src/next/types/type-id.hh), [`type-info.cc`](../src/next/types/type-info.cc), [`value.hh`](../src/next/types/value.hh) |
-| Path representation | [`path.hh`](../src/next/prim/path.hh), [`path.cc`](../src/next/prim/path.cc) |
+| Unicode identifiers and path representation | [`identifier.hh`](../src/next/prim/identifier.hh), [`path.hh`](../src/next/prim/path.hh), [`path.cc`](../src/next/prim/path.cc) |
 | Composition and flattening | [`composition.cc`](../src/next/composition/composition.cc), [`flatten.cc`](../src/next/pipeline/flatten.cc), [`pcp/`](../src/next/pcp/) |
-| Attribute evaluation and interpolation | [`attribute-eval.cc`](../src/next/eval/attribute-eval.cc), [`interpolation.cc`](../src/next/types/interpolation.cc) |
+| Attribute, clip, and fallback evaluation | [`attribute-eval.cc`](../src/next/eval/attribute-eval.cc), [`value-clip.cc`](../src/next/eval/value-clip.cc), [`schema-registry.cc`](../src/next/schema/schema-registry.cc), [`interpolation.cc`](../src/next/types/interpolation.cc) |
 | Crate reading and feature decoding | [`crate-reader.cc`](../src/next/crate/crate-reader.cc), [`crate-reader-decode.cc`](../src/next/crate/crate-reader-decode.cc), [`crate-format.hh`](../src/next/crate/crate-format.hh) |
 | Asset resolution | [`asset-resolver.cc`](../src/next/resolver/asset-resolver.cc) |
 | USDZ I/O | [`usdz-reader.cc`](../src/next/reader/usdz-reader.cc), [`usdz-writer.cc`](../src/next/writer/usdz-writer.cc) |
@@ -75,10 +96,10 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 
 | Compliance area | Status | Principal evidence |
 |---|---|---|
-| Composed Stage Population | **Non-conformant** | Dictionaries replace instead of recursively composing; relationship list ops lose weaker targets; explicit child/property order is not represented; custom-field resolution differs. |
-| Value Resolution | **Non-conformant** | General value clips and schema fallbacks are absent; default-time and interpolation behavior differ. |
-| USDA Format Implementation | **Non-conformant** | Unicode XID identifiers rejected; splines silently skipped; order statements not preserved; some values are silently lost; invalid paths accepted. |
-| USDC Format Implementation | **Non-conformant** | Reader accepts version 0.12 but does not implement spline value type 59; reference `customData` is ignored; some encodings are explicitly unsupported. |
+| Composed Stage Population | **Partial, improved** | Recursive dictionaries, relationship list ops, custom OR, and authored ordering are repaired; schema/specifier breadth remains. |
+| Value Resolution | **Partial, improved** | Supported schema fallbacks and core explicit/template clip lookup are implemented; advanced clips, DefaultTime compatibility, and interpolation breadth remain. |
+| USDA Format Implementation | **Partial, loss-safe** | Unicode and ordering are fixed. Compatibility mode preserves unsupported spline/value text; strict mode rejects it. Typed spline evaluation is still absent. |
+| USDC Format Implementation | **Non-conformant, fail-closed option** | Strict mode promotes ignored/dropped values to errors, but spline type 59 and reference `customData` still require implementation. |
 | Generic `.usd` forwarding | **Partial** | Format detection and forwarding exist; correctness inherits the selected USDA/USDC gaps. |
 | USDZ Format Implementation | **Strong, with reader caveats** | Writer uses stored ZIP32 entries, 64-byte alignment, root-first layout, no encryption, and no archive comment. Reader is deliberately more permissive, which the specification allows. |
 
@@ -88,12 +109,12 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 |---|---|---|
 | Foundational data types (§6) | Partial | Broad scalar/vector/matrix/array support, but no complete `frame4d`, `opaque`, `group`, path-expression, spline, or role/fallback behavior. |
 | Document and layer data model (§7) | Partial | Strong spec containers and metadata coverage, but unknown property fields and several normative authored fields cannot be represented losslessly. |
-| Paths and identifiers (§8) | Non-conformant | ASCII-oriented identifier validation rejects valid Unicode; raw path strings accept invalid repeated separators; order semantics are incomplete. |
+| Paths and identifiers (§8) | Partial/strict-conformant subset | Unicode XID and authored ordering are implemented; strict mode validates the normative path grammar, while compatibility mode remains permissive. |
 | Asset resolution (§9) | Partial | Filesystem/package/search-path and callback resolution are useful; URI schemes, anonymous identifiers, and variable/expression substitution are not general core features. |
 | Composition (§10) | Partial | Sublayers, references, payloads, variants, inherits, specializes, relocates, cycles, and prototypes have meaningful coverage; exact field composition still differs. |
-| Composed stage population (§11) | Partial | Population works for many scenes, but authored ordering and some field/specifier algorithms do not match the required squashed result. |
-| Value resolution (§12) | Non-conformant | Strength resolution is substantial; list ops, clips, schema fallback, DefaultTime, forwarding, and interpolation have confirmed gaps. |
-| Schemas (§13) | Partial | Typed convenience views exist, but there is no general prim-definition/schema registry that supplies built-in properties and fallbacks. |
+| Composed stage population (§11) | Partial, improved | Authored ordering, recursive dictionaries, custom OR, and relationship list-op results are now represented; remaining work is schema/specifier breadth. |
+| Value resolution (§12) | Partial | List ops, supported-schema fallbacks, blocks, and core clips are improved; advanced clips, DefaultTime compatibility, forwarding, and interpolation remain. |
+| Schemas (§13) | Partial | A shared registry now supplies definitions/fallbacks for next-supported schemas; it is not yet a complete generated OpenUSD/AOUSD registry. |
 | Color (§14) | Partial | Color metadata and Tydra colorspace handling exist; full normative authored/fallback semantics are not supplied by core. |
 | Collections (§15) | Partial | Data structures and validation exist, but this review did not find a complete schema/fallback-backed collection evaluation implementation. |
 | Core formats (§16) | Mixed | USDZ writer is strong; USDA and USDC have conformance-blocking gaps described below. |
@@ -102,9 +123,11 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 
 ### AOUSD-FMT-001 — Spline syntax is silently discarded (P0)
 
+**Remediation status:** silent loss fixed; conformance blocker remains. Compatibility loads preserve/re-emit the raw field, while strict loads reject it. Typed spline and USDC support remain the fix needed.
+
 **Normative area:** USDA Spline grammar, §§7.4.2.4, 12.3, 12.6, and USDC 0.12 type support.
 
-The repository fixture `tests/usda/spline_basic.usda` contains five spline properties. `next_usdcat` accepts it but emits five warnings of the form `Unknown attribute property: spline`. Rewriting the layer produces an otherwise valid file whose `Splines` prim is empty. OpenUSD rewrites the same input with all five splines present.
+At the baseline revision, the repository fixture `tests/usda/spline_basic.usda` produced five unknown-property warnings and rewrote to an empty `Splines` prim. The remediated compatibility rewrite now retains all five fields; OpenUSD additionally gives them typed spline semantics.
 
 This violates both data-model requirements and the format compatibility rule that an implementation must not simply ignore unsupported grammar. It is particularly severe because the operation reports success.
 
@@ -125,6 +148,8 @@ The implementation evidence is consistent across layers:
 
 ### AOUSD-TYPE-001 — Foundational declared values can be lost (P0)
 
+**Remediation status:** silent loss fixed. Compatibility mode retains raw defaults such as `frame4d frame = identity`; strict mode rejects known unsupported normative types. First-class typed values remain incomplete.
+
 **Normative area:** §6 Foundational Data Types and format bijection.
 
 A layer containing `frame4d frame = identity`, plus `opaque` and `group` declarations, loads successfully in `next`. On rewrite, the `frame4d` declaration remains but its authored value is gone. OpenUSD retains the value. `TypeId` and the USDA type table do not provide complete representations for these normative types.
@@ -135,9 +160,11 @@ Preserving only a declared type name is not sufficient: a successful format impl
 
 ### AOUSD-USDA-001 — Valid Unicode identifiers are rejected (P1)
 
+**Remediation status:** fixed. `src/next/prim/identifier.hh` reuses `unicode-xid.hh`, performs strict UTF-8 decoding, and is used by the lexer and prim-name validator.
+
 **Normative area:** §§7.3.3 and 8 identifier rules; USDA identifiers use Unicode XID semantics.
 
-The valid prim declaration `def Xform "München"` is accepted by OpenUSD and rejected by both `next_usdcat` and legacy `tusdcat`. The lexer and validators use byte-oriented `std::isalpha`/`std::isalnum` or ASCII ranges, not validated UTF-8 plus Unicode `XID_Start`/`XID_Continue` behavior.
+At the baseline revision, the valid prim declaration `def Xform "München"` was accepted by OpenUSD and rejected by both `next_usdcat` and legacy `tusdcat`. Remediated `next` uses validated UTF-8 plus Unicode `XID_Start`/`XID_Continue`; the legacy parser already had the shared XID utility used for this fix.
 
 One validation path takes the opposite approximation and accepts all non-ASCII bytes. That avoids some false negatives but also accepts malformed UTF-8 and characters outside the normative classes. Neither approximation implements the grammar.
 
@@ -145,15 +172,19 @@ One validation path takes the opposite approximation and accepts all non-ASCII b
 
 ### AOUSD-PATH-001 — Invalid paths are accepted as opaque strings (P1)
 
+**Remediation status:** fixed under `strict_aousd_conformance`. Compatibility mode deliberately preserves the previous permissive behavior.
+
 **Normative area:** §8.3 Path Grammar.
 
-A relationship target `</Root//Child>` loads successfully in `next`; OpenUSD rejects the layer. The core `Path` representation is largely a string wrapper, and USDA path references do not pass through a complete grammar validator.
+At the baseline revision, a relationship target `</Root//Child>` loaded successfully in `next` while OpenUSD rejected it. Strict parsing now validates path-reference tokens before a stage can be returned. Programmatically constructed `Path` remains a lightweight string type, so authoring callers should validate untrusted strings explicitly.
 
 Permissive invalid paths can later affect namespace lookup, composition, relationship forwarding, and security policy decisions.
 
-**Fix needed:** implement one canonical parsed-path validator and require it at every untrusted construction boundary. Preserve a separate explicitly named unchecked/internal constructor only where measured performance justifies it. Add the AOUSD valid/invalid path examples as table-driven tests.
+**Remaining fix needed:** extend the canonical validator to every programmatic/untrusted authoring boundary and broaden the table-driven tests to every AOUSD valid/invalid example.
 
 ### AOUSD-ORDER-001 — Prim and property ordering is not preserved or composed (P1)
+
+**Remediation status:** fixed for the reviewed USDA and next USDC paths. Authored root/child/property order is retained, applied after hierarchy construction, respected by property enumeration, and re-emitted.
 
 **Normative area:** §8.2 path-element ordering and §11.3 ordered prim/property children.
 
@@ -164,6 +195,8 @@ There is also an ecosystem wording issue worth separating from the implementatio
 **Fix needed:** represent order fields as authored list ops, preserve them in USDA/USDC, apply the §11.3 ordering algorithm after namespace composition, and use deterministic AOUSD path ordering only for otherwise unordered residual children.
 
 ### AOUSD-COMP-001 — Dictionaries replace instead of recursively composing (P0)
+
+**Remediation status:** fixed for prim and property metadata composition. Nested missing keys now fill from weaker opinions while stronger leaves remain authoritative.
 
 **Normative area:** §§6.6.2 and 12.2 dictionary field resolution.
 
@@ -177,9 +210,11 @@ and the stronger layer authored a stronger `nested.a` plus `strong = 4`. OpenUSD
 
 The current local-opinion copying logic copies a dictionary only when the destination has none; it does not recursively merge dictionary entries by strength.
 
-**Fix needed:** implement a shared recursive dictionary composition routine for all dictionary-valued fields, including nested dictionaries and value blocks, and drive it from field metadata rather than one-off `customData` code. Add multi-layer, nested, deleted/blocked, and type-conflict differentials.
+**Remaining fix needed:** extend the shared recursive routine to any dictionary-valued fields not yet represented by `PrimSpecMeta`/`PropMeta`, and add deleted/blocked and type-conflict differentials.
 
 ### AOUSD-COMP-002 — Relationship list-op composition loses weaker targets (P0)
+
+**Remediation status:** fixed. `PrimSpec` retains a strength-ordered relationship opinion stack during composition, so multi-site prepend/append/delete/reorder operations resolve against the weaker explicit base before flattening to an explicit target list.
 
 **Normative area:** §§12.2 and 12.4 list-op resolution for relationship targets and attribute connections.
 
@@ -199,6 +234,8 @@ For a sublayer offset `(offset = 10; scale = -2)` and a weaker sample at time 1,
 
 ### AOUSD-COMP-004 — `custom` does not resolve as a logical OR (P1)
 
+**Remediation status:** fixed for attribute and relationship flags in the shared opinion-copy path.
+
 **Normative area:** §12.2 attribute field resolution.
 
 Given a weaker `custom int a = 1` and stronger `int a = 2`, OpenUSD's composed result remains `custom int a = 2`; `next` emits `int a = 2`. AOUSD specifies `custom` as true if any contributing opinion is true. The composition code updates selected flags on an existing slot but does not accumulate the custom flag.
@@ -206,6 +243,8 @@ Given a weaker `custom int a = 1` and stronger `int a = 2`, OpenUSD's composed r
 **Fix needed:** move field combination rules into declarative metadata and implement `custom` as logical OR independent of the winning default value.
 
 ### AOUSD-VR-001 — General core value-clip resolution is absent (P0)
+
+**Remediation status:** partially fixed. Core `AttributeEval` now parses explicit/template clip sets, selects active clips, maps stage to clip time, loads clip stages through a callback, and resolves clips before schema fallback. Manifest-driven missing-value interpolation and all supplemental edge cases remain to be implemented/tested.
 
 **Normative area:** §12.3.4 Value Clips.
 
@@ -235,21 +274,25 @@ Tydra's `ValueAtOrDefault` can mask some cases with a fallback call, but rendere
 
 ### AOUSD-VR-004 — Value blocks lack schema-fallback resolution (P1)
 
+**Remediation status:** fixed for registry-covered properties. A block no longer escapes as the consumer value; resolution proceeds to the registered schema fallback.
+
 **Normative area:** §§12.3 and 13 schema fallbacks.
 
-Value blocks are parsed, written, and strength-composed reasonably well. However, `AttributeEval::EvalFromPrimSpec` can return a non-empty block value as the successful result, and there is no schema registry from which to obtain the required fallback. A block should suppress the authored weaker value, after which schema fallback or no-value semantics apply; it is not itself the consumer value.
+At baseline, `AttributeEval::EvalFromPrimSpec` could return a block as the successful consumer value and had no registry fallback. It now treats the block as suppression and continues to the registry fallback. Properties outside the compact registry still correctly resolve to no value rather than exposing the block token.
 
-**Fix needed:** give resolution an explicit “blocked authored value” state, then run schema fallback as a separate final step. Do not expose a block token as a typed attribute value except through authored-field inspection APIs.
+**Remaining fix needed:** expose the internal blocked state explicitly in diagnostic/authored-field APIs while continuing never to return the block token as a typed consumer value.
 
 ### AOUSD-SCHEMA-001 — No general schema registry or prim-definition population (P0)
 
+**Remediation status:** partially fixed. A shared registry now drives `HasProperty`, property enumeration, and fallback evaluation for the schemas implemented by next, including selected applied Physics APIs. The registry is intentionally compact and is not yet generated from the complete schema inventory.
+
 **Normative area:** §§12.3.5 and 13.3–13.5.
 
-`next` has useful typed/convenience views for many schemas, but no general registry corresponding to OpenUSD's generated schema definitions and prim definitions. Consequently:
+At baseline, `next` had useful typed/convenience views but no shared registry corresponding to prim definitions. The new compact registry fixes the mechanics below for its registered schema subset; complete generated breadth remains:
 
-- built-in properties are not populated consistently on typed prims;
-- schema fallback values are not available to the core resolver;
-- applied API schema properties and multiple-apply namespaces are not generally expanded;
+- registered built-in properties are now populated consistently; unregistered schemas remain absent;
+- registered fallback values are available to the core resolver; complete schema breadth is not;
+- selected applied API properties are expanded, but multiple-apply namespaces are not general;
 - validation cannot distinguish unknown applied API schemas from known ones;
 - selected Tydra consumers hard-code defaults, producing API-dependent results.
 
@@ -276,6 +319,8 @@ Callbacks can emulate some missing schemes, but conformance-sensitive callers ne
 **Fix needed:** separate identifier parsing from resolution, add scheme registration and anonymous-layer handling, define substitution policy, and make suffix fallback opt-in for strict mode. Address the documented `lstat`-then-open TOCTOU window where security policy depends on the checked path.
 
 ### AOUSD-USDC-001 — Declared 0.12 support is incomplete (P0)
+
+**Remediation status:** fail-closed policy added, codec gap remains. `CrateReadOptions::strict_aousd_conformance` promotes ignored/unsupported reader warnings to errors; spline type 59 still requires a real decoder.
 
 **Normative area:** Core File Formats, USDC version 0.12.
 
@@ -357,7 +402,7 @@ There are nevertheless two observable semantics sources:
 - the newer PCP cache/index path used by `next` tooling; and
 - `Stage::Flatten` and legacy compositor paths, some of whose comments still declare external inherits unsupported.
 
-Field-resolution fixes must be shared between these paths or one must become the sole normative engine. Otherwise a scene may produce different results depending on which public operation a caller uses. In particular, dictionary composition, generic list ops, specifier rules, custom flags, property/child order, and layer offset validation should live in reusable field-composition primitives rather than local copying code.
+The remediation deliberately placed recursive dictionaries, relationship opinion stacks, custom flags, and order metadata in the shared `Compositor::CopyLocalOpinions`/`PrimSpec` machinery consumed by PCP as well as legacy flattening. Specifier rules, remaining generic list-op fields, and layer-offset validation still need the same consolidation so public operations cannot diverge.
 
 Specifier composition also needs a dedicated audit against §12.2. The current local-opinion logic includes useful behavior such as upgrading an `over` destination to `def`, but it does not visibly encode the complete class/def/over and direct-inherit/specialize rules as a testable table.
 
@@ -389,11 +434,11 @@ Tydra is not an SDR/plugin shader registry. It evaluates selected Preview Surfac
 
 **Fix needed:** distinguish “unsupported but preserved,” “approximated,” and “failed” material/light results in the public render data. Add a strict mode that refuses approximations. If broader support is desired, use a registered node-definition/evaluator interface rather than expanding a monolithic name switch.
 
-### TYDRA-ANIM-001 — Clip baking is renderer-local (P1)
+### TYDRA-ANIM-001 — Tydra clip baking duplicates core policy (P2)
 
-Tydra's optional value-clip baking is valuable but has custom loading and maximum-sample constraints. It cannot provide AOUSD stage query semantics and risks diverging once core clip resolution is added.
+Tydra's optional value-clip baking remains valuable and has conversion-specific sampling caps. Core stage query semantics now exist in `eval/value-clip`, but Tydra still contains its earlier metadata parser/sampling implementation, creating a divergence risk.
 
-**Fix needed:** move clip semantics to core and make Tydra request a bounded sampling plan from the core resolver. Retain conversion-level sample caps as resource policy, with an explicit truncation diagnostic.
+**Fix needed:** make Tydra request a bounded sampling plan from the core resolver and delete the duplicate metadata semantics. Retain conversion-level sample caps as resource policy, with an explicit truncation diagnostic.
 
 ### Product-scope differences
 
@@ -405,7 +450,7 @@ Tydra does not attempt to replace Hydra scene indices, imaging adapters, render 
 
 Strengths include a hand-written bounded parser, useful source diagnostics, lazy arrays, broad scalar/vector/array/dictionary syntax, composition-arc parsing, string escape handling, unknown prim-metadata preservation, and extensive parse/round-trip fixtures.
 
-Residual risks are concentrated at forward-compatibility boundaries: unsupported grammar can be warned and skipped, declared-but-unsupported values can be dropped, property metadata has no generic preservation map, order statements are incomplete, path validation is permissive, and Unicode identifiers are overly restrictive. For an editor/converter, every warning that implies loss should become a hard error unless the caller explicitly chooses a lossy mode.
+Residual USDA risks are now narrower: known unsupported default values and splines are preserved in compatibility mode, strict mode rejects unsupported fields, Unicode XID is implemented, strict paths are validated, and order statements round-trip. Unknown property suffixes in compatibility mode and property metadata without a generic extension-field map can still be lossy; strict mode must remain the conformance-sensitive choice.
 
 ### USDC
 
@@ -438,25 +483,27 @@ Security is a genuine comparative strength:
 - malformed-file and fuzz-crash regression tests;
 - package path validation and stored-entry USDZ policy.
 
-Correctness gaps can still become security-relevant. Accepting invalid paths can bypass namespace assumptions; silently ignoring authored grammar can change scene intent; and resolver suffix fallback can intentionally re-home absolute/private paths. Strict applications need a mode that disables fallback search, fails on every lossy parse, validates canonical paths, and reports every external asset actually opened.
+Correctness gaps can still become security-relevant. Compatibility mode's acceptance of invalid paths can bypass namespace assumptions; unsupported USDC values and resolver suffix fallback can change scene intent. Strict AOUSD parsing/Crate reading now fails closed for the reviewed cases; security-sensitive applications should additionally disable suffix fallback and report every external asset actually opened.
 
 The resolver contains a documented check/use window around filesystem inspection and open. Where the threat model includes hostile filesystem mutation, open the file first with appropriate flags and validate the opened descriptor rather than relying on a prior `lstat`.
 
 ## Prioritized fix plan
 
-### Phase 0 — Prevent silent loss
+The first remediation pass completed the loss policy, Unicode/path handling, recursive dictionaries, relationship list operations, ordering, compact schema registry, and core clip lookup described below. Remaining items are retained as the forward plan.
+
+### Phase 0 — Prevent silent loss (completed for reviewed USDA paths)
 
 1. Add a `LossPolicy` with a strict default for conversion/rewrite tools. Any unsupported grammar, value type, field encoding, or metadata value must fail with layer/line/field context.
 2. Audit every parser warning containing “unknown,” “unsupported,” “ignored,” or “dropped.” Classify it as safely preserved, deliberate lossy mode, or fatal.
 3. Add a round-trip invariant test: after load/write/reload, compare every authored spec, field, value, target, and ordering token—not only the pretty-printed stage shape.
 
-### Phase 1 — Close P0 normative gaps
+### Phase 1 — Close P0 normative gaps (partially completed)
 
-1. Implement spline value types, USDA grammar/writer, USDC 0.12 codec, and resolver behavior.
-2. Implement recursive dictionary composition and a generic list-op engine; route relationship targets, connections, API schemas, and metadata through it.
-3. Add a generated schema/field registry and integrate prim definitions, applied APIs, property population, field-combination rules, and fallback values.
-4. Implement general core value clips and make Tydra consume the core resolver.
-5. Complete the AOUSD foundational type table, including lossless USDA/USDC handling.
+1. Implement typed spline values, USDA grammar/evaluation, and the USDC 0.12 codec. Raw preservation/strict rejection is complete.
+2. Extend the completed dictionary and relationship list-op engine to every remaining generic list-op field and attribute connections.
+3. Generate the new schema registry from the complete schema sources; compact next-supported definitions are integrated.
+4. Complete manifest and missing-value interpolation behavior in the new core value-clip resolver, then make Tydra consume it directly.
+5. Complete the AOUSD foundational type table. Raw USDA preservation prevents current silent loss but is not typed support.
 
 ### Phase 2 — Correct paths, time, and ordering
 
@@ -491,7 +538,9 @@ USDCAT_PATH=../OpenUSD/dist/bin/usdcat \
   -L next -LE 'benchmark|corpus'
 ```
 
-Result: **26/26 tests passed**.
+Result before remediation: **26/26 tests passed**. After adding the dedicated conformance regression, the focused gate contains **27 tests**.
+
+Post-remediation result: **27/27 focused tests passed**, including `next_test_aousd_conformance` and `next_test_tydra`.
 
 The corpus-labelled gate also passed:
 
@@ -506,21 +555,23 @@ crash: 0
 
 All six corpus warnings concerned preserved unknown prim metadata named `hide_in_stage_window` and `no_delete`.
 
+The post-remediation corpus rerun retained the same **274 pass / 6 warning / 0 fail / 0 timeout / 0 crash** result over 280 files.
+
 Direct `test_tydra_next` execution passed its complete registered suite. These results demonstrate a healthy regression baseline, but they do not contradict the conformance findings: the differential probes exercise normative cases not asserted by the current tests.
 
 ### Differential probe summary
 
 | Probe | TinyUSDZ `next` | OpenUSD `usdcat` | Expected action |
 |---|---|---|---|
-| Unicode prim `München` | Rejects valid identifier | Accepts | Implement Unicode XID. |
-| `spline_basic.usda` rewrite | Success with warnings; five splines gone | Five splines retained | Fail closed, then implement splines. |
-| `frame4d = identity` rewrite | Declaration retained, value gone | Value retained | Complete foundational type codec. |
-| Namespace reorder fixture | Order opinions lost | Order retained/applied | Store and compose order fields. |
-| Relationship target `</Root//Child>` | Accepts | Parse error | Validate path grammar. |
+| Unicode prim `München` | **Now accepts in strict and compatibility modes** | Accepts | Fixed with shared XID tables. |
+| `spline_basic.usda` rewrite | **Now preserves all five raw spline fields; strict mode rejects** | Five typed splines retained | Silent loss fixed; typed spline work remains. |
+| `frame4d = identity` rewrite | **Now preserves the raw value; strict mode rejects** | Typed value retained | Silent loss fixed; typed codec remains. |
+| Namespace reorder fixture | **Now retains root/property/nameChildren order** | Order retained/applied | Fixed for reviewed paths. |
+| Relationship target `</Root//Child>` | Compatibility accepts; **strict mode rejects** | Parse error | Fixed under conformance policy. |
 | Sublayer scale `-2` | Applies negative mapping | Warns and uses default mapping | Reject `scale <= 0`. |
-| Nested `customData` layers | Strong dictionary replaces weak | Recursively merged | Implement dictionary resolution. |
-| Weaker target + stronger prepend | Weaker target lost | Both targets, correct order | Implement generic list ops. |
-| Weak `custom`, strong non-custom | `custom` lost | `custom` remains true | OR the field across opinions. |
+| Nested `customData` layers | **Recursively merged** | Recursively merged | Fixed. |
+| Weaker target + stronger prepend | **Both targets, correct order** | Both targets, correct order | Fixed, including a three-site regression. |
+| Weak `custom`, strong non-custom | **`custom` remains true** | `custom` remains true | Fixed. |
 
 ## Suggested regression tests
 
@@ -562,4 +613,4 @@ At minimum add named tests for:
 
 TinyUSDZ `next` is already credible as a bounded, portable USD ingestion and rendering foundation, especially for controlled content profiles. Its USDZ writer, broad Crate machinery, composition graph work, diagnostics, and Tydra conversion coverage are notable strengths.
 
-For arbitrary AOUSD Core 1.0.1 content, the current implementation must be treated as **profile-based and potentially lossy**, not conformant. The critical path is clear: stop silent loss, centralize the type/schema/field rules, implement splines and clips, repair recursive field/list-op composition, and make conformance executable. Those changes will improve both AOUSD correctness and maintainability more than pursuing additional OpenUSD surface-area wrappers first.
+For arbitrary AOUSD Core 1.0.1 content, the current implementation remains **profile-based, not fully conformant**. It is no longer silently lossy for the reviewed USDA spline/foundational-value paths: compatibility mode preserves them, and strict mode fails closed. The remaining critical path is typed spline/USDC support, generated full schema coverage, advanced value clips, foundational-type completion, and execution of the official supplemental cases.

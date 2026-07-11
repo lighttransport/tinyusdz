@@ -164,6 +164,14 @@ bool AsciiParser::Impl::ParseStageMetadata() {
               }
               Match(TokenType::CloseParen);
             }
+            if (sl_scale <= 0.0) {
+              if (options_.strict_aousd_conformance) {
+                AddError("AOUSD layer-offset scale must be greater than zero");
+                return false;
+              }
+              AddWarning("Non-positive sublayer scale retained in compatibility "
+                         "mode");
+            }
             // Keep the offsets vector parallel to subLayers.
             auto& offs = layer_->meta().subLayerOffsets;
             offs.resize(layer_->meta().subLayers.size() - 1, {0.0, 1.0});
@@ -173,7 +181,12 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           Match(TokenType::CloseBracket);
         }
       } else {
-        // Generic metadata may be a dictionary/list; skip it structurally.
+        if (options_.strict_aousd_conformance) {
+          AddError("Unsupported stage metadata in strict AOUSD mode: " + key);
+          return false;
+        }
+        // Generic metadata may be a dictionary/list; skip it structurally in
+        // compatibility mode, but always diagnose the loss.
         SkipValueLike();
         AddWarning("Unknown stage metadata: " + key);
       }

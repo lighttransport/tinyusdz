@@ -189,6 +189,23 @@
       // separate pxrUSD-style Attribute/Relationship specs (below). Collect the
       // child property names here for the prim's "properties" field.
       std::vector<std::string> prop_names = EmitPrimProperties(prim);
+      if (!prim.meta().propertyOrder().empty()) {
+        std::vector<std::string> ordered;
+        ordered.reserve(prop_names.size());
+        for (const std::string& wanted : prim.meta().propertyOrder()) {
+          if (std::find(prop_names.begin(), prop_names.end(), wanted) !=
+                  prop_names.end() &&
+              std::find(ordered.begin(), ordered.end(), wanted) ==
+                  ordered.end()) {
+            ordered.push_back(wanted);
+          }
+        }
+        for (const std::string& name : prop_names) {
+          if (std::find(ordered.begin(), ordered.end(), name) == ordered.end())
+            ordered.push_back(name);
+        }
+        prop_names = std::move(ordered);
+      }
 
       // Metadata fields from reference/payload/etc strings
       // (stored as regular attributes for now, matching reader behavior)

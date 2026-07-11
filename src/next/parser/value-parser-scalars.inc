@@ -13,8 +13,14 @@ ParseResult ParseBool(Lexer& lexer) {
     lexer.next();
     return ParseResult::Ok(Value(false));
   } else if (tok.type == TokenType::Number) {
-    lexer.next();
-    return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value) != 0.0));
+    // pxr accepts ONLY the integer literals 0 and 1 for bool (not arbitrary
+    // numerics: `bool b = 5` / `= 0.5` are parse errors, not truthiness).
+    if (tok.value == "0" || tok.value == "1") {
+      const bool b = (tok.value == "1");
+      lexer.next();
+      return ParseResult::Ok(Value(b));
+    }
+    return ParseResult::Error("Invalid boolean value (expected 0, 1, true or false)");
   }
   return ParseResult::Error("Expected boolean value");
 }

@@ -53,6 +53,7 @@ struct VariantSelection {
 
 /// Composition options
 struct CompositionOptions {
+  bool strict_aousd_conformance = false;
   bool load_payloads = true;              // Load payloads (false = unloaded)
   bool resolve_inherits = true;           // Resolve inherits
   bool resolve_specializes = true;        // Resolve specializes
@@ -98,7 +99,12 @@ public:
   void SetLayerLoader(LayerLoader loader) { layer_loader_ = std::move(loader); }
 
   /// Set composition options
-  void SetOptions(const CompositionOptions& options) { options_ = options; }
+  void SetOptions(const CompositionOptions& options) {
+    options_ = options;
+    if (options_.strict_aousd_conformance) {
+      options_.usda_parse_options.strict_aousd_conformance = true;
+    }
+  }
   const CompositionOptions& GetOptions() const { return options_; }
 
   // ============================================================

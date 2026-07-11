@@ -102,18 +102,37 @@ class CrateDataSource : public LazyArraySource {
 
 /// Shared array-block decoder — the single source of truth used by both the
 /// crate reader (token/string arrays) and Value::materialize(). `base`/`size`
-/// span a retained crate buffer; `rep` must have its array bit set.
+/// span a retained crate buffer; `rep` must have its array bit set. `version`
+/// selects the element-count header width (see CrateArrayCountHeaderBytes).
 bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
+                      CrateVersion version,
                       const std::vector<std::string>& tokens, size_t max_elements,
                       Value* out);
+
+/// Convenience overload assuming the modern (>= 0.7.0) u64 count header.
+inline bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
+                             const std::vector<std::string>& tokens,
+                             size_t max_elements, Value* out) {
+  return DecodeCrateArray(base, size, rep, CrateVersion{0, 8, 0}, tokens,
+                          max_elements, out);
+}
 
 /// Bytes per element of an array CrateTypeId as stored on disk (0 if unknown).
 uint32_t CrateArrayElemStride(CrateTypeId id);
 
-/// Decode the element-count word at a crate array payload. Some older pxrUSD
-/// crates pack auxiliary data in the high 32 bits and the element count in the
-/// low 32 bits.
-uint64_t CrateArrayElementCount(uint64_t raw_count);
+/// Width of the element-count header at a crate array payload: uint32 for
+/// crate versions < 0.7.0, uint64 for >= 0.7.0. Element data immediately
+/// follows the count. Evidence: pxr crateFile.cpp _WriteUncompressedArray /
+/// _ReadUncompressedArray / _Read+_WritePossiblyCompressedArray all gate on
+/// `(ver < CrateFile::Version(0,7,0)) ? <uint32_t> : <uint64_t>`. There is no
+/// "packed count" form (a previous lo/hi-split heuristic here mis-read pre-0.7
+/// element data by 4 bytes and could silently truncate >= 2^32 counts).
+uint32_t CrateArrayCountHeaderBytes(CrateVersion version);
+
+/// Read the version-appropriate element-count header at the current position
+/// of `r`. Returns false on a short read.
+bool ReadCrateArrayCount(class StreamReader& r, CrateVersion version,
+                         uint64_t* count);
 
 /// next::TypeId that materialize() would surface for an array CrateTypeId.
 TypeId CrateArrayValueType(CrateTypeId id);

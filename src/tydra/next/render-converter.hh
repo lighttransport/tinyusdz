@@ -66,6 +66,13 @@ struct MaterialConfig {
   bool load_textures = true;
   bool allow_missing_textures = true;
 
+  // Assign a generated default PreviewSurface material to meshes/curves that
+  // have no authored material binding (legacy assign_default_material parity).
+  // Disabled by default so callers can distinguish unbound geometry via
+  // material_id == -1.
+  bool assign_default_material = false;
+  std::string default_material_name = "defaultMaterial";
+
   // Color space
   ColorSpace target_color_space = ColorSpace::Linear;
 
@@ -179,6 +186,9 @@ class RenderSceneConverter {
                                  RenderScene* scene);
   void AssignMaterialBindings(const ::tinyusdz::next::Stage& stage,
                               RenderScene* scene);
+  /// Lazily create the shared default material (MaterialConfig::
+  /// assign_default_material); returns its id.
+  int32_t GetOrCreateDefaultMaterial(RenderScene* scene);
   void AssignPointInstanceDrawMaterials(RenderScene* scene);
   void DuplicatePointInstanceMeshes(RenderScene* scene);
 

@@ -122,11 +122,33 @@ public:
   /// Set error message
   void set_error(const std::string& msg);
 
+  /// Fatal lexical malformation (unterminated string / oversized token):
+  /// unlike the recoverable `expect()` mismatch errors, these mean the token
+  /// stream itself is broken and the parse must fail even if the token-level
+  /// grammar happens to recover.
+  bool has_fatal_error() const { return fatal_; }
+  void set_fatal_error(const std::string& msg);
+
+  /// Byte offset (into the input buffer) where the current token — the one
+  /// returned by the latest peek()/next() — starts, AFTER leading whitespace
+  /// and comments. Used to capture the raw source text of skipped values.
+  size_t token_start() const { return token_start_; }
+
+  /// Raw input buffer (for raw-text slices via token_start()/position()).
+  const char* input_data() const { return data_; }
+
+  /// Maximum accepted length for a single token (string literal, identifier,
+  /// number, path/asset reference). Longer tokens are a fatal lex error.
+  static constexpr size_t kMaxTokenLength = 16u * 1024u * 1024u;  // 16MB
+
   /// Worker-thread hint for the parallel large-array parse path, forwarded from
   /// ParseOptions::num_threads (0 = auto, 1 = serial, >1 = that many). Carried on
   /// the lexer because the stateless value-parser array helpers receive only the
   /// lexer; replaces the former TINYUSDZ_NEXT_NUM_THREADS env read.
   int num_threads = 0;
+
+  /// Reject invalid AOUSD paths and malformed Unicode immediately.
+  bool strict_aousd_conformance = false;
 
 private:
   const char* data_;
@@ -138,6 +160,8 @@ private:
   Token current_;
   bool has_current_ = false;
   std::string error_;
+  bool fatal_ = false;
+  size_t token_start_ = 0;
 
   void advance();
   char current_char() const;

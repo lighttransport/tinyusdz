@@ -322,6 +322,11 @@ struct CrateVersion {
   std::string to_string() const {
     return UIntToStr(major) + "." + UIntToStr(minor) + "." + UIntToStr(patch);
   }
+
+  /// Crate files older than 0.7.0 store array element counts as uint32 (pxr
+  /// crateFile.cpp _Write/_ReadUncompressedArray:
+  /// `(ver < CrateFile::Version(0,7,0)) ? Read<uint32_t>() : Read<uint64_t>()`).
+  bool is_pre_070() const { return major == 0 && minor < 7; }
 };
 
 // ============================================================

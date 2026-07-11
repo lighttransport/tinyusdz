@@ -1194,6 +1194,121 @@ static void test_apischemas_cross_arc_merge() {
         "stronger prepend merges in front of weaker schemas");
 }
 
+// P2 audit: a reference that names no prim path to a layer with no authored
+// defaultPrim contributes NOTHING (pxr: "Unresolved reference prim path
+// @...@<defaultPrim>" warning + empty prim) — never silently the first root.
+static void test_audit_p2_ref_no_default_prim() {
+  std::cout << "[P2: reference without prim path or defaultPrim]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"First\" { double size = 1 }\n"
+        "def Xform \"Second\" { double size = 2 }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"Hello\" (prepend references = @./lib.usda@) { }\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds (arc dropped, not fatal)");
+  CHECK(out->prim_at_path("/Hello") != nullptr, "referencing prim kept");
+  CHECK(PropOf(*out, "/Hello", "size") == nullptr,
+        "no silent fallback to the first root prim");
+  bool has_msg = false;
+  for (const auto& e : comp.GetErrors()) {
+    if (e.message.find("defaultPrim") != std::string::npos) has_msg = true;
+  }
+  CHECK(has_msg, "diagnostic mentions the missing defaultPrim");
+}
+
+// P2 audit: children of a deactivated prim are pruned from the final flatten
+// (pxr composes no subtree under active=false; the prim itself is kept here
+// with its authored active=false). A stronger layer re-activating the prim
+// keeps the subtree.
+static void test_audit_p2_inactive_subtree_pruned() {
+  std::cout << "[P2: inactive prim subtree pruned]\n";
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"A\" (active = false) {\n"
+      "    def Sphere \"B\" { double radius = 3 }\n"
+      "}\n"
+      "def Xform \"C\" { double v = 1 }\n");
+  Compositor comp;
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const PrimSpec* a = out->prim_at_path("/A");
+  CHECK(a && a->meta().active_authored && !a->meta().active,
+        "inactive prim kept with active=false");
+  CHECK(out->prim_at_path("/A/B") == nullptr,
+        "child of inactive prim pruned");
+  CHECK(out->prim_at_path("/C") != nullptr, "sibling untouched");
+
+  // Re-activation: the root's authored active=true is stronger than the
+  // referenced layer's active=false — the subtree must survive.
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"R\" (active = false) {\n"
+        "    def Sphere \"S\" { double radius = 1 }\n"
+        "}\n");
+  };
+  auto root2 = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"P\" (active = true\n"
+      "                 prepend references = @./lib.usda@</R>) { }\n");
+  Compositor comp2;
+  comp2.SetLayerLoader(loader);
+  auto out2 = comp2.Compose(*root2);
+  CHECK(out2 != nullptr, "compose 2 succeeds");
+  const PrimSpec* p = out2->prim_at_path("/P");
+  CHECK(p && p->meta().active, "stronger active=true wins");
+  CHECK(out2->prim_at_path("/P/S") != nullptr,
+        "re-activated prim keeps its referenced subtree");
+}
+
+// P2 audit: a stronger spec's authored DEFAULT blocks a weaker spec's
+// timeSamples even when the two defaults happen to be VALUE-EQUAL (the old
+// check compared values, so equal defaults let the weaker samples through).
+static void test_audit_p2_default_blocks_equal_samples() {
+  std::cout << "[P2: equal-value default still blocks weaker samples]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"P\" {\n"
+        "    double x = 5\n"
+        "    double x.timeSamples = { 1: 10, 2: 20 }\n"
+        "    double y = 7\n"
+        "    double y.timeSamples = { 1: 70 }\n"
+        "}\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"P\" (prepend references = @./weak.usda@</P>) {\n"
+      "    double x = 5\n"
+      "}\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const PrimSpec* p = out->prim_at_path("/P");
+  CHECK(p != nullptr, "prim composed");
+  const Value* x = PropOf(*out, "/P", "x");
+  CHECK(x && x->as_double() && *x->as_double() == 5.0, "default kept (5)");
+  PropNameId xid = GetPropNameTable().find("x");
+  CHECK(p && !p->has_time_samples(xid),
+        "stronger equal-value default blocks weaker samples");
+  // Control: a property the stronger spec does NOT author rides through
+  // whole (default + samples from the weaker spec).
+  PropNameId yid = GetPropNameTable().find("y");
+  const auto* yts = p ? p->time_samples(yid) : nullptr;
+  CHECK(yts && yts->size() == 1,
+        "unblocked property keeps its samples");
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -1220,6 +1335,9 @@ int main() {
   test_audit_2026_07();
   test_audit_stage_meta_and_variant_overrides();
   test_apischemas_cross_arc_merge();
+  test_audit_p2_ref_no_default_prim();
+  test_audit_p2_inactive_subtree_pruned();
+  test_audit_p2_default_blocks_equal_samples();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";

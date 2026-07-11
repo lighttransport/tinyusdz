@@ -45,8 +45,9 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   uint64_t count = 0;
   if (rep.payload() != 0) {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-    if (!reader_->read_u64(count)) return false;
-    count = CrateArrayElementCount(count);
+    // u32 count for crate < 0.7.0, u64 for >= 0.7.0 (pxr crateFile.cpp
+    // _ReadUncompressedArray); element data immediately follows the count.
+    if (!ReadCrateArrayCount(*reader_, version_, &count)) return false;
   }
 
   // Bound the file-controlled element count before any allocation.

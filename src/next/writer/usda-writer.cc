@@ -494,6 +494,32 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   PropNameTable& name_table = GetPropNameTable();
   const std::string& name = name_table.get(slot.name_id);
 
+  if (const std::string* raw = spec.raw_default_source(slot.name_id)) {
+    WriteIndent(os, depth, opts.indent);
+    if (opts.emit_custom && slot.is_custom()) os << "custom ";
+    if (slot.is_uniform()) os << "uniform ";
+    const std::string* decl = spec.property_type_name(name);
+    os << (decl ? *decl : std::string("opaque")) << " " << name << " = "
+       << *raw;
+    WritePropMeta(os, spec, slot.name_id, depth, opts);
+    os << "\n";
+    return;
+  }
+
+  if (const std::string* spline = spec.spline_source(slot.name_id)) {
+    WriteIndent(os, depth, opts.indent);
+    if (opts.emit_custom && slot.is_custom()) os << "custom ";
+    if (slot.is_uniform()) os << "uniform ";
+    if (const std::string* decl = spec.property_type_name(name)) {
+      os << *decl;
+    } else {
+      const char* tn = GetTypeName(static_cast<TypeId>(slot.value_type));
+      os << (tn ? tn : "double");
+    }
+    os << " " << name << ".spline = " << *spline << "\n";
+    return;
+  }
+
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
     // Shared `<qualifiers><type> <name>` prefix for the statements below.
@@ -988,7 +1014,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                   has_arc_edits || !meta.relocates().empty() ||
                   !meta.variantSelections().empty() ||
                   !meta.variantSelection.empty() ||
-                  !meta.variantSets().empty();
+                  !meta.variantSets().empty() || !meta.unknownMeta().empty();
 
   if (has_meta) {
     const int md = depth + 1;
@@ -1037,6 +1063,11 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     if (has_assetInfo) kv(DictMetaLine("assetInfo", meta.assetInfo(), md, opts));
     if (has_sdr) kv(DictMetaLine("sdrMetadata", meta.sdrMetadata(), md, opts));
     if (has_clips) kv(DictMetaLine("clips", meta.clips(), md, opts));
+    // Unknown (unmodeled) metadata preserved by the parser: re-emit the raw
+    // authored value text verbatim (it re-parses back into unknownMeta).
+    for (const auto& um : meta.unknownMeta()) {
+      kv(um.first + " = " + um.second);
+    }
 
     // Composition arcs, re-emitting the authored list-op qualifier (Phase 7 S5):
     // a bare/explicit list as `references = [...]`, otherwise the
@@ -1136,6 +1167,20 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 
   int content_depth = depth + 1;
 
+  auto write_order = [&](const char* field,
+                         const std::vector<std::string>& names) {
+    if (names.empty()) return;
+    WriteIndent(os, content_depth, opts.indent);
+    os << "reorder " << field << " = [";
+    for (size_t i = 0; i < names.size(); ++i) {
+      if (i) os << ", ";
+      os << EscapeString(names[i]);
+    }
+    os << "]\n";
+  };
+  write_order("properties", meta.propertyOrder());
+  write_order("nameChildren", meta.primOrder());
+
   // Get property slots
   std::vector<const PropSlot*> prop_slots;
   for (const auto& slot : spec.properties().slots()) {
@@ -1191,11 +1236,22 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   os << "}\n";
 }
 
+void WriteRootPrimOrder(StreamWriter& os, const LayerMeta& meta) {
+  if (meta.rootPrimOrder.empty()) return;
+  os << "reorder rootPrims = [";
+  for (size_t i = 0; i < meta.rootPrimOrder.size(); ++i) {
+    if (i) os << ", ";
+    os << EscapeString(meta.rootPrimOrder[i]);
+  }
+  os << "]\n\n";
+}
+
 // Serialize the layer-stage header metadata + all root prims serially (the
 // classic streaming path). Shared by the serial entry and as a fallback.
 void WriteStageBodySerial(StreamWriter& os, const Layer& layer,
                           const LayerMeta& meta, const USDAWriteOptions& opts) {
   WriteLayerMeta(os, meta, opts);
+  WriteRootPrimOrder(os, meta);
   for (uint32_t root_idx : layer.root_indices()) {
     const PrimSpec* root = layer.prim(root_idx);
     if (root) {
@@ -1264,6 +1320,7 @@ void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
     sink.po = &po;
     sink.holder = &holder;
     WriteLayerMeta(sw, meta, opts);
+    WriteRootPrimOrder(sw, meta);
     for (uint32_t root_idx : layer.root_indices()) {
       const PrimSpec* root = layer.prim(root_idx);
       if (!root) continue;
@@ -1470,6 +1527,7 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.subLayers = root_layer->meta().subLayers;
   meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
   meta.relocates = root_layer->meta().relocates;
+  meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);

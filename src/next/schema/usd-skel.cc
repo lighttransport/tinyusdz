@@ -303,6 +303,7 @@ bool GetBlendShapeData(const Stage& stage, const UsdPrim& prim,
       if (const PropMeta* meta = spec->property_meta(property)) {
         if (meta->authored & PropMeta::kWeight) {
           inbetween.weight = static_cast<float>(meta->weight);
+          inbetween.has_weight = true;
         }
       }
       out->inbetweens.push_back(std::move(inbetween));

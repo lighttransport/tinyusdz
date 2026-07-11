@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
+#include <algorithm>
 
 #include "next/stage/stage.hh"
 #include "next/eval/attribute-eval.hh"
@@ -149,7 +150,12 @@ void test_usd_prim() {
 
   // Test GetPropertyNames
   auto names = mesh.GetPropertyNames();
-  assert(names.size() == 2 && "should have 2 properties");
+  assert(std::find(names.begin(), names.end(), "points") != names.end());
+  assert(std::find(names.begin(), names.end(), "doubleSided") != names.end());
+  // AOUSD stage population includes schema-defined properties even when no
+  // authored spec exists for them.
+  assert(std::find(names.begin(), names.end(), "orientation") != names.end());
+  assert(std::find(names.begin(), names.end(), "visibility") != names.end());
 
   // Test hierarchy
   UsdPrim world = mesh.GetParent();

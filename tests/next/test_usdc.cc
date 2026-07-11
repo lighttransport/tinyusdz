@@ -9,8 +9,10 @@
 #include <fstream>
 #include <vector>
 
+#include "next/crate/crate-data-source.hh"
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/crate/crate-reader-internal.hh"
 #include "next/crate/crate-writer.hh"
 #include "next/layer/layer.hh"
 #include "next/crate/stream-reader.hh"
@@ -658,6 +660,249 @@ void test_array_edit_rep_rejected() {
   std::cout << "  VtArrayEdit rep rejection passed!" << std::endl;
 }
 
+// pxr never emits INLINED reps for quaternions (crateValueInliners.h has no
+// GfQuat _EncodeInline overload and sizeof(GfQuat*) > 4 rules out the
+// always-inlined path) nor for TimeSamples. The reader used to fabricate a
+// value from the payload bits for such reps; they must be dropped instead.
+// Reuses test_array_edit_rep_rejected's dict-embedded-rep patching trick.
+void test_inlined_never_types_rejected() {
+  std::cout << "Testing rejection of inlined quat/TimeSamples reps..." << std::endl;
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Scope");
+  {
+    Dict d;
+    d.set("v", Value(10.5));
+    b.current()->meta().customData() = Value::MakeDictionary(std::move(d));
+  }
+  b.end_prim();
+  b.finalize();
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  assert(writer.WriteLayerToMemory(buf, layer).success);
+
+  // Locate the raw rep embedded in the dict block (see
+  // test_array_edit_rep_rejected for the layout).
+  const uint64_t kRecOff = 8;
+  uint8_t pat[8];
+  std::memcpy(pat, &kRecOff, 8);
+  size_t rep_pos = std::string::npos;
+  for (size_t i = 0; i + 16 <= buf.size(); ++i) {
+    if (std::memcmp(buf.data() + i, pat, 8) != 0) continue;
+    uint64_t raw = 0;
+    std::memcpy(&raw, buf.data() + i + 8, 8);
+    ValueRep rep(raw);
+    if (rep.type_id() == CrateTypeId::Double && !rep.is_inlined() &&
+        !rep.is_array() && !rep.is_array_edit()) {
+      rep_pos = i + 8;
+      break;
+    }
+  }
+  assert(rep_pos != std::string::npos && "embedded dict rep not found");
+
+  const CrateTypeId never_inlined[] = {
+      CrateTypeId::Quatf, CrateTypeId::Quatd, CrateTypeId::Quath,
+      CrateTypeId::TimeSamples};
+  for (CrateTypeId tid : never_inlined) {
+    std::vector<uint8_t> patched = buf;
+    patched[rep_pos + 6] = static_cast<uint8_t>(tid);  // type: bits 48-55
+    patched[rep_pos + 7] |= 0x40;  // inlined: bit 62 lives in the high byte
+    CrateReader reader;
+    CrateReadResult rr = reader.Read(patched.data(), patched.size());
+    assert(rr.success);
+    const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
+    assert(p);
+    const Dict* d = p->meta().customData().as_dictionary();
+    const Value* v = d ? d->find("v") : nullptr;
+    // The value must be dropped/empty — not fabricated from the payload bits.
+    assert((!v || v->is_empty()) &&
+           "inlined quat/TimeSamples rep must not fabricate a value");
+  }
+
+  std::cout << "  Inlined quat/TimeSamples rejection passed!" << std::endl;
+}
+
+// FIELDS prevalidator size table: half-typed scalars are 2-byte lanes on disk
+// (GfVec{2,3,4}h = 4/6/8 bytes, GfQuath = 8). The table used to reuse the
+// float-vector sizes (8/12/16/16), hard-rejecting valid files whose half
+// payload sits within those bytes of EOF as "Field ValueRep payload is
+// truncated". Array reps need only their count header, whose width follows
+// the crate version (u32 < 0.7.0, u64 >= 0.7.0).
+void test_field_min_payload_sizes() {
+  std::cout << "Testing FIELDS prevalidator min payload sizes..." << std::endl;
+
+  const CrateVersion v08{0, 8, 0};
+  const CrateVersion v06{0, 6, 0};
+  auto scalar = [](CrateTypeId t) {
+    return ValueRep::Make(t, /*payload=*/256, false, false, false);
+  };
+
+  // Half family: must match the actual decode sizes (2 bytes per lane).
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Half), v08) == 2);
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Vec2h), v08) == 4);
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Vec3h), v08) == 6);
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Vec4h), v08) == 8);
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Quath), v08) == 8);
+
+  // Float/double entries unchanged.
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Vec2f), v08) == 8);
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Vec3f), v08) == 12);
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Quatf), v08) == 16);
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Quatd), v08) == 32);
+  assert(CrateValueRepMinPayloadBytes(scalar(CrateTypeId::Matrix4d), v08) == 128);
+
+  // Array reps: count header only; width is version-dependent.
+  ValueRep arr = ValueRep::Make(CrateTypeId::Float, 256, /*is_array=*/true,
+                                false, false);
+  assert(CrateValueRepMinPayloadBytes(arr, v08) == 8);
+  assert(CrateValueRepMinPayloadBytes(arr, v06) == 4);
+
+  std::cout << "  FIELDS prevalidator min payload sizes passed!" << std::endl;
+}
+
+// Pre-0.7 crates store array element counts as uint32 with the element data
+// at payload+4 (pxr crateFile.cpp _Read/_WriteUncompressedArray); 0.7+ uses
+// uint64 with data at payload+8. The old lo/hi "packed count" heuristic
+// read a u64 in both cases (mis-placing pre-0.7 data by 4 bytes) and
+// silently truncated 0.7+ counts >= 2^32 to their low 32 bits.
+void test_pre070_array_count() {
+  std::cout << "Testing pre-0.7 array count headers..." << std::endl;
+
+  const float vals[3] = {1.5f, -2.25f, 4.0f};
+  const std::vector<std::string> no_tokens;
+  const size_t kOff = 16;
+
+  // Pre-0.7: [u32 count][floats] — note the first data word is nonzero, the
+  // case the old heuristic classified as a "packed" count.
+  {
+    std::string bytes(kOff, '\0');
+    const uint32_t c = 3;
+    bytes.append(reinterpret_cast<const char*>(&c), 4);
+    bytes.append(reinterpret_cast<const char*>(vals), sizeof(vals));
+    ValueRep rep = ValueRep::Make(CrateTypeId::Float, kOff, /*is_array=*/true,
+                                  false, false);
+    Value out;
+    assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
+                            bytes.size(), rep, CrateVersion{0, 6, 0},
+                            no_tokens, 1024, &out));
+    const std::vector<float>* fa = out.as_float_array();
+    assert(fa && fa->size() == 3);
+    assert((*fa)[0] == 1.5f && (*fa)[1] == -2.25f && (*fa)[2] == 4.0f);
+
+    // ProbeArrayBlock (lazy path) agrees on count and block extent (4-byte
+    // header + 12 data bytes).
+    auto src = CrateDataSource::Adopt(std::string(bytes), CrateVersion{0, 6, 0});
+    LazyArrayRef lr;
+    assert(ProbeArrayBlock(src, rep, 1024, &lr));
+    assert(lr.element_count == 3);
+    assert(lr.block_len == 4 + sizeof(vals));
+  }
+
+  // 0.7+: [u64 count][floats].
+  {
+    std::string bytes(kOff, '\0');
+    const uint64_t c = 3;
+    bytes.append(reinterpret_cast<const char*>(&c), 8);
+    bytes.append(reinterpret_cast<const char*>(vals), sizeof(vals));
+    ValueRep rep = ValueRep::Make(CrateTypeId::Float, kOff, /*is_array=*/true,
+                                  false, false);
+    Value out;
+    assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
+                            bytes.size(), rep, CrateVersion{0, 8, 0},
+                            no_tokens, 1024, &out));
+    const std::vector<float>* fa = out.as_float_array();
+    assert(fa && fa->size() == 3);
+    assert((*fa)[0] == 1.5f && (*fa)[1] == -2.25f && (*fa)[2] == 4.0f);
+  }
+
+  // A 0.7+ count >= 2^32 must be rejected by the element guard, not silently
+  // truncated to its low 32 bits (the old heuristic decoded it as 2 elements).
+  {
+    std::string bytes(kOff, '\0');
+    const uint64_t c = (1ull << 32) + 2;
+    bytes.append(reinterpret_cast<const char*>(&c), 8);
+    bytes.append(reinterpret_cast<const char*>(vals), 8);  // 2 floats
+    ValueRep rep = ValueRep::Make(CrateTypeId::Float, kOff, /*is_array=*/true,
+                                  false, false);
+    Value out;
+    assert(!DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
+                             bytes.size(), rep, CrateVersion{0, 8, 0},
+                             no_tokens, 1024, &out));
+  }
+
+  std::cout << "  Pre-0.7 array count headers passed!" << std::endl;
+}
+
+// The lazy-array materialize path (DecodeCrateArray) must apply the same
+// imaginary-first (disk) -> real-first (internal) quaternion swizzle as the
+// eager UnpackArray path. It used to return the raw disk order.
+void test_lazy_quat_array_swizzle() {
+  std::cout << "Testing quat array swizzle in materialize path..." << std::endl;
+
+  const std::vector<std::string> no_tokens;
+  const size_t kOff = 16;
+  const CrateVersion v08{0, 8, 0};
+
+  // Quatf: two elements, disk order (x,y,z,w).
+  {
+    std::string bytes(kOff, '\0');
+    const uint64_t c = 2;
+    const float q[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    bytes.append(reinterpret_cast<const char*>(&c), 8);
+    bytes.append(reinterpret_cast<const char*>(q), sizeof(q));
+    ValueRep rep = ValueRep::Make(CrateTypeId::Quatf, kOff, /*is_array=*/true,
+                                  false, false);
+    Value out;
+    assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
+                            bytes.size(), rep, v08, no_tokens, 16, &out));
+    assert(out.type_id() == TypeId::Quatf && out.is_array());
+    const std::vector<float>* fa = out.as_float_array();
+    assert(fa && fa->size() == 8);
+    const float expect[8] = {4, 1, 2, 3, 8, 5, 6, 7};  // real-first
+    for (int i = 0; i < 8; ++i) assert((*fa)[i] == expect[i]);
+  }
+
+  // Quatd: one element.
+  {
+    std::string bytes(kOff, '\0');
+    const uint64_t c = 1;
+    const double q[4] = {1, 2, 3, 4};
+    bytes.append(reinterpret_cast<const char*>(&c), 8);
+    bytes.append(reinterpret_cast<const char*>(q), sizeof(q));
+    ValueRep rep = ValueRep::Make(CrateTypeId::Quatd, kOff, /*is_array=*/true,
+                                  false, false);
+    Value out;
+    assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
+                            bytes.size(), rep, v08, no_tokens, 16, &out));
+    const std::vector<double>* da = out.as_double_array();
+    assert(da && da->size() == 4);
+    assert((*da)[0] == 4.0 && (*da)[1] == 1.0 && (*da)[2] == 2.0 &&
+           (*da)[3] == 3.0);
+  }
+
+  // Quath: one element (half lanes 1,2,3,4 -> real-first floats 4,1,2,3).
+  {
+    std::string bytes(kOff, '\0');
+    const uint64_t c = 1;
+    const uint16_t q[4] = {FloatToHalf(1.0f), FloatToHalf(2.0f),
+                           FloatToHalf(3.0f), FloatToHalf(4.0f)};
+    bytes.append(reinterpret_cast<const char*>(&c), 8);
+    bytes.append(reinterpret_cast<const char*>(q), sizeof(q));
+    ValueRep rep = ValueRep::Make(CrateTypeId::Quath, kOff, /*is_array=*/true,
+                                  false, false);
+    Value out;
+    assert(DecodeCrateArray(reinterpret_cast<const uint8_t*>(bytes.data()),
+                            bytes.size(), rep, v08, no_tokens, 16, &out));
+    const std::vector<float>* fa = out.as_float_array();
+    assert(fa && fa->size() == 4);
+    assert((*fa)[0] == 4.0f && (*fa)[1] == 1.0f && (*fa)[2] == 2.0f &&
+           (*fa)[3] == 3.0f);
+  }
+
+  std::cout << "  Quat array swizzle in materialize path passed!" << std::endl;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Reader Tests ===" << std::endl;
   std::cout << std::endl;
@@ -675,6 +920,10 @@ int main() {
     test_inlined_scalar_reconstruction();
     test_crate_reader_audit_cluster();
     test_array_edit_rep_rejected();
+    test_inlined_never_types_rejected();
+    test_field_min_payload_sizes();
+    test_pre070_array_count();
+    test_lazy_quat_array_swizzle();
 
     std::cout << std::endl;
     std::cout << "All USDC tests passed!" << std::endl;

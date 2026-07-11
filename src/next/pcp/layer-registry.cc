@@ -90,6 +90,9 @@ std::shared_ptr<Layer> ConvertLoadedUSDC(USDCLoadResult &&r,
 
 ParseOptions MakeUSDAParseOptions(const LayerLoadOptions &options) {
   ParseOptions popts = options.usda_parse_options;
+  if (options.strict_aousd_conformance) {
+    popts.strict_aousd_conformance = true;
+  }
   popts.num_threads = options.parse_num_threads > 0 ? options.parse_num_threads
                                                     : popts.num_threads;
   popts.max_file_size = MinNonZero(popts.max_file_size, options.max_memory);
@@ -141,6 +144,8 @@ std::shared_ptr<Layer> LoadLayerFromUSDZEntry(USDZReader &reader,
   if (is_usdc) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), label, err);
   }
   if (is_usda) {
@@ -219,6 +224,8 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
 
   if (ext == "usdc") {
     USDCLoadOptions lopts;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     lopts.crate_options.max_memory = options.max_memory;
     return ConvertLoadedUSDC(LoadUSDCFromFile(resolved_path, lopts),
                              resolved_path, err);
@@ -414,6 +421,8 @@ std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
   if (size >= 8 && std::memcmp(data, "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemory(data, size, lopts), key, err);
   }
 
@@ -470,6 +479,8 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
   if (data.size() >= 8 && std::memcmp(data.data(), "PXR-USDC", 8) == 0) {
     USDCLoadOptions lopts;
     lopts.crate_options.max_memory = options.max_memory;
+    lopts.crate_options.strict_aousd_conformance =
+        options.strict_aousd_conformance;
     return ConvertLoadedUSDC(LoadUSDCFromMemoryOwned(std::move(data), lopts),
                              key, err);
   }

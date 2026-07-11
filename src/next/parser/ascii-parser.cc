@@ -83,6 +83,7 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
     lexer_ = std::make_unique<Lexer>(data, length);
   }
   lexer_->num_threads = options_.num_threads;
+  lexer_->strict_aousd_conformance = options_.strict_aousd_conformance;
 
   // Enforce the `#usda 1.0` magic on the raw bytes BEFORE lexing: the lexer
   // treats '#' as a comment, so a token-level check is dead code and any
@@ -118,18 +119,35 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
 
   // Parse root prims
   while (!AtEnd()) {
-    // `reorder rootPrims = [...]` at root scope: accepted and skipped (prim
-    // ordering metadata is not modeled; failing the whole file is worse).
+    // Pseudo-root namespace ordering is an authored field and must survive a
+    // layer rewrite even when it mentions currently absent prim names.
     if (lexer_->peek().type == TokenType::Reorder) {
       lexer_->next();
       std::string what;
-      lexer_->expect(TokenType::Identifier, what);
-      if (Match(TokenType::Equals)) SkipValueLike();
+      if (!lexer_->expect(TokenType::Identifier, what)) return false;
+      if (what == "rootPrims") {
+        if (!ParseOrderList(&layer_->meta().rootPrimOrder)) return false;
+      } else if (options_.strict_aousd_conformance) {
+        AddError("Unsupported root reorder field: " + what);
+        return false;
+      } else {
+        if (Match(TokenType::Equals)) SkipValueLike();
+        AddWarning("Unknown root reorder field ignored: " + what);
+      }
       continue;
     }
     if (!ParsePrim()) {
       return false;
     }
+  }
+
+  // A fatal lexical malformation (unterminated string/path/asset literal,
+  // oversized token) must fail the parse even when the token-level grammar
+  // happened to recover (e.g. an unterminated single-quoted string cut off by
+  // a newline used to be silently accepted).
+  if (lexer_->has_fatal_error()) {
+    AddError(lexer_->error());
+    return false;
   }
 
   // Finalize the layer
@@ -273,6 +291,14 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
       Match(TokenType::Semicolon);
     }
     Match(TokenType::CloseParen);
+    if (scl <= 0.0) {
+      if (options_.strict_aousd_conformance) {
+        AddError("AOUSD composition-arc scale must be greater than zero");
+        return false;
+      }
+      AddWarning("Non-positive composition-arc scale retained in compatibility "
+                 "mode");
+    }
     if (off != 0.0 || scl != 1.0) {
       ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
     }
@@ -657,9 +683,28 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         Match(TokenType::CloseBrace);
       }
     } else {
-      // Generic metadata may be a dictionary/list; skip it structurally.
-      SkipValueLike();
-      AddWarning("Unknown prim metadata: " + key);
+      // Unknown (unmodeled) metadata: consume the value structurally, but
+      // PRESERVE its raw source text so the writer can re-emit it verbatim
+      // (the legacy parser round-trips unknown prim metadata; dropping it
+      // loses pipeline-specific opinions like `sceneName`).
+      lexer_->peek();  // ensure the value's first token is scanned
+      const size_t vstart = lexer_->token_start();
+      const bool skipped = SkipValueLike();
+      if (skipped) {
+        lexer_->peek();  // scan the FOLLOWING token; its start bounds the value
+        size_t vend = lexer_->token_start();
+        const char* base = lexer_->input_data();
+        while (vend > vstart &&
+               (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+                base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+          vend--;
+        }
+        if (vend > vstart) {
+          prim->meta().unknownMeta().emplace_back(
+              key, std::string(base + vstart, vend - vstart));
+        }
+      }
+      AddWarning("Unknown prim metadata (preserved): " + key);
     }
   }
 

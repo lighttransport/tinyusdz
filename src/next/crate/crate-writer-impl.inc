@@ -12,6 +12,9 @@
 class CrateWriter::Impl {
 public:
   #include "crate-writer-write.inc"
+  bool strict_aousd_conformance() const {
+    return options_.strict_aousd_conformance;
+  }
 
 private:
   CrateWriteOptions options_;

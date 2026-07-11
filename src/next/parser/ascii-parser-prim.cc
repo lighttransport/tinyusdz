@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDA ASCII parser prim/property bodies.
 
 #include "ascii-parser-internal.hh"
+#include "../prim/identifier.hh"
 #include "value-parser.hh"
 
 namespace tinyusdz {
@@ -86,6 +87,13 @@ bool AsciiParser::Impl::ParsePrim() {
     return false;
   }
 
+  if (!IsValidIdentifier(prim_name)) {
+    // AOUSD §7.3/§8 uses Unicode XID_Start/XID_Continue. Reuse the same
+    // generated XID tables as legacy TinyUSDZ rather than bytewise ctype.
+    AddError("Prim name contains invalid character(s): \"" + prim_name + "\"");
+    return false;
+  }
+
   builder_->begin_prim(prim_name, type_name, specifier);
 
   if (Check(TokenType::OpenParen)) {
@@ -144,8 +152,18 @@ bool AsciiParser::Impl::ParsePrimContents() {
     if (tok.type == TokenType::Reorder) {
       lexer_->next();
       std::string what;
-      lexer_->expect(TokenType::Identifier, what);
-      if (Match(TokenType::Equals)) SkipValueLike();
+      if (!lexer_->expect(TokenType::Identifier, what)) return false;
+      if (what == "nameChildren" || what == "primChildren") {
+        if (!ParseOrderList(&prim->meta().primOrder())) return false;
+      } else if (what == "properties" || what == "propertyChildren") {
+        if (!ParseOrderList(&prim->meta().propertyOrder())) return false;
+      } else if (options_.strict_aousd_conformance) {
+        AddError("Unsupported prim reorder field: " + what);
+        return false;
+      } else {
+        if (Match(TokenType::Equals)) SkipValueLike();
+        AddWarning("Unknown prim reorder field ignored: " + what);
+      }
       continue;
     }
 
@@ -275,39 +293,55 @@ bool AsciiParser::Impl::ParseAttribute() {
     lexer_->next();
 
     if (type_id == TypeId::Invalid) {
-      // Unknown attribute type: keep the VALUE via literal inference where the
-      // form is unambiguous (pxr preserves `widget w = 5`); the declared type
-      // name is preserved separately, so the writer re-emits `widget w = 5`.
-      Value inferred;
-      const Token& vt = lexer_->peek();
-      if (vt.type == TokenType::Number) {
-        ParseResult r = ParseValue(*lexer_, TypeId::Double);
-        if (r.success) inferred = std::move(r.value);
-      } else if (vt.type == TokenType::String) {
-        ParseResult r = ParseValue(*lexer_, TypeId::String);
-        if (r.success) inferred = std::move(r.value);
-      } else if (vt.type == TokenType::True || vt.type == TokenType::False) {
-        ParseResult r = ParseValue(*lexer_, TypeId::Bool);
-        if (r.success) inferred = std::move(r.value);
+      const bool normative_unsupported =
+          type_name == "frame4d" || type_name == "opaque" ||
+          type_name == "group";
+      if (options_.strict_aousd_conformance && normative_unsupported) {
+        AddError("Unsupported AOUSD foundational value type in strict mode: " +
+                 type_name);
+        return false;
       }
-      if (!inferred.is_empty()) {
-        if (PrimSpec* cur = builder_->current()) {
-          cur->upsert_property(attr_name, std::move(inferred), flags);
-        }
-      } else {
-        if (!SkipValueLike()) {
-          AddError("Failed to skip value for unknown attribute type: " +
-                   type_name);
-          return false;
-        }
-        // Declared-only slot: storing an Invalid-typed Value here would
-        // surface as a `default` field with type enum 0 in the crate writer
-        // (pxr hard error).
-        if (PrimSpec* cur = builder_->current()) {
-          const PropNameId nid = GetPropNameTable().intern(attr_name);
-          if (!cur->property(nid)) cur->add_property_slot(nid, type_id, flags);
-        }
+      // Preserve the complete authored literal rather than guessing a storage
+      // type or silently leaving a declared-only slot. Extension types can
+      // therefore round-trip in compatibility mode without corrupting data.
+      lexer_->peek();
+      const size_t vstart = lexer_->token_start();
+      if (!SkipValueLike()) {
+        AddError("Failed to preserve value for unsupported attribute type: " +
+                 type_name);
+        return false;
       }
+      lexer_->peek();
+      size_t vend = lexer_->token_start();
+      const char* base = lexer_->input_data();
+      while (vend > vstart &&
+             (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+              base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+        --vend;
+      }
+      if (PrimSpec* cur = builder_->current()) {
+        const PropNameId nid = GetPropNameTable().intern(attr_name);
+        std::string raw(base + vstart, vend - vstart);
+        // Preserve the former generic-read convenience for unambiguous scalar
+        // extension values while retaining the exact authored bytes for write.
+        Lexer scalar(raw.data(), raw.size());
+        ParseResult inferred;
+        const TokenType first = scalar.peek().type;
+        if (first == TokenType::Number)
+          inferred = ParseValue(scalar, TypeId::Double);
+        else if (first == TokenType::String)
+          inferred = ParseValue(scalar, TypeId::String);
+        else if (first == TokenType::True || first == TokenType::False)
+          inferred = ParseValue(scalar, TypeId::Bool);
+        if (inferred.success && !inferred.value.is_empty()) {
+          cur->upsert_property(nid, std::move(inferred.value), flags);
+        } else if (!cur->property(nid)) {
+          cur->add_property_slot(nid, type_id, flags);
+        }
+        cur->set_raw_default_source(attr_name, std::move(raw));
+      }
+      AddWarning("Unsupported attribute type preserved as raw authored data: " +
+                 type_name);
     } else {
       ParseResult result;
       ParseArrayContext array_ctx;
@@ -393,11 +427,54 @@ bool AsciiParser::Impl::ParseAttribute() {
         }
       }
       ParsePropertyMetadata(attr_name);
+    } else if (prop_tok.type == TokenType::Identifier &&
+               prop_tok.value == "spline") {
+      lexer_->next();
+      if (!Match(TokenType::Equals)) {
+        AddError("Expected '=' after spline");
+        return false;
+      }
+      if (options_.strict_aousd_conformance) {
+        AddError("AOUSD spline fields are not yet evaluable in next-core; "
+                 "strict mode refuses a partial stage");
+        return false;
+      }
+      // Compatibility mode is deliberately lossless: retain the complete raw
+      // specialized value and re-emit it. This is not a conformance claim—the
+      // field is not evaluated—but it removes the previous silent deletion.
+      lexer_->peek();
+      const size_t vstart = lexer_->token_start();
+      if (!SkipValueLike()) {
+        AddError("Failed to parse spline field");
+        return false;
+      }
+      lexer_->peek();
+      size_t vend = lexer_->token_start();
+      const char* base = lexer_->input_data();
+      while (vend > vstart &&
+             (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+              base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+        --vend;
+      }
+      if (PrimSpec* cur = builder_->current()) {
+        const PropNameId nid = GetPropNameTable().intern(attr_name);
+        if (!cur->property(nid)) {
+          cur->add_property_slot(nid, type_id, flags);
+        }
+        cur->set_spline_source(
+            attr_name, std::string(base + vstart, vend - vstart));
+      }
+      AddWarning("AOUSD spline preserved as raw authored data; evaluation is "
+                 "unavailable in compatibility mode");
     } else {
-      // Unknown property suffix (e.g. `.spline = { bezier: ... }`): consume
-      // the suffix AND its structured value with a balanced skip; consuming
-      // one token left `= { ... }` to derail the prim-content loop.
-      AddWarning("Unknown attribute property: " + prop_tok.value);
+      // Unknown property suffix: never silently ignore it in strict mode.
+      const std::string suffix = prop_tok.value;
+      if (options_.strict_aousd_conformance) {
+        AddError("Unsupported attribute field in strict AOUSD mode: ." +
+                 suffix);
+        return false;
+      }
+      AddWarning("Unknown attribute property: " + suffix);
       lexer_->next();
       if (Match(TokenType::Equals)) SkipValueLike();
     }

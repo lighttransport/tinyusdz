@@ -25,8 +25,11 @@
       // prims are not yet modeled (VariantData has no child storage).
       if (s.variant) {
         // Prim-state opinions from the selected option (authored, so a
-        // weaker source's default cannot flip them back).
-        if (!s.variant->active) {
+        // weaker source's default cannot flip them back). Fill-absent like
+        // every other authored opinion: a STRONGER source's authored active
+        // wins over a weaker variant's (keeps ComposedActive() in agreement
+        // with the filled output).
+        if (!s.variant->active && !out->meta().active_authored) {
           out->meta().active = false;
           out->meta().active_authored = true;
         }
@@ -102,6 +105,25 @@
       if (!cm.variantSets().empty()) out->meta().variantSets().clear();
       if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
     }
+  }
+
+  // Resolved `active` for a prim's sources: strongest authored opinion wins
+  // (fill-absent, mirroring ComposeOpinions' metadata merge — a selected
+  // variant authors active only when it deactivates). Used by BuildStage to
+  // prune the subtree of a deactivated prim WITHOUT composing its opinions
+  // (those are deferred to the parallel fill pass).
+  bool ComposedActive(const std::vector<Src> &srcs) {
+    for (const Src &s : srcs) {
+      if (s.variant) {
+        if (!s.variant->active) return false;
+        continue;  // variant active=true is not an authored opinion
+      }
+      const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
+      for (const SpecRef &sr : specs) {
+        if (sr.spec->meta().active_authored) return sr.spec->meta().active;
+      }
+    }
+    return true;
   }
 
   // Composed child-name ORDER for a prim's sources (weak->strong): iterate sources

@@ -246,6 +246,7 @@ struct RenderMesh {
   FloatChunked texcoords_0;       // Primary UV (st), xy interleaved
   FloatChunked texcoords_1;       // Secondary UV
   FloatChunked colors;            // Vertex colors (rgb or rgba)
+  FloatChunked opacities;         // displayOpacity (1 float per element)
 
   // Interpolation modes for attributes
   Interpolation normals_interp = Interpolation::Vertex;
@@ -253,6 +254,7 @@ struct RenderMesh {
   Interpolation texcoords_0_interp = Interpolation::Vertex;
   Interpolation texcoords_1_interp = Interpolation::Vertex;
   Interpolation colors_interp = Interpolation::Vertex;
+  Interpolation opacities_interp = Interpolation::Vertex;
 
   // Additional primvars (custom attributes)
   std::vector<VertexAttribute> primvars;
@@ -279,6 +281,11 @@ struct RenderMesh {
   // Faces dropped by topology sanitization: authored face numbering (and any
   // GeomSubset indices referring to it) no longer aligns when > 0.
   uint32_t sanitize_dropped_faces = 0;
+
+  // When sanitize_dropped_faces > 0: maps each AUTHORED face index to its
+  // post-sanitize face index (-1 = the face was dropped). Empty when
+  // sanitization kept the authored face numbering intact.
+  std::vector<int32_t> sanitize_face_remap;
 
   // Skinning data
   struct SkinBinding {
@@ -353,6 +360,7 @@ struct RenderMesh {
   bool has_tangents() const { return !tangents.empty(); }
   bool has_texcoords() const { return !texcoords_0.empty(); }
   bool has_colors() const { return !colors.empty(); }
+  bool has_opacities() const { return !opacities.empty(); }
   bool has_skin() const { return skin != nullptr; }
   bool has_blend_shapes() const { return !blend_shapes.empty(); }
 
@@ -649,6 +657,15 @@ struct RenderMaterial {
   };
   AlphaMode alpha_mode = AlphaMode::Opaque;
   float alpha_cutoff = 0.5f;
+
+  // Material displacement/volume terminals (outputs:displacement /
+  // outputs:volume connections). Recorded as metadata (legacy parity:
+  // has_displacement/displacement_shader_path etc.); the shader networks
+  // themselves are not converted.
+  bool has_displacement = false;
+  std::string displacement_shader_path;
+  bool has_volume = false;
+  std::string volume_shader_path;
 
   MaterialXConfig mtlx_config;
 };

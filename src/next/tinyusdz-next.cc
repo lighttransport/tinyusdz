@@ -104,6 +104,9 @@ size_t MinNonZero(size_t a, size_t b) {
 
 LoadOptions EffectiveUSDAOptions(const LoadUSDOptions& options) {
   LoadOptions out = options.usda_options;
+  if (options.strict_aousd_conformance) {
+    out.parse_options.strict_aousd_conformance = true;
+  }
   out.parse_options.max_file_size =
       MinNonZero(out.parse_options.max_file_size, options.max_memory);
   return out;
@@ -111,6 +114,9 @@ LoadOptions EffectiveUSDAOptions(const LoadUSDOptions& options) {
 
 USDCLoadOptions EffectiveUSDCOptions(const LoadUSDOptions& options) {
   USDCLoadOptions out = options.usdc_options;
+  if (options.strict_aousd_conformance) {
+    out.crate_options.strict_aousd_conformance = true;
+  }
   out.crate_options.max_memory =
       MinNonZero(out.crate_options.max_memory, options.max_memory);
   return out;
@@ -316,6 +322,7 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
   copts.num_threads = 1;
 #endif
   copts.max_layer_memory = load_options.max_memory;
+  copts.strict_aousd_conformance = load_options.strict_aousd_conformance;
   copts.usda_parse_options = load_options.usda_options.parse_options;
   if (const char *ct = std::getenv("TUSDRENDER_COMPOSE_THREADS")) {
     int n = std::atoi(ct);
@@ -337,6 +344,9 @@ bool ComposeLoadedStage(Stage* stage, AssetResolver& resolver,
     copts.instance_flatten_mode = comp_opts->instance_flatten_mode;
     copts.prototype_numbering = comp_opts->prototype_numbering;
     copts.apply_list_ops = comp_opts->apply_list_ops;
+    copts.strict_aousd_conformance =
+        copts.strict_aousd_conformance ||
+        comp_opts->strict_aousd_conformance;
     if (comp_opts->num_threads >= 1) copts.num_threads = comp_opts->num_threads;
     copts.enable_timing = comp_opts->enable_timing || copts.enable_timing;
     if (comp_opts->payload_policy) copts.payload_policy = comp_opts->payload_policy;

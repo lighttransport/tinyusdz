@@ -457,10 +457,13 @@ PrimSpec PrimSpec::Clone() const {
     c.rel_edits_.reset(
         new std::unordered_map<std::string, ArcEdit>(*rel_edits_));
   }
+  c.rel_opinion_stacks_ = rel_opinion_stacks_;
   c.rel_flags_ = rel_flags_;
 
   // Deep copy attribute connections + declared type names
   c.connections_ = connections_;
+  c.spline_sources_ = spline_sources_;
+  c.raw_default_sources_ = raw_default_sources_;
   c.prop_type_names_ = prop_type_names_;
 
   // Deep copy per-property metadata (unique_ptr side table).
@@ -714,6 +717,34 @@ SampleResult PrimSpec::interpolate_time_sample(const std::string& name, double t
   return interpolate_time_sample(name_id, time, mode);
 }
 
+void PrimSpec::set_spline_source(const std::string& prop_name,
+                                 std::string source) {
+  spline_sources_[GetPropNameTable().intern(prop_name).id] = std::move(source);
+}
+
+const std::string* PrimSpec::spline_source(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  auto it = spline_sources_.find(name_id.id);
+  return it == spline_sources_.end() ? nullptr : &it->second;
+}
+
+const std::string* PrimSpec::spline_source(
+    const std::string& prop_name) const {
+  return spline_source(GetPropNameTable().find(prop_name));
+}
+
+void PrimSpec::set_raw_default_source(const std::string& prop_name,
+                                      std::string source) {
+  raw_default_sources_[GetPropNameTable().intern(prop_name).id] =
+      std::move(source);
+}
+
+const std::string* PrimSpec::raw_default_source(PropNameId name_id) const {
+  if (!name_id.is_valid()) return nullptr;
+  auto it = raw_default_sources_.find(name_id.id);
+  return it == raw_default_sources_.end() ? nullptr : &it->second;
+}
+
 void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   relationships_[name].push_back(target);
 }
@@ -723,6 +754,17 @@ ArcEdit& PrimSpec::ensure_relationship_edit(const std::string& name) {
     rel_edits_.reset(new std::unordered_map<std::string, ArcEdit>());
   }
   return (*rel_edits_)[name];
+}
+
+const std::vector<PrimSpec::RelationshipOpinion>*
+PrimSpec::relationship_opinion_stack(const std::string& name) const {
+  auto it = rel_opinion_stacks_.find(name);
+  return it == rel_opinion_stacks_.end() ? nullptr : &it->second;
+}
+
+void PrimSpec::set_relationship_opinion_stack(
+    const std::string& name, std::vector<RelationshipOpinion> opinions) {
+  rel_opinion_stacks_[name] = std::move(opinions);
 }
 
 uint16_t PrimSpec::relationship_flags(const std::string& name) const {
@@ -774,6 +816,8 @@ void PrimSpec::set_relationship_targets(const std::string& name,
 
 bool PrimSpec::remove_relationship(const std::string& name) {
   bool removed = relationships_.erase(name) > 0;
+  rel_opinion_stacks_.erase(name);
+  if (rel_edits_) rel_edits_->erase(name);
   PropNameId id = GetPropNameTable().find(name);
   if (id.is_valid()) {
     const PropSlot* slot = props_.find(id);

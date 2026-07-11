@@ -3723,6 +3723,483 @@ def Xform "World"
   std::cout << "  Audit review fixes: PASSED\n";
 }
 
+// P2 audit fixes: blendshape sparse OOB parallel-array drop, weightless
+// in-between skip, hole/subset face remap across topology sanitize, spec
+// `constant` primvar-interpolation default (with size inference), quad
+// shorter-diagonal split, earcut winding vs projected ring orientation,
+// analytic prim axis as rotation (not mirror), displayOpacity channel,
+// default material for unbound geometry, chained UsdTransform2d composition,
+// displacement/volume terminal metadata.
+void TestP2AuditFixes() {
+  std::cout << "Testing P2 audit fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    # Sparse blendshape with an out-of-range point index (9) and one
+    # in-between without an authored weight.
+    def Mesh "Sparse"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token[] skel:blendShapes = ["sparse"]
+        prepend rel skel:blendShapeTargets = </World/Sparse/BS>
+
+        def BlendShape "BS"
+        {
+            uniform vector3f[] offsets = [(1, 0, 0), (2, 0, 0), (3, 0, 0)]
+            uniform vector3f[] normalOffsets = [(0, 1, 0), (0, 2, 0), (0, 3, 0)]
+            uniform int[] pointIndices = [0, 9, 2]
+            uniform vector3f[] inbetweens:half = [(10, 0, 0), (20, 0, 0), (30, 0, 0)] (
+                weight = 0.5
+            )
+            uniform vector3f[] inbetweens:noweight = [(0, 0, 1), (0, 0, 2), (0, 0, 3)]
+        }
+    }
+
+    # Face 1 has an out-of-range vertex index and is dropped by sanitize;
+    # the GeomSubset references AUTHORED face 2, which becomes face 1.
+    def Mesh "SubsetRemap"
+    {
+        int[] faceVertexCounts = [4, 3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 3, 0, 1, 9, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        rel material:binding = </World/MatA>
+
+        def GeomSubset "S"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [2]
+            rel material:binding = </World/MatB>
+        }
+    }
+
+    # Authored face 0 is dropped by sanitize; the authored hole face 2
+    # becomes face 1.
+    def Mesh "HoleRemap"
+    {
+        int[] faceVertexCounts = [3, 3, 3]
+        int[] faceVertexIndices = [0, 1, 9, 0, 1, 2, 0, 2, 3]
+        int[] holeIndices = [2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    }
+
+    # Primvars WITHOUT authored interpolation: per-point arrays infer
+    # vertex; single elements keep the spec default (constant).
+    def Mesh "InterpInfer"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 1)]
+        float[] primvars:displayOpacity = [0.1, 0.2, 0.3, 0.4]
+        float[] primvars:myconst = [7.5]
+    }
+
+    # Non-square quad: diagonal 1-3 (len^2 = 2) is shorter than 0-2
+    # (len^2 = 10) and must be the split edge.
+    def Mesh "Kite"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (2, 0, 0), (3, 1, 0), (1, 1, 0)]
+    }
+
+    # Concave pentagons handled by earcut: winding of the emitted triangles
+    # must follow the authored ring winding for BOTH +z and -z dominant
+    # normals (the old unconditional reverse flipped one of them).
+    def Mesh "PentPosZ"
+    {
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4]
+        point3f[] points = [(0, 0, 0), (2, 0, 0), (2, 2, 0), (1, 1, 0), (0, 2, 0)]
+    }
+
+    def Mesh "PentNegZ"
+    {
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [4, 3, 2, 1, 0]
+        point3f[] points = [(0, 0, 0), (2, 0, 0), (2, 2, 0), (1, 1, 0), (0, 2, 0)]
+    }
+
+    # y-dominant projection (the earcut drop-axis pair (x,z) mirrors the
+    # ring): winding must still follow the authored ring.
+    def Mesh "PentPosY"
+    {
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4]
+        point3f[] points = [(0, 0, 0), (0, 0, -2), (2, 0, -2), (1, 0, -1), (2, 0, 0)]
+    }
+
+    # Analytic prims: the axis transform must be a proper rotation, not a
+    # mirror (a mirror turns the mesh inside out).
+    def Capsule "CapX"
+    {
+        token axis = "X"
+    }
+    def Capsule "CapZ"
+    {
+    }
+    def Cylinder "CylX"
+    {
+        token axis = "X"
+    }
+    def Sphere "BallY"
+    {
+    }
+
+    def Material "MatA"
+    {
+        token outputs:surface.connect = </World/MatA/PS.outputs:surface>
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 0, 0)
+            token outputs:surface
+        }
+    }
+
+    def Material "MatB"
+    {
+        token outputs:surface.connect = </World/MatB/PS.outputs:surface>
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 1, 0)
+            token outputs:surface
+        }
+    }
+
+    # Chained UsdTransform2d: Outer(translate) o Inner(scale+translate)
+    # must COMPOSE (the old code overwrote fields per hop).
+    def Mesh "ChainQuad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 5), (1, 0, 5), (1, 1, 5), (0, 1, 5)]
+        rel material:binding = </World/ChainMat>
+    }
+
+    def Material "ChainMat"
+    {
+        token outputs:surface.connect = </World/ChainMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/ChainMat/Tex.outputs:rgb>
+            token outputs:surface
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @chain.png@
+            float2 inputs:st.connect = </World/ChainMat/Outer.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "Outer"
+        {
+            uniform token info:id = "UsdTransform2d"
+            float2 inputs:in.connect = </World/ChainMat/Inner.outputs:result>
+            float2 inputs:translation = (0.1, 0)
+            float2 outputs:result
+        }
+
+        def Shader "Inner"
+        {
+            uniform token info:id = "UsdTransform2d"
+            float2 inputs:in.connect = </World/ChainMat/Reader.outputs:result>
+            float2 inputs:scale = (2, 2)
+            float2 inputs:translation = (0.2, 0.3)
+            float2 outputs:result
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    # Displacement/volume terminals recorded as metadata.
+    def Material "DispMat"
+    {
+        token outputs:surface.connect = </World/DispMat/PS.outputs:surface>
+        token outputs:displacement.connect = </World/DispMat/Disp.outputs:displacement>
+        token outputs:volume.connect = </World/DispMat/Vol.outputs:volume>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:surface
+        }
+        def Shader "Disp"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:displacement
+        }
+        def Shader "Vol"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:volume
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  assert(lr.success);
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  RenderScene& scene = result.scene;
+
+  auto find_mesh = [&scene](const char* path) -> RenderMesh& {
+    auto it = scene.mesh_by_path.find(path);
+    assert(it != scene.mesh_by_path.end());
+    return scene.meshes[static_cast<size_t>(it->second)];
+  };
+
+  // --- Item 1 + 4: sparse blendshape parallel arrays + weightless
+  // in-between.
+  {
+    RenderMesh& m = find_mesh("/World/Sparse");
+    assert(m.blend_shapes.size() == 1);
+    const RenderMesh::BlendShape& bs = m.blend_shapes[0];
+    // The OOB entry (pointIndices[1] == 9) drops from EVERY parallel array.
+    assert(bs.point_indices == std::vector<uint32_t>({0, 2}));
+    assert(bs.point_offsets.size() == 6);
+    assert(std::fabs(bs.point_offsets[0] - 1.0f) < 1e-6f);
+    assert(std::fabs(bs.point_offsets[3] - 3.0f) < 1e-6f);
+    assert(bs.normal_offsets.size() == 6);
+    assert(std::fabs(bs.normal_offsets[1] - 1.0f) < 1e-6f);
+    assert(std::fabs(bs.normal_offsets[4] - 3.0f) < 1e-6f);
+    // The weightless in-between is skipped (0.0 collides with the base
+    // shape); the weighted one is kept and filtered consistently.
+    assert(bs.inbetweens.size() == 1);
+    assert(bs.inbetweens[0].name == "half");
+    assert(std::fabs(bs.inbetweens[0].weight - 0.5f) < 1e-6f);
+    assert(bs.inbetweens[0].point_offsets.size() == 6);
+    assert(std::fabs(bs.inbetweens[0].point_offsets[0] - 10.0f) < 1e-6f);
+    assert(std::fabs(bs.inbetweens[0].point_offsets[3] - 30.0f) < 1e-6f);
+  }
+
+  // --- Item 2: GeomSubset indices survive sanitize via the face remap.
+  {
+    RenderMesh& m = find_mesh("/World/SubsetRemap");
+    assert(m.sanitize_dropped_faces == 1);
+    assert(m.face_count() == 2);  // quad + valid tri
+    // Authored subset face 2 -> post-sanitize face 1 -> triangle range
+    // [2, 3) (the quad becomes triangles 0-1).
+    assert(m.material_subsets.size() == 1);
+    assert(m.material_subsets[0].face_start == 2);
+    assert(m.material_subsets[0].face_count == 1);
+    assert(m.material_subsets[0].material_id >= 0);
+    assert(m.material_subsets[0].material_id != m.material_id);
+    assert(scene.materials[static_cast<size_t>(
+               m.material_subsets[0].material_id)].prim_path == "/World/MatB");
+  }
+
+  // --- Item 2: holeIndices survive sanitize via the face remap.
+  {
+    RenderMesh& m = find_mesh("/World/HoleRemap");
+    assert(m.sanitize_dropped_faces == 1);
+    assert(m.face_count() == 2);
+    assert(m.hole_faces == std::vector<uint32_t>({1}));
+    // Only the non-hole surviving triangle is emitted.
+    assert(m.triangulated_indices.size() == 3);
+    assert(m.triangulated_indices[0] == 0 && m.triangulated_indices[1] == 1 &&
+           m.triangulated_indices[2] == 2);
+    // Unbound geometry keeps material_id == -1 with the default config.
+    assert(m.material_id == -1);
+  }
+
+  // --- Item 3 + 8: unauthored interpolation inference + displayOpacity
+  // channel.
+  {
+    RenderMesh& m = find_mesh("/World/InterpInfer");
+    assert(m.colors.size() == 12);
+    assert(m.colors_interp == Interpolation::Vertex);
+    assert(m.has_opacities());
+    assert(m.opacities.size() == 4);
+    assert(m.opacities_interp == Interpolation::Vertex);
+    assert(std::fabs(m.opacities[2] - 0.3f) < 1e-6f);
+    bool saw_const = false;
+    for (const VertexAttribute& pv : m.primvars) {
+      if (pv.name == "myconst") {
+        saw_const = true;
+        // 1 element, unauthored interpolation: USD spec default (constant).
+        assert(pv.interpolation == Interpolation::Constant);
+      }
+    }
+    assert(saw_const);
+  }
+
+  // --- Item 5: quad split along the SHORTER diagonal (1-3 here).
+  {
+    RenderMesh& m = find_mesh("/World/Kite");
+    assert(m.triangulated_indices.size() == 6);
+    assert(m.triangulated_indices[0] == 0 && m.triangulated_indices[1] == 1 &&
+           m.triangulated_indices[2] == 3);
+    assert(m.triangulated_indices[3] == 1 && m.triangulated_indices[4] == 2 &&
+           m.triangulated_indices[5] == 3);
+  }
+
+  // --- Item 6: earcut triangles follow the authored ring winding.
+  {
+    auto check_winding = [&](const char* path) {
+      RenderMesh& m = find_mesh(path);
+      assert(m.face_count() == 1);
+      assert(m.triangulated_indices.size() == 9);  // pentagon -> 3 triangles
+      // Newell normal of the authored ring.
+      double nx = 0, ny = 0, nz = 0;
+      const size_t nv = m.face_vertex_indices.size();
+      for (size_t i = 0; i < nv; ++i) {
+        const size_t a = size_t(m.face_vertex_indices[i]) * 3;
+        const size_t b = size_t(m.face_vertex_indices[(i + 1) % nv]) * 3;
+        nx += (double(m.points[a + 1]) - m.points[b + 1]) *
+              (double(m.points[a + 2]) + m.points[b + 2]);
+        ny += (double(m.points[a + 2]) - m.points[b + 2]) *
+              (double(m.points[a]) + m.points[b]);
+        nz += (double(m.points[a]) - m.points[b]) *
+              (double(m.points[a + 1]) + m.points[b + 1]);
+      }
+      for (size_t t = 0; t < m.triangulated_indices.size(); t += 3) {
+        const size_t ia = size_t(m.triangulated_indices[t]) * 3;
+        const size_t ib = size_t(m.triangulated_indices[t + 1]) * 3;
+        const size_t ic = size_t(m.triangulated_indices[t + 2]) * 3;
+        const double e1x = double(m.points[ib]) - m.points[ia];
+        const double e1y = double(m.points[ib + 1]) - m.points[ia + 1];
+        const double e1z = double(m.points[ib + 2]) - m.points[ia + 2];
+        const double e2x = double(m.points[ic]) - m.points[ia];
+        const double e2y = double(m.points[ic + 1]) - m.points[ia + 1];
+        const double e2z = double(m.points[ic + 2]) - m.points[ia + 2];
+        const double tx = e1y * e2z - e1z * e2y;
+        const double ty = e1z * e2x - e1x * e2z;
+        const double tz = e1x * e2y - e1y * e2x;
+        // Triangle normal must point the same way as the face normal.
+        assert(nx * tx + ny * ty + nz * tz > 1e-9);
+      }
+    };
+    check_winding("/World/PentPosZ");
+    check_winding("/World/PentNegZ");
+    check_winding("/World/PentPosY");
+  }
+
+  // --- Item 7: analytic prim axis is a rotation; meshes stay outward
+  // (positive signed volume) for every axis.
+  {
+    auto signed_volume = [&](const char* path) -> double {
+      RenderMesh& m = find_mesh(path);
+      assert(m.is_triangulated);
+      double vol = 0.0;
+      for (size_t t = 0; t < m.triangulated_indices.size(); t += 3) {
+        const size_t ia = size_t(m.triangulated_indices[t]) * 3;
+        const size_t ib = size_t(m.triangulated_indices[t + 1]) * 3;
+        const size_t ic = size_t(m.triangulated_indices[t + 2]) * 3;
+        const double ax = m.points[ia], ay = m.points[ia + 1],
+                     az = m.points[ia + 2];
+        const double bx = m.points[ib], by = m.points[ib + 1],
+                     bz = m.points[ib + 2];
+        const double cx = m.points[ic], cy = m.points[ic + 1],
+                     cz = m.points[ic + 2];
+        vol += (ax * (by * cz - bz * cy) + ay * (bz * cx - bx * cz) +
+                az * (bx * cy - by * cx)) /
+               6.0;
+      }
+      return vol;
+    };
+    // Baseline: the generators themselves are outward (+Y sphere).
+    assert(signed_volume("/World/BallY") > 0.01);
+    // A mirror would flip these negative.
+    assert(signed_volume("/World/CapX") > 0.01);
+    assert(signed_volume("/World/CapZ") > 0.01);
+    assert(signed_volume("/World/CylX") > 0.01);
+    // The rotated capsule/cylinder axes really lie along the authored axis.
+    RenderMesh& capx = find_mesh("/World/CapX");
+    assert((capx.bbox_max.x - capx.bbox_min.x) >
+           (capx.bbox_max.y - capx.bbox_min.y) + 0.5f);
+    RenderMesh& capz = find_mesh("/World/CapZ");
+    assert((capz.bbox_max.z - capz.bbox_min.z) >
+           (capz.bbox_max.y - capz.bbox_min.y) + 0.5f);
+  }
+
+  // --- Item 10: chained UsdTransform2d composes.
+  // Outer(translate (0.1,0)) o Inner(scale (2,2), translate (0.2,0.3)):
+  // uv' = 2*uv + (0.3, 0.3).
+  {
+    bool saw_chain_tex = false;
+    for (const RenderTexture& tex : scene.textures) {
+      if (tex.asset_path != "chain.png") continue;
+      saw_chain_tex = true;
+      assert(std::fabs(tex.scale.x - 2.0f) < 1e-5f);
+      assert(std::fabs(tex.scale.y - 2.0f) < 1e-5f);
+      assert(std::fabs(tex.offset.x - 0.3f) < 1e-5f);
+      assert(std::fabs(tex.offset.y - 0.3f) < 1e-5f);
+      assert(std::fabs(tex.rotation) < 1e-5f);
+      assert(tex.uv_primvar == "st");
+    }
+    assert(saw_chain_tex);
+  }
+
+  // --- Item 11: displacement/volume terminal metadata.
+  {
+    auto it = scene.material_by_path.find("/World/DispMat");
+    assert(it != scene.material_by_path.end());
+    const RenderMaterial& mat =
+        scene.materials[static_cast<size_t>(it->second)];
+    assert(mat.has_displacement);
+    assert(mat.displacement_shader_path == "/World/DispMat/Disp");
+    assert(mat.has_volume);
+    assert(mat.volume_shader_path == "/World/DispMat/Vol");
+    auto ita = scene.material_by_path.find("/World/MatA");
+    assert(ita != scene.material_by_path.end());
+    assert(!scene.materials[static_cast<size_t>(ita->second)].has_displacement);
+  }
+
+  // --- Item 9: default material for unbound geometry (config-gated).
+  {
+    ConverterConfig def_config;
+    def_config.material.assign_default_material = true;
+    RenderSceneConverter def_converter(def_config);
+    ConvertResult def_result = def_converter.Convert(lr.stage);
+    assert(def_result.success);
+    RenderScene& def_scene = def_result.scene;
+    auto it = def_scene.mesh_by_path.find("/World/HoleRemap");
+    assert(it != def_scene.mesh_by_path.end());
+    const RenderMesh& unbound =
+        def_scene.meshes[static_cast<size_t>(it->second)];
+    assert(unbound.material_id >= 0);
+    const RenderMaterial& dm =
+        def_scene.materials[static_cast<size_t>(unbound.material_id)];
+    assert(dm.name == "defaultMaterial");
+    assert(dm.prim_path == "/__tinyusdz_default_material__");
+    assert(dm.shader_type == RenderMaterial::ShaderType::PreviewSurface);
+    assert(dm.preview_surface);
+    // Bound geometry keeps its authored material.
+    auto bit = def_scene.mesh_by_path.find("/World/SubsetRemap");
+    assert(bit != def_scene.mesh_by_path.end());
+    const RenderMesh& bound =
+        def_scene.meshes[static_cast<size_t>(bit->second)];
+    assert(bound.material_id >= 0);
+    assert(def_scene.materials[static_cast<size_t>(bound.material_id)]
+               .prim_path == "/World/MatA");
+  }
+
+  std::cout << "  P2 audit fixes: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -3774,6 +4251,7 @@ int main() {
   TestMaterialUVPrimvarPromotion();
   TestMaterialParityFixes();
   TestAuditReviewFixes();
+  TestP2AuditFixes();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
