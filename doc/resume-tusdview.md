@@ -58,13 +58,44 @@ material pipeline inside `AddRTPreviewMesh` would be re-implementing what the ne
 path already does. Decide before doing it whether the legacy rtPreview path is
 worth keeping at all.
 
-### 3. Cross-backend blendshape screenshot parity
+### 3. LEGACY loader deform: a DOUBLE deform on the `--time` load path
 
-Open in the broader visual-parity matrix. The `--next` half is fixed (a
-non-instanced blendshaped mesh now morphs; `tusdview-blendshape-morph`), but the
-LEGACY Tydra path still renders
-`models/blendshape-and-animation-test-001.usda` identically at every time code —
-same symptom, different loader, not yet diagnosed.
+The old note here — "the legacy path renders
+`models/blendshape-and-animation-test-001.usda` identically at every time code" —
+is STALE. It morphs, and it animates. What it does not do is agree with itself.
+
+`--camera` now works on the legacy loader too (`FindLegacyCamera`; it used to warn
+"need --next" and auto-fit). That was the blocker: without a camera both loaders
+could agree on, the two could not be compared at all — auto-fit framing swamps
+every pixel difference.
+
+With that, comparing in `--mode depth` through one camera (the deform-parity
+harness, on `examples/tusdview/tests/deform-*.usda`):
+
+- at REST the legacy and next loaders agree exactly (mean depth diff 0.02);
+- at a posed time code they diverge, and legacy disagrees with ITSELF: its
+  `--skinning cpu` bake and its GPU/RT paths land in different places (mean 3.1 on
+  `deform-skin-xform`, where the whole deform only moves depth by 3.5).
+
+The proven part. `ConvertStageToScene` (scene_loader.cc, the `std::isfinite(timecode)`
+branch — i.e. every `--time` load) calls `DeformSkinnedMeshes`, which BAKES the pose
+into `render.meshes`. `BuildRtSkinnedMeshVertices` then skins those already-baked
+vertices AGAIN, every frame. Numerically, on `deform-skin-xform` at t=20, rest
+vertex 4 = (-1, 3, 1):
+
+    bake  -> (-1.799,  1.384, 1.0)   # one 60 deg bend about the joint pivot: correct
+    RT    -> (-0.799, -0.116, 1.0)   # the same bend applied to THAT: two bends
+
+Not yet explained, and the reason this is still open: with an IDENTITY SkelRoot the
+raster GPU path matches the CPU bake EXACTLY (0.000), while RT still double-deforms
+— so the raster shader is somehow not double-applying, even though it is fed the
+same baked vertices and the same (correct, SkelRoot-independent) bone matrices. Only
+`dm.world` differs between the two fixtures. Resolve that before fixing: the shape of
+the fix (keep the rest pose for the paths that deform downstream, vs. drop the
+load-time bake) depends on it.
+
+The `--next` loader is self-consistent here (GPU deform == CPU bake, byte-identical
+in depth, on all three deform fixtures), so it is the reference.
 
 Note also that the GPU morph path skins the REST normal (only positions are
 morphed), so it differs from the CPU bake in SHADING, not geometry. That is by
