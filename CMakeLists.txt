@@ -1893,6 +1893,18 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_COLORIO")
   endif(TINYUSDZ_WITH_COLORIO)
 
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    # KTX2 / GPU-compressed texture decode in image-loader.cc goes through the
+    # vendored texpipe/texcomp reader (tp_ktx2_read + tc_*_decompress). Link the
+    # C texture libs into core; the PUBLIC include dirs of tinyusdz_textools
+    # propagate texpipe.h/texcomp.h to the core sources.
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_TEXTOOLS")
+    # NOTE: core uses the plain target_link_libraries signature everywhere; keep
+    # it plain here so CMake doesn't reject a mixed plain/keyword usage.
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} tinyusdz_textools)
+  endif(TINYUSDZ_WITH_TEXTOOLS)
+
   if(TINYUSDZ_WITH_AUDIO)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_AUDIO")

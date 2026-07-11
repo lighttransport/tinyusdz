@@ -162,6 +162,15 @@ bool TexToolsCompress(const light3d::Image& img, bool srgb,
       r = tc_bc3_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
       break;
     }
+    case DrawCompressedFormat::BC5: {
+      // Two-channel (R,G) — normal maps. Encoder reads R,G of the RGBA8 input.
+      tc_bc5_options o;
+      tc_bc5_options_init(&o);
+      size = tc_bc5_compressed_size(w, h);
+      blocks.resize(size);
+      r = tc_bc5_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
+      break;
+    }
     case DrawCompressedFormat::BC7: {
       tc_bc7_options o;
       tc_bc7_options_init(&o);
@@ -173,6 +182,42 @@ bool TexToolsCompress(const light3d::Image& img, bool srgb,
       r = tc_bc7_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
       break;
     }
+    case DrawCompressedFormat::ETC2_RGB: {
+      tc_etc2_options o;
+      tc_etc2_options_init(&o);
+      o.srgb = srgb ? 1 : 0;
+      o.alpha = 0;
+      size = tc_etc2_rgb_compressed_size(w, h);
+      blocks.resize(size);
+      r = tc_etc2_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
+      break;
+    }
+    case DrawCompressedFormat::ETC2_RGBA: {
+      tc_etc2_options o;
+      tc_etc2_options_init(&o);
+      o.srgb = srgb ? 1 : 0;
+      o.alpha = 1;
+      size = tc_etc2_rgba_compressed_size(w, h);
+      blocks.resize(size);
+      r = tc_etc2_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
+      break;
+    }
+    case DrawCompressedFormat::ASTC_4x4: {
+      tc_astc_options o;
+      tc_astc_options_init(&o);
+      o.block_x = 4;
+      o.block_y = 4;
+      o.srgb = srgb ? 1 : 0;
+      o.threads = TexToolsThreads();
+      size = tc_astc_compressed_size(w, h, &o);
+      blocks.resize(size);
+      r = tc_astc_compress_rgba8(rgba, w, h, size_t(w) * 4u, &o, blocks.data(), size);
+      break;
+    }
+    case DrawCompressedFormat::BC6H:
+      // HDR (float RGB) — the RGBA8 compress-on-load path can't feed BC6H.
+      // Reserved for the HDR/EXR texture path (follow-up).
+      return false;
     case DrawCompressedFormat::None:
       return false;
   }

@@ -2015,6 +2015,44 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         tex_abs_path.prim_part()));
   }
 
+#if defined(TINYUSDZ_WITH_TEXTOOLS)
+  // ---- Legacy-transparent KTX2 companion hint (tinyusdz extension) ----------
+  // `inputs:file` deliberately stays a png/jpg/exr so the asset opens in stock
+  // USD tools and is USDZ-legal. A per-attribute `customData` entry
+  //     asset inputs:file = @diffuse.png@ ( customData = { asset ktx2 = @diffuse.ktx2@ } )
+  // names a GPU-compressed companion. When it resolves via the asset resolver we
+  // prefer it (the core image loader decodes/transcodes KTX2 to RGBA8); stock
+  // tools ignore the hint and see only the png. Non-UDIM only. Assets without
+  // the hint are unaffected.
+  if (has_file) {
+    const auto &fmeta = texture.file.metas();
+    if (fmeta.has_customData()) {
+      const auto cd = fmeta.get_customData();
+      auto it = cd.find("ktx2");
+      if (it != cd.end()) {
+        std::string ktx2_hint;
+        if (auto a = it->second.get_value<value::AssetPath>()) {
+          ktx2_hint = a.value().GetAssetPath();
+        } else if (auto s = it->second.get_value<std::string>()) {
+          ktx2_hint = s.value();
+        }
+        if (!ktx2_hint.empty() && !io::IsUDIMPath(ktx2_hint)) {
+          const std::string resolved = env.asset_resolver.resolve(ktx2_hint);
+          if (!resolved.empty()) {
+            DCOUT("Preferring KTX2 companion `" << ktx2_hint << "` over `"
+                                                << assetPath.GetAssetPath()
+                                                << "`");
+            assetPath = value::AssetPath(ktx2_hint);
+          } else {
+            DCOUT("KTX2 companion `" << ktx2_hint
+                                     << "` did not resolve; using original asset.");
+          }
+        }
+      }
+    }
+  }
+#endif  // TINYUSDZ_WITH_TEXTOOLS
+
   // TextureImage and BufferData
   {
     // Check image cache first - if the same asset path was already loaded,

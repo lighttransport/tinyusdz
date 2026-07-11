@@ -676,6 +676,19 @@ bool VulkanRenderer::createDevice(std::string* err) {
   VkPhysicalDeviceFeatures supported{};
   vkGetPhysicalDeviceFeatures(phys_, &supported);
   VkPhysicalDeviceFeatures enabledFeatures{};
+  // Compressed-texture format support: record caps for --texture-compress
+  // cap-gating and enable the features so sampling the corresponding VkFormats
+  // is valid (Vulkan requires the feature enabled at device creation — this also
+  // makes the existing BC1/3/7 upload path spec-correct).
+  caps_.supportsBC = supported.textureCompressionBC;
+  caps_.supportsBC5 = supported.textureCompressionBC;    // RGTC is part of BC
+  caps_.supportsBC6H = supported.textureCompressionBC;   // BPTC float is part of BC
+  caps_.supportsETC2 = supported.textureCompressionETC2;
+  caps_.supportsASTC = supported.textureCompressionASTC_LDR;
+  if (supported.textureCompressionBC) enabledFeatures.textureCompressionBC = VK_TRUE;
+  if (supported.textureCompressionETC2) enabledFeatures.textureCompressionETC2 = VK_TRUE;
+  if (supported.textureCompressionASTC_LDR)
+    enabledFeatures.textureCompressionASTC_LDR = VK_TRUE;
   if (supported.tessellationShader) {
     enabledFeatures.tessellationShader = VK_TRUE;
     tessSupported_ = true;
@@ -2714,8 +2727,21 @@ bool VulkanRenderer::createCompressedTextureImage(const DrawCompressedImageCPU& 
                   : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
   } else if (img.format == DrawCompressedFormat::BC3) {
     format = srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::BC5) {
+    format = VK_FORMAT_BC5_UNORM_BLOCK;  // no sRGB variant
+  } else if (img.format == DrawCompressedFormat::BC6H) {
+    format = VK_FORMAT_BC6H_UFLOAT_BLOCK;  // HDR, no sRGB variant
   } else if (img.format == DrawCompressedFormat::BC7) {
     format = srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::ETC2_RGB) {
+    format = srgb ? VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK
+                  : VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::ETC2_RGBA) {
+    format = srgb ? VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK
+                  : VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK;
+  } else if (img.format == DrawCompressedFormat::ASTC_4x4) {
+    format = srgb ? VK_FORMAT_ASTC_4x4_SRGB_BLOCK
+                  : VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
   }
   if (format == VK_FORMAT_UNDEFINED) return false;
 

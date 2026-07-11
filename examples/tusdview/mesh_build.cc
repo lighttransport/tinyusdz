@@ -847,7 +847,51 @@ void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
 }
 #endif  // !TUSDVIEW_WITH_TEXTOOLS
 
-bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
+// Resolve a requested compression mode to a concrete block format the device
+// can actually sample, given its capabilities. `opaque` only affects the BCn
+// (BC1 vs BC3) auto choice; ASTC/ETC2/BC7 carry alpha regardless. Falls back
+// gracefully (e.g. Astc on a BC-only desktop GPU -> BC7) and returns None when
+// nothing is available so the caller keeps the texture uncompressed.
+DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
+                                            const TextureCompressCaps& caps,
+                                            bool opaque) {
+  const DrawCompressedFormat bcn =
+      opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
+  switch (mode) {
+    case TextureCompressionMode::Off:
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::BCn:
+      if (caps.bc) return bcn;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::BC7:
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Astc:
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Etc2:
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      return DrawCompressedFormat::None;
+    case TextureCompressionMode::Auto:
+      // Prefer the highest-quality format available on the platform.
+      if (caps.bc) return DrawCompressedFormat::BC7;
+      if (caps.astc) return DrawCompressedFormat::ASTC_4x4;
+      if (caps.etc2) return DrawCompressedFormat::ETC2_RGBA;
+      return DrawCompressedFormat::None;
+  }
+  return DrawCompressedFormat::None;
+}
+
+bool EncodeBCn(const light3d::Image& img, bool srgb,
+               TextureCompressionMode mode, const TextureCompressCaps& caps,
                DrawCompressedImageCPU* out) {
   if (!out || img.width <= 0 || img.height <= 0 || img.channels != 4 ||
       img.data.empty()) {
@@ -861,14 +905,13 @@ bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
     }
   }
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
-  const DrawCompressedFormat format =
-      preferBc7 ? DrawCompressedFormat::BC7
-                : (opaque ? DrawCompressedFormat::BC1
-                          : DrawCompressedFormat::BC3);
+  const DrawCompressedFormat format = ChooseCompressedFormat(mode, caps, opaque);
+  if (format == DrawCompressedFormat::None) return false;
   return TexToolsCompress(img, srgb, format, out);
 #else
   (void)srgb;
-  (void)preferBc7;  // BC7 needs the vendored texcomp encoder.
+  (void)mode;
+  (void)caps;  // ASTC/ETC2/BC7 need the vendored texcomp encoder.
   out->format = opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
   out->width = img.width;
   out->height = img.height;
@@ -904,14 +947,15 @@ bool EncodeBCn(const light3d::Image& img, bool srgb, bool preferBc7,
 #endif  // TUSDVIEW_WITH_TEXTOOLS
 }
 
-void CompressTexture(DrawTextureCPU* tex, bool preferBc7) {
+void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
+                     const TextureCompressCaps& caps) {
   if (!tex) return;
   if (tex->isUdim) {
     for (DrawUdimTileCPU& tile : tex->udimTiles) {
-      EncodeBCn(tile.image, tex->srgb, preferBc7, &tile.compressed);
+      EncodeBCn(tile.image, tex->srgb, mode, caps, &tile.compressed);
     }
   }
-  EncodeBCn(tex->image, tex->srgb, preferBc7, &tex->compressed);
+  EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed);
 }
 
 void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out) {
@@ -971,10 +1015,9 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
   }
 
   if (opt.compression != TextureCompressionMode::Off) {
-    const bool preferBc7 = opt.compression == TextureCompressionMode::BC7;
     for (DrawTextureCPU& tex : out->textures) {
       tex.requestedCompressed = true;
-      CompressTexture(&tex, preferBc7);
+      CompressTexture(&tex, opt.compression, opt.caps);
     }
   }
 }
