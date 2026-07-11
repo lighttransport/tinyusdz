@@ -1164,6 +1164,17 @@ bool SetupGpuSkinNext(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
 // BlendShape `pointIndices` index authored POINTS, and FillFlatGeometry's weld
 // can back one point with several vertices (UV seams / hard edges), so each
 // delta entry fans out to every vertex of its point.
+// Does this mesh author blendshapes (skel:blendShapes + skel:blendShapeTargets)?
+// Cheap pre-check so the batching loop can route a morphed mesh onto the
+// standalone (de-instanced) path instead of world-baking it into a shared batch
+// (where per-mesh morph CSR + absPath cannot survive).
+bool NextMeshHasBlendShapes(const tnext::UsdPrim& meshPrim, double time) {
+  if (ReadTokens(meshPrim, "skel:blendShapes", time).empty()) return false;
+  const std::vector<tnext::Path>* targets =
+      meshPrim.GetRelationship("skel:blendShapeTargets");
+  return targets && !targets->empty();
+}
+
 void BuildMorphChannelsNext(const tnext::Stage& stage,
                             const tnext::UsdPrim& meshPrim, double time,
                             DrawMeshCPU* dm,
@@ -3086,6 +3097,109 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     int wholeMat = resolveMeshMaterial(mp, m.texcoords_0_name, m.texcoords_1_name);
     double mw16[16];
     tydn::ComputeWorldTransform(stage, mp, mw16, time);
+
+    // Blendshape (morph) meshes cannot be batched: the GPU morph is a per-vertex
+    // CSR keyed to this prim, applied in OBJECT space by the vertex shader before
+    // the world transform, and the per-frame weight lookup needs the mesh's own
+    // absPath -- none of which survives a world-baked, absPath-less shared batch.
+    // Emit such a mesh standalone (object-space vertices + world in `dm.world`),
+    // exactly as EmitInstancedProto de-instances a skinned/morphed prototype into
+    // one placement. Unskinned or non-morphed meshes keep the batch fast path.
+    if (NextMeshHasBlendShapes(mp, time)) {
+      const size_t numPoints = m.point_count();
+      // Skin with an IDENTITY world (world is applied via dm.world below, not
+      // folded into the bone rows), so morph->skin->world compose in shader order.
+      bool skinned = false;
+      if (opts.gpuSkinning) {
+        double identW[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        skinned = SetupGpuSkinNext(stage, mp, time, &loc, vertexToPoint,
+                                   numPoints, identW, draw);
+      }
+      if (!skinned) {
+        BakeSkinning(stage, mp, time, &loc, vertexToPoint, numPoints);
+      }
+      static const bool kBakeMorph = [] {
+        const char* e = std::getenv("TUSDVIEW_NEXT_MORPH_BAKE");
+        return e && e[0] == '1';
+      }();
+      if (kBakeMorph) {
+        BakeBlendShapes(stage, mp, time, &loc, vertexToPoint, numPoints);
+      } else {
+        BuildMorphChannelsNext(stage, mp, time, &loc, vertexToPoint, numPoints);
+      }
+      // Constant per-vertex opacity folds into an alpha material variant (as in
+      // the batch path); a genuinely varying one keeps its buffer.
+      if (!loc.vertexAlpha.empty()) {
+        float lo = loc.vertexAlpha[0], hi = loc.vertexAlpha[0];
+        for (float a : loc.vertexAlpha) { lo = std::min(lo, a); hi = std::max(hi, a); }
+        if (hi - lo <= 1e-6f) {
+          if (lo < 1.0f - 1e-6f) wholeMat = materialWithAlpha(wholeMat, lo);
+          loc.vertexAlpha.clear();
+          loc.vertexAlpha.shrink_to_fit();
+        } else {
+          ++varyingOpacityMeshes;
+        }
+      }
+      loc.purpose = purpose;
+      loc.absPath = mp.GetPath().str();
+      for (int k = 0; k < 16; ++k) loc.world[k] = static_cast<float>(mw16[k]);
+      if (skinned) {
+        // Bone rows are absolute (geomBind folded, world NOT -- dm.world supplies
+        // it), so no per-mesh bind matrix or row offset; skelId only has to be
+        // valid for the skinning frame to pick the mesh up (the next path indexes
+        // DrawScene::nextSkels).
+        loc.skelId = 0;
+        loc.skinMatrixBase = 0;
+        std::memset(loc.skinGeomBind, 0, sizeof(loc.skinGeomBind));
+        loc.skinGeomBind[0] = loc.skinGeomBind[5] = loc.skinGeomBind[10] =
+            loc.skinGeomBind[15] = 1.0f;
+      }
+      // Object-space bbox (+ morph displacement padding) for frustum culling.
+      if (!loc.vertices.empty()) {
+        float plo[3] = {loc.vertices[0].px, loc.vertices[0].py, loc.vertices[0].pz};
+        float phi[3] = {plo[0], plo[1], plo[2]};
+        for (const DrawVertex& v : loc.vertices) {
+          plo[0] = std::min(plo[0], v.px); phi[0] = std::max(phi[0], v.px);
+          plo[1] = std::min(plo[1], v.py); phi[1] = std::max(phi[1], v.py);
+          plo[2] = std::min(plo[2], v.pz); phi[2] = std::max(phi[2], v.pz);
+        }
+        for (int k = 0; k < 3; ++k) {
+          loc.aabbMin[k] = plo[k] - loc.morphExtent[k];
+          loc.aabbMax[k] = phi[k] + loc.morphExtent[k];
+          loc.protoAabbMin[k] = loc.aabbMin[k];
+          loc.protoAabbMax[k] = loc.aabbMax[k];
+        }
+      }
+      // Per-triangle materials from face GeomSubsets: reorder indices into one
+      // contiguous run per material and emit a submesh each (empty triMat =>
+      // one submesh with wholeMat).
+      std::vector<int> triMat;
+      buildTriMaterials(mp, m, loc.indices.size() / 3, wholeMat, &triMat);
+      if (triMat.empty()) {
+        loc.submeshes.push_back(
+            DrawSubmesh{0, static_cast<uint32_t>(loc.indices.size()), wholeMat});
+      } else {
+        std::vector<uint32_t> reordered;
+        reordered.reserve(loc.indices.size());
+        std::set<int> groups(triMat.begin(), triMat.end());
+        for (int gm : groups) {
+          const uint32_t start = static_cast<uint32_t>(reordered.size());
+          for (size_t t = 0; t < triMat.size(); ++t) {
+            if (triMat[t] != gm) continue;
+            reordered.push_back(loc.indices[t * 3 + 0]);
+            reordered.push_back(loc.indices[t * 3 + 1]);
+            reordered.push_back(loc.indices[t * 3 + 2]);
+          }
+          loc.submeshes.push_back(DrawSubmesh{
+              start, static_cast<uint32_t>(reordered.size()) - start, gm});
+        }
+        loc.indices = std::move(reordered);
+      }
+      draw->triangleCount += loc.indices.size() / 3;
+      draw->meshes.push_back(std::move(loc));
+      continue;
+    }
+
     // Skeletal skinning, before the vertices are world-baked into the batch.
     // GPU: keep the rest pose and emit per-vertex joint attributes (the shader
     // poses every frame). CPU: bake the static pose at `time` into the geometry.

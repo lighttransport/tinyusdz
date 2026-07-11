@@ -863,9 +863,16 @@ void EncodeBC3AlphaBlock(const uint8_t rgba[16][4], uint8_t* out) {
 // nothing is available so the caller keeps the texture uncompressed.
 DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
                                             const TextureCompressCaps& caps,
-                                            bool opaque) {
+                                            bool opaque, bool normal_map) {
+  // A tangent-space normal map's X/Y are independent, so a BC1/BC3 endpoint
+  // color line cross-contaminates them (visibly wrong lighting). Force a
+  // full-channel format instead. BC5 would be ideal (two independent channels)
+  // but the raster shaders don't reconstruct Z from a two-channel sample yet, so
+  // BC7 (all four channels, high quality) is the safe choice; ASTC/ETC2 are also
+  // full-channel. Never BC1/BC3 for a normal map.
   const DrawCompressedFormat bcn =
-      opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
+      normal_map ? DrawCompressedFormat::BC7
+                 : (opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3);
   switch (mode) {
     case TextureCompressionMode::Off:
       return DrawCompressedFormat::None;
@@ -901,7 +908,7 @@ DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
 
 bool EncodeBCn(const light3d::Image& img, bool srgb,
                TextureCompressionMode mode, const TextureCompressCaps& caps,
-               DrawCompressedImageCPU* out) {
+               DrawCompressedImageCPU* out, bool normal_map) {
   if (!out || img.width <= 0 || img.height <= 0 || img.channels != 4 ||
       img.data.empty()) {
     return false;
@@ -914,13 +921,17 @@ bool EncodeBCn(const light3d::Image& img, bool srgb,
     }
   }
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
-  const DrawCompressedFormat format = ChooseCompressedFormat(mode, caps, opaque);
+  const DrawCompressedFormat format =
+      ChooseCompressedFormat(mode, caps, opaque, normal_map);
   if (format == DrawCompressedFormat::None) return false;
   return TexToolsCompress(img, srgb, format, out);
 #else
   (void)srgb;
   (void)mode;
   (void)caps;  // ASTC/ETC2/BC7 need the vendored texcomp encoder.
+  // Without textools the only encoders are BC1/BC3, both of which corrupt a
+  // normal map's X/Y. Leave normal maps uncompressed here.
+  if (normal_map) return false;
   out->format = opaque ? DrawCompressedFormat::BC1 : DrawCompressedFormat::BC3;
   out->width = img.width;
   out->height = img.height;
@@ -957,14 +968,14 @@ bool EncodeBCn(const light3d::Image& img, bool srgb,
 }
 
 void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
-                     const TextureCompressCaps& caps) {
+                     const TextureCompressCaps& caps, bool normal_map) {
   if (!tex) return;
   if (tex->isUdim) {
     for (DrawUdimTileCPU& tile : tex->udimTiles) {
-      EncodeBCn(tile.image, tex->srgb, mode, caps, &tile.compressed);
+      EncodeBCn(tile.image, tex->srgb, mode, caps, &tile.compressed, normal_map);
     }
   }
-  EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed);
+  EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed, normal_map);
 }
 
 }  // namespace  (the texture post-passes below are shared with the --next loader)
@@ -974,13 +985,20 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
 // cap / byte budget inside its texture decoder and must not re-run those passes —
 // can still honor `--texture-compress`. Declared in mesh_build.hh, so these three
 // live outside the anonymous namespace (external linkage).
+void ClassifyTextureUsage(DrawScene* out);  // defined below (near FinalizeDrawTextures)
+
 void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
   if (!out || opt.compression == TextureCompressionMode::Off) return;
+  // Classify usage first so a normal map is not compressed onto a BC1/BC3 color
+  // line (which corrupts the independent X/Y components); it goes to a
+  // full-channel format (BC7/ASTC/ETC2) instead. FinalizeDrawTextures re-runs
+  // this (idempotent).
+  ClassifyTextureUsage(out);
   size_t n = 0, raw = 0, comp = 0;
   for (DrawTextureCPU& tex : out->textures) {
     if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
     tex.requestedCompressed = true;
-    CompressTexture(&tex, opt.compression, opt.caps);
+    CompressTexture(&tex, opt.compression, opt.caps, tex.isNormalMap);
     if (!tex.compressed.data.empty()) {
       ++n;
       raw += tex.image.data.size();
@@ -1055,8 +1073,9 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
       }
     }
   }
-
-  ApplyTextureCompression(opt, out);
+  // NOTE: texture compression is intentionally NOT applied here. It runs after
+  // BuildDrawMaterials (in the callers), so ClassifyTextureUsage can see which
+  // textures are normal maps and keep them off a BC1 color line.
 }
 
 // Classify texture usage from the built materials, then (with --texture-mips)
@@ -1064,7 +1083,11 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
 // run after BuildDrawMaterials on every load path (one-shot and streaming) so
 // both produce identical DrawScenes; texture usage (normal map / ORM packing /
 // alpha-tested) is only known once materials exist.
-void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
+// Tag each texture with how its bound materials use it (normal map, packed-ORM
+// roughness channel, alpha-tested base color). Idempotent. Must run BEFORE
+// ApplyTextureCompression so the block-format choice can see the usage -- a
+// normal map must not be squeezed onto a BC1 color line.
+void ClassifyTextureUsage(DrawScene* out) {
   if (!out) return;
   auto texAt = [&](int idx) -> DrawTextureCPU* {
     if (idx < 0 || static_cast<size_t>(idx) >= out->textures.size()) {
@@ -1089,6 +1112,11 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
       }
     }
   }
+}
+
+void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
+  if (!out) return;
+  ClassifyTextureUsage(out);
   if (!opt.generateMips || !TexToolsAvailable()) return;
   // Build the content-aware chain for one RGBA8 base image + its compressed
   // per-level payloads (same block format as the base level).
@@ -3360,6 +3388,9 @@ void BuildDrawScene(const tydra::RenderScene& rs, DrawScene* out,
   std::vector<int> drawTexMap;
   BuildDrawTextures(rs, out, &drawTexMap, textureOptions);
   BuildDrawMaterials(rs, out, drawTexMap);
+  // Compress after materials so normal maps are classified first (see
+  // ApplyTextureCompression / ClassifyTextureUsage).
+  ApplyTextureCompression(textureOptions, out);
   FinalizeDrawTextures(textureOptions, out);
   BuildDrawLights(rs, out, textureOptions);
 
@@ -3491,6 +3522,8 @@ bool BuildDrawSceneStreaming(tydra::RenderSceneConverter& converter,
     std::vector<int> drawTexMap;
     BuildDrawTextures(scene, out, &drawTexMap, textureOptions);
     BuildDrawMaterials(scene, out, drawTexMap);
+    // Compress after materials so normal maps are classified first.
+    ApplyTextureCompression(textureOptions, out);
     FinalizeDrawTextures(textureOptions, out);
     BuildDrawLights(scene, out, textureOptions);
     // Any mesh not referenced by a node keeps identity placement (matches

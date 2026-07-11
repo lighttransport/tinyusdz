@@ -2432,6 +2432,20 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-vram-budget PROPERTIES SKIP_RETURN_CODE 77)
 
+      # A non-instanced blendshape mesh must animate on the default --next loader.
+      # Morph used to be built only for instanced prototypes, so a plain
+      # SkelRoot -> Mesh blendshape rendered frozen at its rest pose. Headless
+      # (Vulkan); skips without a device.
+      add_test(
+        NAME tusdview-noninstanced-blendshape
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-noninstanced-blendshape.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-noninstanced-blendshape"
+        )
+      set_tests_properties(tusdview-noninstanced-blendshape
+                           PROPERTIES SKIP_RETURN_CODE 77)
+
       # Vulkan RT BLAS compaction: must shrink the acceleration structures, must
       # build ONE BLAS per prototype (not per instance), and must be image-neutral.
       add_test(
