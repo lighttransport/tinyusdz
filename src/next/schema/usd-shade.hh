@@ -160,5 +160,9 @@ bool IsPrimvarReader(const UsdPrim& shader);
 /// Get primvar name being read
 std::string GetPrimvarReaderVarname(const UsdPrim& shader);
 
+/// Stage-aware variant: additionally follows inputs:varname connections
+/// (e.g. to a Material's inputs:frame:stPrimvarName interface attribute).
+std::string GetPrimvarReaderVarname(const Stage& stage, const UsdPrim& shader);
+
 }  // namespace next
 }  // namespace tinyusdz
