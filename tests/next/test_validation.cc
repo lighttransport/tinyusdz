@@ -353,6 +353,35 @@ def Material "Mat"
         "unknown UsdPreviewSurface input warns");
 }
 
+static void test_materialx_rules() {
+  std::cout << "[shade.materialX.*]\n";
+  const std::string usda = R"(#usda 1.0
+
+def Material "BadMtlx"
+{
+    token config:mtlx:version = "2.0"
+    token outputs:mtlx:surface
+
+    def Shader "Node"
+    {
+        uniform token info:id = "ND_test_color3"
+    }
+}
+)";
+  ValidationOptions opts;
+  opts.shade = true;
+  USDValidationResult result;
+  CHECK(Validate(usda, opts, &result), "parses");
+  CHECK(CountWarnings(result, "shade.materialX.configAPI") == 1,
+        "MaterialX properties without MaterialXConfigAPI flagged");
+  CHECK(CountErrors(result, "shade.materialX.version") == 1,
+        "non-string MaterialX version flagged");
+  CHECK(CountErrors(result, "shade.material.outputConnection") == 1,
+        "unconnected MaterialX terminal flagged");
+  CHECK(CountWarnings(result, "shade.materialX.output") == 1,
+        "MaterialX shader without an output flagged");
+}
+
 static void test_lux_rules() {
   std::cout << "[lux.*]\n";
   const std::string usda = R"(#usda 1.0
@@ -472,6 +501,7 @@ int main() {
   test_geom_group_toggle();
   test_geom_primitive_and_subset();
   test_shade_rules();
+  test_materialx_rules();
   test_lux_rules();
   test_physics_rules();
   test_prim_name_and_kind();

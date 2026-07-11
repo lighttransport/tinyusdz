@@ -2006,10 +2006,16 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
 
+# Register tool-local tests added below as part of the top-level test tree.
+if(TINYUSDZ_BUILD_TESTS)
+  enable_testing()
+endif()
+
 # Tools
 if(TINYUSDZ_BUILD_TOOLS)
   add_subdirectory(tools/tusddumpcrate)
   add_subdirectory(tools/tusdzconvert)
+  add_subdirectory(tools/tusdchecker)
   # tusddiff uses the Tydra diff-and-compare API.
   if(TINYUSDZ_WITH_TYDRA)
     add_subdirectory(tools/tusddiff)
@@ -2050,9 +2056,6 @@ if(WIN32)
 endif()
 
 if(TINYUSDZ_BUILD_TESTS)
-
-  enable_testing()
-
   #
   # Standalone tester
   #

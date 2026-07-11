@@ -15,6 +15,7 @@
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -235,6 +236,37 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
     return LoadLayerFromUSDZ(resolved_path, std::string(), options, warn, err);
   }
 
+  if (ext == "mtlx") {
+    std::ifstream f(resolved_path, std::ios::binary | std::ios::ate);
+    if (!f) {
+      if (err) *err += "Failed to open MaterialX layer: " + resolved_path + "\n";
+      return nullptr;
+    }
+    const std::streamoff end = f.tellg();
+    if (end <= 0 ||
+        static_cast<uint64_t>(end) >
+            static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+      if (err) *err += "Invalid MaterialX layer size: " + resolved_path + "\n";
+      return nullptr;
+    }
+    const size_t size = static_cast<size_t>(end);
+    if (options.max_memory > 0 && size > options.max_memory) {
+      if (err) {
+        *err += "MaterialX layer exceeds max_memory: " + resolved_path + "\n";
+      }
+      return nullptr;
+    }
+    std::string data(size, '\0');
+    f.seekg(0, std::ios::beg);
+    if (!f.read(&data[0], static_cast<std::streamsize>(size))) {
+      if (err) *err += "Failed to read MaterialX layer: " + resolved_path + "\n";
+      return nullptr;
+    }
+    return LoadLayerFromMtlxMemory(
+        resolved_path, reinterpret_cast<const uint8_t *>(data.data()),
+        data.size(), warn, err);
+  }
+
   if (err) {
     *err += "Unsupported layer file format for: " + resolved_path + "\n";
   }
@@ -324,6 +356,9 @@ void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
       lb.add_property("inputs:" + input->GetName(), std::move(value));
     }
   }
+  if (!node.GetType().empty()) {
+    lb.add_property("outputs:out", Value::MakeToken(node.GetType()));
+  }
   lb.end_prim();
 }
 
@@ -357,18 +392,29 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
   for (const mtlx::MtlxMaterialPtr &mat : doc.GetMaterials()) {
     if (!mat || mat->GetName().empty()) continue;
     lb.begin_prim(mat->GetName(), "Material");
+    if (PrimSpec *prim = lb.current()) {
+      prim->meta().apiSchemas().push_back("MaterialXConfigAPI");
+    }
     if (!doc.GetVersion().empty()) {
-      lb.add_property("config:mtlx:version",
-                      Value::MakeToken(doc.GetVersion()));
+      lb.add_property("config:mtlx:version", Value(doc.GetVersion()));
     }
     if (!doc.GetColorSpace().empty()) {
-      lb.add_property("config:mtlx:colorspace",
-                      Value::MakeToken(doc.GetColorSpace()));
+      lb.add_property("config:mtlx:colorspace", Value(doc.GetColorSpace()));
     }
     if (!mat->GetSurfaceShader().empty()) {
       lb.add_relationship(
           "mtlx:surface:source",
           Path("/MaterialX/Shaders/" + mat->GetSurfaceShader()));
+    }
+    if (!mat->GetDisplacementShader().empty()) {
+      lb.add_relationship(
+          "mtlx:displacement:source",
+          Path("/MaterialX/Shaders/" + mat->GetDisplacementShader()));
+    }
+    if (!mat->GetVolumeShader().empty()) {
+      lb.add_relationship("mtlx:volume:source",
+                          Path("/MaterialX/Shaders/" +
+                               mat->GetVolumeShader()));
     }
     lb.end_prim();
   }
@@ -491,6 +537,13 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
     return LoadLayerFromMemory(key,
                                reinterpret_cast<const uint8_t *>(data.data()),
                                data.size(), warn, err, options);
+  }
+
+  if (LooksLikeMtlxXML(reinterpret_cast<const uint8_t *>(data.data()),
+                       data.size())) {
+    return LoadLayerFromMtlxMemory(
+        key, reinterpret_cast<const uint8_t *>(data.data()), data.size(), warn,
+        err);
   }
 
   LoadOptions lopts;

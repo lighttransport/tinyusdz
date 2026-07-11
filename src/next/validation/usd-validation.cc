@@ -244,7 +244,10 @@ bool IsShaderOutputName(const std::string &prop_name) {
 
 bool IsMaterialTerminalOutputName(const std::string &prop_name) {
   return prop_name == "outputs:surface" ||
-         prop_name == "outputs:displacement" || prop_name == "outputs:volume";
+         prop_name == "outputs:displacement" || prop_name == "outputs:volume" ||
+         prop_name == "outputs:mtlx:surface" ||
+         prop_name == "outputs:mtlx:displacement" ||
+         prop_name == "outputs:mtlx:volume";
 }
 
 bool IsUsdPrimvarReaderId(const std::string &shader_id) {
@@ -2668,9 +2671,13 @@ void ValidateMaterialXConfig(const PrimSpec &ps,
 
   const bool has_config_api =
       HasAppliedSchema(applied_schemas, "MaterialXConfigAPI");
-  if (has_config_property && !has_config_api) {
+  const bool has_mtlx_terminal =
+      HasProperty(ps, "outputs:mtlx:surface") ||
+      HasProperty(ps, "outputs:mtlx:displacement") ||
+      HasProperty(ps, "outputs:mtlx:volume");
+  if ((has_config_property || has_mtlx_terminal) && !has_config_api) {
     AddWarning(result, "shade.materialX.configAPI", prim_location,
-               "config:mtlx:* properties are authored without applying "
+               "MaterialX properties are authored without applying "
                "MaterialXConfigAPI");
   }
 
@@ -2680,16 +2687,24 @@ void ValidateMaterialXConfig(const PrimSpec &ps,
   }
 
   std::string version;
-  if (GetStringProperty(ps, "config:mtlx:version", &version) &&
-      (version.empty() || !StartsWith(version, "1."))) {
-    AddWarning(result, "shade.materialX.version",
-               MakePropertyLocation(prim_location, "config:mtlx:version"),
-               "MaterialX version should be a 1.x version string, but is `" +
-                   version + "`");
+  if (HasProperty(ps, "config:mtlx:version")) {
+    const std::string location =
+        MakePropertyLocation(prim_location, "config:mtlx:version");
+    if (IsRelationshipProp(ps, "config:mtlx:version") ||
+        AttrTypeNameOf(ps, "config:mtlx:version") != "string" ||
+        !GetStringProperty(ps, "config:mtlx:version", &version)) {
+      AddError(result, "shade.materialX.version", location,
+               "config:mtlx:version must be a string attribute");
+    } else if (version.empty() || !StartsWith(version, "1.")) {
+      AddWarning(result, "shade.materialX.version", location,
+                 "MaterialX version should be a 1.x version string, but is `" +
+                     version + "`");
+    }
   }
 
   std::string source_uri;
-  if (GetStringProperty(ps, "config:mtlx:sourceUri", &source_uri) &&
+  if ((GetStringProperty(ps, "config:mtlx:sourceUri", &source_uri) ||
+       GetAssetPathProperty(ps, "config:mtlx:sourceUri", &source_uri)) &&
       !source_uri.empty() && !IsMaterialXAssetPath(source_uri)) {
     AddWarning(result, "shade.materialX.sourceUri",
                MakePropertyLocation(prim_location, "config:mtlx:sourceUri"),
@@ -2704,10 +2719,67 @@ void ValidateMaterialXShader(const PrimSpec &ps, const std::string &shader_id,
     return;
   }
 
-  if (!HasProperty(ps, "outputs:surface") && !HasProperty(ps, "outputs:out")) {
+  bool has_output = false;
+  for (const PropSlot &slot : ps.properties().slots()) {
+    const std::string &prop_name = GetPropNameTable().get(slot.name_id);
+    if (StartsWith(prop_name, "outputs:")) {
+      has_output = true;
+      break;
+    }
+  }
+  if (!has_output) {
     AddWarning(result, "shade.materialX.output", prim_location,
                "MaterialX shader `" + shader_id +
-                   "` should author outputs:surface or outputs:out");
+                   "` should author at least one outputs:* port");
+  }
+}
+
+void ValidateMaterialXSynthesizedMaterial(
+    const PrimSpec &ps, const std::string &prim_location,
+    const PrimTypeByPath &prim_types, USDValidationResult *result) {
+  if (ps.type_name() != "Material" ||
+      !StartsWith(prim_location, "/MaterialX/Materials/")) {
+    return;
+  }
+
+  bool has_shader = false;
+  for (const char *rel_name : {"mtlx:surface:source",
+                               "mtlx:displacement:source",
+                               "mtlx:volume:source"}) {
+    const std::string relationship_name(rel_name);
+    if (!HasProperty(ps, relationship_name)) {
+      continue;
+    }
+    has_shader = true;
+    const std::string location =
+        MakePropertyLocation(prim_location, relationship_name);
+    if (!IsRelationshipProp(ps, relationship_name)) {
+      AddError(result, "shade.materialX.nodeReference", location,
+               relationship_name + " must be a relationship");
+      continue;
+    }
+    ValidateRelationshipTargetPaths(ps, relationship_name,
+                                    "shade.materialX.nodeReference", location,
+                                    result);
+    for (const Path &target : RelTargets(ps, relationship_name)) {
+      std::string target_prim;
+      SplitScenePathString(target.str(), &target_prim, nullptr);
+      const std::string *target_type = FindPrimType(prim_types, target_prim);
+      if (!target_type) {
+        AddError(result, "shade.materialX.nodeReference", location,
+                 "MaterialX shader target `" + target_prim +
+                     "` does not exist");
+      } else if (*target_type != "Shader" && *target_type != "NodeGraph") {
+        AddError(result, "shade.materialX.nodeReference", location,
+                 "MaterialX shader target `" + target_prim + "` has type `" +
+                     *target_type + "`");
+      }
+    }
+  }
+  if (!has_shader) {
+    AddError(result, "shade.materialX.nodeReference", prim_location,
+             "MaterialX material has no surface, displacement, or volume "
+             "shader reference");
   }
 }
 
@@ -4862,6 +4934,7 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
     if (type_name == "Shader") {
       ValidateMaterialXShader(ps, shader_id, prim_location, result);
     }
+    ValidateMaterialXSynthesizedMaterial(ps, prim_location, prim_types, result);
     ValidateMaterialXReferenceConventions(ps, prim_location, result);
   }
 
