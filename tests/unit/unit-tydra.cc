@@ -1351,6 +1351,7 @@ void tydra_material_binding_validation_test(void) {
     tydra::RenderSceneConverterEnv env(stage);
     // Strict mode: unauthored `asset:file` should propagate an error.
     env.material_config.allow_missing_asset = false;
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1397,6 +1398,7 @@ void tydra_material_binding_validation_test(void) {
 
     tydra::RenderSceneConverterEnv env(stage);
     env.scene_config.load_texture_assets = false;
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1412,6 +1414,7 @@ void tydra_material_binding_validation_test(void) {
         Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"));
 
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1429,6 +1432,7 @@ void tydra_material_binding_validation_test(void) {
         Path("/MaterialPrim/NodeGraphs/Missing", "outputs:out"));
 
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1472,6 +1476,7 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1519,6 +1524,7 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1587,6 +1593,7 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1798,6 +1805,7 @@ void tydra_texture_loader_policy_test(void) {
     env.material_config.texture_image_loader_function =
         FailingTextureImageLoader;
     env.material_config.allow_texture_load_failure = false;
+    env.material_config.strict_material_check = true;
 
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
