@@ -327,6 +327,7 @@ bool ConvertStageToSceneImpl(const tinyusdz::Stage& stage,
   env.asset_resolver.set_allow_parent_relative_paths(allowParentRelativePaths);
   env.timecode = timecode;
   env.scene_config.load_texture_assets = loadTextures;
+  env.scene_config.keep_compressed_textures = textureOptions.keepCompressed;
 
   // USDZ assets (textures, audio, ...) live *inside* the .usdz archive. Register
   // the archive's internal asset map with the resolver so embedded textures

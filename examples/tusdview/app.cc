@@ -995,6 +995,18 @@ void App::startLoadAsync(const std::string& path) {
   const bool rt = rtPath_;
   LoadOptions opts = loadOpts_;
   opts.gpuSkinning = wantsNextGpuSkinning();
+  // Populate GPU compressed-format capabilities so the CPU texture build can
+  // cap-gate `--texture-compress` (e.g. astc -> BC7 fallback on a BC-only
+  // desktop GPU). renderer_ is initialized before any load is started; caps are
+  // copied by value into `opts` here, before the worker thread launches.
+  if (renderer_) {
+    const RendererCaps& rc = renderer_->caps();
+    opts.textureOptions.caps.bc = rc.supportsBC;
+    opts.textureOptions.caps.astc = rc.supportsASTC;
+    opts.textureOptions.caps.etc2 = rc.supportsETC2;
+    opts.textureOptions.caps.bc5 = rc.supportsBC5;
+    opts.textureOptions.caps.bc6h = rc.supportsBC6H;
+  }
   if (std::isfinite(opts.timecode) && skinningRequested_ == SkinningMode::GPU) {
     opts.timecode = std::numeric_limits<double>::quiet_NaN();
   }
