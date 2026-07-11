@@ -19,18 +19,18 @@ The gaps selected for the 2026-07-11 remediation pass now have code and focused 
 |---|---|---|
 | Unicode identifiers | **Fixed** | `next` reuses TinyUSDZ's generated Unicode XID tables for UTF-8 lexing and prim-name validation. |
 | Invalid paths | **Fixed in strict mode** | `ParseOptions::strict_aousd_conformance` and `next_usdcat --aousd-strict` enforce the AOUSD §8 path grammar. Compatibility mode retains permissive legacy ingestion. |
-| Silent spline loss | **Mitigated; typed spline support remains** | Compatibility mode preserves and rewrites the complete authored `.spline` text with a warning. Strict mode fails atomically because typed evaluation and USDC type-59 support are not complete. |
-| Unsupported typed-value loss | **Mitigated** | Undecoded extension/foundational defaults are preserved as raw authored values. Strict mode rejects known unsupported normative types such as `frame4d`. |
+| Spline support | **Implemented** | Typed splines parse, evaluate (`timeSamples > spline > default`, held/linear/bezier/hermite + extrapolation + `autoEase`), and serialize to USDC 0.12 type-59; OpenUSD-differential verified. |
+| Unsupported typed-value loss | **Mitigated; `frame4d`/`opaque`/`pathExpression` now first-class** | These round-trip their authored values; other undecoded extension/foundational defaults are preserved as raw authored values, and strict mode rejects them. |
 | Recursive dictionaries | **Fixed for next composition paths** | Prim and property dictionary metadata now recursively fill missing weaker keys. |
 | Relationship list operations | **Fixed for composed target lists** | Strength-ordered opinion stacks apply explicit/prepend/append/delete/reorder operations across two or more sites and emit the resolved explicit list. |
 | Namespace ordering | **Fixed for USDA and next USDC paths** | Root, prim-child, and property order are stored, composed, applied to traversal, emitted to USDA, and transferred through Crate children fields. |
 | Schema fallback/population | **Implemented for the next-supported schema registry** | A shared compact registry supplies built-in property names and fallbacks for implemented geometry, camera, physics, and applied physics APIs. Registry breadth remains smaller than OpenUSD's generated schemas. |
 | Core value clips | **Implemented subset** | Core `AttributeEval` resolves explicit and template clip sets through a caller-supplied stage loader before schema fallback. Advanced manifest/missing-value behavior still needs the official supplemental suite. |
-| Strict versus compatibility policy | **Implemented** | USDA, USDC, composition, and evaluation expose `strict_aousd_conformance`; USDC strict reads promote lossy warnings to errors and strict writes reject raw/spline fields that Crate cannot encode. |
+| Strict versus compatibility policy | **Implemented** | USDA, USDC, composition, and evaluation expose `strict_aousd_conformance`; USDC strict reads promote lossy warnings to errors and strict writes reject raw fields that Crate cannot encode (splines now encode as type-59). |
 
-The dedicated [`test_aousd_conformance.cc`](../tests/next/test_aousd_conformance.cc) regression covers Unicode, strict paths, spline/value preservation, dictionary and multi-site relationship composition, namespace order, schema fallback/population, explicit value clips, and strict missing-loader behavior.
+The dedicated [`test_aousd_conformance.cc`](../tests/next/test_aousd_conformance.cc) regression covers Unicode, strict paths, typed spline parse/evaluate/USDC round-trip, `frame4d`/`pathExpression` values, dictionary and multi-site relationship composition, namespace order, schema fallback/population, value clips (manifest gating + bracketing interpolation), and strict missing-loader behavior.
 
-TinyUSDZ still must not claim full AOUSD Core 1.0.1 compliance. Strict rejection prevents partial or silently corrupted stages, but rejection is not format implementation compliance. The remaining blockers are typed spline parsing/evaluation and USDC 0.12 spline encoding, full foundational-type coverage, complete generated schema definitions, and the advanced value-clip cases.
+TinyUSDZ still must not claim full AOUSD Core 1.0.1 compliance. Strict rejection prevents partial or silently corrupted stages, but rejection is not format implementation compliance. Typed spline parsing/evaluation and USDC 0.12 spline encoding are now implemented (see AOUSD-FMT-001 below); the remaining blockers are full foundational-type coverage, complete generated schema definitions, and the advanced value-clip cases beyond bracketing interpolation.
 
 ## Executive conclusion
 
@@ -39,8 +39,8 @@ TinyUSDZ `next` is a substantial, security-conscious USD implementation, and its
 That conclusion is not based merely on missing OpenUSD APIs. It follows from confirmed normative behavior differences in each of the three mandatory compliance areas:
 
 - **Composed Stage Population:** the confirmed dictionary, relationship list-op, and property/child ordering differences are fixed; complete schema breadth and some specifier/field rules remain.
-- **Value Resolution:** core value clips and registry-driven fallbacks now exist for the supported subset; advanced clip behavior, full registry coverage, default-time compatibility behavior, and interpolation breadth remain.
-- **Format Implementations:** Unicode identifiers are fixed and unsupported USDA values are no longer silently lost. Typed spline support and USDC 0.12 spline values remain conformance blockers; invalid paths are rejected under strict mode.
+- **Value Resolution:** core value clips (including bracketing interpolation for `interpolateMissingClipValues`) and registry-driven fallbacks now exist for the supported subset; advanced clip behavior, full registry coverage, and default-time compatibility behavior remain.
+- **Format Implementations:** Unicode identifiers are fixed, unsupported USDA values are no longer silently lost, and typed splines (USDA parse/evaluate + USDC 0.12 type-59 codec) are implemented and OpenUSD-differential-verified. Complete foundational-type coverage remains; invalid paths are rejected under strict mode.
 
 The most urgent baseline problem was **silent semantic or authored-data loss**. The remediated paths now either preserve authored USDA text, compose the missing opinions, or fail closed under strict mode. Compatibility mode remains intentionally permissive and must not be confused with a conformance run.
 
@@ -97,9 +97,9 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 | Compliance area | Status | Principal evidence |
 |---|---|---|
 | Composed Stage Population | **Partial, improved** | Recursive dictionaries, relationship list ops, custom OR, and authored ordering are repaired; schema/specifier breadth remains. |
-| Value Resolution | **Partial, improved** | Supported schema fallbacks and core explicit/template clip lookup are implemented; advanced clips, DefaultTime compatibility, and interpolation breadth remain. |
-| USDA Format Implementation | **Partial, loss-safe** | Unicode and ordering are fixed. Compatibility mode preserves unsupported spline/value text; strict mode rejects it. Typed spline evaluation is still absent. |
-| USDC Format Implementation | **Non-conformant, fail-closed option** | Strict mode promotes ignored/dropped values to errors, but spline type 59 and reference `customData` still require implementation. |
+| Value Resolution | **Partial, improved** | Supported schema fallbacks, core explicit/template clip lookup, clip manifest gating, bracketing interpolation for missing clip values, and typed spline evaluation are implemented; advanced clips and DefaultTime compatibility remain. |
+| USDA Format Implementation | **Partial, loss-safe** | Unicode, ordering, and typed spline parse/evaluate are implemented; compatibility mode preserves other unsupported value text and strict mode rejects it. |
+| USDC Format Implementation | **Partial, fail-closed option** | Spline type 59 read/write is implemented (0.12/0.13); strict mode promotes remaining ignored/dropped values to errors; reference `customData` still requires implementation. |
 | Generic `.usd` forwarding | **Partial** | Format detection and forwarding exist; correctness inherits the selected USDA/USDC gaps. |
 | USDZ Format Implementation | **Strong, with reader caveats** | Writer uses stored ZIP32 entries, 64-byte alignment, root-first layout, no encryption, and no archive comment. Reader is deliberately more permissive, which the specification allows. |
 
@@ -107,56 +107,48 @@ AOUSD Core 1.0.1 section 4 requires exact results in three categories, not merel
 
 | AOUSD Core area | `next` assessment | Notes |
 |---|---|---|
-| Foundational data types (§6) | Partial | Broad scalar/vector/matrix/array support, but no complete `frame4d`, `opaque`, `group`, path-expression, spline, or role/fallback behavior. |
+| Foundational data types (§6) | Partial, improved | Broad scalar/vector/matrix/array support; `frame4d`, `opaque`, `pathExpression`, and typed splines now round-trip. Remaining: `group` and a generated full-type-table coverage test. |
 | Document and layer data model (§7) | Partial | Strong spec containers and metadata coverage, but unknown property fields and several normative authored fields cannot be represented losslessly. |
 | Paths and identifiers (§8) | Partial/strict-conformant subset | Unicode XID and authored ordering are implemented; strict mode validates the normative path grammar, while compatibility mode remains permissive. |
 | Asset resolution (§9) | Partial | Filesystem/package/search-path and callback resolution are useful; URI schemes, anonymous identifiers, and variable/expression substitution are not general core features. |
 | Composition (§10) | Partial | Sublayers, references, payloads, variants, inherits, specializes, relocates, cycles, and prototypes have meaningful coverage; exact field composition still differs. |
 | Composed stage population (§11) | Partial, improved | Authored ordering, recursive dictionaries, custom OR, and relationship list-op results are now represented; remaining work is schema/specifier breadth. |
-| Value resolution (§12) | Partial | List ops, supported-schema fallbacks, blocks, and core clips are improved; advanced clips, DefaultTime compatibility, forwarding, and interpolation remain. |
+| Value resolution (§12) | Partial, improved | List ops, supported-schema fallbacks, blocks, core clips (with manifest gating + bracketing interpolation), and typed spline evaluation are implemented; advanced clips, DefaultTime compatibility, and forwarding remain. |
 | Schemas (§13) | Partial | A shared registry now supplies definitions/fallbacks for next-supported schemas; it is not yet a complete generated OpenUSD/AOUSD registry. |
 | Color (§14) | Partial | Color metadata and Tydra colorspace handling exist; full normative authored/fallback semantics are not supplied by core. |
 | Collections (§15) | Partial | Data structures and validation exist, but this review did not find a complete schema/fallback-backed collection evaluation implementation. |
-| Core formats (§16) | Mixed | USDZ writer is strong; USDA and USDC have conformance-blocking gaps described below. |
+| Core formats (§16) | Mixed, improved | USDZ writer is strong; USDA and USDC now cover typed splines (type-59). Remaining USDC gap: reference `customData`. |
 
 ## Confirmed conformance findings
 
-### AOUSD-FMT-001 — Spline syntax is silently discarded (P0)
+### AOUSD-FMT-001 — Spline syntax (was silently discarded) (P0)
 
-**Remediation status:** silent loss fixed; conformance blocker remains. Compatibility loads preserve/re-emit the raw field, while strict loads reject it. Typed spline and USDC support remain the fix needed.
+**Remediation status:** implemented. Typed splines now parse, evaluate, and serialize to USDC 0.12 (type 59); OpenUSD-differential verified in both directions.
 
 **Normative area:** USDA Spline grammar, §§7.4.2.4, 12.3, 12.6, and USDC 0.12 type support.
 
-At the baseline revision, the repository fixture `tests/usda/spline_basic.usda` produced five unknown-property warnings and rewrote to an empty `Splines` prim. The remediated compatibility rewrite now retains all five fields; OpenUSD additionally gives them typed spline semantics.
+At the baseline revision, the repository fixture `tests/usda/spline_basic.usda` produced five unknown-property warnings and rewrote to an empty `Splines` prim. It now round-trips with typed spline semantics.
 
-This violates both data-model requirements and the format compatibility rule that an implementation must not simply ignore unsupported grammar. It is particularly severe because the operation reports success.
+The implementation ([`src/next/types/spline.{hh,cc}`](../src/next/types/spline.hh)) covers:
 
-The implementation evidence is consistent across layers:
+- a typed `SplineData`/`SplineKnot` model (bezier/hermite, dual-valued knots, per-knot tangents, tangent algorithms including `autoEase`, held/linear/curve interpolation, held/linear/sloped/loop extrapolation);
+- USDA parse/write of the `.spline` block, with strict mode rejecting malformed splines at parse time;
+- USDC 0.12 type-59 read/write, byte-compatible with `pxr/base/ts/binary.cpp` (0.13 bump when a knot carries a tangent algorithm);
+- spline value resolution in `AttributeEval` at the AOUSD precedence `timeSamples > spline > default`, casting to the declared `double`/`float`/`half`, with `autoEase` tangents recomputed per `pxr/base/ts/knotData.cpp`.
 
-- the USDA parser recognizes the unknown property form and skips it;
-- the core value system has no usable spline value representation;
-- Crate type identifier 59 is declared, but corresponding read/write/value behavior is not implemented;
-- value resolution has no spline evaluation path.
+**Verification:** `TestTypedSplines` in [`test_aousd_conformance.cc`](../tests/next/test_aousd_conformance.cc) (evaluate + USDC round-trip + half rounding + autoEase + declared-type preservation); OpenUSD `usdcat` opens next-written spline USDC with matching knots/tangents/extrapolation, and a pxr-authored 0.12 spline crate reads and evaluates in next.
 
-**Fix needed:**
+**Remaining:** per-knot spline customData is not retained (consumed on read); post-loop-extrapolation modes survive within next but are lost when re-opened in pxr because pxr's own 0.12 reader masks that field (a pxr limitation, not a next defect).
 
-1. Immediately make unsupported spline input a hard, source-located error in lossless load/rewrite modes.
-2. Add spline data types, curve/knot/tangent parameters, typed storage, equality, and serialization.
-3. Implement USDA parse/write and USDC 0.12 type-59 read/write.
-4. Implement spline value resolution, including extrapolation and loop behavior required by §12.6.
-5. Add OpenUSD-differential USDA and USDC round trips for every interpolation/extrapolation mode and for malformed splines.
+### AOUSD-TYPE-001 — Foundational declared values (were lost) (P0)
 
-### AOUSD-TYPE-001 — Foundational declared values can be lost (P0)
-
-**Remediation status:** silent loss fixed. Compatibility mode retains raw defaults such as `frame4d frame = identity`; strict mode rejects known unsupported normative types. First-class typed values remain incomplete.
+**Remediation status:** largely fixed. `frame4d` is a first-class `matrix4d`-role type whose authored value now round-trips through USDA and USDC; `opaque` declarations round-trip; `pathExpression` is first-class. A complete generated foundational-type coverage test is still absent.
 
 **Normative area:** §6 Foundational Data Types and format bijection.
 
-A layer containing `frame4d frame = identity`, plus `opaque` and `group` declarations, loads successfully in `next`. On rewrite, the `frame4d` declaration remains but its authored value is gone. OpenUSD retains the value. `TypeId` and the USDA type table do not provide complete representations for these normative types.
+At the baseline revision, a layer containing `frame4d frame = ...` rewrote with the declaration intact but the authored value gone. `frame4d` now preserves its 16-double value (shared `matrix4d` storage, USDC `Matrix4d` encoding); pxr reads next's `frame4d` value back byte-for-byte. `opaque` attributes round-trip as declared. `pathExpression` parses, stores, and encodes (USDC type 57, 0.10 bump).
 
-Preserving only a declared type name is not sufficient: a successful format implementation must reproduce the authored field value.
-
-**Fix needed:** add first-class representations and codecs for every AOUSD foundational type, with a generated coverage test that enumerates the specification's type table across scalar, array, default, time-sampled, dictionary, USDA, and USDC forms. Until then, reject an authored value whose declared type has no decoder.
+**Remaining:** a generated coverage test enumerating the specification's full type table across scalar/array/default/time-sampled/dictionary/USDA/USDC forms; `group` and any other undecoded foundational types are still preserved only as raw text (strict mode rejects them).
 
 ### AOUSD-USDA-001 — Valid Unicode identifiers are rejected (P1)
 
