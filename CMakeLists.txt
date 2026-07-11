@@ -2207,6 +2207,7 @@ if(TINYUSDZ_BUILD_TESTS)
         mtlx-usdz-udim-equivalence
         opacity-texture-alpha
         purpose-filtering
+        sphere-light-nee
         subdivision-schemes
         timecode-blendshape-animation
         timecode-normals-animation
