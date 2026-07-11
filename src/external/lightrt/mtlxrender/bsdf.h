@@ -42,4 +42,13 @@ VolumeMedium transmission_medium(const OpenPBRParams *p);
  * Returns f (rgb); *pdf_out gets the mixture pdf for sampling wi. */
 v3 bsdf_eval(const OpenPBRParams *p, v3 N, v3 wo, v3 wi, float *pdf_out);
 
+/* Same, but reports the diffuse and specular halves separately (either out
+ * pointer may be NULL; the return value is still their sum, and *pdf_out is the
+ * same mixture pdf). A split-sum IBL weighs the diffuse lobe against the
+ * irradiance map and the specular lobe against the prefiltered reflection map --
+ * two different environments -- so it must not be handed the sum, or each lobe
+ * gets counted against both. Sheen and coat are grouped with the specular half. */
+v3 bsdf_eval_lobes(const OpenPBRParams *p, v3 N, v3 wo, v3 wi, v3 *out_diffuse,
+                   v3 *out_specular, float *pdf_out);
+
 #endif /* MTLXRENDER_BSDF_H_ */
