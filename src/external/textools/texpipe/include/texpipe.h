@@ -277,17 +277,41 @@ typedef struct tp_ktx2_image {
     int num_levels;
     int num_faces;           /* 1 (2D) or 6 (cube)                             */
     int num_layers;          /* 0 or 1 = non-array                             */
-    uint32_t supercompression; /* only 0 (none) is supported                   */
+    uint32_t supercompression; /* 0 = none, 2 = Zstd (via tp_ktx2_read_zstd)    */
     tp_ktx2_level levels[TP_KTX2_MAX_LEVELS]; /* level 0 = largest             */
+    /* Internal: allocation backing the decompressed levels for a supercompressed
+     * read (NULL for a zero-copy scheme-0 read). Release with tp_ktx2_image_free. */
+    void *_owned;
 } tp_ktx2_image;
 
 /* Parse a KTX2 blob (identifier + header + level index + DFD). Fills `out` with
  * pointers into `data` (no allocation). Supports supercompressionScheme 0 only
- * (Zstd/BasisLZ return TP_ERROR_UNSUPPORTED). vk_format == 0 is interpreted as
- * the uni intermediate (is_uni = 1). Returns TP_ERROR_INVALID_ARGUMENT on a bad
- * identifier / out-of-bounds level index, TP_ERROR_UNSUPPORTED for an
- * unrecognized vk_format or supercompression. */
+ * (Zstd/BasisLZ return TP_ERROR_UNSUPPORTED — use tp_ktx2_read_zstd for Zstd).
+ * vk_format == 0 is interpreted as the uni intermediate (is_uni = 1). Returns
+ * TP_ERROR_INVALID_ARGUMENT on a bad identifier / out-of-bounds level index,
+ * TP_ERROR_UNSUPPORTED for an unrecognized vk_format or supercompression. */
 tp_result tp_ktx2_read(const uint8_t *data, size_t size, tp_ktx2_image *out);
+
+/* Zstd decompressor callback: decompress `src_size` bytes at `src` into `dst`
+ * (capacity `dst_cap`); return the number of bytes written, or 0 on error.
+ * Wrap the host's ZSTD_decompress (this library carries no zstd dependency). */
+typedef size_t (*tp_zstd_decompress_fn)(void *user, uint8_t *dst, size_t dst_cap,
+                                        const uint8_t *src, size_t src_size);
+
+/* Like tp_ktx2_read, but also supports supercompressionScheme 2 (Zstd) when
+ * `zdec` is non-NULL: each level's compressed payload is decompressed into a
+ * single buffer allocated with `a` (tir_allocator; NULL = malloc). On success
+ * with a Zstd input, `out->_owned` holds that buffer and MUST be released with
+ * tp_ktx2_image_free(a, out); the level `data` pointers alias it. For scheme 0
+ * this is identical to tp_ktx2_read (zero-copy, `_owned` == NULL). Returns
+ * TP_ERROR_UNSUPPORTED for scheme 2 when zdec is NULL, or for BasisLZ. */
+tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
+                            const tir_allocator *a, tp_zstd_decompress_fn zdec,
+                            void *user, tp_ktx2_image *out);
+
+/* Release the buffer allocated by a supercompressed tp_ktx2_read_zstd (no-op
+ * when `_owned` is NULL). Use the same allocator passed to the read. */
+void tp_ktx2_image_free(const tir_allocator *a, tp_ktx2_image *img);
 
 /* Decode one level of a parsed KTX2 to RGBA8 (width*height*4 bytes, tightly
  * packed, top-to-bottom). Handles the tinyexr-native decodable set: uni,

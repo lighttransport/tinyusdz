@@ -1181,6 +1181,78 @@ static void test_ktx2_read_roundtrip(void) {
     printf("  ktx2 read + decode (bc7 / astc / uni) + transcode: ok\n");
 }
 
+/* Identity "decompressor": the scheme-2 payloads in this test are stored
+ * uncompressed, so decompression is a bounds-checked memcpy. Exercises the
+ * tp_ktx2_read_zstd allocation / per-level callback path without a real zstd. */
+static size_t passthrough_zdec(void *user, uint8_t *dst, size_t dst_cap,
+                               const uint8_t *src, size_t src_size) {
+    (void)user;
+    if (src_size > dst_cap) return 0;
+    memcpy(dst, src, src_size);
+    return src_size;
+}
+
+static void test_ktx2_zstd_scheme(void) {
+    tir_image_view v;
+    tp_options opt;
+    uint8_t *ref = make_gradient(64, 64);
+    uint8_t *ktx = NULL, *sc2 = NULL, *dec = NULL;
+    size_t ktx_n = 0;
+    tp_ktx2_image img;
+    const size_t npix = 64u * 64u;
+    view_u8(&v, ref, 64, 64);
+    dec = (uint8_t *)malloc(npix * 4u);
+
+    /* A scheme-0 BC7 KTX2 whose levels happen to be "stored uncompressed" is a
+     * valid scheme-2 stream for a passthrough decompressor: byteLength ==
+     * uncompressedByteLength already, so only the scheme field must change. */
+    tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_BC7);
+    opt.container = TP_CONTAINER_KTX2;
+    CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)), "process bc7 ktx2");
+    sc2 = (uint8_t *)malloc(ktx_n);
+    memcpy(sc2, ktx, ktx_n);
+    sc2[44] = 2; sc2[45] = 0; sc2[46] = 0; sc2[47] = 0;  /* supercompression = Zstd */
+
+    /* Plain tp_ktx2_read must refuse a supercompressed stream. */
+    CHECK(tp_ktx2_read(sc2, ktx_n, &img) == TP_ERROR_UNSUPPORTED,
+          "scheme 2 rejected without a decompressor");
+
+    /* With a decompressor it parses, owns a buffer, and decodes identically. */
+    CHECK(TP_OK(tp_ktx2_read_zstd(sc2, ktx_n, NULL, passthrough_zdec, NULL, &img)),
+          "read scheme-2 with passthrough zdec");
+    CHECK(img.supercompression == 2u && img._owned != NULL, "scheme 2 owns buffer");
+    CHECK(img.codec == TP_CODEC_BC7 && img.num_levels == 7, "scheme 2 header");
+    CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)), "decode sc2 l0");
+    {
+        double p = psnr_rgba(ref, dec, npix);
+        printf("    scheme-2(Zstd path) read+decode level0 PSNR=%.2f dB\n", p);
+        CHECK(p >= 30.0, "scheme-2 decode PSNR >= 30 dB");
+    }
+    tp_ktx2_image_free(NULL, &img);
+    CHECK(img._owned == NULL, "image_free clears owned buffer");
+
+    /* A truncated compressed payload (decompressor returns short) is rejected. */
+    {
+        uint64_t off = rd_u64(sc2 + 80);
+        uint64_t len = rd_u64(sc2 + 88);
+        /* Corrupt level-0 byteLength so off+clen overflows the file. */
+        uint8_t save[8];
+        memcpy(save, sc2 + 88, 8);
+        sc2[88] = 0xFF; sc2[89] = 0xFF; sc2[90] = 0xFF; sc2[91] = 0xFF;
+        CHECK(tp_ktx2_read_zstd(sc2, ktx_n, NULL, passthrough_zdec, NULL, &img) ==
+                  TP_ERROR_INVALID_ARGUMENT,
+              "reject scheme-2 out-of-bounds compressed length");
+        memcpy(sc2 + 88, save, 8);
+        (void)off; (void)len;
+    }
+
+    tp_free(NULL, ktx);
+    free(sc2);
+    free(dec);
+    free(ref);
+    printf("  ktx2 scheme-2 (Zstd) read via decompressor callback: ok\n");
+}
+
 int main(void) {
     printf("texpipe unit tests\n");
     test_octa_seam();
@@ -1201,6 +1273,7 @@ int main(void) {
     test_alpha_coverage();
     test_containers();
     test_ktx2_read_roundtrip();
+    test_ktx2_zstd_scheme();
     test_cube_seam_fixup();
     test_cube_split();
     test_cube_container();

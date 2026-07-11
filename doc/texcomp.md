@@ -81,8 +81,11 @@ RGBA8 via the texpipe reader:
 - The reader validates the level index against the file size and each level's
   declared byte length against its block geometry (rejects crafted/truncated
   files).
-- Only `supercompressionScheme = 0` (uncompressed) is supported; Zstd (scheme 2)
-  and BasisLZ (scheme 1) are not yet handled.
+- `supercompressionScheme = 0` (uncompressed) and `2` (Zstd) are supported —
+  real-world KTX2 (esp. UASTC) is usually Zstd-supercompressed. Zstd support
+  requires `TINYUSDZ_WITH_ZSTD_COMPRESSION` (on by default); the reader
+  decompresses each level via the vendored ZSTD. BasisLZ (scheme 1) is not
+  handled.
 
 Because the loader decodes to a normal RGBA8 `Image`, every existing consumer
 works unchanged: **tusdrender** (a software path tracer) consumes `.ktx2` for
@@ -182,7 +185,7 @@ The page reports the detected caps, the chosen GPU format, and the VRAM saving
 
 - **HDR compressed** decode-to-EXR (BC6H / ASTC-HDR); BC6H is the reliable HDR
   GPU-upload target.
-- **KTX2 Zstd** supercompression (scheme 2) in the reader/writer.
+- **KTX2 Zstd** supercompression on the *writer* side (reading is supported).
 - **Basis Universal / `KHR_texture_basisu`** interop (ETC1S/UASTC) for glTF and
   three.js `KTX2Loader` — the "Basis later" seam; the current pipeline is
   intentionally Basis-free.
