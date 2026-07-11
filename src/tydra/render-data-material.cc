@@ -20,6 +20,9 @@
 // KTX2 reader for the keep-compressed texture path (RenderSceneConverterConfig::
 // keep_compressed_textures). Pulls in texcomp.h too.
 #include "texpipe.h"
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#include "external/zstd.h"  // ZSTD_decompress for supercompressionScheme 2
+#endif
 #endif
 #include "io-util.hh"
 #include "linear-algebra.hh"
@@ -1978,6 +1981,15 @@ bool RenderSceneConverter::GetOrCreateDefaultMaterial(
 #if defined(TINYUSDZ_WITH_TEXTOOLS)
 namespace {
 
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+// KTX2 Zstd (supercompressionScheme 2) decompressor for tp_ktx2_read_zstd.
+static size_t KTX2ZstdDecompress(void * /*user*/, uint8_t *dst, size_t dst_cap,
+                                 const uint8_t *src, size_t src_size) {
+  const size_t r = ZSTD_decompress(dst, dst_cap, src, src_size);
+  return ZSTD_isError(r) ? 0u : r;
+}
+#endif
+
 // Case-insensitive ".ktx2" suffix test.
 static bool EndsWithKtx2(const std::string &s) {
   if (s.size() < 5) return false;
@@ -2026,16 +2038,31 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
     return false;
   }
   tp_ktx2_image k;
-  if (!TP_OK(tp_ktx2_read(asset.data(), asset.size(), &k))) {
+  // Handles uncompressed (scheme 0) and, where zstd is available, Zstd (scheme
+  // 2) KTX2; the reader owns any decompressed buffer, released via
+  // tp_ktx2_image_free below.
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+  const tp_result kr = tp_ktx2_read_zstd(asset.data(), asset.size(), nullptr,
+                                         &KTX2ZstdDecompress, nullptr, &k);
+#else
+  const tp_result kr = tp_ktx2_read(asset.data(), asset.size(), &k);
+#endif
+  if (!TP_OK(kr)) {
     if (err) (*err) += "keep-compressed: tp_ktx2_read failed.\n";
     return false;
   }
-  if (k.num_faces != 1 || k.num_layers > 1) return false;  // 2D non-array only
+  if (k.num_faces != 1 || k.num_layers > 1) {  // 2D non-array only
+    tp_ktx2_image_free(nullptr, &k);
+    return false;
+  }
   const TextureBlockFormat bf = Ktx2ToBlockFormat(k);
-  if (bf == TextureBlockFormat::None) return false;
+  if (bf == TextureBlockFormat::None) {
+    tp_ktx2_image_free(nullptr, &k);
+    return false;
+  }
   // Store every mip level, largest-first (level 0 .. level N-1), tightly packed.
   // A GPU consumer re-derives per-level sizes from the block geometry + level
-  // dimensions (each level's byteLength was validated by tp_ktx2_read).
+  // dimensions (each level's byteLength was validated by the reader).
   size_t total = 0;
   for (int l = 0; l < k.num_levels; ++l) total += k.levels[l].size;
   out_bytes->clear();
@@ -2044,6 +2071,7 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
     const tp_ktx2_level &lv = k.levels[l];
     out_bytes->insert(out_bytes->end(), lv.data, lv.data + lv.size);
   }
+  tp_ktx2_image_free(nullptr, &k);  // blocks copied into out_bytes
   texImage->blockFormat = bf;
   texImage->blockWidth = k.block_w;
   texImage->blockHeight = k.block_h;

@@ -293,7 +293,32 @@ static tp_result tp_from_tc(tc_result r) {
 static const uint8_t tp_ktx2_id[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
                                        0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
 
+/* Tightly-packed byte size of one mip level for the parsed image's format;
+ * used to reject crafted files whose declared dimensions exceed the payload. */
+static uint64_t tp_ktx2_level_expected(const tp_ktx2_image *img, uint32_t w,
+                                       uint32_t h) {
+    uint64_t bw = ((uint64_t)w + (uint64_t)img->block_w - 1u) / (uint64_t)img->block_w;
+    uint64_t bh = ((uint64_t)h + (uint64_t)img->block_h - 1u) / (uint64_t)img->block_h;
+    uint64_t e = bw * bh * (uint64_t)img->block_bytes;
+    if ((uint64_t)img->num_faces > 1u) e *= (uint64_t)img->num_faces;
+    if (img->num_layers > 1) e *= (uint64_t)img->num_layers;
+    return e;
+}
+
 tp_result tp_ktx2_read(const uint8_t *data, size_t size, tp_ktx2_image *out) {
+    return tp_ktx2_read_zstd(data, size, NULL, NULL, NULL, out);
+}
+
+void tp_ktx2_image_free(const tir_allocator *a, tp_ktx2_image *img) {
+    if (img && img->_owned) {
+        tp_dealloc(a, img->_owned);
+        img->_owned = NULL;
+    }
+}
+
+tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
+                            const tir_allocator *a, tp_zstd_decompress_fn zdec,
+                            void *user, tp_ktx2_image *out) {
     uint32_t vk, layer_count, face_count, level_count, scheme;
     int nlev, l;
     if (!data || !out) return TP_ERROR_INVALID_ARGUMENT;
@@ -309,7 +334,9 @@ tp_result tp_ktx2_read(const uint8_t *data, size_t size, tp_ktx2_image *out) {
     level_count = tp_rd_u32(data + 40);
     scheme = tp_rd_u32(data + 44);
     out->supercompression = scheme;
-    if (scheme != 0u) return TP_ERROR_UNSUPPORTED; /* Zstd/BasisLZ deferred */
+    if (scheme == 1u) return TP_ERROR_UNSUPPORTED;          /* BasisLZ */
+    if (scheme == 2u && !zdec) return TP_ERROR_UNSUPPORTED; /* need a decompressor */
+    if (scheme != 0u && scheme != 2u) return TP_ERROR_UNSUPPORTED;
 
     nlev = level_count ? (int)level_count : 1; /* 0 = "generate", treat as 1 */
     if (nlev > TP_KTX2_MAX_LEVELS) return TP_ERROR_UNSUPPORTED;
@@ -339,31 +366,67 @@ tp_result tp_ktx2_read(const uint8_t *data, size_t size, tp_ktx2_image *out) {
         out->block_bytes = d.block_bytes;
     }
 
-    for (l = 0; l < nlev; ++l) {
-        const uint8_t *e = data + 80u + (size_t)l * 24u;
-        uint64_t off = tp_rd_u64(e + 0);
-        uint64_t len = tp_rd_u64(e + 8);
-        uint32_t w = out->width >> l, h = out->height >> l;
-        uint64_t bw, bh, expected;
-        if (off > size || len > (uint64_t)size - off)
-            return TP_ERROR_INVALID_ARGUMENT; /* out-of-bounds level */
-        if (!w) w = 1u;
-        if (!h) h = 1u;
-        /* Guard against a header that claims dimensions the level payload can't
-         * cover: a decoder reads block_count(w,h) * block_bytes from the level,
-         * so len must be at least that (prevents OOB reads on crafted files). */
-        bw = ((uint64_t)w + (uint64_t)out->block_w - 1u) / (uint64_t)out->block_w;
-        bh = ((uint64_t)h + (uint64_t)out->block_h - 1u) / (uint64_t)out->block_h;
-        expected = bw * bh * (uint64_t)out->block_bytes;
-        if ((uint64_t)out->num_faces > 1u) expected *= (uint64_t)out->num_faces;
-        if (out->num_layers > 1) expected *= (uint64_t)out->num_layers;
-        if (len < expected) return TP_ERROR_INVALID_ARGUMENT; /* truncated level */
-        out->levels[l].data = data + (size_t)off;
-        out->levels[l].size = (size_t)len;
-        out->levels[l].width = w;
-        out->levels[l].height = h;
+    if (scheme == 0u) {
+        /* Zero-copy: level `data` pointers alias the input. */
+        for (l = 0; l < nlev; ++l) {
+            const uint8_t *e = data + 80u + (size_t)l * 24u;
+            uint64_t off = tp_rd_u64(e + 0);
+            uint64_t len = tp_rd_u64(e + 8);
+            uint32_t w = out->width >> l, h = out->height >> l;
+            if (!w) w = 1u;
+            if (!h) h = 1u;
+            if (off > size || len > (uint64_t)size - off)
+                return TP_ERROR_INVALID_ARGUMENT; /* out-of-bounds level */
+            if (len < tp_ktx2_level_expected(out, w, h))
+                return TP_ERROR_INVALID_ARGUMENT; /* truncated level */
+            out->levels[l].data = data + (size_t)off;
+            out->levels[l].size = (size_t)len;
+            out->levels[l].width = w;
+            out->levels[l].height = h;
+        }
+        return TP_SUCCESS;
     }
-    return TP_SUCCESS;
+
+    /* scheme == 2 (Zstd): decompress every level into one owned buffer. */
+    {
+        uint64_t total = 0;
+        uint8_t *owned;
+        size_t cursor = 0;
+        for (l = 0; l < nlev; ++l)
+            total += tp_rd_u64(data + 80u + (size_t)l * 24u + 16u);
+        if (total == 0u || total > (uint64_t)(size_t)-1)
+            return TP_ERROR_INVALID_ARGUMENT;
+        owned = (uint8_t *)tp_alloc(a, (size_t)total);
+        if (!owned) return TP_ERROR_OUT_OF_MEMORY;
+        for (l = 0; l < nlev; ++l) {
+            const uint8_t *e = data + 80u + (size_t)l * 24u;
+            uint64_t off = tp_rd_u64(e + 0);
+            uint64_t clen = tp_rd_u64(e + 8);
+            uint64_t ulen = tp_rd_u64(e + 16);
+            uint32_t w = out->width >> l, h = out->height >> l;
+            size_t got;
+            if (!w) w = 1u;
+            if (!h) h = 1u;
+            if (off > size || clen > (uint64_t)size - off ||
+                ulen < tp_ktx2_level_expected(out, w, h)) {
+                tp_dealloc(a, owned);
+                return TP_ERROR_INVALID_ARGUMENT;
+            }
+            got = zdec(user, owned + cursor, (size_t)ulen, data + (size_t)off,
+                       (size_t)clen);
+            if (got != (size_t)ulen) {
+                tp_dealloc(a, owned);
+                return TP_ERROR_INVALID_ARGUMENT;
+            }
+            out->levels[l].data = owned + cursor;
+            out->levels[l].size = (size_t)ulen;
+            out->levels[l].width = w;
+            out->levels[l].height = h;
+            cursor += (size_t)ulen;
+        }
+        out->_owned = owned;
+        return TP_SUCCESS;
+    }
 }
 
 tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
