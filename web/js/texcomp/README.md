@@ -12,7 +12,7 @@ Pages: `../texcomp.html` + `../texcomp.js`. WASM: this directory.
 ## Build the WASM module (once)
 
 ```sh
-source /mnt/disk1/work/emsdk/emsdk_env.sh   # or your emscripten env
+source /path/to/emsdk/emsdk_env.sh          # activate emscripten
 bash build.sh                                # -> texcomp_web.mjs + texcomp_web.wasm
 ```
 

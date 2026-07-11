@@ -127,6 +127,8 @@ directly instead of decoding to RGBA8 and re-encoding:
 
 ```
 tusdview <scene> --texture-keep-compressed on
+# runnable example (a 64x64 uni KTX2 with a full mip chain):
+tusdview models/ktx2-uni-plane.usda --texture-keep-compressed on
 ```
 
 - Core/tydra loads the `.ktx2` block payload without decoding
