@@ -11,20 +11,35 @@ namespace next {
 
 namespace {
 
-// Resolve a relative prim/property path (../Sibling, ./Child, Child.attr)
-// against the owning prim's absolute path. Crate files never hold relative
-// paths, and downstream lookups are absolute-only — resolve at parse time
-// (pxr does the same when building SdfPaths).
+// Resolve a relative prim/property path (../Sibling, ./Child, Child.attr,
+// .prop, ..) against the owning prim's absolute path. Crate files never
+// hold relative paths, and downstream lookups are absolute-only — resolve
+// at parse time (pxr does the same when building SdfPaths).
 std::string ResolveRelativeTargetPath(const ::tinyusdz::next::PrimSpec* prim,
                                       const std::string& target) {
   if (target.empty() || target[0] == '/' || !prim) return target;
   std::string base = prim->path().str();
+  // Variant-option content parses into an internal layer rooted at
+  // /__self__; the final host path is unknown until composition, so keep
+  // the authored relative form (GraftSubtree remaps it on selection) —
+  // resolving here would leak the sentinel into written layers.
+  if (base.rfind("/__self__", 0) == 0) return target;
+  // ".prop" / "." anchor forms: a leading dot NOT followed by '.' or '/'
+  // names a property of the anchor prim itself.
+  if (target[0] == '.') {
+    if (target.size() == 1) return base;                      // "."
+    if (target[1] != '.' && target[1] != '/') return base + target;  // ".prop"
+  }
   std::string rest = target;
   while (!rest.empty()) {
-    if (rest.rfind("../", 0) == 0) {
+    const bool bare_up = (rest == "..");
+    if (bare_up || rest.rfind("../", 0) == 0) {
+      if (base.empty() || base == "/") return target;  // past root: keep authored
       const size_t up = base.rfind('/');
       base = (up == std::string::npos || up == 0) ? "/" : base.substr(0, up);
-      rest = rest.substr(3);
+      rest = bare_up ? std::string() : rest.substr(3);
+    } else if (rest == ".") {
+      rest.clear();
     } else if (rest.rfind("./", 0) == 0) {
       rest = rest.substr(2);
     } else {
@@ -360,7 +375,8 @@ bool AsciiParser::Impl::ParseAttribute() {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
           std::string p;
           if (lexer_->expect(TokenType::PathRef, p) && cur) {
-            cur->add_connection(attr_name, Path(p));
+            cur->add_connection(attr_name,
+                                Path(ResolveRelativeTargetPath(cur, p)));
           }
           Match(TokenType::Comma);
         }

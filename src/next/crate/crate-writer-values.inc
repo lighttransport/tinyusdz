@@ -469,6 +469,24 @@
           }
           break;
         }
+        case TypeId::UInt2:
+        case TypeId::UInt3:
+        case TypeId::UInt4: {
+          // UInt-vector arrays share the Vec*i crate encoding (same 32-bit
+          // lanes, bit-exact; declared type name restores uintN). Without
+          // this case they fell into `default:` and were written as EMPTY.
+          const std::vector<uint32_t>* arr = val.as_uint_array();
+          const uint32_t comps = ArrayComps(type_id);
+          if (arr && comps && arr->size() % comps == 0) {
+            count = arr->size() / comps;
+            if (!copy_counted_payload(arr->size(), arr->data(),
+                                      sizeof(uint32_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            std::memcpy(arr_data.data(), &count, 8);
+          }
+          break;
+        }
         // Vector / quat / matrix arrays: flat float or double buffer. comps =
         // scalars per element (Vec2f=2, Vec4f/Quatf=4, Matrix4d=16, ...).
         case TypeId::Quatf: {

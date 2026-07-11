@@ -735,7 +735,38 @@ void Value::retag_role(TypeId new_type) {
     TypeId c = GetComponentType(t);
     return c == TypeId::Invalid ? t : c;
   };
-  if (comp(type_id_) != comp(new_type)) return;
+  // Signed<->unsigned 32-bit int lanes: the crate encodes uint2/3/4 as the
+  // Vec*i twin, so the reader must be able to restore uintN from the
+  // declared type name. Without this, `uint3 v = (...,4294967295)` read
+  // back Int3-typed and printed a negative lane that fails re-parse. Array
+  // storage is a distinct template instantiation per element type, so the
+  // buffer is REBUILT (bit-exact int32<->uint32) rather than reinterpreted.
+  const TypeId oldc = comp(type_id_);
+  const TypeId newc = comp(new_type);
+  if (oldc != newc) {
+    const bool int_uint_pair =
+        (oldc == TypeId::Int && newc == TypeId::UInt) ||
+        (oldc == TypeId::UInt && newc == TypeId::Int);
+    if (!int_uint_pair) return;
+    if (GetComponentCount(type_id_) != GetComponentCount(new_type)) return;
+    if (is_array_) {
+      ensure_materialized();
+      ArrayHandle& h = *ArraySlot(storage_);
+      if (oldc == TypeId::Int) {
+        auto* st = static_cast<IntArrayStorage*>(h.get());
+        std::vector<uint32_t> u(st->data.begin(), st->data.end());
+        h = std::make_shared<UIntArrayStorage>(std::move(u));
+      } else {
+        auto* st = static_cast<UIntArrayStorage*>(h.get());
+        std::vector<int32_t> i(st->data.begin(), st->data.end());
+        h = std::make_shared<IntArrayStorage>(std::move(i));
+      }
+    } else if (GetTypeSize(type_id_) != GetTypeSize(new_type)) {
+      return;  // SBO scalar/vector: same byte width required (it is, 4/lane)
+    }
+    type_id_ = new_type;
+    return;
+  }
   if (GetComponentCount(type_id_) != GetComponentCount(new_type)) return;
   if (!is_array_ && GetTypeSize(type_id_) != GetTypeSize(new_type)) return;
   type_id_ = new_type;
@@ -1578,7 +1609,7 @@ Value LerpValue(const Value& a, const Value& b, double t) {
   // arrays and scalars). This function used to HOLD all of these, so array
   // timeSamples queried between keys snapped to the earlier sample.
   if (a.is_array() || a.type_id() == TypeId::Quatf ||
-      a.type_id() == TypeId::Quatd) {
+      a.type_id() == TypeId::Quatd || a.type_id() == TypeId::TimeCode) {
     Value r = TimeInterpolator::InterpolateValues(a, b, t);
     return (r.type_id() == TypeId::Invalid) ? a : r;
   }

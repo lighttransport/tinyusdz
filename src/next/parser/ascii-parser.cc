@@ -96,7 +96,16 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
             raw[pos] == '\n')) {
       pos++;
     }
-    if (pos + 8 > length || std::memcmp(raw + pos, "#usda 1.", 8) != 0) {
+    bool ok = (pos + 5 <= length) && std::memcmp(raw + pos, "#usda", 5) == 0;
+    if (ok) {
+      pos += 5;
+      size_t ws = pos;
+      while (ws < length && (raw[ws] == ' ' || raw[ws] == '\t')) ws++;
+      // Require whitespace then a version digit ("#usda  1.0" is valid —
+      // the legacy parser accepts arbitrary spacing here).
+      ok = (ws > pos) && ws < length && raw[ws] >= '0' && raw[ws] <= '9';
+    }
+    if (!ok) {
       AddError("Missing or invalid '#usda 1.0' header");
       return false;
     }

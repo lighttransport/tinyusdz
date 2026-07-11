@@ -17,6 +17,14 @@ namespace next {
 // ============================================================
 
 bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
+  // VtArrayEdit reps (crate 0.14): not supported — without this check the
+  // rep masquerades as a scalar of the element type and reads the edit
+  // tuple header as the value (silent corruption).
+  if (rep.is_array_edit()) {
+    AddWarning("VtArrayEdit values are not supported; value dropped");
+    return false;
+  }
+
   CrateTypeId type_id = rep.type_id();
 
   if (rep.is_array()) {

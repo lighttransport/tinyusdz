@@ -1809,6 +1809,84 @@ void test_roundtrip_writer_audit_cluster() {
   assert(ids && "uint3 value must survive the crate roundtrip");
   const std::string* tn = p->property_type_name("ids");
   assert(tn && *tn == "uint3");
+  // Scalar lanes are bit-exact and stay UNSIGNED: a lane >= 2^31 used to
+  // read back Int3-typed and print as a negative (unparseable) literal.
+  {
+    Layer lu;
+    LayerBuilder bu(lu);
+    bu.begin_prim("U", "Scope");
+    {
+      uint32_t v[3] = {1, 2, 4294967295u};
+      bu.current()->add_property("sv", Value::MakeFromRaw(TypeId::UInt3, v), 0);
+      bu.current()->set_property_type_name("sv", "uint3");
+    }
+    {
+      // uint3[] ARRAYS previously hit the writer's default case and were
+      // silently written as EMPTY arrays.
+      std::vector<uint32_t> flat = {1, 2, 3, 4, 5, 4294967295u};
+      bu.current()->add_property(
+          "av", Value::MakeUIntCompArray(std::move(flat), TypeId::UInt3, 3), 0);
+      bu.current()->set_property_type_name("av", "uint3[]");
+    }
+    bu.end_prim();
+    bu.finalize();
+    std::vector<uint8_t> bufu;
+    CrateWriter wu;
+    assert(wu.WriteLayerToMemory(bufu, lu).success);
+    CrateReader ru;
+    CrateReadResult rru = ru.Read(bufu.data(), bufu.size());
+    assert(rru.success);
+    const PrimSpec* up = rru.stage.GetRootLayer()->prim_at_path("/U");
+    assert(up);
+    const Value* sv = up->property_value("sv");
+    assert(sv && sv->type_id() == TypeId::UInt3);
+    size_t nb = 0;
+    const uint8_t* raw = sv->raw_bytes(&nb);
+    assert(raw && nb == 12);
+    uint32_t lanes[3];
+    std::memcpy(lanes, raw, 12);
+    assert(lanes[0] == 1 && lanes[1] == 2 && lanes[2] == 4294967295u);
+    const Value* av = up->property_value("av");
+    assert(av && av->is_array());
+    assert(av->array_size() == 2 && "uint3[] must not come back empty");
+    assert(av->type_id() == TypeId::UInt3);
+    const std::vector<uint32_t>* ua = av->as_uint_array();
+    assert(ua && ua->size() == 6 && (*ua)[5] == 4294967295u);
+  }
+
+  // Explicit-clear must survive next's OWN crate writer (it used to emit
+  // 0x03 + a zero-item run, which re-read as a no-opinion listop).
+  {
+    Layer lc;
+    LayerBuilder bc(lc);
+    bc.begin_prim("C", "Scope");
+    {
+      ArcEdit& e = bc.current()->meta().ensure_arc_edits().references;
+      e = ArcEdit();
+      e.authored = true;  // `references = None`
+    }
+    {
+      ArcEdit& e = bc.current()->meta().ensure_arc_edits().inherits;
+      e = ArcEdit();
+      e.authored = true;  // `inherits = None`
+    }
+    bc.end_prim();
+    bc.finalize();
+    std::vector<uint8_t> bufc;
+    CrateWriter wc;
+    assert(wc.WriteLayerToMemory(bufc, lc).success);
+    CrateReader rc;
+    CrateReadResult rrc = rc.Read(bufc.data(), bufc.size());
+    assert(rrc.success);
+    const PrimSpec* cp = rrc.stage.GetRootLayer()->prim_at_path("/C");
+    assert(cp);
+    const ArcListOpEdits* ed = cp->meta().arc_edits();
+    assert(ed && "explicit-clear must survive next's own usdc rewrite");
+    assert(ed->references.authored && ed->references.is_explicit);
+    assert(cp->meta().references.empty());
+    assert(ed->inherits.authored && ed->inherits.is_explicit);
+    assert(cp->meta().inherits.empty());
+  }
 
   // Full PropMeta round-trip (previously only interpolation/colorSpace/
   // elementSize/customData survived; relationships lost ALL PropMeta).

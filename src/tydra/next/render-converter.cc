@@ -1729,6 +1729,29 @@ Float4 Float4FromArray(const float v[4]) {
   return Float4(v[0], v[1], v[2], v[3]);
 }
 
+// First bound material path whose target actually resolves to a Material,
+// walking the purpose order (preview, all-purpose, full). A dangling
+// purpose-specific rel must fall through to the weaker-purpose rel on the
+// SAME prim, not reject the prim (GetBoundMaterialPath returns only the
+// first authored rel).
+std::string FirstValidBoundMaterialPath(const Stage& stage,
+                                        const ::tinyusdz::next::UsdPrim& prim) {
+  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        "material:binding",
+                                        "material:binding:full"};
+  for (const char* rel : kBindingOrder) {
+    const std::vector<::tinyusdz::next::Path>* targets =
+        prim.GetRelationship(rel);
+    if (!targets || targets->empty()) continue;
+    const std::string p = (*targets)[0].str();
+    if (!p.empty() && ::tinyusdz::tydra::next::IsMaterial(
+                          stage.GetPrimAtPath(p))) {
+      return p;
+    }
+  }
+  return "";
+}
+
 std::string FindInheritedMaterialBinding(const Stage& stage,
                                          const std::string& prim_path) {
   // Walk leaf-up (descendant wins by default), but an ANCESTOR binding marked
@@ -1740,12 +1763,11 @@ std::string FindInheritedMaterialBinding(const Stage& stage,
   while (!path.empty() && path != "/") {
     UsdPrim prim = stage.GetPrimAtPath(path);
     if (prim.IsValid()) {
-      const std::string material_path = ::tinyusdz::next::GetBoundMaterialPath(prim);
-      // A binding whose target does not resolve to a Material prim must not
-      // shadow a valid ancestor binding (legacy skips unresolvable targets).
-      if (!material_path.empty() &&
-          ::tinyusdz::tydra::next::IsMaterial(
-              stage.GetPrimAtPath(material_path))) {
+      // Per-purpose validation: a dangling target must not shadow either a
+      // weaker-purpose rel on the same prim or a valid ancestor binding
+      // (legacy skips unresolvable targets).
+      const std::string material_path = FirstValidBoundMaterialPath(stage, prim);
+      if (!material_path.empty()) {
         if (leaf_binding.empty()) leaf_binding = material_path;
         if (path != prim_path && BindingIsStrongerThanDescendants(prim)) {
           strongest_ancestor = material_path;  // higher ancestors overwrite
@@ -2392,7 +2414,7 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
       if (sub_mat.empty()) {
         UsdPrim sub_prim = stage.GetPrimAtPath(sub.path);
         if (sub_prim.IsValid()) {
-          sub_mat = ::tinyusdz::next::GetBoundMaterialPath(sub_prim);
+          sub_mat = FirstValidBoundMaterialPath(stage, sub_prim);
         }
       }
       if (sub_mat.empty()) continue;
@@ -2609,7 +2631,16 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   // Skinning binding (skel:skeleton + skel:jointIndices/Weights primvars).
   {
     SkinBindingInfo sb;
-    if (GetSkinBinding(prim, &sb) && !sb.joint_indices.empty() &&
+    const bool has_skin_binding = GetSkinBinding(prim, &sb);
+    if (has_skin_binding && !sb.joint_indices.empty() &&
+        sb.joint_indices.size() != sb.joint_weights.size()) {
+      // e.g. one indexed skin primvar expanded while its pair stayed
+      // authored (malformed :indices). Skipping silently leaves the mesh in
+      // bind pose with no hint why.
+      warnings_.push_back("Mismatched skin jointIndices/jointWeights sizes on " +
+                          prim.GetPath().str() + "; mesh renders unskinned");
+    }
+    if (has_skin_binding && !sb.joint_indices.empty() &&
         sb.joint_indices.size() == sb.joint_weights.size()) {
       // UsdSkel binding inheritance: `skel:skeleton` may be authored on an
       // ancestor (typically the enclosing SkelRoot) rather than on the mesh
@@ -4771,19 +4802,40 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       const std::vector<::tinyusdz::next::Path>* nc =
           spec ? spec->connection(prop) : nullptr;
       if (!nc || nc->empty()) {
-        // Compute/adapter nodes (ND_convert_*, color adjust, ...) carry the
-        // upstream connection on an INPUT, not on the referenced output —
-        // follow the first inputs:* connection so textures behind such
-        // nodes still resolve (legacy walks intermediate node inputs too).
+        // Compute/adapter nodes (ND_convert_*, ND_mix_*, color adjust, ...)
+        // carry the upstream connection on an INPUT, not on the referenced
+        // output. Follow the PRIMARY data input — legacy is node-aware
+        // (fg for mix, in/in1 for converts/binary ops); property order is
+        // not a signal (crate flattening alphabetizes, putting `bg` before
+        // `fg`), and factor/mask inputs (mix/amount/weight) must never be
+        // promoted to the surface color.
         const std::vector<::tinyusdz::next::Path>* input_conn = nullptr;
         if (spec) {
-          for (const std::string& prop_name : hop_prim.GetPropertyNames()) {
-            if (prop_name.rfind("inputs:", 0) != 0) continue;
+          static const char* kPreferredInputs[] = {
+              "inputs:in", "inputs:in1", "inputs:fg", "inputs:bg"};
+          for (const char* pref : kPreferredInputs) {
             const std::vector<::tinyusdz::next::Path>* c =
-                spec->connection(prop_name);
+                spec->connection(pref);
             if (c && !c->empty()) {
               input_conn = c;
               break;
+            }
+          }
+          if (!input_conn) {
+            auto is_factor_input = [](const std::string& n) {
+              return n == "inputs:mix" || n == "inputs:amount" ||
+                     n == "inputs:weight" || n == "inputs:factor" ||
+                     n == "inputs:alpha" || n == "inputs:mask";
+            };
+            for (const std::string& prop_name : hop_prim.GetPropertyNames()) {
+              if (prop_name.rfind("inputs:", 0) != 0) continue;
+              if (is_factor_input(prop_name)) continue;
+              const std::vector<::tinyusdz::next::Path>* c =
+                  spec->connection(prop_name);
+              if (c && !c->empty()) {
+                input_conn = c;
+                break;
+              }
             }
           }
         }

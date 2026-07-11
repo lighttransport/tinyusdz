@@ -498,6 +498,66 @@ def Xform "World"
     assert(out.find("</World/Sib.outputs:o>") != std::string::npos);
   }
 
+  // M6 edge forms: ".prop" anchors to the owning prim, bare ".."/"." resolve
+  // to prim paths, bracketed connect lists resolve like the single form, and
+  // relative targets inside variant content keep the AUTHORED form (resolving
+  // there would leak the internal /__self__ sentinel into written layers).
+  {
+    const char* input = R"(#usda 1.0
+def Xform "World"
+{
+    def Xform "A"
+    {
+        rel up = <..>
+        rel self = <.>
+        float inputs:x.connect = <.outputs:o>
+        float inputs:y.connect = [<../Sib.outputs:o>]
+        token outputs:o
+    }
+    def Xform "Sib"
+    {
+        token outputs:o
+    }
+    def Xform "V" (
+        variants = { string s = "a" }
+        prepend variantSets = "s"
+    )
+    {
+        variantSet "s" = {
+            "a" {
+                def Xform "Child" {
+                    rel r = <../Sib>
+                }
+                def Xform "Sib" {}
+            }
+        }
+    }
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim a = r.stage.GetPrimAtPath("/World/A");
+    const std::vector<Path>* up = a.GetRelationship("up");
+    assert(up && up->size() == 1 && (*up)[0].str() == "/World");
+    const std::vector<Path>* self_rel = a.GetRelationship("self");
+    assert(self_rel && self_rel->size() == 1 &&
+           (*self_rel)[0].str() == "/World/A");
+    std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("</World/A.outputs:o>") != std::string::npos);
+    assert(out.find("</World/Sib.outputs:o>") != std::string::npos);
+    assert(out.find("__self__") == std::string::npos);
+    assert(out.find("<../Sib>") != std::string::npos);
+  }
+
+  // M13 whitespace tolerance: multiple spaces between "#usda" and the
+  // version are valid (the legacy parser accepts arbitrary spacing).
+  {
+    const char* input =
+        "#usda  1.0\ndef Xform \"W\"\n{\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+  }
+
   // M7: per-arc customData on a reference must be skipped structurally, not
   // derail the metadata paren scan.
   {

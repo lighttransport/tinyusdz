@@ -671,8 +671,10 @@ struct RenderTexture {
   std::string uv_primvar;
 
   // Sampling
-  WrapMode wrap_s = WrapMode::Repeat;
-  WrapMode wrap_t = WrapMode::Repeat;
+  // Effective UsdUVTexture default: unauthored/useMetadata wrap is Clamp
+  // (matches legacy/pxr; the converter always assigns via ParseWrapMode).
+  WrapMode wrap_s = WrapMode::Clamp;
+  WrapMode wrap_t = WrapMode::Clamp;
 
   // Bias/scale for texture values
   Float4 bias = {0, 0, 0, 0};

@@ -62,6 +62,7 @@ bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
   if (name == "connectability") return tok_or_str(pm.connectability, PropMeta::kConnectability);
   if (name == "outputName") return tok_or_str(pm.outputName, PropMeta::kOutputName);
   if (name == "bindMaterialAs") return tok_or_str(pm.bindMaterialAs, PropMeta::kBindMaterialAs);
+  if (name == "kind") return tok_or_str(pm.kind, PropMeta::kKind);
   if (name == "displayName") return tok_or_str(pm.displayName, PropMeta::kDisplayName);
   if (name == "displayGroup") return tok_or_str(pm.displayGroup, PropMeta::kDisplayGroup);
   if (name == "documentation" || name == "doc") return tok_or_str(pm.doc, PropMeta::kDoc);
@@ -448,7 +449,13 @@ bool CrateReader::Impl::BuildStage() {
         if (f.first == "targetPaths") {
           std::vector<std::string> raw;
           DecodePathTargets(f.second, raw, /*with_markers=*/true);
-          if (!raw.empty() && !raw[0].empty() && raw[0][0] == '\x01') {
+          if (raw.size() == 1 && (raw[0] == "\x01" "E" || raw[0] == "\x01E")) {
+            // Authored explicit-clear (`rel r = None`): a declared,
+            // target-less relationship with an authored (explicit) edit.
+            ri.edits = ArcEdit();
+            ri.edits.authored = true;
+            raw.clear();
+          } else if (!raw.empty() && !raw[0].empty() && raw[0][0] == '\x01') {
             // Non-explicit list op: sublists are marker-delimited.
             ri.edits.authored = true;
             ri.edits.is_explicit = false;
@@ -883,6 +890,26 @@ bool CrateReader::Impl::BuildStage() {
       // metadata entirely (see cache.cc ComposeInto), so consume it.
       if (field.first == "variantSetNames") {
         continue;
+      }
+
+      // Unknown/plugin listop-valued fields arrive as marker-delimited
+      // token arrays ("\x01P"/"\x01D"/... entries). Strip the markers and
+      // any deleted/ordered sublists before storing the phantom property so
+      // control characters never leak into written output.
+      if (const std::vector<std::string>* arr =
+              field.second.as_token_array()) {
+        if (!arr->empty() && !(*arr)[0].empty() && (*arr)[0][0] == '\x01') {
+          std::vector<std::string> cleaned;
+          bool keep = true;
+          for (const std::string& t : *arr) {
+            if (!t.empty() && t[0] == '\x01') {
+              keep = !(t == "\x01" "D" || t == "\x01" "O");
+              continue;
+            }
+            if (keep) cleaned.push_back(t);
+          }
+          field.second = Value::MakeTokenArray(std::move(cleaned));
+        }
       }
 
       uint16_t flags = 0;

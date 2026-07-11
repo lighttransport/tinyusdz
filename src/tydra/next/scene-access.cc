@@ -1144,6 +1144,12 @@ bool GetSkinBinding(const UsdPrim& mesh_prim, SkinBindingInfo* out) {
           (vals.size() % esize) != 0) {
         return;
       }
+      // Expansion size is authored data (indices count x elementSize) — a
+      // hostile file can request terabytes, and this TU builds without
+      // exceptions so an oversized reserve aborts. 2^28 lanes (~1 GiB of
+      // int32) is far past any real skin (10M points x 8 influences = 80M).
+      const size_t kMaxExpandedLanes = size_t(1) << 28;
+      if (esize > kMaxExpandedLanes / idx.size()) return;  // keep authored
       const size_t elems = vals.size() / esize;
       typename std::remove_reference<decltype(vals)>::type expanded;
       expanded.reserve(idx.size() * esize);
