@@ -754,6 +754,29 @@ def Xform "A"
     assert(offs[0].first == 0.0 && offs[0].second == 1.0);
   }
 
+  // Layer-level unknown metadata preserved verbatim and idempotent
+  // (uniform losslessness with prim/property metadata).
+  {
+    const char* input = R"(#usda 1.0
+(
+    myPipelineRoot = "/shots/sq10"
+    renderSettings = { int aa = 4 }
+)
+def Xform "W"
+{
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("myPipelineRoot = \"/shots/sq10\"") != std::string::npos);
+    assert(out.find("renderSettings = { int aa = 4 }") != std::string::npos);
+    LoadResult r2 = LoadUSDAFromString(out.c_str());
+    assert(r2.success);
+    std::string out2 = WriteUSDAToString(r2.stage);
+    assert(out2.find("myPipelineRoot") != std::string::npos);
+  }
+
   std::cout << "  Parser audit regressions passed!" << std::endl;
 }
 
