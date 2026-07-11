@@ -274,6 +274,105 @@ Vec3 EvalMaterialDirect(const TriInfo &tri, const Vec3 &normal,
               brdf.z * radiance.z * ndotl};
 }
 
+// ---------------------------------------------------------------------------
+// Next-event estimation for SPHERE lights, with power-heuristic MIS.
+//
+// Every finite light used to be collapsed to a point: irradiance = I / d², with
+// an ad-hoc `max(1, area)` fudge for the ones that are obviously not points.
+// That is exactly right only in the far field, and increasingly wrong as a
+// sphere light gets large or close -- no penumbra, and a light you are standing
+// inside of divides by ~0.
+//
+// A sphere is the one light whose geometry is fully described by what
+// PreviewLight already carries (position + radius; no tangent frame needed), so
+// it is where area sampling can be added without changing the light plumbing.
+// The other kinds keep the analytic path for now.
+//
+// Radiance vs intensity: PreviewLight::radiance holds an INTENSITY (the punctual
+// path divides it by d²). A sphere of radius r emitting uniform radiance L
+// presents projected area pi*r², so L = I / (pi*r²) reproduces the same far-field
+// irradiance -- i.e. this is energy-preserving against the old look, and only
+// differs where the punctual approximation was wrong to begin with.
+struct LightSample {
+  Vec3 wi{0.0f, 0.0f, 0.0f};
+  float dist{0.0f};
+  float pdf{0.0f};        // solid angle
+  Vec3 radiance{0.0f, 0.0f, 0.0f};
+};
+
+void OrthoBasis(const Vec3 &w, Vec3 *u, Vec3 *v) {
+  const Vec3 a = (std::fabs(w.x) > 0.9f) ? Vec3{0.0f, 1.0f, 0.0f}
+                                         : Vec3{1.0f, 0.0f, 0.0f};
+  *u = Normalize(Cross(a, w));
+  *v = Cross(w, *u);
+}
+
+Vec3 SphereLightRadiance(const PreviewLight &light) {
+  const float r = std::max(1.0e-4f, light.radius);
+  const float scale = 1.0f / (MTLX_PI * r * r);
+  return Mul(light.radiance, scale);
+}
+
+// Uniform cone sampling of the sphere's visible solid angle.
+bool SampleSphereLight(const PreviewLight &light, const Vec3 &p, float u1,
+                       float u2, LightSample *out) {
+  const Vec3 d = Sub(light.position, p);
+  const float dist = Length(d);
+  const float r = light.radius;
+  // Degenerate, or the shading point is inside the sphere: the cone is not
+  // defined. Fall back to the punctual path rather than producing nonsense.
+  if (r <= 1.0e-5f || dist <= r + 1.0e-5f) return false;
+
+  const Vec3 w = Mul(d, 1.0f / dist);
+  Vec3 su, sv;
+  OrthoBasis(w, &su, &sv);
+
+  const float sin_max_sq = (r * r) / (dist * dist);
+  const float cos_max = std::sqrt(std::max(0.0f, 1.0f - sin_max_sq));
+  const float cos_theta = 1.0f - u1 * (1.0f - cos_max);
+  const float sin_theta = std::sqrt(std::max(0.0f, 1.0f - cos_theta * cos_theta));
+  const float phi = 2.0f * MTLX_PI * u2;
+
+  out->wi = Normalize(Add(Add(Mul(su, std::cos(phi) * sin_theta),
+                              Mul(sv, std::sin(phi) * sin_theta)),
+                          Mul(w, cos_theta)));
+  // Distance to the sphere along wi (for the shadow ray); the cone always hits.
+  const float b = Dot(out->wi, d);
+  const float disc = std::max(0.0f, b * b - (dist * dist - r * r));
+  out->dist = std::max(0.0f, b - std::sqrt(disc));
+  const float solid_angle = 2.0f * MTLX_PI * (1.0f - cos_max);
+  out->pdf = (solid_angle > 1.0e-8f) ? (1.0f / solid_angle) : 0.0f;
+  out->radiance = SphereLightRadiance(light);
+  return out->pdf > 0.0f;
+}
+
+// The solid-angle pdf SampleSphereLight would have had for direction `wi` --
+// zero if the direction misses the sphere. This is the light-side pdf that the
+// BSDF-sampled branch needs for its MIS weight.
+float SphereLightPdf(const PreviewLight &light, const Vec3 &p, const Vec3 &wi) {
+  const Vec3 d = Sub(light.position, p);
+  const float dist = Length(d);
+  const float r = light.radius;
+  if (r <= 1.0e-5f || dist <= r + 1.0e-5f) return 0.0f;
+  const float b = Dot(wi, d);
+  if (b <= 0.0f) return 0.0f;  // behind us
+  if ((dist * dist - b * b) > r * r) return 0.0f;  // ray misses the sphere
+  const float cos_max =
+      std::sqrt(std::max(0.0f, 1.0f - (r * r) / (dist * dist)));
+  const float solid_angle = 2.0f * MTLX_PI * (1.0f - cos_max);
+  return (solid_angle > 1.0e-8f) ? (1.0f / solid_angle) : 0.0f;
+}
+
+// Power heuristic (beta = 2). Both pdfs are in solid angle, so they are directly
+// comparable; a delta lobe (pdf_b reported as 1.0 with `specular`) must never
+// reach this -- the caller skips MIS entirely there.
+float PowerHeuristic(float pdf_a, float pdf_b) {
+  const float a = pdf_a * pdf_a;
+  const float b = pdf_b * pdf_b;
+  const float sum = a + b;
+  return (sum > 1.0e-12f) ? (a / sum) : 0.0f;
+}
+
 Vec3 EvalMaterialIblDiffuse(
     const TriInfo &tri, const Vec3 &normal, const Vec3 &wo,
     const Vec3 &diffuse_irradiance, const Options &opt,
@@ -1041,6 +1140,24 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
               tri_colors, tri_normals, openpbr_mats);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
+  // Is this light area-sampled (NEE + MIS) rather than treated as a point? Only
+  // in lightrt-bsdf mode -- the legacy shading path has no BSDF pdf to weigh
+  // against, so MIS is not even defined there, and its look must not change.
+  const bool bsdf_mode =
+      (opt.material_shading == Options::MaterialShading::LightRtBsdf);
+  // Escape hatch for A/B-ing the estimator (and for bisecting a render change):
+  // TUSDR_LIGHT_NEE=0 puts every light back on the punctual path.
+  static const bool kNeeEnabled = [] {
+    const char *e = std::getenv("TUSDR_LIGHT_NEE");
+    return !(e && std::atoi(e) == 0);
+  }();
+  auto is_area_sampled = [&](const PreviewLight &light) -> bool {
+    return kNeeEnabled && bsdf_mode &&
+           light.kind == PreviewLight::Kind::Sphere &&
+           light.radius > 1.0e-5f &&
+           Length(Sub(light.position, p)) > light.radius + 1.0e-5f;
+  };
+
   auto sample_bsdf_bounce = [&]() -> Vec3 {
     if (opt.material_shading != Options::MaterialShading::LightRtBsdf ||
         depth >= 2 || tri.opacity < 0.999f) {
@@ -1070,8 +1187,33 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                         opt, bounce_org, wi, textures, tri_uvs, tlas, blas,
                         instances, bounce_rd, depth + 1, tri_colors,
                         tri_normals, openpbr_mats);
-    return FiniteColor(bounce) ? Mul(bounce, throughput)
-                               : Vec3{0.0f, 0.0f, 0.0f};
+    Vec3 out = FiniteColor(bounce) ? Mul(bounce, throughput)
+                                   : Vec3{0.0f, 0.0f, 0.0f};
+
+    // The other half of MIS. Analytic lights are not in the BVH, so the bounce
+    // ray cannot hit them: pick them up explicitly along wi and weight by the
+    // chance NEE would have found this direction instead. A delta lobe (`specular`)
+    // is unreachable by light sampling, so it takes the full contribution -- this
+    // is what BsdfSample::specular is for.
+    for (const PreviewLight &light : lights.finite) {
+      if (!is_area_sampled(light)) continue;
+      const float pdf_l = SphereLightPdf(light, p, wi);
+      if (pdf_l <= 0.0f) continue;
+      const Vec3 d = Sub(light.position, p);
+      const float b = Dot(wi, d);
+      const float disc =
+          std::max(0.0f, b * b - (Dot(d, d) - light.radius * light.radius));
+      const float hit_dist = std::max(0.0f, b - std::sqrt(disc));
+      if (opt.shadows &&
+          occluded(p, n, wi, std::max(0.0f, hit_dist - 1.0e-3f))) {
+        continue;
+      }
+      const float w = sample.specular ? 1.0f : PowerHeuristic(sample.pdf, pdf_l);
+      const Vec3 L = SphereLightRadiance(light);
+      out = Add(out, Vec3{throughput.x * L.x * w, throughput.y * L.y * w,
+                          throughput.z * L.z * w});
+    }
+    return out;
   };
   if (lights.finite.empty() && lights.mesh.empty()) {
     Vec3 l = Normalize(Sub(camera.origin, p));
@@ -1085,7 +1227,33 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     c = Add(c, sample_bsdf_bounce());
     return apply_opacity(c);
   }
+  // NEE: sample a point on the light, weigh the estimate against the chance the
+  // BSDF sampler would have found the same direction on its own.
+  auto nee_sphere = [&](const PreviewLight &light, pcg32 *rng) {
+    LightSample ls;
+    const float u1 = pcg32_f(rng);
+    const float u2 = pcg32_f(rng);
+    if (!SampleSphereLight(light, p, u1, u2, &ls)) return;
+    const float ndotl = Dot(n, ls.wi);
+    if (ndotl <= 0.0f || ls.pdf <= 0.0f) return;
+    if (opt.shadows &&
+        occluded(p, n, ls.wi, std::max(0.0f, ls.dist - 1.0e-3f))) {
+      return;
+    }
+    OpenPBRParams params = OpenPBRParamsForMaterial(tri, n, tri_openpbr);
+    float pdf_b = 0.0f;
+    v3 f = bsdf_eval(&params, ToMtlxV3(n), ToMtlxV3(view), ToMtlxV3(ls.wi),
+                     &pdf_b);
+    const Vec3 brdf = FromMtlxV3(f);
+    if (!FiniteColor(brdf)) return;
+    const float w = PowerHeuristic(ls.pdf, pdf_b);
+    const float k = w * ndotl / ls.pdf;
+    c = Add(c, Vec3{brdf.x * ls.radiance.x * k, brdf.y * ls.radiance.y * k,
+                    brdf.z * ls.radiance.z * k});
+  };
+
   auto eval_light = [&](const PreviewLight &light) {
+    if (is_area_sampled(light)) return;  // handled by NEE below
     Vec3 l;
     float max_t = 1.0e30f;
     Vec3 radiance = light.radiance;
@@ -1119,6 +1287,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   }
   for (const PreviewLight &light : lights.mesh) {
     eval_light(light);
+  }
+  // Area-sampled lights. Its own RNG stream: seeding from (org, dir, depth) like
+  // the BSDF sampler would correlate the light sample with the BSDF sample and
+  // defeat the whole point of combining them.
+  {
+    pcg32 lrng = MakeBsdfRng(p, n, depth + 0x5eed);
+    for (const PreviewLight &light : lights.finite) {
+      if (is_area_sampled(light)) nee_sphere(light, &lrng);
+    }
   }
   c = Add(c, sample_bsdf_bounce());
   // primvars:displayOpacity < 1: see-through. Blend the surface shade with what
