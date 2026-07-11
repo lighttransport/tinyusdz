@@ -19,10 +19,11 @@
 # TUSDR_LIGHT_DOUBLE_COUNT=1 restores the old behavior; the test A/Bs against it,
 # and also pins the absolute physics where it can:
 #
-#   - FURNACE: a white Lambert quad under a uniform dome of radiance 1 cannot be
-#     meaningfully brighter than the dome. The legacy shading path (no bounce at
-#     all) is the anchor -- it must land at ~1.0 -- and lightrt-bsdf must not be
-#     off by the ~2x that double-counting the dome produced.
+#   - FURNACE: a white Lambert quad under a uniform dome of radiance 1 must come
+#     out at the radiance of the dome. Both shading paths are held to that: the
+#     legacy one (no bounce at all) lands at 0.95x, lightrt-bsdf at 1.00x. It used
+#     to be 2.00x -- half from re-gathering the dome on the bounce, half from
+#     feeding the full BSDF to both split-sum IBL terms.
 #   - MESH LIGHT: a floor lit by an emissive quad must get dimmer once the
 #     emitter stops being counted twice.
 #
@@ -225,11 +226,15 @@ if not (0.75 < leg < 1.25):
           f"radiance of the uniform dome lighting it. That is an IBL "
           f"normalization bug, independent of any double counting.")
     sys.exit(1)
-if bsdf > 1.6:
+if bsdf > 1.15:
     print(f"FAIL: lightrt-bsdf puts the furnace surface at {bsdf:.2f}x the dome "
-          f"radiance (legacy: {leg:.2f}x). The BSDF bounce is escaping to the "
-          f"environment and adding it on top of the split-sum IBL term that "
-          f"already integrated it -- the dome is being counted twice.")
+          f"radiance (legacy: {leg:.2f}x). A white Lambert surface in a uniform "
+          f"furnace must come out at the radiance of the furnace. Either the BSDF "
+          f"bounce is escaping to the environment and adding it on top of the "
+          f"split-sum IBL term that already integrated it (the dome counted "
+          f"twice), or the two IBL terms are each being fed the FULL BSDF instead "
+          f"of their own lobe (bsdf_eval_lobes), which counts both lobes against "
+          f"both prefiltered environments.")
     sys.exit(1)
 if dbl < bsdf * 1.3:
     print(f"FAIL: TUSDR_LIGHT_DOUBLE_COUNT=1 gave {dbl:.2f}x vs {bsdf:.2f}x -- "

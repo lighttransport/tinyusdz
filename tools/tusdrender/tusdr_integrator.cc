@@ -508,8 +508,14 @@ Vec3 EvalMaterialIblDiffuse(
   }
   OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
   float pdf = 0.0f;
-  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(normal), &pdf);
-  Vec3 brdf = FromMtlxV3(f);
+  v3 fd, fs;
+  // ONLY the diffuse lobe belongs against the irradiance map. Using the full BSDF
+  // here (and again against the prefiltered reflection map below) counted both
+  // lobes twice over: a white Lambert surface in a uniform furnace came out at
+  // 1.32x the radiance of the dome lighting it, where it must come out at 1.0x.
+  bsdf_eval_lobes(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(normal), &fd, &fs,
+                  &pdf);
+  Vec3 brdf = FromMtlxV3(fd);
   const float scale = MTLX_PI * tri.occlusion;
   return Vec3{brdf.x * diffuse_irradiance.x * scale,
               brdf.y * diffuse_irradiance.y * scale,
@@ -527,8 +533,11 @@ Vec3 EvalMaterialIblSpecular(
   if (ndotl <= 0.0f) return Vec3{0.0f, 0.0f, 0.0f};
   OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
   float pdf = 0.0f;
-  v3 f = bsdf_eval(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &pdf);
-  Vec3 brdf = FromMtlxV3(f);
+  v3 fd, fs;
+  // ... and only the specular half (spec + sheen + coat) belongs against the
+  // prefiltered reflection map.
+  bsdf_eval_lobes(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &fd, &fs, &pdf);
+  Vec3 brdf = FromMtlxV3(fs);
   return Vec3{brdf.x * prefiltered_radiance.x * ndotl,
               brdf.y * prefiltered_radiance.y * ndotl,
               brdf.z * prefiltered_radiance.z * ndotl};

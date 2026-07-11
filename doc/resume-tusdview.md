@@ -17,8 +17,9 @@ also records why device-local BVH buffers were measured and left OFF).
 Done since (2026-07-12): Vulkan-RT skinning without a reconvert, the two
 double-counted light contributions in `lightrt-bsdf`, area-sampled rect / disk /
 cylinder lights (plus the inverted UsdLux light normal that made them light
-nothing), and the TLAS `PREFER_FAST_BUILD` question (measured, rejected —
-large-scene.md §2.12).
+nothing), the TLAS `PREFER_FAST_BUILD` question (measured, rejected —
+large-scene.md §2.12), and the `lightrt-bsdf` IBL energy (the furnace now lands at
+1.00x the dome that lights it, from 2.00x).
 
 ## Open
 
@@ -31,16 +32,7 @@ geometry directly and free it once their own BVH is built, and they only render 
 one-shot screenshot, where the bake IS the cheapest path. Making them animate
 interactively means re-posing into their BVH, not just into `draw_`.
 
-### 2. `lightrt-bsdf` IBL energy
-
-The furnace test (`tool-tusdrender-light-double-count`) pins a white Lambert
-surface under a uniform dome. The legacy path lands at 0.95x the dome (correct);
-`lightrt-bsdf` lands at **1.32x**. The dome double count is gone — this residual
-is the BSDF-mode IBL split-sum path (`EvalMaterialIblDiffuse` / `...Specular`)
-handing back more energy than it should. Tighten the test's 1.6 ceiling once
-fixed.
-
-### 3. Mesh lights are invisible to the `next` loader
+### 2. Mesh lights are invisible to the `next` loader
 
 `LightCache::mesh` is only populated by the LEGACY flatten (`tusdr_legacy.cc`).
 The next loader — which is what `-rtPreview` uses for `.usda` — never registers an
@@ -48,14 +40,14 @@ emissive `MeshLightAPI` mesh as an analytic light, so such a mesh is lit only by
 whatever a BSDF bounce happens to hit. Both halves of
 `tool-tusdrender-light-double-count` exist because of this split.
 
-### 4. Cross-backend blendshape screenshot parity
+### 3. Cross-backend blendshape screenshot parity
 
 Open in the broader visual-parity matrix. Note that no fixture in the tree
 animates a blendshape under `--time` in *either* loader (legacy or next), which
 is itself worth chasing — `models/blendshape-and-animation-test-001.usda` renders
 identically at every time code.
 
-### 5. usd-assets regression harness
+### 4. usd-assets regression harness
 
 Partial: the batch harness runs both tools over usd-wg/assets. Remaining is
 recording and maintaining the per-machine external-asset baselines.
