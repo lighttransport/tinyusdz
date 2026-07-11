@@ -568,6 +568,7 @@ enum TypeId {
   // Types for usdVol
   TYPE_ID_VOL_BEGIN = 1 << 12,
   TYPE_ID_VOLUME,
+  TYPE_ID_FIELD_ASSET,
   TYPE_ID_OPENVDB_ASSET,
   TYPE_ID_FIELD3D_ASSET,
   TYPE_ID_VOL_END,
@@ -1998,7 +1999,6 @@ class Value {
 
   template <class T>
   Value(const T &v) : v_(v) {
-    //TUSDZ_LOG_I("Value templated constructor called with type: " << typeid(T).name());
   }
 
   // Perfect-forwarding constructor. Use std::forward (NOT std::move): since
@@ -2008,7 +2008,6 @@ class Value {
   // (Callers that intend a move pass `Value(std::move(x))`.)
   template <class T>
   Value(T &&v) noexcept : v_(std::forward<T>(v)) {
-    //TUSDZ_LOG_I("Value templated move constructor called with type: " << typeid(T).name());
   }
 
   // template <class T>
@@ -2238,7 +2237,6 @@ class Value {
 
   template <class T>
   Value &operator=(const T &v) {
-    //TUSDZ_LOG_I("Value templated assignment operator called with type: " << typeid(T).name());
     v_ = v;
     return (*this);
   }
@@ -2855,6 +2853,26 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
 
   d.insert(kBool);
 
+  d.insert(kChar);
+  d.insert(kChar2);
+  d.insert(kChar3);
+  d.insert(kChar4);
+
+  d.insert(kUChar);
+  d.insert(kUChar2);
+  d.insert(kUChar3);
+  d.insert(kUChar4);
+
+  d.insert(kShort);
+  d.insert(kShort2);
+  d.insert(kShort3);
+  d.insert(kShort4);
+
+  d.insert(kUShort);
+  d.insert(kUShort2);
+  d.insert(kUShort3);
+  d.insert(kUShort4);
+
   d.insert(kInt64);
 
   d.insert(kInt);
@@ -2888,8 +2906,7 @@ inline void RegisterPrimAttrTypes(SetType &d, bool include_variant_set = false) 
   d.insert(kQuatf);
   d.insert(kQuatd);
 
-  // AOUSD Core Spec 6.2: uchar and timecode scalar types
-  d.insert(kUChar);
+  // AOUSD Core Spec 6.2: timecode scalar type
   d.insert(kTimeCode);
 
   // AOUSD Core Spec 6.5: All semantic aliases (role types)

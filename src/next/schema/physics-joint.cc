@@ -17,8 +17,49 @@ static bool IsJointType(const UsdPrim& prim, const std::string& type) {
   return prim.IsValid() && prim.GetTypeName() == type;
 }
 
+static bool GetStringOrToken(const UsdPrim& prim, const std::string& prop_name,
+                             std::string* out) {
+  if (!out) return false;
+  const Value* val = prim.GetPropertyValue(prop_name);
+  if (!val) return false;
+  if (const std::string* s = val->as_string()) {
+    *out = *s;
+    return true;
+  }
+  if (const std::string* tok = val->as_token()) {
+    *out = *tok;
+    return true;
+  }
+  return false;
+}
+
+static void SetAxisFromToken(const std::string& token, float axis[3]) {
+  if (token == "X") {
+    axis[0] = 1.0f;
+    axis[1] = 0.0f;
+    axis[2] = 0.0f;
+  } else if (token == "Y") {
+    axis[0] = 0.0f;
+    axis[1] = 1.0f;
+    axis[2] = 0.0f;
+  } else if (token == "Z") {
+    axis[0] = 0.0f;
+    axis[1] = 0.0f;
+    axis[2] = 1.0f;
+  }
+}
+
 bool IsPhysicsJoint(const UsdPrim& prim) {
-  return prim.IsValid() && (prim.GetTypeName().find("Physics") != std::string::npos);
+  if (!prim.IsValid()) return false;
+  const std::string& type = prim.GetTypeName();
+  return type == "PhysicsJoint" ||
+         type == "PhysicsPrismaticJoint" ||
+         type == "PhysicsRevoluteJoint" ||
+         type == "PhysicsSphericalJoint" ||
+         type == "PhysicsFixedJoint" ||
+         type == "PhysicsDistanceJoint" ||
+         type == "PhysicsSliderJoint" ||
+         type == "PhysicsBallJoint";
 }
 
 bool IsPhysicsPrismaticJoint(const UsdPrim& prim) {
@@ -158,16 +199,9 @@ bool GetPhysicsPrismaticJointData(const Stage& stage, const UsdPrim& prim,
 
   // axis
   {
-    const Value* val = prim.GetPropertyValue("physics:axis");
-    if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
-        // Parse axis from string
-        const char* c = s->c_str();
-        if (std::strcmp(c, "X") == 0) { out->axis[0] = 1.0f; out->axis[1] = 0.0f; out->axis[2] = 0.0f; }
-        else if (std::strcmp(c, "Y") == 0) { out->axis[0] = 0.0f; out->axis[1] = 1.0f; out->axis[2] = 0.0f; }
-        else if (std::strcmp(c, "Z") == 0) { out->axis[0] = 0.0f; out->axis[1] = 0.0f; out->axis[2] = 1.0f; }
-      }
+    std::string axis;
+    if (GetStringOrToken(prim, "physics:axis", &axis)) {
+      SetAxisFromToken(axis, out->axis);
     }
   }
 
@@ -214,15 +248,9 @@ bool GetPhysicsRevoluteJointData(const Stage& stage, const UsdPrim& prim,
 
   // axis
   {
-    const Value* val = prim.GetPropertyValue("physics:axis");
-    if (val) {
-      const std::string* s = val->as_string();
-      if (s) {
-        const char* c = s->c_str();
-        if (std::strcmp(c, "X") == 0) { out->axis[0] = 1.0f; out->axis[1] = 0.0f; out->axis[2] = 0.0f; }
-        else if (std::strcmp(c, "Y") == 0) { out->axis[0] = 0.0f; out->axis[1] = 1.0f; out->axis[2] = 0.0f; }
-        else if (std::strcmp(c, "Z") == 0) { out->axis[0] = 0.0f; out->axis[1] = 0.0f; out->axis[2] = 1.0f; }
-      }
+    std::string axis;
+    if (GetStringOrToken(prim, "physics:axis", &axis)) {
+      SetAxisFromToken(axis, out->axis);
     }
   }
 
@@ -267,25 +295,53 @@ bool GetPhysicsSphericalJointData(const Stage& stage, const UsdPrim& prim,
 
   if (!GetPhysicsJointData(stage, prim, out, time)) return false;
 
-  // coneAngleLimit
+  // coneAngle0Limit
+  {
+    const Value* val = prim.GetPropertyValue("physics:coneAngle0Limit");
+    if (val) {
+      const float* f = val->as_float();
+      if (f) {
+        out->coneAngle0Limit = *f;
+        out->coneAngleLimit = *f;
+      }
+    }
+  }
+
+  // coneAngle1Limit
+  {
+    const Value* val = prim.GetPropertyValue("physics:coneAngle1Limit");
+    if (val) {
+      const float* f = val->as_float();
+      if (f) {
+        out->coneAngle1Limit = *f;
+        out->coneAngleLimitY = *f;
+      }
+    }
+  }
+
+  // Legacy non-schema aliases kept for older test fixtures and consumers.
   {
     const Value* val = prim.GetPropertyValue("physics:coneAngleLimit");
     if (val) {
       const float* f = val->as_float();
-      if (f) out->coneAngleLimit = *f;
+      if (f) {
+        out->coneAngleLimit = *f;
+        out->coneAngle0Limit = *f;
+      }
     }
   }
 
-  // coneAngleLimitY
   {
     const Value* val = prim.GetPropertyValue("physics:coneAngleLimitY");
     if (val) {
       const float* f = val->as_float();
-      if (f) out->coneAngleLimitY = *f;
+      if (f) {
+        out->coneAngleLimitY = *f;
+        out->coneAngle1Limit = *f;
+      }
     }
   }
 
-  // coneAngleLimitZ
   {
     const Value* val = prim.GetPropertyValue("physics:coneAngleLimitZ");
     if (val) {
@@ -357,7 +413,22 @@ bool GetPhysicsSliderJointData(const Stage& stage, const UsdPrim& prim,
                                 PhysicsSliderJointData* out,
                                 double time) {
   if (!IsPhysicsSliderJoint(prim) || !out) return false;
-  return GetPhysicsPrismaticJointData(stage, prim, out, time);
+  if (!GetPhysicsJointData(stage, prim, out, time)) return false;
+
+  std::string axis;
+  if (GetStringOrToken(prim, "physics:axis", &axis)) {
+    SetAxisFromToken(axis, out->axis);
+  }
+  if (const Value* val = prim.GetPropertyValue("physics:lowerLimit")) {
+    if (const float* f = val->as_float()) out->lowerLimit = *f;
+  }
+  if (const Value* val = prim.GetPropertyValue("physics:upperLimit")) {
+    if (const float* f = val->as_float()) out->upperLimit = *f;
+  }
+  if (const Value* val = prim.GetPropertyValue("physics:maxForce")) {
+    if (const float* f = val->as_float()) out->maxForce = *f;
+  }
+  return true;
 }
 
 // ============================================================
@@ -368,7 +439,39 @@ bool GetPhysicsBallJointData(const Stage& stage, const UsdPrim& prim,
                               PhysicsBallJointData* out,
                               double time) {
   if (!IsPhysicsBallJoint(prim) || !out) return false;
-  return GetPhysicsSphericalJointData(stage, prim, out, time);
+  if (!GetPhysicsJointData(stage, prim, out, time)) return false;
+
+  if (const Value* val = prim.GetPropertyValue("physics:coneAngle0Limit")) {
+    if (const float* f = val->as_float()) {
+      out->coneAngle0Limit = *f;
+      out->coneAngleLimit = *f;
+    }
+  }
+  if (const Value* val = prim.GetPropertyValue("physics:coneAngle1Limit")) {
+    if (const float* f = val->as_float()) {
+      out->coneAngle1Limit = *f;
+      out->coneAngleLimitY = *f;
+    }
+  }
+  if (const Value* val = prim.GetPropertyValue("physics:coneAngleLimit")) {
+    if (const float* f = val->as_float()) {
+      out->coneAngleLimit = *f;
+      out->coneAngle0Limit = *f;
+    }
+  }
+  if (const Value* val = prim.GetPropertyValue("physics:coneAngleLimitY")) {
+    if (const float* f = val->as_float()) {
+      out->coneAngleLimitY = *f;
+      out->coneAngle1Limit = *f;
+    }
+  }
+  if (const Value* val = prim.GetPropertyValue("physics:coneAngleLimitZ")) {
+    if (const float* f = val->as_float()) out->coneAngleLimitZ = *f;
+  }
+  if (const Value* val = prim.GetPropertyValue("physics:maxTorque")) {
+    if (const float* f = val->as_float()) out->maxTorque = *f;
+  }
+  return true;
 }
 
 } // namespace next

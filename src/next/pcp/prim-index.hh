@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "../parser/ascii-parser.hh"
 #include "arc-types.hh"
 #include "namespace-mapping.hh"
 #include "../layer/layer.hh"
@@ -21,6 +22,7 @@
 
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,6 +37,10 @@ namespace pcp {
 struct LayerStack {
   std::vector<std::shared_ptr<Layer>> layers;  // strongest first
   std::vector<std::string> layer_identifiers;  // resolved id for each layer
+  // Per-layer time offset RELATIVE TO THE STACK ROOT, accumulated through
+  // nested sublayer `(offset = ..; scale = ..)` annotations. Parallel to
+  // `layers`; entry 0 (the root) is identity.
+  std::vector<LayerOffset> layer_offsets;
   std::string identifier;                       // resolved asset path (registry key)
   LayerOffset offset;                           // cumulative time offset to root
 };
@@ -119,6 +125,15 @@ struct CompositionOptions {
   bool apply_list_ops = true;
   int num_threads = 1;             // PrewarmPrimIndices worker hint (see note).
 
+  // Per-layer file/input memory cap for layers loaded by the compositor
+  // (sublayers, references, payloads). 0 = no limit.
+  size_t max_layer_memory = 0;
+
+  // USDA parser options for external USDA layers loaded by this compose path.
+  // Keep defaults aligned with next's parser defaults (non-lazy unless the
+  // caller enables it in LoadUSDOptions).
+  ParseOptions usda_parse_options = {};
+
   // Emit per-phase timing diagnostics to stderr ([next_compose]/[next_build]/
   // [next_warm]). Off by default. Replaces the former TINYUSDZ_NEXT_TIMING env
   // read so the composition core takes no implicit process-environment input;
@@ -130,6 +145,13 @@ struct CompositionOptions {
   /// `load_payloads` flag is used. (Per-prim Load/UnloadPayload overrides this.)
   /// Must be thread-safe when PrewarmPrimIndices runs with num_threads != 1.
   std::function<bool(const Path &, const std::string &)> payload_policy;
+
+  /// Variant selection overrides: map of variantSet -> variantName. Overrides
+  /// any authored variantSelection on the same set (stronger than authored).
+  /// Empty by default (use authored selections as-is). Example:
+  ///   {{"districtLod", "full"}} selects the "full" variant on every prim that
+  ///   defines a "districtLod" variantSet.
+  std::map<std::string, std::string> variant_overrides;
 };
 
 /// The composed graph for a single prim. Borrows its layer-stack table from the

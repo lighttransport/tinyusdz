@@ -119,6 +119,13 @@ bool IsFloatBackedArray(TypeId id) {
     case TypeId::Half3:
     case TypeId::Half4:
     case TypeId::Quath:
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+    case TypeId::Color4h:
+    case TypeId::Texcoord2h:
+    case TypeId::Texcoord3h:
       return true;
     default:
       return false;
@@ -126,9 +133,36 @@ bool IsFloatBackedArray(TypeId id) {
 }
 
 // Array element types stored as a flat std::vector<double> (DoubleArrayStorage).
+// Int-vector element types share the flat int32 array storage with Int.
+bool IsIntBackedArray(TypeId id) {
+  switch (id) {
+    case TypeId::Int:
+    case TypeId::Int2:
+    case TypeId::Int3:
+    case TypeId::Int4:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// UInt-vector element types share the flat uint32 array storage with UInt.
+bool IsUIntBackedArray(TypeId id) {
+  switch (id) {
+    case TypeId::UInt:
+    case TypeId::UInt2:
+    case TypeId::UInt3:
+    case TypeId::UInt4:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool IsDoubleBackedArray(TypeId id) {
   switch (id) {
     case TypeId::Double:
+    case TypeId::TimeCode:
     case TypeId::Double2:
     case TypeId::Double3:
     case TypeId::Double4:
@@ -147,13 +181,6 @@ bool IsDoubleBackedArray(TypeId id) {
     default:
       return false;
   }
-}
-
-// Check if type requires heap allocation
-bool RequiresHeap(TypeId id, bool is_array) {
-  if (is_array) return true;
-  if (id == TypeId::Dictionary) return true;
-  return false;
 }
 
 }  // anonymous namespace
@@ -658,9 +685,60 @@ Value Value::MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
   return v;
 }
 
+Value Value::MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
+                               uint32_t comps_per_elem) {
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  v.array_size_ = comps_per_elem
+                      ? static_cast<uint32_t>(data.size() / comps_per_elem)
+                      : 0;
+  new (v.storage_) ArrayHandle(std::make_shared<UIntArrayStorage>(std::move(data)));
+  return v;
+}
+
+Value Value::MakeStringLikeArray(std::vector<std::string>&& data,
+                                 TypeId elem_type) {
+  Value v;
+  v.type_id_ = elem_type;  // Token, String or AssetPath
+  v.is_array_ = true;
+  v.array_size_ = static_cast<uint32_t>(data.size());
+  new (v.storage_) ArrayHandle(std::make_shared<TokenArrayStorage>(std::move(data)));
+  return v;
+}
+
+Value Value::MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
+                              uint32_t comps_per_elem) {
+  Value v;
+  v.type_id_ = elem_type;
+  v.is_array_ = true;
+  v.array_size_ = comps_per_elem
+                      ? static_cast<uint32_t>(data.size() / comps_per_elem)
+                      : 0;
+  new (v.storage_) ArrayHandle(std::make_shared<IntArrayStorage>(std::move(data)));
+  return v;
+}
+
 // ============================================================
 // Queries and accessors
 // ============================================================
+
+void Value::retag_role(TypeId new_type) {
+  if (new_type == type_id_ || new_type == TypeId::Invalid ||
+      type_id_ == TypeId::Invalid || is_lazy_ || is_block_) {
+    return;
+  }
+  // Only role re-tags: same scalar component type and component count, so the
+  // buffer/SBO layout is identical (Float3 -> point3f, Half4 -> color4h, ...).
+  auto comp = [](TypeId t) {
+    TypeId c = GetComponentType(t);
+    return c == TypeId::Invalid ? t : c;
+  };
+  if (comp(type_id_) != comp(new_type)) return;
+  if (GetComponentCount(type_id_) != GetComponentCount(new_type)) return;
+  if (!is_array_ && GetTypeSize(type_id_) != GetTypeSize(new_type)) return;
+  type_id_ = new_type;
+}
 
 void Value::clear() {
   destroy();
@@ -944,14 +1022,16 @@ const int32_t* Value::as_int4() const {
 }
 
 const float* Value::as_float2() const {
-  if (type_id_ != TypeId::Float2 || is_array_) return nullptr;
+  if ((type_id_ != TypeId::Float2 && type_id_ != TypeId::Texcoord2f) ||
+      is_array_) return nullptr;
   return reinterpret_cast<const float*>(storage_);
 }
 
 const float* Value::as_float3() const {
   if (type_id_ != TypeId::Float3 && type_id_ != TypeId::Point3f &&
       type_id_ != TypeId::Vector3f && type_id_ != TypeId::Normal3f &&
-      type_id_ != TypeId::Color3f) return nullptr;
+      type_id_ != TypeId::Color3f && type_id_ != TypeId::Texcoord3f)
+    return nullptr;
   if (is_array_) return nullptr;
   return reinterpret_cast<const float*>(storage_);
 }
@@ -964,17 +1044,127 @@ const float* Value::as_float4() const {
 }
 
 const double* Value::as_double2() const {
-  if (type_id_ != TypeId::Double2 || is_array_) return nullptr;
+  if ((type_id_ != TypeId::Double2 && type_id_ != TypeId::Texcoord2d) ||
+      is_array_) return nullptr;
   return reinterpret_cast<const double*>(storage_);
 }
 
 const double* Value::as_double3() const {
   if (type_id_ != TypeId::Double3 && type_id_ != TypeId::Point3d &&
       type_id_ != TypeId::Vector3d && type_id_ != TypeId::Normal3d &&
-      type_id_ != TypeId::Color3d) return nullptr;
+      type_id_ != TypeId::Color3d && type_id_ != TypeId::Texcoord3d)
+    return nullptr;
   if (is_array_) return nullptr;
   return reinterpret_cast<const double*>(storage_);
 }
+
+// ============================================================
+// Converting scalar reads (to_float*): unlike the as_* accessors, these
+// widen raw-half SBO scalars (authored half/half3/... store half-bit lanes,
+// not floats) and narrow double-backed values. Lanes are copied in storage
+// order — quat conventions are the caller's concern, same as as_float4().
+// ============================================================
+
+namespace {
+
+// Same conversion as crate-format.hh HalfToFloat (kept local: the types
+// layer must not depend on the crate reader).
+inline float HalfBitsToFloat(uint16_t h) {
+  const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+  uint32_t exponent = (h >> 10) & 0x1Fu;
+  uint32_t mantissa = h & 0x3FFu;
+  uint32_t bits;
+  if (exponent == 0) {
+    if (mantissa == 0) {
+      bits = sign;  // +/- 0
+    } else {
+      // Subnormal half -> normalized float
+      exponent = 127 - 15 + 1;
+      while ((mantissa & 0x400u) == 0) {
+        mantissa <<= 1;
+        exponent--;
+      }
+      mantissa &= 0x3FFu;
+      bits = sign | (exponent << 23) | (mantissa << 13);
+    }
+  } else if (exponent == 0x1Fu) {
+    bits = sign | 0x7F800000u | (mantissa << 13);  // inf / nan
+  } else {
+    bits = sign | ((exponent - 15 + 127) << 23) | (mantissa << 13);
+  }
+  float f;
+  std::memcpy(&f, &bits, sizeof(f));
+  return f;
+}
+
+inline int HalfLaneCount(TypeId id) {
+  switch (id) {
+    case TypeId::Half: return 1;
+    case TypeId::Half2:
+    case TypeId::Texcoord2h: return 2;
+    case TypeId::Half3:
+    case TypeId::Point3h:
+    case TypeId::Vector3h:
+    case TypeId::Normal3h:
+    case TypeId::Color3h:
+    case TypeId::Texcoord3h: return 3;
+    case TypeId::Half4:
+    case TypeId::Quath:
+    case TypeId::Color4h: return 4;
+    default: return 0;
+  }
+}
+
+}  // namespace
+
+bool Value::ToFloatLanes(int lanes, float* out) const {
+  if (!out || is_array_) return false;
+  if (HalfLaneCount(type_id_) == lanes) {
+    const uint16_t* bits = reinterpret_cast<const uint16_t*>(storage_);
+    for (int i = 0; i < lanes; ++i) out[i] = HalfBitsToFloat(bits[i]);
+    return true;
+  }
+  switch (lanes) {
+    case 1:
+      if (const float* f = as_float()) { out[0] = *f; return true; }
+      if (const double* d = as_double()) { out[0] = static_cast<float>(*d); return true; }
+      return false;
+    case 2:
+      if (const float* f = as_float2()) { out[0] = f[0]; out[1] = f[1]; return true; }
+      if (const double* d = as_double2()) {
+        for (int i = 0; i < 2; ++i) out[i] = static_cast<float>(d[i]);
+        return true;
+      }
+      return false;
+    case 3:
+      if (const float* f = as_float3()) {
+        for (int i = 0; i < 3; ++i) out[i] = f[i];
+        return true;
+      }
+      if (const double* d = as_double3()) {
+        for (int i = 0; i < 3; ++i) out[i] = static_cast<float>(d[i]);
+        return true;
+      }
+      return false;
+    case 4:
+      if (const float* f = as_float4()) {
+        for (int i = 0; i < 4; ++i) out[i] = f[i];
+        return true;
+      }
+      if (const double* d = as_double4()) {
+        for (int i = 0; i < 4; ++i) out[i] = static_cast<float>(d[i]);
+        return true;
+      }
+      return false;
+    default:
+      return false;
+  }
+}
+
+bool Value::to_float(float* out) const { return ToFloatLanes(1, out); }
+bool Value::to_float2(float* out) const { return ToFloatLanes(2, out); }
+bool Value::to_float3(float* out) const { return ToFloatLanes(3, out); }
+bool Value::to_float4(float* out) const { return ToFloatLanes(4, out); }
 
 const double* Value::as_double4() const {
   if (type_id_ != TypeId::Double4 && type_id_ != TypeId::Quatd &&
@@ -1033,7 +1223,7 @@ std::vector<float>* Value::as_float_array() {
 
 const std::vector<int32_t>* Value::as_int_array() const {
   ensure_materialized();
-  if (type_id_ != TypeId::Int || !is_array_) return nullptr;
+  if (!is_array_ || !IsIntBackedArray(type_id_)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<IntArrayStorage*>(ptr)->data;
 }
@@ -1075,13 +1265,13 @@ std::vector<int64_t>* Value::as_int64_array() {
 }
 const std::vector<uint32_t>* Value::as_uint_array() const {
   ensure_materialized();
-  if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
+  if (!is_array_ || !IsUIntBackedArray(type_id_)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<UIntArrayStorage*>(ptr)->data;
 }
 std::vector<uint32_t>* Value::as_uint_array() {
   ensure_materialized(); dirty_ = true;
-  if (type_id_ != TypeId::UInt || !is_array_) return nullptr;
+  if (!is_array_ || !IsUIntBackedArray(type_id_)) return nullptr;
   DetachArray(storage_);
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<UIntArrayStorage*>(ptr)->data;
@@ -1107,7 +1297,9 @@ const std::vector<uint8_t>* Value::as_bool_array() const {
 }
 const std::vector<std::string>* Value::as_token_array() const {
   ensure_materialized();
-  if (type_id_ != TypeId::Token || !is_array_) return nullptr;
+  // Token / String / AssetPath arrays share the string-vector storage.
+  if (!is_array_ || (type_id_ != TypeId::Token && type_id_ != TypeId::String &&
+                     type_id_ != TypeId::AssetPath)) return nullptr;
   ArrayStorageBase* ptr = ArraySlot(storage_)->get();
   return &static_cast<TokenArrayStorage*>(ptr)->data;
 }
@@ -1134,14 +1326,17 @@ bool Value::operator==(const Value& other) const {
       return *as_int_array() == *other.as_int_array();
     } else if (type_id_ == TypeId::Int64) {
       return *as_int64_array() == *other.as_int64_array();
-    } else if (type_id_ == TypeId::UInt) {
+    } else if (IsUIntBackedArray(type_id_)) {
       return *as_uint_array() == *other.as_uint_array();
     } else if (type_id_ == TypeId::UInt64) {
       return *as_uint64_array() == *other.as_uint64_array();
     } else if (type_id_ == TypeId::Bool) {
       return *as_bool_array() == *other.as_bool_array();
-    } else if (type_id_ == TypeId::Token) {
+    } else if (type_id_ == TypeId::Token || type_id_ == TypeId::String ||
+               type_id_ == TypeId::AssetPath) {
       return *as_token_array() == *other.as_token_array();
+    } else if (IsIntBackedArray(type_id_)) {  // Int2/Int3/Int4 arrays
+      return *as_int_array() == *other.as_int_array();
     }
     return false;
   }
@@ -1214,7 +1409,7 @@ uint64_t Value::hash() const {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(double));
       }
-    } else if (type_id_ == TypeId::Int) {
+    } else if (IsIntBackedArray(type_id_)) {
       const auto* arr = as_int_array();
       if (arr && !arr->empty()) {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
@@ -1226,7 +1421,7 @@ uint64_t Value::hash() const {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
                         arr->size() * sizeof(int64_t));
       }
-    } else if (type_id_ == TypeId::UInt) {
+    } else if (IsUIntBackedArray(type_id_)) {
       const auto* arr = as_uint_array();
       if (arr && !arr->empty()) {
         h ^= fnv1a_hash(reinterpret_cast<const uint8_t*>(arr->data()),
@@ -1309,7 +1504,7 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
         *out_size = arr->size() * sizeof(double);
         return reinterpret_cast<const uint8_t*>(arr->data());
       }
-    } else if (type_id_ == TypeId::Int) {
+    } else if (IsIntBackedArray(type_id_)) {
       const auto* arr = as_int_array();
       if (arr && !arr->empty()) {
         *out_size = arr->size() * sizeof(int32_t);
@@ -1321,7 +1516,7 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
         *out_size = arr->size() * sizeof(int64_t);
         return reinterpret_cast<const uint8_t*>(arr->data());
       }
-    } else if (type_id_ == TypeId::UInt) {
+    } else if (IsUIntBackedArray(type_id_)) {
       const auto* arr = as_uint_array();
       if (arr && !arr->empty()) {
         *out_size = arr->size() * sizeof(uint32_t);
@@ -1356,6 +1551,109 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
   }
 
   return nullptr;
+}
+
+Value LerpValue(const Value& a, const Value& b, double t) {
+  if (a.type_id() != b.type_id()) return a;  // held on type mismatch
+  const double s = 1.0 - t;
+  auto lf = [&](float x, float y) { return static_cast<float>(s * x + t * y); };
+  auto ld = [&](double x, double y) { return s * x + t * y; };
+
+  switch (a.type_id()) {
+    case TypeId::Float: {
+      const float* pa = a.as_float();
+      const float* pb = b.as_float();
+      if (pa && pb) return Value(lf(*pa, *pb));
+      break;
+    }
+    case TypeId::Double: {
+      const double* pa = a.as_double();
+      const double* pb = b.as_double();
+      if (pa && pb) return Value(ld(*pa, *pb));
+      break;
+    }
+    case TypeId::Float2: {
+      const float* pa = a.as_float2();
+      const float* pb = b.as_float2();
+      if (pa && pb) return Value::MakeFloat2(lf(pa[0], pb[0]), lf(pa[1], pb[1]));
+      break;
+    }
+    case TypeId::Float3:
+    case TypeId::Point3f:
+    case TypeId::Vector3f:
+    case TypeId::Normal3f:
+    case TypeId::Color3f: {
+      const float* pa = a.as_float3();
+      const float* pb = b.as_float3();
+      if (!pa || !pb) break;
+      const float x = lf(pa[0], pb[0]), y = lf(pa[1], pb[1]), z = lf(pa[2], pb[2]);
+      switch (a.type_id()) {
+        case TypeId::Point3f: return Value::MakePoint3f(x, y, z);
+        case TypeId::Vector3f: return Value::MakeVector3f(x, y, z);
+        case TypeId::Normal3f: return Value::MakeNormal3f(x, y, z);
+        case TypeId::Color3f: return Value::MakeColor3f(x, y, z);
+        default: return Value::MakeFloat3(x, y, z);
+      }
+    }
+    case TypeId::Float4:
+    case TypeId::Color4f: {
+      const float* pa = a.as_float4();
+      const float* pb = b.as_float4();
+      if (!pa || !pb) break;
+      const float x = lf(pa[0], pb[0]), y = lf(pa[1], pb[1]);
+      const float z = lf(pa[2], pb[2]), w = lf(pa[3], pb[3]);
+      if (a.type_id() == TypeId::Color4f) return Value::MakeColor4f(x, y, z, w);
+      return Value::MakeFloat4(x, y, z, w);
+    }
+    case TypeId::Double2: {
+      const double* pa = a.as_double2();
+      const double* pb = b.as_double2();
+      if (pa && pb) return Value::MakeDouble2(ld(pa[0], pb[0]), ld(pa[1], pb[1]));
+      break;
+    }
+    case TypeId::Double3:
+    case TypeId::Point3d:
+    case TypeId::Vector3d:
+    case TypeId::Normal3d: {
+      const double* pa = a.as_double3();
+      const double* pb = b.as_double3();
+      if (!pa || !pb) break;
+      const double x = ld(pa[0], pb[0]), y = ld(pa[1], pb[1]), z = ld(pa[2], pb[2]);
+      switch (a.type_id()) {
+        case TypeId::Point3d: return Value::MakePoint3d(x, y, z);
+        case TypeId::Vector3d: return Value::MakeVector3d(x, y, z);
+        case TypeId::Normal3d: return Value::MakeNormal3d(x, y, z);
+        default: return Value::MakeDouble3(x, y, z);
+      }
+    }
+    case TypeId::Double4: {
+      const double* pa = a.as_double4();
+      const double* pb = b.as_double4();
+      if (pa && pb)
+        return Value::MakeDouble4(ld(pa[0], pb[0]), ld(pa[1], pb[1]),
+                                  ld(pa[2], pb[2]), ld(pa[3], pb[3]));
+      break;
+    }
+    case TypeId::Matrix4f: {
+      const float* pa = a.as_matrix4f();
+      const float* pb = b.as_matrix4f();
+      if (!pa || !pb) break;
+      float m[16];
+      for (int i = 0; i < 16; ++i) m[i] = lf(pa[i], pb[i]);
+      return Value::MakeMatrix4f(m);
+    }
+    case TypeId::Matrix4d: {
+      const double* pa = a.as_matrix4d();
+      const double* pb = b.as_matrix4d();
+      if (!pa || !pb) break;
+      double m[16];
+      for (int i = 0; i < 16; ++i) m[i] = ld(pa[i], pb[i]);
+      return Value::MakeMatrix4d(m);
+    }
+    default:
+      break;  // non-interpolatable (int/bool/string/token/quat/...) -> held
+  }
+  return a;
 }
 
 }  // namespace next

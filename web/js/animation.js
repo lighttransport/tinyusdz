@@ -4,7 +4,205 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import {
+	buildNextThreeNode,
+	isNextScene,
+	readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
+import {
+	getAssetUriFromURL,
+	getBackendFromURL,
+	LOADER_BACKEND_CHOICES,
+	makeStaticNextParseOptions,
+	setBackendAndReload
+} from 'tinyusdz/LoaderConfigUtils.js';
+import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
+import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
+import { applyUSDSceneSkinningPipeline } from 'tinyusdz/USDSceneSkinningPipeline.js';
+import { buildNodeIndexMap } from 'tinyusdz/USDAnimationConverter.js';
+import { extractUSDSceneAnimations } from 'tinyusdz/USDSceneAnimationPipeline.js';
+
+const LOADER_BACKEND = getBackendFromURL();
+
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+	return getAssetUriFromURL(params, ['usd']);
+}
+
+function getDisplayNameFromURI(uri) {
+	try {
+		const parsed = new URL(uri, window.location.href);
+		return parsed.pathname.split('/').filter(Boolean).pop() || uri;
+	} catch {
+		return uri.split('/').pop() || uri;
+	}
+}
+
+function formatDurationMs(ms) {
+	if (!Number.isFinite(ms)) return 'n/a';
+	return ms < 1000 ? `${ms.toFixed(0)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+	if (!Number.isFinite(bytes)) return 'n/a';
+	const sign = bytes < 0 ? '-' : '';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	let value = Math.abs(bytes);
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${sign}${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+	const jsHeap = performance.memory?.usedJSHeapSize;
+	const wasmHeap = currentLoader?.native_?.HEAPU8?.buffer?.byteLength;
+	return {
+		jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+		wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+	};
+}
+
+function formatMemoryUse(before, after, key) {
+	const current = after?.[key];
+	if (!Number.isFinite(current)) return 'n/a';
+	const previous = before?.[key];
+	if (!Number.isFinite(previous)) return formatBytes(current);
+	const delta = current - previous;
+	return `${formatBytes(current)} (${delta > 0 ? '+' : ''}${formatBytes(delta)})`;
+}
+
+function formatTextureStats(stats) {
+	if (!stats || !Number.isFinite(stats.textureTotal) || stats.textureTotal <= 0) {
+		return 'queued 0';
+	}
+	const countText = `${stats.textureLoaded}/${stats.textureTotal}` +
+		(stats.textureFailed ? ` (${stats.textureFailed} failed)` : '');
+	return stats.textureComplete && Number.isFinite(stats.textureMs) ?
+		`${countText}, ${formatDurationMs(stats.textureMs)}` :
+		`${countText}, loading`;
+}
+
+function beginLoadStats(fileSize = null) {
+	const stats = {
+		startTime: performance.now(),
+		fileSize,
+		fetchMs: null,
+		parseMs: null,
+		processMs: null,
+		textureMs: null,
+		textureLoaded: 0,
+		textureFailed: 0,
+		textureTotal: 0,
+		textureComplete: false,
+		totalMs: null,
+		memoryBefore: captureMemorySnapshot(),
+		memoryAfter: null
+	};
+	updateLoadStatsPanel(stats, 'Loading...');
+	return stats;
+}
+
+function updateLoadStatsPanel(stats, overrideText = null) {
+	const el = document.getElementById('loadStats');
+	if (!el) return;
+	el.style.display = 'block';
+	if (overrideText) {
+		el.textContent = overrideText;
+		return;
+	}
+	el.textContent = [
+		`File: ${formatBytes(stats.fileSize)}`,
+		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
+		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Textures: ${formatTextureStats(stats)}`,
+		`Total: ${formatDurationMs(stats.totalMs)}`,
+		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+	].join('\n');
+}
+
+function failLoadStats(stats) {
+	if (!stats) return;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats, 'Failed');
+}
+
+function setCurrentFileName(filename) {
+	const currentFileEl = document.getElementById('currentFile');
+	if (currentFileEl) currentFileEl.textContent = filename || '-';
+}
+
+function updateTextureStats(stats, info = {}) {
+	if (!stats) return;
+	stats.textureLoaded = Number.isFinite(info.loaded) ? info.loaded : stats.textureLoaded;
+	stats.textureFailed = Number.isFinite(info.failed) ? info.failed : stats.textureFailed;
+	stats.textureTotal = Number.isFinite(info.total) ? info.total : stats.textureTotal;
+	if (info.complete && Number.isFinite(info.ms)) {
+		stats.textureMs = info.ms;
+		stats.textureComplete = true;
+		stats.memoryAfter = captureMemorySnapshot();
+	}
+	updateLoadStatsPanel(stats);
+}
+
+function startTrackedTextureLoading(manager, stats, label = 'textureQueue') {
+	if (!manager || !Number.isFinite(manager.total) || manager.total <= 0) {
+		updateTextureStats(stats, { loaded: 0, failed: 0, total: 0, complete: true, ms: 0 });
+		return null;
+	}
+	currentTextureLoadingManager = manager;
+	const start = performance.now();
+	updateTextureStats(stats, {
+		loaded: manager.loaded || 0,
+		failed: manager.failed || 0,
+		total: manager.total || 0
+	});
+	return manager.startLoading({
+		concurrency: 16,
+		yieldInterval: 16,
+		onTextureLoaded: (material) => { material.needsUpdate = true; },
+		onProgress: (info) => updateTextureStats(stats, info)
+	}).then((status) => {
+		const elapsed = performance.now() - start;
+		const loaded = status.loaded || 0;
+		const failed = status.failed || 0;
+		const total = status.total || 0;
+		if (currentTextureLoadingManager === manager) currentTextureLoadingManager = null;
+		if (typeof manager.reset === 'function') manager.reset();
+		updateTextureStats(stats, { loaded, failed, total, complete: true, ms: elapsed });
+		console.log(`[animation] ${label}:done ${loaded}/${total} failed=${failed} ${formatDurationMs(elapsed)}`);
+		return status;
+	}).catch((err) => {
+		console.warn(`[animation] ${label} failed:`, err);
+		const elapsed = performance.now() - start;
+		const status = manager.getStatus ? manager.getStatus() : null;
+		const loaded = status?.loaded || manager.loaded || 0;
+		const failed = status?.failed || manager.failed || 0;
+		const total = status?.total || manager.total || 0;
+		if (currentTextureLoadingManager === manager) currentTextureLoadingManager = null;
+		if (typeof manager.reset === 'function') manager.reset();
+		updateTextureStats(stats, { loaded, failed, total, complete: true, ms: elapsed });
+		return status;
+	});
+}
+
+function cleanupCurrentTextureLoading() {
+	if (!currentTextureLoadingManager) return;
+	try {
+		currentTextureLoadingManager.abort();
+		if (typeof currentTextureLoadingManager.reset === 'function') {
+			currentTextureLoadingManager.reset();
+		}
+	} catch (_) {
+		// Ignore stale texture queue cleanup errors.
+	}
+	currentTextureLoadingManager = null;
+}
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -24,7 +222,7 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
 
 // Orbit controls
@@ -118,6 +316,7 @@ let textureCache = new Map();
 // TinyUSDZ loader and scene references for cleanup
 let currentLoader = null;
 let currentUSDScene = null;
+let currentTextureLoadingManager = null;
 let usdDomeLightData = null; // Store DomeLight data from USD file
 
 // Environment map presets
@@ -478,6 +677,12 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 				// Use UUID-based targeting for reliability (same as channel-based animations)
 				// Format: "<uuid>.<property>" (PropertyBinding checks uuid === nodeName)
 				switch (track.path) {
+					case 'CustomProperty':
+						if (debugAnimationTracking) {
+							console.debug(`Skipping USD custom property animation: ${track.propertyName || '(unnamed)'}`);
+						}
+						continue;
+
 					case 'translation':
 					case 'Translation':
 						keyframeTrack = new THREE.VectorKeyframeTrack(
@@ -581,6 +786,12 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 			// Using UUID is more reliable for hierarchical animations
 			// Format: "<uuid>.<property>" (PropertyBinding checks uuid === nodeName)
 			switch (channel.path) {
+				case 'CustomProperty':
+					if (debugAnimationTracking) {
+						console.debug(`Skipping USD custom property animation: ${channel.propertyName || '(unnamed)'}`);
+					}
+					continue;
+
 				case 'Translation':
 					keyframeTrack = new THREE.VectorKeyframeTrack(
 						`${targetUUID}.position`,
@@ -1038,6 +1249,8 @@ async function reloadMaterials() {
 
 // Load USD model asynchronously
 async function loadUSDModel() {
+	cleanupCurrentTextureLoading();
+
 	// Initialize PBR renderer if not already done
 	if (!pmremGenerator) {
 		initializePBRRenderer();
@@ -1732,27 +1945,27 @@ function playAllUSDAnimations() {
 				// Track name format: "<uuid>.<property>"
 				const parts = track.name.split('.');
 				if (parts.length >= 2) {
-					const uuid = parts[0];
+					const targetName = parts[0];
 					let found = false;
 					// Check in usdContentNode which is the mixer root
 					if (usdContentNode) {
 						usdContentNode.traverse(obj => {
-							if (obj.uuid === uuid) {
+							if (obj.uuid === targetName || obj.name === targetName) {
 								found = true;
 							}
 						});
 					}
 					if (!found) {
 						allTracksValid = false;
-						invalidTracks.push({ track: track.name, uuid: uuid });
+						invalidTracks.push({ track: track.name, targetName: targetName });
 					}
 				}
 			});
 
 			if (!allTracksValid) {
-				console.warn(`⚠️ Clip ${clipIndex} "${clip.name}" has ${invalidTracks.length} track(s) with invalid UUIDs:`);
-				invalidTracks.forEach(({track, uuid}) => {
-					console.warn(`  - Track "${track}" references UUID ${uuid.slice(0, 8)} which doesn't exist in scene`);
+				console.warn(`⚠️ Clip ${clipIndex} "${clip.name}" has ${invalidTracks.length} track(s) with invalid targets:`);
+				invalidTracks.forEach(({track, targetName}) => {
+					console.warn(`  - Track "${track}" references target ${targetName.slice(0, 32)} which doesn't exist in scene`);
 				});
 				console.warn(`  Skipping this clip to avoid errors.`);
 				return; // Skip this clip
@@ -1769,16 +1982,16 @@ function playAllUSDAnimations() {
 				// Track name format: "<uuid>.<property>"
 				const parts = track.name.split('.');
 				if (parts.length >= 2) {
-					const uuid = parts[0];
+					const targetName = parts[0];
 					let found = false;
 					// Traverse usdContentNode which is the mixer root
 					if (usdContentNode) {
 						usdContentNode.traverse(obj => {
-							if (obj.uuid === uuid) {
+							if (obj.uuid === targetName || obj.name === targetName) {
 								found = true;
 								// Store action reference for this object
-								if (!objectAnimationActions.has(uuid)) {
-									objectAnimationActions.set(uuid, {
+								if (!objectAnimationActions.has(obj.uuid)) {
+									objectAnimationActions.set(obj.uuid, {
 										action: action,
 										enabled: true,
 										objectName: obj.name,
@@ -2222,6 +2435,9 @@ const animationParams = {
 // GUI setup
 const gui = new GUI();
 gui.title('Animation Controls');
+// Backend switch reloads the page: the loader binds its WASM module at init.
+gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+	.name('Loader Backend').onChange(setBackendAndReload);
 
 // Store references to GUI controllers for dynamic updates
 let timelineController = null;
@@ -2708,13 +2924,22 @@ function onMouseClick(event) {
 }
 
 // Function to load a USD file from ArrayBuffer
-async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
+	window.renderComplete = false;
+	stats = stats || beginLoadStats(arrayBuffer.byteLength);
+	if (!Number.isFinite(stats.fileSize)) {
+		stats.fileSize = arrayBuffer.byteLength;
+	}
+	setCurrentFileName(filename);
+
 	// Initialize PBR renderer if not already done
 	if (!pmremGenerator) {
 		initializePBRRenderer();
 		// Load default environment
 		await loadEnvironment(materialSettings.envMapPreset);
 	}
+
+	cleanupCurrentTextureLoading();
 
 	// Clear existing USD scene
 	while (usdSceneRoot.children.length > 0) {
@@ -2819,19 +3044,150 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 	currentLoader = loader; // Store reference for cleanup
 
-	// Create a Blob URL from the ArrayBuffer
-	// This allows the loader to load the file as if it were a normal URL
-	const blob = new Blob([arrayBuffer]);
-	const blobUrl = URL.createObjectURL(blob);
-
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
-	// Load USD scene from Blob URL
-	const usd_scene = await loader.loadAsync(blobUrl);
+	const parseStart = performance.now();
+	let usd_scene;
+	if (LOADER_BACKEND === 'next' || LOADER_BACKEND === 'auto') {
+		usd_scene = await new Promise((resolve, reject) => {
+			loader.parse(
+				new Uint8Array(arrayBuffer),
+				filename,
+				resolve,
+				reject,
+				makeStaticNextParseOptions({ backend: LOADER_BACKEND })
+			);
+		});
+	} else {
+		const blob = new Blob([arrayBuffer]);
+		const blobUrl = URL.createObjectURL(blob);
+		try {
+			usd_scene = await loader.loadAsync(blobUrl);
+		} finally {
+			URL.revokeObjectURL(blobUrl);
+		}
+	}
+	stats.parseMs = performance.now() - parseStart;
 	currentUSDScene = usd_scene; // Store reference for cleanup
+	const processStart = performance.now();
 
-	// Clean up the Blob URL after loading
-	URL.revokeObjectURL(blobUrl);
+	if (isNextScene(usd_scene)) {
+		const sceneMetadata = readNextSceneMeta(usd_scene);
+		const fileUpAxis = sceneMetadata.upAxis || "Y";
+		const rawSceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
+		const timeCodesPerSecond = rawSceneMetadata.timeCodesPerSecond || 24.0;
+		currentFileUpAxis = fileUpAxis;
+		currentSceneMetadata = {
+			upAxis: fileUpAxis,
+			metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+			framesPerSecond: rawSceneMetadata.framesPerSecond || timeCodesPerSecond,
+			timeCodesPerSecond,
+			startTimeCode: rawSceneMetadata.startTimeCode ?? null,
+			endTimeCode: rawSceneMetadata.endTimeCode ?? null,
+			autoPlay: false,
+			comment: "next backend render",
+			copyright: ""
+		};
+		updateMetadataUI();
+
+		const {
+			hasSkinnedMeshData,
+			allSkinnedMeshUSDData,
+			skinnedMeshDataByName
+		} = extractSkinnedMeshData(usd_scene, { logger: console });
+		const skeletonBuild = buildSkeletonDataFromUSD(usd_scene, {
+			logger: console,
+			hasSkinnedMeshData
+		});
+		const built = buildNextThreeNode(usd_scene, {
+			skipTextures: false,
+			lazyTextures: true,
+			// Animations/skinning are extracted from the adapter AFTER the
+			// build; the default releaseBuildData would wipe them.
+			releaseBuildData: false
+		});
+		if (built.textureManager) {
+			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
+		}
+		// Next animation target_node is a RenderScene node-table index; use the
+		// table map from buildNextThreeNode, not a DFS walk of the built tree.
+		const nodeIndexMap = built.nodeIndexMap || buildNodeIndexMap(built.node);
+		const skinningResult = applyUSDSceneSkinningPipeline({
+			threeNode: built.node,
+			characterGroup: usdSceneRoot,
+			helperScene: scene,
+			skeletonDataArray: skeletonBuild.skeletonDataArray,
+			allSkinnedMeshUSDData,
+			skinnedMeshDataByName,
+			usdScene: usd_scene,
+			showMesh: true,
+			showSkeleton: false,
+			useWASMBoneTexture: false,
+			logger: console
+		});
+		usdContentNode = built.node;
+
+		if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+			usdSceneRoot.rotation.x = -Math.PI / 2;
+		}
+		animationParams.applySceneScale();
+		for (const child of skinningResult.allSceneMeshes || []) {
+			if (child.isMesh) {
+				child.castShadow = true;
+				child.receiveShadow = true;
+			}
+		}
+		try {
+			const animData = extractUSDSceneAnimations(usd_scene, {
+				boneMaps: skeletonBuild.boneMaps,
+				nodeIndexMap,
+				threeRoot: built.node,
+				timeCodesPerSecond,
+				logger: console
+			});
+			usdAnimations = [
+				...animData.usdAnimations,
+				...animData.usdNodeAnimations
+			];
+			if (usdAnimations.length > 0) {
+				let beginTime = 0;
+				let endTime = 0;
+				if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined &&
+				    currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+					beginTime = currentSceneMetadata.startTimeCode;
+					endTime = currentSceneMetadata.endTimeCode;
+				} else {
+					for (const clip of usdAnimations) {
+						if (clip && clip.duration > endTime) endTime = clip.duration;
+					}
+				}
+				if (endTime > beginTime) {
+					animationParams.beginTime = beginTime;
+					animationParams.endTime = endTime;
+					animationParams.duration = endTime - beginTime;
+					animationParams.time = beginTime;
+					updateTimeRangeGUIControllers(endTime);
+				}
+				animationParams.speed = currentSceneMetadata.framesPerSecond || timeCodesPerSecond;
+				playAllUSDAnimations();
+				console.log(`[animation] next backend loaded ${usdAnimations.length} animation clip(s)`);
+			} else {
+				buildSceneGraphUI();
+			}
+		} catch (error) {
+			console.warn('[animation] next animation extraction failed:', error);
+			buildSceneGraphUI();
+		}
+		if (typeof usd_scene.releaseBuildData === 'function') {
+			usd_scene.releaseBuildData();
+		}
+		stats.processMs = performance.now() - processStart;
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		window.renderComplete = true;
+		return;
+	}
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -2887,11 +3243,15 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		envMapIntensity: materialSettings.envMapIntensity,
 		preferredMaterialType: materialSettings.materialType,
 		textureCache: textureCache,
+		textureLoadingManager: new TextureLoadingManager(),
 		storeMaterialData: true
 	};
 
 	// Build Three.js node from USD with MaterialX/OpenPBR support
 	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	if (options.textureLoadingManager) {
+		startTrackedTextureLoading(options.textureLoadingManager, stats, 'textureQueue');
+	}
 
 	// Store USD scene reference for material reloading
 	threeNode.traverse((child) => {
@@ -3017,6 +3377,12 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		// Still build scene graph UI for static scenes
 		buildSceneGraphUI();
 	}
+
+	stats.processMs = performance.now() - processStart;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	updateLoadStatsPanel(stats);
+	window.renderComplete = true;
 }
 
 // Listen for file upload events
@@ -3024,9 +3390,13 @@ window.addEventListener('loadUSDFile', async (event) => {
 	const file = event.detail.file;
 	if (!file) return;
 
+	const stats = beginLoadStats();
 	try {
+		const readStart = performance.now();
 		const arrayBuffer = await file.arrayBuffer();
-		await loadUSDFromArrayBuffer(arrayBuffer, file.name);
+		stats.fetchMs = performance.now() - readStart;
+		stats.fileSize = arrayBuffer.byteLength;
+		await loadUSDFromArrayBuffer(arrayBuffer, file.name, stats);
 		console.log('USD file loaded successfully:', file.name);
 
 		// Hide loading indicator
@@ -3034,6 +3404,7 @@ window.addEventListener('loadUSDFile', async (event) => {
 			window.hideLoadingIndicator();
 		}
 	} catch (error) {
+		failLoadStats(stats);
 		console.error('Failed to load USD file:', error);
 		alert('Failed to load USD file: ' + error.message);
 
@@ -3042,6 +3413,56 @@ window.addEventListener('loadUSDFile', async (event) => {
 			window.hideLoadingIndicator();
 		}
 	}
+});
+
+async function loadUSDFromURI(uri) {
+	const displayName = getDisplayNameFromURI(uri);
+	const stats = beginLoadStats();
+	setCurrentFileName(displayName);
+	const loadingIndicator = document.getElementById('loadingIndicator');
+	if (loadingIndicator) loadingIndicator.classList.add('active');
+	try {
+		const fetchStart = performance.now();
+		const response = await fetch(uri);
+		if (!response.ok) {
+			throw new Error(`Failed to fetch ${uri}: ${response.statusText}`);
+		}
+		const arrayBuffer = await response.arrayBuffer();
+		stats.fetchMs = performance.now() - fetchStart;
+		stats.fileSize = arrayBuffer.byteLength;
+		await loadUSDFromArrayBuffer(arrayBuffer, displayName, stats);
+	} catch (error) {
+		failLoadStats(stats);
+		console.error(`Failed to load USD file (${uri}):`, error);
+		alert('Failed to load USD file: ' + error.message);
+	} finally {
+		if (window.hideLoadingIndicator) {
+			window.hideLoadingIndicator();
+		}
+	}
+}
+
+document.body.addEventListener('dragover', (event) => {
+	event.preventDefault();
+	document.body.classList.add('drag-over');
+});
+
+document.body.addEventListener('dragleave', (event) => {
+	if (!event.relatedTarget || !document.body.contains(event.relatedTarget)) {
+		document.body.classList.remove('drag-over');
+	}
+});
+
+document.body.addEventListener('drop', (event) => {
+	event.preventDefault();
+	document.body.classList.remove('drag-over');
+	const file = event.dataTransfer?.files?.[0];
+	if (!file) return;
+	if (!/\.(usd|usda|usdc|usdz)$/i.test(file.name)) {
+		alert('Please drop a USD file (.usd, .usda, .usdc, .usdz)');
+		return;
+	}
+	window.dispatchEvent(new CustomEvent('loadUSDFile', { detail: { file } }));
 });
 
 // Listen for default model reload
@@ -3055,7 +3476,8 @@ window.addEventListener('loadDefaultModel', async () => {
 });
 
 // Load USD model
-loadUSDModel().catch((error) => {
+const startupUSDURI = getStartupUSDModelURI();
+(startupUSDURI ? loadUSDFromURI(startupUSDURI) : loadUSDModel()).catch((error) => {
 	console.error('Failed to load USD model:', error);
 	alert('Failed to load USD file: ' + error.message);
 });
@@ -3080,6 +3502,8 @@ function animate() {
 	if (fpsUpdateTime >= 0.5) {
 		info.fps = Math.round(frames / fpsUpdateTime);
 		fpsController.updateDisplay(); // Manual update instead of .listen()
+		const fpsValueEl = document.getElementById('fpsValue');
+		if (fpsValueEl) fpsValueEl.textContent = String(info.fps);
 		frames = 0;
 		fpsUpdateTime = 0;
 	}

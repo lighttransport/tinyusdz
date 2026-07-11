@@ -39,13 +39,7 @@ std::string to_string(const Model &model, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const Scope &scope, const uint32_t indent = 0,
                       bool closing_brace = true);
-// UsdVol / UsdRender placeholder prim types.
-std::string to_string(const Volume &v, const uint32_t indent = 0,
-                      bool closing_brace = true);
-std::string to_string(const OpenVDBAsset &v, const uint32_t indent = 0,
-                      bool closing_brace = true);
-std::string to_string(const Field3DAsset &v, const uint32_t indent = 0,
-                      bool closing_brace = true);
+// UsdRender / UsdProc placeholder prim types.
 std::string to_string(const RenderSettings &v, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const RenderProduct &v, const uint32_t indent = 0,
@@ -59,6 +53,15 @@ std::string to_string(const GPrim &gprim, const uint32_t indent = 0,
 std::string to_string(const Xform &xform, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const GeomSphere &sphere, const uint32_t indent = 0,
+                      bool closing_brace = true);
+// UsdVol
+std::string to_string(const Volume &volume, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const FieldAsset &field, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const OpenVDBAsset &asset, const uint32_t indent = 0,
+                      bool closing_brace = true);
+std::string to_string(const Field3DAsset &asset, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const GeomMesh &mesh, const uint32_t indent = 0,
                       bool closing_brace = true);
@@ -103,6 +106,7 @@ std::string to_string(const GeomPointInstancer &instancer,
 std::string to_string(const GeomMesh::InterpolateBoundary interp_boundary);
 std::string to_string(const GeomMesh::SubdivisionScheme subd_scheme);
 std::string to_string(const GeomMesh::FaceVaryingLinearInterpolation fv);
+std::string to_string(const GeomMesh::TriangleSubdivisionRule tri_subdiv_rule);
 
 std::string to_string(const GeomCamera::Projection &proj);
 std::string to_string(const GeomCamera::StereoRole &role);

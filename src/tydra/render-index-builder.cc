@@ -377,9 +377,6 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
         target.second.normalOffsets.swap(tmpNormalOffsets);
 
       }
-
-      // TODO: Inbetween BlendShapes
-
     }
 
   }
@@ -671,9 +668,6 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
         target.second.normalOffsets.swap(tmpNormalOffsets);
 
       }
-
-      // TODO: Inbetween BlendShapes
-
     }
 
     //TUSDZ_LOG_I("proc normal");

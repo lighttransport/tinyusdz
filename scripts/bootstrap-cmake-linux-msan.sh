@@ -24,7 +24,6 @@ cd ${builddir} && cmake \
   -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,${LIBCXX_MSAN_DIR}/lib -lc++ -lc++abi -lunwind " \
   -DCMAKE_AR=/usr/bin/llvm-ar \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
-  -DTINYUSDZ_WITH_OPENSUBDIV=0 \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DTINYUSDZ_MSAN=1 \
   -DTINYUSDZ_WITH_C_API=1 \

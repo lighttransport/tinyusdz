@@ -1308,19 +1308,17 @@ TydraPhysVec3 AxisTokenToVec3(const value::token &tok) {
 
 /* Build anchor transform from joint's localPos/localRot */
 TydraPhysTransform BuildAnchorTransform(
-    const TypedAttribute<value::point3f> &pos,
-    const TypedAttribute<value::quatf> &rot) {
+    const TypedAttributeWithFallback<value::point3f> &pos,
+    const TypedAttributeWithFallback<value::quatf> &rot) {
   TydraPhysTransform xf = tp_xform_identity();
 
-  auto pos_opt = pos.get_value();
-  if (pos_opt.has_value()) {
-    value::point3f p = pos_opt.value();
+  if (pos.authored()) {
+    value::point3f p = pos.get_value();
     xf.position = tp_v3(p[0], p[1], p[2]);
   }
 
-  auto rot_opt = rot.get_value();
-  if (rot_opt.has_value()) {
-    value::quatf q = rot_opt.value();
+  if (rot.authored()) {
+    value::quatf q = rot.get_value();
     /* value::quatf is (x,y,z,w) or (w,x,y,z)? Check convention. */
     /* tinyusdz quatf: real part first? Actually
      * value::quatf stores as [x, y, z, w] based on USD convention. */

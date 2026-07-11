@@ -2,6 +2,8 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
+		<link rel="icon" type="image/x-icon" href="/favicon.ico">
+		<link rel="icon" type="image/png" href="/favicon.png">
 		<title>TinyUSDZ Material / Mesh Dedup Demo</title>
 		<style>
 			body {
@@ -9,6 +11,20 @@
 				overflow: hidden;
 				font-family: Arial, sans-serif;
 				background: #1a1a1a;
+			}
+			body.drag-over::after {
+				content: 'Drop USD file here';
+				position: fixed;
+				inset: 0;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: rgba(33, 150, 243, 0.18);
+				color: #6bb6ff;
+				font-size: 24px;
+				font-weight: 600;
+				pointer-events: none;
+				z-index: 1000;
 			}
 			canvas {
 				display: block;
@@ -109,6 +125,65 @@
 				color: #999;
 				min-height: 14px;
 			}
+			#pickInfo {
+				display: none;
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #ccc;
+			}
+			#pickInfo h4 {
+				margin: 0 0 6px;
+				color: #6bb6ff;
+				font-size: 12px;
+			}
+			#pickDetails {
+				margin: 0;
+				white-space: pre-wrap;
+				overflow-wrap: anywhere;
+				max-height: 240px;
+				overflow: auto;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				line-height: 1.35;
+			}
+			#loadStats {
+				display: none;
+				margin-top: 8px;
+				padding-top: 8px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				white-space: pre-line;
+				color: #bbb;
+			}
+			#progressPanel {
+				display: none;
+				margin-top: 8px;
+				padding-top: 8px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			#progressLabel {
+				font-size: 11px;
+				color: #bbb;
+				margin-bottom: 5px;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
+			#progressTrack {
+				height: 5px;
+				background: rgba(255, 255, 255, 0.14);
+				border-radius: 999px;
+				overflow: hidden;
+			}
+			#progressBar {
+				height: 100%;
+				width: 100%;
+				transform: scaleX(0);
+				transform-origin: left center;
+				background: linear-gradient(90deg, #4CAF50, #6bb6ff);
+				transition: transform 120ms ease-out;
+			}
 			#gui-toggle {
 				position: fixed;
 				top: 10px;
@@ -147,6 +222,12 @@
 			<p>
 				<strong>Current model:</strong> <span id="currentFile">sample scene</span>
 			</p>
+			<p><strong>FPS:</strong> <span id="fpsValue">-</span></p>
+			<div id="progressPanel">
+				<div id="progressLabel">Loading...</div>
+				<div id="progressTrack"><div id="progressBar"></div></div>
+			</div>
+			<div id="loadStats"></div>
 			<div id="file-controls">
 				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
 				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
@@ -196,6 +277,10 @@
 					</tbody>
 				</table>
 				<div id="status"></div>
+			</div>
+			<div id="pickInfo">
+				<h4>Picked Mesh</h4>
+				<pre id="pickDetails">Click a mesh to inspect material and texture bindings.</pre>
 			</div>
 		</div>
 

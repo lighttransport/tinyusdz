@@ -185,8 +185,8 @@ function applyNormalScale(material, normalScale) {
 /**
  * Apply normal map texture in async (await) conversion path.
  */
-async function applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager = null) {
-    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+async function applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager = null, skipTextures = false) {
+    if (skipTextures || !(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
         return;
     }
 
@@ -210,8 +210,8 @@ async function applyNormalMapLoaded(material, normalParam, normalScale, usdScene
 /**
  * Apply normal map texture in legacy fire-and-forget conversion path.
  */
-function applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache) {
-    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+function applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache, skipTextures = false) {
+    if (skipTextures || !(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
         return;
     }
 
@@ -258,7 +258,7 @@ async function applyOpenPBRNormalMapFromGetter(
     loadTextureFn = loadTextureFromUSD
 ) {
     const normalParam = extractNormalParamFromGetter(getParam);
-    if (!(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
+    if (loadTextureFn === null || !(normalParam !== undefined && usdScene && hasTexture(normalParam))) {
         return;
     }
 
@@ -377,6 +377,85 @@ function decodeHDRTexture(data, mimeType) {
 // Texture Loading
 // ============================================================================
 
+const UNSUPPORTED_BROWSER_TEXTURE_EXTENSIONS = new Set([
+    'psd', 'psb', 'tif', 'tiff', 'tx', 'tex', 'ies'
+]);
+
+function getTextureExtension(uri = '') {
+    const clean = String(uri).split(/[?#]/, 1)[0].replace(/@$/, '');
+    const match = /\.([A-Za-z0-9]+)$/.exec(clean);
+    return match ? match[1].toLowerCase() : '';
+}
+
+function isUnsupportedBrowserTextureURI(uri = '') {
+    return UNSUPPORTED_BROWSER_TEXTURE_EXTENSIONS.has(getTextureExtension(uri));
+}
+
+function warnUnsupportedTexture(textureId, uri, reason = '') {
+    console.warn(`Unsupported texture format for texture ${textureId}; skipping texture load`, {
+        textureId,
+        uri: uri || '',
+        extension: getTextureExtension(uri),
+        reason
+    });
+}
+
+function threeWrapMode(wrap) {
+    switch (String(wrap || '').toLowerCase()) {
+        case 'repeat':
+        case 'tile':
+        case 'tileforever':
+            return THREE.RepeatWrapping;
+        case 'mirror':
+        case 'mirroredrepeat':
+            return THREE.MirroredRepeatWrapping;
+        case 'clamp_to_edge':
+        case 'clamp':
+        case 'black':
+        case 'clamp_to_border':
+        default:
+            return THREE.ClampToEdgeWrapping;
+    }
+}
+
+function applyTextureSampler(texture, texData = null) {
+    if (!texture || !texData) return texture;
+
+    texture.wrapS = threeWrapMode(texData.wrapS);
+    texture.wrapT = threeWrapMode(texData.wrapT);
+
+    if (texData.hasTransform2d) {
+        const scaleU = Number.isFinite(texData.txScaleU) ? texData.txScaleU : 1;
+        const scaleV = Number.isFinite(texData.txScaleV) ? texData.txScaleV : 1;
+        const translateU = Number.isFinite(texData.txTranslationU) ? texData.txTranslationU : 0;
+        const translateV = Number.isFinite(texData.txTranslationV) ? texData.txTranslationV : 0;
+        const rotation = Number.isFinite(texData.txRotation) ? texData.txRotation : 0;
+        texture.repeat.set(scaleU, scaleV);
+        texture.offset.set(translateU, translateV);
+        texture.rotation = rotation;
+        texture.center.set(0, 0);
+        texture.matrixAutoUpdate = true;
+    }
+
+    texture.needsUpdate = true;
+    return texture;
+}
+
+function textureCacheKey(textureId, texData = null) {
+    return JSON.stringify({
+        textureId,
+        imageId: texData?.textureImageId,
+        wrapS: texData?.wrapS,
+        wrapT: texData?.wrapT,
+        hasTransform2d: !!texData?.hasTransform2d,
+        txRotation: texData?.txRotation,
+        txScaleU: texData?.txScaleU,
+        txScaleV: texData?.txScaleV,
+        txTranslationU: texData?.txTranslationU,
+        txTranslationV: texData?.txTranslationV
+    });
+}
+
 /**
  * Load texture from USD scene
  * @param {Object} usdScene - USD scene object with getTexture/getImage methods
@@ -387,11 +466,6 @@ function decodeHDRTexture(data, mimeType) {
 async function loadTextureFromUSD(usdScene, textureId, cache = null) {
     if (textureId === undefined || textureId < 0) return null;
 
-    // Check cache
-    if (cache && cache.has(textureId)) {
-        return cache.get(textureId);
-    }
-
     try {
         const texData = usdScene.getTexture(textureId);
         if (!texData || texData.textureImageId === undefined || texData.textureImageId < 0) {
@@ -399,9 +473,19 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             return null;
         }
 
+        const cacheKey = textureCacheKey(textureId, texData);
+        if (cache && cache.has(cacheKey)) {
+            return cache.get(cacheKey);
+        }
+
         const imgData = usdScene.getImageCopy(texData.textureImageId);
         if (!imgData) {
             console.warn(`Image ${texData.textureImageId} not found`);
+            return null;
+        }
+        const imageURI = imgData.uri || '';
+        if (isUnsupportedBrowserTextureURI(imageURI)) {
+            warnUnsupportedTexture(textureId, imageURI, 'browser TextureLoader cannot decode this source format');
             return null;
         }
 
@@ -411,7 +495,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
         if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
             // TinyUSDZ may create duplicate image entries: one with URI reference (bufferId=-1)
             // and one with embedded data (bufferId>=0). Try to find the embedded version.
-            const filename = imgData.uri.replace(/^\.\//, ''); // Remove leading ./
+            const filename = imageURI.replace(/^\.\//, ''); // Remove leading ./
             let foundEmbedded = false;
 
             if (typeof usdScene.numImages === 'function') {
@@ -419,6 +503,10 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                 for (let i = 0; i < numImages; i++) {
                     const altImg = usdScene.getImageCopy(i);
                     if (altImg.bufferId >= 0 && altImg.uri === filename) {
+                        if (isUnsupportedBrowserTextureURI(altImg.uri || filename)) {
+                            warnUnsupportedTexture(textureId, altImg.uri || filename, 'embedded image keeps an unsupported source format');
+                            return null;
+                        }
                         // Found embedded version - use it instead
                         const altImgData = altImg;
                         if (altImgData.data) {
@@ -438,9 +526,12 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                                 } else {
                                     const blob = new Blob([altImgData.data], { type: mimeType });
                                     const blobUrl = URL.createObjectURL(blob);
-                                    const loader = new THREE.TextureLoader();
-                                    texture = await loader.loadAsync(blobUrl);
-                                    URL.revokeObjectURL(blobUrl);
+                                    try {
+                                        const loader = new THREE.TextureLoader();
+                                        texture = await loader.loadAsync(blobUrl);
+                                    } finally {
+                                        URL.revokeObjectURL(blobUrl);
+                                    }
                                 }
                             }
                             foundEmbedded = true;
@@ -453,7 +544,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
             // Fall back to loading from URI if no embedded version found
             if (!foundEmbedded) {
                 const loader = new THREE.TextureLoader();
-                texture = await loader.loadAsync(imgData.uri);
+                texture = await loader.loadAsync(imageURI);
             }
         }
         // Case 2 & 3: Embedded texture
@@ -467,7 +558,7 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                 else if (imgData.channels === 2) texture.format = THREE.RGFormat;
                 else if (imgData.channels === 4) texture.format = THREE.RGBAFormat;
                 else {
-                    console.error(`Unsupported channel count: ${imgData.channels}`);
+                    console.warn(`Unsupported channel count for texture ${textureId}: ${imgData.channels}`);
                     return null;
                 }
 
@@ -484,21 +575,30 @@ async function loadTextureFromUSD(usdScene, textureId, cache = null) {
                     // Standard image - use Blob and TextureLoader
                     const blob = new Blob([imgData.data], { type: mimeType });
                     const blobUrl = URL.createObjectURL(blob);
-                    const loader = new THREE.TextureLoader();
-                    texture = await loader.loadAsync(blobUrl);
-                    URL.revokeObjectURL(blobUrl);
+                    try {
+                        const loader = new THREE.TextureLoader();
+                        texture = await loader.loadAsync(blobUrl);
+                    } finally {
+                        URL.revokeObjectURL(blobUrl);
+                    }
                 }
             }
         }
 
+        texture = applyTextureSampler(texture, texData);
+
         if (texture && cache) {
-            cache.set(textureId, texture);
+            cache.set(cacheKey, texture);
         }
 
         return texture;
 
     } catch (error) {
-        console.error(`Failed to load texture ${textureId}:`, error);
+        console.warn(`Failed to load texture ${textureId}; skipping texture`, {
+            textureId,
+            error,
+            expectedForUnsupportedFormats: true
+        });
         return null;
     }
 }
@@ -550,9 +650,10 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         return material;
     }
 
-    // Texture cache and delayed loading manager
-    const textureCache = options.textureCache || new Map();
-    const textureManager = options.textureLoadingManager || null;
+	    // Texture cache and delayed loading manager
+	    const textureCache = options.textureCache || new Map();
+	    const textureManager = options.textureLoadingManager || null;
+	    const skipTextures = options.skipTextures || false;
 
     // Helper to apply parameter with optional texture
     const applyParam = async (paramName, paramValue, group = null) => {
@@ -569,10 +670,13 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
         }
 
         // Load and apply texture if present
-        if (usdScene && hasTexture(paramValue)) {
+	        if (!skipTextures && usdScene && hasTexture(paramValue)) {
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
                 const textureId = getTextureId(paramValue);
+                if (texMapName === 'map') {
+                    material.color = new THREE.Color(1, 1, 1);
+                }
 
                 // If textureLoadingManager is provided, queue texture for later loading
                 if (textureManager) {
@@ -644,7 +748,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                 material.emissive = createColor(emissionColor);
             }
             // Load emission texture
-            if (usdScene && hasTexture(flat.emission_color)) {
+            if (!skipTextures && usdScene && hasTexture(flat.emission_color)) {
                 const textureId = getTextureId(flat.emission_color);
                 if (textureManager) {
                     textureManager.queueTexture(material, 'emissiveMap', textureId, usdScene);
@@ -669,7 +773,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                 material.opacity = opacityValue;
                 material.transparent = opacityValue < 1.0;
             }
-            if (usdScene && hasTexture(opacityParam)) {
+            if (!skipTextures && usdScene && hasTexture(opacityParam)) {
                 const textureId = getTextureId(opacityParam);
                 // For alpha maps, we need to set transparent=true even in delayed mode
                 material.transparent = true;
@@ -687,7 +791,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
 
         const normalParam = extractNormalParam(flat);
         const normalScale = extractNormalMapScale(flat);
-        await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager);
+        await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager, skipTextures);
     }
 
     // Process grouped format
@@ -749,7 +853,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
             if (emissionColor && Array.isArray(emissionColor)) {
                 material.emissive = createColor(emissionColor);
             }
-            if (usdScene && hasTexture(pbr.emission.emission_color)) {
+            if (!skipTextures && usdScene && hasTexture(pbr.emission.emission_color)) {
                 const textureId = getTextureId(pbr.emission.emission_color);
                 if (textureManager) {
                     textureManager.queueTexture(material, 'emissiveMap', textureId, usdScene);
@@ -775,7 +879,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
                     material.opacity = opacityValue;
                     material.transparent = opacityValue < 1.0;
                 }
-                if (usdScene && hasTexture(opacityParam)) {
+                if (!skipTextures && usdScene && hasTexture(opacityParam)) {
                     const textureId = getTextureId(opacityParam);
                     material.transparent = true;
                     if (textureManager) {
@@ -792,7 +896,7 @@ async function convertOpenPBRToMeshPhysicalMaterialLoaded(materialData, usdScene
 
             const normalParam = extractNormalParam(pbr.geometry);
             const normalScale = extractNormalMapScale(pbr.geometry);
-            await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager);
+            await applyNormalMapLoaded(material, normalParam, normalScale, usdScene, textureCache, textureManager, skipTextures);
         }
     }
 
@@ -854,8 +958,9 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
         return material;
     }
 
-    // Texture cache
-    const textureCache = options.textureCache || new Map();
+	    // Texture cache
+	    const textureCache = options.textureCache || new Map();
+	    const skipTextures = options.skipTextures || false;
 
     // Helper to apply parameter value (sync) and queue texture loading (async)
     const applyParam = (paramName, paramValue) => {
@@ -872,9 +977,12 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
         }
 
         // Queue texture loading (fire-and-forget)
-        if (usdScene && hasTexture(paramValue)) {
+	        if (!skipTextures && usdScene && hasTexture(paramValue)) {
             const texMapName = OPENPBR_TEXTURE_MAP[paramName];
             if (texMapName) {
+                if (texMapName === 'map') {
+                    material.color = new THREE.Color(1, 1, 1);
+                }
                 loadTextureFromUSD(usdScene, getTextureId(paramValue), textureCache).then((texture) => {
                     if (texture) {
                         material[texMapName] = texture;
@@ -942,7 +1050,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
                 material.emissive = createColor(emissionColor);
             }
             // Load emission texture (fire-and-forget)
-            if (usdScene && hasTexture(flat.emission_color)) {
+            if (!skipTextures && usdScene && hasTexture(flat.emission_color)) {
                 loadTextureFromUSD(usdScene, getTextureId(flat.emission_color), textureCache).then((texture) => {
                     if (texture) {
                         material.emissiveMap = texture;
@@ -966,7 +1074,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
                 material.opacity = opacityValue;
                 material.transparent = opacityValue < 1.0;
             }
-            if (usdScene && hasTexture(opacityParam)) {
+            if (!skipTextures && usdScene && hasTexture(opacityParam)) {
                 loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache).then((texture) => {
                     if (texture) {
                         material.alphaMap = texture;
@@ -982,7 +1090,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
 
         const normalParam = extractNormalParam(flat);
         const normalScale = extractNormalMapScale(flat);
-        applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache);
+        applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache, skipTextures);
     }
 
     // Process grouped format
@@ -1044,7 +1152,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
             if (emissionColor && Array.isArray(emissionColor)) {
                 material.emissive = createColor(emissionColor);
             }
-            if (usdScene && hasTexture(pbr.emission.emission_color)) {
+            if (!skipTextures && usdScene && hasTexture(pbr.emission.emission_color)) {
                 loadTextureFromUSD(usdScene, getTextureId(pbr.emission.emission_color), textureCache).then((texture) => {
                     if (texture) {
                         material.emissiveMap = texture;
@@ -1069,7 +1177,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
                     material.opacity = opacityValue;
                     material.transparent = opacityValue < 1.0;
                 }
-                if (usdScene && hasTexture(opacityParam)) {
+                if (!skipTextures && usdScene && hasTexture(opacityParam)) {
                     loadTextureFromUSD(usdScene, getTextureId(opacityParam), textureCache).then((texture) => {
                         if (texture) {
                             material.alphaMap = texture;
@@ -1085,7 +1193,7 @@ function convertOpenPBRToMeshPhysicalMaterial(materialData, usdScene = null, opt
 
             const normalParam = extractNormalParam(pbr.geometry);
             const normalScale = extractNormalMapScale(pbr.geometry);
-            applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache);
+            applyNormalMapLegacy(material, normalParam, normalScale, usdScene, textureCache, skipTextures);
         }
     }
 

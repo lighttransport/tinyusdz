@@ -2,6 +2,7 @@
 
 void spline_usda_eval_test(void);
 void spline_binary_roundtrip_test(void);
+void spline_binary_rejects_huge_knot_count_test(void);
 void spline_crate_roundtrip_test(void);
 void spline_usda_roundtrip_test(void);
 void spline_interpolation_modes_test(void);

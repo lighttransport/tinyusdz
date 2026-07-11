@@ -7,17 +7,16 @@
 #include "value-printer.hh"
 #include "stream-writer.hh"
 #include "dtoa.hh"
+#include "../crate/lazy-array.hh"
 #include "../strfmt.hh"
 #include "../layer/property-index.hh"
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
-#include <functional>
+#include <deque>
 #include <vector>
 #if defined(TINYUSDZ_ENABLE_THREAD)
 #include <atomic>
-#include <condition_variable>
-#include <mutex>
 #include <thread>
 #endif
 
@@ -26,16 +25,97 @@ namespace next {
 
 namespace {
 
-// Parallel-stitch context. When non-null on WritePrimSpec, a child prim whose
-// index is a "frontier" subtree root is spliced from a precomputed string
-// (serialized in parallel on a worker thread) instead of being recursed into on
-// the main thread. `frontier_of[child_idx]` is the frontier slot (or -1); `emit`
-// blocks until that slot is ready, writes it to `os`, frees it, and advances the
-// consumer cursor. Splicing produces exactly what recursing would have, so the
-// byte output is independent of thread count.
-struct StitchCtx {
-  const std::vector<int>* frontier_of = nullptr;
-  std::function<void(StreamWriter&, int)> emit;
+// One unit of parallel write work, emitted in document order by a single serial
+// build pass. The main thread produces cheap structural glue as Text; every array
+// value worth offloading becomes a WholeValue task (formatted by one worker) or,
+// for a large chunkable array, a run of Chunk tasks (formatted by many workers).
+struct WriteTask {
+  enum class Kind : uint8_t { Text, WholeValue, Chunk } kind;
+  std::string text;             // Text: literal bytes, produced during the walk
+  const Value* value = nullptr; // WholeValue/Chunk: borrowed (Layer or holder)
+  size_t lo = 0;                // Chunk: USD element range [lo, hi)
+  size_t hi = 0;
+  bool open = false;            // Chunk: emit leading '['
+  bool close = false;           // Chunk: emit trailing ']'
+  int free_idx = -1;            // after consuming, free holder[free_idx] (or -1)
+};
+
+// Offload tuning. An array property with >= kOffloadMinElems USD elements is
+// formatted by a worker rather than inline on the build thread (tiny arrays stay
+// inline to avoid task spam). A directly chunkable array with >= kSplitMinElems
+// elements is split into kChunkElems-sized pieces so one giant array spreads
+// across workers; kChunkElems also bounds each worker buffer (~3 MB for float3 at
+// 64Ki). A giant chunkable-TYPE array that is not borrowable (compressed/lazy) is
+// decoded once into an owned buffer and then chunked, but only past the larger
+// kMaterializeChunkMin so the one-off decode pays off versus a single WholeValue.
+constexpr size_t kChunkElems = 64u * 1024u;
+constexpr size_t kSplitMinElems = 2u * kChunkElems;
+constexpr size_t kOffloadMinElems = 256u;
+constexpr size_t kMaterializeChunkMin = 1u << 20;  // 1Mi elements
+
+bool IsCompressedLazyIntArray(const Value& value) {
+  if (!value.is_lazy() || value.type_id() != TypeId::Int) return false;
+  const LazyArrayRef* ref = value.lazy_ref();
+  return ref && ref->is_compressed && ref->crate_type == CrateTypeId::Int;
+}
+
+// Collects ordered tasks during the serial build walk. Structural bytes accrue in
+// `cur` (the StreamWriter target); each offloaded array flushes `cur` as a Text
+// task and appends WholeValue/Chunk task(s). The worker emits the array's full
+// `[...]`, so the build path writes nothing for the value itself. Giant
+// non-borrowable arrays are materialized into `holder` (stable addresses) so their
+// chunks can alias one decoded buffer; the buffer is freed once consumed.
+struct SegmentSink {
+  std::vector<WriteTask>* tasks = nullptr;
+  std::string* cur = nullptr;
+  const PrintOptions* po = nullptr;
+  std::deque<Value>* holder = nullptr;
+
+  void flush_text() {
+    if (cur && !cur->empty()) {
+      WriteTask t;
+      t.kind = WriteTask::Kind::Text;
+      t.text = std::move(*cur);
+      cur->clear();
+      tasks->push_back(std::move(t));
+    }
+  }
+
+  void push_chunks(const Value* src, size_t n, int free_idx) {
+    for (size_t lo = 0; lo < n; lo += kChunkElems) {
+      WriteTask t;
+      t.kind = WriteTask::Kind::Chunk;
+      t.value = src;
+      t.lo = lo;
+      t.hi = (lo + kChunkElems < n) ? (lo + kChunkElems) : n;
+      t.open = (lo == 0);
+      t.close = (t.hi == n);
+      if (t.close) t.free_idx = free_idx;  // free the decoded buffer last
+      tasks->push_back(std::move(t));
+    }
+  }
+
+  void offload_array(const Value* v) {
+    flush_text();
+    const size_t n = ArrayElementCount(*v);
+    if (n >= kSplitMinElems && IsChunkableArray(*v, *po)) {
+      push_chunks(v, n, /*free_idx=*/-1);  // borrowable: chunk in place
+    } else if (IsCompressedLazyIntArray(*v)) {
+      WriteTask t;
+      t.kind = WriteTask::Kind::WholeValue;
+      t.value = v;
+      tasks->push_back(std::move(t));
+    } else if (n >= kMaterializeChunkMin && holder && IsChunkableType(*v, *po)) {
+      holder->push_back(v->materialized_copy());  // decode once, then chunk
+      push_chunks(&holder->back(), n,
+                  static_cast<int>(holder->size() - 1));
+    } else {
+      WriteTask t;
+      t.kind = WriteTask::Kind::WholeValue;
+      t.value = v;
+      tasks->push_back(std::move(t));
+    }
+  }
 };
 
 // Freestanding integer -> decimal string: IntToStr/UIntToStr live in ../strfmt.hh
@@ -51,11 +131,81 @@ const char* SpecifierKeyword(PrimSpecifier spec) {
   }
 }
 
-// Write indent
-void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
-  for (int i = 0; i < depth; ++i) {
-    os << indent;
+// Write indent.
+//
+// Emits `depth` copies of `indent` in a single write, backed by a thread-local
+// cache of the repeated unit (grown on demand). This avoids `depth` tiny writes
+// per prim/property on the hot path. The cache is thread_local so it stays
+// correct under the parallel subtree stitcher (each worker has its own
+// StreamWriter). Byte-identical to emitting `indent` in a loop for any unit.
+// Render a canonical arc string for usda text. Arc strings are stored as
+// "@asset@</prim>" / "</prim>" (internal) / bare asset path, optionally with
+// the internal layer-offset suffix "?layerOffset=offset:scale" — the suffix
+// must be re-emitted in pxr syntax `(offset = N; scale = M)` (pxr rejects the
+// internal form).
+std::string FormatArcRef(const std::string& arc) {
+  std::string body = arc;
+  std::string suffix;
+  size_t q = body.find("?layerOffset=");
+  if (q != std::string::npos) {
+    const char* c = body.c_str() + q + 13;
+    char* endp = nullptr;
+    double off = std::strtod(c, &endp);
+    double scl = (endp && *endp == ':') ? std::strtod(endp + 1, nullptr) : 1.0;
+    body.resize(q);
+    if (off != 0.0 || scl != 1.0) {
+      suffix = " (";
+      if (off != 0.0) {
+        suffix += "offset = " + dtos(off);
+        if (scl != 1.0) suffix += "; ";
+      }
+      if (scl != 1.0) suffix += "scale = " + dtos(scl);
+      suffix += ")";
+    }
   }
+  std::string out;
+  if (!body.empty() && body[0] == '<') {
+    out = body;  // internal arc
+  } else if (!body.empty() && body[0] == '@') {
+    // Already-delimited asset form (possibly with a <prim> suffix): if the
+    // asset segment contains an inner '@', re-delimit it triple-@.
+    size_t close = body.find('@', 1);
+    std::string asset =
+        (close != std::string::npos) ? body.substr(1, close - 1) : "";
+    std::string rest =
+        (close != std::string::npos) ? body.substr(close + 1) : "";
+    if (asset.find('@') != std::string::npos || rest.find('@') == 0) {
+      // Conservative re-parse: extract asset by the LAST '@' before any '<'.
+      size_t lt = body.find('<');
+      size_t last_at = (lt == std::string::npos ? body : body.substr(0, lt))
+                           .rfind('@');
+      asset = body.substr(1, last_at - 1);
+      rest = body.substr(last_at + 1);
+      out = FormatAssetPathForUsda(asset) + rest;
+    } else {
+      out = body;
+    }
+  } else {
+    out = FormatAssetPathForUsda(body);
+  }
+  return out + suffix;
+}
+
+void WriteIndent(StreamWriter& os, int depth, const std::string& indent) {
+  if (depth <= 0 || indent.empty()) return;
+  thread_local std::string pad;    // cached repetition of `unit`
+  thread_local std::string unit;   // the indent unit `pad` was built from
+  thread_local int levels = 0;     // number of `unit` copies currently in `pad`
+  if (unit != indent) {
+    unit = indent;
+    pad.clear();
+    levels = 0;
+  }
+  if (depth > levels) {
+    pad.reserve(static_cast<size_t>(depth) * indent.size());
+    for (; levels < depth; ++levels) pad += indent;
+  }
+  os.write(pad.data(), static_cast<size_t>(depth) * indent.size());
 }
 
 // Escape a string for USDA output
@@ -70,7 +220,19 @@ std::string EscapeString(const std::string& s) {
       case '\n': result += "\\n"; break;
       case '\r': result += "\\r"; break;
       case '\t': result += "\\t"; break;
-      default:   result += c; break;
+      default: {
+        // Match the value printer: \xNN-escape control bytes.
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc == 0x7f) {
+          static const char* hexd = "0123456789abcdef";
+          result += "\\x";
+          result += hexd[uc >> 4];
+          result += hexd[uc & 0xf];
+        } else {
+          result += c;
+        }
+        break;
+      }
     }
   }
   result += '"';
@@ -124,37 +286,37 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + "comment = " + EscapeString(meta.comment));
   }
 
-  if (meta.metersPerUnit != 0.01) {
-    lines.push_back(opts.indent + "metersPerUnit = " + format_g(meta.metersPerUnit, opts.double_precision));
+  if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
+    lines.push_back(opts.indent + "metersPerUnit = " + dtos(meta.metersPerUnit));
   }
 
-  if (meta.startTimeCode != 0.0) {
-    lines.push_back(opts.indent + "startTimeCode = " + format_g(meta.startTimeCode, opts.double_precision));
+  if (meta.startTimeCode_set || meta.startTimeCode != 0.0) {
+    lines.push_back(opts.indent + "startTimeCode = " + dtos(meta.startTimeCode));
   }
 
-  if (meta.endTimeCode != 0.0) {
-    lines.push_back(opts.indent + "endTimeCode = " + format_g(meta.endTimeCode, opts.double_precision));
+  if (meta.endTimeCode_set || meta.endTimeCode != 0.0) {
+    lines.push_back(opts.indent + "endTimeCode = " + dtos(meta.endTimeCode));
   }
 
-  if (meta.timeCodesPerSecond != 24.0) {
-    lines.push_back(opts.indent + "timeCodesPerSecond = " + format_g(meta.timeCodesPerSecond, opts.double_precision));
+  if (meta.timeCodesPerSecond_set || meta.timeCodesPerSecond != 24.0) {
+    lines.push_back(opts.indent + "timeCodesPerSecond = " + dtos(meta.timeCodesPerSecond));
   }
 
-  if (meta.upAxis != "Y") {
+  if (meta.upAxis_set || meta.upAxis != "Y") {
     lines.push_back(opts.indent + "upAxis = " + EscapeString(meta.upAxis));
   }
 
   if (meta.framesPerSecond_set) {
-    lines.push_back(opts.indent + "framesPerSecond = " + format_g(meta.framesPerSecond, opts.double_precision));
+    lines.push_back(opts.indent + "framesPerSecond = " + dtos(meta.framesPerSecond));
   }
 
   if (meta.kilogramsPerUnit_set) {
-    lines.push_back(opts.indent + "kilogramsPerUnit = " + format_g(meta.kilogramsPerUnit, opts.double_precision));
+    lines.push_back(opts.indent + "kilogramsPerUnit = " + dtos(meta.kilogramsPerUnit));
   }
 
   if (!meta.colorConfiguration.empty()) {
-    lines.push_back(opts.indent + "colorConfiguration = @" +
-                    meta.colorConfiguration + "@");
+    lines.push_back(opts.indent + "colorConfiguration = " +
+                    FormatAssetPathForUsda(meta.colorConfiguration));
   }
 
   if (!meta.colorManagementSystem.empty()) {
@@ -171,8 +333,22 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
 
   if (!meta.subLayers.empty()) {
     std::string s = opts.indent + "subLayers = [\n";
-    for (const auto& layer : meta.subLayers) {
-      s += opts.indent + opts.indent + "@" + layer + "@,\n";
+    for (size_t i = 0; i < meta.subLayers.size(); ++i) {
+      s += opts.indent + opts.indent + FormatAssetPathForUsda(meta.subLayers[i]);
+      if (i < meta.subLayerOffsets.size()) {
+        const double off = meta.subLayerOffsets[i].first;
+        const double scl = meta.subLayerOffsets[i].second;
+        if (off != 0.0 || scl != 1.0) {
+          s += " (";
+          if (off != 0.0) {
+            s += "offset = " + dtos(off);
+            if (scl != 1.0) s += "; ";
+          }
+          if (scl != 1.0) s += "scale = " + dtos(scl);
+          s += ")";
+        }
+      }
+      s += ",\n";
     }
     s += opts.indent + "]";
     lines.push_back(std::move(s));
@@ -198,6 +374,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   const int md = depth + 1;
   os << " (\n";
   auto kv = [&](const std::string& s) {
+    if (s.empty()) return;  // e.g. DictMetaLine of an empty dict
     WriteIndent(os, md, opts.indent);
     os << s << "\n";
   };
@@ -228,7 +405,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   if (m->authored & PropMeta::kKind)
     kv("kind = " + EscapeString(m->kind));
   if (m->authored & PropMeta::kWeight) {
-    kv("weight = " + format_g(m->weight, opts.double_precision));
+    kv("weight = " + dtos(m->weight));
   }
   if (m->authored & PropMeta::kUnauthoredIdx)
     kv("unauthoredValuesIndex = " + IntToStr(static_cast<long long>(m->unauthoredValuesIndex)));
@@ -281,21 +458,16 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
   for (size_t i = 0; i < samples->size(); ++i) {
     const auto& sample = (*samples)[i];
     WriteIndent(os, depth + 1, opts.indent);
-    os << format_g(sample.first, opts.double_precision) << ": ";
+    os << dtos(sample.first) << ": ";
 
     const Value* val = spec.time_sample_value(sample.second);
     if (val && val->is_block()) {
       os << "None";  // a blocked sample (`123: None`)
     } else if (val) {
-      // Transient decode of lazy (crate-backed) sample arrays — see WriteProperty.
-      // On animation-heavy scenes the time samples dominate, so keeping them lazy
-      // (TimeSampleStorage::add_dedup) + decoding one at a time here is the main
-      // memory win.
-      if (val->is_lazy()) {
-        os << PrintValue(val->materialized_copy(), print_opts);
-      } else {
-        os << PrintValue(*val, print_opts);
-      }
+      // Stream large arrays directly; lazy crate-backed POD arrays can be
+      // borrowed without decoding, while unsupported encodings fall back to a
+      // transient materialized value inside the value printer.
+      PrintValue(os, *val, print_opts);
     } else {
       os << "None";
     }
@@ -308,18 +480,15 @@ void WriteTimeSamples(StreamWriter& os, const std::string& name, PropNameId name
 
 // Write a property value
 void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
-                   int depth, const USDAWriteOptions& opts) {
+                   int depth, const USDAWriteOptions& opts,
+                   SegmentSink* segsink = nullptr) {
   PropNameTable& name_table = GetPropNameTable();
   const std::string& name = name_table.get(slot.name_id);
 
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
-    // USDA forbids metadata after a `.timeSamples` block. If the attribute has
-    // authored metadata, emit it on a bare declaration line FIRST (usdcat form):
-    //   <type> <name> ( ...meta... )
-    //   <type> <name>.timeSamples = { ... }
-    const PropMeta* pm = spec.property_meta(slot.name_id);
-    if (pm && !pm->empty()) {
+    // Shared `<qualifiers><type> <name>` prefix for the statements below.
+    auto emit_ts_decl = [&]() {
       WriteIndent(os, depth, opts.indent);
       if (opts.emit_custom && slot.is_custom()) os << "custom ";
       if (slot.is_uniform()) os << "uniform ";
@@ -331,6 +500,30 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
         if (slot.is_array()) os << "[]";
       }
       os << " " << name;
+    };
+    // An authored DEFAULT coexists with time samples as an independent
+    // field (pxr keeps both; dropping it loses the value used outside the
+    // sampled range / by consumers that ignore samples). Emit it first.
+    const Value* def_val = spec.property_value(slot.name_id);
+    const PropMeta* pm = spec.property_meta(slot.name_id);
+    if (def_val && !def_val->is_empty()) {
+      emit_ts_decl();
+      if (def_val->is_block()) {
+        os << " = None";
+      } else {
+        os << " = ";
+        PrintOptions po;
+        po.float_precision = opts.float_precision;
+        po.double_precision = opts.double_precision;
+        po.indent = opts.indent;
+        PrintValue(os, *def_val, po);
+      }
+      WritePropMeta(os, spec, slot.name_id, depth, opts);
+      os << "\n";
+    } else if (pm && !pm->empty()) {
+      // USDA forbids metadata after a `.timeSamples` block: emit authored
+      // metadata on a bare declaration line first (usdcat form).
+      emit_ts_decl();
       WritePropMeta(os, spec, slot.name_id, depth, opts);
       os << "\n";
     }
@@ -368,7 +561,9 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   // value (a connection-only attr has no authored default). A property may also
   // carry BOTH a value and a connection -> emit them as separate statements.
   const std::vector<Path>* conns = spec.connection(name);
-  const bool has_conn = conns && !conns->empty();
+  // A present-but-empty entry is an authored connection BLOCK
+  // (`.connect = None`); absent means no connection opinion.
+  const bool has_conn = conns != nullptr;
 
   // Value statement (authored default).
   if (has_value && value->is_block()) {
@@ -385,14 +580,15 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     print_opts.double_precision = opts.double_precision;
     print_opts.max_array_elements = opts.max_elements_per_line;
     print_opts.compact = opts.compact;
-    // Lazy (crate-backed) arrays: decode into a throwaway temp and print that,
-    // leaving the Stage's Value lazy. Printing `*value` directly would call the
-    // const array accessors, which materialize in place and keep every array
-    // resident for the whole write. Transient decode bounds peak to ~one array.
-    if (value->is_lazy()) {
-      os << " = " << PrintValue(value->materialized_copy(), print_opts);
+    os << " = ";
+    // Parallel build: offload a non-trivial array value to the worker pool, which
+    // emits its complete `[ ... ]` (byte-identical to the inline PrintValue). Tiny
+    // arrays and non-array values are formatted inline.
+    if (segsink && value->is_array() &&
+        ArrayElementCount(*value) >= kOffloadMinElems) {
+      segsink->offload_array(value);
     } else {
-      os << " = " << PrintValue(*value, print_opts);
+      PrintValue(os, *value, print_opts);
     }
     WritePropMeta(os, spec, slot.name_id, depth, opts);
     os << "\n";
@@ -402,7 +598,9 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
   if (has_conn) {
     emit_decl();
     os << ".connect = ";
-    if (conns->size() == 1) {
+    if (conns->empty()) {
+      os << "None";
+    } else if (conns->size() == 1) {
       os << "<" << (*conns)[0].str() << ">";
     } else {
       os << "[";
@@ -432,21 +630,71 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
                        const std::vector<Path>& targets, const PrimSpec& spec,
                        PropNameId name_id, int depth,
                        const USDAWriteOptions& opts) {
-  WriteIndent(os, depth, opts.indent);
-  os << "rel " << name;
-
-  if (targets.empty()) {
-    os << " = None";
-  } else if (targets.size() == 1) {
-    os << " = <" << targets[0].str() << ">";
-  } else {
-    os << " = [\n";
-    for (const auto& target : targets) {
-      WriteIndent(os, depth + 1, opts.indent);
-      os << "<" << target.str() << ">,\n";
-    }
+  const bool is_custom =
+      (spec.relationship_flags(name) & PropSlot::kFlagCustom) != 0;
+  auto head = [&]() {
     WriteIndent(os, depth, opts.indent);
-    os << "]";
+    if (opts.emit_custom && is_custom) os << "custom ";
+    os << "rel " << name;
+  };
+  auto targets_text = [&](const std::vector<std::string>& tgts) {
+    if (tgts.size() == 1) {
+      os << " = <" << tgts[0] << ">";
+    } else {
+      os << " = [\n";
+      for (const auto& t : tgts) {
+        WriteIndent(os, depth + 1, opts.indent);
+        os << "<" << t << ">,\n";
+      }
+      WriteIndent(os, depth, opts.indent);
+      os << "]";
+    }
+  };
+
+  // Authored list-op edits re-emit their qualifiers (a bare explicit list
+  // changes composition semantics for delete/prepend against weaker layers).
+  const ArcEdit* re = nullptr;
+  {
+    const auto& edits = spec.relationship_edits();
+    auto it = edits.find(name);
+    if (it != edits.end() && it->second.authored && !it->second.is_explicit) {
+      re = &it->second;
+    }
+  }
+  if (re) {
+    bool first = true;
+    auto qual_line = [&](const char* qual,
+                         const std::vector<std::string>& items) {
+      if (items.empty()) return;
+      WriteIndent(os, depth, opts.indent);
+      if (opts.emit_custom && is_custom && first) os << "custom ";
+      os << qual << "rel " << name;
+      targets_text(items);
+      if (first) WritePropMeta(os, spec, name_id, depth, opts);
+      os << "\n";
+      first = false;
+    };
+    qual_line("prepend ", re->prepended);
+    qual_line("append ", re->appended);
+    qual_line("delete ", re->deleted);
+    qual_line("reorder ", re->ordered);
+    if (first) {  // authored but empty edit: keep the declaration
+      head();
+      WritePropMeta(os, spec, name_id, depth, opts);
+      os << "\n";
+    }
+    return;
+  }
+
+  head();
+  if (targets.empty()) {
+    // Declared-only relationship: bare `rel name` (pxr re-parses it as a
+    // declaration; `= None` would author a block instead).
+  } else {
+    std::vector<std::string> tgts;
+    tgts.reserve(targets.size());
+    for (const auto& t : targets) tgts.push_back(t.str());
+    targets_text(tgts);
   }
   WritePropMeta(os, spec, name_id, depth, opts);
   os << "\n";
@@ -455,11 +703,240 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
 // Forward declaration
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
-                   const StitchCtx* sctx = nullptr);
+                   SegmentSink* segsink = nullptr);
+
+// Emit `variantSet "name" = { "opt" (meta) { body } ... }` blocks at `depth`.
+// Bodies merge two representations: inline VariantData (USDA parse /
+// authoring: properties, relationships, arcs, nested sets, content sub-layer)
+// and bracketed holder prims in `layer` (crate representation). When both
+// exist (MergeVariantData pattern), inline opinions win and the holder
+// contributes only what the inline data lacks.
+void WriteVariantSets(StreamWriter& os,
+                      const std::vector<VariantSetData>& sets,
+                      const Layer& layer, const std::string& owner_path,
+                      int depth, const USDAWriteOptions& opts,
+                      SegmentSink* segsink) {
+  for (const VariantSetData& vs : sets) {
+    os << "\n";
+    WriteIndent(os, depth, opts.indent);
+    os << "variantSet " << EscapeString(vs.name) << " = {\n";
+    for (const VariantData& var : vs.variants) {
+      const std::string holder_path =
+          owner_path + "/{" + vs.name + "=" + var.name + "}";
+      const PrimSpec* holder = layer.prim_at_path(holder_path);
+
+      WriteIndent(os, depth + 1, opts.indent);
+      os << EscapeString(var.name);
+
+      // Variant OPTION metadata: composition arcs / active / hidden / doc
+      // authored on the option itself (inline or on the holder prim).
+      const PrimSpecMeta* hmeta = holder ? &holder->meta() : nullptr;
+      auto pick_arcs = [&](const std::vector<std::string>& inline_arcs,
+                           const std::vector<std::string>* holder_arcs)
+          -> const std::vector<std::string>& {
+        static const std::vector<std::string> kEmpty;
+        if (!inline_arcs.empty()) return inline_arcs;
+        return holder_arcs ? *holder_arcs : kEmpty;
+      };
+      const std::vector<std::string>& o_refs =
+          pick_arcs(var.references, hmeta ? &hmeta->references : nullptr);
+      const std::vector<std::string>& o_pls =
+          pick_arcs(var.payloads, hmeta ? &hmeta->payloads : nullptr);
+      const std::vector<std::string>& o_inh =
+          pick_arcs(var.inherits, hmeta ? &hmeta->inherits : nullptr);
+      const std::vector<std::string>& o_spz =
+          pick_arcs(var.specializes, hmeta ? &hmeta->specializes : nullptr);
+      const bool o_inactive = !var.active || (hmeta && !hmeta->active);
+      const bool o_hidden = var.hidden || (hmeta && hmeta->hidden);
+      const std::string& o_doc =
+          !var.doc.empty() ? var.doc : (hmeta ? hmeta->doc() : var.doc);
+      // Nested variant SELECTIONS: authored on the option's own metadata
+      // (`"o1" ( variants = { string inner = "i2" } )`). Gather from the
+      // inline nested sets, or the holder's meta for crate-loaded layers.
+      std::vector<std::pair<std::string, std::string>> o_sels;
+      {
+        const std::vector<VariantSetData>& nsets =
+            !var.variantSets.empty()
+                ? var.variantSets
+                : (hmeta ? hmeta->variantSets() : var.variantSets);
+        for (const VariantSetData& nvs : nsets) {
+          if (!nvs.selected.empty()) o_sels.emplace_back(nvs.name, nvs.selected);
+        }
+        if (hmeta) {
+          for (const auto& kv : hmeta->variantSelections()) {
+            bool have = false;
+            for (auto& e : o_sels) {
+              if (e.first == kv.first) { have = true; break; }
+            }
+            if (!have && !kv.second.empty()) o_sels.push_back(kv);
+          }
+        }
+      }
+      const bool has_opt_meta = !o_refs.empty() || !o_pls.empty() ||
+                                !o_inh.empty() || !o_spz.empty() ||
+                                o_inactive || o_hidden || !o_sels.empty() ||
+                                (!o_doc.empty() && opts.include_comments);
+      if (has_opt_meta) {
+        os << " (\n";
+        auto arc_line = [&](const char* keyword,
+                            const std::vector<std::string>& arcs) {
+          for (const std::string& a : arcs) {
+            WriteIndent(os, depth + 2, opts.indent);
+            os << "prepend " << keyword << " = " << FormatArcRef(a) << "\n";
+          }
+        };
+        arc_line("references", o_refs);
+        arc_line("payload", o_pls);
+        arc_line("inherits", o_inh);
+        arc_line("specializes", o_spz);
+        if (o_inactive) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "active = false\n";
+        }
+        if (o_hidden) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "hidden = true\n";
+        }
+        if (!o_doc.empty() && opts.include_comments) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "doc = " << EscapeString(o_doc) << "\n";
+        }
+        if (!o_sels.empty()) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "variants = {\n";
+          for (const auto& kv : o_sels) {
+            WriteIndent(os, depth + 3, opts.indent);
+            os << "string " << kv.first << " = " << EscapeString(kv.second)
+               << "\n";
+          }
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "}\n";
+        }
+        WriteIndent(os, depth + 1, opts.indent);
+        os << ")";
+      }
+      os << " {\n";
+
+      PrintOptions vpopts;
+      vpopts.float_precision = opts.float_precision;
+      vpopts.double_precision = opts.double_precision;
+      for (const VariantProperty& vp : var.properties) {
+        if (vp.value.is_empty()) continue;  // unknown-typed placeholder
+        WriteIndent(os, depth + 2, opts.indent);
+        if (opts.emit_custom && (vp.flags & PropSlot::kFlagCustom)) {
+          os << "custom ";
+        }
+        if (vp.flags & PropSlot::kFlagUniform) os << "uniform ";
+        const char* tn = GetTypeName(vp.value.type_id());
+        os << (tn ? tn : "token");
+        if (vp.value.is_array()) os << "[]";
+        os << " " << vp.name << " = ";
+        PrintValue(os, vp.value, vpopts);
+        os << "\n";
+      }
+      for (const auto& rel : var.relationships) {
+        WriteIndent(os, depth + 2, opts.indent);
+        os << "rel " << rel.first;
+        if (rel.second.size() == 1) {
+          os << " = <" << rel.second[0].str() << ">";
+        } else if (!rel.second.empty()) {
+          os << " = [";
+          for (size_t t = 0; t < rel.second.size(); ++t) {
+            if (t) os << ", ";
+            os << "<" << rel.second[t].str() << ">";
+          }
+          os << "]";
+        }
+        os << "\n";
+      }
+
+      // Nested variant sets authored on this option.
+      if (!var.variantSets.empty()) {
+        WriteVariantSets(os, var.variantSets, layer, holder_path, depth + 2,
+                         opts, segsink);
+      }
+
+      // Variant CHILD prims + holder extras. Inline content sub-layer first
+      // (USDA representation), then holder contributions not already covered
+      // by the inline data (crate representation / merged pattern).
+      if (var.content) {
+        if (const PrimSpec* self = var.content->prim_at_path("/__self__")) {
+          // The content root's OWN opinions (time-sampled attributes routed
+          // here by the parser, connections, ...) belong in the option body
+          // too — only its non-time-sampled defaults are already covered by
+          // the inline VariantProperty list.
+          auto has_inline = [&](const std::string& name) {
+            for (const VariantProperty& vp : var.properties) {
+              if (vp.name == name) return true;
+            }
+            return false;
+          };
+          PropNameTable& stable = GetPropNameTable();
+          for (const PropSlot& sslot : self->properties().slots()) {
+            if (sslot.is_relationship()) continue;
+            if (!sslot.is_time_sampled() &&
+                has_inline(stable.get(sslot.name_id))) {
+              continue;
+            }
+            WriteProperty(os, sslot, *self, depth + 2, opts, segsink);
+          }
+          for (uint32_t ci : self->child_indices()) {
+            const PrimSpec* child = var.content->prim(ci);
+            if (!child) continue;
+            os << "\n";
+            WritePrimSpec(os, *child, *var.content, depth + 2, opts, segsink);
+          }
+        }
+      }
+      if (holder) {
+        auto has_inline_prop = [&](const std::string& name) {
+          for (const VariantProperty& vp : var.properties) {
+            if (vp.name == name) return true;
+          }
+          return false;
+        };
+        PropNameTable& htable = GetPropNameTable();
+        for (const PropSlot& hslot : holder->properties().slots()) {
+          if (hslot.is_relationship()) continue;
+          if (has_inline_prop(htable.get(hslot.name_id))) continue;
+          WriteProperty(os, hslot, *holder, depth + 2, opts, segsink);
+        }
+        for (const std::string& rel_name : holder->relationship_names()) {
+          if (var.relationships.find(rel_name) != var.relationships.end()) {
+            continue;
+          }
+          const std::vector<Path>* targets = holder->relationship(rel_name);
+          if (!targets) continue;
+          WriteRelationship(os, rel_name, *targets, *holder,
+                            htable.find(rel_name), depth + 2, opts);
+        }
+        // Holder-side nested sets (crate representation).
+        if (var.variantSets.empty() && !holder->meta().variantSets().empty()) {
+          WriteVariantSets(os, holder->meta().variantSets(), layer,
+                           holder_path, depth + 2, opts, segsink);
+        }
+        for (uint32_t ci : holder->child_indices()) {
+          const PrimSpec* child = layer.prim(ci);
+          if (!child) continue;
+          const std::string& cn = child->name();
+          if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') {
+            continue;  // nested holder: emitted via variantSets above
+          }
+          os << "\n";
+          WritePrimSpec(os, *child, layer, depth + 2, opts, segsink);
+        }
+      }
+      WriteIndent(os, depth + 1, opts.indent);
+      os << "}\n";
+    }
+    WriteIndent(os, depth, opts.indent);
+    os << "}\n";
+  }
+}
 
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
-                   const StitchCtx* sctx) {
+                   SegmentSink* segsink) {
   // Write prim definition line
   WriteIndent(os, depth, opts.indent);
   os << SpecifierKeyword(spec.specifier());
@@ -490,17 +967,21 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                   !meta.references.empty() || !meta.payloads.empty() ||
                   !meta.inherits.empty() || !meta.specializes.empty() ||
                   !meta.variantSelections().empty() ||
-                  !meta.variantSelection.empty();
+                  !meta.variantSelection.empty() ||
+                  !meta.variantSets().empty();
 
   if (has_meta) {
     const int md = depth + 1;
     os << " (\n";
     auto kv = [&](const std::string& s) {
+      if (s.empty()) return;  // e.g. DictMetaLine of an empty dict
       WriteIndent(os, md, opts.indent);
       os << s << "\n";
     };
     if (!meta.active) kv("active = false");
+    else if (meta.active_authored) kv("active = true");
     if (meta.hidden) kv("hidden = true");
+    else if (meta.hidden_authored) kv("hidden = false");
     if (meta.instanceable) kv("instanceable = true");
     if (!meta.kind().empty()) kv("kind = " + EscapeString(meta.kind()));
     if (!meta.displayName().empty())
@@ -508,7 +989,12 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     if (has_doc) kv("doc = " + EscapeString(meta.doc()));
     if (has_comment) kv("comment = " + EscapeString(meta.comment()));
     if (!meta.apiSchemas().empty()) {
-      std::string s = "apiSchemas = [";
+      std::string s;
+      if (!meta.apiSchemasQualifier().empty() &&
+          meta.apiSchemasQualifier() != "delete") {
+        s += meta.apiSchemasQualifier() + " ";
+      }
+      s += "apiSchemas = [";
       for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
         if (i > 0) s += ", ";
         s += "\"" + meta.apiSchemas()[i] + "\"";
@@ -534,20 +1020,19 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         os << qual << field << " = [\n";
         for (const auto& a : items) {
           WriteIndent(os, md + 1, opts.indent);
-          // `a` is a composed arc string: "@asset@</prim>" (external),
-          // "</prim>" (internal reference, no asset), or a bare asset path.
-          // Emit external/internal forms as-is; only a bare asset path is
-          // wrapped in @...@.
-          if (!a.empty() && (a[0] == '@' || a[0] == '<'))
-            os << a << ",\n";
-          else
-            os << "@" << a << "@,\n";
+          os << FormatArcRef(a) << ",\n";
         }
         WriteIndent(os, md, opts.indent);
         os << "]\n";
       };
       if (!e || !e->authored || e->is_explicit) {
-        emit("", inl);  // bare/explicit list
+        if (e && e->authored && e->is_explicit && inl.empty()) {
+          // Authored explicit-clear (`references = None`).
+          WriteIndent(os, md, opts.indent);
+          os << field << " = None\n";
+        } else {
+          emit("", inl);  // bare/explicit list
+        }
       } else {
         emit("prepend ", e->prepended);
         emit("append ", e->appended);
@@ -572,14 +1057,42 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       WriteIndent(os, md, opts.indent);
       os << "}\n";
     };
-    if (!meta.variantSelections().empty()) {
-      write_variants(meta.variantSelections());
-    } else if (!meta.variantSelection.empty()) {
-      auto eq = meta.variantSelection.find('=');
-      if (eq != std::string::npos) {
-        write_variants({{meta.variantSelection.substr(0, eq),
-                         meta.variantSelection.substr(eq + 1)}});
+    {
+      // Merge every selection source (per-set `selected` is authoritative,
+      // then the plural list, then the legacy single string): a crate-read
+      // multi-set prim may carry only ONE set in the legacy string, and a
+      // USDA-parsed prim carries selections only in the plural list.
+      std::vector<std::pair<std::string, std::string>> sels;
+      auto add_sel = [&sels](const std::string& set, const std::string& v) {
+        if (set.empty() || v.empty()) return;
+        for (auto& kv : sels) {
+          if (kv.first == set) return;  // first writer wins
+        }
+        sels.emplace_back(set, v);
+      };
+      for (const auto& vs : meta.variantSets()) add_sel(vs.name, vs.selected);
+      for (const auto& kv : meta.variantSelections()) {
+        add_sel(kv.first, kv.second);
       }
+      if (!meta.variantSelection.empty()) {
+        auto eq = meta.variantSelection.find('=');
+        if (eq != std::string::npos) {
+          add_sel(meta.variantSelection.substr(0, eq),
+                  meta.variantSelection.substr(eq + 1));
+        }
+      }
+      if (!sels.empty()) write_variants(sels);
+    }
+
+    // Variant set declaration: `prepend variantSets = ["lod", ...]`.
+    if (!meta.variantSets().empty()) {
+      WriteIndent(os, md, opts.indent);
+      os << "prepend variantSets = [";
+      for (size_t i = 0; i < meta.variantSets().size(); ++i) {
+        if (i) os << ", ";
+        os << EscapeString(meta.variantSets()[i].name);
+      }
+      os << "]\n";
     }
 
     WriteIndent(os, depth, opts.indent);
@@ -611,7 +1124,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
 
   // Write properties
   for (const PropSlot* slot : prop_slots) {
-    WriteProperty(os, *slot, spec, content_depth, opts);
+    WriteProperty(os, *slot, spec, content_depth, opts, segsink);
   }
 
   // Write relationships. These live in the relationship map (add_relationship
@@ -624,18 +1137,22 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     WriteRelationship(os, rel_name, *targets, spec, rid, content_depth, opts);
   }
 
-  // Write children. In stitch mode, a child that is a frontier subtree root is
-  // spliced from its precomputed (parallel-serialized) string instead of being
-  // recursed into here; this yields exactly the same bytes as recursing.
+  // Write variant set bodies (recursive: options may carry nested sets).
+  WriteVariantSets(os, spec.meta().variantSets(), layer, spec.path().str(),
+                   content_depth, opts, segsink);
+
+  // Write children. When `segsink` is active (the parallel build walk), the same
+  // sink propagates so each child's large array values are offloaded too.
+  // Bracketed variant HOLDER prims ("{set=var}", crate representation) are not
+  // real children: their names/selections are emitted via the variantSets
+  // metadata + bodies above, and printing them as defs would be invalid USDA.
   for (uint32_t child_idx : spec.child_indices()) {
     const PrimSpec* child = layer.prim(child_idx);
     if (child) {
+      const std::string& cn = child->name();
+      if (cn.size() >= 2 && cn.front() == '{' && cn.back() == '}') continue;
       os << "\n";
-      if (sctx) {
-        int fs = (*sctx->frontier_of)[child_idx];
-        if (fs >= 0) { sctx->emit(os, fs); continue; }
-      }
-      WritePrimSpec(os, *child, layer, content_depth, opts, sctx);
+      WritePrimSpec(os, *child, layer, content_depth, opts, segsink);
     }
   }
 
@@ -660,227 +1177,213 @@ void WriteStageBodySerial(StreamWriter& os, const Layer& layer,
 #if defined(TINYUSDZ_ENABLE_THREAD)
 
 // Resolve the effective worker count from the option (1 = serial; <=0 = auto;
-// >1 = exactly that many). USDA serialization of large scenes is memory-
-// bandwidth bound (it streams GBs of formatted text), so throughput peaks around
-// ~8 threads and degrades past that from allocator/bandwidth contention; the
-// auto default is therefore capped at kAutoCap. An explicit request is honored
-// as-is so callers can override on unusual hardware.
+// >1 = exactly that many). The parallel writer formats balanced segments (one
+// giant array no longer pins a single worker), so throughput scales with cores;
+// the auto default is capped at kAutoCap to stay reasonable on shared machines
+// while still feeding many cores. An explicit request is honored as-is so callers
+// can override on unusual hardware.
 int ResolveWriteThreads(int requested) {
   if (requested == 1) return 1;
   if (requested > 1) return requested;
-  constexpr int kAutoCap = 8;
+  constexpr int kAutoCap = 16;
   int hw = static_cast<int>(std::thread::hardware_concurrency());
   if (hw < 1) hw = 1;
   return std::min(hw, kAutoCap);
 }
 
-// Per-prim serialized-size proxy: a small base cost (header + scalar props) plus
-// the element count of every array-valued property (cheap: array_size() reads a
-// stored length, even for lazy/undecoded arrays — no materialization). This
-// reflects OUTPUT TEXT size, so a prim holding a giant array (e.g. instanced
-// geometry on Moana Island) is weighted heavily even though it is a single node;
-// a plain node-count proxy would mislabel it as light and never isolate it.
-uint64_t SelfWeight(const PrimSpec& spec) {
-  uint64_t w = 8;  // base: specifier/type/name/braces + small scalar props
-  for (const auto& slot : spec.properties().slots()) {
-    if (slot.is_relationship()) continue;
-    const Value* v = spec.property_value(slot.name_id);
-    if (v && v->is_array()) w += v->array_size();
-  }
-  return w;
+// Array-affecting subset of the write options (the value printer only consults
+// the precision/limit/compact fields). Mirrors the inline construction in
+// WriteProperty so frontier analysis sees the same chunkability decision.
+PrintOptions MakeArrayPrintOpts(const USDAWriteOptions& opts) {
+  PrintOptions p;
+  p.float_precision = opts.float_precision;
+  p.double_precision = opts.double_precision;
+  p.max_array_elements = opts.max_elements_per_line;
+  p.compact = opts.compact;
+  return p;
 }
 
-// Subtree weights (self + sum of children), iterative post-order so deep trees
-// don't overflow the stack.
-void ComputeSubtreeWeights(const Layer& layer, std::vector<uint64_t>& weight) {
-  const size_t n = layer.prim_count();
-  weight.assign(n, 0);
-  std::vector<std::pair<uint32_t, size_t>> st;  // (prim idx, child cursor)
-  for (uint32_t r : layer.root_indices()) {
-    if (!layer.prim(r)) continue;
-    st.emplace_back(r, 0);
-    while (!st.empty()) {
-      uint32_t idx = st.back().first;
-      size_t cursor = st.back().second;
-      const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
-      if (cursor < ch.size()) {
-        st.back().second = cursor + 1;
-        uint32_t c = ch[cursor];
-        if (layer.prim(c)) st.emplace_back(c, 0);
-      } else {
-        uint64_t w = SelfWeight(*layer.prim(idx));
-        for (uint32_t c : ch) {
-          if (layer.prim(c)) w += weight[c];
-        }
-        weight[idx] = w;
-        st.pop_back();
-      }
-    }
-  }
-}
-
-// Pick a disjoint frontier of subtree roots covering all leaves. Splitting is
-// SIZE-bounded: a node becomes a frontier piece once its subtree weight (node
-// count) is at or below `threshold`, otherwise it is split into its children.
-// This caps the work AND the serialized-text size of any single piece, so no
-// worker ever builds a multi-GB buffer (the cause of the low-thread memory blow
-// up), and pieces are numerous/even enough to balance the pool — independent of
-// the thread count. `threshold` aims for ~nthreads*32 pieces but never goes
-// below a floor so we don't make a huge number of tiny pieces.
-void SelectFrontier(const Layer& layer, const std::vector<uint64_t>& weight,
-                    int nthreads, std::vector<char>& is_final) {
-  is_final.assign(layer.prim_count(), 0);
-  uint64_t total = 0;
-  for (uint32_t r : layer.root_indices()) {
-    if (layer.prim(r)) total += weight[r];
-  }
-  const uint64_t floor = 8192;
-  uint64_t threshold = floor;
-  const uint64_t aim = static_cast<uint64_t>(nthreads) * 32;
-  if (aim > 0 && total / aim > threshold) {
-    threshold = total / aim;
-  }
-
-  std::vector<uint32_t> st;  // nodes to classify
-  for (uint32_t r : layer.root_indices()) {
-    if (layer.prim(r)) st.push_back(r);
-  }
-  while (!st.empty()) {
-    uint32_t idx = st.back();
-    st.pop_back();
-    const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
-    bool has_child = false;
-    for (uint32_t c : ch) { if (layer.prim(c)) { has_child = true; break; } }
-    if (!has_child || weight[idx] <= threshold) {
-      is_final[idx] = 1;  // small enough (or a leaf) -> a frontier piece
-    } else {
-      for (uint32_t c : ch) {
-        if (layer.prim(c)) st.push_back(c);
-      }
-    }
-  }
-}
-
-// Pre-order DFS assigning each frontier node a slot in traversal order (so the
-// consumer hits slots 0,1,2,... in order); frontier nodes are not descended.
-void BuildPreorderFrontier(const Layer& layer, const std::vector<char>& is_final,
-                           std::vector<int>& frontier_of,
-                           std::vector<std::pair<uint32_t, int>>& flist) {
-  frontier_of.assign(layer.prim_count(), -1);
-  std::vector<std::pair<uint32_t, int>> st;  // (idx, depth)
-  const std::vector<uint32_t>& roots = layer.root_indices();
-  for (size_t i = roots.size(); i-- > 0;) {
-    if (layer.prim(roots[i])) st.emplace_back(roots[i], 0);
-  }
-  while (!st.empty()) {
-    uint32_t idx = st.back().first;
-    int depth = st.back().second;
-    st.pop_back();
-    if (is_final[idx]) {
-      frontier_of[idx] = static_cast<int>(flist.size());
-      flist.emplace_back(idx, depth);
-      continue;  // do not descend; serialized as a unit
-    }
-    const std::vector<uint32_t>& ch = layer.prim(idx)->child_indices();
-    for (size_t i = ch.size(); i-- > 0;) {
-      if (layer.prim(ch[i])) st.emplace_back(ch[i], depth + 1);
-    }
-  }
-}
-
-// Parallel stage body: serialize frontier subtrees on a worker pool while the
-// main thread walks the tree and splices each subtree (in order) into `os`.
-// Bounded in-flight buffers (window W) keep peak memory near the serial path.
+// Parallel stage body. A single serial pre-order walk builds the document-ordered
+// task list: cheap structural bytes accrue inline as Text, while every array value
+// worth offloading (>= kOffloadMinElems elements) becomes WholeValue/Chunk task(s)
+// referencing the borrowed array. A worker pool then formats the offloaded arrays
+// concurrently -- this is where nearly all of a geometry-heavy stage's write time
+// goes -- while the main thread writes the task results strictly in order. A
+// bounded look-ahead window keeps in-flight result buffers (hence peak memory)
+// small. Output is byte-identical to the serial writer regardless of thread count.
 void WriteStageBodyParallel(StreamWriter& os, const Layer& layer,
                             const LayerMeta& meta, const USDAWriteOptions& opts,
                             int nthreads) {
-  std::vector<uint64_t> weight;
-  ComputeSubtreeWeights(layer, weight);
-  std::vector<char> is_final;
-  SelectFrontier(layer, weight, nthreads, is_final);
-  std::vector<int> frontier_of;
-  std::vector<std::pair<uint32_t, int>> flist;
-  BuildPreorderFrontier(layer, is_final, frontier_of, flist);
-
-  const size_t m = flist.size();
-  if (m <= 1) {  // nothing worth parallelizing
-    WriteStageBodySerial(os, layer, meta, opts);
-    return;
-  }
+  const PrintOptions po = MakeArrayPrintOpts(opts);
 
   // Pre-warm the global interning table on the main thread (its lazy init is the
   // only non-reentrant spot on the write path; reads are thread-safe after).
   (void)GetPropNameTable();
 
-  std::vector<std::string> results(m);
-  std::vector<char> ready(m, 0);
-  std::mutex mu;
-  std::condition_variable cv;
+  // Phase 1 (serial, cheap): walk the whole stage, emitting structure as Text and
+  // offloading array values. No giant array is formatted here, so this is fast.
+  std::vector<WriteTask> tasks;
+  std::deque<Value> holder;  // decoded buffers for materialized giant arrays
+  {
+    std::string cur;
+    StreamWriter sw(&cur);
+    SegmentSink sink;
+    sink.tasks = &tasks;
+    sink.cur = &cur;
+    sink.po = &po;
+    sink.holder = &holder;
+    WriteLayerMeta(sw, meta, opts);
+    for (uint32_t root_idx : layer.root_indices()) {
+      const PrimSpec* root = layer.prim(root_idx);
+      if (!root) continue;
+      WritePrimSpec(sw, *root, layer, 0, opts, &sink);
+      sw << "\n";
+    }
+    sink.flush_text();
+  }
+
+  const size_t m = tasks.size();
+  if (m == 0) return;
+
+  // Group the document-ordered tasks into ~K byte-balanced segments, each a
+  // contiguous task run. A worker formats an entire segment (its structure +
+  // arrays) into one buffer, so writing is just K large in-order copies -- cheap
+  // synchronization (K is small) with balanced formatting (segments are equal
+  // estimated bytes, so no worker gets stuck on one giant array's neighbourhood).
+  auto scalar_bytes = [](const Value& v, uint64_t elems) -> uint64_t {
+    // ~8 output chars per scalar component (digits + ", "); scale by components.
+    size_t comps = GetComponentCount(v.type_id());
+    if (comps < 1) comps = 1;
+    return elems * uint64_t(comps) * 8u + 2u;
+  };
+  auto task_bytes = [&](const WriteTask& t) -> uint64_t {
+    if (t.kind == WriteTask::Kind::Text) return t.text.size();
+    if (t.kind == WriteTask::Kind::Chunk) return scalar_bytes(*t.value, t.hi - t.lo);
+    return scalar_bytes(*t.value, ArrayElementCount(*t.value));  // WholeValue
+  };
+  auto direct_stream_task = [&](const WriteTask& t) -> bool {
+    constexpr uint64_t kDirectStreamBytes = 64ull << 20;
+    return t.kind == WriteTask::Kind::WholeValue && t.value &&
+           IsCompressedLazyIntArray(*t.value) &&
+           task_bytes(t) >= kDirectStreamBytes;
+  };
+  uint64_t total_bytes = 0;
+  for (const auto& t : tasks) total_bytes += task_bytes(t);
+  const size_t k_target = std::max<size_t>(1, static_cast<size_t>(nthreads) * 64);
+  const uint64_t seg_target = std::max<uint64_t>(1, total_bytes / k_target);
+  std::vector<size_t> seg_begin;  // task index where each segment starts; +[m]
+  seg_begin.push_back(0);
+  uint64_t acc = 0;
+  for (size_t i = 0; i < m; ++i) {
+    if (direct_stream_task(tasks[i])) {
+      if (seg_begin.back() != i) seg_begin.push_back(i);
+      seg_begin.push_back(i + 1);
+      acc = 0;
+      continue;
+    }
+    acc += task_bytes(tasks[i]);
+    if (acc >= seg_target && seg_begin.back() != i + 1) {
+      seg_begin.push_back(i + 1);
+      acc = 0;
+    }
+  }
+  if (seg_begin.back() != m) seg_begin.push_back(m);
+  const size_t K = seg_begin.size() - 1;
+  std::vector<uint8_t> direct_segment(K, 0);
+  for (size_t k = 0; k < K; ++k) {
+    direct_segment[k] =
+        (seg_begin[k + 1] == seg_begin[k] + 1 &&
+         direct_stream_task(tasks[seg_begin[k]]))
+            ? 1
+            : 0;
+  }
+
+  // Per-segment list of decoded-buffer holder indices to free once that segment is
+  // written. A buffer's freeing flag sits on its last chunk; by the time that
+  // segment is consumed, all of the buffer's chunks (here and in earlier segments)
+  // have been formatted, so the decode can be released -- bounding peak memory.
+  std::vector<std::vector<int>> seg_free(K);
+  {
+    size_t seg = 0;
+    for (size_t i = 0; i < m; ++i) {
+      while (seg + 1 < K && i >= seg_begin[seg + 1]) ++seg;
+      if (tasks[i].free_idx >= 0) seg_free[seg].push_back(tasks[i].free_idx);
+    }
+  }
+
+  // Phase 2: workers format whole segments; the main thread writes segment buffers
+  // in order. Very large compressed int arrays are marked direct and formatted by
+  // the consumer into the final stream so they do not allocate a full text buffer.
+  // Lock-free: each segment is claimed once via `next`, produced into results[k]
+  // (or marked direct), published via ready[k]; the consumer spins (yielding) on
+  // ready[s] and advances `consumed`, back-pressuring workers past W segments
+  // ahead.
+  std::vector<std::string> results(K);
+  std::vector<std::atomic<uint8_t>> ready(K);
+  for (size_t i = 0; i < K; ++i) ready[i].store(0, std::memory_order_relaxed);
   std::atomic<size_t> next{0};
-  size_t consumed = 0;  // guarded by mu
+  std::atomic<size_t> consumed{0};
   const size_t W = static_cast<size_t>(nthreads) * 2 + 2;
 
+  auto format_segment_to = [&](size_t k, StreamWriter& sw) {
+    for (size_t i = seg_begin[k]; i < seg_begin[k + 1]; ++i) {
+      WriteTask& t = tasks[i];
+      switch (t.kind) {
+        case WriteTask::Kind::Text:
+          sw.write(t.text.data(), t.text.size());
+          std::string().swap(t.text);  // free structure bytes once copied
+          break;
+        case WriteTask::Kind::Chunk:
+          PrintArrayRangeToStream(sw, *t.value, po, t.lo, t.hi, t.open, t.close);
+          break;
+        case WriteTask::Kind::WholeValue:
+          PrintValue(sw, *t.value, po);  // worker emits the full `[ ... ]`
+          break;
+      }
+    }
+  };
+  auto format_segment = [&](size_t k, std::string& buf) {
+    buf.clear();
+    StreamWriter sw(&buf);
+    format_segment_to(k, sw);
+  };
+
   auto worker = [&]() {
-    std::string local;  // reused across pieces to amortize capacity
+    std::string buf;
     for (;;) {
-      size_t i = next.fetch_add(1);
-      if (i >= m) break;
-      {  // backpressure: stay within W of the consumer
-        std::unique_lock<std::mutex> lk(mu);
-        cv.wait(lk, [&] { return i < consumed + W; });
+      size_t k = next.fetch_add(1, std::memory_order_relaxed);
+      if (k >= K) break;
+      while (k >= consumed.load(std::memory_order_acquire) + W) {
+        std::this_thread::yield();
       }
-      // Serialize straight into a std::string via a string-target StreamWriter
-      // (no ostringstream double-buffer, no .str() copy of the whole subtree).
-      local.clear();
-      {
-        StreamWriter sw(&local);
-        WritePrimSpec(sw, *layer.prim(flist[i].first), layer, flist[i].second,
-                      opts, /*sctx=*/nullptr);
+      if (direct_segment[k]) {
+        ready[k].store(2, std::memory_order_release);
+        continue;
       }
-      {
-        std::lock_guard<std::mutex> lk(mu);
-        results[i] = std::move(local);
-        ready[i] = 1;
-      }
-      cv.notify_all();
+      format_segment(k, buf);
+      results[k] = std::move(buf);
+      ready[k].store(1, std::memory_order_release);
     }
   };
 
-  const int nw = std::min<int>(nthreads, static_cast<int>(m));
+  const int nw = std::min<int>(nthreads, static_cast<int>(K));
   std::vector<std::thread> pool;
   pool.reserve(nw);
   for (int t = 0; t < nw; ++t) pool.emplace_back(worker);
 
-  auto emit = [&](StreamWriter& o, int slot) {
-    const size_t s = static_cast<size_t>(slot);
-    std::unique_lock<std::mutex> lk(mu);
-    cv.wait(lk, [&] { return ready[s] != 0; });
-    std::string str = std::move(results[s]);
-    results[s].clear();
-    results[s].shrink_to_fit();
-    lk.unlock();
-    o.write(str.data(), str.size());
-    lk.lock();
-    consumed = s + 1;
-    lk.unlock();
-    cv.notify_all();
-  };
-
-  StitchCtx sctx;
-  sctx.frontier_of = &frontier_of;
-  sctx.emit = emit;
-
-  WriteLayerMeta(os, meta, opts);
-  for (uint32_t root_idx : layer.root_indices()) {
-    const PrimSpec* root = layer.prim(root_idx);
-    if (!root) continue;
-    int fs = frontier_of[root_idx];
-    if (fs >= 0) {
-      emit(os, fs);
-    } else {
-      WritePrimSpec(os, *root, layer, 0, opts, &sctx);
+  for (size_t s = 0; s < K; ++s) {
+    uint8_t state = 0;
+    while ((state = ready[s].load(std::memory_order_acquire)) == 0) {
+      std::this_thread::yield();
     }
-    os << "\n";
+    if (state == 2) {
+      format_segment_to(s, os);
+    } else {
+      os.write(results[s].data(), results[s].size());
+      std::string().swap(results[s]);  // free as we go
+    }
+    for (int idx : seg_free[s]) holder[idx] = Value{};  // release decoded buffers
+    consumed.store(s + 1, std::memory_order_release);
   }
 
   for (auto& th : pool) th.join();
@@ -916,6 +1419,11 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.timeCodesPerSecond = stage_meta.timeCodesPerSecond;
   meta.startTimeCode = stage_meta.startTimeCode;
   meta.endTimeCode = stage_meta.endTimeCode;
+  meta.upAxis_set = stage_meta.upAxis_set;
+  meta.metersPerUnit_set = stage_meta.metersPerUnit_set;
+  meta.timeCodesPerSecond_set = stage_meta.timeCodesPerSecond_set;
+  meta.startTimeCode_set = stage_meta.startTimeCode_set;
+  meta.endTimeCode_set = stage_meta.endTimeCode_set;
   meta.framesPerSecond = stage_meta.framesPerSecond;
   meta.framesPerSecond_set = stage_meta.framesPerSecond_set;
   meta.kilogramsPerUnit = stage_meta.kilogramsPerUnit;
@@ -924,10 +1432,12 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.colorManagementSystem = stage_meta.colorManagementSystem;
   meta.doc = stage_meta.doc;
   meta.comment = stage_meta.comment;
-  // Dictionary-valued stage metadata is not mirrored on StageMeta; take it from
-  // the composed root layer directly.
+  // Dictionary-valued stage metadata and sublayer paths are not mirrored on
+  // StageMeta; take them from the composed root layer directly.
   meta.customLayerData = root_layer->meta().customLayerData;
   meta.expressionVariables = root_layer->meta().expressionVariables;
+  meta.subLayers = root_layer->meta().subLayers;
+  meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);

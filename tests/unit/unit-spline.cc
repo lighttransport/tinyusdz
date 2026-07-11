@@ -13,7 +13,9 @@
 #include "usdc-writer.hh"
 
 #include <cmath>
+#include <cstring>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -180,6 +182,24 @@ void spline_binary_roundtrip_test(void) {
     auto d = out2.knots[0].val.get_value<double>();
     TEST_CHECK(d && std::fabs(d.value() - 3.0) < 1e-12);
   }
+}
+
+void spline_binary_rejects_huge_knot_count_test(void) {
+  // Header says version 1, double-valued bezier spline, followed by a forged
+  // knot count and no knot payload. Decode must reject before reserving.
+  std::vector<uint8_t> blob;
+  blob.push_back(uint8_t(1 | (1 << 4)));  // version=1, descriptor=double
+  blob.push_back(0);                      // no extrapolation, no loops
+  const uint32_t count = (std::numeric_limits<uint32_t>::max)();
+  const size_t off = blob.size();
+  blob.resize(off + sizeof(count));
+  std::memcpy(blob.data() + off, &count, sizeof(count));
+
+  primvar::PrimVar::SplineData out;
+  std::string err;
+  TEST_CHECK(!DecodeSplineFromBinary(blob.data(), blob.size(), &out, &err));
+  TEST_CHECK(err.find("knot count") != std::string::npos);
+  TEST_CHECK(out.knots.empty());
 }
 
 void spline_crate_roundtrip_test(void) {

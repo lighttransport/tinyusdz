@@ -33,6 +33,7 @@ struct USDCLoadResult {
   std::vector<std::string> warnings;
   std::string error_summary;
   CrateVersion version;
+  bool source_was_mmap = false;
 };
 
 /// Load a USDC file from disk

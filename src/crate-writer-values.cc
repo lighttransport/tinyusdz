@@ -25,6 +25,7 @@
 #include "primvar.hh"
 #include "spline-binary.hh"
 #include "array-edit.hh"  // value::ArrayEdit (VtArrayEdit)
+#include "value-pprint.hh"
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -56,6 +57,67 @@ ListOpHeader BuildListOpHeader(const ListOp<T>& listop) {
   return header;  // NRVO
 }
 
+bool ComputeDictionaryFrameSize(uint64_t count, const char* label,
+                                int64_t* out_size, std::string* err) {
+  if (!out_size) {
+    if (err) *err = "Dictionary frame size output is null";
+    return false;
+  }
+
+  size_t entries_size = 0;
+  size_t total_size = 0;
+  if (!safe::mul(count, size_t(20), &entries_size) ||
+      !safe::add(size_t(8), entries_size, &total_size)
+#if SIZE_MAX > INT64_MAX
+      || total_size > size_t((std::numeric_limits<int64_t>::max)())
+#endif
+      ) {
+    if (err) {
+      *err = std::string(label ? label : "Dictionary") +
+             " structure size overflow";
+    }
+    return false;
+  }
+
+  *out_size = static_cast<int64_t>(total_size);
+  return true;
+}
+
+template <typename T>
+std::string FormatSmallIntegerValue(T value) {
+  std::ostringstream ss;
+  ss << static_cast<int64_t>(value);
+  return ss.str();
+}
+
+template <typename T>
+std::string FormatSmallIntegerArray(const std::vector<T> &values) {
+  std::ostringstream ss;
+  ss << "[";
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i) {
+      ss << ", ";
+    }
+    ss << static_cast<int64_t>(values[i]);
+  }
+  ss << "]";
+  return ss.str();
+}
+
+template <typename T>
+std::string FormatUnregisteredValue(const T &value) {
+  std::ostringstream ss;
+  ss << value;
+  return ss.str();
+}
+
+template <typename T>
+std::string FormatUnregisteredArray(const std::vector<T> &values) {
+  std::ostringstream ss;
+  ss << values;
+  return ss.str();
+}
+
 } // anonymous namespace
 
 /// Helper to convert value::Value to CrateValue for TimeSamples serialization
@@ -67,6 +129,7 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   }
 
   uint32_t type_id = val.type_id();
+  const std::string& type_name = val.type_name();
 
   // Macro to reduce repetitive scalar/vector type dispatch
 #define CONVERT_CRATE_VALUE(CppType) \
@@ -85,6 +148,7 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(value::half)
   CONVERT_CRATE_VALUE(float)
   CONVERT_CRATE_VALUE(double)
+  CONVERT_CRATE_VALUE(value::timecode)
   // Vector types
   CONVERT_CRATE_VALUE(value::float2)
   CONVERT_CRATE_VALUE(value::float3)
@@ -105,6 +169,7 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(std::vector<value::half>)
   CONVERT_CRATE_VALUE(std::vector<float>)
   CONVERT_CRATE_VALUE(std::vector<double>)
+  CONVERT_CRATE_VALUE(std::vector<value::timecode>)
   // Vector arrays
   CONVERT_CRATE_VALUE(std::vector<value::float2>)
   CONVERT_CRATE_VALUE(std::vector<value::float3>)
@@ -145,6 +210,191 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   CONVERT_CRATE_VALUE(std::vector<value::quath>)
   CONVERT_CRATE_VALUE(std::vector<value::quatf>)
   CONVERT_CRATE_VALUE(std::vector<value::quatd>)
+  if (type_name == "point3h" || type_name == "vector3h" ||
+      type_name == "normal3h" || type_name == "color3h" ||
+      type_name == "texCoord3h") {
+    if (auto v = val.get_value<value::half3>(false)) {
+      out->Set(*v);
+      return true;
+    }
+  } else if (type_name == "color4h") {
+    if (auto v = val.get_value<value::half4>(false)) {
+      out->Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord2h") {
+    if (auto v = val.get_value<value::half2>(false)) {
+      out->Set(*v);
+      return true;
+    }
+  } else if (type_name == "point3h[]" || type_name == "vector3h[]" ||
+             type_name == "normal3h[]" || type_name == "color3h[]" ||
+             type_name == "texCoord3h[]") {
+    if (auto v = val.get_value<std::vector<value::half3>>(false)) {
+      out->Set(*v);
+      return true;
+    }
+  } else if (type_name == "color4h[]") {
+    if (auto v = val.get_value<std::vector<value::half4>>(false)) {
+      out->Set(*v);
+      return true;
+    }
+  } else if (type_name == "texCoord2h[]") {
+    if (auto v = val.get_value<std::vector<value::half2>>(false)) {
+      out->Set(*v);
+      return true;
+    }
+  } else if (type_name == "char") {
+    if (auto v = val.get_value<char>()) {
+      out->SetUnregisteredValueString(FormatSmallIntegerValue(*v));
+      return true;
+    }
+  } else if (type_name == "char2") {
+    if (auto v = val.get_value<value::char2>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "char3") {
+    if (auto v = val.get_value<value::char3>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "char4") {
+    if (auto v = val.get_value<value::char4>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "uchar2") {
+    if (auto v = val.get_value<value::uchar2>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "uchar3") {
+    if (auto v = val.get_value<value::uchar3>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "uchar4") {
+    if (auto v = val.get_value<value::uchar4>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "short") {
+    if (auto v = val.get_value<int16_t>()) {
+      out->SetUnregisteredValueString(FormatSmallIntegerValue(*v));
+      return true;
+    }
+  } else if (type_name == "short2") {
+    if (auto v = val.get_value<value::short2>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "short3") {
+    if (auto v = val.get_value<value::short3>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "short4") {
+    if (auto v = val.get_value<value::short4>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "ushort") {
+    if (auto v = val.get_value<uint16_t>()) {
+      out->SetUnregisteredValueString(FormatSmallIntegerValue(*v));
+      return true;
+    }
+  } else if (type_name == "ushort2") {
+    if (auto v = val.get_value<value::ushort2>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "ushort3") {
+    if (auto v = val.get_value<value::ushort3>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "ushort4") {
+    if (auto v = val.get_value<value::ushort4>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredValue(*v));
+      return true;
+    }
+  } else if (type_name == "char[]") {
+    if (auto v = val.get_value<std::vector<char>>()) {
+      out->SetUnregisteredValueString(FormatSmallIntegerArray(*v));
+      return true;
+    }
+  } else if (type_name == "char2[]") {
+    if (auto v = val.get_value<std::vector<value::char2>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "char3[]") {
+    if (auto v = val.get_value<std::vector<value::char3>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "char4[]") {
+    if (auto v = val.get_value<std::vector<value::char4>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "uchar2[]") {
+    if (auto v = val.get_value<std::vector<value::uchar2>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "uchar3[]") {
+    if (auto v = val.get_value<std::vector<value::uchar3>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "uchar4[]") {
+    if (auto v = val.get_value<std::vector<value::uchar4>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "short[]") {
+    if (auto v = val.get_value<std::vector<int16_t>>()) {
+      out->SetUnregisteredValueString(FormatSmallIntegerArray(*v));
+      return true;
+    }
+  } else if (type_name == "short2[]") {
+    if (auto v = val.get_value<std::vector<value::short2>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "short3[]") {
+    if (auto v = val.get_value<std::vector<value::short3>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "short4[]") {
+    if (auto v = val.get_value<std::vector<value::short4>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "ushort[]") {
+    if (auto v = val.get_value<std::vector<uint16_t>>()) {
+      out->SetUnregisteredValueString(FormatSmallIntegerArray(*v));
+      return true;
+    }
+  } else if (type_name == "ushort2[]") {
+    if (auto v = val.get_value<std::vector<value::ushort2>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "ushort3[]") {
+    if (auto v = val.get_value<std::vector<value::ushort3>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else if (type_name == "ushort4[]") {
+    if (auto v = val.get_value<std::vector<value::ushort4>>()) {
+      out->SetUnregisteredValueString(FormatUnregisteredArray(*v));
+      return true;
+    }
+  } else
 
 #undef CONVERT_CRATE_VALUE
   // fall through to unmatched type handling
@@ -153,8 +403,6 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   // Phase 5.7: Custom/Unregistered value types
   // For unknown types, attempt to encode as an unregistered value
   // This allows custom attributes with user-defined types to be stored
-  const std::string& type_name = val.type_name();
-
   DCOUT("[ConvertValueToCrateValue] Unmatched type: type_name='" << type_name
         << "' type_id=" << type_id);
 
@@ -188,6 +436,165 @@ static bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue*
   return false;
 }
 
+bool CrateWriter::PackMetaVariable(const std::string& key,
+                                   const MetaVariable& meta,
+                                   crate::ValueRep* value_rep,
+                                   std::string* err) {
+  if (!value_rep) {
+    if (err) *err = "PackMetaVariable: output is null";
+    return false;
+  }
+
+  const value::Value& raw_value = meta.get_raw_value();
+
+#define TRY_PACK_META(Type)                                                   \
+  else if (auto* typed = raw_value.as<Type>()) {                              \
+    crate::CrateValue cv;                                                     \
+    cv.Set(*typed);                                                           \
+    *value_rep = PackValue(cv, err);                                          \
+    return !(err && !err->empty());                                           \
+  }
+
+  if (auto* v = raw_value.as<int32_t>()) {
+    crate::CrateValue cv;
+    cv.Set(*v);
+    *value_rep = PackValue(cv, err);
+    return !(err && !err->empty());
+  }
+  else if (auto* v = raw_value.as<int>()) {
+    crate::CrateValue cv;
+    cv.Set(static_cast<int32_t>(*v));
+    *value_rep = PackValue(cv, err);
+    return !(err && !err->empty());
+  }
+  TRY_PACK_META(uint32_t)
+  TRY_PACK_META(int64_t)
+  TRY_PACK_META(uint64_t)
+  TRY_PACK_META(value::half)
+  TRY_PACK_META(float)
+  TRY_PACK_META(double)
+  TRY_PACK_META(value::timecode)
+  TRY_PACK_META(bool)
+  TRY_PACK_META(std::string)
+  else if (auto* sd = raw_value.as<value::StringData>()) {
+    crate::CrateValue cv;
+    cv.Set(sd->value);
+    *value_rep = PackValue(cv, err);
+    return !(err && !err->empty());
+  }
+  else if (raw_value.type_id() == value::TYPE_ID_STRING) {
+    auto str_opt = meta.get_value<std::string>();
+    if (str_opt) {
+      crate::CrateValue cv;
+      cv.Set(*str_opt);
+      *value_rep = PackValue(cv, err);
+      return !(err && !err->empty());
+    }
+  }
+  TRY_PACK_META(value::token)
+  TRY_PACK_META(value::dict)
+  TRY_PACK_META(CustomDataType)
+  TRY_PACK_META(std::vector<std::string>)
+  else if (auto* sda = raw_value.as<std::vector<value::StringData>>()) {
+    std::vector<std::string> sa;
+    sa.reserve(sda->size());
+    for (const auto& sd : *sda) {
+      sa.push_back(sd.value);
+    }
+    crate::CrateValue cv;
+    cv.Set(sa);
+    *value_rep = PackValue(cv, err);
+    return !(err && !err->empty());
+  }
+  else if (raw_value.type_name() == "string[]" ||
+           (raw_value.is_array() &&
+            raw_value.type_id() == value::TYPE_ID_STRING)) {
+    if (auto* sa = raw_value.as<std::vector<std::string>>()) {
+      crate::CrateValue cv;
+      cv.Set(*sa);
+      *value_rep = PackValue(cv, err);
+      return !(err && !err->empty());
+    } else if (auto* ta = raw_value.as<std::vector<value::token>>()) {
+      std::vector<std::string> sa;
+      sa.reserve(ta->size());
+      for (const auto& t : *ta) {
+        sa.push_back(t.str());
+      }
+      crate::CrateValue cv;
+      cv.Set(sa);
+      *value_rep = PackValue(cv, err);
+      return !(err && !err->empty());
+    } else {
+      auto opt = meta.get_value<std::vector<std::string>>();
+      if (opt) {
+        crate::CrateValue cv;
+        cv.Set(*opt);
+        *value_rep = PackValue(cv, err);
+        return !(err && !err->empty());
+      }
+    }
+  }
+  TRY_PACK_META(std::vector<value::token>)
+  TRY_PACK_META(std::vector<float>)
+  TRY_PACK_META(std::vector<double>)
+  TRY_PACK_META(std::vector<int32_t>)
+  TRY_PACK_META(std::vector<bool>)
+  TRY_PACK_META(std::vector<uint32_t>)
+  TRY_PACK_META(std::vector<int64_t>)
+  TRY_PACK_META(std::vector<uint64_t>)
+  TRY_PACK_META(std::vector<value::half>)
+  TRY_PACK_META(std::vector<value::timecode>)
+  TRY_PACK_META(value::float2)
+  TRY_PACK_META(value::float3)
+  TRY_PACK_META(value::float4)
+  TRY_PACK_META(value::half2)
+  TRY_PACK_META(value::half3)
+  TRY_PACK_META(value::half4)
+  TRY_PACK_META(value::double2)
+  TRY_PACK_META(value::double3)
+  TRY_PACK_META(value::double4)
+  TRY_PACK_META(value::int2)
+  TRY_PACK_META(value::int3)
+  TRY_PACK_META(value::int4)
+  TRY_PACK_META(value::matrix2d)
+  TRY_PACK_META(value::matrix3d)
+  TRY_PACK_META(value::matrix4d)
+  TRY_PACK_META(value::quath)
+  TRY_PACK_META(value::quatf)
+  TRY_PACK_META(value::quatd)
+  TRY_PACK_META(std::vector<value::float2>)
+  TRY_PACK_META(std::vector<value::float3>)
+  TRY_PACK_META(std::vector<value::float4>)
+  TRY_PACK_META(std::vector<value::half2>)
+  TRY_PACK_META(std::vector<value::half3>)
+  TRY_PACK_META(std::vector<value::half4>)
+  TRY_PACK_META(std::vector<value::double2>)
+  TRY_PACK_META(std::vector<value::double3>)
+  TRY_PACK_META(std::vector<value::double4>)
+  TRY_PACK_META(std::vector<value::int2>)
+  TRY_PACK_META(std::vector<value::int3>)
+  TRY_PACK_META(std::vector<value::int4>)
+  TRY_PACK_META(std::vector<value::matrix2d>)
+  TRY_PACK_META(std::vector<value::matrix3d>)
+  TRY_PACK_META(std::vector<value::matrix4d>)
+  TRY_PACK_META(std::vector<value::quath>)
+  TRY_PACK_META(std::vector<value::quatf>)
+  TRY_PACK_META(std::vector<value::quatd>)
+  TRY_PACK_META(value::AssetPath)
+  TRY_PACK_META(std::vector<value::AssetPath>)
+  else {
+    if (err) {
+      *err = "Unsupported metadata dictionary value type for key `" + key +
+             "`: " + raw_value.type_name() + " (type_id=" +
+             std::to_string(raw_value.type_id()) + ")";
+    }
+    return false;
+  }
+
+#undef TRY_PACK_META
+  return false;
+}
+
 // Build the canonical deduplication key for an out-of-line CrateValue.
 //
 // Covers every out-of-line array element type (and the out-of-line vec/matrix/
@@ -211,6 +618,10 @@ bool CrateWriter::ComputeValueDedupDescriptor(const crate::CrateValue& cv,
                                               size_t* element_size,
                                               bool* is_float,
                                               uint32_t* wire_tag) {
+  if (cv.IsUnregisteredValue()) {
+    return false;
+  }
+
 #define DEDUP_DESC_ARRAY(Type, ElemSize, IsFloat, CrateType)                 \
   if (auto* arr = cv.as<std::vector<Type>>()) {                              \
     size_t bsz;                                                              \
@@ -548,8 +959,55 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
   // Phase 1: Write out-of-line value data based on type
   // This handles values that cannot be inlined in the 48-bit payload
 
+  if (const std::string* unregistered = value.GetUnregisteredValueString()) {
+    const int64_t wrapper_start = Tell();
+
+    // Reserve the recursive offset and nested ValueRep. The nested ValueRep
+    // immediately follows the offset, matching the reader's
+    // `seek_from_current(offset - 8)` path for offset=8.
+    if (!Write(int64_t(0))) {
+      if (err) *err = "Failed to reserve unregistered value offset";
+      return -1;
+    }
+    if (!Write(uint64_t(0))) {
+      if (err) *err = "Failed to reserve unregistered value nested ValueRep";
+      return -1;
+    }
+    value_data_end_offset_ = Tell();
+
+    crate::CrateValue nested;
+    nested.Set(*unregistered);
+    crate::ValueRep nested_rep = PackValue(nested, err);
+    if (err && !err->empty()) {
+      return -1;
+    }
+
+    const int64_t after_nested = value_data_end_offset_;
+    if (!Seek(wrapper_start)) {
+      if (err) *err = "Failed to seek to unregistered value wrapper";
+      return -1;
+    }
+    if (!Write(int64_t(8))) {
+      if (err) *err = "Failed to write unregistered value offset";
+      return -1;
+    }
+    if (!Write(nested_rep.GetData())) {
+      if (err) *err = "Failed to write unregistered value nested ValueRep";
+      return -1;
+    }
+    if (!Seek(after_nested)) {
+      if (err) *err = "Failed to seek to end of unregistered value payload";
+      return -1;
+    }
+  }
+  else if (auto* tc_val = value.as<value::timecode>()) {
+    if (!Write(tc_val->value)) {
+      if (err) *err = "Failed to write timecode value";
+      return -1;
+    }
+  }
   // Double - 8 bytes
-  if (auto* double_val = value.as<double>()) {
+  else if (auto* double_val = value.as<double>()) {
     if (!Write(*double_val)) {
       if (err) *err = "Failed to write double value";
       return -1;
@@ -747,6 +1205,21 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       return -1;
     }
   }
+  else if (auto* timecode_array = value.as<std::vector<value::timecode>>()) {
+    uint64_t count = timecode_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write timecode array count";
+      return -1;
+    }
+    std::vector<double> values;
+    values.reserve(timecode_array->size());
+    for (const auto& tc : *timecode_array) {
+      values.push_back(tc.value);
+    }
+    if (WriteCompressedDoubleArray(values.data(), count, is_compressed, err) < 0) {
+      return -1;
+    }
+  }
   // Vector/Quaternion array macros
 #define WRITE_VEC_ARRAY(ElemType, N, TypeName) \
   else if (auto* arr = value.as<std::vector<ElemType>>()) { \
@@ -839,12 +1312,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       if (err) *err = "Failed to write string array count";
       return -1;
     }
+    std::vector<uint32_t> idxs;
+    idxs.reserve(static_cast<size_t>(count));
     for (const auto& str : *string_array) {
-      crate::StringIndex idx = GetOrCreateString(str);
-      if (!Write(idx.value)) {
-        if (err) *err = "Failed to write string array element index";
-        return -1;
-      }
+      idxs.push_back(GetOrCreateString(str).value);
+    }
+    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
+                              "string", is_compressed, err) < 0) {
+      return -1;
     }
   }
   // Asset array - reader expects StringIndex elements (uninlined/array path
@@ -857,12 +1332,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       if (err) *err = "Failed to write asset[] count";
       return -1;
     }
+    std::vector<uint32_t> idxs;
+    idxs.reserve(static_cast<size_t>(count));
     for (const auto& ap : *asset_array) {
-      crate::StringIndex idx = GetOrCreateString(ap.GetAssetPath());
-      if (!Write(idx.value)) {
-        if (err) *err = "Failed to write asset[] element index";
-        return -1;
-      }
+      idxs.push_back(GetOrCreateString(ap.GetAssetPath()).value);
+    }
+    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
+                              "assetPath", is_compressed, err) < 0) {
+      return -1;
     }
   }
   // Scalar PathExpression - a single StringIndex at this offset (non-inlined),
@@ -922,12 +1399,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       if (err) *err = "Failed to write token array count";
       return -1;
     }
+    std::vector<uint32_t> idxs;
+    idxs.reserve(static_cast<size_t>(count));
     for (const auto& tok : *token_array) {
-      crate::TokenIndex idx = GetOrCreateToken(tok.str());
-      if (!Write(idx.value)) {
-        if (err) *err = "Failed to write token array element index";
-        return -1;
-      }
+      idxs.push_back(GetOrCreateToken(tok.str()).value);
+    }
+    if (WriteCompressedArray32(reinterpret_cast<const uint32_t *>(idxs.data()), count,
+                              "token", is_compressed, err) < 0) {
+      return -1;
     }
   }
   // Path array - special handling (paths are stored as indices)
@@ -1015,7 +1494,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
 
     // Calculate size of dictionary structure:
     // 8 bytes for count + (4 + 8 + 8) bytes per entry = 8 + 20*count
-    int64_t dict_struct_size = 8 + (count * 20);
+    int64_t dict_struct_size = 0;
+    if (!ComputeDictionaryFrameSize(count, "Dictionary", &dict_struct_size,
+                                    err)) {
+      return -1;
+    }
     int64_t dict_struct_start = Tell();
 
     // Reserve space by writing zeros
@@ -1037,11 +1520,16 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     std::vector<crate::ValueRep> value_reps;
     value_reps.reserve(count);
 
-    // Dict value packing: any_value_cast dispatch (value::dict uses any_value)
+    // Dict value packing: any_value_cast dispatch (value::dict uses any_value).
+    // Keep this aligned with CustomDataType's Crate-supported value set.
+// NOTE: each invocation is a standalone `if (!value_packed)` rather than an
+// `else if` link in one long chain -- MSVC hits C1061 ("blocks nested too
+// deeply") once an else-if chain built from ~80 macro expansions accumulates
+// that much nesting depth.
 #define TRY_PACK_DICT(Type) \
-      else if (auto* typed = value::any_value_cast<Type>(&kv.second)) { \
+      if (!value_packed) { if (auto* typed = value::any_value_cast<Type>(&kv.second)) { \
         crate::CrateValue cv; cv.Set(*typed); \
-        value_rep = PackValue(cv, err); value_packed = true; }
+        value_rep = PackValue(cv, err); value_packed = true; } }
 
     for (const auto& kv : *dict_val) {
       crate::ValueRep value_rep;
@@ -1056,13 +1544,85 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         value_rep = PackValue(cv, err); value_packed = true;
       }
       TRY_PACK_DICT(uint32_t)
+      TRY_PACK_DICT(int64_t)
+      TRY_PACK_DICT(uint64_t)
+      TRY_PACK_DICT(value::half)
       TRY_PACK_DICT(float)
       TRY_PACK_DICT(double)
+      TRY_PACK_DICT(value::timecode)
       TRY_PACK_DICT(bool)
       TRY_PACK_DICT(std::string)
+      else if (auto* sd = value::any_value_cast<value::StringData>(&kv.second)) {
+        crate::CrateValue cv; cv.Set(sd->value);
+        value_rep = PackValue(cv, err); value_packed = true;
+      }
       TRY_PACK_DICT(value::token)
-      else {
-        if (err) *err = "Unsupported dictionary value type";
+      TRY_PACK_DICT(value::dict)
+      TRY_PACK_DICT(CustomDataType)
+      TRY_PACK_DICT(std::vector<std::string>)
+      else if (auto* sda = value::any_value_cast<std::vector<value::StringData>>(&kv.second)) {
+        std::vector<std::string> sa;
+        sa.reserve(sda->size());
+        for (const auto& sd : *sda) {
+          sa.push_back(sd.value);
+        }
+        crate::CrateValue cv; cv.Set(sa);
+        value_rep = PackValue(cv, err); value_packed = true;
+      }
+      TRY_PACK_DICT(std::vector<value::token>)
+      TRY_PACK_DICT(std::vector<float>)
+      TRY_PACK_DICT(std::vector<double>)
+      TRY_PACK_DICT(std::vector<int32_t>)
+      TRY_PACK_DICT(std::vector<bool>)
+      TRY_PACK_DICT(std::vector<uint32_t>)
+      TRY_PACK_DICT(std::vector<int64_t>)
+      TRY_PACK_DICT(std::vector<uint64_t>)
+      TRY_PACK_DICT(std::vector<value::half>)
+      TRY_PACK_DICT(std::vector<value::timecode>)
+      TRY_PACK_DICT(value::float2)
+      TRY_PACK_DICT(value::float3)
+      TRY_PACK_DICT(value::float4)
+      TRY_PACK_DICT(value::half2)
+      TRY_PACK_DICT(value::half3)
+      TRY_PACK_DICT(value::half4)
+      TRY_PACK_DICT(value::double2)
+      TRY_PACK_DICT(value::double3)
+      TRY_PACK_DICT(value::double4)
+      TRY_PACK_DICT(value::int2)
+      TRY_PACK_DICT(value::int3)
+      TRY_PACK_DICT(value::int4)
+      TRY_PACK_DICT(value::matrix2d)
+      TRY_PACK_DICT(value::matrix3d)
+      TRY_PACK_DICT(value::matrix4d)
+      TRY_PACK_DICT(value::quath)
+      TRY_PACK_DICT(value::quatf)
+      TRY_PACK_DICT(value::quatd)
+      TRY_PACK_DICT(std::vector<value::float2>)
+      TRY_PACK_DICT(std::vector<value::float3>)
+      TRY_PACK_DICT(std::vector<value::float4>)
+      TRY_PACK_DICT(std::vector<value::half2>)
+      TRY_PACK_DICT(std::vector<value::half3>)
+      TRY_PACK_DICT(std::vector<value::half4>)
+      TRY_PACK_DICT(std::vector<value::double2>)
+      TRY_PACK_DICT(std::vector<value::double3>)
+      TRY_PACK_DICT(std::vector<value::double4>)
+      TRY_PACK_DICT(std::vector<value::int2>)
+      TRY_PACK_DICT(std::vector<value::int3>)
+      TRY_PACK_DICT(std::vector<value::int4>)
+      TRY_PACK_DICT(std::vector<value::matrix2d>)
+      TRY_PACK_DICT(std::vector<value::matrix3d>)
+      TRY_PACK_DICT(std::vector<value::matrix4d>)
+      TRY_PACK_DICT(std::vector<value::quath>)
+      TRY_PACK_DICT(std::vector<value::quatf>)
+      TRY_PACK_DICT(std::vector<value::quatd>)
+      TRY_PACK_DICT(value::AssetPath)
+      TRY_PACK_DICT(std::vector<value::AssetPath>)
+      if (!value_packed) {
+        if (err) {
+          *err = "Unsupported dictionary value type for key `" + kv.first +
+                 "`: " + kv.second.type_name() + " (type_id=" +
+                 std::to_string(kv.second.type_id()) + ")";
+        }
         return -1;
       }
 #undef TRY_PACK_DICT
@@ -1134,7 +1694,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
 
     // Calculate size of dictionary structure:
     // 8 bytes for count + (4 + 8 + 8) bytes per entry = 8 + 20*count
-    int64_t dict_struct_size = 8 + (count * 20);
+    int64_t dict_struct_size = 0;
+    if (!ComputeDictionaryFrameSize(count, "CustomDataType", &dict_struct_size,
+                                    err)) {
+      return -1;
+    }
     int64_t dict_struct_start = Tell();
 
     // Reserve space by writing zeros
@@ -1157,119 +1721,10 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     value_reps.reserve(count);
 
     for (const auto& kv : *custom_data) {
-      // Get the raw value::Value from MetaVariable and pack it
-      const value::Value& raw_value = kv.second.get_raw_value();
       crate::ValueRep value_rep;
-      bool value_packed = false;
-
-      // CustomDataType value packing: value::Value dispatch
-#define TRY_PACK_AS(Type) \
-      else if (auto* typed = raw_value.as<Type>()) { \
-        crate::CrateValue cv; cv.Set(*typed); \
-        value_rep = PackValue(cv, err); value_packed = true; }
-
-      if (auto* v = raw_value.as<int32_t>()) {
-        crate::CrateValue cv; cv.Set(*v);
-        value_rep = PackValue(cv, err); value_packed = true;
-      }
-      else if (auto* v = raw_value.as<int>()) {
-        crate::CrateValue cv; cv.Set(static_cast<int32_t>(*v));
-        value_rep = PackValue(cv, err); value_packed = true;
-      }
-      TRY_PACK_AS(uint32_t)
-      TRY_PACK_AS(int64_t)
-      TRY_PACK_AS(uint64_t)
-      TRY_PACK_AS(value::half)
-      TRY_PACK_AS(float)
-      TRY_PACK_AS(double)
-      TRY_PACK_AS(bool)
-      TRY_PACK_AS(std::string)
-      // StringData: extract string value from metadata wrapper
-      else if (auto* sd = raw_value.as<value::StringData>()) {
-        crate::CrateValue cv; cv.Set(sd->value);
-        value_rep = PackValue(cv, err); value_packed = true;
-      }
-      // Fallback: type_id says string but as<string>() failed
-      else if (raw_value.type_id() == value::TYPE_ID_STRING) {
-        auto str_opt = kv.second.get_value<std::string>();
-        if (str_opt) {
-          crate::CrateValue cv; cv.Set(*str_opt);
-          value_rep = PackValue(cv, err); value_packed = true;
-        }
-      }
-      TRY_PACK_AS(value::token)
-      TRY_PACK_AS(CustomDataType)
-      TRY_PACK_AS(std::vector<std::string>)
-      // StringData array: convert to string array
-      else if (auto* sda = raw_value.as<std::vector<value::StringData>>()) {
-        std::vector<std::string> sa;
-        sa.reserve(sda->size());
-        for (const auto& sd : *sda) { sa.push_back(sd.value); }
-        crate::CrateValue cv; cv.Set(sa);
-        value_rep = PackValue(cv, err); value_packed = true;
-      }
-      // Fallback: string array via type_name or is_array+TYPE_ID_STRING
-      else if (raw_value.type_name() == "string[]" || (raw_value.is_array() && raw_value.type_id() == value::TYPE_ID_STRING)) {
-        if (auto* sa = raw_value.as<std::vector<std::string>>()) {
-          crate::CrateValue cv; cv.Set(*sa);
-          value_rep = PackValue(cv, err); value_packed = true;
-        } else if (auto* ta = raw_value.as<std::vector<value::token>>()) {
-          std::vector<std::string> sa;
-          sa.reserve(ta->size());
-          for (const auto& t : *ta) { sa.push_back(t.str()); }
-          crate::CrateValue cv; cv.Set(sa);
-          value_rep = PackValue(cv, err); value_packed = true;
-        } else {
-          auto opt = kv.second.get_value<std::vector<std::string>>();
-          if (opt) {
-            crate::CrateValue cv; cv.Set(*opt);
-            value_rep = PackValue(cv, err); value_packed = true;
-          }
-        }
-      }
-      TRY_PACK_AS(std::vector<value::token>)
-      TRY_PACK_AS(std::vector<float>)
-      TRY_PACK_AS(std::vector<double>)
-      TRY_PACK_AS(std::vector<int32_t>)
-      TRY_PACK_AS(std::vector<bool>)
-      TRY_PACK_AS(std::vector<uint32_t>)
-      TRY_PACK_AS(std::vector<int64_t>)
-      TRY_PACK_AS(std::vector<uint64_t>)
-      TRY_PACK_AS(std::vector<value::half>)
-      // Vec scalars (used by clips dict: double2 active/times entries, etc.)
-      TRY_PACK_AS(value::float2)
-      TRY_PACK_AS(value::float3)
-      TRY_PACK_AS(value::float4)
-      TRY_PACK_AS(value::double2)
-      TRY_PACK_AS(value::double3)
-      TRY_PACK_AS(value::double4)
-      TRY_PACK_AS(value::int2)
-      TRY_PACK_AS(value::int3)
-      TRY_PACK_AS(value::int4)
-      // Vec arrays
-      TRY_PACK_AS(std::vector<value::float2>)
-      TRY_PACK_AS(std::vector<value::float3>)
-      TRY_PACK_AS(std::vector<value::float4>)
-      TRY_PACK_AS(std::vector<value::double2>)
-      TRY_PACK_AS(std::vector<value::double3>)
-      TRY_PACK_AS(std::vector<value::double4>)
-      TRY_PACK_AS(std::vector<value::int2>)
-      TRY_PACK_AS(std::vector<value::int3>)
-      TRY_PACK_AS(std::vector<value::int4>)
-      // Asset paths (clips: assetPaths, manifestAssetPath)
-      TRY_PACK_AS(value::AssetPath)
-      TRY_PACK_AS(std::vector<value::AssetPath>)
-      else {
-        if (err) *err = "Unsupported CustomDataType value type: " + std::string(raw_value.type_name()) + " (type_id=" + std::to_string(raw_value.type_id()) + ")";
+      if (!PackMetaVariable(kv.first, kv.second, &value_rep, err)) {
         return -1;
       }
-#undef TRY_PACK_AS
-
-      if (!value_packed) {
-        if (err) *err = "Failed to pack CustomDataType value";
-        return -1;
-      }
-
       value_reps.push_back(value_rep);
     }
 
@@ -1421,7 +1876,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
     // to fill in the (StringIndex key, int64 offset, ValueRep) tuples.
     {
       uint64_t dict_count = ref_val->customData.size();
-      int64_t dict_struct_size = 8 + (int64_t)(dict_count * 20);
+      int64_t dict_struct_size = 0;
+      if (!ComputeDictionaryFrameSize(dict_count, "Reference customData",
+                                      &dict_struct_size, err)) {
+        return -1;
+      }
       int64_t dict_struct_start = Tell();
 
       // Reserve.
@@ -1439,38 +1898,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
       value_reps.reserve(dict_count);
       for (const auto& kv : ref_val->customData) {
         crate::ValueRep value_rep;
-        bool packed = false;
-        if (auto v = kv.second.get_value<int32_t>()) {
-          crate::CrateValue cv; cv.Set(*v);
-          value_rep = PackValue(cv, err); packed = true;
-        }
-        else if (auto v = kv.second.get_value<float>()) {
-          crate::CrateValue cv; cv.Set(*v);
-          value_rep = PackValue(cv, err); packed = true;
-        }
-        else if (auto v = kv.second.get_value<double>()) {
-          crate::CrateValue cv; cv.Set(*v);
-          value_rep = PackValue(cv, err); packed = true;
-        }
-        else if (auto v = kv.second.get_value<bool>()) {
-          crate::CrateValue cv; cv.Set(*v);
-          value_rep = PackValue(cv, err); packed = true;
-        }
-        else if (auto v = kv.second.get_value<std::string>()) {
-          crate::CrateValue cv; cv.Set(*v);
-          value_rep = PackValue(cv, err); packed = true;
-        }
-        else if (auto sd = kv.second.get_value<value::StringData>()) {
-          crate::CrateValue cv; cv.Set(sd->value);
-          value_rep = PackValue(cv, err); packed = true;
-        }
-        else if (auto v = kv.second.get_value<int64_t>()) {
-          crate::CrateValue cv; cv.Set(*v);
-          value_rep = PackValue(cv, err); packed = true;
-        }
-        if (!packed) {
-          if (err) *err = "Unsupported Reference customData value type: "
-                          + kv.second.type_name();
+        if (!PackMetaVariable(kv.first, kv.second, &value_rep, err)) {
           return -1;
         }
         value_reps.push_back(value_rep);
@@ -1563,7 +1991,11 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
         // arrays, etc.
         {
           uint64_t dict_count = ref.customData.size();
-          int64_t dict_struct_size = 8 + (int64_t)(dict_count * 20);
+          int64_t dict_struct_size = 0;
+          if (!ComputeDictionaryFrameSize(dict_count, "ReferenceListOp customData",
+                                          &dict_struct_size, err)) {
+            return false;
+          }
           int64_t dict_struct_start = Tell();
 
           {
@@ -1576,38 +2008,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value,
           value_reps.reserve(dict_count);
           for (const auto& kv : ref.customData) {
             crate::ValueRep value_rep;
-            bool value_written = false;
-            if (auto v = kv.second.get_value<int32_t>()) {
-              crate::CrateValue cv; cv.Set(*v);
-              value_rep = PackValue(cv, err); value_written = true;
-            }
-            else if (auto v = kv.second.get_value<float>()) {
-              crate::CrateValue cv; cv.Set(*v);
-              value_rep = PackValue(cv, err); value_written = true;
-            }
-            else if (auto v = kv.second.get_value<double>()) {
-              crate::CrateValue cv; cv.Set(*v);
-              value_rep = PackValue(cv, err); value_written = true;
-            }
-            else if (auto v = kv.second.get_value<bool>()) {
-              crate::CrateValue cv; cv.Set(*v);
-              value_rep = PackValue(cv, err); value_written = true;
-            }
-            else if (auto v = kv.second.get_value<std::string>()) {
-              crate::CrateValue cv; cv.Set(*v);
-              value_rep = PackValue(cv, err); value_written = true;
-            }
-            else if (auto sd = kv.second.get_value<value::StringData>()) {
-              crate::CrateValue cv; cv.Set(sd->value);
-              value_rep = PackValue(cv, err); value_written = true;
-            }
-            else if (auto v = kv.second.get_value<int64_t>()) {
-              crate::CrateValue cv; cv.Set(*v);
-              value_rep = PackValue(cv, err); value_written = true;
-            }
-            if (!value_written) {
-              if (err) *err = "Unsupported Reference customData value type: "
-                              + kv.second.type_name();
+            if (!PackMetaVariable(kv.first, kv.second, &value_rep, err)) {
               return false;
             }
             value_reps.push_back(value_rep);

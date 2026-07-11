@@ -36,6 +36,7 @@
 #include "tinyusdz.hh"
 #include "layer.hh"
 #include "tiny-format.hh"
+#include "str-util.hh"
 #include "tydra/diff-and-compare.hh"
 
 namespace {
@@ -326,12 +327,76 @@ std::string subst_protos(const std::string &s,
 }
 
 struct DiffCtx {
+  enum class Domain {
+    All,
+    Material,
+    Geometry,
+    Skinning
+  };
+
   bool semantic = false;
   bool fuzzyAssets = false;  // --fuzzy-assets: compare @path@ by leaf/suffix
+  std::string pathFilter;
+  Domain domain = Domain::All;
   tinyusdz::tydra::DiffOptions opts;
   const std::unordered_map<std::string, std::string> *protoA = nullptr;
   const std::unordered_map<std::string, std::string> *protoB = nullptr;
 };
+
+bool path_selected(const std::string &filter, const std::string &path) {
+  return filter.empty() || tinyusdz::GlobMatchPath(filter, path);
+}
+
+bool contains_any(const std::string &s,
+                  const std::initializer_list<const char *> needles) {
+  for (const char *needle : needles) {
+    if (s.find(needle) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool line_matches_domain(const std::string &line, DiffCtx::Domain domain) {
+  if (domain == DiffCtx::Domain::All) {
+    return true;
+  }
+  switch (domain) {
+    case DiffCtx::Domain::All:
+      return true;
+    case DiffCtx::Domain::Material:
+      return contains_any(line, {"\"Material\"", "\"Shader\"", "\"NodeGraph\"",
+                                 "material:binding", "inputs:", "outputs:",
+                                 "info:id", "@", "file", "texture"});
+    case DiffCtx::Domain::Geometry:
+      return contains_any(line, {"\"Mesh\"", "\"GeomSubset\"", "\"PointInstancer\"",
+                                 "points", "faceVertexCounts",
+                                 "faceVertexIndices", "normals", "primvars:",
+                                 "indices", "elementType", "familyName"});
+    case DiffCtx::Domain::Skinning:
+      return contains_any(line, {"\"SkelRoot\"", "\"Skeleton\"",
+                                 "\"SkelAnimation\"", "\"BlendShape\"", "skel:",
+                                 "jointIndices", "jointWeights", "joints",
+                                 "bindTransforms", "restTransforms",
+                                 "blendShape", "rotations", "translations",
+                                 "scales"});
+  }
+  return false;
+}
+
+bool block_matches_domain(const char *p, const FBlock &b,
+                          DiffCtx::Domain domain) {
+  if (domain == DiffCtx::Domain::All) {
+    return true;
+  }
+  const std::vector<std::string> lines = own_lines(p, b);
+  for (const std::string &line : lines) {
+    if (line_matches_domain(line, domain)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // ---- --faster order-insensitive own-line units --------------------------
 
@@ -549,6 +614,10 @@ build_proto_map(const char *p, size_t n, const std::vector<FBlock> &roots) {
 bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b,
                 const std::string &path, std::ostream &os, const DiffCtx &ctx) {
   if (bytes_equal(pa, a.blk0, a.blk1, pb, b.blk0, b.blk1)) return false;
+  const bool report_this_path =
+      path_selected(ctx.pathFilter, path) &&
+      (block_matches_domain(pa, a, ctx.domain) ||
+       block_matches_domain(pb, b, ctx.domain));
 
   // Children by name.
   std::vector<const FBlock *> amiss, bmiss;
@@ -611,15 +680,28 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
     std::vector<std::string> dels, adds;
     for (const auto &u : ua) {
       auto it = mb.find(u.key);
-      if (it == mb.end()) { dels.push_back(u.text); continue; }
+      if (it == mb.end()) {
+        if (line_matches_domain(u.text, ctx.domain)) {
+          dels.push_back(u.text);
+        }
+        continue;
+      }
       bused[it->second] = true;
-      if (!semeq_key(u.key, u.text, ub[it->second].text))
+      if (!semeq_key(u.key, u.text, ub[it->second].text) &&
+          (line_matches_domain(u.text, ctx.domain) ||
+           line_matches_domain(ub[it->second].text, ctx.domain))) {
         mods.push_back({u.text, ub[it->second].text});
+      }
     }
     for (size_t k = 0; k < ub.size(); ++k)
-      if (!bused[k]) adds.push_back(ub[k].text);
-    const bool hdrDiff = !semeq(hdrA, hdrB);
-    if (hdrDiff || !mods.empty() || !dels.empty() || !adds.empty()) {
+      if (!bused[k] && line_matches_domain(ub[k].text, ctx.domain)) {
+        adds.push_back(ub[k].text);
+      }
+    const bool hdrDiff = !semeq(hdrA, hdrB) &&
+                         (line_matches_domain(hdrA, ctx.domain) ||
+                          line_matches_domain(hdrB, ctx.domain));
+    if (report_this_path &&
+        (hdrDiff || !mods.empty() || !dels.empty() || !adds.empty())) {
       any = true;
       os << "~ " << path << " (modified)\n";
       if (hdrDiff) {
@@ -633,27 +715,54 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
       for (auto &d : dels) os << "  - " << firstline(d) << "\n";
       for (auto &x : adds) os << "  + " << firstline(x) << "\n";
     }
-  } else if (la != lb) {
+  } else if (report_this_path && la != lb) {
     // --fast: positional text comparison.
-    any = true;
-    os << "~ " << path << " (modified)\n";
+    std::ostringstream body;
     if (la.size() == lb.size()) {
       for (size_t i = 0; i < la.size(); ++i) {
         if (la[i] == lb[i]) continue;
+        if (!line_matches_domain(la[i], ctx.domain) &&
+            !line_matches_domain(lb[i], ctx.domain)) {
+          continue;
+        }
         auto pr = tinyusdz::tydra::CenterValuePairForDiff(la[i], lb[i]);
-        os << "  - " << pr.first << "\n  + " << pr.second << "\n";
+        body << "  - " << pr.first << "\n  + " << pr.second << "\n";
       }
     } else {
       std::vector<std::string> sb(lb.begin(), lb.end());
       for (const auto &x : la)
-        if (std::find(sb.begin(), sb.end(), x) == sb.end()) os << "  - " << x << "\n";
+        if (std::find(sb.begin(), sb.end(), x) == sb.end() &&
+            line_matches_domain(x, ctx.domain)) {
+          body << "  - " << x << "\n";
+        }
       std::vector<std::string> sa(la.begin(), la.end());
       for (const auto &x : lb)
-        if (std::find(sa.begin(), sa.end(), x) == sa.end()) os << "  + " << x << "\n";
+        if (std::find(sa.begin(), sa.end(), x) == sa.end() &&
+            line_matches_domain(x, ctx.domain)) {
+          body << "  + " << x << "\n";
+        }
+    }
+    if (!body.str().empty()) {
+      any = true;
+      os << "~ " << path << " (modified)\n" << body.str();
     }
   }
-  for (const auto *d : amiss) { os << "- " << path << "/" << d->name << " (deleted)\n"; any = true; }
-  for (const auto *d : bmiss) { os << "+ " << path << "/" << d->name << " (added)\n"; any = true; }
+  for (const auto *d : amiss) {
+    const std::string child_path = path + "/" + d->name;
+    if (path_selected(ctx.pathFilter, child_path) &&
+        block_matches_domain(pa, *d, ctx.domain)) {
+      os << "- " << child_path << " (deleted)\n";
+      any = true;
+    }
+  }
+  for (const auto *d : bmiss) {
+    const std::string child_path = path + "/" + d->name;
+    if (path_selected(ctx.pathFilter, child_path) &&
+        block_matches_domain(pb, *d, ctx.domain)) {
+      os << "+ " << child_path << " (added)\n";
+      any = true;
+    }
+  }
   for (const auto &pr : both)
     any |= diff_block(pa, *pr.first, pb, *pr.second, path + "/" + pr.first->name, os, ctx);
   return any;
@@ -664,7 +773,8 @@ bool diff_block(const char *pa, const FBlock &a, const char *pb, const FBlock &b
 // 1 diffs, -1 fall back to the full semantic path.
 int struct_diff(const std::string &f1, const std::string &f2, std::ostream &os,
                 bool semantic, bool fuzzyAssets,
-                const tinyusdz::tydra::DiffOptions &opts) {
+                const tinyusdz::tydra::DiffOptions &opts,
+                const std::string &pathFilter, DiffCtx::Domain domain) {
   MMapFile m1, m2;
   if (!mmap_open(f1, m1) || !mmap_open(f2, m2)) {
     mmap_close(m1);
@@ -684,6 +794,8 @@ int struct_diff(const std::string &f1, const std::string &f2, std::ostream &os,
       DiffCtx ctx;
       ctx.semantic = semantic;
       ctx.fuzzyAssets = fuzzyAssets;
+      ctx.pathFilter = pathFilter;
+      ctx.domain = domain;
       ctx.opts = opts;
       std::unordered_map<std::string, std::string> pa, pb;
       if (semantic) {
@@ -709,11 +821,23 @@ int struct_diff(const std::string &f1, const std::string &f2, std::ostream &os,
         const FBlock *m = nullptr;
         for (size_t j = 0; j < t2.size(); ++j)
           if (!used[j] && keyB(t2[j].name) == ka) { m = &t2[j]; used[j] = true; break; }
-        if (m) any |= diff_block(m1.p, a, m2.p, *m, "/" + a.name, os, ctx);
-        else { os << "- /" << a.name << " (deleted)\n"; any = true; }
+        const std::string root_path = "/" + a.name;
+        if (m) any |= diff_block(m1.p, a, m2.p, *m, root_path, os, ctx);
+        else if (path_selected(pathFilter, root_path) &&
+                 block_matches_domain(m1.p, a, domain)) {
+          os << "- " << root_path << " (deleted)\n";
+          any = true;
+        }
       }
       for (size_t j = 0; j < t2.size(); ++j)
-        if (!used[j]) { os << "+ /" << t2[j].name << " (added)\n"; any = true; }
+        if (!used[j]) {
+          const std::string root_path = "/" + t2[j].name;
+          if (path_selected(pathFilter, root_path) &&
+              block_matches_domain(m2.p, t2[j], domain)) {
+            os << "+ " << root_path << " (added)\n";
+            any = true;
+          }
+        }
       rc = any ? 1 : 0;
     }
   }
@@ -763,6 +887,14 @@ void print_usage() {
   std::cout << "              NAME (order-insensitive); blank/comment lines ignored.\n";
   std::cout << "  --fuzzy-assets  (--faster) Compare @asset@ paths by leaf/suffix,\n";
   std::cout << "              so differing path prefixes do not show as diffs.\n";
+  std::cout << "  --path=PATTERN  Limit --fast/--faster reports to matching prim paths.\n";
+  std::cout << "              Glob syntax matches tusdcat --inspect (* and **).\n";
+  std::cout << "  --material-diff Compare/report only material, shader, binding, and\n";
+  std::cout << "              texture-like prim/property blocks. Implies --faster.\n";
+  std::cout << "  --geom-diff Compare/report only geometry topology, subset, and\n";
+  std::cout << "              primvar-related prim/property blocks. Implies --faster.\n";
+  std::cout << "  --skinning-diff Compare/report only UsdSkel and skinning-related\n";
+  std::cout << "              prim/property blocks. Implies --faster.\n";
   std::cout << "  --help      Show this help message\n";
   std::cout << "  -h          Show this help message\n";
   std::cout << "\n";
@@ -804,6 +936,8 @@ int main(int argc, char **argv) {
   bool faster = false;
   // --fuzzy-assets (--faster): compare @asset@ paths by leaf/suffix.
   bool fuzzy_assets = false;
+  std::string path_filter;
+  DiffCtx::Domain diff_domain = DiffCtx::Domain::All;
   std::string file1, file2;
   tinyusdz::tydra::DiffOptions diff_opts;
 
@@ -830,6 +964,17 @@ int main(int argc, char **argv) {
       faster = true;
     } else if (args[i] == "--fuzzy-assets") {
       fuzzy_assets = true;
+    } else if (args[i].rfind("--path=", 0) == 0) {
+      path_filter = args[i].substr(std::strlen("--path="));
+    } else if (args[i] == "--material-diff") {
+      faster = true;
+      diff_domain = DiffCtx::Domain::Material;
+    } else if (args[i] == "--geom-diff") {
+      faster = true;
+      diff_domain = DiffCtx::Domain::Geometry;
+    } else if (args[i] == "--skinning-diff") {
+      faster = true;
+      diff_domain = DiffCtx::Domain::Skinning;
     } else if (args[i] == "--ulps") {
       if (i + 1 >= args.size()) {
         std::cerr << "Error: --ulps requires a value\n";
@@ -878,7 +1023,7 @@ int main(int argc, char **argv) {
   if (fast || faster) {
     std::ostringstream ss;
     int rc = struct_diff(file1, file2, ss, /*semantic=*/faster, fuzzy_assets,
-                         diff_opts);
+                         diff_opts, path_filter, diff_domain);
     if (rc >= 0) {
       if (!quiet) {
         if (rc == 1) std::cout << ss.str();
@@ -888,6 +1033,11 @@ int main(int argc, char **argv) {
     }
     std::cerr << "[tusddiff] " << (faster ? "--faster" : "--fast")
               << " inconclusive (structural surprise); using full diff.\n";
+  }
+
+  if (!path_filter.empty()) {
+    std::cerr << "[tusddiff] --path currently applies to --fast/--faster; "
+                 "default semantic diff will compare full layers.\n";
   }
 
   // Load both USD files as Layers (preserves full PrimSpec tree). Each file is

@@ -13,8 +13,10 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
-#include <stdexcept>
+#include <new>
 #include <vector>
 #include <memory>
 
@@ -24,6 +26,20 @@ namespace next {
 
 // Default chunk size: 64KB (good for WASM page alignment)
 constexpr size_t kDefaultChunkSize = 64 * 1024;
+
+// Pre-flight probe for a large TEMPORARY allocation. Built with
+// -fno-exceptions, where an allocator failure aborts the whole module
+// ("bad_alloc was thrown in -fno-exceptions mode"); probing with malloc and
+// releasing immediately lets converters fail a single prim with an error
+// instead. Meaningful on single-threaded wasm (the heap is grow-only, so a
+// successful probe means the following allocation of the same size succeeds).
+inline bool ProbeAlloc(size_t bytes) {
+  if (bytes == 0) return true;
+  void* p = std::malloc(bytes);
+  if (!p) return false;
+  std::free(p);
+  return true;
+}
 
 // ChunkedArray: Fixed-size chunk allocation for large arrays
 // - Each chunk is allocated separately (no realloc)
@@ -44,18 +60,20 @@ class ChunkedArray {
   ChunkedArray(const ChunkedArray&) = delete;
   ChunkedArray& operator=(const ChunkedArray&) = delete;
 
-  // Reserve space for n elements (pre-allocates chunks)
-  void reserve(size_t n) {
-    size_t needed_chunks = (n + kElementsPerChunk - 1) / kElementsPerChunk;
-    while (chunks_.size() < needed_chunks) {
-      chunks_.push_back(std::unique_ptr<T[]>(new T[kElementsPerChunk]));
-    }
-  }
+  // Growth uses nothrow allocation: under -fno-exceptions (wasm) a throwing
+  // operator new would abort the whole module, so a failed chunk allocation
+  // instead latches alloc_failed(), leaves size()/contents unchanged, and the
+  // grow call reports false. Callers converting untrusted scenes check either
+  // the call result (preferred for resize+fill patterns) or alloc_failed()
+  // after a conversion step and drop the prim with an error.
 
-  // Add element, returns index
+  // Reserve space for n elements (pre-allocates chunks)
+  bool reserve(size_t n) { return ensure_capacity(n); }
+
+  // Add element, returns index (SIZE_MAX on allocation failure)
   size_t push_back(const T& value) {
     size_t idx = size_;
-    ensure_capacity(size_ + 1);
+    if (!ensure_capacity(size_ + 1)) return static_cast<size_t>(-1);
     (*this)[idx] = value;
     ++size_;
     return idx;
@@ -63,16 +81,16 @@ class ChunkedArray {
 
   size_t push_back(T&& value) {
     size_t idx = size_;
-    ensure_capacity(size_ + 1);
+    if (!ensure_capacity(size_ + 1)) return static_cast<size_t>(-1);
     (*this)[idx] = std::move(value);
     ++size_;
     return idx;
   }
 
   // Add multiple elements from contiguous array
-  void append(const T* data, size_t count) {
-    if (count == 0) return;
-    ensure_capacity(size_ + count);
+  bool append(const T* data, size_t count) {
+    if (count == 0) return true;
+    if (!ensure_capacity(size_ + count)) return false;
 
     size_t remaining = count;
     const T* src = data;
@@ -89,33 +107,60 @@ class ChunkedArray {
       size_ += to_copy;
       remaining -= to_copy;
     }
+    return true;
   }
 
-  // Resize (may add uninitialized elements)
-  void resize(size_t n) {
-    ensure_capacity(n);
+  // Resize (may add uninitialized elements). On allocation failure the size
+  // stays unchanged and false is returned — resize+fill callers must check.
+  bool resize(size_t n) {
+    if (!ensure_capacity(n)) return false;
     size_ = n;
+    return true;
   }
 
-  void resize(size_t n, const T& value) {
+  bool resize(size_t n, const T& value) {
     size_t old_size = size_;
-    ensure_capacity(n);
+    if (!ensure_capacity(n)) return false;
     size_ = n;
     for (size_t i = old_size; i < n; ++i) {
       (*this)[i] = value;
     }
+    return true;
   }
+
+  // Latched when a chunk allocation failed; the array contents remain valid
+  // at their pre-failure size.
+  bool alloc_failed() const { return alloc_failed_; }
 
   void clear() {
     size_ = 0;
     // Keep chunks allocated for reuse
   }
 
+  // Release excess memory: drop whole chunks past the logical size and
+  // reallocate the final partial chunk to its exact element count. Scenes with
+  // thousands of SMALL meshes would otherwise pay the full 64KB minimum chunk
+  // for every non-empty array (~450KB per RenderMesh), which alone OOMs the
+  // 2GB wasm32 heap on large prop scenes. Appending after shrink re-expands
+  // the tail chunk transparently.
   void shrink_to_fit() {
-    size_t needed_chunks = (size_ + kElementsPerChunk - 1) / kElementsPerChunk;
-    if (needed_chunks == 0) needed_chunks = 0;
+    const size_t needed_chunks =
+        (size_ + kElementsPerChunk - 1) / kElementsPerChunk;
     while (chunks_.size() > needed_chunks) {
       chunks_.pop_back();
+    }
+    if (chunks_.empty()) {
+      tail_capacity_ = 0;
+      return;
+    }
+    tail_capacity_ = kElementsPerChunk;  // dropped chunks restore full tails
+    const size_t used_in_tail = size_ - (chunks_.size() - 1) * kElementsPerChunk;
+    if (used_in_tail < kElementsPerChunk) {
+      T* exact = new (std::nothrow) T[used_in_tail];
+      if (!exact) return;  // keep the full-size chunk; compaction is optional
+      std::memcpy(exact, chunks_.back().get(), used_in_tail * sizeof(T));
+      chunks_.back().reset(exact);
+      tail_capacity_ = used_in_tail;
     }
   }
 
@@ -132,13 +177,23 @@ class ChunkedArray {
     return chunks_[chunk_idx][offset];
   }
 
+  // Bounds-checked access. Built with -fno-exceptions, so an out-of-range index
+    // is a fatal programming error: report and abort immediately.
   T& at(size_t idx) {
-    if (idx >= size_) throw std::out_of_range("ChunkedArray::at");
+    if (idx >= size_) {
+      std::fprintf(stderr, "ChunkedArray::at: index %zu out of range (size %zu)\n",
+                   idx, size_);
+      std::abort();
+    }
     return (*this)[idx];
   }
 
   const T& at(size_t idx) const {
-    if (idx >= size_) throw std::out_of_range("ChunkedArray::at");
+    if (idx >= size_) {
+      std::fprintf(stderr, "ChunkedArray::at: index %zu out of range (size %zu)\n",
+                   idx, size_);
+      std::abort();
+    }
     return (*this)[idx];
   }
 
@@ -151,11 +206,21 @@ class ChunkedArray {
   bool empty() const { return size_ == 0; }
 
   size_t chunk_count() const { return chunks_.size(); }
-  size_t capacity() const { return chunks_.size() * kElementsPerChunk; }
+  size_t capacity() const {
+    if (chunks_.empty()) return 0;
+    return (chunks_.size() - 1) * kElementsPerChunk + tail_capacity_;
+  }
+
+  // True when the data already lives in one contiguous block (fits in the
+  // first chunk), i.e. chunk_data(0) can be handed out directly without
+  // flattening. Uses the LOGICAL size: extra reserved chunks don't matter.
+  bool is_contiguous() const { return size_ <= kElementsPerChunk; }
 
   // Memory usage in bytes
   size_t memory_usage() const {
-    return chunks_.size() * ChunkBytes + sizeof(*this);
+    if (chunks_.empty()) return sizeof(*this);
+    return (chunks_.size() - 1) * ChunkBytes + tail_capacity_ * sizeof(T) +
+           sizeof(*this);
   }
 
   // Get pointer to chunk data (for direct GPU upload)
@@ -167,13 +232,16 @@ class ChunkedArray {
     return chunks_[chunk_idx].get();
   }
 
-  // Get size of elements in a specific chunk
+  // Number of DATA elements in a chunk, derived from the logical size —
+  // NOT from chunks_.size(): reserve() (or clear() + smaller refill) leaves
+  // more chunks allocated than the logical size covers, and sizing the "last"
+  // chunk off the allocation count made copy_to()/flatten() read (and memcpy
+  // into exact-sized destination buffers!) whole 64KB chunks past the end.
   size_t chunk_size(size_t chunk_idx) const {
-    if (chunk_idx >= chunks_.size()) return 0;
-    if (chunk_idx < chunks_.size() - 1) return kElementsPerChunk;
-    // Last chunk may be partial
-    size_t last_chunk_size = size_ % kElementsPerChunk;
-    return (last_chunk_size == 0 && size_ > 0) ? kElementsPerChunk : last_chunk_size;
+    const size_t begin = chunk_idx * kElementsPerChunk;
+    if (begin >= size_) return 0;
+    const size_t remaining = size_ - begin;
+    return remaining < kElementsPerChunk ? remaining : kElementsPerChunk;
   }
 
   // Flatten to contiguous vector (for compatibility/GPU upload)
@@ -182,16 +250,18 @@ class ChunkedArray {
     result.reserve(size_);
     for (size_t i = 0; i < chunks_.size(); ++i) {
       size_t count = chunk_size(i);
+      if (count == 0) break;
       result.insert(result.end(), chunks_[i].get(), chunks_[i].get() + count);
     }
     return result;
   }
 
-  // Copy to pre-allocated buffer (avoids allocation)
+  // Copy to pre-allocated buffer of exactly size() elements.
   void copy_to(T* dest) const {
     size_t copied = 0;
     for (size_t i = 0; i < chunks_.size() && copied < size_; ++i) {
       size_t count = chunk_size(i);
+      if (count == 0) break;
       std::memcpy(dest + copied, chunks_[i].get(), count * sizeof(T));
       copied += count;
     }
@@ -268,14 +338,47 @@ class ChunkedArray {
   const_iterator cend() const { return const_iterator(this, size_); }
 
  private:
-  void ensure_capacity(size_t n) {
-    while (capacity() < n) {
-      chunks_.push_back(std::unique_ptr<T[]>(new T[kElementsPerChunk]));
+  bool ensure_capacity(size_t n) {
+    if (capacity() >= n) return true;
+    // Guard the chunk-vector growth too: reserve with a nothrow probe so the
+    // push_back below cannot throw-abort under -fno-exceptions.
+    const size_t needed_chunks =
+        (n + kElementsPerChunk - 1) / kElementsPerChunk;
+    if (needed_chunks > chunks_.capacity() &&
+        !ProbeAlloc(needed_chunks * sizeof(chunks_[0]) * 2)) {
+      alloc_failed_ = true;
+      return false;
     }
+    // A shrunken (exact-size) tail chunk must grow back to full capacity
+    // before more chunks are appended, so only the LAST chunk is ever short.
+    if (!chunks_.empty() && tail_capacity_ < kElementsPerChunk) {
+      T* full = new (std::nothrow) T[kElementsPerChunk];
+      if (!full) {
+        alloc_failed_ = true;
+        return false;
+      }
+      std::memcpy(full, chunks_.back().get(), tail_capacity_ * sizeof(T));
+      chunks_.back().reset(full);
+      tail_capacity_ = kElementsPerChunk;
+    }
+    while (capacity() < n) {
+      T* chunk = new (std::nothrow) T[kElementsPerChunk];
+      if (!chunk) {
+        alloc_failed_ = true;
+        return false;
+      }
+      chunks_.push_back(std::unique_ptr<T[]>(chunk));
+      tail_capacity_ = kElementsPerChunk;
+    }
+    return true;
   }
 
   std::vector<std::unique_ptr<T[]>> chunks_;
   size_t size_ = 0;
+  // Element capacity of the LAST chunk (all others are kElementsPerChunk).
+  // 0 when no chunks are allocated.
+  size_t tail_capacity_ = 0;
+  bool alloc_failed_ = false;
 };
 
 // Type aliases for common vertex data

@@ -20,6 +20,27 @@ namespace tydra {
 namespace {
 constexpr double kPI = 3.14159265358979323846;
 constexpr double kPI_2 = 1.57079632679489661923;  // PI / 2
+
+template <typename T>
+inline void ExpandIndexedVertexDataToFaceVarying(
+    const std::vector<int> &faceVertexIndices,
+    const std::vector<T> &vertex_data,
+    std::vector<T> *facevarying_data) {
+  if (!facevarying_data) {
+    return;
+  }
+
+  std::vector<T> expanded;
+  expanded.reserve(faceVertexIndices.size());
+  for (int idx : faceVertexIndices) {
+    if ((idx >= 0) && (static_cast<size_t>(idx) < vertex_data.size())) {
+      expanded.push_back(vertex_data[static_cast<size_t>(idx)]);
+    } else {
+      expanded.push_back(T{});
+    }
+  }
+  *facevarying_data = std::move(expanded);
+}
 }
 
 ///
@@ -333,6 +354,387 @@ inline void GenerateIcosphereMesh(
       uvs.push_back({u, v_coord});
     }
   }
+}
+
+///
+/// Generate cylinder mesh geometry (with caps)
+///
+/// @param[in] radius Cylinder radius
+/// @param[in] height Cylinder height (along Y axis)
+/// @param[in] radialSegments Number of radial segments (default 16)
+/// @param[in] heightSegments Number of height segments (default 1)
+/// @param[out] points Output vertex positions
+/// @param[out] faceVertexCounts Output face vertex counts
+/// @param[out] faceVertexIndices Output face vertex indices
+/// @param[out] normals Output per-face-vertex normals
+/// @param[out] uvs Output per-face-vertex texture coordinates
+///
+inline void GenerateCylinderMesh(
+    double radius, double height,
+    int radialSegments, int heightSegments,
+    std::vector<value::float3> &points,
+    std::vector<int> &faceVertexCounts,
+    std::vector<int> &faceVertexIndices,
+    std::vector<value::float3> &normals,
+    std::vector<value::float2> &uvs) {
+
+  const float r = float(radius);
+  const float heightf = float(height);
+  const float h = heightf * 0.5f;
+  const int rs = std::max(radialSegments, 3);
+  const int hs = std::max(heightSegments, 1);
+
+  points.clear();
+  faceVertexCounts.clear();
+  faceVertexIndices.clear();
+  normals.clear();
+  uvs.clear();
+
+  // Generate side vertices: (hs+1) rings x (rs+1) columns
+  for (int j = 0; j <= hs; ++j) {
+    float v = float(j) / float(hs);
+    float y = -h + v * heightf;
+    for (int i = 0; i <= rs; ++i) {
+      float u = float(i) / float(rs);
+      float angle = u * 2.0f * float(kPI);
+      float x = r * std::cos(angle);
+      float z = r * std::sin(angle);
+      points.push_back({x, y, z});
+      normals.push_back({std::cos(angle), 0.0f, std::sin(angle)});
+      uvs.push_back({u, v});
+    }
+  }
+
+  // Side faces (quads)
+  for (int j = 0; j < hs; ++j) {
+    for (int i = 0; i < rs; ++i) {
+      int a = j * (rs + 1) + i;
+      int b = a + rs + 1;
+      int c = b + 1;
+      int d = a + 1;
+      faceVertexIndices.push_back(a);
+      faceVertexIndices.push_back(b);
+      faceVertexIndices.push_back(c);
+      faceVertexIndices.push_back(d);
+      faceVertexCounts.push_back(4);
+    }
+  }
+
+  // Top cap (fan at y = +h)
+  int topCenter = int(points.size());
+  points.push_back({0.0f, h, 0.0f});
+  normals.push_back({0.0f, 1.0f, 0.0f});
+  uvs.push_back({0.5f, 0.5f});
+  for (int i = 0; i < rs; ++i) {
+    float u0 = float(i) / float(rs);
+    float angle0 = u0 * 2.0f * float(kPI);
+    float u1 = float(i + 1) / float(rs);
+    float angle1 = u1 * 2.0f * float(kPI);
+    int v0 = int(points.size());
+    points.push_back({r * std::cos(angle0), h, r * std::sin(angle0)});
+    normals.push_back({0.0f, 1.0f, 0.0f});
+    uvs.push_back({0.5f + 0.5f * std::cos(angle0), 0.5f + 0.5f * std::sin(angle0)});
+    int v1 = int(points.size());
+    points.push_back({r * std::cos(angle1), h, r * std::sin(angle1)});
+    normals.push_back({0.0f, 1.0f, 0.0f});
+    uvs.push_back({0.5f + 0.5f * std::cos(angle1), 0.5f + 0.5f * std::sin(angle1)});
+    faceVertexIndices.push_back(topCenter);
+    faceVertexIndices.push_back(v0);
+    faceVertexIndices.push_back(v1);
+    faceVertexCounts.push_back(3);
+  }
+
+  // Bottom cap (fan at y = -h)
+  int botCenter = int(points.size());
+  points.push_back({0.0f, -h, 0.0f});
+  normals.push_back({0.0f, -1.0f, 0.0f});
+  uvs.push_back({0.5f, 0.5f});
+  for (int i = 0; i < rs; ++i) {
+    float u0 = float(i) / float(rs);
+    float angle0 = u0 * 2.0f * float(kPI);
+    float u1 = float(i + 1) / float(rs);
+    float angle1 = u1 * 2.0f * float(kPI);
+    int v0 = int(points.size());
+    points.push_back({r * std::cos(angle0), -h, r * std::sin(angle0)});
+    normals.push_back({0.0f, -1.0f, 0.0f});
+    uvs.push_back({0.5f + 0.5f * std::cos(angle0), 0.5f + 0.5f * std::sin(angle0)});
+    int v1 = int(points.size());
+    points.push_back({r * std::cos(angle1), -h, r * std::sin(angle1)});
+    normals.push_back({0.0f, -1.0f, 0.0f});
+    uvs.push_back({0.5f + 0.5f * std::cos(angle1), 0.5f + 0.5f * std::sin(angle1)});
+    faceVertexIndices.push_back(botCenter);
+    faceVertexIndices.push_back(v1);
+    faceVertexIndices.push_back(v0);
+    faceVertexCounts.push_back(3);
+  }
+
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, normals, &normals);
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, uvs, &uvs);
+}
+
+///
+/// Generate cone mesh geometry (cylinder with one radius = 0)
+///
+/// @param[in] radius Cone base radius
+/// @param[in] height Cone height (along Y axis, tip at +Y)
+/// @param[in] radialSegments Number of radial segments (default 16)
+/// @param[out] points Output vertex positions
+/// @param[out] faceVertexCounts Output face vertex counts
+/// @param[out] faceVertexIndices Output face vertex indices
+/// @param[out] normals Output per-face-vertex normals
+/// @param[out] uvs Output per-face-vertex texture coordinates
+///
+inline void GenerateConeMesh(
+    double radius, double height,
+    int radialSegments,
+    std::vector<value::float3> &points,
+    std::vector<int> &faceVertexCounts,
+    std::vector<int> &faceVertexIndices,
+    std::vector<value::float3> &normals,
+    std::vector<value::float2> &uvs) {
+
+  const float r = float(radius);
+  const float h = float(height);
+  const int rs = std::max(radialSegments, 3);
+
+  points.clear();
+  faceVertexCounts.clear();
+  faceVertexIndices.clear();
+  normals.clear();
+  uvs.clear();
+
+  // Tip vertex
+  int tipIdx = 0;
+  points.push_back({0.0f, h * 0.5f, 0.0f});
+  normals.push_back({0.0f, 1.0f, 0.0f});
+  uvs.push_back({0.5f, 1.0f});
+
+  // Base rim vertices
+  for (int i = 0; i <= rs; ++i) {
+    float u = float(i) / float(rs);
+    float angle = u * 2.0f * float(kPI);
+    float x = r * std::cos(angle);
+    float z = r * std::sin(angle);
+    points.push_back({x, -h * 0.5f, z});
+    // Side normal: perpendicular to surface (tilted outward)
+    float nx = std::cos(angle);
+    float nz = std::sin(angle);
+    float slope = r / h;
+    float len = std::sqrt(nx * nx + 1.0f + nz * nz);
+    normals.push_back({nx / len, 1.0f / len * slope, nz / len});
+    uvs.push_back({u, 0.0f});
+  }
+
+  // Side faces (triangles from tip to base rim)
+  for (int i = 0; i < rs; ++i) {
+    faceVertexIndices.push_back(tipIdx);
+    faceVertexIndices.push_back(1 + i);
+    faceVertexIndices.push_back(1 + i + 1);
+    faceVertexCounts.push_back(3);
+  }
+
+  // Bottom cap (fan at y = -h/2)
+  int botCenter = int(points.size());
+  points.push_back({0.0f, -h * 0.5f, 0.0f});
+  normals.push_back({0.0f, -1.0f, 0.0f});
+  uvs.push_back({0.5f, 0.5f});
+  for (int i = 0; i < rs; ++i) {
+    float u0 = float(i) / float(rs);
+    float angle0 = u0 * 2.0f * float(kPI);
+    float u1 = float(i + 1) / float(rs);
+    float angle1 = u1 * 2.0f * float(kPI);
+    int v0 = int(points.size());
+    points.push_back({r * std::cos(angle0), -h * 0.5f, r * std::sin(angle0)});
+    normals.push_back({0.0f, -1.0f, 0.0f});
+    uvs.push_back({0.5f + 0.5f * std::cos(angle0), 0.5f + 0.5f * std::sin(angle0)});
+    int v1 = int(points.size());
+    points.push_back({r * std::cos(angle1), -h * 0.5f, r * std::sin(angle1)});
+    normals.push_back({0.0f, -1.0f, 0.0f});
+    uvs.push_back({0.5f + 0.5f * std::cos(angle1), 0.5f + 0.5f * std::sin(angle1)});
+    faceVertexIndices.push_back(botCenter);
+    faceVertexIndices.push_back(v1);
+    faceVertexIndices.push_back(v0);
+    faceVertexCounts.push_back(3);
+  }
+
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, normals, &normals);
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, uvs, &uvs);
+}
+
+///
+/// Generate capsule mesh geometry (cylinder with hemisphere caps)
+///
+/// @param[in] radius Capsule radius
+/// @param[in] height Cylinder section height (along Y axis, excluding caps)
+/// @param[in] radialSegments Number of radial segments (default 16)
+/// @param[in] heightSegments Number of height segments for cylinder section (default 1)
+/// @param[out] points Output vertex positions
+/// @param[out] faceVertexCounts Output face vertex counts
+/// @param[out] faceVertexIndices Output face vertex indices
+/// @param[out] normals Output per-face-vertex normals
+/// @param[out] uvs Output per-face-vertex texture coordinates
+///
+inline void GenerateCapsuleMesh(
+    double radius, double height,
+    int radialSegments, int heightSegments,
+    std::vector<value::float3> &points,
+    std::vector<int> &faceVertexCounts,
+    std::vector<int> &faceVertexIndices,
+    std::vector<value::float3> &normals,
+    std::vector<value::float2> &uvs) {
+
+  const float r = float(radius);
+  const float heightf = float(height);
+  const float halfCyl = heightf * 0.5f;
+  const int rs = std::max(radialSegments, 3);
+  const int hs = std::max(heightSegments, 1);
+  const int halfSegs = std::max(rs / 2, 2);
+
+  points.clear();
+  faceVertexCounts.clear();
+  faceVertexIndices.clear();
+  normals.clear();
+  uvs.clear();
+
+  // Top hemisphere
+  for (int j = 0; j <= halfSegs; ++j) {
+    float phi = float(kPI_2) * float(j) / float(halfSegs);
+    float y = halfCyl + r * std::sin(phi);
+    float ringR = r * std::cos(phi);
+    float v = 0.5f + 0.5f * float(j) / float(halfSegs);
+    for (int i = 0; i <= rs; ++i) {
+      float u = float(i) / float(rs);
+      float angle = u * 2.0f * float(kPI);
+      float x = ringR * std::cos(angle);
+      float z = ringR * std::sin(angle);
+      points.push_back({x, y, z});
+      float nx = std::cos(angle) * std::cos(phi);
+      float ny = std::sin(phi);
+      float nz = std::sin(angle) * std::cos(phi);
+      normals.push_back({nx, ny, nz});
+      uvs.push_back({u, v});
+    }
+  }
+
+  // Cylinder section
+  for (int j = 0; j <= hs; ++j) {
+    float vFrac = float(j) / float(hs);
+    float y = halfCyl - vFrac * heightf;
+    float v = 0.5f - 0.5f * vFrac;
+    for (int i = 0; i <= rs; ++i) {
+      float u = float(i) / float(rs);
+      float angle = u * 2.0f * float(kPI);
+      points.push_back({r * std::cos(angle), y, r * std::sin(angle)});
+      normals.push_back({std::cos(angle), 0.0f, std::sin(angle)});
+      uvs.push_back({u, v});
+    }
+  }
+
+  // Bottom hemisphere
+  for (int j = 0; j <= halfSegs; ++j) {
+    float phi = -float(kPI_2) * float(j) / float(halfSegs);
+    float y = -halfCyl + r * std::sin(phi);
+    float ringR = r * std::cos(phi);
+    float v = 0.5f - 0.5f * float(j) / float(halfSegs);
+    for (int i = 0; i <= rs; ++i) {
+      float u = float(i) / float(rs);
+      float angle = u * 2.0f * float(kPI);
+      float x = ringR * std::cos(angle);
+      float z = ringR * std::sin(angle);
+      points.push_back({x, y, z});
+      float nx = std::cos(angle) * std::cos(phi);
+      float ny = std::sin(phi);
+      float nz = std::sin(angle) * std::cos(phi);
+      normals.push_back({nx, ny, nz});
+      uvs.push_back({u, v});
+    }
+  }
+
+  // Build quad faces for all sections
+  int totalRings = halfSegs + hs + halfSegs;
+  for (int j = 0; j < totalRings; ++j) {
+    for (int i = 0; i < rs; ++i) {
+      int a = j * (rs + 1) + i;
+      int b = a + rs + 1;
+      int c = b + 1;
+      int d = a + 1;
+      faceVertexIndices.push_back(a);
+      faceVertexIndices.push_back(b);
+      faceVertexIndices.push_back(c);
+      faceVertexIndices.push_back(d);
+      faceVertexCounts.push_back(4);
+    }
+  }
+
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, normals, &normals);
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, uvs, &uvs);
+}
+
+///
+/// Generate plane mesh geometry (grid in XZ plane)
+///
+/// @param[in] width Width (X axis)
+/// @param[in] length Length (Z axis)
+/// @param[in] widthSegments Number of segments along width (default 1)
+/// @param[in] lengthSegments Number of segments along length (default 1)
+/// @param[out] points Output vertex positions
+/// @param[out] faceVertexCounts Output face vertex counts
+/// @param[out] faceVertexIndices Output face vertex indices
+/// @param[out] normals Output per-face-vertex normals
+/// @param[out] uvs Output per-face-vertex texture coordinates
+///
+inline void GeneratePlaneMesh(
+    double width, double length,
+    int widthSegments, int lengthSegments,
+    std::vector<value::float3> &points,
+    std::vector<int> &faceVertexCounts,
+    std::vector<int> &faceVertexIndices,
+    std::vector<value::float3> &normals,
+    std::vector<value::float2> &uvs) {
+
+  const float widthf = float(width);
+  const float lengthf = float(length);
+  const float w = widthf * 0.5f;
+  const float l = lengthf * 0.5f;
+  const int ws = std::max(widthSegments, 1);
+  const int ls = std::max(lengthSegments, 1);
+
+  points.clear();
+  faceVertexCounts.clear();
+  faceVertexIndices.clear();
+  normals.clear();
+  uvs.clear();
+
+  // Generate vertices: (ls+1) rows x (ws+1) columns
+  for (int j = 0; j <= ls; ++j) {
+    float v = float(j) / float(ls);
+    float z = -l + v * lengthf;
+    for (int i = 0; i <= ws; ++i) {
+      float u = float(i) / float(ws);
+      float x = -w + u * widthf;
+      points.push_back({x, 0.0f, z});
+      normals.push_back({0.0f, 1.0f, 0.0f});
+      uvs.push_back({u, v});
+    }
+  }
+
+  // Quad faces
+  for (int j = 0; j < ls; ++j) {
+    for (int i = 0; i < ws; ++i) {
+      int a = j * (ws + 1) + i;
+      int b = a + ws + 1;
+      int c = b + 1;
+      int d = a + 1;
+      faceVertexIndices.push_back(a);
+      faceVertexIndices.push_back(b);
+      faceVertexIndices.push_back(c);
+      faceVertexIndices.push_back(d);
+      faceVertexCounts.push_back(4);
+    }
+  }
+
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, normals, &normals);
+  ExpandIndexedVertexDataToFaceVarying(faceVertexIndices, uvs, &uvs);
 }
 
 }  // namespace tydra

@@ -27,6 +27,11 @@ import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { TinyUSDZLoader } from './src/tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from './src/tinyusdz/TinyUSDZLoaderUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from './src/tinyusdz/TinyUSDZMaterialX.js';
+import {
+    buildNextThreeNode,
+    isNextScene,
+    readNextSceneMeta
+} from './src/tinyusdz/NextRenderSceneUtils.js';
 
 // ---- Worker-compatible image loading patch ----
 THREE.ImageLoader.prototype.load = function (url, onLoad, _onProgress, onError) {
@@ -365,11 +370,11 @@ function applyEnv() {
 // USD Loading with progress
 // ============================================================================
 
-async function handleLoadFile({ data, filename }) {
+async function handleLoadFile({ data, filename, backend = 'legacy' }) {
     sendStatus(`Loading: ${filename}...`);
 
     try {
-        await loadUSDFromData(new Uint8Array(data), filename);
+        await loadUSDFromData(new Uint8Array(data), filename, backend);
     } catch (err) {
         sendError(`Failed to load ${filename}: ${err.message}`);
         console.error('[Worker] loadFile error:', err);
@@ -388,12 +393,13 @@ const COROUTINE_PHASE_MAP = {
     complete:  { stage: 'building', pct: 80, label: 'Parse complete' },
 };
 
-async function loadUSDFromData(data, filename) {
+async function loadUSDFromData(data, filename, backend = 'legacy') {
     clearScene();
 
     sendProgress('parsing', 30, `Parsing: ${filename}...`);
 
-    const useAsync = loaderState.loader.hasAsyncSupport();
+    const useNext = backend === 'next' || backend === 'auto';
+    const useAsync = !useNext && loaderState.loader.hasAsyncSupport();
     console.log(`[Worker] Coroutine async: ${useAsync ? 'ON' : 'OFF'}` +
         (useAsync && DEBUG_PARSE_DELAY_MS > 0 ? `, debug delay: ${DEBUG_PARSE_DELAY_MS}ms/phase` : ''));
 
@@ -420,7 +426,13 @@ async function loadUSDFromData(data, filename) {
             });
         } else {
             usd = await new Promise((resolve, reject) => {
-                loaderState.loader.parse(data, filename, resolve, reject);
+                loaderState.loader.parse(data, filename, resolve, reject, {
+                    backend,
+                    materialDedup: false,
+                    mergeMeshes: false,
+                    mergeMeshesBakeTransform: false,
+                    flattenRenderTree: false
+                });
             });
         }
     } catch (err) {
@@ -441,6 +453,71 @@ async function loadUSDFromData(data, filename) {
     }
 
     loaderState.nativeLoader = usd;
+
+    if (isNextScene(usd)) {
+        const metadata = readNextSceneMeta(usd);
+        sceneState.upAxis = metadata.upAxis || 'Y';
+        sendProgress('building', 80, 'Building next render scene...');
+        const built = buildNextThreeNode(usd, {
+            skipTextures: false,
+            lazyTextures: true,
+            onProgress: (info) => {
+                const pct = 80 + Math.min(1, Math.max(0, info.percentage / 100)) * 14;
+                sendProgress('building', pct, info.message ||
+                    `Building next scene (${info.builtMeshes}/${info.totalMeshes})...`);
+            },
+            progressInterval: 20
+        });
+        sceneState.root = built.node;
+        sceneState.textureLoadingManager = built.textureManager;
+        sceneState.meshCount = usd.numMeshes ? usd.numMeshes() : 0;
+        sceneState.materials = [];
+        built.node.traverse((obj) => {
+            if (obj.isMesh) {
+                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                for (const mat of mats) {
+                    if (mat && !sceneState.materials.includes(mat)) {
+                        sceneState.materials.push(mat);
+                    }
+                }
+            }
+        });
+        three.scene.add(sceneState.root);
+        if (sceneState.root && sceneState.upAxis === 'Z') {
+            sceneState.root.rotation.x = -Math.PI / 2;
+        }
+        fitCameraToScene();
+        if (sceneState.textureLoadingManager && sceneState.textureLoadingManager.total > 0) {
+            const texManager = sceneState.textureLoadingManager;
+            sendTextureProgress({ loaded: 0, total: texManager.total, percentage: 0, isStart: true });
+            texManager.startLoading({
+                onProgress: (info) => sendTextureProgress(info),
+                onTextureLoaded: (material) => { material.needsUpdate = true; },
+                concurrency: 16,
+                yieldInterval: 16
+            }).then(status => {
+                sceneState.textureCount = status.loaded;
+                sendTextureProgress({
+                    ...status,
+                    percentage: 100,
+                    isComplete: true
+                });
+            }).catch(err => {
+                console.warn('[Worker] Next texture loading failed:', err);
+            });
+        }
+        console.log('[Worker] next backend rendered geometry/materials from RenderScene; legacy node APIs are skipped.');
+        const sceneEntityCounts = readSceneEntityCounts(usd);
+        sendLoaded(
+            sceneState.meshCount,
+            sceneState.materials.length,
+            sceneState.textureCount,
+            sceneState.upAxis,
+            sceneEntityCounts
+        );
+        clearPauseState();
+        return;
+    }
 
     // Read metadata
     const metadata = usd.getSceneMetadata ? usd.getSceneMetadata() : {};
@@ -485,7 +562,7 @@ async function loadUSDFromData(data, filename) {
             onTextureLoaded: (material, _mapProperty, _texture) => {
                 material.needsUpdate = true;
             },
-            concurrency: 2,
+            concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
             yieldInterval: 16
         }).then(status => {
             console.log(`[Worker] Texture loading complete: ${status.loaded}/${status.total}`);
@@ -503,11 +580,13 @@ async function loadUSDFromData(data, filename) {
     }
 
     // Send loaded
+    const sceneEntityCounts = readSceneEntityCounts(loaderState.nativeLoader);
     sendLoaded(
         sceneState.meshCount,
         sceneState.materials.length,
         sceneState.textureCount,
-        sceneState.upAxis
+        sceneState.upAxis,
+        sceneEntityCounts
     );
 
     clearPauseState();
@@ -770,6 +849,11 @@ function handleToggleUpAxis({ apply }) {
 // Render loop
 // ============================================================================
 
+const fpsState = {
+    lastUpdateMs: performance.now(),
+    frames: 0
+};
+
 function animate() {
     // Use _origRAF directly — the wrapped requestAnimationFrame is only for
     // coroutine yield points (pause/delay). The render loop must always run.
@@ -779,6 +863,16 @@ function animate() {
         setTimeout(animate, 16);
     }
     three.renderer.render(three.scene, three.camera);
+    fpsState.frames++;
+    const now = performance.now();
+    if (now - fpsState.lastUpdateMs >= 500) {
+        self.postMessage({
+            type: 'fps',
+            fps: fpsState.frames * 1000 / (now - fpsState.lastUpdateMs)
+        });
+        fpsState.frames = 0;
+        fpsState.lastUpdateMs = now;
+    }
 }
 
 // ============================================================================
@@ -803,9 +897,64 @@ function sendTextureProgress(info) {
     self.postMessage({ type: 'texture_progress', ...info });
 }
 
-function sendLoaded(meshCount, materialCount, textureCount, upAxis) {
-    console.log(`[Worker] Loaded: ${meshCount} meshes, ${materialCount} materials, ${textureCount} textures, upAxis=${upAxis}`);
-    self.postMessage({ type: 'loaded', meshCount, materialCount, textureCount, upAxis });
+function readSceneEntityCounts(usd) {
+    const safeNumber = (fn) => {
+        if (typeof fn !== 'function') return 0;
+        try {
+            const value = fn();
+            return Number.isFinite(value) ? value : 0;
+        } catch {
+            return 0;
+        }
+    };
+
+    const safeArrayCount = (fn) => {
+        if (typeof fn !== 'function') return 0;
+        try {
+            const value = fn();
+            return Array.isArray(value) ? value.length : 0;
+        } catch {
+            return 0;
+        }
+    };
+
+    return {
+        lights: safeNumber(usd && usd.numLights && usd.numLights.bind(usd)),
+        cameras: safeNumber(usd && usd.numCameras && usd.numCameras.bind(usd)),
+        nodes: safeNumber(usd && usd.numNodes && usd.numNodes.bind(usd)),
+        pointInstancers: safeNumber(usd && usd.numPointInstancers && usd.numPointInstancers.bind(usd)),
+        pointInstanceDraws: safeNumber(usd && usd.numPointInstanceDraws && usd.numPointInstanceDraws.bind(usd)),
+        skeletons: safeNumber(usd && usd.numSkeletons && usd.numSkeletons.bind(usd)),
+        animations: safeNumber(usd && usd.numAnimations && usd.numAnimations.bind(usd)),
+        unsupportedRenderables: safeNumber(usd && usd.numUnsupportedRenderables && usd.numUnsupportedRenderables.bind(usd)) ||
+            safeArrayCount(usd && usd.getUnsupportedRenderables && usd.getUnsupportedRenderables.bind(usd))
+    };
+}
+
+function sendLoaded(meshCount, materialCount, textureCount, upAxis, sceneEntityCounts = {}) {
+    console.log(
+        `[Worker] Loaded: ${meshCount} meshes, ${materialCount} materials, ${textureCount} textures, ` +
+        `lights=${sceneEntityCounts.lights || 0}, cameras=${sceneEntityCounts.cameras || 0}, ` +
+        `nodes=${sceneEntityCounts.nodes || 0}, pointInstancers=${sceneEntityCounts.pointInstancers || 0}, ` +
+        `pointInstanceDraws=${sceneEntityCounts.pointInstanceDraws || 0}, skeletons=${sceneEntityCounts.skeletons || 0}, ` +
+        `animations=${sceneEntityCounts.animations || 0}, ` +
+        `unsupportedRenderables=${sceneEntityCounts.unsupportedRenderables || 0}, upAxis=${upAxis}`
+    );
+    self.postMessage({
+        type: 'loaded',
+        meshCount,
+        materialCount,
+        textureCount,
+        upAxis,
+        lights: sceneEntityCounts.lights || 0,
+        cameras: sceneEntityCounts.cameras || 0,
+        nodes: sceneEntityCounts.nodes || 0,
+        pointInstancers: sceneEntityCounts.pointInstancers || 0,
+        pointInstanceDraws: sceneEntityCounts.pointInstanceDraws || 0,
+        skeletons: sceneEntityCounts.skeletons || 0,
+        animations: sceneEntityCounts.animations || 0,
+        unsupportedRenderables: sceneEntityCounts.unsupportedRenderables || 0
+    });
 }
 
 // ============================================================================

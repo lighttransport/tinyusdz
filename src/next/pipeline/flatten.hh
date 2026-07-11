@@ -3,19 +3,21 @@
 //
 // TinyUSDZ Next - Low-memory flatten pipeline
 //
-// One-call "load USDC (lazy) -> compose/flatten (structural) -> write USDC
-// (verbatim byte pass-through)" facade. Designed for both native use and the
-// WASM binding: numeric array payloads are never decoded unless edited, so a
-// flatten of a 200 MB scene stays close to the input size in heap instead of
-// the 5-10x blow-up of the eager path.
+// One-call "load USD (lazy when crate-backed) -> compose/flatten (structural)
+// -> write USDC (verbatim byte pass-through)" facade. Designed for both native
+// use and the WASM binding: numeric array payloads are never decoded unless
+// edited, so a flatten of a 200 MB scene stays close to the input size in heap
+// instead of the 5-10x blow-up of the eager path.
 
 #pragma once
 
 #include "../composition/composition.hh"
 #include "../crate/crate-reader.hh"
 #include "../crate/crate-writer.hh"
+#include "../pcp/layer-registry.hh"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -30,10 +32,12 @@ struct FlattenStats {
   size_t prim_count = 0;
   size_t arrays_passed_through = 0;  // arrays copied verbatim from the source
   size_t arrays_reencoded = 0;       // lazy arrays that fell back to re-encode
+  bool input_was_mmap = false;       // direct crate root was mmap-backed
   double read_ms = 0.0;
   double compose_ms = 0.0;
   double write_ms = 0.0;
   std::vector<std::string> referenced_assets;  // asset-valued fields in output layer
+  size_t asset_paths_remapped = 0;
   // Non-fatal composition errors (unresolved/unloadable external arcs). The
   // flatten still succeeds with those arcs skipped; callers should surface
   // these so silent partial composition is visible.
@@ -60,13 +64,45 @@ struct FlattenOptions {
   // for resumable/async loaders that need to fetch a missing layer and retry
   // rather than silently emitting a partial flatten.
   bool fail_on_composition_error = false;
+
+  // Asset-valued property rewrite applied after composition and before writing.
+  // Used by USDZ texture conversion when packed texture names change.
+  std::map<std::string, std::string> asset_path_remap;
 };
 
 /// Filesystem-backed LayerLoader for native multi-file flattens: reads the
-/// resolved path and parses it as a (lazy) USDC crate. The loaded layer keeps
-/// its source bytes alive via the crate data source, so arrays still pass
-/// through verbatim. USDA dependencies are not supported by this loader yet.
+/// resolved path and parses it as USDA / USDC / USDZ via the PCP layer loader.
+/// Crate-backed layers keep their source bytes alive via the crate data source,
+/// so arrays still pass through verbatim.
 LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts = {});
+LayerLoader MakeFileSystemLayerLoader(const CrateReadOptions& read_opts,
+                                     const pcp::LayerLoadOptions& layer_load_opts);
+
+/// Resolver-backed LayerLoader: reads the resolved path's bytes through
+/// `resolver->ReadAsset()` (custom byte-reader first, filesystem fallback) and
+/// parses them by content sniff (crate magic / ZIP header / USDA text). This is
+/// the loader for environments where layers are not plain files — e.g. wasm
+/// asset caches or HTTP-fetched buffers installed via SetAssetReader().
+/// `resolver` must outlive the returned loader.
+LayerLoader MakeResolverLayerLoader(const AssetResolver* resolver,
+                                    const CrateReadOptions& read_opts = {},
+                                    const pcp::LayerLoadOptions& layer_load_opts = {});
+
+/// Load a root USD file (.usda/.usd/.usdc/.usdz), optionally flatten it through
+/// filesystem-resolved dependencies, and write a USDC buffer. This is the native
+/// low-memory path for scenes whose root is USDA but whose heavy dependencies
+/// are crate-backed.
+bool FlattenUSDFileToUSDC(const std::string& filename, std::vector<uint8_t>& out,
+                          const FlattenOptions& opts = {},
+                          FlattenStats* stats = nullptr,
+                          std::string* err = nullptr);
+
+/// Streaming-sink form of FlattenUSDFileToUSDC.
+bool FlattenUSDFileToUSDCToSink(const std::string& filename,
+                                const CrateWriteSink& sink,
+                                const FlattenOptions& opts = {},
+                                FlattenStats* stats = nullptr,
+                                std::string* err = nullptr);
 
 /// Read a USDC buffer, (optionally) flatten it, and write a USDC buffer, keeping
 /// numeric arrays as lazy references throughout so they are copied straight
@@ -97,6 +133,40 @@ bool FlattenUSDCToUSDCOwned(std::string&& data, std::vector<uint8_t>& out,
 /// buffer, with VALUE bytes streamed straight from their source. Output bytes
 /// are identical to the buffer form. `sink` returns false to abort.
 bool FlattenUSDCToUSDCOwnedToSink(std::string&& data, const CrateWriteSink& sink,
+                                  const FlattenOptions& opts = {},
+                                  FlattenStats* stats = nullptr,
+                                  std::string* err = nullptr);
+
+/// Format-agnostic memory-root flatten: content-sniffs `data` (crate magic /
+/// ZIP header / USDA text) and routes crate roots through the lazy
+/// FlattenUSDCToUSDCOwned path and USDA/USDZ roots through the parsed-layer
+/// path. `key` labels diagnostics and selects a USDZ entry when it is a
+/// package path ("pkg.usdz[entry]"). Adopts the input bytes by move.
+bool FlattenUSDMemoryToUSDCOwned(const std::string& key, std::string&& data,
+                                 std::vector<uint8_t>& out,
+                                 const FlattenOptions& opts = {},
+                                 FlattenStats* stats = nullptr,
+                                 std::string* err = nullptr);
+
+/// Streaming-sink form of FlattenUSDMemoryToUSDCOwned.
+bool FlattenUSDMemoryToUSDCOwnedToSink(const std::string& key,
+                                       std::string&& data,
+                                       const CrateWriteSink& sink,
+                                       const FlattenOptions& opts = {},
+                                       FlattenStats* stats = nullptr,
+                                       std::string* err = nullptr);
+
+/// Non-owned forms for callers that must retain the root bytes (e.g. resumable
+/// need-layer sessions that retry the flatten). The caller must keep `data`
+/// alive until the call returns.
+bool FlattenUSDMemoryToUSDC(const std::string& key, const uint8_t* data,
+                            size_t size, std::vector<uint8_t>& out,
+                            const FlattenOptions& opts = {},
+                            FlattenStats* stats = nullptr,
+                            std::string* err = nullptr);
+
+bool FlattenUSDMemoryToUSDCToSink(const std::string& key, const uint8_t* data,
+                                  size_t size, const CrateWriteSink& sink,
                                   const FlattenOptions& opts = {},
                                   FlattenStats* stats = nullptr,
                                   std::string* err = nullptr);

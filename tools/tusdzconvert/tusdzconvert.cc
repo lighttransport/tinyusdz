@@ -91,6 +91,8 @@ void PrintUsage(const char *prog) {
       "  -jpegQuality <1-100>      JPEG quality when (re-)encoding (default: 90).\n"
       "  -numThreads <N>           Texture worker threads (default 0 = all cores; 1 = sequential).\n"
       "  -noReencode               Copy unmodified textures through byte-for-byte.\n"
+      "  -includeUnusedTextures    Also convert/package image files in the input layer\n"
+      "                            directories that are not referenced by UsdUVTexture.\n"
       "\n"
       "Material optimization:\n"
       "  -optimizeMaterials <off|dedupe|preview|atlas>\n"
@@ -516,6 +518,8 @@ int main(int argc, char **argv) {
   parser.add_option("-jpegQuality", true, "1-100");
   parser.add_option("-numThreads", true, "Texture worker threads (0 = auto)");
   parser.add_option("-noReencode", false, "Passthrough unmodified textures");
+  parser.add_option("-includeUnusedTextures", false,
+                    "Package unreferenced image files from input directories");
   parser.add_option("-optimizeMaterials", true, "off|dedupe|preview|atlas");
   parser.add_option("-materialAtlasSize", true, "Material atlas max edge");
   parser.add_option("-materialAtlasTileSize", true, "Material atlas tile edge");
@@ -633,6 +637,7 @@ int main(int argc, char **argv) {
   opts.arkit_compatible = parser.is_set("-arkitCompatible");
   opts.verbose = verbose;
   opts.reencode = !parser.is_set("-noReencode");
+  opts.include_unused_textures = parser.is_set("-includeUnusedTextures");
   opts.png_encoder = enc;
 
   if (parser.is_set("-metersPerUnit")) {
@@ -877,7 +882,12 @@ int main(int argc, char **argv) {
             << "  textures: " << stats.num_textures
             << ", resized: " << stats.num_textures_resized
             << ", reencoded: " << stats.num_textures_reencoded
-            << ", passthrough: " << stats.num_textures_passthrough << "\n";
+            << ", passthrough: " << stats.num_textures_passthrough;
+  if (stats.num_unused_textures_included > 0) {
+    std::cout << ", unused included: "
+              << stats.num_unused_textures_included;
+  }
+  std::cout << "\n";
   if (opts.material_optimization != usdz::MaterialOptimizationMode::Off) {
     std::cout << "  materials: " << stats.num_materials_before << " -> "
               << stats.num_materials_after

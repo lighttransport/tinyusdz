@@ -6,15 +6,52 @@
 #include "prim-spec.hh"
 #include <algorithm>
 #include <cstring>
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#endif
 
 namespace tinyusdz {
 namespace next {
+
+namespace {
+
+std::string NormalizeAssetPathForRemap(std::string path) {
+  for (char& c : path) {
+    if (c == '\\') c = '/';
+  }
+  while (path.rfind("./", 0) == 0) path = path.substr(2);
+  while (!path.empty() && path[0] == '/') path = path.substr(1);
+  return path;
+}
+
+const std::string* FindAssetPathRemap(
+    const std::map<std::string, std::string>& remap,
+    const std::string& path) {
+  auto it = remap.find(path);
+  if (it != remap.end()) return &it->second;
+  const std::string norm = NormalizeAssetPathForRemap(path);
+  it = remap.find(norm);
+  if (it != remap.end()) return &it->second;
+  return nullptr;
+}
+
+}  // namespace
 
 // ============================================================
 // TypeNameTable
 // ============================================================
 
 TypeNameId TypeNameTable::intern(const std::string& name) {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  {
+    std::shared_lock<std::shared_mutex> rlk(mu_);
+    auto hit = name_to_id_.find(name);
+    if (hit != name_to_id_.end()) {
+      return TypeNameId{hit->second};
+    }
+  }
+  std::unique_lock<std::shared_mutex> wlk(mu_);
+#endif
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return TypeNameId{it->second};
@@ -32,11 +69,19 @@ TypeNameId TypeNameTable::intern(const std::string& name) {
 
 const std::string& TypeNameTable::get(TypeNameId id) const {
   static const std::string empty;
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // names_ is a deque: elements never relocate on push_back, so the returned
+  // reference stays valid after the lock is released.
+  std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
   if (!id.is_valid() || id.id >= names_.size()) return empty;
   return names_[id.id];
 }
 
 TypeNameId TypeNameTable::find(const std::string& name) const {
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  std::shared_lock<std::shared_mutex> rlk(mu_);
+#endif
   auto it = name_to_id_.find(name);
   if (it != name_to_id_.end()) {
     return TypeNameId{it->second};
@@ -102,13 +147,14 @@ void TypeNameTable::register_common_types() {
   intern("Component");
 }
 
+// Registration happens inside the (thread-safe) static local initialization,
+// so concurrent first callers cannot observe a half-registered table.
 TypeNameTable& GetTypeNameTable() {
-  static TypeNameTable table;
-  static bool initialized = false;
-  if (!initialized) {
-    table.register_common_types();
-    initialized = true;
-  }
+  static TypeNameTable& table = []() -> TypeNameTable& {
+    static TypeNameTable t;
+    t.register_common_types();
+    return t;
+  }();
   return table;
 }
 
@@ -196,11 +242,28 @@ uint32_t TimeSampleStorage::find_or_store(Value value) {
   return offset;
 }
 
+void TimeSampleStorage::insert_sample(PropNameId name_id, double time,
+                                      uint32_t offset) {
+  auto& vec = samples_[name_id.id];
+  if (vec.empty() || time > vec.back().first) {  // common: authored in order
+    vec.emplace_back(time, offset);
+    return;
+  }
+  auto it = std::lower_bound(
+      vec.begin(), vec.end(), time,
+      [](const std::pair<double, uint32_t>& a, double t) { return a.first < t; });
+  if (it != vec.end() && it->first == time) {
+    it->second = offset;  // re-authored time: last opinion wins
+    return;
+  }
+  vec.insert(it, {time, offset});
+}
+
 uint32_t TimeSampleStorage::add(PropNameId name_id, double time, Value value) {
   // Store without deduplication (faster for unique values)
   uint32_t offset = static_cast<uint32_t>(values_.size());
   values_.push_back(std::move(value));
-  samples_[name_id.id].emplace_back(time, offset);
+  insert_sample(name_id, time, offset);
   return offset;
 }
 
@@ -217,7 +280,7 @@ uint32_t TimeSampleStorage::add_dedup(PropNameId name_id, double time, Value val
   }
   // Store with deduplication (good for repeated array values)
   uint32_t offset = find_or_store(std::move(value));
-  samples_[name_id.id].emplace_back(time, offset);
+  insert_sample(name_id, time, offset);
   return offset;
 }
 
@@ -232,8 +295,36 @@ const Value* TimeSampleStorage::value(uint32_t offset) const {
   return &values_[offset];
 }
 
+size_t TimeSampleStorage::remap_asset_paths(
+    const std::map<std::string, std::string>& remap) {
+  if (remap.empty()) return 0;
+  size_t count = 0;
+  for (Value& value : values_) {
+    const std::string* path = value.as_asset_path();
+    if (!path) continue;
+    const std::string* mapped = FindAssetPathRemap(remap, *path);
+    if (!mapped) continue;
+    value = Value::MakeAssetPath(*mapped);
+    ++count;
+  }
+  return count;
+}
+
 bool TimeSampleStorage::has(PropNameId name_id) const {
   return samples_.find(name_id.id) != samples_.end();
+}
+
+bool TimeSampleStorage::remove(PropNameId name_id) {
+  return samples_.erase(name_id.id) > 0;
+}
+
+void TimeSampleStorage::remap_times(double offset, double scale) {
+  if (offset == 0.0 && scale == 1.0) return;
+  for (auto& kv : samples_) {
+    for (auto& tv : kv.second) {
+      tv.first = offset + scale * tv.first;
+    }
+  }
 }
 
 SampleResult TimeSampleStorage::interpolate(PropNameId name_id, double time,
@@ -360,8 +451,13 @@ PrimSpec PrimSpec::Clone() const {
     }
   }
 
-  // Deep copy relationships
+  // Deep copy relationships (+ authored list-op edits and qualifier flags)
   c.relationships_ = relationships_;
+  if (rel_edits_) {
+    c.rel_edits_.reset(
+        new std::unordered_map<std::string, ArcEdit>(*rel_edits_));
+  }
+  c.rel_flags_ = rel_flags_;
 
   // Deep copy attribute connections + declared type names
   c.connections_ = connections_;
@@ -463,6 +559,94 @@ bool PrimSpec::fill_property_value_if_absent(PropNameId name_id, Value value) {
   return true;
 }
 
+bool PrimSpec::set_property_value(PropNameId name_id, Value value) {
+  PropSlot* slot = props_.find_mutable(name_id);
+  if (!slot || slot->value_offset == UINT32_MAX) return false;
+  if (!values_) return false;
+  uint32_t offset = values_->store(std::move(value));
+  const Value* stored = values_->get(offset);
+  slot->value_offset = offset;
+  if (stored && stored->type_id() != TypeId::Invalid) {
+    slot->value_type = static_cast<uint16_t>(stored->type_id());
+    if (stored->is_array()) slot->flags |= PropSlot::kFlagArray;
+    else slot->flags &= static_cast<uint16_t>(~PropSlot::kFlagArray);
+  }
+  return true;
+}
+
+void PrimSpec::upsert_property(PropNameId name_id, Value value, uint16_t flags) {
+  PropSlot* slot = props_.find_mutable(name_id);
+  if (!slot) {
+    add_property(name_id, std::move(value), flags);
+    return;
+  }
+
+  bool is_array = value.is_array();
+  TypeId type = value.type_id();
+
+  if (slot->value_offset == UINT32_MAX) {
+    // Declared-only slot: attach a value.
+    if (!values_) values_ = std::make_unique<ValueStorage>();
+    slot->value_offset = values_->store(std::move(value));
+  } else if (Value* dst = values_ ? values_->get(slot->value_offset) : nullptr) {
+    // Replace in place — no ValueStorage growth on re-authoring.
+    *dst = std::move(value);
+  } else {
+    if (!values_) values_ = std::make_unique<ValueStorage>();
+    slot->value_offset = values_->store(std::move(value));
+  }
+
+  if (type != TypeId::Invalid) {
+    slot->value_type = static_cast<uint16_t>(type);
+  }
+  slot->flags |= flags;
+  if (is_array) {
+    slot->flags |= PropSlot::kFlagArray;
+  } else {
+    slot->flags &= static_cast<uint16_t>(~PropSlot::kFlagArray);
+  }
+}
+
+void PrimSpec::upsert_property(const std::string& name, Value value,
+                               uint16_t flags) {
+  upsert_property(GetPropNameTable().intern(name), std::move(value), flags);
+}
+
+bool PrimSpec::remove_property(PropNameId name_id) {
+  if (!name_id.is_valid()) return false;
+  bool removed = props_.remove(name_id);
+  if (connections_.erase(name_id.id) > 0) removed = true;
+  prop_type_names_.erase(name_id.id);
+  prop_metas_.erase(name_id.id);
+  if (time_samples_ && time_samples_->remove(name_id)) removed = true;
+  return removed;
+}
+
+bool PrimSpec::remove_property(const std::string& name) {
+  return remove_property(GetPropNameTable().find(name));
+}
+
+size_t PrimSpec::remap_asset_paths(
+    const std::map<std::string, std::string>& remap) {
+  if (remap.empty()) return 0;
+  size_t count = 0;
+  for (const PropSlot& slot : props_.slots()) {
+    const Value* value = property_value(slot.name_id);
+    if (!value) continue;
+    const std::string* path = value->as_asset_path();
+    if (!path) continue;
+    const std::string* mapped = FindAssetPathRemap(remap, *path);
+    if (!mapped) continue;
+    if (set_property_value(slot.name_id, Value::MakeAssetPath(*mapped))) {
+      ++count;
+    }
+  }
+  if (time_samples_) {
+    count += time_samples_->remap_asset_paths(remap);
+  }
+  return count;
+}
+
 void PrimSpec::reserve_properties(size_t count) {
   props_.reserve(count);
 }
@@ -486,6 +670,10 @@ void PrimSpec::add_time_sample(PropNameId name_id, double time, Value value) {
 const std::vector<std::pair<double, uint32_t>>* PrimSpec::time_samples(PropNameId name_id) const {
   if (!time_samples_) return nullptr;
   return time_samples_->get(name_id);
+}
+
+void PrimSpec::remap_time_sample_times(double offset, double scale) {
+  if (time_samples_) time_samples_->remap_times(offset, scale);
 }
 
 bool PrimSpec::has_time_samples(PropNameId name_id) const {
@@ -530,6 +718,73 @@ void PrimSpec::add_relationship(const std::string& name, const Path& target) {
   relationships_[name].push_back(target);
 }
 
+ArcEdit& PrimSpec::ensure_relationship_edit(const std::string& name) {
+  if (!rel_edits_) {
+    rel_edits_.reset(new std::unordered_map<std::string, ArcEdit>());
+  }
+  return (*rel_edits_)[name];
+}
+
+uint16_t PrimSpec::relationship_flags(const std::string& name) const {
+  auto it = rel_flags_.find(name);
+  return it == rel_flags_.end() ? 0 : it->second;
+}
+
+void PrimSpec::set_relationship_flags(const std::string& name, uint16_t flags) {
+  if (flags) rel_flags_[name] = flags;
+}
+
+void PrimSpec::apply_relationship_list_op(const std::string& name,
+                                          const std::vector<Path>& targets,
+                                          RelationshipListOp op) {
+  if (targets.empty()) return;
+  std::vector<Path>& dst = relationships_[name];
+
+  switch (op) {
+    case RelationshipListOp::Prepend:
+      dst.insert(dst.begin(), targets.begin(), targets.end());
+      break;
+    case RelationshipListOp::Add:
+      for (const Path& t : targets) {
+        if (std::find(dst.begin(), dst.end(), t) == dst.end()) {
+          dst.push_back(t);
+        }
+      }
+      break;
+    case RelationshipListOp::Delete:
+      dst.erase(std::remove_if(dst.begin(), dst.end(),
+                               [&](const Path& p) {
+                                 return std::find(targets.begin(), targets.end(),
+                                                  p) != targets.end();
+                               }),
+                dst.end());
+      if (dst.empty()) relationships_.erase(name);
+      break;
+    case RelationshipListOp::Append:
+    default:
+      dst.insert(dst.end(), targets.begin(), targets.end());
+      break;
+  }
+}
+
+void PrimSpec::set_relationship_targets(const std::string& name,
+                                        std::vector<Path> targets) {
+  relationships_[name] = std::move(targets);
+}
+
+bool PrimSpec::remove_relationship(const std::string& name) {
+  bool removed = relationships_.erase(name) > 0;
+  PropNameId id = GetPropNameTable().find(name);
+  if (id.is_valid()) {
+    const PropSlot* slot = props_.find(id);
+    if (slot && slot->is_relationship()) {
+      props_.remove(id);
+      removed = true;
+    }
+  }
+  return removed;
+}
+
 const std::vector<Path>* PrimSpec::relationship(const std::string& name) const {
   auto it = relationships_.find(name);
   if (it == relationships_.end()) return nullptr;
@@ -552,6 +807,10 @@ void PrimSpec::add_connection(const std::string& prop_name, const Path& target) 
   connections_[GetPropNameTable().intern(prop_name).id].push_back(target);
 }
 
+void PrimSpec::set_connection_block(const std::string& prop_name) {
+  connections_[GetPropNameTable().intern(prop_name).id];  // empty vector
+}
+
 const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
   PropNameId id = GetPropNameTable().find(prop_name);
   if (!id.is_valid()) return nullptr;
@@ -569,7 +828,7 @@ void PrimSpec::remap_target_prefix(const std::string& old_prefix,
         t = Path(new_prefix);
       } else if (s.size() > old_prefix.size() &&
                  s.compare(0, old_prefix.size(), old_prefix) == 0 &&
-                 s[old_prefix.size()] == '/') {
+                 (s[old_prefix.size()] == '/' || s[old_prefix.size()] == '.')) {
         t = Path(new_prefix + s.substr(old_prefix.size()));
       }
     }
@@ -618,6 +877,13 @@ PropMeta& PrimSpec::ensure_property_meta(const std::string& prop_name) {
 
 void PrimSpec::add_child_index(uint32_t index) {
   child_indices_.push_back(index);
+}
+
+bool PrimSpec::remove_child_index(uint32_t index) {
+  auto it = std::find(child_indices_.begin(), child_indices_.end(), index);
+  if (it == child_indices_.end()) return false;
+  child_indices_.erase(it);
+  return true;
 }
 
 size_t PrimSpec::memory_usage() const {

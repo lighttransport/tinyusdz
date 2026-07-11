@@ -12,6 +12,7 @@
 
 #include "crate-format.hh"      // CrateVersion, ValueRep, CrateTypeId
 #include "../types/type-id.hh"  // next::TypeId
+#include "lazy-array.hh"
 
 #include <cstdint>
 #include <memory>
@@ -22,9 +23,7 @@ namespace tinyusdz {
 namespace next {
 
 class Value;
-struct LazyArrayRef;
-
-class CrateDataSource {
+class CrateDataSource : public LazyArraySource {
  public:
   /// Adopt the crate bytes by move (no copy) together with the decoded
   /// tokens / string-index tables.
@@ -49,14 +48,20 @@ class CrateDataSource {
   ~CrateDataSource();
 
   /// Whether this source is backed by a memory mapping (vs an owned buffer).
-  bool is_mmapped() const { return mmap_base_ != nullptr; }
+  bool is_mmapped() const override { return mmap_base_ != nullptr; }
+  bool can_borrow() const override {
+    // Both owned buffer and mmap-backed buffers remain stable while the source
+    // object is alive, so array views can safely borrow from them.
+    return true;
+  }
 
-  const uint8_t* base() const {
+  const uint8_t* base() const override {
     return mmap_base_ ? mmap_base_
                       : reinterpret_cast<const uint8_t*>(bytes_.data());
   }
-  size_t size() const { return mmap_base_ ? mmap_size_ : bytes_.size(); }
-  CrateVersion version() const { return version_; }
+  size_t size() const override { return mmap_base_ ? mmap_size_ : bytes_.size(); }
+  CrateVersion version() const override { return version_; }
+  void DiscardRange(uint64_t offset, uint64_t length) const override;
 
   /// Set the crate version once it has been parsed from the bootstrap header.
   /// (The buffer is adopted before the header is read.)
@@ -75,7 +80,7 @@ class CrateDataSource {
   /// Decode a lazy array reference into a concrete Value. Returns false (and
   /// leaves `*out` empty) for array types that have no concrete Value storage
   /// yet, or on a malformed block.
-  bool MaterializeArray(const LazyArrayRef& ref, Value* out) const;
+  bool MaterializeArray(const LazyArrayRef& ref, Value* out) const override;
 
  private:
   CrateDataSource() = default;
@@ -105,8 +110,18 @@ bool DecodeCrateArray(const uint8_t* base, size_t size, ValueRep rep,
 /// Bytes per element of an array CrateTypeId as stored on disk (0 if unknown).
 uint32_t CrateArrayElemStride(CrateTypeId id);
 
+/// Decode the element-count word at a crate array payload. Some older pxrUSD
+/// crates pack auxiliary data in the high 32 bits and the element count in the
+/// low 32 bits.
+uint64_t CrateArrayElementCount(uint64_t raw_count);
+
 /// next::TypeId that materialize() would surface for an array CrateTypeId.
 TypeId CrateArrayValueType(CrateTypeId id);
+
+/// Whether an array type can be represented as a lazy byte reference without
+/// changing its logical value. Unsupported and swizzled-on-read types must be
+/// decoded eagerly, so they keep the normal element-count guard.
+bool CrateArrayTypeCanBeLazy(CrateTypeId id, bool compressed);
 
 }  // namespace next
 }  // namespace tinyusdz

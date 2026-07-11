@@ -26,6 +26,7 @@
 #include "core/path-expression-eval.hh"
 
 #include <deque>
+#include <limits>
 #include <memory>
 #include <unordered_set>
 
@@ -679,6 +680,20 @@ bool ToRelationshipProperty(const nonstd::optional<Relationship> &rel,
   return true;
 }
 
+bool ToRelationshipProperty(const RelationshipProperty &rel,
+                            Property *out_prop) {
+  if (!out_prop) {
+    return false;
+  }
+
+  if (!rel.authored()) {
+    return false;
+  }
+
+  (*out_prop) = Property(rel.relationship(), /* custom */ false);
+  return true;
+}
+
 bool GetXformablePropertyImpl(const Xformable &xformable,
                               const std::map<std::string, Property> &props,
                               const std::string &prop_name,
@@ -824,6 +839,18 @@ void AppendRelationshipPropertyNameIfAuthored(
   }
 
   if (rel) {
+    prop_names->push_back(name);
+  }
+}
+
+void AppendRelationshipPropertyNameIfAuthored(
+    const RelationshipProperty &rel, const std::string &name,
+    std::vector<std::string> *prop_names) {
+  if (!prop_names) {
+    return;
+  }
+
+  if (rel.authored()) {
     prop_names->push_back(name);
   }
 }
@@ -982,6 +1009,369 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   DCOUT("Prop found: " << prop_name
                        << ", ty = " << out_prop->value_type_name());
   return true;
+}
+
+nonstd::expected<bool, std::string> GetGPrimPropertyImpl(
+    const GPrim &gprim, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+
+  TO_PROPERTY("doubleSided", gprim.doubleSided)
+  TO_TOKEN_PROPERTY("orientation", gprim.orientation)
+  TO_TOKEN_PROPERTY("purpose", gprim.purpose)
+  TO_PROPERTY("extent", gprim.extent)
+  TO_TOKEN_PROPERTY("visibility", gprim.visibility)
+
+  if (prop_name == kMaterialBinding) {
+    if (!ToRelationshipProperty(gprim.materialBinding, out_prop)) {
+      return false;
+    }
+  } else if (prop_name == kMaterialBindingPreview) {
+    if (!ToRelationshipProperty(gprim.materialBindingPreview, out_prop)) {
+      return false;
+    }
+  } else if (prop_name == kMaterialBindingFull) {
+    if (!ToRelationshipProperty(gprim.materialBindingFull, out_prop)) {
+      return false;
+    }
+  } else if (prop_name.rfind("material:binding:", 0) == 0) {
+    const std::string purpose =
+        prop_name.substr(sizeof("material:binding:") - 1);
+    const auto it = gprim.materialBindingMap().find(purpose);
+    if (it == gprim.materialBindingMap().end()) {
+      return false;
+    }
+    (*out_prop) = Property(it->second, /* custom */ false);
+  } else if (prop_name == "proxyPrim") {
+    if (!ToRelationshipProperty(gprim.proxyPrim, out_prop)) {
+      return false;
+    }
+  } else if (!GetXformablePropertyImpl(gprim, gprim.props, prop_name,
+                                       out_prop)) {
+    return false;
+  }
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const GeomCamera &camera, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+
+  TO_PROPERTY("clippingPlanes", camera.clippingPlanes)
+  TO_PROPERTY("clippingRange", camera.clippingRange)
+  TO_PROPERTY("exposure", camera.exposure)
+  TO_PROPERTY("focalLength", camera.focalLength)
+  TO_PROPERTY("focusDistance", camera.focusDistance)
+  TO_PROPERTY("horizontalAperture", camera.horizontalAperture)
+  TO_PROPERTY("horizontalApertureOffset", camera.horizontalApertureOffset)
+  TO_PROPERTY("verticalAperture", camera.verticalAperture)
+  TO_PROPERTY("verticalApertureOffset", camera.verticalApertureOffset)
+  TO_PROPERTY("fStop", camera.fStop)
+  TO_TOKEN_PROPERTY("projection", camera.projection)
+  TO_TOKEN_PROPERTY("stereoRole", camera.stereoRole)
+  TO_PROPERTY("shutterClose", camera.shutterClose)
+  TO_PROPERTY("shutterOpen", camera.shutterOpen)
+
+  {
+    return GetGPrimPropertyImpl(camera, prop_name, out_prop);
+  }
+
+  return true;
+}
+
+nonstd::expected<bool, std::string> GetLightAPIPropertyImpl(
+    const LightAPI &light, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+
+  TO_PROPERTY("inputs:color", light.color)
+  TO_PROPERTY("inputs:colorTemperature", light.colorTemperature)
+  TO_PROPERTY("inputs:diffuse", light.diffuse)
+  TO_PROPERTY("inputs:enableColorTemperature", light.enableColorTemperature)
+  TO_PROPERTY("inputs:exposure", light.exposure)
+  TO_PROPERTY("inputs:intensity", light.intensity)
+  TO_PROPERTY("inputs:normalize", light.normalize)
+  TO_PROPERTY("inputs:specular", light.specular)
+  TO_PROPERTY("inputs:shadow:enable", light.shadowEnable)
+  TO_PROPERTY("inputs:shadow:color", light.shadowColor)
+  TO_PROPERTY("inputs:shadow:distance", light.shadowDistance)
+  TO_PROPERTY("inputs:shadow:falloff", light.shadowFalloff)
+  TO_PROPERTY("inputs:shadow:falloffGamma", light.shadowFalloffGamma)
+  TO_PROPERTY("inputs:shaping:focus", light.shapingFocus)
+  TO_PROPERTY("inputs:shaping:focusTint", light.shapingFocusTint)
+  TO_PROPERTY("inputs:shaping:cone:angle", light.shapingConeAngle)
+  TO_PROPERTY("inputs:shaping:cone:softness", light.shapingConeSoftness)
+  TO_PROPERTY("inputs:shaping:ies:file", light.shapingIesFile)
+  TO_PROPERTY("inputs:shaping:ies:angleScale", light.shapingIesAngleScale)
+  TO_PROPERTY("inputs:shaping:ies:normalize", light.shapingIesNormalize)
+  TO_PROPERTY("wavelength:emission", light.spectralEmission)
+
+  if (prop_name == "light:filters") {
+    if (!ToRelationshipProperty(light.lightFilters, out_prop)) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+
+  return true;
+}
+
+template <typename T>
+nonstd::expected<bool, std::string> GetBoundableLightPropertyImpl(
+    const T &light, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+
+  TO_PROPERTY("extent", light.extent)
+  TO_TOKEN_PROPERTY("purpose", light.purpose)
+  TO_TOKEN_PROPERTY("visibility", light.visibility)
+
+  {
+    auto ret = GetLightAPIPropertyImpl(light, prop_name, out_prop);
+    if (!ret) {
+      return nonstd::make_unexpected(std::move(ret.error()));
+    }
+    if (ret.value()) {
+      return true;
+    }
+
+    if (!GetXformablePropertyImpl(light, light.props, prop_name, out_prop)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template <typename T>
+nonstd::expected<bool, std::string> GetNonboundableLightPropertyImpl(
+    const T &light, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+
+  TO_TOKEN_PROPERTY("purpose", light.purpose)
+  TO_TOKEN_PROPERTY("visibility", light.visibility)
+
+  {
+    auto ret = GetLightAPIPropertyImpl(light, prop_name, out_prop);
+    if (!ret) {
+      return nonstd::make_unexpected(std::move(ret.error()));
+    }
+    if (ret.value()) {
+      return true;
+    }
+
+    if (!GetXformablePropertyImpl(light, light.props, prop_name, out_prop)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const SphereLight &light, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+  TO_PROPERTY("inputs:radius", light.radius)
+  {
+    return GetBoundableLightPropertyImpl(light, prop_name, out_prop);
+  }
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const CylinderLight &light, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+  TO_PROPERTY("inputs:length", light.length)
+  TO_PROPERTY("inputs:radius", light.radius)
+  {
+    return GetBoundableLightPropertyImpl(light, prop_name, out_prop);
+  }
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const RectLight &light, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+  TO_PROPERTY("inputs:texture:file", light.file)
+  TO_PROPERTY("inputs:height", light.height)
+  TO_PROPERTY("inputs:width", light.width)
+  {
+    return GetBoundableLightPropertyImpl(light, prop_name, out_prop);
+  }
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const DiskLight &light, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+  TO_PROPERTY("inputs:radius", light.radius)
+  {
+    return GetBoundableLightPropertyImpl(light, prop_name, out_prop);
+  }
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const DistantLight &light, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+  TO_PROPERTY("inputs:angle", light.angle)
+  {
+    return GetNonboundableLightPropertyImpl(light, prop_name, out_prop);
+  }
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const DomeLight &light, const std::string &prop_name, Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+  TO_PROPERTY("guideRadius", light.guideRadius)
+  TO_PROPERTY("inputs:texture:file", light.file)
+  TO_TOKEN_PROPERTY("inputs:texture:format", light.textureFormat)
+
+  if (prop_name == "portals") {
+    if (!ToRelationshipProperty(light.portals, out_prop)) {
+      return false;
+    }
+  } else if (prop_name == "proxyPrim") {
+    if (!ToRelationshipProperty(light.proxyPrim, out_prop)) {
+      return false;
+    }
+  } else {
+    return GetNonboundableLightPropertyImpl(light, prop_name, out_prop);
+  }
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const DomeLight_1 &light, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  std::string err;
+  TO_PROPERTY("guideRadius", light.guideRadius)
+  TO_PROPERTY("inputs:texture:file", light.file)
+  TO_TOKEN_PROPERTY("inputs:texture:format", light.textureFormat)
+  TO_PROPERTY("poleAxis", light.poleAxis)
+
+  if (prop_name == "portals") {
+    if (!ToRelationshipProperty(light.portals, out_prop)) {
+      return false;
+    }
+  } else if (prop_name == "proxyPrim") {
+    if (!ToRelationshipProperty(light.proxyPrim, out_prop)) {
+      return false;
+    }
+  } else {
+    return GetNonboundableLightPropertyImpl(light, prop_name, out_prop);
+  }
+
+  return true;
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const GeometryLight &light, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  if (prop_name == "geometry") {
+    if (!ToRelationshipProperty(light.geometry, out_prop)) {
+      return false;
+    }
+    return true;
+  }
+  return GetNonboundableLightPropertyImpl(light, prop_name, out_prop);
+}
+
+template <>
+nonstd::expected<bool, std::string> GetPrimProperty(
+    const PortalLight &light, const std::string &prop_name,
+    Property *out_prop) {
+  if (!out_prop) {
+    return nonstd::make_unexpected(
+        "[InternalError] nullptr in output Property is not allowed.");
+  }
+
+  if (prop_name == "geometry") {
+    if (!ToRelationshipProperty(light.geometry, out_prop)) {
+      return false;
+    }
+    return true;
+  }
+  return GetNonboundableLightPropertyImpl(light, prop_name, out_prop);
 }
 
 template <>
@@ -1778,6 +2168,301 @@ bool GetPrimPropertyNamesImpl(const GeomMesh &mesh,
 }
 
 template <>
+bool GetPrimPropertyNamesImpl(const GeomCamera &camera,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (!GetGPrimPropertyNamesImpl(&camera, prop_names, attr_prop, rel_prop)) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(camera.clippingPlanes, "clippingPlanes",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(camera.clippingRange, "clippingRange",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(camera.exposure, "exposure", prop_names);
+    AppendPropertyNameIfAuthored(camera.focalLength, "focalLength",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(camera.focusDistance, "focusDistance",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(camera.horizontalAperture,
+                                 "horizontalAperture", prop_names);
+    AppendPropertyNameIfAuthored(camera.horizontalApertureOffset,
+                                 "horizontalApertureOffset", prop_names);
+    AppendPropertyNameIfAuthored(camera.verticalAperture, "verticalAperture",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(camera.verticalApertureOffset,
+                                 "verticalApertureOffset", prop_names);
+    AppendPropertyNameIfAuthored(camera.fStop, "fStop", prop_names);
+    AppendPropertyNameIfAuthored(camera.projection, "projection", prop_names);
+    AppendPropertyNameIfAuthored(camera.stereoRole, "stereoRole", prop_names);
+    AppendPropertyNameIfAuthored(camera.shutterClose, "shutterClose",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(camera.shutterOpen, "shutterOpen",
+                                 prop_names);
+  }
+
+  return true;
+}
+
+void AppendLightAPIPropertyNames(const LightAPI &light,
+                                 std::vector<std::string> *prop_names,
+                                 bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.color, "inputs:color", prop_names);
+    AppendPropertyNameIfAuthored(light.colorTemperature,
+                                 "inputs:colorTemperature", prop_names);
+    AppendPropertyNameIfAuthored(light.diffuse, "inputs:diffuse",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.enableColorTemperature,
+                                 "inputs:enableColorTemperature", prop_names);
+    AppendPropertyNameIfAuthored(light.exposure, "inputs:exposure",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.intensity, "inputs:intensity",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.normalize, "inputs:normalize",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.specular, "inputs:specular",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.shadowEnable, "inputs:shadow:enable",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.shadowColor, "inputs:shadow:color",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.shadowDistance,
+                                 "inputs:shadow:distance", prop_names);
+    AppendPropertyNameIfAuthored(light.shadowFalloff,
+                                 "inputs:shadow:falloff", prop_names);
+    AppendPropertyNameIfAuthored(light.shadowFalloffGamma,
+                                 "inputs:shadow:falloffGamma", prop_names);
+    AppendPropertyNameIfAuthored(light.shapingFocus,
+                                 "inputs:shaping:focus", prop_names);
+    AppendPropertyNameIfAuthored(light.shapingFocusTint,
+                                 "inputs:shaping:focusTint", prop_names);
+    AppendPropertyNameIfAuthored(light.shapingConeAngle,
+                                 "inputs:shaping:cone:angle", prop_names);
+    AppendPropertyNameIfAuthored(light.shapingConeSoftness,
+                                 "inputs:shaping:cone:softness", prop_names);
+    AppendPropertyNameIfAuthored(light.shapingIesFile,
+                                 "inputs:shaping:ies:file", prop_names);
+    AppendPropertyNameIfAuthored(light.shapingIesAngleScale,
+                                 "inputs:shaping:ies:angleScale", prop_names);
+    AppendPropertyNameIfAuthored(light.shapingIesNormalize,
+                                 "inputs:shaping:ies:normalize", prop_names);
+    AppendPropertyNameIfAuthored(light.spectralEmission,
+                                 "wavelength:emission", prop_names);
+  }
+
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(light.lightFilters,
+                                             "light:filters", prop_names);
+  }
+}
+
+template <typename T>
+bool GetBoundableLightPropertyNamesImpl(const T &light,
+                                        std::vector<std::string> *prop_names,
+                                        bool attr_prop, bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.extent, "extent", prop_names);
+    AppendPropertyNameIfAuthored(light.purpose, "purpose", prop_names);
+    AppendPropertyNameIfAuthored(light.visibility, "visibility", prop_names);
+    AppendXformablePropertyNames(light, prop_names);
+  }
+
+  AppendLightAPIPropertyNames(light, prop_names, attr_prop, rel_prop);
+  AppendPropertyNamesFromCustomProps(light.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <typename T>
+bool GetNonboundableLightPropertyNamesImpl(
+    const T &light, std::vector<std::string> *prop_names, bool attr_prop,
+    bool rel_prop) {
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.purpose, "purpose", prop_names);
+    AppendPropertyNameIfAuthored(light.visibility, "visibility", prop_names);
+    AppendXformablePropertyNames(light, prop_names);
+  }
+
+  AppendLightAPIPropertyNames(light, prop_names, attr_prop, rel_prop);
+  AppendPropertyNamesFromCustomProps(light.props, prop_names, attr_prop,
+                                     rel_prop);
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const SphereLight &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetBoundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                          rel_prop)) {
+    return false;
+  }
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.radius, "inputs:radius", prop_names);
+  }
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const CylinderLight &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetBoundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                          rel_prop)) {
+    return false;
+  }
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.length, "inputs:length", prop_names);
+    AppendPropertyNameIfAuthored(light.radius, "inputs:radius", prop_names);
+  }
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const RectLight &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetBoundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                          rel_prop)) {
+    return false;
+  }
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.file, "inputs:texture:file",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.height, "inputs:height", prop_names);
+    AppendPropertyNameIfAuthored(light.width, "inputs:width", prop_names);
+  }
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const DiskLight &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetBoundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                          rel_prop)) {
+    return false;
+  }
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.radius, "inputs:radius", prop_names);
+  }
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const DistantLight &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetNonboundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                             rel_prop)) {
+    return false;
+  }
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.angle, "inputs:angle", prop_names);
+  }
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const DomeLight &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetNonboundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                             rel_prop)) {
+    return false;
+  }
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.guideRadius, "guideRadius",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.file, "inputs:texture:file",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.textureFormat,
+                                 "inputs:texture:format", prop_names);
+  }
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(light.portals, "portals",
+                                             prop_names);
+    AppendRelationshipPropertyNameIfAuthored(light.proxyPrim, "proxyPrim",
+                                             prop_names);
+  }
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const DomeLight_1 &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetNonboundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                             rel_prop)) {
+    return false;
+  }
+  if (attr_prop) {
+    AppendPropertyNameIfAuthored(light.guideRadius, "guideRadius",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.file, "inputs:texture:file",
+                                 prop_names);
+    AppendPropertyNameIfAuthored(light.textureFormat,
+                                 "inputs:texture:format", prop_names);
+    AppendPropertyNameIfAuthored(light.poleAxis, "poleAxis", prop_names);
+  }
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(light.portals, "portals",
+                                             prop_names);
+    AppendRelationshipPropertyNameIfAuthored(light.proxyPrim, "proxyPrim",
+                                             prop_names);
+  }
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const GeometryLight &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetNonboundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                             rel_prop)) {
+    return false;
+  }
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(light.geometry, "geometry",
+                                             prop_names);
+  }
+  return true;
+}
+
+template <>
+bool GetPrimPropertyNamesImpl(const PortalLight &light,
+                              std::vector<std::string> *prop_names,
+                              bool attr_prop, bool rel_prop) {
+  if (!GetNonboundableLightPropertyNamesImpl(light, prop_names, attr_prop,
+                                             rel_prop)) {
+    return false;
+  }
+  if (rel_prop) {
+    AppendRelationshipPropertyNameIfAuthored(light.geometry, "geometry",
+                                             prop_names);
+  }
+  return true;
+}
+
+template <>
 bool GetPrimPropertyNamesImpl(const GeomSubset &subset,
                               std::vector<std::string> *prop_names,
                               bool attr_prop, bool rel_prop) {
@@ -2268,7 +2953,17 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
   GET_PRIM_PROPERTY(Xform)
   GET_PRIM_PROPERTY(Scope)
   GET_PRIM_PROPERTY(GeomMesh)
+  GET_PRIM_PROPERTY(GeomCamera)
   GET_PRIM_PROPERTY(GeomSubset)
+  GET_PRIM_PROPERTY(SphereLight)
+  GET_PRIM_PROPERTY(CylinderLight)
+  GET_PRIM_PROPERTY(RectLight)
+  GET_PRIM_PROPERTY(DiskLight)
+  GET_PRIM_PROPERTY(DistantLight)
+  GET_PRIM_PROPERTY(DomeLight)
+  GET_PRIM_PROPERTY(DomeLight_1)
+  GET_PRIM_PROPERTY(GeometryLight)
+  GET_PRIM_PROPERTY(PortalLight)
   GET_PRIM_PROPERTY(Shader)
   GET_PRIM_PROPERTY(Material)
   GET_PRIM_PROPERTY(SkelRoot)
@@ -2301,7 +2996,17 @@ bool GetPropertyNames(const tinyusdz::Prim &prim,
   GET_PRIM_PROPERTY_NAMES(Xform)
   GET_PRIM_PROPERTY_NAMES(Scope)
   GET_PRIM_PROPERTY_NAMES(GeomMesh)
+  GET_PRIM_PROPERTY_NAMES(GeomCamera)
   GET_PRIM_PROPERTY_NAMES(GeomSubset)
+  GET_PRIM_PROPERTY_NAMES(SphereLight)
+  GET_PRIM_PROPERTY_NAMES(CylinderLight)
+  GET_PRIM_PROPERTY_NAMES(RectLight)
+  GET_PRIM_PROPERTY_NAMES(DiskLight)
+  GET_PRIM_PROPERTY_NAMES(DistantLight)
+  GET_PRIM_PROPERTY_NAMES(DomeLight)
+  GET_PRIM_PROPERTY_NAMES(DomeLight_1)
+  GET_PRIM_PROPERTY_NAMES(GeometryLight)
+  GET_PRIM_PROPERTY_NAMES(PortalLight)
   GET_PRIM_PROPERTY_NAMES(Shader)
   GET_PRIM_PROPERTY_NAMES(Material)
   GET_PRIM_PROPERTY_NAMES(SkelRoot)
@@ -2335,7 +3040,17 @@ bool GetAttributeNames(const tinyusdz::Prim &prim,
   GET_PRIM_ATTRIBUTE_NAMES(Xform)
   GET_PRIM_ATTRIBUTE_NAMES(Scope)
   GET_PRIM_ATTRIBUTE_NAMES(GeomMesh)
+  GET_PRIM_ATTRIBUTE_NAMES(GeomCamera)
   GET_PRIM_ATTRIBUTE_NAMES(GeomSubset)
+  GET_PRIM_ATTRIBUTE_NAMES(SphereLight)
+  GET_PRIM_ATTRIBUTE_NAMES(CylinderLight)
+  GET_PRIM_ATTRIBUTE_NAMES(RectLight)
+  GET_PRIM_ATTRIBUTE_NAMES(DiskLight)
+  GET_PRIM_ATTRIBUTE_NAMES(DistantLight)
+  GET_PRIM_ATTRIBUTE_NAMES(DomeLight)
+  GET_PRIM_ATTRIBUTE_NAMES(DomeLight_1)
+  GET_PRIM_ATTRIBUTE_NAMES(GeometryLight)
+  GET_PRIM_ATTRIBUTE_NAMES(PortalLight)
   GET_PRIM_ATTRIBUTE_NAMES(Shader)
   GET_PRIM_ATTRIBUTE_NAMES(Material)
   GET_PRIM_ATTRIBUTE_NAMES(SkelRoot)
@@ -2368,7 +3083,17 @@ bool GetRelationshipNames(const tinyusdz::Prim &prim,
   GET_PRIM_RELATIONSHIP_NAMES(Xform)
   GET_PRIM_RELATIONSHIP_NAMES(Scope)
   GET_PRIM_RELATIONSHIP_NAMES(GeomMesh)
+  GET_PRIM_RELATIONSHIP_NAMES(GeomCamera)
   GET_PRIM_RELATIONSHIP_NAMES(GeomSubset)
+  GET_PRIM_RELATIONSHIP_NAMES(SphereLight)
+  GET_PRIM_RELATIONSHIP_NAMES(CylinderLight)
+  GET_PRIM_RELATIONSHIP_NAMES(RectLight)
+  GET_PRIM_RELATIONSHIP_NAMES(DiskLight)
+  GET_PRIM_RELATIONSHIP_NAMES(DistantLight)
+  GET_PRIM_RELATIONSHIP_NAMES(DomeLight)
+  GET_PRIM_RELATIONSHIP_NAMES(DomeLight_1)
+  GET_PRIM_RELATIONSHIP_NAMES(GeometryLight)
+  GET_PRIM_RELATIONSHIP_NAMES(PortalLight)
   GET_PRIM_RELATIONSHIP_NAMES(Shader)
   GET_PRIM_RELATIONSHIP_NAMES(Material)
   GET_PRIM_RELATIONSHIP_NAMES(SkelRoot)
@@ -3335,12 +4060,23 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
 
         if (terminal_indexAttr.has_value()) {
 
-          // TODO: Support uint[]?
           std::vector<int32_t> indices;
           if (!terminal_indexAttr.get_value(&indices)) {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Index Attribute is not int[] type. Got {}",
-                            indexAttr.type_name()));
+            std::vector<uint32_t> uint_indices;
+            if (!terminal_indexAttr.get_value(&uint_indices)) {
+              PUSH_ERROR_AND_RETURN(
+                  fmt::format("Index Attribute is not int[] or uint[] type. Got {}",
+                              indexAttr.type_name()));
+            }
+            indices.reserve(uint_indices.size());
+            for (uint32_t idx : uint_indices) {
+              if (idx > uint32_t(std::numeric_limits<int32_t>::max())) {
+                PUSH_ERROR_AND_RETURN(
+                    fmt::format("Index Attribute contains value {} outside int32 range.",
+                                idx));
+              }
+              indices.push_back(static_cast<int32_t>(idx));
+            }
           }
 
           primvar.set_default_indices(indices);
@@ -3368,13 +4104,24 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
         }
 
         if (indexAttr.has_value()) {
-          // Check if int[] type.
-          // TODO: Support uint[]?
+          // Check if int[] or uint[] type.
           std::vector<int32_t> indices;
           if (!indexAttr.get_value(&indices)) {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Index Attribute is not int[] type. Got {}",
-                            indexAttr.type_name()));
+            std::vector<uint32_t> uint_indices;
+            if (!indexAttr.get_value(&uint_indices)) {
+              PUSH_ERROR_AND_RETURN(
+                  fmt::format("Index Attribute is not int[] or uint[] type. Got {}",
+                              indexAttr.type_name()));
+            }
+            indices.reserve(uint_indices.size());
+            for (uint32_t idx : uint_indices) {
+              if (idx > uint32_t(std::numeric_limits<int32_t>::max())) {
+                PUSH_ERROR_AND_RETURN(
+                    fmt::format("Index Attribute contains value {} outside int32 range.",
+                                idx));
+              }
+              indices.push_back(static_cast<int32_t>(idx));
+            }
           }
 
 
@@ -3739,6 +4486,10 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
     DCOUT("bindTransforms.size() = " << bindTransforms.size());
     if (bindTransforms.size() > 0) {
       DCOUT("bindTransforms[0] = " << bindTransforms[0]);
+    } else {
+      DCOUT("bindTransforms is authored but empty - using identity");
+      bindTransformsAuthored = false;
+      bindTransforms.assign(joints.size(), value::matrix4d::identity());
     }
   } else {
     DCOUT("bindTransforms is NOT authored - using identity");
@@ -3763,6 +4514,9 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
     DCOUT("restTransforms.size() = " << restTransforms.size());
     if (restTransforms.size() > 0) {
       DCOUT("restTransforms[0] = " << restTransforms[0]);
+    } else {
+      DCOUT("restTransforms is authored but empty - using fallback");
+      restTransformsAuthored = false;
     }
   } else if (bindTransformsAuthored) {
     // Fallback: compute restTransforms (local) from bindTransforms (world)
@@ -3790,18 +4544,20 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
         // Root joint: use bindTransform directly (world space becomes local space)
         restTransforms[i] = bindTransforms[i];
       } else {
-        // Child joint: compute local transform from world transforms
-        // localTransform = inverse(parentWorldTransform) * childWorldTransform
+        // Child joint: compute local transform from world transforms.
+        // Row-vector convention: childWorld = childLocal * parentWorld.
         value::matrix4d parentInverse;
         if (!inverse(bindTransforms[size_t(parentIdx)], parentInverse)) {
           DCOUT("Failed to compute inverse of parent bindTransform, using identity for restTransform");
           restTransforms[i] = value::matrix4d::identity();
         } else {
-          restTransforms[i] = parentInverse * bindTransforms[i];
+          restTransforms[i] = bindTransforms[i] * parentInverse;
         }
       }
     }
     DCOUT("Computed restTransforms from bindTransforms");
+  } else if (!restTransformsAuthored) {
+    restTransforms.assign(joints.size(), value::matrix4d::identity());
   }
 
   if (joints.size() != restTransforms.size()) {
@@ -4119,6 +4875,11 @@ bool SkinPointsLBS(
   int numJoints = int(jointXforms.size());
 
   skinnedPoints->resize(numPoints);
+  value::matrix4d inverseGeomBindTransform = value::matrix4d::identity();
+  if (!inverse(geomBindTransform, inverseGeomBindTransform)) {
+    if (err) { *err = "Failed to invert geomBindTransform."; }
+    return false;
+  }
 
   for (size_t pi = 0; pi < numPoints; pi++) {
     // Transform rest point into skeleton space via geomBindTransform
@@ -4162,9 +4923,31 @@ bool SkinPointsLBS(
       outz += double(w) * tz;
     }
 
-    (*skinnedPoints)[pi].x = float(outx);
-    (*skinnedPoints)[pi].y = float(outy);
-    (*skinnedPoints)[pi].z = float(outz);
+    double gx = outx * inverseGeomBindTransform.m[0][0] +
+                outy * inverseGeomBindTransform.m[1][0] +
+                outz * inverseGeomBindTransform.m[2][0] +
+                inverseGeomBindTransform.m[3][0];
+    double gy = outx * inverseGeomBindTransform.m[0][1] +
+                outy * inverseGeomBindTransform.m[1][1] +
+                outz * inverseGeomBindTransform.m[2][1] +
+                inverseGeomBindTransform.m[3][1];
+    double gz = outx * inverseGeomBindTransform.m[0][2] +
+                outy * inverseGeomBindTransform.m[1][2] +
+                outz * inverseGeomBindTransform.m[2][2] +
+                inverseGeomBindTransform.m[3][2];
+    double gw = outx * inverseGeomBindTransform.m[0][3] +
+                outy * inverseGeomBindTransform.m[1][3] +
+                outz * inverseGeomBindTransform.m[2][3] +
+                inverseGeomBindTransform.m[3][3];
+    if (std::abs(gw) > 1e-10) {
+      gx /= gw;
+      gy /= gw;
+      gz /= gw;
+    }
+
+    (*skinnedPoints)[pi].x = float(gx);
+    (*skinnedPoints)[pi].y = float(gy);
+    (*skinnedPoints)[pi].z = float(gz);
   }
 
   return true;
@@ -4337,6 +5120,11 @@ bool SkinNormalsLBS(
   int numJoints = int(jointXforms.size());
 
   skinnedNormals->resize(numPoints);
+  value::matrix4d inverseGeomBindTransform = value::matrix4d::identity();
+  if (!inverse(geomBindTransform, inverseGeomBindTransform)) {
+    if (err) { *err = "Failed to invert geomBindTransform."; }
+    return false;
+  }
 
   // For normals, we use inverse-transpose of the skinning matrix.
   // Since we accumulate the weighted skinning matrix per vertex first,
@@ -4379,7 +5167,20 @@ bool SkinNormalsLBS(
       outz += double(w) * tz;
     }
 
+    double gx = outx * inverseGeomBindTransform.m[0][0] +
+                outy * inverseGeomBindTransform.m[1][0] +
+                outz * inverseGeomBindTransform.m[2][0];
+    double gy = outx * inverseGeomBindTransform.m[0][1] +
+                outy * inverseGeomBindTransform.m[1][1] +
+                outz * inverseGeomBindTransform.m[2][1];
+    double gz = outx * inverseGeomBindTransform.m[0][2] +
+                outy * inverseGeomBindTransform.m[1][2] +
+                outz * inverseGeomBindTransform.m[2][2];
+
     // Renormalize
+    outx = gx;
+    outy = gy;
+    outz = gz;
     double len = std::sqrt(outx * outx + outy * outy + outz * outz);
     if (len > 1e-10) {
       outx /= len;
@@ -4577,6 +5378,8 @@ bool GetPhysicsRigidBodyAPI(const Prim &prim, PhysicsRigidBodyAPI *out) {
   const auto *props = PrimPropsMap(prim);
   if (!props) return false;
   ExtractTypedValue<bool>(*props, "physics:rigidBodyEnabled", &out->rigidBodyEnabled);
+  ExtractTypedValue<bool>(*props, "physics:kinematicEnabled", &out->kinematicEnabled);
+  ExtractRel(*props, "physics:simulationOwner", &out->simulationOwner);
   ExtractTypedValue<bool>(*props, "physics:startsAsleep", &out->startsAsleep);
   ExtractTypedValue<float>(*props, "physics:mass", &out->mass);
   ExtractTypedValue<float>(*props, "physics:density", &out->density);

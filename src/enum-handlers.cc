@@ -122,6 +122,16 @@ FaceVaryingLinearInterpolation(const std::string &tok) {
   return LookupEnum("faceVaryingLinearInterpolation", tok, enums);
 }
 
+nonstd::expected<GeomMesh::TriangleSubdivisionRule, std::string>
+TriangleSubdivisionRule(const std::string &tok) {
+  using E = GeomMesh::TriangleSubdivisionRule;
+  constexpr std::array<std::pair<E, const char *>, 2> enums = {{
+      {E::CatmullClark, "catmullClark"},
+      {E::Smooth, "smooth"},
+  }};
+  return LookupEnum("triangleSubdivisionRule", tok, enums);
+}
+
 //
 // GeomSubset enum handlers
 //

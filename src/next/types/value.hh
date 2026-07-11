@@ -155,6 +155,16 @@ public:
                                   uint32_t comps_per_elem);
   static Value MakeDoubleCompArray(std::vector<double>&& data, TypeId elem_type,
                                    uint32_t comps_per_elem);
+  /// Int-vector element types (Int2/Int3/Int4): flat int32 buffer.
+  static Value MakeIntCompArray(std::vector<int32_t>&& data, TypeId elem_type,
+                                uint32_t comps_per_elem);
+  /// UInt-vector element types (UInt2/UInt3/UInt4): flat uint32 buffer.
+  static Value MakeUIntCompArray(std::vector<uint32_t>&& data, TypeId elem_type,
+                                 uint32_t comps_per_elem);
+  /// String-family arrays with an explicit element type (Token / String /
+  /// AssetPath); same storage as MakeTokenArray.
+  static Value MakeStringLikeArray(std::vector<std::string>&& data,
+                                   TypeId elem_type);
 
   // ============================================================
   // Type queries
@@ -162,6 +172,11 @@ public:
 
   /// Get the type ID
   TypeId type_id() const { return type_id_; }
+
+  /// Re-tag the semantic (role) type without touching storage — e.g.
+  /// Float2 -> Texcoord2f after a crate read, where roles exist only in the
+  /// declared type name. No-op unless the two types share a storage layout.
+  void retag_role(TypeId new_type);
 
   /// Check if empty (no value stored). A value BLOCK (`= None`) is NOT empty:
   /// it is an authored opinion that blocks weaker values and must round-trip.
@@ -254,6 +269,16 @@ public:
   const double* as_double3() const;
   const double* as_double4() const;
 
+  /// Converting scalar reads: also widen raw-half SBO scalars (authored
+  /// half/half2/half3/half4 and their role types store half-bit lanes that
+  /// as_float*() cannot see) and narrow double-backed values. Lanes are
+  /// copied in storage order (quats stay real-first like as_float4()).
+  /// Return false when the value is not a matching-arity scalar.
+  bool to_float(float* out) const;
+  bool to_float2(float* out) const;   // out[2]
+  bool to_float3(float* out) const;   // out[3]
+  bool to_float4(float* out) const;   // out[4]
+
   // Matrix accessors (return pointer to first element)
   const float* as_matrix2f() const;
   const float* as_matrix3f() const;
@@ -315,6 +340,9 @@ public:
   const uint8_t* raw_bytes(size_t* out_size) const;
 
 private:
+  // Shared implementation for the to_float* converting reads.
+  bool ToFloatLanes(int lanes, float* out) const;
+
   TypeId type_id_ = TypeId::Invalid;
   bool is_array_ = false;
   bool is_lazy_ = false;  // array payload not decoded; storage_ holds LazyArrayRef*
@@ -366,6 +394,13 @@ struct Dict {
   size_t size() const { return entries.size(); }
   bool empty() const { return entries.empty(); }
 };
+
+/// Linearly interpolate between two values for time-sample evaluation.
+/// `t` is the fraction in [0,1] from `a` to `b`. Interpolatable numeric scalar,
+/// vector, and matrix types are component-wise lerped; non-interpolatable types
+/// (int/bool/string/token/asset/quaternion) and type mismatches fall back to
+/// held interpolation (returns `a`).
+Value LerpValue(const Value& a, const Value& b, double t);
 
 }  // namespace next
 }  // namespace tinyusdz

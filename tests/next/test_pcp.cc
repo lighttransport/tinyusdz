@@ -18,7 +18,9 @@
 
 #include "next/eval/attribute-eval.hh"
 #include "next/layer/layer.hh"
+#include "next/tinyusdz-next.hh"
 #include "next/writer/usda-writer.hh"
+#include "next/writer/usdz-writer.hh"
 #include "next/pcp/cache.hh"
 #include "next/resolver/asset-resolver.hh"
 #include "next/stage/stage.hh"
@@ -578,6 +580,68 @@ static void test_extracted_prototypes() {
   const std::string uc = flatten(pcp::PrototypeNumbering::UsdcatCompatible);
   assert(flatten(pcp::PrototypeNumbering::UsdcatCompatible) == uc &&
          "usdcat-compatible numbering is not reproducible");
+  std::remove(f.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+static void test_extracted_prototypes_collision_and_remap() {
+  std::cout << "test_extracted_prototypes_collision_and_remap..." << std::endl;
+  const std::string f = "/tmp/next_extract_collision.usda";
+  {
+    std::ofstream o(f);
+    o << "#usda 1.0\n"
+         "def Scope \"Flattened_Prototype_1\" { int user = 7 }\n"
+         "def Scope \"Lib\" ( active = false )\n"
+         "{\n"
+         "    def Xform \"Asset\"\n"
+         "    {\n"
+         "        def Material \"Mat\" {}\n"
+         "        def Mesh \"Mesh\"\n"
+         "        {\n"
+         "            rel material:binding = </Lib/Asset/Mat>\n"
+         "        }\n"
+         "    }\n"
+         "}\n"
+         "def Xform \"World\"\n"
+         "{\n"
+         "    def Xform \"A\" ( instanceable = true references = </Lib/Asset> ) {}\n"
+         "    def Xform \"B\" ( instanceable = true references = </Lib/Asset> ) {}\n"
+         "}\n";
+  }
+
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  pcp::CompositionOptions opts;
+  opts.instance_flatten_mode = pcp::InstanceFlattenMode::ExtractedPrototypes;
+  opts.prototype_numbering = pcp::PrototypeNumbering::Deterministic;
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(f, resolver, &stage, opts, &warn, &err));
+
+  UsdPrim user = stage.GetPrimAtPath("/Flattened_Prototype_1");
+  assert(user.IsValid() && user.GetPropertyValue("user") &&
+         "user-authored /Flattened_Prototype_1 must survive name collision");
+  UsdPrim proto = stage.GetPrimAtPath("/Flattened_Prototype_2");
+  assert(proto.IsValid() && "extracted prototype did not skip occupied name");
+  UsdPrim mesh = stage.GetPrimAtPath("/Flattened_Prototype_2/Mesh");
+  assert(mesh.IsValid());
+  const std::vector<Path>* binding = mesh.GetRelationship("material:binding");
+  assert(binding && binding->size() == 1);
+  assert((*binding)[0].str() == "/Flattened_Prototype_2/Mat" &&
+         "internal relationship target was not remapped to extracted prototype");
+
+  UsdPrim a = stage.GetPrimAtPath("/World/A");
+  UsdPrim b = stage.GetPrimAtPath("/World/B");
+  assert(a.IsValid() && b.IsValid());
+  assert(a.GetChildCount() == 0 && b.GetChildCount() == 0 &&
+         "original instance members must be orphaned after extraction");
+  const bool a_refs = !a.GetMeta().references.empty() &&
+                      a.GetMeta().references[0] == "</Flattened_Prototype_2>";
+  const bool b_refs = !b.GetMeta().references.empty() &&
+                      b.GetMeta().references[0] == "</Flattened_Prototype_2>";
+  assert(a_refs && b_refs &&
+         "instance members must reference the extracted prototype root");
+
   std::remove(f.c_str());
   std::cout << "  OK" << std::endl;
 }
@@ -2216,6 +2280,183 @@ static void test_sublayer_stack_composition() {
   std::cout << "  OK" << std::endl;
 }
 
+static Stage BuildSinglePrimStage(const std::string& name,
+                                  const std::string& type_name,
+                                  const std::string& prop_name,
+                                  int prop_value) {
+  Layer layer;
+  LayerBuilder lb(layer);
+  lb.begin_prim(name, type_name);
+  lb.add_property(prop_name, Value(static_cast<int32_t>(prop_value)));
+  lb.end_prim();
+  lb.finalize();
+
+  Stage stage;
+  stage.SetRootLayer(std::move(layer));
+  return stage;
+}
+
+static void AppendU16LE(std::vector<uint8_t>* out, uint16_t v) {
+  out->push_back(static_cast<uint8_t>(v & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 8) & 0xffu));
+}
+
+static void AppendU32LE(std::vector<uint8_t>* out, uint32_t v) {
+  out->push_back(static_cast<uint8_t>(v & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 8) & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 16) & 0xffu));
+  out->push_back(static_cast<uint8_t>((v >> 24) & 0xffu));
+}
+
+static void AppendStoredZipEntry(std::vector<uint8_t>* out,
+                                 const std::string& name,
+                                 const std::string& bytes) {
+  AppendU32LE(out, 0x04034b50u);  // local file header
+  AppendU16LE(out, 20);           // version needed
+  AppendU16LE(out, 0);            // flags
+  AppendU16LE(out, 0);            // stored
+  AppendU16LE(out, 0);            // mod time
+  AppendU16LE(out, 0);            // mod date
+  AppendU32LE(out, 0);            // crc32 (ignored by USDZReader)
+  AppendU32LE(out, static_cast<uint32_t>(bytes.size()));
+  AppendU32LE(out, static_cast<uint32_t>(bytes.size()));
+  AppendU16LE(out, static_cast<uint16_t>(name.size()));
+  AppendU16LE(out, 0);            // extra field
+  out->insert(out->end(), name.begin(), name.end());
+  out->insert(out->end(), bytes.begin(), bytes.end());
+}
+
+static void WriteTwoEntryUSDZ(const std::string& filename,
+                              const std::string& root_usda,
+                              const std::string& sibling_usda) {
+  std::vector<uint8_t> bytes;
+  AppendStoredZipEntry(&bytes, "root.usda", root_usda);
+  AppendStoredZipEntry(&bytes, "sibling.usda", sibling_usda);
+  std::ofstream f(filename, std::ios::binary);
+  f.write(reinterpret_cast<const char*>(bytes.data()),
+          static_cast<std::streamsize>(bytes.size()));
+}
+
+// LoadUSDComposed must route direct .usdz layers and explicit package-path
+// layers through PCP, preserving the normal archive and inner-parser caps.
+static void test_usdz_package_layers() {
+  std::cout << "test_usdz_package_layers..." << std::endl;
+
+  {
+    Stage sub_stage =
+        BuildSinglePrimStage("World", "Xform", "weakVal", 42);
+    USDZWriteResult wr =
+        WriteUSDZToFile("/tmp/next_pcp_sublayer_pkg.usdz", sub_stage);
+    assert(wr.success && "failed to write sublayer USDZ fixture");
+
+    {
+      std::ofstream f("/tmp/next_pcp_usdz_sublayer_root.usda");
+      f << "#usda 1.0\n"
+           "(\n"
+           "    subLayers = [@next_pcp_sublayer_pkg.usdz@]\n"
+           ")\n"
+           "def Xform \"World\"\n"
+           "{\n"
+           "    custom int strongVal = 7\n"
+           "}\n";
+    }
+
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_sublayer_root.usda",
+                              &stage, &warn, &err);
+    if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+    assert(ok && "LoadUSDComposed failed for direct USDZ sublayer");
+    UsdPrim world = stage.GetPrimAtPath("/World");
+    assert(world.IsValid());
+    assert(world.GetPropertyValue("weakVal") != nullptr &&
+           "direct USDZ sublayer weak opinion missing");
+    assert(world.GetPropertyValue("strongVal") != nullptr &&
+           "direct USDZ sublayer strong root opinion missing");
+  }
+
+  {
+    Stage ref_stage =
+        BuildSinglePrimStage("Asset", "Xform", "pkgVal", 99);
+    USDZWriteResult wr =
+        WriteUSDZToFile("/tmp/next_pcp_ref_pkg.usdz", ref_stage);
+    assert(wr.success && "failed to write reference USDZ fixture");
+
+    {
+      std::ofstream f("/tmp/next_pcp_usdz_ref_root.usda");
+      f << "#usda 1.0\n"
+           "def Xform \"World\"\n"
+           "{\n"
+           "    def Xform \"P\" (\n"
+           "        prepend references = "
+           "[@next_pcp_ref_pkg.usdz[root.usdc]@</Asset>]\n"
+           "    )\n"
+           "    {\n"
+           "    }\n"
+           "}\n";
+    }
+
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_ref_root.usda",
+                              &stage, &warn, &err);
+    if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+    assert(ok && "LoadUSDComposed failed for USDZ package reference");
+    UsdPrim p = stage.GetPrimAtPath("/World/P");
+    assert(p.IsValid());
+    assert(p.GetPropertyValue("pkgVal") != nullptr &&
+           "USDZ package-path reference opinion missing");
+  }
+
+  {
+    const std::string root_usda =
+        "#usda 1.0\n"
+        "def Xform \"World\"\n"
+        "{\n"
+        "    def Xform \"P\" (\n"
+        "        prepend references = [@sibling.usda@</Asset>]\n"
+        "    )\n"
+        "    {\n"
+        "    }\n"
+        "}\n";
+    const std::string sibling_usda =
+        "#usda 1.0\n"
+        "def Xform \"Asset\"\n"
+        "{\n"
+        "    custom int siblingVal = 123\n"
+        "}\n";
+    WriteTwoEntryUSDZ("/tmp/next_pcp_multi_pkg.usdz", root_usda,
+                      sibling_usda);
+
+    {
+      std::ofstream f("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
+      f << "#usda 1.0\n"
+           "(\n"
+           "    subLayers = [@next_pcp_multi_pkg.usdz[root.usda]@]\n"
+           ")\n";
+    }
+
+    Stage stage;
+    std::string warn, err;
+    bool ok = LoadUSDComposed("/tmp/next_pcp_usdz_pkg_anchor_root.usda",
+                              &stage, &warn, &err);
+    if (!ok) std::cout << "  [diag] err=" << err << std::endl;
+    assert(ok && "LoadUSDComposed failed for package-internal reference");
+    UsdPrim p = stage.GetPrimAtPath("/World/P");
+    assert(p.IsValid());
+    assert(p.GetPropertyValue("siblingVal") != nullptr &&
+           "relative reference inside USDZ package did not resolve to sibling entry");
+  }
+
+  std::remove("/tmp/next_pcp_sublayer_pkg.usdz");
+  std::remove("/tmp/next_pcp_usdz_sublayer_root.usda");
+  std::remove("/tmp/next_pcp_ref_pkg.usdz");
+  std::remove("/tmp/next_pcp_usdz_ref_root.usda");
+  std::remove("/tmp/next_pcp_multi_pkg.usdz");
+  std::remove("/tmp/next_pcp_usdz_pkg_anchor_root.usda");
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_sublayer_cycle_and_depth() {
   std::cout << "test_sublayer_cycle_and_depth..." << std::endl;
 
@@ -2240,8 +2481,18 @@ static void test_sublayer_cycle_and_depth() {
   resolver.SetWorkingDirectory("/tmp");
   std::string warn, err;
   auto cycle_opened = pcp::Cache::Open(resolver, cycle_layer, cycle_root);
-  assert(!cycle_opened && "sublayer cycle should fail Cache::Open");
-  assert(cycle_opened.error().find("Sublayer cycle") != std::string::npos);
+  // pxr parity: a sublayer cycle is WARNED and the repeated layer skipped —
+  // the rest of the scene still composes (previously the whole load failed).
+  assert(cycle_opened && "sublayer cycle should warn + skip, not fail");
+  {
+    bool cycle_reported = false;
+    for (const auto& is : cycle_opened->GetCompositionIssues()) {
+      if (is.message.find("Sublayer cycle") != std::string::npos) {
+        cycle_reported = true;
+      }
+    }
+    assert(cycle_reported && "cycle must still be diagnosed");
+  }
 
   const std::string depth_sub = "/tmp/next_pcp_depth_sub.usda";
   {
@@ -2893,6 +3144,174 @@ static void test_variant_selected_field() {
   std::cout << "  OK" << std::endl;
 }
 
+
+// ------------------------------------------------------------------
+// Regression tests from the 2026-07 composition/pcp audit.
+// ------------------------------------------------------------------
+
+// Authored `active = false` must survive weaker sources (a referenced prim's
+// DEFAULT active=true used to flip it back — the inverse of LIVRPS).
+static void test_active_survives_weaker_arc() {
+  std::cout << "test_active_survives_weaker_arc..." << std::endl;
+  const std::string ref = "/tmp/next_act_ref.usda";
+  const std::string root = "/tmp/next_act_root.usda";
+  {
+    std::ofstream o(ref);
+    o << "#usda 1.0\ndef Xform \"R\"\n{\n    float x = 1\n}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"A\" (\n"
+         "    active = false\n"
+         "    prepend references = @./next_act_ref.usda@</R>\n"
+         ")\n{\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  UsdPrim a = stage.GetPrimAtPath("/A");
+  assert(a.IsValid());
+  assert(!a.IsActive() && "authored active=false clobbered by weaker source");
+  assert(a.GetPropertyValue("x") != nullptr && "reference still composes");
+  std::remove(ref.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// Relationship / connection targets pointing OUTSIDE a referenced subtree are
+// not expressible in the composed namespace and must be dropped (pxr warns
+// and drops); leaking them verbatim silently aliased unrelated stage prims.
+// In-scope targets keep retargeting.
+static void test_out_of_scope_targets_dropped() {
+  std::cout << "test_out_of_scope_targets_dropped..." << std::endl;
+  const std::string asset = "/tmp/next_scope_asset.usda";
+  const std::string root = "/tmp/next_scope_root.usda";
+  {
+    std::ofstream o(asset);
+    o << "#usda 1.0\n"
+         "def Xform \"Model\"\n{\n"
+         "    def Mesh \"Geo\"\n    {\n"
+         "        rel material:binding = </Materials/Red>\n"
+         "        rel ok = </Model/Geo>\n"
+         "    }\n"
+         "}\n"
+         "def Scope \"Materials\" { def Material \"Red\" { } }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"W\" (prepend references = "
+         "@./next_scope_asset.usda@</Model>)\n{\n}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  UsdPrim geo = stage.GetPrimAtPath("/W/Geo");
+  assert(geo.IsValid());
+  const std::vector<Path>* binding = geo.GetRelationship("material:binding");
+  assert((!binding || binding->empty()) &&
+         "out-of-scope rel target must be dropped, not leaked verbatim");
+  const std::vector<Path>* ok = geo.GetRelationship("ok");
+  assert(ok && ok->size() == 1 && (*ok)[0].str() == "/W/Geo" &&
+         "in-scope rel target retargeted");
+  std::remove(asset.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// HasDeferredPayload must not depend on authored payload ORDER: with two
+// payloads where only one loads, a later loaded arc used to erase the
+// deferral marker set by an earlier deferred one.
+static void test_deferred_payload_marker_order() {
+  std::cout << "test_deferred_payload_marker_order..." << std::endl;
+  const std::string pay1 = "/tmp/next_def_p1.usda";
+  const std::string pay2 = "/tmp/next_def_p2.usda";
+  {
+    std::ofstream o(pay1);
+    o << "#usda 1.0\ndef Xform \"P1\" { float a = 1 }\n";
+  }
+  {
+    std::ofstream o(pay2);
+    o << "#usda 1.0\ndef Xform \"P2\" { float b = 2 }\n";
+  }
+  for (int order = 0; order < 2; ++order) {
+    const std::string root = "/tmp/next_def_root.usda";
+    {
+      std::ofstream o(root);
+      o << "#usda 1.0\n"
+           "def Xform \"A\" (prepend payload = [";
+      if (order == 0) {
+        o << "@./next_def_p2.usda@</P2>, @./next_def_p1.usda@</P1>";
+      } else {
+        o << "@./next_def_p1.usda@</P1>, @./next_def_p2.usda@</P2>";
+      }
+      o << "])\n{\n}\n";
+    }
+    AssetResolver resolver;
+    resolver.SetWorkingDirectory("/tmp");
+    pcp::CompositionOptions opts;
+    // Load only p1; p2 stays deferred — regardless of arc order.
+    opts.payload_policy = [](const Path&, const std::string& asset) {
+      return asset.find("p1") != std::string::npos;
+    };
+    auto layer = std::make_shared<Layer>();
+    {
+      Stage tmp;
+      std::string w, e;
+      assert(LoadUSDA(root, &tmp, &w, &e));
+      layer = std::shared_ptr<Layer>(tmp.ReleaseRootLayer());
+    }
+    auto opened = pcp::Cache::Open(resolver, layer, root, opts);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim a = stage.GetPrimAtPath("/A");
+    assert(a.GetPropertyValue("a") != nullptr && "loaded payload composes");
+    assert(a.GetPropertyValue("b") == nullptr && "deferred payload leaked");
+    assert(cache.HasDeferredPayload(Path("/A")) &&
+           "deferral marker lost (payload order dependence)");
+    std::remove(root.c_str());
+  }
+  std::remove(pay1.c_str());
+  std::remove(pay2.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// A per-sublayer layer offset must not fail the whole load (offsets are
+// parsed and skipped with a warning until composition plumbs them through).
+static void test_sublayer_offset_parses() {
+  std::cout << "test_sublayer_offset_parses..." << std::endl;
+  const std::string sub = "/tmp/next_slo_sub.usda";
+  const std::string root = "/tmp/next_slo_root.usda";
+  {
+    std::ofstream o(sub);
+    o << "#usda 1.0\ndef Xform \"p\" { float a = 1 }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n(\n"
+         "    subLayers = [ @./next_slo_sub.usda@ (offset = 10; scale = 2) ]\n"
+         ")\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err) &&
+         "sublayer layer-offset syntax must not fail the load");
+  assert(stage.GetPrimAtPath("/p").IsValid());
+  std::remove(sub.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
@@ -2902,9 +3321,14 @@ int main() {
   test_crate_style_variant_holder();
   test_usda_connection_and_custom_rel();
   test_variant_option_payload_arc();
+  test_active_survives_weaker_arc();
+  test_out_of_scope_targets_dropped();
+  test_deferred_payload_marker_order();
+  test_sublayer_offset_parses();
   test_parallel_compose_byte_identical();
   test_value_block_roundtrip();
   test_extracted_prototypes();
+  test_extracted_prototypes_collision_and_remap();
   test_connection_namespace_remap();
   test_value_connection_field_compose();
   test_compose_prim_dependency_invalidate();
@@ -2941,6 +3365,7 @@ int main() {
   test_nested_relative_reference();
   test_sublayer_authored_reference_anchor();
   test_sublayer_stack_composition();
+  test_usdz_package_layers();
   test_sublayer_cycle_and_depth();
   test_node_overflow_fails_cleanly();
   test_concurrent_queries();

@@ -55,12 +55,25 @@ bool UsdPrim::HasProperty(const std::string& name) const {
 
 const Value* UsdPrim::GetPropertyValue(const std::string& name) const {
   if (!spec_) return nullptr;
-  return spec_->property_value(name);
+  if (const Value* value = spec_->property_value(name)) return value;
+  return EarliestTimeSampleValue(GetPropNameTable().find(name));
 }
 
 const Value* UsdPrim::GetPropertyValue(PropNameId name_id) const {
   if (!spec_) return nullptr;
-  return spec_->property_value(name_id);
+  if (const Value* value = spec_->property_value(name_id)) return value;
+  return EarliestTimeSampleValue(name_id);
+}
+
+// Default-time value resolution matches OpenUSD (and legacy tydra): when a
+// property has no authored default but does have timeSamples, the samples are
+// consulted — use the earliest one. Without this, timeSamples-only xformOps
+// evaluate as missing and static transforms collapse to identity components.
+const Value* UsdPrim::EarliestTimeSampleValue(PropNameId name_id) const {
+  if (!spec_ || !name_id.is_valid()) return nullptr;
+  const auto* samples = spec_->time_samples(name_id);
+  if (!samples || samples->empty()) return nullptr;
+  return spec_->time_sample_value(samples->front().second);
 }
 
 std::vector<std::string> UsdPrim::GetPropertyNames() const {
@@ -139,11 +152,42 @@ const Value* UsdPrim::GetValueAtTime(const std::string& name, double time) const
 }
 
 Value UsdPrim::GetInterpolatedValue(const std::string& name, double time) const {
-  // For now, just return the held value (no interpolation)
-  // TODO: Implement linear interpolation for numeric types
-  const Value* val = GetValueAtTime(name, time);
-  if (val) return *val;
-  return Value();
+  if (!spec_) return Value();
+
+  PropNameId name_id = GetPropNameTable().find(name);
+  if (!name_id.is_valid()) return Value();
+
+  const auto* samples = spec_->time_samples(name_id);
+  if (!samples || samples->empty()) {
+    const Value* v = spec_->property_value(name_id);
+    return v ? *v : Value();
+  }
+
+  auto it = std::lower_bound(samples->begin(), samples->end(), time,
+                             [](const std::pair<double, uint32_t>& p, double t) {
+                               return p.first < t;
+                             });
+
+  if (it == samples->end()) {
+    const Value* v = spec_->time_sample_value(samples->back().second);
+    return v ? *v : Value();
+  }
+  if (it == samples->begin() || it->first == time) {
+    const Value* v = spec_->time_sample_value(it->second);
+    return v ? *v : Value();
+  }
+
+  // Linearly interpolate between the bracketing samples (held for
+  // non-interpolatable types, handled by LerpValue).
+  auto prev = it;
+  --prev;
+  const Value* va = spec_->time_sample_value(prev->second);
+  const Value* vb = spec_->time_sample_value(it->second);
+  if (!va || !vb) return va ? *va : Value();
+  const double t0 = prev->first;
+  const double t1 = it->first;
+  const double frac = (t1 > t0) ? (time - t0) / (t1 - t0) : 0.0;
+  return LerpValue(*va, *vb, frac);
 }
 
 const std::vector<Path>* UsdPrim::GetRelationship(const std::string& name) const {
@@ -171,10 +215,15 @@ UsdPrim UsdPrim::GetParent() const {
   if (last_slash == std::string::npos) return UsdPrim();
 
   std::string parent_path = path_str.substr(0, last_slash);
+  // O(1) via the path index when available.
+  uint32_t pidx = layer_->index_at_path(parent_path);
+  if (pidx != UINT32_MAX) {
+    return UsdPrim(layer_->prim(pidx), layer_, pidx);
+  }
   const PrimSpec* parent = layer_->prim_at_path(parent_path);
   if (!parent) return UsdPrim();
 
-  // Find parent index (inefficient but works)
+  // Fallback linear scan (path index not built yet)
   for (size_t i = 0; i < layer_->prim_count(); ++i) {
     if (layer_->prim(static_cast<uint32_t>(i)) == parent) {
       return UsdPrim(parent, layer_, static_cast<uint32_t>(i));
@@ -213,6 +262,16 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
 size_t UsdPrim::GetChildCount() const {
   if (!spec_) return 0;
   return ChildSourceSpec()->child_count();
+}
+
+UsdPrim UsdPrim::GetChildAt(size_t index) const {
+  if (!spec_ || !layer_) return UsdPrim();
+  const auto& indices = ChildSourceSpec()->child_indices();
+  if (index >= indices.size()) return UsdPrim();
+  uint32_t idx = indices[index];
+  const PrimSpec* child = layer_->prim(idx);
+  if (!child) return UsdPrim();
+  return UsdPrim(child, layer_, idx);
 }
 
 UsdPrim UsdPrim::GetChild(const std::string& name) const {
@@ -266,6 +325,11 @@ void Stage::UpdateMetaFromRootLayer() {
   meta_.timeCodesPerSecond = lm.timeCodesPerSecond;
   meta_.startTimeCode = lm.startTimeCode;
   meta_.endTimeCode = lm.endTimeCode;
+  meta_.upAxis_set = lm.upAxis_set;
+  meta_.metersPerUnit_set = lm.metersPerUnit_set;
+  meta_.timeCodesPerSecond_set = lm.timeCodesPerSecond_set;
+  meta_.startTimeCode_set = lm.startTimeCode_set;
+  meta_.endTimeCode_set = lm.endTimeCode_set;
   meta_.framesPerSecond = lm.framesPerSecond;
   meta_.framesPerSecond_set = lm.framesPerSecond_set;
   meta_.kilogramsPerUnit = lm.kilogramsPerUnit;
@@ -289,16 +353,13 @@ UsdPrim Stage::GetPrimAtPath(const Path& path) const {
 UsdPrim Stage::GetPrimAtPath(const std::string& path) const {
   if (!root_layer_) return UsdPrim();
 
-  const PrimSpec* spec = root_layer_->prim_at_path(path);
-  if (!spec) return UsdPrim();
-
-  // Find index (could be optimized with reverse map)
-  for (size_t i = 0; i < root_layer_->prim_count(); ++i) {
-    if (root_layer_->prim(static_cast<uint32_t>(i)) == spec) {
-      return UsdPrim(spec, root_layer_.get(), static_cast<uint32_t>(i));
-    }
-  }
-  return UsdPrim();
+  // The path index already maps path -> index; use it directly. (Previously this
+  // re-derived the index with a linear scan over every prim -- O(N) per call,
+  // O(meshes*prims) over a render, ~8% of an isCoral render in per-mesh
+  // material/texture/prototype lookups.)
+  const uint32_t idx = root_layer_->index_at_path(path);
+  if (idx == UINT32_MAX) return UsdPrim();
+  return UsdPrim(root_layer_->prim(idx), root_layer_.get(), idx);
 }
 
 UsdPrim Stage::GetDefaultPrim() const {
@@ -394,6 +455,7 @@ bool Stage::HasTimeSamples() const {
   // Check if any prim has time samples
   bool has_samples = false;
   Traverse([&](const UsdPrim& prim) {
+    (void)prim;
     // Check all properties for time samples
     // Simplified: just check if endTimeCode > startTimeCode
     if (meta_.endTimeCode > meta_.startTimeCode) {
@@ -461,27 +523,37 @@ void StageBuilder::SetDefaultPrim(const std::string& primName) {
 
 void StageBuilder::SetUpAxis(const std::string& axis) {
   meta_.upAxis = axis;
+  meta_.upAxis_set = true;
   layer_->meta().upAxis = axis;
+  layer_->meta().upAxis_set = true;
 }
 
 void StageBuilder::SetMetersPerUnit(double value) {
   meta_.metersPerUnit = value;
+  meta_.metersPerUnit_set = true;
   layer_->meta().metersPerUnit = value;
+  layer_->meta().metersPerUnit_set = true;
 }
 
 void StageBuilder::SetTimeCodesPerSecond(double fps) {
   meta_.timeCodesPerSecond = fps;
+  meta_.timeCodesPerSecond_set = true;
   layer_->meta().timeCodesPerSecond = fps;
+  layer_->meta().timeCodesPerSecond_set = true;
 }
 
 void StageBuilder::SetStartTimeCode(double time) {
   meta_.startTimeCode = time;
+  meta_.startTimeCode_set = true;
   layer_->meta().startTimeCode = time;
+  layer_->meta().startTimeCode_set = true;
 }
 
 void StageBuilder::SetEndTimeCode(double time) {
   meta_.endTimeCode = time;
+  meta_.endTimeCode_set = true;
   layer_->meta().endTimeCode = time;
+  layer_->meta().endTimeCode_set = true;
 }
 
 Stage StageBuilder::Build() {

@@ -174,9 +174,20 @@ structure — **32,811 prims, 122 files parsed, 373 deferred payloads** — in
 **~1.7 GiB / ~3 s**, well within the 16 GB budget. `--load-some=N` streams the
 deferred proxy geometry on demand.
 
-**ALab** (`ALab/entry.usda`, the `mk020_0281` shot) composes **3,293 prims /
-1,271 deferred geometry payloads in ~120 MiB**; the set asset alone
-(`entity/alab_set01/alab_set01.usda`) composes **3,251 prims / 1,264 payloads**.
+**ALab** should be run from the extracted/merged tree when validating full-scene
+composition locally:
+
+```
+/mnt/disk1/data/alab/_merged_ALab/entry.usda
+/mnt/disk1/data/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
+```
+
+The packaged `ALab/entry.usda` path is valid, but in the local extracted
+directory it resolves to the small package layout rather than the full merged
+shot used by the large-scene measurements. The `mk020_0281` shot composes
+**3,293 prims / 1,271 deferred geometry payloads in ~120 MiB** in the legacy
+large-scene loader; the set asset alone composes **3,251 prims / 1,264
+payloads**.
 ALab's asset-centric structure needed three further composition fixes (§3.4):
 (a) composing a *referenced/payload* layer's own subLayers — ALab entity files
 just sublayer their department layers, so without this the referenced content is
@@ -565,6 +576,190 @@ decode at parse/clone, no giant-string copy. The §2 bounded loader is still the
 path to use when geometry must stay on disk entirely; the difference here is that
 a *full* flatten no longer carries gratuitous peak overhead.
 
+### 6.1 Native `next_usdcat` vs current `tusdcat` (2026-06-29)
+
+The table below is a TinyUSDZ-vs-TinyUSDZ snapshot of the native full-compose
+path on the public large scenes. `next_usdcat` uses the `src/next` PCP engine and
+streams the flattened USDA directly to a `FILE*`; `tusdcat` is the current
+library pipeline. Both write USDA to `/dev/null` so the output text is generated
+but not stored on disk. The `next_usdcat` numbers use a Release next build with
+chunked value streaming in the ASCII writer.
+
+Commands:
+
+```sh
+/usr/bin/time -v env TINYUSDZ_NEXT_TIMING=1 \
+  build-next-release/next_usdcat -f -o /dev/null <root.usda>
+
+/usr/bin/time -v \
+  build_ninja/tusdcat -f --memstat --output-format=usda -o /dev/null <root.usda>
+```
+
+| Scene | `next_usdcat` load+compose | `next_usdcat` total | `next_usdcat` max RSS | current `tusdcat` result |
+|---|---:|---:|---:|---|
+| Caldera `caldera.usda` | 3.53 s | 9.71 s | 2.93 GiB | 1:46.7 total, 10.37 GiB max RSS |
+| Moana Island `island.usda` | 15.38 s | 43.42 s | 9.67 GiB | failed after 11.6 s: `xgGroundCover.usd` exceeds the 512 MiB per-asset cap |
+| ALab `ALab/entry.usda` | 0.33 s | 0.36 s | 62 MiB | not comparable: resolver missed a referenced ALab asset and built only a 43 KiB stage |
+
+The table above is the pre-optimization snapshot; the ASCII writer was then
+optimized substantially (§6.2). Current full-composition validation uses
+`next_usdcat -f -o /dev/null` so the scene is actually composed and flattened
+while keeping the output off disk:
+
+```sh
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/caldera/caldera.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/island/usd/island.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entity/alab_set01/alab_set01.usda
+```
+
+Recent measurements on the local workstation:
+
+| Scene | load+compose | total incl. USDA write | max RSS | flattened bytes |
+|---|---:|---:|---:|---:|
+| Caldera `caldera.usda` | 12.43 s | 1:36.17 | 2.11 GiB | 4.26 GB |
+| Moana Island `island.usda` | 213.74 s | 7:44.93 | 7.40 GiB | 10.80 GB |
+| ALab `_merged_ALab/entry.usda` | 8.25 s | 1:50.80 | 1.31 GiB | 4.75 GB |
+| ALab set asset | 5.85 s | 38.67 s | 677 MiB | 1.62 GB |
+
+Island's large XGen arrays are kept lazy/mmap-backed during compose/write. The
+USDC reader decodes older packed array-count headers (low 32 bits = element
+count, high 32 bits = auxiliary metadata) before applying guards. It still
+rejects malformed over-cap arrays through file-size/addressability checks, but
+does not reject valid lazy POD arrays purely because their packed header exceeds
+the default eager-decode element guard.
+
+For a pure USDC reader comparison, the pre-flattened Caldera crate isolates parse
+memory from composition:
+
+```sh
+/usr/bin/time -v env TINYUSDZ_NEXT_TIMING=1 \
+  build-next-release/next_usdcat -l <caldera-build>/caldera.flattened.usdc
+
+/usr/bin/time -v \
+  build_ninja/tusdcat -l --memstat <caldera-build>/caldera.flattened.usdc
+```
+
+| Input | Parser | Load/elapsed | Max RSS | Notes |
+|---|---|---:|---:|---|
+| `caldera.flattened.usdc` | `next_usdcat -l` | 2.57 s load / 3.26 s elapsed | 1.77 GiB | 53,972 prims; warns for unsupported string arrays |
+| `caldera.flattened.usdc` | `tusdcat -l --memstat` | 7.38 s elapsed | 3.34 GiB | Stage in-use memory 2.53 GiB; USDC parser peak 189.8 MiB |
+
+The current `next` reader is therefore faster and lower-memory on this crate
+parse (~2.3x faster elapsed, ~47 % lower max RSS). On the full Caldera
+compose+stream path, `next` is both faster (~11x wall-clock) and lower-memory
+(~3.5x RSS).
+
+### 6.2 ASCII (USDA) writer optimizations
+
+On a fully-composed large scene the **write phase dominates** total wall-clock
+(Caldera ~57 %, Island ~63 % before this work). The `src/next` USDA writer
+(`src/next/writer/{value-printer,usda-writer,dtoa}.{hh,cc}`) was optimized in two
+passes. Every change is **byte-identical** to the serial writer — verified by
+`cmp`/sha256 against the prior binary across the 615-file `tests/usda` +
+`tests/usdc` corpus and on Caldera + Island (10.18 GB hash match) + ALab, in both
+serial and threaded (4/8/16) modes. Output to `/dev/null`, Release build, on a
+32-thread / 16-core workstation:
+
+| Scene (flatten write phase) | Before | After |
+|---|---:|---:|
+| Caldera (4.25 GB) | 728 MB/s | **~850–925 MB/s** |
+| Island (10.18 GB) | 371 MB/s, 26.2 s | **~1000 MB/s, ~11.7 s** |
+| Island peak RSS | 9.67 GiB | **~8.0 GiB** |
+
+#### Pass 1 — per-element number formatting
+
+Large arrays are the bulk of the bytes, so per-scalar formatting is the serial
+hot loop. Two byte-identical changes:
+
+- **No `num_` round-trip.** Each scalar used to format into a stack buffer, append
+  to a reused member `std::string`, then be copied *again* into the chunk buffer.
+  It now formats once into a stack buffer and appends directly. New
+  `dtos_to(char*, float/double)` (`writer/dtoa`) and `IntTo`/`UIntTo(char*, …)`
+  (`strfmt.hh`); `ChunkedStream` drops the `num_` member. Serial writer
+  +~16 % (Caldera 218 → 253 MB/s, Island piped 162 → 176 MB/s).
+- **Indent cache.** `WriteIndent` emits the indentation prefix in one write from a
+  `thread_local` cached padding string instead of `depth` tiny writes.
+
+#### Pass 2 — parallel writer rearchitecture
+
+A profile (a debug switch that skips array-value formatting) showed **~95 % of
+Island's write phase was array formatting running serially on the main thread**.
+The previous parallel design split work by **subtree frontier**, which only
+parallelized *leaf* subtrees — but Island's geometry lives in *interior* prims,
+whose arrays were serialized on the main thread regardless of thread count (write
+scaled only ~1.6× from 1→8 threads).
+
+The writer was rebuilt around a **document-ordered task list**:
+
+1. **Phase 1 (serial, cheap):** one pre-order walk of the whole stage emits cheap
+   structural bytes inline as `Text` tasks and **offloads every array value**
+   (≥ 256 elements) as a task referencing the borrowed array. No giant array is
+   formatted here, so the walk is fast (~1.6 s on Island).
+2. **Phase 2 (parallel):** a worker pool formats **byte-balanced segments** (each
+   a contiguous task run) while the main thread writes the finished segment
+   buffers **in document order**. Synchronization is lock-free (atomics + a
+   bounded look-ahead window that back-pressures workers and bounds in-flight
+   memory) — no per-task mutex/condvar, so it scales to ~250 k tasks.
+
+The critical refinement is that **no single giant array may pin one worker** (a
+single 44 M-element array was an 8 s serial segment). Giant arrays are split into
+element-range chunks formatted concurrently:
+
+- **Directly chunkable arrays** — non-lazy, or *uncompressed*-lazy that can be
+  aliased zero-copy from the memory-mapped crate (new `CanBorrowLazyFlat`,
+  `types/value-view`) — are chunked **in place** with no decode or copy.
+- **Giant compressed-lazy** numeric arrays are **decoded once** into an owned
+  buffer (held in a deque, freed as soon as their chunks are consumed, so peak
+  memory stays bounded) and then chunked.
+- **Half-backed types** (`half`, `quath`, …) widen to float via `as_float_array`,
+  so Island's 21 M-element `quath` orientation arrays chunk through the float
+  range printer too. This was the last serial bottleneck.
+
+New `value-printer` API: `ArrayElementCount`, `IsChunkableType`,
+`IsChunkableArray`, and `PrintArrayRangeToStream` (formatting an element range is
+byte-identical to the full array printer — the foundation of chunk splitting). The
+serial path (`TINYUSDZ_NEXT_NUM_THREADS=1`) is untouched and remains the
+correctness oracle. The auto worker cap was raised 8 → 16 now that the balanced
+design scales with cores (both scenes still improve at 16+).
+
+Tests: `test_array_range_split_parity` (range reconstruction == full print across
+types and cut points) and `test_parallel_writer_parity` (1-thread vs 8-thread
+byte-identical) in `tests/next/test_writer.cc`.
+
+The remaining serial cost is the ~6 s Phase-1 build walk on Island (not yet
+overlapped with Phase 2) — the next available lever.
+
+### 6.3 USDA `/dev/null` write vs USDC crate write
+
+Do not compare the USDA `/dev/null` write numbers above with
+`next_usdcat -f -o out.usdc` timings as if they were the same writer path.
+They exercise different serializers:
+
+- `-o /dev/null` has no `.usdc` suffix, so `next_usdcat` writes flattened USDA
+  text through the optimized parallel ASCII writer. On the local 32-thread /
+  16-core workstation, Island writes ~10.8 GB of USDA text to `/dev/null` in
+  about **14 s** with `TINYUSDZ_NEXT_NUM_THREADS=16` and `--compose-threads 16`.
+- `-o out.usdc` uses the next crate writer. Island's crate output is only
+  ~2.5 GB, but the write phase is still about **36-40 s** even when the output
+  path is a `.usdc` symlink to `/dev/null` or a real file under `/dev/shm`.
+  Thus the time is not storage bandwidth.
+
+The remaining USDC cost is internal crate construction. As detailed in
+[`crate-writer.md`](crate-writer.md), the Island crate writer is dominated by the
+serial per-spec structural build and global interning/dedup tables over ~4.25M
+specs (paths, tokens/strings, fieldsets, value-block dedup). Final byte emission
+and array encoding are a smaller slice. Threaded crate writer paths help
+moderately: for Island, a `/dev/null`-symlink USDC write was ~47.6 s with
+`TINYUSDZ_NEXT_NUM_THREADS=1` and ~36.1 s with `TINYUSDZ_NEXT_NUM_THREADS=16`,
+but they do not remove the global-dedup floor. Writing the same USDC to
+`/dev/shm` remains ~40 s, confirming the bottleneck is CPU/structure building,
+not disk I/O.
+
 ## 7. Verification
 
 ```
@@ -575,6 +770,11 @@ cd build && ctest -R feat-large-scene --output-on-failure
 <build>/large-scene-load /mnt/disk1/data/caldera/caldera.usda --mode=none
 # expect: ~32,811 total prims, 373 deferred payloads, RSS ~1.7 GiB.
 # --load-some=N streams deferred proxy geometry on demand.
+# full composition + USDA writer stress checks:
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/island/usd/island.usda
+env TINYUSDZ_NEXT_TIMING=1 build-next/next_usdcat -f -o /dev/null \
+  /mnt/disk1/data/alab/_merged_ALab/entry.usda
 cd build && ctest --output-on-failure     # no regressions (2 pre-existing
                                            # MaterialX failures are unrelated)
 # suffix-fallback unit tests (§4):

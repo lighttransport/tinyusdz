@@ -3,11 +3,22 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RGBELoader as HDRLoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils, TextureLoadingManager } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import {
+    buildNextThreeNode,
+    isNextScene,
+    nextCountsFromScene,
+    readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
+import {
+    getAssetUriFromURL,
+    LOADER_BACKEND_CHOICES,
+    setBackendAndReload
+} from 'tinyusdz/LoaderConfigUtils.js';
 import { setTinyUSDZ as setMaterialXTinyUSDZ } from 'tinyusdz/TinyUSDZMaterialX.js';
 import { OpenPBRMaterial } from 'tinyusdz/TinyUSDZOpenPBRSimple.js';
 import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.js';
@@ -18,6 +29,7 @@ import { OpenPBRValidator, OpenPBRGroundTruth } from './tests/OpenPBRValidation.
 
 const DEFAULT_BACKGROUND_COLOR = 0x1a1a1a;
 const CAMERA_PADDING = 1.2;
+const MAX_RENDER_PIXEL_RATIO = 2.0;
 
 const ENV_PRESETS = {
     'usd_dome': 'usd',
@@ -40,6 +52,10 @@ const TONE_MAPPINGS = {
 
 const TRACE_LOAD = new URLSearchParams(window.location.search).get('traceLoad') === 'true';
 const TRACE_LOAD_T0 = performance.now();
+const LOADER_BACKEND = (() => {
+    const backend = new URLSearchParams(window.location.search).get('backend');
+    return (backend === 'next' || backend === 'auto' || backend === 'legacy') ? backend : 'legacy';
+})();
 
 function traceLoadPhase(name, detail = '') {
     if (!TRACE_LOAD) {
@@ -47,6 +63,265 @@ function traceLoadPhase(name, detail = '') {
     }
     const elapsed = (performance.now() - TRACE_LOAD_T0).toFixed(1);
     console.log(`[materialx-load] ${elapsed} ms ${name}${detail ? ` ${detail}` : ''}`);
+}
+
+function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
+    return getAssetUriFromURL(params, ['usd']);
+}
+
+function getDisplayNameFromURI(uri) {
+    try {
+        const parsed = new URL(uri, window.location.href);
+        const pathname = parsed.pathname || uri;
+        const basename = pathname.split('/').filter(Boolean).pop();
+        return basename || uri;
+    } catch {
+        return uri.split('/').pop() || uri;
+    }
+}
+
+function readBooleanParam(params, names, currentValue, { falseOnly = false } = {}) {
+    for (const name of names) {
+        if (!params.has(name)) continue;
+        const value = params.get(name);
+        if (falseOnly) {
+            return value !== 'false' && value !== '0';
+        }
+        return value === 'true' || value === '1';
+    }
+    return currentValue;
+}
+
+function nativeOptimizationOptions() {
+    return {
+        materialDedup: settings.nativeMaterialDedup,
+        mergeMeshes: settings.nativeMeshMerge,
+        mergeMeshesBakeTransform: settings.nativeMeshMergeBakeTransform,
+        flattenRenderTree: settings.nativeFlattenRenderTree
+    };
+}
+
+function describeNativeOptimizations() {
+    const enabled = [];
+    if (settings.nativeMaterialDedup) enabled.push('material-dedup');
+    if (settings.nativeMeshMerge) {
+        enabled.push(settings.nativeMeshMergeBakeTransform ? 'merge-meshes(bake)' : 'merge-meshes');
+    }
+    if (settings.nativeFlattenRenderTree) enabled.push('flatten-tree');
+    return enabled.length ? enabled.join(', ') : 'no native optimizations';
+}
+
+function describeNextNativeStats(stats) {
+    if (!stats) return '';
+    const parts = [];
+    if (Number.isFinite(stats.sourceMeshes) && Number.isFinite(stats.optimizedMeshes)) {
+        parts.push(`${stats.sourceMeshes}->${stats.optimizedMeshes} meshes`);
+    }
+    if (Number.isFinite(stats.sourceMaterials) && Number.isFinite(stats.optimizedMaterials)) {
+        parts.push(`${stats.sourceMaterials}->${stats.optimizedMaterials} mats`);
+    }
+    if (Number.isFinite(stats.sourceTextures) && Number.isFinite(stats.optimizedTextures)) {
+        parts.push(`${stats.sourceTextures}->${stats.optimizedTextures} tex`);
+    }
+    return parts.length ? ` · native ${parts.join(', ')}` : '';
+}
+
+function formatDurationMs(ms) {
+    if (!Number.isFinite(ms)) return 'n/a';
+    if (ms < 1000) return `${ms.toFixed(0)} ms`;
+    return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+    if (!Number.isFinite(bytes)) return 'n/a';
+    const sign = bytes < 0 ? '-' : '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = Math.abs(bytes);
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex++;
+    }
+    return `${sign}${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+    const jsHeap = performance.memory?.usedJSHeapSize;
+    const wasmHeap = loaderState.loader?.native_?.HEAPU8?.buffer?.byteLength;
+    return {
+        jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+        wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+    };
+}
+
+let activeLoadStats = null;
+
+function formatMemoryUse(before, after, key) {
+    const current = after?.[key];
+    if (!Number.isFinite(current)) return 'n/a';
+
+    const previous = before?.[key];
+    if (!Number.isFinite(previous)) {
+        return formatBytes(current);
+    }
+
+    const delta = current - previous;
+    const sign = delta > 0 ? '+' : '';
+    return `${formatBytes(current)} (${sign}${formatBytes(delta)})`;
+}
+
+function formatTextureStats(stats) {
+    if (!stats || !Number.isFinite(stats.textureTotal) || stats.textureTotal <= 0) {
+        if (settings.skipTextures) return 'disabled';
+        return stats?.textureMode === 'sync' ? 'synchronous' : 'queued 0';
+    }
+    const countText = `${stats.textureLoaded}/${stats.textureTotal}` +
+        (stats.textureFailed ? ` (${stats.textureFailed} failed)` : '');
+    if (stats.textureComplete && Number.isFinite(stats.textureMs)) {
+        return `${countText}, ${formatDurationMs(stats.textureMs)}`;
+    }
+    return `${countText}, loading`;
+}
+
+function updateLoadStatsPanel(stats) {
+    const container = document.getElementById('load-stats');
+    const details = document.getElementById('load-stats-details');
+    if (!container || !details) return;
+
+    container.style.display = 'block';
+
+    if (stats.status === 'loading') {
+        details.textContent = 'Loading...';
+        return;
+    }
+
+    if (stats.status === 'failed') {
+        details.textContent = 'Failed';
+        return;
+    }
+
+    details.textContent = [
+        `File: ${formatBytes(stats.fileSize)}`,
+        `Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+        `Parse/load: ${formatDurationMs(stats.parseMs)}`,
+        `Process/build: ${formatDurationMs(stats.processMs)}`,
+        `Textures: ${formatTextureStats(stats)}`,
+        `Total: ${formatDurationMs(stats.totalMs)}`,
+        `JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+        `WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+    ].join('\n');
+}
+
+function beginLoadStats(fileSize = null) {
+    const stats = {
+        status: 'loading',
+        startTime: performance.now(),
+        fileSize,
+        fetchMs: null,
+        parseMs: null,
+        processMs: null,
+        textureMs: null,
+        textureLoaded: 0,
+        textureFailed: 0,
+        textureTotal: 0,
+        textureComplete: false,
+        textureMode: settings.deferTextures ? 'deferred' : 'sync',
+        totalMs: null,
+        memoryBefore: captureMemorySnapshot(),
+        memoryAfter: null
+    };
+    activeLoadStats = stats;
+    updateLoadStatsPanel(stats);
+    return stats;
+}
+
+function failLoadStats(stats) {
+    if (!stats || stats.status === 'done') return;
+    stats.status = 'failed';
+    stats.totalMs = performance.now() - stats.startTime;
+    stats.memoryAfter = captureMemorySnapshot();
+    updateLoadStatsPanel(stats);
+}
+
+function updateTextureStats(stats, info = {}) {
+    if (!stats) return;
+    stats.textureLoaded = Number.isFinite(info.loaded) ? info.loaded : stats.textureLoaded;
+    stats.textureFailed = Number.isFinite(info.failed) ? info.failed : stats.textureFailed;
+    stats.textureTotal = Number.isFinite(info.total) ? info.total : stats.textureTotal;
+    if (info.complete && Number.isFinite(info.ms)) {
+        stats.textureMs = info.ms;
+        stats.textureComplete = true;
+        stats.memoryAfter = captureMemorySnapshot();
+    }
+    updateLoadStatsPanel(stats);
+}
+
+function startTrackedTextureLoading(manager, stats, traceName) {
+    if (!manager || !Number.isFinite(manager.total) || manager.total <= 0 || settings.skipTextures) {
+        updateTextureStats(stats, { loaded: 0, failed: 0, total: 0, complete: true, ms: 0 });
+        return null;
+    }
+    sceneState.textureLoadingManager = manager;
+    const textureStart = performance.now();
+    updateTextureStats(stats, {
+        loaded: manager.loaded || 0,
+        failed: manager.failed || 0,
+        total: manager.total || 0
+    });
+    traceLoadPhase(`${traceName}:start`, `${manager.total} textures`);
+    return manager.startLoading({
+        concurrency: settings.textureConcurrency,
+        onTextureLoaded: (material) => {
+            material.needsUpdate = true;
+        },
+        onProgress: (info) => {
+            updateTextureStats(stats, info);
+            if (TRACE_LOAD && (info.loaded + info.failed === info.total || ((info.loaded + info.failed) % 100) === 0)) {
+                traceLoadPhase(`${traceName}:progress`, `${info.loaded}/${info.total} failed=${info.failed || 0}`);
+            }
+        }
+    }).then((status) => {
+        const elapsed = performance.now() - textureStart;
+        const loaded = status.loaded || 0;
+        const failed = status.failed || 0;
+        const total = status.total || 0;
+        if (sceneState.textureLoadingManager === manager) {
+            sceneState.textureLoadingManager = null;
+        }
+        if (typeof manager.reset === 'function') {
+            manager.reset();
+        }
+        updateTextureStats(stats, {
+            loaded,
+            failed,
+            total,
+            complete: true,
+            ms: elapsed
+        });
+        traceLoadPhase(`${traceName}:done`, `${loaded}/${total} failed=${failed} ${formatDurationMs(elapsed)}`);
+        return status;
+    }).catch((err) => {
+        console.warn(`${traceName} failed:`, err);
+        const elapsed = performance.now() - textureStart;
+        const status = manager.getStatus ? manager.getStatus() : null;
+        const loaded = status?.loaded || manager.loaded || 0;
+        const failed = status?.failed || manager.failed || 0;
+        const total = status?.total || manager.total || 0;
+        if (sceneState.textureLoadingManager === manager) {
+            sceneState.textureLoadingManager = null;
+        }
+        if (typeof manager.reset === 'function') {
+            manager.reset();
+        }
+        updateTextureStats(stats, {
+            loaded,
+            failed,
+            total,
+            complete: true,
+            ms: elapsed
+        });
+        return status;
+    });
 }
 
 // ACES 2.0 Tonemapping Shader
@@ -255,14 +530,16 @@ function createTimer() {
     if (typeof THREE.Timer === 'function') {
         return new THREE.Timer();
     }
-    const clock = new THREE.Clock();
+    let lastTime = performance.now();
     return {
         reset() {
-            clock.stop();
-            clock.start();
+            lastTime = performance.now();
         },
         getDelta() {
-            return clock.getDelta();
+            const now = performance.now();
+            const delta = (now - lastTime) / 1000;
+            lastTime = now;
+            return delta;
         }
     };
 }
@@ -280,15 +557,22 @@ const threeState = {
     axesHelper: null
 };
 
+const frameState = {
+    lastFpsUpdateMs: performance.now(),
+    frameCount: 0
+};
+
 // USD loader state
 const loaderState = {
     loader: null,
-    nativeLoader: null
+    nativeLoader: null,
+    currentFileName: ''
 };
 
 // Scene state
 const sceneState = {
     root: null,
+    nextNodeIndexMap: null,
     materials: [],
     materialData: [],
     textureCache: new Map(),
@@ -296,7 +580,8 @@ const sceneState = {
     metadata: null,
     showingNormals: false,
     originalMaterialsMap: new Map(),
-    domeLightData: null
+    domeLightData: null,
+    textureLoadingManager: null
 };
 
 // Picking state
@@ -331,7 +616,8 @@ const guiState = {
     envPresetController: null,
     envColorController: null,
     envColorspaceController: null,
-    envIntensityController: null
+    envIntensityController: null,
+    hidden: false
 };
 
 // User settings
@@ -340,8 +626,8 @@ const settings = {
     materialImplementation: 'physical', // 'physical' | 'openpbr' | 'auto'
     fastMaterials: false,
     fastMaterialMode: 'full',
-    deferTextures: false,
-    textureConcurrency: 4,
+    deferTextures: true,
+    textureConcurrency: 16,
     buildYieldMode: 'raf',
     buildYieldIntervalMs: 250,
     useMeshPtr: true,
@@ -352,6 +638,11 @@ const settings = {
     meshAggregation: 'off',
     meshAggregationMinMeshes: 2,
     computeMissingTangents: false,
+    skipTextures: false,
+    skipEnvironment: false,
+    skipDomeLight: false,
+    skipPMREM: false,
+    antialias: true,
     suppressNativeInfoLogs: true,
     envMapPreset: 'goegap_1k',
     envMapIntensity: 1.0,
@@ -459,13 +750,13 @@ async function init() {
     traceLoadPhase('init:start');
     // URL parameter support for batch rendering (check early for autoRender mode)
     const urlParams = new URLSearchParams(window.location.search);
-    const usdPath = urlParams.get('usd');
+    const usdPath = getStartupUSDModelURI(urlParams);
     const autoRender = urlParams.get('autoRender') === 'true';
     settings.fastMaterials = urlParams.get('fastMaterials') === 'true';
     if (urlParams.has('fastMaterialMode')) {
         settings.fastMaterialMode = urlParams.get('fastMaterialMode') || settings.fastMaterialMode;
     }
-    settings.deferTextures = urlParams.get('deferTextures') === 'true' || settings.fastMaterials;
+    settings.deferTextures = readBooleanParam(urlParams, ['deferTextures'], settings.deferTextures) || settings.fastMaterials;
     if (urlParams.has('textureConcurrency')) {
         const n = Number.parseInt(urlParams.get('textureConcurrency'), 10);
         if (Number.isFinite(n) && n > 0) {
@@ -484,21 +775,16 @@ async function init() {
             settings.buildYieldIntervalMs = n;
         }
     }
-    if (urlParams.has('useMeshPtr')) {
-        settings.useMeshPtr = urlParams.get('useMeshPtr') !== 'false';
-    }
-    if (urlParams.has('nativeMaterialDedup')) {
-        settings.nativeMaterialDedup = urlParams.get('nativeMaterialDedup') === 'true';
-    }
-    if (urlParams.has('nativeMeshMerge')) {
-        settings.nativeMeshMerge = urlParams.get('nativeMeshMerge') === 'true';
-    }
-    if (urlParams.has('nativeMeshMergeBakeTransform')) {
-        settings.nativeMeshMergeBakeTransform = urlParams.get('nativeMeshMergeBakeTransform') !== 'false';
-    }
-    if (urlParams.has('nativeFlattenRenderTree')) {
-        settings.nativeFlattenRenderTree = urlParams.get('nativeFlattenRenderTree') === 'true';
-    }
+    settings.useMeshPtr = readBooleanParam(urlParams, ['useMeshPtr'], settings.useMeshPtr, { falseOnly: true });
+    settings.nativeMaterialDedup = readBooleanParam(
+        urlParams, ['nativeMaterialDedup', 'dedup'], settings.nativeMaterialDedup);
+    settings.nativeMeshMerge = readBooleanParam(
+        urlParams, ['nativeMeshMerge', 'merge'], settings.nativeMeshMerge);
+    settings.nativeMeshMergeBakeTransform = readBooleanParam(
+        urlParams, ['nativeMeshMergeBakeTransform', 'bake'], settings.nativeMeshMergeBakeTransform,
+        { falseOnly: true });
+    settings.nativeFlattenRenderTree = readBooleanParam(
+        urlParams, ['nativeFlattenRenderTree', 'flatten'], settings.nativeFlattenRenderTree);
     if (urlParams.has('meshAggregation')) {
         const mode = urlParams.get('meshAggregation') || 'off';
         settings.meshAggregation = mode === 'true' ? 'material' : mode;
@@ -511,6 +797,14 @@ async function init() {
     }
     if (urlParams.has('computeMissingTangents')) {
         settings.computeMissingTangents = urlParams.get('computeMissingTangents') === 'true';
+    }
+    settings.skipTextures = urlParams.get('skipTextures') === 'true' || urlParams.get('skipTextures') === '1';
+    settings.skipEnvironment = urlParams.get('skipEnvironment') === 'true' || urlParams.get('skipEnvironment') === '1';
+    settings.skipDomeLight = urlParams.get('skipDomeLight') === 'true' || urlParams.get('skipDomeLight') === '1';
+    settings.skipPMREM = urlParams.get('skipPMREM') === 'true' || urlParams.get('skipPMREM') === '1' ||
+        (settings.skipEnvironment && settings.skipDomeLight);
+    if (urlParams.has('antialias')) {
+        settings.antialias = urlParams.get('antialias') !== 'false' && urlParams.get('antialias') !== '0';
     }
     if (urlParams.has('suppressNativeInfoLogs')) {
         settings.suppressNativeInfoLogs = urlParams.get('suppressNativeInfoLogs') !== 'false';
@@ -537,30 +831,16 @@ async function init() {
     setupGUI();
     traceLoadPhase('init:gui-ready');
     setupEventListeners();
-    await loadEnvironment(settings.envMapPreset);
-    traceLoadPhase('init:environment-ready');
+    if (settings.skipEnvironment) {
+        traceLoadPhase('init:environment-skipped');
+    } else {
+        await loadEnvironment(settings.envMapPreset);
+        traceLoadPhase('init:environment-ready');
+    }
 
     if (usdPath) {
         // Load USD file from URL parameter
-        updateStatus(`Loading ${usdPath}...`);
-        try {
-            const response = await fetch(usdPath);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch ${usdPath}: ${response.statusText}`);
-            }
-            const arrayBuffer = await response.arrayBuffer();
-            traceLoadPhase('usd:fetch-done', `${arrayBuffer.byteLength} bytes`);
-            const data = new Uint8Array(arrayBuffer);
-            await loadUSDFromData(data, usdPath);
-        } catch (error) {
-            console.error(`Failed to load USD file (${usdPath}):`, error);
-            updateStatus(`Error: ${error.message}`);
-            if (autoRender) {
-                // Signal error state for batch runner
-                window.renderComplete = true;
-                window.renderError = error.message;
-            }
-        }
+        await loadUSDFromURI(usdPath, autoRender);
     } else {
         await loadDefaultUSDFile();
     }
@@ -577,19 +857,53 @@ async function init() {
     }
 }
 
+async function loadUSDFromURI(uri, autoRender = false) {
+    const displayName = getDisplayNameFromURI(uri);
+    const stats = beginLoadStats();
+    updateStatus(`Loading ${displayName}...`);
+    try {
+        const fetchStart = performance.now();
+        const response = await fetch(uri);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch ${uri}: ${response.statusText}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        stats.fetchMs = performance.now() - fetchStart;
+        stats.fileSize = arrayBuffer.byteLength;
+        traceLoadPhase('usd:fetch-done', `${arrayBuffer.byteLength} bytes`);
+        const data = new Uint8Array(arrayBuffer);
+        await loadUSDFromData(data, displayName, stats);
+        window.renderComplete = true;
+    } catch (error) {
+        failLoadStats(stats);
+        console.error(`Failed to load USD file (${uri}):`, error, error?.stack || '');
+        updateStatus(`Error: ${error.message}`);
+        if (autoRender) {
+            window.renderComplete = true;
+            window.renderError = error.message;
+        }
+    }
+}
+
 function initThreeJS() {
+    traceLoadPhase('initThreeJS:start');
     threeState.scene = new THREE.Scene();
     threeState.scene.background = new THREE.Color(DEFAULT_BACKGROUND_COLOR);
+    traceLoadPhase('initThreeJS:scene');
 
     threeState.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     threeState.camera.position.set(3, 2, 5);
+    traceLoadPhase('initThreeJS:camera');
 
     try {
-        threeState.renderer = new THREE.WebGLRenderer({ antialias: true });
+        traceLoadPhase('initThreeJS:renderer-create:start');
+        threeState.renderer = new THREE.WebGLRenderer({ antialias: settings.antialias });
+        traceLoadPhase('initThreeJS:renderer-create:done');
         // Check if WebGL context was created successfully
         if (!threeState.renderer.getContext()) {
             throw new Error('WebGL context is null');
         }
+        traceLoadPhase('initThreeJS:renderer-context');
     } catch (error) {
         console.error('Failed to create WebGL renderer:', error);
         window.renderInitFailed = true;
@@ -597,16 +911,24 @@ function initThreeJS() {
         throw error;
     }
 
+    traceLoadPhase('initThreeJS:renderer-config:start');
     threeState.renderer.setSize(window.innerWidth, window.innerHeight);
-    threeState.renderer.setPixelRatio(window.devicePixelRatio);
+    threeState.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO));
     // Initialize tonemapping from settings (default: aces_1.3)
     setTonemapping(settings.toneMapping);
     threeState.renderer.toneMappingExposure = settings.exposure;
     threeState.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    traceLoadPhase('initThreeJS:renderer-config:done');
+    traceLoadPhase('initThreeJS:dom-append:start');
     document.getElementById('canvas-container').appendChild(threeState.renderer.domElement);
+    traceLoadPhase('initThreeJS:dom-append:done');
 
-    threeState.pmremGenerator = new THREE.PMREMGenerator(threeState.renderer);
-    threeState.pmremGenerator.compileEquirectangularShader();
+    if (!settings.skipPMREM) {
+        traceLoadPhase('initThreeJS:pmrem:start');
+        threeState.pmremGenerator = new THREE.PMREMGenerator(threeState.renderer);
+        threeState.pmremGenerator.compileEquirectangularShader();
+        traceLoadPhase('initThreeJS:pmrem:done');
+    }
 }
 
 function initControls() {
@@ -615,7 +937,9 @@ function initControls() {
     threeState.controls.dampingFactor = 0.05;
     threeState.controls.screenSpacePanning = true;
     threeState.controls.minDistance = 0.1;
-    threeState.controls.maxDistance = 500;
+    threeState.controls.maxDistance = Infinity;
+    threeState.controls.zoomSpeed = 0.8;
+    threeState.controls.panSpeed = 1.0;
     threeState.controls.mouseButtons = {
         LEFT: THREE.MOUSE.ROTATE,
         MIDDLE: THREE.MOUSE.PAN,
@@ -656,6 +980,10 @@ function setupGUI() {
     guiState.gui.domElement.style.right = '10px';
     guiState.gui.domElement.style.maxHeight = 'calc(100vh - 20px)';
     guiState.gui.domElement.style.overflowY = 'auto';
+
+    // Backend switch reloads the page: the loader binds its WASM module at init.
+    guiState.gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+        .name('Loader Backend').onChange(setBackendAndReload);
 
     setupSceneFolder();
     setupMaterialTypeFolder();
@@ -912,6 +1240,7 @@ Use 'openpbr' implementation to get accurate OpenPBR rendering.
 
 function setupEventListeners() {
     window.addEventListener('resize', onWindowResize);
+    window.addEventListener('keydown', onKeyDown);
 
     const fileInput = document.getElementById('file-input');
     fileInput.addEventListener('change', onFileSelect);
@@ -923,6 +1252,12 @@ function setupEventListeners() {
 
     // Object picking - use click event
     container.addEventListener('click', onCanvasClick);
+
+    const visibilityToggle = document.getElementById('gui-visibility-toggle');
+    if (visibilityToggle) {
+        visibilityToggle.addEventListener('click', () => setGuiHidden(!guiState.hidden));
+        setGuiHidden(false);
+    }
 }
 
 /*
@@ -971,7 +1306,10 @@ function convertUSDAnimationsToThreeJS(usdLoader, root) {
 
     if (numAnimations === 0) return clips;
 
-    const nodeIndexMap = buildNodeIndexMap(root);
+    // Next animation target_node is a RenderScene node-table index; use the
+    // table map from buildNextThreeNode when present, not a DFS walk (the
+    // next tree inserts wrapper groups, so DFS indices drift).
+    const nodeIndexMap = sceneState.nextNodeIndexMap || buildNodeIndexMap(root);
 
     for (let i = 0; i < numAnimations; i++) {
         const usdAnimation = usdLoader.getAnimation(i);
@@ -1725,21 +2063,27 @@ async function loadDefaultScene() {
     updateStatus('Loading default scene...');
     const encoder = new TextEncoder();
     const data = encoder.encode(DEFAULT_USDA_SCENE);
-    await loadUSDFromData(data, 'default.usda');
+    const stats = beginLoadStats(data.byteLength);
+    await loadUSDFromData(data, 'default.usda', stats);
 }
 
 async function loadDefaultUSDFile() {
     const defaultFile = './assets/fancy-teapot-mtlx.usdz';
+    const stats = beginLoadStats();
     updateStatus(`Loading ${defaultFile}...`);
     try {
+        const fetchStart = performance.now();
         const response = await fetch(defaultFile);
         if (!response.ok) {
             throw new Error(`Failed to fetch ${defaultFile}: ${response.statusText}`);
         }
         const arrayBuffer = await response.arrayBuffer();
+        stats.fetchMs = performance.now() - fetchStart;
+        stats.fileSize = arrayBuffer.byteLength;
         const data = new Uint8Array(arrayBuffer);
-        await loadUSDFromData(data, defaultFile);
+        await loadUSDFromData(data, defaultFile, stats);
     } catch (error) {
+        failLoadStats(stats);
         console.error(`Failed to load default USD file (${defaultFile}):`, error);
         updateStatus(`Failed to load ${defaultFile}, loading fallback scene...`);
         await loadDefaultScene();
@@ -1747,21 +2091,90 @@ async function loadDefaultUSDFile() {
 }
 
 async function loadUSDFromFile(file) {
+    const stats = beginLoadStats();
     updateStatus(`Loading: ${file.name}...`);
     try {
+        const readStart = performance.now();
         const arrayBuffer = await file.arrayBuffer();
+        stats.fetchMs = performance.now() - readStart;
+        stats.fileSize = arrayBuffer.byteLength;
         const data = new Uint8Array(arrayBuffer);
-        await loadUSDFromData(data, file.name);
+        await loadUSDFromData(data, file.name, stats);
     } catch (error) {
+        failLoadStats(stats);
         console.error('Failed to load USD file:', error);
         updateStatus(`Error: ${error.message}`);
     }
 }
 
-async function loadUSDFromData(data, filename) {
+async function loadUSDFromData(data, filename, stats = null) {
+    stats = stats || beginLoadStats(data.byteLength);
+    if (!Number.isFinite(stats.fileSize)) {
+        stats.fileSize = data.byteLength;
+    }
     traceLoadPhase('loadUSDFromData:start', `${filename} ${data.byteLength} bytes`);
+    loaderState.currentFileName = filename || '';
     clearScene();
     traceLoadPhase('loadUSDFromData:clearScene-done');
+
+    if (LOADER_BACKEND === 'next' || LOADER_BACKEND === 'auto') {
+        const parseStart = performance.now();
+        const usdScene = await new Promise((resolve, reject) => {
+            loaderState.loader.parse(data, filename, resolve, reject, {
+                backend: LOADER_BACKEND,
+                ...nativeOptimizationOptions()
+            });
+        });
+        stats.parseMs = performance.now() - parseStart;
+        if (isNextScene(usdScene)) {
+            const processStart = performance.now();
+            const meta = readNextSceneMeta(usdScene);
+            sceneState.upAxis = meta.upAxis || 'Y';
+            sceneState.metadata = {
+                upAxis: sceneState.upAxis,
+                metersPerUnit: meta.metersPerUnit || 1.0,
+                framesPerSecond: 24.0,
+                timeCodesPerSecond: 24.0
+            };
+            const built = buildNextThreeNode(usdScene, {
+                skipTextures: settings.skipTextures,
+                lazyTextures: !settings.skipTextures
+            });
+            sceneState.root = built.node;
+            sceneState.nextNodeIndexMap = built.nodeIndexMap || null;
+            threeState.scene.add(sceneState.root);
+            if (built.textureManager && !settings.skipTextures) {
+                startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
+            }
+            collectMaterialsFromScene();
+            updateMaterialUI();
+            initUpAxisConversion();
+            applyUpAxisConversion();
+            fitCameraToScene();
+            updateHelpersSize();
+            const counts = nextCountsFromScene(usdScene);
+            const meshCount = counts.meshes;
+            const materialCount = sceneState.materials.length || counts.materials;
+            document.getElementById('model-info').style.display = 'block';
+            document.getElementById('current-file').textContent = loaderState.currentFileName || '-';
+            document.getElementById('mesh-count').textContent = meshCount;
+            document.getElementById('material-count').textContent = materialCount;
+            setSceneEntityCountsFromScene(counts);
+            updateStatus(`Loaded: ${meshCount} meshes, ${materialCount} materials ` +
+                `(backend: next · MaterialX/OpenPBR material data · ${describeNativeOptimizations()})${describeNextNativeStats(counts.stats)}`);
+            if (typeof usdScene.releaseBuildData === 'function') {
+                usdScene.releaseBuildData();
+            }
+            stats.processMs = performance.now() - processStart;
+            stats.totalMs = performance.now() - stats.startTime;
+            stats.memoryAfter = captureMemorySnapshot();
+            stats.status = 'done';
+            updateLoadStatsPanel(stats);
+            window.renderComplete = true;
+            return;
+        }
+        console.log('[materialx] next backend auto-fell back to legacy.');
+    }
 
     loaderState.nativeLoader = new loaderState.loader.native_.TinyUSDZLoaderNative();
     if (typeof loaderState.nativeLoader.setNativeMaterialDedup === 'function') {
@@ -1787,6 +2200,7 @@ async function loadUSDFromData(data, filename) {
         };
     }
     let success = false;
+    const parseStart = performance.now();
     try {
         success = withNativeInfoLogFilter(() => loaderState.nativeLoader.loadFromBinary(data, filename));
     } finally {
@@ -1794,21 +2208,28 @@ async function loadUSDFromData(data, filename) {
             loaderState.loader.native_.onTinyUSDZDebug = previousDebugCallback;
         }
     }
+    stats.parseMs = performance.now() - parseStart;
     traceLoadPhase('native:loadFromBinary:done', `success=${success}`);
     if (!success) {
+        failLoadStats(stats);
         updateStatus(`Failed to parse USD file: ${filename}`);
-        return;
+        throw new Error(`Failed to parse USD file: ${filename}`);
     }
 
+    const processStart = performance.now();
     traceLoadPhase('metadata:start');
     loadSceneMetadata();
     traceLoadPhase('metadata:done');
     traceLoadPhase('buildSceneGraph:start');
     await buildSceneGraph();
     traceLoadPhase('buildSceneGraph:done');
-    traceLoadPhase('loadDomeLight:start');
-    await loadDomeLight();
-    traceLoadPhase('loadDomeLight:done');
+    if (settings.skipDomeLight) {
+        traceLoadPhase('loadDomeLight:skipped');
+    } else {
+        traceLoadPhase('loadDomeLight:start');
+        await loadDomeLight();
+        traceLoadPhase('loadDomeLight:done');
+    }
     // Animation disabled for now - may revisit later
     // loadAnimations();
     initUpAxisConversion();
@@ -1821,6 +2242,11 @@ async function loadUSDFromData(data, filename) {
     traceLoadPhase('modelInfo:start');
     updateModelInfo();
     traceLoadPhase('modelInfo:done');
+    stats.processMs = performance.now() - processStart;
+    stats.totalMs = performance.now() - stats.startTime;
+    stats.memoryAfter = captureMemorySnapshot();
+    stats.status = 'done';
+    updateLoadStatsPanel(stats);
 }
 
 function isNativeInfoLog(args) {
@@ -1916,6 +2342,8 @@ async function buildSceneGraph() {
         meshAggregation: settings.meshAggregation,
         meshAggregationMinMeshes: settings.meshAggregationMinMeshes,
         computeMissingTangents: settings.computeMissingTangents,
+        sourceFileName: loaderState.currentFileName,
+        skipTextures: settings.skipTextures,
         yieldMode: settings.buildYieldMode,
         yieldIntervalMs: settings.buildYieldIntervalMs,
         debugLogEveryMeshes: 250,
@@ -1926,6 +2354,7 @@ async function buildSceneGraph() {
 
     // Build Three.js scene graph from USD hierarchy
     traceLoadPhase('buildSceneGraph:buildThreeNode:start');
+    sceneState.nextNodeIndexMap = null;
     sceneState.root = await TinyUSDZLoaderUtils.buildThreeNode(
         usdRootNode,
         defaultMtl,
@@ -1934,19 +2363,7 @@ async function buildSceneGraph() {
     );
     traceLoadPhase('buildSceneGraph:buildThreeNode:done');
     if (options.textureLoadingManager) {
-        traceLoadPhase('textureQueue:start', `${options.textureLoadingManager.total} textures`);
-        options.textureLoadingManager.startLoading({
-            concurrency: settings.textureConcurrency,
-            onProgress: (info) => {
-                if (TRACE_LOAD && (info.loaded + info.failed === info.total || ((info.loaded + info.failed) % 100) === 0)) {
-                    traceLoadPhase('textureQueue:progress', `${info.loaded}/${info.total} failed=${info.failed || 0}`);
-                }
-            }
-        }).then((status) => {
-            traceLoadPhase('textureQueue:done', `${status.loaded}/${status.total} failed=${status.failed}`);
-        }).catch((err) => {
-            console.warn('Deferred texture loading failed:', err);
-        });
+        startTrackedTextureLoading(options.textureLoadingManager, activeLoadStats, 'textureQueue');
     }
 
     // Add to scene
@@ -1970,7 +2387,8 @@ async function buildSceneGraph() {
     const meshLabel = renderMeshes === numMeshes ?
         `${numMeshes} meshes` :
         `${renderMeshes} render meshes (${numMeshes} native)`;
-    updateStatus(`Loaded: ${meshLabel}, ${numMaterials} materials (upAxis: ${sceneState.upAxis})`);
+    updateStatus(`Loaded: ${meshLabel}, ${numMaterials} materials ` +
+        `(upAxis: ${sceneState.upAxis} · ${describeNativeOptimizations()})`);
 }
 
 /**
@@ -2090,6 +2508,10 @@ function createMeshWithMaterialsFallback(geometry, meshData, index) {
 }
 
 async function loadDomeLight() {
+    if (!threeState.pmremGenerator) {
+        traceLoadPhase('loadDomeLight:skipped-no-pmrem');
+        return;
+    }
     try {
         const domeLightData = await loadDomeLightFromUSD(loaderState.nativeLoader);
         if (domeLightData && guiState.envPresetController) {
@@ -2247,19 +2669,111 @@ function resetAnimation() {
     });
 }
 
+function readNumberFromMethod(context, method) {
+    if (typeof method !== 'function') return null;
+    try {
+        const value = method.call(context);
+        return Number.isFinite(value) ? value : null;
+    } catch {
+        return null;
+    }
+}
+
+function readLegacySceneEntityCounts(usd) {
+    if (!usd) return {};
+
+    let unsupportedRenderables = readNumberFromMethod(usd, usd.numUnsupportedRenderables);
+    if (unsupportedRenderables === null && typeof usd.getUnsupportedRenderables === 'function') {
+        try {
+            const list = usd.getUnsupportedRenderables();
+            if (Array.isArray(list)) {
+                unsupportedRenderables = list.length;
+            }
+        } catch {
+            unsupportedRenderables = null;
+        }
+    }
+
+    return {
+        lights: readNumberFromMethod(usd, usd.numLights),
+        cameras: readNumberFromMethod(usd, usd.numCameras),
+        nodes: readNumberFromMethod(usd, usd.numNodes),
+        pointInstancers: readNumberFromMethod(usd, usd.numPointInstancers),
+        pointInstanceDraws: readNumberFromMethod(usd, usd.numPointInstanceDraws),
+        skeletons: readNumberFromMethod(usd, usd.numSkeletons),
+        animations: readNumberFromMethod(usd, usd.numAnimations),
+        unsupportedRenderables: Number.isFinite(unsupportedRenderables) ? unsupportedRenderables : 0
+    };
+}
+
+function setSceneEntityCountsFromScene(counts) {
+    const safe = (value) => Number.isFinite(value) ? value : 0;
+    document.getElementById('light-count').textContent = safe(counts?.lights);
+    document.getElementById('camera-count').textContent = safe(counts?.cameras);
+    document.getElementById('node-count').textContent = safe(counts?.nodes);
+    document.getElementById('point-instancer-count').textContent = safe(counts?.pointInstancers);
+    document.getElementById('point-instance-draw-count').textContent = safe(counts?.pointInstanceDraws);
+    document.getElementById('animation-count').textContent = safe(counts?.animations);
+    document.getElementById('skeleton-count').textContent = safe(counts?.skeletons);
+    document.getElementById('unsupported-renderable-count').textContent = safe(counts?.unsupportedRenderables);
+}
+
 function updateModelInfo() {
     const numMeshes = loaderState.nativeLoader.numMeshes();
     const numMaterials = loaderState.nativeLoader.numMaterials();
     const renderMeshes = countRenderMeshesFromScene();
 
     document.getElementById('model-info').style.display = 'block';
+    document.getElementById('current-file').textContent = loaderState.currentFileName || '-';
     document.getElementById('mesh-count').textContent = renderMeshes && renderMeshes !== numMeshes ?
         `${renderMeshes} (${numMeshes} native)` :
         numMeshes;
     document.getElementById('material-count').textContent = numMaterials;
+
+    const entityCounts = readLegacySceneEntityCounts(loaderState.nativeLoader);
+    setSceneEntityCountsFromScene(entityCounts);
 }
 
 async function convertMaterial(matData, index) {
+    if (matData?.__nextMaterial) {
+        const previousMaterial = sceneState.materials[index] || null;
+        const openPBR = matData.openPBR || {};
+        const baseColorParam = openPBR.base_color || openPBR.base?.base_color;
+        const roughnessParam = openPBR.specular_roughness || openPBR.base_roughness ||
+            openPBR.specular?.specular_roughness || openPBR.base?.base_roughness;
+        const metalnessParam = openPBR.base_metalness || openPBR.base?.base_metalness;
+        const opacityParam = openPBR.geometry_opacity || openPBR.opacity ||
+            openPBR.geometry?.geometry_opacity;
+        const emissionParam = openPBR.emission_color || openPBR.emission?.emission_color;
+        const material = new THREE.MeshPhysicalMaterial({
+            color: extractOpenPBRColor(baseColorParam, [0.8, 0.8, 0.8]),
+            roughness: extractOpenPBRValue(roughnessParam, 0.5),
+            metalness: extractOpenPBRValue(metalnessParam, 0.0),
+            opacity: extractOpenPBRValue(opacityParam, 1.0),
+            transparent: extractOpenPBRValue(opacityParam, 1.0) < 1.0,
+            emissive: extractOpenPBRColor(emissionParam, [0.0, 0.0, 0.0]),
+            envMap: threeState.envMap,
+            envMapIntensity: settings.envMapIntensity
+        });
+        material.name = matData.name || `next_material_${index}`;
+        material.userData.rawData = matData;
+        material.userData.typeInfo = {
+            hasOpenPBR: !!matData.hasOpenPBR,
+            hasUsdPreviewSurface: !!matData.hasUsdPreviewSurface
+        };
+        material.userData.typeString = matData.hasOpenPBR
+            ? (matData.hasUsdPreviewSurface ? 'OpenPBR + PreviewSurface' : 'OpenPBR')
+            : (matData.hasUsdPreviewSurface ? 'PreviewSurface' : 'Unknown');
+        material.userData.nextTexturePaths = { ...(matData.texturePaths || previousMaterial?.userData?.nextTexturePaths || {}) };
+        material.userData.nextTextureMetadata = { ...(matData.textureMetadata || previousMaterial?.userData?.nextTextureMetadata || {}) };
+        for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']) {
+            if (previousMaterial && previousMaterial[key]) {
+                material[key] = previousMaterial[key];
+            }
+        }
+        return material;
+    }
+
     const typeInfo = TinyUSDZLoaderUtils.getMaterialType(matData);
     const typeString = TinyUSDZLoaderUtils.getMaterialTypeString(matData);
 
@@ -2743,6 +3257,18 @@ async function reloadMaterials() {
 }
 
 function clearScene() {
+    if (sceneState.textureLoadingManager) {
+        try {
+            sceneState.textureLoadingManager.abort();
+            if (typeof sceneState.textureLoadingManager.reset === 'function') {
+                sceneState.textureLoadingManager.reset();
+            }
+        } catch (_) {
+            // Ignore stale background texture queue cleanup errors.
+        }
+        sceneState.textureLoadingManager = null;
+    }
+
     // Dispose normal visualization materials
     if (sceneState.showingNormals && sceneState.root) {
         sceneState.root.traverse(obj => {
@@ -2786,6 +3312,7 @@ function clearScene() {
 
     sceneState.materials = [];
     sceneState.materialData = [];
+    sceneState.nextNodeIndexMap = null;
 
     // Dispose texture cache
     sceneState.textureCache.forEach(texture => {
@@ -2833,11 +3360,15 @@ function clearScene() {
 function fitCameraToScene() {
     if (!sceneState.root) return;
 
-    const box = new THREE.Box3().setFromObject(sceneState.root);
+    sceneState.root.updateWorldMatrix(true, false);
+    const cachedBox = sceneState.root.userData?.localBoundsBox;
+    const box = cachedBox?.min && cachedBox?.max ?
+        cachedBox.clone().applyMatrix4(sceneState.root.matrixWorld) :
+        new THREE.Box3().setFromObject(sceneState.root);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
 
-    const boundingSphereRadius = size.length() * 0.5;
+    const boundingSphereRadius = Math.max(size.length() * 0.5, 0.001);
     const fov = threeState.camera.fov * (Math.PI / 180);
     const aspectRatio = threeState.camera.aspect;
 
@@ -2858,10 +3389,18 @@ function fitCameraToScene() {
     threeState.camera.lookAt(center);
     threeState.controls.target.copy(center);
 
-    threeState.camera.near = Math.max(0.1, cameraDistance / 100);
-    threeState.camera.far = Math.max(1000, cameraDistance * 10);
+    const minDistance = Math.max(boundingSphereRadius * 0.0005, 0.001);
+    const maxDistance = Math.max(cameraDistance * 50, boundingSphereRadius * 100, 1000);
+
+    threeState.camera.near = Math.max(boundingSphereRadius / 100000, 0.001);
+    threeState.camera.far = Math.max(maxDistance * 2, cameraDistance * 10, 1000);
     threeState.camera.updateProjectionMatrix();
 
+    threeState.controls.minDistance = minDistance;
+    threeState.controls.maxDistance = maxDistance;
+    threeState.controls.panSpeed = Math.max(boundingSphereRadius / 200, 1.0);
+    threeState.controls.keyPanSpeed = Math.max(boundingSphereRadius / 50, 20.0);
+    threeState.controls.zoomSpeed = Math.max(0.8, Math.min(1.5, boundingSphereRadius / 500));
     threeState.controls.update();
 }
 
@@ -3075,12 +3614,20 @@ function addSpecularWeightControl(folder, mat) {
     let specularWeightValue;
     const rawData = mat.userData?.rawData;
 
-    if (rawData?.specular_weight !== undefined) {
-        specularWeightValue = rawData.specular_weight;
-    } else if (rawData?.openPBR?.specular_weight !== undefined) {
-        specularWeightValue = rawData.openPBR.specular_weight;
-    } else if (rawData?.openPBRShader?.specular_weight !== undefined) {
-        specularWeightValue = rawData.openPBRShader.specular_weight;
+    // Next-backend OpenPBR params are objects ({value, texture, ...}) or
+    // vectors; unwrap to the scalar lil-gui needs.
+    const unwrapScalar = (v) => {
+        if (v && typeof v === 'object' && !Array.isArray(v)) v = v.value;
+        if (Array.isArray(v)) v = v[0];
+        return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    };
+
+    if (unwrapScalar(rawData?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.specular_weight);
+    } else if (unwrapScalar(rawData?.openPBR?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.openPBR.specular_weight);
+    } else if (unwrapScalar(rawData?.openPBRShader?.specular_weight) !== undefined) {
+        specularWeightValue = unwrapScalar(rawData.openPBRShader.specular_weight);
     }
 
     // Default to 1.0 if OpenPBR material but no specular_weight specified
@@ -3807,6 +4354,7 @@ function countMeshes() {
 function onWindowResize() {
     threeState.camera.aspect = window.innerWidth / window.innerHeight;
     threeState.camera.updateProjectionMatrix();
+    threeState.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO));
     threeState.renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
@@ -3845,6 +4393,32 @@ function onFileDrop(event) {
     }
 }
 
+function setGuiHidden(hidden) {
+    guiState.hidden = hidden;
+    document.body.classList.toggle('gui-hidden', hidden);
+    const toggle = document.getElementById('gui-visibility-toggle');
+    if (toggle) {
+        toggle.title = hidden ? 'Show UI (H)' : 'Hide UI (H)';
+        toggle.setAttribute('aria-label', hidden ? 'Show UI' : 'Hide UI');
+    }
+}
+
+function isEditableElement(element) {
+    if (!element) return false;
+    const tag = element.tagName;
+    return element.isContentEditable ||
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT';
+}
+
+function onKeyDown(event) {
+    if (event.key !== 'h' && event.key !== 'H') return;
+    if (event.ctrlKey || event.metaKey || event.altKey || isEditableElement(event.target)) return;
+    event.preventDefault();
+    setGuiHidden(!guiState.hidden);
+}
+
 // ============================================================================
 // UI Helpers
 // ============================================================================
@@ -3864,6 +4438,17 @@ window.loadFile = () => document.getElementById('file-input').click();
 
 function animate() {
     requestAnimationFrame(animate);
+    frameState.frameCount++;
+    const now = performance.now();
+    if (now - frameState.lastFpsUpdateMs >= 500) {
+        const fps = frameState.frameCount * 1000 / (now - frameState.lastFpsUpdateMs);
+        const fpsEl = document.getElementById('fps-value');
+        if (fpsEl) {
+            fpsEl.textContent = fps.toFixed(1);
+        }
+        frameState.frameCount = 0;
+        frameState.lastFpsUpdateMs = now;
+    }
     threeState.controls.update();
 
     // Animation disabled for now - may revisit later

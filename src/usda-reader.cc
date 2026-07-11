@@ -1015,6 +1015,10 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<GeomCylinder>();
   RegisterReconstructCallback<GeomCapsule>();
   RegisterReconstructCallback<GeomMesh>();
+  RegisterReconstructCallback<Volume>();
+  RegisterReconstructCallback<FieldAsset>();
+  RegisterReconstructCallback<OpenVDBAsset>();
+  RegisterReconstructCallback<Field3DAsset>();
   RegisterReconstructCallback<GeomSubset>();
   RegisterReconstructCallback<GeomBasisCurves>();
   RegisterReconstructCallback<GeomNurbsCurves>();

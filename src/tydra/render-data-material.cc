@@ -2,22 +2,6 @@
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
-// TODO:
-//   - [ ] Subdivision surface to polygon mesh conversion.
-//     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
-//     function of subd surface)
-//   - [ ] Support Inbetween BlendShape
-//   - [ ] Support material binding collection(Collection API)
-//   - [ ] Support multiple skel animation
-//   https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
-//   - [ ] Adjust normal vector computation with handness?
-//   - [ ] Node xform animation
-//   - [ ] Better build of index buffer
-//     - [ ] Preserve the order of 'points' variable(mesh.points, Skin
-//     indices/weights, BlendShape points, ...) as much as possible.
-//     - Implement spatial hash
-//
-//
 // Material and texture conversion routines split from render-data.cc
 //
 #include <chrono>
@@ -50,7 +34,6 @@
 #include "shape-to-mesh.hh"
 #include "materialx-to-json.hh"
 #include "mmap-array-ref.hh"
-#include "materialx-to-json.hh"
 #include "security-policy.hh"
 
 //
@@ -1439,6 +1422,51 @@ void RenderSceneConverter::RememberMaterialSourceSignature(
   _materialSourceSignatureCache.emplace(signature, material_id);
 }
 
+bool RenderSceneConverter::GetOrCreateDefaultMaterial(
+    const RenderSceneConverterEnv &env, int *material_id) {
+  if (!material_id) {
+    PUSH_ERROR_AND_RETURN("material_id argument is nullptr.");
+  }
+  *material_id = -1;
+
+  if (!env.material_config.assign_default_material) {
+    return true;
+  }
+
+  constexpr const char *kDefaultMaterialPath =
+      "/__tinyusdz_default_material__";
+  if (auto it = materialMap.find(kDefaultMaterialPath);
+      it != materialMap.s_end()) {
+    *material_id = int(it->second);
+    return true;
+  }
+
+  RenderMaterial material;
+  material.name = env.material_config.default_material_name.empty()
+                      ? "defaultMaterial"
+                      : env.material_config.default_material_name;
+  material.abs_path = kDefaultMaterialPath;
+  material.display_name = material.name;
+
+  PreviewSurfaceShader shader;
+  shader.diffuseColor.value = env.material_config.default_material_diffuse_color;
+  shader.roughness.value = env.material_config.default_material_roughness;
+  shader.metallic.value = env.material_config.default_material_metallic;
+  shader.opacity.value = env.material_config.default_material_opacity;
+  material.surfaceShader = shader;
+  material.computeMaterialTag();
+
+  const int id = int(materials.size());
+  materials.emplace_back(std::move(material));
+  materialMap.add(kDefaultMaterialPath, uint64_t(id));
+  *material_id = id;
+
+  if (!EmitMaterial(size_t(id), kDefaultMaterialPath)) {
+    PUSH_ERROR_AND_RETURN("Conversion cancelled by user.");
+  }
+  return true;
+}
+
 // Convert UsdUVTexture shader node.
 // @return true upon conversion success(textures.back() contains the converted
 // UVTexture)
@@ -1792,7 +1820,6 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
       // Linearlization and widen texel bit depth if required.
       if (env.material_config.linearize_color_space) {
-        // TODO: Support ACEScg and Lin_DisplayP3
         DCOUT("linearlize colorspace.");
         size_t width = size_t(texImage.width);
         size_t height = size_t(texImage.height);
@@ -1800,8 +1827,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
         if (channels > 4) {
           PUSH_ERROR_AND_RETURN(
-              fmt::format("TODO: Multiband color channels(5 or more) are not "
-                          "supported(yet)."));
+              fmt::format("Multiband color channels(5 or more) are not "
+                          "supported for texture color conversion."));
         }
 
         // Helper: convert u8 image data to f32 buffer
@@ -2014,9 +2041,22 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                                    to_string(texImage.usdColorSpace)));
           }
 
+        } else if (texImage.usdColorSpace == tydra::ColorSpace::Raw) {
+          imageBuffer = std::move(assetImageBuffer);
+          texImage.colorSpace = tydra::ColorSpace::Raw;
+
+        } else if ((texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB ||
+                    texImage.usdColorSpace == tydra::ColorSpace::Lin_Rec709) &&
+                   env.material_config.preserve_texel_bitdepth) {
+          imageBuffer = std::move(assetImageBuffer);
+          texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
         } else {
-          PUSH_ERROR(fmt::format("Unsupported asset texture texel format: {}",
-                                 to_string(assetImageBuffer.componentType)));
+          PUSH_ERROR(fmt::format(
+              "Unsupported asset texture texel format {} for color conversion "
+              "from {}",
+              to_string(assetImageBuffer.componentType),
+              to_string(texImage.usdColorSpace)));
         }
 
       } else {
@@ -2068,9 +2108,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           imageBuffer = std::move(assetImageBuffer);
 
         } else {
-          PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
-                                 to_string(assetImageBuffer.componentType)));
+          imageBuffer = std::move(assetImageBuffer);
         }
+        texImage.colorSpace = texImage.usdColorSpace;
       }
 
       // Assign buffer id
@@ -3323,28 +3363,71 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     }
   }
   if (has_surface_connection) {
-    const Prim *shaderPrim{nullptr};
-    if (!env.stage.find_prim_at_path(
-            Path(surfacePath.prim_part(), /* prop part */ ""), shaderPrim,
-            &err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "{}'s outputs:surface isn't connected to exising Prim path.\n",
+    // Resolve the authored `outputs:surface` target to a Shader Prim.
+    const Shader *shader{nullptr};
+    {
+      const Prim *p{nullptr};
+      if (env.stage.find_prim_at_path(
+              Path(surfacePath.prim_part(), /* prop part */ ""), p, &err) &&
+          p) {
+        shader = p->as<Shader>();
+      }
+    }
+
+    auto is_supported_surface = [](const Shader *s) -> bool {
+      return s && (s->value.as<UsdPreviewSurface>() ||
+                   s->value.as<OpenPBRSurface>() ||
+                   s->value.as<MtlxOpenPBRSurface>() ||
+                   s->value.as<MtlxAutodeskStandardSurface>());
+    };
+
+    // Fallback for exporters (notably Unreal's USD export) that author
+    // `outputs:surface` as a connection to a reference-SOURCE prim path
+    // (e.g. `/MI_Foo/SurfaceShader`) which is not a standalone prim after
+    // composition, and/or to a custom shader whose info:id we don't
+    // recognize. The real UsdPreviewSurface is still composed in as a child
+    // of the Material, so recover by using the first supported surface-shader
+    // child under the Material prim instead of failing the whole material
+    // (which otherwise cascades to fail the ENTIRE scene load).
+    if (!is_supported_surface(shader)) {
+      const Prim *matPrim{nullptr};
+      std::string ferr;
+      if (env.stage.find_prim_at_path(Path(mat_abs_path.prim_part(), ""),
+                                      matPrim, &ferr) &&
+          matPrim) {
+        for (const Prim &child : matPrim->children()) {
+          const Shader *cs = child.as<Shader>();
+          if (is_supported_surface(cs)) {
+            shader = cs;
+            surfacePath = Path(mat_abs_path.prim_part() + std::string("/") +
+                                   child.element_name(),
+                               "outputs:surface");
+            PushWarn(fmt::format(
+                "{}'s outputs:surface did not resolve to a supported surface "
+                "shader; falling back to child shader `{}`.",
+                mat_abs_path.full_path_name(), child.element_name()));
+            break;
+          }
+        }
+      }
+    }
+
+    if (!is_supported_surface(shader)) {
+      // No usable surface shader. Match the unauthored-`outputs:surface`
+      // policy: fail only under strict checking, otherwise degrade to an
+      // unshaded material rather than aborting the whole scene load.
+      if (env.material_config.strict_material_check) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "{}'s outputs:surface isn't connected to a resolvable, supported "
+            "Shader Prim.\n",
+            mat_abs_path.full_path_name()));
+      }
+      PushWarn(fmt::format(
+          "{}'s outputs:surface isn't resolvable to a supported surface "
+          "shader; producing an unshaded material. (set "
+          "material_config.strict_material_check=true to make this an error.)",
           mat_abs_path.full_path_name()));
-    }
-
-    if (!shaderPrim) {
-      // this should not happen though.
-      PUSH_ERROR_AND_RETURN("[InternalError] invalid Shader Prim.\n");
-    }
-
-    const Shader *shader = shaderPrim->as<Shader>();
-
-    if (!shader) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("{}'s outputs:surface must be connected to Shader Prim, "
-                      "but connected to `{}` Prim.\n",
-                      shaderPrim->prim_type_name()));
-    }
+    } else {
 
     // Check for UsdPreviewSurface, OpenPBRSurface, MtlxOpenPBRSurface, or MtlxAutodeskStandardSurface
     const UsdPreviewSurface *psurface = shader->value.as<UsdPreviewSurface>();
@@ -3615,6 +3698,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
         DCOUT("No MaterialX OpenPBR shader found for material with MaterialXConfigAPI");
       }
     }
+    }  // close: supported surface-shader dispatch (else of the fallback guard)
   }
 
   //
@@ -3697,14 +3781,24 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       rmaterial_id = int64_t(mat_id);
 
     } else {
+      RenderSceneConverter *conv = visitorEnv->converter;
+
+      // Record the current sizes so we can stream the buffers/images/textures
+      // this material conversion appends (no-op without a streaming sink).
+      const size_t buf_begin = conv->buffers.size();
+      const size_t img_begin = conv->images.size();
+      const size_t tex_begin = conv->textures.size();
+      const size_t udim_begin = conv->udim_textures.size();
+
       std::string source_signature;
       if (visitorEnv->env->scene_config.dedup_materials_by_texture_identity &&
-          visitorEnv->converter->BuildMaterialSourceSignature(
-              *visitorEnv->env, bound_material_path, *bound_material,
-              &source_signature)) {
+          conv->BuildMaterialSourceSignature(*visitorEnv->env,
+                                             bound_material_path,
+                                             *bound_material,
+                                             &source_signature)) {
         int64_t cached_material_id = -1;
-        if (visitorEnv->converter->FindMaterialSourceSignature(
-                source_signature, &cached_material_id)) {
+        if (conv->FindMaterialSourceSignature(source_signature,
+                                              &cached_material_id)) {
           if (cached_material_id < 0 ||
               size_t(cached_material_id) >= rmaterials.size()) {
             if (err) {
@@ -3722,14 +3816,30 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       RenderMaterial rmat;
       const auto material_start = TydraPerfClock::now();
-      if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
-                                                  bound_material_path,
-                                                  *bound_material, &rmat)) {
-        if (err) {
-          (*err) += fmt::format("Material conversion failed: {}",
-                                bound_material_path);
+      if (!conv->ConvertMaterial(*visitorEnv->env, bound_material_path,
+                                 *bound_material, &rmat)) {
+        // A material whose shader graph can't be fully converted (e.g. Unreal
+        // USD exports whose shader connections reference an un-composed
+        // reference-source path absent from the flattened stage) should not
+        // abort the ENTIRE scene load. Match the `strict_material_check`
+        // policy used for unresolved surfaces: fail only when strict,
+        // otherwise warn and substitute a default (unshaded) material so the
+        // rest of the scene still loads.
+        if (visitorEnv->env->material_config.strict_material_check) {
+          if (err) {
+            (*err) += fmt::format("Material conversion failed: {}",
+                                  bound_material_path);
+          }
+          return false;
         }
-        return false;
+        conv->PushWarn(fmt::format(
+            "Material conversion failed for `{}`; substituting a default "
+            "unshaded material. (set material_config.strict_material_check="
+            "true to make this fatal.)",
+            bound_material_path.full_path_name()));
+        rmat = RenderMaterial();
+        rmat.abs_path = bound_material_path.prim_part();
+        rmat.name = bound_material_path.element_name();
       }
       visitorEnv->convert_material_ns += ElapsedNs(material_start);
       visitorEnv->material_cache_misses++;
@@ -3758,6 +3868,41 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
                                      << " ( " << rmat.name << " ) ");
 
       rmaterials.push_back(rmat);
+
+      // Stream the newly produced GPU dependencies then the material itself, in
+      // dependency order (buffers -> images -> textures -> udim -> material), so
+      // a consumer's material references already-delivered textures/images.
+      if (conv->HasStreamingSink()) {
+        for (size_t i = buf_begin; i < conv->buffers.size(); i++) {
+          if (!conv->EmitBuffer(i)) {
+            if (err) (*err) += "Conversion cancelled by user.\n";
+            return false;
+          }
+        }
+        for (size_t i = img_begin; i < conv->images.size(); i++) {
+          if (!conv->EmitImage(i)) {
+            if (err) (*err) += "Conversion cancelled by user.\n";
+            return false;
+          }
+        }
+        for (size_t i = tex_begin; i < conv->textures.size(); i++) {
+          if (!conv->EmitTexture(i, conv->textures[i].abs_path)) {
+            if (err) (*err) += "Conversion cancelled by user.\n";
+            return false;
+          }
+        }
+        for (size_t i = udim_begin; i < conv->udim_textures.size(); i++) {
+          if (!conv->EmitUdimTexture(i)) {
+            if (err) (*err) += "Conversion cancelled by user.\n";
+            return false;
+          }
+        }
+        if (!conv->EmitMaterial(size_t(rmaterial_id),
+                                bound_material_path.full_path_name())) {
+          if (err) (*err) += "Conversion cancelled by user.\n";
+          return false;
+        }
+      }
       return true;
     }
 
@@ -3906,8 +4051,6 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     MaterialPath material_path;
     material_path.default_texcoords_primvar_name =
         visitorEnv->env->mesh_config.default_texcoords_primvar_name;
-    // TODO: Implement feature to assign default material
-    // id(MaterialPath::default_material_id) when no bound material found.
 
     {
       const std::string mesh_path_str = abs_path.full_path_name();
@@ -3977,6 +4120,17 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
       }
 
+      if (material_path.material_path.empty()) {
+        if (!visitorEnv->converter->GetOrCreateDefaultMaterial(
+                *visitorEnv->env, &material_path.default_material_id)) {
+          return false;
+        }
+      }
+      if (material_path.backface_material_path.empty()) {
+        material_path.default_backface_material_id =
+            material_path.default_material_id;
+      }
+
       // BlendShapes
       std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
       {
@@ -4034,6 +4188,16 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         return false;
       }
       visitorEnv->progress_ns += ElapsedNs(progress_start);
+
+      // Stream the just-converted mesh (LOCAL space; world placement arrives in
+      // the Hierarchy phase). No-op without a streaming sink.
+      if (!visitorEnv->converter->EmitMesh(size_t(mesh_id),
+                                           abs_path.full_path_name())) {
+        if (err) {
+          (*err) += "Conversion cancelled by user.\n";
+        }
+        return false;
+      }
       DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
             << ": " << abs_path.full_path_name());
     }
@@ -4110,6 +4274,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     if (!visitorEnv->converter->ReportMeshProgress(
             visitorEnv->meshes_processed, visitorEnv->meshes_total,
             abs_path.full_path_name(), msg)) {
+      if (err) {
+        (*err) += "Conversion cancelled by user.\n";
+      }
+      return false;
+    }
+    if (!visitorEnv->converter->EmitMesh(size_t(mesh_id),
+                                         abs_path.full_path_name())) {
       if (err) {
         (*err) += "Conversion cancelled by user.\n";
       }
@@ -4195,8 +4366,111 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       }
       return false;
     }
+    if (!visitorEnv->converter->EmitMesh(size_t(mesh_id),
+                                         abs_path.full_path_name())) {
+      if (err) {
+        (*err) += "Conversion cancelled by user.\n";
+      }
+      return false;
+    }
     DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
           << " (sphere): " << abs_path.full_path_name());
+  }
+
+  // Helper lambda for parametric primitive conversion (Cylinder, Cone, Capsule, Plane)
+  auto convertParamPrim = [&](auto *pprim, const char *primTypeName, auto convertFunc) -> bool {
+    DCOUT(primTypeName << ": " << abs_path);
+
+    MaterialPath material_path;
+    std::map<std::string, MaterialPath> subset_material_path_map;
+
+    {
+      const Material *bound_material{nullptr};
+      Path bound_material_path;
+      bool ret{false};
+      if (!ResolveBoundMaterial(abs_path, "", &bound_material_path, &bound_material, &ret)) {
+        return false;
+      }
+      if (ret && bound_material) {
+        int64_t rmaterial_id = -1;
+        if (!ConvertBoundMaterial(bound_material_path, bound_material, rmaterial_id)) {
+          if (err) {
+            (*err) += "Convert boundMaterial failed: " + bound_material_path.full_path_name();
+          }
+          return false;
+        }
+        material_path.material_path = bound_material_path.full_path_name();
+      }
+    }
+
+    RenderMesh rmesh;
+    std::vector<const tinyusdz::GeomSubset *> material_subsets;
+    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;
+
+    if (!(visitorEnv->converter->*convertFunc)(
+            *visitorEnv->env, abs_path, *pprim, material_path,
+            subset_material_path_map, visitorEnv->converter->materialMap,
+            material_subsets, blendshapes, &rmesh)) {
+      if (err) {
+        (*err) += fmt::format("{} conversion failed: {}", primTypeName, abs_path.full_path_name());
+        (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
+      }
+      return false;
+    }
+
+    uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
+    if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+      if (err) { (*err) += "Mesh index too large.\n"; }
+      return false;
+    }
+    visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
+    visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
+
+    visitorEnv->meshes_processed++;
+    std::string msg = std::string("Converting ") + primTypeName + " " +
+        std::to_string(visitorEnv->meshes_processed) + "/" +
+        std::to_string(visitorEnv->meshes_total);
+    if (!visitorEnv->converter->ReportMeshProgress(
+            visitorEnv->meshes_processed, visitorEnv->meshes_total,
+            abs_path.full_path_name(), msg)) {
+      if (err) { (*err) += "Conversion cancelled by user.\n"; }
+      return false;
+    }
+    if (!visitorEnv->converter->EmitMesh(size_t(mesh_id), abs_path.full_path_name())) {
+      if (err) { (*err) += "Conversion cancelled by user.\n"; }
+      return false;
+    }
+    DCOUT("[Tydra] Mesh " << visitorEnv->meshes_processed << "/" << visitorEnv->meshes_total
+          << " (" << primTypeName << "): " << abs_path.full_path_name());
+    return true;
+  };
+
+  // Handle GeomCylinder primitives
+  if (const tinyusdz::GeomCylinder *pcyl = prim.as<tinyusdz::GeomCylinder>()) {
+    if (!convertParamPrim(pcyl, "cylinder", &RenderSceneConverter::ConvertCylinder)) {
+      return false;
+    }
+  }
+
+  // Handle GeomCone primitives
+  if (const tinyusdz::GeomCone *pcone = prim.as<tinyusdz::GeomCone>()) {
+    if (!convertParamPrim(pcone, "cone", &RenderSceneConverter::ConvertCone)) {
+      return false;
+    }
+  }
+
+  // Handle GeomCapsule primitives
+  if (const tinyusdz::GeomCapsule *pcap = prim.as<tinyusdz::GeomCapsule>()) {
+    if (!convertParamPrim(pcap, "capsule", &RenderSceneConverter::ConvertCapsule)) {
+      return false;
+    }
+  }
+
+  // Handle GeomPlane primitives
+  if (const tinyusdz::GeomPlane *pplane = prim.as<tinyusdz::GeomPlane>()) {
+    if (!convertParamPrim(pplane, "plane", &RenderSceneConverter::ConvertPlane)) {
+      return false;
+    }
   }
 
   return true;  // continue traversal

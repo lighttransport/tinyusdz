@@ -79,6 +79,18 @@ function printSkeletonInfo(usd, detailed = false) {
             }
             jointInfo.get(jointId).channels.add(channel.path);
           }
+          if (channel.skeleton_id === skelId && channel.isSkeletal && Array.isArray(channel.jointRemap)) {
+            for (const jointId of channel.jointRemap) {
+              if (!Number.isFinite(jointId) || jointId < 0) continue;
+              if (!jointInfo.has(jointId)) {
+                jointInfo.set(jointId, {
+                  id: jointId,
+                  channels: new Set()
+                });
+              }
+              jointInfo.get(jointId).channels.add(channel.path);
+            }
+          }
         }
       } catch (e) {
         // Ignore errors
@@ -260,15 +272,25 @@ function printSkinningInfo(usd, detailed = false, boneReductionInfo = null, test
 
         // Weight statistics
         if (detailed && mesh.jointWeights.length > 0) {
-          const weights = Array.from(mesh.jointWeights);
-          const nonZeroWeights = weights.filter(w => w > 0.0001);
-          const sumWeights = nonZeroWeights.reduce((sum, w) => sum + w, 0);
-          const avgWeight = nonZeroWeights.length > 0 ? sumWeights / nonZeroWeights.length : 0;
-          const maxWeight = Math.max(...weights);
-          const minNonZeroWeight = Math.min(...nonZeroWeights);
+          let nonZeroWeightCount = 0;
+          let sumWeights = 0;
+          let maxWeight = -Infinity;
+          let minNonZeroWeight = Infinity;
+          for (let wi = 0; wi < mesh.jointWeights.length; ++wi) {
+            const w = mesh.jointWeights[wi];
+            if (w > maxWeight) maxWeight = w;
+            if (w > 0.0001) {
+              nonZeroWeightCount++;
+              sumWeights += w;
+              if (w < minNonZeroWeight) minNonZeroWeight = w;
+            }
+          }
+          const avgWeight = nonZeroWeightCount > 0 ? sumWeights / nonZeroWeightCount : 0;
+          if (maxWeight === -Infinity) maxWeight = 0;
+          if (minNonZeroWeight === Infinity) minNonZeroWeight = 0;
 
           console.log(`\n  Weight Statistics:`);
-          console.log(`    Non-zero Weights: ${nonZeroWeights.length} / ${weights.length}`);
+          console.log(`    Non-zero Weights: ${nonZeroWeightCount} / ${mesh.jointWeights.length}`);
           console.log(`    Average Weight: ${avgWeight.toFixed(4)}`);
           console.log(`    Max Weight: ${maxWeight.toFixed(4)}`);
           console.log(`    Min Non-zero Weight: ${minNonZeroWeight.toFixed(4)}`);
@@ -378,13 +400,19 @@ function printSkelAnimation(usd, detailed = false, dumpKeyframes = false) {
 
           skelChannels.forEach((channel, idx) => {
             const skelId = channel.skeleton_id !== undefined ? channel.skeleton_id : 0;
-            const jointId = channel.joint_id !== undefined ? channel.joint_id : -1;
-            const key = `skel${skelId}_joint${jointId}`;
+            const jointIds = channel.joint_id !== undefined && channel.joint_id >= 0
+              ? [channel.joint_id]
+              : (Array.isArray(channel.jointRemap)
+                ? channel.jointRemap.filter(jointId => Number.isFinite(jointId) && jointId >= 0)
+                : [-1]);
 
-            if (!channelsByJoint.has(key)) {
-              channelsByJoint.set(key, []);
+            for (const jointId of jointIds) {
+              const key = `skel${skelId}_joint${jointId}`;
+              if (!channelsByJoint.has(key)) {
+                channelsByJoint.set(key, []);
+              }
+              channelsByJoint.get(key).push({ ...channel, joint_id: jointId, originalIndex: idx });
             }
-            channelsByJoint.get(key).push({ ...channel, originalIndex: idx });
           });
 
           // Count unique joints

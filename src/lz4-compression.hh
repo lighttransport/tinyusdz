@@ -5,6 +5,8 @@
 
 namespace tinyusdz {
 
+class StreamReader;
+
 // Based on USD' TfFastCompression
 
 class LZ4Compression
@@ -35,6 +37,14 @@ public:
     static size_t
     DecompressFromBuffer(char const *compressed, char *output,
                          size_t compressedSize, size_t maxOutputSize, std::string *err);
+
+    /// Decompress from the current position of a memory-backed StreamReader
+    /// and advance it by \p compressedSize bytes. This avoids staging the
+    /// compressed input in a temporary vector.
+    static size_t
+    DecompressFromStreamReader(const StreamReader &stream, char *output,
+                               size_t compressedSize, size_t maxOutputSize,
+                               std::string *err);
 };
 
 

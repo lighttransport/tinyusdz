@@ -5,9 +5,18 @@ import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import {
 	createConfiguredTinyUSDZLoader,
-	loadUSDSceneFromURL,
-	parseUSDSceneFromArrayBuffer
+	getAssetUriFromURL,
+	getBackendFromURL,
+	LOADER_BACKEND_CHOICES,
+	makeStaticNextParseOptions,
+	parseUSDSceneFromArrayBuffer,
+	setBackendAndReload
 } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+	buildNextThreeNode,
+	isNextScene,
+	readNextSceneMeta
+} from 'tinyusdz/NextRenderSceneUtils.js';
 import { buildJointHierarchyHTML } from 'tinyusdz/JointHierarchyUtils.js';
 import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
 import { getUSDSceneMetadata } from 'tinyusdz/USDSceneMetadata.js';
@@ -40,6 +49,9 @@ import {
 // ===========================================
 // Configuration
 // ===========================================
+
+const DEFAULT_USD_MODEL_URI = './assets/skintest-animated.usda';
+const LOADER_BACKEND = getBackendFromURL();
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -130,7 +142,7 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
 
 // Orbit controls
@@ -234,10 +246,50 @@ let timelineBaseEnd = 30;
 let selectAnimationController = null;
 let _lastMixerUpdateTime = 0; // For mixer update throttling
 let _mixerAccumDelta = 0; // Accumulated delta for throttled updates
+let _enableBoneInterpolation = true;
+let _totalLoadedBones = 0;
+let _shadowsAutoDisabled = false;
+const BONE_INTERPOLATION_MAX_BONES = 512;
+const SHADOWS_MAX_BONES = 512;
+
+function currentMixerUpdateInterval() {
+	if (_totalLoadedBones > BONE_INTERPOLATION_MAX_BONES) {
+		const authoredFps = Number.isFinite(currentTimeCodesPerSecond)
+			? currentTimeCodesPerSecond
+			: 24;
+		return 1 / Math.max(1, Math.min(24, authoredFps));
+	}
+	return 1 / 30;
+}
+
+function setMeshShadowFlags(mesh, visible = mesh.visible) {
+	const shadowsEnabled = animationParams?.enableShadows === true;
+	mesh.castShadow = shadowsEnabled && visible;
+	mesh.receiveShadow = shadowsEnabled;
+}
+
+function applyShadowSettings() {
+	const enabled = animationParams?.enableShadows === true;
+	renderer.shadowMap.enabled = enabled;
+	directionalLight.castShadow = enabled;
+	ground.receiveShadow = enabled;
+	for (const mesh of allSceneMeshes) {
+		const visible = meshVisibility.get(mesh) !== false && animationParams.showMesh;
+		setMeshShadowFlags(mesh, visible);
+		if (mesh.material) {
+			if (Array.isArray(mesh.material)) {
+				mesh.material.forEach((mat) => { if (mat) mat.needsUpdate = true; });
+			} else {
+				mesh.material.needsUpdate = true;
+			}
+		}
+	}
+}
 
 
 // Store the current file's timeCodesPerSecond (default 24)
 let currentTimeCodesPerSecond = 24;
+let currentMetersPerUnit = 1.0;
 
 // Debug visualization
 let jointSpheres = [];
@@ -253,6 +305,9 @@ let allSceneMeshes = []; // Track all meshes in characterGroup
 let meshVisibility = new Map(); // Per-mesh visibility state: Map<THREE.Mesh, boolean>
 let selectedMeshObj = null; // Currently selected mesh
 let bboxHelper = null; // Bounding box visualization helper
+let currentUSDSource = null;
+let currentVariantSelection = null;
+let availableVariantSelections = [];
 
 // =====================================================================
 // Sub-frame Bone Interpolation
@@ -260,8 +315,8 @@ let bboxHelper = null; // Bounding box visualization helper
 // mixer.update() at 60fps causes ~67MB/s of transient allocations from
 // Three.js interpolants, ballooning the JS heap to ~2.5GB before GC.
 // Keeping the mixer at 30fps halves the allocation rate, but makes
-// animation visibly choppy (every other rendered frame shows the same
-// skeletal pose).
+	// animation visibly choppy (every other rendered frame shows the same
+	// skeletal pose).
 //
 // Solution: run the mixer at 30fps and on intermediate frames lerp/slerp
 // bone local transforms between the two most recent mixer snapshots.
@@ -504,6 +559,19 @@ function applySkeletonHelperOptions() {
 			});
 		}
 		helper.visible = animationParams.showSkeleton;
+	}
+}
+
+function applyMetersPerUnitScale({ refit = false } = {}) {
+	const scale = animationParams?.ignoreMetersPerUnit ? 1.0 : currentMetersPerUnit;
+	const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1.0;
+	characterGroup.scale.setScalar(safeScale);
+	characterGroup.updateMatrixWorld(true);
+	usdSceneRoot.updateMatrixWorld(true);
+	console.log(`metersPerUnit scale: ${safeScale} (${animationParams?.ignoreMetersPerUnit ? 'ignored' : 'applied'})`);
+
+	if (refit) {
+		fitCameraToScene();
 	}
 }
 
@@ -873,7 +941,7 @@ async function createConfiguredLoader() {
 		? animationParams.targetBoneCount
 		: 4;
 
-	return createConfiguredTinyUSDZLoader({
+	const loader = await createConfiguredTinyUSDZLoader({
 		initOptions: { useZstdCompressedWasm: false, useMemory64: false },
 		skinningOptions: {
 			enableBoneReduction,
@@ -882,6 +950,228 @@ async function createConfiguredLoader() {
 			logger: console
 		}
 	});
+	window._tinyusdz_module = loader.native_;
+	window._tinyusdz_wasm_memory = {
+		get buffer() {
+			return loader.native_?.HEAPU8?.buffer ?? null;
+		}
+	};
+	return loader;
+}
+
+function getStartupUSDModelURI() {
+	return getAssetUriFromURL(undefined, ['usd']) || DEFAULT_USD_MODEL_URI;
+}
+
+function getDisplayNameFromURI(uri) {
+	try {
+		const parsed = new URL(uri, window.location.href);
+		const pathname = parsed.pathname || uri;
+		const basename = pathname.split('/').filter(Boolean).pop();
+		return basename || uri;
+	} catch {
+		return uri.split('/').pop() || uri;
+	}
+}
+
+function normalizeVariantInfos(variantInfos) {
+	const selections = [];
+	if (!Array.isArray(variantInfos)) return selections;
+
+	for (const primInfo of variantInfos) {
+		const primPath = primInfo?.primPath;
+		const variantSets = Array.isArray(primInfo?.variantSets) ? primInfo.variantSets : [];
+		if (!primPath) continue;
+
+		for (const variantSet of variantSets) {
+			const variantSetName = variantSet?.name;
+			const options = Array.isArray(variantSet?.options) ? variantSet.options : [];
+			if (!variantSetName || options.length === 0) continue;
+
+			for (const variantName of options) {
+				selections.push({
+					primPath,
+					variantSet: variantSetName,
+					variantName,
+					authoredSelection: variantSet.selection || ''
+				});
+			}
+		}
+	}
+
+	return selections;
+}
+
+function updateVariantControls(variantInfos, activeSelection = null) {
+	availableVariantSelections = normalizeVariantInfos(variantInfos);
+
+	const controlsEl = document.getElementById('variant-controls');
+	const selectEl = document.getElementById('variantSelect');
+	const statusEl = document.getElementById('variantStatus');
+	if (!controlsEl || !selectEl || !statusEl) return;
+
+	selectEl.innerHTML = '';
+	if (availableVariantSelections.length === 0) {
+		controlsEl.style.display = 'none';
+		statusEl.textContent = '';
+		return;
+	}
+
+	controlsEl.style.display = 'flex';
+	for (const selection of availableVariantSelections) {
+		const option = document.createElement('option');
+		option.value = JSON.stringify({
+			primPath: selection.primPath,
+			variantSet: selection.variantSet,
+			variantName: selection.variantName
+		});
+		const defaultSuffix = selection.authoredSelection === selection.variantName ? ' (authored)' : '';
+		option.textContent = `${selection.primPath} ${selection.variantSet}=${selection.variantName}${defaultSuffix}`;
+		selectEl.appendChild(option);
+	}
+
+	const selectionToUse = activeSelection || currentVariantSelection;
+	if (selectionToUse) {
+		const encoded = JSON.stringify(selectionToUse);
+		if ([...selectEl.options].some(option => option.value === encoded)) {
+			selectEl.value = encoded;
+		}
+	} else {
+		const authored = availableVariantSelections.find(
+			selection => selection.authoredSelection === selection.variantName
+		);
+		if (authored) {
+			selectEl.value = JSON.stringify({
+				primPath: authored.primPath,
+				variantSet: authored.variantSet,
+				variantName: authored.variantName
+			});
+		}
+	}
+
+	statusEl.textContent = `${availableVariantSelections.length} variant option${availableVariantSelections.length === 1 ? '' : 's'}`;
+}
+
+async function parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, variantSelection = null) {
+	let variantInfos = [];
+	const usdScene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, {
+		...makeStaticNextParseOptions({ backend: LOADER_BACKEND }),
+		variantSelection,
+		onVariants: (infos) => {
+			variantInfos = infos;
+		}
+	});
+	return { usdScene, variantInfos };
+}
+
+function formatDurationMs(ms) {
+	if (!Number.isFinite(ms)) return 'n/a';
+	if (ms < 1000) return `${ms.toFixed(0)} ms`;
+	return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatBytes(bytes) {
+	if (!Number.isFinite(bytes)) return 'n/a';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	let value = bytes;
+	let unitIndex = 0;
+	while (value >= 1024 && unitIndex < units.length - 1) {
+		value /= 1024;
+		unitIndex++;
+	}
+	return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function captureMemorySnapshot() {
+	const jsHeap = performance.memory?.usedJSHeapSize;
+	const wasmHeap =
+		window._tinyusdz_wasm_memory?.buffer?.byteLength ??
+		window._tinyusdz_module?.HEAPU8?.buffer?.byteLength;
+	return {
+		jsHeap: Number.isFinite(jsHeap) ? jsHeap : null,
+		wasmHeap: Number.isFinite(wasmHeap) ? wasmHeap : null
+	};
+}
+
+function formatMemoryUse(before, after, key) {
+	const current = after?.[key];
+	if (!Number.isFinite(current)) return 'n/a';
+
+	const previous = before?.[key];
+	if (!Number.isFinite(previous)) {
+		return formatBytes(current);
+	}
+
+	const delta = current - previous;
+	const sign = delta > 0 ? '+' : '';
+	return `${formatBytes(current)} (${sign}${formatBytes(delta)})`;
+}
+
+function updateLoadStatsPanel(stats) {
+	const container = document.getElementById('load-stats');
+	const details = document.getElementById('loadStatsDetails');
+	if (!container || !details) return;
+
+	container.style.display = '';
+
+	if (stats.status === 'loading') {
+		details.textContent = 'Loading...';
+		return;
+	}
+
+	if (stats.status === 'failed') {
+		details.textContent = 'Failed';
+		return;
+	}
+
+	const lines = [
+		`File: ${formatBytes(stats.fileSize)}`,
+		`Fetch/read: ${stats.fetchMs === null ? 'n/a' : formatDurationMs(stats.fetchMs)}`,
+		`Parse/load: ${formatDurationMs(stats.parseMs)}`,
+		`Process/build: ${formatDurationMs(stats.processMs)}`,
+		`Total: ${formatDurationMs(stats.totalMs)}`,
+		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
+		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
+	];
+
+	details.textContent = lines.join('\n');
+	details.style.whiteSpace = 'pre-line';
+}
+
+function beginLoadStats(fileSize = null) {
+	window.renderComplete = false;
+	const stats = {
+		status: 'loading',
+		startTime: performance.now(),
+		fileSize,
+		fetchMs: null,
+		parseMs: null,
+		processMs: null,
+		totalMs: null,
+		memoryBefore: captureMemorySnapshot(),
+		memoryAfter: null
+	};
+	updateLoadStatsPanel(stats);
+	return stats;
+}
+
+async function parseAndProcessUSD(loader, arrayBuffer, filename, stats) {
+	const parseStart = performance.now();
+	const { usdScene: usd_scene, variantInfos } =
+		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, currentVariantSelection);
+	stats.parseMs = performance.now() - parseStart;
+	updateVariantControls(variantInfos, currentVariantSelection);
+
+	console.log('USD scene loaded:', usd_scene);
+
+	const processStart = performance.now();
+	await processUSDScene(usd_scene, filename);
+	stats.processMs = performance.now() - processStart;
+	stats.totalMs = performance.now() - stats.startTime;
+	stats.memoryAfter = captureMemorySnapshot();
+	stats.status = 'done';
+	updateLoadStatsPanel(stats);
+	window.renderComplete = true;
 }
 
 /**
@@ -920,17 +1210,76 @@ async function loadUSDModel() {
 	const loader = await createConfiguredLoader();
 
 	// Default USD file to load
-	const usd_filename = "./assets/skintest-animated.usda";
+	const usd_filename = DEFAULT_USD_MODEL_URI;
+	const stats = beginLoadStats();
 
 	console.log(`Loading USD file: ${usd_filename}`);
 
-	// Load USD scene using Promise-based API
-	const usd_scene = await loadUSDSceneFromURL(loader, usd_filename);
+	const fetchStart = performance.now();
+	const response = await fetch(usd_filename);
+	if (!response.ok) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw new Error(`Failed to fetch: ${response.statusText}`);
+	}
+	const arrayBuffer = await response.arrayBuffer();
+	stats.fetchMs = performance.now() - fetchStart;
+	stats.fileSize = arrayBuffer.byteLength;
+	currentUSDSource = {
+		type: 'url',
+		url: usd_filename,
+		filename: usd_filename,
+		arrayBuffer: arrayBuffer.slice(0)
+	};
 
-	console.log('USD scene loaded:', usd_scene);
+	try {
+		await parseAndProcessUSD(loader, arrayBuffer, usd_filename, stats);
+	} catch (error) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw error;
+	}
+}
 
-	// Process the loaded scene
-	await processUSDScene(usd_scene, usd_filename);
+async function loadUSDModelFromURI(uri) {
+	const loader = await createConfiguredLoader();
+	const stats = beginLoadStats();
+	const displayName = getDisplayNameFromURI(uri);
+
+	console.log(`Loading USD file from URI: ${uri}`);
+
+	const fetchStart = performance.now();
+	const response = await fetch(uri);
+	if (!response.ok) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw new Error(`Failed to fetch ${uri}: ${response.statusText}`);
+	}
+	const arrayBuffer = await response.arrayBuffer();
+	stats.fetchMs = performance.now() - fetchStart;
+	stats.fileSize = arrayBuffer.byteLength;
+	currentUSDSource = {
+		type: 'url',
+		url: uri,
+		filename: displayName,
+		arrayBuffer: arrayBuffer.slice(0)
+	};
+
+	try {
+		await parseAndProcessUSD(loader, arrayBuffer, displayName, stats);
+	} catch (error) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw error;
+	}
 }
 
 /**
@@ -940,16 +1289,36 @@ async function loadUSDModel() {
  */
 async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	const loader = await createConfiguredLoader();
+	const stats = beginLoadStats(arrayBuffer.byteLength);
+	stats.fetchMs = null;
 
 	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
 
-	// Parse USD directly from array buffer
-	const usd_scene = await parseUSDSceneFromArrayBuffer(loader, arrayBuffer, filename);
+	currentUSDSource = {
+		type: 'file',
+		filename,
+		arrayBuffer: arrayBuffer.slice(0)
+	};
 
-	console.log('USD scene loaded:', usd_scene);
+	try {
+		await parseAndProcessUSD(loader, arrayBuffer, filename, stats);
+	} catch (error) {
+		stats.status = 'failed';
+		stats.totalMs = performance.now() - stats.startTime;
+		stats.memoryAfter = captureMemorySnapshot();
+		updateLoadStatsPanel(stats);
+		throw error;
+	}
+}
 
-	// Process the loaded scene
-	await processUSDScene(usd_scene, filename);
+async function reloadCurrentUSDWithVariant(variantSelection) {
+	if (!currentUSDSource?.arrayBuffer) {
+		console.warn('No USD source is loaded; cannot reload variant.');
+		return;
+	}
+
+	currentVariantSelection = variantSelection;
+	await loadUSDFromArrayBuffer(currentUSDSource.arrayBuffer.slice(0), currentUSDSource.filename);
 }
 
 /**
@@ -1060,6 +1429,30 @@ async function processUSDScene(usd_scene, filename) {
 		characterGroup.remove(characterGroup.children[0]);
 	}
 
+	let nextBuiltNode = null;
+	let nextNodeIndexMap = null;
+	let nextTextureManager = null;
+	let nextTextureLoadPromise = null;
+	if (isNextScene(usd_scene)) {
+		const built = buildNextThreeNode(usd_scene, {
+			skipTextures: false,
+			lazyTextures: true,
+			releaseBuildData: false
+		});
+		nextBuiltNode = built.node;
+		nextNodeIndexMap = built.nodeIndexMap || null;
+		nextTextureManager = built.textureManager || null;
+		if (nextTextureManager) {
+			nextTextureLoadPromise = nextTextureManager.startLoading({
+				concurrency: TinyUSDZLoaderUtils.defaultTextureConcurrency(),
+				yieldInterval: 16,
+				onTextureLoaded: (material) => { material.needsUpdate = true; }
+			}).catch((err) => {
+				console.warn('[skin-anim] Next texture loading failed:', err);
+			});
+		}
+	}
+
 	// Get normalized scene metadata from library helper.
 	const {
 		sceneMetadata,
@@ -1089,6 +1482,10 @@ async function processUSDScene(usd_scene, filename) {
 	console.log(`metersPerUnit: ${sceneMetadata.metersPerUnit || 1.0}`);
 	console.log(`timeCodesPerSecond: ${timeCodesPerSecond}`);
 	console.log(`startTimeCode: ${startTimeCode}, endTimeCode: ${endTimeCode}`);
+	currentMetersPerUnit = Number.isFinite(Number(sceneMetadata.metersPerUnit))
+		? Number(sceneMetadata.metersPerUnit)
+		: 1.0;
+	applyMetersPerUnitScale();
 
 	const {
 		hasSkinnedMeshData,
@@ -1123,9 +1520,17 @@ async function processUSDScene(usd_scene, filename) {
 	const skeletonDataArray = skeletonBuild.skeletonDataArray;
 	let bones = skeletonBuild.firstBones;
 	boneMaps = skeletonBuild.boneMaps;
-
-	// Get the default root node from USD
-	const usdRootNode = usd_scene.getDefaultRootNode();
+	_totalLoadedBones = skeletonDataArray.reduce((sum, skel) => {
+		const count = skel?.bones?.length ?? skel?.joints?.length ?? 0;
+		return sum + count;
+	}, 0);
+	_enableBoneInterpolation = _totalLoadedBones <= BONE_INTERPOLATION_MAX_BONES;
+	if (!_enableBoneInterpolation) {
+		_clearBoneInterpData();
+		console.log(
+			`Sub-frame bone interpolation disabled for large rig (${_totalLoadedBones} bones > ${BONE_INTERPOLATION_MAX_BONES})`
+		);
+	}
 
 	// Create default material
 	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
@@ -1134,6 +1539,7 @@ async function processUSDScene(usd_scene, filename) {
 		overrideMaterial: false,
 		envMap: null,
 		envMapIntensity: 1.0,
+		sourceFileName: filename,
 	};
 
 	// Monitor WASM heap for growth during scene building.
@@ -1141,20 +1547,27 @@ async function processUSDScene(usd_scene, filename) {
 	const wasmHeapBefore = typeof WebAssembly !== 'undefined' && WebAssembly.Memory ?
 		(window._tinyusdz_wasm_memory ? window._tinyusdz_wasm_memory.buffer.byteLength : null) : null;
 
-	// Build Three.js node from USD
-	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	// Build Three.js node from USD. Next scenes are already materialized from
+	// RenderScene data; legacy scenes are built from the USD node tree.
+	let threeNode = nextBuiltNode;
+	if (!threeNode) {
+		const usdRootNode = usd_scene.getDefaultRootNode();
+		threeNode = await TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+	}
 
 	if (wasmHeapBefore !== null && window._tinyusdz_wasm_memory) {
 		const wasmHeapAfter = window._tinyusdz_wasm_memory.buffer.byteLength;
 		if (wasmHeapAfter !== wasmHeapBefore) {
-			console.error(`[WASM HEAP GREW] ${wasmHeapBefore} → ${wasmHeapAfter} bytes during buildThreeNode! typed_memory_view buffers may be DETACHED.`);
+			console.warn(`[WASM HEAP GREW] ${wasmHeapBefore} -> ${wasmHeapAfter} bytes during buildThreeNode. Retained raw heap views would detach; getMeshCopy/getMeshPtr copies are expected to remain safe.`);
 		}
 	}
 
 	// Build node index map BEFORE bones are added to the hierarchy.
 	// Adding bones changes the DFS traversal order, which would break
 	// the mapping from USD node indices to Three.js objects.
-	const nodeIndexMap = buildNodeIndexMap(threeNode);
+	// Next scenes use the RenderScene node-table map from buildNextThreeNode:
+	// animation target_node is a table index, not a DFS index.
+	const nodeIndexMap = nextNodeIndexMap || buildNodeIndexMap(threeNode);
 
 	// Set Z-up to Y-up conversion based on file metadata.
 	animationParams.convertZUp = (fileUpAxis.toUpperCase() === 'Z');
@@ -1184,6 +1597,15 @@ async function processUSDScene(usd_scene, filename) {
 	skeletonHelpers = skinningResult.skeletonHelpers;
 	allSceneMeshes = skinningResult.allSceneMeshes;
 	meshVisibility = skinningResult.meshVisibility;
+	if (_totalLoadedBones > SHADOWS_MAX_BONES && animationParams.enableShadows) {
+		animationParams.enableShadows = false;
+		_shadowsAutoDisabled = true;
+		console.log(`Shadows disabled for large rig (${_totalLoadedBones} bones > ${SHADOWS_MAX_BONES}); re-enable in GUI if needed`);
+	} else if (_totalLoadedBones <= SHADOWS_MAX_BONES && _shadowsAutoDisabled) {
+		animationParams.enableShadows = true;
+		_shadowsAutoDisabled = false;
+	}
+	applyShadowSettings();
 
 	skinnedMesh = skinningResult.primaryMesh || null;
 	originalMaterial = skinnedMesh ? skinnedMesh.material : null;
@@ -1209,6 +1631,7 @@ async function processUSDScene(usd_scene, filename) {
 		const animationData = extractUSDSceneAnimations(usd_scene, {
 			boneMaps,
 			nodeIndexMap,
+			threeRoot: threeNode,
 			timeCodesPerSecond,
 			logger: console
 		});
@@ -1232,7 +1655,7 @@ async function processUSDScene(usd_scene, filename) {
 
 		if (window.updateAnimationList) {
 			if (animationData.hasAnyAnimation) {
-				window.updateAnimationList(usdAnimations, animationData.animationInfos);
+				window.updateAnimationList(usdAnimations, animationData.animationInfos, timeCodesPerSecond);
 			} else {
 				window.updateAnimationList([], []);
 			}
@@ -1322,15 +1745,27 @@ async function processUSDScene(usd_scene, filename) {
 	// BEFORE this point. The C++ destructor frees render_scene_ vectors, invalidating
 	// all typed_memory_view references (mesh.points, sampler.times/values, etc.).
 	// Keeping it alive retains the entire parsed USD scene in WASM heap memory.
-	if (usd_scene && typeof usd_scene.delete === 'function') {
-		usd_scene.delete();
-	}
-	window.usd_scene = null;
+	// Exception: next-backend lazy textures read archive bytes from the adapter
+	// asynchronously; adapter.delete() clears that archive map, so it must wait
+	// for texture loading to settle.
+	const releaseUSDScene = () => {
+		if (usd_scene && typeof usd_scene.delete === 'function') {
+			usd_scene.delete();
+		}
+		if (window.usd_scene === usd_scene) {
+			window.usd_scene = null;
+		}
 
-	// Hint GC after scene loading — processUSDScene creates many transient objects
-	// (WASM data copies, temporary matrices, skeleton building intermediaries) that
-	// should be collected before the animation loop starts allocating.
-	hintGC();
+		// Hint GC after scene loading — processUSDScene creates many transient objects
+		// (WASM data copies, temporary matrices, skeleton building intermediaries) that
+		// should be collected before the animation loop starts allocating.
+		hintGC();
+	};
+	if (nextTextureLoadPromise) {
+		nextTextureLoadPromise.then(releaseUSDScene);
+	} else {
+		releaseUSDScene();
+	}
 }
 
 /**
@@ -1398,6 +1833,7 @@ window.addEventListener('loadUSDFile', async (event) => {
 	if (!file) return;
 
 	try {
+		currentVariantSelection = null;
 		const arrayBuffer = await file.arrayBuffer();
 		await loadUSDFromArrayBuffer(arrayBuffer, file.name);
 		console.log('USD file loaded successfully:', file.name);
@@ -1416,9 +1852,38 @@ window.addEventListener('loadDefaultModel', async () => {
 	}
 });
 
-// Load USD model on startup
-loadUSDModel().catch((error) => {
-	console.error('Failed to load default USD file:', error);
+const reloadVariantButton = document.getElementById('reloadVariantButton');
+if (reloadVariantButton) {
+	reloadVariantButton.addEventListener('click', async () => {
+		const selectEl = document.getElementById('variantSelect');
+		if (!selectEl?.value) return;
+
+		try {
+			const selection = JSON.parse(selectEl.value);
+			await reloadCurrentUSDWithVariant(selection);
+			console.log(
+				`Reloaded variant: ${selection.primPath} ${selection.variantSet}=${selection.variantName}`
+			);
+		} catch (error) {
+			console.error('Failed to reload selected variant:', error);
+		}
+	});
+}
+
+const variantSelect = document.getElementById('variantSelect');
+if (variantSelect) {
+	variantSelect.addEventListener('change', () => {
+		if (!variantSelect.value) {
+			currentVariantSelection = null;
+			return;
+		}
+		currentVariantSelection = JSON.parse(variantSelect.value);
+	});
+}
+
+// Load USD model on startup. `?uri=/models/foo.usdz` overrides the built-in default.
+loadUSDModelFromURI(getStartupUSDModelURI()).catch((error) => {
+	console.error('Failed to load startup USD file:', error);
 	console.error('Error details:', error.message || error);
 	console.log('Please upload a USD file (with or without skeletal animation).');
 	// Update UI to show error
@@ -1653,7 +2118,7 @@ animationParams = {
 		for (const mesh of allSceneMeshes) {
 			const perMesh = meshVisibility.get(mesh) !== false;
 			mesh.visible = perMesh && this.showMesh;
-			mesh.castShadow = mesh.visible;
+			setMeshShadowFlags(mesh, mesh.visible);
 		}
 	},
 
@@ -1813,6 +2278,11 @@ animationParams = {
 		}
 	},
 
+	ignoreMetersPerUnit: false,
+	toggleMetersPerUnit: function() {
+		applyMetersPerUnitScale({ refit: true });
+	},
+
 	// Extended skinning toggle (texture-based vs 4-bone fallback)
 	useExtendedSkinning: true,
 	toggleExtendedSkinning: function() {
@@ -1828,14 +2298,8 @@ animationParams = {
 	// Shadows
 	enableShadows: true,
 	toggleShadows: function() {
-		renderer.shadowMap.enabled = this.enableShadows;
-		directionalLight.castShadow = this.enableShadows;
-		// Need to update materials and re-render
-		scene.traverse((child) => {
-			if (child.isMesh) {
-				child.material.needsUpdate = true;
-			}
-		});
+		_shadowsAutoDisabled = false;
+		applyShadowSettings();
 		console.log(`Shadows ${this.enableShadows ? 'enabled' : 'disabled'}`);
 	},
 
@@ -1859,7 +2323,7 @@ animationParams = {
 		const newState = !current;
 		meshVisibility.set(mesh, newState);
 		mesh.visible = newState && this.showMesh;
-		mesh.castShadow = mesh.visible;
+		setMeshShadowFlags(mesh, mesh.visible);
 		updateMeshListGUI();
 	},
 	deselectMesh: function() {
@@ -1884,6 +2348,9 @@ animationParams = {
 // GUI setup
 const gui = new GUI();
 gui.title('Skeletal Animation Controls');
+// Backend switch reloads the page: the loader binds its WASM module at init.
+gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+	.name('Loader Backend').onChange(setBackendAndReload);
 
 // Wire up the GUI toggle button
 document.getElementById('gui-toggle')?.addEventListener('click', () => {
@@ -2038,6 +2505,9 @@ visualFolder.add(animationParams, 'convertZUp')
 	.name('Z-up → Y-up')
 	.onChange(() => animationParams.toggleZUp())
 	.listen();
+visualFolder.add(animationParams, 'ignoreMetersPerUnit')
+	.name('Ignore metersPerUnit')
+	.onChange(() => animationParams.toggleMetersPerUnit());
 visualFolder.add(animationParams, 'fitToScene').name('Fit (Current Frame)');
 visualFolder.add(animationParams, 'fitToAllFrames').name('Fit (All Frames)');
 visualFolder.open();
@@ -2349,7 +2819,7 @@ function animate() {
 	// timeline display), mixer evaluates at throttled rate to limit Three.js
 	// interpolant allocations, bone interpolation fills intermediate frames.
 	if (mixer && animationParams.isPlaying) {
-		const mixerInterval = 1 / 30;
+		const mixerInterval = currentMixerUpdateInterval();
 		_mixerAccumDelta += deltaTime;
 
 		// Advance timeline by real time every frame
@@ -2379,11 +2849,15 @@ function animate() {
 				syncPlaybackState(animationPlayback.setTime(animationParams.time, true));
 			}
 
-			// Snapshot bone transforms after mixer evaluation
-			for (const [skelId, skel] of skeletons) {
-				_snapshotBones(skelId, skel.bones);
+			// Snapshot bone transforms after mixer evaluation only when
+			// interpolation is enabled. Very large rigs spend more time
+			// interpolating every rendered frame than they save in smoothness.
+			if (_enableBoneInterpolation) {
+				for (const [skelId, skel] of skeletons) {
+					_snapshotBones(skelId, skel.bones);
+				}
 			}
-		} else if (skeletons.size > 0) {
+		} else if (_enableBoneInterpolation && skeletons.size > 0) {
 			// Intermediate frame: lerp/slerp between prev and curr snapshots
 			const alpha = _mixerAccumDelta / mixerInterval;
 			for (const [skelId, skel] of skeletons) {
@@ -2431,8 +2905,7 @@ function animate() {
 				const debugMat = mesh.material.clone();
 				const debugMesh = new THREE.Mesh(debugGeo, debugMat);
 				debugMesh.name = mesh.name + '_cpuSkin';
-				debugMesh.castShadow = true;
-				debugMesh.receiveShadow = true;
+				setMeshShadowFlags(debugMesh, animationParams.showMesh);
 				// Place at mesh's world transform
 				debugMesh.matrixAutoUpdate = false;
 				mesh._cpuDebugMesh = debugMesh;
@@ -2519,8 +2992,7 @@ function animate() {
 				const debugMat = mesh.material.clone();
 				const debugMesh = new THREE.Mesh(debugGeo, debugMat);
 				debugMesh.name = mesh.name + '_rawMesh';
-				debugMesh.castShadow = true;
-				debugMesh.receiveShadow = true;
+				setMeshShadowFlags(debugMesh, animationParams.showMesh);
 				debugMesh.matrixAutoUpdate = false;
 				mesh._rawDebugMesh = debugMesh;
 				scene.add(debugMesh);

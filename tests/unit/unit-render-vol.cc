@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
-// Unit tests for the UsdRender / UsdVol placeholder prim types. These are
+// Unit tests for UsdRender placeholders and UsdVol prim types. These are
 // recognized as distinct prim *types* (not the generic Model fallback) and
-// retain authored properties generically through USDA + USDC round-trips.
+// retain authored properties through USDA + USDC round-trips.
 
 #define TEST_NO_MAIN
 #include "acutest.h"
@@ -11,6 +11,7 @@
 #include "usdc-writer.hh"
 #include "prim-types.hh"
 #include "core/model-scope.hh"
+#include "usdGeom.hh"
 
 #include <string>
 #include <vector>

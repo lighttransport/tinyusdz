@@ -56,6 +56,23 @@ struct NamespaceMapping {
     return path;  // Outside this arc's namespace; unchanged.
   }
 
+  /// Map a relationship/connection TARGET path. Unlike Apply(), a path that
+  /// falls OUTSIDE a non-identity mapping's source namespace returns "" —
+  /// such targets cannot be expressed in the composed namespace (pxr warns
+  /// "path outside the scope of the reference" and drops them). Leaking them
+  /// verbatim silently aliased unrelated composed prims.
+  std::string ApplyTarget(const std::string &path) const {
+    if (is_identity()) return path;
+    if (path == source_prefix) return target_prefix;
+    if (path.size() > source_prefix.size() &&
+        path.compare(0, source_prefix.size(), source_prefix) == 0 &&
+        (path[source_prefix.size()] == '/' ||
+         path[source_prefix.size()] == '.')) {
+      return target_prefix + path.substr(source_prefix.size());
+    }
+    return std::string();  // not mappable across this arc
+  }
+
   /// Compose two mappings. `outer` maps mid->root, `inner` maps deep->mid;
   /// the result maps deep->root (so a nested reference resolves straight to
   /// root space).

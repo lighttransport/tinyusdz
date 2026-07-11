@@ -95,6 +95,10 @@ RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
+RECONSTRUCT_PRIM_DECL(Volume);
+RECONSTRUCT_PRIM_DECL(FieldAsset);
+RECONSTRUCT_PRIM_DECL(OpenVDBAsset);
+RECONSTRUCT_PRIM_DECL(Field3DAsset);
 RECONSTRUCT_PRIM_DECL(GeomPoints);
 RECONSTRUCT_PRIM_DECL(GeomCone);
 RECONSTRUCT_PRIM_DECL(GeomCube);
@@ -209,6 +213,10 @@ struct PrimTypeTraits;
 DEFINE_PRIM_TYPE(Model, "Model", value::TYPE_ID_MODEL);
 
 DEFINE_PRIM_TYPE(Xform, kGeomXform, value::TYPE_ID_GEOM_XFORM);
+DEFINE_PRIM_TYPE(Volume, kVolume, value::TYPE_ID_VOLUME);
+DEFINE_PRIM_TYPE(FieldAsset, kFieldAsset, value::TYPE_ID_FIELD_ASSET);
+DEFINE_PRIM_TYPE(OpenVDBAsset, kOpenVDBAsset, value::TYPE_ID_OPENVDB_ASSET);
+DEFINE_PRIM_TYPE(Field3DAsset, kField3DAsset, value::TYPE_ID_FIELD3D_ASSET);
 DEFINE_PRIM_TYPE(GeomMesh, kGeomMesh, value::TYPE_ID_GEOM_MESH);
 DEFINE_PRIM_TYPE(GeomPoints, kGeomPoints, value::TYPE_ID_GEOM_POINTS);
 DEFINE_PRIM_TYPE(GeomSphere, kGeomSphere, value::TYPE_ID_GEOM_SPHERE);
@@ -273,10 +281,7 @@ DEFINE_PRIM_TYPE(Preliminary_Text, kPreliminary_Text, value::TYPE_ID_PRELIMINARY
 DEFINE_PRIM_TYPE(SpatialAudio, kSpatialAudio, value::TYPE_ID_SPATIAL_AUDIO);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 
-// UsdVol / UsdRender placeholder prim types.
-DEFINE_PRIM_TYPE(Volume, "Volume", value::TYPE_ID_VOLUME);
-DEFINE_PRIM_TYPE(OpenVDBAsset, "OpenVDBAsset", value::TYPE_ID_OPENVDB_ASSET);
-DEFINE_PRIM_TYPE(Field3DAsset, "Field3DAsset", value::TYPE_ID_FIELD3D_ASSET);
+// UsdRender / UsdProc placeholder prim types.
 DEFINE_PRIM_TYPE(RenderSettings, "RenderSettings", value::TYPE_ID_RENDER_SETTINGS);
 DEFINE_PRIM_TYPE(RenderProduct, "RenderProduct", value::TYPE_ID_RENDER_PRODUCT);
 DEFINE_PRIM_TYPE(RenderVar, "RenderVar", value::TYPE_ID_RENDER_VAR);
@@ -1381,6 +1386,28 @@ bool USDAReader::Impl::ReconstructPrim(
   return true;
 }
 
+// Explicit instantiation declarations for prim::ReconstructPrim placeholder
+// specializations defined in prim-reconstruct.cc. These keep split reader TUs
+// from instantiating from only the forward declaration under -Weverything.
+}  // namespace usda
+namespace prim {
+
+#define USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(__T) \
+  extern template bool ReconstructPrim<__T>( \
+      const Specifier &, PropertyMap &, const ReferenceList &, \
+      __T *, std::string *, std::string *, const PrimReconstructOptions &);
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(Volume)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(OpenVDBAsset)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(Field3DAsset)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderSettings)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderProduct)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(RenderVar)
+USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM(GenerativeProcedural)
+#undef USDA_EXTERN_PLACEHOLDER_RECONSTRUCT_PRIM
+
+}  // namespace prim
+namespace usda {
+
 
 // --- Split reconstruct: RegisterReconstructCallback<T> is instantiated across
 // usda-reader-reconstruct-{1,2,3,4}.cc. Declared extern so the RegisterReconstructCallbacks()
@@ -1397,6 +1424,10 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(GeomPoints)
 USDA_EXTERN_REGISTER_RECONSTRUCT(GeomCylinder)
 USDA_EXTERN_REGISTER_RECONSTRUCT(GeomCapsule)
 USDA_EXTERN_REGISTER_RECONSTRUCT(GeomMesh)
+USDA_EXTERN_REGISTER_RECONSTRUCT(Volume)
+USDA_EXTERN_REGISTER_RECONSTRUCT(FieldAsset)
+USDA_EXTERN_REGISTER_RECONSTRUCT(OpenVDBAsset)
+USDA_EXTERN_REGISTER_RECONSTRUCT(Field3DAsset)
 USDA_EXTERN_REGISTER_RECONSTRUCT(GeomSubset)
 USDA_EXTERN_REGISTER_RECONSTRUCT(GeomBasisCurves)
 USDA_EXTERN_REGISTER_RECONSTRUCT(GeomNurbsCurves)
@@ -1412,6 +1443,13 @@ USDA_EXTERN_REGISTER_RECONSTRUCT(Material)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Shader)
 USDA_EXTERN_REGISTER_RECONSTRUCT(NodeGraph)
 USDA_EXTERN_REGISTER_RECONSTRUCT(Scope)
+USDA_EXTERN_REGISTER_RECONSTRUCT(Volume)
+USDA_EXTERN_REGISTER_RECONSTRUCT(OpenVDBAsset)
+USDA_EXTERN_REGISTER_RECONSTRUCT(Field3DAsset)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderSettings)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderProduct)
+USDA_EXTERN_REGISTER_RECONSTRUCT(RenderVar)
+USDA_EXTERN_REGISTER_RECONSTRUCT(GenerativeProcedural)
 USDA_EXTERN_REGISTER_RECONSTRUCT(SphereLight)
 USDA_EXTERN_REGISTER_RECONSTRUCT(DomeLight)
 USDA_EXTERN_REGISTER_RECONSTRUCT(DiskLight)

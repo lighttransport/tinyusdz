@@ -100,6 +100,29 @@ std::string WcharToUTF8(const std::wstring &wstr);
 std::string ExpandFilePath(const std::string &filepath,
                            void *userdata = nullptr);
 
+///
+/// Match a filename against a simple glob pattern. Supported metacharacters:
+///   '*' matches any (possibly empty) run of characters, and
+///   '?' matches exactly one character.
+/// Everything else (including '[' and '{') is matched literally — this is a
+/// deliberately SIMPLE matcher (no character classes, no brace expansion), so
+/// it cannot exhibit the exponential blow-up of shell brace expansion. Runs in
+/// O(len(pattern) + len(name)).
+///
+bool SimpleGlobMatch(const std::string &pattern, const std::string &name);
+
+///
+/// Expand a simple glob pattern into the matching filesystem paths. Only '*'
+/// and '?' are treated as wildcards (see SimpleGlobMatch); there is NO '**'
+/// recursion and NO brace expansion, so the work is bounded by the sizes of the
+/// directories actually listed (never exponential). `max_results` caps the
+/// number of returned paths (and bounds intermediate candidate growth). A
+/// pattern with no wildcard resolves to itself when it exists. Returns an empty
+/// vector when nothing matches.
+///
+std::vector<std::string> SimpleGlob(const std::string &pattern,
+                                    size_t max_results = 1024);
+
 bool FileExists(const std::string &filepath, void *userdata = nullptr);
 
 ///
@@ -147,7 +170,13 @@ bool IsMMapSupported();
 struct MMapFileHandle
 {
   std::string filename;
-#if defined(WIN32)
+  // NOTE: gate on `_WIN32` (defined by the compiler everywhere on Windows), not
+  // bare `WIN32` (only defined once <windows.h> is included). The MMapFile
+  // implementation accesses hFile/unicode_filename under `_WIN32`; using `WIN32`
+  // here made this struct's layout differ between TUs that include <windows.h>
+  // and those that don't, corrupting `addr` in the caller (crash on USDC load
+  // under llvm-mingw, where the compiler does not predefine bare `WIN32`).
+#if defined(_WIN32)
   std::wstring unicode_filename;
   void *hFile = nullptr;
 #endif

@@ -81,8 +81,10 @@ src/                       Core library sources (~250 .cc/.hh files)
   external/, nonstd/         Vendored deps (header-only): nonstd::
                              optional, expected, string_view, fmt,
                              stb_image, base122, miniz, …
-  attic/, blender/, next/    Experimental / under-construction code
-                             not built into the main library
+  next/                      Stable standalone next-generation core library
+                             and tests (`src/next`, `tests/next`)
+  attic/, blender/           Experimental / under-construction code not
+                             built into the main library
 
 python/                    CPython abi3 wheel (built from
                            src/python/module.c via setuptools +
@@ -109,9 +111,8 @@ tests/                     C++ tests + roundtrip + Python harness
 
 examples/                  Standalone example apps (separate builds):
                            tusdcat, api_tutorial, asset_resolution,
-                           c_api_example, mcp_server, openglviewer,
-                           optixviewer, file_format, js-script,
-                           progressive_composition, etc.
+                           c_api_example, mcp_server, file_format,
+                           js-script, progressive_composition, etc.
 models/                    Test USD files for development
 doc/                       Documentation (testing-cpp.md,
                            how-to-implement-feature.md, ci.md —
@@ -169,13 +170,26 @@ cd python && python3 -m pytest tests/ -q
 - `TINYUSDZ_WITH_TYDRA=ON` - Tydra framework (default ON)
 - `TINYUSDZ_WITH_EXR=ON` - EXR/HDR texture support
 - `TINYUSDZ_WITH_AUDIO=ON` - Audio file loading (mp3/wav)
-- `TINYUSDZ_WITH_OPENSUBDIV=ON` - Subdivision surfaces
+- `TINYUSDZ_TSD_VERIFY_WITH_OSD=ON` - Build tinysubdiv vs OpenSubdiv verification test (set `OpenSubdiv_ROOT` to an OpenSubdiv source checkout)
+- `TINYUSDZ_BUILD_GUI_VIEWER=ON` - Build the interactive GL/Vulkan USD viewer example `tusdview` (pulls in OpenGL/GLFW; Vulkan auto-detected). Keep OFF for headless CI.
+  - `TUSDVIEW_ENABLE_GL_THREAD=ON` (sub-option) builds the experimental `--threaded` render-thread path (default OFF; no-op flag when off).
+
+### GUI viewer (`tusdview`) + Vulkan debugging
+
+Build, headless-screenshot, and Vulkan-debugging notes for the `tusdview` example
+live in **[doc/tusdview.md](doc/tusdview.md)**. In particular, when debugging the
+Vulkan backend (raster / ray query / `--threaded`), build the Khronos
+**validation layers** from source (matching the installed loader version) and run
+tusdview under them — including **GPU-Assisted Validation** for shader
+descriptor-OOB / `VK_ERROR_DEVICE_LOST` faults that plain validation can't see.
+The procedure is in that doc; the threaded VK-RT case study is in
+[examples/tusdview/doc/threading-stage2.md](examples/tusdview/doc/threading-stage2.md).
 
 ## Testing
 
 See `doc/testing-cpp.md` for full details on the C++ test infrastructure, and use [the Regression Test Procedure](doc/testing-cpp.md#regression-test-procedure) before merging/refactoring.
 
-The experimental `next` module (`src/next/`, `tests/next/`) is **excluded from the regression gate** by design — it is a standalone CMake project that the main `build/` does not compile (`TINYUSDZ_NEXT_BUILD_TESTS=OFF`), so it never appears in `ctest`. Do not block merges on it; build/run it on demand only (see [Experimental `next` library tests](doc/testing-cpp.md#experimental-next-library-tests)).
+The stable `next` module (`src/next/`, `tests/next/`) is a standalone CMake project with its own Debug test build. It does not appear in the main native `ctest` tree, so run it explicitly as part of the regression gate (see [Stable `next` library tests](doc/testing-cpp.md#stable-next-library-tests)).
 
 ### Pre-merge checklist
 
@@ -193,7 +207,15 @@ ctest -R roundtrip --output-on-failure
 ctest -R feat --output-on-failure
 ```
 
-2. Run web/WASM checks when web or JS-facing code changed
+2. Run stable `next` checks
+
+```bash
+cmake -S src/next -B build-next -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-next -j16
+ctest --test-dir build-next --output-on-failure
+```
+
+3. Run web/WASM checks when web or JS-facing code changed
 
 ```bash
 cd web
@@ -202,19 +224,19 @@ cmake --build build -j16
 ctest --test-dir build --output-on-failure
 ```
 
-3. Run Pixar compatibility regression if available
+4. Run Pixar compatibility regression if available
 
 ```bash
 USDCAT_PATH=~/local/USD/dist/bin/usdcat TUSDCAT_PATH=./build/tusdcat \
   bash tests/run-usdcat-compare.sh
 ```
 
-4. Check docs and commit hygiene
+5. Check docs and commit hygiene
 
 - Confirm any behavior-impacting changes are covered in [doc/testing-cpp.md](doc/testing-cpp.md)
 - Verify no unrelated artifacts are left uncommitted for review
 
-Do not merge if any command in steps 1–3 fails.
+Do not merge if any command in steps 1–4 fails.
 
 Copy-paste pre-merge script:
 
@@ -235,6 +257,12 @@ ctest --output-on-failure
 ctest -R unit --output-on-failure
 ctest -R roundtrip --output-on-failure
 ctest -R feat --output-on-failure
+
+cd "$ROOT_DIR"
+cmake -S "$ROOT_DIR/src/next" -B "$ROOT_DIR/build-next" \
+  -DTINYUSDZ_NEXT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build "$ROOT_DIR/build-next" -j"$JOBS"
+ctest --test-dir "$ROOT_DIR/build-next" --output-on-failure
 
 cd "$ROOT_DIR/web"
 if [ -f "$ROOT_DIR/web/CMakeLists.txt" ]; then

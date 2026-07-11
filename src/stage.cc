@@ -26,6 +26,7 @@
 
 #include "io-util.hh"
 #include "mmap-array-ref.hh"
+#include "path-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "prim-pprint-parallel.hh"
@@ -403,9 +404,6 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, Prim *&prim,
 
 nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
     const Prim &root, const Path &path) const {
-  // TODO: Resolve "../"
-  // TODO: cache path
-
   if (!path.is_valid()) {
     return nonstd::make_unexpected("Path is invalid.\n");
   }
@@ -421,8 +419,27 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimFromRelativePath(
     return nonstd::make_unexpected("Invalid Path.\n");
   }
 
-  (void)root;
-  return nonstd::make_unexpected("GetPrimFromRelativePath is TODO");
+  if (!path.is_prim_path()) {
+    return nonstd::make_unexpected("Path must be a relative Prim path.\n");
+  }
+
+  if (!root.absolute_path().is_valid() ||
+      !root.absolute_path().is_absolute_path()) {
+    return nonstd::make_unexpected(
+        "Root Prim absolute path is not available.\n");
+  }
+
+  Path absolute_path;
+  std::string resolve_err;
+  if (!pathutil::ResolveRelativePath(root.absolute_path(), path,
+                                     &absolute_path, &resolve_err)) {
+    if (resolve_err.empty()) {
+      resolve_err = "Failed to resolve relative Prim path.\n";
+    }
+    return nonstd::make_unexpected(resolve_err);
+  }
+
+  return GetPrimAtPath(absolute_path);
 }
 
 bool Stage::find_prim_from_relative_path(const Prim &root,
@@ -946,6 +963,10 @@ bool Stage::RenamePrim(const Path &path, const std::string &new_name,
       old_name, new_name);
 
   if (!parent) _root_node_nameSet.clear();
+  if (!compute_absolute_prim_path() && err) {
+    *err = _err;
+    return false;
+  }
   _dirty = true;
   _prim_id_dirty = true;
   return true;
@@ -970,7 +991,8 @@ bool Stage::RemovePrim(const Path &path, std::string *err) {
   const std::string prim_name = std::string((*sib)[idx].element_name());
   sib->erase(sib->begin() + static_cast<std::ptrdiff_t>(idx));
   RemoveFromPrimChildren(
-      parent ? parent->metas().primChildren : stage_metas.primChildren, prim_name);
+      parent ? parent->metas().primChildren : stage_metas.primChildren,
+      prim_name);
 
   if (!parent) _root_node_nameSet.clear();
   _dirty = true;
@@ -1087,6 +1109,10 @@ bool Stage::ReparentPrim(const Path &path, const Path &new_parent_path,
   dest->emplace_back(std::move(moved));
 
   _root_node_nameSet.clear();
+  if (!compute_absolute_prim_path() && err) {
+    *err = _err;
+    return false;
+  }
   _dirty = true;
   _prim_id_dirty = true;
   return true;

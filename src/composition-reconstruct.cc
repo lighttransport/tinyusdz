@@ -46,15 +46,16 @@ namespace prim {
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
 RECONSTRUCT_PRIM_DECL(Scope);
-RECONSTRUCT_PRIM_DECL(Volume);
-RECONSTRUCT_PRIM_DECL(OpenVDBAsset);
-RECONSTRUCT_PRIM_DECL(Field3DAsset);
 RECONSTRUCT_PRIM_DECL(RenderSettings);
 RECONSTRUCT_PRIM_DECL(RenderProduct);
 RECONSTRUCT_PRIM_DECL(RenderVar);
 RECONSTRUCT_PRIM_DECL(GenerativeProcedural);
 RECONSTRUCT_PRIM_DECL(GeomPoints);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
+RECONSTRUCT_PRIM_DECL(Volume);
+RECONSTRUCT_PRIM_DECL(FieldAsset);
+RECONSTRUCT_PRIM_DECL(OpenVDBAsset);
+RECONSTRUCT_PRIM_DECL(Field3DAsset);
 RECONSTRUCT_PRIM_DECL(GeomCapsule);
 RECONSTRUCT_PRIM_DECL(GeomCube);
 RECONSTRUCT_PRIM_DECL(GeomCone);
@@ -143,14 +144,15 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
     RECONSTRUCT_PRIM(Xform)
   RECONSTRUCT_PRIM(Model)
   RECONSTRUCT_PRIM(Scope)
-  RECONSTRUCT_PRIM(Volume)
-  RECONSTRUCT_PRIM(OpenVDBAsset)
-  RECONSTRUCT_PRIM(Field3DAsset)
   RECONSTRUCT_PRIM(RenderSettings)
   RECONSTRUCT_PRIM(RenderProduct)
   RECONSTRUCT_PRIM(RenderVar)
   RECONSTRUCT_PRIM(GenerativeProcedural)
   RECONSTRUCT_PRIM(GeomMesh)
+  RECONSTRUCT_PRIM(Volume)
+  RECONSTRUCT_PRIM(FieldAsset)
+  RECONSTRUCT_PRIM(OpenVDBAsset)
+  RECONSTRUCT_PRIM(Field3DAsset)
   RECONSTRUCT_PRIM(GeomPoints)
   RECONSTRUCT_PRIM(GeomCylinder)
   RECONSTRUCT_PRIM(GeomCube)
@@ -189,7 +191,12 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpecRec(
     PrimSpec &primspec, std::string *warn, std::string *err,
     uint32_t depth = 0) {
 
-  if (size_t(depth) > kMaxDefaultTraversalLimit) {
+  // This recurses once per namespace level (over children), so the cap must be
+  // a stack-safe recursion depth, NOT the 1M iteration limit — a crafted deep
+  // PrimSpec tree at 1M would overflow the native stack. Real USD namespace
+  // depth never approaches this.
+  constexpr uint32_t kMaxReconstructDepth = 1024;
+  if (depth > kMaxReconstructDepth) {
     if (err) {
       (*err) += "ReconstructPrimFromPrimSpecRec: recursion too deep.\n";
     }
