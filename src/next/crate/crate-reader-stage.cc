@@ -902,12 +902,14 @@ bool CrateReader::Impl::BuildStage() {
       }
       if (field.first == "properties" ||
           field.first == "propertyChildren") {
-        if (ps) {
-          if (const std::vector<std::string>* names =
-                  field.second.as_token_array()) {
-            ps->meta().propertyOrder() = *names;
-          }
-        }
+        // pxr writes the `properties` field (natural spec order) for EVERY
+        // prim; it is not an authored `reorder properties`. Synthesizing a
+        // propertyOrder from it made every USDC->USDA round trip gain a
+        // spurious `reorder properties` statement that pxr's own round trip
+        // never emits (pxr drops the order and sorts). So consume the field
+        // without pinning an order. Authored USDA `reorder properties` still
+        // round-trips through the USDA path (parser -> writer); like pxr, it
+        // is not preserved through a crate round trip.
         continue;
       }
       if (field.first == "variantChildren" ||
