@@ -233,11 +233,15 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "layout(location=1) in vec3 aNormal;\n"
       // Per-instance 3x4 object-to-world (row-major o2w; rows = output x/y/z):
       // worldP.c = dot(vec4(pos,1), aRow[c]).  48 B/instance vs a full mat4's 64.
-      // At locations 3/4/5 (the unused skin slots) so location 8 is free for the
-      // per-vertex morph offset/count -- the flat instanced path does not skin.
+      // The non-instanced program's skin slots (3/4) are taken by these rows, so
+      // instanced skinning carries its joints/weights at 6/7 instead (attrib 8 is
+      // the morph CSR). All instances of a prototype share ONE bone block: USD
+      // instancing requires identical composed contents, hence one skeleton+pose.
       "layout(location=3) in vec4 aRow0;\n"
       "layout(location=4) in vec4 aRow1;\n"
       "layout(location=5) in vec4 aRow2;\n"
+      "layout(location=6) in uvec4 aJoint;\n"
+      "layout(location=7) in vec4 aWeight;\n"
       "layout(location=9) in vec3 aColor;\n"     // per-instance color or constant
       "layout(location=10) in vec3 aVtxColor;\n"  // per-vertex prototype color (or 1)
       "layout(location=11) in float aOpacity;\n"  // per-instance opacity or constant
@@ -251,6 +255,21 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "uniform samplerBuffer uMorphDeltaTex;\n"
       "uniform samplerBuffer uMorphCoeffTex;\n"
       "uniform usamplerBuffer uMorphChanTex;\n"
+      // Skeletal skinning, shared with the non-instanced program: the same 4xN
+      // RGBA32F bone texture (unit 4), absolute joint rows. Skinning happens in
+      // PROTOTYPE-LOCAL space, before the per-instance transform.
+      "uniform bool uSkinningEnabled;\n"
+      "uniform sampler2D uBoneTex;\n"
+      "uniform int uBoneTexWidth;\n"
+      "uniform int uBoneMatrixCount;\n"
+      "mat4 fetchBone(uint idx){\n"
+      "  int base=int(idx)*4;\n"
+      "  return mat4(\n"
+      "    texelFetch(uBoneTex,ivec2((base+0)%uBoneTexWidth,(base+0)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+1)%uBoneTexWidth,(base+1)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+2)%uBoneTexWidth,(base+2)/uBoneTexWidth),0),\n"
+      "    texelFetch(uBoneTex,ivec2((base+3)%uBoneTexWidth,(base+3)/uBoneTexWidth),0));\n"
+      "}\n"
       "out vec3 vWorldPos;\n"
       "out vec3 vNormal;\n"
       "out vec3 vColor;\n"
@@ -270,10 +289,22 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "      pos += c * texelFetch(uMorphDeltaTex, mbase + i).yzw;\n"
       "    }\n"
       "  }\n"
+      // Linear-blend skinning (prototype-local). Vertices of an unskinned mesh --
+      // or of an unskinned vertex in a skinned one -- carry zero weights and pass
+      // through untouched, exactly as in the non-instanced program.
+      "  vec3 nrm = aNormal;\n"
+      "  float wsum = aWeight.x + aWeight.y + aWeight.z + aWeight.w;\n"
+      "  uint maxJoint = max(max(aJoint.x, aJoint.y), max(aJoint.z, aJoint.w));\n"
+      "  if (uSkinningEnabled && wsum > 0.0 && int(maxJoint) < uBoneMatrixCount) {\n"
+      "    mat4 skin = fetchBone(aJoint.x) * aWeight.x + fetchBone(aJoint.y) * aWeight.y\n"
+      "              + fetchBone(aJoint.z) * aWeight.z + fetchBone(aJoint.w) * aWeight.w;\n"
+      "    pos = (skin * vec4(pos, 1.0)).xyz;\n"
+      "    nrm = normalize((skin * vec4(aNormal, 0.0)).xyz);\n"
+      "  }\n"
       "  vec4 p = vec4(pos, 1.0);\n"
       "  vec3 wp = vec3(dot(p, aRow0), dot(p, aRow1), dot(p, aRow2));\n"
-      "  vec3 n = vec3(dot(aNormal, aRow0.xyz), dot(aNormal, aRow1.xyz),\n"
-      "                dot(aNormal, aRow2.xyz));\n"
+      "  vec3 n = vec3(dot(nrm, aRow0.xyz), dot(nrm, aRow1.xyz),\n"
+      "                dot(nrm, aRow2.xyz));\n"
       "  vWorldPos = wp;\n"
       "  vNormal = normalize(n);\n"
       // Prototype per-vertex displayColor x per-instance color (both default 1).
@@ -398,6 +429,10 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   iPurpose_ = glGetUniformLocation(instProgram_, "uPurpose");
   iKind_ = glGetUniformLocation(instProgram_, "uKind");
   iHasMorph_ = glGetUniformLocation(instProgram_, "uHasMorph");
+  iSkinningEnabled_ = glGetUniformLocation(instProgram_, "uSkinningEnabled");
+  iBoneTexWidth_ = glGetUniformLocation(instProgram_, "uBoneTexWidth");
+  iBoneMatrixCount_ = glGetUniformLocation(instProgram_, "uBoneMatrixCount");
+  glUniform1i(glGetUniformLocation(instProgram_, "uBoneTex"), 4);  // same unit as mesh
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphDeltaTex"), 8);
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphCoeffTex"), 9);
   glUniform1i(glGetUniformLocation(instProgram_, "uMorphChanTex"), 10);
@@ -1374,21 +1409,34 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  // Skin attribute locations differ by program: the mesh program takes joints at 3
+  // and weights at 4, but in the INSTANCED program those slots (and 5) carry the
+  // per-instance o2w rows, so a skinned prototype binds 6/7 instead. The extended
+  // (>4 influence) stream needs attrib 5 and therefore has no instanced form --
+  // instanced prototypes use the 4-influence path only.
+  const bool skinInstanced = !sm.instanceXforms.empty();
+  const GLuint jointLoc = skinInstanced ? 6u : 3u;
+  const GLuint weightLoc = skinInstanced ? 7u : 4u;
+  if (skinInstanced) gm.extendedSkinned = false;
   if (gm.skinned) {
     glGenBuffers(1, &gm.jointVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.jointVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointIdx.size() * sizeof(uint32_t)),
                  sm.jointIdx.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(3);
-    glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t), (void*)0);
+    glEnableVertexAttribArray(jointLoc);
+    glVertexAttribIPointer(jointLoc, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t),
+                           (void*)0);
+    glVertexAttribDivisor(jointLoc, 0);
     glGenBuffers(1, &gm.weightVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.weightVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointWt.size() * sizeof(float)),
                  sm.jointWt.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(weightLoc);
+    glVertexAttribPointer(weightLoc, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          (void*)0);
+    glVertexAttribDivisor(weightLoc, 0);
     if (gm.extendedSkinned) {
       glGenBuffers(1, &gm.influenceVbo);
       glBindBuffer(GL_ARRAY_BUFFER, gm.influenceVbo);
@@ -1411,6 +1459,14 @@ void GLRenderer::replaceMesh(int meshIndex, const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(5);
       glVertexAttribI2ui(5, 0, 0);
     }
+  } else if (skinInstanced) {
+    // Unskinned prototype: constant zero weights, so the instanced shader passes
+    // every vertex through. Slots 3/4/5 belong to the instance rows here and are
+    // set up below -- do NOT touch them.
+    glDisableVertexAttribArray(6);
+    glDisableVertexAttribArray(7);
+    glVertexAttribI4ui(6, 0, 0, 0, 0);
+    glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
   } else {
     glDisableVertexAttribArray(3);
     glDisableVertexAttribArray(4);
@@ -1472,21 +1528,34 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+  // Skin attribute locations differ by program: the mesh program takes joints at 3
+  // and weights at 4, but in the INSTANCED program those slots (and 5) carry the
+  // per-instance o2w rows, so a skinned prototype binds 6/7 instead. The extended
+  // (>4 influence) stream needs attrib 5 and therefore has no instanced form --
+  // instanced prototypes use the 4-influence path only.
+  const bool skinInstanced = !sm.instanceXforms.empty();
+  const GLuint jointLoc = skinInstanced ? 6u : 3u;
+  const GLuint weightLoc = skinInstanced ? 7u : 4u;
+  if (skinInstanced) gm.extendedSkinned = false;
   if (gm.skinned) {
     glGenBuffers(1, &gm.jointVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.jointVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointIdx.size() * sizeof(uint32_t)),
                  sm.jointIdx.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(3);
-    glVertexAttribIPointer(3, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t), (void*)0);
+    glEnableVertexAttribArray(jointLoc);
+    glVertexAttribIPointer(jointLoc, 4, GL_UNSIGNED_INT, 4 * sizeof(uint32_t),
+                           (void*)0);
+    glVertexAttribDivisor(jointLoc, 0);
     glGenBuffers(1, &gm.weightVbo);
     glBindBuffer(GL_ARRAY_BUFFER, gm.weightVbo);
     glBufferData(GL_ARRAY_BUFFER,
                  static_cast<GLsizeiptr>(sm.jointWt.size() * sizeof(float)),
                  sm.jointWt.data(), GL_STATIC_DRAW);
-    glEnableVertexAttribArray(4);
-    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(weightLoc);
+    glVertexAttribPointer(weightLoc, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          (void*)0);
+    glVertexAttribDivisor(weightLoc, 0);
     if (gm.extendedSkinned) {
       glGenBuffers(1, &gm.influenceVbo);
       glBindBuffer(GL_ARRAY_BUFFER, gm.influenceVbo);
@@ -1510,6 +1579,14 @@ void GLRenderer::appendMesh(const DrawMeshCPU& sm) {
       glDisableVertexAttribArray(5);
       glVertexAttribI2ui(5, 0, 0);
     }
+  } else if (skinInstanced) {
+    // Unskinned prototype: constant zero weights, so the instanced shader passes
+    // every vertex through. Slots 3/4/5 belong to the instance rows here and are
+    // set up below -- do NOT touch them.
+    glDisableVertexAttribArray(6);
+    glDisableVertexAttribArray(7);
+    glVertexAttribI4ui(6, 0, 0, 0, 0);
+    glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
   } else {
     glDisableVertexAttribArray(3);
     glDisableVertexAttribArray(4);
@@ -2327,6 +2404,10 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
     glUniform1f(iDepthScale_, params.depthScale > 1e-4f ? params.depthScale : 1.0f);
     glUniform3fv(iSceneMin_, 1, params.sceneMin);
     glUniform3fv(iSceneExtent_, 1, params.sceneExtent);
+    // Scene-wide bone texture (unit 4), shared with the mesh program.
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, boneTex_ ? boneTex_ : whiteTex_);
+    glActiveTexture(GL_TEXTURE0);
     cullState = -1;  // reset across the program switch; dedup within this pass
     for (size_t mi = 0; mi < meshes_.size(); ++mi) {
       if (params.meshVisible && mi < static_cast<size_t>(params.meshVisibleCount) &&
@@ -2342,6 +2423,18 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
       glUniform1i(iDoubleSided_, mesh.doubleSided ? 1 : 0);
       glUniform1i(iPurpose_, mesh.purposeId);
       glUniform1i(iKind_, mesh.kindId);
+      // Skeletal skinning of the PROTOTYPE (all its instances share one pose).
+      // The bone texture is scene-wide and stays bound for the whole pass; only
+      // the enable flag is per-draw. Unskinned prototypes carry zero weights, so
+      // the shader would pass them through even without this, but skip the fetch.
+      const bool instSkinOn = mesh.skinned && skinningFrameEnabled_;
+      glUniform1i(iSkinningEnabled_, instSkinOn ? 1 : 0);
+      glUniform1i(iBoneTexWidth_, boneTexWidth_ > 0 ? boneTexWidth_ : 4);
+      glUniform1i(iBoneMatrixCount_, boneMatrixCount_);
+      if (!mesh.jointVbo) {  // no skin attrs: constant zero weights
+        glVertexAttribI4ui(6, 0, 0, 0, 0);
+        glVertexAttrib4f(7, 0.0f, 0.0f, 0.0f, 0.0f);
+      }
       // Only touch cull state on a transition: across tens of thousands of
       // prototypes the back-face cull flag almost never changes, so the per-draw
       // glEnable/glDisable/glCullFace was pure redundant driver traffic.

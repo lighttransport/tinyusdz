@@ -192,6 +192,9 @@ class GLRenderer final : public Renderer {
   GLint uDisplacementTexScale_{-1}, uDisplacementTexBias_{-1};
   GLint uHasMorph_{-1};  // GPU blendshape morph enable (per-draw)
   GLint iHasMorph_{-1};  // GPU morph enable in the instanced program (per-draw)
+  // Skeletal skinning in the instanced program (prototype-local, bone texture on
+  // unit 4 -- the same scene-wide texture the mesh program samples).
+  GLint iSkinningEnabled_{-1}, iBoneTexWidth_{-1}, iBoneMatrixCount_{-1};
 
   // GPU tessellation displacement program (built only on GL >= 4.0). Adaptive
   // sub-triangle subdivision in the TCS + per-sample displacement in the TES, so a

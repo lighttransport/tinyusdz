@@ -505,7 +505,18 @@ class VulkanRenderer final : public Renderer {
   void ensureDrawMeta();         // rebuild drawMetaBuf_ when meshes_ changes (non-MDI)
   // (Re)create drawMetaBuf_ to hold `meta` and repoint drawMetaSet_ at it. Shared by
   // ensureDrawMeta (per-mesh layout) and buildInstMdi (per-command layout).
-  struct DrawMetaCPU { int32_t ids[4]; };
+  // Per-draw metadata (set 6), shared by mesh_inst.vert/.frag. `jointAddr` /
+  // `weightAddr` are the device addresses of this mesh's per-vertex skin arrays
+  // (0 = unskinned): the instanced vertex shader fetches them by gl_VertexIndex
+  // rather than through vertex-input state, so the merged multi-draw path needs
+  // no extra bindings -- its draws simply carry 0 (skinned prototypes are kept
+  // out of MDI, whose gl_VertexIndex would index the MERGED buffer).
+  struct DrawMetaCPU {
+    int32_t ids[4];
+    uint64_t jointAddr{0};
+    uint64_t weightAddr{0};
+  };
+  static_assert(sizeof(int32_t) * 4 + sizeof(uint64_t) * 2 == 32, "DrawMeta 32B");
   void writeDrawMeta(const std::vector<DrawMetaCPU>& meta);
 
   // ---- Multi-draw-indirect instanced path (large-scene --next) ----

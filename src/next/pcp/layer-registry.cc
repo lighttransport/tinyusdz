@@ -5,6 +5,7 @@
 
 #include "layer-registry.hh"
 
+#include "../layer/asset-anchor.hh"
 #include "../reader/usda-reader.hh"
 #include "../reader/usdc-reader.hh"
 #include "../reader/usdz-reader.hh"
@@ -176,9 +177,53 @@ std::shared_ptr<Layer> LoadLayerFromUSDZ(const std::string &package_file,
 
 }  // namespace
 
+namespace {
+
+// Stamp every prim in a freshly-loaded layer with the directory its RELATIVE
+// asset paths anchor to: the layer's own directory. Composition flattens prims
+// from many layers into one, so without this the authoring layer -- and with it
+// the only correct anchor for `@../tex/foo.png@` -- is lost. See asset-anchor.hh.
+//
+// USDZ is deliberately excluded: paths inside a package are package-relative and
+// are resolved against the archive, not the filesystem, so they must keep
+// anchor 0 (the consumer's existing package handling takes over).
+void StampAssetAnchor(Layer *layer, const std::string &resolved_path) {
+  if (!layer) return;
+  const size_t slash = resolved_path.find_last_of("/\\");
+  if (slash == std::string::npos) return;  // bare filename: cwd, nothing to add
+
+  const uint32_t id = InternAssetAnchor(resolved_path.substr(0, slash));
+  if (id == 0) return;
+  for (size_t i = 0; i < layer->prim_count(); ++i) {
+    if (PrimSpec *ps = layer->prim_mutable(static_cast<uint32_t>(i))) {
+      ps->set_asset_anchor_id(id);
+    }
+  }
+}
+
+std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
+    const std::string &resolved_path, std::string *warn, std::string *err,
+    const LayerLoadOptions &options);
+
+}  // namespace
+
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,
                                          const LayerLoadOptions &options) {
+  std::shared_ptr<Layer> layer =
+      LoadLayerFromFileUnstamped(resolved_path, warn, err, options);
+  // Package entries resolve inside the archive; leave them at anchor 0.
+  if (layer && !AssetResolver::IsPackagePath(resolved_path)) {
+    StampAssetAnchor(layer.get(), resolved_path);
+  }
+  return layer;
+}
+
+namespace {
+
+std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
+    const std::string &resolved_path, std::string *warn, std::string *err,
+    const LayerLoadOptions &options) {
   if (AssetResolver::IsPackagePath(resolved_path)) {
     std::string package_file;
     std::string entry_name;
@@ -231,6 +276,8 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
   }
   return nullptr;
 }
+
+}  // namespace
 
 std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
                                          std::string *warn, std::string *err,

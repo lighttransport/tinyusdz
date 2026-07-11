@@ -20,7 +20,7 @@
 #include "load_control.hh"   // LoadControl
 #include "scene_loader.hh"   // LoadOptions
 
-namespace tinyusdz { namespace next { class Stage; } }
+namespace tinyusdz { namespace next { class Stage; class StageSession; } }
 
 namespace tusdview {
 
@@ -29,13 +29,12 @@ namespace tusdview {
 // when no renderable mesh was produced). Worker-thread safe (no GPU access).
 // `ctrl` (optional) caps triangles (LoadControl::maxTriangles) and supports
 // cancellation; the scene is marked `truncated` when a cap is hit.
-// `out_stage` (optional) receives the composed lazy stage so the caller can keep
-// it alive for per-frame animation (blendshape weights) -- the lazy mmap arrays
-// stay resident but unmaterialized, so this is cheap.
+// `out_session` receives the persistent composed document used by UI edits,
+// payload/variant recomposition, and per-frame animation.
 bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                     DrawScene* draw, std::string* warn, std::string* err,
                     LoadControl* ctrl = nullptr,
-                    std::shared_ptr<tinyusdz::next::Stage>* out_stage = nullptr);
+                    std::shared_ptr<tinyusdz::next::StageSession>* out_session = nullptr);
 
 // A USD camera resolved from the `next` stage, in world space: `eye` position,
 // unit `forward` (the camera looks down its local -Z) and `up` (local +Y), and
@@ -66,5 +65,20 @@ void BuildNextMorphWeights(
     const tinyusdz::next::Stage& stage, const DrawScene& draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
     std::vector<std::pair<int, std::vector<float>>>* out);
+
+// Per-frame GPU bone matrices for `--next` (the Tydra path's BuildGpuSkinningFrame
+// equivalent: same bone texture, same vertex shader, but posed from the retained
+// next Stage instead of RenderScene::skeletons). Re-poses every skinned source
+// mesh recorded in DrawScene::nextSkels at `time` and packs its block of the bone
+// texture.
+//
+// The next loader world-bakes vertices into material batches, so each block is
+// pre-composed with the mesh's geomBindTransform AND its world transform; the
+// batch itself carries an identity bind matrix and absolute joint rows. Skinned
+// mesh bounds are NOT refreshed (unlike the Tydra path): the next loader frees
+// the CPU geometry after upload, so the load-time bounds stand.
+// Returns false when the scene has no next-path skinning.
+bool BuildNextSkinningFrame(const tinyusdz::next::Stage& stage, DrawScene* draw,
+                            double time, SkinningFrameCPU* frame);
 
 }  // namespace tusdview

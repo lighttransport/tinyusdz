@@ -393,6 +393,13 @@ CMakeUserPresets.json
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the
 # top-level usdcat round-trip compare which globs only tests/usda/*.usda).
 !tests/usda/composition/listop-xlayer-*.usda
+# tusdview material regression fixtures (tusdview-material-binding-inheritance /
+# tusdview-asset-path-anchoring). Listed explicitly rather than un-ignoring all of
+# models/*.usda, which would also catch scratch scenes dropped in that directory.
+!models/tusdview-material-binding-inheritance.usda
+!models/skintest-instanced.usda
+!models/nested-look-texture/root.usda
+!models/nested-look-texture/look/look.usda
 !tests/usda/validation/invalid/*.usda
 !tests/usda/validation/generated/*.usda
 !tests/feat/large-scene/fixture/**/*.usda

@@ -309,6 +309,9 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 option(TINYUSDZ_USE_TINYEXR_V3 "Use the pure-C11 TinyEXR v3 C EXR backend (minimal codecs: no HTJ2K/ZSTD). Set OFF for the deprecated legacy v1 API" ON)
 # ---------
 
+option(TINYUSDZ_WITH_TEXTOOLS
+       "Build vendored tir/texcomp/texpipe/envmap texture tools" ON)
+
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
@@ -998,6 +1001,44 @@ if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
     find_package(zstd REQUIRED)
   endif()
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/zstd-compression.cc)
+endif()
+
+# Vendored pure-C11 texture processing stack used by tusdview/tusdrender.
+if(TINYUSDZ_WITH_TEXTOOLS)
+  set(TEXTOOLS_DIR ${PROJECT_SOURCE_DIR}/src/external/textools)
+  file(GLOB TEXTOOLS_SOURCES CONFIGURE_DEPENDS
+       ${TEXTOOLS_DIR}/resize/src/*.c
+       ${TEXTOOLS_DIR}/texcomp/src/*.c
+       ${TEXTOOLS_DIR}/texpipe/src/*.c
+       ${TEXTOOLS_DIR}/envmap/src/*.c)
+  add_library(tinyusdz_textools STATIC ${TEXTOOLS_SOURCES})
+  target_include_directories(tinyusdz_textools PUBLIC
+      ${TEXTOOLS_DIR}/resize/include
+      ${TEXTOOLS_DIR}/texcomp/include
+      ${TEXTOOLS_DIR}/texpipe/include
+      ${TEXTOOLS_DIR}/envmap/include)
+  target_compile_features(tinyusdz_textools PRIVATE c_std_11)
+  if(NOT MSVC)
+    target_compile_options(tinyusdz_textools PRIVATE -w)
+  endif()
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64" AND NOT MSVC)
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag("-march=armv8-a+sve" TEXTOOLS_HAS_SVE)
+    if(TEXTOOLS_HAS_SVE)
+      set_source_files_properties(
+          ${TEXTOOLS_DIR}/resize/src/tir_kernels_sve.c
+          PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sve")
+    endif()
+  endif()
+  if(UNIX)
+    target_compile_definitions(tinyusdz_textools PRIVATE
+        TIR_ENABLE_THREADS TIR_THREADS_PTHREAD)
+    find_package(Threads REQUIRED)
+    target_link_libraries(tinyusdz_textools PUBLIC Threads::Threads)
+  endif()
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(tinyusdz_textools PUBLIC m)
+  endif()
 endif()
 
 # -- nanoimage --
@@ -2102,6 +2143,32 @@ if(TINYUSDZ_BUILD_TESTS)
               ${PROJECT_SOURCE_DIR}
               ${CMAKE_BINARY_DIR}/tools/tusdrender
     )
+
+    # The legacy (eager tydra) path handles every .usda/.usdz; it used to drop
+    # every UsdUVTexture and render a flat constant base color.
+    add_test(
+      NAME tool-tusdrender-legacy-texture
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_legacy_texture.py
+              "$<TARGET_FILE:tusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/tusdrender
+    )
+    set_tests_properties(tool-tusdrender-legacy-texture
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # -autoframe on a FLAT scene (a quad / ground plane) used to frame it exactly
+    # edge-on and render black.
+    add_test(
+      NAME tool-tusdrender-autoframe-flat
+      COMMAND ${TUSDR_PYTHON}
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/check_autoframe_flat.py
+              "$<TARGET_FILE:tusdrender>"
+              ${PROJECT_SOURCE_DIR}
+              ${CMAKE_BINARY_DIR}/tools/tusdrender
+    )
+    set_tests_properties(tool-tusdrender-autoframe-flat
+                         PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 
   #
@@ -2202,9 +2269,52 @@ if(TINYUSDZ_BUILD_TESTS)
                 --time 12
                 --xvfb-run "${TINYUSDZ_XVFB_RUN}"
         )
+      # Skinning must also reach INSTANCED prototypes (a shared prototype behind
+      # `instanceable = true`), which the next loader used to convert but never
+      # skin -- every instance rendered the rest pose. Asserts the rig actually
+      # animates inside the instance; CPU/GPU are not pixel-compared here (a
+      # GPU-skinned prototype is de-instanced onto the material shader).
+      add_test(
+        NAME tusdview-instanced-prototype-skinning
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-instanced-prototype-skinning.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-instanced-skinning"
+        )
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
+  endif()
+
+  #
+  # UsdShade material-binding resolution: purpose-scoped (material:binding:preview
+  # / :full) bindings authored on an ANCESTOR, as production scenes (ALab) bind.
+  # Reading only the Mesh's own `material:binding` drops the material and every
+  # texture with it. Renders headless (Vulkan offscreen); SKIPs without a GPU.
+  #
+  if(UNIX AND NOT APPLE AND TARGET tusdview)
+    add_test(
+      NAME tusdview-material-binding-inheritance
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-material-binding-inheritance.sh"
+      )
+    set_tests_properties(tusdview-material-binding-inheritance
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
+    # Layer-relative asset-path anchoring: a look layer nested below the root
+    # reaches its texture with `../tex/...`, which only resolves when anchored to
+    # the layer that authored it (see src/next/layer/asset-anchor.hh).
+    add_test(
+      NAME tusdview-asset-path-anchoring
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-material-binding-inheritance.sh"
+                   "${PROJECT_SOURCE_DIR}/models/nested-look-texture/root.usda"
+      )
+    set_tests_properties(tusdview-asset-path-anchoring
+                         PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 
   #

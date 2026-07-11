@@ -614,6 +614,14 @@ public:
   const Path& path() const { return path_; }
   void set_path(const Path& path) { path_ = path; }
 
+  /// Directory this prim's RELATIVE asset paths anchor to, as an id interned in
+  /// asset-anchor.hh (0 = none -> the consumer falls back to the stage's base
+  /// dir). Stamped from the resolved layer path when the layer is loaded, and
+  /// carried through composition so a flattened prim still knows which layer
+  /// authored it. See asset-anchor.hh.
+  uint32_t asset_anchor_id() const { return asset_anchor_id_; }
+  void set_asset_anchor_id(uint32_t id) { asset_anchor_id_ = id; }
+
   // ============================================================
   // Properties (O(1) lookup for common names)
   // ============================================================
@@ -867,6 +875,9 @@ private:
   std::string name_;
   TypeNameId type_id_;
   PrimSpecifier specifier_ = PrimSpecifier::Def;
+  // Interned dir this prim's relative asset paths anchor to (0 = none).
+  // Sits in the padding after `specifier_`, so it costs nothing per prim.
+  uint32_t asset_anchor_id_ = 0;
   Path path_;
 
   PropIndex props_;

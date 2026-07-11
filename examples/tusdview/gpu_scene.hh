@@ -94,6 +94,11 @@ struct DrawMeshCPU {
   // Used by the flat --next preview to tint geometry; the material shader
   // multiplies baseColor by it (default white when absent).
   std::vector<float> vertexColors;
+  // Optional per-vertex alpha (parallel to `vertices`); empty = fully opaque.
+  // Carries USD `primvars:displayOpacity` when it is authored per-point or
+  // per-face-vertex; constant/uniform opacity folds into DrawMaterialCPU::alpha
+  // instead and leaves this empty.
+  std::vector<float> vertexAlpha;
   // Optional tangent-space basis, parallel to `vertices`; each entry is xyz.
   // Populated from USD primvars or Tydra-computed tangents/binormals. Current
   // renderers ignore these until full normal-map/anisotropy evaluation lands.
@@ -532,6 +537,28 @@ struct DrawScene {
   float previewLightDir[3]{0.40160966f, 0.64257544f, 0.48193160f};
   float previewLightColor[3]{1.0f, 1.0f, 1.0f};
   int boneMatrixCount{0};  // height of the per-frame 4xN RGBA32F bone texture
+
+  // --next per-frame GPU skinning. The Tydra path re-poses from
+  // RenderScene::skeletons; the next path has no RenderScene, so each skinned
+  // source mesh records here how to re-pose itself straight from the retained
+  // next Stage. One entry per skinned source mesh (not per DrawMesh: the next
+  // loader merges meshes into material batches, so one batch may draw vertices
+  // from several of these).
+  //
+  // The mesh's vertices are already world-baked into its batch, so the bone rows
+  // this entry owns ([matrixBase, matrixBase + numJoints)) are pre-composed with
+  // both `geomBind` and the mesh's world transform -- see BuildNextSkinningFrame.
+  // Vertices reference them by ABSOLUTE row index through DrawMeshCPU::jointIdx.
+  struct NextSkelBinding {
+    std::string skelPath;  // Skeleton prim
+    std::string animPath;  // bound SkelAnimation ("" = rest pose)
+    std::string meshPath;  // the skinned mesh (diagnostics)
+    int numJoints{0};
+    int matrixBase{0};
+    double geomBind[16];  // primvars:skel:geomBindTransform (row-vector)
+    double world[16];     // mesh world transform baked into the vertices
+  };
+  std::vector<NextSkelBinding> nextSkels;
 
   // World-space bounds over all meshes.
   float aabbMin[3]{-1, -1, -1};

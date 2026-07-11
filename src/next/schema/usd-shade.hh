@@ -61,6 +61,13 @@ UsdPrim GetBoundMaterial(const Stage& stage, const UsdPrim& prim);
 /// Get bound material path
 std::string GetBoundMaterialPath(const UsdPrim& prim);
 
+/// Resolve the material bound to `prim_path`, honoring UsdShade binding
+/// INHERITANCE (a binding on an ancestor applies to its descendants) on top of
+/// the purpose fallback chain in `GetBoundMaterialPath`. Returns "" if nothing
+/// in the ancestor chain binds a material.
+std::string GetInheritedBoundMaterialPath(const Stage& stage,
+                                          const std::string& prim_path);
+
 // ============================================================
 // Shader API
 // ============================================================

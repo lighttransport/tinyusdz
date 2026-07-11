@@ -14,6 +14,9 @@
 
 #include "image-loader.hh"
 #include "image-writer.hh"
+#include "next/layer/asset-anchor.hh"   // AssetAnchorPath
+#include "next/resolver/asset-resolver.hh"
+#include "next/schema/usd-shade.hh"  // GetInheritedBoundMaterialPath
 #include "next/schema/usd-skel.hh"
 #include "tsd/tinysubdiv.hh"
 #include "tydra/attribute-eval.hh"
@@ -281,10 +284,20 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
        opacity_tex.id >= 0 || clearcoat_tex.id >= 0 ||
        clearcoat_rough_tex.id >= 0 || specular_tex_id >= 0 ||
        displacement_tex_id >= 0)) {
-    st = ReadFloatArrayLazy(prim, "primvars:st", time);
-    if (st.empty()) st = ReadFloatArrayLazy(prim, "primvars:UVMap", time);
+    // Exporters disagree on the UV set name; try them in the same preference
+    // order tydra-next's converter uses, so both tools find the same set.
+    std::string st_name;
+    for (const std::string &name :
+         tinyusdz::tydra::next::MeshConfig{}.uv_primvar_names) {
+      st = ReadFloatArrayLazy(prim, ("primvars:" + name).c_str(), time);
+      if (!st.empty()) {
+        st_name = name;
+        break;
+      }
+    }
     if (!st.empty()) {
-      st_indices = ReadIntArrayLazy(prim, "primvars:st:indices", time);
+      st_indices = ReadIntArrayLazy(
+          prim, ("primvars:" + st_name + ":indices").c_str(), time);
       const size_t uv_count =
           st_indices.empty() ? (st.size() / 2) : st_indices.size();
       // Per-point if it matches the points; per-face-vertex if it matches the
@@ -665,62 +678,55 @@ std::string DirName(const std::string &path) {
 // loads once. `usdz`, when set, is searched first so textures packed inside a
 // .usdz archive resolve without touching the filesystem.
 
-// True if a usdz entry name refers to the same asset as `asset_path` (which may
-// be relative, "./tex.png", or "tex.png"). Matches on full path or basename.
-bool UsdzEntryMatches(const std::string &entry, const std::string &asset) {
-  std::string a = asset;
-  if (a.rfind("./", 0) == 0) a = a.substr(2);
-  if (entry == a) return true;
-  if (entry.size() > a.size() &&
-      entry.compare(entry.size() - a.size(), a.size(), a) == 0 &&
-      entry[entry.size() - a.size() - 1] == '/') {
-    return true;
-  }
-  auto base = [](const std::string &s) {
-    size_t p = s.find_last_of('/');
-    return p == std::string::npos ? s : s.substr(p + 1);
-  };
-  return base(entry) == base(a);
-}
-
 bool IsUdimPattern(const std::string &asset) {
   return asset.find("<UDIM>") != std::string::npos;
 }
 
-std::string ReplaceUdimToken(const std::string &asset, int udim) {
-  std::string out = asset;
-  const size_t pos = out.find("<UDIM>");
-  if (pos != std::string::npos) {
-    out.replace(pos, 6, std::to_string(udim));
+// Lazily build the shared decoder: asset resolution (filesystem / .usdz entry),
+// 8-bit normalization, and the -texMaxSize / -texBudgetMb shrink all live in
+// tydra::next::TextureDecoder now, shared with tusdview. `force_rgba` stays off:
+// the CPU integrator samples the source channel count, so a synthetic alpha
+// channel would be a third more memory for nothing.
+tinyusdz::tydra::next::TextureDecoder &DecoderFor(TextureCache &tc) {
+  if (!tc.decoder) {
+    tinyusdz::tydra::next::TextureDecodeOptions opts;
+    opts.base_dir = tc.base_dir;
+    opts.usdz = tc.usdz;
+    opts.force_rgba = false;
+    if (tc.options) {
+      opts.max_edge = tc.options->texture_max_size > 0
+                          ? uint32_t(tc.options->texture_max_size)
+                          : 0u;
+      opts.budget_bytes = tc.options->texture_budget_mb > 0
+                              ? uint64_t(tc.options->texture_budget_mb) *
+                                    1024ull * 1024ull
+                              : 0ull;
+    }
+    tc.decoder =
+        std::make_shared<tinyusdz::tydra::next::TextureDecoder>(std::move(opts));
   }
-  return out;
+  return *tc.decoder;
 }
 
-bool LoadTextureImage(TextureCache &tc, const std::string &asset_path,
-                      tinyusdz::Image *out) {
-  if (!out) return false;
-  if (tc.usdz) {
-    for (size_t i = 0; i < tc.usdz->NumEntries(); ++i) {
-      if (!UsdzEntryMatches(tc.usdz->EntryName(i), asset_path)) continue;
-      auto res = tinyusdz::image::LoadImageFromMemory(
-          tc.usdz->EntryData(i), tc.usdz->EntrySize(i), tc.usdz->EntryName(i));
-      if (res) {
-        *out = std::move(res.value().image);
-        return true;
-      }
-      return false;
-    }
+// Anchor a RAW authored asset path to the layer that authored it. The hand-rolled
+// resolver below reads `inputs:file` straight off the shader prim, so it gets the
+// authored string -- which in a look layer nested below the root is relative to
+// THAT layer (`../../texture/foo.png`) and does not resolve against the scene
+// file. Prims carry their authoring layer's directory through composition; see
+// next/layer/asset-anchor.hh. Prims with no anchor (root layer, USDZ entries)
+// return the path untouched, preserving the previous behavior.
+std::string AnchorAssetNext(const tinyusdz::next::UsdPrim &prim,
+                            const std::string &path) {
+  if (path.empty() || path[0] == '/' ||
+      path.find("://") != std::string::npos) {
+    return path;
   }
-  if (!asset_path.empty()) {
-    std::string path = asset_path;
-    if (path[0] != '/' && !tc.base_dir.empty()) path = tc.base_dir + "/" + path;
-    auto res = tinyusdz::image::LoadImageFromFile(path);
-    if (res) {
-      *out = std::move(res.value().image);
-      return true;
-    }
-  }
-  return false;
+  const tinyusdz::next::PrimSpec *spec = prim.GetPrimSpec();
+  const uint32_t id = spec ? spec->asset_anchor_id() : 0u;
+  const std::string &dir = tinyusdz::next::AssetAnchorPath(id);
+  if (dir.empty()) return path;
+  return tinyusdz::next::AssetResolver::NormalizePath(
+      tinyusdz::next::AssetResolver::JoinPath(dir, path));
 }
 
 int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
@@ -733,96 +739,37 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
   auto it = tc.by_key.find(key);
   if (it != tc.by_key.end()) return it->second;
 
-  auto make_texture = [&](const tinyusdz::Image &img, const std::string &label,
+  // Decode + shrink through the shared decoder, then wrap it in tusdrender's
+  // Texture (sampler state + mip chain).
+  auto make_texture = [&](const std::string &asset, const std::string &label,
                           Texture *out) -> bool {
     if (!out) return false;
-    if (img.width <= 0 || img.height <= 0 || img.data.empty()) {
-      return false;
-    }
-    tinyusdz::Image use = img;
-    if (use.format == tinyusdz::Image::PixelFormat::UInt && use.bpp == 16) {
-      const size_t pixels = size_t(use.width) * size_t(use.height) *
-                            size_t(use.channels);
-      if (use.data.size() < pixels * sizeof(uint16_t)) return false;
-      std::vector<uint8_t> u8(pixels);
-      for (size_t i = 0; i < pixels; ++i) {
-        uint16_t v = 0;
-        std::memcpy(&v, use.data.data() + i * sizeof(uint16_t), sizeof(v));
-        u8[i] = static_cast<uint8_t>((uint32_t(v) + 128u) / 257u);
-      }
-      use.data = std::move(u8);
-      use.bpp = 8;
-    }
-    if (use.bpp != 8 || use.format != tinyusdz::Image::PixelFormat::UInt) {
-      return false;
-    }
-    if (tc.options && tc.options->texture_max_size > 0) {
-      const int longest = std::max(use.width, use.height);
-      if (longest > tc.options->texture_max_size) {
-        const double ratio = static_cast<double>(tc.options->texture_max_size) /
-                             static_cast<double>(longest);
-        const int nw = std::max(1, static_cast<int>(std::floor(use.width * ratio)));
-        const int nh = std::max(1, static_cast<int>(std::floor(use.height * ratio)));
-        tinyusdz::Image resized;
-        std::string err;
-        const auto filter = srgb ? tinyusdz::tydra::ResizeFilter::SRGB
-                                 : tinyusdz::tydra::ResizeFilter::Linear;
-        if (tinyusdz::tydra::ResizeImage(use, nw, nh, &resized, filter, &err)) {
-          use = std::move(resized);
-        } else {
-          std::cerr << "WARN: failed to resize texture " << label << ": "
-                    << err << "\n";
-        }
-      }
-    }
-    if (tc.options && tc.options->texture_budget_mb > 0) {
-      const size_t budget =
-          static_cast<size_t>(tc.options->texture_budget_mb) * 1024ull * 1024ull;
-      const size_t bytes = use.data.size();
-      if (budget > 0 && tc.decoded_bytes + bytes > budget) {
-        const double remain = tc.decoded_bytes < budget
-                                  ? static_cast<double>(budget - tc.decoded_bytes)
-                                  : 0.0;
-        const double ratio =
-            remain > 0.0 ? std::sqrt(remain / static_cast<double>(bytes)) : 0.125;
-        const int nw = std::max(1, static_cast<int>(std::floor(use.width * ratio)));
-        const int nh = std::max(1, static_cast<int>(std::floor(use.height * ratio)));
-        tinyusdz::Image resized;
-        std::string err;
-        const auto filter = srgb ? tinyusdz::tydra::ResizeFilter::SRGB
-                                 : tinyusdz::tydra::ResizeFilter::Linear;
-        if (tinyusdz::tydra::ResizeImage(use, nw, nh, &resized, filter, &err)) {
-          use = std::move(resized);
-        } else {
-          std::cerr << "WARN: failed to fit texture budget for " << label
-                    << ": " << err << "\n";
-        }
-      }
-    }
+    tinyusdz::tydra::next::DecodedImage img;
+    if (!DecoderFor(tc).Decode(asset, srgb, &img)) return false;
     if (tc.options &&
         tc.options->texture_compress == Options::TextureCompress::BCn) {
       std::cerr << "WARN: -texCompress bc requested; " << label
                 << " is currently kept as resized 8-bit texels in tusdrender\n";
     }
     Texture t;
-    t.width = use.width;
-    t.height = use.height;
-    t.channels = use.channels;
-    t.pixels = std::move(use.data);
+    t.width = int(img.width);
+    t.height = int(img.height);
+    t.channels = int(img.channels);
+    t.pixels = std::move(img.pixels);
     t.wrap_s = ws;
     t.wrap_t = wt;
     t.srgb = srgb;
     t.scale = scale;
     t.bias = bias;
     t.build_mips();
-    tc.decoded_bytes += t.pixels.size();
+    tc.decoded_bytes = size_t(DecoderFor(tc).decoded_bytes());
     *out = std::move(t);
     return true;
   };
 
-  auto adopt = [&](const tinyusdz::Image &img, const std::string &label) -> int32_t {
+  auto adopt = [&](const std::string &asset, const std::string &label) -> int32_t {
     Texture t;
-    if (!make_texture(img, label, &t)) return -1;
+    if (!make_texture(asset, label, &t)) return -1;
     int32_t id = int32_t(tc.textures->size());
     tc.textures->push_back(std::move(t));
     return id;
@@ -838,11 +785,10 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
     udim.scale = scale;
     udim.bias = bias;
     for (int tile_id = 1001; tile_id <= 1100; ++tile_id) {
-      const std::string tile_path = ReplaceUdimToken(asset_path, tile_id);
-      tinyusdz::Image img;
-      if (!LoadTextureImage(tc, tile_path, &img)) continue;
+      const std::string tile_path =
+          tinyusdz::tydra::next::ReplaceUdimToken(asset_path, tile_id);
       Texture tile_tex;
-      if (!make_texture(img, tile_path, &tile_tex)) continue;
+      if (!make_texture(tile_path, tile_path, &tile_tex)) continue;
       Texture::UdimTile tile;
       tile.udim = tile_id;
       tile.width = tile_tex.width;
@@ -857,10 +803,7 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
       tc.textures->push_back(std::move(udim));
     }
   } else {
-    tinyusdz::Image img;
-    if (LoadTextureImage(tc, asset_path, &img)) {
-      id = adopt(img, asset_path);
-    }
+    id = adopt(asset_path, asset_path);
   }
   if (id < 0) {
     if (tc.missing_textures) (*tc.missing_textures)++;
@@ -938,7 +881,7 @@ void ResolveScalarTextureNext(const tinyusdz::next::Stage &stage,
     if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
   if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:wrapT"))
     if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
-  int32_t id = LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/false);
+  int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, /*srgb=*/false);
   if (id < 0) return;
   out->id = id;
   const std::string prop = target.property_name();  // e.g. "outputs:g"
@@ -1030,10 +973,10 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
       if (vertex_color && od.size() > 1) *vertex_color = true;
     }
   }
-  const std::vector<tinyusdz::next::Path> *bind =
-      mesh.GetRelationship("material:binding");
-  if (!bind || bind->empty()) return;
-  tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+  const std::string bindPath =
+      tinyusdz::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
+  if (bindPath.empty()) return;
+  tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath(bindPath);
   if (!mat.IsValid()) return;
   tinyusdz::next::UsdPrim surf = ConnectedPrimNext(stage, mat, "outputs:surface");
   if (!surf.IsValid()) {
@@ -1144,7 +1087,7 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
           if (const tinyusdz::next::Value *v =
                   stex.GetPropertyValue("inputs:sourceColorSpace"))
             if (const std::string *t = v->as_token()) srgb = (*t != "raw");
-          int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb);
+          int32_t id = LoadTextureCached(tc, AnchorAssetNext(stex, *ap), ws, wt, srgb);
           if (id >= 0) {
             *specular_tex_id = id;
             if (specular_color) *specular_color = Vec3{1.0f, 1.0f, 1.0f};
@@ -1173,7 +1116,7 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
             if (const std::string *t = v->as_token()) ws = ParseWrapMode(*t);
           if (const tinyusdz::next::Value *v = etex.GetPropertyValue("inputs:wrapT"))
             if (const std::string *t = v->as_token()) wt = ParseWrapMode(*t);
-          int32_t id = LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/true);
+          int32_t id = LoadTextureCached(tc, AnchorAssetNext(etex, *ap), ws, wt, /*srgb=*/true);
           if (id >= 0) {
             *emission_tex_id = id;
             if (emission) *emission = Vec3{1.0f, 1.0f, 1.0f};  // texture is the tint
@@ -1217,7 +1160,7 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
         if (const tinyusdz::next::Value *v = tex.GetPropertyValue("inputs:bias")) {
           ReadVec3Value(*v, &bi);
         }
-        int32_t id = LoadTextureCached(tc, *ap, ws, wt, srgb, sc, bi);
+        int32_t id = LoadTextureCached(tc, AnchorAssetNext(tex, *ap), ws, wt, srgb, sc, bi);
         if (id >= 0) {
           *tex_id = id;
           // A textured surface tints by the texture, not the (often unauthored)
@@ -1251,7 +1194,7 @@ void ResolveMeshMaterialNext(const tinyusdz::next::Stage &stage,
           ReadVec3Value(*v, &bias);
         }
         int32_t id =
-            LoadTextureCached(tc, *ap, ws, wt, /*srgb=*/false, scale, bias);
+            LoadTextureCached(tc, AnchorAssetNext(ntex, *ap), ws, wt, /*srgb=*/false, scale, bias);
         if (id >= 0) {
           *normal_tex_id = id;
           if (uv_xform && uv_xform->identity)
@@ -1379,11 +1322,14 @@ bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
   }
   const tinyusdz::tydra::next::RenderTexture &tex =
       scene.textures[size_t(texture_id)];
-  std::string asset = tex.asset_path;
-  if (asset.empty() && tex.image_id >= 0 &&
-      size_t(tex.image_id) < scene.images.size()) {
+  // Prefer the RESOLVED image path: `asset_path` is the raw authored string,
+  // which in a nested look layer is relative to THAT layer, not to the scene
+  // file. `resolved_path` carries the authoring layer's anchor (asset-anchor.hh).
+  std::string asset;
+  if (tex.image_id >= 0 && size_t(tex.image_id) < scene.images.size()) {
     asset = scene.images[size_t(tex.image_id)].resolved_path;
   }
+  if (asset.empty()) asset = tex.asset_path;
   if (asset.empty()) return false;
   Vec3 scale{tex.scale_value.x, tex.scale_value.y, tex.scale_value.z};
   Vec3 bias{tex.bias.x, tex.bias.y, tex.bias.z};
@@ -1465,13 +1411,13 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
   MeshJobNext resolved = *job;
   ApplyDisplayPrimvarsNext(mesh, &resolved);
 
-  const std::vector<tinyusdz::next::Path> *bind =
-      mesh.GetRelationship("material:binding");
-  if (!bind || bind->empty()) {
+  const std::string bindPath =
+      tinyusdz::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
+  if (bindPath.empty()) {
     *job = resolved;
     return true;
   }
-  tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath((*bind)[0]);
+  tinyusdz::next::UsdPrim mat = stage.GetPrimAtPath(bindPath);
   if (!mat.IsValid()) {
     *job = resolved;
     return true;
@@ -1698,10 +1644,8 @@ void ResolveMeshMaterialCached(
     const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh,
     TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
     MeshJobNext *job) {
-  const std::vector<tinyusdz::next::Path> *bind =
-      mesh.GetRelationship("material:binding");
   const std::string key =
-      (bind && !bind->empty()) ? (*bind)[0].str() : std::string();
+      tinyusdz::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
   if (!key.empty()) {
     auto it = cache.find(key);
     if (it != cache.end()) {
@@ -2330,6 +2274,46 @@ CameraFrame MakeUsdRecordCamera(const Bounds &bounds, tinyusdz::Axis up_axis,
     fwd = Vec3{0.0f, 0.0f, -1.0f};
     up_vec = Vec3{0.0f, 1.0f, 0.0f};
   }
+
+  // FLAT scene (a single quad, a ground plane, a card): one extent is ~zero. The
+  // fixed axis-aligned view above then looks ALONG the plane -- exactly edge-on --
+  // so the render comes out empty. The common case is a Z-up quad lying in the XY
+  // plane, framed from -Y. Look down the degenerate axis instead so the scene is
+  // seen face-on; the two remaining extents become the focal-plane half-extents.
+  const float ext[3] = {dim.x, dim.y, dim.z};
+  const float max_ext = std::max(ext[0], std::max(ext[1], ext[2]));
+  int flat = -1;
+  if (max_ext > 0.0f) {
+    for (int i = 0; i < 3; i++) {
+      if (ext[i] <= 1.0e-4f * max_ext) {
+        flat = i;
+        break;
+      }
+    }
+  }
+  // The axis the default view above already looks down.
+  const int view_axis = (up_axis == tinyusdz::Axis::Z)   ? 1
+                        : (up_axis == tinyusdz::Axis::X) ? 0
+                                                         : 2;
+  if (flat >= 0 && flat != view_axis) {
+    auto unit = [](int a) {
+      return Vec3{a == 0 ? 1.0f : 0.0f, a == 1 ? 1.0f : 0.0f,
+                  a == 2 ? 1.0f : 0.0f};
+    };
+    const int up_idx = (up_axis == tinyusdz::Axis::Z)   ? 2
+                       : (up_axis == tinyusdz::Axis::X) ? 0
+                                                        : 1;
+    pos_dir = unit(flat);          // stand off on the + side of the plane...
+    fwd = Mul(unit(flat), -1.0f);  // ...and look back down at it
+    // The scene's up axis lies IN the plane, unless it IS the flat axis (a card
+    // standing edge-up); then any in-plane axis serves as the roll reference.
+    up_vec = (up_idx == flat) ? unit((flat + 1) % 3) : unit(up_idx);
+
+    plane_x = ext[(flat + 1) % 3] * 0.5f;
+    plane_y = ext[(flat + 2) % 3] * 0.5f;
+    depth = ext[flat] * 0.5f;
+  }
+
   const float plane_radius =
       std::sqrt(plane_x * plane_x + plane_y * plane_y);
   float distance = plane_radius / std::max(1.0e-6f, std::tan(half_hfov)) + depth;
@@ -4391,6 +4375,29 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
   return true;
 }
 
+bool LoadNextStageBudgeted(const Options &opt, tinyusdz::next::Stage *stage,
+                           std::string *warn, std::string *err) {
+  if (!stage) {
+    if (err) *err = "null Stage output";
+    return false;
+  }
+  tinyusdz::next::StageSessionOptions session_options;
+  session_options.compose = true;
+  session_options.composition.variant_overrides = opt.variant_overrides;
+  session_options.max_total_memory = MemBudget::Get().Cap() * 55 / 100;
+  session_options.cache_retention = tinyusdz::next::CacheRetention::LayersOnly;
+  tinyusdz::next::StageSession session;
+  if (!session.OpenFile(opt.input, session_options)) {
+    if (warn) *warn = session.GetWarning();
+    if (err) *err = session.GetError();
+    return false;
+  }
+  *stage = session.TakeStage();
+  if (warn) *warn = session.GetWarning();
+  if (err) err->clear();
+  return true;
+}
+
 bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   ctx.opt = opt;
   ctx.width = opt.width > 0 ? opt.width : 960;
@@ -4401,11 +4408,7 @@ bool BuildRenderContext(const Options &opt, RenderContext &ctx) {
   // the input dir), so tusdrender consumes raw reference-composed scenes (e.g.
   // Caldera prefab stubs) directly — no external usdcat --flatten step. Self-
   // contained / pre-flattened inputs skip composition (identical to LoadUSD).
-  tinyusdz::next::pcp::CompositionOptions comp_opts;
-  if (!opt.variant_overrides.empty())
-    comp_opts.variant_overrides = opt.variant_overrides;
-  if (!tinyusdz::next::LoadUSDComposed(opt.input, &ctx.stage, &warn, &err,
-                                       &comp_opts)) {
+  if (!LoadNextStageBudgeted(opt, &ctx.stage, &warn, &err)) {
     if (!warn.empty()) std::cerr << "WARN: " << warn << "\n";
     std::cerr << "Failed to load USD (next): " << err << "\n";
     return false;
@@ -4524,6 +4527,17 @@ void PrintRTStats(const RenderContext &ctx) {
   std::cerr << "tracked buffer peak: "
             << MemBudget::GiB(MemBudget::Get().PeakTracked()) << "\n";
   std::cerr << "process RSS: " << MemBudget::GiB(MemBudget::ProcessRSS()) << "\n";
+  // Keep the public -stats fields aligned with the schema-aware renderer. The
+  // next path owns the same IblCache representation, so these are exact cache
+  // sizes rather than estimates.
+  std::cerr << "domelight: "
+            << (ctx.ibl.valid && ctx.opt.env_file.empty() ? 1 : 0) << "\n";
+  std::cerr << "ibl envmap: " << (ctx.ibl.valid ? 1 : 0) << "\n";
+  std::cerr << "ibl diffuse size: "
+            << (ctx.ibl.diffuse.width * ctx.ibl.diffuse.height) << "\n";
+  std::cerr << "ibl prefilter levels: " << ctx.ibl.prefiltered.size() << "\n";
+  std::cerr << "ibl brdf lut size: "
+            << (ctx.ibl.brdf_size * ctx.ibl.brdf_size) << "\n";
   // ctx.stats.triangles is the (instance-expanded) renderable triangle count in
   // both paths; ctx.tris is empty in the two-level (TLAS) path.
   std::cerr << "triangles: " << ctx.stats.triangles << "\n";
