@@ -539,48 +539,6 @@ bool CrateReader::Impl::UnpackVec4i(ValueRep rep, Value& out) {
 // Half-precision unpackers
 // ============================================================
 
-namespace {
-
-// Decode IEEE 754 half-precision (16-bit) to float32
-inline float half_to_float(uint16_t h) {
-  // Sign: bit 15
-  // Exponent: bits 14-10 (5 bits, bias 15)
-  // Mantissa: bits 9-0 (10 bits)
-  uint32_t sign = (h >> 15) & 1;
-  uint32_t exp = (h >> 10) & 0x1F;
-  uint32_t mant = h & 0x3FF;
-
-  uint32_t f;
-  if (exp == 0) {
-    // Zero/subnormal
-    if (mant == 0) {
-      f = sign << 31;  // +/- zero
-    } else {
-      // Subnormal: normalize so the leading 1 lands at bit 10, then drop it
-      // (it becomes the implicit float mantissa bit). Each left shift lowers
-      // the effective exponent by one: after s shifts e == -(s+1), and the
-      // float exponent field is 113 - s == 114 + e. The leading 1 must be
-      // masked off (0x3FF) so it does not bleed into the exponent field.
-      int e = -1;
-      uint32_t m = mant;
-      while (!(m & 0x400)) { m <<= 1; e--; }
-      f = (sign << 31) | (static_cast<uint32_t>(114 + e) << 23) |
-          ((m & 0x3FF) << 13);
-    }
-  } else if (exp == 31) {
-    // Inf/NaN
-    f = (sign << 31) | 0x7F800000 | (mant << 13);
-  } else {
-    // Normal
-    f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
-  }
-  float result;
-  std::memcpy(&result, &f, sizeof(result));
-  return result;
-}
-
-} // namespace
-
 bool CrateReader::Impl::UnpackHalf(ValueRep rep, Value& out) {
   // Preserve the half domain: the usda parser stores scalar halves as raw
   // half bits under TypeId::Half, so the crate reader must match for value

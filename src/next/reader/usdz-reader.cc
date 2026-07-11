@@ -9,8 +9,6 @@ namespace next {
 
 // ZIP local file header signature
 static const uint32_t kLocalFileHeaderSig = 0x04034b50;
-static const uint32_t kCentralDirHeaderSig = 0x02014b50;
-static const uint32_t kEOCDSig = 0x06054b50;
 
 #pragma pack(push, 1)
 struct LocalFileHeader {
