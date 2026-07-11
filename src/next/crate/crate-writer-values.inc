@@ -182,6 +182,19 @@
 
     // Non-inline scalars: store in the VALUE data section.
     if (!is_array) {
+      // pathExpression: pxr writes the expression TEXT as a u32 string
+      // index (crate >= 0.10).
+      if (type_id == TypeId::PathExpression) {
+        const std::string* str = val.as_string();
+        if (str) {
+          uint32_t sidx = InternString(*str);
+          uint64_t data_idx = StoreValueData(&sidx, 4, type_id);
+          if (required_version_minor_ < 10) required_version_minor_ = 10;
+          return ValueRep::Make(CrateTypeId::PathExpression, data_idx, false,
+                                false);
+        }
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+      }
       // Quaternions: crate / GfQuat memory layout is imaginary-first
       // (x, y, z, w); the internal layout (usda text order) is real-first
       // (w, x, y, z). Swizzle on write; the reader swizzles back.

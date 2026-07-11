@@ -3530,6 +3530,53 @@ static void test_p2_implied_subroot_class() {
   std::cout << "  OK" << std::endl;
 }
 
+
+// `reorder nameChildren` / `reorder rootPrims` apply to the flattened child
+// order (pxr semantics: listed names move to the front in list order, the
+// rest keep authored order). Locked here because the audit once flagged
+// reorder as unimplemented.
+static void test_reorder_children() {
+  std::cout << "test_reorder_children..." << std::endl;
+  auto parse_to_layer = [](const char* usda) -> std::shared_ptr<Layer> {
+    std::string w, e;
+    auto lp = pcp::LoadLayerFromMemory(
+        "mem.usda", reinterpret_cast<const uint8_t*>(usda),
+        std::strlen(usda), &w, &e);
+    return lp;
+  };
+  auto rootL = parse_to_layer(
+      "#usda 1.0\n"
+      "reorder rootPrims = [\"Z\", \"M\"]\n"
+      "def Xform \"M\" { }\n"
+      "def Xform \"Q\" { }\n"
+      "def Xform \"Z\"\n"
+      "{\n"
+      "    reorder nameChildren = [\"C\", \"A\"]\n"
+      "    def Sphere \"A\" { }\n"
+      "    def Cube \"B\" { }\n"
+      "    def Cone \"C\" { }\n"
+      "}\n");
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  std::vector<UsdPrim> roots = stage.GetRootPrims();
+  assert(roots.size() == 3);
+  assert(roots[0].GetName() == "Z");
+  assert(roots[1].GetName() == "M");
+  assert(roots[2].GetName() == "Q");
+  std::vector<UsdPrim> kids = roots[0].GetChildren();
+  assert(kids.size() == 3);
+  assert(kids[0].GetName() == "C");
+  assert(kids[1].GetName() == "A");
+  assert(kids[2].GetName() == "B");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
@@ -3572,6 +3619,7 @@ int main() {
   test_relocates();
   test_implied_inherit();
   test_layer_relocates();
+  test_reorder_children();
   test_p2_ref_no_default_prim();
   test_p2_inactive_subtree_pruned();
   test_p2_implied_subroot_class();

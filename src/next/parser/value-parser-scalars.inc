@@ -502,6 +502,26 @@ ParseResult ParseMatrix4d(Lexer& lexer) {
   return ParseMatrixDoubleN<4>(lexer, TypeId::Matrix4d);
 }
 
+ParseResult ParseFrame4d(Lexer& lexer) {
+  // Same wire form as matrix4d; keep the frame4d role identity.
+  ParseResult r = ParseMatrix4d(lexer);
+  if (r.success) r.value.retag_role(TypeId::Frame4d);
+  return r;
+}
+
+ParseResult ParsePathExpression(Lexer& lexer) {
+  // SdfPathExpression is authored as a quoted string.
+  ParseResult r = ParseString(lexer);
+  if (r.success) {
+    if (const std::string* sp = r.value.as_string()) {
+      return ParseResult::Ok(
+          Value::MakeStringLike(*sp, TypeId::PathExpression));
+    }
+  }
+  return r;
+}
+
+
 ParseResult ParseMatrix3d(Lexer& lexer) {
   return ParseMatrixDoubleN<3>(lexer, TypeId::Matrix3d);
 }
@@ -550,6 +570,8 @@ ParseFn GetParseFunction(TypeId type_id) {
     case TypeId::Matrix2d: return &ParseMatrix2d;
     case TypeId::Matrix3d: return &ParseMatrix3d;
     case TypeId::Matrix4d: return &ParseMatrix4d;
+    case TypeId::Frame4d: return &ParseFrame4d;
+    case TypeId::PathExpression: return &ParsePathExpression;
 
     // Semantic types that share storage with vectors
     case TypeId::Point3h: return &ParseHalf3;

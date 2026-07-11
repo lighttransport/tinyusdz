@@ -190,6 +190,20 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       return true;
     }
 
+    case CrateTypeId::PathExpression: {
+      // SdfPathExpression (crate >= 0.10): the expression text as a u32
+      // string index in the value stream.
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+        return false;
+      }
+      uint32_t sidx = 0;
+      if (!reader_->read_u32(sidx)) return false;
+      std::string text;
+      GetString(sidx, text);
+      out = Value::MakeStringLike(text, TypeId::PathExpression);
+      return true;
+    }
+
     case CrateTypeId::Dictionary:
       return DecodeDictionary(rep, out, 0);
 

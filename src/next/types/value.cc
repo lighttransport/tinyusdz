@@ -92,7 +92,8 @@ inline void DetachDict(char* s) {
 
 // Check if type uses string storage
 bool UsesStringStorage(TypeId id) {
-  return id == TypeId::String || id == TypeId::Token || id == TypeId::AssetPath;
+  return id == TypeId::String || id == TypeId::Token ||
+         id == TypeId::AssetPath || id == TypeId::PathExpression;
 }
 
 // Array element types stored as a flat std::vector<float> (FloatArrayStorage):
@@ -177,6 +178,7 @@ bool IsDoubleBackedArray(TypeId id) {
     case TypeId::Color4d:
     case TypeId::Texcoord2d:
     case TypeId::Texcoord3d:
+    case TypeId::Frame4d:
     case TypeId::Quatd:
     case TypeId::Matrix2d:
     case TypeId::Matrix3d:
@@ -398,6 +400,14 @@ Value Value::MakeMatrix4d(const double* data) {
   Value v;
   v.type_id_ = TypeId::Matrix4d;
   std::memcpy(v.storage_, data, 16 * sizeof(double));
+  return v;
+}
+
+Value Value::MakeStringLike(const std::string& s, TypeId type) {
+  Value v;
+  if (!UsesStringStorage(type)) return v;
+  v.type_id_ = type;
+  new (v.storage_) StringStorage{s};
   return v;
 }
 
@@ -1027,7 +1037,11 @@ double* Value::as_double() {
 }
 
 const std::string* Value::as_string() const {
-  if (type_id_ != TypeId::String || is_array_) return nullptr;
+  // PathExpression shares the string storage and reads as a string.
+  if ((type_id_ != TypeId::String && type_id_ != TypeId::PathExpression) ||
+      is_array_) {
+    return nullptr;
+  }
   return &reinterpret_cast<const StringStorage*>(storage_)->value;
 }
 
@@ -1252,7 +1266,11 @@ const double* Value::as_matrix3d() const {
 }
 
 const double* Value::as_matrix4d() const {
-  if (type_id_ != TypeId::Matrix4d || is_array_) return nullptr;
+  // frame4d is a matrix4d role type (same double[16] storage).
+  if ((type_id_ != TypeId::Matrix4d && type_id_ != TypeId::Frame4d) ||
+      is_array_) {
+    return nullptr;
+  }
   return reinterpret_cast<const double*>(storage_);
 }
 

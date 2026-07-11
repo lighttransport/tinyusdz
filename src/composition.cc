@@ -3113,6 +3113,22 @@ bool ApplyDeferredVariantSelectionsRec(
   }
 
   primspec = std::move(dst);
+
+  // Re-stamp the resolved selection: a deep arc chain may deliver the
+  // POPULATED variantSet in a later fixpoint iteration (reference ->
+  // payload -> reference, the Kitchen_set pattern). VariantSelectPrimSpec
+  // consumes the selection metadata with the (possibly empty) set it just
+  // applied; without re-stamping, the strongest selection is lost and the
+  // late-arriving set falls back to its own weaker default. Leftover
+  // selections are stripped by CompositeAllArcs once no unresolved arcs
+  // remain.
+  if (!selection.empty()) {
+    VariantSelectionMap vsm;
+    for (const auto &kv : selection) {
+      vsm[kv.first] = kv.second;
+    }
+    primspec.metas().variants = vsm;
+  }
   return true;
 }
 
@@ -3677,6 +3693,27 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
         PushError("Composite `specializes` failed.\n");
         return false;
       }
+    }
+  }
+
+  // Fully resolved (no arcs left anywhere): strip the re-stamped variant
+  // selections — they were kept only so later fixpoint iterations could
+  // apply them to late-arriving variantSets.
+  {
+    const bool fully_resolved = !working.check_unresolved_references() &&
+                                !working.check_unresolved_payload() &&
+                                !working.check_unresolved_inherits() &&
+                                !working.check_unresolved_specializes() &&
+                                !working.check_unresolved_variant();
+    if (fully_resolved) {
+      std::function<void(PrimSpec&)> strip = [&](PrimSpec &ps) {
+        if (ps.metas().variants && !ps.metas().variantSets &&
+            ps.variantSets().empty()) {
+          ps.metas().variants.reset();
+        }
+        for (auto &child : ps.children()) strip(child);
+      };
+      for (auto &ps_item : working.primspecs()) strip(ps_item.second);
     }
   }
 

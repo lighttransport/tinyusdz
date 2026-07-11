@@ -142,6 +142,11 @@ enum class TypeId : uint16_t {
   // arrays are widened into the UInt array storage (bit-exact lanes).
   UChar,
 
+  // frame4d: a matrix4d role type (same double[16] storage).
+  Frame4d,
+  // pathExpression: SdfPathExpression, string-backed.
+  PathExpression,
+
   // Sentinel for array sizing
   Count
 };
