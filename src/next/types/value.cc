@@ -971,9 +971,25 @@ DEFINE_SCALAR_ACCESSOR(uint, UInt, uint32_t)
 DEFINE_SCALAR_ACCESSOR(int64, Int64, int64_t)
 DEFINE_SCALAR_ACCESSOR(uint64, UInt64, uint64_t)
 DEFINE_SCALAR_ACCESSOR(float, Float, float)
-DEFINE_SCALAR_ACCESSOR(double, Double, double)
 
 #undef DEFINE_SCALAR_ACCESSOR
+
+// double additionally accepts TimeCode: same 8-byte storage, and scalar
+// timecode values now keep their type identity through the crate reader.
+const double* Value::as_double() const {
+  if ((type_id_ != TypeId::Double && type_id_ != TypeId::TimeCode) ||
+      is_array_) {
+    return nullptr;
+  }
+  return reinterpret_cast<const double*>(storage_);
+}
+double* Value::as_double() {
+  if ((type_id_ != TypeId::Double && type_id_ != TypeId::TimeCode) ||
+      is_array_) {
+    return nullptr;
+  }
+  return reinterpret_cast<double*>(storage_);
+}
 
 const std::string* Value::as_string() const {
   if (type_id_ != TypeId::String || is_array_) return nullptr;

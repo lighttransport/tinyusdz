@@ -436,6 +436,102 @@ void test_inlined_scalar_reconstruction() {
   std::cout << "  Inlined int64 / half-vector reconstruction passed!" << std::endl;
 }
 
+// Locate a pxr-authored fixture in tests/usdc from any test cwd.
+static std::string FindUsdcFixture(const char* basename) {
+  const char* prefixes[] = {"../../../tests/usdc/", "../../tests/usdc/",
+                            "../tests/usdc/", "./tests/usdc/"};
+  for (const char* p : prefixes) {
+    std::string path = std::string(p) + basename;
+    std::ifstream f(path);
+    if (f.good()) return path;
+  }
+  return std::string();
+}
+
+// 2026-07 audit crate-reader cluster: per-arc customData skipped (arc kept),
+// explicit-clear (`references = None`) preserved, delete-apiSchemas applied,
+// scalar timecode keeps its type, version window through 0.14.
+// All .usdc fixtures authored by pxr usdcat.
+void test_crate_reader_audit_cluster() {
+  std::cout << "Testing crate-reader audit cluster..." << std::endl;
+
+  // Reference with per-arc customData: the ARC must survive (the dict is
+  // skipped). Previously the whole listop was dropped.
+  {
+    std::string fx = FindUsdcFixture("refs-customdata-001.usdc");
+    if (fx.empty()) { std::cout << "  Skipping (fixture missing)\n"; return; }
+    USDCLoadResult r = LoadUSDCFromFile(fx.c_str());
+    assert(r.success);
+    UsdPrim a = r.stage.GetPrimAtPath("/A");
+    assert(a.IsValid());
+    assert(a.GetMeta().references.size() == 1);
+    assert(a.GetMeta().references[0].find("b.usda") != std::string::npos);
+    assert(a.HasProperty("after"));
+  }
+
+  // Explicit-clear (`references = None`, pxr ListOpHeader 0x01 with no
+  // sublists): must record an authored explicit-empty edit, not no-opinion.
+  {
+    std::string fx = FindUsdcFixture("refs-explicit-clear-001.usdc");
+    if (fx.empty()) { std::cout << "  Skipping (fixture missing)\n"; return; }
+    USDCLoadResult r = LoadUSDCFromFile(fx.c_str());
+    assert(r.success);
+    UsdPrim a = r.stage.GetPrimAtPath("/A");
+    assert(a.IsValid());
+    assert(a.GetMeta().references.empty());
+    const ArcListOpEdits* edits = a.GetMeta().arc_edits();
+    assert(edits);
+    assert(edits->references.authored);
+    assert(edits->references.is_explicit);
+  }
+
+  // delete-apiSchemas sublist: applied as removal (the deleted schema must
+  // not leak in; the prepend sublist survives). Previously the deleted
+  // sublist was silently discarded and could not affect anything.
+  {
+    std::string fx = FindUsdcFixture("delete-apischemas-001.usdc");
+    if (fx.empty()) { std::cout << "  Skipping (fixture missing)\n"; return; }
+    USDCLoadResult r = LoadUSDCFromFile(fx.c_str());
+    assert(r.success);
+    UsdPrim a = r.stage.GetPrimAtPath("/A");
+    assert(a.IsValid());
+    const std::vector<std::string>& schemas = a.GetMeta().apiSchemas();
+    assert(schemas.size() == 1);
+    assert(schemas[0] == "CollectionAPI:foo");
+  }
+
+  // Scalar timecode keeps TypeId::TimeCode (was mutated to Double).
+  {
+    std::string fx = FindUsdcFixture("timecode-scalar-001.usdc");
+    if (fx.empty()) { std::cout << "  Skipping (fixture missing)\n"; return; }
+    USDCLoadResult r = LoadUSDCFromFile(fx.c_str());
+    assert(r.success);
+    UsdPrim a = r.stage.GetPrimAtPath("/A");
+    assert(a.IsValid());
+    const Value* t = a.GetPropertyValue("t");
+    assert(t && t->type_id() == TypeId::TimeCode);
+    const double* dv = t->as_double();
+    assert(dv && *dv == 10.5);
+
+    // Version window: the same bytes with the version bumped to 0.14 must
+    // load (additive versions); 0.15 must be rejected.
+    std::ifstream f(fx, std::ios::binary);
+    std::vector<char> bytes((std::istreambuf_iterator<char>(f)),
+                            std::istreambuf_iterator<char>());
+    assert(bytes.size() > 10);
+    bytes[9] = 14;
+    USDCLoadResult ok = LoadUSDCFromMemory(
+        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+    assert(ok.success);
+    bytes[9] = 15;
+    USDCLoadResult bad = LoadUSDCFromMemory(
+        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+    assert(!bad.success);
+  }
+
+  std::cout << "  Crate-reader audit cluster passed!" << std::endl;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Reader Tests ===" << std::endl;
   std::cout << std::endl;
@@ -451,6 +547,7 @@ int main() {
     test_openusd_compressed_value_reps_equal_raw_size();
     test_inlined_int_vec_reconstruction();
     test_inlined_scalar_reconstruction();
+    test_crate_reader_audit_cluster();
 
     std::cout << std::endl;
     std::cout << "All USDC tests passed!" << std::endl;

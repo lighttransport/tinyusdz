@@ -14,6 +14,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -514,7 +515,16 @@ bool CrateReader::Impl::BuildStage() {
     auto append_token_list = [&](const Value& v, std::vector<std::string>& dst,
                                  const char* field_name) {
       if (const std::vector<std::string>* arr = v.as_token_array()) {
-        for (const auto& s : *arr) dst.push_back(s);
+        // Marker-aware: keep prepend/append sublist items, skip
+        // deleted/ordered sublists, strip the markers themselves.
+        bool keep = true;
+        for (const auto& s : *arr) {
+          if (!s.empty() && s[0] == '\x01') {
+            keep = !(s == "\x01" "D" || s == "\x01" "O");
+            continue;
+          }
+          if (keep) dst.push_back(s);
+        }
       } else if (const std::string* s = v.as_token()) {
         dst.push_back(*s);
       } else if (const std::string* s = v.as_string()) {
@@ -530,6 +540,14 @@ bool CrateReader::Impl::BuildStage() {
     auto decode_arc_listop = [&](const Value& v, ArcEdit& e) {
       const std::vector<std::string>* arr = v.as_token_array();
       if (!arr) return;
+      // "\x01E" alone = authored explicit-clear (`references = None` /
+      // pxr's explicit-empty listop): authored with is_explicit kept true
+      // and no items, which the USDA writer re-emits as `= None`.
+      if (arr->size() == 1 && ((*arr)[0] == "\x01" "E" || (*arr)[0] == "\x01E")) {
+        e = ArcEdit();
+        e.authored = true;
+        return;
+      }
       e.authored = true;
       e.is_explicit = false;
       std::vector<std::string>* cur = nullptr;
@@ -587,14 +605,32 @@ bool CrateReader::Impl::BuildStage() {
         if (field.first == "apiSchemas") {
           // Applied API schemas (TokenListOp). Non-explicit sublists arrive
           // marker-delimited; recover the qualifier and strip the markers.
+          // Deleted items apply as in-place removals (same as the USDA
+          // parser; the writer never emits a delete qualifier); ordered
+          // items are ordering-only and are skipped.
           if (const std::vector<std::string>* arr =
                   field.second.as_token_array()) {
             std::string qual;
+            std::vector<std::string> deleted;
+            enum class Mode { Keep, Delete, Skip } mode = Mode::Keep;
             for (const std::string& t : *arr) {
-              if (t == "\x01" "P") { qual = "prepend"; continue; }
-              if (t == "\x01" "A") { qual = "append"; continue; }
-              if (!t.empty() && t[0] == '\x01') continue;
-              ps->meta().apiSchemas().push_back(t);
+              if (t == "\x01" "P") { qual = "prepend"; mode = Mode::Keep; continue; }
+              if (t == "\x01" "A") { qual = "append"; mode = Mode::Keep; continue; }
+              if (t == "\x01" "D") { mode = Mode::Delete; continue; }
+              if (t == "\x01" "O") { mode = Mode::Skip; continue; }
+              if (!t.empty() && t[0] == '\x01') continue;  // E / unknown
+              if (mode == Mode::Keep) ps->meta().apiSchemas().push_back(t);
+              else if (mode == Mode::Delete) deleted.push_back(t);
+            }
+            if (!deleted.empty()) {
+              std::vector<std::string>& applied = ps->meta().apiSchemas();
+              const std::unordered_set<std::string> del(deleted.begin(),
+                                                        deleted.end());
+              applied.erase(std::remove_if(applied.begin(), applied.end(),
+                                           [&](const std::string& a) {
+                                             return del.count(a) != 0;
+                                           }),
+                            applied.end());
             }
             if (!qual.empty()) ps->meta().apiSchemasQualifier() = qual;
           } else {

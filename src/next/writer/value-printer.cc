@@ -807,7 +807,8 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
-    case TypeId::Double: {
+    case TypeId::Double:
+    case TypeId::TimeCode: {  // scalar timecode: same 8-byte double storage
       const double* v = value.as_double();
       if (v) AppendDouble(out, *v); else out += "None";
       return;

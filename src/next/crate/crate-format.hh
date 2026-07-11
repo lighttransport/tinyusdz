@@ -98,12 +98,13 @@ constexpr uint8_t kCrateMinVersionMinor = 4;
 constexpr uint8_t kCrateMinVersionPatch = 0;
 
 /// Maximum supported version.
-/// 0.10.0 only ADDS timecode/timecode[] value types over 0.9.0 (structural
-/// sections unchanged), so accepting it is safe: the new type ids simply
-/// surface as unsupported values if actually authored. (UE 5.6 exports write
-/// 0.10.0.)
+/// Versions past 0.9.0 only ADD value types / fields over the structurally
+/// stable section layout: 0.10 timecode, 0.11 relocates, 0.12/0.13 splines,
+/// 0.14 array edits. Unknown type ids / fields surface as per-value warnings
+/// rather than wholesale rejection, so accept the whole window (legacy reads
+/// through 0.14 too; pxr 25.x writes 0.11+ when those features are authored).
 constexpr uint8_t kCrateMaxVersionMajor = 0;
-constexpr uint8_t kCrateMaxVersionMinor = 10;
+constexpr uint8_t kCrateMaxVersionMinor = 14;
 constexpr uint8_t kCrateMaxVersionPatch = 0;
 
 /// Bootstrap header size

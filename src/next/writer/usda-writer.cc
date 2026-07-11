@@ -960,12 +960,22 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   const bool has_assetInfo = has_dict(meta.assetInfo());
   const bool has_sdr = has_dict(meta.sdrMetadata());
   const bool has_clips = has_dict(meta.clips());
+  // An authored arc EDIT with empty inline lists still needs the metadata
+  // block: explicit-clear (`references = None`) has no items but is a real
+  // opinion.
+  const ArcListOpEdits* arc_edits = meta.arc_edits();
+  const bool has_arc_edits =
+      arc_edits && (arc_edits->references.has_authored_opinion() ||
+                    arc_edits->payloads.has_authored_opinion() ||
+                    arc_edits->inherits.has_authored_opinion() ||
+                    arc_edits->specializes.has_authored_opinion());
   bool has_meta = !meta.active || meta.hidden || meta.instanceable ||
                   !meta.kind().empty() || !meta.displayName().empty() ||
                   has_doc || has_comment || !meta.apiSchemas().empty() ||
                   has_customData || has_assetInfo || has_sdr || has_clips ||
                   !meta.references.empty() || !meta.payloads.empty() ||
                   !meta.inherits.empty() || !meta.specializes.empty() ||
+                  has_arc_edits ||
                   !meta.variantSelections().empty() ||
                   !meta.variantSelection.empty() ||
                   !meta.variantSets().empty();
