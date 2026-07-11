@@ -3280,6 +3280,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
              "DrawMeshCPU::vertexAlpha but no renderer samples a per-vertex "
              "alpha attribute yet, so they render at their material alpha";
   }
+  // GPU block compression + content-aware mip chains. The size cap / byte budget
+  // are already applied inside the --next texture decoder above, so only the
+  // compression pass runs here; without this `--texture-compress` would be inert
+  // on the (default) --next path, which builds its textures itself instead of
+  // going through mesh_build's BuildDrawTextures.
+  ApplyTextureCompression(opts.textureOptions, draw);
+  FinalizeDrawTextures(opts.textureOptions, draw);
+
   if (texCache.decoder && !draw->textures.empty()) {
     const tydn::TextureDecoder& dec = *texCache.decoder;
     LOGI("next: textures %zu, decoded %.1f MB (cap %u px, budget %.0f MB, "

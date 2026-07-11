@@ -85,4 +85,17 @@ bool BuildDrawSceneStreaming(tinyusdz::tydra::RenderSceneConverter& converter,
                              LoadControl* ctrl = nullptr,
                              const TextureRuntimeOptions& textureOptions = {});
 
+// --- Texture post-passes, shared by the legacy and `--next` scene loaders ----
+// Encode the already-decoded DrawScene textures to a GPU block format
+// (`--texture-compress`), cap-gated by TextureRuntimeOptions::caps. Split out of
+// ApplyTextureRuntimeOptions (which also does the size cap / byte budget) so the
+// `--next` loader — whose own texture decoder already applies those — can call
+// just this one.
+void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out);
+
+// Classify texture usage from the built materials, then build the content-aware
+// CPU mip chains (and per-level compressed payloads when compression is on).
+// Must run after the materials exist.
+void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out);
+
 }  // namespace tusdview
