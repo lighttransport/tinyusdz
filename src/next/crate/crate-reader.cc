@@ -48,7 +48,15 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Matrix4d: return UnpackMatrix4d(rep, out);
     case CrateTypeId::Specifier: return UnpackSpecifier(rep, out);
     case CrateTypeId::Variability: return UnpackVariability(rep, out);
-    case CrateTypeId::TimeCode: return UnpackDouble(rep, out);
+    case CrateTypeId::TimeCode: {
+      // Decode like a double but preserve the TimeCode type identity
+      // (a crate rewrite must not silently mutate timecode -> double).
+      if (!UnpackDouble(rep, out)) return false;
+      if (const double* d = out.as_double()) {
+        out = Value::MakeFromRaw(TypeId::TimeCode, d);
+      }
+      return true;
+    }
     case CrateTypeId::TimeSamples: return UnpackTimeSamples(rep, out);
     case CrateTypeId::Half: return UnpackHalf(rep, out);
     case CrateTypeId::Vec2i: return UnpackVec2i(rep, out);
