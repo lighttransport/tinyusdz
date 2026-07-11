@@ -1576,8 +1576,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
           fmt::format("Failed to parse token array for `reorder {}`.",
                       reorder_field));
     }
-    DCOUT("Parsed and ignored `reorder " << reorder_field << "` ("
-          << reorder_toks.size() << " entries; ordering only).");
+    DCOUT("Parsed `reorder " << reorder_field << "` ("
+          << reorder_toks.size() << " entries; preserved for round-trip).");
+    _pending_reorders.emplace_back(reorder_field, std::move(reorder_toks));
     return true;
   }
 

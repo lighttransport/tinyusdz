@@ -390,6 +390,13 @@ class AsciiParser {
   using PrimMetaMap =
       std::multimap<std::string, std::pair<ListEditQual, MetaVariable>>;
 
+  // `reorder <field> = [...]` body statements parsed by ParsePrimProps,
+  // consumed by the enclosing ParseBlock (injected into that prim's
+  // PrimMetaMap as "reorder:<field>" entries). Scoped by index mark so
+  // nested prim blocks take only their own entries.
+  std::vector<std::pair<std::string, std::vector<value::token>>>
+      _pending_reorders;
+
   struct VariantContent;
 
   //

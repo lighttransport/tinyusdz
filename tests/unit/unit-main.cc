@@ -657,6 +657,7 @@ TEST_LIST = {
   // Phase 1b: DAG-based composition graph tests
   { "compgraph_basic_prim_index_test", compgraph_basic_prim_index_test },
   { "compgraph_strength_order_test", compgraph_strength_order_test },
+  { "compgraph_nested_strength_order_test", compgraph_nested_strength_order_test },
   { "compgraph_inherits_dag_test", compgraph_inherits_dag_test },
   { "compgraph_specializes_globally_weak_test", compgraph_specializes_globally_weak_test },
   { "compgraph_references_dag_test", compgraph_references_dag_test },

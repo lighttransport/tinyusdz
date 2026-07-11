@@ -297,6 +297,26 @@ std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel
 // prim-pprint.hh
 namespace prim {
 
+
+// `reorder nameChildren/properties = [...]` body statements (preserved
+// verbatim from parse; pxr keeps them in unflattened output).
+static std::string print_reorder_stmts(const PrimMetas &metas,
+                                       const uint32_t indent) {
+  std::stringstream ss;
+  auto emit = [&](const char *field, const std::vector<value::token> &toks) {
+    if (toks.empty()) return;
+    ss << pprint::Indent(indent) << "reorder " << field << " = [";
+    for (size_t i = 0; i < toks.size(); i++) {
+      if (i) ss << ", ";
+      ss << "\"" << toks[i].str() << "\"";
+    }
+    ss << "]\n";
+  };
+  emit("nameChildren", metas.nameChildrenReorder);
+  emit("properties", metas.propertiesReorder);
+  return ss.str();
+}
+
 std::string print_prim(const Prim &prim, const uint32_t indent) {
   std::stringstream ss;
 
@@ -338,6 +358,18 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
       }
     }
     ss << s;
+
+    {
+      const std::string rs =
+          print_reorder_stmts(item.prim->metas(), item.indent + 1);
+      if (!rs.empty()) {
+        if (require_newline) {
+          ss << "\n";
+          require_newline = false;
+        }
+        ss << rs;
+      }
+    }
 
     // print variant
     if (item.prim->variantSets().size()) {
@@ -707,6 +739,7 @@ void print_primspec(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const Pri
   writer.write(pprint::Indent(indent));
   writer.write("{\n");
 
+  writer.write(print_reorder_stmts(primspec.metas(), indent + 1));
   writer.write(print_props(primspec.props(), indent + 1));
 
   for (size_t i = 0; i < primspec.children().size(); i++) {

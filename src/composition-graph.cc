@@ -1542,52 +1542,52 @@ void PrimIndexBuilder::ComputeStrengthOrder() {
   _result._strength_order.clear();
 
   // Collect all non-culled node indices
-  for (uint16_t i = 0; i < static_cast<uint16_t>(_result._nodes.size()); i++) {
-    if (!_result._nodes[i].is_culled()) {
-      _result._strength_order.push_back(i);
-    }
-  }
-
-  // Assign strength_order values based on:
-  // 1. Arc type (lower enum = stronger)
-  // 2. Depth (shallower = stronger, except specializes)
-  // 3. Sibling number (lower = stronger)
-  // 4. For specializes: they are always weakest, and implied ones
-  //    are weaker than direct ones
-  for (uint16_t i = 0; i < static_cast<uint16_t>(_result._nodes.size()); i++) {
-    CompNode &node = _result._nodes[i];
-
-    int32_t order = 0;
-
-    // Primary: arc type
-    order += static_cast<int32_t>(node.arc_type) * 10000;
-
-    // For specializes, add extra weight to make them globally weakest
-    if (node.arc_type == ArcType::Specialize) {
-      order += 100000;
-      // Implied specializes are even weaker
-      if (node.is_implied_arc()) {
-        order += 50000;
+  // pxr's strength ordering is a PRE-ORDER traversal of the prim-index
+  // tree: a node is stronger than everything in its subtree, and siblings
+  // are already linked strongest-first (first_child/next_sibling). The old
+  // flat `arc_type*10000 + depth*100 + sibling` formula both flattened
+  // nesting (a reference's nested inherit outranked the reference) and
+  // could invert child order across subtrees. Specializes remain globally
+  // weakest: collect them during the walk and append at the end (direct
+  // before implied), per Spec 10.4.1.
+  std::vector<uint16_t> specializes;
+  std::vector<uint16_t> stack;
+  if (!_result._nodes.empty()) stack.push_back(0);
+  while (!stack.empty()) {
+    const uint16_t idx = stack.back();
+    stack.pop_back();
+    const CompNode &node = _result._nodes[idx];
+    if (!node.is_culled()) {
+      if (node.arc_type == ArcType::Specialize) {
+        specializes.push_back(idx);
+      } else {
+        _result._strength_order.push_back(idx);
       }
     }
-
-    // Secondary: depth (shallower = stronger for non-specialize arcs)
-    if (node.arc_type != ArcType::Specialize) {
-      order += static_cast<int32_t>(node.depth) * 100;
+    // Push children in REVERSE sibling order so the strongest child pops
+    // first (pre-order).
+    std::vector<uint16_t> kids;
+    for (uint16_t c = node.first_child; c != CompNode::kInvalidIndex;
+         c = _result._nodes[c].next_sibling) {
+      kids.push_back(c);
     }
-
-    // Tertiary: sibling number
-    order += static_cast<int32_t>(node.sibling_num);
-
-    node.strength_order = order;
+    for (auto it = kids.rbegin(); it != kids.rend(); ++it) {
+      stack.push_back(*it);
+    }
   }
+  std::stable_sort(specializes.begin(), specializes.end(),
+                   [this](uint16_t a, uint16_t b) {
+                     // direct specializes before implied ones
+                     return !_result._nodes[a].is_implied_arc() &&
+                            _result._nodes[b].is_implied_arc();
+                   });
+  for (uint16_t sp : specializes) _result._strength_order.push_back(sp);
 
-  // Sort by strength_order (ascending = strongest first)
-  std::sort(_result._strength_order.begin(), _result._strength_order.end(),
-            [this](uint16_t a, uint16_t b) {
-              return _result._nodes[a].strength_order <
-                     _result._nodes[b].strength_order;
-            });
+  // Record each node's rank so incremental consumers keep a consistent view.
+  for (size_t r = 0; r < _result._strength_order.size(); r++) {
+    _result._nodes[_result._strength_order[r]].strength_order =
+        static_cast<int32_t>(r);
+  }
 }
 
 // ---------------------------------------------------------------------------

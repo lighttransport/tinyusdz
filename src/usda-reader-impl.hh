@@ -1125,6 +1125,18 @@ class USDAReader::Impl {
           sdata.value = spv.value();
           out->set_comment(sdata);
         }
+      } else if (meta.first == "reorder:nameChildren" ||
+                 meta.first == "reorder:properties") {
+        // `reorder` body statements stashed by the parser: route to the
+        // dedicated PrimMetas fields (NOT unregisteredMetas — they are body
+        // statements, not paren metadata).
+        if (auto tv = var.get_value<std::vector<value::token>>()) {
+          if (meta.first == "reorder:nameChildren") {
+            out->nameChildrenReorder = tv.value();
+          } else {
+            out->propertiesReorder = tv.value();
+          }
+        }
       } else {
         // Store unregistered metadata as raw string (OpenUSD-compatible).
         // The value is stored verbatim and written back unquoted to USDA.
