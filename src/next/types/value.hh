@@ -165,6 +165,9 @@ public:
   /// AssetPath); same storage as MakeTokenArray.
   static Value MakeStringLikeArray(std::vector<std::string>&& data,
                                    TypeId elem_type);
+  /// Scalar string-family value with an explicit type (Token / String /
+  /// AssetPath / PathExpression).
+  static Value MakeStringLike(const std::string& s, TypeId type);
 
   // ============================================================
   // Type queries

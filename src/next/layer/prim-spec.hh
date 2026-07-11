@@ -461,6 +461,7 @@ struct PropMeta {
     kWeight         = 1u << 12, kUnauthoredIdx = 1u << 13,
     kAllowedTokens  = 1u << 14, kCustomData    = 1u << 15,
     kAssetInfo      = 1u << 16, kSdrMetadata   = 1u << 17,
+    kUnknownMeta    = 1u << 18,
   };
   // token / string fields
   std::string interpolation;   // constant/uniform/varying/vertex/faceVarying
@@ -483,6 +484,10 @@ struct PropMeta {
   Value customData;
   Value assetInfo;
   Value sdrMetadata;
+  // Unknown (unmodeled) property metadata preserved as raw source text,
+  // authored order (key -> raw value text); the USDA writer re-emits it
+  // verbatim so pipeline-specific opinions round-trip.
+  std::vector<std::pair<std::string, std::string>> unknownMeta;
 
   bool empty() const { return authored == 0; }
 };

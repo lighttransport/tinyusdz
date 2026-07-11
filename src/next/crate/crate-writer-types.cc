@@ -74,6 +74,11 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Matrix2d: return CrateTypeId::Matrix2d;
     case TypeId::Matrix3d: return CrateTypeId::Matrix3d;
     case TypeId::Matrix4d: return CrateTypeId::Matrix4d;
+    // frame4d shares matrix4d's crate encoding; the declared type name
+    // restores the role on read (retag_role: Double x16 both sides).
+    case TypeId::Frame4d: return CrateTypeId::Matrix4d;
+    // pathExpression: crate 0.10 type 57 shares the Token payload form.
+    case TypeId::PathExpression: return CrateTypeId::PathExpression;
     case TypeId::Matrix2f: return CrateTypeId::Matrix2d;
     case TypeId::Matrix3f: return CrateTypeId::Matrix3d;
     case TypeId::Matrix4f: return CrateTypeId::Matrix4d;

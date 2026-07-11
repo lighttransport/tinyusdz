@@ -822,7 +822,8 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
-    case TypeId::String: {
+    case TypeId::String:
+    case TypeId::PathExpression: {  // SdfPathExpression prints as a string
       const std::string* v = value.as_string();
       out += v ? EscapeString(*v) : "None";
       return;
@@ -1019,7 +1020,8 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
-    case TypeId::Matrix4d: {
+    case TypeId::Matrix4d:
+    case TypeId::Frame4d: {  // matrix4d role
       const double* v = value.as_matrix4d();
       if (!v) { out += "None"; return; }
       out += "((";

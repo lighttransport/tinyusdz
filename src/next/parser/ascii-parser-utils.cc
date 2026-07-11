@@ -230,8 +230,28 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
       ParseResult r = ParseDict(*lexer_);
       if (r.success) { m.sdrMetadata = std::move(r.value); m.authored |= PropMeta::kSdrMetadata; }
     } else {
-      AddWarning("Unknown property metadata: " + key);
-      SkipValueLike();
+      // Unknown property metadata: consume the value structurally but
+      // preserve its raw source text for verbatim re-emit (same treatment
+      // as unknown PRIM metadata).
+      lexer_->peek();  // ensure the value's first token is scanned
+      const size_t vstart = lexer_->token_start();
+      const bool skipped = SkipValueLike();
+      if (skipped) {
+        lexer_->peek();  // the following token's start bounds the value
+        size_t vend = lexer_->token_start();
+        const char* base = lexer_->input_data();
+        while (vend > vstart &&
+               (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+                base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+          vend--;
+        }
+        if (vend > vstart) {
+          m.unknownMeta.emplace_back(key,
+                                     std::string(base + vstart, vend - vstart));
+          m.authored |= PropMeta::kUnknownMeta;
+        }
+      }
+      AddWarning("Unknown property metadata (preserved): " + key);
     }
   }
   Match(TokenType::CloseParen);

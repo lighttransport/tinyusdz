@@ -59,13 +59,40 @@ void TestLosslessUnsupportedValues() {
          crate_result.error.find("cannot encode spline") != std::string::npos);
   assert(!Parse(spline, true).success);
 
+  // frame4d is now a first-class matrix4d role type (pxr itself rejects
+  // the old `= identity` shorthand): the matrix form parses, round-trips,
+  // and keeps the frame4d name.
   const std::string frame =
-      "def Xform \"F\" { frame4d frame = identity }\n";
+      "def Xform \"F\" {\n"
+      "    frame4d frame = ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,2,1))\n"
+      "}\n";
   LoadResult frame_compat = Parse(frame, false);
   assert(frame_compat.success);
-  assert(WriteUSDAToString(frame_compat.stage).find(
-             "frame4d frame = identity") != std::string::npos);
-  assert(!Parse(frame, true).success);
+  {
+    UsdPrim f = frame_compat.stage.GetPrimAtPath("/F");
+    const Value* v = f.GetPropertyValue("frame");
+    assert(v && v->type_id() == TypeId::Frame4d);
+    const double* m = v->as_matrix4d();
+    assert(m && m[14] == 2.0);
+    const std::string rew = WriteUSDAToString(frame_compat.stage);
+    assert(rew.find("frame4d frame") != std::string::npos);
+  }
+  // pathExpression is first-class too.
+  const std::string pe =
+      "def Xform \"P\" {\n"
+      "    pathExpression expr = \"/World//Mesh*\"\n"
+      "}\n";
+  LoadResult pe_res = Parse(pe, false);
+  assert(pe_res.success);
+  {
+    UsdPrim pprim = pe_res.stage.GetPrimAtPath("/P");
+    const Value* v = pprim.GetPropertyValue("expr");
+    assert(v && v->type_id() == TypeId::PathExpression);
+    assert(v->as_string() && *v->as_string() == "/World//Mesh*");
+    const std::string rew = WriteUSDAToString(pe_res.stage);
+    assert(rew.find("pathExpression expr = \"/World//Mesh*\"") !=
+           std::string::npos);
+  }
 }
 
 void TestDictionaryAndRelationshipComposition() {

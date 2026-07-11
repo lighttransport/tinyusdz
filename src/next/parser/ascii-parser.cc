@@ -700,8 +700,19 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           vend--;
         }
         if (vend > vstart) {
+          // A list-op qualifier consumed before the key must ride along or
+          // the re-emitted opinion silently changes strength (`prepend
+          // weirdKey = [...]` re-emitted bare).
+          std::string qual_prefix;
+          switch (arc_qual) {
+            case ArcQual::Prepend: qual_prefix = "prepend "; break;
+            case ArcQual::Append: qual_prefix = "append "; break;
+            case ArcQual::Delete: qual_prefix = "delete "; break;
+            case ArcQual::Reorder: qual_prefix = "reorder "; break;
+            default: break;
+          }
           prim->meta().unknownMeta().emplace_back(
-              key, std::string(base + vstart, vend - vstart));
+              qual_prefix + key, std::string(base + vstart, vend - vstart));
         }
       }
       AddWarning("Unknown prim metadata (preserved): " + key);
