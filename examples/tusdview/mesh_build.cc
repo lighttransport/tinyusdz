@@ -1148,6 +1148,16 @@ static DrawCompressedFormat MapTydraBlockFormat(tydra::TextureBlockFormat f) {
   }
 }
 
+// Bytes per 4x4 (or codec-native) block, for splitting a packed mip chain.
+static int BlockFormatBytes(tydra::TextureBlockFormat f) {
+  switch (f) {
+    case tydra::TextureBlockFormat::BC1:
+    case tydra::TextureBlockFormat::ETC2_RGB:
+    case tydra::TextureBlockFormat::EAC_R11: return 8;
+    default: return 16;  // BC3/5/6H/7, ETC2_RGBA, EAC_RG11, ASTC_4x4, UNI
+  }
+}
+
 // Kept-compressed KTX2 passthrough: a tydra image whose blockFormat != None
 // carries GPU block bytes. Adapt them to the device (upload as-is / transcode
 // uni / decode fallback) instead of decoding-then-re-encoding. Only engages when
@@ -1169,32 +1179,80 @@ static bool TryKeepCompressedTexture(const tydra::RenderScene& rs,
 
   const bool isUni = img.blockFormat == tydra::TextureBlockFormat::UNI;
   const DrawCompressedFormat srcFmt = MapTydraBlockFormat(img.blockFormat);
+  const int blockBytes = BlockFormatBytes(img.blockFormat);
+  const int bw = img.blockWidth > 0 ? img.blockWidth : 4;
+  const int bh = img.blockHeight > 0 ? img.blockHeight : 4;
+  auto levelBytes = [&](int lw, int lh) -> size_t {
+    return static_cast<size_t>((lw + bw - 1) / bw) *
+           static_cast<size_t>((lh + bh - 1) / bh) *
+           static_cast<size_t>(blockBytes);
+  };
+
+  // Split the tightly-packed buffer into mip levels (largest-first), deriving
+  // each level's size from its dimensions + block geometry.
+  struct Lvl { size_t off; size_t size; int w; int h; };
+  std::vector<Lvl> levels;
+  size_t off = 0;
+  int lw = img.width, lh = img.height;
+  for (int l = 0; l < 24 && off < buf.size(); ++l) {
+    const size_t sz = levelBytes(lw, lh);
+    if (sz == 0 || off + sz > buf.size()) break;
+    levels.push_back({off, sz, lw, lh});
+    off += sz;
+    if (lw == 1 && lh == 1) break;
+    lw = std::max(1, lw >> 1);
+    lh = std::max(1, lh >> 1);
+  }
+  if (levels.empty()) return false;
+
+  // Level 0 decides the device target (compressed format or RGBA fallback).
   DrawCompressedImageCPU comp;
   light3d::Image rgba;
-  if (!TexToolsAdaptCompressed(buf.data(), buf.size(), isUni, srcFmt,
-                               static_cast<uint32_t>(img.width),
-                               static_cast<uint32_t>(img.height), opt.caps,
+  if (!TexToolsAdaptCompressed(buf.data() + levels[0].off, levels[0].size, isUni,
+                               srcFmt, static_cast<uint32_t>(levels[0].w),
+                               static_cast<uint32_t>(levels[0].h), opt.caps,
                                &comp, &rgba)) {
     return false;
   }
-  if (!comp.data.empty()) {
-    std::fprintf(stderr,
-                 "[tusdview] kept-compressed KTX2: %s (block fmt %d) -> draw fmt "
-                 "%d, %dx%d, %zu bytes (no re-encode)\n",
-                 isUni ? "uni" : "block", static_cast<int>(img.blockFormat),
-                 static_cast<int>(comp.format), comp.width, comp.height,
-                 comp.data.size());
-    tex->compressed = std::move(comp);
-    tex->requestedCompressed = true;
-    tex->compressedFinal = true;
-    // Metadata only; the compressed payload is uploaded directly.
-    tex->image.width = img.width;
-    tex->image.height = img.height;
-    tex->image.channels = 4;
-    tex->image.data.clear();
-  } else {
-    tex->image = std::move(rgba);  // uncompressed fallback
+
+  if (comp.data.empty()) {
+    tex->image = std::move(rgba);  // uncompressed fallback (level 0 only)
+    return true;
   }
+
+  // Compressed: carry the precomputed mip chain (levels 1..N) to the same
+  // target format by copy/transcode. On any failure, fall back to base-only.
+  for (size_t l = 1; l < levels.size(); ++l) {
+    std::vector<uint8_t> mipBytes;
+    if (!TexToolsAdaptCompressedLevel(buf.data() + levels[l].off, levels[l].size,
+                                      isUni, srcFmt, comp.format,
+                                      static_cast<uint32_t>(levels[l].w),
+                                      static_cast<uint32_t>(levels[l].h),
+                                      &mipBytes)) {
+      comp.mips.clear();
+      break;
+    }
+    DrawCompressedMipCPU m;
+    m.width = levels[l].w;
+    m.height = levels[l].h;
+    m.data = std::move(mipBytes);
+    comp.mips.push_back(std::move(m));
+  }
+
+  std::fprintf(stderr,
+               "[tusdview] kept-compressed KTX2: %s (block fmt %d) -> draw fmt "
+               "%d, %dx%d, %zu levels, %zu base bytes (no re-encode)\n",
+               isUni ? "uni" : "block", static_cast<int>(img.blockFormat),
+               static_cast<int>(comp.format), comp.width, comp.height,
+               1 + comp.mips.size(), comp.data.size());
+  tex->compressed = std::move(comp);
+  tex->requestedCompressed = true;
+  tex->compressedFinal = true;
+  // Metadata only; the compressed payload (+ mips) is uploaded directly.
+  tex->image.width = img.width;
+  tex->image.height = img.height;
+  tex->image.channels = 4;
+  tex->image.data.clear();
   return true;
 }
 #endif  // TUSDVIEW_WITH_TEXTOOLS

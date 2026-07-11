@@ -137,8 +137,10 @@ tusdview <scene> --texture-keep-compressed on
   or ETC2 otherwise, or a decode to RGBA8 as a last resort; a stored BC7/ASTC/BCn
   payload is uploaded as-is when the device supports it. This skips the expensive
   re-encode (and its quality loss).
-- Disabled by default; only level 0 is used today (multi-level KTX2 mips are a
-  follow-up). Size-cap / budget resize falls back to the normal decode path.
+- The KTX2's full precomputed mip chain is carried through (each level copied or
+  transcoded to the chosen format), so minification stays correct without
+  re-generating mips. Disabled by default; size-cap / budget resize falls back to
+  the normal decode path.
 
 ## Web demo
 
@@ -176,7 +178,6 @@ The page reports the detected caps, the chosen GPU format, and the VRAM saving
 
 ## Not yet supported / follow-ups
 
-- **Multi-level KTX2 mips** in the kept-compressed passthrough (level 0 only today).
 - **HDR compressed** decode-to-EXR (BC6H / ASTC-HDR); BC6H is the reliable HDR
   GPU-upload target.
 - **KTX2 Zstd** supercompression (scheme 2) in the reader/writer.

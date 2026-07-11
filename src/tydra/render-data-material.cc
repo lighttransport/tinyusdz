@@ -2033,8 +2033,17 @@ static bool LoadKTX2CompressedBlocks(const AssetResolutionResolver &resolver,
   if (k.num_faces != 1 || k.num_layers > 1) return false;  // 2D non-array only
   const TextureBlockFormat bf = Ktx2ToBlockFormat(k);
   if (bf == TextureBlockFormat::None) return false;
-  const tp_ktx2_level &l0 = k.levels[0];
-  out_bytes->assign(l0.data, l0.data + l0.size);
+  // Store every mip level, largest-first (level 0 .. level N-1), tightly packed.
+  // A GPU consumer re-derives per-level sizes from the block geometry + level
+  // dimensions (each level's byteLength was validated by tp_ktx2_read).
+  size_t total = 0;
+  for (int l = 0; l < k.num_levels; ++l) total += k.levels[l].size;
+  out_bytes->clear();
+  out_bytes->reserve(total);
+  for (int l = 0; l < k.num_levels; ++l) {
+    const tp_ktx2_level &lv = k.levels[l];
+    out_bytes->insert(out_bytes->end(), lv.data, lv.data + lv.size);
+  }
   texImage->blockFormat = bf;
   texImage->blockWidth = k.block_w;
   texImage->blockHeight = k.block_h;

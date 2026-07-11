@@ -314,6 +314,36 @@ bool TexToolsAdaptCompressed(const uint8_t* blocks, size_t nbytes, bool srcIsUni
   return false;  // BC1/3/5/6H, ETC2/EAC on an unsupported device — no decoder
 }
 
+bool TexToolsAdaptCompressedLevel(const uint8_t* blocks, size_t nbytes,
+                                  bool srcIsUni, DrawCompressedFormat srcFmt,
+                                  DrawCompressedFormat targetFmt, uint32_t w,
+                                  uint32_t h, std::vector<uint8_t>* out) {
+  if (!blocks || !nbytes || !w || !h || !out) return false;
+  if (srcIsUni) {
+    if (targetFmt == DrawCompressedFormat::ASTC_4x4) {
+      out->assign(blocks, blocks + nbytes);  // uni blocks are valid ASTC 4x4
+      return true;
+    }
+    if (targetFmt == DrawCompressedFormat::BC7) {
+      const size_t sz = tc_bc7_compressed_size(w, h);
+      out->resize(sz);
+      return tc_uni_transcode_bc7(blocks, w, h, out->data(), sz) == TC_SUCCESS;
+    }
+    if (targetFmt == DrawCompressedFormat::ETC2_RGBA) {
+      const size_t sz = tc_etc2_rgba_compressed_size(w, h);
+      out->resize(sz);
+      return tc_uni_transcode_etc2(blocks, w, h, 1, out->data(), sz) == TC_SUCCESS;
+    }
+    return false;
+  }
+  // Stored block format: only a direct copy to the same format is supported.
+  if (targetFmt == srcFmt) {
+    out->assign(blocks, blocks + nbytes);
+    return true;
+  }
+  return false;
+}
+
 bool TexToolsBuildMips(const light3d::Image& base, const TexUsage& usage,
                        std::vector<light3d::Image>* outMips) {
   if (!outMips || !ValidRGBA8(base)) return false;
