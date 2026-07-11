@@ -246,6 +246,7 @@ struct RenderMesh {
   FloatChunked texcoords_0;       // Primary UV (st), xy interleaved
   FloatChunked texcoords_1;       // Secondary UV
   FloatChunked colors;            // Vertex colors (rgb or rgba)
+  FloatChunked opacities;         // displayOpacity (1 float per element)
 
   // Interpolation modes for attributes
   Interpolation normals_interp = Interpolation::Vertex;
@@ -253,6 +254,7 @@ struct RenderMesh {
   Interpolation texcoords_0_interp = Interpolation::Vertex;
   Interpolation texcoords_1_interp = Interpolation::Vertex;
   Interpolation colors_interp = Interpolation::Vertex;
+  Interpolation opacities_interp = Interpolation::Vertex;
 
   // Additional primvars (custom attributes)
   std::vector<VertexAttribute> primvars;
@@ -261,13 +263,29 @@ struct RenderMesh {
   int32_t material_id = -1;  // -1 = no material
 
   // Per-face material (GeomSubset)
-  // Maps face range [start, end) to material_id
+  // Maps face range [start, start+count) to material_id. When the mesh is
+  // triangulated (face_triangle_offsets non-empty), the ranges are in
+  // TRIANGLE space (indexing triangulated_indices/3); otherwise they are
+  // authored polygon-face ranges.
   struct MaterialSubset {
     uint32_t face_start;
     uint32_t face_count;
     int32_t material_id;
   };
   std::vector<MaterialSubset> material_subsets;
+
+  // Prefix sums of triangles emitted per authored face (size = nfaces + 1);
+  // filled by triangulation. Holes/degenerate faces contribute 0 triangles.
+  std::vector<uint32_t> face_triangle_offsets;
+
+  // Faces dropped by topology sanitization: authored face numbering (and any
+  // GeomSubset indices referring to it) no longer aligns when > 0.
+  uint32_t sanitize_dropped_faces = 0;
+
+  // When sanitize_dropped_faces > 0: maps each AUTHORED face index to its
+  // post-sanitize face index (-1 = the face was dropped). Empty when
+  // sanitization kept the authored face numbering intact.
+  std::vector<int32_t> sanitize_face_remap;
 
   // Skinning data
   struct SkinBinding {
@@ -277,6 +295,10 @@ struct RenderMesh {
     int32_t skeleton_id = -1;
     std::string skeleton_path;    // bound Skeleton prim (resolves skeleton_id)
     Matrix4 geom_bind_transform;
+    // Mesh-local `skel:joints` order: when non-empty, joint_indices index
+    // into this list until the converter remaps them to skeleton joint
+    // order (done in the skeleton-resolve pass).
+    std::vector<std::string> mesh_joint_order;
   };
   std::unique_ptr<SkinBinding> skin;
 
@@ -338,6 +360,7 @@ struct RenderMesh {
   bool has_tangents() const { return !tangents.empty(); }
   bool has_texcoords() const { return !texcoords_0.empty(); }
   bool has_colors() const { return !colors.empty(); }
+  bool has_opacities() const { return !opacities.empty(); }
   bool has_skin() const { return skin != nullptr; }
   bool has_blend_shapes() const { return !blend_shapes.empty(); }
 
@@ -524,7 +547,9 @@ struct ShaderParam {
 struct PreviewSurfaceShader {
   ShaderParam diffuse_color = {{-1}, {0.18f, 0.18f, 0.18f, 1.0f}};
   ShaderParam emissive_color = {{-1}, {0, 0, 0, 1}};
-  ShaderParam specular_color = {{-1}, {1, 1, 1, 1}};
+  // UsdPreviewSurface spec fallback is (0,0,0) — only meaningful when
+  // useSpecularWorkflow is on.
+  ShaderParam specular_color = {{-1}, {0, 0, 0, 1}};
 
   ShaderParam metallic = {{-1}, {0, 0, 0, 0}};
   ShaderParam roughness = {{-1}, {0.5f, 0, 0, 0}};
@@ -633,6 +658,15 @@ struct RenderMaterial {
   AlphaMode alpha_mode = AlphaMode::Opaque;
   float alpha_cutoff = 0.5f;
 
+  // Material displacement/volume terminals (outputs:displacement /
+  // outputs:volume connections). Recorded as metadata (legacy parity:
+  // has_displacement/displacement_shader_path etc.); the shader networks
+  // themselves are not converted.
+  bool has_displacement = false;
+  std::string displacement_shader_path;
+  bool has_volume = false;
+  std::string volume_shader_path;
+
   MaterialXConfig mtlx_config;
 };
 
@@ -654,8 +688,10 @@ struct RenderTexture {
   std::string uv_primvar;
 
   // Sampling
-  WrapMode wrap_s = WrapMode::Repeat;
-  WrapMode wrap_t = WrapMode::Repeat;
+  // Effective UsdUVTexture default: unauthored/useMetadata wrap is Clamp
+  // (matches legacy/pxr; the converter always assigns via ParseWrapMode).
+  WrapMode wrap_s = WrapMode::Clamp;
+  WrapMode wrap_t = WrapMode::Clamp;
 
   // Bias/scale for texture values
   Float4 bias = {0, 0, 0, 0};
@@ -663,6 +699,11 @@ struct RenderTexture {
 
   // Image reference
   int32_t image_id = -1;
+
+  // Authored colorspace: colorSpace asset metadata on inputs:file when
+  // present, else inputs:sourceColorSpace ("auto"/"sRGB"/"raw"/...). Web
+  // consumers decode in the browser and need the authored intent.
+  std::string source_color_space = "auto";
 
   // Which channel to use (for single-channel textures)
   enum class Channel : uint8_t { R = 0, G, B, A, RGB, RGBA };
@@ -718,6 +759,24 @@ struct RenderLight {
   std::vector<std::string> shadow_link_targets;
   std::vector<std::string> filter_targets;
 
+  // Light/shadow linking resolved to RenderScene mesh indices (CollectionAPI
+  // collection:lightLink / collection:shadowLink relationship form). When the
+  // collection is unauthored the light links everything and *_links_all stays
+  // true; membershipExpression collections are not evaluated (no path
+  // expression parser in next) and also keep *_links_all = true.
+  bool light_links_all = true;
+  std::vector<int32_t> light_link_mesh_indices;
+  bool shadow_links_all = true;
+  std::vector<int32_t> shadow_link_mesh_indices;
+
+  // DomeLight inputs:texture:format token (matches UsdLux).
+  enum class DomeTextureFormat : uint8_t {
+    Automatic = 0,
+    Latlong,
+    MirroredBall,
+    Angular,
+  };
+
   // Transform
   Matrix4 transform;
 
@@ -727,7 +786,7 @@ struct RenderLight {
     struct { float width, height; } rect;
     struct { float radius; } disk;
     struct { float angle; } spot;  // Cone angle in radians
-    struct { int32_t texture_id; } dome;
+    struct { int32_t texture_id; DomeTextureFormat texture_format; } dome;
     struct { float radius, length; } cylinder;
     struct { float angle; } distant;  // Angular size in degrees
   } params = {};

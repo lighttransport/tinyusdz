@@ -4,6 +4,7 @@
 // Tydra Next - Render Scene Converter Implementation
 
 #include "render-converter.hh"
+#include "next/resolver/asset-resolver.hh"
 #include "materialx.hh"
 #include "next/schema/usdPhysics.hh"
 #include "next/schema/usd-shade.hh"
@@ -127,10 +128,14 @@ RenderTexture::Channel ChannelFromConnection(const std::string& connection_path)
 }
 
 WrapMode ParseWrapMode(const std::string& token) {
+  if (token == "repeat") return WrapMode::Repeat;
   if (token == "clamp") return WrapMode::Clamp;
   if (token == "mirror") return WrapMode::Mirror;
   if (token == "black") return WrapMode::Black;
-  return WrapMode::Repeat;
+  // UsdUVTexture's wrapS/wrapT fallback is "useMetadata"; with no texture
+  // metadata the effective mode is clamp-to-edge (legacy tydra behavior) —
+  // NOT repeat, which visibly tiles textures authored to clamp.
+  return WrapMode::Clamp;
 }
 
 ColorSpace ParseColorSpace(const std::string& token) {
@@ -209,6 +214,27 @@ bool ValueToShaderParam(const Value& value, ShaderParam* out) {
                    static_cast<float>(v[2]), static_cast<float>(v[3]));
     return true;
   }
+  // Half-precision shader inputs (half/half2/half3/half4 + role types) store
+  // raw half-bit lanes; widen through the converting reads.
+  {
+    float h[4];
+    if (value.to_float(h)) {
+      SetParamFloat(out, h[0]);
+      return true;
+    }
+    if (value.to_float2(h)) {
+      SetParamFloat4(out, h[0], h[1], 0.0f, 1.0f);
+      return true;
+    }
+    if (value.to_float3(h)) {
+      SetParamFloat3(out, h[0], h[1], h[2]);
+      return true;
+    }
+    if (value.to_float4(h)) {
+      SetParamFloat4(out, h[0], h[1], h[2], h[3]);
+      return true;
+    }
+  }
 
   return false;
 }
@@ -242,6 +268,74 @@ bool ValueToFloat4(const Value& value, Float4* out) {
                   static_cast<float>(v[2]), static_cast<float>(v[3]));
     return true;
   }
+  // Authored half-precision scalars (half3 rotate/scale, quath orient, ...)
+  // store raw half-bit lanes; the converting reads widen them.
+  float h[4];
+  if (value.to_float3(h)) {
+    *out = Float4(h[0], h[1], h[2], 0.0f);
+    return true;
+  }
+  if (value.to_float4(h)) {
+    *out = Float4(h[0], h[1], h[2], h[3]);
+    return true;
+  }
+  if (value.to_float(h)) {
+    *out = Float4(h[0], 0.0f, 0.0f, 0.0f);
+    return true;
+  }
+  return false;
+}
+
+// Closed-form Euler-degrees -> quaternion (xyzw) for all six USD rotation
+// orders (rotateXYZ means apply X first: Q = Qz * Qy * Qx). Ported from the
+// legacy tydra converter so Rotation channels always carry quaternions.
+Float4 EulerDegreesToQuatXYZW(float xdeg, float ydeg, float zdeg,
+                              const std::string& order) {
+  const double kHalfDegToRad = 3.14159265358979323846 / 360.0;
+  const float sx = static_cast<float>(std::sin(double(xdeg) * kHalfDegToRad));
+  const float cx = static_cast<float>(std::cos(double(xdeg) * kHalfDegToRad));
+  const float sy = static_cast<float>(std::sin(double(ydeg) * kHalfDegToRad));
+  const float cy = static_cast<float>(std::cos(double(ydeg) * kHalfDegToRad));
+  const float sz = static_cast<float>(std::sin(double(zdeg) * kHalfDegToRad));
+  const float cz = static_cast<float>(std::cos(double(zdeg) * kHalfDegToRad));
+
+  if (order == "XZY") {  // Q = Qy * Qz * Qx
+    return Float4(cy*cz*sx + sy*sz*cx, cy*sz*sx + sy*cz*cx,
+                  cy*sz*cx - sy*cz*sx, cy*cz*cx - sy*sz*sx);
+  }
+  if (order == "YXZ") {  // Q = Qz * Qx * Qy
+    return Float4(cz*sx*cy - sz*cx*sy, cz*cx*sy + sz*sx*cy,
+                  cz*sx*sy + sz*cx*cy, cz*cx*cy - sz*sx*sy);
+  }
+  if (order == "YZX") {  // Q = Qx * Qz * Qy
+    return Float4(sx*cz*cy - cx*sz*sy, cx*cz*sy - sx*sz*cy,
+                  cx*sz*cy + sx*cz*sy, cx*cz*cy + sx*sz*sy);
+  }
+  if (order == "ZXY") {  // Q = Qy * Qx * Qz
+    return Float4(cy*sx*cz + sy*cx*sz, sy*cx*cz - cy*sx*sz,
+                  cy*cx*sz - sy*sx*cz, cy*cx*cz + sy*sx*sz);
+  }
+  if (order == "ZYX") {  // Q = Qx * Qy * Qz
+    return Float4(cx*sy*sz + sx*cy*cz, cx*sy*cz - sx*cy*sz,
+                  cx*cy*sz + sx*sy*cz, cx*cy*cz - sx*sy*sz);
+  }
+  // XYZ (and fallback): Q = Qz * Qy * Qx
+  return Float4(cz*cy*sx - sz*sy*cx, cz*sy*cx + sz*cy*sx,
+                sz*cy*cx - cz*sy*sx, cz*cy*cx + sz*sy*sx);
+}
+
+// Extracts the axis order ("XYZ", "ZYX", ...) from an xformOp:rotate<ORDER>
+// property name. Returns false for single-axis rotateX/Y/Z and non-rotate ops.
+bool EulerRotationOrderFromPropName(const std::string& prop_name,
+                                    std::string* out_order) {
+  const size_t pos = prop_name.find("rotate");
+  if (pos == std::string::npos) return false;
+  const std::string tail = prop_name.substr(pos + 6, 3);
+  if (tail == "XYZ" || tail == "XZY" || tail == "YXZ" || tail == "YZX" ||
+      tail == "ZXY" || tail == "ZYX") {
+    *out_order = tail;
+    return true;
+  }
   return false;
 }
 
@@ -261,12 +355,14 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
   }
 
   if (is_scalar) {
+    // Single-axis rotations become quaternions: Rotation channels are
+    // consumed as xyzw quats by the render layer, never as raw degrees.
     if (prop_name.find("rotateX") != std::string::npos) {
-      *out = Float4(scalar, 0.0f, 0.0f, 0.0f);
+      *out = EulerDegreesToQuatXYZW(scalar, 0.0f, 0.0f, "XYZ");
     } else if (prop_name.find("rotateY") != std::string::npos) {
-      *out = Float4(0.0f, scalar, 0.0f, 0.0f);
+      *out = EulerDegreesToQuatXYZW(0.0f, scalar, 0.0f, "XYZ");
     } else if (prop_name.find("rotateZ") != std::string::npos) {
-      *out = Float4(0.0f, 0.0f, scalar, 0.0f);
+      *out = EulerDegreesToQuatXYZW(0.0f, 0.0f, scalar, "XYZ");
     } else if (prop_name.find("scale") != std::string::npos) {
       *out = Float4(scalar, scalar, scalar, 0.0f);
     } else {
@@ -275,7 +371,25 @@ bool ValueToAnimationFloat4(const std::string& prop_name,
     return true;
   }
 
-  return ValueToFloat4(value, out);
+  if (!ValueToFloat4(value, out)) return false;
+
+  // next-core Values keep quats real-first (w, x, y, z); render animation
+  // channels use xyzw (three.js quaternion order). xformOp:orient is the
+  // quat-valued xform op.
+  const ::tinyusdz::next::TypeId tid = value.type_id();
+  if (tid == ::tinyusdz::next::TypeId::Quatf ||
+      tid == ::tinyusdz::next::TypeId::Quatd ||
+      tid == ::tinyusdz::next::TypeId::Quath) {
+    *out = Float4(out->y, out->z, out->w, out->x);
+    return true;
+  }
+
+  // Three-axis Euler rotate ops (float3 degrees) also convert to quats.
+  std::string rot_order;
+  if (EulerRotationOrderFromPropName(prop_name, &rot_order)) {
+    *out = EulerDegreesToQuatXYZW(out->x, out->y, out->z, rot_order);
+  }
+  return true;
 }
 
 void AssignNodeDataId(RenderScene* scene,
@@ -313,6 +427,40 @@ Matrix4 MatrixFromPointInstancerTransform(
     dst.m[i] = static_cast<float>(src.matrix[i]);
   }
   return dst;
+}
+
+// General 4x4 inverse (Gauss-Jordan, double precision). Returns false for a
+// singular matrix. Used to derive rest transforms from bind transforms.
+bool InvertMatrix4x4D(const double m[16], double out[16]) {
+  double a[4][8];
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      a[r][c] = m[r * 4 + c];
+      a[r][c + 4] = (r == c) ? 1.0 : 0.0;
+    }
+  }
+  for (int col = 0; col < 4; ++col) {
+    int pivot = col;
+    for (int r = col + 1; r < 4; ++r) {
+      if (std::fabs(a[r][col]) > std::fabs(a[pivot][col])) pivot = r;
+    }
+    if (std::fabs(a[pivot][col]) < 1e-12) return false;
+    if (pivot != col) {
+      for (int c = 0; c < 8; ++c) std::swap(a[col][c], a[pivot][c]);
+    }
+    const double inv_p = 1.0 / a[col][col];
+    for (int c = 0; c < 8; ++c) a[col][c] *= inv_p;
+    for (int r = 0; r < 4; ++r) {
+      if (r == col) continue;
+      const double f = a[r][col];
+      if (f == 0.0) continue;
+      for (int c = 0; c < 8; ++c) a[r][c] -= f * a[col][c];
+    }
+  }
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) out[r * 4 + c] = a[r][c + 4];
+  }
+  return true;
 }
 
 Matrix4 MulMatrix4(const Matrix4& a, const Matrix4& b) {
@@ -408,6 +556,7 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
   CopyChunkedArray(src.texcoords_0, &dst->texcoords_0);
   CopyChunkedArray(src.texcoords_1, &dst->texcoords_1);
   CopyChunkedArray(src.colors, &dst->colors);
+  CopyChunkedArray(src.opacities, &dst->opacities);
   CopyChunkedArray(src.triangulated_indices, &dst->triangulated_indices);
   CopyChunkedArray(src.triangulated_face_vertex_indices,
                    &dst->triangulated_face_vertex_indices);
@@ -416,6 +565,9 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
   dst->texcoords_0_interp = src.texcoords_0_interp;
   dst->texcoords_1_interp = src.texcoords_1_interp;
   dst->colors_interp = src.colors_interp;
+  dst->opacities_interp = src.opacities_interp;
+  dst->sanitize_dropped_faces = src.sanitize_dropped_faces;
+  dst->sanitize_face_remap = src.sanitize_face_remap;
   dst->material_id = src.material_id;
   dst->material_subsets = src.material_subsets;
   dst->is_triangulated = src.is_triangulated;
@@ -916,38 +1068,95 @@ void TraceTextureStChain(const Stage& stage, const UsdPrim& texture_prim,
                          TextureNodeData* out) {
   UsdPrim cur = texture_prim;
   std::string prop = "inputs:st";
+
+  // Chained UsdTransform2d nodes COMPOSE (each node applies
+  // uv' = R(rotation) * (scale * uv) + translation to its input). Accumulate
+  // the affine composition walking from the texture (outermost) towards the
+  // primvar reader (innermost): F_total(uv) = F_outer(F_inner(uv)).
+  // A single node keeps its authored values verbatim (no decomposition).
+  // Note: animated or connected translation/rotation/scale inputs are NOT
+  // evaluated here (only directly-authored values are read).
+  int transform_nodes = 0;
+  double A[2][2] = {{1.0, 0.0}, {0.0, 1.0}};  // accumulated linear part
+  double T[2] = {0.0, 0.0};                   // accumulated offset
+
   for (int hop = 0; hop < 4 && cur.IsValid(); ++hop) {
     const ::tinyusdz::next::PrimSpec* spec = cur.GetPrimSpec();
     const std::vector<::tinyusdz::next::Path>* conns =
         spec ? spec->connection(prop) : nullptr;
-    if (!conns || conns->empty()) return;
+    if (!conns || conns->empty()) break;
     const std::string next_path = SourcePrimPathFromConnection((*conns)[0].str());
     UsdPrim np = stage.GetPrimAtPath(next_path);
-    if (!np.IsValid()) return;
+    if (!np.IsValid()) break;
     std::string id;
     GetToken(np, "info:id", &id);
     if (id == "UsdTransform2d") {
-      float tr[2];
-      if (GetFloat2Local(np, "inputs:translation", tr)) {
+      float tr[2] = {0.0f, 0.0f};
+      GetFloat2Local(np, "inputs:translation", tr);
+      float rot = 0.0f;
+      GetFloat(np, "inputs:rotation", &rot);
+      float sc[2] = {1.0f, 1.0f};
+      GetFloat2Local(np, "inputs:scale", sc);
+
+      if (transform_nodes == 0) {
+        // First (outermost) node: keep the raw authored values so a single
+        // Transform2d round-trips exactly.
         out->uv_translation[0] = tr[0];
         out->uv_translation[1] = tr[1];
-      }
-      float rot = 0.0f;
-      if (GetFloat(np, "inputs:rotation", &rot)) out->uv_rotation = rot;
-      float sc[2];
-      if (GetFloat2Local(np, "inputs:scale", sc)) {
+        out->uv_rotation = rot;
         out->uv_scale[0] = sc[0];
         out->uv_scale[1] = sc[1];
       }
+
+      // Local affine L(uv) = R * diag(sc) * uv + tr.
+      const double rad = double(rot) * 3.14159265358979323846 / 180.0;
+      const double c = std::cos(rad), s = std::sin(rad);
+      const double L[2][2] = {{c * sc[0], -s * sc[1]},
+                              {s * sc[0], c * sc[1]}};
+      // Accumulated-so-far F is applied AFTER this (deeper) node:
+      // F_new(uv) = F(L(uv)) => A_new = A*L, T_new = A*t_L + T.
+      const double A00 = A[0][0] * L[0][0] + A[0][1] * L[1][0];
+      const double A01 = A[0][0] * L[0][1] + A[0][1] * L[1][1];
+      const double A10 = A[1][0] * L[0][0] + A[1][1] * L[1][0];
+      const double A11 = A[1][0] * L[0][1] + A[1][1] * L[1][1];
+      T[0] += A[0][0] * tr[0] + A[0][1] * tr[1];
+      T[1] += A[1][0] * tr[0] + A[1][1] * tr[1];
+      A[0][0] = A00; A[0][1] = A01; A[1][0] = A10; A[1][1] = A11;
+
+      ++transform_nodes;
       cur = np;
       prop = "inputs:in";
       continue;
     }
     if (id.rfind("UsdPrimvarReader", 0) == 0) {
-      out->uv_primvar = ::tinyusdz::next::GetPrimvarReaderVarname(np);
-      return;
+      out->uv_primvar = ::tinyusdz::next::GetPrimvarReaderVarname(stage, np);
+      break;
     }
-    return;
+    break;
+  }
+
+  if (transform_nodes > 1) {
+    // Decompose the composite affine back into the translate/rotate/scale
+    // model RenderTexture carries (uv' = R * diag(scale) * uv + offset).
+    // Composition of non-uniform scales and rotations can introduce shear,
+    // which this model cannot represent; the QR-style decomposition below
+    // drops it (best effort).
+    out->uv_translation[0] = static_cast<float>(T[0]);
+    out->uv_translation[1] = static_cast<float>(T[1]);
+    const double sx = std::sqrt(A[0][0] * A[0][0] + A[1][0] * A[1][0]);
+    if (sx > 1.0e-12) {
+      const double c = A[0][0] / sx;
+      const double s = A[1][0] / sx;
+      const double sy = -s * A[0][1] + c * A[1][1];
+      out->uv_rotation = static_cast<float>(
+          std::atan2(s, c) * 180.0 / 3.14159265358979323846);
+      out->uv_scale[0] = static_cast<float>(sx);
+      out->uv_scale[1] = static_cast<float>(sy);
+    } else {
+      out->uv_rotation = 0.0f;
+      out->uv_scale[0] = static_cast<float>(A[0][0]);
+      out->uv_scale[1] = static_cast<float>(A[1][1]);
+    }
   }
 }
 
@@ -957,6 +1166,19 @@ bool ExtractTextureNodeData(const Stage& stage,
                             TextureNodeData* out) {
   if (!out || !texture_prim.IsValid()) return false;
 
+  // colorSpace asset metadata on inputs:file takes precedence over the
+  // sourceColorSpace attribute (legacy tydra resolution order). Applied on
+  // BOTH extraction branches — the UsdUVTexture fast path below returns
+  // early.
+  auto apply_file_meta_color_space = [&texture_prim, out]() {
+    if (const ::tinyusdz::next::PropMeta* file_meta =
+            texture_prim.GetPropertyMeta("inputs:file")) {
+      if (!file_meta->colorSpace.empty()) {
+        out->source_color_space = file_meta->colorSpace;
+      }
+    }
+  };
+
   ::tinyusdz::next::UVTextureData uv;
   if (::tinyusdz::next::GetUVTextureData(stage, texture_prim, &uv, time_code)) {
     out->file = uv.file;
@@ -965,6 +1187,7 @@ bool ExtractTextureNodeData(const Stage& stage,
     out->source_color_space = uv.source_color_space;
     std::memcpy(out->scale, uv.scale, sizeof(out->scale));
     std::memcpy(out->bias, uv.bias, sizeof(out->bias));
+    apply_file_meta_color_space();
     TraceTextureStChain(stage, texture_prim, out);
     return !out->file.empty();
   }
@@ -996,9 +1219,18 @@ bool ExtractTextureNodeData(const Stage& stage,
   if (std::optional<std::string> cs = eval.EvalToken(texture_prim, "inputs:sourceColorSpace")) {
     out->source_color_space = *cs;
   }
+  apply_file_meta_color_space();
   TraceTextureStChain(stage, texture_prim, out);
 
   return true;
+}
+
+// MaterialX Autodesk standard_surface (usdMtlx flatten pattern).
+bool IsStandardSurfaceShaderId(const std::string& id) {
+  return id == "ND_standard_surface_surfaceshader" ||
+         id == "standard_surface" ||
+         id == "AutodeskStandardSurface" ||
+         id == "MtlxAutodeskStandardSurface";
 }
 
 bool IsOpenPBRShaderId(const std::string& id) {
@@ -1154,6 +1386,120 @@ bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
   return false;
 }
 
+// Material-driven UV primvar promotion: UsdPrimvarReader varnames other than
+// the default "st" only survive as generic mesh.primvars entries, which no
+// texture consumer samples. After materials are bound, promote the primvar
+// each bound material's textures actually reference into texcoords_0/1
+// (legacy selects UV sets from the shader network the same way).
+void PromoteMaterialUVPrimvars(RenderScene* scene,
+                               const std::string& default_uv,
+                               std::vector<std::string>* warnings) {
+  if (!scene) return;
+
+  auto texture_uv_names = [scene](const RenderMaterial& mat,
+                                  std::vector<std::string>* names) {
+    auto add = [scene, names](const ShaderParam& p) {
+      if (p.texture_id < 0 ||
+          static_cast<size_t>(p.texture_id) >= scene->textures.size()) {
+        return;
+      }
+      const std::string& uv =
+          scene->textures[static_cast<size_t>(p.texture_id)].uv_primvar;
+      if (uv.empty()) return;
+      if (std::find(names->begin(), names->end(), uv) == names->end()) {
+        names->push_back(uv);
+      }
+    };
+    if (mat.preview_surface) {
+      const PreviewSurfaceShader& ps = *mat.preview_surface;
+      for (const ShaderParam* p :
+           {&ps.diffuse_color, &ps.emissive_color, &ps.specular_color,
+            &ps.metallic, &ps.roughness, &ps.clearcoat,
+            &ps.clearcoat_roughness, &ps.opacity, &ps.opacity_threshold,
+            &ps.ior, &ps.normal, &ps.displacement, &ps.occlusion}) {
+        add(*p);
+      }
+    }
+    if (mat.openpbr) {
+      const OpenPBRSurfaceShader& o = *mat.openpbr;
+      for (const ShaderParam* p :
+           {&o.base_weight, &o.base_color, &o.base_roughness,
+            &o.base_metalness, &o.specular_weight, &o.specular_color,
+            &o.specular_roughness, &o.specular_ior, &o.transmission_weight,
+            &o.coat_weight, &o.coat_color, &o.coat_roughness,
+            &o.emission_luminance, &o.emission_color, &o.normal,
+            &o.opacity}) {
+        add(*p);
+      }
+    }
+  };
+
+  for (RenderMesh& mesh : scene->meshes) {
+    // Gather UV names referenced by every material bound to this mesh
+    // (direct binding + subsets).
+    std::vector<int32_t> material_ids;
+    if (mesh.material_id >= 0) material_ids.push_back(mesh.material_id);
+    for (const RenderMesh::MaterialSubset& subset : mesh.material_subsets) {
+      if (subset.material_id >= 0) material_ids.push_back(subset.material_id);
+    }
+    std::vector<std::string> wanted;
+    for (int32_t mid : material_ids) {
+      if (static_cast<size_t>(mid) >= scene->materials.size()) continue;
+      texture_uv_names(scene->materials[static_cast<size_t>(mid)], &wanted);
+    }
+    // Names equal to the defaults are already in texcoords_0/1.
+    wanted.erase(std::remove_if(wanted.begin(), wanted.end(),
+                                [&default_uv](const std::string& n) {
+                                  return n == default_uv ||
+                                         n == default_uv + "1";
+                                }),
+                 wanted.end());
+    if (wanted.empty()) continue;
+
+    auto promote = [&mesh, warnings](const std::string& name,
+                                     FloatChunked* dst,
+                                     Interpolation* dst_interp) -> bool {
+      for (size_t ai = 0; ai < mesh.primvars.size(); ++ai) {
+        VertexAttribute& attr = mesh.primvars[ai];
+        if (attr.name != name || attr.format != VertexFormat::Vec2) continue;
+        dst->clear();
+        if (attr.has_indices()) {
+          const size_t elems = attr.float_data.size() / 2;
+          for (size_t k = 0; k < attr.indices.size(); ++k) {
+            const uint32_t idx = attr.indices[k];
+            if (idx >= elems) {
+              warnings->push_back("Mesh '" + mesh.prim_path + "': UV primvar '" +
+                                  name + "' has out-of-range indices; not promoted");
+              dst->clear();
+              return false;
+            }
+            dst->push_back(attr.float_data[idx * 2 + 0]);
+            dst->push_back(attr.float_data[idx * 2 + 1]);
+          }
+        } else {
+          for (size_t k = 0; k < attr.float_data.size(); ++k) {
+            dst->push_back(attr.float_data[k]);
+          }
+        }
+        *dst_interp = attr.interpolation;
+        mesh.primvars.erase(mesh.primvars.begin() +
+                            static_cast<std::ptrdiff_t>(ai));
+        return true;
+      }
+      return false;
+    };
+
+    // The material-referenced UV set takes the primary slot (matching
+    // legacy's shader-network-driven selection); a second distinct name
+    // fills the secondary slot when free.
+    if (promote(wanted[0], &mesh.texcoords_0, &mesh.texcoords_0_interp)) {
+      if (wanted.size() > 1 && mesh.texcoords_1.empty()) {
+        promote(wanted[1], &mesh.texcoords_1, &mesh.texcoords_1_interp);
+      }
+    }
+  }
+}
+
 void ResolveSkeletalAnimationTargets(RenderScene* scene) {
   if (!scene) return;
   for (size_t ai = 0; ai < scene->animations.size(); ++ai) {
@@ -1215,6 +1561,81 @@ void ResolveSkeletalAnimationTargets(RenderScene* scene) {
   }
 }
 
+bool PathIsAtOrUnder(const std::string& path, const std::string& root) {
+  if (root.empty() || path.empty()) return false;
+  if (path == root) return true;
+  return path.size() > root.size() &&
+         path.compare(0, root.size(), root) == 0 && path[root.size()] == '/';
+}
+
+// Resolve one CollectionAPI instance (collection:<name>:*) on a light prim
+// to RenderScene mesh indices, mirroring legacy ResolveLightLinking:
+// excludes take hierarchical precedence, includeRoot adds the light prim's
+// subtree, explicitOnly matches exact paths, expandPrims (default) and
+// expandPrimsAndProperties match descendants. Unauthored collections keep
+// *links_all = true (light affects everything); membershipExpression
+// collections are not evaluated (no path-expression parser in next) and
+// also keep the links-all default.
+void ResolveLightLinkInstance(const UsdPrim& prim, const RenderScene& scene,
+                              const std::string& instance_name,
+                              bool* links_all,
+                              std::vector<int32_t>* mesh_indices) {
+  const std::string base = "collection:" + instance_name + ":";
+  if (prim.HasProperty(base + "membershipExpression")) return;
+
+  const std::vector<::tinyusdz::next::Path>* includes =
+      prim.GetRelationship(base + "includes");
+  const std::vector<::tinyusdz::next::Path>* excludes =
+      prim.GetRelationship(base + "excludes");
+  if (!includes && !excludes) return;  // unauthored -> links all
+
+  bool include_root = false;
+  GetBool(prim, base + "includeRoot", &include_root);
+  std::string rule = "expandPrims";
+  GetToken(prim, base + "expansionRule", &rule);
+  const bool explicit_only = (rule == "explicitOnly");
+  const std::string& owner_path = prim.GetPath().str();
+
+  *links_all = false;
+  mesh_indices->clear();
+  for (size_t mi = 0; mi < scene.meshes.size(); ++mi) {
+    const std::string& mesh_path = scene.meshes[mi].prim_path;
+    bool excluded = false;
+    if (excludes) {
+      for (const ::tinyusdz::next::Path& p : *excludes) {
+        if (PathIsAtOrUnder(mesh_path, p.str())) { excluded = true; break; }
+      }
+    }
+    if (excluded) continue;
+
+    bool included = include_root && PathIsAtOrUnder(mesh_path, owner_path);
+    if (!included && includes) {
+      for (const ::tinyusdz::next::Path& p : *includes) {
+        if (explicit_only ? (mesh_path == p.str())
+                          : PathIsAtOrUnder(mesh_path, p.str())) {
+          included = true;
+          break;
+        }
+      }
+    }
+    if (included) mesh_indices->push_back(static_cast<int32_t>(mi));
+  }
+}
+
+void ResolveLightLinking(const Stage& stage, RenderScene* scene) {
+  if (!scene) return;
+  for (RenderLight& light : scene->lights) {
+    UsdPrim prim = stage.GetPrimAtPath(light.prim_path);
+    if (!prim.IsValid()) continue;
+    ResolveLightLinkInstance(prim, *scene, "lightLink",
+                             &light.light_links_all,
+                             &light.light_link_mesh_indices);
+    ResolveLightLinkInstance(prim, *scene, "shadowLink",
+                             &light.shadow_links_all,
+                             &light.shadow_link_mesh_indices);
+  }
+}
+
 std::vector<std::string> ReadRelationshipTargets(const UsdPrim& prim,
                                                  const std::string& name) {
   std::vector<std::string> out;
@@ -1239,12 +1660,17 @@ void ApplyAxis(std::vector<value::float3>* points,
                std::vector<value::float3>* normals,
                const std::string& axis) {
   if (axis == "Y" || axis.empty()) return;
+  // Proper ROTATIONS mapping the generator's +Y symmetry axis onto the
+  // authored axis. The previous axis swap was a mirror (determinant -1),
+  // which flipped the winding and turned the analytic meshes inside out.
   auto map_point = [&](value::float3& v) {
     const float x = v[0], y = v[1], z = v[2];
     if (axis == "Z") {
-      v[0] = x; v[1] = z; v[2] = y;
+      // R_x(+90 deg): +Y -> +Z
+      v[0] = x; v[1] = -z; v[2] = y;
     } else if (axis == "X") {
-      v[0] = y; v[1] = x; v[2] = z;
+      // R_z(-90 deg): +Y -> +X
+      v[0] = y; v[1] = -x; v[2] = z;
     }
   };
   for (value::float3& p : *points) map_point(p);
@@ -1369,6 +1795,29 @@ Float4 Float4FromArray(const float v[4]) {
   return Float4(v[0], v[1], v[2], v[3]);
 }
 
+// First bound material path whose target actually resolves to a Material,
+// walking the purpose order (preview, all-purpose, full). A dangling
+// purpose-specific rel must fall through to the weaker-purpose rel on the
+// SAME prim, not reject the prim (GetBoundMaterialPath returns only the
+// first authored rel).
+std::string FirstValidBoundMaterialPath(const Stage& stage,
+                                        const ::tinyusdz::next::UsdPrim& prim) {
+  static const char* kBindingOrder[] = {"material:binding:preview",
+                                        "material:binding",
+                                        "material:binding:full"};
+  for (const char* rel : kBindingOrder) {
+    const std::vector<::tinyusdz::next::Path>* targets =
+        prim.GetRelationship(rel);
+    if (!targets || targets->empty()) continue;
+    const std::string p = (*targets)[0].str();
+    if (!p.empty() && ::tinyusdz::tydra::next::IsMaterial(
+                          stage.GetPrimAtPath(p))) {
+      return p;
+    }
+  }
+  return "";
+}
+
 std::string FindInheritedMaterialBinding(const Stage& stage,
                                          const std::string& prim_path) {
   // Walk leaf-up (descendant wins by default), but an ANCESTOR binding marked
@@ -1380,7 +1829,10 @@ std::string FindInheritedMaterialBinding(const Stage& stage,
   while (!path.empty() && path != "/") {
     UsdPrim prim = stage.GetPrimAtPath(path);
     if (prim.IsValid()) {
-      const std::string material_path = ::tinyusdz::next::GetBoundMaterialPath(prim);
+      // Per-purpose validation: a dangling target must not shadow either a
+      // weaker-purpose rel on the same prim or a valid ancestor binding
+      // (legacy skips unresolvable targets).
+      const std::string material_path = FirstValidBoundMaterialPath(stage, prim);
       if (!material_path.empty()) {
         if (leaf_binding.empty()) leaf_binding = material_path;
         if (path != prim_path && BindingIsStrongerThanDescendants(prim)) {
@@ -1605,6 +2057,8 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
 
     AssignMaterialBindings(stage, &result.scene);
+    PromoteMaterialUVPrimvars(&result.scene, config_.mesh.default_uv_primvar,
+                              &warnings_);
     AssignPointInstanceDrawMaterials(&result.scene);
     if (config_.point_instancer.duplicate_meshes) {
       DuplicatePointInstanceMeshes(&result.scene);
@@ -1655,6 +2109,22 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.skeletons) {
       Skeleton skeleton;
       if (ConvertSkeleton(rec.prim, &skeleton)) {
+        // skel:animationSource may be authored on the SkelRoot (or another
+        // ancestor) instead of the Skeleton itself; every descendant
+        // Skeleton inherits it (UsdSkel binding inheritance).
+        if (skeleton.animation_source_path.empty()) {
+          UsdPrim anc = GetParent(stage, rec.prim);
+          while (anc.IsValid()) {
+            const std::vector<std::string> sources =
+                ReadRelationshipTargets(anc, "skel:animationSource");
+            if (!sources.empty()) {
+              skeleton.animation_source_path = sources[0];
+              break;
+            }
+            if (::tinyusdz::tydra::next::IsSkelRoot(anc)) break;
+            anc = GetParent(stage, anc);
+          }
+        }
         int32_t skeleton_id = static_cast<int32_t>(result.scene.skeletons.size());
         result.scene.skeletons.push_back(std::move(skeleton));
         AssignNodeDataId(&result.scene, rec.path, skeleton_id);
@@ -1670,9 +2140,54 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
           break;
         }
       }
+
+      // Mesh-local `skel:joints`: jointIndices index into the mesh's own
+      // (subset/permuted) joint list — remap them onto the skeleton's joint
+      // order. Unmatched tokens zero the influence weight rather than
+      // silently deforming by joint 0.
+      if (!mesh.skin->mesh_joint_order.empty() &&
+          mesh.skin->skeleton_id >= 0) {
+        const Skeleton& skel =
+            result.scene.skeletons[static_cast<size_t>(mesh.skin->skeleton_id)];
+        std::vector<int32_t> remap(mesh.skin->mesh_joint_order.size(), -1);
+        bool identity = true;
+        for (size_t k = 0; k < mesh.skin->mesh_joint_order.size(); ++k) {
+          const std::string& token = mesh.skin->mesh_joint_order[k];
+          for (size_t ji = 0; ji < skel.joints.size(); ++ji) {
+            if (JointTokenMatches(skel.joints[ji], token)) {
+              remap[k] = static_cast<int32_t>(ji);
+              break;
+            }
+          }
+          if (remap[k] != static_cast<int32_t>(k)) identity = false;
+          if (remap[k] < 0) {
+            warnings_.push_back("Mesh " + mesh.prim_path +
+                                " skel:joints token '" + token +
+                                "' not found in skeleton " + skel.prim_path);
+          }
+        }
+        if (!identity) {
+          const size_t n = mesh.skin->joint_indices.size();
+          for (size_t k = 0; k < n; ++k) {
+            const uint16_t local = mesh.skin->joint_indices[k];
+            const int32_t target =
+                local < remap.size() ? remap[local] : -1;
+            if (target >= 0 && target <= 65535) {
+              mesh.skin->joint_indices[k] = static_cast<uint16_t>(target);
+            } else {
+              mesh.skin->joint_indices[k] = 0;
+              if (k < mesh.skin->joint_weights.size()) {
+                mesh.skin->joint_weights[k] = 0.0f;
+              }
+            }
+          }
+        }
+      }
     }
 
     ResolveSkeletalAnimationTargets(&result.scene);
+
+    ResolveLightLinking(stage, &result.scene);
 
     if (config_.progress_callback) {
       config_.progress_callback(1.0f, "Conversion complete");
@@ -1932,6 +2447,7 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
   }
 }
 
+
 void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
                                                   RenderScene* scene) {
   if (!scene) return;
@@ -1964,7 +2480,7 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
       if (sub_mat.empty()) {
         UsdPrim sub_prim = stage.GetPrimAtPath(sub.path);
         if (sub_prim.IsValid()) {
-          sub_mat = ::tinyusdz::next::GetBoundMaterialPath(sub_prim);
+          sub_mat = FirstValidBoundMaterialPath(stage, sub_prim);
         }
       }
       if (sub_mat.empty()) continue;
@@ -1972,11 +2488,22 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
       if (mit == scene->material_by_path.end()) continue;
       const uint32_t nfaces = static_cast<uint32_t>(mesh.face_count());
       // Sort + split into consecutive runs, dropping out-of-range faces.
+      // Authored subset indices use the ORIGINAL face numbering; when
+      // sanitization dropped faces, route them through the old->new remap
+      // first so the surviving faces keep their bindings.
       std::vector<uint32_t> faces;
       faces.reserve(sub.indices.size());
       for (int32_t fi : sub.indices) {
-        if (fi >= 0 && static_cast<uint32_t>(fi) < nfaces) {
-          faces.push_back(static_cast<uint32_t>(fi));
+        if (fi < 0) continue;
+        uint32_t face = static_cast<uint32_t>(fi);
+        if (mesh.sanitize_dropped_faces > 0) {
+          if (face >= mesh.sanitize_face_remap.size()) continue;
+          const int32_t remapped = mesh.sanitize_face_remap[face];
+          if (remapped < 0) continue;  // face was dropped by sanitize
+          face = static_cast<uint32_t>(remapped);
+        }
+        if (face < nfaces) {
+          faces.push_back(face);
         }
       }
       std::sort(faces.begin(), faces.end());
@@ -1993,7 +2520,67 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
         }
       }
     }
+
+    // Remap subset runs from polygon-face space into TRIANGLE space using
+    // the triangulation prefix sums (an N-gon becomes N-2 triangles;
+    // holes/degenerate faces contribute 0). Subset indices were already
+    // remapped into the post-sanitize face numbering above, so this holds
+    // even when sanitization dropped faces.
+    if (!mesh.material_subsets.empty() &&
+        !mesh.face_triangle_offsets.empty()) {
+      const std::vector<uint32_t>& offs = mesh.face_triangle_offsets;
+      const uint32_t nfaces_tri =
+          static_cast<uint32_t>(offs.size() > 0 ? offs.size() - 1 : 0);
+      std::vector<RenderMesh::MaterialSubset> remapped;
+      remapped.reserve(mesh.material_subsets.size());
+      for (const RenderMesh::MaterialSubset& ms : mesh.material_subsets) {
+        if (ms.face_start >= nfaces_tri) continue;
+        const uint32_t face_end =
+            std::min(ms.face_start + ms.face_count, nfaces_tri);
+        const uint32_t tri_start = offs[ms.face_start];
+        const uint32_t tri_count = offs[face_end] - tri_start;
+        if (tri_count == 0) continue;
+        remapped.push_back(
+            RenderMesh::MaterialSubset{tri_start, tri_count, ms.material_id});
+      }
+      mesh.material_subsets = std::move(remapped);
+    }
   }
+
+  // Optional default material for unbound geometry (legacy
+  // assign_default_material parity).
+  if (config_.material.assign_default_material) {
+    for (RenderMesh& mesh : scene->meshes) {
+      if (mesh.material_id < 0) {
+        mesh.material_id = GetOrCreateDefaultMaterial(scene);
+      }
+    }
+    for (RenderCurves& curves : scene->curves) {
+      if (curves.material_id < 0) {
+        curves.material_id = GetOrCreateDefaultMaterial(scene);
+      }
+    }
+  }
+}
+
+int32_t RenderSceneConverter::GetOrCreateDefaultMaterial(RenderScene* scene) {
+  // Same sentinel path as the legacy converter.
+  constexpr const char* kDefaultMaterialPath = "/__tinyusdz_default_material__";
+  const auto it = scene->material_by_path.find(kDefaultMaterialPath);
+  if (it != scene->material_by_path.end()) return it->second;
+  RenderMaterial material;
+  material.name = config_.material.default_material_name.empty()
+                      ? "defaultMaterial"
+                      : config_.material.default_material_name;
+  material.prim_path = kDefaultMaterialPath;
+  material.shader_type = RenderMaterial::ShaderType::PreviewSurface;
+  // PreviewSurfaceShader defaults (0.18 diffuse / 0.5 roughness / opaque)
+  // match the legacy default material parameters.
+  material.preview_surface = std::make_unique<PreviewSurfaceShader>();
+  const int32_t id = static_cast<int32_t>(scene->materials.size());
+  scene->materials.push_back(std::move(material));
+  scene->material_by_path[kDefaultMaterialPath] = id;
+  return id;
 }
 
 void RenderSceneConverter::AssignPointInstanceDrawMaterials(RenderScene* scene) {
@@ -2098,6 +2685,50 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
     return false;
   }
 
+  // The shape generators are inconsistent about winding: capsule/cone emit
+  // INWARD (negative signed volume) faces while cube/sphere/cylinder are
+  // outward. The old axis MIRROR happened to flip capsule/cone right side
+  // out at the default Z axis (while turning the cylinder inside out); with
+  // the axis applied as a proper rotation below, normalize the winding here
+  // so every closed solid is outward. Authored normals already point
+  // outward, so only the corner order flips (normals/uvs are per-corner and
+  // reverse with it to stay parallel).
+  {
+    double volume = 0.0;
+    size_t off = 0;
+    for (int c : face_counts) {
+      if (c < 3 || off + size_t(c) > face_indices.size()) break;
+      const value::float3& a = points[size_t(face_indices[off])];
+      for (int k = 1; k + 1 < c; ++k) {
+        const value::float3& b = points[size_t(face_indices[off + size_t(k)])];
+        const value::float3& d =
+            points[size_t(face_indices[off + size_t(k) + 1])];
+        volume += (double(a[0]) * (double(b[1]) * d[2] - double(b[2]) * d[1]) +
+                   double(a[1]) * (double(b[2]) * d[0] - double(b[0]) * d[2]) +
+                   double(a[2]) * (double(b[0]) * d[1] - double(b[1]) * d[0])) /
+                  6.0;
+      }
+      off += size_t(c);
+    }
+    if (volume < -1.0e-9) {
+      size_t start = 0;
+      for (int c : face_counts) {
+        if (c <= 0 || start + size_t(c) > face_indices.size()) break;
+        std::reverse(face_indices.begin() + long(start),
+                     face_indices.begin() + long(start + size_t(c)));
+        if (normals.size() >= start + size_t(c)) {
+          std::reverse(normals.begin() + long(start),
+                       normals.begin() + long(start + size_t(c)));
+        }
+        if (uvs.size() >= start + size_t(c)) {
+          std::reverse(uvs.begin() + long(start),
+                       uvs.begin() + long(start + size_t(c)));
+        }
+        start += size_t(c);
+      }
+    }
+  }
+
   std::string axis = "Z";
   GetToken(prim, "axis", &axis);
   if (type == "Cube" || type == "Sphere") axis = "Y";
@@ -2148,7 +2779,16 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   // Skinning binding (skel:skeleton + skel:jointIndices/Weights primvars).
   {
     SkinBindingInfo sb;
-    if (GetSkinBinding(prim, &sb) && !sb.joint_indices.empty() &&
+    const bool has_skin_binding = GetSkinBinding(prim, &sb);
+    if (has_skin_binding && !sb.joint_indices.empty() &&
+        sb.joint_indices.size() != sb.joint_weights.size()) {
+      // e.g. one indexed skin primvar expanded while its pair stayed
+      // authored (malformed :indices). Skipping silently leaves the mesh in
+      // bind pose with no hint why.
+      warnings_.push_back("Mismatched skin jointIndices/jointWeights sizes on " +
+                          prim.GetPath().str() + "; mesh renders unskinned");
+    }
+    if (has_skin_binding && !sb.joint_indices.empty() &&
         sb.joint_indices.size() == sb.joint_weights.size()) {
       // UsdSkel binding inheritance: `skel:skeleton` may be authored on an
       // ancestor (typically the enclosing SkelRoot) rather than on the mesh
@@ -2160,6 +2800,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       // render unskinned in bind pose.
       if (sb.skeleton_path.empty()) {
         UsdPrim anc = GetParent(stage, prim);
+        UsdPrim skel_root;
         while (anc.IsValid()) {
           std::string inherited = GetBoundSkeleton(anc);
           if (!inherited.empty()) {
@@ -2167,8 +2808,23 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
             break;
           }
           // Binding inheritance is scoped to the SkelRoot subtree.
-          if (::tinyusdz::tydra::next::IsSkelRoot(anc)) break;
+          if (::tinyusdz::tydra::next::IsSkelRoot(anc)) {
+            skel_root = anc;
+            break;
+          }
           anc = GetParent(stage, anc);
+        }
+        // No authored binding anywhere: fall back to a Skeleton contained
+        // in the enclosing SkelRoot (common Blender / older-exporter shape;
+        // legacy tydra binds this way too). First Skeleton in the subtree
+        // wins, matching legacy.
+        if (sb.skeleton_path.empty() && skel_root.IsValid()) {
+          for (const UsdPrim& desc : GetDescendants(skel_root)) {
+            if (::tinyusdz::tydra::next::IsSkeleton(desc)) {
+              sb.skeleton_path = desc.GetPath().str();
+              break;
+            }
+          }
         }
       }
       const size_t point_count = out->point_count();
@@ -2249,6 +2905,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
                                       sb.joint_weights.size());
       out->skin->influences_per_vertex =
           static_cast<uint32_t>(output_influences);
+      out->skin->mesh_joint_order = std::move(sb.joint_order);
       std::memcpy(out->skin->geom_bind_transform.m, sb.geom_bind_transform,
                   sizeof(sb.geom_bind_transform));
       // skeleton_id is resolved by the caller once skeletons are converted
@@ -2267,18 +2924,57 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     if (bd.offsets.empty()) continue;
     RenderMesh::BlendShape shape;
     shape.name = bs.name.empty() ? bs_prim.GetName() : bs.name;
-    shape.point_offsets.append(bd.offsets.data(), bd.offsets.size());
-    if (bd.hasNormalOffsets && !bd.normalOffsets.empty()) {
-      shape.normal_offsets.append(bd.normalOffsets.data(),
-                                  bd.normalOffsets.size());
-    }
+
+    // Sparse targets: offsets[k] (and normalOffsets[k] / in-between
+    // offsets[k]) apply to point pointIndices[k]. An out-of-range index must
+    // drop the WHOLE parallel entry — dropping it from point_indices alone
+    // (the previous behavior) misaligned every remaining offset.
+    std::vector<size_t> kept;  // kept entry positions (sparse targets only)
+    const size_t authored_entries = bd.offsets.size() / 3;
     if (bd.hasPointIndices) {
       const size_t npts = out->point_count();
-      for (int32_t pi : bd.pointIndices) {
-        // Drop out-of-range point indices (a consumer would index OOB).
+      const size_t nentries =
+          std::min(bd.pointIndices.size(), authored_entries);
+      kept.reserve(nentries);
+      for (size_t k = 0; k < nentries; ++k) {
+        const int32_t pi = bd.pointIndices[k];
         if (pi >= 0 && static_cast<size_t>(pi) < npts) {
-          shape.point_indices.push_back(static_cast<uint32_t>(pi));
+          kept.push_back(k);
         }
+      }
+      if (kept.size() != bd.pointIndices.size()) {
+        warnings_.push_back("BlendShape '" + bs_prim.GetPath().str() +
+                            "': dropped out-of-range pointIndices entries "
+                            "(with their parallel offsets)");
+      }
+    }
+
+    // Copy 3-float entries at the kept positions of a parallel array.
+    auto append_kept = [&kept](const std::vector<float>& src,
+                               FloatChunked* dst) {
+      for (size_t k : kept) {
+        dst->push_back(src[k * 3 + 0]);
+        dst->push_back(src[k * 3 + 1]);
+        dst->push_back(src[k * 3 + 2]);
+      }
+    };
+
+    if (bd.hasPointIndices) {
+      append_kept(bd.offsets, &shape.point_offsets);
+      if (bd.hasNormalOffsets &&
+          bd.normalOffsets.size() == bd.offsets.size()) {
+        append_kept(bd.normalOffsets, &shape.normal_offsets);
+      }
+      shape.point_indices.reserve(kept.size());
+      for (size_t k : kept) {
+        shape.point_indices.push_back(
+            static_cast<uint32_t>(bd.pointIndices[k]));
+      }
+    } else {
+      shape.point_offsets.append(bd.offsets.data(), bd.offsets.size());
+      if (bd.hasNormalOffsets && !bd.normalOffsets.empty()) {
+        shape.normal_offsets.append(bd.normalOffsets.data(),
+                                    bd.normalOffsets.size());
       }
     }
     for (const ::tinyusdz::next::BlendShapeData::Inbetween& source :
@@ -2288,11 +2984,23 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
                             "' on " + bs_prim.GetPath().str());
         continue;
       }
+      if (!source.has_weight) {
+        // A weightless in-between would sit at 0.0 and collide with the base
+        // shape; legacy tydra skips these too.
+        warnings_.push_back("In-between '" + source.name + "' on " +
+                            bs_prim.GetPath().str() +
+                            " has no authored weight; skipped");
+        continue;
+      }
       RenderMesh::BlendShape::Inbetween inbetween;
       inbetween.name = source.name;
       inbetween.weight = source.weight;
-      inbetween.point_offsets.append(source.offsets.data(),
-                                     source.offsets.size());
+      if (bd.hasPointIndices) {
+        append_kept(source.offsets, &inbetween.point_offsets);
+      } else {
+        inbetween.point_offsets.append(source.offsets.data(),
+                                       source.offsets.size());
+      }
       shape.inbetweens.push_back(std::move(inbetween));
     }
     out->blend_shapes.push_back(std::move(shape));
@@ -2600,10 +3308,15 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
 
   std::vector<uint32_t> counts;
   std::vector<uint32_t> indices;
+  // Authored face index -> post-sanitize face index (-1 = dropped), so
+  // consumers of authored face numbering (holeIndices, GeomSubset indices)
+  // can be remapped instead of discarded.
+  std::vector<int32_t> face_remap(mesh->face_vertex_counts.size(), -1);
   counts.reserve(mesh->face_vertex_counts.size());
   indices.reserve(index_count);
   size_t offset = 0;
   size_t dropped = 0;
+  size_t authored_face = 0;
   for (uint32_t c : mesh->face_vertex_counts) {
     if (offset + c > index_count) {
       // counts overrun the index buffer: drop this and all later faces.
@@ -2620,6 +3333,7 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
       }
     }
     if (face_ok) {
+      face_remap[authored_face] = static_cast<int32_t>(counts.size());
       counts.push_back(c);
       for (uint32_t i = 0; i < c; ++i) {
         indices.push_back(mesh->face_vertex_indices[offset + i]);
@@ -2628,9 +3342,15 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
       ++dropped;
     }
     offset += c;
+    ++authored_face;
   }
   if (dropped > 0 || indices.size() != index_count ||
       counts.size() != mesh->face_vertex_counts.size()) {
+    mesh->sanitize_dropped_faces = static_cast<uint32_t>(
+        mesh->face_vertex_counts.size() - counts.size());
+    if (mesh->sanitize_dropped_faces > 0) {
+      mesh->sanitize_face_remap = std::move(face_remap);
+    }
     warnings_.push_back("Mesh '" + mesh->prim_path +
                         "': dropped invalid faces (out-of-range or negative "
                         "faceVertexIndices, or counts overrunning the index "
@@ -2639,6 +3359,22 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
     mesh->face_vertex_counts.append(counts.data(), counts.size());
     mesh->face_vertex_indices.clear();
     mesh->face_vertex_indices.append(indices.data(), indices.size());
+
+    // holeIndices were read in authored face numbering; remap them so hole
+    // faces keep pointing at the same topological faces after the drop.
+    if (mesh->sanitize_dropped_faces > 0 && !mesh->hole_faces.empty()) {
+      std::vector<uint32_t> remapped_holes;
+      remapped_holes.reserve(mesh->hole_faces.size());
+      for (uint32_t h : mesh->hole_faces) {
+        if (h < mesh->sanitize_face_remap.size() &&
+            mesh->sanitize_face_remap[h] >= 0) {
+          remapped_holes.push_back(
+              static_cast<uint32_t>(mesh->sanitize_face_remap[h]));
+        }
+      }
+      std::sort(remapped_holes.begin(), remapped_holes.end());
+      mesh->hole_faces = std::move(remapped_holes);
+    }
   }
 }
 
@@ -2823,12 +3559,26 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     if (!pv.value) continue;
     std::vector<float> data;
     const uint32_t comps = PrimvarToFloats(*pv.value, &data);
-    const Interpolation interp = ParsePrimvarInterp(pv.interpolation);
     const bool is_uv0 = (pv.name == uv_base);
     const bool is_uv1 = (pv.name == uv_base + "1");
     const bool is_color = (pv.name == "displayColor");
+    const bool is_opacity = (pv.name == "displayOpacity");
     const bool is_normals = (pv.name == "normals");
-    const bool builtin = is_uv0 || is_uv1 || is_color || is_normals;
+    const bool builtin =
+        is_uv0 || is_uv1 || is_color || is_opacity || is_normals;
+
+    // Unauthored interpolation defaults to `constant` per the USD spec
+    // (pxr UsdGeomPrimvar / legacy GeomPrimvar parity). Unauthored arrays
+    // sized per-point/per-corner/per-face are common in the wild though, so
+    // infer the mode from the LOGICAL element count for those.
+    auto resolve_interp = [&](size_t elems) -> Interpolation {
+      if (!pv.interpolation_authored && elems > 1) {
+        if (elems == npoints) return Interpolation::Vertex;
+        if (elems == ncorners) return Interpolation::FaceVarying;
+        if (elems == nfaces) return Interpolation::Uniform;
+      }
+      return ParsePrimvarInterp(pv.interpolation);
+    };
 
     // Skinning primvars are consumed by the skin binding (GetSkinBinding),
     // not by the generic vertex-attribute channel.
@@ -2842,7 +3592,8 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       VertexAttribute attr;
       attr.name = pv.name;
       attr.format = VertexFormat::Int;
-      attr.interpolation = interp;
+      attr.interpolation = resolve_interp(
+          pv.indices.empty() ? ia->size() : pv.indices.size());
       attr.int_data.append(ia->data(), ia->size());
       bool idx_ok = true;
       for (int32_t raw : pv.indices) {
@@ -2876,6 +3627,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     if (builtin) {
       // Size must match the declared interpolation or a consumer indexes OOB.
       const size_t elems = data.size() / comps;
+      const Interpolation interp = resolve_interp(elems);
       if (elems != expected_elems(interp)) {
         warnings_.push_back(
             "Mesh '" + mesh->prim_path + "': primvar '" + pv.name +
@@ -2891,6 +3643,11 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       } else if (is_color && (comps == 3 || comps == 4)) {
         mesh->colors.append(data.data(), data.size());
         mesh->colors_interp = interp;
+      } else if (is_opacity && comps == 1) {
+        // displayOpacity as a render channel (legacy exposes it alongside
+        // displayColor; consumers combine it as the vertex-color alpha).
+        mesh->opacities.append(data.data(), data.size());
+        mesh->opacities_interp = interp;
       } else if (is_normals && comps == 3) {
         // primvars:normals takes precedence over the raw `normals` attribute.
         mesh->normals.clear();
@@ -2908,7 +3665,8 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
                   : comps == 3 ? VertexFormat::Vec3
                                : VertexFormat::Vec4;
     if (comps > 4) continue;  // matrices etc.: not a vertex attribute
-    attr.interpolation = interp;
+    attr.interpolation = resolve_interp(
+        pv.indices.empty() ? (data.size() / comps) : pv.indices.size());
     attr.float_data.append(data.data(), data.size());
     bool idx_ok = true;
     const size_t elems = data.size() / comps;
@@ -2964,7 +3722,7 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
   if (ReadFloatArray(prim, "primvars:displayColor", config_.time_code,
                      &colors) &&
       !colors.empty()) {
-    std::string interp_tok = "vertex";
+    std::string interp_tok;
     if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
       if (const ::tinyusdz::next::PropMeta* pm =
               spec->property_meta("primvars:displayColor")) {
@@ -2973,8 +3731,17 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
         }
       }
     }
-    const Interpolation interp = ParsePrimvarInterp(interp_tok);
     const size_t elems = colors.view.size / 3;
+    Interpolation interp;
+    if (interp_tok.empty()) {
+      // Unauthored: spec default is constant; per-point arrays are common in
+      // the wild, so classify by element count.
+      interp = (elems == out->point_count() && elems != 1)
+                   ? Interpolation::Vertex
+                   : Interpolation::Constant;
+    } else {
+      interp = ParsePrimvarInterp(interp_tok);
+    }
     const size_t expected = (interp == Interpolation::Constant)
                                 ? 1
                                 : out->point_count();
@@ -3652,7 +4419,11 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
 
   if (all_triangles && !mesh->left_handed && mesh->hole_faces.empty()) {
-    // Just copy indices; corner remap is identity.
+    // Just copy indices; corner remap is identity, one triangle per face.
+    mesh->face_triangle_offsets.resize(mesh->face_vertex_counts.size() + 1);
+    for (size_t f = 0; f <= mesh->face_vertex_counts.size(); ++f) {
+      mesh->face_triangle_offsets[f] = static_cast<uint32_t>(f);
+    }
     const size_t n = mesh->face_vertex_indices.size();
     if (WouldOverflowSizeMul(n, sizeof(uint32_t)) ||
         (n * sizeof(uint32_t)) > kMaxTempAllocBytes * 4u) {
@@ -3700,8 +4471,11 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
                         mesh->prim_path + "'");
     return false;
   }
+  mesh->face_triangle_offsets.assign(mesh->face_vertex_counts.size() + 1, 0);
   size_t idx_offset = 0;
   for (size_t f = 0; f < mesh->face_vertex_counts.size(); ++f) {
+    mesh->face_triangle_offsets[f] =
+        static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
     const uint32_t nverts = mesh->face_vertex_counts[f];
     if (idx_offset + nverts > mesh->face_vertex_indices.size()) return false;
     const bool is_hole = std::binary_search(mesh->hole_faces.begin(),
@@ -3718,6 +4492,37 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
               static_cast<uint32_t>(idx_offset + corner));
         }
       };
+
+      if (nverts == 4) {
+        // Split the quad along the SHORTER diagonal (legacy parity): better
+        // triangle quality, and non-planar / concave-ish quads render
+        // correctly. A tie (e.g. a planar rectangle) keeps the classic
+        // 0-2 fan split.
+        const uint32_t i0 = mesh->face_vertex_indices[idx_offset + 0];
+        const uint32_t i1 = mesh->face_vertex_indices[idx_offset + 1];
+        const uint32_t i2 = mesh->face_vertex_indices[idx_offset + 2];
+        const uint32_t i3 = mesh->face_vertex_indices[idx_offset + 3];
+        auto dist_sq = [&](uint32_t a, uint32_t b) -> float {
+          const float dx = mesh->points[size_t(a) * 3 + 0] -
+                           mesh->points[size_t(b) * 3 + 0];
+          const float dy = mesh->points[size_t(a) * 3 + 1] -
+                           mesh->points[size_t(b) * 3 + 1];
+          const float dz = mesh->points[size_t(a) * 3 + 2] -
+                           mesh->points[size_t(b) * 3 + 2];
+          return dx * dx + dy * dy + dz * dz;
+        };
+        if (dist_sq(i1, i3) < dist_sq(i0, i2)) {
+          // Diagonal 1-3: triangles (0,1,3) and (1,2,3).
+          emit_triangle(0, 1, 3);
+          emit_triangle(1, 2, 3);
+        } else {
+          // Diagonal 0-2: triangles (0,1,2) and (0,2,3).
+          emit_triangle(0, 1, 2);
+          emit_triangle(0, 2, 3);
+        }
+        idx_offset += nverts;
+        continue;
+      }
 
       bool used_earcut = false;
       if (config_.mesh.triangulation_method ==
@@ -3767,11 +4572,37 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
             mapbox::earcut<uint32_t>(polygon);
         if (!local.empty() && (local.size() % 3) == 0) {
           used_earcut = true;
+          // earcut emits every triangle in ONE fixed 2D orientation
+          // regardless of the input ring winding. The triangles must follow
+          // the AUTHORED ring winding (so their 3D orientation matches the
+          // face); compare the projected ring's signed area against the
+          // orientation of the first non-degenerate output triangle and flip
+          // when they disagree. (The previous unconditional reverse flipped
+          // faces whose projection preserved orientation — e.g. a
+          // +dominant-axis polygon projected without an axis-order swap.)
+          double ring_area2 = 0.0;  // 2x signed area of the projected ring
+          const std::vector<Point2>& ring = polygon[0];
+          for (size_t i = 0; i < ring.size(); ++i) {
+            const Point2& a = ring[i];
+            const Point2& b = ring[(i + 1) % ring.size()];
+            ring_area2 += a[0] * b[1] - b[0] * a[1];
+          }
+          double tri_cross = 0.0;
+          for (size_t i = 0; i < local.size() && tri_cross == 0.0; i += 3) {
+            const Point2& a = ring[local[i]];
+            const Point2& b = ring[local[i + 1]];
+            const Point2& c = ring[local[i + 2]];
+            tri_cross = (b[0] - a[0]) * (c[1] - a[1]) -
+                        (b[1] - a[1]) * (c[0] - a[0]);
+          }
+          const bool flip = (ring_area2 != 0.0) && (tri_cross != 0.0) &&
+                            ((ring_area2 > 0.0) != (tri_cross > 0.0));
           for (size_t i = 0; i < local.size(); i += 3) {
-            // earcut emits clockwise triangles. Reverse them to the USD
-            // right-handed convention; emit_triangle applies the authored
-            // leftHanded correction afterwards.
-            emit_triangle(local[i], local[i + 2], local[i + 1]);
+            if (flip) {
+              emit_triangle(local[i], local[i + 2], local[i + 1]);
+            } else {
+              emit_triangle(local[i], local[i + 1], local[i + 2]);
+            }
           }
         } else {
           warnings_.push_back("Earcut failed for face " + std::to_string(f) +
@@ -3789,6 +4620,8 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     }
     idx_offset += nverts;
   }
+  mesh->face_triangle_offsets[mesh->face_vertex_counts.size()] =
+      static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
 
   mesh->is_triangulated = true;
   return true;
@@ -3914,7 +4747,21 @@ bool RenderSceneConverter::ComputeVertexNormals(RenderMesh* mesh) {
 
 std::string RenderSceneConverter::ResolveAssetPath(
     const std::string& file) const {
-  if (config_.asset_base_dir.empty() || file.empty() || file[0] == '/' ||
+  if (file.empty()) return file;
+  // A configured AssetResolver owns resolution (anchor/search paths +
+  // suffix fallback); asset_base_dir doubles as the anchor directory.
+  if (config_.asset_resolver) {
+    const std::string anchor = config_.asset_base_dir.empty()
+                                   ? std::string()
+                                   : config_.asset_base_dir + "/";
+    ::tinyusdz::next::ResolvedAsset resolved =
+        config_.asset_resolver->Resolve(file, anchor);
+    if (resolved.exists && !resolved.resolved_path.empty()) {
+      return resolved.resolved_path;
+    }
+    return file;
+  }
+  if (config_.asset_base_dir.empty() || file[0] == '/' ||
       file.find("://") != std::string::npos) {
     return file;
   }
@@ -3964,6 +4811,22 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   out->prim_path = prim.GetPath().str();
   ExtractMaterialXConfig(prim, &out->mtlx_config);
 
+  // Displacement/volume terminal metadata (legacy parity: recorded, not
+  // converted into shader networks).
+  {
+    const std::string disp =
+        ::tinyusdz::next::GetDisplacementShader(stage, prim);
+    if (!disp.empty()) {
+      out->has_displacement = true;
+      out->displacement_shader_path = disp;
+    }
+    const std::string vol = ::tinyusdz::next::GetVolumeShader(stage, prim);
+    if (!vol.empty()) {
+      out->has_volume = true;
+      out->volume_shader_path = vol;
+    }
+  }
+
   // Find shader(s) in material. The material's `outputs:surface` connection
   // names the authoritative surface shader (child iteration order previously
   // decided ties, and shaders living OUTSIDE the material prim never resolved).
@@ -4010,6 +4873,20 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
         ExtractOpenPBRSurface(stage, child, out->openpbr.get(), scene);
         if (out->openpbr->opacity.is_texture() ||
+            out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon ||
+            out->openpbr->transmission_weight.value.x > kAlphaEpsilon) {
+          // Transmissive OpenPBR (glass) needs the blend path even at
+          // opacity 1 (legacy marks these Translucent).
+          out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+        }
+        found_shader = true;
+      } else if (IsStandardSurfaceShaderId(shader_id)) {
+        // MaterialX standard_surface maps onto OpenPBR (legacy tydra's
+        // ConvertMtlxStandardSurfaceToOpenPBRSurface table).
+        out->shader_type = RenderMaterial::ShaderType::OpenPBR;
+        out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
+        ExtractStandardSurfaceAsOpenPBR(stage, child, out->openpbr.get(), scene);
+        if (out->openpbr->opacity.is_texture() ||
             out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;
         }
@@ -4023,7 +4900,8 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // convert through the MaterialX -> PreviewSurface mapping.
     MtlxConverter mtlx;
     RenderMaterial mtlx_out;
-    if (mtlx.ConvertUsdMtlxMaterial(stage, prim, &mtlx_out)) {
+    if (mtlx.ConvertUsdMtlxMaterial(stage, prim, &mtlx_out,
+                                    /*allow_converter_delegation=*/false)) {
       if (mtlx_out.preview_surface) {
         out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
         out->preview_surface = std::move(mtlx_out.preview_surface);
@@ -4086,6 +4964,81 @@ bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
           eval.EvalInt(shader_prim, "inputs:useSpecularWorkflow")) {
     out->use_specular_workflow = (*use_spec != 0);
   }
+
+  return true;
+}
+
+// MaterialX standard_surface -> OpenPBR field mapping (mirrors legacy
+// ConvertMtlxStandardSurfaceToOpenPBRSurface). ExtractShaderParam follows
+// connections, so textured inputs (ND_image chains that resolve to a file)
+// come through as textures.
+bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
+    const Stage& stage, const UsdPrim& shader_prim, OpenPBRSurfaceShader* out,
+    RenderScene* scene) {
+  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+
+  // Base layer
+  ExtractShaderParam(stage, shader_prim, "base", &out->base_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "base_color", &out->base_color, scene);
+  ExtractShaderParam(stage, shader_prim, "diffuse_roughness",
+                     &out->base_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "metalness", &out->base_metalness,
+                     scene);
+
+  // Specular layer
+  ExtractShaderParam(stage, shader_prim, "specular", &out->specular_weight,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "specular_color",
+                     &out->specular_color, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness",
+                     &out->specular_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_IOR", &out->specular_ior,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
+                     &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_rotation",
+                     &out->specular_rotation, scene);
+
+  // Transmission
+  ExtractShaderParam(stage, shader_prim, "transmission",
+                     &out->transmission_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_color",
+                     &out->transmission_color, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_depth",
+                     &out->transmission_depth, scene);
+
+  // Subsurface
+  ExtractShaderParam(stage, shader_prim, "subsurface",
+                     &out->subsurface_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "subsurface_color",
+                     &out->subsurface_color, scene);
+  ExtractShaderParam(stage, shader_prim, "subsurface_radius",
+                     &out->subsurface_radius, scene);
+
+  // Sheen
+  ExtractShaderParam(stage, shader_prim, "sheen", &out->sheen_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_color", &out->sheen_color,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_roughness",
+                     &out->sheen_roughness, scene);
+
+  // Coat
+  ExtractShaderParam(stage, shader_prim, "coat", &out->coat_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_color", &out->coat_color,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "coat_roughness",
+                     &out->coat_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_IOR", &out->coat_ior, scene);
+
+  // Emission
+  ExtractShaderParam(stage, shader_prim, "emission", &out->emission_luminance,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "emission_color",
+                     &out->emission_color, scene);
+
+  // Geometry
+  ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
+  ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
 
   return true;
 }
@@ -4177,7 +5130,47 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       const ::tinyusdz::next::PrimSpec* spec = hop_prim.GetPrimSpec();
       const std::vector<::tinyusdz::next::Path>* nc =
           spec ? spec->connection(prop) : nullptr;
-      if (!nc || nc->empty()) break;
+      if (!nc || nc->empty()) {
+        // Compute/adapter nodes (ND_convert_*, ND_mix_*, color adjust, ...)
+        // carry the upstream connection on an INPUT, not on the referenced
+        // output. Follow the PRIMARY data input — legacy is node-aware
+        // (fg for mix, in/in1 for converts/binary ops); property order is
+        // not a signal (crate flattening alphabetizes, putting `bg` before
+        // `fg`), and factor/mask inputs (mix/amount/weight) must never be
+        // promoted to the surface color.
+        const std::vector<::tinyusdz::next::Path>* input_conn = nullptr;
+        if (spec) {
+          static const char* kPreferredInputs[] = {
+              "inputs:in", "inputs:in1", "inputs:fg", "inputs:bg"};
+          for (const char* pref : kPreferredInputs) {
+            const std::vector<::tinyusdz::next::Path>* c =
+                spec->connection(pref);
+            if (c && !c->empty()) {
+              input_conn = c;
+              break;
+            }
+          }
+          if (!input_conn) {
+            auto is_factor_input = [](const std::string& n) {
+              return n == "inputs:mix" || n == "inputs:amount" ||
+                     n == "inputs:weight" || n == "inputs:factor" ||
+                     n == "inputs:alpha" || n == "inputs:mask";
+            };
+            for (const std::string& prop_name : hop_prim.GetPropertyNames()) {
+              if (prop_name.rfind("inputs:", 0) != 0) continue;
+              if (is_factor_input(prop_name)) continue;
+              const std::vector<::tinyusdz::next::Path>* c =
+                  spec->connection(prop_name);
+              if (c && !c->empty()) {
+                input_conn = c;
+                break;
+              }
+            }
+          }
+        }
+        if (!input_conn) break;
+        nc = input_conn;
+      }
       connection_path = (*nc)[0].str();
     }
     const std::string texture_prim_path = SourcePrimPathFromConnection(connection_path);
@@ -4232,6 +5225,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       texture.bias = Float4(tex_data.bias[0], tex_data.bias[1],
                             tex_data.bias[2], tex_data.bias[3]);
       texture.image_id = image_id;
+      texture.source_color_space = tex_data.source_color_space;
       texture.output_channel = ChannelFromConnection(connection_path);
       // UsdTransform2d on the st chain (rotation is authored in degrees;
       // RenderTexture stores radians).
@@ -4371,6 +5365,25 @@ bool RenderSceneConverter::ConvertLight(const UsdPrim& prim, RenderLight* out) {
     case LightType::Directional:
       GetFloat(prim, "inputs:angle", &out->params.distant.angle);
       break;
+    case LightType::Dome: {
+      std::string format;
+      if (GetToken(prim, "inputs:texture:format", &format)) {
+        if (format == "latlong") {
+          out->params.dome.texture_format =
+              RenderLight::DomeTextureFormat::Latlong;
+        } else if (format == "mirroredBall") {
+          out->params.dome.texture_format =
+              RenderLight::DomeTextureFormat::MirroredBall;
+        } else if (format == "angular") {
+          out->params.dome.texture_format =
+              RenderLight::DomeTextureFormat::Angular;
+        } else {
+          out->params.dome.texture_format =
+              RenderLight::DomeTextureFormat::Automatic;
+        }
+      }
+      break;
+    }
     default:
       break;
   }
@@ -4467,6 +5480,26 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   }
   out->animation_source_path = skel.animationSource;
 
+  // Authored-count validation: a short bindTransforms/restTransforms array
+  // silently identity-fills the tail joints (visually collapsed limbs with
+  // no hint why). Unauthored (empty) is fine — rest derives from bind below.
+  if (!skel.bindTransforms.empty() &&
+      skel.bindTransforms.size() != skel.joints.size() * 16) {
+    warnings_.push_back(
+        "Skeleton " + prim.GetPath().str() + " authors " +
+        std::to_string(skel.bindTransforms.size() / 16) +
+        " bindTransforms for " + std::to_string(skel.joints.size()) +
+        " joints; missing entries use identity");
+  }
+  if (!skel.restTransforms.empty() &&
+      skel.restTransforms.size() != skel.joints.size() * 16) {
+    warnings_.push_back(
+        "Skeleton " + prim.GetPath().str() + " authors " +
+        std::to_string(skel.restTransforms.size() / 16) +
+        " restTransforms for " + std::to_string(skel.joints.size()) +
+        " joints; missing entries derive from bindTransforms");
+  }
+
   std::vector<int> topology;
   std::string err;
   if (!::tinyusdz::next::BuildSkelTopology(skel.joints, topology, &err)) {
@@ -4490,6 +5523,49 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 
     if (joint.parent_id < 0 && out->root_joint < 0) {
       out->root_joint = static_cast<int32_t>(i);
+    }
+  }
+
+  // restTransforms are optional in UsdSkel: when unauthored (or too short),
+  // derive the parent-local rest pose from the world-space bindTransforms —
+  // rest[i] = bind[i] * inverse(bind[parent]) (row-vector convention).
+  // Leaving identity here collapses every joint onto its parent.
+  if (skel.restTransforms.size() < skel.joints.size() * 16 &&
+      skel.bindTransforms.size() >= skel.joints.size() * 16) {
+    const size_t authored_rest = skel.restTransforms.size() / 16;
+    for (size_t i = authored_rest; i < out->joints.size(); ++i) {
+      SkeletonJoint& joint = out->joints[i];
+      const int32_t parent = joint.parent_id;
+      if (parent < 0) {
+        joint.rest_transform = joint.bind_transform;
+        continue;
+      }
+      double parent_bind[16];
+      double parent_inv[16];
+      for (int e = 0; e < 16; ++e) {
+        parent_bind[e] =
+            double(out->joints[static_cast<size_t>(parent)].bind_transform.m[e]);
+      }
+      if (!InvertMatrix4x4D(parent_bind, parent_inv)) {
+        joint.rest_transform = joint.bind_transform;
+        continue;
+      }
+      // rest = bind * parent_inv (row-vector: local * parent = world)
+      double bind[16];
+      for (int e = 0; e < 16; ++e) bind[e] = double(joint.bind_transform.m[e]);
+      double rest[16];
+      for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+          double sum = 0.0;
+          for (int k = 0; k < 4; ++k) {
+            sum += bind[r * 4 + k] * parent_inv[k * 4 + c];
+          }
+          rest[r * 4 + c] = sum;
+        }
+      }
+      for (int e = 0; e < 16; ++e) {
+        joint.rest_transform.m[e] = static_cast<float>(rest[e]);
+      }
     }
   }
 
@@ -4678,6 +5754,18 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
           expected_elements = element_count;
           channel.element_count = element_count;
           channel.array_values.reserve(times.size() * values->size());
+          // Width validation: blendShapeWeights samples must be as wide as
+          // the declared blendShapes list, or weights drive the wrong shapes.
+          if (target_path == AnimationChannel::TargetPath::Weights &&
+              !blend_shape_order.empty() &&
+              element_count != blend_shape_order.size()) {
+            warnings_.push_back(
+                "SkelAnimation " + prim.GetPath().str() + " has " +
+                std::to_string(element_count) +
+                " blendShapeWeights per sample for " +
+                std::to_string(blend_shape_order.size()) +
+                " declared blendShapes");
+          }
         } else if (element_count != expected_elements) {
           warnings_.push_back("Skipping inconsistent SkelAnimation sample for " +
                               prim.GetPath().str() + "." + prop_name);

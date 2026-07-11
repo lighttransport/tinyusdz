@@ -217,6 +217,7 @@ list(
   NEXT_SOURCES
   ${TINYUSDZ_NEXT_DIR}/types/type-info.cc
   ${TINYUSDZ_NEXT_DIR}/types/value.cc
+  ${TINYUSDZ_NEXT_DIR}/types/spline.cc
   ${TINYUSDZ_NEXT_DIR}/types/interpolation.cc
   ${TINYUSDZ_NEXT_DIR}/prim/path.cc
   ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
@@ -259,6 +260,8 @@ list(
   ${TINYUSDZ_NEXT_DIR}/schema/geom-xform.cc
   ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
   ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
+  ${TINYUSDZ_NEXT_DIR}/eval/value-clip.cc
+  ${TINYUSDZ_NEXT_DIR}/schema/schema-registry.cc
 )
 
 list(

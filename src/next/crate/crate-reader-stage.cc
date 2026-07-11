@@ -14,6 +14,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,100 @@ static Value ParseDictText(const std::string& text) {
   return r.success ? std::move(r.value) : Value();
 }
 
+
+// Decode one property-spec field into PropMeta, setting its authored bit.
+// Returns false for field names that are not property metadata.
+bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
+                                            ValueRep rep, PropMeta& pm) {
+  auto tok_or_str = [&](std::string& dst, uint32_t bit) -> bool {
+    Value v;
+    if (!UnpackValue(rep, v)) return true;  // known field, bad value: eat it
+    if (const std::string* s = v.as_token()) { dst = *s; pm.authored |= bit; }
+    else if (const std::string* s = v.as_string()) { dst = *s; pm.authored |= bit; }
+    return true;
+  };
+  auto dict_field = [&](Value& dst, uint32_t bit) -> bool {
+    Value v;
+    if (!UnpackValue(rep, v)) return true;
+    if (v.is_dictionary()) { dst = std::move(v); pm.authored |= bit; }
+    else if (const std::string* s = v.as_string()) {
+      Value d = ParseDictText(*s);
+      if (d.is_dictionary()) { dst = std::move(d); pm.authored |= bit; }
+    } else if (const std::string* s = v.as_token()) {
+      Value d = ParseDictText(*s);
+      if (d.is_dictionary()) { dst = std::move(d); pm.authored |= bit; }
+    }
+    return true;
+  };
+
+  if (name == "interpolation") return tok_or_str(pm.interpolation, PropMeta::kInterpolation);
+  if (name == "colorSpace") return tok_or_str(pm.colorSpace, PropMeta::kColorSpace);
+  if (name == "renderType") return tok_or_str(pm.renderType, PropMeta::kRenderType);
+  if (name == "connectability") return tok_or_str(pm.connectability, PropMeta::kConnectability);
+  if (name == "outputName") return tok_or_str(pm.outputName, PropMeta::kOutputName);
+  if (name == "bindMaterialAs") return tok_or_str(pm.bindMaterialAs, PropMeta::kBindMaterialAs);
+  if (name == "kind") return tok_or_str(pm.kind, PropMeta::kKind);
+  if (name == "displayName") return tok_or_str(pm.displayName, PropMeta::kDisplayName);
+  if (name == "displayGroup") return tok_or_str(pm.displayGroup, PropMeta::kDisplayGroup);
+  if (name == "documentation" || name == "doc") return tok_or_str(pm.doc, PropMeta::kDoc);
+  if (name == "elementSize") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const int32_t* i = v.as_int()) {
+        pm.elementSize = *i;
+        pm.authored |= PropMeta::kElementSize;
+      }
+    }
+    return true;
+  }
+  if (name == "unauthoredValuesIndex") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const int32_t* i = v.as_int()) {
+        pm.unauthoredValuesIndex = *i;
+        pm.authored |= PropMeta::kUnauthoredIdx;
+      }
+    }
+    return true;
+  }
+  if (name == "weight") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const double* d = v.as_double()) {
+        pm.weight = *d;
+        pm.authored |= PropMeta::kWeight;
+      } else if (const float* f = v.as_float()) {
+        pm.weight = *f;
+        pm.authored |= PropMeta::kWeight;
+      }
+    }
+    return true;
+  }
+  if (name == "hidden") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const bool* b = v.as_bool()) {
+        pm.hidden = *b;
+        pm.authored |= PropMeta::kHidden;
+      }
+    }
+    return true;
+  }
+  if (name == "allowedTokens") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const std::vector<std::string>* toks = v.as_token_array()) {
+        pm.allowedTokens = *toks;
+        pm.authored |= PropMeta::kAllowedTokens;
+      }
+    }
+    return true;
+  }
+  if (name == "customData") return dict_field(pm.customData, PropMeta::kCustomData);
+  if (name == "assetInfo") return dict_field(pm.assetInfo, PropMeta::kAssetInfo);
+  if (name == "sdrMetadata") return dict_field(pm.sdrMetadata, PropMeta::kSdrMetadata);
+  return false;
+}
 
 bool CrateReader::Impl::BuildStage() {
   // Create layer and builder
@@ -125,6 +220,24 @@ bool CrateReader::Impl::BuildStage() {
           else
             layer.meta().expressionVariables = std::move(d);
         }
+      } else if (field.first == "layerRelocates" ||
+                 field.first == "relocates") {
+        if (const std::vector<std::string>* pairs =
+                field.second.as_token_array()) {
+          for (size_t i = 0; i + 1 < pairs->size(); i += 2) {
+            layer.meta().relocates.emplace_back((*pairs)[i], (*pairs)[i + 1]);
+          }
+        }
+      } else if (field.first == "colorConfiguration") {
+        if (const std::string* s = field.second.as_asset_path())
+          layer.meta().colorConfiguration = *s;
+        else if (const std::string* s = field.second.as_token())
+          layer.meta().colorConfiguration = *s;
+      } else if (field.first == "colorManagementSystem") {
+        if (const std::string* s = field.second.as_token())
+          layer.meta().colorManagementSystem = *s;
+        else if (const std::string* s = field.second.as_string())
+          layer.meta().colorManagementSystem = *s;
       } else if (field.first == "doc") {
         if (const std::string* s = field.second.as_string())
           layer.meta().doc = *s;
@@ -283,15 +396,11 @@ bool CrateReader::Impl::BuildStage() {
     std::vector<std::string> connection_targets;
     bool uniform = false;
     bool custom = false;
+    std::string spline_text;  // Crate type-59 spline, decoded to USDA text
     std::vector<std::pair<double, Value>> time_samples;
-    // Per-property metadata (round-tripped via attribute spec fields).
-    std::string interpolation;
-    std::string color_space;
-    int32_t element_size = 1;
-    bool has_interpolation = false;
-    bool has_color_space = false;
-    bool has_element_size = false;
-    Value custom_data;  // dictionary
+    // Per-property metadata (round-tripped via attribute spec fields);
+    // `meta.authored` bits record which fields were present.
+    PropMeta meta;
   };
   struct RelInfo {
     std::string name;
@@ -299,6 +408,7 @@ bool CrateReader::Impl::BuildStage() {
     ArcEdit edits;        // authored list-op sublists (marker-decoded)
     bool custom = false;
     bool uniform = false;
+    PropMeta meta;        // relationships carry PropMeta too (doc/hidden/...)
   };
   std::unordered_map<std::string, std::vector<AttrInfo>> attr_map;
   std::unordered_map<std::string, std::vector<RelInfo>> rel_map;
@@ -348,7 +458,13 @@ bool CrateReader::Impl::BuildStage() {
         if (f.first == "targetPaths") {
           std::vector<std::string> raw;
           DecodePathTargets(f.second, raw, /*with_markers=*/true);
-          if (!raw.empty() && !raw[0].empty() && raw[0][0] == '\x01') {
+          if (raw.size() == 1 && (raw[0] == "\x01" "E" || raw[0] == "\x01E")) {
+            // Authored explicit-clear (`rel r = None`): a declared,
+            // target-less relationship with an authored (explicit) edit.
+            ri.edits = ArcEdit();
+            ri.edits.authored = true;
+            raw.clear();
+          } else if (!raw.empty() && !raw[0].empty() && raw[0][0] == '\x01') {
             // Non-explicit list op: sublists are marker-delimited.
             ri.edits.authored = true;
             ri.edits.is_explicit = false;
@@ -377,6 +493,8 @@ bool CrateReader::Impl::BuildStage() {
           if (UnpackValue(f.second, v)) {
             if (const std::string* s = v.as_token()) ri.uniform = (*s == "uniform");
           }
+        } else {
+          DecodePropMetaField(f.first, f.second, ri.meta);
         }
       }
       rel_map[prim_path].push_back(std::move(ri));
@@ -400,6 +518,9 @@ bool CrateReader::Impl::BuildStage() {
         }
       } else if (f.first == "timeSamples") {
         DecodeTimeSamples(f.second, &ai.time_samples);
+      } else if (f.first == "spline") {
+        // Crate type-59 spline: decode to USDA text (PrimSpec's storage form).
+        DecodeSplineToText(f.second, &ai.spline_text);
       } else if (f.first == "connectionPaths") {
         if (DecodePathTargets(f.second, ai.connection_targets)) {
           // Present-but-empty = authored connection block (`.connect = None`).
@@ -417,41 +538,9 @@ bool CrateReader::Impl::BuildStage() {
         if (UnpackValue(f.second, v)) {
           if (const bool* b = v.as_bool()) ai.custom = *b;
         }
-      } else if (f.first == "interpolation") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          if (const std::string* s = v.as_token()) {
-            ai.interpolation = *s;
-            ai.has_interpolation = true;
-          }
-        }
-      } else if (f.first == "colorSpace") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          if (const std::string* s = v.as_token()) {
-            ai.color_space = *s;
-            ai.has_color_space = true;
-          }
-        }
-      } else if (f.first == "elementSize") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          if (const int32_t* i = v.as_int()) {
-            ai.element_size = *i;
-            ai.has_element_size = true;
-          }
-        }
-      } else if (f.first == "customData") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          if (v.is_dictionary()) {
-            ai.custom_data = std::move(v);
-          } else if (const std::string* s = v.as_string()) {
-            ai.custom_data = ParseDictText(*s);
-          } else if (const std::string* s = v.as_token()) {
-            ai.custom_data = ParseDictText(*s);
-          }
-        }
+      } else if (!DecodePropMetaField(f.first, f.second, ai.meta)) {
+        // Unknown/unsupported property field: ignore (matches previous
+        // behavior for anything beyond the known set).
       }
     }
     // Role types (texCoord2f, point3f, color3h, ...) exist in the crate only
@@ -514,7 +603,16 @@ bool CrateReader::Impl::BuildStage() {
     auto append_token_list = [&](const Value& v, std::vector<std::string>& dst,
                                  const char* field_name) {
       if (const std::vector<std::string>* arr = v.as_token_array()) {
-        for (const auto& s : *arr) dst.push_back(s);
+        // Marker-aware: keep prepend/append sublist items, skip
+        // deleted/ordered sublists, strip the markers themselves.
+        bool keep = true;
+        for (const auto& s : *arr) {
+          if (!s.empty() && s[0] == '\x01') {
+            keep = !(s == "\x01" "D" || s == "\x01" "O");
+            continue;
+          }
+          if (keep) dst.push_back(s);
+        }
       } else if (const std::string* s = v.as_token()) {
         dst.push_back(*s);
       } else if (const std::string* s = v.as_string()) {
@@ -530,6 +628,14 @@ bool CrateReader::Impl::BuildStage() {
     auto decode_arc_listop = [&](const Value& v, ArcEdit& e) {
       const std::vector<std::string>* arr = v.as_token_array();
       if (!arr) return;
+      // "\x01E" alone = authored explicit-clear (`references = None` /
+      // pxr's explicit-empty listop): authored with is_explicit kept true
+      // and no items, which the USDA writer re-emits as `= None`.
+      if (arr->size() == 1 && ((*arr)[0] == "\x01" "E" || (*arr)[0] == "\x01E")) {
+        e = ArcEdit();
+        e.authored = true;
+        return;
+      }
       e.authored = true;
       e.is_explicit = false;
       std::vector<std::string>* cur = nullptr;
@@ -587,14 +693,32 @@ bool CrateReader::Impl::BuildStage() {
         if (field.first == "apiSchemas") {
           // Applied API schemas (TokenListOp). Non-explicit sublists arrive
           // marker-delimited; recover the qualifier and strip the markers.
+          // Deleted items apply as in-place removals (same as the USDA
+          // parser; the writer never emits a delete qualifier); ordered
+          // items are ordering-only and are skipped.
           if (const std::vector<std::string>* arr =
                   field.second.as_token_array()) {
             std::string qual;
+            std::vector<std::string> deleted;
+            enum class Mode { Keep, Delete, Skip } mode = Mode::Keep;
             for (const std::string& t : *arr) {
-              if (t == "\x01" "P") { qual = "prepend"; continue; }
-              if (t == "\x01" "A") { qual = "append"; continue; }
-              if (!t.empty() && t[0] == '\x01') continue;
-              ps->meta().apiSchemas().push_back(t);
+              if (t == "\x01" "P") { qual = "prepend"; mode = Mode::Keep; continue; }
+              if (t == "\x01" "A") { qual = "append"; mode = Mode::Keep; continue; }
+              if (t == "\x01" "D") { mode = Mode::Delete; continue; }
+              if (t == "\x01" "O") { mode = Mode::Skip; continue; }
+              if (!t.empty() && t[0] == '\x01') continue;  // E / unknown
+              if (mode == Mode::Keep) ps->meta().apiSchemas().push_back(t);
+              else if (mode == Mode::Delete) deleted.push_back(t);
+            }
+            if (!deleted.empty()) {
+              std::vector<std::string>& applied = ps->meta().apiSchemas();
+              const std::unordered_set<std::string> del(deleted.begin(),
+                                                        deleted.end());
+              applied.erase(std::remove_if(applied.begin(), applied.end(),
+                                           [&](const std::string& a) {
+                                             return del.count(a) != 0;
+                                           }),
+                            applied.end());
             }
             if (!qual.empty()) ps->meta().apiSchemasQualifier() = qual;
           } else {
@@ -698,9 +822,21 @@ bool CrateReader::Impl::BuildStage() {
             ps->meta().displayName() = *s;
           continue;
         }
+        if (field.first == "relocates") {
+          if (const std::vector<std::string>* pairs =
+                  field.second.as_token_array()) {
+            for (size_t i = 0; i + 1 < pairs->size(); i += 2) {
+              ps->meta().relocates().emplace_back((*pairs)[i],
+                                                  (*pairs)[i + 1]);
+            }
+          }
+          continue;
+        }
         if (field.first == "instanceable") {
-          if (const bool* b = field.second.as_bool())
+          if (const bool* b = field.second.as_bool()) {
             ps->meta().instanceable = *b;
+            ps->meta().instanceable_authored = true;
+          }
           continue;
         }
         if (field.first == "customData" || field.first == "assetInfo" ||
@@ -753,7 +889,14 @@ bool CrateReader::Impl::BuildStage() {
       // phantom `token[] primChildren`/`properties` attributes.
       if (field.first == "primChildren") {
         // Authored sibling order: the hierarchy below is built in path-sorted
-        // order, so capture the order here and restore it after finalize.
+        // order, so capture the order here and restore the child links after
+        // finalize (see the prim_children_order pass). Do NOT also set
+        // primOrder()/rootPrimOrder: pxr writes `primChildren` on every prim as
+        // the natural order and preserves it purely by emission order, never
+        // by re-emitting a `reorder nameChildren`/`reorder rootPrims`
+        // statement. Restoring child_indices already reproduces that emission
+        // order; setting primOrder() here made every USDC->USDA round trip gain
+        // a spurious reorder statement pxr never emits.
         if (const std::vector<std::string>* names =
                 field.second.as_token_array()) {
           if (!names->empty()) {
@@ -763,8 +906,18 @@ bool CrateReader::Impl::BuildStage() {
         continue;
       }
       if (field.first == "properties" ||
-          field.first == "propertyChildren" ||
-          field.first == "variantChildren" ||
+          field.first == "propertyChildren") {
+        // pxr writes the `properties` field (natural spec order) for EVERY
+        // prim; it is not an authored `reorder properties`. Synthesizing a
+        // propertyOrder from it made every USDC->USDA round trip gain a
+        // spurious `reorder properties` statement that pxr's own round trip
+        // never emits (pxr drops the order and sorts). So consume the field
+        // without pinning an order. Authored USDA `reorder properties` still
+        // round-trips through the USDA path (parser -> writer); like pxr, it
+        // is not preserved through a crate round trip.
+        continue;
+      }
+      if (field.first == "variantChildren" ||
           field.first == "variantSetChildren") {
         continue;
       }
@@ -776,6 +929,26 @@ bool CrateReader::Impl::BuildStage() {
       // metadata entirely (see cache.cc ComposeInto), so consume it.
       if (field.first == "variantSetNames") {
         continue;
+      }
+
+      // Unknown/plugin listop-valued fields arrive as marker-delimited
+      // token arrays ("\x01P"/"\x01D"/... entries). Strip the markers and
+      // any deleted/ordered sublists before storing the phantom property so
+      // control characters never leak into written output.
+      if (const std::vector<std::string>* arr =
+              field.second.as_token_array()) {
+        if (!arr->empty() && !(*arr)[0].empty() && (*arr)[0][0] == '\x01') {
+          std::vector<std::string> cleaned;
+          bool keep = true;
+          for (const std::string& t : *arr) {
+            if (!t.empty() && t[0] == '\x01') {
+              keep = !(t == "\x01" "D" || t == "\x01" "O");
+              continue;
+            }
+            if (keep) cleaned.push_back(t);
+          }
+          field.second = Value::MakeTokenArray(std::move(cleaned));
+        }
       }
 
       uint16_t flags = 0;
@@ -824,29 +997,15 @@ bool CrateReader::Impl::BuildStage() {
         if (ai.is_connection && ai.connection_targets.empty()) {
           ps->set_connection_block(ai.name);  // authored `.connect = None`
         }
+        if (!ai.spline_text.empty()) {
+          ps->set_spline_source(ai.name, std::move(ai.spline_text));
+        }
         for (const auto& t : ai.connection_targets) {
           ps->add_connection(ai.name, Path(t));
         }
-        // Per-property metadata.
-        if (ai.has_interpolation || ai.has_color_space || ai.has_element_size ||
-            ai.custom_data.is_dictionary()) {
-          PropMeta& pm = ps->ensure_property_meta(ai.name);
-          if (ai.has_interpolation) {
-            pm.interpolation = ai.interpolation;
-            pm.authored |= PropMeta::kInterpolation;
-          }
-          if (ai.has_color_space) {
-            pm.colorSpace = ai.color_space;
-            pm.authored |= PropMeta::kColorSpace;
-          }
-          if (ai.has_element_size) {
-            pm.elementSize = ai.element_size;
-            pm.authored |= PropMeta::kElementSize;
-          }
-          if (ai.custom_data.is_dictionary()) {
-            pm.customData = std::move(ai.custom_data);
-            pm.authored |= PropMeta::kCustomData;
-          }
+        // Per-property metadata (full PropMeta round-trip).
+        if (ai.meta.authored != 0) {
+          ps->ensure_property_meta(ai.name) = std::move(ai.meta);
         }
       }
     }
@@ -869,6 +1028,9 @@ bool CrateReader::Impl::BuildStage() {
           ps->set_relationship_flags(
               ri.name, static_cast<uint16_t>(ps->relationship_flags(ri.name) |
                                              PropSlot::kFlagCustom));
+        }
+        if (ri.meta.authored != 0) {
+          ps->ensure_property_meta(ri.name) = std::move(ri.meta);
         }
       }
     }

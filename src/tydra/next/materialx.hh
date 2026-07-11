@@ -191,10 +191,18 @@ public:
   /// @param stage USD stage
   /// @param material_prim Material prim with MaterialX shader binding
   /// @param out Output render material
+  /// @param allow_converter_delegation When true (direct callers), a
+  ///        material-local shader may be routed through the shared
+  ///        RenderSceneConverter. MUST be false when called FROM
+  ///        RenderSceneConverter::ConvertMaterial — the two functions
+  ///        otherwise recurse into each other until stack overflow on
+  ///        materials whose shader neither side converts directly (e.g.
+  ///        ND_standard_surface_surfaceshader).
   /// @return true on success
   bool ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
                                const tinyusdz::next::UsdPrim& material_prim,
-                               RenderMaterial* out);
+                               RenderMaterial* out,
+                               bool allow_converter_delegation = true);
 
   /// Parse MaterialX content to intermediate representation
   bool ParseMtlx(const std::string& mtlx_content,

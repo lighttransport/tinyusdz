@@ -13,7 +13,7 @@
     size_t pos = 0;
     std::memcpy(buffer_.data() + pos, kCrateMagic, 8); pos += 8;
     buffer_[pos++] = options_.version_major;
-    buffer_[pos++] = options_.version_minor;
+    buffer_[pos++] = std::max(options_.version_minor, required_version_minor_);
     buffer_[pos++] = options_.version_patch;
     buffer_[pos++] = 0; // pad
     buffer_[pos++] = 0; buffer_[pos++] = 0;

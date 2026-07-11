@@ -22,7 +22,12 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
-import { basenameFromUri, getAssetUriFromURL, getBackendFromURL } from 'tinyusdz/LoaderConfigUtils.js';
+import {
+  basenameFromUri,
+  getAssetUriFromURL,
+  getBackendFromURL,
+  mountBackendSelector
+} from 'tinyusdz/LoaderConfigUtils.js';
 
 // Light-to-HDRI projection (no TinyUSDZ dependency)
 import {
@@ -5334,6 +5339,9 @@ function animate() {
 
 async function init() {
   debugLog('Initializing UsdLux demo...');
+
+  // Backend switch reloads the page (the loader binds its WASM module at init).
+  mountBackendSelector(document.getElementById('controls-info'), { append: true });
 
   // Initialize spectral canvas
   initSpectralCanvas();

@@ -70,7 +70,12 @@ RenderPrimKind Classify(const ::tinyusdz::next::UsdPrim& prim,
 
 std::string PurposeForPrim(const ::tinyusdz::next::UsdPrim& prim,
                            const std::string& inherited) {
-  if (const ::tinyusdz::next::Value* v = prim.GetPropertyValue("purpose")) {
+  // Purpose is inherited. Inspect only an AUTHORED local opinion here;
+  // UsdPrim::GetPropertyValue also exposes the schema fallback "default",
+  // which must not shadow an ancestor's authored "render/proxy/guide".
+  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+  if (const ::tinyusdz::next::Value* v =
+          spec ? spec->property_value("purpose") : nullptr) {
     if (const std::string* s = v->as_token()) {
       if (*s == "render" || *s == "proxy" || *s == "guide") return *s;
       if (*s == "default") return "default";

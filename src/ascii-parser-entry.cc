@@ -1249,6 +1249,9 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   }
 
   PrimMetaMap in_metas;
+  // Reorder statements collected while parsing THIS block's body (nested
+  // blocks consume their own entries before returning).
+  const size_t reorder_mark = _pending_reorders.size();
   {
     // look ahead
     char c;
@@ -1431,6 +1434,18 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       }
     }
   }
+
+  // Attach `reorder` body statements parsed in THIS block to the prim's
+  // metas as synthetic "reorder:<field>" entries (nested blocks already
+  // consumed theirs); the reader routes them to PrimMetas and the printer
+  // re-emits the body statements (pxr keeps them verbatim).
+  for (size_t ri = reorder_mark; ri < _pending_reorders.size(); ri++) {
+    MetaVariable rv;
+    rv.set_value(_pending_reorders[ri].second);
+    in_metas.emplace("reorder:" + _pending_reorders[ri].first,
+                     std::make_pair(ListEditQual::ResetToExplicit, rv));
+  }
+  _pending_reorders.resize(reorder_mark);
 
   std::string pTy = prim_type;
 

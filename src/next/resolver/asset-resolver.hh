@@ -31,6 +31,12 @@ struct ResolverConfig {
   std::string working_directory;           // Base directory for relative paths
   bool allow_absolute_paths = true;        // Allow absolute path resolution
   bool search_recursively = false;         // Search subdirectories
+  // When the literal path does not resolve, retry progressively shorter
+  // path suffixes (SuffixCandidates) against anchor/working-dir/search
+  // paths — rehomes assets authored with absolute or machine-specific
+  // prefixes (matches legacy AssetResolutionResolver's default-on
+  // suffix fallback).
+  bool enable_suffix_fallback = true;
 };
 
 /// Custom resolver callback type
@@ -158,7 +164,8 @@ private:
 
   // Internal resolution
   ResolvedAsset ResolveInternal(const std::string& asset_path,
-                                const std::string& anchor_path) const;
+                                const std::string& anchor_path,
+                                bool allow_suffix_fallback = true) const;
   bool FileExists(const std::string& path) const;
 };
 

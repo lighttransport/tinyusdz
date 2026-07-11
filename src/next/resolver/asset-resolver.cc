@@ -198,7 +198,8 @@ std::string AssetResolver::CreateIdentifier(const std::string& asset_path,
 }
 
 ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
-                                              const std::string& anchor_path) const {
+                                              const std::string& anchor_path,
+                                              bool allow_suffix_fallback) const {
   ResolvedAsset result;
   result.original_path = asset_path;
 
@@ -240,7 +241,12 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
       result.resolved_path = NormalizePath(asset_path);
       result.exists = FileExists(result.resolved_path);
     }
-    return result;
+    // A missing absolute path falls through to the suffix fallback below
+    // (assets authored with another machine's absolute prefix).
+    if (result.exists ||
+        !(allow_suffix_fallback && config_.enable_suffix_fallback)) {
+      return result;
+    }
   }
 
   // Relative paths authored inside a package layer resolve to another entry in
@@ -298,6 +304,21 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
       result.resolved_path = candidate;
       result.exists = true;
       return result;
+    }
+  }
+
+  // Suffix fallback: rehome paths authored with absolute / machine-specific
+  // prefixes by retrying progressively shorter suffixes (down to the
+  // basename) through the same anchor / working-dir / search-path order.
+  if (allow_suffix_fallback && config_.enable_suffix_fallback) {
+    for (const std::string& suffix : SuffixCandidates(asset_path)) {
+      if (suffix == asset_path) continue;
+      ResolvedAsset alt =
+          ResolveInternal(suffix, anchor_path, /*allow_suffix_fallback=*/false);
+      if (alt.exists) {
+        alt.original_path = asset_path;
+        return alt;
+      }
     }
   }
 

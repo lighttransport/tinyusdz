@@ -9,6 +9,7 @@
 
 #include "crate-data-source.hh"
 #include "stream-reader.hh"
+#include "../layer/prim-spec.hh"  // PropMeta (property metadata decode)
 
 #include <memory>
 #include <string>
@@ -16,6 +17,13 @@
 
 namespace tinyusdz {
 namespace next {
+
+/// FIELDS prevalidation: minimum number of payload bytes a non-inlined
+/// ValueRep of this type must have available at its offset for the decoder
+/// not to run off the end of the file. Sizes must match the actual decode
+/// reads (crate-reader-unpack.cc) — overstating rejects valid files whose
+/// payload sits near EOF. Exposed (non-static) for unit tests.
+uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version);
 
 // TfToken-lite storage for the crate token table. The token section is one
 // contiguous run of NUL-separated strings; keeping one blob plus spans avoids a
@@ -96,6 +104,8 @@ class CrateReader::Impl {
   bool ReadFieldsets();
   bool ReadSpecs();
   bool ReadPaths();
+  bool DecodePropMetaField(const std::string& name, ValueRep rep,
+                           PropMeta& pm);
   bool BuildStage();
 
   bool UnpackValue(ValueRep rep, Value& out);
@@ -127,6 +137,9 @@ class CrateReader::Impl {
   bool UnpackTimeSamples(ValueRep rep, Value& out);
   bool DecodeTimeSamples(ValueRep rep,
                          std::vector<std::pair<double, Value>>* out);
+  // Decode a Crate type-59 (TsSpline) field to its USDA text form (the storage
+  // PrimSpec uses). Returns false on a malformed blob.
+  bool DecodeSplineToText(ValueRep rep, std::string* out);
   bool UnpackTokenOrStringVector(ValueRep rep, CrateTypeId type_id, Value& out);
   bool UnpackDoubleVector(ValueRep rep, Value& out);
   bool UnpackVec2i(ValueRep rep, Value& out);

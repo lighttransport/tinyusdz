@@ -194,6 +194,14 @@ struct PrimSpecMetaExt {
   Value assetInfo;
   Value sdrMetadata;
   Value clips;
+  // Authored namespace ordering fields (`reorder nameChildren/properties`).
+  std::vector<std::string> primOrder;
+  std::vector<std::string> propertyOrder;
+  // Unknown (unmodeled) prim metadata, preserved as (key, raw source text of
+  // the value) in authored order so the USDA writer can re-emit it verbatim
+  // (the legacy parser preserves unknown prim metadata; dropping it loses
+  // pipeline-specific opinions like `sceneName`).
+  std::vector<std::pair<std::string, std::string>> unknownMeta;
   // Arc list-op qualifiers (Phase 7 S5); null unless authored.
   std::unique_ptr<ArcListOpEdits> arc_edits;
 
@@ -213,6 +221,9 @@ struct PrimSpecMetaExt {
         assetInfo(o.assetInfo),
         sdrMetadata(o.sdrMetadata),
         clips(o.clips),
+        primOrder(o.primOrder),
+        propertyOrder(o.propertyOrder),
+        unknownMeta(o.unknownMeta),
         arc_edits(o.arc_edits ? new ArcListOpEdits(*o.arc_edits) : nullptr) {}
   PrimSpecMetaExt &operator=(const PrimSpecMetaExt &) = delete;
 };
@@ -232,6 +243,7 @@ struct PrimSpecMeta {
   // authored active=false).
   bool active_authored = false;
   bool hidden_authored = false;
+  bool instanceable_authored = false;  // instanceable=false is a real opinion
   bool instanceable = false;  // when true (with arcs), the prim is an instance
 
   // Composition arcs (stored as paths for lazy resolution).
@@ -256,6 +268,7 @@ struct PrimSpecMeta {
     hidden = o.hidden;
     active_authored = o.active_authored;
     hidden_authored = o.hidden_authored;
+    instanceable_authored = o.instanceable_authored;
     instanceable = o.instanceable;
     references = o.references;
     payloads = o.payloads;
@@ -403,6 +416,30 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->clips;
   }
+  const std::vector<std::string> &primOrder() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->primOrder : kEmpty;
+  }
+  std::vector<std::string> &primOrder() {
+    ensure_ext();
+    return ext_->primOrder;
+  }
+  const std::vector<std::string> &propertyOrder() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->propertyOrder : kEmpty;
+  }
+  std::vector<std::string> &propertyOrder() {
+    ensure_ext();
+    return ext_->propertyOrder;
+  }
+  const std::vector<std::pair<std::string, std::string>> &unknownMeta() const {
+    static const std::vector<std::pair<std::string, std::string>> kEmpty;
+    return ext_ ? ext_->unknownMeta : kEmpty;
+  }
+  std::vector<std::pair<std::string, std::string>> &unknownMeta() {
+    ensure_ext();
+    return ext_->unknownMeta;
+  }
 
  private:
   std::unique_ptr<PrimSpecMetaExt> ext_;
@@ -424,6 +461,7 @@ struct PropMeta {
     kWeight         = 1u << 12, kUnauthoredIdx = 1u << 13,
     kAllowedTokens  = 1u << 14, kCustomData    = 1u << 15,
     kAssetInfo      = 1u << 16, kSdrMetadata   = 1u << 17,
+    kUnknownMeta    = 1u << 18,
   };
   // token / string fields
   std::string interpolation;   // constant/uniform/varying/vertex/faceVarying
@@ -446,6 +484,10 @@ struct PropMeta {
   Value customData;
   Value assetInfo;
   Value sdrMetadata;
+  // Unknown (unmodeled) property metadata preserved as raw source text,
+  // authored order (key -> raw value text); the USDA writer re-emits it
+  // verbatim so pipeline-specific opinions round-trip.
+  std::vector<std::pair<std::string, std::string>> unknownMeta;
 
   bool empty() const { return authored == 0; }
 };
@@ -579,6 +621,11 @@ private:
 /// - Children stored as indices, not pointers
 class PrimSpec {
 public:
+  struct RelationshipOpinion {
+    std::vector<Path> items;
+    ArcEdit edit;
+    bool qualified = false;
+  };
   PrimSpec();
   explicit PrimSpec(const std::string& name);
   PrimSpec(const std::string& name, const std::string& type_name);
@@ -726,6 +773,24 @@ public:
                                        TimeInterpolation mode = TimeInterpolation::Linear) const;
 
   // ============================================================
+  // Spline authored field preservation
+  // ============================================================
+
+  /// Preserve the normative `.spline` field text until the typed TsSpline
+  /// evaluator/Crate codec is available. This prevents successful rewrites
+  /// from silently deleting spline data. Strict AOUSD parsing rejects the
+  /// unsupported field instead of returning a partially interpreted stage.
+  void set_spline_source(const std::string& prop_name, std::string source);
+  const std::string* spline_source(PropNameId name_id) const;
+  const std::string* spline_source(const std::string& prop_name) const;
+
+  /// Lossless compatibility storage for a default whose declared extension or
+  /// not-yet-supported foundational type has no Value decoder.
+  void set_raw_default_source(const std::string& prop_name,
+                              std::string source);
+  const std::string* raw_default_source(PropNameId name_id) const;
+
+  // ============================================================
   // Relationships
   // ============================================================
 
@@ -756,6 +821,11 @@ public:
     return rel_edits_ ? *rel_edits_ : kEmpty;
   }
   ArcEdit& ensure_relationship_edit(const std::string& name);
+
+  const std::vector<RelationshipOpinion>* relationship_opinion_stack(
+      const std::string& name) const;
+  void set_relationship_opinion_stack(
+      const std::string& name, std::vector<RelationshipOpinion> opinions);
 
   /// Per-relationship qualifier flags (PropSlot::kFlagCustom /
   /// kFlagUniform). 0 when unauthored.
@@ -879,12 +949,19 @@ private:
   std::unordered_map<std::string, std::vector<Path>> relationships_;
   // Lazily allocated (rare): authored rel list-op edits + qualifier flags.
   std::unique_ptr<std::unordered_map<std::string, ArcEdit>> rel_edits_;
+  std::unordered_map<std::string, std::vector<RelationshipOpinion>>
+      rel_opinion_stacks_;
   std::unordered_map<std::string, uint16_t> rel_flags_;
 
   // Attribute connections: interned property-name id -> connection targets.
   // (Keyed by PropNameId.id rather than a string to avoid a key string per
   // connected property on shader-heavy scenes.)
   std::unordered_map<uint32_t, std::vector<Path>> connections_;
+
+  // Raw USDA `.spline` values keyed by property id. Kept separate from Value
+  // because spline is a specialized sampled field, not an attribute default.
+  std::unordered_map<uint32_t, std::string> spline_sources_;
+  std::unordered_map<uint32_t, std::string> raw_default_sources_;
 
   // Declared USD type names: interned property-name id -> interned typeName id
   // (both interned in the global PropNameTable). Lets the writer re-emit the
