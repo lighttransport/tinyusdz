@@ -11,6 +11,8 @@
 
 #include "next/crate/crate-format.hh"
 #include "next/crate/crate-reader.hh"
+#include "next/crate/crate-writer.hh"
+#include "next/layer/layer.hh"
 #include "next/crate/stream-reader.hh"
 #include "next/reader/usdc-reader.hh"
 
@@ -529,7 +531,112 @@ void test_crate_reader_audit_cluster() {
     assert(!bad.success);
   }
 
+  // `rel r = None` + `inherits = None` (pxr-authored): inherits records an
+  // authored explicit-clear; the rel comes back as a declared target-less
+  // relationship (same as the USDA parser's model) — and neither derails
+  // the load.
+  {
+    std::string fx = FindUsdcFixture("rel-inherits-none-001.usdc");
+    if (fx.empty()) { std::cout << "  Skipping (fixture missing)\n"; return; }
+    USDCLoadResult r = LoadUSDCFromFile(fx.c_str());
+    assert(r.success);
+    UsdPrim a = r.stage.GetPrimAtPath("/A");
+    assert(a.IsValid());
+    const ArcListOpEdits* edits = a.GetMeta().arc_edits();
+    assert(edits && edits->inherits.authored && edits->inherits.is_explicit);
+    assert(a.GetMeta().inherits.empty());
+    const std::vector<Path>* targets = a.GetRelationship("r");
+    assert(targets && targets->empty());  // declared, target-less
+  }
+
   std::cout << "  Crate-reader audit cluster passed!" << std::endl;
+}
+
+// VtArrayEdit ValueReps (crate 0.14, bit 60) must be rejected with a
+// warning — the element type in the type byte otherwise makes them decode
+// as a plain scalar reading the edit tuple as the value (silent
+// corruption). Reps in the FIELDS section are LZ4-compressed, so patch the
+// RAW rep a dictionary entry embeds next to its data: pxr WriteMap layout
+// is [u32 key][i64 rec_off][value bytes][8-byte ValueRep], so for
+// `double v = 10.5` the rep sits immediately after the 10.5 bytes.
+void test_array_edit_rep_rejected() {
+  std::cout << "Testing VtArrayEdit rep rejection..." << std::endl;
+
+  // ValueRep flag decode.
+  {
+    ValueRep rep(ValueRep::Make(CrateTypeId::Double, 1234).raw() |
+                 (1ull << 60));
+    assert(rep.is_array_edit());
+    assert(!ValueRep::Make(CrateTypeId::Double, 1234).is_array_edit());
+  }
+
+  Layer layer;
+  LayerBuilder b(layer);
+  b.begin_prim("P", "Scope");
+  {
+    Dict d;
+    d.set("v", Value(10.5));
+    b.current()->meta().customData() = Value::MakeDictionary(std::move(d));
+  }
+  b.end_prim();
+  b.finalize();
+  CrateWriter writer;
+  std::vector<uint8_t> buf;
+  assert(writer.WriteLayerToMemory(buf, layer).success);
+
+  // Locate the embedded rep. Next's dict block layout is
+  // [u32 keyIdx][i64 recOffset=8][u64 ValueRep]: find the constant
+  // recOffset (u64 == 8) followed by a non-inlined, non-array Double rep.
+  const uint64_t kRecOff = 8;
+  uint8_t pat[8];
+  std::memcpy(pat, &kRecOff, 8);
+  size_t rep_pos = std::string::npos;
+  for (size_t i = 0; i + 16 <= buf.size(); ++i) {
+    if (std::memcmp(buf.data() + i, pat, 8) != 0) continue;
+    uint64_t raw = 0;
+    std::memcpy(&raw, buf.data() + i + 8, 8);
+    ValueRep rep(raw);
+    if (rep.type_id() == CrateTypeId::Double && !rep.is_inlined() &&
+        !rep.is_array() && !rep.is_array_edit()) {
+      rep_pos = i + 8;
+      break;
+    }
+  }
+  assert(rep_pos != std::string::npos && "embedded dict rep not found");
+
+  // Sanity: unpatched file reads the dict value.
+  {
+    CrateReader reader;
+    CrateReadResult rr = reader.Read(buf.data(), buf.size());
+    assert(rr.success);
+    const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
+    assert(p);
+    const Dict* d = p->meta().customData().as_dictionary();
+    assert(d && d->find("v") && d->find("v")->as_double() &&
+           *d->find("v")->as_double() == 10.5);
+  }
+
+  // Patched: bit 60 set -> value dropped with a warning, load still
+  // succeeds, and the corrupt scalar is NOT fabricated.
+  buf[rep_pos + 7] |= 0x10;  // bit 60 lives in the high byte (bits 56-63)
+  {
+    CrateReader reader;
+    CrateReadResult rr = reader.Read(buf.data(), buf.size());
+    assert(rr.success);
+    const PrimSpec* p = rr.stage.GetRootLayer()->prim_at_path("/P");
+    assert(p);
+    const Dict* d = p->meta().customData().as_dictionary();
+    const Value* v = d ? d->find("v") : nullptr;
+    assert(!(v && v->as_double() && *v->as_double() != 10.5) &&
+           "array-edit rep must not decode as a garbage scalar");
+    bool warned = false;
+    for (const std::string& w : rr.warnings) {
+      if (w.find("VtArrayEdit") != std::string::npos) warned = true;
+    }
+    assert(warned);
+  }
+
+  std::cout << "  VtArrayEdit rep rejection passed!" << std::endl;
 }
 
 int main() {
@@ -548,6 +655,7 @@ int main() {
     test_inlined_int_vec_reconstruction();
     test_inlined_scalar_reconstruction();
     test_crate_reader_audit_cluster();
+    test_array_edit_rep_rejected();
 
     std::cout << std::endl;
     std::cout << "All USDC tests passed!" << std::endl;

@@ -2164,6 +2164,9 @@ function compareSingleFile(inputFile, options) {
     'delete-apischemas-001.usdc':
       'delete-apiSchemas sublists apply as in-place removals; the writer ' +
       'does not re-emit a delete qualifier (known crate-writer P1)',
+    'rel-inherits-none-001.usdc':
+      'legacy tusdcat prints explicit-empty inherits as [] where pxr keeps ' +
+      'None (legacy-side gap; the next reader preserves the clear)',
   };
   const base = require('path').basename(inputFile);
   if (usdcXfails[base]) {

@@ -115,6 +115,18 @@ ParseResult ParseDouble(Lexer& lexer) {
   return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value)));
 }
 
+ParseResult ParseTimeCode(Lexer& lexer) {
+  // Same wire format as double, but the value keeps its TimeCode identity
+  // (matches the crate reader; a rewrite must not mutate timecode -> double).
+  const Token& tok = lexer.peek();
+  if (!IsNumberToken(tok)) {
+    return ParseResult::Error("Expected timecode value");
+  }
+  lexer.next();
+  const double d = FastFloatParseToken<double>(tok.value);
+  return ParseResult::Ok(Value::MakeFromRaw(TypeId::TimeCode, &d));
+}
+
 ParseResult ParseString(Lexer& lexer) {
   const Token& tok = lexer.peek();
   if (tok.type != TokenType::String) {
@@ -539,7 +551,7 @@ ParseFn GetParseFunction(TypeId type_id) {
     case TypeId::Texcoord3f: return &ParseFloat3;
     case TypeId::Texcoord3d: return &ParseDouble3;
 
-    case TypeId::TimeCode: return &ParseDouble;
+    case TypeId::TimeCode: return &ParseTimeCode;
 
     default:
       return nullptr;
