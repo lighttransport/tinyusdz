@@ -766,6 +766,13 @@ bool ComposeLayerToFixedPoint(AssetResolutionResolver &resolver,
     src_layer = std::move(tmp);
   }
 
+  // NOTE: this loop applies R -> P -> I -> V rather than routing through
+  // CompositeAllArcs (LIVRPS strength order) because the InPlace variants
+  // below halve peak memory — this converter's job is multi-GB scenes.
+  // Deferred variant evaluation (ShouldDeferVariantComposition) covers the
+  // common selection-vs-late-variantSet hazard; the residual divergence is
+  // the inherits-vs-references strength edge, which tusdcat/web/binding
+  // handle via CompositeAllArcs.
   constexpr int kMaxIteration = 64;
   for (int i = 0; i < kMaxIteration; i++) {
     bool has_unresolved = false;
