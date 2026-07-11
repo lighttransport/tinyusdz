@@ -2408,6 +2408,19 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-noninstanced-lod"
         )
       set_tests_properties(tusdview-noninstanced-lod PROPERTIES SKIP_RETURN_CODE 77)
+
+      # The ray tracer traces vertex buffers, so the raster vertex shader's
+      # deform never reaches it. --next --rt used to give up and re-run the whole
+      # converter per time code; it now re-poses the retained rest vertices.
+      add_test(
+        NAME tusdview-rt-skinning
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-rt-skinning.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-animated.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-rt-skinning"
+        )
+      set_tests_properties(tusdview-rt-skinning PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()

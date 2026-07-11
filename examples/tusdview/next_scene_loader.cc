@@ -2047,21 +2047,24 @@ bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
   return false;
 }
 
-bool BuildNextSkinningFrame(const tnext::Stage& stage, DrawScene* draw,
-                            double time, SkinningFrameCPU* frame) {
-  if (!draw || !frame) return false;
-  if (draw->boneMatrixCount <= 0 || draw->nextSkels.empty()) return false;
+// The scene's absolute bone rows at `time`, indexed exactly as DrawMeshCPU::
+// jointIdx indexes them. Shared by the raster bone-texture upload
+// (BuildNextSkinningFrame) and the RT vertex re-pose (BuildNextRtDeformedVertices),
+// which must agree row-for-row or the two backends pose differently.
+static bool ComputeNextBoneRows(const tnext::Stage& stage, const DrawScene& draw,
+                                double time, std::vector<matrix4d>* out) {
+  if (!out || draw.boneMatrixCount <= 0 || draw.nextSkels.empty()) return false;
 
   // One row per (skinned source mesh, joint), addressed absolutely by
   // DrawMeshCPU::jointIdx. Identity is the safe default: it renders the vertex
   // at its world-baked REST position, so a skeleton that stops resolving degrades
   // to the rest pose instead of collapsing the mesh to the origin.
-  const size_t rows = static_cast<size_t>(draw->boneMatrixCount);
+  const size_t rows = static_cast<size_t>(draw.boneMatrixCount);
   std::vector<matrix4d> bones(rows, matrix4d::identity());
   // Skeletons are shared between meshes far more often than not; pose each once.
   std::map<std::pair<std::string, std::string>, std::vector<matrix4d>> posed;
 
-  for (const DrawScene::NextSkelBinding& nb : draw->nextSkels) {
+  for (const DrawScene::NextSkelBinding& nb : draw.nextSkels) {
     const auto key = std::make_pair(nb.skelPath, nb.animPath);
     auto it = posed.find(key);
     if (it == posed.end()) {
@@ -2083,6 +2086,17 @@ bool BuildNextSkinningFrame(const tnext::Stage& stage, DrawScene* draw,
       bones[row] = invW * (G * sm[j] * invG) * W;
     }
   }
+
+  *out = std::move(bones);
+  return true;
+}
+
+bool BuildNextSkinningFrame(const tnext::Stage& stage, DrawScene* draw,
+                            double time, SkinningFrameCPU* frame) {
+  if (!draw || !frame) return false;
+  std::vector<matrix4d> bones;
+  if (!ComputeNextBoneRows(stage, *draw, time, &bones)) return false;
+  const size_t rows = bones.size();
 
   // Pack straight from `bones` rather than walking draw->meshes (as the Tydra
   // path does): the next loader frees each mesh's CPU geometry after GPU upload,
@@ -2162,6 +2176,104 @@ static float NextHalfToFloat(uint16_t h) {
   float f;
   std::memcpy(&f, &bits, sizeof(f));
   return f;
+}
+
+bool BuildNextRtDeformedVertices(
+    const tnext::Stage& stage, const DrawScene& draw, double time,
+    const std::unordered_map<std::string, float>* blendOverride,
+    std::vector<RtSkinnedMeshUpload>* out) {
+  if (!out) return false;
+  out->clear();
+
+  std::vector<matrix4d> bones;
+  const bool hasSkin = ComputeNextBoneRows(stage, draw, time, &bones);
+
+  // Morph coefficients per morphed mesh -- the same evaluation the raster vertex
+  // shader is fed, so RT and raster morph identically.
+  std::vector<std::pair<int, std::vector<float>>> morphCoeffs;
+  BuildNextMorphWeights(stage, draw, time, blendOverride, &morphCoeffs);
+  std::unordered_map<int, const std::vector<float>*> coeffByMesh;
+  for (const auto& mc : morphCoeffs) coeffByMesh[mc.first] = &mc.second;
+
+  for (size_t mi = 0; mi < draw.meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw.meshes[mi];
+    const size_t nv = m.vertices.size();
+    if (nv == 0) continue;  // CPU geometry freed: nothing to re-pose from
+    const bool skinned = hasSkin && m.jointIdx.size() == nv * 4 &&
+                         m.jointWt.size() == nv * 4;
+    auto ci = coeffByMesh.find(static_cast<int>(mi));
+    const bool morphed = ci != coeffByMesh.end() &&
+                         m.morphOffsetCount.size() == nv * 2 &&
+                         !m.morphDeltaHalf.empty();
+    if (!skinned && !morphed) continue;
+
+    std::vector<DrawVertex> verts = m.vertices;  // rest pose
+    const size_t entries = m.morphDeltaHalf.size() / 4;
+    for (size_t v = 0; v < nv; ++v) {
+      float p[3] = {verts[v].px, verts[v].py, verts[v].pz};
+      const float rest_n[3] = {verts[v].nx, verts[v].ny, verts[v].nz};
+      float n[3] = {rest_n[0], rest_n[1], rest_n[2]};
+
+      // Blendshape morph, before skinning (deform.glsl's order). Each entry packs
+      // 4 halfs: (channelId, dx, dy, dz).
+      if (morphed) {
+        const std::vector<float>& coeff = *ci->second;
+        const size_t base = m.morphOffsetCount[v * 2 + 0];
+        const size_t count = m.morphOffsetCount[v * 2 + 1];
+        for (size_t k = 0; k < count && base + k < entries; ++k) {
+          const uint16_t* e = &m.morphDeltaHalf[(base + k) * 4];
+          const size_t chan = static_cast<size_t>(NextHalfToFloat(e[0]) + 0.5f);
+          if (chan >= coeff.size()) continue;
+          const float c = coeff[chan];
+          if (std::fabs(c) < 1e-6f) continue;
+          p[0] += c * NextHalfToFloat(e[1]);
+          p[1] += c * NextHalfToFloat(e[2]);
+          p[2] += c * NextHalfToFloat(e[3]);
+        }
+      }
+
+      // Linear-blend skinning. The bone rows are absolute and already carry both
+      // the mesh's geomBind and its world transform (the next loader world-bakes
+      // its vertices), so this is the same row-vector p*M the vertex shader
+      // applies -- the two must not drift apart.
+      if (skinned) {
+        double acc[3] = {0, 0, 0}, accn[3] = {0, 0, 0}, wsum = 0.0;
+        for (int k = 0; k < 4; ++k) {
+          const float w = m.jointWt[v * 4 + static_cast<size_t>(k)];
+          if (!(w > 0.0f)) continue;
+          const uint32_t j = m.jointIdx[v * 4 + static_cast<size_t>(k)];
+          if (j >= bones.size()) continue;
+          const matrix4d& B = bones[j];
+          for (int c = 0; c < 3; ++c) {
+            acc[c] += double(w) * (double(p[0]) * B.m[0][c] +
+                                   double(p[1]) * B.m[1][c] +
+                                   double(p[2]) * B.m[2][c] + B.m[3][c]);
+            accn[c] += double(w) * (double(rest_n[0]) * B.m[0][c] +
+                                    double(rest_n[1]) * B.m[1][c] +
+                                    double(rest_n[2]) * B.m[2][c]);
+          }
+          wsum += double(w);
+        }
+        if (wsum > 0.0) {
+          for (int c = 0; c < 3; ++c) p[c] = static_cast<float>(acc[c] / wsum);
+          const double len = std::sqrt(accn[0] * accn[0] + accn[1] * accn[1] +
+                                       accn[2] * accn[2]);
+          if (len > 1e-12) {
+            for (int c = 0; c < 3; ++c) n[c] = static_cast<float>(accn[c] / len);
+          }
+        }
+      }
+
+      verts[v].px = p[0]; verts[v].py = p[1]; verts[v].pz = p[2];
+      verts[v].nx = n[0]; verts[v].ny = n[1]; verts[v].nz = n[2];
+    }
+
+    RtSkinnedMeshUpload up;
+    up.meshIndex = static_cast<int>(mi);
+    up.vertices = std::move(verts);
+    out->push_back(std::move(up));
+  }
+  return !out->empty();
 }
 
 // DomeLight support for the `next` path: walk the stage for DomeLight prims,
