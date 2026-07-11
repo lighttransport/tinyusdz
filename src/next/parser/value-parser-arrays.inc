@@ -319,7 +319,11 @@ bool ParseScalarArray(SliceParser* sp, std::vector<T>* out, ParseOne parse_one) 
     if (!parse_one(sp, &v)) return false;
     out->push_back(v);
     if (out->size() > kMaxArrayScalars) return false;
-    if (sp->maybe_consume(',')) continue;
+    if (sp->maybe_consume(',')) {
+      // Trailing comma before ']' is valid USDA ([0, 1, 2,]).
+      if (sp->at_array_end()) return sp->finish_array();
+      continue;
+    }
     return sp->finish_array();
   }
 }
@@ -340,7 +344,10 @@ bool ParseTupleArray(SliceParser* sp, std::vector<ScalarT>* out,
     }
     if (!sp->consume(')')) return false;
     if (out->size() > kMaxArrayScalars) return false;
-    if (sp->maybe_consume(',')) continue;
+    if (sp->maybe_consume(',')) {
+      if (sp->at_array_end()) return sp->finish_array();  // trailing comma
+      continue;
+    }
     return sp->finish_array();
   }
 }
@@ -366,7 +373,10 @@ bool ParseMatrixArray(SliceParser* sp, std::vector<ScalarT>* out,
     }
     if (!sp->consume(')')) return false;
     if (out->size() > kMaxArrayScalars) return false;
-    if (sp->maybe_consume(',')) continue;
+    if (sp->maybe_consume(',')) {
+      if (sp->at_array_end()) return sp->finish_array();  // trailing comma
+      continue;
+    }
     return sp->finish_array();
   }
 }
@@ -400,6 +410,7 @@ constexpr size_t kParallelChunkMinBytes = size_t(1) << 20;  // 1 MiB
 template <class T, uint32_t N, class ParseOne>
 bool ParseChunkFlat(const char* b, const char* e, bool is_last,
                     std::vector<T>* local, ParseOne parse_one) {
+  (void)is_last;  // trailing comma before ']' is valid on any chunk
   SliceParser sp{b, e};
   // Inline whitespace skip. `simple` arrays (the only ones reaching here) contain
   // no `#` comments, so this matches SliceParser::skip_ws on this input. Hoisting
@@ -446,9 +457,9 @@ bool ParseChunkFlat(const char* b, const char* e, bool is_last,
     ++sp.p;                            // consume the separator comma
     skipws();
     if (sp.p >= end) {
-      // Trailing separator: the normal inter-chunk boundary, but on the FINAL
-      // chunk it is a trailing comma before ']' which the serial parser rejects.
-      return is_last ? false : true;
+      // Trailing separator: the normal inter-chunk boundary; on the FINAL
+      // chunk it is a trailing comma before ']', which is valid USDA.
+      return true;
     }
   }
 }

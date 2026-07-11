@@ -30,8 +30,12 @@ ParseResult ParseInt(Lexer& lexer) {
     return ParseResult::Error("Expected integer value");
   }
   lexer.next();
-  int32_t value = DecimalToI32(tok.value.c_str());
-  return ParseResult::Ok(Value(value));
+  int64_t wide = 0;
+  if (!value_parser_detail::DecimalToI64Checked(tok.value.c_str(), &wide) ||
+      wide > INT32_MAX || wide < INT32_MIN) {
+    return ParseResult::Error("Integer value out of range");
+  }
+  return ParseResult::Ok(Value(static_cast<int32_t>(wide)));
 }
 
 ParseResult ParseUInt(Lexer& lexer) {
@@ -41,8 +45,11 @@ ParseResult ParseUInt(Lexer& lexer) {
     return ParseResult::Error("Expected unsigned integer value");
   }
   lexer.next();
-  uint32_t value = DecimalToU32(tok.value.c_str());
-  return ParseResult::Ok(Value(value));
+  uint64_t wide = 0;
+  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &wide) || wide > UINT32_MAX) {
+    return ParseResult::Error("Unsigned integer value out of range");
+  }
+  return ParseResult::Ok(Value(static_cast<uint32_t>(wide)));
 }
 
 ParseResult ParseInt64(Lexer& lexer) {
@@ -52,7 +59,10 @@ ParseResult ParseInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit integer value");
   }
   lexer.next();
-  int64_t value = DecimalToI64(tok.value.c_str());
+  int64_t value = 0;
+  if (!value_parser_detail::DecimalToI64Checked(tok.value.c_str(), &value)) {
+    return ParseResult::Error("64-bit integer value out of range");
+  }
   return ParseResult::Ok(Value(value));
 }
 
@@ -63,7 +73,10 @@ ParseResult ParseUInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
   }
   lexer.next();
-  uint64_t value = DecimalToU64(tok.value.c_str());
+  uint64_t value = 0;
+  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &value)) {
+    return ParseResult::Error("64-bit unsigned integer value out of range");
+  }
   return ParseResult::Ok(Value(value));
 }
 

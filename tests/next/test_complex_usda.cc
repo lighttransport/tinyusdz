@@ -386,6 +386,239 @@ def Xform "World"
   std::cout << "  Relationship body list-ops passed!" << std::endl;
 }
 
+// Regressions for the 2026-07 parser audit cluster (H1/H3/H4/M5/M6/M7/
+// M10/M13/M14). Each case failed (silently mis-parsed or derailed) before
+// the corresponding fix.
+void test_parser_audit_2026_07() {
+  std::cout << "Testing parser audit regressions..." << std::endl;
+
+  // H1: a list-edit qualifier before an ATTRIBUTE must be a hard error, not
+  // a silent drop (a dropped `delete X.connect` becomes an ADD).
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W"
+{
+    delete float inputs:x.connect = </W/S.outputs:o>
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success);
+    bool found = false;
+    for (const auto& err : r.errors) {
+      if (err.message.find("List-editing qualifier") != std::string::npos) {
+        found = true;
+      }
+    }
+    assert(found);
+  }
+
+  // H3: scalar int overflow must error (previously saturated silently).
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W"
+{
+    int v = 99999999999
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success);
+  }
+  {
+    // Boundary values still parse.
+    const char* input = R"(#usda 1.0
+def Xform "W"
+{
+    int lo = -2147483648
+    int hi = 2147483647
+    uint uhi = 4294967295
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+  }
+
+  // H4: `\@@@` escape inside a triple-@ asset path (literal "@@@") must not
+  // desync the lexer; the following attribute still parses.
+  {
+    const char* input = "#usda 1.0\n"
+        "def Xform \"W\"\n"
+        "{\n"
+        "    asset a = @@@weird\\@@@name.usd@@@\n"
+        "    int after = 7\n"
+        "}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    assert(w.IsValid());
+    assert(w.HasProperty("a"));
+    assert(w.HasProperty("after"));
+  }
+
+  // M5: trailing commas in arrays (scalar and tuple) are valid USDA.
+  {
+    const char* input = R"(#usda 1.0
+def Mesh "W"
+{
+    int[] idx = [1, 2, 3,]
+    point3f[] pts = [(0, 0, 0), (1, 1, 1),]
+    int after = 1
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    assert(w.HasProperty("idx"));
+    assert(w.HasProperty("pts"));
+    assert(w.HasProperty("after"));
+  }
+
+  // M6: relative relationship / connection targets resolve against the
+  // owning prim's path.
+  {
+    const char* input = R"(#usda 1.0
+def Xform "World"
+{
+    def Xform "A"
+    {
+        rel r = <../Sib>
+        float inputs:x.connect = <../Sib.outputs:o>
+    }
+    def Xform "Sib"
+    {
+    }
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim a = r.stage.GetPrimAtPath("/World/A");
+    const std::vector<Path>* targets = a.GetRelationship("r");
+    assert(targets && targets->size() == 1);
+    assert((*targets)[0].str() == "/World/Sib");
+    std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("</World/Sib.outputs:o>") != std::string::npos);
+  }
+
+  // M7: per-arc customData on a reference must be skipped structurally, not
+  // derail the metadata paren scan.
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W" (
+    references = @./missing.usda@ (
+        customData = {
+            int priority = 1
+        }
+    )
+    kind = "component"
+)
+{
+    int after = 3
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    assert(w.HasProperty("after"));
+  }
+
+  // M10: single non-bracketed apiSchemas value must land in apiSchemas, not
+  // be misparsed into the prim's doc string.
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W" (
+    prepend apiSchemas = "PhysicsRigidBodyAPI"
+)
+{
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    const std::vector<std::string>& schemas = w.GetMeta().apiSchemas();
+    assert(schemas.size() == 1);
+    assert(schemas[0] == "PhysicsRigidBodyAPI");
+    std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("doc = \"PhysicsRigidBodyAPI\"") == std::string::npos);
+  }
+
+  // M13: text without a `#usda 1.x` header must be rejected (the old
+  // token-level check was dead code — the lexer eats `#` as comments).
+  {
+    const char* input = R"(def Xform "W"
+{
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success);
+  }
+  {
+    // Leading whitespace before the header is fine.
+    const char* input = "\n  #usda 1.0\ndef Xform \"W\"\n{\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+  }
+
+  // Property metadata inside a variantSet body must survive (previously
+  // silently dropped; VariantProperty cannot carry PropMeta, so it is
+  // routed through the variant content "__self__" prim).
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W" (
+    variants = {
+        string shape = "a"
+    }
+    prepend variantSets = "shape"
+)
+{
+    variantSet "shape" = {
+        "a" {
+            float3[] extent = [(0, 0, 0), (1, 1, 1)] (
+                interpolation = "constant"
+            )
+            int v = 1
+        }
+        "b" {
+            int v = 2
+        }
+    }
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("interpolation = \"constant\"") != std::string::npos);
+    // Value must not be duplicated (inline VariantProperty + __self__).
+    size_t first = out.find("float3[] extent");
+    assert(first != std::string::npos);
+    assert(out.find("float3[] extent", first + 1) == std::string::npos);
+    LoadResult r2 = LoadUSDAFromString(out.c_str());
+    assert(r2.success);
+    std::string out2 = WriteUSDAToString(r2.stage);
+    assert(out2.find("interpolation = \"constant\"") != std::string::npos);
+  }
+
+  // M14: a `.spline` statement is skipped structurally; the prim parser
+  // keeps going.
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W"
+{
+    double x.spline = {
+        bezier,
+        1: 5,
+        10: 20,
+    }
+    int after = 9
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    assert(w.HasProperty("after"));
+  }
+
+  std::cout << "  Parser audit regressions passed!" << std::endl;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Complex USDA Tests ===" << std::endl;
   std::cout << std::endl;
@@ -396,6 +629,7 @@ int main() {
     test_large_scene_ascii_grammar_regressions();
     test_metadata_dict_propmeta_roundtrip();
     test_relationship_body_listops();
+    test_parser_audit_2026_07();
 
     std::cout << std::endl;
     std::cout << "All complex USDA tests passed!" << std::endl;

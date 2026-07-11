@@ -651,6 +651,18 @@ Token Lexer::scan_asset_ref() {
     char c = current_char();
 
     if (is_triple) {
+      // Inside @@@...@@@, `\@@@` is an ESCAPED literal `@@@` (SdfAssetPath
+      // escaping) — consume it without terminating, else the tail desyncs
+      // the token stream.
+      if (c == '\\' && peek_char() == '@' && peek_char(2) == '@' &&
+          peek_char(3) == '@') {
+        value += "@@@";
+        advance();
+        advance();
+        advance();
+        advance();
+        continue;
+      }
       if (c == '@' && peek_char() == '@' && peek_char(2) == '@') {
         advance();
         advance();
