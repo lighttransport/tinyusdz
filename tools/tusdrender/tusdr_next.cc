@@ -217,12 +217,55 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
       Vec3 lc{1.0f, 1.0f, 1.0f};
       if (const tinyusdz::next::Value *v = prim.GetPropertyValue("inputs:color"))
         if (const float *f = v->as_float3()) lc = Vec3{f[0], f[1], f[2]};
-      // Same convention as the legacy path (MeshLightEmission): the light color is
-      // TINTED by the material -- its emissive color if it has one, else its base
-      // color -- rather than emitting raw intensity. inputs:normalize is not
-      // honored (the mesh's total area is not known here), so a normalized mesh
-      // light comes out brighter than it should.
-      const Vec3 light_color = Mul(lc, li * std::pow(2.0f, lx));
+      // Same convention as the legacy CollectAllGeometry path (MeshLightEmission):
+      // the light color is TINTED by the material -- its emissive color if it has
+      // one, else its base color -- rather than emitting raw intensity.
+      Vec3 light_color = Mul(lc, li * std::pow(2.0f, lx));
+      // inputs:normalize: the light's POWER is held fixed as its area changes, so
+      // the radiance is divided by the emitting area. Without this a normalized
+      // mesh light scales with its own size -- exactly backwards. The area has to
+      // be the WORLD area (a scaled mesh light emits over the scaled surface), and
+      // it is measured here rather than in CollectMeshLightsNext because that runs
+      // on the flat triangle list, where one material may be shared by several
+      // meshes and their areas would be pooled. Re-reads the topology, which is
+      // why it is gated on MeshLightAPI. Blendshape offsets are not applied: a
+      // morphing light would otherwise change brightness every frame.
+      bool normalize = false;
+      if (const tinyusdz::next::Value *v =
+              prim.GetPropertyValue("inputs:normalize"))
+        if (const bool *b = v->as_bool()) normalize = *b;
+      if (normalize) {
+        const std::vector<float> npts_f = ReadFloatArrayLazy(prim, "points", time);
+        const std::vector<int32_t> ncounts =
+            ReadIntArrayLazy(prim, "faceVertexCounts", time);
+        const std::vector<int32_t> nidx =
+            ReadIntArrayLazy(prim, "faceVertexIndices", time);
+        const size_t np = npts_f.size() / 3;
+        auto wp = [&](int32_t i) {
+          return TransformPoint(world, Vec3{npts_f[3 * size_t(i) + 0],
+                                            npts_f[3 * size_t(i) + 1],
+                                            npts_f[3 * size_t(i) + 2]});
+        };
+        float total = 0.0f;
+        size_t cur = 0;
+        for (int32_t c : ncounts) {
+          if (c < 3 || cur + size_t(c) > nidx.size()) {
+            cur += size_t(std::max<int32_t>(0, c));
+            continue;
+          }
+          for (int32_t k = 1; k + 1 < c; k++) {
+            const int32_t i0 = nidx[cur + 0], i1 = nidx[cur + size_t(k)],
+                          i2 = nidx[cur + size_t(k + 1)];
+            if (i0 < 0 || i1 < 0 || i2 < 0 || size_t(i0) >= np ||
+                size_t(i1) >= np || size_t(i2) >= np) {
+              continue;
+            }
+            total += TriangleArea(wp(i0), wp(i1), wp(i2));
+          }
+          cur += size_t(c);
+        }
+        if (total > 1.0e-8f) light_color = Mul(light_color, 1.0f / total);
+      }
       const Vec3 tint = (Luminance(emission) > 1.0e-6f) ? emission : base_color;
       mesh_emission = Mul(light_color, tint);
       mesh_area_light = 1;
@@ -4284,9 +4327,12 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
 void CollectMeshLightsNext(RenderContext &ctx) {
   ctx.lights.mesh.clear();
   ctx.lights.mesh_cdf.clear();
-  if (ctx.tris.empty() || ctx.flat_mats.empty()) return;
 
-  for (size_t i = 0; i < ctx.tris.size(); ++i) {
+  // Flat (non-instanced) triangles. On the two-level path this list holds only the
+  // base geometry and is routinely EMPTY -- and returning early on that, as this
+  // used to, skipped the instanced emitters below along with it.
+  const size_t nflat = ctx.flat_mats.empty() ? 0 : ctx.tris.size();
+  for (size_t i = 0; i < nflat; ++i) {
     const FlatTri &ft = ctx.tris[i];
     if (ft.mat_id >= ctx.flat_mats.size()) continue;
     const TriMat &m = ctx.flat_mats[ft.mat_id];
@@ -4303,6 +4349,44 @@ void CollectMeshLightsNext(RenderContext &ctx) {
     ml.power = std::max(0.0f, Luminance(ml.radiance) * area);
     ml.tri_id = int(i);
     ctx.lights.mesh.push_back(ml);
+  }
+
+  // INSTANCED emissive meshes (the TLAS path). The loop above walks the flat
+  // triangle list, which an instanced prototype is deliberately not in -- its
+  // geometry is stored once in a BLAS and placed by InstanceRT. So an
+  // `instanceable` mesh light registered nothing at all and lit nothing, however
+  // bright it was. Each PLACEMENT is its own light (that is what instancing
+  // means), so every emissive prototype triangle is emitted once per instance,
+  // transformed to world. The prototype's vertex soup is freed after its BVH is
+  // built, so the positions come back out of the leaves (lrt_tri_get_verts).
+  for (const InstanceRT &inst : ctx.instances) {
+    if (inst.blas_id >= ctx.blas.size()) continue;
+    const Blas &b = ctx.blas[inst.blas_id];
+    if (b.is_curve || !b.scene || !lrt_tri_scene_has_verts(b.scene)) continue;
+    for (size_t t = 0; t < b.tris.size(); ++t) {
+      const uint32_t mid = b.tris[t].mat_id;
+      if (mid >= b.mat_table.size()) continue;
+      const TriMat &m = b.mat_table[mid];
+      if (!m.area_light || Luminance(m.emission) <= 1.0e-6f) continue;
+      float v0[3], v1[3], v2[3];
+      if (!lrt_tri_get_verts(b.scene, uint32_t(t), v0, v1, v2)) continue;
+      const Vec3 p0 = TransformPointO2W(inst.o2w, Vec3{v0[0], v0[1], v0[2]});
+      const Vec3 p1 = TransformPointO2W(inst.o2w, Vec3{v1[0], v1[1], v1[2]});
+      const Vec3 p2 = TransformPointO2W(inst.o2w, Vec3{v2[0], v2[1], v2[2]});
+      const float area = TriangleArea(p0, p1, p2);
+      if (!(area > 1.0e-10f)) continue;
+      const Vec3 n = Normalize(Cross(Sub(p1, p0), Sub(p2, p0)));
+      PreviewLight ml;
+      ml.kind = PreviewLight::Kind::Mesh;
+      ml.position = Mul(Add(Add(p0, p1), p2), 1.0f / 3.0f);
+      ml.normal = n;
+      ml.direction = Mul(n, -1.0f);
+      ml.radiance = m.emission;
+      ml.area = area;
+      ml.power = std::max(0.0f, Luminance(ml.radiance) * area);
+      ml.tri_id = -1;  // not in the flat list
+      ctx.lights.mesh.push_back(ml);
+    }
   }
 
   constexpr size_t kMaxMeshLights = 1024;

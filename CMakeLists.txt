@@ -2204,6 +2204,7 @@ if(TINYUSDZ_BUILD_TESTS)
         instancer-invisible-ids
         light-double-count
         material-shading-bsdf-sample
+        mesh-light-gaps
         mtlx-usdz-texture-equivalence
         mtlx-usdz-udim-equivalence
         opacity-texture-alpha
