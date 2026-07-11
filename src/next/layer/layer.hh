@@ -55,6 +55,45 @@ struct LayerMeta {
   // May be shorter than subLayers (older files / API construction): missing
   // entries are identity (0, 1).
   std::vector<std::pair<double, double>> subLayerOffsets;
+
+  /// Fill stage-metadata fields this layer leaves unauthored from a WEAKER
+  /// layer (a sublayer): stage metadata resolves through the whole root
+  /// layer stack in pxr (upAxis/metersPerUnit/timeCodesPerSecond/...), so a
+  /// flatten engine must gap-fill before dropping the subLayers list. Call
+  /// with sublayers strongest-first.
+  void FillAbsentStageMetaFrom(const LayerMeta& weaker) {
+    if (defaultPrim.empty() && !weaker.defaultPrim.empty()) {
+      defaultPrim = weaker.defaultPrim;
+    }
+    if (!upAxis_set && weaker.upAxis_set) {
+      upAxis = weaker.upAxis;
+      upAxis_set = true;
+    }
+    if (!metersPerUnit_set && weaker.metersPerUnit_set) {
+      metersPerUnit = weaker.metersPerUnit;
+      metersPerUnit_set = true;
+    }
+    if (!timeCodesPerSecond_set && weaker.timeCodesPerSecond_set) {
+      timeCodesPerSecond = weaker.timeCodesPerSecond;
+      timeCodesPerSecond_set = true;
+    }
+    if (!framesPerSecond_set && weaker.framesPerSecond_set) {
+      framesPerSecond = weaker.framesPerSecond;
+      framesPerSecond_set = true;
+    }
+    if (!kilogramsPerUnit_set && weaker.kilogramsPerUnit_set) {
+      kilogramsPerUnit = weaker.kilogramsPerUnit;
+      kilogramsPerUnit_set = true;
+    }
+    if (!startTimeCode_set && weaker.startTimeCode_set) {
+      startTimeCode = weaker.startTimeCode;
+      startTimeCode_set = true;
+    }
+    if (!endTimeCode_set && weaker.endTimeCode_set) {
+      endTimeCode = weaker.endTimeCode;
+      endTimeCode_set = true;
+    }
+  }
 };
 
 /// Layer - owns all PrimSpecs for a USD file

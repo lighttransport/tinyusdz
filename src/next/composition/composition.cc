@@ -220,16 +220,15 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   // metadata gaps from sublayers first (defaultPrim authored only in a
   // sublayer must survive), then drop the list.
   if (!result->meta().subLayers.empty()) {
-    if (result->meta().defaultPrim.empty()) {
-      for (const std::string& sl : result->meta().subLayers) {
-        std::string resolved = sl;
-        if (resolver_) resolved = resolver_->ResolvePath(sl, anchor_path);
-        if (const Layer* sub = GetCachedLayer(resolved)) {
-          if (!sub->meta().defaultPrim.empty()) {
-            result->meta().defaultPrim = sub->meta().defaultPrim;
-            break;
-          }
-        }
+    // Stage metadata resolves through the whole root layer STACK (root
+    // wins, then sublayers in strength order); gap-fill before dropping
+    // the list — this flatten output IS the stage for downstream
+    // consumers.
+    for (const std::string& sl : result->meta().subLayers) {
+      std::string resolved = sl;
+      if (resolver_) resolved = resolver_->ResolvePath(sl, anchor_path);
+      if (const Layer* sub = GetCachedLayer(resolved)) {
+        result->meta().FillAbsentStageMetaFrom(sub->meta());
       }
     }
     result->meta().subLayers.clear();
@@ -1172,7 +1171,12 @@ bool Compositor::ApplyVariants(PrimSpec& prim, const Layer& layer,
 
   for (const auto& vs : prim.meta().variantSets()) {
     std::string chosen = vs.selected;
-    auto override_it = options_.variant_overrides.find(vs.name);
+    // Prim-scoped override ("<primPath>{<set>}") wins over the bare-set key.
+    auto override_it = options_.variant_overrides.find(
+        prim.path().str() + "{" + vs.name + "}");
+    if (override_it == options_.variant_overrides.end()) {
+      override_it = options_.variant_overrides.find(vs.name);
+    }
     if (override_it != options_.variant_overrides.end()) {
       chosen = override_it->second;
     }

@@ -64,7 +64,10 @@ struct CompositionOptions {
   size_t max_layer_memory = 0;
   ParseOptions usda_parse_options = {};
 
-  // Strongest variant selections for flattening: set name -> variant name.
+  // Strongest variant selections for flattening. Keys are either a bare
+  // variant-set name ("shape" — applies to every prim carrying that set) or
+  // prim-scoped "<primPath>{<set>}" ("/World/B{shape}" — applies to that
+  // prim only and wins over the bare-set key; pxr keys selections per prim).
   // Empty keeps authored selections.
   std::map<std::string, std::string> variant_overrides;
 };

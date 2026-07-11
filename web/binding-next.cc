@@ -719,10 +719,12 @@ class NextFlattenSession {
     return result;
   }
 
-  emscripten::val setVariantOverride(const std::string& prim_path,
+  // Key is a variant-set name ("shape", applies stage-wide) or the
+  // prim-scoped form "<primPath>{<set>}" (wins over the bare-set key).
+  emscripten::val setVariantOverride(const std::string& set_or_scoped_key,
                                      const std::string& selection) {
     emscripten::val result = emscripten::val::object();
-    variant_overrides_[prim_path] = selection;
+    variant_overrides_[set_or_scoped_key] = selection;
     result.set("success", true);
     return result;
   }
@@ -1374,12 +1376,13 @@ class RenderStream {
   }
   void clearAssets() { clip_assets_.clear(); }
 
-  // Strongest variant selection for a variant SET (applies to every prim
-  // carrying that set, matching the compositor's set-name-keyed overrides).
-  // Takes effect on the next begin()/beginOwned().
-  void setVariantOverride(const std::string &set_name,
+  // Strongest variant selection. `key` is a variant-set name (applies to
+  // every prim carrying that set) or the prim-scoped form
+  // "<primPath>{<set>}" which wins over the bare-set key. Takes effect on
+  // the next begin()/beginOwned().
+  void setVariantOverride(const std::string &key,
                           const std::string &selection) {
-    variant_overrides_[set_name] = selection;
+    variant_overrides_[key] = selection;
   }
   void clearVariantOverrides() { variant_overrides_.clear(); }
 
