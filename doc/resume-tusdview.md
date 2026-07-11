@@ -14,43 +14,48 @@ selection, the tusdview BLAS-compaction port, `--vram-budget`, raster LOD for
 non-instanced meshes (§2.10), and the `-vk` tiled ray dispatch (§2.11 — which
 also records why device-local BVH buffers were measured and left OFF).
 
+Done since (2026-07-12): Vulkan-RT skinning without a reconvert, the two
+double-counted light contributions in `lightrt-bsdf`, area-sampled rect / disk /
+cylinder lights (plus the inverted UsdLux light normal that made them light
+nothing), and the TLAS `PREFER_FAST_BUILD` question (measured, rejected —
+large-scene.md §2.12).
+
 ## Open
 
-### 1. RT / CUDA / HIP skinning
+### 1. CUDA / HIP skinning
 
-The last `--next` skinning gap, and the biggest item here. Raster (GL + Vulkan,
-instanced prototypes included) skins on the GPU; the ray-tracing backends still
-take the load-time CPU bake, so every new time code costs a full re-bake of the
-posed geometry.
+The Vulkan ray tracer now re-poses the retained rest vertices per frame
+(`BuildNextRtDeformedVertices`) instead of re-running the converter for every time
+code. The CUDA/HIP tracers still take the load-time CPU bake: they read `draw_`
+geometry directly and free it once their own BVH is built, and they only render a
+one-shot screenshot, where the bake IS the cheapest path. Making them animate
+interactively means re-posing into their BVH, not just into `draw_`.
 
-### 2. `lightrt-bsdf`: two double-counted light contributions
+### 2. `lightrt-bsdf` IBL energy
 
-Known, unfixed, from the NEE work:
+The furnace test (`tool-tusdrender-light-double-count`) pins a white Lambert
+surface under a uniform dome. The legacy path lands at 0.95x the dome (correct);
+`lightrt-bsdf` lands at **1.32x**. The dome double count is gone — this residual
+is the BSDF-mode IBL split-sum path (`EvalMaterialIblDiffuse` / `...Specular`)
+handing back more energy than it should. Tighten the test's 1.6 ceiling once
+fixed.
 
-- the dome light is counted twice, and
-- emissive meshes are counted twice.
+### 3. Mesh lights are invisible to the `next` loader
 
-Both need `Shade()` split into an emitted term and a reflected term; today it is
-a single analytic direct-lighting evaluator, so the BSDF-side and light-side
-contributions overlap. Regression anchors: `tool-tusdrender-sphere-light-nee`,
-`tool-tusdrender-material-shading-bsdf-sample`.
+`LightCache::mesh` is only populated by the LEGACY flatten (`tusdr_legacy.cc`).
+The next loader — which is what `-rtPreview` uses for `.usda` — never registers an
+emissive `MeshLightAPI` mesh as an analytic light, so such a mesh is lit only by
+whatever a BSDF bounce happens to hit. Both halves of
+`tool-tusdrender-light-double-count` exist because of this split.
 
-### 3. Rect / disk / cylinder lights are still punctual
+### 4. Cross-backend blendshape screenshot parity
 
-Only sphere lights are area-sampled (cone sampling + power-heuristic MIS). The
-others collapse to a point, so they cast hard shadows regardless of size. Needs
-tangent axes plumbed through `PreviewLight`, then a per-shape sampler and pdf.
+Open in the broader visual-parity matrix. Note that no fixture in the tree
+animates a blendshape under `--time` in *either* loader (legacy or next), which
+is itself worth chasing — `models/blendshape-and-animation-test-001.usda` renders
+identically at every time code.
 
-### 4. TLAS `PREFER_FAST_BUILD` for settle rebuilds
-
-The last P2 VRAM follow-on from the [large-scene.md](large-scene.md) §2.8 review,
-and the lowest-value one: deprioritized once BLAS compaction and RT LOD landed.
-
-### 5. Cross-backend blendshape screenshot parity
-
-Open in the broader visual-parity matrix.
-
-### 6. usd-assets regression harness
+### 5. usd-assets regression harness
 
 Partial: the batch harness runs both tools over usd-wg/assets. Remaining is
 recording and maintaining the per-machine external-asset baselines.
