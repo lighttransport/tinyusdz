@@ -2324,6 +2324,13 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
   } else if (const auto *scene = prim.as<tinyusdz::PhysicsScene>()) {
     AddSceneJson(props, *scene);
     AddPropertyMap(props, rels, scene->props);
+  } else if (const auto *group = prim.as<tinyusdz::PhysicsCollisionGroup>()) {
+    AddTypedAttr(props, "physics:mergeGroup", group->mergeGroup);
+    AddFallbackAttr(props, "physics:invertFilteredGroups",
+                    group->invertFilteredGroups);
+    rels["physics:filteredGroups"] =
+        RelationshipTargetsJson(group->filteredGroups);
+    AddPropertyMap(props, rels, group->props);
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsRevoluteJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddTypedAttr(props, "physics:axis", joint->axis);
@@ -5342,6 +5349,9 @@ class TinyUSDZLoaderNative {
     metadata.set("comment", render_scene_.meta.comment);
     metadata.set("upAxis", render_scene_.meta.upAxis);
     metadata.set("metersPerUnit", render_scene_.meta.metersPerUnit);
+    const tinyusdz::Layer &meta_layer = composited_ ? composed_layer_ : layer_;
+    metadata.set("kilogramsPerUnit",
+                 meta_layer.metas().kilogramsPerUnit.get_value());
     metadata.set("framesPerSecond", render_scene_.meta.framesPerSecond);
     metadata.set("timeCodesPerSecond", render_scene_.meta.timeCodesPerSecond);
     metadata.set("autoPlay", render_scene_.meta.autoPlay);
@@ -7704,6 +7714,8 @@ class TinyUSDZLoaderNative {
 
     json root;
     root["upAxis"] = AxisName(stage.metas().upAxis.get_value());
+    root["metersPerUnit"] = stage.metas().metersPerUnit.get_value();
+    root["kilogramsPerUnit"] = stage.metas().kilogramsPerUnit.get_value();
     root["prims"] = json::array();
 
     for (const auto &prim : stage.root_prims()) {
