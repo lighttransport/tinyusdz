@@ -6,6 +6,32 @@ import {
 } from './ExtendedSkinning.js';
 import { collectMeshesInHierarchy } from './SceneGraphUtils.js';
 
+/**
+ * Recover a skeleton prim's WORLD transform from the RenderScene node table
+ * (next backend). The next-built three tree is flat — every mesh has its world
+ * matrix baked — so the Skeleton prim has no named node to parent bones under;
+ * without its ancestor transform (e.g. an axis-correcting Z_UP xform) the
+ * bones deform in the wrong space. Returns a fixed-matrix Group or null.
+ */
+function skeletonWorldParentFromScene(usdScene, skelAbsPath) {
+  const nodes = usdScene && Array.isArray(usdScene.nodes) ? usdScene.nodes : null;
+  if (!nodes || !skelAbsPath) return null;
+  const node = nodes.find((n) => n && n.primPath === skelAbsPath);
+  const m = node && node.worldMatrix;
+  if (!m || m.length !== 16) return null;
+  const group = new THREE.Group();
+  group.name = `${skelAbsPath}`;
+  // USD row-major -> three.js column-major
+  group.matrix.set(
+    m[0], m[4], m[8], m[12],
+    m[1], m[5], m[9], m[13],
+    m[2], m[6], m[10], m[14],
+    m[3], m[7], m[11], m[15]
+  );
+  group.matrixAutoUpdate = false;
+  return group;
+}
+
 function registerMeshVisibility(mesh, showMesh, allSceneMeshes, meshVisibility) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
@@ -262,9 +288,21 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
             `Placing rootBone ${skelId} at skeleton node: ${boneParent.name} (path: ${skelAbsPath})`
           );
         } else {
-          logger.warn(
-            `Could not find skeleton node "${skelAbsPath}" in hierarchy for skeleton ${skelId}, falling back to threeNode root`
-          );
+          // Flat (next) trees have no per-prim nodes; rebuild the skeleton
+          // prim's world transform from the RenderScene node table so bones
+          // deform in the same space the baked mesh worlds use.
+          const worldParent = skeletonWorldParentFromScene(usdScene, skelAbsPath);
+          if (worldParent) {
+            threeNode.add(worldParent);
+            boneParent = worldParent;
+            logger.log(
+              `Placing rootBone ${skelId} under reconstructed skeleton world node (path: ${skelAbsPath})`
+            );
+          } else {
+            logger.warn(
+              `Could not find skeleton node "${skelAbsPath}" in hierarchy for skeleton ${skelId}, falling back to threeNode root`
+            );
+          }
         }
       }
       boneParent.add(skelRootBone);

@@ -32,6 +32,9 @@ import subprocess
 import sys
 import zlib
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gpu_backend import device_name, is_software_renderer  # noqa: E402
+
 SKIP = 77
 # Compare the two renders by RATIO rather than absolute stdev: the checker's
 # contrast depends on the backend's shading (GL and Vulkan light this quad
@@ -105,25 +108,41 @@ def stdev_of_lit(px):
 
 
 def render(binary, model, out_png, backend):
-    cmd = []
-    xvfb = shutil.which("xvfb-run")
-    if xvfb and not os.environ.get("DISPLAY"):
-        cmd = [xvfb, "-a"]
-    cmd += [binary, "--backend", backend, "--next", "--frames", "4",
+    args = [binary, "--backend", backend, "--next", "--frames", "4",
             "--screenshot", out_png, model]
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       timeout=600)
-    if r.returncode != 0 or not os.path.exists(out_png):
-        return None
-    return r.stdout.decode(errors="replace")
+    xvfb = shutil.which("xvfb-run")
+    # Prefer an inherited DISPLAY -- that is where a HARDWARE GL device lives,
+    # and this test only means something there (see gpu_backend.py). Fall back to
+    # Xvfb when there is no DISPLAY, or when the one we inherited cannot be
+    # opened (a stale forwarded X11 socket, common under ssh/ctest).
+    prefixes = []
+    if os.environ.get("DISPLAY"):
+        prefixes.append([])
+    if xvfb:
+        prefixes.append([xvfb, "-a"])
+    for prefix in prefixes:
+        r = subprocess.run(prefix + args, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=600)
+        if r.returncode == 0 and os.path.exists(out_png):
+            return r.stdout.decode(errors="replace")
+    return None
 
 
 def check_backend(binary, secondary, primary, work, backend):
-    """None = backend unavailable (skip), else 0 / 1."""
+    """None = backend cannot answer (unavailable, or software), else 0 / 1."""
     sec_png = os.path.join(work, f"uvset1_{backend}.png")
     pri_png = os.path.join(work, f"uvset0_{backend}.png")
-    if render(binary, secondary, sec_png, backend) is None:
+    out = render(binary, secondary, sec_png, backend)
+    if out is None:
         print(f"SKIP: {backend} backend unavailable")
+        return None
+    # A software rasterizer fetches no vertex attribute but aPosition, so every
+    # texture samples uv (0,0) and both renders come out identically wrong --
+    # see gpu_backend.py. Nothing to learn here; let the caller try another
+    # backend.
+    if is_software_renderer(out):
+        print(f"SKIP: {backend} is a software renderer ({device_name(out)}); "
+              f"it cannot fetch UVs, so this test cannot run on it")
         return None
     if render(binary, primary, pri_png, backend) is None:
         print(f"SKIP: {backend} backend unavailable")
@@ -188,15 +207,18 @@ def main():
         f.write(src.replace('token inputs:varname = "uvSet1"',
                             'token inputs:varname = "st"'))
     try:
-        rc = check_backend(binary, model, primary, work, "gl")
-        if rc is None:
-            return SKIP
-        if rc != 0:
-            return rc
-        vk = check_backend(binary, model, primary, work, "vk")
-        if vk is not None and vk != 0:
-            return vk
-        return 0
+        # Every backend that can answer must agree. GL may be unable to (absent,
+        # or a software rasterizer that fetches no UVs) -- then Vulkan carries
+        # the test. If neither can answer, skip rather than assert on garbage.
+        answered = False
+        for backend in ("gl", "vk"):
+            rc = check_backend(binary, model, primary, work, backend)
+            if rc is None:
+                continue
+            if rc != 0:
+                return rc
+            answered = True
+        return 0 if answered else SKIP
     finally:
         if os.path.exists(primary):
             os.remove(primary)

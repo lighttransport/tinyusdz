@@ -83,6 +83,34 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
     lexer_ = std::make_unique<Lexer>(data, length);
   }
   lexer_->num_threads = options_.num_threads;
+  lexer_->strict_aousd_conformance = options_.strict_aousd_conformance;
+
+  // Enforce the `#usda 1.0` magic on the raw bytes BEFORE lexing: the lexer
+  // treats '#' as a comment, so a token-level check is dead code and any
+  // text starting with `def "x" {}` would "parse" as USDA.
+  {
+    const char* raw = source_ ? reinterpret_cast<const char*>(source_->base())
+                              : data;
+    size_t pos = 0;
+    while (pos < length &&
+           (raw[pos] == ' ' || raw[pos] == '\t' || raw[pos] == '\r' ||
+            raw[pos] == '\n')) {
+      pos++;
+    }
+    bool ok = (pos + 5 <= length) && std::memcmp(raw + pos, "#usda", 5) == 0;
+    if (ok) {
+      pos += 5;
+      size_t ws = pos;
+      while (ws < length && (raw[ws] == ' ' || raw[ws] == '\t')) ws++;
+      // Require whitespace then a version digit ("#usda  1.0" is valid —
+      // the legacy parser accepts arbitrary spacing here).
+      ok = (ws > pos) && ws < length && raw[ws] >= '0' && raw[ws] <= '9';
+    }
+    if (!ok) {
+      AddError("Missing or invalid '#usda 1.0' header");
+      return false;
+    }
+  }
 
   // Parse stage metadata (header block)
   if (!ParseStageMetadata()) {
@@ -91,18 +119,35 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
 
   // Parse root prims
   while (!AtEnd()) {
-    // `reorder rootPrims = [...]` at root scope: accepted and skipped (prim
-    // ordering metadata is not modeled; failing the whole file is worse).
+    // Pseudo-root namespace ordering is an authored field and must survive a
+    // layer rewrite even when it mentions currently absent prim names.
     if (lexer_->peek().type == TokenType::Reorder) {
       lexer_->next();
       std::string what;
-      lexer_->expect(TokenType::Identifier, what);
-      if (Match(TokenType::Equals)) SkipValueLike();
+      if (!lexer_->expect(TokenType::Identifier, what)) return false;
+      if (what == "rootPrims") {
+        if (!ParseOrderList(&layer_->meta().rootPrimOrder)) return false;
+      } else if (options_.strict_aousd_conformance) {
+        AddError("Unsupported root reorder field: " + what);
+        return false;
+      } else {
+        if (Match(TokenType::Equals)) SkipValueLike();
+        AddWarning("Unknown root reorder field ignored: " + what);
+      }
       continue;
     }
     if (!ParsePrim()) {
       return false;
     }
+  }
+
+  // A fatal lexical malformation (unterminated string/path/asset literal,
+  // oversized token) must fail the parse even when the token-level grammar
+  // happened to recover (e.g. an unterminated single-quoted string cut off by
+  // a newline used to be silently accepted).
+  if (lexer_->has_fatal_error()) {
+    AddError(lexer_->error());
+    return false;
   }
 
   // Finalize the layer
@@ -234,6 +279,11 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
           }
           if (k == "offset") off = v;
           else if (k == "scale") scl = v;
+        } else {
+          // Unknown key with a structured value (customData = { ... } may
+          // contain nested parens/braces): balanced skip, or the paren scan
+          // terminates INSIDE the value and desyncs the metadata block.
+          SkipValueLike();
         }
       } else {
         lexer_->next();  // skip unexpected token (avoid spinning)
@@ -241,6 +291,14 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
       Match(TokenType::Semicolon);
     }
     Match(TokenType::CloseParen);
+    if (scl <= 0.0) {
+      if (options_.strict_aousd_conformance) {
+        AddError("AOUSD composition-arc scale must be greater than zero");
+        return false;
+      }
+      AddWarning("Non-positive composition-arc scale retained in compatibility "
+                 "mode");
+    }
     if (off != 0.0 || scl != 1.0) {
       ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
     }
@@ -449,6 +507,28 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       ParseResult result = ParseValue(*lexer_, TypeId::Bool);
       if (result.success && result.value.as_bool()) {
         prim->meta().instanceable = *result.value.as_bool();
+        prim->meta().instanceable_authored = true;
+      }
+    } else if (key == "relocates") {
+      // relocates = { </old/path>: </new/path>, ... } — namespace renames
+      // consumed by pcp (SdfRelocates). Relative paths resolve against the
+      // owning prim.
+      if (Match(TokenType::OpenBrace)) {
+        while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+          std::string src, dst;
+          if (!lexer_->expect(TokenType::PathRef, src)) break;
+          if (!Match(TokenType::Colon)) break;
+          if (!lexer_->expect(TokenType::PathRef, dst)) break;
+          if (prim) {
+            auto abs = [&](const std::string& p) {
+              if (p.empty() || p[0] == '/') return p;
+              return prim->path().str() + "/" + p;
+            };
+            prim->meta().relocates().emplace_back(abs(src), abs(dst));
+          }
+          Match(TokenType::Comma);
+        }
+        Match(TokenType::CloseBrace);
       }
     } else if (key == "apiSchemas") {
       std::vector<std::string> schemas;
@@ -466,15 +546,25 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           Match(TokenType::Comma);
         }
         Match(TokenType::CloseBracket);
+      } else if (Check(TokenType::String)) {
+        // Non-bracketed single value (`prepend apiSchemas = "FooAPI"`): must
+        // be consumed here, or the metadata loop's bare-string rule assigns
+        // it to the prim DOC (double corruption).
+        std::string schema;
+        if (lexer_->expect(TokenType::String, schema)) {
+          schemas.push_back(schema);
+        }
       }
       // Apply per the authored qualifier: `delete apiSchemas = [...]` must
-      // REMOVE the schemas (appending them would invert the opinion). The
-      // qualifier itself is recorded so it round-trips (pxr authors applied
-      // schemas as `prepend apiSchemas`).
+      // REMOVE the schemas (appending them would invert the opinion). Record
+      // only the ADDITIVE qualifier: next collapses the sublists into a single
+      // resolved list, so that list must be written as prepend/append/explicit
+      // and NEVER as `delete` — a delete list-op would re-subtract the resolved
+      // items on read (dropping e.g. a `prepend [3]` + `delete [1]` prim's two
+      // remaining schemas entirely). The authored delete is applied here.
       switch (arc_qual) {
         case ArcQual::Prepend: prim->meta().apiSchemasQualifier() = "prepend"; break;
         case ArcQual::Append: prim->meta().apiSchemasQualifier() = "append"; break;
-        case ArcQual::Delete: prim->meta().apiSchemasQualifier() = "delete"; break;
         default: break;
       }
       std::vector<std::string>& applied = prim->meta().apiSchemas();
@@ -595,9 +685,39 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         Match(TokenType::CloseBrace);
       }
     } else {
-      // Generic metadata may be a dictionary/list; skip it structurally.
-      SkipValueLike();
-      AddWarning("Unknown prim metadata: " + key);
+      // Unknown (unmodeled) metadata: consume the value structurally, but
+      // PRESERVE its raw source text so the writer can re-emit it verbatim
+      // (the legacy parser round-trips unknown prim metadata; dropping it
+      // loses pipeline-specific opinions like `sceneName`).
+      lexer_->peek();  // ensure the value's first token is scanned
+      const size_t vstart = lexer_->token_start();
+      const bool skipped = SkipValueLike();
+      if (skipped) {
+        lexer_->peek();  // scan the FOLLOWING token; its start bounds the value
+        size_t vend = lexer_->token_start();
+        const char* base = lexer_->input_data();
+        while (vend > vstart &&
+               (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+                base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+          vend--;
+        }
+        if (vend > vstart) {
+          // A list-op qualifier consumed before the key must ride along or
+          // the re-emitted opinion silently changes strength (`prepend
+          // weirdKey = [...]` re-emitted bare).
+          std::string qual_prefix;
+          switch (arc_qual) {
+            case ArcQual::Prepend: qual_prefix = "prepend "; break;
+            case ArcQual::Append: qual_prefix = "append "; break;
+            case ArcQual::Delete: qual_prefix = "delete "; break;
+            case ArcQual::Reorder: qual_prefix = "reorder "; break;
+            default: break;
+          }
+          prim->meta().unknownMeta().emplace_back(
+              qual_prefix + key, std::string(base + vstart, vend - vstart));
+        }
+      }
+      AddWarning("Unknown prim metadata (preserved): " + key);
     }
   }
 

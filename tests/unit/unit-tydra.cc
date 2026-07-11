@@ -1394,6 +1394,9 @@ void tydra_material_binding_validation_test(void) {
     tydra::RenderSceneConverterEnv env(stage);
     // Strict mode: unauthored `asset:file` should propagate an error.
     env.material_config.allow_missing_asset = false;
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1749,6 +1752,9 @@ void tydra_material_binding_validation_test(void) {
 
     tydra::RenderSceneConverterEnv env(stage);
     env.scene_config.load_texture_assets = false;
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1764,6 +1770,9 @@ void tydra_material_binding_validation_test(void) {
         Path("/MaterialPrim/NodeGraphs/Image", "outputs:out"));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -1776,6 +1785,8 @@ void tydra_material_binding_validation_test(void) {
         Path("/MaterialPrim/NodeGraphs/Missing", "outputs:out"));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
     env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
@@ -2017,6 +2028,8 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
     env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
@@ -2065,6 +2078,8 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
     env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
@@ -2134,6 +2149,9 @@ void tydra_material_binding_validation_test(void) {
     TEST_CHECK(stage.add_root_prim(std::move(material_prim)));
 
     tydra::RenderSceneConverterEnv env(stage);
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 
@@ -2514,6 +2532,9 @@ void tydra_texture_loader_policy_test(void) {
         FailingTextureImageLoader;
     env.material_config.allow_texture_load_failure = false;
 
+    // Strict mode: 73330b10b demoted non-strict material failures to
+    // warnings + default material; opt in to keep testing the error path.
+    env.material_config.strict_material_check = true;
     tydra::RenderScene scene;
     tydra::RenderSceneConverter converter;
 

@@ -45,8 +45,9 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
   uint64_t count = 0;
   if (rep.payload() != 0) {
     if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) return false;
-    if (!reader_->read_u64(count)) return false;
-    count = CrateArrayElementCount(count);
+    // u32 count for crate < 0.7.0, u64 for >= 0.7.0 (pxr crateFile.cpp
+    // _ReadUncompressedArray); element data immediately follows the count.
+    if (!ReadCrateArrayCount(*reader_, version_, &count)) return false;
   }
 
   // Bound the file-controlled element count before any allocation.
@@ -283,6 +284,16 @@ bool CrateReader::Impl::UnpackArray(ValueRep rep, Value& out) {
         return false;
       }
       out = Value::MakeUIntArray(std::move(data));
+      return true;
+    }
+    case CrateTypeId::UChar: {
+      // uchar[]: tightly packed uint8 on disk (pxr never int-compresses
+      // 8-bit arrays); widened into the uint32 array storage in memory.
+      // Previously these were dropped as unsupported.
+      std::vector<uint8_t> raw8(static_cast<size_t>(count));
+      if (!read_raw(raw8.data(), sizeof(uint8_t))) return false;
+      std::vector<uint32_t> data(raw8.begin(), raw8.end());
+      out = Value::MakeUIntCompArray(std::move(data), TypeId::UChar, 1);
       return true;
     }
     case CrateTypeId::UInt64: {

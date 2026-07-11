@@ -55,6 +55,7 @@
       LayerLoadOptions load_opts;
       load_opts.max_memory = options.max_layer_memory;
       load_opts.usda_parse_options = options.usda_parse_options;
+      load_opts.strict_aousd_conformance = options.strict_aousd_conformance;
       std::shared_ptr<Layer> arc_layer =
           reg_->GetOrLoad(*resolver, arc.asset_path, anchor, warn, err,
                           load_opts);
@@ -73,8 +74,17 @@
       } else if (!arc_layer->meta().defaultPrim.empty()) {
         arc_site = "/" + arc_layer->meta().defaultPrim;
       } else {
-        const auto &roots = arc_layer->root_indices();
-        arc_site = roots.empty() ? "/" : "/" + arc_layer->prim(roots[0])->name();
+        // No target prim path and no authored defaultPrim: pxr reports
+        // "Unresolved reference prim path @...@<defaultPrim>" and the arc
+        // contributes NOTHING (the referencing prim composes empty). The
+        // previous silent fallback to the first root prim composed content
+        // pxr never would.
+        AddIssue(ErrorCode::UnresolvedPrimPath, arc_id,
+                 "Unresolved reference prim path @" + arc.asset_path +
+                     "@<defaultPrim>: layer has no defaultPrim and the arc "
+                     "names no prim path",
+                 warn);
+        return;
       }
     }
 
@@ -133,14 +143,33 @@
     // (root strongest) so they outrank the referenced-stack class opinions.
     // Class paths are global, so the site is unchanged across stacks.
     if (IsClassBasedArc(kind)) {
+      // The implied class path must be expressed in the ANCESTOR stack's own
+      // namespace: an inherit to a SUB-ROOT class (e.g. </Models/_class_X>
+      // where /Models is referenced as /World) is implied at the MAPPED path
+      // (/World/_class_X) in the referencing stack, so overrides authored
+      // there compose (pxr maps implied classes through the arc's map
+      // function). A root-level class path lies outside every arc's source
+      // prefix, so Apply() leaves it unchanged (the previous behavior).
+      // Limitation: src.map_idx maps to ROOT namespace; for a chain with
+      // intermediate reference stacks the intermediate-namespace path is not
+      // tracked, so those keep the root-mapped path (root-level class paths
+      // are unaffected).
+      const std::string implied_site = Mapping(src.map_idx).Apply(arc_site);
       std::set<uint32_t> seen_stack;
       for (uint32_t as : chain) {
         if (as == arc_stack_idx || !seen_stack.insert(as).second) continue;
-        if (Specs(as, arc_site).empty()) continue;
+        if (Specs(as, implied_site).empty()) continue;
         Src implied = arc_src;
         implied.stack_idx = as;
+        if (implied_site != arc_site) {
+          implied.site = implied_site;
+          // Implied specs live at implied_site and compose onto the same
+          // destination the direct class arc maps to.
+          implied.map_idx = InternMapping(NamespaceMapping{
+              implied_site, Mapping(arc_src.map_idx).Apply(arc_site)});
+        }
         std::vector<uint32_t> ichain{as};
-        const ExpansionFrame iframe{as, &arc_site, frame,
+        const ExpansionFrame iframe{as, &implied.site, frame,
                                     frame ? frame->depth + 1 : 0};
         ExpandArcs(implied, &iframe, target, spec_out, sels, ichain, warn, err);
       }
@@ -424,7 +453,16 @@
       // Carry a base source's own arc kind so a specialize re-rooted onto a
       // child stays globally weakest.
       std::vector<Src> *tgt = (s.arc_kind == ArcType::Specialize) ? &spec : &main;
-      std::vector<uint32_t> chain{s.stack_idx};
+      // Ancestor chain for implied class arcs. A re-rooted child source (its
+      // parent reached this stack through a reference/payload) descends from
+      // the ROOT stack by construction, so seed the chain with it — otherwise
+      // a class inherited by a referenced CHILD prim is never implied in the
+      // root stack and root-layer overrides on the class path are dropped.
+      // (Intermediate stacks of the parent's arc chain are not tracked; see
+      // the implied-class note in ProcessArc.)
+      std::vector<uint32_t> chain;
+      if (s.stack_idx != 0) chain.push_back(0);
+      chain.push_back(s.stack_idx);
       const ExpansionFrame seed{s.stack_idx, &s.site, nullptr, 0};
       ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
     }

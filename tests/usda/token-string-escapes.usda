@@ -1,0 +1,17 @@
+#usda 1.0
+(
+    doc = "Regression: tokens/strings containing quotes, backslashes and control chars must re-parse (escape handling in ReadStringLiteral / writer escaping)"
+)
+
+def Xform "root"
+{
+    token dq = 'has"double quote'
+    token sq = "has'single quote"
+    token both = "both'kinds\"here"
+    token bslash = "back\\slash"
+    token tab = "tab\there"
+    token spaced = "token with spaces"
+    token[] arr = ["mix'and\"match", "plain", 'only"double', "a\\b"]
+    string s1 = "string with \"escaped\" quotes"
+    string s2 = 'string with "double" quotes'
+}

@@ -12,7 +12,7 @@
 // DOM references (mutable: canvas is replaced on worker respawn)
 // ============================================================================
 
-import { getAssetUriFromURL } from './src/tinyusdz/LoaderConfigUtils.js';
+import { getAssetUriFromURL, mountBackendSelector } from './src/tinyusdz/LoaderConfigUtils.js';
 
 let canvas = document.getElementById('gl');
 const statusEl = document.getElementById('status');
@@ -1030,4 +1030,6 @@ document.body.addEventListener('drop', async (e) => {
 initMemoryGraph();
 attachCanvasEvents(canvas);
 resizeObserver.observe(canvas);
+// Backend switch reloads the page (the worker binds its WASM module at init).
+mountBackendSelector(document.getElementById('info-panel'));
 spawnWorker();
