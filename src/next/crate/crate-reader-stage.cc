@@ -244,6 +244,32 @@ bool CrateReader::Impl::BuildStage() {
       } else if (field.first == "comment") {
         if (const std::string* s = field.second.as_string())
           layer.meta().comment = *s;
+      } else if (field.first == "__tinyusdz_unknownMeta") {
+        // tinyusdz-private: length-prefixed (key, raw-value) pairs of unmodeled
+        // LAYER metadata the parser preserved (see the writer).
+        const std::string* s = field.second.as_string();
+        if (!s) s = field.second.as_token();
+        if (s) {
+          size_t p = 0;
+          auto read_chunk = [&](std::string& out) -> bool {
+            size_t colon = s->find(':', p);
+            if (colon == std::string::npos) return false;
+            size_t len = 0;
+            for (size_t i = p; i < colon; ++i) {
+              if ((*s)[i] < '0' || (*s)[i] > '9') return false;
+              len = len * 10 + static_cast<size_t>((*s)[i] - '0');
+            }
+            if (colon + 1 + len > s->size()) return false;
+            out = s->substr(colon + 1, len);
+            p = colon + 1 + len;
+            return true;
+          };
+          std::string key, val;
+          while (p < s->size() && read_chunk(key) && read_chunk(val)) {
+            layer.meta().unknownMeta.emplace_back(std::move(key),
+                                                  std::move(val));
+          }
+        }
       } else if (field.first == "subLayerOffsets") {
         if (const std::vector<double>* arr = field.second.as_double_array()) {
           layer.meta().subLayerOffsets.clear();
@@ -882,6 +908,34 @@ bool CrateReader::Impl::BuildStage() {
             VariantSetData vsd;
             vsd.name = std::move(n);
             ps->meta().variantSets().push_back(std::move(vsd));
+          }
+          continue;
+        }
+        if (field.first == "__tinyusdz_unknownMeta") {
+          // tinyusdz-private field: length-prefixed (key, raw-value) pairs of
+          // unmodeled prim metadata the parser preserved (see the writer).
+          const std::string* blob = field.second.as_string();
+          if (!blob) blob = field.second.as_token();
+          if (blob) {
+            size_t p = 0;
+            auto read_chunk = [&](std::string& out) -> bool {
+              size_t colon = blob->find(':', p);
+              if (colon == std::string::npos) return false;
+              size_t len = 0;
+              for (size_t i = p; i < colon; ++i) {
+                if ((*blob)[i] < '0' || (*blob)[i] > '9') return false;
+                len = len * 10 + static_cast<size_t>((*blob)[i] - '0');
+              }
+              if (colon + 1 + len > blob->size()) return false;
+              out = blob->substr(colon + 1, len);
+              p = colon + 1 + len;
+              return true;
+            };
+            std::string key, val;
+            while (p < blob->size() && read_chunk(key) && read_chunk(val)) {
+              ps->meta().unknownMeta().emplace_back(std::move(key),
+                                                    std::move(val));
+            }
           }
           continue;
         }
