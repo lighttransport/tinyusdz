@@ -314,9 +314,14 @@ void TestSchemaFallbackAndValueClips() {
       [](const std::string& asset, Stage* out, std::string*, std::string*) {
         const char* text = nullptr;
         if (asset == "clipA.usda") {
+          // visibility is a SCHEMA FALLBACK of Xform (Imageable). The gate must
+          // still exclude it because it is not authored in the manifest — a
+          // HasProperty()-based gate would wrongly let it through.
           text = "def Xform \"Root\" {\n"
                  "  float x.timeSamples = { 0: 7, 20: 7 }\n"
                  "  float y.timeSamples = { 0: 9, 20: 9 }\n"
+                 "  token visibility.timeSamples = "
+                 "{ 0: \"invisible\", 20: \"invisible\" }\n"
                  "}\n";
         } else if (asset == "clipB.usda") {
           text = "def Xform \"Root\" { }\n";  // no opinion for x
@@ -340,6 +345,14 @@ void TestSchemaFallbackAndValueClips() {
       manifest_result.stage.GetPrimAtPath("/Root"), "y", m_opts);
   assert(!(gated.success && gated.source_asset == "clipA.usda") &&
          "manifest must gate undeclared properties out of clip resolution");
+  // visibility is a schema fallback authored in the clip but NOT in the
+  // manifest: it must NOT resolve through clips (guards the HasProperty ->
+  // authored-spec gating fix; a HasProperty gate would leak it in).
+  EvalResult gated_fallback = m_eval.EvalWith(
+      manifest_result.stage.GetPrimAtPath("/Root"), "visibility", m_opts);
+  assert(!(gated_fallback.success &&
+           gated_fallback.source_asset == "clipA.usda") &&
+         "manifest gate must exclude schema-fallback properties too");
 
   // interpolateMissingClipValues must INTERPOLATE (not hold) between the
   // nearest earlier and later clips that carry a value. Three clips, empty
@@ -382,6 +395,50 @@ void TestSchemaFallbackAndValueClips() {
   assert(interp.success && interp.value.as_double());
   assert(std::fabs(*interp.value.as_double() - 12.0) < 1e-9 &&
          "missing clip value must interpolate to 12.0, not hold 0.0");
+
+  // Vectors (and other linear types) must interpolate component-wise, not
+  // hold — the common animated float3 case. Same clip layout, float3 p:
+  // a@0=(0,0,0), c@20=(20,40,60) -> t=12 -> (12,24,36).
+  LoadResult vinterp_result = Parse(
+      "def Xform \"Root\" (\n"
+      "  clips = {\n"
+      "    dictionary default = {\n"
+      "      double2[] active = [(0, 0), (10, 1), (20, 2)]\n"
+      "      asset[] assetPaths = [@a.usda@, @b.usda@, @c.usda@]\n"
+      "      string primPath = \"/Root\"\n"
+      "      bool interpolateMissingClipValues = true\n"
+      "      double2[] times = [(0, 0), (30, 30)]\n"
+      "    }\n"
+      "  }\n"
+      ") { float3 p }\n");
+  assert(vinterp_result.success);
+  AttributeEval v_eval(&vinterp_result.stage);
+  EvalOptions v_opts;
+  v_opts.time = 12.0;
+  v_opts.clip_stage_loader =
+      [](const std::string& asset, Stage* out, std::string*, std::string*) {
+        const char* text = nullptr;
+        if (asset == "a.usda")
+          text = "def Xform \"Root\" { float3 p.timeSamples = { 0: (0,0,0) } }\n";
+        else if (asset == "b.usda")
+          text = "def Xform \"Root\" { }\n";
+        else if (asset == "c.usda")
+          text =
+              "def Xform \"Root\" { float3 p.timeSamples = { 20: (20,40,60) } }\n";
+        else
+          return false;
+        LoadResult clip = Parse(text);
+        if (!clip.success || !out) return false;
+        *out = std::move(clip.stage);
+        return true;
+      };
+  EvalResult vinterp = v_eval.EvalWith(
+      vinterp_result.stage.GetPrimAtPath("/Root"), "p", v_opts);
+  assert(vinterp.success && vinterp.value.as_float3());
+  const float* vp = vinterp.value.as_float3();
+  assert(std::fabs(vp[0] - 12.0f) < 1e-4f && std::fabs(vp[1] - 24.0f) < 1e-4f &&
+         std::fabs(vp[2] - 36.0f) < 1e-4f &&
+         "float3 missing clip value must interpolate component-wise");
 }
 
 void TestTypedSplines() {
@@ -502,6 +559,14 @@ void TestTypedSplines() {
         true);
     assert(cd.success &&
            "spline knot customData with a brace in a string must parse");
+    // Triple-quoted string with an embedded quote and brace must not desync.
+    LoadResult tq = Parse(
+        "def Xform \"T\" {\n"
+        "  double v.spline = { 0: 1; { string s = \"\"\"a\"b}\"\"\" }, 10: 2, }\n"
+        "}\n",
+        true);
+    assert(tq.success &&
+           "spline customData triple-quoted string with a brace must parse");
   }
 }
 
@@ -599,6 +664,50 @@ void TestFoundationalTypeMatrix() {
          "value + connection must both survive USDC");
 }
 
+void TestMetadataAndListOpFidelity() {
+  // NaN sublayer offset scale: strict rejects; compat substitutes identity
+  // (a `scale <= 0` guard would let NaN through since NaN <= 0 is false).
+  const char* nan_scale =
+      "def Xform \"R\" {}\n";  // body irrelevant; the offset is in stage meta
+  const std::string layer_txt =
+      std::string("#usda 1.0\n(\n  subLayers = [\n"
+                  "    @sub.usda@ (offset = 1; scale = nan)\n  ]\n)\n") +
+      nan_scale;
+  LoadOptions strict_opts;
+  strict_opts.parse_options.strict_aousd_conformance = true;
+  LoadResult strict = LoadUSDAFromString(layer_txt, strict_opts);
+  assert(!strict.success && "NaN sublayer scale must be rejected in strict mode");
+  LoadResult compat = LoadUSDAFromString(layer_txt, LoadOptions{});
+  assert(compat.success);
+  const Layer* rl = compat.stage.GetRootLayer();
+  assert(rl && !rl->meta().subLayerOffsets.empty());
+  assert(rl->meta().subLayerOffsets[0].second == 1.0 &&
+         "NaN sublayer scale must degrade to identity (1.0)");
+
+  // apiSchemas listop qualifier survives a USDC round trip: a bare authoring
+  // stays explicit (not flipped to prepend); an authored prepend stays prepend.
+  auto roundtrip_api = [](const std::string& body) -> std::string {
+    LoadResult r = Parse(body, true);
+    assert(r.success);
+    USDCWriteOptions wo;
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, r.stage, wo).success);
+    USDCLoadOptions lo;
+    USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size(), lo);
+    assert(back.success);
+    return WriteUSDAToString(back.stage);
+  };
+  const std::string bare =
+      roundtrip_api("def \"P\" ( apiSchemas = [\"SkelBindingAPI\"] ) {}\n");
+  assert(bare.find("apiSchemas = [\"SkelBindingAPI\"]") != std::string::npos &&
+         bare.find("prepend apiSchemas") == std::string::npos &&
+         "bare apiSchemas must stay explicit through USDC");
+  const std::string prep = roundtrip_api(
+      "def \"P\" ( prepend apiSchemas = [\"SkelBindingAPI\"] ) {}\n");
+  assert(prep.find("prepend apiSchemas") != std::string::npos &&
+         "authored prepend apiSchemas must stay prepend through USDC");
+}
+
 }  // namespace
 
 int main() {
@@ -606,6 +715,7 @@ int main() {
   TestLosslessUnsupportedValues();
   TestTypedSplines();
   TestFoundationalTypeMatrix();
+  TestMetadataAndListOpFidelity();
   TestDictionaryAndRelationshipComposition();
   TestNamespaceOrdering();
   TestSchemaFallbackAndValueClips();
