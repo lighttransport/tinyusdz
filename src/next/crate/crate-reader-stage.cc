@@ -126,6 +126,16 @@ bool CrateReader::Impl::BuildStage() {
           else
             layer.meta().expressionVariables = std::move(d);
         }
+      } else if (field.first == "colorConfiguration") {
+        if (const std::string* s = field.second.as_asset_path())
+          layer.meta().colorConfiguration = *s;
+        else if (const std::string* s = field.second.as_token())
+          layer.meta().colorConfiguration = *s;
+      } else if (field.first == "colorManagementSystem") {
+        if (const std::string* s = field.second.as_token())
+          layer.meta().colorManagementSystem = *s;
+        else if (const std::string* s = field.second.as_string())
+          layer.meta().colorManagementSystem = *s;
       } else if (field.first == "doc") {
         if (const std::string* s = field.second.as_string())
           layer.meta().doc = *s;
@@ -735,8 +745,10 @@ bool CrateReader::Impl::BuildStage() {
           continue;
         }
         if (field.first == "instanceable") {
-          if (const bool* b = field.second.as_bool())
+          if (const bool* b = field.second.as_bool()) {
             ps->meta().instanceable = *b;
+            ps->meta().instanceable_authored = true;
+          }
           continue;
         }
         if (field.first == "customData" || field.first == "assetInfo" ||

@@ -135,6 +135,9 @@
         // conventional prepended form (pxr authors `prepend apiSchemas`).
         api_data[0] = prim.meta().apiSchemasQualifier() == "append"
                           ? 0x40   // kHasAppended
+                      : prim.meta().apiSchemasQualifier() == "delete"
+                          ? 0x08   // kHasDeleted (rewriting as prepend
+                                   // would INVERT the opinion)
                           : 0x20;  // kHasPrepended
         uint64_t cnt = count;
         std::memcpy(api_data.data() + 1, &cnt, 8);
@@ -220,8 +223,15 @@
 
       // Authored list-op sublists round-trip natively inside the pxr listop
       // encodings above (no next-private companion fields).
+      // comment must be a String rep: pxr's SdfSchema types `comment` as
+      // string and silently drops a Token-typed field on read.
       if (!prim.meta().comment().empty()) {
-        add_string_field("comment", prim.meta().comment());
+        CrateField f;
+        f.token_index.value = InternToken("comment");
+        uint32_t str_idx = InternString(prim.meta().comment());
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
       }
 
       // kind (token), displayName (string), instanceable (bool).
@@ -233,13 +243,22 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
+      // displayName is string-typed in pxr's schema (Token would be dropped).
       if (!prim.meta().displayName().empty()) {
-        add_string_field("displayName", prim.meta().displayName());
+        CrateField f;
+        f.token_index.value = InternToken("displayName");
+        uint32_t str_idx = InternString(prim.meta().displayName());
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
       }
-      if (prim.meta().instanceable) {
+      // instanceable=false is a real (blocking) opinion when authored.
+      if (prim.meta().instanceable || prim.meta().instanceable_authored) {
         CrateField f;
         f.token_index.value = InternToken("instanceable");
-        f.value_rep = ValueRep::Make(CrateTypeId::Bool, 1, false, true);
+        f.value_rep = ValueRep::Make(CrateTypeId::Bool,
+                                     prim.meta().instanceable ? 1 : 0, false,
+                                     true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -501,6 +520,28 @@
         f.token_index.value = InternToken("comment");
         uint32_t str_idx = InternString(layer.meta().comment);
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      // Color management (pxr schema: colorConfiguration is asset,
+      // colorManagementSystem is token). Previously dropped by the crate
+      // writer while the USDA writer kept them.
+      if (!layer.meta().colorConfiguration.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("colorConfiguration");
+        f.value_rep = ValueRep::Make(
+            CrateTypeId::AssetPath,
+            InternToken(layer.meta().colorConfiguration), false, true);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+      if (!layer.meta().colorManagementSystem.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("colorManagementSystem");
+        f.value_rep = ValueRep::Make(
+            CrateTypeId::Token,
+            InternToken(layer.meta().colorManagementSystem), false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }

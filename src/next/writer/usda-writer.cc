@@ -970,6 +970,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                     arc_edits->inherits.has_authored_opinion() ||
                     arc_edits->specializes.has_authored_opinion());
   bool has_meta = !meta.active || meta.hidden || meta.instanceable ||
+                  meta.instanceable_authored ||
                   !meta.kind().empty() || !meta.displayName().empty() ||
                   has_doc || has_comment || !meta.apiSchemas().empty() ||
                   has_customData || has_assetInfo || has_sdr || has_clips ||
@@ -993,6 +994,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     if (meta.hidden) kv("hidden = true");
     else if (meta.hidden_authored) kv("hidden = false");
     if (meta.instanceable) kv("instanceable = true");
+    else if (meta.instanceable_authored) kv("instanceable = false");
     if (!meta.kind().empty()) kv("kind = " + EscapeString(meta.kind()));
     if (!meta.displayName().empty())
       kv("displayName = " + EscapeString(meta.displayName()));
