@@ -1810,6 +1810,63 @@ void test_roundtrip_writer_audit_cluster() {
   const std::string* tn = p->property_type_name("ids");
   assert(tn && *tn == "uint3");
 
+  // Full PropMeta round-trip (previously only interpolation/colorSpace/
+  // elementSize/customData survived; relationships lost ALL PropMeta).
+  {
+    Layer l3;
+    LayerBuilder b3(l3);
+    b3.begin_prim("R", "Scope");
+    b3.current()->add_property("x", Value(1.0f), 0);
+    {
+      PropMeta& m = b3.current()->ensure_property_meta("x");
+      m.displayName = "The X";  m.authored |= PropMeta::kDisplayName;
+      m.displayGroup = "Grp";   m.authored |= PropMeta::kDisplayGroup;
+      m.doc = "x doc";          m.authored |= PropMeta::kDoc;
+      m.hidden = true;          m.authored |= PropMeta::kHidden;
+      m.renderType = "struct";  m.authored |= PropMeta::kRenderType;
+      m.connectability = "interfaceOnly";
+      m.authored |= PropMeta::kConnectability;
+      m.weight = 0.5;           m.authored |= PropMeta::kWeight;
+      m.unauthoredValuesIndex = 1;
+      m.authored |= PropMeta::kUnauthoredIdx;
+      m.allowedTokens = {"a", "b"};
+      m.authored |= PropMeta::kAllowedTokens;
+    }
+    b3.current()->add_relationship("r", Path("/R"));
+    {
+      PropMeta& m = b3.current()->ensure_property_meta("r");
+      m.doc = "rel doc";        m.authored |= PropMeta::kDoc;
+      m.hidden = true;          m.authored |= PropMeta::kHidden;
+    }
+    b3.end_prim();
+    b3.finalize();
+    std::vector<uint8_t> buf3;
+    CrateWriter w3;
+    assert(w3.WriteLayerToMemory(buf3, l3).success);
+    CrateReader r3;
+    CrateReadResult rr3 = r3.Read(buf3.data(), buf3.size());
+    assert(rr3.success);
+    const PrimSpec* rp = rr3.stage.GetRootLayer()->prim_at_path("/R");
+    assert(rp);
+    const PropMeta* xm =
+        rp->property_meta(GetPropNameTable().intern("x"));
+    assert(xm);
+    assert(xm->displayName == "The X");
+    assert(xm->displayGroup == "Grp");
+    assert(xm->doc == "x doc");
+    assert(xm->hidden && (xm->authored & PropMeta::kHidden));
+    assert(xm->renderType == "struct");
+    assert(xm->connectability == "interfaceOnly");
+    assert(xm->weight == 0.5);
+    assert(xm->unauthoredValuesIndex == 1);
+    assert(xm->allowedTokens.size() == 2 && xm->allowedTokens[1] == "b");
+    const PropMeta* rm =
+        rp->property_meta(GetPropNameTable().intern("r"));
+    assert(rm && "relationship PropMeta must survive the crate roundtrip");
+    assert(rm->doc == "rel doc");
+    assert(rm->hidden);
+  }
+
   // delete-apiSchemas: the writer used to emit the delete-qualified list
   // with the PREPENDED header bit — the opinion came back inverted (the
   // deleted schema re-applied). Now it round-trips as a deleted sublist,

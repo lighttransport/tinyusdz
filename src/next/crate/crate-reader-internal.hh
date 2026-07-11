@@ -9,6 +9,7 @@
 
 #include "crate-data-source.hh"
 #include "stream-reader.hh"
+#include "../layer/prim-spec.hh"  // PropMeta (property metadata decode)
 
 #include <memory>
 #include <string>
@@ -96,6 +97,8 @@ class CrateReader::Impl {
   bool ReadFieldsets();
   bool ReadSpecs();
   bool ReadPaths();
+  bool DecodePropMetaField(const std::string& name, ValueRep rep,
+                           PropMeta& pm);
   bool BuildStage();
 
   bool UnpackValue(ValueRep rep, Value& out);

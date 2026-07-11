@@ -31,6 +31,99 @@ static Value ParseDictText(const std::string& text) {
 }
 
 
+// Decode one property-spec field into PropMeta, setting its authored bit.
+// Returns false for field names that are not property metadata.
+bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
+                                            ValueRep rep, PropMeta& pm) {
+  auto tok_or_str = [&](std::string& dst, uint32_t bit) -> bool {
+    Value v;
+    if (!UnpackValue(rep, v)) return true;  // known field, bad value: eat it
+    if (const std::string* s = v.as_token()) { dst = *s; pm.authored |= bit; }
+    else if (const std::string* s = v.as_string()) { dst = *s; pm.authored |= bit; }
+    return true;
+  };
+  auto dict_field = [&](Value& dst, uint32_t bit) -> bool {
+    Value v;
+    if (!UnpackValue(rep, v)) return true;
+    if (v.is_dictionary()) { dst = std::move(v); pm.authored |= bit; }
+    else if (const std::string* s = v.as_string()) {
+      Value d = ParseDictText(*s);
+      if (d.is_dictionary()) { dst = std::move(d); pm.authored |= bit; }
+    } else if (const std::string* s = v.as_token()) {
+      Value d = ParseDictText(*s);
+      if (d.is_dictionary()) { dst = std::move(d); pm.authored |= bit; }
+    }
+    return true;
+  };
+
+  if (name == "interpolation") return tok_or_str(pm.interpolation, PropMeta::kInterpolation);
+  if (name == "colorSpace") return tok_or_str(pm.colorSpace, PropMeta::kColorSpace);
+  if (name == "renderType") return tok_or_str(pm.renderType, PropMeta::kRenderType);
+  if (name == "connectability") return tok_or_str(pm.connectability, PropMeta::kConnectability);
+  if (name == "outputName") return tok_or_str(pm.outputName, PropMeta::kOutputName);
+  if (name == "bindMaterialAs") return tok_or_str(pm.bindMaterialAs, PropMeta::kBindMaterialAs);
+  if (name == "displayName") return tok_or_str(pm.displayName, PropMeta::kDisplayName);
+  if (name == "displayGroup") return tok_or_str(pm.displayGroup, PropMeta::kDisplayGroup);
+  if (name == "documentation" || name == "doc") return tok_or_str(pm.doc, PropMeta::kDoc);
+  if (name == "elementSize") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const int32_t* i = v.as_int()) {
+        pm.elementSize = *i;
+        pm.authored |= PropMeta::kElementSize;
+      }
+    }
+    return true;
+  }
+  if (name == "unauthoredValuesIndex") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const int32_t* i = v.as_int()) {
+        pm.unauthoredValuesIndex = *i;
+        pm.authored |= PropMeta::kUnauthoredIdx;
+      }
+    }
+    return true;
+  }
+  if (name == "weight") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const double* d = v.as_double()) {
+        pm.weight = *d;
+        pm.authored |= PropMeta::kWeight;
+      } else if (const float* f = v.as_float()) {
+        pm.weight = *f;
+        pm.authored |= PropMeta::kWeight;
+      }
+    }
+    return true;
+  }
+  if (name == "hidden") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const bool* b = v.as_bool()) {
+        pm.hidden = *b;
+        pm.authored |= PropMeta::kHidden;
+      }
+    }
+    return true;
+  }
+  if (name == "allowedTokens") {
+    Value v;
+    if (UnpackValue(rep, v)) {
+      if (const std::vector<std::string>* toks = v.as_token_array()) {
+        pm.allowedTokens = *toks;
+        pm.authored |= PropMeta::kAllowedTokens;
+      }
+    }
+    return true;
+  }
+  if (name == "customData") return dict_field(pm.customData, PropMeta::kCustomData);
+  if (name == "assetInfo") return dict_field(pm.assetInfo, PropMeta::kAssetInfo);
+  if (name == "sdrMetadata") return dict_field(pm.sdrMetadata, PropMeta::kSdrMetadata);
+  return false;
+}
+
 bool CrateReader::Impl::BuildStage() {
   // Create layer and builder
   Layer layer;
@@ -295,14 +388,9 @@ bool CrateReader::Impl::BuildStage() {
     bool uniform = false;
     bool custom = false;
     std::vector<std::pair<double, Value>> time_samples;
-    // Per-property metadata (round-tripped via attribute spec fields).
-    std::string interpolation;
-    std::string color_space;
-    int32_t element_size = 1;
-    bool has_interpolation = false;
-    bool has_color_space = false;
-    bool has_element_size = false;
-    Value custom_data;  // dictionary
+    // Per-property metadata (round-tripped via attribute spec fields);
+    // `meta.authored` bits record which fields were present.
+    PropMeta meta;
   };
   struct RelInfo {
     std::string name;
@@ -310,6 +398,7 @@ bool CrateReader::Impl::BuildStage() {
     ArcEdit edits;        // authored list-op sublists (marker-decoded)
     bool custom = false;
     bool uniform = false;
+    PropMeta meta;        // relationships carry PropMeta too (doc/hidden/...)
   };
   std::unordered_map<std::string, std::vector<AttrInfo>> attr_map;
   std::unordered_map<std::string, std::vector<RelInfo>> rel_map;
@@ -388,6 +477,8 @@ bool CrateReader::Impl::BuildStage() {
           if (UnpackValue(f.second, v)) {
             if (const std::string* s = v.as_token()) ri.uniform = (*s == "uniform");
           }
+        } else {
+          DecodePropMetaField(f.first, f.second, ri.meta);
         }
       }
       rel_map[prim_path].push_back(std::move(ri));
@@ -428,41 +519,9 @@ bool CrateReader::Impl::BuildStage() {
         if (UnpackValue(f.second, v)) {
           if (const bool* b = v.as_bool()) ai.custom = *b;
         }
-      } else if (f.first == "interpolation") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          if (const std::string* s = v.as_token()) {
-            ai.interpolation = *s;
-            ai.has_interpolation = true;
-          }
-        }
-      } else if (f.first == "colorSpace") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          if (const std::string* s = v.as_token()) {
-            ai.color_space = *s;
-            ai.has_color_space = true;
-          }
-        }
-      } else if (f.first == "elementSize") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          if (const int32_t* i = v.as_int()) {
-            ai.element_size = *i;
-            ai.has_element_size = true;
-          }
-        }
-      } else if (f.first == "customData") {
-        Value v;
-        if (UnpackValue(f.second, v)) {
-          if (v.is_dictionary()) {
-            ai.custom_data = std::move(v);
-          } else if (const std::string* s = v.as_string()) {
-            ai.custom_data = ParseDictText(*s);
-          } else if (const std::string* s = v.as_token()) {
-            ai.custom_data = ParseDictText(*s);
-          }
-        }
+      } else if (!DecodePropMetaField(f.first, f.second, ai.meta)) {
+        // Unknown/unsupported property field: ignore (matches previous
+        // behavior for anything beyond the known set).
       }
     }
     // Role types (texCoord2f, point3f, color3h, ...) exist in the crate only
@@ -875,26 +934,9 @@ bool CrateReader::Impl::BuildStage() {
         for (const auto& t : ai.connection_targets) {
           ps->add_connection(ai.name, Path(t));
         }
-        // Per-property metadata.
-        if (ai.has_interpolation || ai.has_color_space || ai.has_element_size ||
-            ai.custom_data.is_dictionary()) {
-          PropMeta& pm = ps->ensure_property_meta(ai.name);
-          if (ai.has_interpolation) {
-            pm.interpolation = ai.interpolation;
-            pm.authored |= PropMeta::kInterpolation;
-          }
-          if (ai.has_color_space) {
-            pm.colorSpace = ai.color_space;
-            pm.authored |= PropMeta::kColorSpace;
-          }
-          if (ai.has_element_size) {
-            pm.elementSize = ai.element_size;
-            pm.authored |= PropMeta::kElementSize;
-          }
-          if (ai.custom_data.is_dictionary()) {
-            pm.customData = std::move(ai.custom_data);
-            pm.authored |= PropMeta::kCustomData;
-          }
+        // Per-property metadata (full PropMeta round-trip).
+        if (ai.meta.authored != 0) {
+          ps->ensure_property_meta(ai.name) = std::move(ai.meta);
         }
       }
     }
@@ -917,6 +959,9 @@ bool CrateReader::Impl::BuildStage() {
           ps->set_relationship_flags(
               ri.name, static_cast<uint16_t>(ps->relationship_flags(ri.name) |
                                              PropSlot::kFlagCustom));
+        }
+        if (ri.meta.authored != 0) {
+          ps->ensure_property_meta(ri.name) = std::move(ri.meta);
         }
       }
     }
