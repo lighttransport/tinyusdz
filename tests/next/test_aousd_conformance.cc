@@ -706,6 +706,84 @@ void TestMetadataAndListOpFidelity() {
       "def \"P\" ( prepend apiSchemas = [\"SkelBindingAPI\"] ) {}\n");
   assert(prep.find("prepend apiSchemas") != std::string::npos &&
          "authored prepend apiSchemas must stay prepend through USDC");
+
+  // `prepend apiSchemas = [A,B,C]` + `delete apiSchemas = [C]` resolves to
+  // [A,B]; those two must SURVIVE USDC. (Regression: the trailing delete used
+  // to leave the qualifier as `delete`, so the crate wrote a delete list-op
+  // that re-subtracted the resolved schemas on read, dropping them entirely.)
+  const std::string del = roundtrip_api(
+      "def \"P\" (\n"
+      "  prepend apiSchemas = [\"AAPI\", \"BAPI\", \"CAPI\"]\n"
+      "  delete apiSchemas = [\"CAPI\"]\n"
+      ") {}\n");
+  assert(del.find("\"AAPI\"") != std::string::npos &&
+         del.find("\"BAPI\"") != std::string::npos &&
+         del.find("\"CAPI\"") == std::string::npos &&
+         "prepend+delete apiSchemas must resolve to [A,B] and survive USDC");
+
+  // Variant declaration vs dangling selection through USDC:
+  // - a prim that only SELECTS a variant (no `prepend variantSets`) must NOT
+  //   gain a synthesized variantSets declaration / empty variantSet block;
+  // - a prim that DECLARES `prepend variantSets` must keep it.
+  const std::string dangling = roundtrip_api(
+      "def Xform \"H\" ( variants = { string v = \"a\" } ) {}\n");
+  assert(dangling.find("variants = {") != std::string::npos &&
+         "dangling variant selection must survive USDC");
+  assert(dangling.find("variantSets") == std::string::npos &&
+         "a dangling selection must not synthesize a variantSets declaration");
+  const std::string declared = roundtrip_api(
+      "def Xform \"H\" (\n"
+      "  variants = { string v = \"a\" }\n"
+      "  prepend variantSets = \"v\"\n"
+      ") {}\n");
+  assert(declared.find("prepend variantSets") != std::string::npos &&
+         "authored prepend variantSets must survive USDC");
+  assert(declared.find("variantSet \"v\"") == std::string::npos &&
+         "a declaration-only variant set must NOT emit an empty variantSet "
+         "block (matches pxr)");
+
+  // A relocate-to-nothing target `<>` (the empty SdfPath) must survive USDC as
+  // `<>`, not `</>`, and must NOT be written as a PATHS tree node (pxr rejects
+  // a crate with an empty spec path). Parsed in compatibility mode (pxr itself
+  // treats `<>` as ill-formed, so it is not a strict-conformant construct).
+  LoadResult relo = LoadUSDAFromString(
+      "#usda 1.0\n"
+      "def Xform \"W\" (\n"
+      "  relocates = { </W/keep>: </W/moved>, </W/drop>: <> }\n"
+      ") {\n}\n",
+      LoadOptions{});
+  assert(relo.success);
+  USDCWriteOptions rwo;
+  std::vector<uint8_t> rcrate;
+  assert(WriteUSDCToMemory(rcrate, relo.stage, rwo).success);
+  USDCLoadOptions rlo;
+  USDCLoadResult rback = LoadUSDCFromMemory(rcrate.data(), rcrate.size(), rlo);
+  assert(rback.success);
+  const std::string relo_usda = WriteUSDAToString(rback.stage);
+  assert(relo_usda.find("</W/drop>: <>") != std::string::npos &&
+         "empty relocate target must round-trip as <>, not </>");
+
+  // Unmodeled (unknown) prim- AND layer-level metadata must survive USDC
+  // verbatim (encoded in a tinyusdz-private field). Parsed non-strict since
+  // strict AOUSD mode rejects unknown metadata.
+  LoadResult um = LoadUSDAFromString(
+      "#usda 1.0\n"
+      "(\n  customStageKey = 42\n)\n"
+      "def Xform \"P\" (\n  customPrimKey = \"hi\"\n) {\n}\n",
+      LoadOptions{});
+  assert(um.success);
+  USDCWriteOptions umwo;
+  std::vector<uint8_t> umcrate;
+  assert(WriteUSDCToMemory(umcrate, um.stage, umwo).success);
+  USDCLoadOptions umlo;
+  USDCLoadResult umback =
+      LoadUSDCFromMemory(umcrate.data(), umcrate.size(), umlo);
+  assert(umback.success);
+  const std::string um_usda = WriteUSDAToString(umback.stage);
+  assert(um_usda.find("customStageKey = 42") != std::string::npos &&
+         "unknown layer metadata must survive USDC");
+  assert(um_usda.find("customPrimKey = \"hi\"") != std::string::npos &&
+         "unknown prim metadata must survive USDC");
 }
 
 }  // namespace

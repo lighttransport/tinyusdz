@@ -188,10 +188,17 @@
     // 36-byte {std::string, uint32} entries, and no path string is duplicated.
     // `sorted[i]` is the index of the i-th path in pre-order; downstream reads
     // `paths_[sorted[i]]`.
+    // The empty path (SdfPath(), interned for a relocate-to-nothing target
+    // `</a>: <>`) must NOT be encoded as a PATHS tree node: pxr excludes it
+    // ("we do not write out the empty path", crateFile.cpp) and a real node
+    // for it makes pxr reject the whole crate ("spec has empty path"). Keep it
+    // in total_paths so its index stays valid; the reader leaves an unencoded
+    // index as the empty path, matching pxr.
     std::vector<uint32_t> sorted;
-    sorted.resize(paths_.size());
+    sorted.reserve(paths_.size());
     for (size_t i = 0; i < paths_.size(); i++) {
-      sorted[i] = static_cast<uint32_t>(i);
+      if (paths_[i].empty()) continue;
+      sorted.push_back(static_cast<uint32_t>(i));
     }
     // Pre-order sort. Plain byte-lexicographic order is NOT pre-order when a
     // sibling name extends another with a character below '/' (e.g. prims
