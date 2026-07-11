@@ -9,8 +9,8 @@ The compression codecs come from the vendored, pure-C11 **tinyexr texture tool
 stack** at `src/external/textools/` (built as `tinyusdz_textools` when
 `TINYUSDZ_WITH_TEXTOOLS=ON`, the default):
 
-- **texcomp** — block encoders (BC1/3/5/6H/7, ETC2/EAC, ASTC LDR+HDR), the `uni`
-  transcodable intermediate, and decoders (uni / BC7 / ASTC LDR).
+- **texcomp** — block encoders **and decoders** for BC1/3/5/6H/7, ETC2/EAC and
+  ASTC LDR+HDR, plus the `uni` transcodable intermediate.
 - **texpipe** — mip-chain + DDS/KTX2 container writer **and reader**
   (`tp_ktx2_read` / `tp_ktx2_decode_level_rgba8` / `tp_ktx2_write_uni`).
 - **tir** — content-aware image resize. **envmap** — IBL/prefiltered cubemaps.
@@ -84,7 +84,11 @@ tusdview scene_ktx2.usda --texture-keep-compressed on
 
 The output opens unchanged in stock USD tools (they see only the png and ignore
 `customData`), while tinyusdz-aware consumers pick up the compressed companion.
-Non-8-bit (HDR/EXR) sources are skipped — `uni` is LDR RGBA8 only.
+
+**HDR sources** (`.exr` / `.hdr`) are routed to **BC6H** instead of `uni` (which is
+LDR-only): they are encoded as a mipped BC6H `.ktx2` that uploads as-is wherever
+BPTC is supported, and decodes to float (or tone-maps) elsewhere. A 64x64 HDR test
+texture: 64 KiB RGBA32F -> 5 KiB BC6H.
 
 The `.ktx2` is **Zstd-supercompressed** by default (`supercompressionScheme = 2`,
 the form real KTX2/UASTC assets ship in) — typically an order of magnitude smaller
@@ -98,9 +102,10 @@ on disk than the raw block payload (a 64x64 test texture: 5792 -> 501 bytes).
 (`src/image-loader.cc`) detects the KTX2 identifier and decodes level 0 to
 RGBA8 via the texpipe reader:
 
-- Decodable formats: **uni**, **BC7**, **ASTC LDR**. Other block formats
-  (BC1/3/5, ETC2/EAC) and HDR (BC6H / ASTC-HDR) are reported as an error — upload
-  their blocks directly or keep them compressed instead of CPU-decoding.
+- **Every** block format decodes: the LDR codecs (uni, BC1/3/5/7, ETC2/EAC,
+  ASTC LDR) to RGBA8, and the HDR ones (**BC6H**, **ASTC-HDR**) to **float RGBA**
+  (`bpp = 32`, `PixelFormat::Float`) — HDR has no meaningful RGBA8 form, so an HDR
+  `.ktx2` loads as a float image just like an EXR.
 - The reader validates the level index against the file size and each level's
   declared byte length against its block geometry (rejects crafted/truncated
   files).
@@ -115,8 +120,8 @@ works unchanged: **tusdrender** (a software path tracer) consumes `.ktx2` for
 free, and `usdz-convert` can re-encode it to png/jpg/exr for a legacy asset.
 
 `tydra::TextureImage` (`src/tydra/render-data.hh`) also carries a
-`TextureBlockFormat blockFormat` (+ `blockWidth`/`blockHeight`) for a future
-keep-compressed GPU passthrough; today the loader always decodes to RGBA8.
+`TextureBlockFormat blockFormat` (+ `blockWidth`/`blockHeight`), which the
+keep-compressed passthrough (below) populates instead of decoding.
 
 ## tusdview: compress-on-load
 
@@ -143,8 +148,9 @@ tusdview <scene.usd[z]> --texture-mips on|off
 - `maxTextureSize` / `textureBudgetMB` cap decoded texture memory before
   compression.
 
-BC6H (HDR) is reserved in the format enum but not yet wired into the RGBA8
-compress-on-load path (it needs the float/EXR texture route).
+BC6H (HDR) is not reachable from this RGBA8 *compress-on-load* path — an HDR
+source must be authored to a BC6H `.ktx2` (`usd-texcomp`, above) and consumed via
+the kept-compressed passthrough, which uploads its blocks directly.
 
 ### Kept-compressed KTX2 passthrough
 
@@ -206,8 +212,6 @@ The page reports the detected caps, the chosen GPU format, and the VRAM saving
 
 ## Not yet supported / follow-ups
 
-- **HDR compressed** decode-to-EXR (BC6H / ASTC-HDR); BC6H is the reliable HDR
-  GPU-upload target.
 - **Basis Universal / `KHR_texture_basisu`** interop (ETC1S/UASTC) for glTF and
   three.js `KTX2Loader` — the "Basis later" seam; the current pipeline is
   intentionally Basis-free.

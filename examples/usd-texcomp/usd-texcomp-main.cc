@@ -52,11 +52,81 @@ constexpr bool kZstdAvailable = true;
 constexpr bool kZstdAvailable = false;
 #endif
 
-bool HasImageExt(const std::string &p) {
+std::string LowerExt(const std::string &p) {
   const std::string e = tinyusdz::io::GetFileExtension(p);
   std::string lo;
   for (char c : e) lo += char(std::tolower(static_cast<unsigned char>(c)));
-  return lo == "png" || lo == "jpg" || lo == "jpeg" || lo == "bmp" || lo == "tga";
+  return lo;
+}
+
+bool IsHdrExt(const std::string &p) {
+  const std::string e = LowerExt(p);
+  return e == "exr" || e == "hdr";
+}
+
+bool HasImageExt(const std::string &p) {
+  const std::string e = LowerExt(p);
+  return e == "png" || e == "jpg" || e == "jpeg" || e == "bmp" || e == "tga" ||
+         e == "exr" || e == "hdr";
+}
+
+// Load an HDR image as tightly-packed float RGB (3 channels), for the BC6H path.
+bool LoadRGBf(const std::string &path, std::vector<float> *out, int *w, int *h,
+              std::string *err) {
+  auto r = tinyusdz::image::LoadImageFromFile(path);
+  if (!r) {
+    if (err) *err = r.error();
+    return false;
+  }
+  const tinyusdz::Image &im = r.value().image;
+  if (im.format != tinyusdz::Image::PixelFormat::Float || im.width <= 0 ||
+      im.height <= 0 || im.channels < 3) {
+    if (err) *err = "not a float RGB(A) image";
+    return false;
+  }
+  const size_t n = size_t(im.width) * size_t(im.height);
+  const int ch = im.channels;
+  out->resize(n * 3u);
+  if (im.bpp == 32) {
+    const float *src = reinterpret_cast<const float *>(im.data.data());
+    for (size_t i = 0; i < n; ++i)
+      for (int c = 0; c < 3; ++c) (*out)[i * 3 + size_t(c)] = src[i * size_t(ch) + size_t(c)];
+  } else {
+    if (err) *err = "unsupported HDR bit depth (need fp32)";
+    return false;
+  }
+  *w = im.width;
+  *h = im.height;
+  return true;
+}
+
+// Float RGB -> BC6H KTX2 (mipped). BC6H is a direct GPU HDR format (not the
+// transcodable `uni`), so it uploads as-is where BPTC is supported and decodes
+// to float / tone-maps elsewhere.
+bool EncodeBc6hKtx2(std::vector<float> &rgb, int w, int h, bool mips,
+                    std::vector<uint8_t> *out, int *levels_out,
+                    std::string *err) {
+  tir_image_view v{rgb.data(), w, h, 3, TIR_F32, 0};
+  tp_options o;
+  tp_options_init(&o, TP_CONTENT_COLOR, TP_CODEC_BC6H);
+  o.container = TP_CONTAINER_KTX2;
+  if (!mips) o.max_levels = 1;
+  uint8_t *buf = nullptr;
+  size_t bsz = 0;
+  if (!TP_OK(tp_process(nullptr, &v, 1, &o, &buf, &bsz))) {
+    if (err) *err = "BC6H tp_process failed";
+    return false;
+  }
+  out->assign(buf, buf + bsz);
+  tp_free(nullptr, buf);
+  // level count = full halving chain unless capped
+  int n = 1;
+  if (mips) {
+    int m = w > h ? w : h;
+    while (m > 1) { m >>= 1; ++n; }
+  }
+  *levels_out = n;
+  return true;
 }
 
 std::string ReplaceExtWithKtx2(const std::string &p) {
@@ -288,18 +358,33 @@ int main(int argc, char **argv) {
   size_t total_src = 0, total_ktx = 0;
   for (const std::string &a : assets) {
     const std::string src = in_dir.empty() ? a : tinyusdz::io::JoinPath(in_dir, a);
-    std::vector<uint8_t> rgba;
+    const bool is_hdr = IsHdrExt(a);
     int w = 0, h = 0;
     std::string lerr;
-    if (!LoadRGBA8(src, &rgba, &w, &h, &lerr)) {
-      std::fprintf(stderr, "skip %s: %s\n", a.c_str(), lerr.c_str());
-      continue;
-    }
     std::vector<uint8_t> ktx;
     int levels = 0;
-    if (!EncodeUniKtx2(rgba, w, h, mips, zstd, &ktx, &levels, &lerr)) {
-      std::fprintf(stderr, "skip %s: %s\n", a.c_str(), lerr.c_str());
-      continue;
+    size_t src_px_bytes = 0;
+    const char *kind = nullptr;
+
+    if (is_hdr) {
+      // HDR (EXR/.hdr) -> BC6H, the GPU-native HDR block format.
+      std::vector<float> rgb;
+      if (!LoadRGBf(src, &rgb, &w, &h, &lerr) ||
+          !EncodeBc6hKtx2(rgb, w, h, mips, &ktx, &levels, &lerr)) {
+        std::fprintf(stderr, "skip %s: %s\n", a.c_str(), lerr.c_str());
+        continue;
+      }
+      src_px_bytes = size_t(w) * size_t(h) * 4u * sizeof(float);  // RGBA32F
+      kind = "bc6h";
+    } else {
+      std::vector<uint8_t> rgba;
+      if (!LoadRGBA8(src, &rgba, &w, &h, &lerr) ||
+          !EncodeUniKtx2(rgba, w, h, mips, zstd, &ktx, &levels, &lerr)) {
+        std::fprintf(stderr, "skip %s: %s\n", a.c_str(), lerr.c_str());
+        continue;
+      }
+      src_px_bytes = size_t(w) * size_t(h) * 4u;  // RGBA8
+      kind = zstd ? "zstd-uni" : "uni";
     }
     const std::string rel = ReplaceExtWithKtx2(a);
     const std::string dst = out_dir.empty() ? rel : tinyusdz::io::JoinPath(out_dir, rel);
@@ -316,13 +401,14 @@ int main(int argc, char **argv) {
     }
     f.close();
 
-    const size_t src_bytes = size_t(w) * size_t(h) * 4u;
+    const size_t src_bytes = src_px_bytes;
     total_src += src_bytes;
     total_ktx += ktx.size();
     hint[a] = rel;
-    std::printf("  %s -> %s (%dx%d, %d level(s), %zu KiB %s-KTX2 vs %zu KiB RGBA8)\n",
-                a.c_str(), rel.c_str(), w, h, levels, ktx.size() / 1024,
-                zstd ? "zstd-uni" : "uni", src_bytes / 1024);
+    std::printf(
+        "  %s -> %s (%dx%d, %d level(s), %zu KiB %s-KTX2 vs %zu KiB uncompressed)\n",
+        a.c_str(), rel.c_str(), w, h, levels, ktx.size() / 1024, kind,
+        src_bytes / 1024);
   }
 
   if (hint.empty()) {
