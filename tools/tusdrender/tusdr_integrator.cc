@@ -850,7 +850,8 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const ByteVec *tri_colors,
            const std::vector<float> *tri_normals,
            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
-               *openpbr_mats) {
+               *openpbr_mats,
+           bool indirect) {
   lrt_ray ray;
   ray.org[0] = ray_org.x;
   ray.org[1] = ray_org.y;
@@ -1032,7 +1033,23 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   float best_t = tri_hit ? tri_t : camera.zfar;
   DirectHit direct_hit;
   IntersectDirectScene(direct, ray_org, ray_dir, camera.znear, best_t, &direct_hit);
+  // Escape hatch for A/B-ing the double-count fix (and for bisecting a render
+  // change): TUSDR_LIGHT_DOUBLE_COUNT=1 restores the old behavior, where an
+  // indirect bounce re-gathered the dome and the analytic mesh lights on top of
+  // the direct lighting that already delivered them.
+  static const bool kDoubleCount = [] {
+    const char *e = std::getenv("TUSDR_LIGHT_DOUBLE_COUNT");
+    return e && std::atoi(e) == 1;
+  }();
+  const bool gathered_directly = indirect && !kDoubleCount;
   if (!tri_hit && !direct_hit.hit) {
+    // An escaping BSDF bounce must not bring the ENVIRONMENT back with it: the
+    // surface that spawned it already integrated the dome over this very lobe
+    // (the split-sum IBL term, or the flat dome term), so returning it here
+    // counts the dome twice. The background is a different thing -- a flat
+    // backdrop that no IBL term accounts for -- so an indirect ray still returns
+    // it, and a reflective surface still picks up the backdrop's tint.
+    if (gathered_directly) return opt.bg;
     if (ibl && ibl->valid) {
       return Add(opt.bg, SampleEnv(ibl->env, EnvDir(*ibl, ray_dir)));
     }
@@ -1064,7 +1081,13 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
   }
   Vec3 view = Normalize(Mul(ray_dir, -1.0f));
   // Occlusion (AO) modulates the indirect/ambient response, not self-emission.
-  Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), tri.emission);
+  // An indirect bounce that lands on an analytic mesh light must not pick up its
+  // emission: the shading point it came from already received that light through
+  // the direct-lighting term (eval_light over LightCache::mesh).
+  const Vec3 emitted = (gathered_directly && tri.area_light)
+                           ? Vec3{0.0f, 0.0f, 0.0f}
+                           : tri.emission;
+  Vec3 c = Add(Mul(tri.base_color, opt.ambient * tri.occlusion), emitted);
   if (ibl && ibl->valid) {
     Vec3 diffuse = SampleEnv(ibl->diffuse, EnvDir(*ibl, n));
     float ndotv = std::max(0.0f, Dot(n, view));
@@ -1137,7 +1160,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     const Vec3 behind =
         Shade(scene, direct, tris, mats, lights, ibl, behind_camera, opt, behind_org,
               ray_dir, textures, tri_uvs, tlas, blas, instances, rd, depth + 1,
-              tri_colors, tri_normals, openpbr_mats);
+              tri_colors, tri_normals, openpbr_mats, indirect);
     return Add(Mul(col, a), Mul(behind, 1.0f - a));
   };
   // Is this light area-sampled (NEE + MIS) rather than treated as a point? Only
@@ -1186,7 +1209,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     Vec3 bounce = Shade(scene, direct, tris, mats, lights, ibl, bounce_camera,
                         opt, bounce_org, wi, textures, tri_uvs, tlas, blas,
                         instances, bounce_rd, depth + 1, tri_colors,
-                        tri_normals, openpbr_mats);
+                        tri_normals, openpbr_mats, /*indirect=*/true);
     Vec3 out = FiniteColor(bounce) ? Mul(bounce, throughput)
                                    : Vec3{0.0f, 0.0f, 0.0f};
 

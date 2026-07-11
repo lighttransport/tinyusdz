@@ -550,6 +550,10 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
       if (lights && mesh.is_area_light && Luminance(tri.emission) > 1.0e-6f) {
         float area = TriangleArea(p0, p1, p2);
         if (area > 1.0e-10f) {
+          // Mark the triangle as an analytic light so a BSDF-bounce ray landing
+          // on it does not add its emission on top of the direct-lighting term
+          // that already delivers it.
+          (*tris)[size_t(tri_id)].area_light = 1;
           PreviewLight ml;
           ml.kind = PreviewLight::Kind::Mesh;
           ml.position = Mul(Add(Add(p0, p1), p2), 1.0f / 3.0f);

@@ -356,6 +356,11 @@ struct TriInfo {
   float ior{1.5f};                   // inputs:ior; dielectric F0 = ((ior-1)/(ior+1))^2
   uint8_t use_specular_workflow{0};  // inputs:useSpecularWorkflow
   uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
+  // This triangle is part of an emissive mesh that is ALSO registered as an
+  // analytic mesh light (LightCache::mesh). Its emission is therefore already
+  // being delivered by direct lighting, and a BSDF-bounce ray that lands on it
+  // must not add it a second time -- see the `indirect` argument of Shade.
+  uint8_t area_light{0};
 };
 
 // Per-material shading parameters, factored out of the per-triangle record. A
@@ -405,6 +410,11 @@ struct TriMat {
   float ior{1.5f};
   uint8_t use_specular_workflow{0};
   uint32_t openpbr_id{kNoOpenPBRMaterial};  // optional side-table OpenPBR block
+  // This triangle is part of an emissive mesh that is ALSO registered as an
+  // analytic mesh light (LightCache::mesh). Its emission is therefore already
+  // being delivered by direct lighting, and a BSDF-bounce ray that lands on it
+  // must not add it a second time -- see the `indirect` argument of Shade.
+  uint8_t area_light{0};
 };
 
 // Slim per-triangle record for instanced BLAS storage: just a material id into
@@ -477,6 +487,7 @@ inline TriInfo CombineTriMat(const TriMat &m) {
   t.ior = m.ior;
   t.use_specular_workflow = m.use_specular_workflow;
   t.openpbr_id = m.openpbr_id;
+  t.area_light = m.area_light;
   return t;
 }
 
@@ -527,6 +538,7 @@ inline TriMat ExtractTriMat(const TriInfo &t) {
   m.ior = t.ior;
   m.use_specular_workflow = t.use_specular_workflow;
   m.openpbr_id = t.openpbr_id;
+  m.area_light = t.area_light;
   return m;
 }
 
@@ -589,7 +601,7 @@ inline bool SameTriMat(const TriMat &a, const TriMat &b) {
          a.specular_color.z == b.specular_color.z &&
          a.specular_tex_id == b.specular_tex_id && a.ior == b.ior &&
          a.use_specular_workflow == b.use_specular_workflow &&
-         a.openpbr_id == b.openpbr_id;
+         a.openpbr_id == b.openpbr_id && a.area_light == b.area_light;
 }
 
 // A scalar texture binding: texture index + source channel (UsdUVTexture

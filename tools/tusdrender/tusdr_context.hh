@@ -247,7 +247,16 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
            const ByteVec *tri_colors = nullptr,
            const std::vector<float> *tri_normals = nullptr,
            const std::vector<tinyusdz::tydra::LightRtOpenPBRParams>
-               *openpbr_mats = nullptr);
+               *openpbr_mats = nullptr,
+           // This ray is a BSDF-sampled indirect bounce, not a camera/transmission
+           // ray. Two contributions are then already accounted for at the surface
+           // that spawned it and must NOT be gathered again:
+           //   - the environment / dome, which the split-sum IBL term integrates
+           //     over the whole lobe, so an escaping bounce contributes nothing;
+           //   - the emission of an analytic mesh light, which direct lighting
+           //     already delivers (TriInfo::area_light marks those triangles).
+           // Without this, both are counted twice in `-materialShading lightrt-bsdf`.
+           bool indirect = false);
 
 uint8_t ToSRGB8(float linear);
 
