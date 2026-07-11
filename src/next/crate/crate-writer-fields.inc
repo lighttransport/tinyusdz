@@ -116,11 +116,12 @@
         fields_.push_back(f);
       }
 
-      // apiSchemas — a TokenListOp with one PREPENDED run:
-      //   [u8 ListOpHeader=0x20 prepended][u64 count][u32 token_idx]*count
-      // pxr itself authors applied API schemas as `prepend apiSchemas`, so
-      // this both satisfies its schema type and round-trips the qualifier
-      // (next flattens list-op sublists on read, so any form reads back).
+      // apiSchemas — a TokenListOp with one run:
+      //   [u8 ListOpHeader][u64 count][u32 token_idx]*count
+      // The header encodes the authored qualifier. A BARE `apiSchemas = [...]`
+      // is an EXPLICIT list (0x03 = IsExplicit|HasExplicitItems), NOT a
+      // prepend: pxr round-trips a bare authoring as explicit, and writing it
+      // as prepend flipped the qualifier on every USDC round trip.
       if (!prim.meta().apiSchemas().empty()) {
         size_t count = prim.meta().apiSchemas().size();
         size_t items_bytes = 0;
@@ -131,14 +132,15 @@
           return;
         }
         std::vector<uint8_t> api_data(api_data_size);
-        // Header bit from the authored qualifier; bare lists write pxr's
-        // conventional prepended form (pxr authors `prepend apiSchemas`).
-        api_data[0] = prim.meta().apiSchemasQualifier() == "append"
+        // Header bit from the authored qualifier; a bare list is explicit.
+        api_data[0] = prim.meta().apiSchemasQualifier() == "prepend"
+                          ? 0x20   // kHasPrepended
+                      : prim.meta().apiSchemasQualifier() == "append"
                           ? 0x40   // kHasAppended
                       : prim.meta().apiSchemasQualifier() == "delete"
                           ? 0x08   // kHasDeleted (rewriting as prepend
                                    // would INVERT the opinion)
-                          : 0x20;  // kHasPrepended
+                          : 0x03;  // kIsExplicit | kHasExplicitItems
         uint64_t cnt = count;
         std::memcpy(api_data.data() + 1, &cnt, 8);
         for (size_t i = 0; i < count; ++i) {
