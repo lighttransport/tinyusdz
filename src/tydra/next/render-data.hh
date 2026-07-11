@@ -539,7 +539,9 @@ struct ShaderParam {
 struct PreviewSurfaceShader {
   ShaderParam diffuse_color = {{-1}, {0.18f, 0.18f, 0.18f, 1.0f}};
   ShaderParam emissive_color = {{-1}, {0, 0, 0, 1}};
-  ShaderParam specular_color = {{-1}, {1, 1, 1, 1}};
+  // UsdPreviewSurface spec fallback is (0,0,0) — only meaningful when
+  // useSpecularWorkflow is on.
+  ShaderParam specular_color = {{-1}, {0, 0, 0, 1}};
 
   ShaderParam metallic = {{-1}, {0, 0, 0, 0}};
   ShaderParam roughness = {{-1}, {0.5f, 0, 0, 0}};

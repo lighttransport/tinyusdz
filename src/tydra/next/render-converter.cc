@@ -128,10 +128,14 @@ RenderTexture::Channel ChannelFromConnection(const std::string& connection_path)
 }
 
 WrapMode ParseWrapMode(const std::string& token) {
+  if (token == "repeat") return WrapMode::Repeat;
   if (token == "clamp") return WrapMode::Clamp;
   if (token == "mirror") return WrapMode::Mirror;
   if (token == "black") return WrapMode::Black;
-  return WrapMode::Repeat;
+  // UsdUVTexture's wrapS/wrapT fallback is "useMetadata"; with no texture
+  // metadata the effective mode is clamp-to-edge (legacy tydra behavior) —
+  // NOT repeat, which visibly tiles textures authored to clamp.
+  return WrapMode::Clamp;
 }
 
 ColorSpace ParseColorSpace(const std::string& token) {
@@ -209,6 +213,27 @@ bool ValueToShaderParam(const Value& value, ShaderParam* out) {
     SetParamFloat4(out, static_cast<float>(v[0]), static_cast<float>(v[1]),
                    static_cast<float>(v[2]), static_cast<float>(v[3]));
     return true;
+  }
+  // Half-precision shader inputs (half/half2/half3/half4 + role types) store
+  // raw half-bit lanes; widen through the converting reads.
+  {
+    float h[4];
+    if (value.to_float(h)) {
+      SetParamFloat(out, h[0]);
+      return true;
+    }
+    if (value.to_float2(h)) {
+      SetParamFloat4(out, h[0], h[1], 0.0f, 1.0f);
+      return true;
+    }
+    if (value.to_float3(h)) {
+      SetParamFloat3(out, h[0], h[1], h[2]);
+      return true;
+    }
+    if (value.to_float4(h)) {
+      SetParamFloat4(out, h[0], h[1], h[2], h[3]);
+      return true;
+    }
   }
 
   return false;
@@ -1067,7 +1092,7 @@ void TraceTextureStChain(const Stage& stage, const UsdPrim& texture_prim,
       continue;
     }
     if (id.rfind("UsdPrimvarReader", 0) == 0) {
-      out->uv_primvar = ::tinyusdz::next::GetPrimvarReaderVarname(np);
+      out->uv_primvar = ::tinyusdz::next::GetPrimvarReaderVarname(stage, np);
       return;
     }
     return;
@@ -1716,7 +1741,11 @@ std::string FindInheritedMaterialBinding(const Stage& stage,
     UsdPrim prim = stage.GetPrimAtPath(path);
     if (prim.IsValid()) {
       const std::string material_path = ::tinyusdz::next::GetBoundMaterialPath(prim);
-      if (!material_path.empty()) {
+      // A binding whose target does not resolve to a Material prim must not
+      // shadow a valid ancestor binding (legacy skips unresolvable targets).
+      if (!material_path.empty() &&
+          ::tinyusdz::tydra::next::IsMaterial(
+              stage.GetPrimAtPath(material_path))) {
         if (leaf_binding.empty()) leaf_binding = material_path;
         if (path != prim_path && BindingIsStrongerThanDescendants(prim)) {
           strongest_ancestor = material_path;  // higher ancestors overwrite
@@ -4484,7 +4513,10 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
         out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
         ExtractOpenPBRSurface(stage, child, out->openpbr.get(), scene);
         if (out->openpbr->opacity.is_texture() ||
-            out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
+            out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon ||
+            out->openpbr->transmission_weight.value.x > kAlphaEpsilon) {
+          // Transmissive OpenPBR (glass) needs the blend path even at
+          // opacity 1 (legacy marks these Translucent).
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;
         }
         found_shader = true;
@@ -4738,7 +4770,26 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       const ::tinyusdz::next::PrimSpec* spec = hop_prim.GetPrimSpec();
       const std::vector<::tinyusdz::next::Path>* nc =
           spec ? spec->connection(prop) : nullptr;
-      if (!nc || nc->empty()) break;
+      if (!nc || nc->empty()) {
+        // Compute/adapter nodes (ND_convert_*, color adjust, ...) carry the
+        // upstream connection on an INPUT, not on the referenced output —
+        // follow the first inputs:* connection so textures behind such
+        // nodes still resolve (legacy walks intermediate node inputs too).
+        const std::vector<::tinyusdz::next::Path>* input_conn = nullptr;
+        if (spec) {
+          for (const std::string& prop_name : hop_prim.GetPropertyNames()) {
+            if (prop_name.rfind("inputs:", 0) != 0) continue;
+            const std::vector<::tinyusdz::next::Path>* c =
+                spec->connection(prop_name);
+            if (c && !c->empty()) {
+              input_conn = c;
+              break;
+            }
+          }
+        }
+        if (!input_conn) break;
+        nc = input_conn;
+      }
       connection_path = (*nc)[0].str();
     }
     const std::string texture_prim_path = SourcePrimPathFromConnection(connection_path);

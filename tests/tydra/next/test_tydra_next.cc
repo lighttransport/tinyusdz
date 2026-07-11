@@ -3232,6 +3232,141 @@ def Xform "World"
   std::cout << "  Material UV primvar promotion: PASSED\n";
 }
 
+
+// Materials P1 fixes: dangling leaf binding must not shadow a valid
+// ancestor binding; inputs:varname authored as a connection resolves;
+// a texture behind a compute node (input-side connection) still resolves;
+// transmissive OpenPBR marks the blend path.
+void TestMaterialParityFixes() {
+  std::cout << "Testing material parity fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    rel material:binding = </World/GoodMat>
+
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:customUV = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/MissingMat>
+    }
+
+    def Mesh "Glass"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 2), (1, 0, 2), (1, 1, 2), (0, 1, 2)]
+        rel material:binding = </World/GlassMat>
+    }
+
+    def Material "GoodMat"
+    {
+        token inputs:frame:stPrimvarName = "customUV"
+        token outputs:surface.connect = </World/GoodMat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/GoodMat/Convert.outputs:out>
+            token outputs:surface
+        }
+
+        def Shader "Convert"
+        {
+            uniform token info:id = "ND_convert_color4_color3"
+            color4f inputs:in.connect = </World/GoodMat/Tex.outputs:rgba>
+            color3f outputs:out
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @albedo.png@
+            float2 inputs:st.connect = </World/GoodMat/Reader.outputs:result>
+            float4 outputs:rgba
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname.connect = </World/GoodMat.inputs:frame:stPrimvarName>
+            float2 outputs:result
+        }
+    }
+
+    def Material "GlassMat"
+    {
+        token outputs:surface.connect = </World/GlassMat/PBR.outputs:out>
+
+        def Shader "PBR"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            float inputs:transmission_weight = 1.0
+            token outputs:out
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+
+  // Dangling </World/MissingMat> on the mesh must not shadow the valid
+  // ancestor binding.
+  int quad = -1;
+  int glass = -1;
+  for (size_t mi = 0; mi < result.scene.meshes.size(); ++mi) {
+    if (result.scene.meshes[mi].prim_path == "/World/Quad") quad = static_cast<int>(mi);
+    if (result.scene.meshes[mi].prim_path == "/World/Glass") glass = static_cast<int>(mi);
+  }
+  assert(quad >= 0 && glass >= 0);
+  const RenderMesh& quad_mesh = result.scene.meshes[static_cast<size_t>(quad)];
+  assert(quad_mesh.material_id >= 0);
+  assert(result.scene.materials[static_cast<size_t>(quad_mesh.material_id)]
+             .prim_path == "/World/GoodMat");
+
+  // The texture behind the ND_convert node resolves, with the varname
+  // followed through the connection to the material interface attribute.
+  assert(!result.scene.textures.empty());
+  bool found_texture = false;
+  for (const RenderTexture& tex : result.scene.textures) {
+    if (tex.asset_path == "albedo.png") {
+      found_texture = true;
+      assert(tex.uv_primvar == "customUV");
+    }
+  }
+  assert(found_texture);
+
+  // ...and the customUV primvar is promoted into texcoords_0.
+  assert(quad_mesh.texcoords_0.size() == 8);
+
+  // Transmissive OpenPBR takes the blend path.
+  const RenderMesh& glass_mesh = result.scene.meshes[static_cast<size_t>(glass)];
+  assert(glass_mesh.material_id >= 0);
+  const RenderMaterial& glass_mat =
+      result.scene.materials[static_cast<size_t>(glass_mesh.material_id)];
+  assert(glass_mat.alpha_mode == RenderMaterial::AlphaMode::Blend);
+
+  std::cout << "  Material parity fixes: PASSED\n";
+}
+
 int main() {
   std::cout << "=== Tydra Next Unit Tests ===\n\n";
 
@@ -3280,6 +3415,7 @@ int main() {
   TestStandardSurfaceNoRecursion();
   TestUsdSkelParityFixes();
   TestMaterialUVPrimvarPromotion();
+  TestMaterialParityFixes();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";
