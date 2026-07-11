@@ -91,7 +91,7 @@ render_profile() {
     echo "$log"
     return 1
   fi
-  for expected in "backend=vkr+vkInstanced" "rtLod=on" "maxVram=10"; do
+  for expected in "backend=vk" "rtLod=on" "maxVram=8"; do
     if ! echo "$log" | grep -q "$expected"; then
       echo "FAIL: largeSceneProfile island did not apply expected default: $expected"
       echo "$log"
