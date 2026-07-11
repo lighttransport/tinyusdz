@@ -4,67 +4,60 @@ Tracked companion to the (local, untracked) `resume-tusdview.md` scratch notes.
 This file is the durable list: what is still open, why, and what it touches.
 
 Status as of 2026-07-11. The `--next` primvars / texturing / texture-VRAM
-workstream is **done and pushed**, including GPU skinning (raster, both
-backends, instanced prototypes included) and the large-scene verification
-(numbers in [large-scene.md §2.9](large-scene.md)).
+workstream is **done and pushed**, including GPU skinning (raster, both backends,
+instanced prototypes included) and the large-scene verification (numbers in
+[large-scene.md §2.9](large-scene.md)).
 
-## Open — in progress
+Also done since the last revision of this file, and no longer listed below: the
+shared material-eval Phase 2 (sphere-light NEE + MIS), per-texture UV-set
+selection, the tusdview BLAS-compaction port, `--vram-budget`, raster LOD for
+non-instanced meshes (§2.10), and the `-vk` tiled ray dispatch (§2.11 — which
+also records why device-local BVH buffers were measured and left OFF).
 
-### 1. Shared material-evaluation layer, Phase 2 (MIS / next-event estimation)
+## Open
 
-See [shared-material-eval-scope.md](shared-material-eval-scope.md). Phase 1
-landed: a shared OpenPBR parameter block (`src/tydra/openpbr-params.hh`) and a
-`tydra::next::RenderMaterial -> LightRtOpenPBRParams` converter, so tusdview,
-tusdrender and lightrt evaluate one material description instead of four.
+### 1. RT / CUDA / HIP skinning
 
-Remaining: MIS / next-event weighting around the `bsdf_sample` continuation
-path, then broaden golden coverage for the experimental mode
-(`-materialShading lightrt-bsdf`). Regression anchor:
-`tool-tusdrender-degraded-material`.
+The last `--next` skinning gap, and the biggest item here. Raster (GL + Vulkan,
+instanced prototypes included) skins on the GPU; the ray-tracing backends still
+take the load-time CPU bake, so every new time code costs a full re-bake of the
+posed geometry.
 
-### 3. Per-texture UV-set selection
+### 2. `lightrt-bsdf`: two double-counted light contributions
 
-`RenderTexture::uv_primvar` can name a *secondary* UV set, but nothing can route
-it: `uv1` exists only as a debug AOV (render mode 31). Sampling it needs a
-`uvSet` field on `DrawTexSampleCPU`, plus material-buffer and shader changes
-across GL / Vulkan / RT.
+Known, unfixed, from the NEE work:
 
-The `st` / `UVMap` / `uv` / `st0` / `map1` fallback chain already covers the
-common single-UV-set case, so this only bites multi-UV-set assets (lightmaps,
-decal sets).
+- the dome light is counted twice, and
+- emissive meshes are counted twice.
 
-### 5. P2 VRAM follow-ons
+Both need `Shade()` split into an emitted term and a reflected term; today it is
+a single analytic direct-lighting evaluator, so the BSDF-side and light-side
+contributions overlap. Regression anchors: `tool-tusdrender-sphere-light-nee`,
+`tool-tusdrender-material-shading-bsdf-sample`.
 
-From the §2.8 review in [large-scene.md](large-scene.md), all unimplemented:
+### 3. Rect / disk / cylinder lights are still punctual
 
-- **tusdview BLAS-compaction port** — the lightrt fork compacts by default
-  (caldera `-vkInstanced` 1051→525 MiB; island 7153→5408 MiB). tusdview's own RT
-  path does not: island RT sits at 4.2 GiB, estimated ~2.7 GiB compacted. Best
-  value of the five.
-- ~~**Device-local node/block buffers**~~ — implemented, measured, left OFF
-  (`LRT_VK_DEVICE_LOCAL=1` opts in). Traversal is not bound by where the BVH
-  lives on this GPU (identical 0.144 µs/ray either way) and moving it into VRAM
-  spends ~1.9 GiB of the budget we are trying to reclaim. See large-scene.md
-  §2.11 before revisiting.
-- ~~**Tiled ray/hit dispatch**~~ — DONE. The `-vk` compute trace ran the whole
-  frame in one dispatch (48 B × w × h × spp — 6.3 GB of VRAM at 1080p/64 spp);
-  it now tiles at 4 M rays (192 MiB), which is byte-identical and 22 % faster.
-  Test `tool-tusdrender-vk-ray-tiling`.
-- **TLAS `PREFER_FAST_BUILD`** for settle rebuilds.
-- **`--vram-budget <GiB>` umbrella flag** deriving `--max-gpu-mem`, texture
-  budgets and auto `--rt-lod` from the memory-budget query (today each is a
-  separate knob).
-- ~~**Raster LOD for non-instanced meshes**~~ — DONE. Island `--raster-lod` now
-  draws 15.2 M tris instead of 40.3 M (84 400 of 100 801 meshes; the rest are
-  sub-pixel-culled or collapsed to box proxies). The prerequisite turned out to
-  be a loader bug: the next static-batch path handed every non-instanced mesh the
-  running *scene*-bounds accumulator as its AABB, so no unique mesh could ever be
-  outside the frustum or small on screen — the per-mesh frustum cull was a no-op
-  too. Regression test `tusdview-noninstanced-lod`.
+Only sphere lights are area-sampled (cone sampling + power-heuristic MIS). The
+others collapse to a point, so they cast hard shadows regardless of size. Needs
+tangent axes plumbed through `PreviewLight`, then a per-shape sampler and pdf.
 
-## Open — not started
+### 4. TLAS `PREFER_FAST_BUILD` for settle rebuilds
 
-### Geometry tangents — DORMANT BY DECISION (2026-07-11), do not re-litigate
+The last P2 VRAM follow-on from the [large-scene.md](large-scene.md) §2.8 review,
+and the lowest-value one: deprioritized once BLAS compaction and RT LOD landed.
+
+### 5. Cross-backend blendshape screenshot parity
+
+Open in the broader visual-parity matrix.
+
+### 6. usd-assets regression harness
+
+Partial: the batch harness runs both tools over usd-wg/assets. Remaining is
+recording and maintaining the per-machine external-asset baselines.
+
+## Dormant by decision (2026-07-11) — do not re-litigate
+
+### Geometry tangents
 
 `FillFlatGeometry` already resolves `m.tangents` through the weld, but
 `MeshConfig::compute_tangents` defaults false, so tangents are always empty and
@@ -73,32 +66,17 @@ cost nothing.
 Do not build without asking. GL, Vulkan and RT all derive the TBN from
 screen-space UV derivatives (`vk/shaders/mesh.frag`, `raytrace.comp`), so normal
 maps render correctly today. Real tangents only buy correct handedness on
-mirrored/seamed UVs, cost ~16 B/vertex against a memory-reduction goal, and
-would need per-mesh gating (a second converter pass for meshes whose bound
-material has a normal map, i.e. resolving the material *before* conversion),
-tangent world-transform in the batch-append path, a new VBO/binding, and shader
-edits in `gl/gl_renderer.cc` + `vk/vk_renderer.cc` + `vk/shaders/mesh.{vert,frag}`
-— `mesh.frag` being the file the separate sophisticated-texturing branch owns.
-
-### RT/CUDA/HIP skinning
-
-The last `--next` skinning gap. Raster (GL + Vulkan, instanced prototypes
-included) skins on the GPU; the ray-tracing backends still take the load-time
-CPU bake, so every new time code costs a full re-bake.
-
-### Cross-backend blendshape screenshot parity
-
-Open in the broader visual-parity matrix.
-
-### usd-assets regression harness
-
-Partial: the batch harness runs both tools over usd-wg/assets. Remaining is
-recording and maintaining the per-machine external-asset baselines.
+mirrored/seamed UVs, cost ~16 B/vertex against a memory-reduction goal, and would
+need per-mesh gating (a second converter pass for meshes whose bound material has
+a normal map, i.e. resolving the material *before* conversion), tangent
+world-transform in the batch-append path, a new VBO/binding, and shader edits in
+`gl/gl_renderer.cc` + `vk/vk_renderer.cc` + `vk/shaders/mesh.{vert,frag}` —
+`mesh.frag` being the file the separate sophisticated-texturing branch owns.
 
 ## Verification
 
 ```bash
-cd build && make -j16 && ctest --output-on-failure     # 46/46
+cd build && make -j16 && ctest --output-on-failure     # 70/70
 
 # large-scene matrix (see large-scene.md §2.9 for the numbers to hold)
 CALDERA=/mnt/disk1/data/caldera/caldera.usda \
