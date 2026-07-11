@@ -2439,6 +2439,27 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-blendshape-morph"
         )
       set_tests_properties(tusdview-blendshape-morph PROPERTIES SKIP_RETURN_CODE 77)
+
+      # GPU deform vs CPU bake, in depth through a fixed camera, over the three
+      # deform paths that had no fixture at all. Each of these caught a live bug:
+      #   skin-xform     -- skinning under a rotated/scaled parent (the bone rows
+      #                     must undo the static path's world bake and re-apply it);
+      #   morph-subsets  -- a morphed mesh torn into two batches by material-bind
+      #                     GeomSubsets, which re-index the sparse delta lists;
+      #   morph-skin     -- both deforms live at once, which pins the ORDER (morph
+      #                     the bind pose, then skin the morphed points).
+      foreach(deform_case skin-xform morph-subsets morph-skin)
+        add_test(
+          NAME tusdview-deform-${deform_case}
+          COMMAND python3
+                  ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
+                  "$<TARGET_FILE:tusdview>"
+                  "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-${deform_case}.usda"
+                  "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-${deform_case}"
+          )
+        set_tests_properties(tusdview-deform-${deform_case}
+                             PROPERTIES SKIP_RETURN_CODE 77)
+      endforeach()
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
