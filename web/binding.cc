@@ -2168,10 +2168,30 @@ void AddSceneJson(json &props, const tinyusdz::PhysicsScene &scene) {
   if (scene.mjcScene) {
     AddFallbackAttr(props, "mjc:option:timestep",
                     scene.mjcScene.value().timestep);
+    AddFallbackAttr(props, "mjc:option:impratio",
+                    scene.mjcScene.value().impratio);
     AddFallbackAttr(props, "mjc:option:iterations",
                     scene.mjcScene.value().iterations);
     AddFallbackAttr(props, "mjc:option:integrator",
                     scene.mjcScene.value().integrator);
+    AddFallbackAttr(props, "mjc:option:cone",
+                    scene.mjcScene.value().cone);
+#define ADD_MJC_FLAG_JSON(name) \
+    AddFallbackAttr(props, "mjc:flag:" #name, \
+                    scene.mjcScene.value().flag_##name)
+    ADD_MJC_FLAG_JSON(constraint); ADD_MJC_FLAG_JSON(equality);
+    ADD_MJC_FLAG_JSON(frictionloss); ADD_MJC_FLAG_JSON(limit);
+    ADD_MJC_FLAG_JSON(contact); ADD_MJC_FLAG_JSON(spring);
+    ADD_MJC_FLAG_JSON(damper); ADD_MJC_FLAG_JSON(gravity);
+    ADD_MJC_FLAG_JSON(clampctrl); ADD_MJC_FLAG_JSON(warmstart);
+    ADD_MJC_FLAG_JSON(filterparent); ADD_MJC_FLAG_JSON(actuation);
+    ADD_MJC_FLAG_JSON(refsafe); ADD_MJC_FLAG_JSON(sensor);
+    ADD_MJC_FLAG_JSON(midphase); ADD_MJC_FLAG_JSON(nativeccd);
+    ADD_MJC_FLAG_JSON(eulerdamp); ADD_MJC_FLAG_JSON(autoreset);
+    ADD_MJC_FLAG_JSON(island); ADD_MJC_FLAG_JSON(override);
+    ADD_MJC_FLAG_JSON(energy); ADD_MJC_FLAG_JSON(fwdinv);
+    ADD_MJC_FLAG_JSON(invdiscrete); ADD_MJC_FLAG_JSON(multiccd);
+#undef ADD_MJC_FLAG_JSON
   }
   if (scene.newtonScene) {
     AddFallbackAttr(props, "newton:maxSolverIterations",
