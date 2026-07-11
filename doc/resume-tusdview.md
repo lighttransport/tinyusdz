@@ -32,13 +32,18 @@ geometry directly and free it once their own BVH is built, and they only render 
 one-shot screenshot, where the bake IS the cheapest path. Making them animate
 interactively means re-posing into their BVH, not just into `draw_`.
 
-### 2. Mesh lights are invisible to the `next` loader
+### 2. Mesh-light gaps (the light itself now works in both loaders)
 
-`LightCache::mesh` is only populated by the LEGACY flatten (`tusdr_legacy.cc`).
-The next loader — which is what `-rtPreview` uses for `.usda` — never registers an
-emissive `MeshLightAPI` mesh as an analytic light, so such a mesh is lit only by
-whatever a BSDF bounce happens to hit. Both halves of
-`tool-tusdrender-light-double-count` exist because of this split.
+Two known holes in `CollectMeshLightsNext`:
+
+- `inputs:normalize` is ignored (the mesh's total area is not known where the
+  emission is resolved), so a normalized mesh light is too bright; and
+- the emitter's material TINT differs between loaders: the legacy default base
+  color is 0.18 gray, the next default is 0.55, so the same emissive mesh lights
+  a floor ~3x brighter through the next loader.
+
+Also: mesh lights are collected from the FLAT triangle list only, so an
+`instanceable` emissive mesh (the TLAS/`TriStore` path) still registers none.
 
 ### 3. Cross-backend blendshape screenshot parity
 
