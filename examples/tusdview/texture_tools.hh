@@ -43,6 +43,16 @@ bool TexToolsAdaptCompressed(const uint8_t* blocks, size_t nbytes, bool srcIsUni
                              DrawCompressedImageCPU* outCompressed,
                              light3d::Image* outRGBA);
 
+// Produce the block payload for one mip level to the already-chosen target draw
+// format (from the level-0 TexToolsAdaptCompressed result), by copy (uni->ASTC,
+// or a stored format == target) or transcode (uni->BC7/ETC2). Used to carry a
+// KTX2's precomputed mip chain through the kept-compressed passthrough. Returns
+// false if the level can't be produced for `targetFmt`.
+bool TexToolsAdaptCompressedLevel(const uint8_t* blocks, size_t nbytes,
+                                  bool srcIsUni, DrawCompressedFormat srcFmt,
+                                  DrawCompressedFormat targetFmt, uint32_t w,
+                                  uint32_t h, std::vector<uint8_t>* out);
+
 // How a texture is consumed by the materials; drives the content-aware mip
 // build (sRGB filtering, alpha-coverage preservation, normal renormalize,
 // packed-channel rules, wrap-aware filter edges).
