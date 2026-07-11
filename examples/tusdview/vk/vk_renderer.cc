@@ -798,6 +798,18 @@ bool VulkanRenderer::createDevice(std::string* err) {
     pfnGetASDeviceAddress_ =
         reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
             vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureDeviceAddressKHR"));
+    // Compaction is optional: if either entry point is missing we still build,
+    // just uncompacted. Never a reason to disable RT.
+    pfnCmdWriteASProps_ =
+        reinterpret_cast<PFN_vkCmdWriteAccelerationStructuresPropertiesKHR>(
+            vkGetDeviceProcAddr(device_,
+                                "vkCmdWriteAccelerationStructuresPropertiesKHR"));
+    pfnCmdCopyAS_ = reinterpret_cast<PFN_vkCmdCopyAccelerationStructureKHR>(
+        vkGetDeviceProcAddr(device_, "vkCmdCopyAccelerationStructureKHR"));
+    if (const char* e = std::getenv("TUSDVIEW_BLAS_COMPACT")) {
+      blasCompact_ = (std::atoi(e) != 0);
+    }
+    if (!pfnCmdWriteASProps_ || !pfnCmdCopyAS_) blasCompact_ = false;
     if (!pfnGetBufferDeviceAddress_ || !pfnGetASBuildSizes_ || !pfnCreateAS_ ||
         !pfnDestroyAS_ || !pfnCmdBuildAS_ || !pfnGetASDeviceAddress_) {
       rtSupported_ = false;  // any missing entrypoint -> rasterization only
@@ -4996,6 +5008,306 @@ void VulkanRenderer::buildBlas(VkMeshGPU& m) {
   dai.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
   dai.accelerationStructure = m.blas;
   m.blasAddr = pfnGetASDeviceAddress_(device_, &dai);
+
+  blasBytes_ += sizes.accelerationStructureSize;
+  blasBytesUncompacted_ += sizes.accelerationStructureSize;
+}
+
+// BLAS compaction, in waves.
+//
+// The old path built one BLAS per prototype, each in its own one-shot command
+// buffer -- so one vkQueueSubmit + vkQueueWaitIdle (a full queue stall) and one
+// vkAllocateMemory per prototype -- and kept the build-time size forever. A
+// built BLAS is typically ~half its build-time size, so on Island's Full set
+// that is gigabytes of dead VRAM.
+//
+// Here each wave does exactly two submits: build every BLAS in the wave into one
+// shared transient buffer and write their compacted sizes into a query pool;
+// then copy each into a right-sized AS. Transient storage is one wave's worth,
+// not the whole set's.
+static constexpr uint32_t kBlasWaveMax = 512;                       // query-pool capacity
+static constexpr VkDeviceSize kBlasWaveBytes = 128ull * 1024 * 1024;  // transient budget
+
+void VulkanRenderer::buildBlasWave(const std::vector<uint32_t>& meshIds) {
+  if (!pfnCreateAS_) return;
+
+  // meshIds is one entry per INSTANCE at Full, so a prototype appears many times
+  // (Island: 17k instances over a few thousand prototypes). The old per-mesh path
+  // absorbed that silently -- buildBlas early-returns once m.blas exists -- but a
+  // batch planner must dedupe explicitly: filtering on `blas == NULL` alone admits
+  // every duplicate (nothing is built yet at planning time), builds the same mesh
+  // N times and leaks all but the last copy. That was a 6.7x memory blowup on
+  // Island, which is exactly what it did.
+  std::vector<uint32_t> todo;
+  todo.reserve(meshIds.size());
+  std::vector<bool> queued(meshes_.size(), false);
+  for (uint32_t id : meshIds) {
+    if (id >= meshes_.size() || queued[id]) continue;
+    VkMeshGPU& m = meshes_[id];
+    if (m.blas == VK_NULL_HANDLE && m.indexCount >= 3) {
+      queued[id] = true;
+      todo.push_back(id);
+    }
+  }
+  blasUniqueBuilt_ += todo.size();
+  if (todo.empty()) return;
+
+  if (!blasCompact_) {
+    for (uint32_t id : todo) buildBlas(meshes_[id]);
+    return;
+  }
+
+  size_t next = 0;
+  while (next < todo.size()) {
+    // ---- plan one wave -------------------------------------------------------
+    struct Item {
+      uint32_t meshId;
+      VkDeviceSize asOffset;      // into the shared transient AS buffer
+      VkDeviceSize asSize;
+      VkDeviceSize scratchOffset;
+      uint32_t primCount;
+      VkAccelerationStructureKHR fullAs{VK_NULL_HANDLE};
+    };
+    std::vector<Item> items;
+    // These must stay alive until vkCmdBuildAccelerationStructuresKHR is
+    // recorded: bgi.pGeometries points into `geoms`. A vector that reallocates
+    // would dangle every earlier pointer, so both are reserved up front.
+    std::vector<VkAccelerationStructureGeometryKHR> geoms;
+    std::vector<VkAccelerationStructureBuildGeometryInfoKHR> bgis;
+    const size_t cap = std::min<size_t>(kBlasWaveMax, todo.size() - next);
+    items.reserve(cap);
+    geoms.reserve(cap);
+    bgis.reserve(cap);
+
+    VkDeviceSize asBytes = 0, scratchBytes = 0;
+    while (next < todo.size() && items.size() < kBlasWaveMax) {
+      VkMeshGPU& m = meshes_[todo[next]];
+
+      VkAccelerationStructureGeometryKHR geom{};
+      geom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+      geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+      geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+      auto& tri = geom.geometry.triangles;
+      tri.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+      tri.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+      tri.vertexData.deviceAddress = m.vboAddr;
+      tri.vertexStride = sizeof(DrawVertex);
+      tri.maxVertex = m.vertexCount - 1;
+      tri.indexType = VK_INDEX_TYPE_UINT32;
+      tri.indexData.deviceAddress = m.eboAddr;
+
+      const uint32_t primCount = m.indexCount / 3;
+
+      VkAccelerationStructureBuildGeometryInfoKHR bgi{};
+      bgi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+      bgi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+      bgi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                  VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+      bgi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+      bgi.geometryCount = 1;
+
+      VkAccelerationStructureBuildSizesInfoKHR sizes{};
+      sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+      bgi.pGeometries = &geom;  // sizing only reads the geometry description
+      pfnGetASBuildSizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                          &bgi, &primCount, &sizes);
+
+      const VkDeviceSize asAligned = (sizes.accelerationStructureSize + 255) & ~VkDeviceSize(255);
+      const VkDeviceSize scratchAligned =
+          (sizes.buildScratchSize + scratchAlign_ - 1) & ~VkDeviceSize(scratchAlign_ - 1);
+
+      // Always take the first item, even if it alone blows the budget -- a single
+      // huge mesh must still build.
+      if (!items.empty() &&
+          (asBytes + asAligned + scratchBytes + scratchAligned) > kBlasWaveBytes) {
+        break;
+      }
+
+      Item it{};
+      it.meshId = todo[next];
+      it.asOffset = asBytes;
+      it.asSize = sizes.accelerationStructureSize;
+      it.scratchOffset = scratchBytes;
+      it.primCount = primCount;
+      items.push_back(it);
+      geoms.push_back(geom);
+      bgis.push_back(bgi);
+
+      asBytes += asAligned;
+      scratchBytes += scratchAligned;
+      ++next;
+    }
+    if (items.empty()) break;
+
+    // ---- transient wave storage ---------------------------------------------
+    VkBuffer fullBuf = VK_NULL_HANDLE, scratchBuf = VK_NULL_HANDLE;
+    VkDeviceMemory fullMem = VK_NULL_HANDLE, scratchMem = VK_NULL_HANDLE;
+    const bool ok =
+        createDeviceBuffer(asBytes, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                           &fullBuf, &fullMem) &&
+        createDeviceBuffer(scratchBytes + scratchAlign_, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                           &scratchBuf, &scratchMem);
+    if (!ok) {
+      // Out of memory for the wave: fall back to the one-at-a-time path, which
+      // needs far less transient headroom, rather than dropping the geometry.
+      if (fullBuf) vkDestroyBuffer(device_, fullBuf, nullptr);
+      if (fullMem) vkFreeMemory(device_, fullMem, nullptr);
+      if (scratchBuf) vkDestroyBuffer(device_, scratchBuf, nullptr);
+      if (scratchMem) vkFreeMemory(device_, scratchMem, nullptr);
+      for (const Item& it : items) buildBlas(meshes_[it.meshId]);
+      continue;
+    }
+
+    VkDeviceAddress scratchBase = bufferDeviceAddress(scratchBuf);
+    scratchBase = (scratchBase + scratchAlign_ - 1) &
+                  ~static_cast<VkDeviceAddress>(scratchAlign_ - 1);
+
+    VkQueryPoolCreateInfo qpi{};
+    qpi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    qpi.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+    qpi.queryCount = static_cast<uint32_t>(items.size());
+    VkQueryPool qp = VK_NULL_HANDLE;
+    if (vkCreateQueryPool(device_, &qpi, nullptr, &qp) != VK_SUCCESS) {
+      vkDestroyBuffer(device_, fullBuf, nullptr);
+      vkFreeMemory(device_, fullMem, nullptr);
+      vkDestroyBuffer(device_, scratchBuf, nullptr);
+      vkFreeMemory(device_, scratchMem, nullptr);
+      for (const Item& it : items) buildBlas(meshes_[it.meshId]);
+      continue;
+    }
+
+    // Create the full-size AS handles over slices of the shared buffer.
+    bool created = true;
+    for (size_t i = 0; i < items.size(); ++i) {
+      VkAccelerationStructureCreateInfoKHR aci{};
+      aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+      aci.buffer = fullBuf;
+      aci.offset = items[i].asOffset;
+      aci.size = items[i].asSize;
+      aci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+      if (pfnCreateAS_(device_, &aci, nullptr, &items[i].fullAs) != VK_SUCCESS) {
+        created = false;
+        break;
+      }
+      bgis[i].pGeometries = &geoms[i];
+      bgis[i].dstAccelerationStructure = items[i].fullAs;
+      bgis[i].scratchData.deviceAddress = scratchBase + items[i].scratchOffset;
+    }
+
+    if (created) {
+      // ---- submit 1: build the whole wave, then query compacted sizes --------
+      std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges(items.size());
+      std::vector<const VkAccelerationStructureBuildRangeInfoKHR*> pRanges(items.size());
+      for (size_t i = 0; i < items.size(); ++i) {
+        ranges[i].primitiveCount = items[i].primCount;
+        pRanges[i] = &ranges[i];
+      }
+      VkCommandBuffer cb = beginOneShot();
+      pfnCmdBuildAS_(cb, static_cast<uint32_t>(bgis.size()), bgis.data(), pRanges.data());
+      VkMemoryBarrier bar{};
+      bar.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+      bar.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+      bar.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+      vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                           VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1,
+                           &bar, 0, nullptr, 0, nullptr);
+      vkCmdResetQueryPool(cb, qp, 0, static_cast<uint32_t>(items.size()));
+      std::vector<VkAccelerationStructureKHR> fulls(items.size());
+      for (size_t i = 0; i < items.size(); ++i) fulls[i] = items[i].fullAs;
+      pfnCmdWriteASProps_(cb, static_cast<uint32_t>(fulls.size()), fulls.data(),
+                          VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, qp, 0);
+      endOneShot(cb);
+
+      std::vector<VkDeviceSize> compacted(items.size(), 0);
+      const VkResult qr = vkGetQueryPoolResults(
+          device_, qp, 0, static_cast<uint32_t>(items.size()),
+          compacted.size() * sizeof(VkDeviceSize), compacted.data(),
+          sizeof(VkDeviceSize),
+          VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+      // ---- submit 2: copy each into right-sized storage ----------------------
+      VkCommandBuffer cb2 = beginOneShot();
+      for (size_t i = 0; i < items.size(); ++i) {
+        VkMeshGPU& m = meshes_[items[i].meshId];
+        const VkDeviceSize csize = (qr == VK_SUCCESS) ? compacted[i] : 0;
+        // A compacted size of 0, or one that is not actually smaller, means
+        // there is nothing to win: keep the full-size build by handing its
+        // storage to the mesh and skipping the copy.
+        if (csize == 0 || csize >= items[i].asSize) {
+          // Cannot hand over a slice of the shared buffer, so rebuild this one
+          // standalone after the wave is torn down.
+          continue;
+        }
+        if (!createDeviceBuffer(csize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                &m.blasBuf, &m.blasMem)) {
+          continue;
+        }
+        VkAccelerationStructureCreateInfoKHR aci{};
+        aci.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        aci.buffer = m.blasBuf;
+        aci.size = csize;
+        aci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        if (pfnCreateAS_(device_, &aci, nullptr, &m.blas) != VK_SUCCESS) {
+          vkDestroyBuffer(device_, m.blasBuf, nullptr);
+          vkFreeMemory(device_, m.blasMem, nullptr);
+          m.blasBuf = VK_NULL_HANDLE;
+          m.blasMem = VK_NULL_HANDLE;
+          continue;
+        }
+        VkCopyAccelerationStructureInfoKHR cpi{};
+        cpi.sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR;
+        cpi.src = items[i].fullAs;
+        cpi.dst = m.blas;
+        cpi.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+        pfnCmdCopyAS_(cb2, &cpi);
+        blasBytes_ += csize;
+        blasBytesUncompacted_ += items[i].asSize;
+      }
+      endOneShot(cb2);
+
+      for (size_t i = 0; i < items.size(); ++i) {
+        VkMeshGPU& m = meshes_[items[i].meshId];
+        if (m.blas == VK_NULL_HANDLE) continue;  // skipped above; rebuilt below
+        VkAccelerationStructureDeviceAddressInfoKHR dai{};
+        dai.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        dai.accelerationStructure = m.blas;
+        m.blasAddr = pfnGetASDeviceAddress_(device_, &dai);
+      }
+    }
+
+    // The transient wave storage (and its full-size AS handles) dies here; the
+    // compacted copies own their own memory.
+    for (const Item& it : items) {
+      if (it.fullAs && pfnDestroyAS_) pfnDestroyAS_(device_, it.fullAs, nullptr);
+    }
+    vkDestroyQueryPool(device_, qp, nullptr);
+    vkDestroyBuffer(device_, fullBuf, nullptr);
+    vkFreeMemory(device_, fullMem, nullptr);
+    vkDestroyBuffer(device_, scratchBuf, nullptr);
+    vkFreeMemory(device_, scratchMem, nullptr);
+
+    // Anything the wave could not compact (or failed to create) still needs a
+    // BLAS: build it the plain way now that the wave's memory is back.
+    for (const Item& it : items) {
+      if (meshes_[it.meshId].blas == VK_NULL_HANDLE) buildBlas(meshes_[it.meshId]);
+    }
+  }
+}
+
+void VulkanRenderer::evictBlasNotIn(const std::vector<uint32_t>& keepMeshIds) {
+  // RT LOD promotes a prototype to Full lazily but never demoted its BLAS, so the
+  // resident set only grew: pan across Island and every region the camera has
+  // ever visited keeps its full-size BLAS forever. Drop the ones this pose does
+  // not render at Full -- they rebuild (compacted) if the camera comes back.
+  if (!rtSupported_) return;
+  std::vector<bool> keep(meshes_.size(), false);
+  for (uint32_t id : keepMeshIds) {
+    if (id < keep.size()) keep[id] = true;
+  }
+  for (size_t i = 0; i < meshes_.size(); ++i) {
+    if (keep[i] || meshes_[i].blas == VK_NULL_HANDLE) continue;
+    destroyBlas(meshes_[i]);
+  }
 }
 
 // Below this instance count the flat per-instance LOD loop is already cheap, so the
@@ -5137,8 +5449,26 @@ void VulkanRenderer::rebuildTlas() {
   // Build the full BLAS only for prototypes that an instance actually renders at
   // Full this pose (the long Proxy/Cull tail keeps no full BLAS -> memory bound by
   // the visible near set, not the scene size).
-  for (const RtLodInstance& s : sel)
-    if (s.level == RtLod::Full) buildBlas(meshes_[s.meshId]);
+  std::vector<uint32_t> fullIds;
+  fullIds.reserve(sel.size());
+  for (const RtLodInstance& s : sel) {
+    if (s.level == RtLod::Full) fullIds.push_back(s.meshId);
+  }
+  // Evict BEFORE building: the demoted set's memory is what pays for the new
+  // wave, which matters exactly when VRAM is tight.
+  evictBlasNotIn(fullIds);
+  blasBytes_ = 0;
+  blasBytesUncompacted_ = 0;
+  blasUniqueBuilt_ = 0;
+  buildBlasWave(fullIds);
+  if (blasBytesUncompacted_ > 0) {
+    LOGI("[vk_rt] BLAS: %.1f MiB resident from %.1f MiB built (%.0f%%), "
+         "%zu unique of %zu full instances, compact=%d",
+         double(blasBytes_) / (1024.0 * 1024.0),
+         double(blasBytesUncompacted_) / (1024.0 * 1024.0),
+         100.0 * double(blasBytes_) / double(blasBytesUncompacted_),
+         blasUniqueBuilt_, fullIds.size(), blasCompact_ ? 1 : 0);
+  }
 
   insts.reserve(sel.size());
   instInfos.reserve(sel.size());

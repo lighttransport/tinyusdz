@@ -709,6 +709,23 @@ class VulkanRenderer final : public Renderer {
   PFN_vkDestroyAccelerationStructureKHR pfnDestroyAS_{nullptr};
   PFN_vkCmdBuildAccelerationStructuresKHR pfnCmdBuildAS_{nullptr};
   PFN_vkGetAccelerationStructureDeviceAddressKHR pfnGetASDeviceAddress_{nullptr};
+  // BLAS compaction: build with ALLOW_COMPACTION, query the compacted size, then
+  // copy into a right-sized AS. A BLAS is typically ~half its build-time size.
+  PFN_vkCmdWriteAccelerationStructuresPropertiesKHR pfnCmdWriteASProps_{nullptr};
+  PFN_vkCmdCopyAccelerationStructureKHR pfnCmdCopyAS_{nullptr};
+  bool blasCompact_{true};  // TUSDVIEW_BLAS_COMPACT=0 opts out
+  // Resident compacted BLAS bytes for this pose, and what they would have cost
+  // uncompacted (reported in the [vk_rt] log; also what the test asserts on).
+  uint64_t blasBytes_{0};
+  uint64_t blasBytesUncompacted_{0};
+  size_t blasUniqueBuilt_{0};  // prototypes actually built this pose (post-dedup)
+
+  // Build the Full-LOD BLAS set as compacted waves (one build submit + one copy
+  // submit per wave), instead of one build + one queue stall per prototype.
+  void buildBlasWave(const std::vector<uint32_t>& meshIds);
+  // Drop the BLAS of prototypes this pose does not render at Full. Without this
+  // the BLAS set only ever grows as the camera visits new regions.
+  void evictBlasNotIn(const std::vector<uint32_t>& keepMeshIds);
 
   VkAccelerationStructureKHR tlas_{VK_NULL_HANDLE};
   VkBuffer tlasBuf_{VK_NULL_HANDLE};
