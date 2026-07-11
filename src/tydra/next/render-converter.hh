@@ -16,6 +16,12 @@
 #include "next/stage/stage.hh"
 
 namespace tinyusdz {
+namespace next {
+class AssetResolver;
+}  // namespace next
+}  // namespace tinyusdz
+
+namespace tinyusdz {
 namespace tydra {
 namespace next {
 
@@ -66,6 +72,13 @@ struct MaterialConfig {
   // Texture loading
   bool load_textures = true;
   bool allow_missing_textures = true;
+
+  // Assign a generated default PreviewSurface material to meshes/curves that
+  // have no authored material binding (legacy assign_default_material parity).
+  // Disabled by default so callers can distinguish unbound geometry via
+  // material_id == -1.
+  bool assign_default_material = false;
+  std::string default_material_name = "defaultMaterial";
 
   // Color space
   ColorSpace target_color_space = ColorSpace::Linear;
@@ -123,6 +136,11 @@ struct ConverterConfig {
   // against it into TextureImage::resolved_path. Empty = leave paths as
   // authored.
   std::string asset_base_dir;
+
+  // Optional next-core AssetResolver (non-owning). When set it takes over
+  // texture asset-path resolution (anchor/working-dir/search paths +
+  // suffix fallback) instead of the plain asset_base_dir prefix above.
+  const ::tinyusdz::next::AssetResolver* asset_resolver = nullptr;
 
   // Progress callback
   using ProgressCallback = std::function<void(float progress, const std::string& message)>;
@@ -251,6 +269,10 @@ class RenderSceneConverter {
   void AssignMeshMaterialBinding(const ::tinyusdz::next::Stage& stage,
                                  const RenderScene& scene,
                                  RenderMesh* mesh);
+
+  /// Lazily create the shared default material (MaterialConfig::
+  /// assign_default_material); returns its id.
+  int32_t GetOrCreateDefaultMaterial(RenderScene* scene);
   void AssignPointInstanceDrawMaterials(RenderScene* scene);
   void DuplicatePointInstanceMeshes(RenderScene* scene);
 
@@ -294,6 +316,10 @@ class RenderSceneConverter {
                              const UsdPrim& shader_prim,
                              PreviewSurfaceShader* out,
                              RenderScene* scene);
+  bool ExtractStandardSurfaceAsOpenPBR(const ::tinyusdz::next::Stage& stage,
+                                       const ::tinyusdz::next::UsdPrim& shader_prim,
+                                       OpenPBRSurfaceShader* out,
+                                       RenderScene* scene);
   bool ExtractOpenPBRSurface(const ::tinyusdz::next::Stage& stage,
                              const UsdPrim& shader_prim,
                              OpenPBRSurfaceShader* out,

@@ -191,10 +191,18 @@ public:
   /// @param stage USD stage
   /// @param material_prim Material prim with MaterialX shader binding
   /// @param out Output render material
+  /// @param allow_converter_delegation When true (direct callers), a
+  ///        material-local shader may be routed through the shared
+  ///        RenderSceneConverter. MUST be false when called FROM
+  ///        RenderSceneConverter::ConvertMaterial — the two functions
+  ///        otherwise recurse into each other until stack overflow on
+  ///        materials whose shader neither side converts directly (e.g.
+  ///        ND_standard_surface_surfaceshader).
   /// @return true on success
   bool ConvertUsdMtlxMaterial(const tinyusdz::next::Stage& stage,
                                const tinyusdz::next::UsdPrim& material_prim,
-                               RenderMaterial* out);
+                               RenderMaterial* out,
+                               bool allow_converter_delegation = true);
 
   /// Parse MaterialX content to intermediate representation
   bool ParseMtlx(const std::string& mtlx_content,
@@ -210,20 +218,10 @@ public:
   /// Get warning message
   const std::string& GetWarning() const { return warning_; }
 
-  /// When a material-local surface shader is found, ConvertUsdMtlxMaterial
-  /// normally hands the material back to RenderSceneConverter::ConvertMaterial,
-  /// which understands UsdPreviewSurface/OpenPBR. Callers reached FROM
-  /// ConvertMaterial must disable that: ConvertMaterial only falls back to this
-  /// converter once it has already failed to find a shader it knows, so
-  /// delegating back re-enters it with the same prim and recurses until the
-  /// stack overflows (an unknown info:id parented under its Material did this).
-  void SetDelegateToRenderConverter(bool v) { delegate_to_render_converter_ = v; }
-
 private:
   MtlxConvertOptions options_;
   std::string error_;
   std::string warning_;
-  bool delegate_to_render_converter_ = true;
 
   // Internal conversion helpers
   bool ParseStandardSurface(const MtlxNodeInfo& node, StandardSurfaceData* out);

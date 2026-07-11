@@ -3312,6 +3312,271 @@ static void test_sublayer_offset_parses() {
   std::cout << "  OK" << std::endl;
 }
 
+
+// 2026-07 deferred audit items: layer-level relocates apply during
+// BuildStage (cross-parent move, matching pxr), and the applied list is
+// dropped from the flattened output metadata.
+static void test_layer_relocates() {
+  std::cout << "test_layer_relocates..." << std::endl;
+
+  auto asset = std::make_shared<Layer>();
+  {
+    LayerBuilder ab(*asset);
+    ab.begin_prim("CharRig", "Xform");
+    ab.begin_prim("Rig", "Xform");
+    ab.begin_prim("Anim", "Xform");
+    ab.add_property("v", Value(int32_t(7)));
+    ab.end_prim();
+    ab.end_prim();
+    ab.end_prim();
+    ab.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    rootL->meta().relocates.emplace_back("/Char/Rig/Anim", "/Char/Anim");
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("Char", "Xform");
+    rb.current()->meta().references.push_back("@mem_rig@</CharRig>");
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("mem_rig", asset);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim moved = stage.GetPrimAtPath("/Char/Anim");
+  assert(moved.IsValid() && "relocated prim must exist at the new path");
+  const Value* v = moved.GetPropertyValue("v");
+  assert(v && v->as_int() && *v->as_int() == 7);
+  UsdPrim old_loc = stage.GetPrimAtPath("/Char/Rig/Anim");
+  assert(!old_loc.IsValid() && "source location must be vacated");
+  UsdPrim rig = stage.GetPrimAtPath("/Char/Rig");
+  assert(rig.IsValid() && "unrelocated sibling structure intact");
+  // Applied relocates must not survive into the flattened metadata.
+  assert(stage.GetRootLayer()->meta().relocates.empty());
+  std::cout << "  OK" << std::endl;
+}
+
+// P2 audit: a reference that names no prim path to a layer without an
+// authored defaultPrim contributes NOTHING and warns (pxr: "Unresolved
+// reference prim path @...@<defaultPrim>") — never silently the first root
+// prim.
+static void test_p2_ref_no_default_prim() {
+  std::cout << "test_p2_ref_no_default_prim..." << std::endl;
+  const std::string lib = "/tmp/next_p2_nodef_lib.usda";
+  const std::string root = "/tmp/next_p2_nodef_root.usda";
+  {
+    std::ofstream o(lib);
+    o << "#usda 1.0\n"
+         "def Xform \"First\" { double size = 1 }\n"
+         "def Xform \"Second\" { double size = 2 }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"Hello\" (prepend references = "
+         "@./next_p2_nodef_lib.usda@) { }\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err) &&
+         "unresolved default-prim reference must not fail the compose");
+  UsdPrim hello = stage.GetPrimAtPath("/Hello");
+  assert(hello.IsValid() && "referencing prim kept (empty)");
+  assert(hello.GetPropertyValue("size") == nullptr &&
+         "no silent fallback to the first root prim");
+  assert(warn.find("defaultPrim") != std::string::npos &&
+         "warning names the missing defaultPrim");
+  std::remove(lib.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// P2 audit: BuildStage prunes the SUBTREE of a deactivated prim (pxr composes
+// no children under active=false; the prim itself is kept, with its authored
+// active=false, so consumers can query IsActive). A stronger layer's
+// active=true re-activation keeps the subtree.
+static void test_p2_inactive_subtree_pruned() {
+  std::cout << "test_p2_inactive_subtree_pruned..." << std::endl;
+  const std::string f = "/tmp/next_p2_inactive.usda";
+  {
+    std::ofstream o(f);
+    o << "#usda 1.0\n"
+         "def Xform \"A\" (active = false)\n{\n"
+         "    def Sphere \"B\" { double radius = 3 }\n"
+         "}\n"
+         "def Xform \"C\" { double v = 1 }\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(f, resolver, &stage, {}, &warn, &err));
+  UsdPrim a = stage.GetPrimAtPath("/A");
+  assert(a.IsValid() && !a.IsActive() &&
+         "inactive prim kept with active=false");
+  assert(!stage.GetPrimAtPath("/A/B").IsValid() &&
+         "child of inactive prim pruned from the stage");
+  assert(stage.GetPrimAtPath("/C").IsValid() && "sibling untouched");
+  std::remove(f.c_str());
+
+  // Re-activation: root-authored active=true is stronger than the referenced
+  // prim's active=false — the referenced subtree must survive.
+  const std::string ref = "/tmp/next_p2_react_ref.usda";
+  const std::string root = "/tmp/next_p2_react_root.usda";
+  {
+    std::ofstream o(ref);
+    o << "#usda 1.0\n"
+         "def Xform \"R\" (active = false)\n{\n"
+         "    def Sphere \"S\" { double radius = 1 }\n"
+         "}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"P\" (active = true\n"
+         "                 prepend references = @./next_p2_react_ref.usda@</R>"
+         ")\n{\n}\n";
+  }
+  Stage stage2;
+  warn.clear(); err.clear();
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage2, {}, &warn, &err));
+  UsdPrim p = stage2.GetPrimAtPath("/P");
+  assert(p.IsValid() && p.IsActive() && "stronger active=true wins");
+  assert(stage2.GetPrimAtPath("/P/S").IsValid() &&
+         "re-activated prim keeps its referenced subtree");
+  std::remove(ref.c_str());
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+// P2 audit: an inherit to a SUB-ROOT class reached through a reference is
+// implied at the MAPPED class path in the referencing stack, so a root-layer
+// override at that path composes onto the inheriting prim (pxr maps implied
+// classes through the arc's map function). Also covers the root-level class
+// case for a CHILD prim of the referenced root (the re-rooted source's
+// ancestor chain must include the root stack).
+static void test_p2_implied_subroot_class() {
+  std::cout << "test_p2_implied_subroot_class..." << std::endl;
+  const std::string models = "/tmp/next_p2_models.usda";
+  const std::string root = "/tmp/next_p2_models_root.usda";
+  {
+    std::ofstream o(models);
+    o << "#usda 1.0\n(\n    defaultPrim = \"Models\"\n)\n"
+         "def Scope \"Models\"\n{\n"
+         "    class \"_class_X\" { double a = 1 }\n"
+         "    def Xform \"M\" (inherits = </Models/_class_X>) { }\n"
+         "}\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "def Xform \"World\" (references = @./next_p2_models.usda@)\n{\n"
+         "    over \"_class_X\" { double a = 2 }\n"
+         "}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  UsdPrim m = stage.GetPrimAtPath("/World/M");
+  assert(m.IsValid());
+  const Value* a = m.GetPropertyValue("a");
+  assert(a && a->as_double() && *a->as_double() == 2.0 &&
+         "root override on the implied sub-root class path must win");
+  std::remove(models.c_str());
+  std::remove(root.c_str());
+
+  // Root-level class inherited by a CHILD of the referenced root prim.
+  const std::string lib2 = "/tmp/next_p2_models2.usda";
+  const std::string root2 = "/tmp/next_p2_models2_root.usda";
+  {
+    std::ofstream o(lib2);
+    o << "#usda 1.0\n(\n    defaultPrim = \"Models\"\n)\n"
+         "class \"_class_X\" { double a = 1 }\n"
+         "def Scope \"Models\"\n{\n"
+         "    def Xform \"M\" (inherits = </_class_X>) { }\n"
+         "}\n";
+  }
+  {
+    std::ofstream o(root2);
+    o << "#usda 1.0\n"
+         "over \"_class_X\" { double a = 2 }\n"
+         "def Xform \"World\" (references = @./next_p2_models2.usda@) { }\n";
+  }
+  Stage stage2;
+  warn.clear(); err.clear();
+  assert(pcp::ComposeStageFromFile(root2, resolver, &stage2, {}, &warn, &err));
+  UsdPrim m2 = stage2.GetPrimAtPath("/World/M");
+  assert(m2.IsValid());
+  const Value* a2 = m2.GetPropertyValue("a");
+  assert(a2 && a2->as_double() && *a2->as_double() == 2.0 &&
+         "root override on a root-level implied class must reach a "
+         "referenced CHILD prim");
+  std::remove(lib2.c_str());
+  std::remove(root2.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
+
+// `reorder nameChildren` / `reorder rootPrims` apply to the flattened child
+// order (pxr semantics: listed names move to the front in list order, the
+// rest keep authored order). Locked here because the audit once flagged
+// reorder as unimplemented.
+static void test_reorder_children() {
+  std::cout << "test_reorder_children..." << std::endl;
+  auto parse_to_layer = [](const char* usda) -> std::shared_ptr<Layer> {
+    std::string w, e;
+    auto lp = pcp::LoadLayerFromMemory(
+        "mem.usda", reinterpret_cast<const uint8_t*>(usda),
+        std::strlen(usda), &w, &e);
+    return lp;
+  };
+  auto rootL = parse_to_layer(
+      "#usda 1.0\n"
+      "reorder rootPrims = [\"Z\", \"M\"]\n"
+      "def Xform \"M\" { }\n"
+      "def Xform \"Q\" { }\n"
+      "def Xform \"Z\"\n"
+      "{\n"
+      "    reorder nameChildren = [\"C\", \"A\"]\n"
+      "    def Sphere \"A\" { }\n"
+      "    def Cube \"B\" { }\n"
+      "    def Cone \"C\" { }\n"
+      "}\n");
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  std::vector<UsdPrim> roots = stage.GetRootPrims();
+  assert(roots.size() == 3);
+  assert(roots[0].GetName() == "Z");
+  assert(roots[1].GetName() == "M");
+  assert(roots[2].GetName() == "Q");
+  std::vector<UsdPrim> kids = roots[0].GetChildren();
+  assert(kids.size() == 3);
+  assert(kids[0].GetName() == "C");
+  assert(kids[1].GetName() == "A");
+  assert(kids[2].GetName() == "B");
+  std::cout << "  OK" << std::endl;
+}
+
 int main() {
   test_compute_prim_index();
   test_typed_composition_issues();
@@ -3353,6 +3618,11 @@ int main() {
   test_flatten_instances();
   test_relocates();
   test_implied_inherit();
+  test_layer_relocates();
+  test_reorder_children();
+  test_p2_ref_no_default_prim();
+  test_p2_inactive_subtree_pruned();
+  test_p2_implied_subroot_class();
   test_instance_proxy();
   test_parallel_prewarm();
   test_cross_source_variant();

@@ -18,6 +18,10 @@ namespace next {
 
 /// Options for reading crate files
 struct CrateReadOptions {
+  /// Fail closed when any field/value must be ignored or approximated. This
+  /// turns reader warnings into errors for AOUSD conformance-sensitive loads.
+  bool strict_aousd_conformance = false;
+
   /// Optional progress callback. `phase` is a stable short string, `current`
   /// and `total` are phase-local counts when available. Return false to cancel.
   std::function<bool(const char* phase, size_t current, size_t total)>

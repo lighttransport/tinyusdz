@@ -14,6 +14,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gpu_backend import device_name, is_software_renderer  # noqa: E402
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -89,30 +92,42 @@ def child_env(args):
     return env
 
 
-def command_prefix(args):
+def command_prefixes(args):
+    """Launch prefixes to try, in order.
+
+    An inherited DISPLAY comes first: that is where a HARDWARE GL device lives,
+    and GPU skinning only works on one (Xvfb has no DRI, so Mesa falls back to
+    llvmpipe, which fetches no skin attributes -- see gpu_backend.py). Xvfb is
+    the fallback, both when there is no DISPLAY and when the inherited one turns
+    out to be unusable (a stale forwarded X11 socket).
+    """
     if args.headless:
-        return []
+        return [[]]
     if args.no_xvfb or platform.system() != "Linux":
-        return []
+        return [[]]
+    prefixes = []
+    if os.environ.get("DISPLAY"):
+        prefixes.append([])
     xvfb_run = args.xvfb_run or shutil.which("xvfb-run")
-    if not xvfb_run:
+    if xvfb_run:
+        screen = f"-screen 0 {args.width}x{args.height}x24"
+        prefixes.append([xvfb_run, "-a", "-s", screen])
+    if not prefixes:
         raise RuntimeError("xvfb-run was not found; install it or pass --no-xvfb")
-    screen = f"-screen 0 {args.width}x{args.height}x24"
-    return [xvfb_run, "-a", "-s", screen]
+    return prefixes
 
 
 def run_viewer(args, mode, output_path):
-    prefix = command_prefix(args)
-    cmd = prefix + [args.app]
+    viewer = [args.app]
     if args.headless:
-        cmd.append("--headless")
+        viewer.append("--headless")
     if args.rt:
-        cmd.append("--rt")
+        viewer.append("--rt")
     if args.vk_device:
-        cmd += ["--vk-device", args.vk_device]
+        viewer += ["--vk-device", args.vk_device]
     if args.mode:
-        cmd += ["--mode", args.mode]
-    cmd += [
+        viewer += ["--mode", args.mode]
+    viewer += [
         "--backend",
         args.backend,
         "--frames",
@@ -125,10 +140,29 @@ def run_viewer(args, mode, output_path):
         str(output_path),
         args.model,
     ]
-    proc = subprocess.run(
-        cmd, text=True, capture_output=True, check=False, env=child_env(args)
-    )
-    log = (proc.stdout or "") + (proc.stderr or "")
+    prefixes = command_prefixes(args)
+    for i, prefix in enumerate(prefixes):
+        cmd = prefix + viewer
+        proc = subprocess.run(
+            cmd, text=True, capture_output=True, check=False, env=child_env(args)
+        )
+        log = (proc.stdout or "") + (proc.stderr or "")
+        # An inherited DISPLAY that cannot be opened (stale forwarded X11) is not
+        # a failure -- fall through to the Xvfb prefix.
+        if proc.returncode != 0 and i + 1 < len(prefixes) and "glfwInit failed" in log:
+            continue
+        break
+    # A software rasterizer (Xvfb / forwarded X11 give Mesa llvmpipe, which has
+    # no DRI) fetches only aPosition: the skin joint/weight attributes read back
+    # as zero, so the GPU-skinned render is the rest pose no matter what the
+    # skinning code does, and CPU-vs-GPU always differs -- see gpu_backend.py.
+    # The comparison is meaningless there, so skip rather than fail.
+    if is_software_renderer(log):
+        raise SkipTest(
+            f"{args.backend} is a software renderer ({device_name(log)}); it "
+            f"does not fetch the skin vertex attributes, so CPU-vs-GPU skinning "
+            f"cannot be compared on it"
+        )
     if proc.returncode != 0:
         if args.skip_unavailable and (
             "Vulkan" in log

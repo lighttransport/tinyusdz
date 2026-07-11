@@ -6,6 +6,7 @@
 // Core DAG construction tests
 void compgraph_basic_prim_index_test(void);
 void compgraph_strength_order_test(void);
+void compgraph_nested_strength_order_test(void);
 void compgraph_inherits_dag_test(void);
 void compgraph_specializes_globally_weak_test(void);
 void compgraph_references_dag_test(void);

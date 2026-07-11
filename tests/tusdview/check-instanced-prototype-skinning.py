@@ -35,6 +35,9 @@ import subprocess
 import sys
 import zlib
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gpu_backend import device_name, is_software_renderer  # noqa: E402
+
 SKIP = 77
 # Fraction of pixels that must change between the two time codes. The rig bends
 # ~1.2 scene units; the rest-pose bug pins this at exactly 0.0.
@@ -99,18 +102,25 @@ def read_png_rgb(path):
 
 
 def render(binary, model, out_png, timecode, backend):
-    cmd = []
-    xvfb = shutil.which("xvfb-run")
-    if xvfb and not os.environ.get("DISPLAY"):
-        cmd = [xvfb, "-a"]
-    cmd += [binary, "--backend", backend, "--frames", "4", "--time", str(timecode),
+    args = [binary, "--backend", backend, "--frames", "4", "--time", str(timecode),
             "--skinning", "gpu", "--screenshot", out_png, model]
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       timeout=600)
-    log = r.stdout.decode(errors="replace")
-    if r.returncode != 0 or not os.path.exists(out_png):
-        return None, log
-    return log, log
+    xvfb = shutil.which("xvfb-run")
+    # Prefer an inherited DISPLAY (that is where a hardware GL device lives) and
+    # fall back to Xvfb when there is none, or when the one we inherited cannot
+    # be opened (a stale forwarded X11 socket).
+    prefixes = []
+    if os.environ.get("DISPLAY"):
+        prefixes.append([])
+    if xvfb:
+        prefixes.append([xvfb, "-a"])
+    log = ""
+    for prefix in prefixes:
+        r = subprocess.run(prefix + args, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=600)
+        log = r.stdout.decode(errors="replace")
+        if r.returncode == 0 and os.path.exists(out_png):
+            return log, log
+    return None, log
 
 
 def instance_count(log):
@@ -126,6 +136,14 @@ def check_backend(binary, model, work, backend):
     log_a, raw_a = render(binary, model, a_png, 0, backend)
     if log_a is None:
         print(f"SKIP: {backend} backend unavailable")
+        return None
+    # GPU skinning cannot work on a software rasterizer: it fetches no vertex
+    # attribute but aPosition, so the joints/weights read as zero and the rig
+    # renders its rest pose whatever the code does (see gpu_backend.py).
+    if is_software_renderer(raw_a):
+        print(f"SKIP: {backend} is a software renderer ({device_name(raw_a)}); "
+              f"it does not fetch the skin vertex attributes, so GPU skinning "
+              f"cannot be exercised on it")
         return None
     log_b, _ = render(binary, model, b_png, 12, backend)
     if log_b is None:

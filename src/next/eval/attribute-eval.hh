@@ -16,6 +16,7 @@
 #include "../stage/stage.hh"
 #include <string>
 #include <optional>
+#include <functional>
 
 namespace tinyusdz {
 namespace next {
@@ -29,6 +30,14 @@ struct EvalOptions {
   TimeInterpolation interp = TimeInterpolation::Linear;  // Interpolation mode
   bool follow_connections = true;                 // Follow shader connections
   int max_connection_depth = 16;                  // Max connection chain depth
+  /// AOUSD DefaultTime semantics: do not consult timeSamples; resolve authored
+  /// default, a value block, then the schema fallback.
+  bool default_time = false;
+  bool strict_aousd_conformance = false;
+  /// Loader used by core value-clip resolution. When absent, compatibility
+  /// mode skips clips; strict mode returns an evaluation error.
+  std::function<bool(const std::string&, Stage*, std::string*, std::string*)>
+      clip_stage_loader;
 };
 
 /// Evaluation result with metadata
@@ -38,8 +47,11 @@ struct EvalResult {
   bool from_time_sample = false;    // Value came from time sample
   bool from_default = false;        // Value came from default
   bool from_connection = false;     // Value resolved via connection
+  bool from_schema_fallback = false;
   bool interpolated = false;        // Value was interpolated
   std::string source_path;          // Path where value was found
+  std::string source_asset;         // Value-clip asset, when applicable
+  std::string error;
 };
 
 /// AttributeEval - attribute value evaluation

@@ -15,6 +15,7 @@ import {
 	getBackendFromURL,
 	loadUSDSceneFromURL,
 	makeStaticNextParseOptions,
+	mountBackendSelector,
 	parseUSDSceneFromArrayBuffer
 } from 'tinyusdz/LoaderConfigUtils.js';
 import {
@@ -413,12 +414,17 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		});
 		const built = buildNextThreeNode(usdScene, {
 			skipTextures: false,
-			lazyTextures: true
+			lazyTextures: true,
+			// Animations/skinning are extracted from the adapter AFTER the
+			// build; the default releaseBuildData would wipe them.
+			releaseBuildData: false
 		});
 		if (built.textureManager) {
 			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
 		}
-		const nodeIndexMap = buildNodeIndexMap(built.node);
+		// Next animation target_node is a RenderScene node-table index; use the
+		// table map from buildNextThreeNode, not a DFS walk of the built tree.
+		const nodeIndexMap = built.nodeIndexMap || buildNodeIndexMap(built.node);
 		if (String(meta.upAxis || 'Y').toUpperCase() === 'Z') {
 			characterGroup.rotation.x = -Math.PI / 2;
 		}
@@ -442,6 +448,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			const animData = extractUSDSceneAnimations(usdScene, {
 				boneMaps: skeletonBuild.boneMaps,
 				nodeIndexMap,
+				threeRoot: built.node,
 				timeCodesPerSecond: sceneTimeCodesPerSecond,
 				logger: console
 			});
@@ -556,6 +563,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		const animData = extractUSDSceneAnimations(usdScene, {
 			boneMaps,
 			nodeIndexMap,
+			threeRoot: threeNode,
 			timeCodesPerSecond,
 			logger: console
 		});
@@ -575,7 +583,7 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			const info = animationInfos[i];
 			const srcType = info?.sourceType || 'Unknown';
 			const joints = info?.numAnimatedJoints ?? 0;
-			console.log(`  Clip ${i}: "${clip.name}" — ${clip.duration.toFixed(2)}s, ${clip.tracks.length} tracks, source: ${srcType}, joints: ${joints}`);
+			console.log(`  Clip ${i}: "${clip.name}" — ${clip.duration.toFixed(0)} frames (${(clip.duration / sceneTimeCodesPerSecond).toFixed(2)}s), ${clip.tracks.length} tracks, source: ${srcType}, joints: ${joints}`);
 		});
 	} catch (err) {
 		console.error('Animation extraction failed:', err);
@@ -1189,6 +1197,9 @@ async function initLoader() {
 	loader = await createConfiguredTinyUSDZLoader();
 	console.log('TinyUSDZ loader initialized');
 }
+
+// Backend switch reloads the page (the loader binds its WASM module at init).
+mountBackendSelector(document.getElementById('file-controls'));
 
 async function loadFromURL(url) {
 	if (!loader) await initLoader();

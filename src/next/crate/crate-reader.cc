@@ -17,6 +17,14 @@ namespace next {
 // ============================================================
 
 bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
+  // VtArrayEdit reps (crate 0.14): not supported — without this check the
+  // rep masquerades as a scalar of the element type and reads the edit
+  // tuple header as the value (silent corruption).
+  if (rep.is_array_edit()) {
+    AddWarning("VtArrayEdit values are not supported; value dropped");
+    return false;
+  }
+
   CrateTypeId type_id = rep.type_id();
 
   if (rep.is_array()) {
@@ -26,8 +34,16 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
   switch (type_id) {
     case CrateTypeId::Bool: return UnpackBool(rep, out);
     case CrateTypeId::Int: return UnpackInt(rep, out);
-    case CrateTypeId::UInt:
-    case CrateTypeId::UChar: return UnpackUInt(rep, out);
+    case CrateTypeId::UInt: return UnpackUInt(rep, out);
+    case CrateTypeId::UChar: {
+      // Keep the uchar type identity (was mutated to uint).
+      if (!UnpackUInt(rep, out)) return false;
+      if (const uint32_t* u = out.as_uint()) {
+        const uint8_t b = static_cast<uint8_t>(*u & 0xFFu);
+        out = Value::MakeFromRaw(TypeId::UChar, &b);
+      }
+      return true;
+    }
     case CrateTypeId::Int64: return UnpackInt64(rep, out);
     case CrateTypeId::UInt64: return UnpackUInt64(rep, out);
     case CrateTypeId::Float: return UnpackFloat(rep, out);
@@ -48,7 +64,15 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
     case CrateTypeId::Matrix4d: return UnpackMatrix4d(rep, out);
     case CrateTypeId::Specifier: return UnpackSpecifier(rep, out);
     case CrateTypeId::Variability: return UnpackVariability(rep, out);
-    case CrateTypeId::TimeCode: return UnpackDouble(rep, out);
+    case CrateTypeId::TimeCode: {
+      // Decode like a double but preserve the TimeCode type identity
+      // (a crate rewrite must not silently mutate timecode -> double).
+      if (!UnpackDouble(rep, out)) return false;
+      if (const double* d = out.as_double()) {
+        out = Value::MakeFromRaw(TypeId::TimeCode, d);
+      }
+      return true;
+    }
     case CrateTypeId::TimeSamples: return UnpackTimeSamples(rep, out);
     case CrateTypeId::Half: return UnpackHalf(rep, out);
     case CrateTypeId::Vec2i: return UnpackVec2i(rep, out);
@@ -166,8 +190,46 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       return true;
     }
 
+    case CrateTypeId::PathExpression: {
+      // SdfPathExpression (crate >= 0.10): the expression text as a u32
+      // string index in the value stream.
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+        return false;
+      }
+      uint32_t sidx = 0;
+      if (!reader_->read_u32(sidx)) return false;
+      std::string text;
+      GetString(sidx, text);
+      out = Value::MakeStringLike(text, TypeId::PathExpression);
+      return true;
+    }
+
     case CrateTypeId::Dictionary:
       return DecodeDictionary(rep, out, 0);
+
+    case CrateTypeId::Relocates: {
+      // SdfRelocates (crate >= 0.11): [u64 count][(u32 src, u32 dst)*].
+      // Surface as a flat token array of [src, dst, ...] pairs; the stage
+      // builder folds them into PrimSpecMeta::relocates.
+      if (rep.payload() == 0) { out = Value::MakeTokenArray({}); return true; }
+      if (!reader_->seek(static_cast<size_t>(rep.payload_as_offset()))) {
+        return false;
+      }
+      uint64_t n = 0;
+      if (!reader_->read_u64(n)) return false;
+      if (n > options_.max_array_elements) return false;
+      std::vector<std::string> pairs;
+      pairs.reserve(static_cast<size_t>(n) * 2);
+      for (uint64_t i = 0; i < n; ++i) {
+        uint32_t src = 0, dst = 0;
+        if (!reader_->read_u32(src) || !reader_->read_u32(dst)) return false;
+        if (src >= paths_.size() || dst >= paths_.size()) return false;
+        pairs.push_back(paths_[src]);
+        pairs.push_back(paths_[dst]);
+      }
+      out = Value::MakeTokenArray(std::move(pairs));
+      return true;
+    }
 
     default:
       AddWarning(std::string("Unsupported value type: ") + CrateTypeIdName(type_id));

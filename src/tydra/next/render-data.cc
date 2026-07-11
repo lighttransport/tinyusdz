@@ -39,6 +39,7 @@ void RenderMesh::compact() {
   texcoords_0.shrink_to_fit();
   texcoords_1.shrink_to_fit();
   colors.shrink_to_fit();
+  opacities.shrink_to_fit();
   triangulated_indices.shrink_to_fit();
   triangulated_face_vertex_indices.shrink_to_fit();
 
@@ -68,6 +69,7 @@ bool RenderMesh::has_alloc_failure() const {
       points.alloc_failed() || normals.alloc_failed() ||
       tangents.alloc_failed() || texcoords_0.alloc_failed() ||
       texcoords_1.alloc_failed() || colors.alloc_failed() ||
+      opacities.alloc_failed() ||
       triangulated_indices.alloc_failed() ||
       triangulated_face_vertex_indices.alloc_failed()) {
     return true;
@@ -103,6 +105,7 @@ size_t RenderMesh::memory_usage() const {
   total += texcoords_0.memory_usage();
   total += texcoords_1.memory_usage();
   total += colors.memory_usage();
+  total += opacities.memory_usage();
   total += triangulated_indices.memory_usage();
 
   for (const auto& pv : primvars) {
