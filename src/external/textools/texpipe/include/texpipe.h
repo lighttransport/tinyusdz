@@ -385,6 +385,36 @@ tp_result tp_ktx2_write_uni(const uint8_t *const *uni_levels,
                             const uint32_t *level_h, int num_levels,
                             uint8_t *out, size_t out_size, size_t *written);
 
+/* Zstd compressor callbacks -- the write-side counterpart of
+ * tp_zstd_decompress_fn. `zbound` returns the worst-case compressed size for
+ * `src_size` (wrap ZSTD_compressBound); `zenc` compresses and returns the bytes
+ * written, or 0 on error (wrap ZSTD_compress). As on the read side, the library
+ * carries no zstd dependency -- the host supplies these. */
+typedef size_t (*tp_zstd_bound_fn)(void *user, size_t src_size);
+typedef size_t (*tp_zstd_compress_fn)(void *user, uint8_t *dst, size_t dst_cap,
+                                      const uint8_t *src, size_t src_size);
+
+/* tp_ktx2_write_uni, but Zstd-supercompressed (supercompressionScheme = 2) --
+ * the form real KTX2/UASTC assets ship in on disk (block data typically packs to
+ * a fraction of its raw size). Each level is compressed independently so a reader
+ * can inflate them one at a time; read it back with tp_ktx2_read_zstd.
+ *
+ * The output size is not known until the levels are compressed, so unlike
+ * tp_ktx2_write_uni the buffer is *allocated* with `a` (NULL = malloc) and
+ * returned via *out / *out_size; release it with tp_free(a, *out).
+ *
+ * Level rules match tp_ktx2_write_uni: only level_w[0] / level_h[0] reach the
+ * header, levels 1.. must be the standard halving pyramid, and uni_sizes[l] must
+ * be the exact block payload for level l (the reader pins uncompressedByteLength
+ * to it). */
+tp_result tp_ktx2_write_uni_zstd(const tir_allocator *a, tp_zstd_bound_fn zbound,
+                                 tp_zstd_compress_fn zenc, void *user,
+                                 const uint8_t *const *uni_levels,
+                                 const size_t *uni_sizes,
+                                 const uint32_t *level_w,
+                                 const uint32_t *level_h, int num_levels,
+                                 uint8_t **out, size_t *out_size);
+
 /* ===========================================================================
  * Leaf helpers (also the Phase 1 test surface)
  * ========================================================================= */

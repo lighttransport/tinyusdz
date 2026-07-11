@@ -1594,6 +1594,72 @@ static size_t passthrough_zdec(void *user, uint8_t *dst, size_t dst_cap,
     return src_size;
 }
 
+/* Identity compressor pair, the write-side mirror of passthrough_zdec: exercises
+ * the tp_ktx2_write_uni_zstd layout / index / callback path without a real zstd
+ * (a stream it writes is then read back with passthrough_zdec). */
+static size_t passthrough_zbound(void *user, size_t src_size) {
+    (void)user;
+    return src_size;
+}
+static size_t passthrough_zenc(void *user, uint8_t *dst, size_t dst_cap,
+                               const uint8_t *src, size_t src_size) {
+    (void)user;
+    if (src_size > dst_cap) return 0;
+    memcpy(dst, src, src_size);
+    return src_size;
+}
+
+/* uni levels -> Zstd-supercompressed KTX2 -> read back -> decode. */
+static void test_ktx2_uni_zstd_write(void) {
+    const uint32_t W = 64, H = 64;
+    uint8_t *ref = make_gradient((int)W, (int)H);
+    uint8_t *uni = NULL, *ktx = NULL, *dec = NULL;
+    const uint8_t *levels[1];
+    size_t sizes[1], usz, ktx_n = 0;
+    uint32_t lw[1], lh[1];
+    tp_ktx2_image img;
+    const size_t npix = (size_t)W * H;
+
+    usz = tc_uni_compressed_size(W, H);
+    uni = (uint8_t *)malloc(usz);
+    CHECK(tc_uni_compress_rgba8(ref, W, H, (size_t)W * 4u, uni, usz) == TC_SUCCESS,
+          "uni compress");
+    levels[0] = uni; sizes[0] = usz; lw[0] = W; lh[0] = H;
+
+    CHECK(TP_OK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound, passthrough_zenc,
+                                       NULL, levels, sizes, lw, lh, 1, &ktx,
+                                       &ktx_n)),
+          "write uni zstd ktx2");
+    CHECK(ktx != NULL && ktx_n > 0, "zstd ktx2 produced");
+    CHECK(rd_u32(ktx + 44) == 2u, "supercompressionScheme = 2");
+    CHECK(rd_u32(ktx + 12) == 0u, "vkFormat = UNDEFINED (uni)");
+    CHECK(rd_u64(ktx + 96) == (uint64_t)usz, "uncompressedByteLength = uni size");
+
+    /* Plain tp_ktx2_read must refuse it; tp_ktx2_read_zstd must accept it. */
+    CHECK(tp_ktx2_read(ktx, ktx_n, &img) == TP_ERROR_UNSUPPORTED,
+          "scheme-2 needs a decompressor");
+    CHECK(TP_OK(tp_ktx2_read_zstd(ktx, ktx_n, NULL, passthrough_zdec, NULL, &img)),
+          "read back written zstd ktx2");
+    CHECK(img.is_uni && img.supercompression == 2u && img.width == W &&
+              img.num_levels == 1,
+          "round-trip header");
+
+    dec = (uint8_t *)malloc(npix * 4u);
+    CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)),
+          "decode round-tripped level0");
+    {
+        double p = psnr_rgba(ref, dec, npix);
+        printf("    uni->zstd-KTX2->read->decode PSNR=%.2f dB\n", p);
+        CHECK(p >= 30.0, "zstd-ktx2 round-trip PSNR >= 30 dB");
+    }
+    tp_ktx2_image_free(NULL, &img);
+    tp_free(NULL, ktx);
+    free(dec);
+    free(uni);
+    free(ref);
+    printf("  ktx2 uni Zstd writer (write -> read -> decode): ok\n");
+}
+
 static void test_ktx2_zstd_scheme(void) {
     tir_image_view v;
     tp_options opt;
@@ -1713,6 +1779,7 @@ int main(void) {
     test_ktx2_kv();
     test_ktx2_bc6h_float();
     test_ktx2_zstd_scheme();
+    test_ktx2_uni_zstd_write();
     test_cube_seam_fixup();
     test_cube_split();
     test_cube_container();

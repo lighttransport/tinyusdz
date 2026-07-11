@@ -27,11 +27,30 @@
 #include "tinyusdz.hh"
 
 extern "C" {
-#include "texpipe.h"  // tp_ktx2_write_uni / tp_ktx2_uni_size (pulls in texcomp.h)
+#include "texpipe.h"  // tp_ktx2_write_uni[_zstd] (pulls in texcomp.h)
 #include "tir.h"      // tir_resize (mip chain)
 }
 
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#include "external/zstd.h"  // ZSTD_compress for supercompressionScheme 2
+#endif
+
 namespace {
+
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+// Zstd callbacks for tp_ktx2_write_uni_zstd (texpipe carries no zstd itself).
+size_t ZstdBound(void * /*user*/, size_t src_size) {
+  return ZSTD_compressBound(src_size);
+}
+size_t ZstdCompress(void * /*user*/, uint8_t *dst, size_t dst_cap,
+                    const uint8_t *src, size_t src_size) {
+  const size_t r = ZSTD_compress(dst, dst_cap, src, src_size, 19);
+  return ZSTD_isError(r) ? 0u : r;
+}
+constexpr bool kZstdAvailable = true;
+#else
+constexpr bool kZstdAvailable = false;
+#endif
 
 bool HasImageExt(const std::string &p) {
   const std::string e = tinyusdz::io::GetFileExtension(p);
@@ -81,9 +100,10 @@ bool LoadRGBA8(const std::string &path, std::vector<uint8_t> *out, int *w, int *
   return true;
 }
 
-// RGBA8 -> uni mip chain -> KTX2 bytes.
+// RGBA8 -> uni mip chain -> KTX2 bytes. `zstd` supercompresses the level payloads
+// (supercompressionScheme 2) — the form real KTX2/UASTC assets ship in.
 bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
-                   std::vector<uint8_t> *out, int *levels_out,
+                   bool zstd, std::vector<uint8_t> *out, int *levels_out,
                    std::string *err) {
   std::vector<std::vector<uint8_t>> uni;
   std::vector<uint32_t> lw, lh;
@@ -124,6 +144,26 @@ bool EncodeUniKtx2(const std::vector<uint8_t> &rgba, int w, int h, bool mips,
     ls.push_back(u.size());
   }
   const int n = int(uni.size());
+
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+  if (zstd) {
+    uint8_t *buf = nullptr;
+    size_t bsz = 0;
+    if (!TP_OK(tp_ktx2_write_uni_zstd(nullptr, &ZstdBound, &ZstdCompress, nullptr,
+                                      lp.data(), ls.data(), lw.data(), lh.data(),
+                                      n, &buf, &bsz))) {
+      if (err) *err = "tp_ktx2_write_uni_zstd failed";
+      return false;
+    }
+    out->assign(buf, buf + bsz);
+    tp_free(nullptr, buf);
+    *levels_out = n;
+    return true;
+  }
+#else
+  (void)zstd;
+#endif
+
   const size_t ksz = tp_ktx2_uni_size(ls.data(), n);
   if (ksz == 0) {
     if (err) *err = "ktx2 layout overflow";
@@ -187,6 +227,7 @@ void Usage() {
       "usd-texcomp — author GPU-compressed (.ktx2) texture companions\n"
       "\n"
       "usage: usd-texcomp <input.usd[a|c]> -o <output.usda> [--mips on|off]\n"
+      "                   [--zstd on|off]   (Zstd-supercompress the .ktx2; default on)\n"
       "\n"
       "For each UsdUVTexture inputs:file image, writes <name>.ktx2 (uni/UASTC,\n"
       "mipped) next to the output and adds a legacy-safe hint on the attribute:\n"
@@ -200,11 +241,14 @@ void Usage() {
 int main(int argc, char **argv) {
   std::string in_path, out_path;
   bool mips = true;
+  bool zstd = kZstdAvailable;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "-o") && (i + 1) < argc) {
       out_path = argv[++i];
     } else if (!std::strcmp(argv[i], "--mips") && (i + 1) < argc) {
       mips = !std::strcmp(argv[++i], "on");
+    } else if (!std::strcmp(argv[i], "--zstd") && (i + 1) < argc) {
+      zstd = kZstdAvailable && !std::strcmp(argv[++i], "on");
     } else if (!std::strcmp(argv[i], "-h") || !std::strcmp(argv[i], "--help")) {
       Usage();
       return 0;
@@ -253,7 +297,7 @@ int main(int argc, char **argv) {
     }
     std::vector<uint8_t> ktx;
     int levels = 0;
-    if (!EncodeUniKtx2(rgba, w, h, mips, &ktx, &levels, &lerr)) {
+    if (!EncodeUniKtx2(rgba, w, h, mips, zstd, &ktx, &levels, &lerr)) {
       std::fprintf(stderr, "skip %s: %s\n", a.c_str(), lerr.c_str());
       continue;
     }
@@ -276,9 +320,9 @@ int main(int argc, char **argv) {
     total_src += src_bytes;
     total_ktx += ktx.size();
     hint[a] = rel;
-    std::printf("  %s -> %s (%dx%d, %d level(s), %zu KiB uni-KTX2 vs %zu KiB RGBA8)\n",
+    std::printf("  %s -> %s (%dx%d, %d level(s), %zu KiB %s-KTX2 vs %zu KiB RGBA8)\n",
                 a.c_str(), rel.c_str(), w, h, levels, ktx.size() / 1024,
-                src_bytes / 1024);
+                zstd ? "zstd-uni" : "uni", src_bytes / 1024);
   }
 
   if (hint.empty()) {
