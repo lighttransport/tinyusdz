@@ -5099,6 +5099,26 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
   }
   out->animation_source_path = skel.animationSource;
 
+  // Authored-count validation: a short bindTransforms/restTransforms array
+  // silently identity-fills the tail joints (visually collapsed limbs with
+  // no hint why). Unauthored (empty) is fine — rest derives from bind below.
+  if (!skel.bindTransforms.empty() &&
+      skel.bindTransforms.size() != skel.joints.size() * 16) {
+    warnings_.push_back(
+        "Skeleton " + prim.GetPath().str() + " authors " +
+        std::to_string(skel.bindTransforms.size() / 16) +
+        " bindTransforms for " + std::to_string(skel.joints.size()) +
+        " joints; missing entries use identity");
+  }
+  if (!skel.restTransforms.empty() &&
+      skel.restTransforms.size() != skel.joints.size() * 16) {
+    warnings_.push_back(
+        "Skeleton " + prim.GetPath().str() + " authors " +
+        std::to_string(skel.restTransforms.size() / 16) +
+        " restTransforms for " + std::to_string(skel.joints.size()) +
+        " joints; missing entries derive from bindTransforms");
+  }
+
   std::vector<int> topology;
   std::string err;
   if (!::tinyusdz::next::BuildSkelTopology(skel.joints, topology, &err)) {
@@ -5353,6 +5373,18 @@ bool RenderSceneConverter::ConvertAnimation(const Stage& stage,
           expected_elements = element_count;
           channel.element_count = element_count;
           channel.array_values.reserve(times.size() * values->size());
+          // Width validation: blendShapeWeights samples must be as wide as
+          // the declared blendShapes list, or weights drive the wrong shapes.
+          if (target_path == AnimationChannel::TargetPath::Weights &&
+              !blend_shape_order.empty() &&
+              element_count != blend_shape_order.size()) {
+            warnings_.push_back(
+                "SkelAnimation " + prim.GetPath().str() + " has " +
+                std::to_string(element_count) +
+                " blendShapeWeights per sample for " +
+                std::to_string(blend_shape_order.size()) +
+                " declared blendShapes");
+          }
         } else if (element_count != expected_elements) {
           warnings_.push_back("Skipping inconsistent SkelAnimation sample for " +
                               prim.GetPath().str() + "." + prop_name);

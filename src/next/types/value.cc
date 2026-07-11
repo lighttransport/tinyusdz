@@ -5,6 +5,7 @@
 
 #include "value.hh"
 #include "type-info.hh"
+#include "interpolation.hh"
 #include "../crate/lazy-array.hh"
 #include "../crate/crate-data-source.hh"
 
@@ -1555,6 +1556,16 @@ const uint8_t* Value::raw_bytes(size_t* out_size) const {
 
 Value LerpValue(const Value& a, const Value& b, double t) {
   if (a.type_id() != b.type_id()) return a;  // held on type mismatch
+
+  // Arrays and quaternions: delegate to the full interpolator (per-lane
+  // lerp for float/double/half-backed arrays, per-element slerp for quat
+  // arrays and scalars). This function used to HOLD all of these, so array
+  // timeSamples queried between keys snapped to the earlier sample.
+  if (a.is_array() || a.type_id() == TypeId::Quatf ||
+      a.type_id() == TypeId::Quatd) {
+    Value r = TimeInterpolator::InterpolateValues(a, b, t);
+    return (r.type_id() == TypeId::Invalid) ? a : r;
+  }
   const double s = 1.0 - t;
   auto lf = [&](float x, float y) { return static_cast<float>(s * x + t * y); };
   auto ld = [&](double x, double y) { return s * x + t * y; };

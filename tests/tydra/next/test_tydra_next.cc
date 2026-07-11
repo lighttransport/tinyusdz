@@ -21,6 +21,7 @@
 #include "tydra/next/render-converter.hh"
 #include "tydra/next/urdf-to-usd.hh"
 #include "next/reader/usda-reader.hh"
+#include "next/schema/usd-skel.hh"
 
 using namespace tinyusdz::tydra::next;
 using namespace tinyusdz::next;
@@ -3150,6 +3151,140 @@ def Xform "World"
 }
 
 
+// 2026-07 audit UsdSkel cluster: quat-array slerp between keys, indexed skin
+// primvar expansion, token-array joints/blendShapes in GetSkelAnimationData,
+// and count/width validation warnings.
+void TestUsdSkelClusterFixes() {
+  std::cout << "Testing UsdSkel cluster fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 1
+    endTimeCode = 3
+)
+
+def Xform "World"
+{
+    def SkelRoot "Char"
+    {
+        rel skel:animationSource = </World/Char/Anim>
+
+        # 2 joints but only 1 bindTransform: must WARN (silent identity
+        # fill collapses the limb with no hint why).
+        def Skeleton "Skel"
+        {
+            uniform token[] joints = ["Root", "Root/Spine"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))
+            ]
+        }
+
+        # 2 declared blendShapes but 3 weights per sample: must WARN.
+        # rotations: identity -> 90deg about X; t=2 must SLERP to 45deg.
+        def SkelAnimation "Anim"
+        {
+            uniform token[] joints = ["Root", "Root/Spine"]
+            uniform token[] blendShapes = ["smile", "frown"]
+            float[] blendShapeWeights.timeSamples = {
+                1: [0, 0, 0],
+                3: [1, 1, 1],
+            }
+            quatf[] rotations.timeSamples = {
+                1: [(1, 0, 0, 0), (1, 0, 0, 0)],
+                3: [(0.70710678, 0.70710678, 0, 0), (1, 0, 0, 0)],
+            }
+        }
+
+        # Indexed skin primvars: values are 2 ELEMENTS of elementSize 2;
+        # :indices addresses elements, expansion is per-group.
+        def Mesh "Body"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            rel skel:skeleton = </World/Char/Skel>
+            int[] primvars:skel:jointIndices = [0, 1, 1, 0] (elementSize = 2)
+            int[] primvars:skel:jointIndices:indices = [0, 1, 0, 1]
+            float[] primvars:skel:jointWeights = [0.75, 0.25, 0.5, 0.5] (elementSize = 2)
+            int[] primvars:skel:jointWeights:indices = [0, 1, 0, 1]
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary
+              << ")\n";
+    return;
+  }
+
+  // Quat ARRAY slerp between keys (was: empty/held). Internal quat lane
+  // order is real-first (w, x, y, z); midpoint of identity->90degX is 45degX.
+  {
+    UsdPrim anim = lr.stage.GetPrimAtPath("/World/Char/Anim");
+    assert(anim.IsValid());
+    Value mid = anim.GetInterpolatedValue("rotations", 2.0);
+    const std::vector<float>* lanes = mid.as_float_array();
+    assert(lanes && lanes->size() == 8);
+    assert(std::fabs((*lanes)[0] - 0.9238795f) < 1e-4f);  // cos(22.5deg)
+    assert(std::fabs((*lanes)[1] - 0.3826834f) < 1e-4f);  // sin(22.5deg)
+    assert(std::fabs((*lanes)[2]) < 1e-6f);
+    assert(std::fabs((*lanes)[3]) < 1e-6f);
+    // Second element stays identity.
+    assert(std::fabs((*lanes)[4] - 1.0f) < 1e-4f);
+    // The slerped value keeps its array element type.
+    assert(mid.type_id() == TypeId::Quatf);
+  }
+
+  // GetSkelAnimationData: token[] joints/blendShapes must populate (the old
+  // reader only handled scalar string/token authoring).
+  {
+    UsdPrim anim = lr.stage.GetPrimAtPath("/World/Char/Anim");
+    ::tinyusdz::next::SkelAnimationData data;
+    assert(::tinyusdz::next::GetSkelAnimationData(lr.stage, anim, &data, 1.0));
+    assert(data.joints.size() == 2);
+    assert(data.joints[0] == "Root");
+    assert(data.joints[1] == "Root/Spine");
+    assert(data.blendShapes.size() == 2);
+    assert(data.blendShapes[0] == "smile");
+  }
+
+  // Indexed skin primvars expand per elementSize group.
+  {
+    UsdPrim mesh = lr.stage.GetPrimAtPath("/World/Char/Body");
+    SkinBindingInfo sb;
+    assert(GetSkinBinding(mesh, &sb));
+    const std::vector<int32_t> want_idx = {0, 1, 1, 0, 0, 1, 1, 0};
+    assert(sb.joint_indices == want_idx);
+    assert(sb.joint_weights.size() == 8);
+    assert(std::fabs(sb.joint_weights[0] - 0.75f) < 1e-6f);
+    assert(std::fabs(sb.joint_weights[2] - 0.5f) < 1e-6f);
+    assert(std::fabs(sb.joint_weights[4] - 0.75f) < 1e-6f);
+  }
+
+  // Validation warnings from the converter.
+  {
+    ConverterConfig config;
+    RenderSceneConverter converter(config);
+    ConvertResult result = converter.Convert(lr.stage);
+    assert(result.success);
+    bool warned_bind = false, warned_weights = false;
+    for (const std::string& w : result.warnings) {
+      if (w.find("bindTransforms") != std::string::npos) warned_bind = true;
+      if (w.find("blendShapeWeights") != std::string::npos) {
+        warned_weights = true;
+      }
+    }
+    assert(warned_bind);
+    assert(warned_weights);
+  }
+
+  std::cout << "  UsdSkel cluster fixes: PASSED\n";
+}
+
+
 // Material-driven UV primvar promotion: a texture sampling a
 // UsdPrimvarReader with varname "uv" (not "st") must surface that primvar
 // as texcoords_0.
@@ -3414,6 +3549,7 @@ int main() {
   TestLightLinkingAndDomeFormat();
   TestStandardSurfaceNoRecursion();
   TestUsdSkelParityFixes();
+  TestUsdSkelClusterFixes();
   TestMaterialUVPrimvarPromotion();
   TestMaterialParityFixes();
   TestLegacyParityExtraction();
