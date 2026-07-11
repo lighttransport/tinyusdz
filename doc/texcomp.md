@@ -69,6 +69,23 @@ loader decodes it, and `usdz-convert` transcodes it to png/jpg when a
 legacy/ARKit target is requested (`IsAllowedTextureExt` allows `ktx2` as an
 *input*; `IsAllowedARKitTextureExt` still excludes it from USDZ output).
 
+### Authoring the companions: `usd-texcomp`
+
+`examples/usd-texcomp` is the producer side. For every `UsdUVTexture.inputs:file`
+image it writes a `.ktx2` (uni/UASTC, full mip chain) next to the output and adds
+the `customData ktx2` hint to the attribute — leaving `inputs:file` untouched:
+
+```sh
+usd-texcomp scene.usda -o scene_ktx2.usda [--mips on|off]
+#   diffuse.png -> diffuse.ktx2 (1024x1024, 11 level(s), ...)
+# then:
+tusdview scene_ktx2.usda --texture-keep-compressed on
+```
+
+The output opens unchanged in stock USD tools (they see only the png and ignore
+`customData`), while tinyusdz-aware consumers pick up the compressed companion.
+Non-8-bit (HDR/EXR) sources are skipped — `uni` is LDR RGBA8 only.
+
 ## Core / tydra: loading a KTX2
 
 `.ktx2` is a first-class loadable image. `tinyusdz::image::LoadImageFromMemory`

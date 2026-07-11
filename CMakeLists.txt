@@ -2155,6 +2155,10 @@ endif()
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/tusdcat)
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    # Authors .ktx2 texture companions + the legacy-safe customData hints.
+    add_subdirectory(examples/usd-texcomp)
+  endif()
   if (TINYUSDZ_WITH_TYDRA)
     add_subdirectory(examples/tydra_api)
     add_subdirectory(examples/tydra_to_renderscene)
