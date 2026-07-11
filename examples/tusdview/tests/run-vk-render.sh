@@ -207,7 +207,7 @@ run_asset_pass() {
   if [ "$label" = "profile" ]; then
     for expected in "large-scene-profile island resolved" "backend=vk" \
                     "--next=on" "--raster-lod=on" "--rt-lod=on" \
-                    "--max-gpu-mem=10.0"; do
+                    "--max-gpu-mem=8.0"; do
       if ! echo "$log" | grep -q -- "$expected"; then
         echo "FAIL: profile pass did not apply expected default: $expected"
         return 1

@@ -1769,7 +1769,7 @@ void ValidatePointInstancer(const PrimSpec &ps,
              MakePropertyLocation(prim_location, "prototypes"),
              "prototypes must be a relationship");
   } else {
-    const std::vector<Path> &targets = RelTargets(ps, "prototypes");
+    const std::vector<Path> targets = RelTargets(ps, "prototypes");
     prototype_count = targets.size();
     if (targets.empty()) {
       AddError(result, "geom.pointInstancer.prototypes",
@@ -2282,7 +2282,8 @@ void ValidateSkelBinding(const PrimSpec &ps, const std::string &prim_location,
         ps, "skel:skeleton", "geom.skel.binding.skeleton",
         MakePropertyLocation(prim_location, "skel:skeleton"), result);
     if (IsRelationshipProp(ps, "skel:skeleton")) {
-      for (const Path &target : RelTargets(ps, "skel:skeleton")) {
+      const std::vector<Path> targets = RelTargets(ps, "skel:skeleton");
+      for (const Path &target : targets) {
         std::string prim_part;
         SplitScenePathString(target.str(), &prim_part, nullptr);
         const std::string *target_type = FindPrimType(prim_types, prim_part);
@@ -2302,7 +2303,8 @@ void ValidateSkelBinding(const PrimSpec &ps, const std::string &prim_location,
         ps, "skel:animationSource", "geom.skel.binding.animationSource",
         MakePropertyLocation(prim_location, "skel:animationSource"), result);
     if (IsRelationshipProp(ps, "skel:animationSource")) {
-      for (const Path &target : RelTargets(ps, "skel:animationSource")) {
+      const std::vector<Path> targets = RelTargets(ps, "skel:animationSource");
+      for (const Path &target : targets) {
         std::string prim_part;
         SplitScenePathString(target.str(), &prim_part, nullptr);
         const std::string *target_type = FindPrimType(prim_types, prim_part);
@@ -2388,7 +2390,7 @@ void ValidateSkinningPrimvars(const PrimSpec &ps,
     size_t local_joint_count = 0;
     bool have_local_joint_count = false;
     if (IsRelationshipProp(ps, "skel:skeleton")) {
-      const std::vector<Path> &targets = RelTargets(ps, "skel:skeleton");
+      const std::vector<Path> targets = RelTargets(ps, "skel:skeleton");
       if (targets.size() == 1) {
         std::string prim_part;
         SplitScenePathString(targets[0].str(), &prim_part, nullptr);
