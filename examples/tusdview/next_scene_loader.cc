@@ -1011,20 +1011,22 @@ bool PoseNextSkeleton(const tnext::Stage& stage, const std::string& skelPath,
 // deform dm->vertices (rest, point-indexed) in place, then recompute normals.
 // The CPU-skinning path (and the CPU ray tracers, which read this geometry).
 // No-op -- leaves the rest pose -- on any missing/mismatched skin/skeleton data.
-void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
+// Returns true when the mesh was actually skinned (so the caller knows its
+// vertices are ONE pose of an animated rig, not static geometry).
+bool BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
                   double time, DrawMeshCPU* dm,
                   const std::vector<uint32_t>& vertexToPoint,
                   size_t numPoints) {
-  if (!dm || dm->vertices.empty()) return;
+  if (!dm || dm->vertices.empty()) return false;
   const size_t nv = dm->vertices.size();
   NextSkinBinding bind;
   if (!ResolveNextSkinBinding(stage, meshPrim, time, nv, vertexToPoint,
                               numPoints, &bind)) {
-    return;
+    return false;
   }
   std::vector<matrix4d> skinMat;
   if (!PoseNextSkeleton(stage, bind.skelPath, bind.animPath, time, &skinMat)) {
-    return;
+    return false;
   }
 
   std::vector<::tinyusdz::value::point3f> rest(nv), skinned;
@@ -1037,7 +1039,7 @@ void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
   if (!tinyusdz::tydra::SkinPointsLBS(rest, bind.geomBind, skinMat, bind.vidx,
                                       bind.vwgt, bind.numInfl, &skinned, &lerr) ||
       skinned.size() != nv) {
-    return;
+    return false;
   }
   // Skin the NORMALS with the same blended matrix the GPU vertex shader uses,
   // rather than regenerating a smooth normal field from the posed positions:
@@ -1078,6 +1080,7 @@ void BakeSkinning(const tnext::Stage& stage, const tnext::UsdPrim& meshPrim,
     dm->vertices[i].ny = static_cast<float>(acc[1] / len);
     dm->vertices[i].nz = static_cast<float>(acc[2] / len);
   }
+  return true;
 }
 
 // GPU skinning alternative to BakeSkinning: keep the mesh in its REST pose and
@@ -2735,6 +2738,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // indices are absolute bone-texture rows, so one batch can draw vertices
     // posed by several different skeletons.
     bool anySkin = false;
+    // True when a SKINNED mesh joined this batch under CPU skinning: its vertices
+    // are one baked pose, so they do not bound the rig over the animation (the GPU
+    // path signals the same thing through anySkin).
+    bool anyCpuSkin = false;
     int matId = 0;
   };
   // key = (purpose, geometricNormal, materialId) -> current batch. Keying by
@@ -2911,10 +2918,34 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       b.dm.jointIdx.clear();
       b.dm.jointWt.clear();
     }
-    if (bounds.has)
+    // This batch's OWN world bounds, over its (already world-baked) vertices.
+    // Copying the running scene-bounds accumulator here instead -- as this used to
+    // -- gives every static mesh the scene-spanning box, which makes both the
+    // per-mesh frustum cull and raster LOD no-ops: nothing is ever outside the
+    // frustum or small on screen.
+    //
+    // Skinned batches keep the conservative scene box (either skinning mode): the
+    // vertices here are a single pose -- rest for GPU skinning, one sampled time
+    // for CPU skinning -- so they do not bound the mesh over the animation, and a
+    // tight box would pop it out of view as the rig moves.
+    if ((b.anySkin || b.anyCpuSkin) && bounds.has) {
       for (int k = 0; k < 3; ++k) {
         b.dm.aabbMin[k] = bounds.mn[k]; b.dm.aabbMax[k] = bounds.mx[k];
       }
+    } else {
+      float lo[3] = {b.dm.vertices[0].px, b.dm.vertices[0].py,
+                     b.dm.vertices[0].pz};
+      float hi[3] = {lo[0], lo[1], lo[2]};
+      for (const DrawVertex& v : b.dm.vertices) {
+        lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+        lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+        lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+      }
+      for (int k = 0; k < 3; ++k) {
+        b.dm.aabbMin[k] = lo[k] - b.dm.morphExtent[k];
+        b.dm.aabbMax[k] = hi[k] + b.dm.morphExtent[k];
+      }
+    }
     b.dm.submeshes.push_back(
         DrawSubmesh{0, static_cast<uint32_t>(b.dm.indices.size()), b.matId});
     std::memset(b.dm.world, 0, sizeof(b.dm.world));
@@ -3044,11 +3075,13 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // GPU: keep the rest pose and emit per-vertex joint attributes (the shader
     // poses every frame). CPU: bake the static pose at `time` into the geometry.
     // Both no-op for unskinned meshes.
+    bool cpuSkinned = false;
     if (opts.gpuSkinning) {
       SetupGpuSkinNext(stage, mp, time, &loc, vertexToPoint, m.point_count(),
                        mw16, draw);
     } else {
-      BakeSkinning(stage, mp, time, &loc, vertexToPoint, m.point_count());
+      cpuSkinned =
+          BakeSkinning(stage, mp, time, &loc, vertexToPoint, m.point_count());
     }
     float Mf[16];
     for (int k = 0; k < 16; ++k) Mf[k] = static_cast<float>(mw16[k]);
@@ -3094,6 +3127,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // Give `b` skin attribute arrays sized to the vertices it already holds
     // (zero-weight = unskinned), so the two arrays stay parallel to b.dm.vertices.
     auto openSkin = [&](Batch& b) {
+      if (cpuSkinned) b.anyCpuSkin = true;
       if (!hasSkin || b.anySkin) return;
       b.dm.jointIdx.assign(b.dm.vertices.size() * 4, 0u);
       b.dm.jointWt.assign(b.dm.vertices.size() * 4, 0.0f);

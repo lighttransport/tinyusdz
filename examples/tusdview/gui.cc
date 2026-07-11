@@ -2885,6 +2885,19 @@ void Gui::buildViewVisibilityMask() {
     const light3d::Mat4 vp = cam_->proj(/*zeroToOneDepth=*/false) * cam_->view();
     fr = light3d::Frustum::fromViewProjection(vp);
   }
+  // Non-instanced raster LOD: needs the same projected-size metric the instance
+  // cull uses, and the shared box-proxy draw to collapse into.
+  nonInstProxy_.xforms.clear();
+  nonInstProxy_.colors.clear();
+  nonInstProxy_.opacities.clear();
+  nonInstProxy_.count = 0;
+  const bool lodOn = rasterLodEnabled_ && cam_ && renderer_;
+  RtLodCamera lodCam;
+  if (lodOn) lodCam = buildRasterLodCam();
+  // Backends without the shared box-proxy draw (VK) still size-cull; they just
+  // cannot substitute a box, so a small mesh keeps drawing at full resolution.
+  const bool lodProxy = lodOn && lodCam.proxyEnabled;
+
   // Per-mesh stats here; per-instance stats (visible instances + instanced tris)
   // are owned by cullInstances (dirty-gated, so not recomputed every frame).
   statVisibleMeshes_ = 0;
@@ -2902,6 +2915,44 @@ void Gui::buildViewVisibilityMask() {
       if (fr.testAABB(mn, mx) == light3d::CullResult::Outside) vis = false;
     }
     viewVisible_[i] = vis ? uint8_t{1} : uint8_t{0};
+    // Raster LOD for NON-INSTANCED meshes. The instance cull only ever looked at
+    // meshes with instanceCount() > 0, so unique geometry got no LOD at all: its
+    // only filter was this all-or-nothing frustum test. That is the whole of
+    // Island's residual raster cost -- 55 M drawn tris of unique geometry against
+    // 63 visible instances -- because the instanced side is already solved.
+    //
+    // Classify each one exactly like an instance: sub-pixel -> cull, small ->
+    // collapse to the shared box proxy, else draw it. A decimated LOD for a big
+    // unique mesh is a different (much larger) project; the box is the cheap 80%.
+    if (vis && ninst == 0 && lodOn) {
+      const float* lo = m.aabbMin;
+      const float* hi = m.aabbMax;
+      const bool degenerate = !(hi[0] > lo[0] || hi[1] > lo[1] || hi[2] > lo[2]);
+      if (!degenerate) {
+        const float center[3] = {0.5f * (lo[0] + hi[0]), 0.5f * (lo[1] + hi[1]),
+                                 0.5f * (lo[2] + hi[2])};
+        const float ext[3] = {0.5f * (hi[0] - lo[0]), 0.5f * (hi[1] - lo[1]),
+                              0.5f * (hi[2] - lo[2])};
+        const float radius =
+            std::sqrt(ext[0] * ext[0] + ext[1] * ext[1] + ext[2] * ext[2]);
+        const float px = ProjectedRadiusPx(center, radius, lodCam);
+        if (px < lodCam.cullPx) {
+          vis = false;  // sub-pixel
+        } else if (lodProxy && px < lodCam.fullPx) {
+          // Non-instanced geometry is world-baked, so its AABB is already in world
+          // space: the box proxy's object->world is the identity.
+          static const float kIdentity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+          float bx[12];
+          BoxFitXform(kIdentity, lo, hi, bx);
+          nonInstProxy_.xforms.insert(nonInstProxy_.xforms.end(), bx, bx + 12);
+          const float* tint = m.flatColor;
+          nonInstProxy_.colors.insert(nonInstProxy_.colors.end(), tint, tint + 3);
+          vis = false;  // drawn as a box instead
+        }
+      }
+      viewVisible_[i] = vis ? uint8_t{1} : uint8_t{0};
+    }
+
     if (!vis) continue;
     ++statVisibleMeshes_;
     if (ninst > 0) {
@@ -2913,6 +2964,9 @@ void Gui::buildViewVisibilityMask() {
       statDrawCalls_ += m.submeshes.size();
     }
   }
+  nonInstProxy_.count =
+      static_cast<uint32_t>(nonInstProxy_.xforms.size() / 12);
+  nonInstProxy_.hasColors = true;
 }
 
 Gui::~Gui() { joinCullWorker(); }
@@ -3174,26 +3228,47 @@ void Gui::cullInstancesSync() {
   }
   // Upload the accumulated box proxies (one shared instanced draw). Always called
   // (count 0 when LOD off) so a previous frame's proxies are cleared.
-  {
-    uint32_t pc = proxyResult_.count;
-    std::vector<float> pxf = std::move(proxyResult_.xforms);
-    std::vector<float> pcol = std::move(proxyResult_.colors);
-    gpu([this, pc, pxf = std::move(pxf), pcol = std::move(pcol)]() mutable {
-      renderer_->updateProxyInstances(pxf.data(), pcol.data(), pc);
-    });
-  }
+  uploadProxies(&proxyResult_);
   statVisibleInstances_ = visInstances;
   statInstTris_ = instTris;
 }
 
+// Union of the non-instanced proxies (rebuilt every frame by
+// buildViewVisibilityMask) and the instance cull's proxies (dirty-gated, so they
+// arrive only on the frames the cull actually reran). Both feed the single shared
+// box-proxy instanced draw, so they have to be uploaded together; the content
+// compare keeps the steady state free.
+void Gui::uploadProxies(CullJobMesh* instProxy) {
+  std::vector<float> xf = nonInstProxy_.xforms;
+  std::vector<float> col = nonInstProxy_.colors;
+  if (instProxy) {
+    xf.insert(xf.end(), instProxy->xforms.begin(), instProxy->xforms.end());
+    col.insert(col.end(), instProxy->colors.begin(), instProxy->colors.end());
+    instProxy->xforms.clear();
+    instProxy->colors.clear();
+    instProxy->count = 0;
+  }
+  if (lastProxyValid_ && xf == lastProxyXforms_ && col == lastProxyColors_) return;
+  lastProxyXforms_ = xf;
+  lastProxyColors_ = col;
+  lastProxyValid_ = true;
+  const uint32_t pc = static_cast<uint32_t>(xf.size() / 12);
+  gpu([this, pc, xf = std::move(xf), col = std::move(col)]() mutable {
+    renderer_->updateProxyInstances(xf.data(), col.data(), pc);
+  });
+}
+
 void Gui::cullInstances() {
   if (!draw_ || !renderer_ || !cam_) return;
-  // Only instanced prototypes carry instanceXforms; nothing to do otherwise.
+  // Only instanced prototypes carry instanceXforms; nothing to do otherwise --
+  // except the box proxies raster LOD substituted for small NON-instanced meshes,
+  // which still need their upload (a scene can be entirely non-instanced).
   bool anyInstanced = false;
   for (const auto& m : draw_->meshes) {
     if (m.instanceCount() > 0) { anyInstanced = true; break; }
   }
   if (!anyInstanced) {
+    uploadProxies(nullptr);
     if (!cullRunning_.load()) { statVisibleInstances_ = 0; statInstTris_ = 0; }
     return;
   }
@@ -3216,14 +3291,7 @@ void Gui::cullInstances() {
       });
     }
     // Apply the accumulated box proxies (shared instanced draw).
-    {
-      uint32_t pc = cullJobProxy_.count;
-      std::vector<float> pxf = std::move(cullJobProxy_.xforms);
-      std::vector<float> pcol = std::move(cullJobProxy_.colors);
-      gpu([this, pc, pxf = std::move(pxf), pcol = std::move(pcol)]() mutable {
-        renderer_->updateProxyInstances(pxf.data(), pcol.data(), pc);
-      });
-    }
+    uploadProxies(&cullJobProxy_);
     statVisibleInstances_ = cullJobVisInstances_;
     statInstTris_ = cullJobInstTris_;
     cullDone_.store(false);
