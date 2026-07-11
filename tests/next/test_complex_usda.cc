@@ -739,6 +739,21 @@ def Xform "A"
     assert(out.find("</A/Old>: </A/New>") != std::string::npos);
   }
 
+  // AOUSD-COMP-003: a non-positive sublayer scale is invalid — pxr warns
+  // and substitutes NO offset. Retaining scale=-2 time-reversed samples.
+  {
+    const char* input = R"(#usda 1.0
+(
+    subLayers = [@./sub.usda@ (scale = -2)]
+)
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    const auto& offs = r.stage.GetRootLayer()->meta().subLayerOffsets;
+    assert(offs.size() == 1);
+    assert(offs[0].first == 0.0 && offs[0].second == 1.0);
+  }
+
   std::cout << "  Parser audit regressions passed!" << std::endl;
 }
 
