@@ -671,6 +671,15 @@ inline Vec3 Normalize(const Vec3 &v) {
   return Mul(v, 1.0f / len);
 }
 
+// Any two unit vectors perpendicular to `w` and to each other. Gives a shaped
+// light a sampling basis when its world matrix carries no usable axes.
+inline void OrthonormalBasis(const Vec3 &w, Vec3 *u, Vec3 *v) {
+  const Vec3 a = (std::fabs(w.x) > 0.9f) ? Vec3{0.0f, 1.0f, 0.0f}
+                                         : Vec3{1.0f, 0.0f, 0.0f};
+  *u = Normalize(Cross(a, w));
+  *v = Cross(w, *u);
+}
+
 inline Vec3 Clamp01(const Vec3 &v) {
   return Vec3{std::max(0.0f, std::min(1.0f, v.x)),
               std::max(0.0f, std::min(1.0f, v.y)),

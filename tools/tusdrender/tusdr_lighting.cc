@@ -460,11 +460,34 @@ void AddFiniteLight(const RenderLight &light, PreviewLight::Kind kind,
   if (Length(dst.direction) < 1.0e-6f) {
     dst.direction = Vec3{0.0f, -1.0f, 0.0f};
   }
-  dst.normal = Mul(dst.direction, -1.0f);
+  // The OUTWARD normal of the emitting face, which for a UsdLux light IS its
+  // emission direction (rect/disk/cylinder emit along local -Z / radially).
+  // This used to be stored negated, while eval_light's emission-cone test and
+  // the mesh lights (PreviewLight::Kind::Mesh, normal = the triangle's outward
+  // normal) both read it as the emitting face -- so a rect light pointed AT a
+  // surface lit nothing at all, and only lit what was behind it.
+  dst.normal = dst.direction;
   dst.radiance = LightColor(light);
   dst.radius = light.radius;
   dst.width = light.width;
   dst.height = light.height;
+  dst.length = light.length;
+  // Local axes in world space (normalized rows of the world matrix), so the light
+  // can be SAMPLED over its surface: a rect/disk lies in the local XY plane, a
+  // cylinder runs along local +X. Degenerate rows fall back to an arbitrary basis
+  // perpendicular to the emission normal, which keeps the sampler well-defined.
+  {
+    Vec3 ax{light.transform.m[0][0], light.transform.m[0][1],
+            light.transform.m[0][2]};
+    Vec3 ay{light.transform.m[1][0], light.transform.m[1][1],
+            light.transform.m[1][2]};
+    if (Length(ax) > 1.0e-8f && Length(ay) > 1.0e-8f) {
+      dst.axis_u = Normalize(ax);
+      dst.axis_v = Normalize(ay);
+    } else {
+      OrthonormalBasis(dst.normal, &dst.axis_u, &dst.axis_v);
+    }
+  }
   if (kind == PreviewLight::Kind::Sphere) {
     dst.area = SphereArea(light);
   } else if (kind == PreviewLight::Kind::Rect) {

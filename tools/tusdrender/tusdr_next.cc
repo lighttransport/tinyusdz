@@ -4269,7 +4269,13 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
                         float(world.m[3][2])};
     Vec3 dir = TransformVector(world, Vec3{0.0f, 0.0f, -1.0f});  // -Z forward
     dst.direction = Length(dir) > 1.0e-6f ? Normalize(dir) : Vec3{0, -1, 0};
-    dst.normal = Mul(dst.direction, -1.0f);
+    // The OUTWARD normal of the emitting face, which for a UsdLux light IS its
+    // emission direction (rect/disk/cylinder emit along local -Z / radially).
+    // This used to be stored negated, while eval_light's emission-cone test and
+    // the mesh lights (PreviewLight::Kind::Mesh, normal = the triangle's outward
+    // normal) both read it as the emitting face -- so a rect light pointed AT a
+    // surface lit nothing at all, and only lit what was behind it.
+    dst.normal = dst.direction;
     dst.radiance = Mul(color, scale);
     const float radius = ReadCamFloatNext(prim, "inputs:radius", 0.5f);
     const float width = ReadCamFloatNext(prim, "inputs:width", 1.0f);
@@ -4279,6 +4285,19 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
     dst.radius = radius;
     dst.width = width;
     dst.height = height;
+    dst.length = length;
+    // Local axes in world space, so a shaped light can be sampled over its
+    // surface: rect/disk live in the local XY plane, a cylinder runs along +X.
+    {
+      const Vec3 ax = TransformVector(world, Vec3{1.0f, 0.0f, 0.0f});
+      const Vec3 ay = TransformVector(world, Vec3{0.0f, 1.0f, 0.0f});
+      if (Length(ax) > 1.0e-8f && Length(ay) > 1.0e-8f) {
+        dst.axis_u = Normalize(ax);
+        dst.axis_v = Normalize(ay);
+      } else {
+        OrthonormalBasis(dst.normal, &dst.axis_u, &dst.axis_v);
+      }
+    }
     if (kind == PreviewLight::Kind::Rect) dst.area = width * height;
     else if (kind == PreviewLight::Kind::Sphere) dst.area = 4 * kPi * radius * radius;
     else if (kind == PreviewLight::Kind::Disk) dst.area = kPi * radius * radius;
