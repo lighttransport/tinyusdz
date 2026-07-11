@@ -2187,6 +2187,65 @@ if(TINYUSDZ_BUILD_TESTS)
                          PROPERTIES SKIP_RETURN_CODE 77)
   endif()
 
+  # tusdrender's shell regressions in tools/tusdrender/tests/. These existed for
+  # a long time with NO add_test() anywhere, so nothing ran them and the docs
+  # cited ctest names that did not resolve; run-degraded-material.sh had been
+  # segfaulting (infinite MtlxConverter <-> ConvertMaterial recursion) unnoticed.
+  # Each takes the binary as $1 and exits 77 to skip.
+  #
+  # Only the hermetic ones are registered: run-gpu-render.sh needs a GPU, and
+  # run-large-scene-profiles.sh / run-material-resolver.sh /
+  # run-alpha-blend-sort-external.sh need external multi-GB asset corpora.
+  if(TARGET tusdrender)
+    set(TUSDR_SHELL_TESTS
+        camera-modes
+        cmyk-jpeg-texture
+        degraded-material
+        instancer-invisible-ids
+        material-shading-bsdf-sample
+        mtlx-usdz-texture-equivalence
+        mtlx-usdz-udim-equivalence
+        opacity-texture-alpha
+        purpose-filtering
+        subdivision-schemes
+        timecode-blendshape-animation
+        timecode-normals-animation
+        timecode-points-animation
+        timecode-transform-animation
+        transparency
+        usdz-texture-equivalence)
+    foreach(t ${TUSDR_SHELL_TESTS})
+      add_test(
+        NAME tool-tusdrender-${t}
+        COMMAND bash
+                ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-${t}.sh
+                "$<TARGET_FILE:tusdrender>"
+      )
+      set_tests_properties(tool-tusdrender-${t} PROPERTIES SKIP_RETURN_CODE 77)
+    endforeach()
+
+    # run-material-resolver.sh takes the binary via $TUSDRENDER (its positional
+    # args are options) and skips itself when USD_ASSETS_ROOT is unset, so it is
+    # safe to register: it runs on machines that have the corpus, skips on those
+    # that don't. README.md already told people to run it by this ctest name.
+    add_test(
+      NAME tool-tusdrender-material-resolver
+      COMMAND bash ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-material-resolver.sh
+    )
+    set_tests_properties(tool-tusdrender-material-resolver
+                         PROPERTIES SKIP_RETURN_CODE 77
+                         ENVIRONMENT "TUSDRENDER=$<TARGET_FILE:tusdrender>")
+
+    add_test(
+      NAME tool-tusdrender-alpha-blend-sort-external
+      COMMAND bash
+              ${PROJECT_SOURCE_DIR}/tools/tusdrender/tests/run-alpha-blend-sort-external.sh
+              "$<TARGET_FILE:tusdrender>"
+    )
+    set_tests_properties(tool-tusdrender-alpha-blend-sort-external
+                         PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+
   #
   # USDA parser tester
   #

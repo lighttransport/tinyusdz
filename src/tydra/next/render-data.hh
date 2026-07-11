@@ -643,6 +643,13 @@ struct RenderMaterial {
   };
   ShaderType shader_type = ShaderType::None;
 
+  // The material had no convertible surface shader and carries a neutral
+  // default instead of being dropped (see ConvertMaterial). Conversion still
+  // SUCCEEDS in that case, so a caller that only checks the return value cannot
+  // tell a real material from a gray stand-in; consumers that report load
+  // degradation must look here.
+  bool default_fallback = false;
+
   // Shader data (one of these based on shader_type)
   std::unique_ptr<PreviewSurfaceShader> preview_surface;
   std::unique_ptr<OpenPBRSurfaceShader> openpbr;

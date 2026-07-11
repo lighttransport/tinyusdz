@@ -1434,6 +1434,17 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
     if (err) *err = converter.GetLastError();
     return false;
   }
+  // Conversion "succeeds" with a neutral stand-in when the surface shader is
+  // unconvertible (an unknown info:id, an engine sourceAsset surface). That is
+  // deliberate -- the mesh keeps its binding and still renders -- but it is a
+  // degradation, so report it rather than silently shading the mesh gray.
+  if (rm.default_fallback) {
+    if (err) {
+      *err = "material '" + bindPath +
+             "' has no convertible surface shader (default material)";
+    }
+    return false;
+  }
 
   using NextMat = tinyusdz::tydra::next::RenderMaterial;
   if (rm.shader_type == NextMat::ShaderType::PreviewSurface &&
