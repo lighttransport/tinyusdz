@@ -396,6 +396,7 @@ bool CrateReader::Impl::BuildStage() {
     std::vector<std::string> connection_targets;
     bool uniform = false;
     bool custom = false;
+    std::string spline_text;  // Crate type-59 spline, decoded to USDA text
     std::vector<std::pair<double, Value>> time_samples;
     // Per-property metadata (round-tripped via attribute spec fields);
     // `meta.authored` bits record which fields were present.
@@ -517,6 +518,9 @@ bool CrateReader::Impl::BuildStage() {
         }
       } else if (f.first == "timeSamples") {
         DecodeTimeSamples(f.second, &ai.time_samples);
+      } else if (f.first == "spline") {
+        // Crate type-59 spline: decode to USDA text (PrimSpec's storage form).
+        DecodeSplineToText(f.second, &ai.spline_text);
       } else if (f.first == "connectionPaths") {
         if (DecodePathTargets(f.second, ai.connection_targets)) {
           // Present-but-empty = authored connection block (`.connect = None`).
@@ -985,6 +989,9 @@ bool CrateReader::Impl::BuildStage() {
         }
         if (ai.is_connection && ai.connection_targets.empty()) {
           ps->set_connection_block(ai.name);  // authored `.connect = None`
+        }
+        if (!ai.spline_text.empty()) {
+          ps->set_spline_source(ai.name, std::move(ai.spline_text));
         }
         for (const auto& t : ai.connection_targets) {
           ps->add_connection(ai.name, Path(t));

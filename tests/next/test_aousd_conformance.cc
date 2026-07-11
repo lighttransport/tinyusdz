@@ -3,6 +3,7 @@
 #include "next/composition/composition.hh"
 #include "next/eval/attribute-eval.hh"
 #include "next/reader/usda-reader.hh"
+#include "next/reader/usdc-reader.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
@@ -42,6 +43,8 @@ void TestUnicodeAndPaths() {
 }
 
 void TestLosslessUnsupportedValues() {
+  // Typed splines are now first-class: they parse (even in strict mode),
+  // evaluate, and encode to USDC (Crate type 59).
   const std::string spline =
       "def Xform \"S\" {\n"
       "  double value.spline = { 0: 0; post linear, 10: 10, }\n"
@@ -51,14 +54,15 @@ void TestLosslessUnsupportedValues() {
   const std::string rewritten = WriteUSDAToString(compat.stage);
   assert(rewritten.find("value.spline") != std::string::npos);
   assert(rewritten.find("post linear") != std::string::npos);
-  USDCWriteOptions strict_usdc;
-  strict_usdc.crate_options.strict_aousd_conformance = true;
-  std::vector<uint8_t> crate;
-  USDCWriteResult crate_result =
-      WriteUSDCToMemory(crate, compat.stage, strict_usdc);
-  assert(!crate_result.success &&
-         crate_result.error.find("cannot encode spline") != std::string::npos);
-  assert(!Parse(spline, true).success);
+  // Strict AOUSD parse now accepts the (grammatically valid) spline.
+  assert(Parse(spline, true).success);
+  // A grammatically malformed spline is a hard error in strict mode.
+  assert(!Parse(
+              "def Xform \"B\" {\n"
+              "  double value.spline = { 0: 0; post bogus, }\n"
+              "}\n",
+              true)
+              .success);
 
   // frame4d is now a first-class matrix4d role type (pxr itself rejects
   // the old `= identity` shorthand): the matrix form parses, round-trips,
@@ -337,11 +341,78 @@ void TestSchemaFallbackAndValueClips() {
          "manifest must gate undeclared properties out of clip resolution");
 }
 
+void TestTypedSplines() {
+  // A linear spline: value ramps 0->10 over t in [0,10], held outside.
+  const std::string body =
+      "def Xform \"S\" {\n"
+      "  double v.spline = {\n"
+      "    bezier,\n"
+      "    0: 0; post linear,\n"
+      "    10: 10,\n"
+      "  }\n"
+      "}\n";
+  LoadResult res = Parse(body, true);
+  assert(res.success);
+
+  AttributeEval eval(&res.stage);
+  const UsdPrim s = res.stage.GetPrimAtPath("/S");
+
+  auto sample = [&](double t) -> double {
+    EvalOptions o;
+    o.time = t;
+    EvalResult r = eval.EvalWith(s, "v", o);
+    assert(r.success && r.value.as_double());
+    return *r.value.as_double();
+  };
+  assert(std::fabs(sample(0.0) - 0.0) < 1e-9);
+  assert(std::fabs(sample(5.0) - 5.0) < 1e-9);
+  assert(std::fabs(sample(10.0) - 10.0) < 1e-9);
+  assert(std::fabs(sample(-3.0) - 0.0) < 1e-9);   // pre-extrapolation: held
+  assert(std::fabs(sample(20.0) - 10.0) < 1e-9);  // post-extrapolation: held
+
+  // Round-trip through USDC (Crate type 59) and re-evaluate.
+  USDCWriteOptions usdc_opts;
+  usdc_opts.crate_options.strict_aousd_conformance = true;
+  std::vector<uint8_t> crate;
+  USDCWriteResult wr = WriteUSDCToMemory(crate, res.stage, usdc_opts);
+  assert(wr.success && !crate.empty());
+
+  USDCLoadOptions lopts;
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size(), lopts);
+  assert(back.success);
+  const UsdPrim s2 = back.stage.GetPrimAtPath("/S");
+  assert(s2.IsValid());
+  AttributeEval eval2(&back.stage);
+  EvalOptions o5;
+  o5.time = 5.0;
+  EvalResult r5 = eval2.EvalWith(s2, "v", o5);
+  assert(r5.success && r5.value.as_double() &&
+         std::fabs(*r5.value.as_double() - 5.0) < 1e-9);
+  // The decoded USDC also re-emits the spline as USDA text.
+  const std::string usda_back = WriteUSDAToString(back.stage);
+  assert(usda_back.find("v.spline") != std::string::npos);
+
+  // A float-typed spline keeps its declared scalar type through evaluation.
+  LoadResult fr = Parse(
+      "def Xform \"F\" {\n"
+      "  float w.spline = { 0: 1, 4: 5; post linear, }\n"
+      "}\n",
+      true);
+  assert(fr.success);
+  AttributeEval feval(&fr.stage);
+  EvalOptions fo;
+  fo.time = 2.0;
+  EvalResult fres =
+      feval.EvalWith(fr.stage.GetPrimAtPath("/F"), "w", fo);
+  assert(fres.success && fres.value.as_float());
+}
+
 }  // namespace
 
 int main() {
   TestUnicodeAndPaths();
   TestLosslessUnsupportedValues();
+  TestTypedSplines();
   TestDictionaryAndRelationshipComposition();
   TestNamespaceOrdering();
   TestSchemaFallbackAndValueClips();

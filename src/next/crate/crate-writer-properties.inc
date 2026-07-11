@@ -289,6 +289,52 @@
     return name;
   }
 
+  // Typed spline (Crate type 59, >= 0.12.0): the raw USDA text parses to the
+  // ts-binary blob. Payload framing: uint64 blobSize + blob + uint64
+  // customData count (always 0 — per-knot customData is not retained).
+  // Returns false (and sets result_.error in strict mode) when the text does
+  // not parse; the caller then simply omits the field.
+  bool BuildSplineField(const std::string& prop_path,
+                        const std::string& type_name,
+                        const std::string& spline_text, CrateField* out) {
+    SplineData sd;
+    std::string serr;
+    if (!ParseSplineText(spline_text, &sd, &serr)) {
+      if (options_.strict_aousd_conformance) {
+        result_.error = "Cannot encode malformed spline " + prop_path + ": " + serr;
+      }
+      return false;
+    }
+    std::string base = type_name;
+    if (base.size() >= 2 && base.compare(base.size() - 2, 2, "[]") == 0) {
+      base.resize(base.size() - 2);
+    }
+    sd.value_desc = (base == "float") ? 2 : (base == "half") ? 3 : 1;
+
+    std::vector<uint8_t> blob;
+    if (!EncodeSplineBinary(sd, &blob, &serr)) {
+      if (options_.strict_aousd_conformance) {
+        result_.error = "Cannot encode spline " + prop_path + ": " + serr;
+      }
+      return false;
+    }
+    std::vector<uint8_t> raw(8 + blob.size() + 8, 0);
+    uint64_t blob_size = blob.size();
+    std::memcpy(raw.data(), &blob_size, 8);
+    if (!blob.empty()) std::memcpy(raw.data() + 8, blob.data(), blob.size());
+    // trailing uint64 customData count stays 0
+    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+
+    // A version-2 blob (tangent algorithms) needs crate 0.13.0; version 1
+    // needs 0.12.0.
+    const int need = (SplineBinaryVersion(sd) >= 2) ? 13 : 12;
+    if (required_version_minor_ < need) required_version_minor_ = need;
+
+    out->token_index.value = InternToken("spline");
+    out->value_rep = ValueRep::Make(CrateTypeId::Spline, data_idx, false, false);
+    return true;
+  }
+
   CrateField BuildTimeSamplesField(const PrimSpec& prim, PropNameId prop_id) {
     auto* samples = prim.time_samples(prop_id);
     uint64_t num_samples = samples ? samples->size() : 0;
@@ -529,6 +575,15 @@
       }
 
       if (has_ts) flds.push_back(BuildTimeSamplesField(prim, slot.name_id));
+
+      if (const std::string* spline_text = prim.spline_source(slot.name_id)) {
+        CrateField sf;
+        if (BuildSplineField(base + "." + prop_name, tn, *spline_text, &sf)) {
+          flds.push_back(sf);
+        } else if (!result_.error.empty()) {
+          return prop_names;  // strict mode: abort on unencodable spline
+        }
+      }
 
       if (const PropMeta* pm = prim.property_meta(slot.name_id)) {
         EmitPropMetaFields(*pm, flds);

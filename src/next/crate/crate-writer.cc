@@ -13,6 +13,7 @@
 #include "safe-arithmetic.hh"
 #include "stream-writer.hh"
 #include "../layer/property-index.hh"
+#include "../types/spline.hh"
 #include "../types/type-id.hh"
 #include <unordered_map>
 #include <unordered_set>
@@ -38,10 +39,17 @@ bool ValidateStrictCrateFields(const Layer& layer, std::string* error) {
   for (const PrimSpec& prim : layer.prims()) {
     for (const PropSlot& slot : prim.properties().slots()) {
       const std::string& name = GetPropNameTable().get(slot.name_id);
-      if (prim.spline_source(slot.name_id)) {
-        if (error) *error = "Strict AOUSD USDC write cannot encode spline field " +
-                            prim.path().str() + "." + name;
-        return false;
+      if (const std::string* spline_text = prim.spline_source(slot.name_id)) {
+        // Typed splines encode as Crate type 59; only a spline whose raw
+        // text does not parse is unencodable.
+        SplineData sd;
+        std::string serr;
+        if (!ParseSplineText(*spline_text, &sd, &serr)) {
+          if (error) *error =
+              "Strict AOUSD USDC write cannot encode malformed spline " +
+              prim.path().str() + "." + name + ": " + serr;
+          return false;
+        }
       }
       if (prim.raw_default_source(slot.name_id)) {
         if (error) *error =

@@ -137,6 +137,9 @@ class CrateReader::Impl {
   bool UnpackTimeSamples(ValueRep rep, Value& out);
   bool DecodeTimeSamples(ValueRep rep,
                          std::vector<std::pair<double, Value>>* out);
+  // Decode a Crate type-59 (TsSpline) field to its USDA text form (the storage
+  // PrimSpec uses). Returns false on a malformed blob.
+  bool DecodeSplineToText(ValueRep rep, std::string* out);
   bool UnpackTokenOrStringVector(ValueRep rep, CrateTypeId type_id, Value& out);
   bool UnpackDoubleVector(ValueRep rep, Value& out);
   bool UnpackVec2i(ValueRep rep, Value& out);
