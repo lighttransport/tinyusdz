@@ -2509,6 +2509,36 @@ if(TINYUSDZ_BUILD_TESTS)
       )
     set_tests_properties(tusdview-asset-path-anchoring
                          PROPERTIES SKIP_RETURN_CODE 77)
+
+    # usd-wg/assets regression baseline. The batch harness could always RENDER the
+    # corpus; what it had no answer for was "did this change what any of it looks
+    # like?" -- so a render that silently turned a scene black still passed. The
+    # checked-in baseline (examples/tusdview/tests/usd-assets-goldens.tsv) records a
+    # COVERAGE fingerprint per (mode, asset): a silhouette bitfield, chosen over a
+    # pixel hash because it survives the GPU/driver lighting differences that would
+    # otherwise make the file useless anywhere but the machine that wrote it. A
+    # geometry, composition, or material-binding regression moves the silhouette; a
+    # shading nudge does not.
+    #
+    # Still a per-machine artifact in the end, so it is OPT-IN twice over: it needs
+    # the corpus (USD_ASSETS_ROOT, else SKIP) and TUSDVIEW_RUN_GOLDEN=1 (else SKIP).
+    # Refresh it deliberately, and read the diff before committing it:
+    #
+    #   TUSDVIEW_RUN_GOLDEN=1 tests/tusdview/run-usd-assets-batch.sh \
+    #     --golden-kind coverage \
+    #     --update-golden examples/tusdview/tests/usd-assets-goldens.tsv
+    add_test(
+      NAME tusdview-usd-assets-golden
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              "TUSDVIEW_USD_ASSETS_GATE=TUSDVIEW_RUN_GOLDEN"
+              "TUSDVIEW_USD_ASSETS_FAIL_ON=timeout,backend_error,golden_mismatch"
+              bash "${PROJECT_SOURCE_DIR}/tests/tusdview/run-usd-assets-batch.sh"
+                   --golden-kind coverage
+                   --golden "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/usd-assets-goldens.tsv"
+      )
+    set_tests_properties(tusdview-usd-assets-golden
+                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 5400)
   endif()
 
   #

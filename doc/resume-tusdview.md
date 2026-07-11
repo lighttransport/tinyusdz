@@ -84,10 +84,32 @@ that is blendshaped AND skinned at the same time code. The last two found live
 bugs (a morph applied in the wrong space, and the CPU bake skinning before it
 morphed). Anything else that deforms geometry belongs in that harness.
 
-### 4. usd-assets regression harness
+### 4. usd-assets regression harness — DONE, but the baseline is per-machine
 
-Partial: the batch harness runs both tools over usd-wg/assets. Remaining is
-recording and maintaining the per-machine external-asset baselines.
+`tusdview-usd-assets-golden` compares every asset in the corpus against
+`examples/tusdview/tests/usd-assets-goldens.tsv` (280 assets, 255 of which render
+in each of vk-raster and vk-rt; the other 25 are load errors and carry no
+fingerprint). The batch harness could always RENDER the corpus — what it had no
+answer for was "did this change what any of it looks like?", so a render that
+silently turned a scene black still passed.
+
+The fingerprint is a COVERAGE bitfield (a silhouette), not a pixel hash: it
+survives the GPU/driver lighting differences that would make a checked-in hash
+useless anywhere but the machine that recorded it. Geometry, composition and
+material-binding regressions move the silhouette; a shading nudge does not.
+
+Opt-in twice over — it needs the corpus (`USD_ASSETS_ROOT`) and
+`TUSDVIEW_RUN_GOLDEN=1`, and SKIPs without either. ~11 min on an RTX 5060 Ti.
+Refresh deliberately, and READ THE DIFF before committing it:
+
+```bash
+TUSDVIEW_RUN_GOLDEN=1 tests/tusdview/run-usd-assets-batch.sh \
+  --golden-kind coverage \
+  --update-golden examples/tusdview/tests/usd-assets-goldens.tsv
+```
+
+Recorded 2026-07-12 on an RTX 5060 Ti (driver 610.43.02). A different GPU will
+likely need its own baseline; that is why the gate exists.
 
 ## Dormant by decision (2026-07-11) — do not re-litigate
 
