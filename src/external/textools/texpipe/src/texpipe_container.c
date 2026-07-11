@@ -294,7 +294,10 @@ static const uint8_t tp_ktx2_id[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
                                        0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
 
 /* Tightly-packed byte size of one mip level for the parsed image's format;
- * used to reject crafted files whose declared dimensions exceed the payload. */
+ * used to reject crafted files whose declared dimensions exceed the payload.
+ * The caller has already clamped width/height to TP_KTX2_MAX_DIM, faces to 6 and
+ * layers to TP_KTX2_MAX_LAYERS, so the product stays far below 2^64 (worst case
+ * 2^14 * 2^14 blocks * 16 B * 6 * 2^11 = 2^46) and cannot wrap. */
 static uint64_t tp_ktx2_level_expected(const tp_ktx2_image *img, uint32_t w,
                                        uint32_t h) {
     uint64_t bw = ((uint64_t)w + (uint64_t)img->block_w - 1u) / (uint64_t)img->block_w;
@@ -320,6 +323,7 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
                             const tir_allocator *a, tp_zstd_decompress_fn zdec,
                             void *user, tp_ktx2_image *out) {
     uint32_t vk, layer_count, face_count, level_count, scheme;
+    uint32_t dfd_off, dfd_len;
     int nlev, l;
     if (!data || !out) return TP_ERROR_INVALID_ARGUMENT;
     if (size < 80u || memcmp(data, tp_ktx2_id, 12) != 0)
@@ -333,19 +337,38 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
     face_count = tp_rd_u32(data + 36);
     level_count = tp_rd_u32(data + 40);
     scheme = tp_rd_u32(data + 44);
+    dfd_off = tp_rd_u32(data + 48);
+    dfd_len = tp_rd_u32(data + 52);
     out->supercompression = scheme;
     if (scheme == 1u) return TP_ERROR_UNSUPPORTED;          /* BasisLZ */
     if (scheme == 2u && !zdec) return TP_ERROR_UNSUPPORTED; /* need a decompressor */
     if (scheme != 0u && scheme != 2u) return TP_ERROR_UNSUPPORTED;
 
+    /* Range-check the header counts while still unsigned: narrowing a hostile
+     * 32-bit field to int first would turn it negative and slip past the limits
+     * (and past the num_layers/num_faces guards downstream). */
+    if (out->width == 0u || out->height == 0u ||
+        out->width > (uint32_t)TP_KTX2_MAX_DIM ||
+        out->height > (uint32_t)TP_KTX2_MAX_DIM)
+        return TP_ERROR_UNSUPPORTED;
+    if (level_count > (uint32_t)TP_KTX2_MAX_LEVELS) return TP_ERROR_UNSUPPORTED;
+    if (face_count > 6u) return TP_ERROR_UNSUPPORTED;
+    if (layer_count > (uint32_t)TP_KTX2_MAX_LAYERS) return TP_ERROR_UNSUPPORTED;
+
     nlev = level_count ? (int)level_count : 1; /* 0 = "generate", treat as 1 */
-    if (nlev > TP_KTX2_MAX_LEVELS) return TP_ERROR_UNSUPPORTED;
     out->num_levels = nlev;
     out->num_faces = face_count ? (int)face_count : 1;
     out->num_layers = (int)layer_count;
     out->vk_format = vk;
 
     if (size < 80u + (size_t)nlev * 24u) return TP_ERROR_INVALID_ARGUMENT;
+
+    /* The DFD is not parsed (vkFormat carries everything we need), but a file
+     * claiming one outside the blob is malformed. */
+    if (dfd_len != 0u &&
+        ((uint64_t)dfd_off + (uint64_t)dfd_len > (uint64_t)size ||
+         dfd_off < 80u + (uint64_t)nlev * 24u))
+        return TP_ERROR_INVALID_ARGUMENT;
 
     if (vk == 0u) {
         out->is_uni = 1;              /* UASTC transcodable intermediate */
@@ -389,11 +412,25 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
 
     /* scheme == 2 (Zstd): decompress every level into one owned buffer. */
     {
+        uint64_t ulen[TP_KTX2_MAX_LEVELS];
         uint64_t total = 0;
         uint8_t *owned;
         size_t cursor = 0;
-        for (l = 0; l < nlev; ++l)
-            total += tp_rd_u64(data + 80u + (size_t)l * 24u + 16u);
+        /* uncompressedByteLength must be *exactly* the inflated level size (per
+         * KTX2: the levels are tightly packed block data). Pinning it rather
+         * than merely lower-bounding it is what keeps `total` bounded by the
+         * dimension caps: a hostile pair of huge lengths would otherwise wrap
+         * the sum, yielding a small `owned` that zdec then writes far past --
+         * it is handed `ulen` as its destination capacity. */
+        for (l = 0; l < nlev; ++l) {
+            uint32_t w = out->width >> l, h = out->height >> l;
+            if (!w) w = 1u;
+            if (!h) h = 1u;
+            ulen[l] = tp_rd_u64(data + 80u + (size_t)l * 24u + 16u);
+            if (ulen[l] != tp_ktx2_level_expected(out, w, h))
+                return TP_ERROR_INVALID_ARGUMENT;
+            total += ulen[l]; /* <= TP_KTX2_MAX_LEVELS * 2^46: cannot wrap */
+        }
         if (total == 0u || total > (uint64_t)(size_t)-1)
             return TP_ERROR_INVALID_ARGUMENT;
         owned = (uint8_t *)tp_alloc(a, (size_t)total);
@@ -402,27 +439,25 @@ tp_result tp_ktx2_read_zstd(const uint8_t *data, size_t size,
             const uint8_t *e = data + 80u + (size_t)l * 24u;
             uint64_t off = tp_rd_u64(e + 0);
             uint64_t clen = tp_rd_u64(e + 8);
-            uint64_t ulen = tp_rd_u64(e + 16);
             uint32_t w = out->width >> l, h = out->height >> l;
             size_t got;
             if (!w) w = 1u;
             if (!h) h = 1u;
-            if (off > size || clen > (uint64_t)size - off ||
-                ulen < tp_ktx2_level_expected(out, w, h)) {
+            if (off > size || clen > (uint64_t)size - off) {
                 tp_dealloc(a, owned);
                 return TP_ERROR_INVALID_ARGUMENT;
             }
-            got = zdec(user, owned + cursor, (size_t)ulen, data + (size_t)off,
+            got = zdec(user, owned + cursor, (size_t)ulen[l], data + (size_t)off,
                        (size_t)clen);
-            if (got != (size_t)ulen) {
+            if (got != (size_t)ulen[l]) {
                 tp_dealloc(a, owned);
                 return TP_ERROR_INVALID_ARGUMENT;
             }
             out->levels[l].data = owned + cursor;
-            out->levels[l].size = (size_t)ulen;
+            out->levels[l].size = (size_t)ulen[l];
             out->levels[l].width = w;
             out->levels[l].height = h;
-            cursor += (size_t)ulen;
+            cursor += (size_t)ulen[l];
         }
         out->_owned = owned;
         return TP_SUCCESS;
@@ -440,6 +475,11 @@ tp_result tp_ktx2_decode_level_rgba8(const tp_ktx2_image *img, int level,
         return TP_ERROR_UNSUPPORTED; /* single-face / non-array only for now */
     w = img->levels[level].width;
     h = img->levels[level].height;
+    if (!w || !h) return TP_ERROR_INVALID_ARGUMENT;
+    /* w*h*4 is computed in 64 bits first: on a 32-bit size_t the RGBA8 surface
+     * for a large level wraps, which would let the out_size check pass. */
+    if ((uint64_t)w * (uint64_t)h * 4u > (uint64_t)(size_t)-1)
+        return TP_ERROR_UNSUPPORTED;
     need = (size_t)w * (size_t)h * 4u;
     if (out_size < need) return TP_ERROR_INVALID_ARGUMENT;
     blocks = img->levels[level].data;
@@ -479,11 +519,17 @@ static void tp_write_uni_dfd(uint8_t *p) {
     tp_wr_u32(p + 40, 0xffffffffu);        /* sampleUpper */
 }
 
+/* Total KTX2 byte size for `n` uni levels, filling loff[] with each level's
+ * offset. Returns 0 if the layout overflows size_t (uni_sizes[] is caller data
+ * on the public tp_ktx2_write_uni path, so it is not trusted to be sane). */
 static size_t tp_ktx2_uni_layout(const size_t *sizes, int n, uint64_t *loff) {
     size_t cursor = 80u + (size_t)n * 24u + 44u; /* + kvd(0) + sgd(0) */
+    const size_t smax = (size_t)-1;
     int l;
     for (l = n - 1; l >= 0; --l) {          /* smallest-first, aligned to 16 */
+        if (cursor > smax - 15u) return 0;
         cursor = tp_align_up(cursor, 16u);
+        if (sizes[l] > smax - cursor) return 0;
         if (loff) loff[l] = cursor;
         cursor += sizes[l];
     }
@@ -502,12 +548,12 @@ tp_result tp_ktx2_write_uni(const uint8_t *const *uni_levels,
     uint64_t loff[TP_KTX2_MAX_LEVELS];
     size_t need, dfd_off;
     int l;
-    (void)level_h;
     if (!uni_levels || !uni_sizes || !level_w || !level_h || !out)
         return TP_ERROR_INVALID_ARGUMENT;
     if (num_levels < 1 || num_levels > TP_KTX2_MAX_LEVELS)
         return TP_ERROR_INVALID_ARGUMENT;
     need = tp_ktx2_uni_layout(uni_sizes, num_levels, loff);
+    if (need == 0u) return TP_ERROR_INVALID_ARGUMENT; /* layout overflowed */
     if (out_size < need) return TP_ERROR_INVALID_ARGUMENT;
     memset(out, 0, need);
 
