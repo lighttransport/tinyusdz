@@ -4679,12 +4679,18 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // convert through the MaterialX -> PreviewSurface mapping.
     MtlxConverter mtlx;
     RenderMaterial mtlx_out;
+    // We are the fallback path: we already failed to find a shader we know, so
+    // the converter must not hand this same material back to us.
+    mtlx.SetDelegateToRenderConverter(false);
     if (mtlx.ConvertUsdMtlxMaterial(stage, prim, &mtlx_out)) {
       if (mtlx_out.preview_surface) {
         out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
         out->preview_surface = std::move(mtlx_out.preview_surface);
         out->alpha_mode = mtlx_out.alpha_mode;
         out->alpha_cutoff = mtlx_out.alpha_cutoff;
+        // The converter also hands back a neutral stand-in for shaders it does
+        // not understand; that is a degradation, not a conversion.
+        out->default_fallback = mtlx_out.default_fallback;
         if (!out->mtlx_config.authored) {
           out->mtlx_config = std::move(mtlx_out.mtlx_config);
         }
@@ -4705,6 +4711,7 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
     // legacy tydra graceful-degradation behavior.
     out->shader_type = RenderMaterial::ShaderType::PreviewSurface;
     out->preview_surface = std::make_unique<PreviewSurfaceShader>();
+    out->default_fallback = true;
     warnings_.push_back(
         "Material '" + out->prim_path +
         "' has no convertible surface shader; using a default material.");
