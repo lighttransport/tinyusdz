@@ -3307,13 +3307,19 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       var.set_value(paths);
 
     } else {
-      Path path;
-      if (!ReadBasicType(&path)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
+      // `inherits = None` / `specializes = None`: an explicit-clear list op
+      // (pxr parses it; a bare Path read fails on the None token).
+      if (MaybeNone()) {
+        var.set_value(value::ValueBlock());
+      } else {
+        Path path;
+        if (!ReadBasicType(&path)) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kAscii,
+              fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
+        }
+        var.set_value(path);
       }
-      var.set_value(path);
     }
   } else {
     switch (tyid) {

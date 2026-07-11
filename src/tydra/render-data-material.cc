@@ -3592,11 +3592,11 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
           if (mat_prim) {
             // Iterate through children to find OpenPBR shader
             for (const auto& child : mat_prim->children()) {
-              const Shader* shader = child.as<Shader>();
-              if (shader) {
+              const Shader* child_shader = child.as<Shader>();
+              if (child_shader) {
                 // Check if this is an OpenPBR shader by its info:id
-                if (shader->info_id == kNdOpenPbrSurfaceSurfaceshader ||
-                    shader->info_id == "ND_open_pbr_surface_surfaceshader") {
+                if (child_shader->info_id == kNdOpenPbrSurfaceSurfaceshader ||
+                    child_shader->info_id == "ND_open_pbr_surface_surfaceshader") {
                   Path child_path = mat_abs_path;
                   child_path = child_path.append_element(child.element_name());
                   mtlxSurfacePath = child_path;
