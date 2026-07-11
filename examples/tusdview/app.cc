@@ -746,9 +746,18 @@ void App::applyLoaded(bool ok, bool progressive) {
     const int upAxis = (draw_.upAxis == "Z") ? 2 : 1;
     camera_.setUpAxis(upAxis);
     NextCameraPose campose;
-    if (!cameraName_.empty() && useNextLoader_ && nextSession_ &&
-        FindNextCamera(nextSession_->GetStage(), cameraName_, animTime_,
-                       &campose)) {
+    // Either loader can be framed on a named USD camera. The legacy path reads the
+    // camera out of the converted RenderScene (FindLegacyCamera); it used to just
+    // warn "need --next" and auto-fit instead, which meant the two loaders could
+    // never be pointed at the same camera -- and so could not be compared.
+    const bool haveCamera =
+        !cameraName_.empty() &&
+        (useNextLoader_ && nextSession_
+             ? FindNextCamera(nextSession_->GetStage(), cameraName_, animTime_,
+                              &campose)
+             : (loaded_.ok &&
+                FindLegacyCamera(loaded_.render, cameraName_, &campose)));
+    if (haveCamera) {
       // Drive the orbit rig from a scene camera. The auto-fit framing is useless
       // on vast scenes (Caldera's 8 km map frames to a sub-pixel speck); a named
       // USD camera gives a meaningful district view across raster / --rt / --cuda.
@@ -784,7 +793,7 @@ void App::applyLoaded(bool ok, bool progressive) {
            cameraName_.c_str(), campose.fovYDeg, campose.zNear, campose.zFar);
     } else {
       if (!cameraName_.empty()) {
-        LOGW("camera '%s' not found (need --next + a Camera prim); auto-fitting",
+        LOGW("camera '%s' not found (no such Camera prim); auto-fitting",
              cameraName_.c_str());
       }
       // Frame on the visible geometry. Two inflators are excluded so pan/dolly

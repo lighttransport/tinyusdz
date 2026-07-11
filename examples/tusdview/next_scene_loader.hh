@@ -56,6 +56,15 @@ struct NextCameraPose {
 bool FindNextCamera(const tinyusdz::next::Stage& stage, const std::string& name,
                     double time, NextCameraPose* out);
 
+// Same, for the LEGACY loader, which has no next Stage -- only the converted
+// Tydra RenderScene. `--camera` used to be silently unavailable there ("need
+// --next"), which meant the two loaders could not be pointed at one camera and so
+// could not be compared frame-to-frame at all. The pose comes from the camera
+// node's world matrix, so it is already evaluated at the load time code (Tydra
+// bakes it); `time` is not re-sampled.
+bool FindLegacyCamera(const tinyusdz::tydra::RenderScene& scene,
+                      const std::string& name, NextCameraPose* out);
+
 // Per-frame GPU-morph coefficients for `--next` instanced prototypes: for each
 // draw mesh that carries morph channels, resolve its blendshape weights from
 // `stage` at `time` (manual `blendOverride` weights, when set, replace animated

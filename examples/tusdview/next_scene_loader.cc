@@ -2047,6 +2047,73 @@ bool FindNextCamera(const tnext::Stage& stage, const std::string& name,
   return false;
 }
 
+// The legacy loader has no next Stage, only the converted RenderScene -- so
+// `--camera` was silently unavailable there. The camera's world matrix is already
+// baked into its Node (Tydra composes the hierarchy), and its lens lives in the
+// parallel RenderCamera the node's id indexes.
+bool FindLegacyCameraRec(const tinyusdz::tydra::RenderScene& scene,
+                         const tinyusdz::tydra::Node& node,
+                         const std::string& name, NextCameraPose* out) {
+  // scene.nodes is the ROOTS of a tree, not a flat list -- a camera is almost
+  // always nested under an Xform (Blender writes /root/Camera/Camera), so a
+  // top-level-only scan finds nothing.
+  if (node.nodeType == tinyusdz::tydra::NodeType::Camera) {
+    // Match by exact name, exact path, or a "/<name>" path suffix -- the same
+    // three ways FindNextCameraRec matches, so one --camera argument means the
+    // same thing to both loaders.
+    const std::string& path = node.abs_path;
+    const bool match =
+        name.empty() || node.prim_name == name || path == name ||
+        (path.size() > name.size() &&
+         path.compare(path.size() - name.size(), name.size(), name) == 0 &&
+         path[path.size() - name.size() - 1] == '/');
+    if (!match) {
+      for (const tinyusdz::tydra::Node& c : node.children)
+        if (FindLegacyCameraRec(scene, c, name, out)) return true;
+      return false;
+    }
+
+    // Row-major (p*M): translation in row 3, local axes in rows 0..2. USD cameras
+    // look down local -Z with local +Y up.
+    const tinyusdz::value::matrix4d& m = node.global_matrix;
+    float up[3] = {float(m.m[1][0]), float(m.m[1][1]), float(m.m[1][2])};
+    float fwd[3] = {-float(m.m[2][0]), -float(m.m[2][1]), -float(m.m[2][2])};
+    auto norm3 = [](float v[3]) {
+      const float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+      if (l > 1e-12f) { v[0] /= l; v[1] /= l; v[2] /= l; }
+    };
+    norm3(up);
+    norm3(fwd);
+    for (int k = 0; k < 3; ++k) {
+      out->eye[k] = float(m.m[3][k]);
+      out->up[k] = up[k];
+      out->forward[k] = fwd[k];
+    }
+    out->fovYDeg = 60.0f;
+    if (node.id >= 0 && size_t(node.id) < scene.cameras.size()) {
+      const tinyusdz::tydra::RenderCamera& cam = scene.cameras[size_t(node.id)];
+      out->fovYDeg = 2.0f *
+                     std::atan(0.5f * cam.verticalAperture /
+                               std::max(1.0e-6f, cam.focalLength)) *
+                     (180.0f / 3.14159265358979323846f);
+      out->zNear = std::max(1.0e-4f, cam.znear);
+      out->zFar = std::max(out->zNear + 1.0e-3f, cam.zfar);
+    }
+    return true;
+  }
+  for (const tinyusdz::tydra::Node& c : node.children)
+    if (FindLegacyCameraRec(scene, c, name, out)) return true;
+  return false;
+}
+
+bool FindLegacyCamera(const tinyusdz::tydra::RenderScene& scene,
+                      const std::string& name, NextCameraPose* out) {
+  if (!out) return false;
+  for (const tinyusdz::tydra::Node& root : scene.nodes)
+    if (FindLegacyCameraRec(scene, root, name, out)) return true;
+  return false;
+}
+
 // The scene's absolute bone rows at `time`, indexed exactly as DrawMeshCPU::
 // jointIdx indexes them. Shared by the raster bone-texture upload
 // (BuildNextSkinningFrame) and the RT vertex re-pose (BuildNextRtDeformedVertices),
