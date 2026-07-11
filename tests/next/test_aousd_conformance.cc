@@ -505,12 +505,87 @@ void TestTypedSplines() {
   }
 }
 
+// AOUSD-TYPE-001 coverage: every supported foundational type must survive a
+// USDA -> USDC -> USDA round trip with no value/type loss and no spurious
+// structural additions (e.g. a `reorder properties` synthesized from the
+// crate `properties` field).
+void TestFoundationalTypeMatrix() {
+  const std::string body =
+      "def Scope \"T\" {\n"
+      "    bool b = true\n"
+      "    uchar uc = 200\n"
+      "    int i = -5\n"
+      "    uint ui = 7\n"
+      "    int64 i64 = -100000000000\n"
+      "    uint64 u64 = 100000000000\n"
+      "    half h = 1.5\n"
+      "    float f = 2.5\n"
+      "    double d = 3.5\n"
+      "    string s = \"hi\"\n"
+      "    token tok = \"abc\"\n"
+      "    asset a = @./tex.png@\n"
+      "    int2 i2 = (1, 2)\n"
+      "    int3 i3 = (1, 2, 3)\n"
+      "    int4 i4 = (1, 2, 3, 4)\n"
+      "    half2 h2 = (1.5, 2.5)\n"
+      "    half3 h3 = (1.5, 2.5, 3.5)\n"
+      "    half4 h4 = (1.5, 2.5, 3.5, 4.5)\n"
+      "    float2 f2 = (1.5, 2.5)\n"
+      "    float3 f3 = (1.5, 2.5, 3.5)\n"
+      "    float4 f4 = (1.5, 2.5, 3.5, 4.5)\n"
+      "    double2 d2 = (1.5, 2.5)\n"
+      "    double3 d3 = (1.5, 2.5, 3.5)\n"
+      "    double4 d4 = (1.5, 2.5, 3.5, 4.5)\n"
+      "    point3f p3f = (1, 2, 3)\n"
+      "    normal3f n3f = (0, 1, 0)\n"
+      "    vector3f v3f = (1, 0, 0)\n"
+      "    color3f c3f = (0.1, 0.2, 0.3)\n"
+      "    color4f c4f = (0.1, 0.2, 0.3, 1)\n"
+      "    texCoord2f uv = (0.5, 0.5)\n"
+      "    quatf qf = (1, 0, 0, 0)\n"
+      "    quatd qd = (1, 0, 0, 0)\n"
+      "    quath qh = (1, 0, 0, 0)\n"
+      "    matrix2d m2 = ((1, 0), (0, 1))\n"
+      "    matrix3d m3 = ((1, 0, 0), (0, 1, 0), (0, 0, 1))\n"
+      "    matrix4d m4 = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))\n"
+      "    frame4d fr = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 2, 1))\n"
+      "    int[] ia = [1, 2, 3]\n"
+      "    float[] fa = [1.5, 2.5]\n"
+      "    double[] da = [1.5, 2.5]\n"
+      "    half[] ha = [1.5, 2.5]\n"
+      "    uchar[] uca = [1, 2, 200]\n"
+      "    token[] toka = [\"a\", \"b\"]\n"
+      "    string[] sa = [\"x\", \"y\"]\n"
+      "    asset[] aa = [@./p.png@, @./q.png@]\n"
+      "    float3[] f3a = [(1, 2, 3), (4, 5, 6)]\n"
+      "    point3f[] p3a = [(1, 2, 3), (4, 5, 6)]\n"
+      "    color3f[] c3a = [(0.1, 0.2, 0.3)]\n"
+      "    matrix4d[] m4a = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]\n"
+      "    bool[] ba = [true, false, true]\n"
+      "}\n";
+  LoadResult direct = Parse(body, true);
+  assert(direct.success);
+  const std::string a1 = WriteUSDAToString(direct.stage);
+
+  USDCWriteOptions usdc_opts;
+  std::vector<uint8_t> crate;
+  USDCWriteResult wr = WriteUSDCToMemory(crate, direct.stage, usdc_opts);
+  assert(wr.success);
+  USDCLoadOptions lopts;
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size(), lopts);
+  assert(back.success);
+  const std::string a2 = WriteUSDAToString(back.stage);
+  assert(a1 == a2 &&
+         "foundational type matrix must survive USDA->USDC->USDA unchanged");
+}
+
 }  // namespace
 
 int main() {
   TestUnicodeAndPaths();
   TestLosslessUnsupportedValues();
   TestTypedSplines();
+  TestFoundationalTypeMatrix();
   TestDictionaryAndRelationshipComposition();
   TestNamespaceOrdering();
   TestSchemaFallbackAndValueClips();
