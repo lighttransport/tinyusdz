@@ -2248,6 +2248,8 @@ if(TINYUSDZ_BUILD_TESTS)
         camera-modes
         cmyk-jpeg-texture
         degraded-material
+        frames-framespec
+        ibl-specular-bound
         instancer-invisible-ids
         material-shading-bsdf-sample
         mtlx-usdz-texture-equivalence
@@ -2256,12 +2258,14 @@ if(TINYUSDZ_BUILD_TESTS)
         purpose-filtering
         sphere-light-nee
         subdivision-schemes
+        textureless-dome
         timecode-blendshape-animation
         timecode-normals-animation
         timecode-points-animation
         timecode-transform-animation
         transparency
-        usdz-texture-equivalence)
+        usdz-texture-equivalence
+        uv-set-routing)
     foreach(t ${TUSDR_SHELL_TESTS})
       add_test(
         NAME tool-tusdrender-${t}
