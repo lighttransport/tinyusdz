@@ -32,6 +32,18 @@ namespace pcp {
 
 class Cache {
  public:
+  struct MemoryStats {
+    size_t source_layer_bytes = 0;
+    size_t transient_cache_bytes = 0;
+    size_t layer_count = 0;
+    size_t prim_index_count = 0;
+    size_t composed_prim_count = 0;
+
+    size_t total_bytes() const {
+      return source_layer_bytes + transient_cache_bytes;
+    }
+  };
+
   Cache();
   ~Cache();
   Cache(Cache &&) noexcept;
@@ -102,6 +114,14 @@ class Cache {
   /// Materialize the fully-composed scene into `stage` (a fresh root Layer).
   bool BuildStage(Stage *stage, std::string *warn, std::string *err);
 
+  /// Approximate logical residency owned by the composition cache. Source
+  /// layers are counted once even when several layer stacks reference them.
+  MemoryStats GetMemoryStats() const;
+
+  /// Drop recomputable PrimIndex/source/opinion caches while retaining parsed
+  /// layers, load rules, deferred-payload state and variant selections.
+  void TrimTransientCaches();
+
   // --- lazy per-prim composition (Phase 10) -------------------------------
 
   /// Compose (and cache) just the prim at `prim_path` on first access, reusing
@@ -168,6 +188,12 @@ class Cache {
 
   /// A snapshot of the current payload load rules.
   LoadRules GetLoadRules() const;
+
+  /// Replace path-scoped variant selections and invalidate only paths whose
+  /// selections changed (plus dependent indices). Parsed layers stay cached.
+  void SetVariantSelections(
+      const CompositionOptions::VariantSelectionMap &selections);
+  CompositionOptions::VariantSelectionMap GetVariantSelections() const;
 
   /// Whether `prim_path` has an unloaded (deferred) payload.
   bool HasDeferredPayload(const Path &prim_path) const;

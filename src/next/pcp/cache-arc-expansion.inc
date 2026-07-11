@@ -401,8 +401,9 @@
     }
   }
 
-  std::vector<Src> ExpandList(const std::vector<Src> &base, std::string *warn,
-                              std::string *err) {
+  std::vector<Src> ExpandList(const std::vector<Src> &base,
+                              const std::string &root_prim_path,
+                              std::string *warn, std::string *err) {
     std::vector<Src> main;
     std::vector<Src> spec;  // specialize-derived: globally weakest
     // Variant selections accumulated across the prim's sources (cross-source).
@@ -414,6 +415,10 @@
     std::map<std::string, std::string> sels;
     for (const auto &ov : options.variant_overrides) {
       sels[ov.first] = ov.second;
+    }
+    const auto scoped = options.variant_overrides_by_path.find(root_prim_path);
+    if (scoped != options.variant_overrides_by_path.end()) {
+      for (const auto &ov : scoped->second) sels[ov.first] = ov.second;
     }
     for (const Src &s : base) {
       // Carry a base source's own arc kind so a specialize re-rooted onto a
@@ -490,7 +495,7 @@
       // unordered_map element refs are stable across later inserts, and
       // pending[0] (the queried leaf) is filled last, so this captures it.
       std::vector<Src> &slot = sources_cache[key];
-      slot = ExpandList(base, warn, err);
+      slot = ExpandList(base, key, warn, err);
       result = &slot;
     }
     return *result;

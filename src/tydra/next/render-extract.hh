@@ -81,8 +81,6 @@ struct PointInstancerData {
   std::vector<int64_t> ids;
   std::vector<int64_t> invisible_ids;
   std::vector<int64_t> inactive_ids;
-  std::vector<float> display_colors;
-  std::vector<float> display_opacities;
   std::vector<::tinyusdz::next::PointInstancerTransform> transforms;
   bool valid = false;
   std::string validation_error;
@@ -94,7 +92,8 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
 
 bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
                             double time_code,
-                            PointInstancerData* out);
+                            PointInstancerData* out,
+                            bool compute_transforms = true);
 
 void GatherMeshPrims(const ::tinyusdz::next::UsdPrim& root,
                      std::vector<::tinyusdz::next::UsdPrim>* out);

@@ -142,3 +142,24 @@
     composed_children_.clear();
     issues_.clear();  // fresh diagnostics for the recomposition.
   }
+
+  void SetVariantSelections(
+      const CompositionOptions::VariantSelectionMap &selections) {
+    NEXT_PCP_LOCK(api_mu_);
+    std::set<std::string> changed;
+    for (const auto &entry : options.variant_overrides_by_path) {
+      const auto it = selections.find(entry.first);
+      if (it == selections.end() || it->second != entry.second) {
+        changed.insert(entry.first);
+      }
+    }
+    for (const auto &entry : selections) {
+      const auto it = options.variant_overrides_by_path.find(entry.first);
+      if (it == options.variant_overrides_by_path.end() ||
+          it->second != entry.second) {
+        changed.insert(entry.first);
+      }
+    }
+    options.variant_overrides_by_path = selections;
+    for (const std::string &path : changed) Invalidate_locked(Path(path));
+  }

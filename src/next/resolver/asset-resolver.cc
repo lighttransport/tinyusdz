@@ -38,16 +38,24 @@ bool FileExistsImpl(const std::string& path) {
   std::ifstream f(path);
   return f.good();
 #else
-  // Use stat (follows symlinks) so a symlinked asset resolves to its target's
-  // type: production scenes routinely symlink assets into place (e.g. Animal
-  // Logic ALab merges techvar_assets/baked_procedurals as symlinks). lstat here
-  // would see S_ISLNK (not S_ISREG) and wrongly report the asset missing, so the
-  // resolver would fall back to the bare unanchored path. A symlink to a regular
-  // file yields S_ISREG; a dangling symlink fails stat (correctly "not found").
-  // (A TOCTOU window still exists between this check and any subsequent open().)
+  // Follow symlinks: production USD asset trees commonly use them for shared
+  // payload and texture roots. The subsequent reader still enforces its size
+  // and format limits.
   struct stat st;
   return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
 #endif
+}
+
+bool HasParentComponent(const std::string& path) {
+  size_t begin = 0;
+  while (begin <= path.size()) {
+    size_t end = path.find_first_of("/\\", begin);
+    if (end == std::string::npos) end = path.size();
+    if (path.compare(begin, end - begin, "..") == 0) return true;
+    if (end == path.size()) break;
+    begin = end + 1;
+  }
+  return false;
 }
 
 std::string NormalizePackageEntryPath(std::string path) {
@@ -208,6 +216,10 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
   result.original_path = asset_path;
 
   if (asset_path.empty()) {
+    return result;
+  }
+
+  if (!config_.allow_parent_paths && HasParentComponent(asset_path)) {
     return result;
   }
 

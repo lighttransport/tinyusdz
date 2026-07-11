@@ -439,8 +439,19 @@ double Stage::GetTimeCodesPerSecond() const {
 }
 
 bool Stage::HasTimeSamples() const {
-  // Simplified: just check if endTimeCode > startTimeCode.
-  return meta_.endTimeCode > meta_.startTimeCode;
+  // Check if any prim has time samples
+  bool has_samples = false;
+  Traverse([&](const UsdPrim& prim) {
+    (void)prim;
+    // Check all properties for time samples
+    // Simplified: just check if endTimeCode > startTimeCode
+    if (meta_.endTimeCode > meta_.startTimeCode) {
+      has_samples = true;
+      return false;  // Stop traversal
+    }
+    return true;
+  });
+  return has_samples;
 }
 
 size_t Stage::GetPrimCount() const {

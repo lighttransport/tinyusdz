@@ -232,6 +232,9 @@ struct VertexAttribute {
 struct RenderMesh {
   std::string name;
   std::string prim_path;
+  // True for an extent-derived low-cost stand-in emitted by a streaming sink
+  // policy instead of the authored geometry payload.
+  bool is_proxy = false;
 
   // Topology
   UInt32Chunked face_vertex_counts;   // Number of verts per face
@@ -246,6 +249,13 @@ struct RenderMesh {
   FloatChunked texcoords_0;       // Primary UV (st), xy interleaved
   FloatChunked texcoords_1;       // Secondary UV
   FloatChunked colors;            // Vertex colors (rgb or rgba)
+
+  // Authored primvar names of the two UV sets (e.g. "st", "UVMap"). Empty when
+  // the set is absent. A texture names the set it samples via
+  // RenderTexture::uv_primvar, so a consumer matches that against these to pick
+  // the slot.
+  std::string texcoords_0_name;
+  std::string texcoords_1_name;
 
   // Interpolation modes for attributes
   Interpolation normals_interp = Interpolation::Vertex;
@@ -369,7 +379,7 @@ struct RenderPoints {
 };
 
 //
-// RenderCurves - curve prim data for UsdGeomBasisCurves / UsdGeomNurbsCurves.
+// RenderCurves - curve prim data for BasisCurves, NurbsCurves and HermiteCurves.
 //
 // Carries both the authored CONTROL data (control points, widths, colors,
 // topology) and a render-ready TESSELLATED polyline representation produced
@@ -394,6 +404,7 @@ struct RenderCurves {
   CurveBasis basis = CurveBasis::Bezier;  // cubic BasisCurves only
   CurveWrap wrap = CurveWrap::Nonperiodic;
   bool is_nurbs = false;  // true = NurbsCurves (order/knots evaluated)
+  bool is_hermite = false;  // true = HermiteCurves (point/tangent pairs)
 
   //
   // Tessellated polylines (render-ready output)
@@ -428,9 +439,19 @@ struct RenderCurves {
 // RenderPointInstancer - render-ready instance arrays for UsdGeomPointInstancer
 //
 struct RenderPointInstancer {
+  struct CompactInstance {
+    float position[3];
+    uint32_t packed_orientation;  // four signed normalized 8-bit components
+    uint16_t scale[3];            // IEEE 754 binary16
+    uint16_t flags;               // bit 0: visible and active
+    int32_t prototype_index;
+    uint32_t source_index;
+  };
+  static_assert(sizeof(CompactInstance) == 32,
+                "Compact PointInstancer record must remain 32 bytes");
+
   std::string name;
   std::string prim_path;
-  int32_t material_id = -1;  // Optional material binding on the instancer.
 
   std::vector<std::string> prototype_paths;
   std::vector<int32_t> prototype_node_ids;     // One entry per prototype path.
@@ -447,16 +468,18 @@ struct RenderPointInstancer {
   std::vector<int64_t> invisible_ids;
   std::vector<int64_t> inactive_ids;
   std::vector<Matrix4> transforms;
-  std::vector<float> display_colors;    // rgb, size = instance_count * 3
-  std::vector<float> display_opacities; // alpha, size = instance_count
   std::vector<uint8_t> instance_visible;  // 1 = visible/active, 0 = hidden
+  std::vector<CompactInstance> compact_instances;
   uint32_t draw_start = 0;
   uint32_t draw_count = 0;
 
   bool valid = false;
   std::string validation_error;
 
-  size_t instance_count() const { return proto_indices.size(); }
+  size_t instance_count() const {
+    return proto_indices.empty() ? compact_instances.size()
+                                 : proto_indices.size();
+  }
   size_t visible_instance_count() const;
   bool has_valid_draw_range(size_t total_draw_count) const;
   bool has_orientations() const { return !orientations.empty(); }
@@ -464,8 +487,6 @@ struct RenderPointInstancer {
   bool has_velocities() const { return !velocities.empty(); }
   bool has_angular_velocities() const { return !angular_velocities.empty(); }
   bool has_ids() const { return !ids.empty(); }
-  bool has_display_colors() const { return !display_colors.empty(); }
-  bool has_display_opacities() const { return !display_opacities.empty(); }
   size_t prototype_count() const { return prototype_paths.size(); }
   size_t prototype_mesh_count(size_t prototype_index) const;
   bool has_valid_prototype_mesh_bindings() const;
@@ -482,10 +503,6 @@ struct RenderPointInstanceDraw {
   int32_t mesh_id = -1;
   int32_t material_id = -1;
   int32_t expanded_mesh_id = -1;  // Optional duplicated mesh generated from this draw.
-  bool has_display_color = false;
-  Float3 display_color = {1.0f, 1.0f, 1.0f};
-  bool has_display_opacity = false;
-  float display_opacity = 1.0f;
   Matrix4 transform;
 };
 

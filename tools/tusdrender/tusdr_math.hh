@@ -33,6 +33,7 @@
 
 #include "value-types.hh"
 #include "tydra/openpbr-params.hh"
+#include "tydra/next/resource-budget.hh"
 #include "xform.hh"
 
 namespace tusdr {
@@ -50,14 +51,18 @@ class MemBudget {
     return inst;
   }
 
-  // cap_override_gib <= 0 -> auto: min(32 GiB, 0.5 * MemAvailable).
+  // cap_override_gib <= 0 -> the shared 32 GiB-target host policy.
   void Init(double cap_override_gib) {
     if (cap_override_gib > 0.0) {
       cap_ = size_t(cap_override_gib * double(size_t(1) << 30));
     } else {
       size_t avail = AvailableSystemMemory();
-      size_t half = avail ? avail / 2 : 0;
-      cap_ = half ? std::min(kDefaultCapBytes, half) : kDefaultCapBytes;
+      const uint64_t target_capacity =
+          avail ? std::min<uint64_t>(avail, tinyusdz::tydra::next::GiB(32))
+                : tinyusdz::tydra::next::GiB(32);
+      cap_ = static_cast<size_t>(
+          tinyusdz::tydra::next::ComputeResourceBudget(target_capacity, 0)
+              .host_limit);
     }
     base_.store(0);
     tracked_.store(0);

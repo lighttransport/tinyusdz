@@ -8,7 +8,6 @@
 
 #include "prim-spec.hh"
 #include <string>
-#include <string_view>
 #include <vector>
 #include <memory>
 #include <unordered_map>
@@ -27,17 +26,6 @@ struct LayerMeta {
   // Authored flags for the core fields above: an opinion authored AT the
   // fallback value ("upAxis = \"Y\"", "startTimeCode = 0") must round-trip
   // as authored, and an unauthored field must not be written.
-  bool upAxis_set = false;
-  bool metersPerUnit_set = false;
-  bool timeCodesPerSecond_set = false;
-  bool startTimeCode_set = false;
-  bool endTimeCode_set = false;
-
-  // Authored-tracking flags for the value-defaulted fields above, so the writer
-  // re-emits an authored opinion even when it equals the schema fallback (e.g.
-  // `upAxis = "Y"`, `metersPerUnit = 0.01`) -- matching pxr usdcat, which prints
-  // authored stage metadata regardless of value. Without these the writer could
-  // only "omit if == default" and silently dropped authored defaults on flatten.
   bool upAxis_set = false;
   bool metersPerUnit_set = false;
   bool timeCodesPerSecond_set = false;
@@ -220,13 +208,8 @@ public:
 
   /// Start a new prim at the given path
   /// Returns the prim index
-  uint32_t begin_prim(std::string_view name, std::string_view type_name,
+  uint32_t begin_prim(const std::string& name, const std::string& type_name,
                       PrimSpecifier specifier = PrimSpecifier::Def);
-
-  /// Start a new prim with an explicit absolute path.
-  /// Returns the prim index.
-  uint32_t begin_prim(std::string_view name, std::string_view type_name,
-                      PrimSpecifier specifier, std::string_view full_path);
 
   /// End current prim (validates and finalizes)
   void end_prim();
@@ -235,13 +218,13 @@ public:
   PrimSpec* current();
 
   /// Add property to current prim
-  void add_property(std::string_view name, Value value, uint16_t flags = 0);
+  void add_property(const std::string& name, Value value, uint16_t flags = 0);
 
   /// Add time sample to current prim
-  void add_time_sample(std::string_view prop_name, double time, Value value);
+  void add_time_sample(const std::string& prop_name, double time, Value value);
 
   /// Add relationship to current prim
-  void add_relationship(std::string_view name, const Path& target);
+  void add_relationship(const std::string& name, const Path& target);
 
   /// Set metadata on current prim
   void set_active(bool active);

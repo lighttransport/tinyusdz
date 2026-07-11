@@ -24,6 +24,7 @@
 #include "next/tinyusdz-next.hh"
 #include "next/types/value.hh"
 #include "tydra/next/scene-access.hh"
+#include "tydra/next/texture-cache.hh"
 extern "C" {
 #include "lightrt_c_tri.h"
 }
@@ -520,7 +521,7 @@ struct Options {
   bool ibl_envmap{false};   // -ibl envmap: vendored envmap-lib IBL precompute
   bool progress{false};
   enum class MaterialResolver { Legacy, TydraNext, Compare };
-  MaterialResolver material_resolver{MaterialResolver::Legacy};
+  MaterialResolver material_resolver{MaterialResolver::TydraNext};
   enum class MaterialShading { Legacy, LightRtBsdf };
   MaterialShading material_shading{MaterialShading::Legacy};
   lrt_tri_quality quality{LRT_TRI_BUILD_FAST};
@@ -818,6 +819,8 @@ struct TextureCache {
   std::string base_dir;  // directory of the input file, for relative paths
   const tinyusdz::next::USDZReader *usdz{nullptr};
   const Options *options{nullptr};
+  // Shared decode + size cap + byte budget (built on first use in tusdr_next).
+  std::shared_ptr<tinyusdz::tydra::next::TextureDecoder> decoder;
   size_t decoded_bytes{0};
   size_t *degraded_materials{nullptr};  // -> RTPreviewStats::degraded_materials
   size_t *missing_textures{nullptr};  // -> RTPreviewStats::missing_textures

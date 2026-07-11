@@ -24,6 +24,7 @@
 #include <unistd.h>  // realpath, getpid
 
 #include "next/pcp/prim-index.hh"  // pcp::CompositionOptions
+#include "tydra/next/resource-budget.hh"
 #include "tusdr_context.hh"
 
 #ifdef HAVE_VULKAN
@@ -233,13 +234,22 @@ bool PrepareLodStream(Options *opt, std::string *generated_wrapper) {
   //    not model per-district variation -- conservative and predictable).
   const bool gpu = opt->vulkan || opt->vulkan_rt || opt->use_d3d || opt->hip;
   const double host_avail = double(MemBudget::AvailableSystemMemory());
-  const double host_budget =
-      opt->max_mem_gib > 0.0 ? opt->max_mem_gib * kGiB : 0.5 * host_avail;
+  const uint64_t host_capacity = host_avail > 0.0
+                                     ? std::min<uint64_t>(
+                                           static_cast<uint64_t>(host_avail),
+                                           tinyusdz::tydra::next::GiB(32))
+                                     : tinyusdz::tydra::next::GiB(32);
   const double vram_total = gpu ? double(QueryDeviceLocalVRAMBytes()) : 0.0;
+  const tinyusdz::tydra::next::ResourceBudget automatic =
+      tinyusdz::tydra::next::ComputeResourceBudget(
+          host_capacity, static_cast<uint64_t>(vram_total));
+  const double host_budget = opt->max_mem_gib > 0.0
+                                 ? opt->max_mem_gib * kGiB
+                                 : double(automatic.host_limit);
   const double vram_budget =
       !gpu ? 1e30
            : (opt->max_vram_gib > 0.0 ? opt->max_vram_gib * kGiB
-                                      : 0.5 * vram_total);
+                                      : double(automatic.vram_limit));
   const double cost_host = opt->lod_district_mem_gib * kGiB;
   const double cost_vram = opt->lod_district_vram_gib * kGiB;
   const double base_host = double(MemBudget::ProcessRSS());  // proxy structure

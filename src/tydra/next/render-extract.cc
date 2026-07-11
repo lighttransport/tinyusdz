@@ -45,7 +45,8 @@ bool IsLightType(const std::string& t) {
 }
 
 bool IsCurveType(const std::string& t) {
-  return t == "BasisCurves" || t == "NurbsCurves";
+  return t == "BasisCurves" || t == "NurbsCurves" ||
+         t == "HermiteCurves";
 }
 
 RenderPrimKind Classify(const ::tinyusdz::next::UsdPrim& prim,
@@ -164,13 +165,12 @@ bool IsAnalyticGeomTypeName(const std::string& type_name) {
 }
 
 bool IsMeshRenderableTypeName(const std::string& type_name) {
-  return type_name == "Mesh" || IsAnalyticGeomTypeName(type_name);
+  return type_name == "Mesh" || type_name == "TetMesh" ||
+         IsAnalyticGeomTypeName(type_name);
 }
 
 bool IsUnsupportedRenderableTypeName(const std::string& type_name) {
-  // BasisCurves/NurbsCurves are converted (RenderCurves); HermiteCurves is not.
-  return type_name == "Points" || type_name == "HermiteCurves" ||
-         type_name == "Volume" || type_name == "TetMesh" ||
+  return type_name == "Points" || type_name == "Volume" ||
          type_name == "NurbsPatch";
 }
 
@@ -189,7 +189,8 @@ bool CollectRenderPrims(const ::tinyusdz::next::Stage& stage,
 
 bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
                             double time_code,
-                            PointInstancerData* out) {
+                            PointInstancerData* out,
+                            bool compute_transforms) {
   if (!out) return false;
   *out = PointInstancerData();
   ::tinyusdz::next::UsdGeomPointInstancer pi(prim);
@@ -211,11 +212,9 @@ bool ReadPointInstancerData(const ::tinyusdz::next::UsdPrim& prim,
   out->ids = pi.GetIds(time_code);
   out->invisible_ids = pi.GetInvisibleIds(time_code);
   out->inactive_ids = pi.GetInactiveIds();
-  out->display_colors =
-      ReadFloatArrayCopy(prim, "primvars:displayColor", time_code);
-  out->display_opacities =
-      ReadFloatArrayCopy(prim, "primvars:displayOpacity", time_code);
-  out->transforms = pi.ComputeInstanceTransforms(time_code);
+  if (compute_transforms) {
+    out->transforms = pi.ComputeInstanceTransforms(time_code);
+  }
   out->valid = pi.HasValidInstanceArrays(time_code, &out->validation_error);
   return true;
 }

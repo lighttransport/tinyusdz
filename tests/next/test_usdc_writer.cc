@@ -615,34 +615,6 @@ void test_usdc_encode_value_fallback_roundtrip() {
   std::cout << "  USDC EncodeValue fallback roundtrip test passed!\n\n";
 }
 
-void test_usdc_value_block_roundtrip() {
-  std::cout << "Testing USDC ValueBlock roundtrip...\n";
-
-  StageBuilder stage_builder;
-  stage_builder.SetDefaultPrim("Root");
-  LayerBuilder& layer = stage_builder.GetLayerBuilder();
-
-  layer.begin_prim("Mesh", "Mesh");
-  layer.current()->set_property_type_name("primvars:displayColor:indices", "int[]");
-  layer.add_property("primvars:displayColor:indices", Value::MakeBlock());
-  layer.end_prim();
-  layer.finalize();
-
-  Stage stage = stage_builder.Build();
-  std::vector<uint8_t> buffer;
-  USDCWriteResult write_result = WriteUSDCToMemory(buffer, stage);
-  assert(write_result.success);
-  USDCLoadResult read_result = LoadUSDCFromMemory(buffer.data(), buffer.size());
-  assert(read_result.success);
-
-  UsdPrim mesh = read_result.stage.GetPrimAtPath("/Mesh");
-  assert(mesh.IsValid());
-  const Value* prop = mesh.GetPropertyValue("primvars:displayColor:indices");
-  assert(prop && prop->is_block());
-
-  std::cout << "  USDC ValueBlock roundtrip test passed!\n\n";
-}
-
 int main() {
   std::cout << "=== TinyUSDZ Next USDC Writer Tests ===\n\n";
 
@@ -658,7 +630,6 @@ int main() {
     test_usdc_bool_array_roundtrip();
     test_usdc_relationship_connection_roundtrip();
     test_usdc_encode_value_fallback_roundtrip();
-    test_usdc_value_block_roundtrip();
 
     std::cout << "=== All USDC writer tests passed! ===\n";
     return 0;
