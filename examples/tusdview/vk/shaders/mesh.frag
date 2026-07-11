@@ -56,6 +56,11 @@ struct MaterialTexParam {
   vec4 emissiveScale; vec4 emissiveBias;
   vec4 scalar0;  // metallicChannel, roughnessChannel, metallicScale, metallicBias
   vec4 scalar1;  // roughnessScale, roughnessBias, displacementScale, displacementBias
+  // Per-slot UV set: 0 = vUV (texcoords_0), 1 = vUV1 (texcoords_1).
+  // x = base color, y = metal/rough, z = normal, w = emissive.
+  // Displacement is absent on purpose: it is sampled in the vertex/tessellation
+  // stages, which do not carry the second set.
+  vec4 uvSets;
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -117,7 +122,8 @@ float channelOf(vec4 c, float chf) {
 
 vec4 sampleBaseColor(vec2 uv) {
   MaterialTexParam m = matTexParam();
-  vec2 tuv = xformUv(uv, m.baseUv0, m.baseUv1);
+  vec2 suv = (m.uvSets.x > 0.5) ? vUV1 : uv;
+  vec2 tuv = xformUv(suv, m.baseUv0, m.baseUv1);
   vec4 c = ((pc.ids.w & 1) != 0)
       ? sampleUdim(uBaseColorUdimTex, uBaseColorUdimLut, tuv)
       : texture(uBaseColorTex, tuv);
@@ -126,7 +132,8 @@ vec4 sampleBaseColor(vec2 uv) {
 
 vec4 sampleMetalRough(vec2 uv) {
   MaterialTexParam m = matTexParam();
-  vec2 tuv = xformUv(uv, m.mrUv0, m.mrUv1);
+  vec2 suv = (m.uvSets.y > 0.5) ? vUV1 : uv;
+  vec2 tuv = xformUv(suv, m.mrUv0, m.mrUv1);
   return ((pc.ids.w & 2) != 0)
       ? sampleUdim(uMetalRoughUdimTex, uMetalRoughUdimLut, tuv)
       : texture(uMetalRoughTex, tuv);
@@ -134,7 +141,8 @@ vec4 sampleMetalRough(vec2 uv) {
 
 vec4 sampleNormal(vec2 uv) {
   MaterialTexParam m = matTexParam();
-  vec2 tuv = xformUv(uv, m.normalUv0, m.normalUv1);
+  vec2 suv = (m.uvSets.z > 0.5) ? vUV1 : uv;
+  vec2 tuv = xformUv(suv, m.normalUv0, m.normalUv1);
   vec4 c = ((pc.ids.w & 4) != 0)
       ? sampleUdim(uNormalUdimTex, uNormalUdimLut, tuv)
       : texture(uNormalTex, tuv);
@@ -143,7 +151,8 @@ vec4 sampleNormal(vec2 uv) {
 
 vec4 sampleEmissive(vec2 uv) {
   MaterialTexParam m = matTexParam();
-  vec2 tuv = xformUv(uv, m.emissiveUv0, m.emissiveUv1);
+  vec2 suv = (m.uvSets.w > 0.5) ? vUV1 : uv;
+  vec2 tuv = xformUv(suv, m.emissiveUv0, m.emissiveUv1);
   vec4 c = ((pc.ids.w & 8) != 0)
       ? sampleUdim(uEmissiveUdimTex, uEmissiveUdimLut, tuv)
       : texture(uEmissiveTex, tuv);

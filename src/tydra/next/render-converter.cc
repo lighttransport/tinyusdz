@@ -3328,6 +3328,49 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
                   : config_.mesh.uv_primvar_names.front();
   }
 
+  // The SECONDARY UV set. This used to be hard-coded to `uv_base + "1"`, so only
+  // st1 / UVMap1 / uv1 were ever extracted -- a texture whose UsdPrimvarReader
+  // names `uvSet1`, `map2` or `UVMap.001` (all common) referenced a set the
+  // converter never built, and RenderTexture::uv_primvar pointed at nothing.
+  //
+  // Take any second 2-component primvar instead, preferring the conventional
+  // names so existing assets keep their slot assignment: uv_base + "1" first,
+  // then the other configured UV names, then any remaining float2 primvar (in
+  // name order, so the choice is deterministic rather than dependent on authoring
+  // order). Skinning primvars are consumed by the skin binding, not here.
+  auto two_component = [&](const std::string& name) -> bool {
+    for (const Primvar& pv : primvars) {
+      if (pv.name != name || !pv.value || !pv.value->is_array()) continue;
+      return GetComponentCount(pv.value->type_id()) == 2;
+    }
+    return false;
+  };
+  std::string uv_second;
+  if (two_component(uv_base + "1")) {
+    uv_second = uv_base + "1";
+  }
+  if (uv_second.empty()) {
+    for (const std::string& candidate : config_.mesh.uv_primvar_names) {
+      if (candidate != uv_base && two_component(candidate)) {
+        uv_second = candidate;
+        break;
+      }
+    }
+  }
+  if (uv_second.empty()) {
+    std::vector<std::string> others;
+    for (const Primvar& pv : primvars) {
+      if (pv.name == uv_base || !pv.value || !pv.value->is_array()) continue;
+      if (GetComponentCount(pv.value->type_id()) != 2) continue;
+      if (pv.name.rfind("skel:", 0) == 0) continue;
+      others.push_back(pv.name);
+    }
+    if (!others.empty()) {
+      std::sort(others.begin(), others.end());
+      uv_second = others.front();
+    }
+  }
+
   const size_t npoints = mesh->point_count();
   const size_t nfaces = mesh->face_count();
   const size_t ncorners = mesh->face_vertex_indices.size();
@@ -3393,7 +3436,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     const uint32_t comps = PrimvarToFloats(*pv.value, &data);
     const Interpolation interp = ParsePrimvarInterp(pv.interpolation);
     const bool is_uv0 = (pv.name == uv_base);
-    const bool is_uv1 = (pv.name == uv_base + "1");
+    const bool is_uv1 = (!uv_second.empty() && pv.name == uv_second);
     const bool is_color = (pv.name == "displayColor");
     const bool is_normals = (pv.name == "normals");
     const bool builtin = is_uv0 || is_uv1 || is_color || is_normals;

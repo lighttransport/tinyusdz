@@ -986,6 +986,14 @@ void PackRtMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[51] = mat.metallicTexBias;
   dst[52] = mat.roughnessTexScale;
   dst[53] = mat.roughnessTexBias;
+  // Per-slot UV set, bit-packed into one free float (the RT layout has exactly
+  // two spare): bit 0 = base color, 1 = metal/rough, 2 = normal, 3 = emissive.
+  int uvSetBits = 0;
+  if (mat.baseColorSample.uvSet == 1) uvSetBits |= 1;
+  if (mat.metalRoughSample.uvSet == 1) uvSetBits |= 2;
+  if (mat.normalSample.uvSet == 1) uvSetBits |= 4;
+  if (mat.emissiveSample.uvSet == 1) uvSetBits |= 8;
+  dst[54] = static_cast<float>(uvSetBits);
 }
 
 void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
@@ -1010,6 +1018,12 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[17 * 4 + 1] = mat.roughnessTexBias;
   dst[17 * 4 + 2] = mat.displacementTexScale;
   dst[17 * 4 + 3] = mat.displacementTexBias;
+  // Per-slot UV set. Displacement stays on uv0: it is sampled in the vertex /
+  // tessellation stages, which do not carry the second set.
+  dst[18 * 4 + 0] = static_cast<float>(mat.baseColorSample.uvSet);
+  dst[18 * 4 + 1] = static_cast<float>(mat.metalRoughSample.uvSet);
+  dst[18 * 4 + 2] = static_cast<float>(mat.normalSample.uvSet);
+  dst[18 * 4 + 3] = static_cast<float>(mat.emissiveSample.uvSet);
 }
 
 }  // namespace tusdview
