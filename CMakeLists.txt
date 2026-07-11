@@ -2369,6 +2369,18 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-vram-budget"
         )
       set_tests_properties(tusdview-vram-budget PROPERTIES SKIP_RETURN_CODE 77)
+
+      # Vulkan RT BLAS compaction: must shrink the acceleration structures, must
+      # build ONE BLAS per prototype (not per instance), and must be image-neutral.
+      add_test(
+        NAME tusdview-blas-compaction
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-blas-compaction.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/models/skintest-instanced.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-blas-compaction"
+        )
+      set_tests_properties(tusdview-blas-compaction PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
