@@ -32,18 +32,31 @@ geometry directly and free it once their own BVH is built, and they only render 
 one-shot screenshot, where the bake IS the cheapest path. Making them animate
 interactively means re-posing into their BVH, not just into `draw_`.
 
-### 2. Mesh-light gaps (the light itself now works in both loaders)
+### 2. Mesh lights on the LEGACY `-rtPreview` path
 
-Two known holes in `CollectMeshLightsNext`:
+The `next` gaps are closed (`tool-tusdrender-mesh-light-gaps`): `inputs:normalize`
+now divides the radiance by the emitting world area, and an `instanceable`
+emissive mesh registers one light per PLACEMENT (it registered none — mesh lights
+were collected from the flat triangle list, which an instanced prototype is
+deliberately not in). Both are asserted as equivalences, not thresholds:
+normalized(area 4, intensity 40) == plain(intensity 10), and instanced == the same
+lamps written out in full.
 
-- `inputs:normalize` is ignored (the mesh's total area is not known where the
-  emission is resolved), so a normalized mesh light is too bright; and
-- the emitter's material TINT differs between loaders: the legacy default base
-  color is 0.18 gray, the next default is 0.55, so the same emissive mesh lights
-  a floor ~3x brighter through the next loader.
+What is left is the legacy loader, and the earlier note here — "the emitter's
+material tint differs, so next lights a floor ~3x brighter" — was wrong about the
+cause. `-legacyLoad -rtPreview` goes through `AddRTPreviewMesh`, which is a bare
+geometry flatten: every triangle gets a hardcoded 0.55 gray, no material, no
+emission, and no mesh light at all. A mesh light there does not light anything —
+raising its intensity 10x changes nothing, and the floor is lit only by the
+fallback camera headlight. (The material-aware legacy code, `CollectAllGeometry` /
+`MeshLightEmission`, is a different entry point and does honor `is_area_light` and
+`light_normalize`; the rtPreview path simply does not use it.)
 
-Also: mesh lights are collected from the FLAT triangle list only, so an
-`instanceable` emissive mesh (the TLAS/`TriStore` path) still registers none.
+`next` is the DEFAULT loader and `-legacyLoad` is the opt-out compatibility path,
+so this is a known limitation of a fallback rather than a live bug. Rebuilding the
+material pipeline inside `AddRTPreviewMesh` would be re-implementing what the next
+path already does. Decide before doing it whether the legacy rtPreview path is
+worth keeping at all.
 
 ### 3. Cross-backend blendshape screenshot parity
 
