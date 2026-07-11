@@ -63,6 +63,10 @@ struct LayerMeta {
   // entries are identity (0, 1).
   std::vector<std::pair<double, double>> subLayerOffsets;
 
+  // Unknown (unmodeled) stage metadata preserved as raw source text in
+  // authored order; the USDA writer re-emits it verbatim.
+  std::vector<std::pair<std::string, std::string>> unknownMeta;
+
   /// Fill stage-metadata fields this layer leaves unauthored from a WEAKER
   /// layer (a sublayer): stage metadata resolves through the whole root
   /// layer stack in pxr (upAxis/metersPerUnit/timeCodesPerSecond/...), so a

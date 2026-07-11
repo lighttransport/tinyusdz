@@ -314,6 +314,9 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + "kilogramsPerUnit = " + dtos(meta.kilogramsPerUnit));
   }
 
+  for (const auto& um : meta.unknownMeta) {
+    lines.push_back(opts.indent + um.first + " = " + um.second);
+  }
   if (!meta.relocates.empty()) {
     std::string s = opts.indent + "relocates = {\n";
     for (const auto& r : meta.relocates) {
@@ -1532,6 +1535,7 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.subLayers = root_layer->meta().subLayers;
   meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
   meta.relocates = root_layer->meta().relocates;
+  meta.unknownMeta = root_layer->meta().unknownMeta;
   meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)

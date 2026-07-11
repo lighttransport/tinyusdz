@@ -190,10 +190,27 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           AddError("Unsupported stage metadata in strict AOUSD mode: " + key);
           return false;
         }
-        // Generic metadata may be a dictionary/list; skip it structurally in
-        // compatibility mode, but always diagnose the loss.
-        SkipValueLike();
-        AddWarning("Unknown stage metadata: " + key);
+        // Generic metadata may be a dictionary/list: consume it structurally
+        // but PRESERVE the raw source text so the writer re-emits it verbatim
+        // (uniform losslessness with prim/property metadata).
+        lexer_->peek();  // ensure the value's first token is scanned
+        const size_t vstart = lexer_->token_start();
+        const bool skipped = SkipValueLike();
+        if (skipped) {
+          lexer_->peek();  // the following token's start bounds the value
+          size_t vend = lexer_->token_start();
+          const char* base = lexer_->input_data();
+          while (vend > vstart &&
+                 (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+                  base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+            vend--;
+          }
+          if (vend > vstart) {
+            layer_->meta().unknownMeta.emplace_back(
+                key, std::string(base + vstart, vend - vstart));
+          }
+        }
+        AddWarning("Unknown stage metadata (preserved): " + key);
       }
     }
 
