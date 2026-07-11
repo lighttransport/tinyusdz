@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <utility>
 
 #include "image-loader.hh"
@@ -60,6 +61,35 @@ bool LoadSourceImage(const TextureDecodeOptions& opt, const std::string& asset,
   if (!res) return false;
   *out = std::move(res.value().image);
   return true;
+}
+
+// Raw bytes of an asset, resolved exactly like LoadSourceImage (usdz entry first,
+// then base_dir-relative on disk).
+bool ReadSourceBytes(const TextureDecodeOptions& opt, const std::string& asset,
+                     std::vector<uint8_t>* out) {
+  if (asset.empty() || !out) return false;
+  if (opt.usdz) {
+    for (size_t i = 0; i < opt.usdz->NumEntries(); ++i) {
+      if (!UsdzEntryMatches(opt.usdz->EntryName(i), asset)) continue;
+      const uint8_t* p = opt.usdz->EntryData(i);
+      const size_t n = opt.usdz->EntrySize(i);
+      if (!p || !n) return false;
+      out->assign(p, p + n);
+      return true;
+    }
+  }
+  std::string path = asset;
+  if (path[0] != '/' && !opt.base_dir.empty()) {
+    path = opt.base_dir + "/" + path;
+  }
+  std::ifstream f(path, std::ios::binary | std::ios::ate);
+  if (!f) return false;
+  const std::streamoff n = f.tellg();
+  if (n <= 0) return false;
+  f.seekg(0, std::ios::beg);
+  out->resize(static_cast<size_t>(n));
+  return bool(f.read(reinterpret_cast<char*>(out->data()),
+                     static_cast<std::streamsize>(n)));
 }
 
 // Narrow a 16-bit UInt image to 8-bit in place. Loaders hand back 16-bit PNGs
@@ -164,6 +194,11 @@ void ScaledExtent(const DecodedImage& img, double ratio, uint32_t* w,
 }
 
 }  // namespace
+
+bool TextureDecoder::ReadAssetBytes(const std::string& asset,
+                                   std::vector<uint8_t>* out) const {
+  return ReadSourceBytes(options_, asset, out);
+}
 
 bool TextureDecoder::Decode(const std::string& asset, bool srgb,
                             DecodedImage* out) {

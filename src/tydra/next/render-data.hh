@@ -677,6 +677,13 @@ struct RenderTexture {
   std::string prim_path;
   std::string asset_path;  // Original USD asset path
 
+  // Legacy-safe GPU-compressed companion named by the `inputs:file` attribute's
+  // `customData = { asset ktx2 = @foo.ktx2@ }` hint (see doc/texcomp.md). Empty
+  // when unauthored. `asset_path` still points at the plain image, so unaware
+  // consumers are unaffected; a consumer that can upload GPU blocks loads this
+  // instead.
+  std::string ktx2_hint;
+
   // UV transform
   Float2 offset = {0, 0};
   Float2 scale = {1, 1};
