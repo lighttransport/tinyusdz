@@ -37,6 +37,30 @@ bool AsciiParser::Impl::ParseNamespacedName(std::string* out, const char* what) 
   return true;
 }
 
+bool AsciiParser::Impl::ParseOrderList(std::vector<std::string>* out) {
+  if (!out || !Match(TokenType::Equals) || !Match(TokenType::OpenBracket)) {
+    AddError("Expected '= [...]' after reorder field");
+    return false;
+  }
+  std::vector<std::string> parsed;
+  while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+    const Token& tok = lexer_->peek();
+    if (tok.type != TokenType::String && !IsNameToken(tok)) {
+      AddError("Expected a name in reorder list");
+      return false;
+    }
+    parsed.push_back(tok.value);
+    lexer_->next();
+    if (!Check(TokenType::CloseBracket)) Match(TokenType::Comma);
+  }
+  if (!Match(TokenType::CloseBracket)) {
+    AddError("Unterminated reorder list");
+    return false;
+  }
+  *out = std::move(parsed);
+  return true;
+}
+
 bool AsciiParser::Impl::SkipBalancedBlock(TokenType open, TokenType close,
                                          size_t depth_level) {
   if (!Check(open)) return false;

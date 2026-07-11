@@ -236,6 +236,9 @@ nonstd::expected<Cache, std::string> Cache::Open(
   Cache cache;
   cache.impl_->resolver = &resolver;
   cache.impl_->options = options;
+  if (cache.impl_->options.strict_aousd_conformance) {
+    cache.impl_->options.usda_parse_options.strict_aousd_conformance = true;
+  }
   // Back-compat: a lone `flatten_instances = true` (mode left Native) means the
   // self-contained Holder flatten.
   if (cache.impl_->options.flatten_instances &&
@@ -418,7 +421,11 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           std::string *warn, std::string *err) {
   LayerLoadOptions lopts;
   lopts.max_memory = options.max_layer_memory;
+  lopts.strict_aousd_conformance = options.strict_aousd_conformance;
   lopts.usda_parse_options = options.usda_parse_options;
+  if (options.strict_aousd_conformance) {
+    lopts.usda_parse_options.strict_aousd_conformance = true;
+  }
   std::shared_ptr<Layer> root = LoadLayerFromFile(
       filename, warn, err, lopts);
   if (!root) return false;

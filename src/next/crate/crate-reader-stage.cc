@@ -890,13 +890,23 @@ bool CrateReader::Impl::BuildStage() {
                 field.second.as_token_array()) {
           if (!names->empty()) {
             prim_children_order[entry.full_path] = *names;
+            if (ps) ps->meta().primOrder() = *names;
+            else if (entry.full_path == "/") layer.meta().rootPrimOrder = *names;
           }
         }
         continue;
       }
       if (field.first == "properties" ||
-          field.first == "propertyChildren" ||
-          field.first == "variantChildren" ||
+          field.first == "propertyChildren") {
+        if (ps) {
+          if (const std::vector<std::string>* names =
+                  field.second.as_token_array()) {
+            ps->meta().propertyOrder() = *names;
+          }
+        }
+        continue;
+      }
+      if (field.first == "variantChildren" ||
           field.first == "variantSetChildren") {
         continue;
       }

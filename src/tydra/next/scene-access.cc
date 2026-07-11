@@ -949,8 +949,9 @@ std::vector<Primvar> GetPrimvars(const UsdPrim& prim) {
           std::string interp_attr = name + ":interpolation";
           GetToken(prim, interp_attr, &pv.interpolation);
         }
+        pv.interpolation_authored = !pv.interpolation.empty();
         if (pv.interpolation.empty()) {
-          pv.interpolation = "vertex";  // Default
+          pv.interpolation = "constant";  // USD spec default (pxr/legacy parity)
         }
 
         // Get indices if present
@@ -986,8 +987,9 @@ Primvar GetPrimvar(const UsdPrim& prim, const std::string& name) {
       std::string interp_attr = full_name + ":interpolation";
       GetToken(prim, interp_attr, &pv.interpolation);
     }
+    pv.interpolation_authored = !pv.interpolation.empty();
     if (pv.interpolation.empty()) {
-      pv.interpolation = "vertex";
+      pv.interpolation = "constant";  // USD spec default (pxr/legacy parity)
     }
 
     std::string indices_attr = full_name + ":indices";

@@ -27,6 +27,7 @@ namespace next {
 namespace pcp {
 
 struct LayerLoadOptions {
+  bool strict_aousd_conformance = false;
   /// Maximum file/input bytes for each loaded external layer (0 = no limit).
   size_t max_memory = 0;
 

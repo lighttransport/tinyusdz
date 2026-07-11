@@ -90,6 +90,73 @@ bool SubtreeIsSelfContained(const Layer& layer, const std::string& root_path) {
   return true;
 }
 
+// AOUSD §6.6.2 / §12.2: dictionary opinions combine recursively. Keys from
+// the stronger value keep their values; missing keys (including nested keys)
+// are filled from the weaker value.
+void MergeWeakerDictionary(Value* stronger, const Value& weaker) {
+  if (!stronger || !weaker.is_dictionary()) return;
+  if (!stronger->is_dictionary()) {
+    *stronger = weaker;
+    return;
+  }
+  Dict* dst = stronger->as_dictionary();
+  const Dict* src = weaker.as_dictionary();
+  if (!dst || !src) return;
+  for (const auto& entry : src->entries) {
+    Value* existing = dst->find(entry.first);
+    if (!existing) {
+      dst->set(entry.first, entry.second);
+    } else if (existing->is_dictionary() && entry.second.is_dictionary()) {
+      MergeWeakerDictionary(existing, entry.second);
+    }
+  }
+}
+
+void ApplyRelationshipEdit(std::vector<Path>* values, const ArcEdit& edit) {
+  if (!values) return;
+  auto as_path = [](const std::string& s) { return Path(s); };
+  auto erase_items = [&](const std::vector<std::string>& items) {
+    values->erase(std::remove_if(values->begin(), values->end(),
+                                 [&](const Path& p) {
+                                   return std::find(items.begin(), items.end(),
+                                                    p.str()) != items.end();
+                                 }),
+                  values->end());
+  };
+  auto add_unique = [&](const Path& p, bool front) {
+    values->erase(std::remove(values->begin(), values->end(), p),
+                  values->end());
+    if (front) values->insert(values->begin(), p);
+    else values->push_back(p);
+  };
+  erase_items(edit.deleted);
+  // Insert prepended items in reverse so their authored order is retained.
+  for (auto it = edit.prepended.rbegin(); it != edit.prepended.rend(); ++it) {
+    add_unique(as_path(*it), true);
+  }
+  for (const std::string& item : edit.appended) {
+    add_unique(as_path(item), false);
+  }
+  if (!edit.ordered.empty()) {
+    std::vector<Path> ordered;
+    ordered.reserve(values->size());
+    for (const std::string& item : edit.ordered) {
+      Path p(item);
+      auto it = std::find(values->begin(), values->end(), p);
+      if (it != values->end() &&
+          std::find(ordered.begin(), ordered.end(), p) == ordered.end()) {
+        ordered.push_back(p);
+      }
+    }
+    for (const Path& p : *values) {
+      if (std::find(ordered.begin(), ordered.end(), p) == ordered.end()) {
+        ordered.push_back(p);
+      }
+    }
+    *values = std::move(ordered);
+  }
+}
+
 // Clone the prim at `root_path` and its descendants into a fresh layer (paths
 // kept; `root_path` prim is the layer root). Used to compose a self-contained
 // referenced subtree alone. child_indices on the clones reference the source
@@ -242,6 +309,30 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
 
   // Finalize the composed layer
   result->finalize();
+
+  // Prune the subtree of every deactivated prim (pxr composes NO children
+  // under an inactive prim; usdcat --flatten drops the prim itself too — the
+  // prim is kept here, with its authored active=false, so consumers can still
+  // query it). Only in the FINAL variant-resolving flatten: intermediate
+  // composes (nested sublayers / GetComposedExternalLayer, which run with
+  // resolve_variants=false) may still be re-activated by a stronger layer.
+  if (options_.resolve_variants) {
+    std::vector<std::string> prune;
+    const size_t pc = result->prim_count();
+    for (size_t i = 0; i < pc; ++i) {
+      const PrimSpec* p = result->prim(static_cast<uint32_t>(i));
+      if (!p || !p->meta().active_authored || p->meta().active) continue;
+      for (uint32_t ci : p->child_indices()) {
+        if (const PrimSpec* c = result->prim(ci)) {
+          prune.push_back(c->path().str());
+        }
+      }
+    }
+    // remove_prim_at_path drops the whole subtree from the hierarchy/index
+    // (already-removed nested paths simply miss). The specs stay allocated
+    // but unreachable — writers/consumers traverse from the roots.
+    for (const std::string& cp : prune) result->remove_prim_at_path(cp);
+  }
 
   return result;
 }
@@ -515,6 +606,11 @@ void Compositor::CopyLocalOpinions(
   // Copy properties (source overrides target for time-sampled props).
   // Preserves valueless slots (connection-only / declared-only attributes),
   // their declared type names, and connection targets for USDC fidelity.
+  // Property ids whose DEFAULT value on the target was filled from THIS
+  // source (below): the source's time samples belong with that default and
+  // may ride along; any other authored target default came from a STRONGER
+  // spec and blocks the source's samples (see the time-sample loop).
+  std::set<PropNameId> default_filled_from_source;
   PropNameTable& name_table = GetPropNameTable();
   for (const auto& slot : source.properties().slots()) {
     const std::string& pname = name_table.get(slot.name_id);
@@ -528,6 +624,7 @@ void Compositor::CopyLocalOpinions(
       if (tgt_slot->value_offset == UINT32_MAX) {
         if (const Value* sv = source.property_value(slot.name_id)) {
           target.fill_property_value_if_absent(slot.name_id, *sv);
+          default_filled_from_source.insert(slot.name_id);
         }
       }
       const std::vector<Path>* tconns = target.connection(pname);
@@ -557,6 +654,27 @@ void Compositor::CopyLocalOpinions(
           if (missing & PropMeta::kDisplayName) dst.displayName = spm->displayName;
           dst.authored |= missing;
         }
+        // Dictionary-valued property metadata combines recursively even when
+        // both specs author the same field.
+        tpm = target.property_meta(slot.name_id);
+        if (tpm && (tpm->authored & PropMeta::kCustomData) &&
+            (spm->authored & PropMeta::kCustomData)) {
+          MergeWeakerDictionary(
+              &target.ensure_property_meta(pname).customData,
+              spm->customData);
+        }
+        if (tpm && (tpm->authored & PropMeta::kAssetInfo) &&
+            (spm->authored & PropMeta::kAssetInfo)) {
+          MergeWeakerDictionary(
+              &target.ensure_property_meta(pname).assetInfo,
+              spm->assetInfo);
+        }
+        if (tpm && (tpm->authored & PropMeta::kSdrMetadata) &&
+            (spm->authored & PropMeta::kSdrMetadata)) {
+          MergeWeakerDictionary(
+              &target.ensure_property_meta(pname).sdrMetadata,
+              spm->sdrMetadata);
+        }
       }
       // Variability (uniform) fills from the weaker source too.
       if ((slot.flags & PropSlot::kFlagUniform) &&
@@ -565,11 +683,29 @@ void Compositor::CopyLocalOpinions(
           ms->flags |= PropSlot::kFlagUniform;
         }
       }
+      // AOUSD §12.2: custom resolves true if any contributing opinion is true.
+      if ((slot.flags & PropSlot::kFlagCustom) &&
+          !(tgt_slot->flags & PropSlot::kFlagCustom)) {
+        if (PropSlot* ms = target.property_mutable(slot.name_id)) {
+          ms->flags |= PropSlot::kFlagCustom;
+        }
+      }
+      if (!target.spline_source(slot.name_id)) {
+        if (const std::string* spline = source.spline_source(slot.name_id)) {
+          target.set_spline_source(pname, *spline);
+        }
+      }
+      if (!target.raw_default_source(slot.name_id)) {
+        if (const std::string* raw = source.raw_default_source(slot.name_id)) {
+          target.set_raw_default_source(pname, *raw);
+        }
+      }
       continue;  // target opinion otherwise wins (incl. time-sampled merge)
     }
     const Value* src_val = source.property_value(slot.name_id);
     if (src_val) {
       target.add_property(slot.name_id, *src_val, slot.flags);
+      default_filled_from_source.insert(slot.name_id);
     } else {
       // No authored default: carry the typed slot across (connection-only /
       // declared-only attribute).
@@ -588,19 +724,98 @@ void Compositor::CopyLocalOpinions(
     if (const PropMeta* pm = source.property_meta(slot.name_id)) {
       target.ensure_property_meta(pname) = *pm;
     }
+    if (const std::string* spline = source.spline_source(slot.name_id)) {
+      target.set_spline_source(pname, *spline);
+    }
+    if (const std::string* raw = source.raw_default_source(slot.name_id)) {
+      target.set_raw_default_source(pname, *raw);
+    }
   }
 
-  // Copy relationships not already present on the target.
+  // Relationship target list ops compose over the weaker target list. A
+  // stronger explicit list blocks weaker targets; a stronger qualified edit
+  // is applied to the weaker effective list (the old skip-on-existing path
+  // lost `</A>` from weak A + strong prepend B).
   for (const auto& rel_name : source.relationship_names()) {
-    if (target.relationship(rel_name)) continue;
-    if (const std::vector<Path>* tgts = source.relationship(rel_name)) {
-      for (const auto& t : *tgts) {
-        if (!target_mappable(t)) continue;
-        target.add_relationship(rel_name, map_target(t));
+    std::vector<PrimSpec::RelationshipOpinion> opinions;
+    if (const auto* existing = target.relationship_opinion_stack(rel_name)) {
+      opinions = *existing;
+    } else if (const std::vector<Path>* items = target.relationship(rel_name)) {
+      PrimSpec::RelationshipOpinion opinion;
+      opinion.items = *items;
+      const auto& edits = target.relationship_edits();
+      auto it = edits.find(rel_name);
+      if (it != edits.end() && it->second.authored) {
+        opinion.edit = it->second;
+        opinion.qualified = !it->second.is_explicit;
+      }
+      opinions.push_back(std::move(opinion));
+    }
+
+    auto remap_opinion = [&](PrimSpec::RelationshipOpinion opinion) {
+      std::vector<Path> mapped_items;
+      for (const Path& item : opinion.items) {
+        if (target_mappable(item)) mapped_items.push_back(map_target(item));
+      }
+      opinion.items = std::move(mapped_items);
+      auto remap_edit_items = [&](std::vector<std::string>* items) {
+        if (!remap_path) return;
+        std::vector<std::string> mapped;
+        for (const std::string& item : *items) {
+          std::string value = remap_path(item);
+          if (!value.empty()) mapped.push_back(std::move(value));
+        }
+        *items = std::move(mapped);
+      };
+      remap_edit_items(&opinion.edit.prepended);
+      remap_edit_items(&opinion.edit.appended);
+      remap_edit_items(&opinion.edit.deleted);
+      remap_edit_items(&opinion.edit.ordered);
+      opinions.push_back(std::move(opinion));
+    };
+
+    if (const auto* source_stack =
+            source.relationship_opinion_stack(rel_name)) {
+      for (const auto& opinion : *source_stack) remap_opinion(opinion);
+    } else if (const std::vector<Path>* items =
+                   source.relationship(rel_name)) {
+      PrimSpec::RelationshipOpinion opinion;
+      opinion.items = *items;
+      const auto& edits = source.relationship_edits();
+      auto it = edits.find(rel_name);
+      if (it != edits.end() && it->second.authored) {
+        opinion.edit = it->second;
+        opinion.qualified = !it->second.is_explicit;
+      }
+      remap_opinion(std::move(opinion));
+    }
+
+    std::vector<Path> effective;
+    for (auto it = opinions.rbegin(); it != opinions.rend(); ++it) {
+      if (!it->qualified || it->edit.is_explicit) {
+        effective = it->items;
+      } else {
+        ApplyRelationshipEdit(&effective, it->edit);
       }
     }
+    target.set_relationship_targets(rel_name, std::move(effective));
+    target.set_relationship_opinion_stack(rel_name, std::move(opinions));
+    ArcEdit& resolved = target.ensure_relationship_edit(rel_name);
+    resolved = ArcEdit();
+    resolved.authored = true;
+    resolved.is_explicit = true;
+    target.set_relationship_flags(
+        rel_name, static_cast<uint16_t>(target.relationship_flags(rel_name) |
+                                        source.relationship_flags(rel_name)));
     if (const PropMeta* pm = source.property_meta(rel_name)) {
-      target.ensure_property_meta(rel_name) = *pm;
+      const PropMeta* current = target.property_meta(rel_name);
+      if (!current || current->authored == 0) {
+        target.ensure_property_meta(rel_name) = *pm;
+      } else if ((pm->authored & PropMeta::kCustomData) &&
+                 (current->authored & PropMeta::kCustomData)) {
+        PropMeta& dst = target.ensure_property_meta(rel_name);
+        MergeWeakerDictionary(&dst.customData, pm->customData);
+      }
     }
   }
 
@@ -617,20 +832,14 @@ void Compositor::CopyLocalOpinions(
     bool target_has_ts = target.has_time_samples(ts_prop_id);
     if (!target_has_ts) {
       if (const PropSlot* tslot = target.property(ts_prop_id)) {
+        // The target's authored default blocks this source's samples UNLESS
+        // that default was filled from this very source (then they are one
+        // spec's opinion and ride together). Authored-ness is what matters:
+        // comparing VALUES let a weaker spec's samples through whenever its
+        // default happened to EQUAL the stronger spec's (false positive).
         if (tslot->value_offset != UINT32_MAX &&
-            !source.property(ts_prop_id)) {
-          // The default came from a STRONGER spec (this weaker source's own
-          // default, if any, was already skipped by fill-absent): block.
+            default_filled_from_source.count(ts_prop_id) == 0) {
           continue;
-        }
-        if (tslot->value_offset != UINT32_MAX && source.property(ts_prop_id)) {
-          // Both target and source author this property; if the target's
-          // default was filled FROM this source the samples belong with it,
-          // otherwise a stronger spec authored it. Distinguish via pointer
-          // identity of the values.
-          const Value* tv = target.property_value(ts_prop_id);
-          const Value* sv = source.property_value(ts_prop_id);
-          if (tv && sv && !(*tv == *sv)) continue;
         }
       }
       // Copy time samples from source to target, remapping the sample time by
@@ -678,6 +887,13 @@ void Compositor::CopyLocalOpinions(
       target.meta().displayName().empty()) {
     target.meta().displayName() = source.meta().displayName();
   }
+  if (target.meta().primOrder().empty() && !source.meta().primOrder().empty()) {
+    target.meta().primOrder() = source.meta().primOrder();
+  }
+  if (target.meta().propertyOrder().empty() &&
+      !source.meta().propertyOrder().empty()) {
+    target.meta().propertyOrder() = source.meta().propertyOrder();
+  }
   if (!source.meta().apiSchemas().empty()) {
     std::vector<std::string>& tgt = target.meta().apiSchemas();
     const std::string& tq = target.meta().apiSchemasQualifier();
@@ -715,14 +931,26 @@ void Compositor::CopyLocalOpinions(
   {
     const PrimSpecMeta& cs = source.meta();
     const PrimSpecMeta& ct = target.meta();
-    if (cs.customData().is_dictionary() && !ct.customData().is_dictionary())
-      target.meta().customData() = cs.customData();
-    if (cs.assetInfo().is_dictionary() && !ct.assetInfo().is_dictionary())
-      target.meta().assetInfo() = cs.assetInfo();
-    if (cs.sdrMetadata().is_dictionary() && !ct.sdrMetadata().is_dictionary())
-      target.meta().sdrMetadata() = cs.sdrMetadata();
-    if (cs.clips().is_dictionary() && !ct.clips().is_dictionary())
-      target.meta().clips() = cs.clips();
+    if (cs.customData().is_dictionary()) {
+      if (!ct.customData().is_dictionary())
+        target.meta().customData() = cs.customData();
+      else MergeWeakerDictionary(&target.meta().customData(), cs.customData());
+    }
+    if (cs.assetInfo().is_dictionary()) {
+      if (!ct.assetInfo().is_dictionary())
+        target.meta().assetInfo() = cs.assetInfo();
+      else MergeWeakerDictionary(&target.meta().assetInfo(), cs.assetInfo());
+    }
+    if (cs.sdrMetadata().is_dictionary()) {
+      if (!ct.sdrMetadata().is_dictionary())
+        target.meta().sdrMetadata() = cs.sdrMetadata();
+      else MergeWeakerDictionary(&target.meta().sdrMetadata(), cs.sdrMetadata());
+    }
+    if (cs.clips().is_dictionary()) {
+      if (!ct.clips().is_dictionary())
+        target.meta().clips() = cs.clips();
+      else MergeWeakerDictionary(&target.meta().clips(), cs.clips());
+    }
   }
 
   // Variant sets + selections ride along from the weaker `source`, MERGED
@@ -991,7 +1219,21 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
     return;
   }
   std::string tp = arc.prim_path;
-  if (tp.empty()) tp = "/" + raw->meta().defaultPrim;
+  if (tp.empty()) {
+    if (raw->meta().defaultPrim.empty()) {
+      // pxr: "Unresolved reference prim path @...@<defaultPrim>" — the arc
+      // names no prim and the layer authors no defaultPrim, so it contributes
+      // nothing (composition continues; the prim stays empty). Never guess a
+      // root prim silently.
+      AddError("Unresolved reference prim path @" + arc.asset_path +
+                   "@<defaultPrim>: layer has no defaultPrim and the arc "
+                   "names no prim path",
+               self, arc.asset_path, arc.type);
+      PopStack();
+      return;
+    }
+    tp = "/" + raw->meta().defaultPrim;
+  }
 
   // Compose the external target's OWN arcs first (references / payloads /
   // inherits / specializes), variants deferred, so a referenced asset whose

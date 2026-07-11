@@ -516,6 +516,8 @@
             LayerLoadOptions load_opts;
             load_opts.max_memory = options.max_layer_memory;
             load_opts.usda_parse_options = options.usda_parse_options;
+            load_opts.strict_aousd_conformance =
+                options.strict_aousd_conformance;
             reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w,
                             &e, load_opts);
           }

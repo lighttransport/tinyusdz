@@ -471,6 +471,10 @@ bool CrateReader::Impl::ReportProgress(const char* phase, size_t current,
 }
 
 void CrateReader::Impl::AddWarning(const std::string& msg) {
+  if (options_.strict_aousd_conformance) {
+    AddError("Strict AOUSD mode: " + msg);
+    return;
+  }
   result_.warnings.push_back(msg);
 }
 

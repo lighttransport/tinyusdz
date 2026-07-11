@@ -87,6 +87,12 @@
 
       if (is_instance) continue;  // prototype provides the subtree
 
+      // A deactivated prim composes NO subtree (pxr prunes children of an
+      // inactive prim; usdcat --flatten drops the prim itself too — the prim
+      // is kept here, with its authored active=false, so stage consumers can
+      // still query IsActive on it).
+      if (!ComposedActive(srcs)) continue;
+
       // Push children in reverse order so the first child processes first
       // (preserving the original visitation order).
       for (auto it = children.rbegin(); it != children.rend(); ++it) {

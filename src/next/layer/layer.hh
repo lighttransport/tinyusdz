@@ -45,6 +45,9 @@ struct LayerMeta {
   std::string doc;
   std::string comment;
 
+  // Authored pseudo-root namespace order (`reorder rootPrims = [...]`).
+  std::vector<std::string> rootPrimOrder;
+
   // Dictionary-valued stage metadata (Dictionary Value; empty when unauthored).
   Value customLayerData;
   Value expressionVariables;
@@ -66,6 +69,9 @@ struct LayerMeta {
   /// flatten engine must gap-fill before dropping the subLayers list. Call
   /// with sublayers strongest-first.
   void FillAbsentStageMetaFrom(const LayerMeta& weaker) {
+    if (rootPrimOrder.empty() && !weaker.rootPrimOrder.empty()) {
+      rootPrimOrder = weaker.rootPrimOrder;
+    }
     if (defaultPrim.empty() && !weaker.defaultPrim.empty()) {
       defaultPrim = weaker.defaultPrim;
     }
@@ -147,6 +153,9 @@ public:
   /// compressed-paths encoding requires this; composition appends grafted
   /// subtrees out of order. Clears the path index (rebuild after).
   void sort_prims_by_path();
+
+  /// Apply authored root/nameChildren ordering to hierarchy index vectors.
+  void apply_namespace_ordering();
 
   /// Clone the layer. PrimSpecs are deep-cloned, while Value array payloads keep
   /// their copy-on-write/lazy shared backing, so this is cheap for crate-backed

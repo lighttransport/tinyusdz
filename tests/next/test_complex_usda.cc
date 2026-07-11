@@ -742,6 +742,180 @@ def Xform "A"
   std::cout << "  Parser audit regressions passed!" << std::endl;
 }
 
+// Regressions for the 2026-07 P2 parser-audit cluster: strict bool literals,
+// unterminated-string lex errors, matrixNf type-name mapping, unknown prim
+// metadata preservation, and prim-name validation / token-length caps.
+void test_parser_audit_p2_2026_07() {
+  std::cout << "Testing P2 parser audit regressions..." << std::endl;
+
+  // Item 1: bool accepts ONLY 0/1/true/false. `bool b = 5` (numeric
+  // truthiness) must be a parse error, matching pxr.
+  {
+    const char* input = "#usda 1.0\ndef Xform \"W\"\n{\n    bool b = 5\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "bool b = 5 must be a parse error");
+  }
+  {
+    const char* input = "#usda 1.0\ndef Xform \"W\"\n{\n    bool[] ba = [2, 0]\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "bool[] with numeric 2 must be a parse error");
+  }
+  {
+    // Valid forms still parse, scalar and array.
+    const char* input = R"(#usda 1.0
+def Xform "W"
+{
+    bool b0 = 0
+    bool b1 = 1
+    bool bt = true
+    bool bf = false
+    bool[] ba = [0, 1, true, false]
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    const Value* b0 = w.GetPropertyValue("b0");
+    assert(b0 && b0->as_bool() && *b0->as_bool() == false);
+    const Value* b1 = w.GetPropertyValue("b1");
+    assert(b1 && b1->as_bool() && *b1->as_bool() == true);
+  }
+
+  // Item 2: unterminated string literals must be a parse error, not a
+  // silently-completed token. Newline-cut single-quote form (this one used to
+  // parse "successfully"), triple-quoted EOF form, and plain EOF form.
+  {
+    const char* input =
+        "#usda 1.0\ndef Xform \"W\"\n{\n    string s = \"abc\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "newline-unterminated string must be a parse error");
+  }
+  {
+    const char* input =
+        "#usda 1.0\ndef Xform \"W\"\n{\n    string s = \"\"\"abc\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "EOF inside triple-quoted string must be a parse error");
+  }
+  {
+    const char* input = "#usda 1.0\ndef Xform \"W\"\n{\n    string s = \"abc";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "EOF inside string must be a parse error");
+  }
+  {
+    // Unterminated string in a prim METADATA block (grammar recovers across
+    // it, so only the lexer's fatal state can catch it).
+    const char* input =
+        "#usda 1.0\ndef Xform \"W\" (\n    doc = \"unterminated\n)\n{\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "unterminated string in metadata must be a parse error");
+  }
+  {
+    // Legit multi-line triple-quoted strings still parse.
+    const char* input =
+        "#usda 1.0\ndef Xform \"W\"\n{\n    string s = \"\"\"multi\nline\"\"\"\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    const Value* s = w.GetPropertyValue("s");
+    assert(s && s->as_string() && *s->as_string() == "multi\nline");
+  }
+
+  // Item 3: matrix2f/3f/4f type names map to their TypeIds (the parsers
+  // existed but the names were unmapped, silently dropping the VALUES).
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W"
+{
+    matrix2f m2 = ( (1, 2), (3, 4) )
+    matrix3f m3 = ( (1, 0, 0), (0, 1, 0), (0, 0, 1) )
+    matrix4f m4 = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    UsdPrim w = r.stage.GetPrimAtPath("/W");
+    const Value* m2 = w.GetPropertyValue("m2");
+    assert(m2 && m2->type_id() == TypeId::Matrix2f);
+    const float* m2v = m2->as_matrix2f();
+    assert(m2v && m2v[0] == 1.0f && m2v[1] == 2.0f && m2v[2] == 3.0f &&
+           m2v[3] == 4.0f);
+    const Value* m3 = w.GetPropertyValue("m3");
+    assert(m3 && m3->type_id() == TypeId::Matrix3f);
+    const Value* m4 = w.GetPropertyValue("m4");
+    assert(m4 && m4->type_id() == TypeId::Matrix4f);
+    // Round-trips with the declared single-precision type name and value.
+    std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("matrix2f m2 = ((1, 2), (3, 4))") != std::string::npos);
+    assert(out.find("matrix3f m3 =") != std::string::npos);
+    assert(out.find("matrix4f m4 =") != std::string::npos);
+  }
+
+  // Item 4: unknown prim metadata is preserved (raw source text) and
+  // re-emitted by the USDA writer; the round-trip is idempotent.
+  {
+    const char* input = R"(#usda 1.0
+def Xform "W" (
+    sceneName = "Foo"
+    hide_in_stage = true
+    weird_dict = {
+        string a = "b"
+        int c = 3
+    }
+    weird_list = [1, 2, 3]
+)
+{
+}
+)";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+    std::string out = WriteUSDAToString(r.stage);
+    assert(out.find("sceneName = \"Foo\"") != std::string::npos);
+    assert(out.find("hide_in_stage = true") != std::string::npos);
+    assert(out.find("weird_dict = {") != std::string::npos);
+    assert(out.find("weird_list = [1, 2, 3]") != std::string::npos);
+    // Idempotent: re-parsing the written text reproduces the same output.
+    LoadResult r2 = LoadUSDAFromString(out.c_str());
+    assert(r2.success);
+    std::string out2 = WriteUSDAToString(r2.stage);
+    assert(out == out2);
+  }
+
+  // Item 5a: prim names must be valid USD identifiers
+  // ([A-Za-z_][A-Za-z0-9_]*); the legacy parser hard-errors, so does next.
+  {
+    const char* input = "#usda 1.0\ndef Xform \"9bad name!\"\n{\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "invalid prim name must be a parse error");
+    bool found = false;
+    for (const auto& err : r.errors) {
+      if (err.message.find("Prim name") != std::string::npos) found = true;
+    }
+    assert(found);
+  }
+  {
+    const char* input = "#usda 1.0\ndef Xform \"\"\n{\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(!r.success && "empty prim name must be a parse error");
+  }
+  {
+    const char* input = "#usda 1.0\ndef Xform \"_ok_Name2\"\n{\n}\n";
+    LoadResult r = LoadUSDAFromString(input);
+    assert(r.success);
+  }
+
+  // Item 5b: single-token length cap (16MB). An unclosed 20MB string literal
+  // is rejected via the cap rather than buffered whole.
+  {
+    std::string input = "#usda 1.0\ndef Xform \"W\"\n{\n    string s = \"";
+    input += std::string(20u * 1024u * 1024u, 'a');
+    input += "\"\n}\n";
+    LoadResult r = LoadUSDAFromString(input.c_str());
+    assert(!r.success && "20MB string token must exceed the token cap");
+  }
+
+  std::cout << "  P2 parser audit regressions passed!" << std::endl;
+}
+
 int main() {
   std::cout << "=== TinyUSDZ Next Complex USDA Tests ===" << std::endl;
   std::cout << std::endl;
@@ -753,6 +927,7 @@ int main() {
     test_metadata_dict_propmeta_roundtrip();
     test_relationship_body_listops();
     test_parser_audit_2026_07();
+    test_parser_audit_p2_2026_07();
 
     std::cout << std::endl;
     std::cout << "All complex USDA tests passed!" << std::endl;

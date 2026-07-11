@@ -556,6 +556,7 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
   CopyChunkedArray(src.texcoords_0, &dst->texcoords_0);
   CopyChunkedArray(src.texcoords_1, &dst->texcoords_1);
   CopyChunkedArray(src.colors, &dst->colors);
+  CopyChunkedArray(src.opacities, &dst->opacities);
   CopyChunkedArray(src.triangulated_indices, &dst->triangulated_indices);
   CopyChunkedArray(src.triangulated_face_vertex_indices,
                    &dst->triangulated_face_vertex_indices);
@@ -564,6 +565,9 @@ void CopyRenderMeshCommon(const RenderMesh& src, RenderMesh* dst) {
   dst->texcoords_0_interp = src.texcoords_0_interp;
   dst->texcoords_1_interp = src.texcoords_1_interp;
   dst->colors_interp = src.colors_interp;
+  dst->opacities_interp = src.opacities_interp;
+  dst->sanitize_dropped_faces = src.sanitize_dropped_faces;
+  dst->sanitize_face_remap = src.sanitize_face_remap;
   dst->material_id = src.material_id;
   dst->material_subsets = src.material_subsets;
   dst->is_triangulated = src.is_triangulated;
@@ -1064,38 +1068,95 @@ void TraceTextureStChain(const Stage& stage, const UsdPrim& texture_prim,
                          TextureNodeData* out) {
   UsdPrim cur = texture_prim;
   std::string prop = "inputs:st";
+
+  // Chained UsdTransform2d nodes COMPOSE (each node applies
+  // uv' = R(rotation) * (scale * uv) + translation to its input). Accumulate
+  // the affine composition walking from the texture (outermost) towards the
+  // primvar reader (innermost): F_total(uv) = F_outer(F_inner(uv)).
+  // A single node keeps its authored values verbatim (no decomposition).
+  // Note: animated or connected translation/rotation/scale inputs are NOT
+  // evaluated here (only directly-authored values are read).
+  int transform_nodes = 0;
+  double A[2][2] = {{1.0, 0.0}, {0.0, 1.0}};  // accumulated linear part
+  double T[2] = {0.0, 0.0};                   // accumulated offset
+
   for (int hop = 0; hop < 4 && cur.IsValid(); ++hop) {
     const ::tinyusdz::next::PrimSpec* spec = cur.GetPrimSpec();
     const std::vector<::tinyusdz::next::Path>* conns =
         spec ? spec->connection(prop) : nullptr;
-    if (!conns || conns->empty()) return;
+    if (!conns || conns->empty()) break;
     const std::string next_path = SourcePrimPathFromConnection((*conns)[0].str());
     UsdPrim np = stage.GetPrimAtPath(next_path);
-    if (!np.IsValid()) return;
+    if (!np.IsValid()) break;
     std::string id;
     GetToken(np, "info:id", &id);
     if (id == "UsdTransform2d") {
-      float tr[2];
-      if (GetFloat2Local(np, "inputs:translation", tr)) {
+      float tr[2] = {0.0f, 0.0f};
+      GetFloat2Local(np, "inputs:translation", tr);
+      float rot = 0.0f;
+      GetFloat(np, "inputs:rotation", &rot);
+      float sc[2] = {1.0f, 1.0f};
+      GetFloat2Local(np, "inputs:scale", sc);
+
+      if (transform_nodes == 0) {
+        // First (outermost) node: keep the raw authored values so a single
+        // Transform2d round-trips exactly.
         out->uv_translation[0] = tr[0];
         out->uv_translation[1] = tr[1];
-      }
-      float rot = 0.0f;
-      if (GetFloat(np, "inputs:rotation", &rot)) out->uv_rotation = rot;
-      float sc[2];
-      if (GetFloat2Local(np, "inputs:scale", sc)) {
+        out->uv_rotation = rot;
         out->uv_scale[0] = sc[0];
         out->uv_scale[1] = sc[1];
       }
+
+      // Local affine L(uv) = R * diag(sc) * uv + tr.
+      const double rad = double(rot) * 3.14159265358979323846 / 180.0;
+      const double c = std::cos(rad), s = std::sin(rad);
+      const double L[2][2] = {{c * sc[0], -s * sc[1]},
+                              {s * sc[0], c * sc[1]}};
+      // Accumulated-so-far F is applied AFTER this (deeper) node:
+      // F_new(uv) = F(L(uv)) => A_new = A*L, T_new = A*t_L + T.
+      const double A00 = A[0][0] * L[0][0] + A[0][1] * L[1][0];
+      const double A01 = A[0][0] * L[0][1] + A[0][1] * L[1][1];
+      const double A10 = A[1][0] * L[0][0] + A[1][1] * L[1][0];
+      const double A11 = A[1][0] * L[0][1] + A[1][1] * L[1][1];
+      T[0] += A[0][0] * tr[0] + A[0][1] * tr[1];
+      T[1] += A[1][0] * tr[0] + A[1][1] * tr[1];
+      A[0][0] = A00; A[0][1] = A01; A[1][0] = A10; A[1][1] = A11;
+
+      ++transform_nodes;
       cur = np;
       prop = "inputs:in";
       continue;
     }
     if (id.rfind("UsdPrimvarReader", 0) == 0) {
       out->uv_primvar = ::tinyusdz::next::GetPrimvarReaderVarname(stage, np);
-      return;
+      break;
     }
-    return;
+    break;
+  }
+
+  if (transform_nodes > 1) {
+    // Decompose the composite affine back into the translate/rotate/scale
+    // model RenderTexture carries (uv' = R * diag(scale) * uv + offset).
+    // Composition of non-uniform scales and rotations can introduce shear,
+    // which this model cannot represent; the QR-style decomposition below
+    // drops it (best effort).
+    out->uv_translation[0] = static_cast<float>(T[0]);
+    out->uv_translation[1] = static_cast<float>(T[1]);
+    const double sx = std::sqrt(A[0][0] * A[0][0] + A[1][0] * A[1][0]);
+    if (sx > 1.0e-12) {
+      const double c = A[0][0] / sx;
+      const double s = A[1][0] / sx;
+      const double sy = -s * A[0][1] + c * A[1][1];
+      out->uv_rotation = static_cast<float>(
+          std::atan2(s, c) * 180.0 / 3.14159265358979323846);
+      out->uv_scale[0] = static_cast<float>(sx);
+      out->uv_scale[1] = static_cast<float>(sy);
+    } else {
+      out->uv_rotation = 0.0f;
+      out->uv_scale[0] = static_cast<float>(A[0][0]);
+      out->uv_scale[1] = static_cast<float>(A[1][1]);
+    }
   }
 }
 
@@ -1599,12 +1660,17 @@ void ApplyAxis(std::vector<value::float3>* points,
                std::vector<value::float3>* normals,
                const std::string& axis) {
   if (axis == "Y" || axis.empty()) return;
+  // Proper ROTATIONS mapping the generator's +Y symmetry axis onto the
+  // authored axis. The previous axis swap was a mirror (determinant -1),
+  // which flipped the winding and turned the analytic meshes inside out.
   auto map_point = [&](value::float3& v) {
     const float x = v[0], y = v[1], z = v[2];
     if (axis == "Z") {
-      v[0] = x; v[1] = z; v[2] = y;
+      // R_x(+90 deg): +Y -> +Z
+      v[0] = x; v[1] = -z; v[2] = y;
     } else if (axis == "X") {
-      v[0] = y; v[1] = x; v[2] = z;
+      // R_z(-90 deg): +Y -> +X
+      v[0] = y; v[1] = -x; v[2] = z;
     }
   };
   for (value::float3& p : *points) map_point(p);
@@ -2422,11 +2488,22 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
       if (mit == scene->material_by_path.end()) continue;
       const uint32_t nfaces = static_cast<uint32_t>(mesh.face_count());
       // Sort + split into consecutive runs, dropping out-of-range faces.
+      // Authored subset indices use the ORIGINAL face numbering; when
+      // sanitization dropped faces, route them through the old->new remap
+      // first so the surviving faces keep their bindings.
       std::vector<uint32_t> faces;
       faces.reserve(sub.indices.size());
       for (int32_t fi : sub.indices) {
-        if (fi >= 0 && static_cast<uint32_t>(fi) < nfaces) {
-          faces.push_back(static_cast<uint32_t>(fi));
+        if (fi < 0) continue;
+        uint32_t face = static_cast<uint32_t>(fi);
+        if (mesh.sanitize_dropped_faces > 0) {
+          if (face >= mesh.sanitize_face_remap.size()) continue;
+          const int32_t remapped = mesh.sanitize_face_remap[face];
+          if (remapped < 0) continue;  // face was dropped by sanitize
+          face = static_cast<uint32_t>(remapped);
+        }
+        if (face < nfaces) {
+          faces.push_back(face);
         }
       }
       std::sort(faces.begin(), faces.end());
@@ -2444,39 +2521,66 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
       }
     }
 
-    // Remap subset runs from authored polygon-face space into TRIANGLE
-    // space using the triangulation prefix sums (an N-gon becomes N-2
-    // triangles; holes/degenerate faces contribute 0). Authored subset
-    // indices no longer align when sanitization dropped faces — skip with
-    // a warning rather than mis-assign materials.
+    // Remap subset runs from polygon-face space into TRIANGLE space using
+    // the triangulation prefix sums (an N-gon becomes N-2 triangles;
+    // holes/degenerate faces contribute 0). Subset indices were already
+    // remapped into the post-sanitize face numbering above, so this holds
+    // even when sanitization dropped faces.
     if (!mesh.material_subsets.empty() &&
         !mesh.face_triangle_offsets.empty()) {
-      if (mesh.sanitize_dropped_faces > 0) {
-        warnings_.push_back("Mesh '" + mesh.prim_path +
-                            "': GeomSubset material bindings skipped (topology "
-                            "sanitization dropped faces; authored subset "
-                            "indices no longer align)");
-        mesh.material_subsets.clear();
-      } else {
-        const std::vector<uint32_t>& offs = mesh.face_triangle_offsets;
-        const uint32_t nfaces_tri =
-            static_cast<uint32_t>(offs.size() > 0 ? offs.size() - 1 : 0);
-        std::vector<RenderMesh::MaterialSubset> remapped;
-        remapped.reserve(mesh.material_subsets.size());
-        for (const RenderMesh::MaterialSubset& ms : mesh.material_subsets) {
-          if (ms.face_start >= nfaces_tri) continue;
-          const uint32_t face_end =
-              std::min(ms.face_start + ms.face_count, nfaces_tri);
-          const uint32_t tri_start = offs[ms.face_start];
-          const uint32_t tri_count = offs[face_end] - tri_start;
-          if (tri_count == 0) continue;
-          remapped.push_back(
-              RenderMesh::MaterialSubset{tri_start, tri_count, ms.material_id});
-        }
-        mesh.material_subsets = std::move(remapped);
+      const std::vector<uint32_t>& offs = mesh.face_triangle_offsets;
+      const uint32_t nfaces_tri =
+          static_cast<uint32_t>(offs.size() > 0 ? offs.size() - 1 : 0);
+      std::vector<RenderMesh::MaterialSubset> remapped;
+      remapped.reserve(mesh.material_subsets.size());
+      for (const RenderMesh::MaterialSubset& ms : mesh.material_subsets) {
+        if (ms.face_start >= nfaces_tri) continue;
+        const uint32_t face_end =
+            std::min(ms.face_start + ms.face_count, nfaces_tri);
+        const uint32_t tri_start = offs[ms.face_start];
+        const uint32_t tri_count = offs[face_end] - tri_start;
+        if (tri_count == 0) continue;
+        remapped.push_back(
+            RenderMesh::MaterialSubset{tri_start, tri_count, ms.material_id});
+      }
+      mesh.material_subsets = std::move(remapped);
+    }
+  }
+
+  // Optional default material for unbound geometry (legacy
+  // assign_default_material parity).
+  if (config_.material.assign_default_material) {
+    for (RenderMesh& mesh : scene->meshes) {
+      if (mesh.material_id < 0) {
+        mesh.material_id = GetOrCreateDefaultMaterial(scene);
+      }
+    }
+    for (RenderCurves& curves : scene->curves) {
+      if (curves.material_id < 0) {
+        curves.material_id = GetOrCreateDefaultMaterial(scene);
       }
     }
   }
+}
+
+int32_t RenderSceneConverter::GetOrCreateDefaultMaterial(RenderScene* scene) {
+  // Same sentinel path as the legacy converter.
+  constexpr const char* kDefaultMaterialPath = "/__tinyusdz_default_material__";
+  const auto it = scene->material_by_path.find(kDefaultMaterialPath);
+  if (it != scene->material_by_path.end()) return it->second;
+  RenderMaterial material;
+  material.name = config_.material.default_material_name.empty()
+                      ? "defaultMaterial"
+                      : config_.material.default_material_name;
+  material.prim_path = kDefaultMaterialPath;
+  material.shader_type = RenderMaterial::ShaderType::PreviewSurface;
+  // PreviewSurfaceShader defaults (0.18 diffuse / 0.5 roughness / opaque)
+  // match the legacy default material parameters.
+  material.preview_surface = std::make_unique<PreviewSurfaceShader>();
+  const int32_t id = static_cast<int32_t>(scene->materials.size());
+  scene->materials.push_back(std::move(material));
+  scene->material_by_path[kDefaultMaterialPath] = id;
+  return id;
 }
 
 void RenderSceneConverter::AssignPointInstanceDrawMaterials(RenderScene* scene) {
@@ -2579,6 +2683,50 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
   } else {
     last_error_ = "Unsupported analytic geom prim";
     return false;
+  }
+
+  // The shape generators are inconsistent about winding: capsule/cone emit
+  // INWARD (negative signed volume) faces while cube/sphere/cylinder are
+  // outward. The old axis MIRROR happened to flip capsule/cone right side
+  // out at the default Z axis (while turning the cylinder inside out); with
+  // the axis applied as a proper rotation below, normalize the winding here
+  // so every closed solid is outward. Authored normals already point
+  // outward, so only the corner order flips (normals/uvs are per-corner and
+  // reverse with it to stay parallel).
+  {
+    double volume = 0.0;
+    size_t off = 0;
+    for (int c : face_counts) {
+      if (c < 3 || off + size_t(c) > face_indices.size()) break;
+      const value::float3& a = points[size_t(face_indices[off])];
+      for (int k = 1; k + 1 < c; ++k) {
+        const value::float3& b = points[size_t(face_indices[off + size_t(k)])];
+        const value::float3& d =
+            points[size_t(face_indices[off + size_t(k) + 1])];
+        volume += (double(a[0]) * (double(b[1]) * d[2] - double(b[2]) * d[1]) +
+                   double(a[1]) * (double(b[2]) * d[0] - double(b[0]) * d[2]) +
+                   double(a[2]) * (double(b[0]) * d[1] - double(b[1]) * d[0])) /
+                  6.0;
+      }
+      off += size_t(c);
+    }
+    if (volume < -1.0e-9) {
+      size_t start = 0;
+      for (int c : face_counts) {
+        if (c <= 0 || start + size_t(c) > face_indices.size()) break;
+        std::reverse(face_indices.begin() + long(start),
+                     face_indices.begin() + long(start + size_t(c)));
+        if (normals.size() >= start + size_t(c)) {
+          std::reverse(normals.begin() + long(start),
+                       normals.begin() + long(start + size_t(c)));
+        }
+        if (uvs.size() >= start + size_t(c)) {
+          std::reverse(uvs.begin() + long(start),
+                       uvs.begin() + long(start + size_t(c)));
+        }
+        start += size_t(c);
+      }
+    }
   }
 
   std::string axis = "Z";
@@ -2776,18 +2924,57 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
     if (bd.offsets.empty()) continue;
     RenderMesh::BlendShape shape;
     shape.name = bs.name.empty() ? bs_prim.GetName() : bs.name;
-    shape.point_offsets.append(bd.offsets.data(), bd.offsets.size());
-    if (bd.hasNormalOffsets && !bd.normalOffsets.empty()) {
-      shape.normal_offsets.append(bd.normalOffsets.data(),
-                                  bd.normalOffsets.size());
-    }
+
+    // Sparse targets: offsets[k] (and normalOffsets[k] / in-between
+    // offsets[k]) apply to point pointIndices[k]. An out-of-range index must
+    // drop the WHOLE parallel entry — dropping it from point_indices alone
+    // (the previous behavior) misaligned every remaining offset.
+    std::vector<size_t> kept;  // kept entry positions (sparse targets only)
+    const size_t authored_entries = bd.offsets.size() / 3;
     if (bd.hasPointIndices) {
       const size_t npts = out->point_count();
-      for (int32_t pi : bd.pointIndices) {
-        // Drop out-of-range point indices (a consumer would index OOB).
+      const size_t nentries =
+          std::min(bd.pointIndices.size(), authored_entries);
+      kept.reserve(nentries);
+      for (size_t k = 0; k < nentries; ++k) {
+        const int32_t pi = bd.pointIndices[k];
         if (pi >= 0 && static_cast<size_t>(pi) < npts) {
-          shape.point_indices.push_back(static_cast<uint32_t>(pi));
+          kept.push_back(k);
         }
+      }
+      if (kept.size() != bd.pointIndices.size()) {
+        warnings_.push_back("BlendShape '" + bs_prim.GetPath().str() +
+                            "': dropped out-of-range pointIndices entries "
+                            "(with their parallel offsets)");
+      }
+    }
+
+    // Copy 3-float entries at the kept positions of a parallel array.
+    auto append_kept = [&kept](const std::vector<float>& src,
+                               FloatChunked* dst) {
+      for (size_t k : kept) {
+        dst->push_back(src[k * 3 + 0]);
+        dst->push_back(src[k * 3 + 1]);
+        dst->push_back(src[k * 3 + 2]);
+      }
+    };
+
+    if (bd.hasPointIndices) {
+      append_kept(bd.offsets, &shape.point_offsets);
+      if (bd.hasNormalOffsets &&
+          bd.normalOffsets.size() == bd.offsets.size()) {
+        append_kept(bd.normalOffsets, &shape.normal_offsets);
+      }
+      shape.point_indices.reserve(kept.size());
+      for (size_t k : kept) {
+        shape.point_indices.push_back(
+            static_cast<uint32_t>(bd.pointIndices[k]));
+      }
+    } else {
+      shape.point_offsets.append(bd.offsets.data(), bd.offsets.size());
+      if (bd.hasNormalOffsets && !bd.normalOffsets.empty()) {
+        shape.normal_offsets.append(bd.normalOffsets.data(),
+                                    bd.normalOffsets.size());
       }
     }
     for (const ::tinyusdz::next::BlendShapeData::Inbetween& source :
@@ -2797,11 +2984,23 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
                             "' on " + bs_prim.GetPath().str());
         continue;
       }
+      if (!source.has_weight) {
+        // A weightless in-between would sit at 0.0 and collide with the base
+        // shape; legacy tydra skips these too.
+        warnings_.push_back("In-between '" + source.name + "' on " +
+                            bs_prim.GetPath().str() +
+                            " has no authored weight; skipped");
+        continue;
+      }
       RenderMesh::BlendShape::Inbetween inbetween;
       inbetween.name = source.name;
       inbetween.weight = source.weight;
-      inbetween.point_offsets.append(source.offsets.data(),
-                                     source.offsets.size());
+      if (bd.hasPointIndices) {
+        append_kept(source.offsets, &inbetween.point_offsets);
+      } else {
+        inbetween.point_offsets.append(source.offsets.data(),
+                                       source.offsets.size());
+      }
       shape.inbetweens.push_back(std::move(inbetween));
     }
     out->blend_shapes.push_back(std::move(shape));
@@ -3109,10 +3308,15 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
 
   std::vector<uint32_t> counts;
   std::vector<uint32_t> indices;
+  // Authored face index -> post-sanitize face index (-1 = dropped), so
+  // consumers of authored face numbering (holeIndices, GeomSubset indices)
+  // can be remapped instead of discarded.
+  std::vector<int32_t> face_remap(mesh->face_vertex_counts.size(), -1);
   counts.reserve(mesh->face_vertex_counts.size());
   indices.reserve(index_count);
   size_t offset = 0;
   size_t dropped = 0;
+  size_t authored_face = 0;
   for (uint32_t c : mesh->face_vertex_counts) {
     if (offset + c > index_count) {
       // counts overrun the index buffer: drop this and all later faces.
@@ -3129,6 +3333,7 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
       }
     }
     if (face_ok) {
+      face_remap[authored_face] = static_cast<int32_t>(counts.size());
       counts.push_back(c);
       for (uint32_t i = 0; i < c; ++i) {
         indices.push_back(mesh->face_vertex_indices[offset + i]);
@@ -3137,11 +3342,15 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
       ++dropped;
     }
     offset += c;
+    ++authored_face;
   }
   if (dropped > 0 || indices.size() != index_count ||
       counts.size() != mesh->face_vertex_counts.size()) {
     mesh->sanitize_dropped_faces = static_cast<uint32_t>(
         mesh->face_vertex_counts.size() - counts.size());
+    if (mesh->sanitize_dropped_faces > 0) {
+      mesh->sanitize_face_remap = std::move(face_remap);
+    }
     warnings_.push_back("Mesh '" + mesh->prim_path +
                         "': dropped invalid faces (out-of-range or negative "
                         "faceVertexIndices, or counts overrunning the index "
@@ -3150,6 +3359,22 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
     mesh->face_vertex_counts.append(counts.data(), counts.size());
     mesh->face_vertex_indices.clear();
     mesh->face_vertex_indices.append(indices.data(), indices.size());
+
+    // holeIndices were read in authored face numbering; remap them so hole
+    // faces keep pointing at the same topological faces after the drop.
+    if (mesh->sanitize_dropped_faces > 0 && !mesh->hole_faces.empty()) {
+      std::vector<uint32_t> remapped_holes;
+      remapped_holes.reserve(mesh->hole_faces.size());
+      for (uint32_t h : mesh->hole_faces) {
+        if (h < mesh->sanitize_face_remap.size() &&
+            mesh->sanitize_face_remap[h] >= 0) {
+          remapped_holes.push_back(
+              static_cast<uint32_t>(mesh->sanitize_face_remap[h]));
+        }
+      }
+      std::sort(remapped_holes.begin(), remapped_holes.end());
+      mesh->hole_faces = std::move(remapped_holes);
+    }
   }
 }
 
@@ -3334,12 +3559,26 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     if (!pv.value) continue;
     std::vector<float> data;
     const uint32_t comps = PrimvarToFloats(*pv.value, &data);
-    const Interpolation interp = ParsePrimvarInterp(pv.interpolation);
     const bool is_uv0 = (pv.name == uv_base);
     const bool is_uv1 = (pv.name == uv_base + "1");
     const bool is_color = (pv.name == "displayColor");
+    const bool is_opacity = (pv.name == "displayOpacity");
     const bool is_normals = (pv.name == "normals");
-    const bool builtin = is_uv0 || is_uv1 || is_color || is_normals;
+    const bool builtin =
+        is_uv0 || is_uv1 || is_color || is_opacity || is_normals;
+
+    // Unauthored interpolation defaults to `constant` per the USD spec
+    // (pxr UsdGeomPrimvar / legacy GeomPrimvar parity). Unauthored arrays
+    // sized per-point/per-corner/per-face are common in the wild though, so
+    // infer the mode from the LOGICAL element count for those.
+    auto resolve_interp = [&](size_t elems) -> Interpolation {
+      if (!pv.interpolation_authored && elems > 1) {
+        if (elems == npoints) return Interpolation::Vertex;
+        if (elems == ncorners) return Interpolation::FaceVarying;
+        if (elems == nfaces) return Interpolation::Uniform;
+      }
+      return ParsePrimvarInterp(pv.interpolation);
+    };
 
     // Skinning primvars are consumed by the skin binding (GetSkinBinding),
     // not by the generic vertex-attribute channel.
@@ -3353,7 +3592,8 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       VertexAttribute attr;
       attr.name = pv.name;
       attr.format = VertexFormat::Int;
-      attr.interpolation = interp;
+      attr.interpolation = resolve_interp(
+          pv.indices.empty() ? ia->size() : pv.indices.size());
       attr.int_data.append(ia->data(), ia->size());
       bool idx_ok = true;
       for (int32_t raw : pv.indices) {
@@ -3387,6 +3627,7 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
     if (builtin) {
       // Size must match the declared interpolation or a consumer indexes OOB.
       const size_t elems = data.size() / comps;
+      const Interpolation interp = resolve_interp(elems);
       if (elems != expected_elems(interp)) {
         warnings_.push_back(
             "Mesh '" + mesh->prim_path + "': primvar '" + pv.name +
@@ -3402,6 +3643,11 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
       } else if (is_color && (comps == 3 || comps == 4)) {
         mesh->colors.append(data.data(), data.size());
         mesh->colors_interp = interp;
+      } else if (is_opacity && comps == 1) {
+        // displayOpacity as a render channel (legacy exposes it alongside
+        // displayColor; consumers combine it as the vertex-color alpha).
+        mesh->opacities.append(data.data(), data.size());
+        mesh->opacities_interp = interp;
       } else if (is_normals && comps == 3) {
         // primvars:normals takes precedence over the raw `normals` attribute.
         mesh->normals.clear();
@@ -3419,7 +3665,8 @@ bool RenderSceneConverter::ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* 
                   : comps == 3 ? VertexFormat::Vec3
                                : VertexFormat::Vec4;
     if (comps > 4) continue;  // matrices etc.: not a vertex attribute
-    attr.interpolation = interp;
+    attr.interpolation = resolve_interp(
+        pv.indices.empty() ? (data.size() / comps) : pv.indices.size());
     attr.float_data.append(data.data(), data.size());
     bool idx_ok = true;
     const size_t elems = data.size() / comps;
@@ -3475,7 +3722,7 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
   if (ReadFloatArray(prim, "primvars:displayColor", config_.time_code,
                      &colors) &&
       !colors.empty()) {
-    std::string interp_tok = "vertex";
+    std::string interp_tok;
     if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
       if (const ::tinyusdz::next::PropMeta* pm =
               spec->property_meta("primvars:displayColor")) {
@@ -3484,8 +3731,17 @@ bool RenderSceneConverter::ConvertPoints(const UsdPrim& prim,
         }
       }
     }
-    const Interpolation interp = ParsePrimvarInterp(interp_tok);
     const size_t elems = colors.view.size / 3;
+    Interpolation interp;
+    if (interp_tok.empty()) {
+      // Unauthored: spec default is constant; per-point arrays are common in
+      // the wild, so classify by element count.
+      interp = (elems == out->point_count() && elems != 1)
+                   ? Interpolation::Vertex
+                   : Interpolation::Constant;
+    } else {
+      interp = ParsePrimvarInterp(interp_tok);
+    }
     const size_t expected = (interp == Interpolation::Constant)
                                 ? 1
                                 : out->point_count();
@@ -4237,6 +4493,37 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
         }
       };
 
+      if (nverts == 4) {
+        // Split the quad along the SHORTER diagonal (legacy parity): better
+        // triangle quality, and non-planar / concave-ish quads render
+        // correctly. A tie (e.g. a planar rectangle) keeps the classic
+        // 0-2 fan split.
+        const uint32_t i0 = mesh->face_vertex_indices[idx_offset + 0];
+        const uint32_t i1 = mesh->face_vertex_indices[idx_offset + 1];
+        const uint32_t i2 = mesh->face_vertex_indices[idx_offset + 2];
+        const uint32_t i3 = mesh->face_vertex_indices[idx_offset + 3];
+        auto dist_sq = [&](uint32_t a, uint32_t b) -> float {
+          const float dx = mesh->points[size_t(a) * 3 + 0] -
+                           mesh->points[size_t(b) * 3 + 0];
+          const float dy = mesh->points[size_t(a) * 3 + 1] -
+                           mesh->points[size_t(b) * 3 + 1];
+          const float dz = mesh->points[size_t(a) * 3 + 2] -
+                           mesh->points[size_t(b) * 3 + 2];
+          return dx * dx + dy * dy + dz * dz;
+        };
+        if (dist_sq(i1, i3) < dist_sq(i0, i2)) {
+          // Diagonal 1-3: triangles (0,1,3) and (1,2,3).
+          emit_triangle(0, 1, 3);
+          emit_triangle(1, 2, 3);
+        } else {
+          // Diagonal 0-2: triangles (0,1,2) and (0,2,3).
+          emit_triangle(0, 1, 2);
+          emit_triangle(0, 2, 3);
+        }
+        idx_offset += nverts;
+        continue;
+      }
+
       bool used_earcut = false;
       if (config_.mesh.triangulation_method ==
               MeshConfig::TriangulationMethod::Earcut &&
@@ -4285,11 +4572,37 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
             mapbox::earcut<uint32_t>(polygon);
         if (!local.empty() && (local.size() % 3) == 0) {
           used_earcut = true;
+          // earcut emits every triangle in ONE fixed 2D orientation
+          // regardless of the input ring winding. The triangles must follow
+          // the AUTHORED ring winding (so their 3D orientation matches the
+          // face); compare the projected ring's signed area against the
+          // orientation of the first non-degenerate output triangle and flip
+          // when they disagree. (The previous unconditional reverse flipped
+          // faces whose projection preserved orientation — e.g. a
+          // +dominant-axis polygon projected without an axis-order swap.)
+          double ring_area2 = 0.0;  // 2x signed area of the projected ring
+          const std::vector<Point2>& ring = polygon[0];
+          for (size_t i = 0; i < ring.size(); ++i) {
+            const Point2& a = ring[i];
+            const Point2& b = ring[(i + 1) % ring.size()];
+            ring_area2 += a[0] * b[1] - b[0] * a[1];
+          }
+          double tri_cross = 0.0;
+          for (size_t i = 0; i < local.size() && tri_cross == 0.0; i += 3) {
+            const Point2& a = ring[local[i]];
+            const Point2& b = ring[local[i + 1]];
+            const Point2& c = ring[local[i + 2]];
+            tri_cross = (b[0] - a[0]) * (c[1] - a[1]) -
+                        (b[1] - a[1]) * (c[0] - a[0]);
+          }
+          const bool flip = (ring_area2 != 0.0) && (tri_cross != 0.0) &&
+                            ((ring_area2 > 0.0) != (tri_cross > 0.0));
           for (size_t i = 0; i < local.size(); i += 3) {
-            // earcut emits clockwise triangles. Reverse them to the USD
-            // right-handed convention; emit_triangle applies the authored
-            // leftHanded correction afterwards.
-            emit_triangle(local[i], local[i + 2], local[i + 1]);
+            if (flip) {
+              emit_triangle(local[i], local[i + 2], local[i + 1]);
+            } else {
+              emit_triangle(local[i], local[i + 1], local[i + 2]);
+            }
           }
         } else {
           warnings_.push_back("Earcut failed for face " + std::to_string(f) +
@@ -4497,6 +4810,22 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   out->name = prim.GetName();
   out->prim_path = prim.GetPath().str();
   ExtractMaterialXConfig(prim, &out->mtlx_config);
+
+  // Displacement/volume terminal metadata (legacy parity: recorded, not
+  // converted into shader networks).
+  {
+    const std::string disp =
+        ::tinyusdz::next::GetDisplacementShader(stage, prim);
+    if (!disp.empty()) {
+      out->has_displacement = true;
+      out->displacement_shader_path = disp;
+    }
+    const std::string vol = ::tinyusdz::next::GetVolumeShader(stage, prim);
+    if (!vol.empty()) {
+      out->has_volume = true;
+      out->volume_shader_path = vol;
+    }
+  }
 
   // Find shader(s) in material. The material's `outputs:surface` connection
   // names the authoritative surface shader (child iteration order previously

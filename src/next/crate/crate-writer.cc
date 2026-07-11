@@ -32,6 +32,30 @@
 namespace tinyusdz {
 namespace next {
 
+namespace {
+
+bool ValidateStrictCrateFields(const Layer& layer, std::string* error) {
+  for (const PrimSpec& prim : layer.prims()) {
+    for (const PropSlot& slot : prim.properties().slots()) {
+      const std::string& name = GetPropNameTable().get(slot.name_id);
+      if (prim.spline_source(slot.name_id)) {
+        if (error) *error = "Strict AOUSD USDC write cannot encode spline field " +
+                            prim.path().str() + "." + name;
+        return false;
+      }
+      if (prim.raw_default_source(slot.name_id)) {
+        if (error) *error =
+            "Strict AOUSD USDC write cannot encode raw unsupported value " +
+            prim.path().str() + "." + name;
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
 
 #include "crate-writer-impl.inc"
 
@@ -77,6 +101,12 @@ CrateWriteResult CrateWriter::WriteLayerToFile(const char* filename, const Layer
 }
 
 CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, const Layer& layer) {
+  if (impl_->strict_aousd_conformance()) {
+    CrateWriteResult strict_result;
+    if (!ValidateStrictCrateFields(layer, &strict_result.error)) {
+      return strict_result;
+    }
+  }
   // Inline-authored variants (VariantSetData without bracketed holder prims)
   // must be materialized into holder prims or the crate drops them.
   if (LayerNeedsVariantHolders(layer)) {
@@ -91,6 +121,12 @@ CrateWriteResult CrateWriter::WriteLayerToMemory(std::vector<uint8_t>& buffer, c
 }
 
 CrateWriteResult CrateWriter::WriteLayerToSink(const CrateWriteSink& sink, const Layer& layer) {
+  if (impl_->strict_aousd_conformance()) {
+    CrateWriteResult strict_result;
+    if (!ValidateStrictCrateFields(layer, &strict_result.error)) {
+      return strict_result;
+    }
+  }
   // Impl::Write streams bootstrap/VALUE/structural/TOC to `sink` in file order
   // when a sink is supplied; buffer_ only ever holds the small structural tail.
   if (LayerNeedsVariantHolders(layer)) {

@@ -259,6 +259,8 @@ list(
   ${TINYUSDZ_NEXT_DIR}/schema/geom-xform.cc
   ${TINYUSDZ_NEXT_DIR}/schema/usd-shade.cc
   ${TINYUSDZ_NEXT_DIR}/eval/attribute-eval.cc
+  ${TINYUSDZ_NEXT_DIR}/eval/value-clip.cc
+  ${TINYUSDZ_NEXT_DIR}/schema/schema-registry.cc
 )
 
 list(

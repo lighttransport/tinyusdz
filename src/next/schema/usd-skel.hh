@@ -85,6 +85,10 @@ struct BlendShapeData {
   struct Inbetween {
     std::string name;
     float weight = 0.0f;
+    // True when the `weight` attribute metadata was authored. An in-between
+    // without an authored weight is unusable (0.0 collides with the base
+    // shape); consumers should skip it (matches legacy tydra).
+    bool has_weight = false;
     std::vector<float> offsets;
   };
   // Offsets (vector3f[])

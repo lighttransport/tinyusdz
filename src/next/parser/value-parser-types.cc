@@ -90,6 +90,12 @@ const TypeNameEntry kTypeNames[] = {
   {"matrix2d", TypeId::Matrix2d},
   {"matrix3d", TypeId::Matrix3d},
   {"matrix4d", TypeId::Matrix4d},
+  // Single-precision matrices: not in pxr's Sdf value-type names, but the
+  // TypeIds + parsers exist (crate files can carry them), so map the names to
+  // keep hand-authored `matrixNf` values instead of dropping them.
+  {"matrix2f", TypeId::Matrix2f},
+  {"matrix3f", TypeId::Matrix3f},
+  {"matrix4f", TypeId::Matrix4f},
 
   // Texture coordinates
   {"texCoord2h", TypeId::Texcoord2h},

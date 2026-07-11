@@ -18,6 +18,13 @@
 namespace tinyusdz {
 namespace next {
 
+/// FIELDS prevalidation: minimum number of payload bytes a non-inlined
+/// ValueRep of this type must have available at its offset for the decoder
+/// not to run off the end of the file. Sizes must match the actual decode
+/// reads (crate-reader-unpack.cc) — overstating rejects valid files whose
+/// payload sits near EOF. Exposed (non-static) for unit tests.
+uint64_t CrateValueRepMinPayloadBytes(ValueRep rep, CrateVersion version);
+
 // TfToken-lite storage for the crate token table. The token section is one
 // contiguous run of NUL-separated strings; keeping one blob plus spans avoids a
 // per-token std::string allocation while the reader is reconstructing the layer.

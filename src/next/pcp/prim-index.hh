@@ -86,6 +86,9 @@ enum class PrototypeNumbering { Deterministic, UsdcatCompatible };
 
 /// Composition options.
 struct CompositionOptions {
+  /// Opt into fail-closed AOUSD parsing/resolution policy. Compatibility mode
+  /// remains the default for legacy assets.
+  bool strict_aousd_conformance = false;
   bool load_payloads = true;       // default policy when payload_policy is null.
   uint32_t max_depth = 256;        // arc recursion limit / cycle backstop.
   uint32_t max_namespace_depth = 1024;  // composed prim-tree depth backstop
