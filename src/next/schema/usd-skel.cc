@@ -378,24 +378,30 @@ bool BuildSkelTopology(const std::vector<std::string>& joints,
       continue;
     }
 
-    std::string parentPath = path.substr(0, lastSlash);
-
-    // Find parent index
+    // Find the nearest ANCESTOR present in the joint list: UsdSkel allows
+    // sparse joint lists (e.g. ["Root", "Root/Pelvis/Spine"]), where the
+    // parent is the closest listed ancestor, not necessarily the immediate
+    // path prefix (pxr UsdSkelTopology semantics).
     bool found = false;
-    for (size_t j = 0; j < joints.size(); ++j) {
-      if (joints[j] == parentPath) {
-        dst[i] = static_cast<int>(j);
-        found = true;
-        break;
+    std::string parentPath = path.substr(0, lastSlash);
+    while (!parentPath.empty()) {
+      for (size_t j = 0; j < joints.size(); ++j) {
+        if (joints[j] == parentPath) {
+          dst[i] = static_cast<int>(j);
+          found = true;
+          break;
+        }
       }
+      if (found) break;
+      const size_t up = parentPath.rfind('/');
+      if (up == std::string::npos || up == 0) break;
+      parentPath = parentPath.substr(0, up);
     }
 
     if (!found) {
-      if (err) {
-        *err = "Parent joint not found: " + parentPath +
-               " for joint: " + path;
-      }
-      return false;
+      // No listed ancestor at all: treat the joint as an extra root (pxr
+      // tolerates this rather than failing the topology).
+      dst[i] = -1;
     }
   }
 

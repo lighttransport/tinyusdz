@@ -1554,6 +1554,13 @@ def Xform "Root"
         def GeomSubset "SubA"
         {
             uniform token familyName = "materialBind"
+            int[] indices = [0]
+            rel material:binding = </Root/Mat2>
+        }
+
+        def GeomSubset "SubHole"
+        {
+            uniform token familyName = "materialBind"
             int[] indices = [1]
             rel material:binding = </Root/Mat2>
         }
@@ -1654,9 +1661,12 @@ def Xform "Root"
     assert(m.normals.size() == 6 &&
            m.normals_interp == Interpolation::Uniform);
     assert(m.material_id >= 0);  // purpose binding (material:binding:preview)
+    // Subsets are TRIANGLE ranges after triangulation: authored face 0 (a
+    // quad -> 2 triangles) covers triangles [0, 2); the subset on the HOLE
+    // face 1 contributes no renderable triangles and is dropped.
     assert(m.material_subsets.size() == 1);
-    assert(m.material_subsets[0].face_start == 1 &&
-           m.material_subsets[0].face_count == 1);
+    assert(m.material_subsets[0].face_start == 0 &&
+           m.material_subsets[0].face_count == 2);
     assert(m.material_subsets[0].material_id != m.material_id);
     assert(m.primvars.size() == 1 && m.primvars[0].name == "heat");
     assert(m.primvars[0].indices.size() == 6);
@@ -3010,6 +3020,8 @@ def Xform "World"
         {
             uniform token info:id = "ND_standard_surface_surfaceshader"
             color3f inputs:base_color = (0.8, 0.2, 0.1)
+            float inputs:specular_roughness = 0.35
+            float inputs:metalness = 0.9
             token outputs:out
         }
     }
@@ -3025,12 +3037,199 @@ def Xform "World"
   ConverterConfig config;
   RenderSceneConverter converter(config);
   ConvertResult result = converter.Convert(lr.stage);
-  // Must terminate (no stack overflow) and keep the mesh; the material may be
-  // a fallback until a real standard_surface mapping lands.
+  // Must terminate (no stack overflow), keep the mesh, and now convert the
+  // standard_surface through the OpenPBR mapping (not the gray fallback).
   assert(result.success);
   assert(result.scene.meshes.size() == 1);
+  const auto mat_it = result.scene.material_by_path.find("/World/Mat");
+  assert(mat_it != result.scene.material_by_path.end());
+  const RenderMaterial& mat =
+      result.scene.materials[static_cast<size_t>(mat_it->second)];
+  assert(mat.shader_type == RenderMaterial::ShaderType::OpenPBR);
+  assert(mat.openpbr);
+  assert(std::fabs(mat.openpbr->base_color.value.x - 0.8f) < 0.001f);
+  assert(std::fabs(mat.openpbr->base_color.value.y - 0.2f) < 0.001f);
+  assert(std::fabs(mat.openpbr->base_color.value.z - 0.1f) < 0.001f);
 
   std::cout << "  standard_surface no-recursion: PASSED\n";
+}
+
+
+// UsdSkel P0 parity fixes: sparse joint topology, mesh-local skel:joints
+// remap, SkelRoot-containment skeleton fallback, rest-from-bind derivation,
+// and skel:animationSource authored on the SkelRoot.
+void TestUsdSkelParityFixes() {
+  std::cout << "Testing UsdSkel parity fixes...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    startTimeCode = 1
+    endTimeCode = 2
+)
+
+def Xform "World"
+{
+    def SkelRoot "Char" (
+    )
+    {
+        rel skel:animationSource = </World/Char/Anim>
+
+        # Sparse joint list: Spine's parent is Root (nearest listed
+        # ancestor), not the unlisted "Root/Pelvis". No restTransforms:
+        # rest must derive from bind * inverse(parentBind).
+        def Skeleton "Skel"
+        {
+            uniform token[] joints = ["Root", "Root/Pelvis/Spine"]
+            uniform matrix4d[] bindTransforms = [
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1)),
+                ((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,3,0,1))
+            ]
+        }
+
+        def SkelAnimation "Anim"
+        {
+            uniform token[] joints = ["Root"]
+            float3[] translations.timeSamples = { 1: [(0, 1, 0)], }
+        }
+
+        # Mesh: no skel:skeleton rel anywhere (containment fallback), and a
+        # REVERSED mesh-local skel:joints list — jointIndices are local.
+        def Mesh "Body"
+        {
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+            uniform token[] skel:joints = ["Root/Pelvis/Spine", "Root"]
+            int[] primvars:skel:jointIndices = [0, 0, 0, 0] (elementSize = 1)
+            float[] primvars:skel:jointWeights = [1, 1, 1, 1] (elementSize = 1)
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.skeletons.size() == 1);
+  const Skeleton& skel = result.scene.skeletons[0];
+
+  // Sparse topology: Spine's parent is Root (index 0), not a flattened root.
+  assert(skel.joints.size() == 2);
+  assert(skel.joints[1].parent_id == 0);
+
+  // Rest-from-bind: Spine rest = bind(Spine) * inverse(bind(Root)) ->
+  // translation (0, 3, 0), NOT identity.
+  assert(std::fabs(skel.joints[1].rest_transform.m[13] - 3.0f) < 0.001f);
+
+  // animationSource authored on the SkelRoot resolves onto the skeleton.
+  assert(skel.animation_source_path == "/World/Char/Anim");
+
+  // Containment fallback: the mesh binds the SkelRoot's skeleton with no
+  // authored rel...
+  assert(result.scene.meshes.size() == 1);
+  const RenderMesh& mesh = result.scene.meshes[0];
+  assert(mesh.skin);
+  assert(mesh.skin->skeleton_id == 0);
+
+  // ...and the mesh-local reversed skel:joints remaps: local index 0 =
+  // "Root/Pelvis/Spine" = skeleton joint 1.
+  assert(mesh.skin->joint_indices.size() == 4);
+  for (size_t i = 0; i < 4; ++i) {
+    assert(mesh.skin->joint_indices[i] == 1);
+  }
+
+  std::cout << "  UsdSkel parity fixes: PASSED\n";
+}
+
+
+// Material-driven UV primvar promotion: a texture sampling a
+// UsdPrimvarReader with varname "uv" (not "st") must surface that primvar
+// as texcoords_0.
+void TestMaterialUVPrimvarPromotion() {
+  std::cout << "Testing material-driven UV primvar promotion...\n";
+
+  const char* usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:uv = [(0, 0), (0.25, 0), (0.25, 0.5), (0, 0.5)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/Mat>
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/PS.outputs:surface>
+
+        def Shader "PS"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/Mat/Tex.outputs:rgb>
+            token outputs:surface
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @wood.png@
+            float2 inputs:st.connect = </World/Mat/Reader.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "Reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "uv"
+            float2 outputs:result
+        }
+    }
+}
+)";
+
+  LoadResult lr = LoadUSDAFromString(usda, std::strlen(usda));
+  if (!lr.success) {
+    std::cout << "  SKIPPED (failed to parse test USDA: " << lr.error_summary << ")\n";
+    return;
+  }
+
+  ConverterConfig config;
+  RenderSceneConverter converter(config);
+  ConvertResult result = converter.Convert(lr.stage);
+  assert(result.success);
+  assert(result.scene.meshes.size() == 1);
+  const RenderMesh& mesh = result.scene.meshes[0];
+
+  // The texture records the authored varname...
+  assert(!result.scene.textures.empty());
+  assert(result.scene.textures[0].uv_primvar == "uv");
+
+  // ...and the "uv" primvar is promoted into texcoords_0.
+  assert(mesh.texcoords_0.size() == 8);
+  assert(std::fabs(mesh.texcoords_0[2] - 0.25f) < 0.001f);
+  assert(std::fabs(mesh.texcoords_0[5] - 0.5f) < 0.001f);
+  // The promoted primvar no longer duplicates in the generic channel.
+  for (const VertexAttribute& attr : mesh.primvars) {
+    assert(attr.name != "uv");
+  }
+
+  std::cout << "  Material UV primvar promotion: PASSED\n";
 }
 
 int main() {
@@ -3079,6 +3278,8 @@ int main() {
   TestMultiSkeletonJointRemap();
   TestLightLinkingAndDomeFormat();
   TestStandardSurfaceNoRecursion();
+  TestUsdSkelParityFixes();
+  TestMaterialUVPrimvarPromotion();
   TestLegacyParityExtraction();
 
   std::cout << "\n=== All Tydra Next tests PASSED ===\n";

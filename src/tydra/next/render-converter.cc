@@ -404,6 +404,40 @@ Matrix4 MatrixFromPointInstancerTransform(
   return dst;
 }
 
+// General 4x4 inverse (Gauss-Jordan, double precision). Returns false for a
+// singular matrix. Used to derive rest transforms from bind transforms.
+bool InvertMatrix4x4D(const double m[16], double out[16]) {
+  double a[4][8];
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      a[r][c] = m[r * 4 + c];
+      a[r][c + 4] = (r == c) ? 1.0 : 0.0;
+    }
+  }
+  for (int col = 0; col < 4; ++col) {
+    int pivot = col;
+    for (int r = col + 1; r < 4; ++r) {
+      if (std::fabs(a[r][col]) > std::fabs(a[pivot][col])) pivot = r;
+    }
+    if (std::fabs(a[pivot][col]) < 1e-12) return false;
+    if (pivot != col) {
+      for (int c = 0; c < 8; ++c) std::swap(a[col][c], a[pivot][c]);
+    }
+    const double inv_p = 1.0 / a[col][col];
+    for (int c = 0; c < 8; ++c) a[col][c] *= inv_p;
+    for (int r = 0; r < 4; ++r) {
+      if (r == col) continue;
+      const double f = a[r][col];
+      if (f == 0.0) continue;
+      for (int c = 0; c < 8; ++c) a[r][c] -= f * a[col][c];
+    }
+  }
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) out[r * 4 + c] = a[r][c + 4];
+  }
+  return true;
+}
+
 Matrix4 MulMatrix4(const Matrix4& a, const Matrix4& b) {
   Matrix4 r;
   for (int i = 0; i < 4; ++i) {
@@ -1105,6 +1139,14 @@ bool ExtractTextureNodeData(const Stage& stage,
   return true;
 }
 
+// MaterialX Autodesk standard_surface (usdMtlx flatten pattern).
+bool IsStandardSurfaceShaderId(const std::string& id) {
+  return id == "ND_standard_surface_surfaceshader" ||
+         id == "standard_surface" ||
+         id == "AutodeskStandardSurface" ||
+         id == "MtlxAutodeskStandardSurface";
+}
+
 bool IsOpenPBRShaderId(const std::string& id) {
   return id == "ND_open_pbr_surface_surfaceshader" ||
          id == "open_pbr_surface" ||
@@ -1256,6 +1298,120 @@ bool JointTokenMatches(const SkeletonJoint& joint, const std::string& token) {
     return sep == 0 || joint.path[sep - 1] == '/';
   }
   return false;
+}
+
+// Material-driven UV primvar promotion: UsdPrimvarReader varnames other than
+// the default "st" only survive as generic mesh.primvars entries, which no
+// texture consumer samples. After materials are bound, promote the primvar
+// each bound material's textures actually reference into texcoords_0/1
+// (legacy selects UV sets from the shader network the same way).
+void PromoteMaterialUVPrimvars(RenderScene* scene,
+                               const std::string& default_uv,
+                               std::vector<std::string>* warnings) {
+  if (!scene) return;
+
+  auto texture_uv_names = [scene](const RenderMaterial& mat,
+                                  std::vector<std::string>* names) {
+    auto add = [scene, names](const ShaderParam& p) {
+      if (p.texture_id < 0 ||
+          static_cast<size_t>(p.texture_id) >= scene->textures.size()) {
+        return;
+      }
+      const std::string& uv =
+          scene->textures[static_cast<size_t>(p.texture_id)].uv_primvar;
+      if (uv.empty()) return;
+      if (std::find(names->begin(), names->end(), uv) == names->end()) {
+        names->push_back(uv);
+      }
+    };
+    if (mat.preview_surface) {
+      const PreviewSurfaceShader& ps = *mat.preview_surface;
+      for (const ShaderParam* p :
+           {&ps.diffuse_color, &ps.emissive_color, &ps.specular_color,
+            &ps.metallic, &ps.roughness, &ps.clearcoat,
+            &ps.clearcoat_roughness, &ps.opacity, &ps.opacity_threshold,
+            &ps.ior, &ps.normal, &ps.displacement, &ps.occlusion}) {
+        add(*p);
+      }
+    }
+    if (mat.openpbr) {
+      const OpenPBRSurfaceShader& o = *mat.openpbr;
+      for (const ShaderParam* p :
+           {&o.base_weight, &o.base_color, &o.base_roughness,
+            &o.base_metalness, &o.specular_weight, &o.specular_color,
+            &o.specular_roughness, &o.specular_ior, &o.transmission_weight,
+            &o.coat_weight, &o.coat_color, &o.coat_roughness,
+            &o.emission_luminance, &o.emission_color, &o.normal,
+            &o.opacity}) {
+        add(*p);
+      }
+    }
+  };
+
+  for (RenderMesh& mesh : scene->meshes) {
+    // Gather UV names referenced by every material bound to this mesh
+    // (direct binding + subsets).
+    std::vector<int32_t> material_ids;
+    if (mesh.material_id >= 0) material_ids.push_back(mesh.material_id);
+    for (const RenderMesh::MaterialSubset& subset : mesh.material_subsets) {
+      if (subset.material_id >= 0) material_ids.push_back(subset.material_id);
+    }
+    std::vector<std::string> wanted;
+    for (int32_t mid : material_ids) {
+      if (static_cast<size_t>(mid) >= scene->materials.size()) continue;
+      texture_uv_names(scene->materials[static_cast<size_t>(mid)], &wanted);
+    }
+    // Names equal to the defaults are already in texcoords_0/1.
+    wanted.erase(std::remove_if(wanted.begin(), wanted.end(),
+                                [&default_uv](const std::string& n) {
+                                  return n == default_uv ||
+                                         n == default_uv + "1";
+                                }),
+                 wanted.end());
+    if (wanted.empty()) continue;
+
+    auto promote = [&mesh, warnings](const std::string& name,
+                                     FloatChunked* dst,
+                                     Interpolation* dst_interp) -> bool {
+      for (size_t ai = 0; ai < mesh.primvars.size(); ++ai) {
+        VertexAttribute& attr = mesh.primvars[ai];
+        if (attr.name != name || attr.format != VertexFormat::Vec2) continue;
+        dst->clear();
+        if (attr.has_indices()) {
+          const size_t elems = attr.float_data.size() / 2;
+          for (size_t k = 0; k < attr.indices.size(); ++k) {
+            const uint32_t idx = attr.indices[k];
+            if (idx >= elems) {
+              warnings->push_back("Mesh '" + mesh.prim_path + "': UV primvar '" +
+                                  name + "' has out-of-range indices; not promoted");
+              dst->clear();
+              return false;
+            }
+            dst->push_back(attr.float_data[idx * 2 + 0]);
+            dst->push_back(attr.float_data[idx * 2 + 1]);
+          }
+        } else {
+          for (size_t k = 0; k < attr.float_data.size(); ++k) {
+            dst->push_back(attr.float_data[k]);
+          }
+        }
+        *dst_interp = attr.interpolation;
+        mesh.primvars.erase(mesh.primvars.begin() +
+                            static_cast<std::ptrdiff_t>(ai));
+        return true;
+      }
+      return false;
+    };
+
+    // The material-referenced UV set takes the primary slot (matching
+    // legacy's shader-network-driven selection); a second distinct name
+    // fills the secondary slot when free.
+    if (promote(wanted[0], &mesh.texcoords_0, &mesh.texcoords_0_interp)) {
+      if (wanted.size() > 1 && mesh.texcoords_1.empty()) {
+        promote(wanted[1], &mesh.texcoords_1, &mesh.texcoords_1_interp);
+      }
+    }
+  }
 }
 
 void ResolveSkeletalAnimationTargets(RenderScene* scene) {
@@ -1784,6 +1940,8 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     }
 
     AssignMaterialBindings(stage, &result.scene);
+    PromoteMaterialUVPrimvars(&result.scene, config_.mesh.default_uv_primvar,
+                              &warnings_);
     AssignPointInstanceDrawMaterials(&result.scene);
     if (config_.point_instancer.duplicate_meshes) {
       DuplicatePointInstanceMeshes(&result.scene);
@@ -1834,6 +1992,22 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     for (const auto& rec : extracted.skeletons) {
       Skeleton skeleton;
       if (ConvertSkeleton(rec.prim, &skeleton)) {
+        // skel:animationSource may be authored on the SkelRoot (or another
+        // ancestor) instead of the Skeleton itself; every descendant
+        // Skeleton inherits it (UsdSkel binding inheritance).
+        if (skeleton.animation_source_path.empty()) {
+          UsdPrim anc = GetParent(stage, rec.prim);
+          while (anc.IsValid()) {
+            const std::vector<std::string> sources =
+                ReadRelationshipTargets(anc, "skel:animationSource");
+            if (!sources.empty()) {
+              skeleton.animation_source_path = sources[0];
+              break;
+            }
+            if (::tinyusdz::tydra::next::IsSkelRoot(anc)) break;
+            anc = GetParent(stage, anc);
+          }
+        }
         int32_t skeleton_id = static_cast<int32_t>(result.scene.skeletons.size());
         result.scene.skeletons.push_back(std::move(skeleton));
         AssignNodeDataId(&result.scene, rec.path, skeleton_id);
@@ -1847,6 +2021,49 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         if (result.scene.skeletons[si].prim_path == mesh.skin->skeleton_path) {
           mesh.skin->skeleton_id = static_cast<int32_t>(si);
           break;
+        }
+      }
+
+      // Mesh-local `skel:joints`: jointIndices index into the mesh's own
+      // (subset/permuted) joint list — remap them onto the skeleton's joint
+      // order. Unmatched tokens zero the influence weight rather than
+      // silently deforming by joint 0.
+      if (!mesh.skin->mesh_joint_order.empty() &&
+          mesh.skin->skeleton_id >= 0) {
+        const Skeleton& skel =
+            result.scene.skeletons[static_cast<size_t>(mesh.skin->skeleton_id)];
+        std::vector<int32_t> remap(mesh.skin->mesh_joint_order.size(), -1);
+        bool identity = true;
+        for (size_t k = 0; k < mesh.skin->mesh_joint_order.size(); ++k) {
+          const std::string& token = mesh.skin->mesh_joint_order[k];
+          for (size_t ji = 0; ji < skel.joints.size(); ++ji) {
+            if (JointTokenMatches(skel.joints[ji], token)) {
+              remap[k] = static_cast<int32_t>(ji);
+              break;
+            }
+          }
+          if (remap[k] != static_cast<int32_t>(k)) identity = false;
+          if (remap[k] < 0) {
+            warnings_.push_back("Mesh " + mesh.prim_path +
+                                " skel:joints token '" + token +
+                                "' not found in skeleton " + skel.prim_path);
+          }
+        }
+        if (!identity) {
+          const size_t n = mesh.skin->joint_indices.size();
+          for (size_t k = 0; k < n; ++k) {
+            const uint16_t local = mesh.skin->joint_indices[k];
+            const int32_t target =
+                local < remap.size() ? remap[local] : -1;
+            if (target >= 0 && target <= 65535) {
+              mesh.skin->joint_indices[k] = static_cast<uint16_t>(target);
+            } else {
+              mesh.skin->joint_indices[k] = 0;
+              if (k < mesh.skin->joint_weights.size()) {
+                mesh.skin->joint_weights[k] = 0.0f;
+              }
+            }
+          }
         }
       }
     }
@@ -2113,6 +2330,7 @@ void RenderSceneConverter::BuildNodeHierarchy(const RenderExtractResult& extract
   }
 }
 
+
 void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
                                                   RenderScene* scene) {
   if (!scene) return;
@@ -2172,6 +2390,39 @@ void RenderSceneConverter::AssignMaterialBindings(const Stage& stage,
           mesh.material_subsets.push_back(ms);
           run_start = i;
         }
+      }
+    }
+
+    // Remap subset runs from authored polygon-face space into TRIANGLE
+    // space using the triangulation prefix sums (an N-gon becomes N-2
+    // triangles; holes/degenerate faces contribute 0). Authored subset
+    // indices no longer align when sanitization dropped faces — skip with
+    // a warning rather than mis-assign materials.
+    if (!mesh.material_subsets.empty() &&
+        !mesh.face_triangle_offsets.empty()) {
+      if (mesh.sanitize_dropped_faces > 0) {
+        warnings_.push_back("Mesh '" + mesh.prim_path +
+                            "': GeomSubset material bindings skipped (topology "
+                            "sanitization dropped faces; authored subset "
+                            "indices no longer align)");
+        mesh.material_subsets.clear();
+      } else {
+        const std::vector<uint32_t>& offs = mesh.face_triangle_offsets;
+        const uint32_t nfaces_tri =
+            static_cast<uint32_t>(offs.size() > 0 ? offs.size() - 1 : 0);
+        std::vector<RenderMesh::MaterialSubset> remapped;
+        remapped.reserve(mesh.material_subsets.size());
+        for (const RenderMesh::MaterialSubset& ms : mesh.material_subsets) {
+          if (ms.face_start >= nfaces_tri) continue;
+          const uint32_t face_end =
+              std::min(ms.face_start + ms.face_count, nfaces_tri);
+          const uint32_t tri_start = offs[ms.face_start];
+          const uint32_t tri_count = offs[face_end] - tri_start;
+          if (tri_count == 0) continue;
+          remapped.push_back(
+              RenderMesh::MaterialSubset{tri_start, tri_count, ms.material_id});
+        }
+        mesh.material_subsets = std::move(remapped);
       }
     }
   }
@@ -2341,6 +2592,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
       // render unskinned in bind pose.
       if (sb.skeleton_path.empty()) {
         UsdPrim anc = GetParent(stage, prim);
+        UsdPrim skel_root;
         while (anc.IsValid()) {
           std::string inherited = GetBoundSkeleton(anc);
           if (!inherited.empty()) {
@@ -2348,8 +2600,23 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
             break;
           }
           // Binding inheritance is scoped to the SkelRoot subtree.
-          if (::tinyusdz::tydra::next::IsSkelRoot(anc)) break;
+          if (::tinyusdz::tydra::next::IsSkelRoot(anc)) {
+            skel_root = anc;
+            break;
+          }
           anc = GetParent(stage, anc);
+        }
+        // No authored binding anywhere: fall back to a Skeleton contained
+        // in the enclosing SkelRoot (common Blender / older-exporter shape;
+        // legacy tydra binds this way too). First Skeleton in the subtree
+        // wins, matching legacy.
+        if (sb.skeleton_path.empty() && skel_root.IsValid()) {
+          for (const UsdPrim& desc : GetDescendants(skel_root)) {
+            if (::tinyusdz::tydra::next::IsSkeleton(desc)) {
+              sb.skeleton_path = desc.GetPath().str();
+              break;
+            }
+          }
         }
       }
       const size_t point_count = out->point_count();
@@ -2430,6 +2697,7 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
                                       sb.joint_weights.size());
       out->skin->influences_per_vertex =
           static_cast<uint32_t>(output_influences);
+      out->skin->mesh_joint_order = std::move(sb.joint_order);
       std::memcpy(out->skin->geom_bind_transform.m, sb.geom_bind_transform,
                   sizeof(sb.geom_bind_transform));
       // skeleton_id is resolved by the caller once skeletons are converted
@@ -2812,6 +3080,8 @@ void RenderSceneConverter::SanitizeMeshTopology(RenderMesh* mesh) {
   }
   if (dropped > 0 || indices.size() != index_count ||
       counts.size() != mesh->face_vertex_counts.size()) {
+    mesh->sanitize_dropped_faces = static_cast<uint32_t>(
+        mesh->face_vertex_counts.size() - counts.size());
     warnings_.push_back("Mesh '" + mesh->prim_path +
                         "': dropped invalid faces (out-of-range or negative "
                         "faceVertexIndices, or counts overrunning the index "
@@ -3833,7 +4103,11 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
   }
 
   if (all_triangles && !mesh->left_handed && mesh->hole_faces.empty()) {
-    // Just copy indices; corner remap is identity.
+    // Just copy indices; corner remap is identity, one triangle per face.
+    mesh->face_triangle_offsets.resize(mesh->face_vertex_counts.size() + 1);
+    for (size_t f = 0; f <= mesh->face_vertex_counts.size(); ++f) {
+      mesh->face_triangle_offsets[f] = static_cast<uint32_t>(f);
+    }
     const size_t n = mesh->face_vertex_indices.size();
     if (WouldOverflowSizeMul(n, sizeof(uint32_t)) ||
         (n * sizeof(uint32_t)) > kMaxTempAllocBytes * 4u) {
@@ -3881,8 +4155,11 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
                         mesh->prim_path + "'");
     return false;
   }
+  mesh->face_triangle_offsets.assign(mesh->face_vertex_counts.size() + 1, 0);
   size_t idx_offset = 0;
   for (size_t f = 0; f < mesh->face_vertex_counts.size(); ++f) {
+    mesh->face_triangle_offsets[f] =
+        static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
     const uint32_t nverts = mesh->face_vertex_counts[f];
     if (idx_offset + nverts > mesh->face_vertex_indices.size()) return false;
     const bool is_hole = std::binary_search(mesh->hole_faces.begin(),
@@ -3970,6 +4247,8 @@ bool RenderSceneConverter::TriangulateMesh(RenderMesh* mesh) {
     }
     idx_offset += nverts;
   }
+  mesh->face_triangle_offsets[mesh->face_vertex_counts.size()] =
+      static_cast<uint32_t>(mesh->triangulated_indices.size() / 3);
 
   mesh->is_triangulated = true;
   return true;
@@ -4209,6 +4488,17 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
           out->alpha_mode = RenderMaterial::AlphaMode::Blend;
         }
         found_shader = true;
+      } else if (IsStandardSurfaceShaderId(shader_id)) {
+        // MaterialX standard_surface maps onto OpenPBR (legacy tydra's
+        // ConvertMtlxStandardSurfaceToOpenPBRSurface table).
+        out->shader_type = RenderMaterial::ShaderType::OpenPBR;
+        out->openpbr = std::make_unique<OpenPBRSurfaceShader>();
+        ExtractStandardSurfaceAsOpenPBR(stage, child, out->openpbr.get(), scene);
+        if (out->openpbr->opacity.is_texture() ||
+            out->openpbr->opacity.value.x < 1.0f - kAlphaEpsilon) {
+          out->alpha_mode = RenderMaterial::AlphaMode::Blend;
+        }
+        found_shader = true;
       }
     }
   }
@@ -4282,6 +4572,81 @@ bool RenderSceneConverter::ExtractPreviewSurface(const Stage& stage,
           eval.EvalInt(shader_prim, "inputs:useSpecularWorkflow")) {
     out->use_specular_workflow = (*use_spec != 0);
   }
+
+  return true;
+}
+
+// MaterialX standard_surface -> OpenPBR field mapping (mirrors legacy
+// ConvertMtlxStandardSurfaceToOpenPBRSurface). ExtractShaderParam follows
+// connections, so textured inputs (ND_image chains that resolve to a file)
+// come through as textures.
+bool RenderSceneConverter::ExtractStandardSurfaceAsOpenPBR(
+    const Stage& stage, const UsdPrim& shader_prim, OpenPBRSurfaceShader* out,
+    RenderScene* scene) {
+  if (!out || !::tinyusdz::next::IsShader(shader_prim)) return false;
+
+  // Base layer
+  ExtractShaderParam(stage, shader_prim, "base", &out->base_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "base_color", &out->base_color, scene);
+  ExtractShaderParam(stage, shader_prim, "diffuse_roughness",
+                     &out->base_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "metalness", &out->base_metalness,
+                     scene);
+
+  // Specular layer
+  ExtractShaderParam(stage, shader_prim, "specular", &out->specular_weight,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "specular_color",
+                     &out->specular_color, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_roughness",
+                     &out->specular_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_IOR", &out->specular_ior,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "specular_anisotropy",
+                     &out->specular_anisotropy, scene);
+  ExtractShaderParam(stage, shader_prim, "specular_rotation",
+                     &out->specular_rotation, scene);
+
+  // Transmission
+  ExtractShaderParam(stage, shader_prim, "transmission",
+                     &out->transmission_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_color",
+                     &out->transmission_color, scene);
+  ExtractShaderParam(stage, shader_prim, "transmission_depth",
+                     &out->transmission_depth, scene);
+
+  // Subsurface
+  ExtractShaderParam(stage, shader_prim, "subsurface",
+                     &out->subsurface_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "subsurface_color",
+                     &out->subsurface_color, scene);
+  ExtractShaderParam(stage, shader_prim, "subsurface_radius",
+                     &out->subsurface_radius, scene);
+
+  // Sheen
+  ExtractShaderParam(stage, shader_prim, "sheen", &out->sheen_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_color", &out->sheen_color,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "sheen_roughness",
+                     &out->sheen_roughness, scene);
+
+  // Coat
+  ExtractShaderParam(stage, shader_prim, "coat", &out->coat_weight, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_color", &out->coat_color,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "coat_roughness",
+                     &out->coat_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "coat_IOR", &out->coat_ior, scene);
+
+  // Emission
+  ExtractShaderParam(stage, shader_prim, "emission", &out->emission_luminance,
+                     scene);
+  ExtractShaderParam(stage, shader_prim, "emission_color",
+                     &out->emission_color, scene);
+
+  // Geometry
+  ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
+  ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
 
   return true;
 }
@@ -4706,6 +5071,49 @@ bool RenderSceneConverter::ConvertSkeleton(const UsdPrim& prim, Skeleton* out) {
 
     if (joint.parent_id < 0 && out->root_joint < 0) {
       out->root_joint = static_cast<int32_t>(i);
+    }
+  }
+
+  // restTransforms are optional in UsdSkel: when unauthored (or too short),
+  // derive the parent-local rest pose from the world-space bindTransforms —
+  // rest[i] = bind[i] * inverse(bind[parent]) (row-vector convention).
+  // Leaving identity here collapses every joint onto its parent.
+  if (skel.restTransforms.size() < skel.joints.size() * 16 &&
+      skel.bindTransforms.size() >= skel.joints.size() * 16) {
+    const size_t authored_rest = skel.restTransforms.size() / 16;
+    for (size_t i = authored_rest; i < out->joints.size(); ++i) {
+      SkeletonJoint& joint = out->joints[i];
+      const int32_t parent = joint.parent_id;
+      if (parent < 0) {
+        joint.rest_transform = joint.bind_transform;
+        continue;
+      }
+      double parent_bind[16];
+      double parent_inv[16];
+      for (int e = 0; e < 16; ++e) {
+        parent_bind[e] =
+            double(out->joints[static_cast<size_t>(parent)].bind_transform.m[e]);
+      }
+      if (!InvertMatrix4x4D(parent_bind, parent_inv)) {
+        joint.rest_transform = joint.bind_transform;
+        continue;
+      }
+      // rest = bind * parent_inv (row-vector: local * parent = world)
+      double bind[16];
+      for (int e = 0; e < 16; ++e) bind[e] = double(joint.bind_transform.m[e]);
+      double rest[16];
+      for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+          double sum = 0.0;
+          for (int k = 0; k < 4; ++k) {
+            sum += bind[r * 4 + k] * parent_inv[k * 4 + c];
+          }
+          rest[r * 4 + c] = sum;
+        }
+      }
+      for (int e = 0; e < 16; ++e) {
+        joint.rest_transform.m[e] = static_cast<float>(rest[e]);
+      }
     }
   }
 
