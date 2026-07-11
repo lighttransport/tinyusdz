@@ -1,23 +1,34 @@
 #!/usr/bin/env python3
-"""tusdview `--next`: an ordinary (non-instanced) blendshaped mesh must MORPH.
+"""tusdview `--next`: an ordinary (non-instanced) blendshaped mesh must MORPH,
+and it must morph in the RIGHT SPACE.
 
-BuildMorphChannelsNext / BakeBlendShapes were only ever called on the INSTANCED
-prototype path. A plain blendshaped mesh -- which is what almost every rig in the
-wild is -- went through the static batch path, which called neither, so it
-rendered its REST shape at every time code. Nothing in the suite noticed, because
-no test animated a blendshape.
+Two bugs, one test.
 
-This asserts, on the `--next` raster path:
+(a) BuildMorphChannelsNext / BakeBlendShapes were only ever called on the
+    INSTANCED prototype path. A plain blendshaped mesh -- which is what almost
+    every rig in the wild is -- went through the static batch path, which called
+    neither, so it rendered its REST shape at every time code.
 
-  1. the mesh actually changes with the time code (it used to be byte-identical
-     at every time);
-  2. the GPU morph agrees with the CPU bake (TUSDVIEW_NEXT_MORPH_BAKE=1) on
-     GEOMETRY -- the silhouettes must coincide. They differ in shading, and that
-     is expected: the vertex shader morphs positions and skins the REST normal,
-     while the bake recomputes normals from the morphed points. Comparing
-     silhouettes tests the thing that was broken (the positions) without pinning
-     the thing that is a known approximation; and
-  3. it reaches the ray tracer too, which traces the vertex buffers themselves.
+(b) That path world-BAKES its vertices (the batch's own transform is identity),
+    but the blendshape offsets are authored in MESH-local space, and every
+    consumer -- deform.glsl and BuildNextRtDeformedVertices -- adds the delta
+    straight onto the position it is handed. The deltas were left in mesh space,
+    so a blendshaped mesh under a rotated or scaled parent morphed along the
+    wrong axes. (Skinning already did the equivalent: its bone rows are
+    invW * (G*sm*invG) * W.) The instanced path is exempt -- its vertices stay
+    mesh-local.
+
+The geometry checks render in `--mode depth` through a FIXED USD camera. Both
+matter:
+
+  * depth is purely geometric, so the comparison is not polluted by the known,
+    by-design shading difference (the GPU path morphs positions and skins the
+    REST normal; the CPU bake recomputes normals from the morphed points); and
+  * a fixed camera, because the two paths legitimately frame the scene
+    differently -- the GPU path pads the mesh box by `morphExtent` so a morphed
+    mesh is never frustum-culled, while the bake's box is exact. Auto-framing
+    would otherwise move the camera between the two renders and swamp any real
+    geometric difference.
 
 Exits 77 (skip) when the binary or a usable GPU is missing.
 """
@@ -28,7 +39,94 @@ import sys
 import zlib
 
 SKIP = 77
-MIN_IOU = 0.99
+MAX_MEAN_DIFF = 0.5   # depth, GPU morph vs CPU bake: they must agree exactly
+MIN_POSE_DIFF = 1.0   # depth, rest vs posed: the morph must actually do something
+
+# A blendshaped cube under a ROTATED + non-uniformly SCALED parent, with a fixed
+# camera. The offsets push the +y face along mesh-local +y; the parent turns that
+# into world -x, doubled. A loader that forgets to carry the deltas through the
+# world bake displaces the face along world +y instead -- a gross, obvious error
+# that the identity-transform fixtures in models/ cannot see.
+XFORM_MORPH_USDA = """#usda 1.0
+(
+    defaultPrim = "root"
+    endTimeCode = 20
+    startTimeCode = 1
+    upAxis = "Y"
+)
+
+def Xform "root"
+{
+    def Camera "Cam"
+    {
+        float focalLength = 24
+        float horizontalAperture = 20.955
+        float verticalAperture = 15.2908
+        float2 clippingRange = (0.1, 1000)
+        double3 xformOp:translate = (0, 3, 14)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def SphereLight "Key"
+    {
+        float inputs:intensity = 900
+        float inputs:radius = 0.5
+        double3 xformOp:translate = (6, 8, 10)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def SkelRoot "Rig" (
+        prepend apiSchemas = ["SkelBindingAPI"]
+    )
+    {
+        double3 xformOp:rotateXYZ = (0, 0, 90)
+        double3 xformOp:scale = (2, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ", "xformOp:scale"]
+
+        def Mesh "Cube" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform bool doubleSided = 1
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [0, 4, 6, 2, 3, 2, 6, 7, 7, 6, 4, 5, 5, 1, 3, 7, 1, 0, 2, 3, 5, 4, 0, 1]
+            point3f[] points = [(1, 1, 1), (1, 1, -1), (1, -1, 1), (1, -1, -1), (-1, 1, 1), (-1, 1, -1), (-1, -1, 1), (-1, -1, -1)]
+            color3f[] primvars:displayColor = [(0.85, 0.85, 0.85)]
+            int[] primvars:skel:jointIndices = [0, 0, 0, 0, 0, 0, 0, 0] (elementSize = 1 interpolation = "vertex")
+            float[] primvars:skel:jointWeights = [1, 1, 1, 1, 1, 1, 1, 1] (elementSize = 1 interpolation = "vertex")
+            uniform token[] skel:blendShapes = ["Key_1"]
+            rel skel:blendShapeTargets = </root/Rig/Cube/Key_1>
+            prepend rel skel:skeleton = </root/Rig/Skel>
+            uniform token subdivisionScheme = "none"
+
+            def BlendShape "Key_1"
+            {
+                uniform vector3f[] offsets = [(0, 3, 0), (0, 3, 0), (0, 0, 0), (0, 0, 0), (0, 3, 0), (0, 3, 0), (0, 0, 0), (0, 0, 0)]
+                uniform int[] pointIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+            }
+        }
+
+        def Skeleton "Skel" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform matrix4d[] bindTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )]
+            uniform token[] joints = ["joint1"]
+            uniform matrix4d[] restTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )]
+            prepend rel skel:animationSource = </root/Rig/Skel/Anim>
+
+            def SkelAnimation "Anim"
+            {
+                uniform token[] blendShapes = ["Key_1"]
+                float[] blendShapeWeights.timeSamples = {
+                    1: [0],
+                    20: [1],
+                }
+            }
+        }
+    }
+}
+"""
 
 
 def render(binary, model, out, time, extra=(), env=None):
@@ -83,13 +181,11 @@ def read_luma(path):
     return out
 
 
-def silhouette_iou(a_path, b_path, thresh=25.0):
+def mean_diff(a_path, b_path):
     a, b = read_luma(a_path), read_luma(b_path)
     if len(a) != len(b):
-        return 0.0
-    inter = sum(1 for x, y in zip(a, b) if x > thresh and y > thresh)
-    union = sum(1 for x, y in zip(a, b) if x > thresh or y > thresh)
-    return inter / union if union else 0.0
+        return float("inf")
+    return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 
 
 def main():
@@ -103,13 +199,13 @@ def main():
             return SKIP
     os.makedirs(work, exist_ok=True)
 
+    # (a) The mesh has to change with the time code at all.
     rest = os.path.join(work, "morph_t1.png")
     posed = os.path.join(work, "morph_t20.png")
     if not render(binary, model, rest, 1):
         print("SKIP: headless render produced no image (no usable GPU?)")
         return SKIP
     render(binary, model, posed, 20)
-
     if open(rest, "rb").read() == open(posed, "rb").read():
         print("FAIL: the mesh renders identically at time 1 and time 20, so its "
               "blendshape is not being applied at all. A non-instanced blendshaped "
@@ -118,16 +214,42 @@ def main():
               "does.")
         return 1
 
-    baked = os.path.join(work, "morph_t20_baked.png")
-    render(binary, model, baked, 20, env={"TUSDVIEW_NEXT_MORPH_BAKE": "1"})
-    iou = silhouette_iou(posed, baked)
-    if iou < MIN_IOU:
-        print(f"FAIL: the GPU morph and the CPU bake disagree on GEOMETRY at the "
-              f"same time code (silhouette IoU {iou:.4f} < {MIN_IOU}). The two must "
-              f"produce the same morphed positions -- check the per-vertex delta "
-              f"re-indexing when a mesh is appended to a batch.")
+    # (b) Under a rotated + scaled parent, the GPU morph must land exactly where
+    # the CPU bake does. Depth, fixed camera: geometry only.
+    scene = os.path.join(work, "xform_morph.usda")
+    with open(scene, "w") as f:
+        f.write(XFORM_MORPH_USDA)
+    depth = ["--mode", "depth", "--camera", "Cam"]
+    d_rest = os.path.join(work, "xform_depth_t1.png")
+    d_gpu = os.path.join(work, "xform_depth_t20.png")
+    d_bake = os.path.join(work, "xform_depth_t20_baked.png")
+    ok = (render(binary, scene, d_rest, 1, extra=depth) and
+          render(binary, scene, d_gpu, 20, extra=depth) and
+          render(binary, scene, d_bake, 20, extra=depth,
+                 env={"TUSDVIEW_NEXT_MORPH_BAKE": "1"}))
+    if not ok:
+        print("SKIP: the transformed-parent scene did not render")
+        return SKIP
+
+    pose = mean_diff(d_rest, d_bake)
+    if pose < MIN_POSE_DIFF:
+        print(f"FAIL: the CPU bake's depth barely moves between time 1 and time 20 "
+              f"(mean {pose:.3f} < {MIN_POSE_DIFF}), so the check below -- which "
+              f"compares the GPU morph against it -- would be vacuous.")
         return 1
 
+    diff = mean_diff(d_gpu, d_bake)
+    if diff > MAX_MEAN_DIFF:
+        print(f"FAIL: under a rotated/scaled parent the GPU morph and the CPU bake "
+              f"put the geometry in DIFFERENT places (mean depth diff {diff:.3f} > "
+              f"{MAX_MEAN_DIFF}; the morph itself moves depth by {pose:.3f}). The "
+              f"blendshape offsets are MESH-local, but the static batch path bakes "
+              f"its vertices into world space -- so the deltas (and morphExtent) "
+              f"must be carried through the same transform, or the mesh morphs "
+              f"along the wrong axes.")
+        return 1
+
+    # (c) It has to reach the ray tracer, which traces the vertex buffers.
     rt1 = os.path.join(work, "morph_rt_t1.png")
     rt20 = os.path.join(work, "morph_rt_t20.png")
     if render(binary, model, rt1, 1, extra=["--rt"]) and \
@@ -138,8 +260,9 @@ def main():
                   "reach them (BuildNextRtDeformedVertices).")
             return 1
 
-    print(f"PASS: non-instanced blendshape morphs, matches the CPU bake "
-          f"(silhouette IoU {iou:.4f}), and reaches the ray tracer")
+    print(f"PASS: non-instanced blendshape morphs, lands exactly where the CPU bake "
+          f"does under a rotated/scaled parent (mean depth diff {diff:.3f}), and "
+          f"reaches the ray tracer")
     return 0
 
 
