@@ -4,7 +4,7 @@
 # Produces texcomp_web.mjs + texcomp_web.wasm in this directory (ES6 module,
 # loaded by texcomp.js). Pure C11 — no tinyusdz, no basis_universal.
 #
-# Requires emscripten on PATH (e.g. `source /mnt/disk1/work/emsdk/emsdk_env.sh`).
+# Requires emscripten on PATH (e.g. `source /path/to/emsdk/emsdk_env.sh`).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +12,7 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 TEXCOMP="$ROOT/src/external/textools/texcomp"
 
 if ! command -v emcc >/dev/null 2>&1; then
-  echo "emcc not found. Run: source /mnt/disk1/work/emsdk/emsdk_env.sh" >&2
+  echo "emcc not found. Activate emscripten first: source /path/to/emsdk/emsdk_env.sh" >&2
   exit 1
 fi
 
