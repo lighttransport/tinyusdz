@@ -577,6 +577,26 @@ void TestFoundationalTypeMatrix() {
   const std::string a2 = WriteUSDAToString(back.stage);
   assert(a1 == a2 &&
          "foundational type matrix must survive USDA->USDC->USDA unchanged");
+
+  // An attribute that carries BOTH a default value and a connection must keep
+  // the connection through USDC (the connection flag was formerly set only
+  // when the connect statement created the slot, so `v = x` + `v.connect = <t>`
+  // dropped the connection in the crate).
+  LoadResult conn = Parse(
+      "def Scope \"C\" {\n"
+      "    float v = 100.5\n"
+      "    float v.connect = </C.other>\n"
+      "    float other = 1\n"
+      "}\n",
+      true);
+  assert(conn.success);
+  std::vector<uint8_t> ccrate;
+  assert(WriteUSDCToMemory(ccrate, conn.stage, usdc_opts).success);
+  USDCLoadResult cback = LoadUSDCFromMemory(ccrate.data(), ccrate.size(), lopts);
+  assert(cback.success);
+  assert(WriteUSDAToString(cback.stage).find("v.connect = </C.other>") !=
+             std::string::npos &&
+         "value + connection must both survive USDC");
 }
 
 }  // namespace

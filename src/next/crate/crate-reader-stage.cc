@@ -889,13 +889,18 @@ bool CrateReader::Impl::BuildStage() {
       // phantom `token[] primChildren`/`properties` attributes.
       if (field.first == "primChildren") {
         // Authored sibling order: the hierarchy below is built in path-sorted
-        // order, so capture the order here and restore it after finalize.
+        // order, so capture the order here and restore the child links after
+        // finalize (see the prim_children_order pass). Do NOT also set
+        // primOrder()/rootPrimOrder: pxr writes `primChildren` on every prim as
+        // the natural order and preserves it purely by emission order, never
+        // by re-emitting a `reorder nameChildren`/`reorder rootPrims`
+        // statement. Restoring child_indices already reproduces that emission
+        // order; setting primOrder() here made every USDC->USDA round trip gain
+        // a spurious reorder statement pxr never emits.
         if (const std::vector<std::string>* names =
                 field.second.as_token_array()) {
           if (!names->empty()) {
             prim_children_order[entry.full_path] = *names;
-            if (ps) ps->meta().primOrder() = *names;
-            else if (entry.full_path == "/") layer.meta().rootPrimOrder = *names;
           }
         }
         continue;

@@ -848,11 +848,19 @@ std::vector<std::string> PrimSpec::relationship_names() const {
 }
 
 void PrimSpec::add_connection(const std::string& prop_name, const Path& target) {
-  connections_[GetPropNameTable().intern(prop_name).id].push_back(target);
+  const PropNameId id = GetPropNameTable().intern(prop_name);
+  connections_[id.id].push_back(target);
+  // Mark the slot as carrying a connection so serializers that gate on the
+  // flag (the USDC writer) emit it even when the property ALSO has a default
+  // value — otherwise `attr = v` + `attr.connect = <t>` loses the connection
+  // through a crate round trip.
+  if (PropSlot* s = property_mutable(id)) s->flags |= PropSlot::kFlagConnection;
 }
 
 void PrimSpec::set_connection_block(const std::string& prop_name) {
-  connections_[GetPropNameTable().intern(prop_name).id];  // empty vector
+  const PropNameId id = GetPropNameTable().intern(prop_name);
+  connections_[id.id];  // empty vector (authored `.connect = None`)
+  if (PropSlot* s = property_mutable(id)) s->flags |= PropSlot::kFlagConnection;
 }
 
 const std::vector<Path>* PrimSpec::connection(const std::string& prop_name) const {
