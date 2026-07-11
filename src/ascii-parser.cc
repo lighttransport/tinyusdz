@@ -1498,6 +1498,10 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
 
   bool end_with_quotation{false};
 
+  // Displayed(raw) length of the string literal(excluding quotation chars).
+  // Note that this can differ from the length of the unescaped result.
+  size_t displayed_len = 0;
+
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -1507,6 +1511,29 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
 
     if ((c == '\n') || (c == '\r')) {
       PUSH_ERROR_AND_RETURN("New line in string literal.");
+    }
+
+    if (c == '\\') {
+      // Consume the escape pair atomically so that an escaped quotation
+      // char(\" or \') does not terminate the literal, and `\\` is not
+      // mis-interpreted(e.g. `"a\\"` = token `a\`).
+      char nc;
+      if (!Char1(&nc)) {
+        PUSH_ERROR_AND_RETURN("Truncated escape sequence in string literal.");
+      }
+      if ((nc == '\n') || (nc == '\r')) {
+        PUSH_ERROR_AND_RETURN("New line in string literal.");
+      }
+      if ((nc == '"') || (nc == '\'')) {
+        // Unescape quotation char here. Other escape sequences(\t, \\, \xNN,
+        // ...) are decoded by unescapeControlSequence() below.
+        buf += nc;
+      } else {
+        buf += c;
+        buf += nc;
+      }
+      displayed_len += 2;
+      continue;
     }
 
     if (single_quote) {
@@ -1520,6 +1547,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
     }
 
     buf += c;
+    displayed_len++;
   }
 
   if (!end_with_quotation) {
@@ -1528,9 +1556,9 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
                     single_quote ? "'" : "\""));
   }
 
-  (*literal) = std::move(buf);
+  (*literal) = unescapeControlSequence(buf);
 
-  _curr_cursor.col += int(literal->size() + 2);  // +2 for quotation chars
+  _curr_cursor.col += int(displayed_len + 2);  // +2 for quotation chars
 
   return true;
 }
@@ -2164,6 +2192,73 @@ bool AsciiParser::ParseStageMetaOpt() {
     return false;
   }
 
+  // `subLayers` items may carry a LayerOffset:
+  //   subLayers = [ @a.usda@ (offset = 10; scale = 2), @b.usda@ ]
+  // which the generic asset[] parser does not understand, so parse the
+  // array with a custom loop here.
+  if (varname == "subLayers") {
+    if (!Expect('[')) {
+      PUSH_ERROR_AND_RETURN("'[' expected for `subLayers` value.");
+    }
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    while (!Eof()) {
+      char c;
+      if (!LookChar1(&c)) {
+        return false;
+      }
+
+      if (c == ']') {
+        if (!SeekTo(CurrLoc() + 1)) {
+          return false;
+        }
+        break;
+      }
+
+      SubLayer sublayer;
+
+      value::AssetPath asset_path;
+      bool triple_deliminated{false};
+      if (!ParseAssetIdentifier(&asset_path, &triple_deliminated)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse asset path in `subLayers`.");
+      }
+      sublayer.assetPath = asset_path;
+
+      // Optional LayerOffset: `(offset = 10; scale = 2)`
+      if (!MaybeParseLayerOffset(&sublayer.layerOffset)) {
+        return false;
+      }
+
+      CHECK_MEMORY_USAGE(sizeof(SubLayer) +
+                         sublayer.assetPath.GetAssetPath().length());
+      _stage_metas.subLayers.push_back(sublayer);
+
+      if (!SkipCommentAndWhitespaceAndNewline()) {
+        return false;
+      }
+
+      // Optional separator
+      if (!LookChar1(&c)) {
+        return false;
+      }
+      if (c == ',') {
+        if (!SeekTo(CurrLoc() + 1)) {
+          return false;
+        }
+        if (!SkipCommentAndWhitespaceAndNewline()) {
+          return false;
+        }
+      }
+    }
+
+    RecordLayerMetaCursor("subLayers", layer_meta_cursor);
+
+    return true;
+  }
+
   // AOUSD Core Spec 10.3.2.6: relocates has special syntax:
   //   relocates = { </source> : </target>, ... }
   // Path-to-path map cannot be parsed by standard ParseMetaValue.
@@ -2240,12 +2335,16 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`defaultPrim` isn't a token value.");
     }
   } else if (varname == "subLayers") {
+    // NOTE: normally unreachable — `subLayers` is parsed with the custom
+    // loop above(to support per-item LayerOffset). Keep as fallback.
     std::vector<value::AssetPath> paths;
     if (var.get_value(&paths)) {
       DCOUT("subLayers = " << paths);
       for (const auto &item : paths) {
         CHECK_MEMORY_USAGE(sizeof(value::AssetPath) + item.GetAssetPath().length());
-        _stage_metas.subLayers.push_back(item);
+        SubLayer sublayer;
+        sublayer.assetPath = item;
+        _stage_metas.subLayers.push_back(sublayer);
       }
     } else {
       PUSH_ERROR_AND_RETURN("`subLayers` isn't an array of asset path");
@@ -3187,6 +3286,99 @@ bool AsciiParser::ParsePayload(Payload *out, bool *triple_deliminated) {
   }
 
   return true;
+}
+
+///
+/// Parse optional LayerOffset group: `(offset = <double>; scale = <double>)`.
+/// pxr USDA syntax: fields are optional and separated by `;`.
+/// When no `(` follows at the current location, this is a no-op(returns true).
+///
+bool AsciiParser::MaybeParseLayerOffset(LayerOffset *out) {
+  if (!out) {
+    return false;
+  }
+
+  auto loc = CurrLoc();
+
+  // Only skip spaces/tabs — the LayerOffset group must follow on the same
+  // line as the asset path/prim path.
+  if (!SkipWhitespace()) {
+    SeekTo(loc);
+    return true;
+  }
+
+  char c;
+  if (!LookChar1(&c)) {
+    SeekTo(loc);
+    return true;
+  }
+
+  if (c != '(') {
+    SeekTo(loc);
+    return true;
+  }
+
+  // Consume '('
+  if (!Char1(&c)) {
+    return false;
+  }
+
+  while (!Eof()) {
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    if (c == ')') {
+      Char1(&c);  // consume
+      return true;
+    }
+
+    if (c == ';') {
+      Char1(&c);  // consume separator
+      continue;
+    }
+
+    std::string id;
+    if (!ReadIdentifier(&id)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse parameter name in LayerOffset.");
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (!Expect('=')) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("`=` expected after `{}` in LayerOffset.", id));
+    }
+
+    if (!SkipWhitespaceAndNewline()) {
+      return false;
+    }
+
+    double value{0.0};
+    if (!ReadBasicType(&value)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to parse value for `{}` in LayerOffset.", id));
+    }
+
+    if (id == "offset") {
+      out->_offset = value;
+    } else if (id == "scale") {
+      out->_scale = value;
+    } else {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Unsupported parameter `{}` in LayerOffset. Only `offset` and "
+          "`scale` are supported.",
+          id));
+    }
+  }
+
+  PUSH_ERROR_AND_RETURN("Unterminated LayerOffset. `)` expected.");
 }
 
 bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {

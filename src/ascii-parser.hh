@@ -124,7 +124,7 @@ class AsciiParser {
     ///
     /// Predefined Stage metas
     ///
-    std::vector<value::AssetPath> subLayers;  // 'subLayers'
+    std::vector<SubLayer> subLayers;  // 'subLayers' (with optional LayerOffset)
     value::token defaultPrim;                 // 'defaultPrim'
     value::StringData doc;                    // 'doc' or 'documentation'
     nonstd::optional<Axis> upAxis;            // not specified = nullopt
@@ -1108,6 +1108,14 @@ class AsciiParser {
 
   bool ParseReference(Reference *out, bool *triple_deliminated);
   bool ParsePayload(Payload *out, bool *triple_deliminated);
+
+  ///
+  /// Parse optional LayerOffset group: `(offset = <double>; scale = <double>)`
+  /// (both fields optional, `;`-separated, pxr USDA syntax).
+  /// When no `(` group follows at the current location, returns true and
+  /// leaves `out` unchanged.
+  ///
+  bool MaybeParseLayerOffset(LayerOffset *out);
 
   // `#` style comment
   bool ParseSharpComment();
