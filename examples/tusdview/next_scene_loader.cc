@@ -86,15 +86,20 @@ inline matrix4d Mul4(const matrix4d& a, const matrix4d& b) {
   return r;
 }
 
-// Per-instance local transform from position + orientation quaternion (xyzw) +
-// scale, matching tusdrender's InstanceTRS (p * S * R, translation in row 3).
-inline matrix4d InstanceTRS(const float* pos, const float* q_xyzw,
+// Per-instance local transform from position + orientation quaternion + scale,
+// matching tusdrender's InstanceTRS (p * S * R, translation in row 3).
+// `q_wxyz` is REAL-FIRST (w, x, y, z), which is how the next stage stores a quat:
+// crate is imaginary-first on disk and the reader swizzles on load
+// (crate-reader-unpack.cc). Reading these four floats as (x,y,z,w) turns a
+// 30-degree Z rotation into a 150-degree X rotation -- it flips the instance
+// upside down, which is exactly what a PointInstancer of an oriented prototype did.
+inline matrix4d InstanceTRS(const float* pos, const float* q_wxyz,
                             const float* s3) {
   ::tinyusdz::value::quatf q;
-  q.imag[0] = q_xyzw[0];
-  q.imag[1] = q_xyzw[1];
-  q.imag[2] = q_xyzw[2];
-  q.real = q_xyzw[3];
+  q.real = q_wxyz[0];
+  q.imag[0] = q_wxyz[1];
+  q.imag[1] = q_wxyz[2];
+  q.imag[2] = q_wxyz[3];
   ::tinyusdz::value::matrix3d rot = ::tinyusdz::to_matrix3x3(q);
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) rot.m[i][j] *= static_cast<double>(s3[i]);
@@ -1529,7 +1534,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
 
   // Nested instancers: compose each per-instance transform (relative to protoRoot)
   // with every outer placement, then recurse on the inner prototype.
-  static const float kIdentQuat[4] = {0, 0, 0, 1};
+  static const float kIdentQuat[4] = {1, 0, 0, 0};  // real-first (w,x,y,z)
   static const float kUnitScale[3] = {1, 1, 1};
   for (const tnext::UsdPrim& ni : nestedInstancers) {
     if (static_cast<size_t>(*instTotal) >= instBudget) break;
@@ -2916,7 +2921,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           int pi = (i < protoIdx.size()) ? protoIdx[i] : 0;
           if (pi >= 0 && pi < int(protos->size())) byProto[pi].push_back(uint32_t(i));
         }
-        static const float kIdentQuat[4] = {0, 0, 0, 1};
+        static const float kIdentQuat[4] = {1, 0, 0, 0};  // real-first (w,x,y,z)
         static const float kUnitScale[3] = {1, 1, 1};
 
         for (size_t pi = 0; pi < protos->size(); ++pi) {

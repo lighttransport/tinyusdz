@@ -2094,7 +2094,7 @@ static void ExpandPointInstancerJobsNext(
   std::unordered_set<int64_t> hidden_set(invisible.begin(), invisible.end());
   hidden_set.insert(inactive.begin(), inactive.end());
 
-  static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  static const float kIdentQuat[4] = {1.0f, 0.0f, 0.0f, 0.0f};  // real-first
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   for (size_t i = 0; i < n; ++i) {
     if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
@@ -2561,16 +2561,19 @@ bool BuildNextCurves(RenderContext &ctx, const std::vector<CurveJobNext> &jobs,
 
 // Build a UsdGeomPointInstancer per-instance object->world matrix in the
 // row-vector convention (p' = p * M): scale, then orient, then translate, all in
-// the instancer's local space (USD's instance transform order). `quat_xyzw` is
-// the orientation as stored by the next loader (imaginary x,y,z then real w);
-// `scale3`/`pos` are per-axis scale and translation.
-matrix4d InstanceTRS(const float *pos, const float *quat_xyzw,
+// the instancer's local space (USD's instance transform order). `quat_wxyz` is the
+// orientation as the NEXT stage stores it: REAL-FIRST (w, x, y, z). Crate is
+// imaginary-first on disk and the reader swizzles on load (crate-reader-unpack.cc),
+// so reading these four floats as (x,y,z,w) turns a 30-degree Z rotation into a
+// 150-degree X rotation -- it flips the instance upside down. `scale3`/`pos` are
+// per-axis scale and translation.
+matrix4d InstanceTRS(const float *pos, const float *quat_wxyz,
                      const float *scale3) {
   tinyusdz::value::quatf q;
-  q.imag[0] = quat_xyzw[0];
-  q.imag[1] = quat_xyzw[1];
-  q.imag[2] = quat_xyzw[2];
-  q.real = quat_xyzw[3];
+  q.real = quat_wxyz[0];
+  q.imag[0] = quat_wxyz[1];
+  q.imag[1] = quat_wxyz[2];
+  q.imag[2] = quat_wxyz[3];
   // 3x3 rotation in the same convention as the rest of the xform stack.
   tinyusdz::value::matrix3d rot = tinyusdz::to_matrix3x3(q);
   // p * S * R with S diagonal scales row i of R by scale[i].
@@ -2743,7 +2746,7 @@ void CollectPointInstancer(const tinyusdz::next::Stage &stage,
   std::unordered_set<int64_t> hidden_set(invisible.begin(), invisible.end());
   hidden_set.insert(inactive.begin(), inactive.end());
 
-  static const float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+  static const float kIdentQuat[4] = {1.0f, 0.0f, 0.0f, 0.0f};  // real-first
   static const float kUnitScale[3] = {1.0f, 1.0f, 1.0f};
   size_t emitted = 0;
   for (size_t i = 0; i < n; ++i) {
