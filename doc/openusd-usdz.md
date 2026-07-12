@@ -188,20 +188,68 @@ runtime-side limit.
 
 ---
 
-## 5. Implications for tinyusdz
+## 5. Status in tinyusdz — `tusdchecker --arkit`
 
-To produce output that passes `usdchecker --arkit`, our converter should:
+The rules above are **implemented** in the dependency-free `next` validator
+(`src/next/validation/usd-validation.{hh,cc}`) as an opt-in `arkit` rule group, and are exposed by
+the `tusdchecker` CLI (`tools/tusdchecker/`):
 
-- **Root layer = `.usdc`** crate; flatten composition (we already absolutize/flatten in conversions).
-- Write **`upAxis = "Y"`** and **`metersPerUnit`** stage metadata; set a `defaultPrim`.
-- ZIP writer must store **uncompressed** entries with **64-byte alignment** (matches our crate/usdz
-  writer requirements).
-- Restrict embedded textures to **png/jpeg** (exr is allowed but uncommon for our PBR output); we
-  must **convert** non-portable inputs (tga/bmp/etc.) **ourselves** — OpenUSD will not.
-- Materials: **`UsdPreviewSurface` + `UsdUVTexture`** (id-based), single connection per input;
-  normal maps need scale `(2,2,2,1)` / bias `(-1,-1,-1,0)` / `sourceColorSpace = raw`.
-- Apply **`MaterialBindingAPI`** on bound prims; keep prim types within the ARKit whitelist.
-- Keep the package **self-contained** (no external references).
+```sh
+cmake -S . -B build_ninja -G Ninja -DTINYUSDZ_BUILD_TOOLS=ON
+cmake --build build_ninja --target tusdchecker
+
+build_ninja/tusdchecker --arkit asset.usdz         # ARKit profile, exit 1 on any arkit.* error
+build_ninja/tusdchecker --groups core,arkit a.usda # just the ARKit rules on a layer
+build_ninja/tusdchecker --arkit --json asset.usdz  # "checkedGroups":[...,"arkit"]
+```
+
+`--arkit` enables the `arkit` group plus the base groups OpenUSD always runs with it
+(`core,geom,shade,package`). The group is a **delivery profile, not a defect class**, so it is *not*
+part of `--all` / `MakeValidateAllOptions()`: a Z-up layer with a `BasisCurves` prim is perfectly
+valid USD, just not ARKit-deliverable.
+
+### Rule mapping: OpenUSD checker → tusdchecker
+
+| OpenUSD checker (complianceChecker.py) | tusdchecker rule id | Group |
+| --- | --- | --- |
+| `ByteAlignmentChecker` | `package.entry.alignment` | package |
+| `CompressionChecker` | `package.entry.compression`, `package.entry.size` | package |
+| `MissingReferenceChecker` | `package.dependency.missing`, `package.dependency.external`; `core.composition.error` under `--composed` | package / core |
+| `StageMetadataChecker` | `core.layer.upAxis`, `core.layer.metersPerUnit`, `core.layer.defaultPrim`; ARKit-strength: `arkit.stage.upAxis` (must be `Y`), `arkit.stage.metersPerUnit`, `arkit.stage.defaultPrim` | core / **arkit** |
+| `TextureChecker` | `arkit.texture.format` (exr/jpg/jpeg/png; bmp/tga/hdr/tif/tx/zfile get the "decodable but non-portable" message) | **arkit** |
+| `PrimEncapsulationChecker` | `geom.encapsulation.nestedGprim`, `shade.encapsulation.shaderParent` | geom / shade |
+| `NormalMapTextureChecker` | `arkit.normalMap.scaleBias` (scale `(2,2,2,1)`, bias `(-1,-1,-1,0)`, `sourceColorSpace = "raw"`) | **arkit** |
+| `MaterialBindingAPIAppliedChecker` | `shade.material.bindingAPI` | shade |
+| `SkelBindingAPIAppliedChecker` | `geom.skel.binding.api`, `geom.skel.binding.root` | geom |
+| `ShaderPropertyTypeConformanceChecker` | `shade.preview.inputType`, `shade.preview.unknownInput`, `shade.uvTexture.*`, `shade.primvarReader.*` (partial — see below) | shade |
+| `ARKitLayerChecker` | `arkit.layer.extension` (sublayer / reference / payload asset paths limited to usd/usda/usdc/usdz) | **arkit** |
+| `ARKitPrimTypeChecker` | `arkit.prim.type` (§4 whitelist, plus any `RealityKit*` type; untyped allowed) | **arkit** |
+| `ARKitShaderChecker` | `arkit.shader.implementationSource` (must be `id`), `arkit.shader.id` (`UsdPreviewSurface`, `UsdUVTexture`, `UsdTransform2d`, `UsdPrimvarReader*`, `ND_*`), `arkit.shader.connection` (≤ 1 connection per input) | **arkit** |
+| `ARKitMaterialBindingChecker` | `arkit.material.binding` (direct and collection-based bindings must resolve to a Material prim) | **arkit** |
+| `ARKitFileExtensionChecker` | `arkit.package.fileExtension` (error; replaces the non-ARKit `package.entry.extension` portability warning) + `arkit.package.rootLayer` (root entry must be `.usdc`) | **arkit** |
+| `ARKitPackageEncapsulationChecker` | `package.dependency.external`, `package.dependency.missing` | package |
+
+### Deliberately not implemented
+
+- **Full SDR-driven `ShaderPropertyTypeConformance`.** tinyusdz has no shader-definition registry;
+  input types are checked against the generated `UsdPreviewSurface` table and the `UsdUVTexture` /
+  `UsdPrimvarReader` schemas only. Arbitrary `ND_*` MaterialX node inputs are not type-checked.
+- **Composed-stage / per-variant evaluation.** The `arkit` rules run on the uncomposed `next::Layer`
+  (like every other group). Target-resolution rules (`arkit.material.binding`) only hard-fail when
+  the layer is self-contained — no sublayers, no external reference/payload arcs — which is exactly
+  what an ARKit `.usdz` root layer must be anyway. `--composed` can be combined with `--arkit` to
+  flatten first.
+- **Image bit-depth introspection.** `arkit.normalMap.scaleBias` decides "8-bit" from the file
+  extension (png/jpg/jpeg/bmp/tga), not by decoding the image; a 16-bit PNG normal map is therefore
+  still asked for the `(2,2,2,1)` / `(-1,-1,-1,0)` remap.
+- **Texture conversion.** As established in §3, OpenUSD never rewrites textures, and neither does
+  the checker: non-portable formats are *reported*, not fixed. Converting tga/bmp → png remains the
+  converter's job.
+
+Producer-side, the same list is the contract for our USDZ writer: `.usdc` root layer, uncompressed
+64-byte-aligned zip entries, `upAxis = "Y"` + `metersPerUnit` + `defaultPrim`, id-based
+`UsdPreviewSurface` / `UsdUVTexture` networks, `MaterialBindingAPI` on bound prims, and a
+self-contained package.
 
 See also `[[mjcf-texture-asset-paths]]` for our texture-embedding decision.
 

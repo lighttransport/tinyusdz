@@ -33,6 +33,15 @@
         if (seen_root.insert(ps->name()).second) root_names.push_back(ps->name());
       }
     }
+    // A relocate may move a prim to a NEW ROOT PRIM. The root layer need not
+    // author a spec for the new name, so take the names from the root layer
+    // stack's namespace edits as well.
+    if (const std::vector<StackRelocates::Arrival> *arrivals =
+            layer_stacks[0].relocates.ArrivalsAt("/")) {
+      for (const StackRelocates::Arrival &a : *arrivals) {
+        if (seen_root.insert(a.name).second) root_names.push_back(a.name);
+      }
+    }
     prof_sources_ns_ = prof_compose_ns_ = prof_reg_ns_ = 0;
     // Structure pass (serial): walk every root, fixing each prim's slot/parent/
     // child-order/instancing and recording its (slot, sources) for opinion fill.
@@ -84,6 +93,11 @@
     // stage-build walk — keeping them would re-relocate on re-read.
     out->meta().subLayers.clear();
     out->meta().relocates.clear();
+    for (const std::string &path : deferred_payload_prims) {
+      if (PrimSpec *prim = out->prim_at_path_mutable(path)) {
+        prim->meta().loaded = false;
+      }
+    }
     stage->SetRootLayer(std::move(*out));
     return true;
   }

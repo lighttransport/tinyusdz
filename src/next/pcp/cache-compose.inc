@@ -17,6 +17,7 @@
   // distinct slots fill concurrently without interfering.
   void ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
     bool specifier_set = false;
+    bool specifier_from_direct_inherit = false;
 
     // Pass 1 (strong->weak): compose opinions.
     for (const Src &s : srcs) {
@@ -69,6 +70,9 @@
         if (!specifier_set) {
           out->set_specifier(spec->specifier());
           specifier_set = true;
+          specifier_from_direct_inherit =
+              s.arc_kind == ArcType::Inherit &&
+              spec->specifier() != PrimSpecifier::Over;
         }
 
         // Remap relationship/connection TARGET paths from this arc's
@@ -77,6 +81,7 @@
         // their flattened paths. Identity for local opinions. The time offset
         // composes the arc's offset with the spec layer's sublayer offset.
         const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
+        const PrimSpecifier before = out->specifier();
         Compositor::CopyLocalOpinions(
             *out, *spec, spec_off.offset, spec_off.scale,
             [&](const std::string &p) {
@@ -90,6 +95,15 @@
               }
               return Mapping(s.map_idx).ApplyTarget(p);
             });
+        if (s.arc_kind == ArcType::Inherit) {
+          if (before == PrimSpecifier::Over &&
+              spec->specifier() != PrimSpecifier::Over) {
+            specifier_from_direct_inherit = true;
+          } else if (specifier_from_direct_inherit &&
+                     spec->specifier() == PrimSpecifier::Def) {
+            out->set_specifier(PrimSpecifier::Def);
+          }
+        }
       }
     }
 
@@ -103,6 +117,9 @@
       const PrimSpecMeta &cm = out->meta();
       if (!cm.variantSelection.empty()) out->meta().variantSelection.clear();
       if (!cm.variantSets().empty()) out->meta().variantSets().clear();
+      if (cm.variantSetNameEdits().authored) {
+        out->meta().variantSetNameEdits() = StringListOpEdits();
+      }
       if (!cm.variantSelections().empty()) out->meta().variantSelections().clear();
     }
   }
@@ -132,6 +149,12 @@
   // ComposeInto's Pass 2, factored out so the parallel source-warming pre-pass
   // discovers exactly the same child namespace the serial compose walks.
   std::vector<std::string> ComposeChildNames(const std::vector<Src> &srcs) {
+    // Namespace edits authored by any contributing layer stack: a relocated-away
+    // name is PROHIBITED here (it no longer exists at this parent, even when a
+    // weaker stack still authors a spec for it -- the "shadow spec" case), and a
+    // relocated-in name is a child of this prim regardless of where its content
+    // physically lives.
+    const ChildRelocations edits = RelocationsAt(srcs);
     std::vector<std::string> child_names;
     std::set<std::string> seen_child;
     for (auto sit = srcs.rbegin(); sit != srcs.rend(); ++sit) {
@@ -149,11 +172,15 @@
           // onto the host as a Variant source (see ExpandArcs). Skip the markers
           // so they never leak into the composed child list.
           if (!cs->name().empty() && cs->name().front() == '{') continue;
+          if (edits.departed.count(cs->name())) continue;
           if (seen_child.insert(cs->name()).second) {
             child_names.push_back(cs->name());
           }
         }
       }
+    }
+    for (const std::string &name : edits.arrived) {
+      if (seen_child.insert(name).second) child_names.push_back(name);
     }
     return child_names;
   }

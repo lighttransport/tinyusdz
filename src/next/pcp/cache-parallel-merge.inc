@@ -70,11 +70,29 @@
       return m;
     };
     for (auto &kv : w.sources_cache) {
+      // Only the composed (root-namespace) entries are adopted. Stack-qualified
+      // intermediate keys ("@N:/path" / "!N:/path", built by SourcesForSite /
+      // SourcesForRelocateSource) embed the WORKER's layer-stack index N, which
+      // means something else in the main table -- copying them verbatim would
+      // reinterpret them against the wrong stack. They are cheap to recompute
+      // (the serial BuildStage repopulates any it needs), so skip them.
+      if (!kv.first.empty() && (kv.first[0] == '@' || kv.first[0] == '!')) {
+        continue;
+      }
       if (sources_cache.count(kv.first)) continue;
       std::vector<Src> srcs = kv.second;
       for (Src &s : srcs) {
         s.stack_idx = remap(s.stack_idx);
         s.map_idx = remap_map(s.map_idx);
+        // The implied-class arc chain also indexes the worker's tables.
+        if (s.arc_chain && !s.arc_chain->empty()) {
+          ArcChain remapped;
+          remapped.reserve(s.arc_chain->size());
+          for (const auto &node : *s.arc_chain) {
+            remapped.emplace_back(remap(node.first), remap_map(node.second));
+          }
+          s.arc_chain = std::make_shared<const ArcChain>(std::move(remapped));
+        }
       }
       sources_cache.emplace(kv.first, std::move(srcs));
     }

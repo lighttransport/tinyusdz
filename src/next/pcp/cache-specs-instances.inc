@@ -133,6 +133,20 @@
     const VariantData *vd;
   };
 
+  // The fallback option for a variantSet nothing selects: the first candidate
+  // (in configured order) the set actually defines, or null. See
+  // CompositionOptions::variant_fallbacks.
+  const std::string *FallbackSelection(const VariantSetData &vss) const {
+    auto it = options.variant_fallbacks.find(vss.name);
+    if (it == options.variant_fallbacks.end()) return nullptr;
+    for (const std::string &candidate : it->second) {
+      for (const VariantData &vd : vss.variants) {
+        if (vd.name == candidate) return &vd.name;
+      }
+    }
+    return nullptr;
+  }
+
   // Resolve the selected variants for the variantSets defined on `spec`, using
   // the accumulated cross-source selection map. Returns one entry per selected
   // set.
@@ -142,9 +156,15 @@
     std::vector<SelectedVariant> out;
     for (const VariantSetData &vss : spec.meta().variantSets()) {
       auto sit = sels.find(vss.name);
-      if (sit == sels.end()) continue;  // no selection for this set
+      // No authored selection anywhere: fall back to a registered global default
+      // (pxr's variant fallbacks; `standin -> render`). Consulted here only, so
+      // an authored selection always wins and the fallback never poisons `sels`
+      // (and thus never pre-empts a selection authored in a weaker layer).
+      const std::string *chosen =
+          sit != sels.end() ? &sit->second : FallbackSelection(vss);
+      if (!chosen) continue;  // no selection for this set
       for (const VariantData &vd : vss.variants) {
-        if (vd.name == sit->second) {
+        if (vd.name == *chosen) {
           out.push_back({&vss.name, &vd});
           break;
         }
@@ -176,10 +196,11 @@
   // instance accumulates sources whose `site` is the instance's path WITHIN an
   // ancestor asset (e.g. `/root/set/.../leaf_0069` vs `_0070`), carrying the
   // instance-LOCAL opinions (transform/placement) that live outside the
-  // instancing boundary. Those have `site != map.source_prefix` (the arc has a
+  // instancing boundary. Their mapping renames an ANCESTOR prefix (the arc has a
   // positional offset beyond where it was introduced). A master-defining arc
-  // targets the prim directly, so `site == map.source_prefix` (asset-relative,
-  // identical across instances). Keep only the latter.
+  // targets the prim directly, so the mapping renames from exactly this site
+  // (asset-relative, identical across instances). Keep only the latter --
+  // `NamespaceMapping::MapsFrom`.
   std::string ComputeInstanceKeyImpl(const std::vector<Src> &srcs) const {
     std::string key;
     for (const Src &s : srcs) {
@@ -195,7 +216,11 @@
     }
     for (size_t i = 1; i < srcs.size(); ++i) {
       const Src &s = srcs[i];
-      if (s.site != Mapping(s.map_idx).source_prefix) continue;  // ancestral/positional
+      // Only sources an arc targeted DIRECTLY identify the instance; ancestral/
+      // positional ones (a child re-rooted under an arc) map from an ancestor
+      // prefix. (A mapping can carry several pairs -- one per arc plus one per
+      // relocate -- so this asks whether ANY of them starts at this site.)
+      if (!Mapping(s.map_idx).MapsFrom(s.site)) continue;
       key += ArcTypeName(s.arc_kind);
       key += "|" + layer_stacks[s.stack_idx].identifier + "|" + s.site;
       if (s.variant) key += "|v:" + s.variant->name;

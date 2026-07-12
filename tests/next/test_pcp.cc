@@ -146,6 +146,7 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.begin_prim("Lib", "Scope");
   lb.begin_prim("Model", "Mesh");
   lb.add_property("size", Value::MakeFloat3(1.0f, 2.0f, 3.0f));
+  lb.add_relationship("inside", Path("/Lib/Model/Inner"));
   lb.begin_prim("Inner", "Sphere");
   lb.end_prim();  // Inner
   lb.end_prim();  // Model
@@ -1020,6 +1021,7 @@ static void test_deferred_payload() {
   assert(!cache.HasDeferredPayload(Path("/World/P")));
   Stage stage2;
   assert(cache.BuildStage(&stage2, &warn, &err));
+  assert(stage2.GetPrimAtPath("/World/P").IsLoaded());
   UsdPrim p2 = stage2.GetPrimAtPath("/World/P");
   assert(p2.GetPropertyValue("size") != nullptr && "payload did not load");
   assert(stage2.GetPrimAtPath("/World/P/Inner").IsValid());
@@ -1052,6 +1054,8 @@ static void test_load_rules_lifecycle() {
          "UnloadPayload left HasDeferredPayload stale");
   Stage s1;
   assert(cache.BuildStage(&s1, &warn, &err));
+  assert(!s1.GetPrimAtPath("/World/P").IsLoaded() &&
+         "populated stage lost deferred-payload state");
   assert(!s1.GetPrimAtPath("/World/P/Inner").IsValid() && "payload content leaked after unload");
 
   // Load it back with descendants.
@@ -1059,6 +1063,7 @@ static void test_load_rules_lifecycle() {
   assert(!cache.HasDeferredPayload(Path("/World/P")));
   Stage s2;
   assert(cache.BuildStage(&s2, &warn, &err));
+  assert(s2.GetPrimAtPath("/World/P").IsLoaded());
   assert(s2.GetPrimAtPath("/World/P/Inner").IsValid() && "payload did not reload");
   std::cout << "  OK" << std::endl;
 }
@@ -1663,12 +1668,33 @@ static void test_instance_proxy() {
   // The prototype owns the referenced child; the instance's subtree is NOT
   // duplicated in the layer.
   assert(stage.GetPrimAtPath("/World/Inst1/Inner").IsValid());
-  assert(!stage.GetPrimAtPath("/World/Inst2/Inner").IsValid() &&
+  assert(stage.GetRootLayer()->prim_at_path("/World/Inst2/Inner") == nullptr &&
          "instance subtree was duplicated");
+  UsdPrim direct_proxy = stage.GetPrimAtPath("/World/Inst2/Inner");
+  assert(direct_proxy.IsValid() &&
+         direct_proxy.GetPath().str() == "/World/Inst2/Inner" &&
+         "direct instance-proxy lookup failed");
 
   // ...but child access through the instance is transparent (proxy).
   assert(i2.GetChildCount() == i1.GetChildCount());
-  assert(i2.GetChild("Inner").IsValid() && "instance proxy child access failed");
+  assert(i2.GetPropertyValue("size") != nullptr &&
+         "instance root must expose prototype properties");
+  const std::vector<std::string> instance_properties = i2.GetPropertyNames();
+  assert(std::find(instance_properties.begin(), instance_properties.end(),
+                   "size") != instance_properties.end());
+  const std::vector<std::string> instance_relationships =
+      i2.GetRelationshipNames();
+  assert(std::find(instance_relationships.begin(), instance_relationships.end(),
+                   "inside") != instance_relationships.end());
+  UsdPrim proxy_child = i2.GetChild("Inner");
+  assert(proxy_child.IsValid() && "instance proxy child access failed");
+  assert(proxy_child.GetPath().str() == "/World/Inst2/Inner" &&
+         proxy_child.GetParent().GetPath().str() == "/World/Inst2");
+  std::vector<Path> forwarded;
+  assert(i2.GetForwardedRelationshipTargets("inside", &forwarded));
+  assert(forwarded.size() == 1 &&
+         forwarded[0].str() == "/World/Inst2/Inner" &&
+         "prototype relationship target was not mapped into instance namespace");
   std::cout << "  OK" << std::endl;
 }
 
@@ -1797,34 +1823,34 @@ static void test_implied_intermediate() {
   auto B = std::make_shared<Layer>();
   {
     LayerBuilder bb(*B);
+    bb.begin_prim("B", "Mesh");
+    bb.current()->meta().inherits.push_back("</B/_class_Foo>");
     bb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
     bb.add_property("fooB", Value::MakeFloat3(1, 0, 0));
     bb.end_prim();
-    bb.begin_prim("B", "Mesh");
-    bb.current()->meta().inherits.push_back("</_class_Foo>");
     bb.end_prim();
     bb.finalize();
   }
   auto A = std::make_shared<Layer>();
   {
     LayerBuilder ab(*A);
+    ab.begin_prim("A", "");
+    ab.current()->meta().references.push_back("@assetB@</B>");
     ab.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
     ab.add_property("fooA", Value::MakeFloat3(0, 1, 0));
     ab.end_prim();
-    ab.begin_prim("A", "");
-    ab.current()->meta().references.push_back("@assetB@</B>");
     ab.end_prim();
     ab.finalize();
   }
   auto rootL = std::make_shared<Layer>();
   {
     LayerBuilder rb(*rootL);
-    rb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
-    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
-    rb.end_prim();
     rb.begin_prim("World", "Xform");
     rb.begin_prim("T", "");
     rb.current()->meta().references.push_back("@assetA@</A>");
+    rb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
+    rb.end_prim();
     rb.end_prim();
     rb.end_prim();
     rb.finalize();
@@ -2986,6 +3012,12 @@ static void test_typed_composition_issues() {
     lb.current()->meta().references.push_back("</A>");  // ancestor cycle
     lb.end_prim();
     lb.end_prim();
+    lb.begin_prim("Source", "Xform");
+    lb.end_prim();
+    lb.begin_prim("InvalidOffset", "");
+    lb.current()->meta().references.push_back(
+        "</Source>?layerOffset=0:0");
+    lb.end_prim();
     lb.finalize();
   }
 
@@ -2999,13 +3031,20 @@ static void test_typed_composition_issues() {
   assert(cache.BuildStage(&stage, nullptr, nullptr));
   const auto &issues = cache.GetCompositionIssues();
   bool saw_cycle = false;
+  bool saw_invalid_offset = false;
   for (const auto &iss : issues) {
     if (iss.code == EC::ArcCycle) {
       saw_cycle = true;
       assert(!iss.message.empty() && !iss.site.empty());
     }
+    if (iss.code == EC::InvalidReferenceOffset) {
+      saw_invalid_offset = true;
+      assert(iss.message.find("identity") != std::string::npos);
+    }
   }
   assert(saw_cycle && "ArcCycle issue must be recorded even with err==nullptr");
+  assert(saw_invalid_offset &&
+         "invalid arc offsets must surface a typed diagnostic");
 
   // Invalidate begins a fresh diagnostics cycle (and bounds accumulation).
   cache.Invalidate(Path("/A"));
@@ -3366,6 +3405,186 @@ static void test_layer_relocates() {
   std::cout << "  OK" << std::endl;
 }
 
+// Relocates are a per-LAYER-STACK namespace edit, not a root-layer-only one: a
+// relocate authored in a REFERENCED layer renames prims inside the referenced
+// namespace, and the rename maps through the arc into root space. Mirrors the
+// AOUSD supplemental TrickyMultipleRelocations case:
+//   subrig.usd  /SubRig/Anim/AnimScope        (content, delivered by a reference)
+//               /SubRig/Rig2                  (shadow spec at a relocated path)
+//   rig.usd     /CharRig{Anim, Rig{SubRig -> @subrig@</SubRig>}}
+//               relocates { /CharRig/Rig/SubRig/Anim/AnimScope -> /CharRig/Anim/AnimScope }
+//   root.usd    /Char -> @rig@</CharRig>
+//               relocates { /Char/Anim -> /Char/Anim2 }   (renames on top of the above)
+static void test_relocates_in_referenced_layer_stack() {
+  std::cout << "test_relocates_in_referenced_layer_stack..." << std::endl;
+
+  auto subrig = std::make_shared<Layer>();
+  {
+    LayerBuilder sb(*subrig);
+    sb.begin_prim("SubRig", "Xform");
+    sb.begin_prim("Anim", "Xform");
+    sb.begin_prim("AnimScope", "Xform");
+    sb.add_property("x", Value(int32_t(42)));
+    sb.end_prim();
+    sb.end_prim();
+    sb.end_prim();
+    sb.finalize();
+  }
+  auto rig = std::make_shared<Layer>();
+  {
+    rig->meta().relocates.emplace_back("/CharRig/Rig/SubRig/Anim/AnimScope",
+                                       "/CharRig/Anim/AnimScope");
+    LayerBuilder rb(*rig);
+    rb.begin_prim("CharRig", "Xform");
+    rb.begin_prim("Anim", "Xform");
+    rb.end_prim();
+    rb.begin_prim("Rig", "Xform");
+    rb.begin_prim("SubRig", "Xform");
+    rb.current()->meta().references.push_back("@mem_subrig@</SubRig>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    rootL->meta().relocates.emplace_back("/Char/Anim", "/Char/Anim2");
+    LayerBuilder lb(*rootL);
+    lb.begin_prim("Char", "Xform");
+    lb.current()->meta().references.push_back("@mem_rig@</CharRig>");
+    lb.end_prim();
+    // An opinion authored at the relocate TARGET path composes on top of the
+    // relocated content (the target address is a real site in this layer stack).
+    lb.begin_prim("Char2Anim2Holder", "Xform");
+    lb.end_prim();
+    lb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("mem_rig", rig);
+  cache.PreloadLayer("mem_subrig", subrig);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  // The referenced stack's relocate moved AnimScope up to /CharRig/Anim, which
+  // the root stack's relocate then renamed to Anim2 -- and the content still
+  // resolves through the SubRig reference into subrig.usd.
+  UsdPrim moved = stage.GetPrimAtPath("/Char/Anim2/AnimScope");
+  assert(moved.IsValid() && "relocate authored in a referenced layer stack");
+  const Value *x = moved.GetPropertyValue("x");
+  assert(x && x->as_int() && *x->as_int() == 42);
+  // Both source locations are vacated, in both namespaces.
+  assert(!stage.GetPrimAtPath("/Char/Anim").IsValid());
+  assert(!stage.GetPrimAtPath("/Char/Rig/SubRig/Anim/AnimScope").IsValid());
+  // The unrelocated structure around them is intact.
+  assert(stage.GetPrimAtPath("/Char/Rig/SubRig/Anim").IsValid());
+  assert(stage.GetRootLayer()->meta().relocates.empty());
+  std::cout << "  OK" << std::endl;
+}
+
+// A relocate may move a prim to a NEW ROOT PRIM; opinions authored at the new
+// root name compose on top of the relocated content (supplemental
+// TrickyInheritsAndRelocatesToNewRootPrim).
+static void test_relocate_to_new_root_prim() {
+  std::cout << "test_relocate_to_new_root_prim..." << std::endl;
+
+  auto model = std::make_shared<Layer>();
+  {
+    LayerBuilder mb(*model);
+    mb.begin_prim("Model", "Xform");
+    mb.begin_prim("Scope", "Xform");
+    mb.add_property("v", Value(int32_t(3)));
+    mb.end_prim();
+    mb.end_prim();
+    mb.finalize();
+  }
+  auto rootL = std::make_shared<Layer>();
+  {
+    rootL->meta().relocates.emplace_back("/Group/Model", "/Model_Renamed");
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("Group", "Xform");
+    rb.begin_prim("Model", "Xform");
+    rb.current()->meta().references.push_back("@mem_model@</Model>");
+    rb.end_prim();
+    rb.end_prim();
+    // An `over` at the new root name: authored at the relocate TARGET.
+    rb.begin_prim("Model_Renamed", "");
+    rb.current()->set_specifier(PrimSpecifier::Over);
+    rb.add_property("tag", Value(std::string("target")));
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  resolver.SetCustomResolver(
+      [](const std::string &a, const std::string &) { return a; });
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+  cache.PreloadLayer("mem_model", model);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim moved = stage.GetPrimAtPath("/Model_Renamed");
+  assert(moved.IsValid() && "relocate to a new root prim");
+  const Value *tag = moved.GetPropertyValue("tag");
+  assert(tag && tag->as_string() && *tag->as_string() == "target");
+  UsdPrim scope = stage.GetPrimAtPath("/Model_Renamed/Scope");
+  assert(scope.IsValid() && "relocated subtree follows the prim");
+  const Value *v = scope.GetPropertyValue("v");
+  assert(v && v->as_int() && *v->as_int() == 3);
+  assert(!stage.GetPrimAtPath("/Group/Model").IsValid());
+  assert(stage.GetPrimAtPath("/Group").IsValid());
+  std::cout << "  OK" << std::endl;
+}
+
+// An inherit/specialize target may be authored RELATIVE to the prim that
+// authors it (`<../_Y>`), which resolves against the authoring site.
+static void test_relative_class_arc_target() {
+  std::cout << "test_relative_class_arc_target..." << std::endl;
+
+  auto rootL = std::make_shared<Layer>();
+  {
+    LayerBuilder rb(*rootL);
+    rb.begin_prim("X", "");
+    rb.current()->set_specifier(PrimSpecifier::Class);
+    rb.begin_prim("_Y", "");
+    rb.current()->set_specifier(PrimSpecifier::Class);
+    rb.add_property("v", Value(int32_t(9)));
+    rb.end_prim();
+    rb.begin_prim("B", "Xform");
+    rb.current()->meta().inherits.push_back("<../_Y>");
+    rb.end_prim();
+    rb.end_prim();
+    rb.finalize();
+  }
+
+  AssetResolver resolver;
+  auto opened = pcp::Cache::Open(resolver, rootL);
+  assert(opened);
+  pcp::Cache cache = std::move(*opened);
+
+  Stage stage;
+  std::string warn, err;
+  assert(cache.BuildStage(&stage, &warn, &err));
+
+  UsdPrim b = stage.GetPrimAtPath("/X/B");
+  assert(b.IsValid());
+  const Value *v = b.GetPropertyValue("v");
+  assert(v && v->as_int() && *v->as_int() == 9 &&
+         "relative inherit target must resolve against the authoring prim");
+  std::cout << "  OK" << std::endl;
+}
+
 // P2 audit: a reference that names no prim path to a layer without an
 // authored defaultPrim contributes NOTHING and warns (pxr: "Unresolved
 // reference prim path @...@<defaultPrim>") — never silently the first root
@@ -3619,6 +3838,9 @@ int main() {
   test_relocates();
   test_implied_inherit();
   test_layer_relocates();
+  test_relocates_in_referenced_layer_stack();
+  test_relocate_to_new_root_prim();
+  test_relative_class_arc_target();
   test_reorder_children();
   test_p2_ref_no_default_prim();
   test_p2_inactive_subtree_pruned();
