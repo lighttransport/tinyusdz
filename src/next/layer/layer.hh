@@ -7,6 +7,7 @@
 #pragma once
 
 #include "prim-spec.hh"
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <memory>
@@ -18,6 +19,7 @@ namespace next {
 /// Layer metadata
 struct LayerMeta {
   std::string defaultPrim;
+  bool defaultPrim_set = false;
   std::string upAxis = "Y";
   double metersPerUnit = 0.01;
   double timeCodesPerSecond = 24.0;
@@ -41,16 +43,25 @@ struct LayerMeta {
   bool kilogramsPerUnit_set = false;
   std::string colorConfiguration;   // asset path
   std::string colorManagementSystem;  // token
+  bool colorConfiguration_set = false;
+  bool colorManagementSystem_set = false;
 
   std::string doc;
   std::string comment;
+  std::string owner;
+  bool doc_set = false;
+  bool comment_set = false;
+  bool owner_set = false;
 
   // Authored pseudo-root namespace order (`reorder rootPrims = [...]`).
   std::vector<std::string> rootPrimOrder;
+  bool rootPrimOrder_set = false;
 
   // Dictionary-valued stage metadata (Dictionary Value; empty when unauthored).
   Value customLayerData;
   Value expressionVariables;
+  bool customLayerData_set = false;
+  bool expressionVariables_set = false;
 
   // Layer-level relocates (SdfRelocates, USD 24.11+): composed source path
   // -> new path. Applied by pcp during stage build (cross-arc prims only).
@@ -66,6 +77,8 @@ struct LayerMeta {
   // Unknown (unmodeled) stage metadata preserved as raw source text in
   // authored order; the USDA writer re-emits it verbatim.
   std::vector<std::pair<std::string, std::string>> unknownMeta;
+  // Decodable unregistered USDC fields retained by name and typed value.
+  std::vector<TypedExtensionField> unknownFields;
 
   /// Fill stage-metadata fields this layer leaves unauthored from a WEAKER
   /// layer (a sublayer): stage metadata resolves through the whole root
@@ -73,11 +86,35 @@ struct LayerMeta {
   /// flatten engine must gap-fill before dropping the subLayers list. Call
   /// with sublayers strongest-first.
   void FillAbsentStageMetaFrom(const LayerMeta& weaker) {
-    if (rootPrimOrder.empty() && !weaker.rootPrimOrder.empty()) {
+    if (!rootPrimOrder_set &&
+        (weaker.rootPrimOrder_set || !weaker.rootPrimOrder.empty())) {
       rootPrimOrder = weaker.rootPrimOrder;
+      rootPrimOrder_set = true;
     }
-    if (defaultPrim.empty() && !weaker.defaultPrim.empty()) {
+    if (!defaultPrim_set &&
+        (weaker.defaultPrim_set || !weaker.defaultPrim.empty())) {
       defaultPrim = weaker.defaultPrim;
+      defaultPrim_set = true;
+    }
+    if (!doc_set && weaker.doc_set) {
+      doc = weaker.doc;
+      doc_set = true;
+    }
+    if (!owner_set && weaker.owner_set) {
+      owner = weaker.owner;
+      owner_set = true;
+    }
+    if (!comment_set && weaker.comment_set) {
+      comment = weaker.comment;
+      comment_set = true;
+    }
+    if (!colorConfiguration_set && weaker.colorConfiguration_set) {
+      colorConfiguration = weaker.colorConfiguration;
+      colorConfiguration_set = true;
+    }
+    if (!colorManagementSystem_set && weaker.colorManagementSystem_set) {
+      colorManagementSystem = weaker.colorManagementSystem;
+      colorManagementSystem_set = true;
     }
     if (!upAxis_set && weaker.upAxis_set) {
       upAxis = weaker.upAxis;
@@ -107,6 +144,8 @@ struct LayerMeta {
       endTimeCode = weaker.endTimeCode;
       endTimeCode_set = true;
     }
+    MergeWeakerRawFields(&unknownMeta, weaker.unknownMeta);
+    MergeWeakerExtensionFields(&unknownFields, weaker.unknownFields);
   }
 };
 

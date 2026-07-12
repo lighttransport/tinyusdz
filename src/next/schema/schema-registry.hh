@@ -28,6 +28,8 @@ class SchemaRegistry {
   const SchemaPropertyDefinition* FindProperty(
       const PrimSpec& prim, const std::string& property_name) const;
   std::vector<std::string> PropertyNames(const PrimSpec& prim) const;
+  bool IsKnownSchema(const std::string& schema_type) const;
+  std::vector<std::string> SchemaTypes() const;
 
  private:
   SchemaRegistry();

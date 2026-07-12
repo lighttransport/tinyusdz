@@ -25,6 +25,24 @@ bool HasAppliedSchema(const PrimSpec& prim, const std::string& schema) {
   return false;
 }
 
+bool MatchDefinitionName(const PrimSpec& prim,
+                         const SchemaPropertyDefinition& def,
+                         const std::string& property_name) {
+  const std::string marker = "__INSTANCE__";
+  const size_t marker_pos = def.name.find(marker);
+  if (marker_pos == std::string::npos) return def.name == property_name;
+  for (const std::string& applied : prim.meta().apiSchemas()) {
+    const std::string prefix = def.schema_type + ":";
+    if (applied.compare(0, prefix.size(), prefix) != 0) continue;
+    const std::string instance = applied.substr(prefix.size());
+    if (instance.empty()) continue;
+    std::string instantiated = def.name;
+    instantiated.replace(marker_pos, marker.size(), instance);
+    if (instantiated == property_name) return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 SchemaRegistry::SchemaRegistry() {
@@ -59,6 +77,20 @@ SchemaRegistry::SchemaRegistry() {
     d.has_fallback = true;
     properties_.push_back(std::move(d));
   };
+  auto declare = [&](const char* schema, const char* name, const char* type) {
+    SchemaPropertyDefinition d;
+    d.schema_type = schema;
+    d.name = name;
+    d.type_name = type;
+    properties_.push_back(std::move(d));
+  };
+
+#define AOUSD_SCHEMA_FALLBACK(schema, name, type, fallback) \
+  add(schema, name, type, fallback);
+#define AOUSD_SCHEMA_DECLARE(schema, name, type) declare(schema, name, type);
+#include "generated/aousd-core-schema-definitions.inc"
+#undef AOUSD_SCHEMA_DECLARE
+#undef AOUSD_SCHEMA_FALLBACK
   add("Imageable", "visibility", "token", Token("inherited"));
   add("Imageable", "purpose", "token", Token("default"));
   add("Xformable", "xformOpOrder", "token[]",
@@ -160,6 +192,62 @@ SchemaRegistry::SchemaRegistry() {
   add("ShadowAPI", "inputs:shadow:distance", "float", Value(-1.0f));
   add("ShadowAPI", "inputs:shadow:falloff", "float", Value(-1.0f));
   add("ShadowAPI", "inputs:shadow:falloffGamma", "float", Value(1.0f));
+
+  // Data-driven declarations for the remaining schemas implemented by next.
+  // Declarations populate HasProperty()/property-name queries without
+  // inventing a fallback where the schema intentionally has none.
+  const struct Decl { const char* schema; const char* name; const char* type; }
+      declarations[] = {
+          {"Boundable", "extent", "float3[]"},
+          {"PointBased", "points", "point3f[]"},
+          {"PointBased", "velocities", "vector3f[]"},
+          {"PointBased", "accelerations", "vector3f[]"},
+          {"PointBased", "normals", "normal3f[]"},
+          {"PointBased", "widths", "float[]"},
+          {"Mesh", "faceVertexCounts", "int[]"},
+          {"Mesh", "faceVertexIndices", "int[]"},
+          {"PointInstancer", "protoIndices", "int[]"},
+          {"PointInstancer", "positions", "point3f[]"},
+          {"PointInstancer", "orientations", "quath[]"},
+          {"PointInstancer", "scales", "float3[]"},
+          {"PointInstancer", "ids", "int64[]"},
+          {"PointInstancer", "invisibleIds", "int64[]"},
+          {"PointInstancer", "prototypes", "relationship"},
+          {"Shader", "info:id", "token"},
+          {"NodeGraph", "outputs", "namespace"},
+          {"Material", "outputs:surface", "token"},
+          {"Material", "outputs:displacement", "token"},
+          {"Material", "outputs:volume", "token"},
+          {"Skeleton", "joints", "token[]"},
+          {"Skeleton", "bindTransforms", "matrix4d[]"},
+          {"Skeleton", "restTransforms", "matrix4d[]"},
+          {"SkelAnimation", "joints", "token[]"},
+          {"SkelAnimation", "translations", "float3[]"},
+          {"SkelAnimation", "rotations", "quath[]"},
+          {"SkelAnimation", "scales", "half3[]"},
+          {"BlendShape", "offsets", "vector3f[]"},
+          {"BlendShape", "normalOffsets", "vector3f[]"},
+          {"BlendShape", "pointIndices", "int[]"},
+          {"SkelBindingAPI", "skel:joints", "token[]"},
+          {"SkelBindingAPI", "skel:jointIndices", "int[]"},
+          {"SkelBindingAPI", "skel:jointWeights", "float[]"},
+          {"SkelBindingAPI", "skel:skeleton", "relationship"},
+          {"SkelBindingAPI", "skel:animationSource", "relationship"},
+          {"PhysicsDriveAPI", "physics:drive:type", "token"},
+          {"PhysicsDriveAPI", "physics:drive:maxForce", "float"},
+          {"PhysicsDriveAPI", "physics:drive:targetPosition", "float"},
+          {"PhysicsDriveAPI", "physics:drive:targetVelocity", "float"},
+          {"PhysicsLimitAPI", "physics:limit:low", "float"},
+          {"PhysicsLimitAPI", "physics:limit:high", "float"},
+      };
+  for (const Decl& declaration : declarations) {
+    declare(declaration.schema, declaration.name, declaration.type);
+  }
+
+  add("Shader", "info:implementationSource", "token", Token("id"));
+  add("PhysicsMaterialAPI", "physics:staticFriction", "float", Value(0.0f));
+  add("PhysicsMaterialAPI", "physics:dynamicFriction", "float", Value(0.0f));
+  add("PhysicsMaterialAPI", "physics:restitution", "float", Value(0.0f));
 }
 
 const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
@@ -174,7 +262,7 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
     current = it->second;
   }
   for (const SchemaPropertyDefinition& def : properties_) {
-    if (def.name != property_name) continue;
+    if (!MatchDefinitionName(prim, def, property_name)) continue;
     if (std::find(schemas.begin(), schemas.end(), def.schema_type) !=
         schemas.end()) {
       return &def;
@@ -188,11 +276,55 @@ std::vector<std::string> SchemaRegistry::PropertyNames(
     const PrimSpec& prim) const {
   std::vector<std::string> result;
   for (const SchemaPropertyDefinition& def : properties_) {
-    if (FindProperty(prim, def.name) != &def) continue;
-    if (std::find(result.begin(), result.end(), def.name) == result.end()) {
-      result.push_back(def.name);
+    std::string name = def.name;
+    const std::string marker = "__INSTANCE__";
+    const size_t marker_pos = name.find(marker);
+    if (marker_pos != std::string::npos) {
+      bool emitted = false;
+      for (const std::string& applied : prim.meta().apiSchemas()) {
+        const std::string prefix = def.schema_type + ":";
+        if (applied.compare(0, prefix.size(), prefix) != 0) continue;
+        std::string instantiated = name;
+        instantiated.replace(marker_pos, marker.size(),
+                             applied.substr(prefix.size()));
+        if (FindProperty(prim, instantiated) == &def &&
+            std::find(result.begin(), result.end(), instantiated) ==
+                result.end()) {
+          result.push_back(std::move(instantiated));
+        }
+        emitted = true;
+      }
+      if (emitted) continue;
+    }
+    if (FindProperty(prim, name) != &def) continue;
+    if (std::find(result.begin(), result.end(), name) == result.end()) {
+      result.push_back(std::move(name));
     }
   }
+  return result;
+}
+
+bool SchemaRegistry::IsKnownSchema(const std::string& schema_type) const {
+  if (std::find_if(properties_.begin(), properties_.end(), [&](const auto& p) {
+        return p.schema_type == schema_type;
+      }) != properties_.end()) return true;
+  return std::find_if(parents_.begin(), parents_.end(), [&](const auto& p) {
+           return p.first == schema_type || p.second == schema_type;
+         }) != parents_.end();
+}
+
+std::vector<std::string> SchemaRegistry::SchemaTypes() const {
+  std::vector<std::string> result;
+  auto add_unique = [&](const std::string& schema) {
+    if (std::find(result.begin(), result.end(), schema) == result.end())
+      result.push_back(schema);
+  };
+  for (const auto& parent : parents_) {
+    add_unique(parent.first);
+    add_unique(parent.second);
+  }
+  for (const auto& property : properties_) add_unique(property.schema_type);
+  std::sort(result.begin(), result.end());
   return result;
 }
 

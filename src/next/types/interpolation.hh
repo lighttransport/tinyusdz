@@ -75,6 +75,8 @@ public:
   static Value InterpolateValues(const Value& a, const Value& b, double t);
 
 private:
+  static bool IsLinearInterpolatable(TypeId type);
+
   /// Find bracket indices for a given time
   /// Returns (lower_idx, upper_idx, is_exact_match)
   static std::tuple<size_t, size_t, bool> FindBracket(
@@ -171,7 +173,8 @@ SampleResult TimeInterpolator::InterpolateWithOffsets(
 
   result.value = InterpolateValues(*v_lower, *v_upper, t);
   result.success = !result.value.is_empty();
-  result.interpolated = result.success;
+  result.interpolated =
+      result.success && IsLinearInterpolatable(v_lower->type_id());
 
   return result;
 }

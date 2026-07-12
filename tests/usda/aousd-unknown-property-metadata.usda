@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    extensionLayerProbe = "kept-by-openusd"
+)
+
+def Scope "P" (
+    extensionPrimProbe = 17
+)
+{
+    int v = 1 (
+        extensionProbe = 42
+    )
+    rel r (
+        extensionRelProbe = "kept-by-openusd"
+    )
+}

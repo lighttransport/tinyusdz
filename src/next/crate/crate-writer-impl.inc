@@ -51,6 +51,10 @@ private:
     std::shared_ptr<const LazyArraySource> src;  // null => inline `data`
     uint64_t src_offset = 0;
     uint64_t src_len = 0;
+    // Byte offsets of recursively-written ValueReps embedded in this block.
+    // These payloads start as value_data_ indices and are relocated after the
+    // VALUE layout is known (used by spline per-knot customData maps).
+    std::vector<size_t> embedded_value_rep_offsets;
     DataBlock() : type(TypeId::Invalid) {}
     DataBlock(TypeId t, std::vector<uint8_t>&& bytes)
         : type(t), data(std::move(bytes)) {}

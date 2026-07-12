@@ -346,7 +346,8 @@ bool ParseSplineText(const std::string& text, SplineData* out,
         sc.p++;
         sc.skip_ws();
         if (sc.peek() == '{') {
-          // Per-knot customData dictionary: consume (not retained). Brace
+          const char* custom_begin = sc.p;
+          // Per-knot customData dictionary. Brace
           // counting must ignore braces inside string literals and comments,
           // else a value like `"}"` desyncs the depth and truncates early.
           int depth = 0;
@@ -386,6 +387,8 @@ bool ParseSplineText(const std::string& text, SplineData* out,
               depth--;
             }
           } while (depth > 0);
+          k.custom_data_source.assign(custom_begin,
+                                      static_cast<size_t>(sc.p - custom_begin));
           continue;
         }
         std::string spec;
@@ -493,6 +496,9 @@ std::string FormatSplineText(const SplineData& sd, const std::string& indent) {
              tangent(k.post_tan_width, k.post_tan_slope, k.post_algo);
         break;
       default: break;
+    }
+    if (!k.custom_data_source.empty()) {
+      s += "; " + k.custom_data_source;
     }
     s += ",\n";
   }

@@ -8,6 +8,7 @@
 #pragma once
 
 #include "../layer/layer.hh"
+#include "expression-variables.hh"
 #include "../parser/ascii-parser.hh"
 #include "../resolver/asset-resolver.hh"
 #include <string>
@@ -54,6 +55,8 @@ struct VariantSelection {
 /// Composition options
 struct CompositionOptions {
   bool strict_aousd_conformance = false;
+  ExpressionVariablePolicy expression_variable_policy =
+      ExpressionVariablePolicy::Evaluate;
   bool load_payloads = true;              // Load payloads (false = unloaded)
   bool resolve_inherits = true;           // Resolve inherits
   bool resolve_specializes = true;        // Resolve specializes

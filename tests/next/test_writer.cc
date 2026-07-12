@@ -1029,11 +1029,12 @@ def Scope "E" (
   // Layer offsets re-emit in pxr syntax, not the internal form.
   assert(out1.find("?layerOffset") == std::string::npos);
   assert(out1.find("(offset = 10; scale = 2)") != std::string::npos);
-  // Target-less relationships survive as bare declarations.
+  // A bare relationship declaration is distinct from authored explicit-empty
+  // targetPaths (`= None` / `= []`), which normalize to `= None`.
   assert(out1.find("rel material:binding") != std::string::npos);
-  assert(out1.find("rel none_rel") != std::string::npos);
-  assert(out1.find("rel empty_rel") != std::string::npos);
-  assert(out1.find("= None") == std::string::npos);
+  assert(out1.find("rel material:binding =") == std::string::npos);
+  assert(out1.find("rel none_rel = None") != std::string::npos);
+  assert(out1.find("rel empty_rel = None") != std::string::npos);
   // 32-bit integers saturate instead of truncating bits.
   assert(out1.find("int sat = 2147483647") != std::string::npos);
   assert(out1.find("uint usat = 4294967295") != std::string::npos);
@@ -1108,8 +1109,13 @@ def Scope "V"
     assert(v_count == 1 && "duplicate sibling prims must merge");
     const PrimSpec* v = layer->prim_at_path("/V");
     assert(v && v->property_value("merged") && "merged prim keeps opinions");
-    // delete apiSchemas removed "B".
-    assert(v->meta().apiSchemas().size() == 1 && v->meta().apiSchemas()[0] == "A");
+    // A later non-explicit list edit exits explicit mode. OpenUSD retains only
+    // the delete sublist here, so applying it to an empty weaker base is empty.
+    assert(v->meta().apiSchemas().empty());
+    assert(v->meta().apiSchemaEdits().authored &&
+           !v->meta().apiSchemaEdits().is_explicit &&
+           v->meta().apiSchemaEdits().deleted ==
+               std::vector<std::string>{"B"});
     // timeSamples stored sorted regardless of authored order.
     const auto* ts = v->time_samples(GetPropNameTable().intern("ts"));
     assert(ts && ts->size() == 3);

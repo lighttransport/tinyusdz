@@ -157,6 +157,12 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
       Match(TokenType::Comma);
       continue;
     }
+    std::string qualifier;
+    if (Match(TokenType::Prepend)) qualifier = "prepend ";
+    else if (Match(TokenType::Append)) qualifier = "append ";
+    else if (Match(TokenType::Add)) qualifier = "add ";
+    else if (Match(TokenType::Delete)) qualifier = "delete ";
+    else if (Match(TokenType::Reorder)) qualifier = "reorder ";
     std::string key;
     if (!lexer_->expect(TokenType::Identifier, key)) {
       // expect() consumes the mismatched token; do NOT skip another one (a
@@ -190,6 +196,7 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
     else if (key == "displayName") read_str(m.displayName, PropMeta::kDisplayName);
     else if (key == "displayGroup") read_str(m.displayGroup, PropMeta::kDisplayGroup);
     else if (key == "doc" || key == "documentation") read_str(m.doc, PropMeta::kDoc);
+    else if (key == "comment") read_str(m.comment, PropMeta::kComment);
     else if (key == "elementSize") {
       ParseResult r = ParseValue(*lexer_, TypeId::Int);
       if (r.success && r.value.as_int()) {
@@ -246,7 +253,7 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
           vend--;
         }
         if (vend > vstart) {
-          m.unknownMeta.emplace_back(key,
+          m.unknownMeta.emplace_back(qualifier + key,
                                      std::string(base + vstart, vend - vstart));
           m.authored |= PropMeta::kUnknownMeta;
         }

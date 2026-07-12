@@ -13,8 +13,10 @@
 #include "safe-arithmetic.hh"
 #include "stream-writer.hh"
 #include "../layer/property-index.hh"
+#include "../parser/ascii-parser.hh"
 #include "../types/spline.hh"
 #include "../types/type-id.hh"
+#include "../writer/value-printer.hh"
 #include <unordered_map>
 #include <unordered_set>
 #include <map>

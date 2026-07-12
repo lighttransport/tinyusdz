@@ -61,7 +61,8 @@ class Cache {
     UnresolvedPrimPath,       ///< an arc targets a prim path that does not exist
     IndexCapacityExceeded,    ///< PrimIndex node count exceeds uint16 capacity
     InvalidVariantSelection,  ///< a variant selection names no known variant
-    InvalidReferenceOffset,   ///< a layer offset is non-invertible (scale == 0)
+    InvalidReferenceOffset,   ///< offset non-finite or scale not positive-finite
+    ExpressionVariableError,  ///< asset-path expression failed evaluation
   };
 
   /// One typed composition diagnostic. `site` is the layer:prim (or prim path)

@@ -145,7 +145,8 @@ inline bool ParsePropertyName(const std::string& text, size_t* pos) {
 }
 
 inline bool ParsePathElements(const std::string& text, size_t* pos,
-                              bool prim_required) {
+                              bool prim_required,
+                              bool at_most_one_property = false) {
   bool have_prim = false;
   if (*pos < text.size() && text[*pos] != '.') {
     if (!ParseIdentifier(text, pos)) return false;
@@ -172,10 +173,13 @@ inline bool ParsePathElements(const std::string& text, size_t* pos,
   }
   if (prim_required && !have_prim) return false;
   bool have_property = false;
+  size_t property_count = 0;
   while (*pos < text.size() && text[*pos] == '.') {
+    if (at_most_one_property && property_count != 0) return false;
     ++*pos;
     if (!ParsePropertyName(text, pos)) return false;
     have_property = true;
+    ++property_count;
   }
   return have_prim || have_property;
 }
@@ -204,11 +208,19 @@ inline bool IsValidPathString(const std::string& text) {
   } else if (text.size() >= 2 && text[0] == '.' && text[1] == '.') {
     pos = 2;
     if (pos == text.size()) return true;
+    // The normative examples require repeated parent traversal (`../..`,
+    // `../../Sibling`) even though the compact PEG spells out only one `..`.
+    while (pos + 3 <= text.size() && text.compare(pos, 3, "/..") == 0 &&
+           (pos + 3 == text.size() || text[pos + 3] == '/')) {
+      pos += 3;
+      if (pos == text.size()) return true;
+    }
     if (text[pos] != '/') return false;
     ++pos;
   }
   if (pos >= text.size()) return false;
-  if (!identifier_detail::ParsePathElements(text, &pos, prim_required)) {
+  if (!identifier_detail::ParsePathElements(text, &pos, prim_required,
+                                             prim_required)) {
     return false;
   }
   return pos == text.size();

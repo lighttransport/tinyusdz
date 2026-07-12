@@ -281,9 +281,12 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           vflags |= PropSlot::kFlagCustom;
           lexer_->next();
         } else if (tt == TokenType::Uniform) {
-          vflags |= PropSlot::kFlagUniform;
+          vflags |= PropSlot::kFlagUniform |
+                    PropSlot::kFlagVariabilityAuthored;
           lexer_->next();
         } else if (tt == TokenType::Varying) {
+          vflags |= PropSlot::kFlagVarying |
+                    PropSlot::kFlagVariabilityAuthored;
           lexer_->next();
         } else {
           break;
@@ -321,6 +324,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           out->relationships[rel_name];  // declaration without targets
         }
         SkipPropertyMetadata();
+        out->relationshipFlags[rel_name] = vflags;
         continue;
       }
       std::string type_name;
@@ -498,6 +502,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
 
   // Apply nested selections stashed from the option metadata to the nested
   // sets parsed from the body.
+  out->variantSelections = pending_selections;
   for (const auto& sel : pending_selections) {
     for (VariantSetData& nvs : out->variantSets) {
       if (nvs.name == sel.first) {

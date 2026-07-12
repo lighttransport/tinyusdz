@@ -36,6 +36,11 @@ bool CrateReader::Impl::ResolveFieldset(uint32_t fieldset_index,
         Value value;
         if (UnpackValue(field.value_rep, value)) {
           out.emplace_back(std::move(name), std::move(value));
+        } else {
+          // Preserve field identity in diagnostics even when the value codec is
+          // unsupported (notably OpenUSD UnregisteredValue extension fields).
+          // Strict AOUSD mode promotes this warning and rejects the load.
+          AddWarning("Failed to decode field '" + name + "'; field ignored");
         }
       }
     }
@@ -140,7 +145,7 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
     return read_run();
   };
   if ((bits & kHasExplicit) && !read_run()) return false;
-  if ((bits & kHasAdded) && !marked_run("\x01" "A")) return false;
+  if ((bits & kHasAdded) && !marked_run("\x01" "G")) return false;
   if ((bits & kHasPrepended) && !marked_run("\x01" "P")) return false;
   if ((bits & kHasAppended) && !marked_run("\x01" "A")) return false;
   if ((bits & kHasDeleted) && !(mark ? marked_run("\x01" "D") : read_run())) return false;
@@ -249,7 +254,7 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
     return read_run(keep);
   };
   if ((bits & kHasExplicit) && !read_run(true)) return false;
-  if ((bits & kHasAdded) && !marked_run("\x01" "A", true)) return false;
+  if ((bits & kHasAdded) && !marked_run("\x01" "G", true)) return false;
   if ((bits & kHasPrepended) && !marked_run("\x01" "P", true)) return false;
   if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
   if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;
@@ -328,7 +333,7 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
     return read_run(keep);
   };
   if ((bits & kHasExplicit) && !read_run(true)) return false;
-  if ((bits & kHasAdded) && !marked_run("\x01" "A", true)) return false;
+  if ((bits & kHasAdded) && !marked_run("\x01" "G", true)) return false;
   if ((bits & kHasPrepended) && !marked_run("\x01" "P", true)) return false;
   if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
   if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;

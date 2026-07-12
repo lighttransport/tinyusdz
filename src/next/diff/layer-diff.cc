@@ -459,6 +459,7 @@ std::string ArcEditToStr(const ArcEdit &e) {
   if (!e.authored) return "<none>";
   std::stringstream ss;
   ss << (e.is_explicit ? "explicit" : "listop");
+  ss << " add" << StrListToStr(e.added);
   ss << " prepend" << StrListToStr(e.prepended);
   ss << " append" << StrListToStr(e.appended);
   ss << " delete" << StrListToStr(e.deleted);
@@ -613,6 +614,24 @@ std::string FormatPropertyForDiff(const PrimSpec &ps, const std::string &name,
 // Per-property metadata (PropMeta) comparison.
 // ---------------------------------------------------------------------------
 
+bool ExtensionFieldsEqual(const std::vector<TypedExtensionField>& lhs,
+                          const std::vector<TypedExtensionField>& rhs,
+                          const DiffOptions& opts) {
+  if (lhs.size() != rhs.size()) return false;
+  for (const TypedExtensionField& field : lhs) {
+    const auto it = std::find_if(
+        rhs.begin(), rhs.end(), [&](const TypedExtensionField& candidate) {
+          return candidate.name == field.name;
+        });
+    if (it == rhs.end() || it->unregistered != field.unregistered ||
+        it->unregistered_source != field.unregistered_source ||
+        !ValuesEquivalentForDiff(field.value, it->value, opts)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool ComparePropMetas(const PropMeta *lhs, const PropMeta *rhs,
                       const DiffOptions &opts,
                       std::vector<std::string> *reasons) {
@@ -681,6 +700,9 @@ bool ComparePropMetas(const PropMeta *lhs, const PropMeta *rhs,
   }
   if (!CompareDictValues(l.sdrMetadata, r.sdrMetadata, opts, nullptr)) {
     note("sdrMetadata");
+  }
+  if (!ExtensionFieldsEqual(l.unknownFields, r.unknownFields, opts)) {
+    note("extensionFields");
   }
   return equal;
 }
@@ -759,6 +781,13 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
       if ((*lc)[i].str() != (*rc)[i].str()) cEqual = false;
     }
     if (!cEqual) note("connections");
+  }
+  static const ArcEdit kNoConnectionEdit;
+  const ArcEdit* lce = lp.connection_edit(name);
+  const ArcEdit* rce = rp.connection_edit(name);
+  if (ArcEditToStr(lce ? *lce : kNoConnectionEdit) !=
+      ArcEditToStr(rce ? *rce : kNoConnectionEdit)) {
+    note("connectionListOp");
   }
 
   // Default value.
@@ -863,20 +892,47 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
   if (VariantSetsToStr(l.variantSets()) != VariantSetsToStr(r.variantSets())) {
     note("meta:variantSets");
   }
+  const StringListOpEdits& lv = l.variantSetNameEdits();
+  const StringListOpEdits& rv = r.variantSetNameEdits();
+  if (lv.authored != rv.authored || lv.is_explicit != rv.is_explicit ||
+      lv.explicit_items != rv.explicit_items || lv.added != rv.added ||
+      lv.prepended != rv.prepended || lv.appended != rv.appended ||
+      lv.deleted != rv.deleted || lv.ordered != rv.ordered) {
+    note("meta:variantSetNames");
+  }
+  if (l.primOrder() != r.primOrder() ||
+      l.primOrderAuthored() != r.primOrderAuthored()) {
+    note("meta:primOrder");
+  }
+  if (l.propertyOrder() != r.propertyOrder() ||
+      l.propertyOrderAuthored() != r.propertyOrderAuthored()) {
+    note("meta:propertyOrder");
+  }
   if (l.layer_offset != r.layer_offset) {
     note("meta:layerOffset");
   }
 
-  if (l.kind() != r.kind()) note("meta:kind");
+  if (l.kind() != r.kind() || l.kindAuthored() != r.kindAuthored())
+    note("meta:kind");
   if (l.doc() != r.doc()) note("meta:doc");
   if (l.comment() != r.comment()) note("meta:comment");
-  if (l.displayName() != r.displayName()) note("meta:displayName");
+  if (l.displayName() != r.displayName() ||
+      l.displayNameAuthored() != r.displayNameAuthored())
+    note("meta:displayName");
   if (l.instance_prototype() != r.instance_prototype()) {
     note("meta:instancePrototype");
   }
   if (l.apiSchemas() != r.apiSchemas() ||
       l.apiSchemasQualifier() != r.apiSchemasQualifier()) {
     note("meta:apiSchemas");
+  }
+  const StringListOpEdits& la = l.apiSchemaEdits();
+  const StringListOpEdits& ra = r.apiSchemaEdits();
+  if (la.authored != ra.authored || la.is_explicit != ra.is_explicit ||
+      la.explicit_items != ra.explicit_items || la.added != ra.added ||
+      la.prepended != ra.prepended || la.appended != ra.appended ||
+      la.deleted != ra.deleted || la.ordered != ra.ordered) {
+    note("meta:apiSchemasListOp");
   }
   if (PairListToStr(l.relocates()) != PairListToStr(r.relocates())) {
     note("meta:relocates");
@@ -892,6 +948,17 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
   }
   if (!CompareDictValues(l.clips(), r.clips(), opts, nullptr)) {
     note("meta:clips");
+  }
+  if (!ExtensionFieldsEqual(l.unknownFields(), r.unknownFields(), opts)) {
+    note("meta:extensionFields");
+  }
+  const StringListOpEdits& lc = l.clipSetEdits();
+  const StringListOpEdits& rc = r.clipSetEdits();
+  if (lc.authored != rc.authored || lc.is_explicit != rc.is_explicit ||
+      lc.explicit_items != rc.explicit_items || lc.added != rc.added ||
+      lc.prepended != rc.prepended || lc.appended != rc.appended ||
+      lc.deleted != rc.deleted || lc.ordered != rc.ordered) {
+    note("meta:clipSets");
   }
   return equal;
 }
@@ -1066,14 +1133,23 @@ bool CompareLayerMetas(const LayerMeta &lhs, const LayerMeta &rhs,
   if (lhs.upAxis != rhs.upAxis) {
     noteField("upAxis", lhs.upAxis, rhs.upAxis);
   }
-  if (lhs.defaultPrim != rhs.defaultPrim) {
+  if (lhs.defaultPrim != rhs.defaultPrim ||
+      lhs.defaultPrim_set != rhs.defaultPrim_set) {
     noteField("defaultPrim", lhs.defaultPrim, rhs.defaultPrim);
+  }
+  if (lhs.rootPrimOrder != rhs.rootPrimOrder ||
+      lhs.rootPrimOrder_set != rhs.rootPrimOrder_set) {
+    noteField("primOrder", std::to_string(lhs.rootPrimOrder.size()),
+              std::to_string(rhs.rootPrimOrder.size()));
   }
   if (lhs.comment != rhs.comment) {
     noteField("comment", lhs.comment, rhs.comment);
   }
   if (lhs.doc != rhs.doc) {
     noteField("documentation", lhs.doc, rhs.doc);
+  }
+  if (lhs.owner != rhs.owner || lhs.owner_set != rhs.owner_set) {
+    noteField("owner", lhs.owner, rhs.owner);
   }
   if (lhs.colorConfiguration != rhs.colorConfiguration) {
     noteField("colorConfiguration", lhs.colorConfiguration,
@@ -1124,6 +1200,10 @@ bool CompareLayerMetas(const LayerMeta &lhs, const LayerMeta &rhs,
         out.changedFields.push_back("expressionVariables:" + k);
       }
     }
+  }
+  if (!ExtensionFieldsEqual(lhs.unknownFields, rhs.unknownFields, opts)) {
+    noteField("extensionFields", std::to_string(lhs.unknownFields.size()),
+              std::to_string(rhs.unknownFields.size()));
   }
 
   return out.changed();

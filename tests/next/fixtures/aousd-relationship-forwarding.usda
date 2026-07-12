@@ -1,0 +1,18 @@
+#usda 1.0
+
+def Scope "foo"
+{
+    rel myRel = [</foo/bar>, </baz.bazrel>, </foo/bar>]
+    rel cycle = </baz.cycle>
+    token terminalAttr = "terminal"
+
+    def Scope "bar"
+    {
+    }
+}
+
+def Scope "baz"
+{
+    rel bazrel = [</foo/terminalAttr>, </foo/foobar>, </foo/foobar/barbaz>]
+    rel cycle = [</foo.cycle>, </foo/bar>]
+}

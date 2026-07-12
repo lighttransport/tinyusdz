@@ -86,12 +86,15 @@
     // sublist header bits; a bare/explicit list is one explicit run.
     if (edits && edits->authored && !edits->is_explicit) {
       uint8_t bits = 0;
+      if (!edits->added.empty()) bits |= 0x04;
       if (!edits->prepended.empty()) bits |= 0x20;
       if (!edits->appended.empty()) bits |= 0x40;
       if (!edits->deleted.empty()) bits |= 0x08;
       if (!edits->ordered.empty()) bits |= 0x10;
       blob.push_back(bits);
-      // Run order matches the reader: prepended, appended, deleted, ordered.
+      // Run order matches the reader: added, prepended, appended, deleted,
+      // ordered.
+      if (!edits->added.empty()) put_items(edits->added);
       if (!edits->prepended.empty()) put_items(edits->prepended);
       if (!edits->appended.empty()) put_items(edits->appended);
       if (!edits->deleted.empty()) put_items(edits->deleted);
@@ -146,7 +149,10 @@
         if (endp && *endp == ':') scale = std::strtod(endp + 1, nullptr);
       }
       uint32_t asset_idx = InternString(asset);
-      uint32_t path_idx = InternPath(prim_path.empty() ? "/" : prim_path);
+      // An omitted prim path means "use the referenced layer's defaultPrim".
+      // It is encoded as SdfPath::EmptyPath, not AbsoluteRootPath: writing "/"
+      // makes OpenUSD re-emit the invalid/default-changing @asset@</> form.
+      uint32_t path_idx = InternPath(prim_path);
       put_bytes(&asset_idx, 4);
       put_bytes(&path_idx, 4);
       put_bytes(&offset, 8);
@@ -189,15 +195,18 @@
     };
     if (edits && edits->authored && !edits->is_explicit) {
       std::vector<std::string> pre = strip(edits->prepended);
+      std::vector<std::string> add = strip(edits->added);
       std::vector<std::string> app = strip(edits->appended);
       std::vector<std::string> del = strip(edits->deleted);
       std::vector<std::string> ord = strip(edits->ordered);
       uint8_t bits = 0;
+      if (!add.empty()) bits |= 0x04;
       if (!pre.empty()) bits |= 0x20;
       if (!app.empty()) bits |= 0x40;
       if (!del.empty()) bits |= 0x08;
       if (!ord.empty()) bits |= 0x10;
       blob.push_back(bits);
+      if (!add.empty()) put_run(add);
       if (!pre.empty()) put_run(pre);
       if (!app.empty()) put_run(app);
       if (!del.empty()) put_run(del);
@@ -235,6 +244,98 @@
     f.value_rep =
         ValueRep::Make(CrateTypeId::StringListOp, data_idx, false, false);
     return f;
+  }
+
+  CrateField MakeStringListOpField(const std::string& field_name,
+                                   const StringListOpEdits& edits) {
+    std::vector<uint8_t> raw;
+    raw.reserve(1 + 5 * 8 +
+                4 * (edits.explicit_items.size() + edits.added.size() +
+                     edits.prepended.size() + edits.appended.size() +
+                     edits.deleted.size() + edits.ordered.size()));
+    uint8_t bits = 0;
+    if (edits.is_explicit) {
+      bits = edits.explicit_items.empty() ? 0x01 : 0x03;
+    } else {
+      if (!edits.added.empty()) bits |= 0x04;
+      if (!edits.deleted.empty()) bits |= 0x08;
+      if (!edits.ordered.empty()) bits |= 0x10;
+      if (!edits.prepended.empty()) bits |= 0x20;
+      if (!edits.appended.empty()) bits |= 0x40;
+    }
+    raw.push_back(bits);
+    auto put_run = [&](const std::vector<std::string>& items) {
+      const size_t base = raw.size();
+      raw.resize(base + 8 + items.size() * 4);
+      const uint64_t count = items.size();
+      std::memcpy(raw.data() + base, &count, 8);
+      for (size_t i = 0; i < items.size(); ++i) {
+        const uint32_t idx = InternString(items[i]);
+        std::memcpy(raw.data() + base + 8 + i * 4, &idx, 4);
+      }
+    };
+    if (edits.is_explicit) {
+      if (!edits.explicit_items.empty()) put_run(edits.explicit_items);
+    } else {
+      if (!edits.added.empty()) put_run(edits.added);
+      if (!edits.prepended.empty()) put_run(edits.prepended);
+      if (!edits.appended.empty()) put_run(edits.appended);
+      if (!edits.deleted.empty()) put_run(edits.deleted);
+      if (!edits.ordered.empty()) put_run(edits.ordered);
+    }
+    const uint64_t data_idx =
+        InternBlock({TypeId::Invalid, std::move(raw)});
+    CrateField field;
+    field.token_index.value = InternToken(field_name);
+    field.value_rep =
+        ValueRep::Make(CrateTypeId::StringListOp, data_idx, false, false);
+    return field;
+  }
+
+  CrateField MakeTokenListOpField(const std::string& field_name,
+                                  const StringListOpEdits& edits) {
+    std::vector<uint8_t> raw;
+    raw.reserve(1 + 5 * 8 +
+                4 * (edits.explicit_items.size() + edits.added.size() +
+                     edits.prepended.size() + edits.appended.size() +
+                     edits.deleted.size() + edits.ordered.size()));
+    uint8_t bits = 0;
+    if (edits.is_explicit) {
+      bits = edits.explicit_items.empty() ? 0x01 : 0x03;
+    } else {
+      if (!edits.added.empty()) bits |= 0x04;
+      if (!edits.deleted.empty()) bits |= 0x08;
+      if (!edits.ordered.empty()) bits |= 0x10;
+      if (!edits.prepended.empty()) bits |= 0x20;
+      if (!edits.appended.empty()) bits |= 0x40;
+    }
+    raw.push_back(bits);
+    auto put_run = [&](const std::vector<std::string>& items) {
+      const size_t base = raw.size();
+      raw.resize(base + 8 + items.size() * 4);
+      const uint64_t count = items.size();
+      std::memcpy(raw.data() + base, &count, 8);
+      for (size_t i = 0; i < items.size(); ++i) {
+        const uint32_t idx = InternToken(items[i]);
+        std::memcpy(raw.data() + base + 8 + i * 4, &idx, 4);
+      }
+    };
+    if (edits.is_explicit) {
+      if (!edits.explicit_items.empty()) put_run(edits.explicit_items);
+    } else {
+      if (!edits.added.empty()) put_run(edits.added);
+      if (!edits.prepended.empty()) put_run(edits.prepended);
+      if (!edits.appended.empty()) put_run(edits.appended);
+      if (!edits.deleted.empty()) put_run(edits.deleted);
+      if (!edits.ordered.empty()) put_run(edits.ordered);
+    }
+    const uint64_t data_idx =
+        InternBlock({TypeId::Invalid, std::move(raw)});
+    CrateField field;
+    field.token_index.value = InternToken(field_name);
+    field.value_rep =
+        ValueRep::Make(CrateTypeId::TokenListOp, data_idx, false, false);
+    return field;
   }
 
   // Build a StringVector field ([u64 count][u32 string_idx]*count) -- pxr's
@@ -291,7 +392,8 @@
 
   // Typed spline (Crate type 59, >= 0.12.0): the raw USDA text parses to the
   // ts-binary blob. Payload framing: uint64 blobSize + blob + uint64
-  // customData count (always 0 — per-knot customData is not retained).
+  // followed by an unordered_map<double, VtDictionary> for per-knot
+  // customData.
   // Returns false (and sets result_.error in strict mode) when the text does
   // not parse; the caller then simply omits the field.
   bool BuildSplineField(const std::string& prop_path,
@@ -318,12 +420,71 @@
       }
       return false;
     }
-    std::vector<uint8_t> raw(8 + blob.size() + 8, 0);
+    std::vector<uint8_t> raw(8 + blob.size(), 0);
     uint64_t blob_size = blob.size();
     std::memcpy(raw.data(), &blob_size, 8);
     if (!blob.empty()) std::memcpy(raw.data() + 8, blob.data(), blob.size());
-    // trailing uint64 customData count stays 0
-    uint64_t data_idx = InternBlock({TypeId::Invalid, std::move(raw)});
+
+    auto append = [&](const void* bytes, size_t size) {
+      const uint8_t* p = static_cast<const uint8_t*>(bytes);
+      raw.insert(raw.end(), p, p + size);
+    };
+    struct KnotDict {
+      double time;
+      Value value;
+    };
+    std::vector<KnotDict> custom;
+    for (const SplineKnot& knot : sd.knots) {
+      if (knot.custom_data_source.empty()) continue;
+      const std::string wrapper =
+          "#usda 1.0\ndef Scope \"P\" { int x (customData = " +
+          knot.custom_data_source + ") = 0 }\n";
+      AsciiParser parser;
+      if (!parser.Parse(wrapper.data(), wrapper.size())) {
+        if (options_.strict_aousd_conformance) {
+          result_.error = "Cannot encode spline knot customData for " +
+                          prop_path;
+        }
+        return false;
+      }
+      Stage parsed = parser.TakeStage();
+      const Layer* layer = parsed.GetRootLayer();
+      const PrimSpec* prim = layer ? layer->prim_at_path("/P") : nullptr;
+      const PropMeta* meta = prim ? prim->property_meta("x") : nullptr;
+      if (!meta || !meta->customData.is_dictionary()) {
+        if (options_.strict_aousd_conformance) {
+          result_.error = "Spline knot customData is not a dictionary for " +
+                          prop_path;
+        }
+        return false;
+      }
+      custom.push_back({knot.time, meta->customData});
+    }
+
+    const uint64_t custom_count = custom.size();
+    append(&custom_count, 8);
+    DataBlock spline_block;
+    spline_block.type = TypeId::Invalid;
+    for (const KnotDict& item : custom) {
+      append(&item.time, 8);
+      const Dict* dict = item.value.as_dictionary();
+      const uint64_t entry_count = dict ? dict->entries.size() : 0;
+      append(&entry_count, 8);
+      if (!dict) continue;
+      for (const auto& entry : dict->entries) {
+        const uint32_t key = InternString(entry.first);
+        const int64_t recursive_offset = 8;
+        const ValueRep rep = EncodeValue(entry.second);
+        append(&key, 4);
+        append(&recursive_offset, 8);
+        spline_block.embedded_value_rep_offsets.push_back(raw.size());
+        const uint64_t rep_raw = rep.raw();
+        append(&rep_raw, 8);
+      }
+    }
+    spline_block.data = std::move(raw);
+    const uint64_t data_idx = value_data_.size();
+    value_data_.push_back(std::move(spline_block));
 
     // A version-2 blob (tangent algorithms) needs crate 0.13.0; version 1
     // needs 0.12.0.
@@ -476,6 +637,7 @@
     if (pm.authored & PropMeta::kDisplayGroup)
       str_field("displayGroup", pm.displayGroup);
     if (pm.authored & PropMeta::kDoc) str_field("documentation", pm.doc);
+    if (pm.authored & PropMeta::kComment) str_field("comment", pm.comment);
     if (pm.authored & PropMeta::kElementSize)
       int_field("elementSize", pm.elementSize);
     if (pm.authored & PropMeta::kUnauthoredIdx)
@@ -506,6 +668,19 @@
     if (pm.authored & PropMeta::kCustomData) dict_field("customData", pm.customData);
     if (pm.authored & PropMeta::kAssetInfo) dict_field("assetInfo", pm.assetInfo);
     if (pm.authored & PropMeta::kSdrMetadata) dict_field("sdrMetadata", pm.sdrMetadata);
+    for (const auto& field : pm.unknownFields) {
+      CrateField f;
+      f.token_index.value = InternToken(field.name);
+      f.value_rep = EncodeExtensionField(field);
+      if (f.value_rep.type_id() == CrateTypeId::Invalid) {
+        if (options_.strict_aousd_conformance && result_.error.empty()) {
+          result_.error = "Cannot encode extension property field '" +
+                          field.name + "'";
+        }
+        continue;
+      }
+      flds.push_back(f);
+    }
   }
 
   std::vector<std::string> EmitPrimProperties(const PrimSpec& prim) {
@@ -565,7 +740,10 @@
             if (!p.str().empty()) targets.push_back(p.str());
           // An authored-empty list is a connection BLOCK (`.connect = None`):
           // emit an explicit-empty PathListOp so it round-trips.
-          uint64_t blk = StorePathListOp(targets);
+          const ArcEdit* edit = prim.connection_edit(prop_name);
+          uint64_t blk = (edit && edit->authored)
+                             ? StorePathArcListOp(targets, edit)
+                             : StorePathListOp(targets);
           CrateField cf;
           cf.token_index.value = InternToken("connectionPaths");
           cf.value_rep =
@@ -620,7 +798,10 @@
       std::vector<CrateField> flds;
       CrateField vf;
       vf.token_index.value = InternToken("variability");
-      vf.value_rep = ValueRep::Make(CrateTypeId::Variability, 1, false, true);
+      const bool varying =
+          (prim.relationship_flags(rel_name) & PropSlot::kFlagVarying) != 0;
+      vf.value_rep = ValueRep::Make(CrateTypeId::Variability,
+                                    varying ? 0 : 1, false, true);
       flds.push_back(vf);
       if (prim.relationship_flags(rel_name) & PropSlot::kFlagCustom) {
         CrateField cf;
@@ -635,7 +816,9 @@
         const auto& edits = prim.relationship_edits();
         auto eit = edits.find(rel_name);
         if (eit != edits.end() && eit->second.authored &&
-            !eit->second.is_explicit) {
+            (!eit->second.is_explicit ||
+             (prim.relationship(rel_name) &&
+              prim.relationship(rel_name)->empty()))) {
           rel_edit = &eit->second;
         }
       }
