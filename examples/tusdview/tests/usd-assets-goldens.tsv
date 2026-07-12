@@ -44,7 +44,7 @@ vk-raster	full_assets/OpenChessSet/assets/Queen/Queen_payload.usd	000060cf38f18f
 vk-raster	full_assets/OpenChessSet/assets/Rook/Rook.usd	000000fffeffef7cf3cf3cf3ef7ef7cf3000
 vk-raster	full_assets/OpenChessSet/assets/Rook/Rook_geom.usd	000000fffeffef7cf3cf3cf3ef7ef7cf3000
 vk-raster	full_assets/OpenChessSet/assets/Rook/Rook_payload.usd	000000fffeffef7cf3cf3cf3ef7ef7cf3000
-vk-raster	full_assets/OpenChessSet/chess_set.usda	0000000000000f3fffffffff8ff000000000
+vk-raster	full_assets/OpenChessSet/chess_set.usda	000000000000000ffffffffffff0c7000000
 vk-raster	full_assets/StandardShaderBall/layers/environment.usda	000000000ffffffffffffffffff8ff007000
 vk-raster	full_assets/StandardShaderBall/layers/shaderball.usda	000000010cf7ffffffff7ffffffff7000000
 vk-raster	full_assets/StandardShaderBall/material_surface_geo/subdiv.usda	000000000cf3ffffffffffff76c600000000
@@ -108,8 +108,8 @@ vk-raster	intent-vfx/assets/teapot/mtl.usd	000000000000cf7fffffffffef3000000000
 vk-raster	intent-vfx/assets/teapot/payload.usd	000000000000cf7fffffffffef3000000000
 vk-raster	intent-vfx/assets/teapot/teapot.usd	000000000000cf7fffffffffef3000000000
 vk-raster	intent-vfx/scenes/simpleAssetScene.usd	000000000ef7ffffffffffffcf7000000000
-vk-raster	intent-vfx/scenes/teapotScene.usd	000000000000000ffffff000000000000000
-vk-raster	intent-vfx/scenes/teapotScene_layout.usd	000000000000000ffffff000000000000000
+vk-raster	intent-vfx/scenes/teapotScene.usd	000000000000000ffffff240000000000000
+vk-raster	intent-vfx/scenes/teapotScene_layout.usd	000000000000000fffdff000000000000000
 vk-raster	intent-vfx/scenes/teapotScene_layoutOverrides.usd	000000000000cf7fffffffffcf1000000000
 vk-raster	test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd	000000000000ff3ffffffcff008000000000
 vk-raster	test_assets/AlphaBlendSortTest/AlphaBlendSortTest.usda	000000000000020000000000000000000000
@@ -299,7 +299,7 @@ vk-rt	full_assets/OpenChessSet/assets/Queen/Queen_payload.usd	000060cf38f18f10f0
 vk-rt	full_assets/OpenChessSet/assets/Rook/Rook.usd	000000fffeffef7cf3cf3cf3ef7ef7cf3000
 vk-rt	full_assets/OpenChessSet/assets/Rook/Rook_geom.usd	000000fffeffef7cf3cf3cf3ef7ef7cf3000
 vk-rt	full_assets/OpenChessSet/assets/Rook/Rook_payload.usd	000000fffeffef7cf3cf3cf3ef7ef7cf3000
-vk-rt	full_assets/OpenChessSet/chess_set.usda	0000000000000f3fffffffff8ff002000000
+vk-rt	full_assets/OpenChessSet/chess_set.usda	000000000000000ffffffffffff0c7000000
 vk-rt	full_assets/StandardShaderBall/layers/environment.usda	000000000020fffffffffffffffcff003000
 vk-rt	full_assets/StandardShaderBall/layers/shaderball.usda	00000000080060c300000000000000000000
 vk-rt	full_assets/StandardShaderBall/material_surface_geo/subdiv.usda	000000000cf3ffffffffffff7fc600000000
@@ -363,8 +363,8 @@ vk-rt	intent-vfx/assets/teapot/mtl.usd	000000000000cf7fffffffffef3000000000
 vk-rt	intent-vfx/assets/teapot/payload.usd	000000000000cf7fffffffffef3000000000
 vk-rt	intent-vfx/assets/teapot/teapot.usd	000000000000cf7fffffffffef3000000000
 vk-rt	intent-vfx/scenes/simpleAssetScene.usd	000000000ef7ffffffffffffcf7000000000
-vk-rt	intent-vfx/scenes/teapotScene.usd	000000000000000ffffff240000000000000
-vk-rt	intent-vfx/scenes/teapotScene_layout.usd	000000000000000ffffff000000000000000
+vk-rt	intent-vfx/scenes/teapotScene.usd	000000000000000ffffff242000000000000
+vk-rt	intent-vfx/scenes/teapotScene_layout.usd	000000000000000ffffff040000000000000
 vk-rt	intent-vfx/scenes/teapotScene_layoutOverrides.usd	000000000000cf7fffffffffef3000000000
 vk-rt	test_assets/AlphaBlendModeTest/AlphaBlendModeTest.usd	000000000000ff3ffffffcff00c000000000
 vk-rt	test_assets/AlphaBlendSortTest/AlphaBlendSortTest.usda	000000000000020ffffff08f000000000000
