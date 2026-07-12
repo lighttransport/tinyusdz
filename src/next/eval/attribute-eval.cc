@@ -28,7 +28,7 @@ EvalResult AttributeEval::Eval(const UsdPrim& prim, const std::string& attr_name
 EvalResult AttributeEval::EvalAt(const UsdPrim& prim, const std::string& attr_name,
                                   double time) const {
   EvalOptions opts = options_;
-  opts.time = time;
+  opts.time = TimeQuery::Numeric(time);
   return EvalInternal(prim, attr_name, opts, 0);
 }
 
@@ -81,19 +81,22 @@ EvalResult AttributeEval::EvalInternal(const UsdPrim& prim, const std::string& a
   // AOUSD precedence is timeSamples -> spline -> default -> clips -> schema
   // fallback. EvalFromPrimSpec may already have produced the fallback; clips
   // get one chance to replace only that final fallback (never authored data).
-  if (!opts.default_time &&
+  if (opts.time.is_numeric() &&
       (!result.success || result.from_schema_fallback) &&
       spec->meta().clips().is_dictionary()) {
     Value clipped;
     std::string asset;
+    std::string clip_set;
     std::string clip_error;
-    if (ResolveValueClip(prim, attr_name, opts.time, opts.clip_stage_loader,
-                         &clipped, &asset, &clip_error)) {
+    if (ResolveValueClip(prim, attr_name, opts.time.numeric_time(),
+                         opts.clip_stage_loader, &clipped, &asset, &clip_error,
+                         &clip_set, opts.clip_stage_cache.get())) {
       result = EvalResult();
       result.value = std::move(clipped);
       result.success = true;
       result.from_time_sample = true;
       result.source_asset = std::move(asset);
+      result.source_clip_set = std::move(clip_set);
     } else if (opts.strict_aousd_conformance && !clip_error.empty()) {
       result = EvalResult();
       result.error = std::move(clip_error);
@@ -114,9 +117,10 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
   PropNameId name_id = GetPropNameTable().find(attr_name);
 
   // Try time samples first (if time is specified)
-  if (!opts.default_time && name_id.is_valid() &&
+  if (opts.time.is_numeric() && name_id.is_valid() &&
       spec->has_time_samples(name_id)) {
-    SampleResult sample = spec->interpolate_time_sample(name_id, opts.time, opts.interp);
+    SampleResult sample = spec->interpolate_time_sample(
+        name_id, opts.time.numeric_time(), opts.interp);
     if (sample.success) {
       result.value = std::move(sample.value);
       result.success = true;
@@ -129,12 +133,12 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
   // Spline (AOUSD 12.3 precedence: timeSamples > spline > default). The
   // authored text parses on demand; the result is cast to the attribute's
   // declared scalar type.
-  if (!opts.default_time && name_id.is_valid()) {
+  if (opts.time.is_numeric() && name_id.is_valid()) {
     if (const std::string* spline_text = spec->spline_source(name_id)) {
       SplineData sd;
       if (ParseSplineText(*spline_text, &sd, nullptr)) {
         double v = 0.0;
-        if (EvaluateSplineData(sd, opts.time, &v)) {
+        if (EvaluateSplineData(sd, opts.time.numeric_time(), &v)) {
           const std::string* tn = spec->property_type_name(attr_name);
           if (tn && *tn == "float") {
             result.value = Value(static_cast<float>(v));
@@ -158,6 +162,7 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
 
   // Fall back to default value
   const Value* default_val = spec->property_value(attr_name);
+  if (default_val && default_val->is_block()) result.blocked = true;
   if (default_val && !default_val->is_empty() && !default_val->is_block()) {
     result.value = *default_val;
     result.success = true;
@@ -168,6 +173,7 @@ EvalResult AttributeEval::EvalFromPrimSpec(const PrimSpec* spec, const std::stri
   // Try by name_id if string lookup failed
   if (name_id.is_valid()) {
     default_val = spec->property_value(name_id);
+    if (default_val && default_val->is_block()) result.blocked = true;
     if (default_val && !default_val->is_empty() && !default_val->is_block()) {
       result.value = *default_val;
       result.success = true;

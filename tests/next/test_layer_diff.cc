@@ -44,6 +44,19 @@ static bool hasReason(const PropDiffs& pd, const std::string& path,
   return false;
 }
 
+static bool hasPrimReason(const PsDiffs& diffs, const std::string& path,
+                          const std::string& reason) {
+  const size_t slash = path.rfind('/');
+  const std::string parent = slash == 0 ? "/" : path.substr(0, slash);
+  const std::string name = path.substr(slash + 1);
+  const auto it = diffs.find(parent);
+  if (it == diffs.end()) return false;
+  for (const auto& detail : it->second.modifiedDetails) {
+    if (detail.name == name && has(detail.reasons, reason)) return true;
+  }
+  return false;
+}
+
 // Build a tiny scene through the Layer authoring API. `mutate` tweaks the
 // second copy.
 struct SceneOpts {
@@ -296,6 +309,51 @@ static void test_metadata_gating() {
   CHECK(!lm.changed(), "layer meta diff suppressed with compareMetadata=false");
 }
 
+static void test_authored_empty_metadata_diff() {
+  std::cout << "[authored-empty metadata diff]\n";
+  SceneOpts o;
+  Layer a = BuildScene(o);
+  Layer b = BuildScene(o);
+  b.meta().defaultPrim_set = true;
+  b.meta().rootPrimOrder_set = true;
+  PrimSpec* root = b.prim_at_path_mutable("/Root");
+  CHECK(root != nullptr, "root prim available for authored-state mutation");
+  if (!root) return;
+  root->meta().setPrimOrderAuthored();
+  root->meta().setPropertyOrderAuthored();
+  StringListOpEdits& variants = root->meta().variantSetNameEdits();
+  variants.authored = true;
+  variants.is_explicit = true;
+  root->meta().setApiSchemasAuthored();
+  StringListOpEdits& api_schemas = root->meta().apiSchemaEdits();
+  api_schemas.authored = true;
+  api_schemas.is_explicit = true;
+
+  PsDiffs ps;
+  PropDiffs pp;
+  LayerMetaDiff lm;
+  RunDiff(a, b, ps, pp, {}, &lm);
+  CHECK(has(lm.changedFields, "~defaultPrim"),
+        "empty authored defaultPrim differs from unauthored");
+  CHECK(has(lm.changedFields, "~primOrder"),
+        "empty authored root primOrder differs from unauthored");
+  bool primOrder = false;
+  bool propertyOrder = false;
+  bool variantSetNames = false;
+  bool apiSchemas = false;
+  if (ps.count("/")) {
+    for (const auto& modified : ps["/"].modifiedDetails) {
+      if (modified.name != "Root") continue;
+      primOrder = has(modified.reasons, "meta:primOrder");
+      propertyOrder = has(modified.reasons, "meta:propertyOrder");
+      variantSetNames = has(modified.reasons, "meta:variantSetNames");
+      apiSchemas = has(modified.reasons, "meta:apiSchemasListOp");
+    }
+  }
+  CHECK(primOrder && propertyOrder && variantSetNames && apiSchemas,
+        "prim authored-empty order/list-op states are diff-visible");
+}
+
 static void test_array_diff() {
   std::cout << "[array diff]\n";
   SceneOpts o;
@@ -416,6 +474,32 @@ static void test_property_add_remove_and_relationship() {
         "removed property reported");
 }
 
+static void test_extension_field_diff() {
+  std::cout << "[typed extension fields]\n";
+  SceneOpts opts;
+  Layer a = BuildScene(opts);
+  Layer b = BuildScene(opts);
+  b.meta().unknownFields.push_back(
+      TypedExtensionField{"layerExt", Value(int32_t(1)), false, {}});
+  PrimSpec* ball = b.prim_at_path_mutable("/Root/Ball");
+  ball->meta().unknownFields().push_back(
+      TypedExtensionField{"primExt", Value(std::string("raw")), true,
+                          "\"raw\""});
+  ball->ensure_property_meta("radius").unknownFields.push_back(
+      TypedExtensionField{"propExt", Value(true), false, {}});
+
+  PsDiffs ps;
+  PropDiffs pp;
+  LayerMetaDiff lm;
+  RunDiff(a, b, ps, pp, {}, &lm);
+  CHECK(has(lm.changedFields, "~extensionFields"),
+        "layer extension-field difference reported");
+  CHECK(hasPrimReason(ps, "/Root/Ball", "meta:extensionFields"),
+        "prim extension-field difference reported");
+  CHECK(hasReason(pp, "/Root/Ball", "radius", "meta:extensionFields"),
+        "property extension-field difference reported");
+}
+
 static void test_json_output() {
   std::cout << "[JSON renderer]\n";
   SceneOpts o;
@@ -462,10 +546,12 @@ int main() {
   test_prim_add_remove();
   test_type_change();
   test_metadata_gating();
+  test_authored_empty_metadata_diff();
   test_array_diff();
   test_timesample_diff();
   test_fuzzy_asset_paths();
   test_property_add_remove_and_relationship();
+  test_extension_field_diff();
   test_json_output();
 
   if (g_fail) {

@@ -7,6 +7,7 @@
 #include "composition.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <system_error>
 #include <unordered_set>
@@ -94,22 +95,67 @@ bool SubtreeIsSelfContained(const Layer& layer, const std::string& root_path) {
 // the stronger value keep their values; missing keys (including nested keys)
 // are filled from the weaker value.
 void MergeWeakerDictionary(Value* stronger, const Value& weaker) {
-  if (!stronger || !weaker.is_dictionary()) return;
-  if (!stronger->is_dictionary()) {
-    *stronger = weaker;
-    return;
-  }
-  Dict* dst = stronger->as_dictionary();
-  const Dict* src = weaker.as_dictionary();
-  if (!dst || !src) return;
-  for (const auto& entry : src->entries) {
-    Value* existing = dst->find(entry.first);
-    if (!existing) {
-      dst->set(entry.first, entry.second);
-    } else if (existing->is_dictionary() && entry.second.is_dictionary()) {
-      MergeWeakerDictionary(existing, entry.second);
+  MergeWeakerDictionaryValue(stronger, weaker);
+}
+
+void MergeWeakerPropMeta(PropMeta* stronger, const PropMeta& weaker) {
+  if (!stronger) return;
+  auto fill = [&](uint32_t bit, auto* destination, const auto& source) {
+    if ((weaker.authored & bit) && !(stronger->authored & bit)) {
+      *destination = source;
+      stronger->authored |= bit;
     }
+  };
+  fill(PropMeta::kInterpolation, &stronger->interpolation,
+       weaker.interpolation);
+  fill(PropMeta::kElementSize, &stronger->elementSize, weaker.elementSize);
+  fill(PropMeta::kColorSpace, &stronger->colorSpace, weaker.colorSpace);
+  fill(PropMeta::kDisplayName, &stronger->displayName, weaker.displayName);
+  fill(PropMeta::kDisplayGroup, &stronger->displayGroup, weaker.displayGroup);
+  fill(PropMeta::kDoc, &stronger->doc, weaker.doc);
+  fill(PropMeta::kComment, &stronger->comment, weaker.comment);
+  fill(PropMeta::kHidden, &stronger->hidden, weaker.hidden);
+  fill(PropMeta::kRenderType, &stronger->renderType, weaker.renderType);
+  fill(PropMeta::kConnectability, &stronger->connectability,
+       weaker.connectability);
+  fill(PropMeta::kOutputName, &stronger->outputName, weaker.outputName);
+  fill(PropMeta::kBindMaterialAs, &stronger->bindMaterialAs,
+       weaker.bindMaterialAs);
+  fill(PropMeta::kKind, &stronger->kind, weaker.kind);
+  fill(PropMeta::kWeight, &stronger->weight, weaker.weight);
+  fill(PropMeta::kUnauthoredIdx, &stronger->unauthoredValuesIndex,
+       weaker.unauthoredValuesIndex);
+  fill(PropMeta::kAllowedTokens, &stronger->allowedTokens,
+       weaker.allowedTokens);
+
+  auto merge_dictionary = [&](uint32_t bit, Value* destination,
+                              const Value& source) {
+    if (!(weaker.authored & bit)) return;
+    if (!(stronger->authored & bit)) {
+      *destination = source;
+      stronger->authored |= bit;
+    } else {
+      MergeWeakerDictionary(destination, source);
+    }
+  };
+  merge_dictionary(PropMeta::kCustomData, &stronger->customData,
+                   weaker.customData);
+  merge_dictionary(PropMeta::kAssetInfo, &stronger->assetInfo,
+                   weaker.assetInfo);
+  merge_dictionary(PropMeta::kSdrMetadata, &stronger->sdrMetadata,
+                   weaker.sdrMetadata);
+
+  if (weaker.authored & PropMeta::kUnknownMeta) {
+    for (const auto& field : weaker.unknownMeta) {
+      const bool present = std::find_if(
+          stronger->unknownMeta.begin(), stronger->unknownMeta.end(),
+          [&](const auto& own) { return own.first == field.first; }) !=
+          stronger->unknownMeta.end();
+      if (!present) stronger->unknownMeta.push_back(field);
+    }
+    stronger->authored |= PropMeta::kUnknownMeta;
   }
+  MergeWeakerExtensionFields(&stronger->unknownFields, weaker.unknownFields);
 }
 
 void ApplyRelationshipEdit(std::vector<Path>* values, const ArcEdit& edit) {
@@ -133,6 +179,12 @@ void ApplyRelationshipEdit(std::vector<Path>* values, const ArcEdit& edit) {
   // Insert prepended items in reverse so their authored order is retained.
   for (auto it = edit.prepended.rbegin(); it != edit.prepended.rend(); ++it) {
     add_unique(as_path(*it), true);
+  }
+  for (const std::string& item : edit.added) {
+    const Path path = as_path(item);
+    if (std::find(values->begin(), values->end(), path) == values->end()) {
+      values->push_back(path);
+    }
   }
   for (const std::string& item : edit.appended) {
     add_unique(as_path(item), false);
@@ -294,7 +346,10 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
     // consumers.
     for (const std::string& sl : result->meta().subLayers) {
       std::string resolved = sl;
-      if (resolver_) resolved = resolver_->ResolvePath(sl, anchor_path);
+      if (resolver_) {
+        resolved = resolver_->ResolvePath(
+            sl, anchor_path, !options_.strict_aousd_conformance);
+      }
       if (const Layer* sub = GetCachedLayer(resolved)) {
         result->meta().FillAbsentStageMetaFrom(sub->meta());
       }
@@ -364,7 +419,8 @@ std::unique_ptr<Layer> Compositor::ComposeSublayers(const Layer& root_layer,
 
     std::string resolved_path = sublayer_path;
     if (resolver_) {
-      resolved_path = resolver_->ResolvePath(sublayer_path, anchor_path);
+      resolved_path = resolver_->ResolvePath(
+          sublayer_path, anchor_path, !options_.strict_aousd_conformance);
     }
 
     if (std::find(options_.muted_layers.begin(),
@@ -403,8 +459,14 @@ std::unique_ptr<Layer> Compositor::ComposeSublayers(const Layer& root_layer,
       // space. (Nested sublayer offsets were already baked by the recursive
       // Compose above, so this composes correctly through nesting.)
       if (sub_index < sublayer_offsets.size()) {
-        const double off = sublayer_offsets[sub_index].first;
-        const double scl = sublayer_offsets[sub_index].second;
+        double off = sublayer_offsets[sub_index].first;
+        double scl = sublayer_offsets[sub_index].second;
+        if (!std::isfinite(off) || !std::isfinite(scl) || !(scl > 0.0)) {
+          AddError("Invalid sublayer offset; using identity mapping", "",
+                   sublayer_path, ArcType::Local);
+          off = 0.0;
+          scl = 1.0;
+        }
         if (off != 0.0 || scl != 1.0) {
           for (size_t pi = 0; pi < composed_sub->prim_count(); ++pi) {
             if (PrimSpec* p = composed_sub->prim_mutable(static_cast<uint32_t>(pi))) {
@@ -544,6 +606,11 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
     merge_deleted(se->specializes, tedits.specializes);
   }
   // Variant sets/selections: fill-absent by set name.
+  if (!target.meta().variantSetNameEdits().authored &&
+      source.meta().variantSetNameEdits().authored) {
+    target.meta().variantSetNameEdits() =
+        source.meta().variantSetNameEdits();
+  }
   if (!source.meta().variantSets().empty()) {
     for (const VariantSetData& svs : source.meta().variantSets()) {
       bool have = false;
@@ -589,6 +656,67 @@ void Compositor::CopyLocalOpinions(
     if (!remap_path) return true;
     return p.str().empty() || !remap_path(p.str()).empty();
   };
+  auto compose_connections = [&](const std::string& prop_name) {
+    if (!source.connection(prop_name)) return;
+    std::vector<PrimSpec::RelationshipOpinion> opinions;
+    if (const auto* stack = target.connection_opinion_stack(prop_name)) {
+      opinions = *stack;
+    } else if (const std::vector<Path>* items = target.connection(prop_name)) {
+      PrimSpec::RelationshipOpinion opinion;
+      opinion.items = *items;
+      if (const ArcEdit* edit = target.connection_edit(prop_name)) {
+        opinion.edit = *edit;
+        opinion.qualified = edit->authored && !edit->is_explicit;
+      }
+      opinions.push_back(std::move(opinion));
+    }
+
+    auto remap_opinion = [&](PrimSpec::RelationshipOpinion opinion) {
+      std::vector<Path> mapped;
+      for (const Path& item : opinion.items) {
+        if (target_mappable(item)) mapped.push_back(map_target(item));
+      }
+      opinion.items = std::move(mapped);
+      auto remap_items = [&](std::vector<std::string>* items) {
+        if (!remap_path) return;
+        std::vector<std::string> remapped;
+        for (const std::string& item : *items) {
+          const std::string value = remap_path(item);
+          if (!value.empty()) remapped.push_back(value);
+        }
+        *items = std::move(remapped);
+      };
+      remap_items(&opinion.edit.added);
+      remap_items(&opinion.edit.prepended);
+      remap_items(&opinion.edit.appended);
+      remap_items(&opinion.edit.deleted);
+      remap_items(&opinion.edit.ordered);
+      opinions.push_back(std::move(opinion));
+    };
+    if (const auto* stack = source.connection_opinion_stack(prop_name)) {
+      for (const auto& opinion : *stack) remap_opinion(opinion);
+    } else if (const std::vector<Path>* items = source.connection(prop_name)) {
+      PrimSpec::RelationshipOpinion opinion;
+      opinion.items = *items;
+      if (const ArcEdit* edit = source.connection_edit(prop_name)) {
+        opinion.edit = *edit;
+        opinion.qualified = edit->authored && !edit->is_explicit;
+      }
+      remap_opinion(std::move(opinion));
+    }
+
+    std::vector<Path> effective;
+    for (auto it = opinions.rbegin(); it != opinions.rend(); ++it) {
+      if (!it->qualified || it->edit.is_explicit) effective = it->items;
+      else ApplyRelationshipEdit(&effective, it->edit);
+    }
+    target.set_connection_targets(prop_name, std::move(effective));
+    target.set_connection_opinion_stack(prop_name, std::move(opinions));
+    ArcEdit& resolved = target.ensure_connection_edit(prop_name);
+    resolved = ArcEdit();
+    resolved.authored = true;
+    resolved.is_explicit = true;
+  };
   // Copy type name if target doesn't have one
   if (target.type_name().empty() && !source.type_name().empty()) {
     target.set_type_name(source.type_name());
@@ -599,8 +727,12 @@ void Compositor::CopyLocalOpinions(
   // `def`, matching pxr (an over alone defines nothing; the def makes the
   // prim real).
   if (target.specifier() == PrimSpecifier::Over &&
-      source.specifier() == PrimSpecifier::Def) {
-    target.set_specifier(PrimSpecifier::Def);
+      source.specifier() != PrimSpecifier::Over) {
+    // An `over` is undefining. The strongest weaker defining opinion supplies
+    // the resolved defining kind: `def` stays concrete, while `class` remains
+    // abstract. The old def-only promotion left over+class incorrectly
+    // undefining in populated stages.
+    target.set_specifier(source.specifier());
   }
 
   // Copy properties (source overrides target for time-sampled props).
@@ -627,53 +759,16 @@ void Compositor::CopyLocalOpinions(
           default_filled_from_source.insert(slot.name_id);
         }
       }
-      const std::vector<Path>* tconns = target.connection(pname);
-      if (!tconns || tconns->empty()) {
-        if (const std::vector<Path>* sconns = source.connection(pname)) {
-          for (const auto& c : *sconns) {
-            if (!target_mappable(c)) continue;
-            target.add_connection(pname, map_target(c));
-          }
-        }
-      }
+      compose_connections(pname);
       // Property METADATA is likewise per-field: a stronger value-only
       // override must not drop the weaker layer's interpolation / elementSize
       // / customData (render-breaking for primvars). Fill absent fields.
       if (const PropMeta* spm = source.property_meta(slot.name_id)) {
         const PropMeta* tpm = target.property_meta(slot.name_id);
-        if (!tpm || tpm->authored == 0) {
+        if (!tpm) {
           target.ensure_property_meta(pname) = *spm;
-        } else if ((spm->authored & ~tpm->authored) != 0) {
-          PropMeta& dst = target.ensure_property_meta(pname);
-          const uint32_t missing = spm->authored & ~dst.authored;
-          if (missing & PropMeta::kInterpolation) dst.interpolation = spm->interpolation;
-          if (missing & PropMeta::kElementSize) dst.elementSize = spm->elementSize;
-          if (missing & PropMeta::kColorSpace) dst.colorSpace = spm->colorSpace;
-          if (missing & PropMeta::kCustomData) dst.customData = spm->customData;
-          if (missing & PropMeta::kDoc) dst.doc = spm->doc;
-          if (missing & PropMeta::kDisplayName) dst.displayName = spm->displayName;
-          dst.authored |= missing;
-        }
-        // Dictionary-valued property metadata combines recursively even when
-        // both specs author the same field.
-        tpm = target.property_meta(slot.name_id);
-        if (tpm && (tpm->authored & PropMeta::kCustomData) &&
-            (spm->authored & PropMeta::kCustomData)) {
-          MergeWeakerDictionary(
-              &target.ensure_property_meta(pname).customData,
-              spm->customData);
-        }
-        if (tpm && (tpm->authored & PropMeta::kAssetInfo) &&
-            (spm->authored & PropMeta::kAssetInfo)) {
-          MergeWeakerDictionary(
-              &target.ensure_property_meta(pname).assetInfo,
-              spm->assetInfo);
-        }
-        if (tpm && (tpm->authored & PropMeta::kSdrMetadata) &&
-            (spm->authored & PropMeta::kSdrMetadata)) {
-          MergeWeakerDictionary(
-              &target.ensure_property_meta(pname).sdrMetadata,
-              spm->sdrMetadata);
+        } else {
+          MergeWeakerPropMeta(&target.ensure_property_meta(pname), *spm);
         }
       }
       // Variability (uniform) fills from the weaker source too.
@@ -715,12 +810,7 @@ void Compositor::CopyLocalOpinions(
     if (const std::string* tn = source.property_type_name(pname)) {
       target.set_property_type_name(pname, *tn);
     }
-    if (const std::vector<Path>* conns = source.connection(pname)) {
-      for (const auto& c : *conns) {
-        if (!target_mappable(c)) continue;
-        target.add_connection(pname, map_target(c));
-      }
-    }
+    compose_connections(pname);
     if (const PropMeta* pm = source.property_meta(slot.name_id)) {
       target.ensure_property_meta(pname) = *pm;
     }
@@ -768,6 +858,7 @@ void Compositor::CopyLocalOpinions(
         *items = std::move(mapped);
       };
       remap_edit_items(&opinion.edit.prepended);
+      remap_edit_items(&opinion.edit.added);
       remap_edit_items(&opinion.edit.appended);
       remap_edit_items(&opinion.edit.deleted);
       remap_edit_items(&opinion.edit.ordered);
@@ -809,12 +900,10 @@ void Compositor::CopyLocalOpinions(
                                         source.relationship_flags(rel_name)));
     if (const PropMeta* pm = source.property_meta(rel_name)) {
       const PropMeta* current = target.property_meta(rel_name);
-      if (!current || current->authored == 0) {
+      if (!current) {
         target.ensure_property_meta(rel_name) = *pm;
-      } else if ((pm->authored & PropMeta::kCustomData) &&
-                 (current->authored & PropMeta::kCustomData)) {
-        PropMeta& dst = target.ensure_property_meta(rel_name);
-        MergeWeakerDictionary(&dst.customData, pm->customData);
+      } else {
+        MergeWeakerPropMeta(&target.ensure_property_meta(rel_name), *pm);
       }
     }
   }
@@ -856,8 +945,10 @@ void Compositor::CopyLocalOpinions(
 
   // Copy metadata fields (fill-absent: a stronger/earlier opinion already on the
   // target wins; weaker opinions only fill gaps).
-  if (!source.meta().doc().empty() && target.meta().doc().empty()) {
+  if ((source.meta().doc_authored() || !source.meta().doc().empty()) &&
+      !target.meta().doc_authored() && target.meta().doc().empty()) {
     target.meta().doc() = source.meta().doc();
+    target.meta().set_doc_authored();
   }
   // active/hidden: fill-absent on AUTHORED opinions only. The previous
   // "copy on difference" let a weaker spec's DEFAULT (active = true) clobber
@@ -877,28 +968,92 @@ void Compositor::CopyLocalOpinions(
     target.meta().instanceable_authored =
         source.meta().instanceable_authored || source.meta().instanceable;
   }
-  if (!source.meta().comment().empty() && target.meta().comment().empty()) {
+  if ((source.meta().comment_authored() ||
+       !source.meta().comment().empty()) &&
+      !target.meta().comment_authored() && target.meta().comment().empty()) {
     target.meta().comment() = source.meta().comment();
+    target.meta().set_comment_authored();
   }
-  if (!source.meta().kind().empty() && target.meta().kind().empty()) {
+  if ((source.meta().kindAuthored() || !source.meta().kind().empty()) &&
+      !target.meta().kindAuthored() && target.meta().kind().empty()) {
     target.meta().kind() = source.meta().kind();
+    target.meta().setKindAuthored();
   }
-  if (!source.meta().displayName().empty() &&
+  if ((source.meta().displayNameAuthored() ||
+       !source.meta().displayName().empty()) &&
+      !target.meta().displayNameAuthored() &&
       target.meta().displayName().empty()) {
     target.meta().displayName() = source.meta().displayName();
+    target.meta().setDisplayNameAuthored();
   }
-  if (target.meta().primOrder().empty() && !source.meta().primOrder().empty()) {
+  if (!source.meta().unknownMeta().empty()) {
+    MergeWeakerRawFields(&target.meta().unknownMeta(),
+                         source.meta().unknownMeta());
+  }
+  if (!target.meta().primOrderAuthored() &&
+      (source.meta().primOrderAuthored() ||
+       !source.meta().primOrder().empty())) {
     target.meta().primOrder() = source.meta().primOrder();
+    target.meta().setPrimOrderAuthored();
   }
-  if (target.meta().propertyOrder().empty() &&
-      !source.meta().propertyOrder().empty()) {
+  if (!target.meta().propertyOrderAuthored() &&
+      (source.meta().propertyOrderAuthored() ||
+       !source.meta().propertyOrder().empty())) {
     target.meta().propertyOrder() = source.meta().propertyOrder();
+    target.meta().setPropertyOrderAuthored();
   }
-  if (!source.meta().apiSchemas().empty()) {
+  if (!target.meta().displayGroupOrderAuthored() &&
+      (source.meta().displayGroupOrderAuthored() ||
+       !source.meta().displayGroupOrder().empty())) {
+    target.meta().displayGroupOrder() = source.meta().displayGroupOrder();
+    target.meta().setDisplayGroupOrderAuthored();
+  }
+  if (source.meta().apiSchemasAuthored() ||
+      !source.meta().apiSchemas().empty()) {
+    const bool target_had_api_opinion = target.meta().apiSchemasAuthored();
+    if (!target.meta().apiSchemasAuthored() &&
+        source.meta().apiSchemaEdits().authored) {
+      target.meta().apiSchemaEdits() = source.meta().apiSchemaEdits();
+    }
     std::vector<std::string>& tgt = target.meta().apiSchemas();
     const std::string& tq = target.meta().apiSchemasQualifier();
-    if (tgt.empty()) {
+    if (target_had_api_opinion && target.meta().apiSchemaEdits().authored) {
+      const StringListOpEdits edits = target.meta().apiSchemaEdits();
+      if (edits.is_explicit) {
+        tgt = edits.explicit_items;
+      } else {
+        std::vector<std::string> applied = edits.prepended;
+        const std::unordered_set<std::string> deleted(
+            edits.deleted.begin(), edits.deleted.end());
+        auto append_unique = [&](const std::string& schema) {
+          if (std::find(applied.begin(), applied.end(), schema) == applied.end())
+            applied.push_back(schema);
+        };
+        for (const std::string& schema : source.meta().apiSchemas()) {
+          if (!deleted.count(schema)) append_unique(schema);
+        }
+        for (const std::string& schema : edits.added) append_unique(schema);
+        for (const std::string& schema : edits.appended) {
+          applied.erase(std::remove(applied.begin(), applied.end(), schema),
+                        applied.end());
+          applied.push_back(schema);
+        }
+        // Ordered-list cross-site resolution is retained in authored form but
+        // remains a separately audited gap; do not invent a total-order rule.
+        tgt = std::move(applied);
+      }
+      // The composed/flattened prim no longer has a weaker list beneath it;
+      // encode its resolved result explicitly instead of re-emitting the local
+      // edit and accidentally applying it a second time downstream.
+      StringListOpEdits& resolved = target.meta().apiSchemaEdits();
+      resolved = StringListOpEdits();
+      resolved.authored = true;
+      resolved.is_explicit = true;
+      resolved.explicit_items = tgt;
+      target.meta().apiSchemasQualifier().clear();
+    } else if (!target.meta().apiSchemasAuthored() && tgt.empty()) {
       tgt = source.meta().apiSchemas();
+      target.meta().setApiSchemasAuthored();
       if (target.meta().apiSchemasQualifier().empty()) {
         target.meta().apiSchemasQualifier() =
             source.meta().apiSchemasQualifier();
@@ -935,21 +1090,65 @@ void Compositor::CopyLocalOpinions(
       if (!ct.customData().is_dictionary())
         target.meta().customData() = cs.customData();
       else MergeWeakerDictionary(&target.meta().customData(), cs.customData());
+      if (cs.customDataAuthored()) target.meta().setCustomDataAuthored();
     }
     if (cs.assetInfo().is_dictionary()) {
       if (!ct.assetInfo().is_dictionary())
         target.meta().assetInfo() = cs.assetInfo();
       else MergeWeakerDictionary(&target.meta().assetInfo(), cs.assetInfo());
+      if (cs.assetInfoAuthored()) target.meta().setAssetInfoAuthored();
     }
     if (cs.sdrMetadata().is_dictionary()) {
       if (!ct.sdrMetadata().is_dictionary())
         target.meta().sdrMetadata() = cs.sdrMetadata();
       else MergeWeakerDictionary(&target.meta().sdrMetadata(), cs.sdrMetadata());
+      if (cs.sdrMetadataAuthored()) target.meta().setSdrMetadataAuthored();
     }
     if (cs.clips().is_dictionary()) {
       if (!ct.clips().is_dictionary())
         target.meta().clips() = cs.clips();
       else MergeWeakerDictionary(&target.meta().clips(), cs.clips());
+      if (cs.clipsAuthored()) target.meta().setClipsAuthored();
+    }
+    if (!cs.unknownFields().empty()) {
+      MergeWeakerExtensionFields(&target.meta().unknownFields(),
+                                 cs.unknownFields());
+    }
+
+    // clipSets is a separate SdfStringListOp controlling strength among the
+    // dictionaries above. Resolve a stronger edit over the weaker effective
+    // order and store the flattened result explicitly, so downstream
+    // evaluation cannot accidentally apply the local edit twice.
+    const bool target_had_clip_sets = ct.clipSetEdits().authored;
+    if (target_had_clip_sets || cs.clipSetEdits().authored) {
+      std::vector<std::string> weaker_names;
+      if (const Dict* d = cs.clips().as_dictionary()) {
+        for (const auto& entry : d->entries) weaker_names.push_back(entry.first);
+      }
+      std::sort(weaker_names.begin(), weaker_names.end());
+      weaker_names = ApplyStringListOp(cs.clipSetEdits(), weaker_names);
+      if (target_had_clip_sets) {
+        if (const Dict* d = ct.clips().as_dictionary()) {
+          std::vector<std::string> local_names;
+          for (const auto& entry : d->entries) local_names.push_back(entry.first);
+          std::sort(local_names.begin(), local_names.end());
+          for (const std::string& name : local_names) {
+            if (std::find(weaker_names.begin(), weaker_names.end(), name) ==
+                weaker_names.end()) {
+              weaker_names.push_back(name);
+            }
+          }
+        }
+        std::vector<std::string> resolved =
+            ApplyStringListOp(ct.clipSetEdits(), weaker_names);
+        StringListOpEdits& dst = target.meta().clipSetEdits();
+        dst = StringListOpEdits();
+        dst.authored = true;
+        dst.is_explicit = true;
+        dst.explicit_items = std::move(resolved);
+      } else {
+        target.meta().clipSetEdits() = cs.clipSetEdits();
+      }
     }
   }
 
@@ -963,6 +1162,11 @@ void Compositor::CopyLocalOpinions(
   // An all-or-nothing copy would drop that content because the target "already
   // has" the (empty) set. The selection itself is left to the referencing prim
   // (ApplyVariants runs after arc resolution and is strongest).
+  if (!target.meta().variantSetNameEdits().authored &&
+      source.meta().variantSetNameEdits().authored) {
+    target.meta().variantSetNameEdits() =
+        source.meta().variantSetNameEdits();
+  }
   if (!source.meta().variantSets().empty()) {
     std::vector<VariantSetData>& tsets = target.meta().variantSets();
     // The host (target) may express its selection as the legacy variantSelection
@@ -1009,6 +1213,10 @@ void Compositor::CopyLocalOpinions(
         for (const auto& sr : svar.relationships) {
           if (!tvar->relationships.count(sr.first)) {
             tvar->relationships[sr.first] = sr.second;
+            auto fit = svar.relationshipFlags.find(sr.first);
+            if (fit != svar.relationshipFlags.end()) {
+              tvar->relationshipFlags[sr.first] = fit->second;
+            }
           }
         }
         if (!tvar->content && svar.content) tvar->content = svar.content;
@@ -1070,6 +1278,9 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   // encoding; decode before the path lookup (raw strings never matched, so
   // every inherit failed with "class not found").
   if (options_.resolve_inherits) {
+    const bool local_was_over = prim.specifier() == PrimSpecifier::Over;
+    bool inherited_class = false;
+    bool inherited_def = false;
     for (const auto& inh : prim.meta().inherits) {
       CompositionArc arc = ParseReference(inh);
       // Programmatically-built layers store a bare prim path; the USDA
@@ -1090,8 +1301,18 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
         continue;
       }
       ResolveArcsForPrim(layer, *cls, anchor_path, depth + 1);
+      inherited_class = inherited_class ||
+                        cls->specifier() == PrimSpecifier::Class;
+      inherited_def = inherited_def || cls->specifier() == PrimSpecifier::Def;
       CopyLocalOpinions(prim, *cls);
       GraftSubtree(layer, anchor_path, arc.prim_path, self);
+    }
+    // Direct inherits collectively determine an otherwise-undefining prim.
+    // A concrete inherited definition wins regardless of list order; a local
+    // defining specifier remains stronger and is never changed here.
+    if (local_was_over) {
+      if (inherited_def) prim.set_specifier(PrimSpecifier::Def);
+      else if (inherited_class) prim.set_specifier(PrimSpecifier::Class);
     }
   }
 
@@ -1164,6 +1385,7 @@ void Compositor::ResolveArcsForPrim(Layer& layer, PrimSpec& prim,
   if (options_.resolve_variants) {
     if (prim.meta().has_ext()) {
       prim.meta().variantSets().clear();
+      prim.meta().variantSetNameEdits() = StringListOpEdits();
       prim.meta().variantSelections().clear();
     }
     prim.meta().variantSelection.clear();
@@ -1205,7 +1427,10 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
 
   // External arc: load the referenced layer via the loader/cache.
   std::string resolved = arc.asset_path;
-  if (resolver_) resolved = resolver_->ResolvePath(arc.asset_path, anchor_path);
+  if (resolver_) {
+    resolved = resolver_->ResolvePath(
+        arc.asset_path, anchor_path, !options_.strict_aousd_conformance);
+  }
   if (CheckCycle(resolved)) {
     AddError("Circular reference detected", self, arc.asset_path, arc.type);
     return;
@@ -1264,6 +1489,13 @@ void Compositor::ResolveRefArc(Layer& layer, PrimSpec& prim,
   double t_offset = 0.0, t_scale = 1.0;
   if (!arc.layer_offset.empty()) {
     ParseLayerOffset(arc.layer_offset, t_offset, t_scale);
+    if (!std::isfinite(t_offset) || !std::isfinite(t_scale) ||
+        !(t_scale > 0.0)) {
+      AddError("Invalid reference/payload layer offset; using identity mapping",
+               self, arc.asset_path, arc.type);
+      t_offset = 0.0;
+      t_scale = 1.0;
+    }
   }
   // Retarget relationship/connection paths from the referenced namespace into
   // the host's; out-of-scope targets are dropped (pxr behavior).
@@ -1377,6 +1609,10 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
   for (const auto& [rel_name, targets] : variant.relationships) {
     if (!prim.relationship(rel_name)) {
       for (const auto& target : targets) prim.add_relationship(rel_name, target);
+      auto fit = variant.relationshipFlags.find(rel_name);
+      if (fit != variant.relationshipFlags.end()) {
+        prim.set_relationship_flags(rel_name, fit->second);
+      }
     }
   }
   if (!variant.doc.empty() && prim.meta().doc().empty()) {
@@ -1731,7 +1967,6 @@ void Compositor::ParseLayerOffset(const std::string& offset_str,
   } else {
     offset = ParseOffsetField(b, b + colon);
     scale = ParseOffsetField(b + colon + 1, e);
-    if (scale == 0.0) scale = 1.0;
   }
 }
 
@@ -1755,6 +1990,7 @@ void FlattenLayer(Layer& layer) {
     // See note above: avoid allocating an empty ext just to clear variantSets.
     if (meta.has_ext()) {
       meta.variantSets().clear();
+      meta.variantSetNameEdits() = StringListOpEdits();
       meta.variantSelections().clear();
     }
   }

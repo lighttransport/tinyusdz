@@ -90,7 +90,9 @@ const Keyword kKeywords[] = {
   {"over", TokenType::Over},
   {"class", TokenType::Class},
   {"true", TokenType::True},
+  {"True", TokenType::True},
   {"false", TokenType::False},
+  {"False", TokenType::False},
   {"None", TokenType::None},
   {"timeSamples", TokenType::TimeSamples},
   {"custom", TokenType::Custom},
@@ -146,6 +148,19 @@ void Lexer::skip_whitespace() {
       advance();
     } else if (c == '#') {
       skip_comment();
+    } else if (c == '/' && peek_char() == '*') {
+      // USDA accepts C-style separating comments in addition to `#` line
+      // comments. They are whitespace and may occur between a type and name.
+      advance();
+      advance();
+      while (pos_ < length_) {
+        if (current_char() == '*' && peek_char() == '/') {
+          advance();
+          advance();
+          break;
+        }
+        advance();
+      }
     } else {
       break;
     }

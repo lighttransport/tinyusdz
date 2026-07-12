@@ -558,12 +558,24 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                                                 std::string *warn,
                                                 std::string *err,
                                                 const LayerLoadOptions &options) {
-  ResolvedAsset resolved_asset = resolver.Resolve(asset_path, anchor);
+  ResolvedAsset resolved_asset = resolver.Resolve(
+      asset_path, anchor, !options.strict_aousd_conformance);
   const std::string resolved = resolved_asset.resolved_path;
   if (resolved.empty()) {
     if (err) *err += "Failed to resolve asset path: " + asset_path + "\n";
     return nullptr;
   }
+  auto load_resolved = [&](std::string* load_warn,
+                           std::string* load_err) -> std::shared_ptr<Layer> {
+    if (!AssetResolver::GetIdentifierScheme(resolved).empty() ||
+        resolver.HasAssetReader()) {
+      std::vector<uint8_t> bytes;
+      if (!resolver.ReadAsset(resolved, &bytes, load_err)) return nullptr;
+      return LoadLayerFromMemory(resolved, bytes.data(), bytes.size(),
+                                 load_warn, load_err, options);
+    }
+    return LoadLayerFromFile(resolved, load_warn, load_err, options);
+  };
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   std::shared_future<LoadOutcome> wait_fut;
@@ -593,8 +605,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 
   // Parse WITHOUT holding the lock, so other paths load concurrently.
   LoadOutcome outcome;
-  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err,
-                                    options);
+  outcome.layer = load_resolved(&outcome.warn, &outcome.err);
   {
     std::lock_guard<std::mutex> lk(*mu_);
     if (outcome.layer) {
@@ -613,8 +624,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return it->second;  // Cache hit -- no re-parse.
   }
 
-  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err,
-                                                   options);
+  std::shared_ptr<Layer> layer = load_resolved(warn, err);
   if (!layer) {
     return nullptr;
   }

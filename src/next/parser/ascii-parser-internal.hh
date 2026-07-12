@@ -49,7 +49,11 @@ private:
   bool ParseStageMetadata();
   bool ParsePrim();
   bool ParsePrimContents();
-  bool ParseAttribute();
+  bool ParseAttribute(
+      PrimSpec::RelationshipListOp connection_op =
+          PrimSpec::RelationshipListOp::Append,
+      bool explicit_connection = true,
+      const std::string& preconsumed_type = std::string());
   bool ParseRelationship(PrimSpec::RelationshipListOp op =
                              PrimSpec::RelationshipListOp::Append,
                          bool explicit_list = true, uint16_t flags = 0);

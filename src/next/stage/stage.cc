@@ -7,6 +7,7 @@
 #include "../composition/composition.hh"
 #include "../schema/schema-registry.hh"
 #include <algorithm>
+#include <unordered_set>
 
 namespace tinyusdz {
 namespace next {
@@ -31,7 +32,7 @@ const std::string& UsdPrim::GetTypeName() const {
 
 const Path& UsdPrim::GetPath() const {
   if (!spec_) return kEmptyPath;
-  return spec_->path();
+  return proxy_path_.empty() ? spec_->path() : proxy_path_;
 }
 
 PrimSpecifier UsdPrim::GetSpecifier() const {
@@ -41,69 +42,162 @@ PrimSpecifier UsdPrim::GetSpecifier() const {
 
 bool UsdPrim::IsActive() const {
   if (!spec_) return false;
-  return spec_->meta().active;
+  UsdPrim current = *this;
+  while (current) {
+    if (!current.spec_->meta().active) return false;
+    current = current.GetParent();
+  }
+  return true;
+}
+
+bool UsdPrim::IsLoaded() const {
+  if (!spec_) return false;
+  UsdPrim current = *this;
+  while (current) {
+    if (!current.spec_->meta().loaded) return false;
+    current = current.GetParent();
+  }
+  return true;
 }
 
 bool UsdPrim::IsDefined() const {
   if (!spec_) return false;
-  return spec_->specifier() == PrimSpecifier::Def;
+  UsdPrim current = *this;
+  while (current) {
+    if (current.spec_->specifier() == PrimSpecifier::Over) return false;
+    current = current.GetParent();
+  }
+  return true;
+}
+
+bool UsdPrim::IsAbstract() const {
+  if (!spec_) return false;
+  UsdPrim current = *this;
+  while (current) {
+    if (current.spec_->specifier() == PrimSpecifier::Class) return true;
+    current = current.GetParent();
+  }
+  return false;
+}
+
+bool UsdPrim::IsConcretelyDefined() const {
+  if (!spec_) return false;
+  UsdPrim current = *this;
+  while (current) {
+    if (current.spec_->specifier() != PrimSpecifier::Def) return false;
+    current = current.GetParent();
+  }
+  return true;
+}
+
+bool UsdPrim::IsInModelHierarchy() const {
+  if (!spec_) return false;
+  const std::string& own_kind = spec_->meta().kind();
+  if (own_kind != "group" && own_kind != "assembly" &&
+      own_kind != "component") {
+    return false;
+  }
+
+  UsdPrim ancestor = GetParent();
+  while (ancestor) {
+    const std::string& kind = ancestor.spec_->meta().kind();
+    if (kind != "group" && kind != "assembly") return false;
+    ancestor = ancestor.GetParent();
+  }
+  return true;
 }
 
 bool UsdPrim::HasProperty(const std::string& name) const {
   if (!spec_) return false;
+  const PrimSpec* source = ChildSourceSpec();
   return spec_->property(name) != nullptr ||
-         GetSchemaRegistry().FindProperty(*spec_, name) != nullptr;
+         (source != spec_ && source->property(name) != nullptr) ||
+         GetSchemaRegistry().FindProperty(*source, name) != nullptr;
 }
 
 const Value* UsdPrim::GetPropertyValue(const std::string& name) const {
   if (!spec_) return nullptr;
   if (const Value* value = spec_->property_value(name)) {
-    if (!value->is_block()) return value;
+    return value->is_block() ? nullptr : value;
+  }
+  const PrimSpec* source = ChildSourceSpec();
+  if (source != spec_) {
+    if (const Value* value = source->property_value(name)) {
+      return value->is_block() ? nullptr : value;
+    }
   }
   if (const SchemaPropertyDefinition* def =
-          GetSchemaRegistry().FindProperty(*spec_, name)) {
+          GetSchemaRegistry().FindProperty(*source, name)) {
     if (def->has_fallback) return &def->fallback;
   }
-  return EarliestTimeSampleValue(GetPropNameTable().find(name));
+  return nullptr;
 }
 
 const Value* UsdPrim::GetPropertyValue(PropNameId name_id) const {
   if (!spec_) return nullptr;
   if (const Value* value = spec_->property_value(name_id)) {
-    if (!value->is_block()) return value;
+    return value->is_block() ? nullptr : value;
+  }
+  const PrimSpec* source = ChildSourceSpec();
+  if (source != spec_) {
+    if (const Value* value = source->property_value(name_id)) {
+      return value->is_block() ? nullptr : value;
+    }
   }
   const std::string& name = GetPropNameTable().get(name_id);
   if (const SchemaPropertyDefinition* def =
-          GetSchemaRegistry().FindProperty(*spec_, name)) {
+          GetSchemaRegistry().FindProperty(*source, name)) {
     if (def->has_fallback) return &def->fallback;
   }
+  return nullptr;
+}
+
+const Value* UsdPrim::GetPropertyValueOrEarliestTimeSample(
+    const std::string& name) const {
+  if (const Value* value = GetPropertyValue(name)) return value;
+  return EarliestTimeSampleValue(GetPropNameTable().find(name));
+}
+
+const Value* UsdPrim::GetPropertyValueOrEarliestTimeSample(
+    PropNameId name_id) const {
+  if (const Value* value = GetPropertyValue(name_id)) return value;
   return EarliestTimeSampleValue(name_id);
 }
 
-// Default-time value resolution matches OpenUSD (and legacy tydra): when a
-// property has no authored default but does have timeSamples, the samples are
-// consulted — use the earliest one. Without this, timeSamples-only xformOps
-// evaluate as missing and static transforms collapse to identity components.
 const Value* UsdPrim::EarliestTimeSampleValue(PropNameId name_id) const {
   if (!spec_ || !name_id.is_valid()) return nullptr;
-  const auto* samples = spec_->time_samples(name_id);
+  const PrimSpec* owner = spec_;
+  const auto* samples = owner->time_samples(name_id);
+  if ((!samples || samples->empty()) && ChildSourceSpec() != spec_) {
+    owner = ChildSourceSpec();
+    samples = owner->time_samples(name_id);
+  }
   if (!samples || samples->empty()) return nullptr;
-  return spec_->time_sample_value(samples->front().second);
+  return owner->time_sample_value(samples->front().second);
 }
 
 std::vector<std::string> UsdPrim::GetPropertyNames() const {
   std::vector<std::string> names;
   if (!spec_) return names;
 
+  const PrimSpec* source = ChildSourceSpec();
   const auto& props = spec_->properties();
-  names.reserve(props.size());
+  names.reserve(props.size() + (source == spec_ ? 0 : source->properties().size()));
 
   PropNameTable& table = GetPropNameTable();
   for (const auto& slot : props.slots()) {
     names.push_back(table.get(slot.name_id));
   }
+  if (source != spec_) {
+    for (const auto& slot : source->properties().slots()) {
+      const std::string& name = table.get(slot.name_id);
+      if (std::find(names.begin(), names.end(), name) == names.end()) {
+        names.push_back(name);
+      }
+    }
+  }
   for (const std::string& built_in :
-       GetSchemaRegistry().PropertyNames(*spec_)) {
+       GetSchemaRegistry().PropertyNames(*source)) {
     if (std::find(names.begin(), names.end(), built_in) == names.end()) {
       names.push_back(built_in);
     }
@@ -231,16 +325,110 @@ Value UsdPrim::GetInterpolatedValue(const std::string& name, double time) const 
 
 const std::vector<Path>* UsdPrim::GetRelationship(const std::string& name) const {
   if (!spec_) return nullptr;
-  return spec_->relationship(name);
+  if (const std::vector<Path>* relationship = spec_->relationship(name))
+    return relationship;
+  return ChildSourceSpec()->relationship(name);
+}
+
+bool UsdPrim::GetForwardedRelationshipTargets(
+    const std::string& name, std::vector<Path>* targets) const {
+  if (!targets) return false;
+  targets->clear();
+  if (!spec_ || !layer_ || !GetRelationship(name)) return false;
+
+  std::string prototype_root = prototype_root_;
+  std::string instance_root = instance_root_;
+  const PrimSpec* root_owner = spec_;
+  if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
+    prototype_root = spec_->meta().instance_prototype();
+    instance_root = spec_->path().str();
+    if (!spec_->relationship(name)) {
+      if (const PrimSpec* prototype =
+              layer_->prim_at_path(Path(prototype_root))) root_owner = prototype;
+    }
+  }
+  auto map_prefix = [](const std::string& path, const std::string& from,
+                       const std::string& to) {
+    if (from.empty() || to.empty()) return path;
+    if (path == from) return to;
+    if (path.size() > from.size() && path.compare(0, from.size(), from) == 0 &&
+        (path[from.size()] == '/' || path[from.size()] == '.')) {
+      return to + path.substr(from.size());
+    }
+    return path;
+  };
+
+  std::unordered_set<std::string> visited_relationships;
+  std::unordered_set<std::string> unique_targets;
+
+  std::function<void(const PrimSpec&, const std::string&)> forward;
+  forward = [&](const PrimSpec& owner, const std::string& relationship_name) {
+    const std::vector<Path>* raw = owner.relationship(relationship_name);
+    if (!raw) return;
+
+    for (const Path& target : *raw) {
+      const std::string lookup_string =
+          map_prefix(target.str(), instance_root, prototype_root);
+      const std::string output_string =
+          map_prefix(target.str(), prototype_root, instance_root);
+      const Path lookup_target(lookup_string);
+      if (target.has_property()) {
+        const PrimSpec* target_prim =
+            layer_->prim_at_path(lookup_target.prim_path());
+        if (target_prim &&
+            target_prim->relationship(lookup_target.property_name()) != nullptr) {
+          if (visited_relationships.insert(lookup_string).second) {
+            forward(*target_prim, lookup_target.property_name());
+          }
+          continue;
+        }
+      }
+      if (unique_targets.insert(output_string).second) {
+        targets->push_back(Path(output_string));
+      }
+    }
+  };
+
+  visited_relationships.insert(root_owner->path().append_property(name).str());
+  forward(*root_owner, name);
+  return true;
 }
 
 std::vector<std::string> UsdPrim::GetRelationshipNames() const {
   if (!spec_) return {};
-  return spec_->relationship_names();
+  std::vector<std::string> names = spec_->relationship_names();
+  const PrimSpec* source = ChildSourceSpec();
+  if (source != spec_) {
+    for (const std::string& name : source->relationship_names()) {
+      if (std::find(names.begin(), names.end(), name) == names.end()) {
+        names.push_back(name);
+      }
+    }
+  }
+  return names;
 }
 
 UsdPrim UsdPrim::GetParent() const {
   if (!spec_ || !layer_) return UsdPrim();
+
+  if (!proxy_path_.empty() && !prototype_root_.empty()) {
+    const std::string proxy = proxy_path_.str();
+    const size_t slash = proxy.rfind('/');
+    if (slash == std::string::npos || slash == 0) return UsdPrim();
+    const std::string proxy_parent = proxy.substr(0, slash);
+    if (proxy_parent == instance_root_) {
+      const uint32_t index = layer_->index_at_path(instance_root_);
+      const PrimSpec* instance = layer_->prim_at_path(Path(instance_root_));
+      return instance ? UsdPrim(instance, layer_, index) : UsdPrim();
+    }
+    const std::string prototype_parent =
+        prototype_root_ + proxy_parent.substr(instance_root_.size());
+    const uint32_t index = layer_->index_at_path(prototype_parent);
+    const PrimSpec* parent = layer_->prim_at_path(Path(prototype_parent));
+    return parent ? UsdPrim(parent, layer_, index, Path(proxy_parent),
+                            prototype_root_, instance_root_)
+                  : UsdPrim();
+  }
 
   // Parse parent path from current path
   const std::string& path_str = spec_->path().str();
@@ -286,13 +474,26 @@ std::vector<UsdPrim> UsdPrim::GetChildren() const {
   if (!spec_ || !layer_) return children;
 
   const PrimSpec* src = ChildSourceSpec();
+  std::string prototype_root = prototype_root_;
+  std::string instance_root = instance_root_;
+  if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
+    prototype_root = spec_->meta().instance_prototype();
+    instance_root = spec_->path().str();
+  }
   const auto& indices = src->child_indices();
   children.reserve(indices.size());
 
   for (uint32_t idx : indices) {
     const PrimSpec* child = layer_->prim(idx);
     if (child) {
-      children.emplace_back(child, layer_, idx);
+      if (!prototype_root.empty()) {
+        children.emplace_back(
+            child, layer_, idx,
+            Path(instance_root + child->path().str().substr(prototype_root.size())),
+            prototype_root, instance_root);
+      } else {
+        children.emplace_back(child, layer_, idx);
+      }
     }
   }
   return children;
@@ -310,6 +511,18 @@ UsdPrim UsdPrim::GetChildAt(size_t index) const {
   uint32_t idx = indices[index];
   const PrimSpec* child = layer_->prim(idx);
   if (!child) return UsdPrim();
+  std::string prototype_root = prototype_root_;
+  std::string instance_root = instance_root_;
+  if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
+    prototype_root = spec_->meta().instance_prototype();
+    instance_root = spec_->path().str();
+  }
+  if (!prototype_root.empty()) {
+    return UsdPrim(
+        child, layer_, idx,
+        Path(instance_root + child->path().str().substr(prototype_root.size())),
+        prototype_root, instance_root);
+  }
   return UsdPrim(child, layer_, idx);
 }
 
@@ -319,6 +532,19 @@ UsdPrim UsdPrim::GetChild(const std::string& name) const {
   for (uint32_t idx : ChildSourceSpec()->child_indices()) {
     const PrimSpec* child = layer_->prim(idx);
     if (child && child->name() == name) {
+      std::string prototype_root = prototype_root_;
+      std::string instance_root = instance_root_;
+      if (prototype_root.empty() && !spec_->meta().instance_prototype().empty()) {
+        prototype_root = spec_->meta().instance_prototype();
+        instance_root = spec_->path().str();
+      }
+      if (!prototype_root.empty()) {
+        return UsdPrim(
+            child, layer_, idx,
+            Path(instance_root +
+                 child->path().str().substr(prototype_root.size())),
+            prototype_root, instance_root);
+      }
       return UsdPrim(child, layer_, idx);
     }
   }
@@ -359,6 +585,7 @@ void Stage::UpdateMetaFromRootLayer() {
 
   const LayerMeta& lm = root_layer_->meta();
   meta_.defaultPrim = lm.defaultPrim;
+  meta_.defaultPrim_set = lm.defaultPrim_set;
   meta_.upAxis = lm.upAxis;
   meta_.metersPerUnit = lm.metersPerUnit;
   meta_.timeCodesPerSecond = lm.timeCodesPerSecond;
@@ -375,8 +602,14 @@ void Stage::UpdateMetaFromRootLayer() {
   meta_.kilogramsPerUnit_set = lm.kilogramsPerUnit_set;
   meta_.colorConfiguration = lm.colorConfiguration;
   meta_.colorManagementSystem = lm.colorManagementSystem;
+  meta_.colorConfiguration_set = lm.colorConfiguration_set;
+  meta_.colorManagementSystem_set = lm.colorManagementSystem_set;
   meta_.doc = lm.doc;
   meta_.comment = lm.comment;
+  meta_.owner = lm.owner;
+  meta_.doc_set = lm.doc_set;
+  meta_.comment_set = lm.comment_set;
+  meta_.owner_set = lm.owner_set;
 }
 
 UsdPrim Stage::GetPseudoRoot() const {
@@ -397,8 +630,37 @@ UsdPrim Stage::GetPrimAtPath(const std::string& path) const {
   // O(meshes*prims) over a render, ~8% of an isCoral render in per-mesh
   // material/texture/prototype lookups.)
   const uint32_t idx = root_layer_->index_at_path(path);
-  if (idx == UINT32_MAX) return UsdPrim();
-  return UsdPrim(root_layer_->prim(idx), root_layer_.get(), idx);
+  if (idx != UINT32_MAX) {
+    return UsdPrim(root_layer_->prim(idx), root_layer_.get(), idx);
+  }
+
+  // Instance-proxy lookup: the composed layer stores one prototype subtree,
+  // so descendants of another instance root need not have physical PrimSpecs.
+  // Find the nearest real ancestor that points at a prototype, remap the
+  // requested suffix into that subtree, and return a proxy UsdPrim whose public
+  // path remains in the instance namespace. Nearest-first also handles nested
+  // instances whose instance root itself is physically present.
+  size_t slash = path.size();
+  while (slash > 1) {
+    slash = path.rfind('/', slash - 1);
+    if (slash == std::string::npos || slash == 0) break;
+    const std::string instance_root = path.substr(0, slash);
+    const uint32_t instance_idx = root_layer_->index_at_path(instance_root);
+    if (instance_idx == UINT32_MAX) continue;
+    const PrimSpec* instance = root_layer_->prim(instance_idx);
+    if (!instance || instance->meta().instance_prototype().empty()) continue;
+    const std::string& prototype_root =
+        instance->meta().instance_prototype();
+    const std::string prototype_path = prototype_root + path.substr(slash);
+    const uint32_t prototype_idx = root_layer_->index_at_path(prototype_path);
+    if (prototype_idx == UINT32_MAX) continue;
+    const PrimSpec* prototype = root_layer_->prim(prototype_idx);
+    if (prototype) {
+      return UsdPrim(prototype, root_layer_.get(), prototype_idx, Path(path),
+                     prototype_root, instance_root);
+    }
+  }
+  return UsdPrim();
 }
 
 UsdPrim Stage::GetDefaultPrim() const {
@@ -517,6 +779,7 @@ size_t Stage::GetMemoryUsage() const {
   size += meta_.defaultPrim.capacity();
   size += meta_.upAxis.capacity();
   size += meta_.doc.capacity();
+  size += meta_.owner.capacity();
 
   if (root_layer_) {
     size += root_layer_->memory_usage();
@@ -557,7 +820,9 @@ StageBuilder::~StageBuilder() = default;
 
 void StageBuilder::SetDefaultPrim(const std::string& primName) {
   meta_.defaultPrim = primName;
+  meta_.defaultPrim_set = true;
   layer_->meta().defaultPrim = primName;
+  layer_->meta().defaultPrim_set = true;
 }
 
 void StageBuilder::SetUpAxis(const std::string& axis) {

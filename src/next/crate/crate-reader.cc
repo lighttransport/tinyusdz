@@ -6,6 +6,7 @@
 #include "crate-reader-internal.hh"
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -74,6 +75,32 @@ bool CrateReader::Impl::UnpackValue(ValueRep rep, Value& out) {
       return true;
     }
     case CrateTypeId::TimeSamples: return UnpackTimeSamples(rep, out);
+    case CrateTypeId::UnregisteredValue: {
+      if (rep.is_inlined() || rep.payload() == 0) return false;
+      const uint64_t wrapper = rep.payload_as_offset();
+      if (!reader_->seek(static_cast<size_t>(wrapper))) return false;
+      int64_t relative = 0;
+      if (!reader_->read_i64(relative) || relative < 0) return false;
+      uint64_t nested_pos = 0;
+      if (static_cast<uint64_t>(relative) >
+              (std::numeric_limits<uint64_t>::max)() - wrapper) {
+        return false;
+      }
+      nested_pos = wrapper + static_cast<uint64_t>(relative);
+      if (!reader_->seek(static_cast<size_t>(nested_pos))) {
+        return false;
+      }
+      uint64_t nested_raw = 0;
+      if (!reader_->read_u64(nested_raw)) return false;
+      const ValueRep nested(nested_raw);
+      // OpenUSD stores the authored source spelling as a nested String (and
+      // may use Dictionary for registered dictionary-shaped extensions).
+      if (nested.type_id() != CrateTypeId::String &&
+          nested.type_id() != CrateTypeId::Dictionary) {
+        return false;
+      }
+      return UnpackValue(nested, out);
+    }
     case CrateTypeId::Half: return UnpackHalf(rep, out);
     case CrateTypeId::Vec2i: return UnpackVec2i(rep, out);
     case CrateTypeId::Vec3i: return UnpackVec3i(rep, out);

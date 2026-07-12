@@ -11,6 +11,7 @@
 #include "../types/value.hh"
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <deque>
@@ -107,6 +108,7 @@ struct VariantData {
   std::string doc;
   std::vector<VariantProperty> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;
+  std::unordered_map<std::string, uint16_t> relationshipFlags;
   // Composition arcs authored in the variant OPTION's metadata block, e.g.
   // `"opt" ( prepend payload = @./geo.usd@</geo> ) {}`. Stored in the same
   // canonical "@asset@</prim>" / "</prim>" encoding as PrimSpecMeta's arc
@@ -117,6 +119,9 @@ struct VariantData {
   std::vector<std::string> payloads;
   std::vector<std::string> inherits;
   std::vector<std::string> specializes;
+  // Variant selections authored on this option. These may target a sibling
+  // variant set on the host prim, not only a set nested inside this option.
+  std::vector<std::pair<std::string, std::string>> variantSelections;
   // Nested variant sets authored inside this variant option (recursive).
   std::vector<VariantSetData> variantSets;
   // Optional subtree for variants that add prim-level opinions and/or child
@@ -142,14 +147,15 @@ struct VariantSetData {
 struct ArcEdit {
   bool authored = false;     // true when this arc field authored list-op edits.
   bool is_explicit = true;  // bare list (the common case)
+  std::vector<std::string> added;
   std::vector<std::string> prepended;
   std::vector<std::string> appended;
   std::vector<std::string> deleted;
   std::vector<std::string> ordered;
 
   bool has_qualifiers() const {
-    return authored && (!is_explicit || !prepended.empty() || !appended.empty() ||
-           !deleted.empty() || !ordered.empty());
+    return authored && (!is_explicit || !added.empty() || !prepended.empty() ||
+           !appended.empty() || !deleted.empty() || !ordered.empty());
   }
   bool has_authored_opinion() const {
     return authored;
@@ -165,6 +171,133 @@ struct ArcListOpEdits {
   ArcEdit specializes;
 };
 
+/// Exact authored SdfStringListOp sublists. `variantSetNames` needs this in
+/// addition to the effective VariantSetData vector: delete/order operations
+/// may be inert locally yet remain authored data, and explicit-empty must not
+/// collapse to an unauthored field.
+struct StringListOpEdits {
+  bool authored = false;
+  bool is_explicit = false;
+  std::vector<std::string> explicit_items;
+  std::vector<std::string> added;
+  std::vector<std::string> prepended;
+  std::vector<std::string> appended;
+  std::vector<std::string> deleted;
+  std::vector<std::string> ordered;
+
+  bool has_nonexplicit_items() const {
+    return !added.empty() || !prepended.empty() || !appended.empty() ||
+           !deleted.empty() || !ordered.empty();
+  }
+};
+
+/// Generic decodable extension field retained from USDC. Unregistered fields
+/// use Crate's recursive UnregisteredValue wrapper and must be re-encoded with
+/// that wrapper rather than silently changing their schema type.
+struct TypedExtensionField {
+  std::string name;
+  Value value;
+  bool unregistered = false;
+  std::string unregistered_source;
+};
+
+inline void MergeWeakerDictionaryValue(Value* stronger,
+                                       const Value& weaker) {
+  if (!stronger || !weaker.is_dictionary()) return;
+  if (!stronger->is_dictionary()) {
+    *stronger = weaker;
+    return;
+  }
+  Dict* destination = stronger->as_dictionary();
+  const Dict* source = weaker.as_dictionary();
+  if (!destination || !source) return;
+  for (const auto& entry : source->entries) {
+    Value* existing = destination->find(entry.first);
+    if (!existing) {
+      destination->set(entry.first, entry.second);
+    } else if (existing->is_dictionary() && entry.second.is_dictionary()) {
+      MergeWeakerDictionaryValue(existing, entry.second);
+    }
+  }
+}
+
+inline void MergeWeakerExtensionFields(
+    std::vector<TypedExtensionField>* stronger,
+    const std::vector<TypedExtensionField>& weaker) {
+  if (!stronger) return;
+  for (const TypedExtensionField& field : weaker) {
+    auto existing = std::find_if(
+        stronger->begin(), stronger->end(),
+        [&](const TypedExtensionField& own) { return own.name == field.name; });
+    if (existing == stronger->end()) {
+      stronger->push_back(field);
+    } else if (existing->value.is_dictionary() && field.value.is_dictionary()) {
+      MergeWeakerDictionaryValue(&existing->value, field.value);
+      // The authored source represented only the stronger dictionary. Force
+      // writers to regenerate the merged UnregisteredValue source.
+      if (existing->unregistered) existing->unregistered_source.clear();
+    }
+  }
+}
+
+inline void MergeWeakerRawFields(
+    std::vector<std::pair<std::string, std::string>>* stronger,
+    const std::vector<std::pair<std::string, std::string>>& weaker) {
+  if (!stronger) return;
+  for (const auto& field : weaker) {
+    const bool present = std::find_if(
+        stronger->begin(), stronger->end(),
+        [&](const auto& own) { return own.first == field.first; }) !=
+        stronger->end();
+    if (!present) stronger->push_back(field);
+  }
+}
+
+/// Apply an authored string list-op to a weaker effective list. This preserves
+/// the authored sublists above while providing one shared effective-order rule
+/// for composition and consumers such as value clips.
+inline std::vector<std::string> ApplyStringListOp(
+    const StringListOpEdits &edits,
+    const std::vector<std::string> &weaker) {
+  std::vector<std::string> result;
+  auto append_unique = [&](const std::string &item) {
+    if (std::find(result.begin(), result.end(), item) == result.end()) {
+      result.push_back(item);
+    }
+  };
+  if (!edits.authored) {
+    for (const std::string &item : weaker) append_unique(item);
+    return result;
+  }
+  if (edits.is_explicit) {
+    for (const std::string &item : edits.explicit_items) append_unique(item);
+    return result;
+  }
+
+  for (const std::string &item : edits.prepended) append_unique(item);
+  for (const std::string &item : weaker) {
+    if (std::find(edits.deleted.begin(), edits.deleted.end(), item) ==
+        edits.deleted.end()) {
+      append_unique(item);
+    }
+  }
+  for (const std::string &item : edits.added) append_unique(item);
+  for (const std::string &item : edits.appended) {
+    result.erase(std::remove(result.begin(), result.end(), item), result.end());
+    result.push_back(item);
+  }
+  std::vector<std::string> ordered;
+  for (const std::string &item : edits.ordered) {
+    auto it = std::find(result.begin(), result.end(), item);
+    if (it != result.end()) {
+      ordered.push_back(*it);
+      result.erase(it);
+    }
+  }
+  ordered.insert(ordered.end(), result.begin(), result.end());
+  return ordered;
+}
+
 /// Cold PrimSpec metadata: fields that are empty on the vast majority of prims
 /// (no docs / variants / relocates / apiSchemas / instancing / list-op edits).
 /// Held behind a lazily-allocated unique_ptr on PrimSpecMeta so an ordinary
@@ -173,17 +306,26 @@ struct ArcListOpEdits {
 struct PrimSpecMetaExt {
   std::string doc;
   std::string comment;
+  bool doc_authored = false;
+  bool comment_authored = false;
   std::string kind;         // model kind (component/group/assembly/...)
+  bool kind_authored = false;
   std::string displayName;  // UI display name
+  bool display_name_authored = false;
+  std::vector<std::string> displayGroupOrder;
+  bool displayGroupOrderAuthored = false;
   // When non-empty (set by composition), this prim is an instance whose
   // children come from the prototype prim at this path (no duplicated subtree).
   std::string instance_prototype;
   std::vector<std::string> apiSchemas;
+  bool apiSchemasAuthored = false;
+  StringListOpEdits apiSchemaEdits;
   // Authored list-op qualifier for apiSchemas: "" (bare/explicit),
   // "prepend", "append" or "delete" — pxr's own convention is prepend.
   std::string apiSchemasQualifier;
   // Variant set definitions.
   std::vector<VariantSetData> variantSets;
+  StringListOpEdits variantSetNameEdits;
   // Multiple variant selections (set -> selection); composed in addition to the
   // legacy single `variantSelection` field on PrimSpecMeta.
   std::vector<std::pair<std::string, std::string>> variantSelections;
@@ -194,14 +336,22 @@ struct PrimSpecMetaExt {
   Value assetInfo;
   Value sdrMetadata;
   Value clips;
+  StringListOpEdits clipSetEdits;
+  bool customDataAuthored = false;
+  bool assetInfoAuthored = false;
+  bool sdrMetadataAuthored = false;
+  bool clipsAuthored = false;
   // Authored namespace ordering fields (`reorder nameChildren/properties`).
   std::vector<std::string> primOrder;
   std::vector<std::string> propertyOrder;
+  bool primOrderAuthored = false;
+  bool propertyOrderAuthored = false;
   // Unknown (unmodeled) prim metadata, preserved as (key, raw source text of
   // the value) in authored order so the USDA writer can re-emit it verbatim
   // (the legacy parser preserves unknown prim metadata; dropping it loses
   // pipeline-specific opinions like `sceneName`).
   std::vector<std::pair<std::string, std::string>> unknownMeta;
+  std::vector<TypedExtensionField> unknownFields;
   // Arc list-op qualifiers (Phase 7 S5); null unless authored.
   std::unique_ptr<ArcListOpEdits> arc_edits;
 
@@ -209,21 +359,38 @@ struct PrimSpecMetaExt {
   PrimSpecMetaExt(const PrimSpecMetaExt &o)
       : doc(o.doc),
         comment(o.comment),
+        doc_authored(o.doc_authored),
+        comment_authored(o.comment_authored),
         kind(o.kind),
+        kind_authored(o.kind_authored),
         displayName(o.displayName),
+        display_name_authored(o.display_name_authored),
+        displayGroupOrder(o.displayGroupOrder),
+        displayGroupOrderAuthored(o.displayGroupOrderAuthored),
         instance_prototype(o.instance_prototype),
         apiSchemas(o.apiSchemas),
+        apiSchemasAuthored(o.apiSchemasAuthored),
+        apiSchemaEdits(o.apiSchemaEdits),
         apiSchemasQualifier(o.apiSchemasQualifier),
         variantSets(o.variantSets),
+        variantSetNameEdits(o.variantSetNameEdits),
         variantSelections(o.variantSelections),
         relocates(o.relocates),
         customData(o.customData),
         assetInfo(o.assetInfo),
         sdrMetadata(o.sdrMetadata),
         clips(o.clips),
+        clipSetEdits(o.clipSetEdits),
+        customDataAuthored(o.customDataAuthored),
+        assetInfoAuthored(o.assetInfoAuthored),
+        sdrMetadataAuthored(o.sdrMetadataAuthored),
+        clipsAuthored(o.clipsAuthored),
         primOrder(o.primOrder),
         propertyOrder(o.propertyOrder),
+        primOrderAuthored(o.primOrderAuthored),
+        propertyOrderAuthored(o.propertyOrderAuthored),
         unknownMeta(o.unknownMeta),
+        unknownFields(o.unknownFields),
         arc_edits(o.arc_edits ? new ArcListOpEdits(*o.arc_edits) : nullptr) {}
   PrimSpecMetaExt &operator=(const PrimSpecMetaExt &) = delete;
 };
@@ -243,6 +410,7 @@ struct PrimSpecMeta {
   // authored active=false).
   bool active_authored = false;
   bool hidden_authored = false;
+  bool loaded = true;  // runtime PCP state; not authored/serialized metadata
   bool instanceable_authored = false;  // instanceable=false is a real opinion
   bool instanceable = false;  // when true (with arcs), the prim is an instance
 
@@ -268,6 +436,7 @@ struct PrimSpecMeta {
     hidden = o.hidden;
     active_authored = o.active_authored;
     hidden_authored = o.hidden_authored;
+    loaded = o.loaded;
     instanceable_authored = o.instanceable_authored;
     instanceable = o.instanceable;
     references = o.references;
@@ -311,6 +480,11 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->doc;
   }
+  bool doc_authored() const { return ext_ && ext_->doc_authored; }
+  void set_doc_authored(bool authored = true) {
+    ensure_ext();
+    ext_->doc_authored = authored;
+  }
   const std::string &comment() const {
     static const std::string kEmpty;
     return ext_ ? ext_->comment : kEmpty;
@@ -318,6 +492,11 @@ struct PrimSpecMeta {
   std::string &comment() {
     ensure_ext();
     return ext_->comment;
+  }
+  bool comment_authored() const { return ext_ && ext_->comment_authored; }
+  void set_comment_authored(bool authored = true) {
+    ensure_ext();
+    ext_->comment_authored = authored;
   }
   const std::string &kind() const {
     static const std::string kEmpty;
@@ -327,6 +506,11 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->kind;
   }
+  bool kindAuthored() const { return ext_ && ext_->kind_authored; }
+  void setKindAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->kind_authored = authored;
+  }
   const std::string &displayName() const {
     static const std::string kEmpty;
     return ext_ ? ext_->displayName : kEmpty;
@@ -334,6 +518,13 @@ struct PrimSpecMeta {
   std::string &displayName() {
     ensure_ext();
     return ext_->displayName;
+  }
+  bool displayNameAuthored() const {
+    return ext_ && ext_->display_name_authored;
+  }
+  void setDisplayNameAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->display_name_authored = authored;
   }
   const std::string &instance_prototype() const {
     static const std::string kEmpty;
@@ -351,6 +542,21 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->apiSchemas;
   }
+  bool apiSchemasAuthored() const {
+    return ext_ && ext_->apiSchemasAuthored;
+  }
+  void setApiSchemasAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->apiSchemasAuthored = authored;
+  }
+  const StringListOpEdits &apiSchemaEdits() const {
+    static const StringListOpEdits kEmpty;
+    return ext_ ? ext_->apiSchemaEdits : kEmpty;
+  }
+  StringListOpEdits &apiSchemaEdits() {
+    ensure_ext();
+    return ext_->apiSchemaEdits;
+  }
   const std::string &apiSchemasQualifier() const {
     static const std::string kEmpty;
     return ext_ ? ext_->apiSchemasQualifier : kEmpty;
@@ -366,6 +572,36 @@ struct PrimSpecMeta {
   std::vector<VariantSetData> &variantSets() {
     ensure_ext();
     return ext_->variantSets;
+  }
+  const StringListOpEdits &variantSetNameEdits() const {
+    static const StringListOpEdits kEmpty;
+    return ext_ ? ext_->variantSetNameEdits : kEmpty;
+  }
+  StringListOpEdits &variantSetNameEdits() {
+    ensure_ext();
+    return ext_->variantSetNameEdits;
+  }
+  const StringListOpEdits &clipSetEdits() const {
+    static const StringListOpEdits kEmpty;
+    return ext_ ? ext_->clipSetEdits : kEmpty;
+  }
+  StringListOpEdits &clipSetEdits() {
+    ensure_ext();
+    return ext_->clipSetEdits;
+  }
+  bool primOrderAuthored() const {
+    return ext_ && ext_->primOrderAuthored;
+  }
+  void setPrimOrderAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->primOrderAuthored = authored;
+  }
+  bool propertyOrderAuthored() const {
+    return ext_ && ext_->propertyOrderAuthored;
+  }
+  void setPropertyOrderAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->propertyOrderAuthored = authored;
   }
   const std::vector<std::pair<std::string, std::string>> &variantSelections()
       const {
@@ -392,6 +628,13 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->customData;
   }
+  bool customDataAuthored() const {
+    return ext_ && ext_->customDataAuthored;
+  }
+  void setCustomDataAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->customDataAuthored = authored;
+  }
   const Value &assetInfo() const {
     static const Value kEmpty;
     return ext_ ? ext_->assetInfo : kEmpty;
@@ -399,6 +642,11 @@ struct PrimSpecMeta {
   Value &assetInfo() {
     ensure_ext();
     return ext_->assetInfo;
+  }
+  bool assetInfoAuthored() const { return ext_ && ext_->assetInfoAuthored; }
+  void setAssetInfoAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->assetInfoAuthored = authored;
   }
   const Value &sdrMetadata() const {
     static const Value kEmpty;
@@ -408,6 +656,13 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->sdrMetadata;
   }
+  bool sdrMetadataAuthored() const {
+    return ext_ && ext_->sdrMetadataAuthored;
+  }
+  void setSdrMetadataAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->sdrMetadataAuthored = authored;
+  }
   const Value &clips() const {
     static const Value kEmpty;
     return ext_ ? ext_->clips : kEmpty;
@@ -416,9 +671,29 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->clips;
   }
+  bool clipsAuthored() const { return ext_ && ext_->clipsAuthored; }
+  void setClipsAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->clipsAuthored = authored;
+  }
   const std::vector<std::string> &primOrder() const {
     static const std::vector<std::string> kEmpty;
     return ext_ ? ext_->primOrder : kEmpty;
+  }
+  const std::vector<std::string> &displayGroupOrder() const {
+    static const std::vector<std::string> kEmpty;
+    return ext_ ? ext_->displayGroupOrder : kEmpty;
+  }
+  std::vector<std::string> &displayGroupOrder() {
+    ensure_ext();
+    return ext_->displayGroupOrder;
+  }
+  bool displayGroupOrderAuthored() const {
+    return ext_ && ext_->displayGroupOrderAuthored;
+  }
+  void setDisplayGroupOrderAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->displayGroupOrderAuthored = authored;
   }
   std::vector<std::string> &primOrder() {
     ensure_ext();
@@ -435,6 +710,14 @@ struct PrimSpecMeta {
   const std::vector<std::pair<std::string, std::string>> &unknownMeta() const {
     static const std::vector<std::pair<std::string, std::string>> kEmpty;
     return ext_ ? ext_->unknownMeta : kEmpty;
+  }
+  const std::vector<TypedExtensionField> &unknownFields() const {
+    static const std::vector<TypedExtensionField> kEmpty;
+    return ext_ ? ext_->unknownFields : kEmpty;
+  }
+  std::vector<TypedExtensionField> &unknownFields() {
+    ensure_ext();
+    return ext_->unknownFields;
   }
   std::vector<std::pair<std::string, std::string>> &unknownMeta() {
     ensure_ext();
@@ -461,7 +744,7 @@ struct PropMeta {
     kWeight         = 1u << 12, kUnauthoredIdx = 1u << 13,
     kAllowedTokens  = 1u << 14, kCustomData    = 1u << 15,
     kAssetInfo      = 1u << 16, kSdrMetadata   = 1u << 17,
-    kUnknownMeta    = 1u << 18,
+    kUnknownMeta    = 1u << 18, kComment = 1u << 19,
   };
   // token / string fields
   std::string interpolation;   // constant/uniform/varying/vertex/faceVarying
@@ -474,6 +757,7 @@ struct PropMeta {
   std::string displayName;
   std::string displayGroup;
   std::string doc;
+  std::string comment;
   // scalar fields
   int32_t elementSize = 1;
   int32_t unauthoredValuesIndex = -1;
@@ -488,6 +772,7 @@ struct PropMeta {
   // authored order (key -> raw value text); the USDA writer re-emits it
   // verbatim so pipeline-specific opinions round-trip.
   std::vector<std::pair<std::string, std::string>> unknownMeta;
+  std::vector<TypedExtensionField> unknownFields;
 
   bool empty() const { return authored == 0; }
 };
@@ -799,6 +1084,7 @@ public:
     Prepend,
     Add,
     Delete,
+    Reorder,
   };
 
   /// Add a relationship target
@@ -855,6 +1141,21 @@ public:
   /// Author a connection BLOCK (`attr.connect = None`): an empty entry in the
   /// connection map (distinct from "no connection authored").
   void set_connection_block(const std::string& prop_name);
+
+  /// Exact authored connectionPaths list-op for this attribute.
+  const ArcEdit* connection_edit(const std::string& prop_name) const;
+  ArcEdit& ensure_connection_edit(const std::string& prop_name);
+
+  const std::vector<RelationshipOpinion>* connection_opinion_stack(
+      const std::string& prop_name) const;
+  void set_connection_opinion_stack(
+      const std::string& prop_name, std::vector<RelationshipOpinion> opinions);
+
+  void set_connection_targets(const std::string& prop_name,
+                              std::vector<Path> targets);
+  void apply_connection_list_op(const std::string& prop_name,
+                                const std::vector<Path>& targets,
+                                RelationshipListOp op);
 
   /// Get connection targets for an attribute (nullptr if none)
   const std::vector<Path>* connection(const std::string& prop_name) const;
@@ -957,6 +1258,9 @@ private:
   // (Keyed by PropNameId.id rather than a string to avoid a key string per
   // connected property on shader-heavy scenes.)
   std::unordered_map<uint32_t, std::vector<Path>> connections_;
+  std::unique_ptr<std::unordered_map<uint32_t, ArcEdit>> connection_edits_;
+  std::unordered_map<uint32_t, std::vector<RelationshipOpinion>>
+      connection_opinion_stacks_;
 
   // Raw USDA `.spline` values keyed by property id. Kept separate from Value
   // because spline is a specialized sampled field, not an attribute default.

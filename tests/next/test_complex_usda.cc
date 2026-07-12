@@ -392,8 +392,8 @@ def Xform "World"
 void test_parser_audit_2026_07() {
   std::cout << "Testing parser audit regressions..." << std::endl;
 
-  // H1: a list-edit qualifier before an ATTRIBUTE must be a hard error, not
-  // a silent drop (a dropped `delete X.connect` becomes an ADD).
+  // H1 follow-up: connection list-edit qualifiers are now modeled explicitly;
+  // a delete must be retained as a delete, never silently treated as an add.
   {
     const char* input = R"(#usda 1.0
 def Xform "W"
@@ -402,14 +402,12 @@ def Xform "W"
 }
 )";
     LoadResult r = LoadUSDAFromString(input);
-    assert(!r.success);
-    bool found = false;
-    for (const auto& err : r.errors) {
-      if (err.message.find("List-editing qualifier") != std::string::npos) {
-        found = true;
-      }
-    }
-    assert(found);
+    assert(r.success && r.stage.GetRootLayer());
+    const PrimSpec* prim = r.stage.GetRootLayer()->prim_at_path("/W");
+    assert(prim);
+    const ArcEdit* edit = prim->connection_edit("inputs:x");
+    assert(edit && edit->authored && !edit->is_explicit &&
+           edit->deleted == std::vector<std::string>{"/W/S.outputs:o"});
   }
 
   // H3: scalar int overflow must error (previously saturated silently).

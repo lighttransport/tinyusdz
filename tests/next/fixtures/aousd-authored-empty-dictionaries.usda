@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    customLayerData = {
+    }
+)
+
+def Scope "P" (
+    customData = {
+    }
+)
+{
+    int value = 1 (
+        customData = {
+        }
+    )
+}

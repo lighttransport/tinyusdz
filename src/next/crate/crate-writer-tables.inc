@@ -63,6 +63,7 @@
     InternToken("active");
     InternToken("hidden");
     InternToken("doc");
+    InternToken("documentation");
     InternToken("apiSchemas");
     InternToken("kind");
     InternToken("permission");
@@ -81,6 +82,8 @@
     InternToken("variants");
     InternToken("variantSelection");
     InternToken("customData");
+    InternToken("clips");
+    InternToken("clipSets");
     InternToken("comment");
     InternToken("subLayers");
 
@@ -106,10 +109,10 @@
     InternToken("Z");
 
     // Intern layer metadata
-    if (!layer.meta().defaultPrim.empty()) {
+    if (layer.meta().defaultPrim_set || !layer.meta().defaultPrim.empty()) {
       InternToken(layer.meta().defaultPrim);
     }
-    if (!layer.meta().doc.empty()) {
+    if (layer.meta().doc_set || !layer.meta().doc.empty()) {
       InternString(layer.meta().doc);
     }
 
@@ -124,9 +127,41 @@
       }
 
       // Metadata strings
-      if (!prim.meta().doc().empty()) InternString(prim.meta().doc());
+      if (prim.meta().doc_authored() || !prim.meta().doc().empty()) {
+        InternString(prim.meta().doc());
+      }
       for (const auto& schema : prim.meta().apiSchemas()) {
         InternToken(schema);
+      }
+      {
+        const StringListOpEdits& edits = prim.meta().apiSchemaEdits();
+        const std::vector<std::string>* lists[] = {
+            &edits.explicit_items, &edits.added, &edits.prepended,
+            &edits.appended, &edits.deleted, &edits.ordered};
+        for (const std::vector<std::string>* list : lists) {
+          for (const std::string& item : *list) InternToken(item);
+        }
+      }
+      {
+        const StringListOpEdits& edits = prim.meta().clipSetEdits();
+        const std::vector<std::string>* lists[] = {
+            &edits.explicit_items, &edits.added, &edits.prepended,
+            &edits.appended, &edits.deleted, &edits.ordered};
+        for (const std::vector<std::string>* list : lists) {
+          for (const std::string& item : *list) InternToken(item);
+        }
+      }
+      for (const auto& variant_set : prim.meta().variantSets()) {
+        InternString(variant_set.name);
+      }
+      {
+        const StringListOpEdits& edits = prim.meta().variantSetNameEdits();
+        const std::vector<std::string>* lists[] = {
+            &edits.explicit_items, &edits.added, &edits.prepended,
+            &edits.appended, &edits.deleted, &edits.ordered};
+        for (const std::vector<std::string>* list : lists) {
+          for (const std::string& item : *list) InternString(item);
+        }
       }
       for (const auto& ref : prim.meta().references) {
         InternString(ref);

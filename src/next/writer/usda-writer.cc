@@ -258,7 +258,7 @@ std::string DictMetaLine(const std::string& key, const Value& v, int level,
                          const USDAWriteOptions& opts) {
   if (!v.is_dictionary()) return "";
   const Dict* d = v.as_dictionary();
-  if (!d || d->empty()) return "";
+  if (!d) return "";
   PrintOptions print_opts;
   print_opts.indent = opts.indent;
   std::string base;
@@ -274,16 +274,20 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
 
   std::vector<std::string> lines;
 
-  if (!meta.defaultPrim.empty()) {
+  if (meta.defaultPrim_set || !meta.defaultPrim.empty()) {
     lines.push_back(opts.indent + "defaultPrim = " + EscapeString(meta.defaultPrim));
   }
 
-  if (!meta.doc.empty() && opts.include_comments) {
+  if ((meta.doc_set || !meta.doc.empty()) && opts.include_comments) {
     lines.push_back(opts.indent + "doc = " + EscapeString(meta.doc));
   }
 
-  if (!meta.comment.empty() && opts.include_comments) {
+  if ((meta.comment_set || !meta.comment.empty()) && opts.include_comments) {
     lines.push_back(opts.indent + "comment = " + EscapeString(meta.comment));
+  }
+
+  if (meta.owner_set || !meta.owner.empty()) {
+    lines.push_back(opts.indent + "owner = " + EscapeString(meta.owner));
   }
 
   if (meta.metersPerUnit_set || meta.metersPerUnit != 0.01) {
@@ -317,6 +321,13 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   for (const auto& um : meta.unknownMeta) {
     lines.push_back(opts.indent + um.first + " = " + um.second);
   }
+  for (const auto& field : meta.unknownFields) {
+    lines.push_back(opts.indent + field.name + " = " +
+                    (field.unregistered &&
+                             !field.unregistered_source.empty()
+                         ? field.unregistered_source
+                         : PrintValue(field.value, PrintOptions{})));
+  }
   if (!meta.relocates.empty()) {
     std::string s = opts.indent + "relocates = {\n";
     for (const auto& r : meta.relocates) {
@@ -326,20 +337,33 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     s += opts.indent + "}";
     lines.push_back(s);
   }
-  if (!meta.colorConfiguration.empty()) {
+  if (meta.colorConfiguration_set || !meta.colorConfiguration.empty()) {
     lines.push_back(opts.indent + "colorConfiguration = " +
                     FormatAssetPathForUsda(meta.colorConfiguration));
   }
 
-  if (!meta.colorManagementSystem.empty()) {
+  if (meta.colorManagementSystem_set || !meta.colorManagementSystem.empty()) {
     lines.push_back(opts.indent + "colorManagementSystem = " +
                     EscapeString(meta.colorManagementSystem));
   }
 
   {
-    std::string s = DictMetaLine("customLayerData", meta.customLayerData, 1, opts);
+    std::string s;
+    if (meta.customLayerData_set ||
+        (meta.customLayerData.is_dictionary() &&
+         meta.customLayerData.as_dictionary() &&
+         !meta.customLayerData.as_dictionary()->empty())) {
+      s = DictMetaLine("customLayerData", meta.customLayerData, 1, opts);
+    }
     if (!s.empty()) lines.push_back(opts.indent + s);
-    s = DictMetaLine("expressionVariables", meta.expressionVariables, 1, opts);
+    s.clear();
+    if (meta.expressionVariables_set ||
+        (meta.expressionVariables.is_dictionary() &&
+         meta.expressionVariables.as_dictionary() &&
+         !meta.expressionVariables.as_dictionary()->empty())) {
+      s = DictMetaLine("expressionVariables", meta.expressionVariables, 1,
+                       opts);
+    }
     if (!s.empty()) lines.push_back(opts.indent + s);
   }
 
@@ -404,6 +428,8 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     kv("displayGroup = " + EscapeString(m->displayGroup));
   if (m->authored & PropMeta::kDoc)
     kv("doc = " + EscapeString(m->doc));
+  if (m->authored & PropMeta::kComment)
+    kv("comment = " + EscapeString(m->comment));
   if (m->authored & PropMeta::kHidden)
     kv(std::string("hidden = ") + (m->hidden ? "true" : "false"));
   if (m->authored & PropMeta::kRenderType)
@@ -438,6 +464,12 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     for (const auto& um : m->unknownMeta) {
       kv(um.first + " = " + um.second);  // verbatim raw source text
     }
+  }
+  for (const auto& field : m->unknownFields) {
+    kv(field.name + " = " +
+       (field.unregistered && !field.unregistered_source.empty()
+            ? field.unregistered_source
+            : PrintValue(field.value, PrintOptions{})));
   }
   WriteIndent(os, depth, opts.indent);
   os << ")";
@@ -590,8 +622,9 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
 
   // Emit the leading `<indent><qualifiers><type> <name>` shared by the value
   // line and the `.connect` line (USDA repeats the type on each statement).
-  auto emit_decl = [&]() {
+  auto emit_decl = [&](const char* prefix = "") {
     WriteIndent(os, depth, opts.indent);
+    os << prefix;
     // `custom` is a deprecated qualifier; emit only under opt-in (--openusd-compat).
     if (opts.emit_custom && slot.is_custom()) os << "custom ";
     if (slot.is_uniform()) os << "uniform ";
@@ -639,24 +672,50 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
 
   // Connection statement: `<type> <name>.connect = </path>` (or `[...]`).
   if (has_conn) {
-    emit_decl();
-    os << ".connect = ";
-    if (conns->empty()) {
-      os << "None";
-    } else if (conns->size() == 1) {
-      os << "<" << (*conns)[0].str() << ">";
-    } else {
-      os << "[";
-      for (size_t i = 0; i < conns->size(); ++i) {
-        if (i) os << ", ";
-        os << "<" << (*conns)[i].str() << ">";
+    const ArcEdit* edit = spec.connection_edit(name);
+    auto emit_targets = [&](const std::vector<std::string>& targets) {
+      if (targets.empty()) {
+        os << "None";
+      } else if (targets.size() == 1) {
+        os << "<" << targets[0] << ">";
+      } else {
+        os << "[";
+        for (size_t i = 0; i < targets.size(); ++i) {
+          if (i) os << ", ";
+          os << "<" << targets[i] << ">";
+        }
+        os << "]";
       }
-      os << "]";
+    };
+    bool wrote_meta = has_value;
+    if (edit && edit->authored && !edit->is_explicit) {
+      auto emit_connection_op = [&](const char* qualifier,
+                                    const std::vector<std::string>& targets) {
+        if (targets.empty()) return;
+        emit_decl(qualifier);
+        os << ".connect = ";
+        emit_targets(targets);
+        if (!wrote_meta) {
+          WritePropMeta(os, spec, slot.name_id, depth, opts);
+          wrote_meta = true;
+        }
+        os << "\n";
+      };
+      emit_connection_op("add ", edit->added);
+      emit_connection_op("prepend ", edit->prepended);
+      emit_connection_op("append ", edit->appended);
+      emit_connection_op("delete ", edit->deleted);
+      emit_connection_op("reorder ", edit->ordered);
+    } else {
+      emit_decl();
+      os << ".connect = ";
+      std::vector<std::string> targets;
+      targets.reserve(conns->size());
+      for (const Path& path : *conns) targets.push_back(path.str());
+      emit_targets(targets);
+      if (!wrote_meta) WritePropMeta(os, spec, slot.name_id, depth, opts);
+      os << "\n";
     }
-    // Property metadata attaches once; emit on the value line if present, else
-    // here on the connection line.
-    if (!has_value) WritePropMeta(os, spec, slot.name_id, depth, opts);
-    os << "\n";
   }
 
   // Declared-only attribute (no value, no connection): emit the bare
@@ -675,9 +734,14 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
                        const USDAWriteOptions& opts) {
   const bool is_custom =
       (spec.relationship_flags(name) & PropSlot::kFlagCustom) != 0;
+  const uint16_t relationship_flags = spec.relationship_flags(name);
   auto head = [&]() {
     WriteIndent(os, depth, opts.indent);
     if (opts.emit_custom && is_custom) os << "custom ";
+    if (relationship_flags & PropSlot::kFlagVariabilityAuthored) {
+      os << ((relationship_flags & PropSlot::kFlagVarying) ? "varying "
+                                                           : "uniform ");
+    }
     os << "rel " << name;
   };
   auto targets_text = [&](const std::vector<std::string>& tgts) {
@@ -697,11 +761,13 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   // Authored list-op edits re-emit their qualifiers (a bare explicit list
   // changes composition semantics for delete/prepend against weaker layers).
   const ArcEdit* re = nullptr;
+  bool explicit_empty = false;
   {
     const auto& edits = spec.relationship_edits();
-    auto it = edits.find(name);
-    if (it != edits.end() && it->second.authored && !it->second.is_explicit) {
-      re = &it->second;
+    const auto it = edits.find(name);
+    if (it != edits.end() && it->second.authored) {
+      if (!it->second.is_explicit) re = &it->second;
+      else if (targets.empty()) explicit_empty = true;
     }
   }
   if (re) {
@@ -717,6 +783,7 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
       os << "\n";
       first = false;
     };
+    qual_line("add ", re->added);
     qual_line("prepend ", re->prepended);
     qual_line("append ", re->appended);
     qual_line("delete ", re->deleted);
@@ -731,8 +798,9 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
 
   head();
   if (targets.empty()) {
-    // Declared-only relationship: bare `rel name` (pxr re-parses it as a
-    // declaration; `= None` would author a block instead).
+    if (explicit_empty) os << " = None";
+    // Otherwise this is a declared-only relationship: bare `rel name` (pxr
+    // re-parses it without an authored targetPaths opinion).
   } else {
     std::vector<std::string> tgts;
     tgts.reserve(targets.size());
@@ -803,12 +871,19 @@ void WriteVariantSets(StreamWriter& os,
       // inline nested sets, or the holder's meta for crate-loaded layers.
       std::vector<std::pair<std::string, std::string>> o_sels;
       {
+        o_sels = var.variantSelections;
         const std::vector<VariantSetData>& nsets =
             !var.variantSets.empty()
                 ? var.variantSets
                 : (hmeta ? hmeta->variantSets() : var.variantSets);
         for (const VariantSetData& nvs : nsets) {
-          if (!nvs.selected.empty()) o_sels.emplace_back(nvs.name, nvs.selected);
+          if (!nvs.selected.empty()) {
+            bool have = false;
+            for (const auto& existing : o_sels) {
+              if (existing.first == nvs.name) { have = true; break; }
+            }
+            if (!have) o_sels.emplace_back(nvs.name, nvs.selected);
+          }
         }
         if (hmeta) {
           for (const auto& kv : hmeta->variantSelections()) {
@@ -999,15 +1074,22 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
   // All prim metadata goes in the parenthesized header section so it re-parses
   // (the parser reads prim metadata from `( ... )`, never from the prim body).
   const PrimSpecMeta& meta = spec.meta();
-  const bool has_doc = !meta.doc().empty() && opts.include_comments;
-  const bool has_comment = !meta.comment().empty() && opts.include_comments;
+  const bool has_doc = (meta.doc_authored() || !meta.doc().empty()) &&
+                       opts.include_comments;
+  const bool has_comment =
+      (meta.comment_authored() || !meta.comment().empty()) &&
+      opts.include_comments;
   auto has_dict = [](const Value& v) {
     return v.is_dictionary() && v.as_dictionary() && !v.as_dictionary()->empty();
   };
-  const bool has_customData = has_dict(meta.customData());
-  const bool has_assetInfo = has_dict(meta.assetInfo());
-  const bool has_sdr = has_dict(meta.sdrMetadata());
-  const bool has_clips = has_dict(meta.clips());
+  const bool has_customData =
+      meta.customDataAuthored() || has_dict(meta.customData());
+  const bool has_assetInfo =
+      meta.assetInfoAuthored() || has_dict(meta.assetInfo());
+  const bool has_sdr =
+      meta.sdrMetadataAuthored() || has_dict(meta.sdrMetadata());
+  const bool has_clips = meta.clipsAuthored() || has_dict(meta.clips());
+  const bool has_clip_set_edits = meta.clipSetEdits().authored;
   // An authored arc EDIT with empty inline lists still needs the metadata
   // block: explicit-clear (`references = None`) has no items but is a real
   // opinion.
@@ -1017,17 +1099,27 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                     arc_edits->payloads.has_authored_opinion() ||
                     arc_edits->inherits.has_authored_opinion() ||
                     arc_edits->specializes.has_authored_opinion());
+  const StringListOpEdits& variant_edits = meta.variantSetNameEdits();
+  const bool has_variant_edits =
+      variant_edits.authored &&
+      (variant_edits.is_explicit ? !variant_edits.explicit_items.empty()
+                                 : variant_edits.has_nonexplicit_items());
   bool has_meta = !meta.active || meta.hidden || meta.instanceable ||
                   meta.instanceable_authored ||
+                  meta.kindAuthored() || meta.displayNameAuthored() ||
+                  meta.displayGroupOrderAuthored() ||
                   !meta.kind().empty() || !meta.displayName().empty() ||
-                  has_doc || has_comment || !meta.apiSchemas().empty() ||
+                  has_doc || has_comment || meta.apiSchemasAuthored() ||
+                  !meta.apiSchemas().empty() ||
                   has_customData || has_assetInfo || has_sdr || has_clips ||
+                  has_clip_set_edits ||
                   !meta.references.empty() || !meta.payloads.empty() ||
                   !meta.inherits.empty() || !meta.specializes.empty() ||
                   has_arc_edits || !meta.relocates().empty() ||
                   !meta.variantSelections().empty() ||
                   !meta.variantSelection.empty() ||
-                  !meta.variantSets().empty() || !meta.unknownMeta().empty();
+                  has_variant_edits || !meta.variantSets().empty() ||
+                  !meta.unknownMeta().empty() || !meta.unknownFields().empty();
 
   if (has_meta) {
     const int md = depth + 1;
@@ -1043,24 +1135,55 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     else if (meta.hidden_authored) kv("hidden = false");
     if (meta.instanceable) kv("instanceable = true");
     else if (meta.instanceable_authored) kv("instanceable = false");
-    if (!meta.kind().empty()) kv("kind = " + EscapeString(meta.kind()));
-    if (!meta.displayName().empty())
+    if (meta.kindAuthored() || !meta.kind().empty())
+      kv("kind = " + EscapeString(meta.kind()));
+    if (meta.displayNameAuthored() || !meta.displayName().empty())
       kv("displayName = " + EscapeString(meta.displayName()));
+    if (meta.displayGroupOrderAuthored() ||
+        !meta.displayGroupOrder().empty()) {
+      std::string value = "displayGroupOrder = [";
+      for (size_t i = 0; i < meta.displayGroupOrder().size(); ++i) {
+        if (i) value += ", ";
+        value += EscapeString(meta.displayGroupOrder()[i]);
+      }
+      value += "]";
+      kv(value);
+    }
     if (has_doc) kv("doc = " + EscapeString(meta.doc()));
     if (has_comment) kv("comment = " + EscapeString(meta.comment()));
-    if (!meta.apiSchemas().empty()) {
-      std::string s;
-      if (!meta.apiSchemasQualifier().empty() &&
-          meta.apiSchemasQualifier() != "delete") {
-        s += meta.apiSchemasQualifier() + " ";
+    if (meta.apiSchemasAuthored() || !meta.apiSchemas().empty()) {
+      const StringListOpEdits& edits = meta.apiSchemaEdits();
+      auto write_api_op = [&](const char* qualifier,
+                              const std::vector<std::string>& schemas) {
+        if (schemas.empty()) return;
+        std::string s = qualifier;
+        s += "apiSchemas = [";
+        for (size_t i = 0; i < schemas.size(); ++i) {
+          if (i) s += ", ";
+          s += EscapeString(schemas[i]);
+        }
+        s += "]";
+        kv(s);
+      };
+      if (edits.authored) {
+        if (edits.is_explicit) {
+          if (edits.explicit_items.empty()) kv("apiSchemas = None");
+          else write_api_op("", edits.explicit_items);
+        } else {
+          write_api_op("delete ", edits.deleted);
+          write_api_op("add ", edits.added);
+          write_api_op("prepend ", edits.prepended);
+          write_api_op("append ", edits.appended);
+          write_api_op("reorder ", edits.ordered);
+        }
+      } else {
+        std::string qualifier;
+        if (!meta.apiSchemasQualifier().empty()) {
+          qualifier = meta.apiSchemasQualifier() + " ";
+        }
+        write_api_op(qualifier.c_str(), meta.apiSchemas());
+        if (meta.apiSchemas().empty()) kv("apiSchemas = None");
       }
-      s += "apiSchemas = [";
-      for (size_t i = 0; i < meta.apiSchemas().size(); ++i) {
-        if (i > 0) s += ", ";
-        s += "\"" + meta.apiSchemas()[i] + "\"";
-      }
-      s += "]";
-      kv(s);
     }
     if (!meta.relocates().empty()) {
       WriteIndent(os, md, opts.indent);
@@ -1076,10 +1199,41 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     if (has_assetInfo) kv(DictMetaLine("assetInfo", meta.assetInfo(), md, opts));
     if (has_sdr) kv(DictMetaLine("sdrMetadata", meta.sdrMetadata(), md, opts));
     if (has_clips) kv(DictMetaLine("clips", meta.clips(), md, opts));
+    if (has_clip_set_edits) {
+      const StringListOpEdits& edits = meta.clipSetEdits();
+      auto write_clip_set_op = [&](const char* qualifier,
+                                   const std::vector<std::string>& names) {
+        if (names.empty()) return;
+        std::string s = qualifier;
+        s += "clipSets = [";
+        for (size_t i = 0; i < names.size(); ++i) {
+          if (i) s += ", ";
+          s += EscapeString(names[i]);
+        }
+        s += "]";
+        kv(s);
+      };
+      if (edits.is_explicit) {
+        if (edits.explicit_items.empty()) kv("clipSets = None");
+        else write_clip_set_op("", edits.explicit_items);
+      } else {
+        write_clip_set_op("delete ", edits.deleted);
+        write_clip_set_op("add ", edits.added);
+        write_clip_set_op("prepend ", edits.prepended);
+        write_clip_set_op("append ", edits.appended);
+        write_clip_set_op("reorder ", edits.ordered);
+      }
+    }
     // Unknown (unmodeled) metadata preserved by the parser: re-emit the raw
     // authored value text verbatim (it re-parses back into unknownMeta).
     for (const auto& um : meta.unknownMeta()) {
       kv(um.first + " = " + um.second);
+    }
+    for (const auto& field : meta.unknownFields()) {
+      kv(field.name + " = " +
+         (field.unregistered && !field.unregistered_source.empty()
+              ? field.unregistered_source
+              : PrintValue(field.value, PrintOptions{})));
     }
 
     // Composition arcs, re-emitting the authored list-op qualifier (Phase 7 S5):
@@ -1109,9 +1263,11 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
           emit("", inl);  // bare/explicit list
         }
       } else {
+        emit("add ", e->added);
         emit("prepend ", e->prepended);
         emit("append ", e->appended);
         emit("delete ", e->deleted);
+        emit("reorder ", e->ordered);
       }
     };
     write_arc("references", meta.references,
@@ -1139,13 +1295,15 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       // USDA-parsed prim carries selections only in the plural list.
       std::vector<std::pair<std::string, std::string>> sels;
       auto add_sel = [&sels](const std::string& set, const std::string& v) {
-        if (set.empty() || v.empty()) return;
+        if (set.empty()) return;
         for (auto& kv : sels) {
           if (kv.first == set) return;  // first writer wins
         }
         sels.emplace_back(set, v);
       };
-      for (const auto& vs : meta.variantSets()) add_sel(vs.name, vs.selected);
+      for (const auto& vs : meta.variantSets()) {
+        if (!vs.selected.empty()) add_sel(vs.name, vs.selected);
+      }
       for (const auto& kv : meta.variantSelections()) {
         add_sel(kv.first, kv.second);
       }
@@ -1159,8 +1317,31 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       if (!sels.empty()) write_variants(sels);
     }
 
-    // Variant set declaration: `prepend variantSets = ["lod", ...]`.
-    if (!meta.variantSets().empty()) {
+    // Variant set declarations retain their exact authored SdfStringListOp
+    // sublists when USDA has a spelling for them. Explicit-empty is valid in
+    // USDC/API state but has no valid USDA text spelling and is omitted here.
+    if (has_variant_edits) {
+      auto write_variant_op = [&](const char* qualifier,
+                                  const std::vector<std::string>& names) {
+        if (names.empty()) return;
+        WriteIndent(os, md, opts.indent);
+        os << qualifier << "variantSets = [";
+        for (size_t i = 0; i < names.size(); ++i) {
+          if (i) os << ", ";
+          os << EscapeString(names[i]);
+        }
+        os << "]\n";
+      };
+      if (variant_edits.is_explicit) {
+        write_variant_op("", variant_edits.explicit_items);
+      } else {
+        write_variant_op("delete ", variant_edits.deleted);
+        write_variant_op("add ", variant_edits.added);
+        write_variant_op("prepend ", variant_edits.prepended);
+        write_variant_op("append ", variant_edits.appended);
+        write_variant_op("reorder ", variant_edits.ordered);
+      }
+    } else if (!variant_edits.authored && !meta.variantSets().empty()) {
       WriteIndent(os, md, opts.indent);
       os << "prepend variantSets = [";
       for (size_t i = 0; i < meta.variantSets().size(); ++i) {
@@ -1515,6 +1696,7 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   LayerMeta meta;
   const StageMeta& stage_meta = stage.GetMeta();
   meta.defaultPrim = stage_meta.defaultPrim;
+  meta.defaultPrim_set = stage_meta.defaultPrim_set;
   meta.upAxis = stage_meta.upAxis;
   meta.metersPerUnit = stage_meta.metersPerUnit;
   meta.timeCodesPerSecond = stage_meta.timeCodesPerSecond;
@@ -1531,17 +1713,26 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.kilogramsPerUnit_set = stage_meta.kilogramsPerUnit_set;
   meta.colorConfiguration = stage_meta.colorConfiguration;
   meta.colorManagementSystem = stage_meta.colorManagementSystem;
+  meta.colorConfiguration_set = stage_meta.colorConfiguration_set;
+  meta.colorManagementSystem_set = stage_meta.colorManagementSystem_set;
   meta.doc = stage_meta.doc;
   meta.comment = stage_meta.comment;
+  meta.owner = stage_meta.owner;
+  meta.doc_set = stage_meta.doc_set;
+  meta.comment_set = stage_meta.comment_set;
+  meta.owner_set = stage_meta.owner_set;
   // Dictionary-valued stage metadata and sublayer paths are not mirrored on
   // StageMeta; take them from the composed root layer directly.
   meta.customLayerData = root_layer->meta().customLayerData;
   meta.expressionVariables = root_layer->meta().expressionVariables;
+  meta.customLayerData_set = root_layer->meta().customLayerData_set;
+  meta.expressionVariables_set = root_layer->meta().expressionVariables_set;
   meta.subLayers = root_layer->meta().subLayers;
   meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
   meta.relocates = root_layer->meta().relocates;
   meta.unknownMeta = root_layer->meta().unknownMeta;
   meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
+  meta.rootPrimOrder_set = root_layer->meta().rootPrimOrder_set;
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   const int nthreads = ResolveWriteThreads(options.num_threads);

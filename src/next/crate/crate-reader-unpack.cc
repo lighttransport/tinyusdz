@@ -4,6 +4,7 @@
 // TinyUSDZ Next - USDC Crate Reader scalar/value unpackers
 
 #include "crate-reader-internal.hh"
+#include "../writer/value-printer.hh"
 #include "../types/spline.hh"
 
 #include <cstdint>
@@ -244,9 +245,55 @@ bool CrateReader::Impl::DecodeSplineToText(ValueRep rep, std::string* out) {
   std::string serr;
   if (!DecodeSplineBinary(blob.data(), blob.size(), &sd, &serr)) return false;
 
-  // Per-knot customData count follows; tinyusdz does not retain it, but a
-  // present-but-nonzero count is not an error (the entries live at their own
-  // offsets and do not disturb other value reads).
+  // Per-knot customData is an unordered_map<double, VtDictionary> written
+  // directly after the spline blob.
+  uint64_t custom_count = 0;
+  if (!reader_->read_u64(custom_count) ||
+      custom_count > options_.max_array_elements) {
+    return false;
+  }
+  for (uint64_t ci = 0; ci < custom_count; ++ci) {
+    double knot_time = 0.0;
+    uint64_t dict_count = 0;
+    if (!reader_->read_f64(knot_time) || !reader_->read_u64(dict_count) ||
+        dict_count > options_.max_array_elements) {
+      return false;
+    }
+    Value dict_value = Value::MakeDictionary();
+    Dict* dict = dict_value.as_dictionary();
+    for (uint64_t di = 0; di < dict_count; ++di) {
+      uint32_t key_index = 0;
+      if (!reader_->read_u32(key_index)) return false;
+      std::string key;
+      GetString(key_index, key);
+      const size_t value_start = reader_->position();
+      uint64_t recursive_offset_raw = 0;
+      if (!reader_->read_u64(recursive_offset_raw)) return false;
+      const size_t rep_position = static_cast<size_t>(
+          static_cast<int64_t>(value_start) +
+          static_cast<int64_t>(recursive_offset_raw));
+      if (!reader_->seek(rep_position)) return false;
+      uint64_t raw = 0;
+      if (!reader_->read_u64(raw)) return false;
+      const size_t next_entry = reader_->position();
+      ValueRep value_rep(raw);
+      Value value;
+      if (value_rep.type_id() == CrateTypeId::Dictionary) {
+        if (!DecodeDictionary(value_rep, value, 1)) return false;
+      } else if (value_rep.type_id() != CrateTypeId::Invalid &&
+                 !UnpackValue(value_rep, value)) {
+        return false;
+      }
+      dict->set(std::move(key), std::move(value));
+      if (!reader_->seek(next_entry)) return false;
+    }
+    for (SplineKnot& knot : sd.knots) {
+      if (knot.time == knot_time) {
+        knot.custom_data_source = PrintValue(dict_value);
+        break;
+      }
+    }
+  }
   *out = FormatSplineText(sd, "");
   return true;
 }

@@ -518,6 +518,24 @@
     }
   }
 
+  void _PatchEmbeddedValueReps(DataBlock* block) {
+    if (!block) return;
+    for (size_t offset : block->embedded_value_rep_offsets) {
+      if (offset + 8 > block->data.size()) continue;
+      uint64_t raw = 0;
+      std::memcpy(&raw, block->data.data() + offset, 8);
+      ValueRep rep(raw);
+      if (rep.is_inlined()) continue;
+      const uint64_t payload = rep.payload();
+      if (payload == 0 || payload >= value_offsets_.size()) continue;
+      const uint64_t absolute =
+          value_start_offset_ + value_offsets_[static_cast<size_t>(payload)];
+      raw = ValueRep::Make(rep.type_id(), absolute, rep.is_array(), false,
+                           rep.is_compressed()).raw();
+      std::memcpy(block->data.data() + offset, &raw, 8);
+    }
+  }
+
   // Compute the VALUE section layout (8-byte-aligned block offsets) and patch
   // every field/time-sample ValueRep with its absolute file offset. Returns the
   // total VALUE section size in bytes (== the offset just past the last block).
@@ -568,6 +586,7 @@
       if (value_data_[i].type == TypeId::Dictionary) {
         _PatchDictBlock(static_cast<uint64_t>(i));
       }
+      _PatchEmbeddedValueReps(&value_data_[i]);
     }
 
     return current_offset;

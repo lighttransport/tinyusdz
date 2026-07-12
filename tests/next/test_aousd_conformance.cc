@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "next/composition/composition.hh"
+#include "next/prim/identifier.hh"
 #include "next/eval/attribute-eval.hh"
+#include "next/pcp/cache.hh"
+#include "next/resolver/asset-resolver.hh"
 #include "next/reader/usda-reader.hh"
 #include "next/reader/usdc-reader.hh"
 #include "next/types/spline.hh"
 #include "next/writer/usda-writer.hh"
 #include "next/writer/usdc-writer.hh"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -30,6 +35,40 @@ std::unique_ptr<Layer> TakeLayer(LoadResult* result) {
   return result->stage.ReleaseRootLayer();
 }
 
+std::string UsdaFixturePath(const std::string& filename) {
+  const std::string file_path(__FILE__);
+  const std::string marker = "/tests/next/";
+  const size_t pos = file_path.rfind(marker);
+  assert(pos != std::string::npos);
+  return file_path.substr(0, pos) + "/tests/usda/" + filename;
+}
+
+std::string NextFixturePath(const std::string& filename) {
+  const std::string file_path(__FILE__);
+  const size_t slash = file_path.rfind('/');
+  assert(slash != std::string::npos);
+  return file_path.substr(0, slash) + "/fixtures/" + filename;
+}
+
+std::vector<uint8_t> ReadHexFixture(const std::string& filename) {
+  std::ifstream ifs(NextFixturePath(filename));
+  assert(ifs);
+  std::vector<uint8_t> bytes;
+  char hi = 0;
+  char lo = 0;
+  auto nibble = [](char c) -> uint8_t {
+    if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+    if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+    assert(c >= 'A' && c <= 'F');
+    return static_cast<uint8_t>(c - 'A' + 10);
+  };
+  while (ifs >> hi) {
+    assert(ifs >> lo);
+    bytes.push_back(static_cast<uint8_t>((nibble(hi) << 4) | nibble(lo)));
+  }
+  return bytes;
+}
+
 void TestUnicodeAndPaths() {
   LoadResult unicode = Parse("def Xform \"München\" {}\n", true);
   assert(unicode.success);
@@ -41,6 +80,25 @@ void TestUnicodeAndPaths() {
   LoadResult strict = Parse(invalid, true);
   assert(!strict.success);
   assert(strict.error_summary.find("Invalid AOUSD path") != std::string::npos);
+
+  // Table-driven boundaries from AOUSD Core §8.3. In particular, absolute
+  // paths use PrimFirstPathElements (at most one property element), while
+  // relative paths permit relational-property chains.
+  const char* valid_paths[] = {
+      "/", ".", "..", "../..", "../../Sibling", "../.points",
+      "Descendant", ".property", ".relationship.attribute",
+      "/City{ selection = NewYork }",
+      "/City/Street{selection=5thAvenue}",
+      "/City/Street{selection=}",
+  };
+  for (const char* path : valid_paths) assert(IsValidPathString(path));
+  const char* invalid_paths[] = {
+      "", "./Descendant/Prim", "/New York/New York", "/abc/123",
+      "/City/Street{=}", "/abc{123=}", "/Root/", "/Root//Child",
+      "/Prim/namespace:", "/Prim.:property", "/Prim.namespace::property",
+      "/Prim.abc:123", "/Prim.relationship.attribute",
+  };
+  for (const char* path : invalid_paths) assert(!IsValidPathString(path));
 }
 
 void TestLosslessUnsupportedValues() {
@@ -99,6 +157,29 @@ void TestLosslessUnsupportedValues() {
     assert(rew.find("pathExpression expr = \"/World//Mesh*\"") !=
            std::string::npos);
   }
+
+  // `opaque` and its `group` semantic alias can only agree with a ValueBlock.
+  // Strict mode must accept that normative form and preserve the declaration.
+  LoadResult opaque = Parse(
+      "def Scope \"O\" {\n"
+      "    opaque marker = None\n"
+      "    group bundle = None\n"
+      "}\n",
+      true);
+  assert(opaque.success);
+  const std::string opaque_usda = WriteUSDAToString(opaque.stage);
+  assert(opaque_usda.find("opaque marker = None") != std::string::npos);
+  assert(opaque_usda.find("group bundle = None") != std::string::npos);
+  std::vector<uint8_t> opaque_crate;
+  USDCWriteOptions opaque_write;
+  opaque_write.crate_options.strict_aousd_conformance = true;
+  assert(WriteUSDCToMemory(opaque_crate, opaque.stage, opaque_write).success);
+  USDCLoadResult opaque_back =
+      LoadUSDCFromMemory(opaque_crate.data(), opaque_crate.size());
+  assert(opaque_back.success);
+  const std::string opaque_crate_usda = WriteUSDAToString(opaque_back.stage);
+  assert(opaque_crate_usda.find("opaque marker = None") != std::string::npos);
+  assert(opaque_crate_usda.find("group bundle = None") != std::string::npos);
 }
 
 void TestSchemaRegistryBreadth() {
@@ -109,7 +190,10 @@ void TestSchemaRegistryBreadth() {
       "def Mesh \"M\" { }\n"
       "def Camera \"C\" { }\n"
       "def SphereLight \"L\" { }\n"
-      "def BasisCurves \"B\" { }\n";
+      "def BasisCurves \"B\" { }\n"
+      "def PointInstancer \"I\" { }\n"
+      "def Shader \"S\" { }\n"
+      "def Mesh \"Skinned\" (prepend apiSchemas = [\"SkelBindingAPI\"]) {}\n";
   LoadResult r = Parse("#usda 1.0\n" + usda, false);
   assert(r.success);
   auto expect_tok = [&](const char* prim, const char* attr,
@@ -130,6 +214,27 @@ void TestSchemaRegistryBreadth() {
     const SchemaPropertyDefinition* def =
         GetSchemaRegistry().FindProperty(*c.GetPrimSpec(), "clippingRange");
     assert(def && def->has_fallback);
+  }
+  const SchemaRegistry& registry = GetSchemaRegistry();
+  assert(registry.SchemaTypes().size() >= 30);
+  assert(registry.IsKnownSchema("SkelBindingAPI") &&
+         registry.IsKnownSchema("PhysicsMaterialAPI"));
+  {
+    const UsdPrim instancer = r.stage.GetPrimAtPath("/I");
+    const SchemaPropertyDefinition* def = registry.FindProperty(
+        *instancer.GetPrimSpec(), "protoIndices");
+    assert(def && !def->has_fallback && def->type_name == "int[]");
+  }
+  {
+    const UsdPrim shader = r.stage.GetPrimAtPath("/S");
+    const SchemaPropertyDefinition* def = registry.FindProperty(
+        *shader.GetPrimSpec(), "info:implementationSource");
+    assert(def && def->has_fallback && def->fallback.as_token() &&
+           *def->fallback.as_token() == "id");
+  }
+  {
+    const UsdPrim skinned = r.stage.GetPrimAtPath("/Skinned");
+    assert(registry.FindProperty(*skinned.GetPrimSpec(), "skel:joints"));
   }
   {
     UsdPrim l = r.stage.GetPrimAtPath("/L");
@@ -202,20 +307,112 @@ void TestDictionaryAndRelationshipComposition() {
   assert(stacked && stacked->size() == 3);
   assert((*stacked)[0].str() == "/B" && (*stacked)[1].str() == "/A" &&
          (*stacked)[2].str() == "/C");
+
+  // Property metadata resolves field-by-field. This matrix covers fields that
+  // the former hand-picked copier omitted, recursive dictionaries, unknown raw
+  // metadata, and typed extension dictionaries.
+  PrimSpec weak_prop("P"), strong_prop("P"), composed_prop("P");
+  weak_prop.add_property("x", Value(1.0f));
+  strong_prop.add_property("x", Value(2.0f));
+  weak_prop.meta().unknownMeta().push_back({"weakPrimMeta", "2"});
+  strong_prop.meta().unknownMeta().push_back({"strongPrimMeta", "1"});
+  PropMeta& weak_meta = weak_prop.ensure_property_meta("x");
+  weak_meta.renderType = "color";
+  weak_meta.connectability = "interfaceOnly";
+  weak_meta.allowedTokens = {"a", "b"};
+  weak_meta.authored |= PropMeta::kRenderType | PropMeta::kConnectability |
+                        PropMeta::kAllowedTokens | PropMeta::kCustomData |
+                        PropMeta::kAssetInfo | PropMeta::kUnknownMeta;
+  weak_meta.unknownMeta.push_back({"weakMeta", "17"});
+  weak_meta.customData = Value::MakeDictionary();
+  Value weak_nested = Value::MakeDictionary();
+  weak_nested.as_dictionary()->set("b", Value(int32_t(2)));
+  weak_meta.customData.as_dictionary()->set("nested", weak_nested);
+  weak_meta.assetInfo = Value::MakeDictionary();
+  weak_meta.assetInfo.as_dictionary()->set("weak", Value(true));
+
+  PropMeta& strong_meta = strong_prop.ensure_property_meta("x");
+  strong_meta.displayName = "Strong";
+  strong_meta.authored |= PropMeta::kDisplayName | PropMeta::kCustomData |
+                          PropMeta::kUnknownMeta;
+  strong_meta.unknownMeta.push_back({"strongMeta", "\"yes\""});
+  strong_meta.customData = Value::MakeDictionary();
+  Value strong_nested = Value::MakeDictionary();
+  strong_nested.as_dictionary()->set("a", Value(int32_t(9)));
+  strong_meta.customData.as_dictionary()->set("nested", strong_nested);
+
+  TypedExtensionField strong_extension;
+  strong_extension.name = "extensionDict";
+  strong_extension.unregistered = true;
+  strong_extension.unregistered_source =
+      "{ dictionary nested = { int a = 9 } }";
+  strong_extension.value = Value::MakeDictionary();
+  Value strong_extension_nested = Value::MakeDictionary();
+  strong_extension_nested.as_dictionary()->set("a", Value(int32_t(9)));
+  strong_extension.value.as_dictionary()->set("nested",
+                                               strong_extension_nested);
+  strong_meta.unknownFields.push_back(strong_extension);
+  TypedExtensionField weak_extension;
+  weak_extension.name = "extensionDict";
+  weak_extension.unregistered = true;
+  weak_extension.value = Value::MakeDictionary();
+  Value weak_extension_nested = Value::MakeDictionary();
+  weak_extension_nested.as_dictionary()->set("b", Value(int32_t(2)));
+  weak_extension.value.as_dictionary()->set("nested", weak_extension_nested);
+  weak_extension.value.as_dictionary()->set("weak", Value(true));
+  weak_meta.unknownFields.push_back(weak_extension);
+
+  Compositor::CopyLocalOpinions(composed_prop, strong_prop);
+  Compositor::CopyLocalOpinions(composed_prop, weak_prop);
+  const PropMeta* merged_meta = composed_prop.property_meta("x");
+  assert(merged_meta && merged_meta->displayName == "Strong" &&
+         merged_meta->renderType == "color" &&
+         merged_meta->connectability == "interfaceOnly" &&
+         merged_meta->allowedTokens == std::vector<std::string>({"a", "b"}) &&
+         merged_meta->assetInfo.as_dictionary()->find("weak") &&
+         merged_meta->unknownMeta.size() == 2);
+  assert(composed_prop.meta().unknownMeta().size() == 2 &&
+         "unknown prim metadata must fill by field name across sites");
+  const Dict* merged_custom = merged_meta->customData.as_dictionary();
+  const Dict* merged_nested =
+      merged_custom->find("nested")->as_dictionary();
+  assert(merged_nested->find("a") && merged_nested->find("b"));
+  assert(merged_meta->unknownFields.size() == 1);
+  const Dict* merged_extension =
+      merged_meta->unknownFields[0].value.as_dictionary();
+  const Dict* merged_extension_nested =
+      merged_extension->find("nested")->as_dictionary();
+  assert(merged_extension->find("weak") &&
+         merged_extension_nested->find("a") &&
+         merged_extension_nested->find("b") &&
+         merged_meta->unknownFields[0].unregistered_source.empty());
+
+  LoadResult extension_stage = Parse("def Scope \"P\" { float x = 2 }\n");
+  PrimSpec* extension_prim =
+      extension_stage.stage.GetRootLayer()->prim_at_path_mutable("/P");
+  extension_prim->ensure_property_meta("x") = *merged_meta;
+  std::vector<uint8_t> extension_crate;
+  assert(WriteUSDCToMemory(extension_crate, extension_stage.stage).success);
+  USDCLoadResult extension_back = LoadUSDCFromMemory(
+      extension_crate.data(), extension_crate.size());
+  assert(extension_back.success);
+  const PrimSpec* extension_back_prim =
+      extension_back.stage.GetRootLayer()->prim_at_path("/P");
+  const PropMeta* extension_back_meta =
+      extension_back_prim->property_meta("x");
+  assert(extension_back_meta && extension_back_meta->unknownFields.size() == 1);
+  const Dict* extension_back_dict =
+      extension_back_meta->unknownFields[0].value.as_dictionary();
+  assert(extension_back_dict && extension_back_dict->find("weak") &&
+         extension_back_dict->find("nested")->as_dictionary()->find("a") &&
+         extension_back_dict->find("nested")->as_dictionary()->find("b"));
 }
 
 void TestNamespaceOrdering() {
-  LoadResult result = Parse(
-      "reorder rootPrims = [\"B\", \"A\"]\n"
-      "def \"A\" {}\n"
-      "def \"B\" {\n"
-      "  reorder properties = [\"y\", \"x\"]\n"
-      "  reorder nameChildren = [\"D\", \"C\"]\n"
-      "  int x = 1\n"
-      "  int y = 2\n"
-      "  def \"C\" {}\n"
-      "  def \"D\" {}\n"
-      "}\n", true);
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult result = LoadUSDAFromFile(
+      UsdaFixturePath("aousd-namespace-order.usda"), strict);
   assert(result.success);
   const std::vector<UsdPrim> roots = result.stage.GetRootPrims();
   assert(roots.size() == 2 && roots[0].GetName() == "B" &&
@@ -225,12 +422,813 @@ void TestNamespaceOrdering() {
   assert(children.size() == 2 && children[0].GetName() == "D" &&
          children[1].GetName() == "C");
   const std::vector<std::string> properties = b.GetPropertyNames();
-  assert(properties.size() == 2 && properties[0] == "y" &&
-         properties[1] == "x");
+  const auto y = std::find(properties.begin(), properties.end(), "y");
+  const auto x = std::find(properties.begin(), properties.end(), "x");
+  assert(y != properties.end() && x != properties.end() && y < x);
   const std::string rewritten = WriteUSDAToString(result.stage);
   assert(rewritten.find("reorder rootPrims") != std::string::npos);
   assert(rewritten.find("reorder properties") != std::string::npos);
   assert(rewritten.find("reorder nameChildren") != std::string::npos);
+
+  // primOrder/propertyOrder are real population fields, not aliases for the
+  // natural primChildren/properties lists. They must survive Crate explicitly.
+  std::vector<uint8_t> crate;
+  assert(WriteUSDCToMemory(crate, result.stage).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success);
+  const std::vector<UsdPrim> crate_roots = back.stage.GetRootPrims();
+  assert(crate_roots.size() == 2 && crate_roots[0].GetName() == "B" &&
+         crate_roots[1].GetName() == "A");
+  const UsdPrim crate_b = back.stage.GetPrimAtPath("/B");
+  const std::vector<UsdPrim> crate_children = crate_b.GetChildren();
+  assert(crate_children.size() == 2 && crate_children[0].GetName() == "D" &&
+         crate_children[1].GetName() == "C");
+  const std::vector<std::string> crate_props = crate_b.GetPropertyNames();
+  const auto crate_y = std::find(crate_props.begin(), crate_props.end(), "y");
+  const auto crate_x = std::find(crate_props.begin(), crate_props.end(), "x");
+  assert(crate_y != crate_props.end() && crate_x != crate_props.end() &&
+         crate_y < crate_x);
+  const std::string crate_usda = WriteUSDAToString(back.stage);
+  assert(crate_usda.find("reorder rootPrims") != std::string::npos);
+  assert(crate_usda.find("reorder properties") != std::string::npos);
+  assert(crate_usda.find("reorder nameChildren") != std::string::npos);
+}
+
+void TestDefaultPrimReferenceEncoding() {
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult result = LoadUSDAFromFile(
+      UsdaFixturePath("aousd-defaultprim-reference.usda"), strict);
+  assert(result.success);
+  std::vector<uint8_t> crate;
+  assert(WriteUSDCToMemory(crate, result.stage).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success);
+  const std::string usda = WriteUSDAToString(back.stage);
+  assert(usda.find("@aousd-defaultprim-target.usda@") != std::string::npos);
+  assert(usda.find("@aousd-defaultprim-target.usda@</>") ==
+             std::string::npos &&
+         "omitted reference prim path must stay empty, not become </>");
+
+  // The empty path is semantic, not just textual: after the USDC round trip,
+  // composition must select the referenced layer's defaultPrim.
+  LoadResult target = LoadUSDAFromFile(
+      UsdaFixturePath("aousd-defaultprim-target.usda"), strict);
+  assert(target.success);
+  std::unique_ptr<Layer> target_layer = TakeLayer(&target);
+  std::unique_ptr<Layer> host_layer = back.stage.ReleaseRootLayer();
+  assert(host_layer);
+  Compositor compositor;
+  compositor.SetLayerLoader([&](const std::string& path, std::string*) {
+    if (path.find("aousd-defaultprim-target.usda") == std::string::npos)
+      return std::unique_ptr<Layer>();
+    return std::make_unique<Layer>(target_layer->Clone());
+  });
+  std::unique_ptr<Layer> composed =
+      compositor.Compose(*host_layer, "host.usdc");
+  assert(composed);
+  const PrimSpec* host = composed->prim_at_path("/Host");
+  assert(host);
+  const Value* marker = host->property_value("marker");
+  assert(marker && marker->as_int() && *marker->as_int() == 7 &&
+         "omitted reference path must compose the target defaultPrim");
+}
+
+void TestRelationshipForwarding() {
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult result = LoadUSDAFromFile(
+      NextFixturePath("aousd-relationship-forwarding.usda"), strict);
+  assert(result.success);
+
+  const UsdPrim foo = result.stage.GetPrimAtPath("/foo");
+  const std::vector<Path>* raw = foo.GetRelationship("myRel");
+  assert(raw && raw->size() == 3 && (*raw)[0] == Path("/foo/bar") &&
+         (*raw)[1] == Path("/baz.bazrel") &&
+         (*raw)[2] == Path("/foo/bar"));
+
+  std::vector<Path> forwarded;
+  assert(foo.GetForwardedRelationshipTargets("myRel", &forwarded));
+  assert(forwarded.size() == 4 && forwarded[0] == Path("/foo/bar") &&
+         forwarded[1] == Path("/foo/terminalAttr") &&
+         forwarded[2] == Path("/foo/foobar") &&
+         forwarded[3] == Path("/foo/foobar/barbaz") &&
+         "forwarding must recurse, preserve first-seen order, and deduplicate");
+
+  assert(foo.GetForwardedRelationshipTargets("cycle", &forwarded));
+  assert(forwarded.size() == 1 && forwarded[0] == Path("/foo/bar") &&
+         "relationship forwarding cycles must terminate");
+  assert(!foo.GetForwardedRelationshipTargets("missing", &forwarded));
+
+  std::vector<uint8_t> crate;
+  assert(WriteUSDCToMemory(crate, result.stage).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success);
+  const UsdPrim crate_foo = back.stage.GetPrimAtPath("/foo");
+  assert(crate_foo.GetForwardedRelationshipTargets("myRel", &forwarded));
+  assert(forwarded.size() == 4 && forwarded[0] == Path("/foo/bar") &&
+         forwarded[1] == Path("/foo/terminalAttr") &&
+         forwarded[2] == Path("/foo/foobar") &&
+         forwarded[3] == Path("/foo/foobar/barbaz") &&
+         "forwarding semantics must survive USDC round-trip");
+}
+
+void TestAuthoredEmptyMetadata() {
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult default_prim = LoadUSDAFromFile(
+      NextFixturePath("aousd-authored-empty-defaultprim.usda"), strict);
+  assert(default_prim.success);
+  const Layer* default_prim_layer = default_prim.stage.GetRootLayer();
+  assert(default_prim_layer && default_prim_layer->meta().defaultPrim_set &&
+         default_prim_layer->meta().defaultPrim.empty());
+  assert(WriteUSDAToString(default_prim.stage).find("defaultPrim = \"\"") !=
+         std::string::npos);
+  std::vector<uint8_t> default_prim_crate;
+  assert(WriteUSDCToMemory(default_prim_crate, default_prim.stage).success);
+  USDCLoadResult default_prim_back = LoadUSDCFromMemory(
+      default_prim_crate.data(), default_prim_crate.size());
+  assert(default_prim_back.success);
+  const Layer* default_prim_back_layer =
+      default_prim_back.stage.GetRootLayer();
+  assert(default_prim_back_layer &&
+         default_prim_back_layer->meta().defaultPrim_set &&
+         default_prim_back_layer->meta().defaultPrim.empty());
+
+  LoadResult weak_default = Parse("(defaultPrim = \"Weak\")\n"
+                                  "def Scope \"Weak\" {}\n", true);
+  assert(weak_default.success);
+  std::unique_ptr<Layer> strong_default_layer = TakeLayer(&default_prim);
+  std::unique_ptr<Layer> weak_default_layer = TakeLayer(&weak_default);
+  assert(strong_default_layer && weak_default_layer);
+  strong_default_layer->meta().FillAbsentStageMetaFrom(
+      weak_default_layer->meta());
+  assert(strong_default_layer->meta().defaultPrim_set &&
+         strong_default_layer->meta().defaultPrim.empty() &&
+         "authored-empty defaultPrim must block a weaker defaultPrim");
+
+  LoadResult result = LoadUSDAFromFile(
+      NextFixturePath("aousd-authored-empty-metadata.usda"), strict);
+  assert(result.success);
+  const Layer* layer = result.stage.GetRootLayer();
+  assert(layer && layer->meta().doc_set && layer->meta().doc.empty());
+  const UsdPrim prim = result.stage.GetPrimAtPath("/P");
+  assert(prim && prim.GetMeta().doc_authored() && prim.GetMeta().doc().empty());
+  const PropMeta* property_meta = prim.GetPropertyMeta("value");
+  assert(property_meta && (property_meta->authored & PropMeta::kDoc) &&
+         property_meta->doc.empty());
+
+  auto count_empty_docs = [](const std::string& text) {
+    size_t count = 0;
+    size_t pos = 0;
+    while ((pos = text.find("doc = \"\"", pos)) != std::string::npos) {
+      ++count;
+      pos += 8;
+    }
+    return count;
+  };
+  assert(count_empty_docs(WriteUSDAToString(result.stage)) == 3 &&
+         "layer, prim, and property authored-empty documentation must survive");
+
+  std::vector<uint8_t> crate;
+  USDCWriteOptions write_options;
+  write_options.crate_options.strict_aousd_conformance = true;
+  assert(WriteUSDCToMemory(crate, result.stage, write_options).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success);
+  assert(count_empty_docs(WriteUSDAToString(back.stage)) == 3 &&
+         "USDC documentation must use the standard field and retain authored state");
+
+  LoadResult empty_prim_strings = Parse(
+      "over \"P\" (kind = \"\" displayName = \"\" comment = \"\") {}\n",
+      true);
+  assert(empty_prim_strings.success);
+  const UsdPrim empty_strings_prim =
+      empty_prim_strings.stage.GetPrimAtPath("/P");
+  assert(empty_strings_prim.GetMeta().kindAuthored() &&
+         empty_strings_prim.GetMeta().displayNameAuthored() &&
+         empty_strings_prim.GetMeta().comment_authored());
+  LoadResult weak_prim_strings = Parse(
+      "def \"P\" (kind = \"component\" displayName = \"Weak\" "
+      "comment = \"Weak comment\") {}\n",
+      true);
+  PrimSpec merged_strings("P");
+  Compositor::CopyLocalOpinions(
+      merged_strings, *empty_prim_strings.stage.GetRootLayer()->prim_at_path("/P"));
+  Compositor::CopyLocalOpinions(
+      merged_strings, *weak_prim_strings.stage.GetRootLayer()->prim_at_path("/P"));
+  assert(merged_strings.meta().kindAuthored() &&
+         merged_strings.meta().kind().empty() &&
+         merged_strings.meta().displayNameAuthored() &&
+         merged_strings.meta().displayName().empty() &&
+         merged_strings.meta().comment_authored() &&
+         merged_strings.meta().comment().empty() &&
+         "authored-empty prim strings must block weaker opinions");
+  std::vector<uint8_t> empty_strings_crate;
+  assert(WriteUSDCToMemory(empty_strings_crate,
+                           empty_prim_strings.stage).success);
+  USDCLoadResult empty_strings_back = LoadUSDCFromMemory(
+      empty_strings_crate.data(), empty_strings_crate.size());
+  assert(empty_strings_back.success);
+  const UsdPrim empty_strings_back_prim =
+      empty_strings_back.stage.GetPrimAtPath("/P");
+  assert(empty_strings_back_prim.GetMeta().kindAuthored() &&
+         empty_strings_back_prim.GetMeta().displayNameAuthored() &&
+         empty_strings_back_prim.GetMeta().comment_authored());
+  const std::string empty_strings_usda =
+      WriteUSDAToString(empty_strings_back.stage);
+  assert(empty_strings_usda.find("kind = \"\"") != std::string::npos &&
+         empty_strings_usda.find("displayName = \"\"") !=
+             std::string::npos &&
+         empty_strings_usda.find("comment = \"\"") != std::string::npos);
+
+  LoadResult empty_variant_selection = Parse(
+      "over \"V\" (variants = { string look = \"\" }) {}\n", true);
+  assert(empty_variant_selection.success);
+  const PrimSpec* empty_variant_prim =
+      empty_variant_selection.stage.GetRootLayer()->prim_at_path("/V");
+  const std::vector<std::pair<std::string, std::string>> empty_look = {
+      {"look", ""}};
+  assert(empty_variant_prim &&
+         empty_variant_prim->meta().variantSelections() == empty_look);
+  assert(WriteUSDAToString(empty_variant_selection.stage)
+             .find("string look = \"\"") != std::string::npos);
+  std::vector<uint8_t> empty_variant_crate;
+  assert(WriteUSDCToMemory(empty_variant_crate,
+                           empty_variant_selection.stage).success);
+  USDCLoadResult empty_variant_back = LoadUSDCFromMemory(
+      empty_variant_crate.data(), empty_variant_crate.size());
+  assert(empty_variant_back.success);
+  const PrimSpec* empty_variant_back_prim =
+      empty_variant_back.stage.GetRootLayer()->prim_at_path("/V");
+  assert(empty_variant_back_prim &&
+         empty_variant_back_prim->meta().variantSelections() == empty_look &&
+         "an authored empty selection must survive USDC and block weaker "
+         "variant selections");
+  PrimSpec empty_variant_merged("V");
+  PrimSpec weak_variant("V");
+  weak_variant.meta().variantSelections().push_back({"look", "red"});
+  Compositor::CopyLocalOpinions(empty_variant_merged,
+                                *empty_variant_back_prim);
+  Compositor::CopyLocalOpinions(empty_variant_merged, weak_variant);
+  assert(empty_variant_merged.meta().variantSelections() == empty_look);
+
+  LoadResult dictionaries = LoadUSDAFromFile(
+      NextFixturePath("aousd-authored-empty-dictionaries.usda"), strict);
+  assert(dictionaries.success);
+  const Layer* dict_layer = dictionaries.stage.GetRootLayer();
+  const UsdPrim dict_prim = dictionaries.stage.GetPrimAtPath("/P");
+  const PropMeta* dict_prop = dict_prim.GetPropertyMeta("value");
+  assert(dict_layer && dict_layer->meta().customLayerData_set &&
+         dict_prim.GetMeta().customDataAuthored() && dict_prop &&
+         (dict_prop->authored & PropMeta::kCustomData));
+  auto count = [](const std::string& text, const std::string& needle) {
+    size_t n = 0;
+    for (size_t pos = 0; (pos = text.find(needle, pos)) != std::string::npos;
+         pos += needle.size()) {
+      ++n;
+    }
+    return n;
+  };
+  const std::string dict_usda = WriteUSDAToString(dictionaries.stage);
+  assert(count(dict_usda, "customLayerData = {") == 1);
+  assert(count(dict_usda, "customData = {") == 2 &&
+         "authored-empty dictionaries must survive at all core scopes");
+  std::vector<uint8_t> dict_crate;
+  assert(WriteUSDCToMemory(dict_crate, dictionaries.stage).success);
+  USDCLoadResult dict_back =
+      LoadUSDCFromMemory(dict_crate.data(), dict_crate.size());
+  assert(dict_back.success);
+  const std::string dict_back_usda = WriteUSDAToString(dict_back.stage);
+  assert(count(dict_back_usda, "customLayerData = {") == 1);
+  assert(count(dict_back_usda, "customData = {") == 2);
+
+  LoadResult color = LoadUSDAFromFile(
+      NextFixturePath("aousd-authored-empty-color.usda"), strict);
+  assert(color.success);
+  const Layer* color_layer = color.stage.GetRootLayer();
+  assert(color_layer && color_layer->meta().colorConfiguration_set &&
+         color_layer->meta().colorManagementSystem_set &&
+         color_layer->meta().colorConfiguration.empty() &&
+         color_layer->meta().colorManagementSystem.empty());
+  const std::string color_usda = WriteUSDAToString(color.stage);
+  assert(color_usda.find("colorConfiguration = @@") != std::string::npos);
+  assert(color_usda.find("colorManagementSystem = \"\"") !=
+         std::string::npos);
+  std::vector<uint8_t> color_crate;
+  assert(WriteUSDCToMemory(color_crate, color.stage).success);
+  USDCLoadResult color_back =
+      LoadUSDCFromMemory(color_crate.data(), color_crate.size());
+  assert(color_back.success);
+  const std::string color_back_usda = WriteUSDAToString(color_back.stage);
+  assert(color_back_usda.find("colorConfiguration = @@") !=
+         std::string::npos);
+  assert(color_back_usda.find("colorManagementSystem = \"\"") !=
+         std::string::npos);
+
+  // OpenUSD-authored USDC can retain authored-empty namespace ordering even
+  // though USDA rejects `reorder ... = []`. Preserve that field presence in
+  // the layer model and when writing another crate. The same oracle fixture
+  // also carries an explicit-empty variantSetNames list-op; that richer
+  // list-op authored state is audited separately.
+  const std::vector<uint8_t> empty_order_fixture =
+      ReadHexFixture("aousd-authored-empty-orders.usdc.hex");
+  USDCLoadResult empty_orders = LoadUSDCFromMemory(
+      empty_order_fixture.data(), empty_order_fixture.size());
+  assert(empty_orders.success);
+  const Layer* empty_order_layer = empty_orders.stage.GetRootLayer();
+  const UsdPrim empty_order_prim = empty_orders.stage.GetPrimAtPath("/P");
+  assert(empty_order_layer && empty_order_layer->meta().rootPrimOrder_set &&
+         empty_order_layer->meta().rootPrimOrder.empty());
+  assert(empty_order_prim && empty_order_prim.GetMeta().primOrderAuthored() &&
+         empty_order_prim.GetMeta().primOrder().empty() &&
+         empty_order_prim.GetMeta().propertyOrderAuthored() &&
+         empty_order_prim.GetMeta().propertyOrder().empty());
+
+  std::vector<uint8_t> empty_order_crate;
+  assert(WriteUSDCToMemory(empty_order_crate, empty_orders.stage).success);
+  USDCLoadResult empty_order_back = LoadUSDCFromMemory(
+      empty_order_crate.data(), empty_order_crate.size());
+  assert(empty_order_back.success);
+  const Layer* empty_order_back_layer = empty_order_back.stage.GetRootLayer();
+  const UsdPrim empty_order_back_prim =
+      empty_order_back.stage.GetPrimAtPath("/P");
+  assert(empty_order_back_layer &&
+         empty_order_back_layer->meta().rootPrimOrder_set);
+  assert(empty_order_back_prim &&
+         empty_order_back_prim.GetMeta().primOrderAuthored() &&
+         empty_order_back_prim.GetMeta().propertyOrderAuthored());
+}
+
+void TestSpecifierResolution() {
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult strong = LoadUSDAFromFile(
+      NextFixturePath("aousd-specifier-strong.usda"), strict);
+  LoadResult weak = LoadUSDAFromFile(
+      NextFixturePath("aousd-specifier-weak.usda"), strict);
+  assert(strong.success && weak.success);
+  std::unique_ptr<Layer> strong_layer = TakeLayer(&strong);
+  std::unique_ptr<Layer> weak_layer = TakeLayer(&weak);
+  assert(strong_layer && weak_layer);
+
+  Compositor compositor;
+  compositor.SetLayerLoader([&](const std::string& path, std::string*) {
+    if (path.find("aousd-specifier-weak.usda") == std::string::npos) {
+      return std::unique_ptr<Layer>();
+    }
+    return std::make_unique<Layer>(weak_layer->Clone());
+  });
+  std::unique_ptr<Layer> composed =
+      compositor.Compose(*strong_layer, "aousd-specifier-strong.usda");
+  assert(composed);
+  assert(composed->prim_at_path("/WeakDefStrongOver")->specifier() ==
+         PrimSpecifier::Def);
+  assert(composed->prim_at_path("/WeakClassStrongOver")->specifier() ==
+         PrimSpecifier::Class &&
+         "a stronger over backed by a weaker class resolves as class");
+  assert(composed->prim_at_path("/WeakDefStrongClass")->specifier() ==
+         PrimSpecifier::Class);
+  assert(composed->prim_at_path("/WeakClassStrongDef")->specifier() ==
+         PrimSpecifier::Def);
+
+  LoadResult inherit_strong = LoadUSDAFromFile(
+      NextFixturePath("aousd-specifier-inherit-strong.usda"), strict);
+  LoadResult inherit_weak = LoadUSDAFromFile(
+      NextFixturePath("aousd-specifier-inherit-weak.usda"), strict);
+  assert(inherit_strong.success && inherit_weak.success);
+  std::unique_ptr<Layer> inherit_strong_layer = TakeLayer(&inherit_strong);
+  std::unique_ptr<Layer> inherit_weak_layer = TakeLayer(&inherit_weak);
+  Compositor inherit_compositor;
+  inherit_compositor.SetLayerLoader(
+      [&](const std::string& path, std::string*) {
+        if (path.find("aousd-specifier-inherit-weak.usda") ==
+            std::string::npos) {
+          return std::unique_ptr<Layer>();
+        }
+        return std::make_unique<Layer>(inherit_weak_layer->Clone());
+      });
+  std::unique_ptr<Layer> inherited = inherit_compositor.Compose(
+      *inherit_strong_layer, "aousd-specifier-inherit-strong.usda");
+  assert(inherited);
+  assert(inherited->prim_at_path("/OnlyInheritedClass")->specifier() ==
+         PrimSpecifier::Class);
+  assert(inherited->prim_at_path("/OnlyInheritedDef")->specifier() ==
+         PrimSpecifier::Def);
+  assert(inherited->prim_at_path("/LocalDefVsInheritedClass")->specifier() ==
+         PrimSpecifier::Def);
+  assert(inherited->prim_at_path("/LocalClassVsInheritedDef")->specifier() ==
+         PrimSpecifier::Class &&
+         "weaker local and direct-inherit specifier rules must match AOUSD");
+
+  LoadResult multi = LoadUSDAFromFile(
+      NextFixturePath("aousd-specifier-specializes.usda"), strict);
+  assert(multi.success);
+  std::unique_ptr<Layer> multi_layer = TakeLayer(&multi);
+  Compositor multi_compositor;
+  std::unique_ptr<Layer> multi_composed =
+      multi_compositor.Compose(*multi_layer, "specifier-specializes.usda");
+  assert(multi_composed);
+  assert(multi_composed->prim_at_path("/TwoInherits")->specifier() ==
+         PrimSpecifier::Def);
+  assert(multi_composed->prim_at_path("/TwoInheritsReversed")->specifier() ==
+         PrimSpecifier::Def &&
+         "a def among direct inherits must concretely define in either order");
+  assert(multi_composed->prim_at_path("/TwoSpecializes")->specifier() ==
+         PrimSpecifier::Class &&
+         "specializes remain strength-ordered rather than def-preferred");
+}
+
+void TestVariantSetListOpFidelity() {
+  LoadResult text = Parse(
+      "def Scope \"Text\" (\n"
+      "  add variantSets = [\"add\"]\n"
+      "  prepend variantSets = [\"pre\"]\n"
+      "  append variantSets = [\"app\"]\n"
+      "  delete variantSets = [\"del\"]\n"
+      "  reorder variantSets = [\"ord\"]\n"
+      ") {}\n",
+      true);
+  assert(text.success);
+  const StringListOpEdits& text_edits =
+      text.stage.GetPrimAtPath("/Text").GetMeta().variantSetNameEdits();
+  assert(text_edits.added == std::vector<std::string>{"add"} &&
+         text_edits.prepended == std::vector<std::string>{"pre"} &&
+         text_edits.appended == std::vector<std::string>{"app"} &&
+         text_edits.deleted == std::vector<std::string>{"del"} &&
+         text_edits.ordered == std::vector<std::string>{"ord"});
+
+  const std::vector<uint8_t> oracle =
+      ReadHexFixture("aousd-variantset-listops.usdc.hex");
+  USDCLoadResult loaded = LoadUSDCFromMemory(oracle.data(), oracle.size());
+  assert(loaded.success);
+  auto edits = [&](const char* path) -> const StringListOpEdits& {
+    const UsdPrim prim = loaded.stage.GetPrimAtPath(path);
+    assert(prim);
+    return prim.GetMeta().variantSetNameEdits();
+  };
+  assert(edits("/ExplicitEmpty").authored &&
+         edits("/ExplicitEmpty").is_explicit &&
+         edits("/ExplicitEmpty").explicit_items.empty());
+  assert(edits("/Explicit").is_explicit &&
+         edits("/Explicit").explicit_items ==
+             std::vector<std::string>{"explicit"});
+  assert(edits("/Prepended").prepended ==
+         std::vector<std::string>{"pre"});
+  assert(edits("/Appended").appended ==
+         std::vector<std::string>{"app"});
+  assert(edits("/Added").added == std::vector<std::string>{"add"});
+  assert(edits("/Deleted").deleted == std::vector<std::string>{"del"});
+  assert(edits("/Ordered").ordered == std::vector<std::string>{"ord"});
+  const StringListOpEdits& mixed = edits("/Mixed");
+  assert(mixed.authored && !mixed.is_explicit &&
+         mixed.added == std::vector<std::string>{"add"} &&
+         mixed.prepended == std::vector<std::string>{"pre"} &&
+         mixed.appended == std::vector<std::string>{"app"} &&
+         mixed.deleted == std::vector<std::string>{"del"} &&
+         mixed.ordered == std::vector<std::string>{"ord"});
+
+  const std::string usda = WriteUSDAToString(loaded.stage);
+  assert(usda.find("variantSets = [\"explicit\"]") != std::string::npos);
+  assert(usda.find("add variantSets = [\"add\"]") != std::string::npos);
+  assert(usda.find("prepend variantSets = [\"pre\"]") !=
+         std::string::npos);
+  assert(usda.find("append variantSets = [\"app\"]") !=
+         std::string::npos);
+  assert(usda.find("delete variantSets = [\"del\"]") !=
+         std::string::npos);
+  assert(usda.find("reorder variantSets = [\"ord\"]") !=
+         std::string::npos);
+
+  std::vector<uint8_t> rewritten;
+  assert(WriteUSDCToMemory(rewritten, loaded.stage).success);
+  USDCLoadResult back =
+      LoadUSDCFromMemory(rewritten.data(), rewritten.size());
+  assert(back.success);
+  const UsdPrim empty_back = back.stage.GetPrimAtPath("/ExplicitEmpty");
+  const UsdPrim mixed_back = back.stage.GetPrimAtPath("/Mixed");
+  assert(empty_back && empty_back.GetMeta().variantSetNameEdits().authored &&
+         empty_back.GetMeta().variantSetNameEdits().is_explicit &&
+         empty_back.GetMeta().variantSetNameEdits().explicit_items.empty());
+  assert(mixed_back &&
+         mixed_back.GetMeta().variantSetNameEdits().added ==
+             std::vector<std::string>{"add"} &&
+         mixed_back.GetMeta().variantSetNameEdits().prepended ==
+             std::vector<std::string>{"pre"} &&
+         mixed_back.GetMeta().variantSetNameEdits().appended ==
+             std::vector<std::string>{"app"} &&
+         mixed_back.GetMeta().variantSetNameEdits().deleted ==
+             std::vector<std::string>{"del"} &&
+         mixed_back.GetMeta().variantSetNameEdits().ordered ==
+             std::vector<std::string>{"ord"});
+}
+
+void TestApiSchemaListOpFidelity() {
+  LoadResult text = Parse(
+      "def Scope \"Empty\" (apiSchemas = None) {}\n"
+      "def Scope \"Text\" (\n"
+      "  add apiSchemas = [\"AddAPI\"]\n"
+      "  prepend apiSchemas = [\"PreAPI\"]\n"
+      "  append apiSchemas = [\"AppAPI\"]\n"
+      "  delete apiSchemas = [\"DelAPI\"]\n"
+      "  reorder apiSchemas = [\"OrdAPI\"]\n"
+      ") {}\n",
+      true);
+  assert(text.success);
+  const StringListOpEdits& empty_text =
+      text.stage.GetPrimAtPath("/Empty").GetMeta().apiSchemaEdits();
+  const StringListOpEdits& mixed_text =
+      text.stage.GetPrimAtPath("/Text").GetMeta().apiSchemaEdits();
+  assert(empty_text.authored && empty_text.is_explicit &&
+         empty_text.explicit_items.empty());
+  assert(mixed_text.added == std::vector<std::string>{"AddAPI"} &&
+         mixed_text.prepended == std::vector<std::string>{"PreAPI"} &&
+         mixed_text.appended == std::vector<std::string>{"AppAPI"} &&
+         mixed_text.deleted == std::vector<std::string>{"DelAPI"} &&
+         mixed_text.ordered == std::vector<std::string>{"OrdAPI"});
+
+  const std::vector<uint8_t> oracle =
+      ReadHexFixture("aousd-apischemas-listops.usdc.hex");
+  USDCLoadResult loaded = LoadUSDCFromMemory(oracle.data(), oracle.size());
+  assert(loaded.success);
+  auto edits = [&](const char* path) -> const StringListOpEdits& {
+    const UsdPrim prim = loaded.stage.GetPrimAtPath(path);
+    assert(prim);
+    return prim.GetMeta().apiSchemaEdits();
+  };
+  assert(edits("/ExplicitEmpty").authored &&
+         edits("/ExplicitEmpty").is_explicit &&
+         edits("/ExplicitEmpty").explicit_items.empty());
+  assert(edits("/Explicit").explicit_items ==
+         std::vector<std::string>{"ExplicitAPI"});
+  assert(edits("/Prepended").prepended ==
+         std::vector<std::string>{"PreAPI"});
+  assert(edits("/Appended").appended ==
+         std::vector<std::string>{"AppAPI"});
+  assert(edits("/Added").added == std::vector<std::string>{"AddAPI"});
+  assert(edits("/Deleted").deleted == std::vector<std::string>{"DelAPI"});
+  assert(edits("/Ordered").ordered == std::vector<std::string>{"OrdAPI"});
+  const StringListOpEdits& mixed = edits("/Mixed");
+  assert(mixed.added == std::vector<std::string>{"AddAPI"} &&
+         mixed.prepended == std::vector<std::string>{"PreAPI"} &&
+         mixed.appended == std::vector<std::string>{"AppAPI"} &&
+         mixed.deleted == std::vector<std::string>{"DelAPI"} &&
+         mixed.ordered == std::vector<std::string>{"OrdAPI"});
+
+  const std::string usda = WriteUSDAToString(loaded.stage);
+  assert(usda.find("apiSchemas = None") != std::string::npos);
+  assert(usda.find("add apiSchemas = [\"AddAPI\"]") != std::string::npos);
+  assert(usda.find("prepend apiSchemas = [\"PreAPI\"]") !=
+         std::string::npos);
+  assert(usda.find("append apiSchemas = [\"AppAPI\"]") !=
+         std::string::npos);
+  assert(usda.find("delete apiSchemas = [\"DelAPI\"]") !=
+         std::string::npos);
+  assert(usda.find("reorder apiSchemas = [\"OrdAPI\"]") !=
+         std::string::npos);
+
+  std::vector<uint8_t> rewritten;
+  assert(WriteUSDCToMemory(rewritten, loaded.stage).success);
+  USDCLoadResult back =
+      LoadUSDCFromMemory(rewritten.data(), rewritten.size());
+  assert(back.success);
+  const StringListOpEdits& empty_back =
+      back.stage.GetPrimAtPath("/ExplicitEmpty").GetMeta().apiSchemaEdits();
+  const StringListOpEdits& mixed_back =
+      back.stage.GetPrimAtPath("/Mixed").GetMeta().apiSchemaEdits();
+  assert(empty_back.authored && empty_back.is_explicit &&
+         empty_back.explicit_items.empty());
+  assert(mixed_back.added == mixed.added &&
+         mixed_back.prepended == mixed.prepended &&
+         mixed_back.appended == mixed.appended &&
+         mixed_back.deleted == mixed.deleted &&
+         mixed_back.ordered == mixed.ordered);
+
+  LoadResult strong = LoadUSDAFromFile(
+      NextFixturePath("aousd-apischemas-compose-strong.usda"));
+  LoadResult weak = LoadUSDAFromFile(
+      NextFixturePath("aousd-apischemas-compose-weak.usda"));
+  assert(strong.success && weak.success);
+  std::unique_ptr<Layer> strong_layer = TakeLayer(&strong);
+  std::unique_ptr<Layer> weak_layer = TakeLayer(&weak);
+  Compositor compositor;
+  compositor.SetLayerLoader([&](const std::string& path, std::string*) {
+    if (path.find("aousd-apischemas-compose-weak.usda") ==
+        std::string::npos) {
+      return std::unique_ptr<Layer>();
+    }
+    return std::make_unique<Layer>(weak_layer->Clone());
+  });
+  std::unique_ptr<Layer> composed = compositor.Compose(
+      *strong_layer, NextFixturePath("aousd-apischemas-compose-strong.usda"));
+  assert(composed);
+  const PrimSpec* composed_prim = composed->prim_at_path("/P");
+  assert(composed_prim &&
+         composed_prim->meta().apiSchemas() ==
+             std::vector<std::string>{"KeepAPI"});
+  const StringListOpEdits& resolved =
+      composed_prim->meta().apiSchemaEdits();
+  assert(resolved.authored && resolved.is_explicit &&
+         resolved.explicit_items == std::vector<std::string>{"KeepAPI"} &&
+         "strong delete must remove only the weaker matching API schema");
+}
+
+void TestConnectionListOpFidelity() {
+  LoadResult authored = Parse(
+      "def Scope \"P\" {\n"
+      "  add float x.connect = </Add.out>\n"
+      "  prepend float x.connect = </Pre.out>\n"
+      "  append float x.connect = </App.out>\n"
+      "  delete float x.connect = </Del.out>\n"
+      "  reorder float x.connect = </Ord.out>\n"
+      "}\n",
+      true);
+  assert(authored.success);
+  const UsdPrim p = authored.stage.GetPrimAtPath("/P");
+  const ArcEdit* edit = p.GetPrimSpec()->connection_edit("x");
+  assert(edit && edit->authored && !edit->is_explicit &&
+         edit->added == std::vector<std::string>{"/Add.out"} &&
+         edit->prepended == std::vector<std::string>{"/Pre.out"} &&
+         edit->appended == std::vector<std::string>{"/App.out"} &&
+         edit->deleted == std::vector<std::string>{"/Del.out"} &&
+         edit->ordered == std::vector<std::string>{"/Ord.out"});
+  const std::string text = WriteUSDAToString(authored.stage);
+  assert(text.find("add float x.connect = </Add.out>") != std::string::npos &&
+         text.find("prepend float x.connect = </Pre.out>") !=
+             std::string::npos &&
+         text.find("append float x.connect = </App.out>") !=
+             std::string::npos &&
+         text.find("delete float x.connect = </Del.out>") !=
+             std::string::npos &&
+         text.find("reorder float x.connect = </Ord.out>") !=
+             std::string::npos);
+
+  std::vector<uint8_t> crate;
+  assert(WriteUSDCToMemory(crate, authored.stage).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success);
+  const ArcEdit* back_edit =
+      back.stage.GetPrimAtPath("/P").GetPrimSpec()->connection_edit("x");
+  assert(back_edit && back_edit->added == edit->added &&
+         back_edit->prepended == edit->prepended &&
+         back_edit->appended == edit->appended &&
+         back_edit->deleted == edit->deleted &&
+         back_edit->ordered == edit->ordered);
+
+  LoadResult weak = Parse(
+      "def Scope \"P\" { float x.connect = [</Weak.out>, </Drop.out>] }\n");
+  LoadResult strong = Parse(
+      "over \"P\" {\n"
+      "  prepend float x.connect = </Strong.out>\n"
+      "  delete float x.connect = </Drop.out>\n"
+      "}\n");
+  assert(weak.success && strong.success);
+  std::unique_ptr<Layer> weak_layer = TakeLayer(&weak);
+  std::unique_ptr<Layer> strong_layer = TakeLayer(&strong);
+  PrimSpec* strong_p = strong_layer->prim_at_path_mutable("/P");
+  const PrimSpec* weak_p = weak_layer->prim_at_path("/P");
+  assert(strong_p && weak_p);
+  Compositor::CopyLocalOpinions(*strong_p, *weak_p);
+  const std::vector<Path>* resolved = strong_p->connection("x");
+  assert(resolved && resolved->size() == 2 &&
+         (*resolved)[0].str() == "/Strong.out" &&
+         (*resolved)[1].str() == "/Weak.out");
+  const ArcEdit* resolved_edit = strong_p->connection_edit("x");
+  assert(resolved_edit && resolved_edit->is_explicit);
+}
+
+void TestStageQueryAncestry() {
+  LoadOptions strict;
+  strict.parse_options.strict_aousd_conformance = true;
+  LoadResult result = LoadUSDAFromFile(
+      NextFixturePath("aousd-stage-query-ancestry.usda"), strict);
+  assert(result.success);
+
+  const UsdPrim class_child =
+      result.stage.GetPrimAtPath("/DefParent/ClassChild");
+  const UsdPrim grandchild =
+      result.stage.GetPrimAtPath("/DefParent/ClassChild/Grandchild");
+  assert(class_child.IsDefined() && class_child.IsAbstract() &&
+         !class_child.IsConcretelyDefined());
+  assert(grandchild.IsDefined() && grandchild.IsAbstract() &&
+         !grandchild.IsConcretelyDefined() &&
+         "a class ancestor makes descendants abstract but still defined");
+
+  const UsdPrim over_child =
+      result.stage.GetPrimAtPath("/DefParent/OverChild");
+  const UsdPrim over_desc =
+      result.stage.GetPrimAtPath("/DefParent/OverChild/Descendant");
+  assert(!over_child.IsDefined() && !over_desc.IsDefined() &&
+         "an undefining ancestor makes the whole descendant path undefined");
+
+  const UsdPrim class_parent = result.stage.GetPrimAtPath("/ClassParent");
+  const UsdPrim class_parent_child =
+      result.stage.GetPrimAtPath("/ClassParent/Child");
+  assert(class_parent.IsDefined() && class_parent.IsAbstract());
+  assert(class_parent_child.IsDefined() && class_parent_child.IsAbstract());
+
+  const UsdPrim inactive_child =
+      result.stage.GetPrimAtPath("/Inactive/Child");
+  assert(!inactive_child.IsActive() &&
+         "a stronger active=true child cannot override an inactive ancestor");
+
+  LoadResult models = LoadUSDAFromFile(
+      NextFixturePath("aousd-model-hierarchy.usda"), strict);
+  assert(models.success);
+  assert(models.stage.GetPrimAtPath("/RootGroup").IsInModelHierarchy());
+  assert(models.stage.GetPrimAtPath("/RootGroup/Assembly")
+             .IsInModelHierarchy());
+  assert(models.stage.GetPrimAtPath("/RootGroup/Assembly/Component")
+             .IsInModelHierarchy());
+  assert(!models.stage
+              .GetPrimAtPath(
+                  "/RootGroup/Assembly/Component/Subcomponent")
+              .IsInModelHierarchy());
+  assert(models.stage.GetPrimAtPath("/RootComponent").IsInModelHierarchy());
+  assert(!models.stage.GetPrimAtPath("/Broken/Component")
+              .IsInModelHierarchy() &&
+         "an unkinded ancestor breaks model-hierarchy continuity");
+}
+
+void TestInterpolationMatrix() {
+  LoadResult result = Parse(
+      "def Scope \"I\" {\n"
+      "  half h.timeSamples = { 0: 0, 2: 2 }\n"
+      "  float f.timeSamples = { 0: 0, 2: 2 }\n"
+      "  double d.timeSamples = { 0: 0, 2: 2 }\n"
+      "  timecode tc.timeSamples = { 0: 0, 2: 2 }\n"
+      "  half2 h2.timeSamples = { 0: (0,0), 2: (2,4) }\n"
+      "  float2 f2.timeSamples = { 0: (0,0), 2: (2,4) }\n"
+      "  double2 d2.timeSamples = { 0: (0,0), 2: (2,4) }\n"
+      "  half3 h3.timeSamples = { 0: (0,0,0), 2: (2,4,6) }\n"
+      "  float3 f3.timeSamples = { 0: (0,0,0), 2: (2,4,6) }\n"
+      "  double3 d3.timeSamples = { 0: (0,0,0), 2: (2,4,6) }\n"
+      "  half4 h4.timeSamples = { 0: (0,0,0,0), 2: (2,4,6,8) }\n"
+      "  float4 f4.timeSamples = { 0: (0,0,0,0), 2: (2,4,6,8) }\n"
+      "  double4 d4.timeSamples = { 0: (0,0,0,0), 2: (2,4,6,8) }\n"
+      "  color3d cd.timeSamples = { 0: (0,0,0), 2: (2,4,6) }\n"
+      "  matrix2d m2.timeSamples = { 0: ((0,0),(0,0)), 2: ((2,4),(6,8)) }\n"
+      "  matrix3d m3.timeSamples = { 0: ((0,0,0),(0,0,0),(0,0,0)), 2: ((2,4,6),(8,10,12),(14,16,18)) }\n"
+      "  matrix4d m4.timeSamples = { 0: ((0,0,0,0),(0,0,0,0),(0,0,0,0),(0,0,0,0)), 2: ((2,4,6,8),(10,12,14,16),(18,20,22,24),(26,28,30,32)) }\n"
+      "  quath qh.timeSamples = { 0: (1,0,0,0), 2: (1,0,0,0) }\n"
+      "  quatf qf.timeSamples = { 0: (1,0,0,0), 2: (1,0,0,0) }\n"
+      "  quatd qd.timeSamples = { 0: (1,0,0,0), 2: (1,0,0,0) }\n"
+      "  token held.timeSamples = { 0: \"left\", 2: \"right\" }\n"
+      "}\n",
+      true);
+  assert(result.success);
+  const UsdPrim prim = result.stage.GetPrimAtPath("/I");
+  AttributeEval eval(&result.stage);
+  EvalOptions opts;
+  opts.time = 1.0;
+  EvalResult h = eval.EvalWith(prim, "h", opts);
+  float hf = 0.0f;
+  assert(h.success && h.value.type_id() == TypeId::Half &&
+         h.value.to_float(&hf) && std::fabs(hf - 1.0f) < 1e-3f);
+  const std::pair<const char*, TypeId> linear_types[] = {
+      {"h", TypeId::Half},       {"f", TypeId::Float},
+      {"d", TypeId::Double},     {"tc", TypeId::TimeCode},
+      {"h2", TypeId::Half2},     {"f2", TypeId::Float2},
+      {"d2", TypeId::Double2},   {"h3", TypeId::Half3},
+      {"f3", TypeId::Float3},    {"d3", TypeId::Double3},
+      {"h4", TypeId::Half4},     {"f4", TypeId::Float4},
+      {"d4", TypeId::Double4},   {"m2", TypeId::Matrix2d},
+      {"m3", TypeId::Matrix3d},  {"m4", TypeId::Matrix4d},
+      {"qh", TypeId::Quath},     {"qf", TypeId::Quatf},
+      {"qd", TypeId::Quatd},     {"cd", TypeId::Color3d},
+  };
+  for (const auto& item : linear_types) {
+    EvalResult value = eval.EvalWith(prim, item.first, opts);
+    assert(value.success && value.interpolated &&
+           value.value.type_id() == item.second);
+  }
+
+  EvalResult hv = eval.EvalWith(prim, "h3", opts);
+  float h3[3] = {};
+  assert(hv.success && hv.value.type_id() == TypeId::Half3 &&
+         hv.value.to_float3(h3));
+  assert(std::fabs(h3[0] - 1.0f) < 1e-3f &&
+         std::fabs(h3[1] - 2.0f) < 1e-3f &&
+         std::fabs(h3[2] - 3.0f) < 1e-3f);
+  EvalResult cd = eval.EvalWith(prim, "cd", opts);
+  const double* c3 = cd.value.as_double3();
+  assert(cd.success && cd.value.type_id() == TypeId::Color3d && c3 &&
+         c3[0] == 1.0 && c3[1] == 2.0 && c3[2] == 3.0);
+  EvalResult m = eval.EvalWith(prim, "m2", opts);
+  const double* m2 = m.value.as_matrix2d();
+  assert(m.success && m2 && m2[0] == 1.0 && m2[1] == 2.0 &&
+         m2[2] == 3.0 && m2[3] == 4.0);
+  EvalResult q = eval.EvalWith(prim, "qh", opts);
+  assert(q.success && q.value.type_id() == TypeId::Quath);
+  EvalResult held = eval.EvalWith(prim, "held", opts);
+  assert(held.success && held.value.as_token() &&
+         *held.value.as_token() == "left" && !held.interpolated);
+  opts.time = -1.0;
+  EvalResult before = eval.EvalWith(prim, "h", opts);
+  assert(before.success && before.value.to_float(&hf) && hf == 0.0f);
+  opts.time = 3.0;
+  EvalResult after = eval.EvalWith(prim, "h", opts);
+  assert(after.success && after.value.to_float(&hf) && hf == 2.0f);
 }
 
 void TestSchemaFallbackAndValueClips() {
@@ -243,12 +1241,50 @@ void TestSchemaFallbackAndValueClips() {
          !*double_sided->as_bool());
   AttributeEval mesh_eval(&mesh_result.stage);
   EvalOptions default_time;
-  default_time.default_time = true;
+  default_time.time = TimeQuery::Default();
   default_time.strict_aousd_conformance = true;
   EvalResult fallback = mesh_eval.EvalWith(mesh, "orientation", default_time);
   assert(fallback.success && fallback.from_schema_fallback);
   assert(fallback.value.as_token() &&
          *fallback.value.as_token() == "rightHanded");
+
+  LoadResult blocked_result = Parse(
+      "def Mesh \"Blocked\" {\n"
+      "  uniform token orientation = None\n"
+      "  custom token noFallback = None\n"
+      "}\n",
+      true);
+  assert(blocked_result.success);
+  const UsdPrim blocked = blocked_result.stage.GetPrimAtPath("/Blocked");
+  AttributeEval blocked_eval(&blocked_result.stage);
+  EvalResult blocked_fallback =
+      blocked_eval.EvalWith(blocked, "orientation", default_time);
+  assert(blocked_fallback.success && blocked_fallback.blocked &&
+         blocked_fallback.from_schema_fallback &&
+         blocked_fallback.value.as_token() &&
+         *blocked_fallback.value.as_token() == "rightHanded");
+  EvalResult blocked_missing =
+      blocked_eval.EvalWith(blocked, "noFallback", default_time);
+  assert(!blocked_missing.success && blocked_missing.blocked &&
+         !blocked_missing.value.is_block());
+
+  LoadResult time_query_result = Parse(
+      "def Xform \"Timed\" {\n"
+      "  double sampleOnly.timeSamples = { 0: 4 }\n"
+      "}\n",
+      true);
+  assert(time_query_result.success);
+  const UsdPrim timed = time_query_result.stage.GetPrimAtPath("/Timed");
+  AttributeEval timed_eval(&time_query_result.stage);
+  EvalResult at_default =
+      timed_eval.EvalWith(timed, "sampleOnly", default_time);
+  assert(!at_default.success &&
+         "DefaultTime must not alias numeric time zero");
+  EvalOptions numeric_zero;
+  numeric_zero.time = TimeQuery::Numeric(0.0);
+  EvalResult at_zero = timed_eval.EvalWith(timed, "sampleOnly", numeric_zero);
+  assert(at_zero.success && at_zero.from_time_sample &&
+         at_zero.value.as_double() && *at_zero.value.as_double() == 4.0);
 
   LoadResult root_result = Parse(
       "def Xform \"Root\" (\n"
@@ -266,8 +1302,12 @@ void TestSchemaFallbackAndValueClips() {
   EvalOptions clip_options;
   clip_options.time = 0.5;
   clip_options.strict_aousd_conformance = true;
+  clip_options.clip_stage_cache = std::make_shared<ValueClipStageCache>();
+  int clip_load_count = 0;
   clip_options.clip_stage_loader =
-      [](const std::string& asset, Stage* out, std::string*, std::string*) {
+      [&clip_load_count](const std::string& asset, Stage* out, std::string*,
+                         std::string*) {
+        ++clip_load_count;
         if (asset != "clip.usda" || !out) return false;
         LoadResult clip = Parse(
             "def Xform \"Root\" {\n"
@@ -282,6 +1322,199 @@ void TestSchemaFallbackAndValueClips() {
   assert(clipped.success && clipped.source_asset == "clip.usda");
   assert(clipped.value.as_float() &&
          std::fabs(*clipped.value.as_float() - 3.0f) < 1e-6f);
+  clip_options.time = TimeQuery::Numeric(0.75);
+  EvalResult cached_clip = clip_eval.EvalWith(
+      root_result.stage.GetPrimAtPath("/Root"), "x", clip_options);
+  assert(cached_clip.success && cached_clip.value.as_float() &&
+         std::fabs(*cached_clip.value.as_float() - 3.5f) < 1e-6f &&
+         clip_load_count == 1 &&
+         "caller-owned clip cache must reuse stages across queries");
+
+  // clipSets is independent from the clips dictionary and defines
+  // strongest-to-weakest set traversal.
+  LoadResult multi_result = Parse(
+      "def Xform \"Root\" (\n"
+      "  clipSets = [\"zWeak\", \"aStrong\"]\n"
+      "  clips = {\n"
+      "    dictionary zWeak = {\n"
+      "      asset[] assetPaths = [@weak.usda@]\n"
+      "      double2[] active = [(0, 0)]\n"
+      "      string primPath = \"/Root\"\n"
+      "    }\n"
+      "    dictionary aStrong = {\n"
+      "      asset[] assetPaths = [@strong.usda@]\n"
+      "      double2[] active = [(0, 0)]\n"
+      "      string primPath = \"/Root\"\n"
+      "    }\n"
+      "  }\n"
+      ") { float x }\n");
+  assert(multi_result.success);
+  AttributeEval multi_eval(&multi_result.stage);
+  EvalOptions multi_options;
+  multi_options.time = TimeQuery::Numeric(0.0);
+  multi_options.clip_stage_loader =
+      [](const std::string& asset, Stage* out, std::string*, std::string*) {
+        const float value = asset == "strong.usda" ? 2.0f : 1.0f;
+        LoadResult clip = Parse(
+            "def Xform \"Root\" { float x = " + std::to_string(value) +
+            " }\n");
+        if (!clip.success || !out) return false;
+        *out = std::move(clip.stage);
+        return true;
+      };
+  EvalResult multi = multi_eval.EvalWith(
+      multi_result.stage.GetPrimAtPath("/Root"), "x", multi_options);
+  assert(multi.success && multi.source_clip_set == "zWeak" &&
+         multi.source_asset == "weak.usda" && multi.value.as_float() &&
+         *multi.value.as_float() == 1.0f);
+
+  const StringListOpEdits& clip_sets =
+      multi_result.stage.GetPrimAtPath("/Root").GetMeta().clipSetEdits();
+  assert(clip_sets.authored && clip_sets.is_explicit &&
+         clip_sets.explicit_items ==
+             std::vector<std::string>({"zWeak", "aStrong"}));
+  const std::string clip_sets_usda = WriteUSDAToString(multi_result.stage);
+  assert(clip_sets_usda.find(
+             "clipSets = [\"zWeak\", \"aStrong\"]") !=
+         std::string::npos);
+  std::vector<uint8_t> clip_sets_usdc;
+  assert(WriteUSDCToMemory(clip_sets_usdc, multi_result.stage).success);
+  USDCLoadResult clip_sets_back =
+      LoadUSDCFromMemory(clip_sets_usdc.data(), clip_sets_usdc.size());
+  assert(clip_sets_back.success);
+  const StringListOpEdits& clip_sets_back_edits =
+      clip_sets_back.stage.GetPrimAtPath("/Root").GetMeta().clipSetEdits();
+  assert(clip_sets_back_edits.authored && clip_sets_back_edits.is_explicit &&
+         clip_sets_back_edits.explicit_items == clip_sets.explicit_items);
+
+  LoadResult clip_ops = Parse(
+      "def Scope \"Empty\" ( clipSets = None ) {}\n"
+      "def Scope \"Ops\" (\n"
+      "  add clipSets = [\"add\"]\n"
+      "  prepend clipSets = [\"pre\"]\n"
+      "  append clipSets = [\"app\"]\n"
+      "  delete clipSets = [\"del\"]\n"
+      "  reorder clipSets = [\"ord\"]\n"
+      ") {}\n",
+      true);
+  assert(clip_ops.success);
+  const StringListOpEdits& empty_clip_sets =
+      clip_ops.stage.GetPrimAtPath("/Empty").GetMeta().clipSetEdits();
+  assert(empty_clip_sets.authored && empty_clip_sets.is_explicit &&
+         empty_clip_sets.explicit_items.empty());
+  assert(WriteUSDAToString(clip_ops.stage).find("clipSets = None") !=
+         std::string::npos);
+  const StringListOpEdits& ops =
+      clip_ops.stage.GetPrimAtPath("/Ops").GetMeta().clipSetEdits();
+  assert(ops.authored && !ops.is_explicit &&
+         ops.added == std::vector<std::string>{"add"} &&
+         ops.prepended == std::vector<std::string>{"pre"} &&
+         ops.appended == std::vector<std::string>{"app"} &&
+         ops.deleted == std::vector<std::string>{"del"} &&
+         ops.ordered == std::vector<std::string>{"ord"});
+  std::vector<uint8_t> clip_ops_usdc;
+  assert(WriteUSDCToMemory(clip_ops_usdc, clip_ops.stage).success);
+  USDCLoadResult clip_ops_back =
+      LoadUSDCFromMemory(clip_ops_usdc.data(), clip_ops_usdc.size());
+  assert(clip_ops_back.success);
+  const StringListOpEdits& back_empty =
+      clip_ops_back.stage.GetPrimAtPath("/Empty").GetMeta().clipSetEdits();
+  assert(back_empty.authored && back_empty.is_explicit &&
+         back_empty.explicit_items.empty());
+  const StringListOpEdits& back_ops =
+      clip_ops_back.stage.GetPrimAtPath("/Ops").GetMeta().clipSetEdits();
+  assert(back_ops.added == ops.added &&
+         back_ops.prepended == ops.prepended &&
+         back_ops.appended == ops.appended &&
+         back_ops.deleted == ops.deleted &&
+         back_ops.ordered == ops.ordered);
+
+  LoadResult weak_clip_sets = Parse(
+      "def Xform \"Root\" (\n"
+      "  clipSets = [\"weakB\", \"weakA\"]\n"
+      "  clips = {\n"
+      "    dictionary weakA = { asset[] assetPaths = [@a.usda@] "
+      "double2[] active = [(0, 0)] }\n"
+      "    dictionary weakB = { asset[] assetPaths = [@b.usda@] "
+      "double2[] active = [(0, 0)] }\n"
+      "  }\n"
+      ") {}\n");
+  LoadResult strong_clip_sets = Parse(
+      "def Xform \"Root\" (\n"
+      "  prepend references = @weak.usda@</Root>\n"
+      "  prepend clipSets = [\"strong\"]\n"
+      "  clips = { dictionary strong = {\n"
+      "    asset[] assetPaths = [@strong.usda@]\n"
+      "    double2[] active = [(0, 0)]\n"
+      "  } }\n"
+      ") {}\n");
+  assert(weak_clip_sets.success && strong_clip_sets.success);
+  std::unique_ptr<Layer> weak_clip_layer = TakeLayer(&weak_clip_sets);
+  std::unique_ptr<Layer> strong_clip_layer = TakeLayer(&strong_clip_sets);
+  Compositor clip_compositor;
+  clip_compositor.SetLayerLoader(
+      [&](const std::string& path, std::string*) -> std::unique_ptr<Layer> {
+        if (path.find("weak.usda") == std::string::npos) return nullptr;
+        return std::make_unique<Layer>(weak_clip_layer->Clone());
+      });
+  std::unique_ptr<Layer> composed_clip_sets =
+      clip_compositor.Compose(*strong_clip_layer, "strong.usda");
+  assert(composed_clip_sets);
+  const PrimSpec* composed_root =
+      composed_clip_sets->prim_at_path("/Root");
+  assert(composed_root);
+  const StringListOpEdits& composed_order =
+      composed_root->meta().clipSetEdits();
+  assert(composed_order.authored && composed_order.is_explicit &&
+         composed_order.explicit_items ==
+             std::vector<std::string>({"strong", "weakB", "weakA"}));
+
+  LoadResult invalid_clip_result = Parse(
+      "def Xform \"Root\" ( clips = { dictionary bad = {\n"
+      "  asset[] assetPaths = [@only.usda@]\n"
+      "  double2[] active = [(0, 2)]\n"
+      "} } ) { float x }\n");
+  assert(invalid_clip_result.success);
+  AttributeEval invalid_clip_eval(&invalid_clip_result.stage);
+  EvalOptions invalid_options;
+  invalid_options.time = TimeQuery::Numeric(0.0);
+  invalid_options.strict_aousd_conformance = true;
+  invalid_options.clip_stage_loader = multi_options.clip_stage_loader;
+  EvalResult invalid_clip = invalid_clip_eval.EvalWith(
+      invalid_clip_result.stage.GetPrimAtPath("/Root"), "x",
+      invalid_options);
+  assert(!invalid_clip.success &&
+         invalid_clip.error.find("out of range") != std::string::npos);
+
+  LoadResult cyclic_clips = Parse(
+      "def Xform \"Root\" ( clips = { dictionary default = {\n"
+      "  asset[] assetPaths = [@loop.usda@]\n"
+      "  double2[] active = [(0, 0)]\n"
+      "  string primPath = \"/Root\"\n"
+      "} } ) { float x }\n");
+  assert(cyclic_clips.success);
+  AttributeEval cyclic_eval(&cyclic_clips.stage);
+  EvalOptions cyclic_options;
+  cyclic_options.time = TimeQuery::Numeric(0.0);
+  cyclic_options.strict_aousd_conformance = true;
+  cyclic_options.clip_stage_cache = std::make_shared<ValueClipStageCache>();
+  cyclic_options.clip_stage_loader =
+      [](const std::string& asset, Stage* out, std::string*, std::string*) {
+        if (asset != "loop.usda" || !out) return false;
+        LoadResult loop = Parse(
+            "def Xform \"Root\" ( clips = { dictionary default = {\n"
+            "  asset[] assetPaths = [@loop.usda@]\n"
+            "  double2[] active = [(0, 0)]\n"
+            "  string primPath = \"/Root\"\n"
+            "} } ) { float x }\n");
+        if (!loop.success) return false;
+        *out = std::move(loop.stage);
+        return true;
+      };
+  EvalResult cyclic = cyclic_eval.EvalWith(
+      cyclic_clips.stage.GetPrimAtPath("/Root"), "x", cyclic_options);
+  assert(!cyclic.success &&
+         cyclic.error.find("cycle detected") != std::string::npos);
 
   clip_options.clip_stage_loader = {};
   EvalResult strict_missing_loader = clip_eval.EvalWith(
@@ -441,6 +1674,170 @@ void TestSchemaFallbackAndValueClips() {
          "float3 missing clip value must interpolate component-wise");
 }
 
+void TestRelationshipVariabilityFidelity() {
+  LoadResult loaded = Parse(
+      "def Xform \"P\" { varying rel r = </P> }\n");
+  assert(loaded.success && loaded.stage.GetRootLayer());
+  const PrimSpec* prim = loaded.stage.GetRootLayer()->prim_at_path("/P");
+  assert(prim);
+  uint16_t flags = prim->relationship_flags("r");
+  assert((flags & PropSlot::kFlagVariabilityAuthored) != 0);
+  assert((flags & PropSlot::kFlagVarying) != 0);
+  assert(WriteUSDAToString(loaded.stage).find("varying rel r") !=
+         std::string::npos);
+
+  std::vector<uint8_t> crate;
+  assert(WriteUSDCToMemory(crate, loaded.stage).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success && back.stage.GetRootLayer());
+  const PrimSpec* back_prim = back.stage.GetRootLayer()->prim_at_path("/P");
+  assert(back_prim);
+  flags = back_prim->relationship_flags("r");
+  assert((flags & PropSlot::kFlagVariabilityAuthored) != 0);
+  assert((flags & PropSlot::kFlagVarying) != 0);
+  assert(WriteUSDAToString(back.stage).find("varying rel r") !=
+         std::string::npos);
+}
+
+void TestLayerOwnerFidelity() {
+  LoadResult loaded = LoadUSDAFromString(
+      "#usda 1.0\n( owner = \"\" )\ndef Scope \"P\" {}\n",
+      LoadOptions{});
+  assert(loaded.success && loaded.stage.GetRootLayer());
+  assert(loaded.stage.GetRootLayer()->meta().owner_set);
+  assert(loaded.stage.GetRootLayer()->meta().owner.empty());
+  assert(WriteUSDAToString(loaded.stage).find("owner = \"\"") !=
+         std::string::npos);
+
+  std::vector<uint8_t> crate;
+  assert(WriteUSDCToMemory(crate, loaded.stage).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success && back.stage.GetRootLayer());
+  assert(back.stage.GetRootLayer()->meta().owner_set);
+  assert(back.stage.GetRootLayer()->meta().owner.empty());
+  assert(WriteUSDAToString(back.stage).find("owner = \"\"") !=
+         std::string::npos);
+}
+
+void TestGeneratedCoreSchemaCoverage() {
+  LoadResult parsed = Parse(
+      "def Scope \"P\" (prepend apiSchemas = [\"ColorSpaceDefinitionAPI\", "
+      "\"ColorSpaceAPI\", \"CollectionAPI:rooms\"]) {}\n");
+  assert(parsed.success);
+  UsdPrim prim = parsed.stage.GetPrimAtPath("/P");
+  const SchemaRegistry& registry = GetSchemaRegistry();
+  const SchemaPropertyDefinition* color =
+      registry.FindProperty(*prim.GetPrimSpec(), "whitePoint");
+  assert(color && color->has_fallback && color->type_name == "float2");
+  const SchemaPropertyDefinition* collection = registry.FindProperty(
+      *prim.GetPrimSpec(), "collection:rooms:expansionRule");
+  assert(collection && collection->has_fallback &&
+         collection->fallback.as_token() &&
+         *collection->fallback.as_token() == "expandPrims");
+  const std::vector<std::string> names = registry.PropertyNames(
+      *prim.GetPrimSpec());
+  assert(std::find(names.begin(), names.end(),
+                   "collection:rooms:includes") != names.end());
+  assert(std::find(names.begin(), names.end(),
+                   "collection:__INSTANCE__:includes") == names.end());
+}
+
+void TestExpressionVariablePolicy() {
+  LoadResult root_result = Parse(
+      "( expressionVariables = { string TARGET = \"usd-anon:target\" } )\n"
+      "def Xform \"Root\" (references = @`${TARGET}`@) {}\n");
+  assert(root_result.success);
+  std::shared_ptr<Layer> root(root_result.stage.ReleaseRootLayer().release());
+  assert(root->meta().expressionVariables.is_dictionary());
+  const PrimSpec* root_spec = root->prim_at_path("/Root");
+  assert(root_spec && root_spec->meta().references.size() == 1);
+  const ExpressionEvaluation direct = EvaluateAssetPathExpression(
+      root_spec->meta().references[0].substr(
+          1, root_spec->meta().references[0].size() - 2),
+      root->meta().expressionVariables);
+  assert(direct.success);
+
+  AssetResolver resolver;
+  const std::string target =
+      "#usda 1.0\n( defaultPrim = \"Target\" )\n"
+      "def Xform \"Target\" { int marker = 7 }\n";
+  resolver.RegisterMemoryAsset(
+      "usd-anon:target", std::vector<uint8_t>(target.begin(), target.end()));
+  assert(resolver.Resolve("usd-anon:target", "usd-anon:root").exists);
+  pcp::CompositionOptions options;
+  options.expression_variable_policy = ExpressionVariablePolicy::RequireResolved;
+  auto opened = pcp::Cache::Open(resolver, root, "usd-anon:root", options);
+  assert(opened);
+  const pcp::PrimIndex* index =
+      opened->ComputePrimIndex(Path("/Root"), nullptr, nullptr);
+  assert(index && index->GetNodeCount() >= 2);
+  Stage composed;
+  std::string warn;
+  std::string err;
+  assert(opened->BuildStage(&composed, &warn, &err));
+  assert(composed.GetPrimAtPath("/Root").IsValid());
+  const Value* marker = composed.GetPrimAtPath("/Root").GetPropertyValue("marker");
+  assert(marker && marker->as_int() && *marker->as_int() == 7);
+
+  LoadResult missing_result = Parse(
+      "def Xform \"Root\" (references = @`${MISSING}`@) {}\n");
+  assert(missing_result.success);
+  std::shared_ptr<Layer> missing(
+      missing_result.stage.ReleaseRootLayer().release());
+  auto rejected = pcp::Cache::Open(resolver, missing, "usd-anon:missing", options);
+  assert(rejected);
+  Stage rejected_stage;
+  assert(rejected->BuildStage(&rejected_stage, &warn, &err));
+  const auto issues = rejected->GetCompositionIssues();
+  assert(std::find_if(issues.begin(), issues.end(), [](const auto& issue) {
+           return issue.code == pcp::Cache::ErrorCode::ExpressionVariableError;
+         }) != issues.end());
+}
+
+void TestRemainingElectiveFieldCoverage() {
+  struct FieldCoverage { const char* scope; const char* name; const char* mode; };
+  const FieldCoverage generated_fields[] = {
+#define AOUSD_FIELD(scope, name, coverage) {#scope, #name, #coverage},
+#include "next/schema/generated/aousd-elective-field-coverage.inc"
+#undef AOUSD_FIELD
+  };
+  assert(sizeof(generated_fields) / sizeof(generated_fields[0]) >= 70);
+  auto covered = [&](const char* scope, const char* name, const char* mode) {
+    return std::find_if(std::begin(generated_fields), std::end(generated_fields),
+                        [&](const FieldCoverage& field) {
+                          return std::string(field.scope) == scope &&
+                                 field.name == std::string(name) &&
+                                 field.mode == std::string(mode);
+                        }) != std::end(generated_fields);
+  };
+  assert(covered("Prim", "displayGroupOrder", "Typed"));
+  assert(covered("Property", "comment", "Typed"));
+  assert(covered("Prim", "prefixSubstitutions", "Opaque"));
+  const std::string source =
+      "def Xform \"P\" (displayGroupOrder = [\"Geometry\", \"Look\"]) {\n"
+      "  int value = 1 (comment = \"\")\n"
+      "}\n";
+  LoadResult parsed = Parse(source, true);
+  assert(parsed.success);
+  const UsdPrim prim = parsed.stage.GetPrimAtPath("/P");
+  assert(prim.GetMeta().displayGroupOrderAuthored() &&
+         prim.GetMeta().displayGroupOrder().size() == 2);
+  const PropMeta* meta = prim.GetPrimSpec()->property_meta("value");
+  assert(meta && (meta->authored & PropMeta::kComment) && meta->comment.empty());
+  const std::string text = WriteUSDAToString(parsed.stage);
+  assert(text.find("displayGroupOrder = [\"Geometry\", \"Look\"]") !=
+         std::string::npos);
+  assert(text.find("comment = \"\"") != std::string::npos);
+
+  std::vector<uint8_t> crate;
+  assert(WriteUSDCToMemory(crate, parsed.stage, USDCWriteOptions{}).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success);
+  const std::string binary_text = WriteUSDAToString(back.stage);
+  assert(binary_text.find("displayGroupOrder") != std::string::npos);
+  assert(binary_text.find("comment = \"\"") != std::string::npos);
+}
+
 void TestTypedSplines() {
   // A linear spline: value ramps 0->10 over t in [0,10], held outside.
   const std::string body =
@@ -559,6 +1956,17 @@ void TestTypedSplines() {
         true);
     assert(cd.success &&
            "spline knot customData with a brace in a string must parse");
+    const std::string cd_usda = WriteUSDAToString(cd.stage);
+    assert(cd_usda.find("string s = \"}\"") != std::string::npos &&
+           "spline knot customData must survive USDA writing");
+    std::vector<uint8_t> cd_crate;
+    assert(WriteUSDCToMemory(cd_crate, cd.stage).success);
+    USDCLoadResult cd_back =
+        LoadUSDCFromMemory(cd_crate.data(), cd_crate.size());
+    assert(cd_back.success);
+    const std::string cd_back_usda = WriteUSDAToString(cd_back.stage);
+    assert(cd_back_usda.find("string s = \"}\"") != std::string::npos &&
+           "spline knot customData must survive USDC round-trip");
     // Triple-quoted string with an embedded quote and brace must not desync.
     LoadResult tq = Parse(
         "def Xform \"T\" {\n"
@@ -586,12 +1994,16 @@ void TestFoundationalTypeMatrix() {
       "    half h = 1.5\n"
       "    float f = 2.5\n"
       "    double d = 3.5\n"
+      "    timecode tc = 24\n"
       "    string s = \"hi\"\n"
       "    token tok = \"abc\"\n"
       "    asset a = @./tex.png@\n"
       "    int2 i2 = (1, 2)\n"
       "    int3 i3 = (1, 2, 3)\n"
       "    int4 i4 = (1, 2, 3, 4)\n"
+      "    uint2 ui2 = (1, 2)\n"
+      "    uint3 ui3 = (1, 2, 3)\n"
+      "    uint4 ui4 = (1, 2, 3, 4)\n"
       "    half2 h2 = (1.5, 2.5)\n"
       "    half3 h3 = (1.5, 2.5, 3.5)\n"
       "    half4 h4 = (1.5, 2.5, 3.5, 4.5)\n"
@@ -601,35 +2013,84 @@ void TestFoundationalTypeMatrix() {
       "    double2 d2 = (1.5, 2.5)\n"
       "    double3 d3 = (1.5, 2.5, 3.5)\n"
       "    double4 d4 = (1.5, 2.5, 3.5, 4.5)\n"
+      "    point3h p3h = (1, 2, 3)\n"
       "    point3f p3f = (1, 2, 3)\n"
+      "    point3d p3d = (1, 2, 3)\n"
+      "    normal3h n3h = (0, 1, 0)\n"
       "    normal3f n3f = (0, 1, 0)\n"
+      "    normal3d n3d = (0, 1, 0)\n"
+      "    vector3h v3h = (1, 0, 0)\n"
       "    vector3f v3f = (1, 0, 0)\n"
+      "    vector3d v3d = (1, 0, 0)\n"
+      "    color3h c3h = (0.1, 0.2, 0.3)\n"
       "    color3f c3f = (0.1, 0.2, 0.3)\n"
+      "    color3d c3d = (0.1, 0.2, 0.3)\n"
+      "    color4h c4h = (0.1, 0.2, 0.3, 1)\n"
       "    color4f c4f = (0.1, 0.2, 0.3, 1)\n"
+      "    color4d c4d = (0.1, 0.2, 0.3, 1)\n"
+      "    texCoord2h uvh = (0.5, 0.5)\n"
       "    texCoord2f uv = (0.5, 0.5)\n"
+      "    texCoord2d uvd = (0.5, 0.5)\n"
+      "    texCoord3h uv3h = (0.5, 0.5, 0.5)\n"
+      "    texCoord3f uv3f = (0.5, 0.5, 0.5)\n"
+      "    texCoord3d uv3d = (0.5, 0.5, 0.5)\n"
       "    quatf qf = (1, 0, 0, 0)\n"
       "    quatd qd = (1, 0, 0, 0)\n"
       "    quath qh = (1, 0, 0, 0)\n"
       "    matrix2d m2 = ((1, 0), (0, 1))\n"
       "    matrix3d m3 = ((1, 0, 0), (0, 1, 0), (0, 0, 1))\n"
       "    matrix4d m4 = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))\n"
+      "    matrix2f m2f = ((1, 0), (0, 1))\n"
+      "    matrix3f m3f = ((1, 0, 0), (0, 1, 0), (0, 0, 1))\n"
+      "    matrix4f m4f = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))\n"
       "    frame4d fr = ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 2, 1))\n"
+      "    pathExpression pe = \"/World//Mesh*\"\n"
       "    int[] ia = [1, 2, 3]\n"
       "    float[] fa = [1.5, 2.5]\n"
       "    double[] da = [1.5, 2.5]\n"
       "    half[] ha = [1.5, 2.5]\n"
+      "    timecode[] tca = [1, 2]\n"
       "    uchar[] uca = [1, 2, 200]\n"
       "    token[] toka = [\"a\", \"b\"]\n"
       "    string[] sa = [\"x\", \"y\"]\n"
       "    asset[] aa = [@./p.png@, @./q.png@]\n"
       "    float3[] f3a = [(1, 2, 3), (4, 5, 6)]\n"
       "    point3f[] p3a = [(1, 2, 3), (4, 5, 6)]\n"
+      "    point3h[] p3ha = [(1, 2, 3), (4, 5, 6)]\n"
+      "    point3d[] p3da = [(1, 2, 3), (4, 5, 6)]\n"
       "    color3f[] c3a = [(0.1, 0.2, 0.3)]\n"
+      "    quath[] qha = [(1, 0, 0, 0)]\n"
+      "    pathExpression[] pea = [\"/A\", \"/B\"]\n"
       "    matrix4d[] m4a = [((1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1))]\n"
       "    bool[] ba = [true, false, true]\n"
       "}\n";
   LoadResult direct = Parse(body, true);
   assert(direct.success);
+  // Registry-driven completeness guard: adding a public TypeId now fails this
+  // test until the foundational fixture authors it. Structural pseudo-types
+  // and Extent (the schema role for float3[]) are intentionally excluded.
+  const PrimSpec* type_prim = direct.stage.GetRootLayer()->prim_at_path("/T");
+  assert(type_prim);
+  for (uint16_t raw = static_cast<uint16_t>(TypeId::Bool);
+       raw < static_cast<uint16_t>(TypeId::Count); ++raw) {
+    const TypeId id = static_cast<TypeId>(raw);
+    if (id == TypeId::Extent || id == TypeId::Dictionary ||
+        id == TypeId::Relationship || id == TypeId::Reference) {
+      continue;
+    }
+    const char* expected = GetTypeName(id);
+    assert(expected);
+    bool authored = false;
+    for (const PropSlot& slot : type_prim->properties().slots()) {
+      const std::string& name = GetPropNameTable().get(slot.name_id);
+      const std::string* declared = type_prim->property_type_name(name);
+      if (declared && *declared == expected) {
+        authored = true;
+        break;
+      }
+    }
+    assert(authored && "public foundational TypeId is absent from the matrix");
+  }
   const std::string a1 = WriteUSDAToString(direct.stage);
 
   USDCWriteOptions usdc_opts;
@@ -684,6 +2145,22 @@ void TestMetadataAndListOpFidelity() {
   assert(rl->meta().subLayerOffsets[0].second == 1.0 &&
          "NaN sublayer scale must degrade to identity (1.0)");
 
+  const std::string invalid_arc_offset =
+      "def Xform \"R\" (\n"
+      "  prepend references = @sub.usda@</R> "
+      "(offset = 5; scale = -2)\n"
+      ") {}\n";
+  assert(!Parse(invalid_arc_offset, true).success &&
+         "negative reference scale must be rejected in strict mode");
+  LoadResult compat_arc = Parse(invalid_arc_offset, false);
+  assert(compat_arc.success);
+  const UsdPrim compat_arc_prim = compat_arc.stage.GetPrimAtPath("/R");
+  assert(compat_arc_prim &&
+         !compat_arc_prim.GetMeta().references.empty() &&
+         compat_arc_prim.GetMeta().references.front().find("layerOffset=") ==
+             std::string::npos &&
+         "invalid reference offset must degrade to identity");
+
   // apiSchemas listop qualifier survives a USDC round trip: a bare authoring
   // stays explicit (not flipped to prepend); an authored prepend stays prepend.
   auto roundtrip_api = [](const std::string& body) -> std::string {
@@ -707,19 +2184,79 @@ void TestMetadataAndListOpFidelity() {
   assert(prep.find("prepend apiSchemas") != std::string::npos &&
          "authored prepend apiSchemas must stay prepend through USDC");
 
-  // `prepend apiSchemas = [A,B,C]` + `delete apiSchemas = [C]` resolves to
-  // [A,B]; those two must SURVIVE USDC. (Regression: the trailing delete used
-  // to leave the qualifier as `delete`, so the crate wrote a delete list-op
-  // that re-subtracted the resolved schemas on read, dropping them entirely.)
+  // In SdfListOp semantics deletion applies to the weaker/base list before
+  // local prepends. Therefore local prepend [A,B,C] + delete [C] has effective
+  // value [A,B,C], while both authored sublists survive USDC exactly.
   const std::string del = roundtrip_api(
       "def \"P\" (\n"
       "  prepend apiSchemas = [\"AAPI\", \"BAPI\", \"CAPI\"]\n"
       "  delete apiSchemas = [\"CAPI\"]\n"
       ") {}\n");
-  assert(del.find("\"AAPI\"") != std::string::npos &&
-         del.find("\"BAPI\"") != std::string::npos &&
-         del.find("\"CAPI\"") == std::string::npos &&
-         "prepend+delete apiSchemas must resolve to [A,B] and survive USDC");
+  assert(del.find("prepend apiSchemas = [\"AAPI\", \"BAPI\", \"CAPI\"]") !=
+             std::string::npos &&
+         del.find("delete apiSchemas = [\"CAPI\"]") != std::string::npos &&
+         "prepend+delete apiSchemas sublists must survive USDC exactly");
+  LoadResult del_effective = LoadUSDAFromString(del, strict_opts);
+  assert(del_effective.success);
+  const std::vector<std::string>& applied =
+      del_effective.stage.GetPrimAtPath("/P").GetMeta().apiSchemas();
+  assert(applied == std::vector<std::string>({"AAPI", "BAPI", "CAPI"}) &&
+         "same-site delete must not remove a locally prepended API schema");
+
+  // A target-less declaration and an authored explicit-empty targetPaths
+  // opinion are distinct. The latter clears weaker targets and must not
+  // collapse to bare `rel r` during either USDA or USDC round trips.
+  const std::string empty_rel = roundtrip_api(
+      "def Scope \"P\" {\n"
+      "  rel declared\n"
+      "  rel cleared = None\n"
+      "}\n");
+  assert(empty_rel.find("rel declared\n") != std::string::npos &&
+         empty_rel.find("rel declared =") == std::string::npos);
+  assert(empty_rel.find("rel cleared = None") != std::string::npos &&
+         "authored explicit-empty relationship targets must survive USDC");
+
+  // A stronger explicit-empty apiSchemas list blocks weaker applications. An
+  // empty vector without authored state used to look unauthored, allowing the
+  // weaker API to leak into the populated prim.
+  LoadResult api_strong = LoadUSDAFromString(
+      "#usda 1.0\n( subLayers = [@weak.usda@] )\n"
+      "over \"P\" ( apiSchemas = [] ) {}\n",
+      LoadOptions{});
+  LoadResult api_weak = Parse(
+      "def \"P\" ( apiSchemas = [\"WeakAPI\"] ) {}\n", true);
+  assert(api_strong.success && api_weak.success);
+  std::unique_ptr<Layer> api_strong_layer = TakeLayer(&api_strong);
+  std::unique_ptr<Layer> api_weak_layer = TakeLayer(&api_weak);
+  Compositor api_compositor;
+  api_compositor.SetLayerLoader(
+      [&](const std::string& path, std::string*) {
+        if (path.find("weak.usda") == std::string::npos) {
+          return std::unique_ptr<Layer>();
+        }
+        return std::make_unique<Layer>(api_weak_layer->Clone());
+      });
+  std::unique_ptr<Layer> api_composed =
+      api_compositor.Compose(*api_strong_layer, "strong.usda");
+  assert(api_composed);
+  const PrimSpec* api_prim = api_composed->prim_at_path("/P");
+  assert(api_prim && api_prim->meta().apiSchemasAuthored() &&
+         api_prim->meta().apiSchemas().empty() &&
+         "strong explicit-empty apiSchemas must block weaker schemas");
+  Stage api_stage;
+  api_stage.SetRootLayer(std::move(*api_composed));
+  const std::string api_usda = WriteUSDAToString(api_stage);
+  assert(api_usda.find("apiSchemas = None") != std::string::npos);
+  std::vector<uint8_t> api_crate;
+  assert(WriteUSDCToMemory(api_crate, api_stage).success);
+  USDCLoadResult api_back =
+      LoadUSDCFromMemory(api_crate.data(), api_crate.size());
+  assert(api_back.success);
+  const UsdPrim api_back_prim = api_back.stage.GetPrimAtPath("/P");
+  assert(api_back_prim.GetMeta().apiSchemasAuthored() &&
+         api_back_prim.GetMeta().apiSchemas().empty());
+  assert(WriteUSDAToString(api_back.stage).find("apiSchemas = None") !=
+         std::string::npos);
 
   // Variant declaration vs dangling selection through USDC:
   // - a prim that only SELECTS a variant (no `prepend variantSets`) must NOT
@@ -796,8 +2333,22 @@ int main() {
   TestMetadataAndListOpFidelity();
   TestDictionaryAndRelationshipComposition();
   TestNamespaceOrdering();
+  TestDefaultPrimReferenceEncoding();
+  TestRelationshipForwarding();
+  TestAuthoredEmptyMetadata();
+  TestVariantSetListOpFidelity();
+  TestApiSchemaListOpFidelity();
+  TestConnectionListOpFidelity();
+  TestSpecifierResolution();
+  TestStageQueryAncestry();
+  TestInterpolationMatrix();
   TestSchemaFallbackAndValueClips();
-  std::cout << "AOUSD conformance regressions: PASSED\n";
   TestSchemaRegistryBreadth();
+  TestRelationshipVariabilityFidelity();
+  TestLayerOwnerFidelity();
+  TestGeneratedCoreSchemaCoverage();
+  TestExpressionVariablePolicy();
+  TestRemainingElectiveFieldCoverage();
+  std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;
 }
