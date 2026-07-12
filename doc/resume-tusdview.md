@@ -3,7 +3,7 @@
 Tracked companion to the (local, untracked) `resume-tusdview.md` scratch notes.
 This file is the durable list: what is still open, why, and what it touches.
 
-Status as of 2026-07-11. The `--next` primvars / texturing / texture-VRAM
+Status as of 2026-07-13. The `--next` primvars / texturing / texture-VRAM
 workstream is **done and pushed**, including GPU skinning (raster, both backends,
 instanced prototypes included) and the large-scene verification (numbers in
 [large-scene.md §2.9](large-scene.md)).
@@ -25,7 +25,82 @@ nothing), the TLAS `PREFER_FAST_BUILD` question (measured, rejected —
 large-scene.md §2.12), and the `lightrt-bsdf` IBL energy (the furnace now lands at
 1.00x the dome that lights it, from 2.00x).
 
+Done since (2026-07-13), all committed, none pushed: the proxy/render purpose
+supersede (both loaders), and a family of **silent data-loss bugs in the writers**
+found by sweeping fixtures through `tusdcat` — see [Open](#open) for what is left
+of that sweep, and [Prompts for a fresh session](#prompts-for-a-fresh-session) to
+pick it up cold.
+
+## Prompts for a fresh session
+
+Paste one of these verbatim. Each is self-contained: it says what is broken, how
+to reproduce it, and how to know when it is fixed. Read the section it points at
+before starting — the reasoning there is the part that is expensive to re-derive.
+
+**1. Finish the crate-writer round-trip sweep** (the biggest known correctness
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-133-of-422-fixtures)):
+
+> The tinyusdz crate (.usdc) writer silently drops authored data. Reproduce with
+> the sweep in doc/resume-tusdview.md ("The crate writer drops data"): 133 of 422
+> `tests/usda` fixtures do not survive `usda -> usdc -> usda` intact. Known
+> categories: a TYPELESS prim (`def "bora"`) comes back as `def Model "bora"`
+> (the writer invents a typeName); Camera `shutter:open` / `shutter:close` are
+> dropped; `hidden` metadata, `bindMaterialAs` and some `material:binding`
+> relationships are dropped. Fix them one category at a time, smallest first.
+> Each fix must come with a mutation-verified assertion in
+> `tests/run-scope-imageable-roundtrip.sh` (revert the fix, watch the test fail),
+> and must not regress the 87-test suite or raise the fixture count. Do not
+> "fix" a diff by making the printer match the writer — the printer is already a
+> fixed point (all 422 fixtures re-print identically); the writer is what is
+> wrong.
+
+**2. Get the pxr reference comparison running** (this whole workstream is
+currently self-referential — see the caveat in that section):
+
+> `tests/run-usdcat-compare.sh` diffs tusdcat against pxr's usdcat, but pxr is not
+> installed at the path it expects (`/home/syoyo/local/USD/dist/bin/usdcat`), so
+> it cannot run here. Every round-trip claim we have verifies only that tinyusdz's
+> own reader and writer agree with EACH OTHER — a bug they share is invisible.
+> Install/point at a pxr build and run the comparison over `tests/usda`, then
+> triage what it finds.
+
+**3. Mesh lights on the legacy `-rtPreview` path** — see the section below; decide
+whether that path is worth keeping before building anything.
+
 ## Open
+
+### The crate writer drops data (133 of 422 fixtures)
+
+`.usdc` is not a faithful round-trip today. Sweep, from the repo root:
+
+```bash
+for f in tests/usda/*.usda; do
+  a=$(mktemp); c=$(mktemp --suffix=.usdc); d=$(mktemp)
+  ./build/tusdcat "$f" > "$a" 2>/dev/null || continue
+  ./build/tusdcat --output-format usdc -o "$c" "$f" >/dev/null 2>&1
+  ./build/tusdcat "$c" > "$d" 2>/dev/null
+  cmp -s "$a" "$d" || echo "DIFF $f"
+  rm -f "$a" "$c" "$d"
+done | wc -l          # 133 as of 2026-07-13 (was 140)
+```
+
+The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a
+diff here is the crate writer losing data, not the printer being creative. Known
+remaining categories, in rough order of how much they matter:
+
+- a TYPELESS prim (`def "bora"`, 49 lines) comes back as `def Model "bora"`: the
+  writer invents a typeName where USD has none.
+- Camera `shutter:open` / `shutter:close` are never written.
+- `hidden` metadata, `bindMaterialAs`, and some `material:binding` relationships.
+
+**Why this kept happening:** the extraction was copy-pasted per prim type, so each
+new prim type was one omission away from losing data — and several did. Three
+rounds of this are already fixed (below); prefer a shared helper over another copy.
+
+CAVEAT on all of it: the checks verify that tinyusdz's reader and writer agree
+with each other. A bug they SHARE is invisible to them. The pxr comparison
+(`tests/run-usdcat-compare.sh`) is what would catch that, and it cannot run here —
+pxr is not installed at the path it wants.
 
 ### Mesh lights on the LEGACY `-rtPreview` path
 
@@ -57,6 +132,53 @@ worth keeping at all.
 
 The deform/bounds work below is DONE and guarded by tests. It stays written down
 because each item cost a wrong turn that is easy to re-take.
+
+### `proxy` and `render` are ALTERNATIVES, not two things to draw
+
+tusdview drew both, so the stand-in landed on top of the geometry it stands in for.
+It stayed invisible until upstream FIXED `Sphere.radius` (2 -> USD's default 1):
+intent-vfx's `simpleAsset` authors a bare Cube as the proxy for a bare Sphere, and
+with the radius correct that cube (size 2) exactly encloses that sphere (radius 1),
+so the asset rendered as a blank box. The lesson is the diagnosis, not the fix: the
+"regression" was an upstream CORRECTION exposing a latent bug of ours, and
+restoring the old radius would have "fixed" the picture by keeping a bug.
+
+A proxy is now superseded by render-purpose geometry (both loaders); one that
+stands in for nothing still draws. The supersede is scoped to the MODEL root —
+nearest ancestor with an authored kind other than `group` — because the two are
+alternatives of the same ASSET. Scoping to any shared ancestor instead DELETES
+real geometry, which the usd-assets goldens caught: Apple's
+`stage_composition/purpose.usda` sits four unrelated cubes under one Scope, one of
+them proxy-purpose, and a shared-ancestor rule dropped it. Guarded by
+`tusdview-purpose-proxy-supersede` (all three cases, both loaders).
+
+### The writers silently dropped authored data
+
+Three rounds, each found by sweeping fixtures through `tusdcat` rather than by
+reading code. All fixed and guarded by `scope-imageable-roundtrip`, which now
+sweeps ALL 26 imageable prim types through both `usda -> usda` and
+`usda -> usdc -> usda`:
+
+1. **Scope**: `visibility` was parsed into a typed field and then never printed or
+   written — it vanished on round-trip. `purpose` was never parsed into its typed
+   field at all (`Scope::purpose` was dead; it read back as Default forever) and
+   survived only by accident, by falling through into the generic `props` map.
+2. **Lights, Volume, Material, NodeGraph**: the lights and Volume lost BOTH
+   attributes through the crate writer; Material/NodeGraph lost `purpose` through
+   both writers. Volume's was the silliest — it DOES call
+   `ExtractGPrimProperties`, but was missing from that function's cast list, so it
+   found no gprim and wrote nothing.
+3. **Light transforms** (the worst): NO light extractor wrote xformOps. Lights are
+   Xformable but were missing from `ExtractXformOpsFromXformable`'s cast list, so
+   a scene written to `.usdc` came back with **every light at the world origin**.
+   `SkelRoot`, `Skeleton` and `Volume` were missing there too. Also: `inputs:exposure`
+   was copy-pasted per light and five of them forgot it; RectLight never wrote its
+   texture; neither DomeLight wrote `inputs:texture:format`.
+
+Also: an AUTHORED opinion equal to the schema fallback (`visibility = "inherited"`)
+is now written. It is not the same as no opinion — an authored opinion blocks
+weaker ones during composition, so dropping it because it "looks like the default"
+silently changes what the layer means.
 
 ### LEGACY loader deform: a DOUBLE deform on the `--time` load path
 
@@ -211,6 +333,15 @@ TUSDVIEW_RUN_GOLDEN=1 tests/tusdview/run-usd-assets-batch.sh \
 Recorded 2026-07-12 on an RTX 5060 Ti (driver 610.43.02). A different GPU will
 likely need its own baseline; that is why the gate exists.
 
+Refreshed again 2026-07-13, for upstream's `Sphere.radius` correction and the
+proxy/render supersede. It earned its keep a SECOND time: it flagged
+`stage_composition/purpose.usda`, and that flag was the supersede rule being too
+broad — it was deleting a proxy cube that nothing superseded. Read the diff; a
+fingerprint that moves on an asset your change should not have touched is the
+point of the thing. (`normalsTypes` under vk-rt moves ~11 bits, over the tol of 8:
+a receding row of small cubes makes a thin, framing-sensitive silhouette. Verified
+by rendering it — geometry is correct.)
+
 Refreshed 2026-07-12 for the PointInstancer quaternion fix, and it earned its keep:
 it flagged `full_assets/OpenChessSet` (in BOTH modes, which is what a real geometry
 change looks like), and the render showed why -- every PAWN was missing. The pawns
@@ -240,7 +371,7 @@ world-transform in the batch-append path, a new VBO/binding, and shader edits in
 ## Verification
 
 ```bash
-cd build && make -j16 && ctest --output-on-failure     # 85/85
+cd build && make -j16 && ctest --output-on-failure     # 87/87
 
 # The GL/Vulkan tests need a display; headless, on NVIDIA:
 # xvfb-run -a env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
