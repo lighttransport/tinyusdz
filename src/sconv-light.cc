@@ -36,6 +36,8 @@ namespace experimental {
   if (!EmitTypedAnimatableAttr("inputs:shaping:cone:angle", (light)->shapingConeAngle, fields, err)) return false; \
   if (!EmitTypedAnimatableAttr("inputs:shaping:cone:softness", (light)->shapingConeSoftness, fields, err)) return false;
 
+// Lights are imageable: `visibility` / `purpose` are typed fields, so they have
+// to be written explicitly or they vanish on write.
 #define EXTRACT_COMMON_LIGHT(light) \
   if (!ExtractImageableAttrs((light)->visibility, (light)->purpose, fields, err)) return false; \
   if (!ExtractXformOpsFromXformable(prim, prim_path, fields, err)) return false; \

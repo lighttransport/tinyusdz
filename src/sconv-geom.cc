@@ -1914,27 +1914,7 @@ bool CrateWriter::ExtractScopeProperties(
     return false;
   }
 
-  if (scope->visibility.authored()) {
-    const auto& vis_animatable = scope->visibility.get_value();
-    Visibility vis_val;
-    if (vis_animatable.has_default() && vis_animatable.get_default(&vis_val) &&
-        vis_val != Visibility::Inherited) {
-      crate::CrateValue vis_crate_val;
-      vis_crate_val.Set(value::token(to_string(vis_val)));
-      fields.push_back({"visibility", vis_crate_val});
-    }
-  }
-
-  if (scope->purpose.authored()) {
-    const Purpose purpose_val = scope->purpose.get_value();
-    if (purpose_val != Purpose::Default) {
-      crate::CrateValue purpose_crate_val;
-      purpose_crate_val.Set(value::token(to_string(purpose_val)));
-      fields.push_back({"purpose", purpose_crate_val});
-    }
-  }
-
-  return true;
+  return ExtractImageableAttrs(scope->visibility, scope->purpose, fields, err);
 }
 
 // ============================================================================
@@ -1963,6 +1943,7 @@ bool CrateWriter::ExtractGPrimProperties(
     // chained `if (auto *t = …) else if (auto *t = …)`.
 #define TRY_AS_GPRIM(__TY) if (!gprim) { if (auto *p = prim.data().as<__TY>()) gprim = static_cast<const GPrim *>(p); }
     TRY_AS_GPRIM(Xform)
+    TRY_AS_GPRIM(Volume)
     TRY_AS_GPRIM(GeomMesh)
     TRY_AS_GPRIM(GeomSphere)
     TRY_AS_GPRIM(GeomCube)
@@ -1987,58 +1968,10 @@ bool CrateWriter::ExtractGPrimProperties(
     return true;
   }
 
-  // Extract common GPrim properties
-
-  // Extract visibility
-  if (gprim->visibility.authored()) {
-    const auto& vis_animatable = gprim->visibility.get_value();
-    if (vis_animatable.has_default()) {
-      Visibility vis_val;
-      if (vis_animatable.get_default(&vis_val)) {
-        if (vis_val != Visibility::Inherited) {  // Only write if not default
-          crate::CrateValue vis_crate_val;
-          value::token vis_tok(to_string(vis_val));
-          vis_crate_val.Set(vis_tok);
-          fields.push_back({"visibility", vis_crate_val});
-        }
-      }
-    }
-
-    // Handle animated visibility (TimeSamples)
-    if (vis_animatable.has_timesamples()) {
-      const value::TimeSamples *vis_ts = vis_animatable.get_timesamples_ptr();
-
-      // Enum timesamples are stored as int64; cast back to Visibility and emit
-      // token timeSamples for the crate writer.
-      value::TimeSamples ts;
-      const auto &samples = vis_ts->get_samples();
-      for (size_t i = 0; i < samples.size(); i++) {
-        if (samples[i].blocked) {
-          ts.add_blocked_sample(samples[i].t, value::Value());
-        } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
-          value::token vis_token(to_string(static_cast<Visibility>(*iv)));
-          ts.add_sample(samples[i].t, value::Value(vis_token));
-        }
-      }
-
-      crate::CrateValue ts_crate_val;
-      ts_crate_val.Set(ts);
-      fields.push_back({"visibility.timeSamples", ts_crate_val});
-
-      DCOUT("[ExtractGPrimProperties] Added animated visibility with "
-                << ts.size() << " samples");
-    }
-  }
-
-  // Extract purpose
-  if (gprim->purpose.authored()) {
-    Purpose purpose_val = gprim->purpose.get_value();
-    if (purpose_val != Purpose::Default) {  // Only write if not default
-      crate::CrateValue purpose_crate_val;
-      value::token purpose_tok(to_string(purpose_val));
-      purpose_crate_val.Set(purpose_tok);
-      fields.push_back({"purpose", purpose_crate_val});
-    }
+  // Extract the imageable attributes (visibility / purpose) shared with every
+  // other imageable prim -- Scope, the lights, Material/NodeGraph.
+  if (!ExtractImageableAttrs(gprim->visibility, gprim->purpose, fields, err)) {
+    return false;
   }
 
   // Extract extent (bounding box) - stored as float3[2] in USD
