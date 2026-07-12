@@ -3236,7 +3236,9 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
         face_indices, normals, uvs);
   } else if (type == "Sphere") {
     ::tinyusdz::tydra::GenerateIcosphereMesh(
-        ReadDoubleProperty(prim, "radius", 2.0), 2, points, face_counts,
+        // USD's Sphere.radius default is 1 (Cube.size is 2). Normally the
+        // schema registry supplies it and this fallback never fires.
+        ReadDoubleProperty(prim, "radius", 1.0), 2, points, face_counts,
         face_indices, normals, uvs);
   } else if (type == "Cylinder" || type == "Cylinder_1") {
     double radius = ReadDoubleProperty(prim, "radius", 1.0);

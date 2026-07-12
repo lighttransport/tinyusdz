@@ -3383,10 +3383,58 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   size_t weldedVertices = 0;
   size_t sourcePoints = 0;
   size_t deferredProxyCount = 0;
+
+  // USD's `proxy` and `render` purposes are ALTERNATIVES -- a stand-in and the real
+  // geometry, two representations of one thing -- not two things to draw at once.
+  // Drawn together they land on top of each other: intent-vfx/simpleAsset authors an
+  // unadorned Cube as the proxy for an unadorned Sphere, and USD's defaults make that
+  // cube (size 2) exactly enclose that sphere (radius 1), so the stand-in box hid the
+  // asset completely. Prefer the real thing: a proxy is SUPERSEDED by render-purpose
+  // geometry and not emitted; a proxy that stands in for nothing still draws, which is
+  // the whole point of authoring one.
+  //
+  // The two are alternatives of the same ASSET, so the model root is the scope that
+  // pairs them -- NOT any shared ancestor. Scoping by shared ancestor deletes real
+  // geometry: Apple's stage_composition/purpose.usda puts four unrelated cubes side by
+  // side under one Scope, one of them proxy-purpose, and a shared-ancestor rule drops
+  // that cube even though nothing supersedes it. `group` is excluded for the same
+  // reason -- it is the container for many models (/World), not one asset.
+  auto modelRootOf = [&](const std::string& abs) -> std::string {
+    std::string p = abs;
+    while (!p.empty()) {
+      const tnext::UsdPrim prim = stage.GetPrimAtPath(p);
+      if (prim.IsValid()) {
+        const std::string& kind = prim.GetMeta().kind();
+        if (!kind.empty() && kind != "group") return p;
+      }
+      if (p == "/") break;
+      const size_t slash = p.find_last_of('/');
+      p = (slash == std::string::npos || slash == 0) ? "/" : p.substr(0, slash);
+    }
+    return {};  // no enclosing model: nothing to scope a supersede to
+  };
+
+  std::unordered_set<std::string> renderModels;
+  for (const PendingMesh& pending : meshPrims) {
+    const std::string path = pending.prim.GetPath().str();
+    if (ResolveNextPurpose(stage, path) != "render") continue;
+    const std::string model = modelRootOf(path);
+    if (!model.empty()) renderModels.insert(model);
+  }
+  size_t supersededProxyCount = 0;
+
   for (const PendingMesh& pending : meshPrims) {
     const tnext::UsdPrim& mp = pending.prim;
     if (ctrl && ctrl->cancel.load()) break;
     if (capped) break;
+    if (!renderModels.empty()) {
+      const std::string path = mp.GetPath().str();
+      if (ResolveNextPurpose(stage, path) == "proxy" &&
+          renderModels.count(modelRootOf(path))) {
+        ++supersededProxyCount;
+        continue;
+      }
+    }
     tydn::RenderMesh m;
     const tydn::GeometryInfo geometry =
         conv.GetGeometryInfo(mp, tydn::GeometryKind::Mesh);
@@ -3746,6 +3794,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   if (deferredProxyCount > 0) {
     LOGI("next: first frame uses %zu deferred-payload proxies",
          deferredProxyCount);
+  }
+  if (supersededProxyCount > 0) {
+    LOGI("next: %zu proxy-purpose mesh(es) superseded by render-purpose geometry",
+         supersededProxyCount);
   }
   for (auto& kv : open) flushBatch(kv.second);
 

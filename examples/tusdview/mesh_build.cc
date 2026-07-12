@@ -24,8 +24,10 @@ extern "C" {
 #include <limits>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "light3d/math.h"
+#include "log.hh"
 #include "skinning.hh"  // InbetweenSamples, CollectBlendShapeInbetweens
 #include "stage.hh"
 #include "core/prim.hh"
@@ -53,20 +55,45 @@ const char* PurposeName(tinyusdz::Purpose purpose) {
   }
 }
 
+// `purpose` lives on UsdGeomImageable, so it can be authored on ANY imageable
+// prim -- not just the Mesh/Xform pair this used to check. Assets routinely
+// author it on the grouping prim (intent-vfx's simpleAsset puts it on the
+// `proxy` and `render` Scopes), and missing that made every mesh under it
+// resolve to `default`.
+template <typename T>
+bool TypedAuthoredPurpose(const tinyusdz::Prim& prim, std::string* out) {
+  const auto* p = prim.as<T>();
+  if (!p || !p->purpose.authored()) return false;
+  *out = PurposeName(p->purpose.get_value());
+  return true;
+}
+
 bool AuthoredPurpose(const tinyusdz::Prim& prim, std::string* out) {
-  if (const auto* mesh = prim.as<tinyusdz::GeomMesh>()) {
-    if (mesh->purpose.authored()) {
-      *out = PurposeName(mesh->purpose.get_value());
-      return true;
+  // Scope is the odd one out: ReconstructPrim<Scope> parses only `visibility`
+  // into a typed field and drops every other property into the generic `props`
+  // map (Scope::purpose exists but is never populated -- reading it always
+  // yields Default). So take the token from `props`, which is where the reader
+  // actually leaves it.
+  if (const auto* scope = prim.as<tinyusdz::Scope>()) {
+    const auto it = scope->props.find("purpose");
+    if (it == scope->props.end() || !it->second.is_attribute()) return false;
+    tinyusdz::value::token tok;
+    if (!it->second.get_attribute().get_value(&tok) || tok.str().empty()) {
+      return false;
     }
+    *out = tok.str();
+    return true;
   }
-  if (const auto* xform = prim.as<tinyusdz::Xform>()) {
-    if (xform->purpose.authored()) {
-      *out = PurposeName(xform->purpose.get_value());
-      return true;
-    }
-  }
-  return false;
+  return TypedAuthoredPurpose<tinyusdz::GeomMesh>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::Xform>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomSphere>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomCube>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomCylinder>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomCone>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomCapsule>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomPlane>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomBasisCurves>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomPoints>(prim, out);
 }
 
 std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
@@ -92,6 +119,28 @@ std::string ResolveInheritedPurpose(const tinyusdz::Stage& stage,
 
 // USD `kind` is authored on the model prim (component/group/assembly), usually an
 // ancestor of the mesh, so walk up to the nearest prim carrying a kind.
+// Path of the nearest ancestor (self included) that roots a MODEL -- any
+// authored kind other than `group`, which is the container for many models
+// (/World) rather than one asset. Empty when there is none. Used to scope
+// proxy/render purpose alternatives to the asset that authored both.
+std::string ResolveModelRoot(const tinyusdz::Stage& stage,
+                             const std::string& absPath) {
+  std::string path = absPath;
+  while (!path.empty()) {
+    const tinyusdz::Prim* prim = nullptr;
+    std::string err;
+    if (stage.find_prim_at_path(tinyusdz::Path(path, ""), prim, &err) && prim &&
+        prim->metas().has_kind()) {
+      const std::string kind = prim->metas().get_kind_str();
+      if (!kind.empty() && kind != "group") return path;
+    }
+    if (path == "/") break;
+    const size_t slash = path.find_last_of('/');
+    path = (slash == std::string::npos || slash == 0) ? "/" : path.substr(0, slash);
+  }
+  return {};
+}
+
 int ResolveInheritedKind(const tinyusdz::Stage& stage, const std::string& absPath) {
   std::string path = absPath;
   while (!path.empty()) {
@@ -2814,6 +2863,46 @@ void ApplyMeshPurposes(const tinyusdz::Stage& stage, DrawScene* draw) {
                                         : ResolveInheritedPurpose(stage, mesh.absPath);
     mesh.kindId =
         mesh.absPath.empty() ? 0 : ResolveInheritedKind(stage, mesh.absPath);
+  }
+
+  // `proxy` and `render` are ALTERNATIVES in USD, not two things to draw: the
+  // proxy is a stand-in for a render prim too heavy to show. Drawing both puts
+  // the stand-in on top of the geometry it stands in for (in intent-vfx's
+  // simpleAsset, a proxy Cube of size 2 exactly encloses the render Sphere of
+  // radius 1, hiding it completely). So a proxy is SUPERSEDED by render-purpose
+  // geometry; one that stands in for nothing still draws, which is the whole
+  // point of authoring it.
+  //
+  // The two are alternatives of the same ASSET, so the model root scopes the
+  // pairing -- see the matching rule in next_scene_loader.cc for why a shared
+  // ancestor is the wrong scope (it deletes unrelated proxy-only geometry).
+  std::unordered_set<std::string> renderModels;
+  for (const DrawMeshCPU& mesh : draw->meshes) {
+    if (mesh.purpose != "render" || mesh.absPath.empty()) continue;
+    const std::string model = ResolveModelRoot(stage, mesh.absPath);
+    if (!model.empty()) renderModels.insert(model);
+  }
+  if (renderModels.empty()) return;
+
+  const size_t before = draw->meshes.size();
+  draw->meshes.erase(
+      std::remove_if(draw->meshes.begin(), draw->meshes.end(),
+                     [&](const DrawMeshCPU& mesh) {
+                       if (mesh.purpose != "proxy" || mesh.absPath.empty()) {
+                         return false;
+                       }
+                       return renderModels.count(
+                                  ResolveModelRoot(stage, mesh.absPath)) > 0;
+                     }),
+      draw->meshes.end());
+
+  const size_t superseded = before - draw->meshes.size();
+  if (superseded > 0) {
+    LOGI("legacy: %zu proxy-purpose mesh(es) superseded by render-purpose geometry",
+         superseded);
+    // The dropped proxies were folded into the scene box by BuildDrawScene, and
+    // the box drives the ground grid, depth normalization and auto-fit.
+    ComputeSceneBounds(draw);
   }
 }
 

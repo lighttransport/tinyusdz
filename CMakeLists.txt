@@ -2552,6 +2552,20 @@ if(TINYUSDZ_BUILD_TESTS)
     set_tests_properties(tusdview-material-binding-inheritance
                          PROPERTIES SKIP_RETURN_CODE 77)
 
+    # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
+    # both put the stand-in on top of the geometry it stands in for (intent-vfx's
+    # simpleAsset: a proxy Cube of size 2 exactly encloses the render Sphere of
+    # radius 1). Both loaders must supersede the proxy -- and still draw it when
+    # there is no render geometry to supersede it.
+    add_test(
+      NAME tusdview-purpose-proxy-supersede
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-purpose-proxy-supersede.sh"
+      )
+    set_tests_properties(tusdview-purpose-proxy-supersede
+                         PROPERTIES SKIP_RETURN_CODE 77)
+
     # Layer-relative asset-path anchoring: a look layer nested below the root
     # reaches its texture with `../tex/...`, which only resolves when anchored to
     # the layer that authored it (see src/next/layer/asset-anchor.hh).
