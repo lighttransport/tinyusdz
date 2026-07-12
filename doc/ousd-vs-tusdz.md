@@ -207,7 +207,7 @@ and the stronger layer authored a stronger `nested.a` plus `strong = 4`. OpenUSD
 
 The shared local-opinion path now recursively merges `customData`, `assetInfo`, `sdrMetadata`, clips, and typed extension dictionaries. The property copier is field-complete for both attributes and relationships: weaker `renderType`, `connectability`, `allowedTokens`, scalar metadata, raw unknown fields, and dictionary fields no longer disappear merely because a stronger property authored another metadata field. Merged unregistered dictionaries regenerate their source and survive USDC reread.
 
-**Remaining:** add deleted/blocked and dictionary type-conflict differentials, and extend typed storage to variant/spec categories outside the current Layer/Prim/Property model.
+Explicit-empty authored state is now distinguishable from unauthored for layer `relocates`/`subLayers` and prim `relocates`/`variants` (dedicated authored bits, round-tripped through USDA — `relocates = {}`, `subLayers = []`, `variants = {}` — and USDC; `TestAuthoredStateBits`). **Remaining:** add deleted/blocked and dictionary type-conflict differentials, and extend typed storage to variant/spec categories outside the current Layer/Prim/Property model.
 
 ### AOUSD-COMP-002 — Relationship list-op composition loses weaker targets (P0)
 
@@ -219,7 +219,7 @@ With a weaker `rel r = </A>` and a stronger `prepend rel r = </B>`, OpenUSD reso
 
 Attribute `.connect` authoring now preserves all six sublists in USDA and USDC, including cross-site prepend/delete resolution and explicit-empty state. The broader problem still generalizes to elective fields not yet registered with the shared list-op machinery; ordered and generated multi-layer combinations are not yet registry-driven.
 
-**Remaining:** relationship results and explicit-empty `targetPaths` now round-trip, and stronger explicit-empty `apiSchemas` correctly blocks weaker applications. Both schema-name fields now have exact explicit/add/prepend/append/delete/order storage and interoperable USDC encoding, including inert and explicit-empty sublists. The reviewed cross-site API-schema delete case now resolves through the shared opinion-copy path; ordered and generated multi-layer combinations are not yet registry-driven.
+**Remaining:** relationship results and explicit-empty `targetPaths` now round-trip, and stronger explicit-empty `apiSchemas` correctly blocks weaker applications. Both schema-name fields now have exact explicit/add/prepend/append/delete/order storage and interoperable USDC encoding, including inert and explicit-empty sublists. The reviewed cross-site API-schema delete case now resolves through the shared opinion-copy path. Cross-site `reorder` now applies with pxr SdfListOp semantics (shared `ApplyStringListOrder`, also used by clipSets/variantSet-name edits), and `test_cross_layer_string_listop_matrix` locks in every qualifier combination across a sublayer stack. The composition/emission code itself is still bespoke per field rather than driven by a field-table registry.
 
 A direct cross-site probe keeps this distinction concrete: a stronger `delete apiSchemas = ["WeakAPI"]` over weaker `prepend apiSchemas = ["WeakAPI", "KeepAPI"]` flattens to `["KeepAPI"]` in OpenUSD. Next previously produced an empty applied list; legacy and PCP composition now produce the same explicit `["KeepAPI"]` result and do not re-emit the local delete operation onto the flattened layer.
 
