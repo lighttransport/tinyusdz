@@ -329,8 +329,10 @@ struct PrimSpecMetaExt {
   // Multiple variant selections (set -> selection); composed in addition to the
   // legacy single `variantSelection` field on PrimSpecMeta.
   std::vector<std::pair<std::string, std::string>> variantSelections;
+  bool variantSelectionsAuthored = false;
   // Relocates: namespace renames (absolute source path -> absolute target path).
   std::vector<std::pair<std::string, std::string>> relocates;
+  bool relocatesAuthored = false;
   // Dictionary-valued metadata (each a Dictionary Value; empty when unauthored).
   Value customData;
   Value assetInfo;
@@ -380,7 +382,9 @@ struct PrimSpecMetaExt {
         variantSets(o.variantSets),
         variantSetNameEdits(o.variantSetNameEdits),
         variantSelections(o.variantSelections),
+        variantSelectionsAuthored(o.variantSelectionsAuthored),
         relocates(o.relocates),
+        relocatesAuthored(o.relocatesAuthored),
         customData(o.customData),
         assetInfo(o.assetInfo),
         sdrMetadata(o.sdrMetadata),
@@ -618,6 +622,13 @@ struct PrimSpecMeta {
     ensure_ext();
     return ext_->variantSelections;
   }
+  bool variantSelectionsAuthored() const {
+    return ext_ && ext_->variantSelectionsAuthored;
+  }
+  void setVariantSelectionsAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->variantSelectionsAuthored = authored;
+  }
   const std::vector<std::pair<std::string, std::string>> &relocates() const {
     static const std::vector<std::pair<std::string, std::string>> kEmpty;
     return ext_ ? ext_->relocates : kEmpty;
@@ -625,6 +636,11 @@ struct PrimSpecMeta {
   std::vector<std::pair<std::string, std::string>> &relocates() {
     ensure_ext();
     return ext_->relocates;
+  }
+  bool relocatesAuthored() const { return ext_ && ext_->relocatesAuthored; }
+  void setRelocatesAuthored(bool authored = true) {
+    ensure_ext();
+    ext_->relocatesAuthored = authored;
   }
   const Value &customData() const {
     static const Value kEmpty;

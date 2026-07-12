@@ -1860,6 +1860,70 @@ void TestExpressionVariablePolicy() {
 // SdfVariableExpression function-language grammar: typed literals, the
 // function set, string interpolation + escapes, recursive variable
 // evaluation with cycle detection, and error/None propagation.
+// Authored-state bits for the previously structural-only fields: explicit
+// empty vs unauthored must be distinguishable and must round-trip through
+// USDA and USDC for layer relocates/subLayers and prim relocates/variants.
+void TestAuthoredStateBits() {
+  // Explicit-empty authored state.
+  {
+    LoadResult r = Parse(
+        "(\n"
+        "    relocates = {}\n"
+        "    subLayers = []\n"
+        ")\n"
+        "def Xform \"P\" (\n"
+        "    relocates = {}\n"
+        "    variants = {}\n"
+        ") {}\n");
+    assert(r.success);
+    const Layer* layer = r.stage.GetRootLayer();
+    assert(layer->meta().relocates_set && layer->meta().relocates.empty());
+    assert(layer->meta().subLayers_set && layer->meta().subLayers.empty());
+    const PrimSpec* prim = layer->prim_at_path("/P");
+    assert(prim);
+    assert(prim->meta().relocatesAuthored() && prim->meta().relocates().empty());
+    assert(prim->meta().variantSelectionsAuthored() &&
+           prim->meta().variantSelections().empty());
+
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.find("relocates = {}") != std::string::npos);
+    assert(usda.find("subLayers = []") != std::string::npos);
+    assert(usda.find("variants = {}") != std::string::npos);
+    // The USDA spelling itself re-parses to the same authored state.
+    LoadResult again = LoadUSDAFromString(usda, LoadOptions{});
+    assert(again.success);
+    assert(again.stage.GetRootLayer()->meta().relocates_set);
+    assert(again.stage.GetRootLayer()->meta().subLayers_set);
+
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, r.stage, USDCWriteOptions{}).success);
+    USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+    assert(back.success);
+    const Layer* blayer = back.stage.GetRootLayer();
+    assert(blayer->meta().relocates_set && blayer->meta().relocates.empty());
+    assert(blayer->meta().subLayers_set && blayer->meta().subLayers.empty());
+    const PrimSpec* bprim = blayer->prim_at_path("/P");
+    assert(bprim && bprim->meta().relocatesAuthored() &&
+           bprim->meta().relocates().empty());
+    assert(bprim->meta().variantSelectionsAuthored() &&
+           bprim->meta().variantSelections().empty());
+  }
+  // Unauthored: no bits, no spurious emission.
+  {
+    LoadResult r = Parse("def Xform \"P\" {}\n");
+    assert(r.success);
+    const Layer* layer = r.stage.GetRootLayer();
+    assert(!layer->meta().relocates_set && !layer->meta().subLayers_set);
+    const PrimSpec* prim = layer->prim_at_path("/P");
+    assert(prim && !prim->meta().relocatesAuthored() &&
+           !prim->meta().variantSelectionsAuthored());
+    const std::string usda = WriteUSDAToString(r.stage);
+    assert(usda.find("relocates") == std::string::npos);
+    assert(usda.find("subLayers") == std::string::npos);
+    assert(usda.find("variants") == std::string::npos);
+  }
+}
+
 void TestVariableExpressionGrammar() {
   Value vars = Value::MakeDictionary();
   Dict* d = vars.as_dictionary();
@@ -2752,6 +2816,7 @@ int main() {
   TestGeneratedCoreSchemaCoverage();
   TestExpressionVariablePolicy();
   TestVariableExpressionGrammar();
+  TestAuthoredStateBits();
   TestRemainingElectiveFieldCoverage();
   std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;

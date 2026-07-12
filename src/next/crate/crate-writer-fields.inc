@@ -165,7 +165,7 @@
 
       // relocates (SdfRelocates, crate >= 0.11):
       //   [u64 count][(u32 srcPathIdx, u32 dstPathIdx)*]
-      if (!prim.meta().relocates().empty()) {
+      if (prim.meta().relocatesAuthored() || !prim.meta().relocates().empty()) {
         const auto& rel = prim.meta().relocates();
         std::vector<uint8_t> blob(8 + rel.size() * 8);
         uint64_t cnt = rel.size();
@@ -418,7 +418,7 @@
                     prim.meta().variantSelection.substr(eq + 1));
           }
         }
-        if (!sels.empty()) {
+        if (!sels.empty() || prim.meta().variantSelectionsAuthored()) {
           uint64_t blk = StoreVariantSelectionMap(sels);
           CrateField vf;
           vf.token_index.value = InternToken("variantSelection");
@@ -716,7 +716,7 @@
 
       // layerRelocates (SdfRelocates, crate >= 0.11), same wire layout as
       // the prim-level field: [u64 count][(u32 src, u32 dst)*].
-      if (!layer.meta().relocates.empty()) {
+      if (layer.meta().relocates_set || !layer.meta().relocates.empty()) {
         const auto& rel = layer.meta().relocates;
         std::vector<uint8_t> blob(8 + rel.size() * 8);
         uint64_t cnt = rel.size();
@@ -770,7 +770,7 @@
 
       // subLayers (StringVector — pxr's schema type; a token[] here reads back
       // in pxr as an empty sublayer list)
-      if (!layer.meta().subLayers.empty()) {
+      if (layer.meta().subLayers_set || !layer.meta().subLayers.empty()) {
         CrateField f = MakeStringVectorField("subLayers", layer.meta().subLayers);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
