@@ -2125,6 +2125,238 @@ void TestFoundationalTypeMatrix() {
          "value + connection must both survive USDC");
 }
 
+// ---------------------------------------------------------------------------
+// AOUSD §6 normative foundational type table, embedded from the supplemental
+// corpus `data_types/tests/foundational_data_types.json` (release_dec2025).
+// The corpus is intentionally not vendored; the table below is its content
+// de-duplicated (the JSON repeats `uint[]` and lists a stray scalar `uint64`
+// in the array section). Every scalar named type has a normative `[]` form.
+// `dictionary` is a metadata value type (covered in the dictionary context),
+// `listop<...>` are metadata list-ops (covered by the list-op fidelity
+// tests), and `opaque`/`group` carry no non-block values by definition.
+static const char* kNormativeScalars[] = {
+    "asset",    "bool",     "double",   "float",    "half",     "int",
+    "int64",    "string",   "timecode", "token",    "uchar",    "uint",
+    "uint64",   "double2",  "double3",  "double4",  "float2",   "float3",
+    "float4",   "half2",    "half3",    "half4",    "int2",     "int3",
+    "int4",     "matrix2d", "matrix3d", "matrix4d", "quatd",    "quatf",
+    "quath",
+};
+
+// Semantic aliases (alias -> underlying); the scalar and `[]` forms are both
+// normative. `group -> opaque` is block-only and covered with opaque.
+static const char* kNormativeAliases[][2] = {
+    {"color3d", "double3"},   {"color3f", "float3"},   {"color3h", "half3"},
+    {"color4d", "double4"},   {"color4f", "float4"},   {"color4h", "half4"},
+    {"normal3d", "double3"},  {"normal3f", "float3"},  {"normal3h", "half3"},
+    {"point3d", "double3"},   {"point3f", "float3"},   {"point3h", "half3"},
+    {"vector3d", "double3"},  {"vector3f", "float3"},  {"vector3h", "half3"},
+    {"frame4d", "matrix4d"},  {"texCoord2d", "double2"},
+    {"texCoord2f", "float2"}, {"texCoord2h", "half2"},
+    {"texCoord3d", "double3"},{"texCoord3f", "float3"},
+    {"texCoord3h", "half3"},
+};
+
+// Two distinct USDA literals per normative type (default vs second sample).
+std::string NormativeLiteral(const std::string& type, int variant) {
+  const bool second = variant != 0;
+  auto tuple = [&](int n, bool integral) {
+    std::string out = "(";
+    for (int i = 0; i < n; ++i) {
+      if (i) out += ", ";
+      const int base = i + 1 + (second ? 4 : 0);
+      out += integral ? std::to_string(base)
+                      : (std::to_string(base) + ".5");
+    }
+    return out + ")";
+  };
+  auto matrix = [&](int n) {
+    std::string out = "(";
+    for (int r = 0; r < n; ++r) {
+      if (r) out += ", ";
+      out += "(";
+      for (int c = 0; c < n; ++c) {
+        if (c) out += ", ";
+        if (r == c) out += "1";
+        else if (second && r == n - 1 && c == 0) out += "2";
+        else out += "0";
+      }
+      out += ")";
+    }
+    return out + ")";
+  };
+  if (type == "bool") return second ? "false" : "true";
+  if (type == "uchar") return second ? "9" : "200";
+  if (type == "int" || type == "uint") return second ? "9" : "7";
+  if (type == "int64") return second ? "-9" : "-100000000000";
+  if (type == "uint64") return second ? "9" : "100000000000";
+  if (type == "half" || type == "float" || type == "double")
+    return second ? "2.5" : "1.5";
+  if (type == "timecode") return second ? "48" : "24";
+  if (type == "string") return second ? "\"there\"" : "\"hi\"";
+  if (type == "token") return second ? "\"xyz\"" : "\"abc\"";
+  if (type == "asset") return second ? "@./q.png@" : "@./p.png@";
+  if (type.compare(0, 6, "matrix") == 0) return matrix(type[6] - '0');
+  if (type.compare(0, 4, "quat") == 0)
+    return second ? "(0, 1, 0, 0)" : "(1, 0, 0, 0)";
+  // Component tuples: trailing digit gives the count; int tuples authored
+  // integral, the rest floating.
+  const int n = type.back() - '0';
+  const bool integral = type.compare(0, 3, "int") == 0;
+  return tuple(n, integral);
+}
+
+std::string SanitizeTypeIdent(const std::string& type) {
+  std::string out;
+  for (char c : type) {
+    if (c == '[' || c == ']') continue;
+    out += c;
+  }
+  return out;
+}
+
+// Parse strict + verify every authored property keeps its declared type name,
+// then round-trip USDA -> USDC -> USDA byte-identically.
+void CheckNormativeBody(const std::string& body, const char* label) {
+  LoadResult direct = Parse(body, true);
+  if (!direct.success) {
+    std::fprintf(stderr, "normative matrix (%s) failed to parse:\n", label);
+    for (const auto& e : direct.errors) {
+      std::fprintf(stderr, "  %s\n", e.message.c_str());
+    }
+    std::fprintf(stderr, "%s\n", body.c_str());
+  }
+  assert(direct.success);
+  const std::string a1 = WriteUSDAToString(direct.stage);
+  std::vector<uint8_t> crate;
+  USDCWriteOptions usdc_opts;
+  assert(WriteUSDCToMemory(crate, direct.stage, usdc_opts).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success);
+  const std::string a2 = WriteUSDAToString(back.stage);
+  if (a1 != a2) {
+    std::fprintf(stderr, "normative matrix (%s) crate round-trip diff:\n", label);
+    std::fprintf(stderr, "--- usda\n%s\n--- usda after crate\n%s\n", a1.c_str(),
+                 a2.c_str());
+  }
+  assert(a1 == a2 && "normative type matrix must survive USDA->USDC->USDA");
+}
+
+// AOUSD-TYPE-001: cases GENERATED from the normative specification table
+// (rather than the implementation registry) across the scalar / array /
+// time-sampled / dictionary / semantic-alias contexts.
+void TestNormativeTypeMatrix() {
+  // Context 1+2: scalar and array defaults, declared-type fidelity.
+  {
+    std::string body = "def Scope \"T\" {\n";
+    for (const char* t : kNormativeScalars) {
+      const std::string id = SanitizeTypeIdent(t);
+      body += "    " + std::string(t) + " v_" + id + " = " +
+              NormativeLiteral(t, 0) + "\n";
+      body += "    " + std::string(t) + "[] va_" + id + " = [" +
+              NormativeLiteral(t, 0) + ", " + NormativeLiteral(t, 1) + "]\n";
+    }
+    body += "}\n";
+    LoadResult direct = Parse(body, true);
+    assert(direct.success);
+    const PrimSpec* prim = direct.stage.GetRootLayer()->prim_at_path("/T");
+    assert(prim);
+    for (const char* t : kNormativeScalars) {
+      const std::string id = SanitizeTypeIdent(t);
+      const std::string* scalar_decl = prim->property_type_name("v_" + id);
+      assert(scalar_decl && *scalar_decl == t &&
+             "normative scalar type name must survive parsing");
+      const std::string* array_decl = prim->property_type_name("va_" + id);
+      assert(array_decl && *array_decl == std::string(t) + "[]" &&
+             "normative array type name must survive parsing");
+    }
+    CheckNormativeBody(body, "defaults");
+  }
+
+  // Context 3: time-sampled values for every scalar and array type.
+  {
+    std::string body = "def Scope \"TS\" {\n";
+    for (const char* t : kNormativeScalars) {
+      const std::string id = SanitizeTypeIdent(t);
+      body += "    " + std::string(t) + " ts_" + id + ".timeSamples = {\n" +
+              "        1: " + NormativeLiteral(t, 0) + ",\n" +
+              "        2: " + NormativeLiteral(t, 1) + "\n    }\n";
+      body += "    " + std::string(t) + "[] tsa_" + id + ".timeSamples = {\n" +
+              "        1: [" + NormativeLiteral(t, 0) + "],\n" +
+              "        2: [" + NormativeLiteral(t, 1) + "]\n    }\n";
+    }
+    body += "}\n";
+    CheckNormativeBody(body, "timeSamples");
+  }
+
+  // Context 4: every normative type nested as a typed dictionary entry
+  // (customData), scalar and array forms, plus a nested dictionary.
+  {
+    std::string body = "def Scope \"D\" (\n    customData = {\n";
+    for (const char* t : kNormativeScalars) {
+      const std::string id = SanitizeTypeIdent(t);
+      body += "        " + std::string(t) + " k_" + id + " = " +
+              NormativeLiteral(t, 0) + "\n";
+      body += "        " + std::string(t) + "[] ka_" + id + " = [" +
+              NormativeLiteral(t, 0) + "]\n";
+    }
+    body += "        dictionary nested = { int a = 1 }\n";
+    body += "    }\n) {\n}\n";
+    // Guard against silent entry loss (a byte-compare alone cannot catch a
+    // key dropped by BOTH the parser and the writer): every typed entry must
+    // appear in the writer output.
+    LoadResult direct = Parse(body, true);
+    assert(direct.success);
+    const std::string out = WriteUSDAToString(direct.stage);
+    for (const char* t : kNormativeScalars) {
+      const std::string id = SanitizeTypeIdent(t);
+      assert(out.find(" k_" + id + " = ") != std::string::npos &&
+             "typed dictionary entry lost");
+      assert(out.find(" ka_" + id + " = ") != std::string::npos &&
+             "typed dictionary array entry lost");
+    }
+    CheckNormativeBody(body, "dictionary");
+  }
+
+  // Context 5: semantic aliases — the DECLARED name must stay the alias (not
+  // collapse to the underlying type) through parse and crate round-trip.
+  {
+    std::string body = "def Scope \"A\" {\n";
+    for (const auto& alias : kNormativeAliases) {
+      const std::string id = SanitizeTypeIdent(alias[0]);
+      body += "    " + std::string(alias[0]) + " al_" + id + " = " +
+              NormativeLiteral(alias[1], 0) + "\n";
+      body += "    " + std::string(alias[0]) + "[] ala_" + id + " = [" +
+              NormativeLiteral(alias[1], 0) + "]\n";
+    }
+    body += "}\n";
+    LoadResult direct = Parse(body, true);
+    assert(direct.success);
+    const PrimSpec* prim = direct.stage.GetRootLayer()->prim_at_path("/A");
+    assert(prim);
+    for (const auto& alias : kNormativeAliases) {
+      const std::string id = SanitizeTypeIdent(alias[0]);
+      const std::string* decl = prim->property_type_name("al_" + id);
+      assert(decl && *decl == alias[0] &&
+             "semantic alias must not collapse to its underlying type");
+      const std::string* adecl = prim->property_type_name("ala_" + id);
+      assert(adecl && *adecl == std::string(alias[0]) + "[]");
+    }
+    CheckNormativeBody(body, "aliases");
+  }
+
+  // opaque/group: `None` (block) is the only representable value; ordinary
+  // values must be rejected in strict mode (checked in
+  // TestLosslessUnsupportedValues). Re-assert the block round-trip here so the
+  // normative matrix is self-contained.
+  CheckNormativeBody(
+      "def Scope \"O\" {\n"
+      "    opaque marker = None\n"
+      "    group bundle = None\n"
+      "}\n",
+      "opaque/group");
+}
+
 void TestMetadataAndListOpFidelity() {
   // NaN sublayer offset scale: strict rejects; compat substitutes identity
   // (a `scale <= 0` guard would let NaN through since NaN <= 0 is false).
@@ -2330,6 +2562,7 @@ int main() {
   TestLosslessUnsupportedValues();
   TestTypedSplines();
   TestFoundationalTypeMatrix();
+  TestNormativeTypeMatrix();
   TestMetadataAndListOpFidelity();
   TestDictionaryAndRelationshipComposition();
   TestNamespaceOrdering();
