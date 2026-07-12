@@ -36,8 +36,13 @@ namespace experimental {
   if (!EmitTypedAnimatableAttr("inputs:shaping:cone:angle", (light)->shapingConeAngle, fields, err)) return false; \
   if (!EmitTypedAnimatableAttr("inputs:shaping:cone:softness", (light)->shapingConeSoftness, fields, err)) return false;
 
-// Lights are imageable: `visibility` / `purpose` are typed fields, so they have
-// to be written explicitly or they vanish on write.
+// Lights are imageable AND Xformable: `visibility` / `purpose` / xformOps are all
+// typed fields, so they have to be written explicitly or they vanish on write --
+// a light whose xformOps are dropped comes back at the world origin.
+//
+// intensity / color / exposure live on the LightAPI base, so they belong here
+// too. They used to be copy-pasted into each light extractor, and half of them
+// forgot `exposure`.
 #define EXTRACT_COMMON_LIGHT(light) \
   if (!ExtractImageableAttrs((light)->visibility, (light)->purpose, fields, err)) return false; \
   if (!ExtractXformOpsFromXformable(prim, prim_path, fields, err)) return false; \
@@ -192,10 +197,18 @@ bool CrateWriter::ExtractDomeLightProperties(
     }
   }
 
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  // `inputs:texture:format` is a typed enum field and was never written.
+  if (light->textureFormat.authored()) {
+    const auto& fmt_anim = light->textureFormat.get_value();
+    DomeLight::TextureFormat fmt_enum;
+    if (fmt_anim.has_default() && fmt_anim.get_default(&fmt_enum)) {
+      crate::CrateValue fmt_val;
+      fmt_val.Set(value::token(to_string(fmt_enum)));
+      fields.push_back({"inputs:texture:format", fmt_val});
+    }
+  }
+
+
   // guideRadius is parsed (DOME_LIGHT_TYPED_ATTRS) and printed, so emit it too
   // for USDC round-trip parity. Note: no "inputs:" prefix (matches the reader).
   if (!EmitTypedAnimatableAttr("guideRadius", light->guideRadius, fields, err)) return false;
@@ -217,12 +230,6 @@ bool CrateWriter::ExtractGeometryLightProperties(
     return false;
   }
 
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
-  if (light->exposure.authored())
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -241,12 +248,6 @@ bool CrateWriter::ExtractPortalLightProperties(
     return false;
   }
 
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
-  if (light->exposure.authored())
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -285,10 +286,18 @@ bool CrateWriter::ExtractDomeLight1Properties(
     }
   }
 
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  // `inputs:texture:format` is a typed enum field and was never written.
+  if (light->textureFormat.authored()) {
+    const auto& fmt_anim = light->textureFormat.get_value();
+    DomeLight_1::TextureFormat fmt_enum;
+    if (fmt_anim.has_default() && fmt_anim.get_default(&fmt_enum)) {
+      crate::CrateValue fmt_val;
+      fmt_val.Set(value::token(to_string(fmt_enum)));
+      fields.push_back({"inputs:texture:format", fmt_val});
+    }
+  }
+
+
 
   if (!EmitTypedAnimatableAttr("guideRadius", light->guideRadius, fields, err)) return false;
 
