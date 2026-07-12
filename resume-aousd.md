@@ -72,68 +72,75 @@ The `next` PCP composition lives in `src/next/pcp/`. Key pieces after the 22-gap
 
 ---
 
-## Remaining gaps (pick one; each is independently workable)
+## Status (2026-07-13 session)
 
-Ordered roughly by concreteness/value. Each says: what's missing, where, how to verify.
+Items 1, 2, 3, 5, 6 below are DONE; item 4 is partially done (4a + a 4b
+increment). Commits, in order: `a36323902` (item 2), `46d02c244` (item 1),
+`05e9a6bf0` (item 3), `b87303a74` (item 5), `e556b252d` (item 6),
+`5c2aa33fc` (item 4a), `12385cded` (item 4b increment). All gates green at
+each commit (both ctest builds, supplemental ratchet 0, roundtrip baseline,
+main-lib build).
 
-### 1. Sampled-value oracle for value resolution  *(most concrete, high value)*
-The supplemental `value_resolution` cases currently only assert that the 8 entry
-layers **load/compose** (`run-aousd-supplemental.py`, `value_resolution` branch —
-it just checks `next_usdcat -f` returns 0). The corpus ships expected **resolved
-sample values** (value-clip bracketing, layer offsets, interpolation) that are NOT
-checked. Translate those assertions and compare `next`'s resolved values (via
-`src/next/eval/` attribute-eval / value-clip) against the corpus expectations.
-- Files: `tests/next/run-aousd-supplemental.py` (add a value-comparison mode),
-  `src/next/eval/value-clip.{cc,hh}`, `src/next/eval/attribute-eval.{cc,hh}`.
-- Verify: new assertions pass on all 8 cases; `doc/ousd-vs-tusdz.md:288` note updated.
+### 1. Sampled-value oracle for value resolution — DONE
+`tests/next/test_aousd_value_resolution.cc` translates the corpus's expected
+resolved values (ctest `next_test_aousd_value_resolution`, self-skips without
+the corpus; also `run-aousd-supplemental.py --aousd-value-test`, blocking).
+Fixed three real resolver bugs it exposed: LVRPS clip strength (per-property
+`clipShadowedProps` recorded during pcp compose), `times` jump-discontinuity
+ordering, out-of-range stage-time mapping. Remaining follow-on (doc ~:299):
+make Tydra consume the core resolver.
 
-### 2. Composition specifier edge case  *(concrete bug, no current test)*
-Code-review finding, left un-fixed: in `cache-compose.inc` (~line 98-106,
-`ComposeOpinions`), a composed prim whose strongest spec-bearing source is a
-direct-inherit `class` gets **downgraded to `def`** when a WEAKER Inherit source's
-spec is a `def` (`specifier_from_direct_inherit` is set from the first spec-bearing
-source, which can itself be an inherit). Repro: `/World/Foo` inherits `/_C`;
-`/_C` is `class _C { class Child {} }` and `_C` inherits `/_D` where
-`_D` is `class _D { def Child {} }`. Composed `/World/Foo/Child` should stay an
-abstract `class` but is emitted as a concrete `def`.
-- Fix: the specifier should be the strongest authored opinion's, with the
-  direct-inherit-over-`over` promotion only applying when the def opinion is at
-  least as strong. Add a `test_pcp.cc` regression first (in-memory `LayerBuilder`).
+### 2. Composition specifier edge case — DONE
+Ported pxr `_GetPrimSpecifierImpl`: ancestral-inherit class resolves in plain
+strength order; only a DIRECT (non-ancestral) inherit class is weaker than a
+def. `Src` gained an `ancestral` bit. Regression: `test_specifier_resolution`.
 
-### 3. Data-type round-trip generated from the normative table
-Today `test_aousd_conformance.cc` guards every public `TypeId` in the implementation
-registry. Generate cases from the normative §-spec type table across every
-scalar / array / default / time-sampled / dictionary context instead.
-- `opaque`/`group` non-block values are correctly unrepresentable — keep that.
-- Verify: expanded matrix passes; `doc/ousd-vs-tusdz.md:158` note updated.
+### 3. Data-type round-trip generated from the normative table — DONE
+`TestNormativeTypeMatrix` embeds the §6 table (from the corpus JSON,
+de-duplicated) and generates default/array/time-sampled/dictionary/alias
+contexts with declared-name + byte-identical crate round-trip assertions.
 
-### 4. Elective authored-state + list-op breadth
-- Not every elective layer/prim/property field has an authored-state bit; add one
-  (or store fields generically) so explicit-empty vs unauthored vs default is
-  distinguishable for ALL core fields, not the reviewed subset.
-- `apiSchemas` / `variantSetNames` ordered + generated multi-layer combinations
-  aren't registry-driven (`cache-arc-listops.inc`, `schema-registry`).
-- Missing differentials: deleted/blocked values, dictionary type-conflict.
-- Typed extension-field storage doesn't cover variant/spec categories outside the
-  Layer/Prim/Property model (also limits `diff/layer-diff.cc`).
-- Files: `src/next/layer/prim-spec.{cc,hh}`, `src/next/crate/crate-writer-*.inc`,
-  `src/next/schema/schema-registry.{cc,hh}`. Docs: `:210 :222 :417 :427`.
+### 4. Elective authored-state + list-op breadth — PARTIAL
+Done (4a): authored bits + explicit-empty round-trip for layer
+`relocates`/`subLayers` and prim `relocates`/`variants`
+(`TestAuthoredStateBits`). Explicit-empty arc lists were already covered
+(parser ArcEdit + crate `\x01E` marker).
+Done (4b increment): cross-site `reorder` now applies with pxr SdfListOp
+semantics (`ApplyStringListOrder`, shared with clipSets/variantSet-name
+edits); `test_cross_layer_string_listop_matrix` covers every qualifier
+combination across a sublayer stack.
+REMAINING:
+- Registry-driven field table: apiSchemas / variantSetNames / clipSets
+  composition + crate emission are still bespoke per field
+  (`composition.cc:~1011`, `crate-writer-fields.inc`); a {name, scope, kind,
+  fallback, accessor} table could drive them through `ApplyStringListOp`.
+- Variant-scope generic storage: `VariantData`/`VariantSetData` have no
+  unknownMeta/TypedExtensionField storage or authored bits; also limits
+  `diff/layer-diff.cc` (variants compare via `VariantSetsToStr` only). If
+  added, new variant storage MUST be stripped in flatten
+  (`cache-compose.inc` variant-selection strip block).
+- Differentials: deleted/blocked values, dictionary type-conflict diagnostic
+  (`MergeWeakerDictionaryValue` silently keeps a stronger non-dict).
+- Docs: `:210 :222 :417 :427`.
 
-### 5. General `SdfVariableExpression` function grammar
-Only direct/quoted **asset-path** substitution is implemented
-(`src/next/composition/expression-variables.cc`, `EvaluateAssetPathExpression`).
-The general expression **function language** (string ops, conditionals, etc.) is not.
-Define substitution policy + implement the grammar.
-- Docs: `:361 :365`.
+### 5. General `SdfVariableExpression` function grammar — DONE
+Full recursive-descent typed evaluator (literals, `${VAR}` with recursion +
+cycle detection, escapes, if/and/or/not/eq/neq/lt/leq/gt/geq/contains/at/
+len/defined; nesting/expansion caps). Wired at reference/payload arcs,
+sublayer paths (vs the stack ROOT layer's expressionVariables), and variant
+selections; `None` = no opinion. Tests: `TestVariableExpressionGrammar`,
+`test_expression_sublayer_and_variant_selection`. Known gap (doc'd):
+layer-stack identity does not include expression variables (pxr keys stacks
+by (identifier, vars)).
 
-### 6. Identifier validation at authoring boundaries
-The shared UTF-8/XID validator runs on parser + validator paths but NOT on every
-programmatic authoring boundary (`Path`/name construction from untrusted strings).
-Wire it in; generate cases from every grammar production incl. malformed UTF-8 and
-noncharacter/private-use boundaries.
-- Files: `src/next/prim/identifier.hh`, `src/next/prim/path.*`. Docs: `:168 :182`.
+### 6. Identifier validation at authoring boundaries — DONE
+`Path::is_valid`/`Path::Parse`; validating `append_child`/`append_property`;
+`Layer::define_prim_at_path` component checks; validation module's weak
+byte-≥0x80 approximation replaced by the shared strict validator. Generated
+UTF-8/XID boundary cases in `TestUnicodeAndPaths`. `PrimSpec::set_name`
+deliberately stays raw (reader-internal, lexer-validated input).
 
-### 7. Non-core OpenUSD domain-schema breadth  *(large, product-driven)*
+### 7. Non-core OpenUSD domain-schema breadth  *(large, product-driven — untouched)*
 Schema checks are structural for schemas `next` knows — not a plugin registry.
 Volume/field, Hermite/TetMesh/NURBS-patch, render-settings, shader-node breadth are
 product parity, not AOUSD Core. Prioritize from application requirements; label as
