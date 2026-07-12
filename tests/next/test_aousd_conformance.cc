@@ -1794,6 +1794,113 @@ void TestExpressionVariablePolicy() {
          }) != issues.end());
 }
 
+// SdfVariableExpression function-language grammar: typed literals, the
+// function set, string interpolation + escapes, recursive variable
+// evaluation with cycle detection, and error/None propagation.
+void TestVariableExpressionGrammar() {
+  Value vars = Value::MakeDictionary();
+  Dict* d = vars.as_dictionary();
+  d->set("A", Value(std::string("v1")));
+  d->set("B", Value(std::string("v2")));
+  d->set("N", Value(int32_t(3)));
+  d->set("FLAG", Value(true));
+  d->set("EXPR", Value(std::string("`\"pre_${A}\"`")));
+  d->set("CYC1", Value(std::string("`${CYC2}`")));
+  d->set("CYC2", Value(std::string("`${CYC1}`")));
+
+  const auto eval = [&](const std::string& body) {
+    return EvaluateAssetPathExpression("`" + body + "`", vars);
+  };
+  const auto value_of = [&](const std::string& body) {
+    const ExpressionEvaluation r = eval(body);
+    assert(r.is_expression && r.success && !r.is_none);
+    return r.value;
+  };
+  const auto fails = [&](const std::string& body) {
+    const ExpressionEvaluation r = eval(body);
+    return r.is_expression && !r.success;
+  };
+  const auto is_none = [&](const std::string& body) {
+    const ExpressionEvaluation r = eval(body);
+    return r.is_expression && r.success && r.is_none;
+  };
+  const auto bool_of = [&](const std::string& body) {
+    // Booleans surface through if(): the asset-path wrapper requires string.
+    return value_of("if(" + body + ", \"T\", \"F\")");
+  };
+
+  // Non-expressions pass through untouched.
+  assert(!EvaluateAssetPathExpression("./plain.usda", vars).is_expression);
+
+  // Variables, quoted strings, interpolation, escapes.
+  assert(value_of("${A}") == "v1");
+  assert(value_of("\"x_${A}_${B}\"") == "x_v1_v2");
+  assert(value_of("'single_${A}'") == "single_v1");
+  assert(value_of("\"a\\${A}\"") == "a${A}");   // escaped interpolation
+  assert(value_of("'don\\'t'") == "don't");
+  assert(fails("\"unterminated"));
+  assert(fails("${UNDEFINED}"));
+  assert(fails("${A} trailing"));
+
+  // Typed literals. Non-string results are type errors for asset paths;
+  // None is "no opinion".
+  assert(fails("42"));
+  assert(fails("True"));
+  assert(is_none("None"));
+  assert(fails("99999999999999999999"));  // int64 overflow
+  assert(fails("[\"a\", [\"nested\"]]"));  // nested lists
+
+  // if / and / or / not.
+  assert(value_of("if(True, \"a\")") == "a");
+  assert(is_none("if(False, \"a\")"));
+  assert(value_of("if(False, \"a\", \"b\")") == "b");
+  assert(value_of("if(${FLAG}, \"y\", \"n\")") == "y");
+  assert(bool_of("and(True, True)") == "T");
+  assert(bool_of("and(True, False)") == "F");
+  assert(bool_of("or(False, True)") == "T");
+  assert(bool_of("not(False)") == "T");
+  assert(fails("if(\"notbool\", \"a\")"));
+  assert(fails("and(True)"));  // arity
+
+  // Comparisons.
+  assert(bool_of("eq(${A}, \"v1\")") == "T");
+  assert(bool_of("neq(${A}, ${B})") == "T");
+  assert(bool_of("eq(${N}, 3)") == "T");
+  assert(bool_of("lt(2, 3)") == "T");
+  assert(bool_of("leq(3, 3)") == "T");
+  assert(bool_of("gt(\"b\", \"a\")") == "T");
+  assert(bool_of("geq(${N}, 3)") == "T");
+  assert(fails("eq(1, \"one\")"));  // type mismatch
+  assert(fails("lt(True, False)"));
+
+  // contains / at / len over lists and strings.
+  assert(bool_of("contains([\"a\", \"b\"], \"b\")") == "T");
+  assert(bool_of("contains([1, 2, 3], ${N})") == "T");
+  assert(bool_of("contains(\"hello\", \"ell\")") == "T");
+  assert(value_of("at([\"a\", \"b\", \"c\"], 1)") == "b");
+  assert(value_of("at([\"a\", \"b\", \"c\"], -1)") == "c");
+  assert(value_of("at(\"xyz\", 0)") == "x");
+  assert(fails("at([\"a\"], 5)"));
+  assert(bool_of("eq(len([\"a\", \"b\"]), 2)") == "T");
+  assert(bool_of("eq(len(${A}), 2)") == "T");
+
+  // defined().
+  assert(bool_of("defined(\"A\")") == "T");
+  assert(bool_of("defined(\"A\", \"MISSING\")") == "F");
+
+  // Nested calls and whitespace tolerance.
+  assert(value_of("if( and( eq(${A}, \"v1\"), not(False) ), ${B}, \"no\" )") ==
+         "v2");
+
+  // Recursive variable evaluation + cycle detection.
+  assert(value_of("${EXPR}") == "pre_v1");
+  assert(fails("${CYC1}"));
+
+  // Unknown function / garbage.
+  assert(fails("nosuchfn(1)"));
+  assert(fails("@!!"));
+}
+
 void TestRemainingElectiveFieldCoverage() {
   struct FieldCoverage { const char* scope; const char* name; const char* mode; };
   const FieldCoverage generated_fields[] = {
@@ -2581,6 +2688,7 @@ int main() {
   TestLayerOwnerFidelity();
   TestGeneratedCoreSchemaCoverage();
   TestExpressionVariablePolicy();
+  TestVariableExpressionGrammar();
   TestRemainingElectiveFieldCoverage();
   std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;

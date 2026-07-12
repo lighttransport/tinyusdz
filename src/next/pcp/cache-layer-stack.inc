@@ -24,8 +24,13 @@
     st.identifier = identifier;
     std::set<std::string> visiting;
     visiting.insert(identifier);
+    // Sublayer asset-path expressions evaluate against the STACK ROOT layer's
+    // expressionVariables (pxr consults only the root/session layer of the
+    // stack for expression variables; sublayers' own expressionVariables do
+    // not feed sibling sublayer paths).
     if (!AppendLayerAndSublayers(st, layer, identifier, &visiting, 0,
-                                 LayerOffset{}, warn, err)) {
+                                 LayerOffset{}, layer->meta().expressionVariables,
+                                 warn, err)) {
       return kInvalidStack;
     }
     Value vars = Value::MakeDictionary();
@@ -150,6 +155,7 @@
                                const std::string &identifier,
                                std::set<std::string> *visiting,
                                uint32_t depth, const LayerOffset &cum_offset,
+                               const Value &expr_vars,
                                std::string *warn, std::string *err) {
     if (!layer) return false;
     if (depth > options.max_depth) {
@@ -166,7 +172,23 @@
     const std::string &anchor = identifier;
     const auto &sub_offsets = layer->meta().subLayerOffsets;
     for (size_t sub_i = 0; sub_i < layer->meta().subLayers.size(); ++sub_i) {
-      const std::string &sub = layer->meta().subLayers[sub_i];
+      std::string sub = layer->meta().subLayers[sub_i];
+      if (!sub.empty() && sub.front() == '`' &&
+          options.expression_variable_policy !=
+              ExpressionVariablePolicy::Disabled) {
+        const ExpressionEvaluation expression =
+            EvaluateAssetPathExpression(sub, expr_vars);
+        if (expression.is_expression && !expression.success) {
+          AddIssue(ErrorCode::ExpressionVariableError, sub, expression.error,
+                   options.expression_variable_policy ==
+                           ExpressionVariablePolicy::RequireResolved
+                       ? err
+                       : warn);
+          continue;  // the sublayer contributes nothing
+        }
+        if (expression.is_none) continue;  // no opinion
+        if (expression.success) sub = expression.value;
+      }
       // Cumulative offset for this sublayer: parent's offset composed with the
       // authored per-sublayer (offset = ..; scale = ..).
       LayerOffset sub_cum = cum_offset;
@@ -206,7 +228,7 @@
       if (sl) {
         if (visiting) visiting->insert(sub_id);
         if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,
-                                     sub_cum, warn, err)) {
+                                     sub_cum, expr_vars, warn, err)) {
           if (visiting) visiting->erase(sub_id);
           return false;
         }

@@ -3712,6 +3712,59 @@ static void test_specifier_resolution() {
   std::cout << "  OK" << std::endl;
 }
 
+// Variable expressions in SUBLAYER asset paths (evaluated against the stack
+// root layer's expressionVariables) and in VARIANT SELECTIONS (evaluated
+// against the source's composed expression variables).
+static void test_expression_sublayer_and_variant_selection() {
+  std::cout << "test_expression_sublayer_and_variant_selection..." << std::endl;
+  const std::string sub = "/tmp/next_exprvar_sub.usda";
+  const std::string root = "/tmp/next_exprvar_root.usda";
+  {
+    std::ofstream o(sub);
+    o << "#usda 1.0\n"
+         "def Xform \"FromSub\" { int tag = 42 }\n";
+  }
+  {
+    std::ofstream o(root);
+    o << "#usda 1.0\n"
+         "(\n"
+         "    expressionVariables = {\n"
+         "        string SUB = \"next_exprvar_sub.usda\"\n"
+         "        string COLOR = \"green\"\n"
+         "    }\n"
+         "    subLayers = [@`${SUB}`@]\n"
+         ")\n"
+         "def Xform \"Root\" (\n"
+         "    variants = { string shadingVariant = \"`if(eq(${COLOR}, "
+         "\\\"green\\\"), \\\"green\\\", \\\"red\\\")`\" }\n"
+         "    prepend variantSets = \"shadingVariant\"\n"
+         ") {\n"
+         "    variantSet \"shadingVariant\" = {\n"
+         "        \"red\" { int c = 1 }\n"
+         "        \"green\" { int c = 2 }\n"
+         "    }\n"
+         "}\n";
+  }
+
+  AssetResolver resolver;
+  Stage stage;
+  pcp::CompositionOptions opts;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, opts, &warn, &err));
+  UsdPrim from_sub = stage.GetPrimAtPath("/FromSub");
+  assert(from_sub.IsValid() &&
+         "sublayer expression must resolve against the root layer's "
+         "expressionVariables");
+  const Value* tag = from_sub.GetPropertyValue("tag");
+  assert(tag && tag->as_int() && *tag->as_int() == 42);
+  UsdPrim root_prim = stage.GetPrimAtPath("/Root");
+  assert(root_prim.IsValid());
+  const Value* c = root_prim.GetPropertyValue("c");
+  assert(c && c->as_int() && *c->as_int() == 2 &&
+         "variant selection expression must evaluate before selection");
+  std::cout << "  OK" << std::endl;
+}
+
 // P2 audit: a reference that names no prim path to a layer without an
 // authored defaultPrim contributes NOTHING and warns (pxr: "Unresolved
 // reference prim path @...@<defaultPrim>") — never silently the first root
@@ -3969,6 +4022,7 @@ int main() {
   test_relocate_to_new_root_prim();
   test_relative_class_arc_target();
   test_specifier_resolution();
+  test_expression_sublayer_and_variant_selection();
   test_reorder_children();
   test_p2_ref_no_default_prim();
   test_p2_inactive_subtree_pruned();
