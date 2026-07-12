@@ -99,6 +99,69 @@ void TestUnicodeAndPaths() {
       "/Prim.abc:123", "/Prim.relationship.attribute",
   };
   for (const char* path : invalid_paths) assert(!IsValidPathString(path));
+
+  // UTF-8 / Unicode boundary cases per grammar production: malformed byte
+  // sequences (truncated, lone continuation, overlong, surrogate range,
+  // beyond U+10FFFF) must be rejected; XID identifiers reject noncharacters
+  // and private-use codepoints, and accept valid non-ASCII XID letters.
+  {
+    const std::string truncated = std::string("Pr") + char(0xC3);
+    const std::string lone_continuation = std::string("P") + char(0x80) + "x";
+    const std::string overlong = std::string("P") + char(0xC0) + char(0xAF);
+    const std::string surrogate =            // U+D800 (CESU-8 encoding)
+        std::string("P") + char(0xED) + char(0xA0) + char(0x80);
+    const std::string beyond_max =           // U+110000
+        std::string("P") + char(0xF4) + char(0x90) + char(0x80) + char(0x80);
+    const std::string noncharacter =         // U+FDD0
+        std::string("P") + char(0xEF) + char(0xB7) + char(0x90);
+    const std::string reversed_bom =         // U+FFFE
+        std::string("P") + char(0xEF) + char(0xBF) + char(0xBE);
+    const std::string private_use =          // U+E000
+        std::string("P") + char(0xEE) + char(0x80) + char(0x80);
+    const std::string invalid_names[] = {
+        truncated, lone_continuation, overlong, surrogate, beyond_max,
+        noncharacter, reversed_bom, private_use,
+    };
+    for (const std::string& name : invalid_names) {
+      assert(!IsValidIdentifier(name));
+      assert(!IsValidNamespacedIdentifier("ns:" + name));
+      assert(!IsValidPathString("/" + name));
+      // Authoring boundaries reject the same inputs.
+      assert(Path("/World").append_child(name).empty());
+      assert(Path("/World").append_property(name).empty());
+      Layer layer;
+      assert(layer.define_prim_at_path("/" + name) == UINT32_MAX);
+      assert(layer.define_prim_at_path("/Ok/" + name + "/Child") ==
+             UINT32_MAX);
+    }
+    const char* valid_names[] = {
+        "M\xC3\xBCnchen",              // U+00FC, XID letter
+        "\xE6\x9D\xB1\xE4\xBA\xAC",    // 東京
+        "_1", "a\xCC\x81",             // combining acute (XID_Continue)
+    };
+    for (const char* name : valid_names) {
+      assert(IsValidIdentifier(name));
+      assert(!Path("/World").append_child(name).empty());
+      Layer layer;
+      assert(layer.define_prim_at_path(std::string("/") + name) !=
+             UINT32_MAX);
+    }
+    // Digits are XID_Continue but not XID_Start.
+    assert(!IsValidIdentifier("1abc"));
+    assert(IsValidIdentifier("abc1"));
+  }
+
+  // Path::is_valid / Path::Parse mirror the string validator at the Path
+  // authoring boundary.
+  assert(Path("/World/Cube").is_valid());
+  assert(!Path("/Root//Child").is_valid());
+  assert(!Path("").is_valid());
+  assert(Path::Parse("/World/Cube").str() == "/World/Cube");
+  assert(Path::Parse("/Root//Child").empty());
+  // Namespaced properties append; a raw '.' in a property name is rejected.
+  assert(Path("/P").append_property("xformOp:translate").str() ==
+         "/P.xformOp:translate");
+  assert(Path("/P").append_property("bad.name").empty());
 }
 
 void TestLosslessUnsupportedValues() {

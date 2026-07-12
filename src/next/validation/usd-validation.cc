@@ -21,6 +21,8 @@
 
 #include "usd-validation.hh"
 
+#include "../prim/identifier.hh"
+
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
@@ -91,41 +93,12 @@ bool EndsWith(const std::string &s, const std::string &suffix) {
          s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// Approximation of the legacy is_valid_utf8_identifier(): ASCII
-// [A-Za-z_][A-Za-z0-9_]* with any non-ASCII (UTF-8 continuation/lead) byte
-// accepted as an identifier character.
-bool IsValidIdentifier(const std::string &name) {
-  if (name.empty()) {
-    return false;
-  }
-  auto is_alpha = [](unsigned char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-  };
-  auto is_digit = [](unsigned char c) { return c >= '0' && c <= '9'; };
-  const unsigned char c0 = static_cast<unsigned char>(name[0]);
-  if (!(is_alpha(c0) || c0 == '_' || c0 >= 0x80)) {
-    return false;
-  }
-  for (char ch : name) {
-    const unsigned char c = static_cast<unsigned char>(ch);
-    if (!(is_alpha(c) || is_digit(c) || c == '_' || c >= 0x80)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool IsValidNamespacedIdentifier(const std::string &name) {
-  if (name.empty()) {
-    return false;
-  }
-  for (const std::string &part : SplitString(name, ':')) {
-    if (part.empty() || !IsValidIdentifier(part)) {
-      return false;
-    }
-  }
-  return true;
-}
+// Identifier validation delegates to the shared strict UTF-8 + Unicode XID
+// validator (src/next/prim/identifier.hh) — the same implementation the
+// parser and lexer use. The previous file-local approximation accepted ANY
+// byte >= 0x80, so malformed UTF-8 and non-XID codepoints passed validation.
+// (The shared IsValidIdentifier / IsValidNamespacedIdentifier are visible
+// here through the enclosing tinyusdz::next namespace.)
 
 // ---------------------------------------------------------------------------
 // Issue helpers

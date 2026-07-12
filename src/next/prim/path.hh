@@ -48,6 +48,17 @@ public:
   /// Check if path contains a property component (has '.')
   bool has_property() const;
 
+  /// Validate this path against the AOUSD §8.3 textual path grammar
+  /// (strict UTF-8 + Unicode XID identifiers). Empty paths are invalid.
+  /// Construction stays unvalidated (hot composition paths build Paths from
+  /// already-validated parser output); call this at authoring boundaries or
+  /// use Parse() for untrusted input.
+  bool is_valid() const;
+
+  /// Validating factory for untrusted input: returns an empty Path when
+  /// `path_str` fails the AOUSD §8.3 path grammar.
+  static Path Parse(const std::string& path_str);
+
   /// Get the full path string
   const std::string& str() const { return path_; }
   const char* c_str() const { return path_.c_str(); }
