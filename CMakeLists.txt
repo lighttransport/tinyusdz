@@ -2456,7 +2456,14 @@ if(TINYUSDZ_BUILD_TESTS)
       #                     the scene box then grew from those local vertices without
       #                     the instance placement, so the grid and the depth ramp
       #                     landed in the wrong place.
-      foreach(deform_case skin-xform morph-subsets morph-skin instanced-proto)
+      #   pointinstancer -- the same prototype placed by a PointInstancer, whose
+      #                     placements come from positions/orientations/scales arrays
+      #                     rather than from prims referencing it. It caught the
+      #                     orientation quaternion being read imaginary-first when the
+      #                     next stage stores it real-first: a 30-degree Z rotation
+      #                     decoded as a 150-degree X rotation, i.e. upside-down.
+      foreach(deform_case skin-xform morph-subsets morph-skin instanced-proto
+                          pointinstancer)
         add_test(
           NAME tusdview-deform-${deform_case}
           COMMAND python3

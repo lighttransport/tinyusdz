@@ -871,14 +871,33 @@ bool BuildGpuSkinningFrame(
                    -std::numeric_limits<float>::max(),
                    -std::numeric_limits<float>::max()};
 
-    auto update = [&](const point3f& local) {
-      float w[3];
-      TransformPointWorld(dm.world, local, w);
+    // An INSTANCED mesh's vertices are prototype-local and `world` is ignored (each
+    // placement carries its own o2w, 3 rows of (x,y,z,tx)); bounding them through
+    // `world` would stack every instance on top of the prototype's origin. A
+    // PointInstancer of a deforming prototype is exactly that case.
+    const size_t ninst = dm.instanceCount();
+    auto grow = [&](const float w[3]) {
       for (int c = 0; c < 3; ++c) {
         mn[c] = std::min(mn[c], w[c]);
         mx[c] = std::max(mx[c], w[c]);
       }
       meshFirst = false;
+    };
+    auto update = [&](const point3f& local) {
+      if (ninst > 0) {
+        for (size_t k = 0; k < ninst; ++k) {
+          const float* X = &dm.instanceXforms[k * 12];
+          const float w[3] = {
+              X[0] * local.x + X[1] * local.y + X[2] * local.z + X[3],
+              X[4] * local.x + X[5] * local.y + X[6] * local.z + X[7],
+              X[8] * local.x + X[9] * local.y + X[10] * local.z + X[11]};
+          grow(w);
+        }
+        return;
+      }
+      float w[3];
+      TransformPointWorld(dm.world, local, w);
+      grow(w);
     };
 
     const bool skinned = dm.skelId >= 0 && dm.skinMatrixBase >= 0 &&
