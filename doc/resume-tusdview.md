@@ -14,7 +14,11 @@ selection, the tusdview BLAS-compaction port, `--vram-budget`, raster LOD for
 non-instanced meshes (§2.10), and the `-vk` tiled ray dispatch (§2.11 — which
 also records why device-local BVH buffers were measured and left OFF).
 
-Done since (2026-07-12): Vulkan-RT skinning without a reconvert, the two
+Done since (2026-07-12): the CUDA/HIP tracers now take the SHARED deform rather
+than their own load-time bake (`poseNextDrawForTracer`, on both the interactive and
+the screenshot paths — guarded by `tusdview-deform-cuda`; they still rebuild the BVH
+on a new time code rather than refitting it, which is a perf question, not a
+correctness one). Also: Vulkan-RT skinning without a reconvert, the two
 double-counted light contributions in `lightrt-bsdf`, area-sampled rect / disk /
 cylinder lights (plus the inverted UsdLux light normal that made them light
 nothing), the TLAS `PREFER_FAST_BUILD` question (measured, rejected —
@@ -23,16 +27,7 @@ large-scene.md §2.12), and the `lightrt-bsdf` IBL energy (the furnace now lands
 
 ## Open
 
-### 1. CUDA / HIP skinning
-
-The Vulkan ray tracer now re-poses the retained rest vertices per frame
-(`BuildNextRtDeformedVertices`) instead of re-running the converter for every time
-code. The CUDA/HIP tracers still take the load-time CPU bake: they read `draw_`
-geometry directly and free it once their own BVH is built, and they only render a
-one-shot screenshot, where the bake IS the cheapest path. Making them animate
-interactively means re-posing into their BVH, not just into `draw_`.
-
-### 2. Mesh lights on the LEGACY `-rtPreview` path
+### Mesh lights on the LEGACY `-rtPreview` path
 
 The `next` gaps are closed (`tool-tusdrender-mesh-light-gaps`): `inputs:normalize`
 now divides the radiance by the emitting world area, and an `instanceable`
@@ -58,7 +53,12 @@ material pipeline inside `AddRTPreviewMesh` would be re-implementing what the ne
 path already does. Decide before doing it whether the legacy rtPreview path is
 worth keeping at all.
 
-### 3. LEGACY loader deform: a DOUBLE deform on the `--time` load path
+## Closed — kept for the reasoning, not because they are open
+
+The deform/bounds work below is DONE and guarded by tests. It stays written down
+because each item cost a wrong turn that is easy to re-take.
+
+### LEGACY loader deform: a DOUBLE deform on the `--time` load path
 
 The old note here — "the legacy path renders
 `models/blendshape-and-animation-test-001.usda` identically at every time code" —
@@ -160,7 +160,31 @@ fixed camera, legacy vs next full-frame mean depth diff: **1.259 → 0.028** (me
 two LOADERS (`MAX_LOADER_DIFF`) on every deform fixture, not just next against its
 own CPU bake.
 
-### 4. usd-assets regression harness — DONE, but the baseline is per-machine
+### A PointInstancer's orientations are REAL-FIRST
+
+The next stage stores quats real-first (w, x, y, z) — crate is imaginary-first on
+disk and the reader swizzles on load. `InstanceTRS` read the four floats of
+`orientations` as (x, y, z, w), in BOTH the tusdview next loader and tusdrender, so
+a 30-degree Z rotation decoded as a ~150-degree X rotation and the identity fallback
+(0,0,0,1) was a 180-degree flip. In usd-wg/assets' OpenChessSet that flipped every
+PointInstancer'd PAWN through the board, where it rendered hidden underneath.
+
+Worth remembering HOW it surfaced: `next` was self-consistent across raster, RT and
+CUDA (all 0.000 against its own CPU bake — they share the placement code, so they
+were wrong together). Only the cross-LOADER check caught it. A backend-vs-backend
+comparison cannot see a bug that lives upstream of all the backends.
+
+The rest of the class was audited and is clean: `xformOp:orient` (scene-access.cc)
+reads w,x,y,z, the next loader's SkelAnimation rotations are real-first,
+`PackSnorm8Quaternion`'s identity is {1,0,0,0}, and render-data.hh documents
+`orientations` as "quatf real,imaginary xyz". Guarded by
+`tool-tusdrender-instancer-orientation` (an equivalence: a quaternion-oriented
+instance must render byte-identically to the same rotation as an xformOp) and
+`tusdview-deform-pointinstancer`.
+
+## Tooling
+
+### usd-assets regression harness — the baseline is per-machine
 
 `tusdview-usd-assets-golden` compares every asset in the corpus against
 `examples/tusdview/tests/usd-assets-goldens.tsv` (280 assets, 255 of which render
@@ -216,7 +240,11 @@ world-transform in the batch-append path, a new VBO/binding, and shader edits in
 ## Verification
 
 ```bash
-cd build && make -j16 && ctest --output-on-failure     # 70/70
+cd build && make -j16 && ctest --output-on-failure     # 85/85
+
+# The GL/Vulkan tests need a display; headless, on NVIDIA:
+# xvfb-run -a env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
+#   ctest --output-on-failure
 
 # large-scene matrix (see large-scene.md §2.9 for the numbers to hold)
 CALDERA=/mnt/disk1/data/caldera/caldera.usda \
