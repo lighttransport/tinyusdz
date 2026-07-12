@@ -584,6 +584,7 @@ private:
   void ExtractPrimMeta(const PrimMeta& metas, crate::FieldValuePairVector& fields);
 
   /// Extract common GPrim properties (visibility, purpose, etc.)
+  bool ExtractScopeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
   bool ExtractGPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Material properties (outputs: surface, displacement, volume)
