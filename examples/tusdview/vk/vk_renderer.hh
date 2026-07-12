@@ -154,6 +154,9 @@ class VulkanRenderer final : public Renderer {
     VkBuffer vtxColorBuf{VK_NULL_HANDLE};   // per-vertex displayColor (vec3[]), 0=none
     VkDeviceMemory vtxColorMem{VK_NULL_HANDLE};
     VkDeviceAddress vtxColorAddr{0};
+    // Raster per-vertex displayColor: set-24 SSBO the mesh vertex shader fetches
+    // by gl_VertexIndex (dummyMorphDesc_ + a cleared flag bit when absent).
+    VkDescriptorSet vtxColorDesc{VK_NULL_HANDLE};
     VkDeviceAddress uv1Addr{0};              // uv1 SSBO address (RT multi-UV AOV)
     VkDeviceAddress inflAddr{0};             // influence SSBO address (RT influence AOV)
     VkBuffer faceBuf{VK_NULL_HANDLE};        // per-triangle source face id (uint[])
