@@ -152,6 +152,7 @@
                 Mapping(target_src.map_idx)));
             remapped.offset = src.offset.Compose(target_src.offset);
             remapped.arc_kind = kind;
+            remapped.ancestral = false;  // reached via this prim's own arc
             remapped.expression_variables = src.expression_variables;
             target->push_back(std::move(remapped));
           }
@@ -458,6 +459,7 @@
               Mapping(composed_src.map_idx)));
           s.offset = src.offset.Compose(composed_src.offset);
           s.arc_kind = kind;
+          s.ancestral = false;  // reached via this prim's own arc
           target->push_back(std::move(s));
         }
       }
@@ -865,6 +867,7 @@
     dst.arc_kind = ps.arc_kind;
     dst.expression_variables = ps.expression_variables;
     dst.arc_chain = ps.arc_chain;
+    dst.ancestral = true;  // child derivation, like DeriveChildSources
     base->push_back(std::move(dst));
 
     const NamespaceMapping outer = renamed_map(arrival.src_site);
@@ -919,6 +922,7 @@
       c.offset = ps.offset;
       c.arc_kind = ps.arc_kind;
       c.arc_chain = ps.arc_chain;  // implied class arcs need the whole chain
+      c.ancestral = true;          // arc was introduced at the parent
       base.push_back(std::move(c));
     }
     return base;

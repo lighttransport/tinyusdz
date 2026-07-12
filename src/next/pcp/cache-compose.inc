@@ -16,8 +16,16 @@
   // (and interns property names into the shared, locked PropNameTable), so
   // distinct slots fill concurrently without interfering.
   void ComposeOpinions(const std::vector<Src> &srcs, PrimSpec *out) {
-    bool specifier_set = false;
-    bool specifier_from_direct_inherit = false;
+    // Composed specifier (pxr _GetPrimSpecifierImpl): NOT plain strength
+    // order. A defining specifier always beats `over`, and a `class` due to a
+    // DIRECT (non-ancestral) inherit is weaker than any other defining
+    // specifier — classness is not inherited, so scanning continues looking
+    // for a (possibly weaker) `def`. A class reached through an ancestral
+    // inherit resolves in plain strength order. Resolved here independently
+    // of CopyLocalOpinions' fill-absent promotion and applied after the loop.
+    PrimSpecifier resolved_specifier = PrimSpecifier::Over;
+    bool specifier_done = false;
+    bool specifier_seen = false;
 
     // Pass 1 (strong->weak): compose opinions.
     for (const Src &s : srcs) {
@@ -67,12 +75,20 @@
       for (const SpecRef &sr : specs) {
         const PrimSpec *spec = sr.spec;
 
-        if (!specifier_set) {
-          out->set_specifier(spec->specifier());
-          specifier_set = true;
-          specifier_from_direct_inherit =
-              s.arc_kind == ArcType::Inherit &&
-              spec->specifier() != PrimSpecifier::Over;
+        specifier_seen = true;
+        if (!specifier_done) {
+          const PrimSpecifier cur = spec->specifier();
+          if (cur == PrimSpecifier::Def) {
+            resolved_specifier = PrimSpecifier::Def;
+            specifier_done = true;
+          } else if (cur == PrimSpecifier::Class) {
+            resolved_specifier = PrimSpecifier::Class;
+            // A direct-inherit class is tentative: keep scanning for a def.
+            if (s.arc_kind != ArcType::Inherit || s.ancestral) {
+              specifier_done = true;
+            }
+          }
+          // `over` never contributes a defining specifier.
         }
 
         // Remap relationship/connection TARGET paths from this arc's
@@ -81,7 +97,6 @@
         // their flattened paths. Identity for local opinions. The time offset
         // composes the arc's offset with the spec layer's sublayer offset.
         const LayerOffset spec_off = s.offset.Compose(sr.layer_offset);
-        const PrimSpecifier before = out->specifier();
         Compositor::CopyLocalOpinions(
             *out, *spec, spec_off.offset, spec_off.scale,
             [&](const std::string &p) {
@@ -95,17 +110,9 @@
               }
               return Mapping(s.map_idx).ApplyTarget(p);
             });
-        if (s.arc_kind == ArcType::Inherit) {
-          if (before == PrimSpecifier::Over &&
-              spec->specifier() != PrimSpecifier::Over) {
-            specifier_from_direct_inherit = true;
-          } else if (specifier_from_direct_inherit &&
-                     spec->specifier() == PrimSpecifier::Def) {
-            out->set_specifier(PrimSpecifier::Def);
-          }
-        }
       }
     }
+    if (specifier_seen) out->set_specifier(resolved_specifier);
 
     // Flatten drops variant SELECTION metadata: the selected variant's content
     // has already been grafted inline (ExpandArcs / variant Src), so pxr's

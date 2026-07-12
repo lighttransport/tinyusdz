@@ -52,6 +52,12 @@ struct Src {
   std::string site;            // prim path within the layer stack
   LayerOffset offset;
   ArcType arc_kind = ArcType::Root;  // arc this source arrived through
+  // True when the arc was introduced at a namespace ANCESTOR (the source was
+  // derived by DeriveChildSources rather than by this prim's own arc
+  // expansion). pxr PcpNodeRef::IsDueToAncestor analogue; specifier
+  // resolution treats a class from a direct inherit as weaker than any other
+  // defining specifier, but an ancestral one composes in plain strength order.
+  bool ancestral = false;
   // For Variant sources: the selected variant's inline opinions (lives inside a
   // shared layer's PrimSpecMeta, so the pointer is stable). null otherwise.
   const VariantData *variant = nullptr;
