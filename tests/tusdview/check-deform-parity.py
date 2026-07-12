@@ -35,13 +35,15 @@ import zlib
 SKIP = 77
 MAX_MEAN_DIFF = 0.5   # GPU deform vs CPU bake: same geometry, bar raster edges
 MIN_POSE_DIFF = 1.0   # rest vs posed: the deform must actually move something
+MAX_LOADER_DIFF = 0.5  # next vs legacy: same deform, same bounds, same frame
 
 
-def render(binary, scene, out, time, camera, extra=(), env=None, backend=()):
+def render(binary, scene, out, time, camera, extra=(), env=None, backend=(),
+           loader="--next"):
     e = dict(os.environ)
     if env:
         e.update(env)
-    cmd = [binary, "--next", "--headless", "--mode", "depth", "--camera", camera,
+    cmd = [binary, loader, "--headless", "--mode", "depth", "--camera", camera,
            "--frames", "3", "--time", str(time), "--screenshot", out,
            *backend, *extra, scene]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -158,6 +160,32 @@ def main():
               f"be carried through that transform); and the per-batch RE-INDEXING of "
               f"the sparse morph delta lists when a GeomSubset splits a mesh.")
         return 1
+
+    # The two LOADERS must also agree, and not just on the mesh: the whole frame.
+    # The scene box drives the ground grid, the depth normalization and the
+    # auto-fit, and the next loader used to take it from the 8 corners of each
+    # mesh's local bbox pushed through its world matrix (loose under rotation) and
+    # then never refresh it after the deform (so an animated load framed on the
+    # REST pose). Both are now derived the way the Tydra path derives them: from
+    # the posed vertices.
+    legacy = os.path.join(work, f"{tag}_legacy.png")
+    if which == "raster" and render(binary, scene, legacy, pose_t, camera,
+                                    loader="--legacy-load"):
+        ldiff = mean_diff(gpu, legacy)
+        if ldiff > MAX_LOADER_DIFF:
+            print(f"FAIL: {tag}: the next and legacy loaders do not render the same "
+                  f"frame (mean depth diff {ldiff:.3f} > {MAX_LOADER_DIFF}) even "
+                  f"though the next deform matches its own CPU bake ({diff:.3f}). "
+                  f"That points at the SCENE BOUNDS, not the deform: the next "
+                  f"loader has to take its box from the batches' vertices (not from "
+                  f"corner-transformed local bboxes) AND refresh it for the pose at "
+                  f"each time code (BuildNextPosedSceneBounds), or the grid and the "
+                  f"depth ramp sit somewhere the legacy path does not put them.")
+            return 1
+        print(f"PASS: {tag}: GPU deform matches the CPU bake (mean depth diff "
+              f"{diff:.3f}; the deform moves depth by {pose:.3f}); the legacy loader "
+              f"renders the same frame ({ldiff:.3f})")
+        return 0
 
     print(f"PASS: {tag}: GPU deform matches the CPU bake (mean depth diff "
           f"{diff:.3f}; the deform moves depth by {pose:.3f})")

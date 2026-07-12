@@ -61,12 +61,17 @@ bool BuildSkeletonJointWorlds(const tinyusdz::tydra::RenderScene& render,
 // `draw`; scene bounds stay stable during playback to avoid grid/helper scale
 // wobble.
 //
-// Blendshapes are NOT applied here: the raster path morphs in the GPU vertex
-// shader (see BuildMorphChannelWeights + the renderer's morph buffers), so this
-// builds only the bone matrices + bounds from rest geometry.
+// The raster path morphs in the GPU vertex shader (BuildMorphChannelWeights +
+// the renderer's morph buffers), so no morphed vertices are produced here -- but
+// the BOUNDS have to see the morph anyway, or a morph-only mesh keeps its rest box
+// and the grid / depth ramp / auto-fit sit where the mesh no longer is. Pass
+// `stage` (and any manual weight overrides) to include it; without a stage the
+// bounds are skin-only, as they used to be.
 bool BuildGpuSkinningFrame(
     const tinyusdz::tydra::RenderScene& render, DrawScene* draw, double timecode,
-    SkinningFrameCPU* frame, bool updateSkinnedHelpers);
+    SkinningFrameCPU* frame, bool updateSkinnedHelpers,
+    const tinyusdz::Stage* stage = nullptr,
+    const std::unordered_map<std::string, float>* blendOverride = nullptr);
 
 struct RtSkinnedMeshUpload {
   int meshIndex{-1};

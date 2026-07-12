@@ -84,12 +84,27 @@ void BuildNextMorphWeights(
 //
 // The next loader world-bakes vertices into material batches, so each block is
 // pre-composed with the mesh's geomBindTransform AND its world transform; the
-// batch itself carries an identity bind matrix and absolute joint rows. Skinned
-// mesh bounds are NOT refreshed (unlike the Tydra path): the next loader frees
-// the CPU geometry after upload, so the load-time bounds stand.
+// batch itself carries an identity bind matrix and absolute joint rows. Per-MESH
+// bounds are not refreshed: a skinned batch deliberately carries the conservative
+// scene box, so that a moving rig never culls itself out of view. The SCENE box is
+// refreshed separately -- see BuildNextPosedSceneBounds.
 // Returns false when the scene has no next-path skinning.
 bool BuildNextSkinningFrame(const tinyusdz::next::Stage& stage, DrawScene* draw,
                             double time, SkinningFrameCPU* frame);
+
+// The scene's world box at `time`, with the skeleton posed. The load-time box is
+// the REST box, so an animated `--time` load otherwise frames, grids and depth-
+// normalizes against a pose it is not showing (the Tydra path re-derives its box
+// from the posed vertices; this is the next-path equivalent).
+//
+// Takes the box from the POSED VERTICES (BuildNextRtDeformedVertices), so it is
+// the same tight box the CPU bake and the Tydra path derive -- a conservative
+// bound would put the grid and the depth ramp somewhere else than those paths do,
+// on identical geometry. Returns false when nothing deformed.
+bool BuildNextPosedSceneBounds(
+    const tinyusdz::next::Stage& stage, const DrawScene& draw, double time,
+    const std::unordered_map<std::string, float>* blendOverride,
+    float outMin[3], float outMax[3]);
 
 // Ray tracing cannot use the raster vertex shader's deform: the BLAS is built
 // from actual vertex buffers, so the geometry itself has to move. Re-pose the

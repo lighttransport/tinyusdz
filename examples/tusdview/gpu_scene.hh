@@ -195,6 +195,17 @@ struct DrawMeshCPU {
   // GPU-morphed instanced prototype is not wrongly frustum-culled when the morph
   // pushes geometry past the rest box. 0 = no morph. See BuildMorphChannelsNext.
   float morphExtent[3]{0, 0, 0};
+  // --next deform: this mesh's OWN rest-pose world box, and the absolute bone-row
+  // range its jointIdx references. aabbMin/Max cannot serve: a skinned batch keeps
+  // the conservative whole-scene box there (a tight rest box would pop the mesh out
+  // of view as the rig moves). These let BuildNextPosedSceneBounds re-derive the
+  // scene box at a new time code from 8 corners per bone, instead of re-skinning
+  // every vertex -- which is what the Tydra path does, and what the next loader is
+  // built to avoid. boneLo < 0 = unskinned.
+  float restAabbMin[3]{0, 0, 0};
+  float restAabbMax[3]{0, 0, 0};
+  int boneLo{-1};
+  int boneHi{-1};
   bool doubleSided{false};
   int kindId{0};  // USD model kind AOV (resolved up ancestors); see KindId()
   // Optional 2nd texcoord set (2 floats/vertex, parallel to `vertices`); empty =
