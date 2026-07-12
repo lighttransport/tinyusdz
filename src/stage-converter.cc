@@ -516,8 +516,12 @@ bool CrateWriter::ConvertSinglePrim(
   // programmatically-built prims too. Without this, an authored UsdShade
   // network round-trips through USDA but loses every shader input/output on
   // USDC/USDZ write (only `info:id` survived via the generic prop path).
+  // Exception: a genuinely typeless prim is held internally as the catch-all
+  // `Model` struct, whose type_name() unconditionally returns "Model" as an
+  // internal label, not an authored or inferable schema name -- falling back
+  // to it here resurrects a typeName the prim never had.
   std::string type_name = prim.prim_type_name();
-  if (type_name.empty()) {
+  if (type_name.empty() && prim.type_name() != "Model") {
     type_name = prim.type_name();
   }
 
@@ -1470,8 +1474,12 @@ bool CrateWriter::ExtractPrimProperties(
   // Without this fallback the writer skips both the `typeName` crate
   // field and the type-specific property extraction, and the reader sees
   // a generic prim with no schema and no attributes.
+  // Exception: a genuinely typeless prim is held internally as the catch-all
+  // `Model` struct, whose type_name() unconditionally returns "Model" as an
+  // internal label, not an authored or inferable schema name -- falling back
+  // to it here resurrects a typeName the prim never had.
   std::string type_name = prim.prim_type_name();
-  if (type_name.empty()) {
+  if (type_name.empty() && prim.type_name() != "Model") {
     type_name = prim.type_name();
   }
 

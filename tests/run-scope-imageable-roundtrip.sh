@@ -206,4 +206,50 @@ else
   echo "ok[lights-usdc]: light transforms, exposure and textures survived"
 fi
 
+# A genuinely typeless prim (`def "bora"`, no typeName authored at all) was
+# invented a typeName of "Model" by the crate writer: the writer's "infer a
+# schema name for in-memory-built prims" fallback (stage-converter.cc) read
+# the internal C++ label of the catch-all `Model` struct that backs typeless
+# prims and treated it as if it were an authored/inferable typeName. Cover
+# `def`/`over`/`class` -- the same fallback backs all three specifiers.
+cat > "$TMP/typeless.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "W"
+)
+
+def "W"
+{
+    over "child"
+    {
+    }
+}
+
+class "TheClass"
+{
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/typeless.usdc" "$TMP/typeless.usda" \
+     >"$TMP/write4.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the typeless-prim scene to usdc"
+  cat "$TMP/write4.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/typeless.usdc" > "$TMP/typeless-rt.usda" 2>/dev/null
+lost=""
+for expect in 'def "W"' 'over "child"' 'class "TheClass"'; do
+  grep -qF "$expect" "$TMP/typeless-rt.usda" || lost="$lost
+    $expect"
+done
+if [ -n "$lost" ]; then
+  echo "FAIL[typeless-usdc]: typeless prim gained an invented typeName:$lost"
+  echo "--- got ---"
+  cat "$TMP/typeless-rt.usda"
+  status=1
+else
+  echo "ok[typeless-usdc]: typeless def/over/class stayed typeless"
+fi
+
 exit "$status"
