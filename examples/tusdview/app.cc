@@ -932,8 +932,17 @@ void App::loadFileBlocking(const std::string& path) {
     applyLoaded(ok, /*progressive=*/false);
     return;
   }
-  const bool gpuRestLoad = std::isfinite(loadOpts_.timecode) &&
-                           skinningRequested_ == SkinningMode::GPU;
+  // Load the REST pose whenever the deform may be re-applied downstream -- which is
+  // whenever GPU skinning could win, i.e. Auto as much as an explicit GPU. Gating
+  // this on an explicit GPU alone (as it did) left the DEFAULT, Auto, baking the
+  // pose into the geometry at load (DeformSkinnedMeshes) and then letting
+  // updateSkinningEffective pick GPU anyway -- so the vertex shader, and the RT
+  // vertex re-pose, deformed the ALREADY-DEFORMED geometry. Every animated
+  // `--time` screenshot on the legacy loader was posed twice. If GPU turns out to
+  // be ineligible, the block below re-renders with the CPU bake, so Auto still
+  // lands on a correctly posed scene either way.
+  const bool gpuRestLoad =
+      std::isfinite(loadOpts_.timecode) && wantsGpuSkinningLoad();
   if (gpuRestLoad) opts.timecode = std::numeric_limits<double>::quiet_NaN();
   int autoW = 0, autoH = 0;
   getRequestedWindowSize(&autoW, &autoH);
