@@ -2202,6 +2202,7 @@ if(TINYUSDZ_BUILD_TESTS)
         cmyk-jpeg-texture
         degraded-material
         instancer-invisible-ids
+        instancer-orientation
         light-double-count
         material-shading-bsdf-sample
         mesh-light-gaps
