@@ -45,10 +45,22 @@ namespace experimental {
   if ((light)->shapingConeSoftness.authored()) \
     if (!ExtractAnimatableDefault((light)->shapingConeSoftness.get_value(), "inputs:shaping:cone:softness", fields, err)) return false;
 
-// Lights are imageable: `visibility` / `purpose` are typed fields, so they have
-// to be written explicitly or they vanish on write.
+// Lights are imageable AND Xformable: `visibility` / `purpose` / xformOps are all
+// typed fields, so they have to be written explicitly or they vanish on write --
+// a light whose xformOps are dropped comes back at the world origin.
+//
+// intensity / color / exposure live on the LightAPI base, so they belong here
+// too. They used to be copy-pasted into each light extractor, and half of them
+// forgot `exposure`.
 #define EXTRACT_COMMON_LIGHT(light) \
   if (!ExtractImageableAttrs((light)->visibility, (light)->purpose, fields, err)) return false; \
+  if (!ExtractXformOpsFromXformable(prim, prim_path, fields, err)) return false; \
+  if ((light)->intensity.authored()) \
+    if (!ExtractAnimatableDefault((light)->intensity.get_value(), "inputs:intensity", fields, err)) return false; \
+  if ((light)->color.authored()) \
+    if (!ExtractAnimatableDefault((light)->color.get_value(), "inputs:color", fields, err)) return false; \
+  if ((light)->exposure.authored()) \
+    if (!ExtractAnimatableDefault((light)->exposure.get_value(), "inputs:exposure", fields, err)) return false; \
   if ((light)->specular.authored()) \
     if (!ExtractAnimatableDefault((light)->specular.get_value(), "inputs:specular", fields, err)) return false; \
   if ((light)->diffuse.authored()) \
@@ -73,12 +85,6 @@ bool CrateWriter::ExtractSphereLightProperties(
 
   if (light->radius.authored())
     if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
-  if (light->exposure.authored())
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -102,10 +108,20 @@ bool CrateWriter::ExtractRectLightProperties(
     if (!ExtractAnimatableDefault(light->width.get_value(), "inputs:width", fields, err)) return false;
   if (light->height.authored())
     if (!ExtractAnimatableDefault(light->height.get_value(), "inputs:height", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+
+  // RectLight carries a texture like DomeLight does; it was never written.
+  if (light->file.authored()) {
+    const auto& file_opt = light->file.get_value();
+    if (file_opt) {
+      const Animatable<value::AssetPath>& file_anim = *file_opt;
+      value::AssetPath file_val;
+      if (file_anim.has_default() && file_anim.get_default(&file_val)) {
+        crate::CrateValue crate_val;
+        crate_val.Set(file_val);
+        fields.push_back({"inputs:texture:file", crate_val});
+      }
+    }
+  }
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -127,10 +143,6 @@ bool CrateWriter::ExtractDiskLightProperties(
 
   if (light->radius.authored())
     if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -154,10 +166,6 @@ bool CrateWriter::ExtractCylinderLightProperties(
     if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
   if (light->length.authored())
     if (!ExtractAnimatableDefault(light->length.get_value(), "inputs:length", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -179,10 +187,6 @@ bool CrateWriter::ExtractDistantLightProperties(
 
   if (light->angle.authored())
     if (!ExtractAnimatableDefault(light->angle.get_value(), "inputs:angle", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -217,10 +221,18 @@ bool CrateWriter::ExtractDomeLightProperties(
     }
   }
 
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  // `inputs:texture:format` is a typed enum field and was never written.
+  if (light->textureFormat.authored()) {
+    const auto& fmt_anim = light->textureFormat.get_value();
+    DomeLight::TextureFormat fmt_enum;
+    if (fmt_anim.has_default() && fmt_anim.get_default(&fmt_enum)) {
+      crate::CrateValue fmt_val;
+      fmt_val.Set(value::token(to_string(fmt_enum)));
+      fields.push_back({"inputs:texture:format", fmt_val});
+    }
+  }
+
+
   // guideRadius is parsed (DOME_LIGHT_TYPED_ATTRS) and printed, so emit it too
   // for USDC round-trip parity. Note: no "inputs:" prefix (matches the reader).
   if (light->guideRadius.authored())
@@ -243,12 +255,6 @@ bool CrateWriter::ExtractGeometryLightProperties(
     return false;
   }
 
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
-  if (light->exposure.authored())
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -267,12 +273,6 @@ bool CrateWriter::ExtractPortalLightProperties(
     return false;
   }
 
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
-  if (light->exposure.authored())
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -311,10 +311,18 @@ bool CrateWriter::ExtractDomeLight1Properties(
     }
   }
 
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  // `inputs:texture:format` is a typed enum field and was never written.
+  if (light->textureFormat.authored()) {
+    const auto& fmt_anim = light->textureFormat.get_value();
+    DomeLight_1::TextureFormat fmt_enum;
+    if (fmt_anim.has_default() && fmt_anim.get_default(&fmt_enum)) {
+      crate::CrateValue fmt_val;
+      fmt_val.Set(value::token(to_string(fmt_enum)));
+      fields.push_back({"inputs:texture:format", fmt_val});
+    }
+  }
+
+
 
   if (light->guideRadius.authored())
     if (!ExtractAnimatableDefault(light->guideRadius.get_value(), "guideRadius", fields, err)) return false;

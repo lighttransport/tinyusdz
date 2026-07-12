@@ -1599,6 +1599,34 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     xformable = static_cast<const Xformable*>(instancer);
   } else if (auto* xform = prim.data().as<Xform>()) {
     xformable = xform;
+  } else if (auto* volume = prim.data().as<Volume>()) {
+    xformable = static_cast<const Xformable*>(volume);
+  } else if (auto* skelroot = prim.data().as<SkelRoot>()) {
+    xformable = static_cast<const Xformable*>(skelroot);
+  } else if (auto* skel = prim.data().as<Skeleton>()) {
+    xformable = static_cast<const Xformable*>(skel);
+  }
+  // Lights are Xformable too (via Boundable/NonboundableLight). Leaving them out
+  // of this list silently dropped every light's transform on write, so a scene
+  // round-tripped through .usdc came back with all its lights at the origin.
+  else if (auto* l = prim.data().as<SphereLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<RectLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DiskLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<CylinderLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DistantLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DomeLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DomeLight_1>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<GeometryLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<PortalLight>()) {
+    xformable = static_cast<const Xformable*>(l);
   } else {
     // Not a type we handle yet
     return true;
@@ -1802,16 +1830,18 @@ bool CrateWriter::ExtractImageableAttrs(
 ) {
   (void)err;
 
+  // NOTE: an AUTHORED opinion is written even when it equals the schema fallback.
+  // `visibility = "inherited"` is not the same as no opinion at all: an authored
+  // opinion blocks weaker ones during composition, so dropping it because it
+  // "looks like the default" silently changes what the layer means.
   if (visibility.authored()) {
     const auto& vis_animatable = visibility.get_value();
     if (vis_animatable.has_default()) {
       Visibility vis_val;
       if (vis_animatable.get_default(&vis_val)) {
-        if (vis_val != Visibility::Inherited) {  // Only write if not default
-          crate::CrateValue vis_crate_val;
-          vis_crate_val.Set(value::token(to_string(vis_val)));
-          fields.push_back({"visibility", vis_crate_val});
-        }
+        crate::CrateValue vis_crate_val;
+        vis_crate_val.Set(value::token(to_string(vis_val)));
+        fields.push_back({"visibility", vis_crate_val});
       }
     }
 
@@ -1838,12 +1868,9 @@ bool CrateWriter::ExtractImageableAttrs(
   }
 
   if (purpose.authored()) {
-    const Purpose purpose_val = purpose.get_value();
-    if (purpose_val != Purpose::Default) {  // Only write if not default
-      crate::CrateValue purpose_crate_val;
-      purpose_crate_val.Set(value::token(to_string(purpose_val)));
-      fields.push_back({"purpose", purpose_crate_val});
-    }
+    crate::CrateValue purpose_crate_val;
+    purpose_crate_val.Set(value::token(to_string(purpose.get_value())));
+    fields.push_back({"purpose", purpose_crate_val});
   }
 
   return true;
