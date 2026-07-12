@@ -337,6 +337,11 @@ struct PrimSpecMetaExt {
   Value sdrMetadata;
   Value clips;
   StringListOpEdits clipSetEdits;
+  // Composed-output only (never parsed or serialized): properties whose
+  // strongest authored opinion came from a composition source WEAKER than the
+  // source that introduced the clips metadata. Value-clip resolution takes
+  // precedence over these (LVRPS: local > clips > references/payloads).
+  std::vector<PropNameId> clipShadowedProps;
   bool customDataAuthored = false;
   bool assetInfoAuthored = false;
   bool sdrMetadataAuthored = false;
@@ -381,6 +386,7 @@ struct PrimSpecMetaExt {
         sdrMetadata(o.sdrMetadata),
         clips(o.clips),
         clipSetEdits(o.clipSetEdits),
+        clipShadowedProps(o.clipShadowedProps),
         customDataAuthored(o.customDataAuthored),
         assetInfoAuthored(o.assetInfoAuthored),
         sdrMetadataAuthored(o.sdrMetadataAuthored),
@@ -675,6 +681,14 @@ struct PrimSpecMeta {
   void setClipsAuthored(bool authored = true) {
     ensure_ext();
     ext_->clipsAuthored = authored;
+  }
+  const std::vector<PropNameId> &clipShadowedProps() const {
+    static const std::vector<PropNameId> kEmpty;
+    return ext_ ? ext_->clipShadowedProps : kEmpty;
+  }
+  std::vector<PropNameId> &clipShadowedProps() {
+    ensure_ext();
+    return ext_->clipShadowedProps;
   }
   const std::vector<std::string> &primOrder() const {
     static const std::vector<std::string> kEmpty;

@@ -458,6 +458,13 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_aousd_conformance PRIVATE tinyusdz_next)
 
+    # Sampled-value oracle for the AOUSD supplemental value_resolution cases
+    # (self-skips with exit 77 when the corpus is unavailable).
+    add_executable(test_aousd_value_resolution
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_aousd_value_resolution.cc
+    )
+    target_link_libraries(test_aousd_value_resolution PRIVATE tinyusdz_next)
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -744,10 +751,18 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
                     --suite-root "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}"
                     --next-usdcat "$<TARGET_FILE:next_usdcat>"
                     --aousd-test "$<TARGET_FILE:test_aousd_conformance>"
+                    --aousd-value-test "$<TARGET_FILE:test_aousd_value_resolution>"
                     --max-composition-fail 0)
         set_tests_properties(next_aousd_supplemental
             PROPERTIES LABELS "next;aousd;supplemental" TIMEOUT 600)
     endif()
+    # Sampled-value oracle also runs as its own ctest entry; the binary
+    # self-skips (exit 77) when the corpus is missing.
+    add_test(NAME next_test_aousd_value_resolution
+        COMMAND test_aousd_value_resolution "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_aousd_value_resolution
+        PROPERTIES SKIP_RETURN_CODE 77 LABELS "next;aousd")
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when

@@ -10,6 +10,7 @@
 #include "../layer/property-index.hh"
 #include "../pcp/cache.hh"  // EvalAttributeLazy: cache-backed lazy evaluation
 #include "../schema/schema-registry.hh"
+#include <algorithm>
 #include <cstring>
 
 namespace tinyusdz {
@@ -78,11 +79,23 @@ EvalResult AttributeEval::EvalInternal(const UsdPrim& prim, const std::string& a
 
   // Try to get value from prim spec
   result = EvalFromPrimSpec(spec, attr_name, opts);
-  // AOUSD precedence is timeSamples -> spline -> default -> clips -> schema
-  // fallback. EvalFromPrimSpec may already have produced the fallback; clips
-  // get one chance to replace only that final fallback (never authored data).
+  // LVRPS precedence: opinions from sources at-or-stronger than the
+  // clips-introducing source beat clips; opinions composition filled from
+  // WEAKER sources (recorded per-property as clipShadowedProps) lose to
+  // clips. EvalFromPrimSpec may also have produced the schema fallback;
+  // clips replace that too. When clips cannot resolve the property, the
+  // shadowed/fallback result below is kept.
+  bool clip_shadowed = false;
+  if (opts.time.is_numeric() && result.success &&
+      !spec->meta().clipShadowedProps().empty()) {
+    const std::vector<PropNameId>& shadowed = spec->meta().clipShadowedProps();
+    const PropNameId name_id = GetPropNameTable().find(attr_name);
+    clip_shadowed = name_id.is_valid() &&
+                    std::find(shadowed.begin(), shadowed.end(), name_id) !=
+                        shadowed.end();
+  }
   if (opts.time.is_numeric() &&
-      (!result.success || result.from_schema_fallback) &&
+      (!result.success || result.from_schema_fallback || clip_shadowed) &&
       spec->meta().clips().is_dictionary()) {
     Value clipped;
     std::string asset;

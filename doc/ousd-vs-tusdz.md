@@ -285,8 +285,19 @@ The AOUSD supplemental material includes basic, advanced, multiple-set, timing, 
 
 Nested clip-bearing stages now recurse through the core resolver with a bounded
 depth and an asset/property resolution stack; repeated entries produce a stable
-cycle diagnostic. **Remaining:** translate the supplemental sampled-value assertions and make
-Tydra consume the core resolver rather than own duplicate metadata semantics.
+cycle diagnostic.
+
+The supplemental sampled-value assertions are now translated into
+`tests/next/test_aousd_value_resolution.cc` (ctest
+`next_test_aousd_value_resolution`; also invoked by
+`run-aousd-supplemental.py --aousd-value-test`): default/timesamples
+bracketing + Held interpolation, `times` jump discontinuities, out-of-range
+stage-time clamping, clip-set name ordering, multi-clip `active` switching,
+and LVRPS clip strength. Composition records per-property clip shadowing
+(`PrimSpecMeta::clipShadowedProps`): opinions filled from sources weaker than
+the clips-introducing source lose to clips, while local opinions keep
+precedence. **Remaining:** make Tydra consume the core resolver rather than
+own duplicate metadata semantics.
 
 ### AOUSD-VR-002 — Default-time queries consult time samples (P1)
 

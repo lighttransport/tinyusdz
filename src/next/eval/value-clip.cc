@@ -114,8 +114,13 @@ int ActiveIndex(const ValueClipSet& set, double time) {
 
 double ClipTime(const ValueClipSet& set, double time) {
   if (set.times.empty()) return time;
-  if (time <= set.times.front().first) return set.times.front().second;
-  if (time >= set.times.back().first) return set.times.back().second;
+  // Stage times strictly OUTSIDE the authored `times` range map to the
+  // boundary STAGE time (AOUSD supplemental value-resolution reference
+  // semantics), which the clip's own sample range then clamps.
+  if (time < set.times.front().first) return set.times.front().first;
+  if (time > set.times.back().first) return set.times.back().first;
+  if (time == set.times.front().first) return set.times.front().second;
+  if (time == set.times.back().first) return set.times.back().second;
   for (size_t i = 0; i + 1 < set.times.size(); ++i) {
     const auto& a = set.times[i];
     const auto& b = set.times[i + 1];
@@ -182,6 +187,16 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
     if (set.active.empty() && !set.asset_paths.empty())
       set.active.emplace_back(0.0, 0);
     std::sort(set.active.begin(), set.active.end());
+    // Jump discontinuity: two consecutive authored entries with the SAME
+    // stage time mean "clip time approaches the first entry's value up to
+    // (not including) the stage time, then jumps to the second's". Encode
+    // the first entry at stage_time - epsilon BEFORE sorting, so the sort
+    // cannot reorder the pair and destroy the discontinuity.
+    for (size_t i = 0; i + 1 < set.times.size(); ++i) {
+      if (set.times[i].first == set.times[i + 1].first) {
+        set.times[i].first -= 1e-9;
+      }
+    }
     std::sort(set.times.begin(), set.times.end());
     for (const auto& active : set.active) {
       if (active.second < 0 ||

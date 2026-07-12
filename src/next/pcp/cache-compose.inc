@@ -27,6 +27,26 @@
     bool specifier_done = false;
     bool specifier_seen = false;
 
+    // Value-clip strength (LVRPS): opinions from sources at-or-stronger than
+    // the source that introduces the `clips` metadata beat clips; opinions
+    // from weaker sources (a reference/payload behind the clips author) LOSE
+    // to clips. Composition merges opinions fill-absent with provenance lost,
+    // so snapshot which properties already carry a value/samples when clips
+    // first compose; anything filled afterwards is recorded as clip-shadowed
+    // for AttributeEval.
+    bool clips_snapshot_taken = false;
+    std::vector<PropNameId> pre_clip_props;
+    const auto snapshot_pre_clip_props = [&]() {
+      if (clips_snapshot_taken || !out->meta().clips().is_dictionary()) return;
+      clips_snapshot_taken = true;
+      for (const PropSlot &sl : out->properties().slots()) {
+        if (sl.is_relationship()) continue;
+        if (sl.value_offset != UINT32_MAX || sl.is_time_sampled()) {
+          pre_clip_props.push_back(sl.name_id);
+        }
+      }
+    };
+
     // Pass 1 (strong->weak): compose opinions.
     for (const Src &s : srcs) {
       // Variant source: graft the selected variant's inline opinions
@@ -110,9 +130,20 @@
               }
               return Mapping(s.map_idx).ApplyTarget(p);
             });
+        snapshot_pre_clip_props();
       }
     }
     if (specifier_seen) out->set_specifier(resolved_specifier);
+    if (clips_snapshot_taken) {
+      for (const PropSlot &sl : out->properties().slots()) {
+        if (sl.is_relationship()) continue;
+        if (sl.value_offset == UINT32_MAX && !sl.is_time_sampled()) continue;
+        if (std::find(pre_clip_props.begin(), pre_clip_props.end(),
+                      sl.name_id) == pre_clip_props.end()) {
+          out->meta().clipShadowedProps().push_back(sl.name_id);
+        }
+      }
+    }
 
     // Flatten drops variant SELECTION metadata: the selected variant's content
     // has already been grafted inline (ExpandArcs / variant Src), so pxr's
