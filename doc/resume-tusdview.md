@@ -143,6 +143,17 @@ on it, so any of these made two paths render identical geometry differently.
    first — from the half-precision GPU channels, since `dm.morphs` is freed once
    those are built.
 
+4. The INSTANCED PROTOTYPE path (`EmitInstancedProto`) was the one deform emitter
+   with no fixture, and was called exempt from the world-bake bugs "by
+   construction" — it is, its vertices stay prototype-LOCAL and the placement lives
+   in the instance matrix. But that is exactly what the posed-bounds pass got wrong:
+   it grew the scene box from those local vertices *without* pushing them through
+   each instance's matrix, so a 2-instance scene boxed both copies on top of the
+   origin. `deform-instanced-proto.usda` (two instances of one skinned+blendshaped
+   external reference, one of them rotated and scaled) went 1.218 → **0.000** against
+   the CPU bake. The deform itself was already right (mesh IoU 0.996 before the fix)
+   — it was purely the box.
+
 On `deform-skin-xform` (rotated + non-uniformly scaled SkelRoot) at t=20, through a
 fixed camera, legacy vs next full-frame mean depth diff: **1.259 → 0.028** (mesh IoU
 0.963 → 0.998). Asserted by `check-deform-parity.py`, which now also compares the

@@ -2448,8 +2448,15 @@ if(TINYUSDZ_BUILD_TESTS)
       #   morph-subsets  -- a morphed mesh torn into two batches by material-bind
       #                     GeomSubsets, which re-index the sparse delta lists;
       #   morph-skin     -- both deforms live at once, which pins the ORDER (morph
-      #                     the bind pose, then skin the morphed points).
-      foreach(deform_case skin-xform morph-subsets morph-skin)
+      #                     the bind pose, then skin the morphed points);
+      #   instanced-proto -- the same deform reached through NATIVE INSTANCING,
+      #                     which is a different emitter (EmitInstancedProto) whose
+      #                     vertices stay prototype-LOCAL. It was called exempt from
+      #                     the world-bake bugs by construction, and it was -- but
+      #                     the scene box then grew from those local vertices without
+      #                     the instance placement, so the grid and the depth ramp
+      #                     landed in the wrong place.
+      foreach(deform_case skin-xform morph-subsets morph-skin instanced-proto)
         add_test(
           NAME tusdview-deform-${deform_case}
           COMMAND python3
