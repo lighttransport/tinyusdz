@@ -1748,6 +1748,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
   // Try to extract properties based on prim type
   if (type_name == "Xform") {
     return ExtractXformProperties(prim, prim_path, fields, err);
+  } else if (type_name == "Scope") {
+    return ExtractScopeProperties(prim, prim_path, fields, err);
   } else if (type_name == "Mesh") {
     return ExtractMeshProperties(prim, prim_path, fields, err);
   } else if (type_name == "Volume") {

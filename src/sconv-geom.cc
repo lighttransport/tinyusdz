@@ -1894,6 +1894,50 @@ bool CrateWriter::ExtractImageableAttrs(
 }
 
 // ============================================================================
+// Scope Property Extraction
+// ============================================================================
+
+// Scope is imageable but NOT a GPrim, so ExtractGPrimProperties skips it and its
+// typed `visibility` / `purpose` would never reach the crate. Authoring purpose
+// on a Scope is the standard way to ship a render/proxy pair, so losing it drops
+// the asset's whole purpose structure on write.
+bool CrateWriter::ExtractScopeProperties(
+  const Prim& prim,
+  const Path& prim_path,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  (void)prim_path;
+  const Scope* scope = prim.data().as<Scope>();
+  if (!scope) {
+    if (err) *err = "Failed to cast prim to Scope";
+    return false;
+  }
+
+  if (scope->visibility.authored()) {
+    const auto& vis_animatable = scope->visibility.get_value();
+    Visibility vis_val;
+    if (vis_animatable.has_default() && vis_animatable.get_default(&vis_val) &&
+        vis_val != Visibility::Inherited) {
+      crate::CrateValue vis_crate_val;
+      vis_crate_val.Set(value::token(to_string(vis_val)));
+      fields.push_back({"visibility", vis_crate_val});
+    }
+  }
+
+  if (scope->purpose.authored()) {
+    const Purpose purpose_val = scope->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose_val)));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
+  }
+
+  return true;
+}
+
+// ============================================================================
 // GPrim Common Property Extraction
 // ============================================================================
 
