@@ -2249,6 +2249,7 @@ if(TINYUSDZ_BUILD_TESTS)
         cmyk-jpeg-texture
         degraded-material
         frames-framespec
+        geomsubset-materials
         ibl-specular-bound
         instancer-invisible-ids
         material-shading-bsdf-sample
