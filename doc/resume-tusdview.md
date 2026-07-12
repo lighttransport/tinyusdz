@@ -77,25 +77,36 @@ harness, on `examples/tusdview/tests/deform-*.usda`):
   `--skinning cpu` bake and its GPU/RT paths land in different places (mean 3.1 on
   `deform-skin-xform`, where the whole deform only moves depth by 3.5).
 
-The proven part. `ConvertStageToScene` (scene_loader.cc, the `std::isfinite(timecode)`
-branch — i.e. every `--time` load) calls `DeformSkinnedMeshes`, which BAKES the pose
-into `render.meshes`. `BuildRtSkinnedMeshVertices` then skins those already-baked
-vertices AGAIN, every frame. Numerically, on `deform-skin-xform` at t=20, rest
+FIXED: the DOUBLE deform. `ConvertStageToScene` (scene_loader.cc, the
+`std::isfinite(timecode)` branch — i.e. every animated `--time` load) BAKES the pose
+into `render.meshes` via `DeformSkinnedMeshes`. The rest-pose load that exists to
+stop the shader posing it a second time (`gpuRestLoad`) was gated on an EXPLICIT
+`--skinning gpu` — but the default is **Auto**, so the default path baked the pose
+and then `updateSkinningEffective` picked GPU anyway, and the vertex shader (or, under
+`--rt`, `BuildRtSkinnedMeshVertices`) deformed the already-deformed geometry. A
+60-degree bend rendered as 120. Numerically, on `deform-skin-xform` at t=20, rest
 vertex 4 = (-1, 3, 1):
 
-    bake  -> (-1.799,  1.384, 1.0)   # one 60 deg bend about the joint pivot: correct
-    RT    -> (-0.799, -0.116, 1.0)   # the same bend applied to THAT: two bends
+    bake -> (-1.799,  1.384, 1.0)   one 60 deg bend about the joint pivot: correct
+    RT   -> (-0.799, -0.116, 1.0)   that bend applied to THAT: two bends
 
-Not yet explained, and the reason this is still open: with an IDENTITY SkelRoot the
-raster GPU path matches the CPU bake EXACTLY (0.000), while RT still double-deforms
-— so the raster shader is somehow not double-applying, even though it is fed the
-same baked vertices and the same (correct, SkelRoot-independent) bone matrices. Only
-`dm.world` differs between the two fixtures. Resolve that before fixing: the shape of
-the fix (keep the rest pose for the paths that deform downstream, vs. drop the
-load-time bake) depends on it.
+`gpuRestLoad` now covers every mode that may deform downstream (`wantsGpuSkinningLoad()`
+— Auto as much as GPU); the existing not-eligible fallback re-renders with the CPU
+bake, so Auto lands correctly either way. Guarded by `tusdview-legacy-double-deform`
+(mesh silhouette in depth through a fixed camera: 0.43 before, 0.96 after).
 
-The `--next` loader is self-consistent here (GPU deform == CPU bake, byte-identical
-in depth, on all three deform fixtures), so it is the reference.
+The earlier confusion, recorded so it is not re-derived: an explicit `--skinning gpu`
+run took the rest-load path and looked fine, which made the raster path seem innocent.
+It was the DEFAULT that was broken.
+
+### Still open: a ~4% legacy residual
+
+With the double deform gone, the legacy paths still do not agree exactly: mesh
+silhouette IoU is 0.96 (raster vs its own CPU bake) and 0.92 (RT vs the bake), where
+`--next` is 1.0000 against its own bake. Same fixture, same fixed camera. Small, but
+it is a real disagreement and not noise — worth chasing next. Note the ground grid is
+drawn from scene bounds and moves on its own, so compare the mesh only (mask the near
+depths), as the test does.
 
 Note also that the GPU morph path skins the REST normal (only positions are
 morphed), so it differs from the CPU bake in SHADING, not geometry. That is by

@@ -2476,6 +2476,21 @@ if(TINYUSDZ_BUILD_TESTS)
                 cuda
         )
       set_tests_properties(tusdview-deform-cuda PROPERTIES SKIP_RETURN_CODE 77)
+
+      # LEGACY loader: an animated --time load must pose the mesh ONCE. It bakes the
+      # pose into the geometry at load, and the rest-pose load that keeps the shader
+      # from posing it a second time was gated on an EXPLICIT --skinning gpu -- so
+      # the DEFAULT (auto) deformed twice.
+      add_test(
+        NAME tusdview-legacy-double-deform
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-legacy-double-deform.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-skin-xform.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-legacy-double-deform"
+        )
+      set_tests_properties(tusdview-legacy-double-deform
+                           PROPERTIES SKIP_RETURN_CODE 77)
     else()
       message(STATUS "tinyusdz: skipping tusdview screenshot diff test; xvfb-run not found")
     endif()
