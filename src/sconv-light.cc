@@ -45,7 +45,10 @@ namespace experimental {
   if ((light)->shapingConeSoftness.authored()) \
     if (!ExtractAnimatableDefault((light)->shapingConeSoftness.get_value(), "inputs:shaping:cone:softness", fields, err)) return false;
 
+// Lights are imageable: `visibility` / `purpose` are typed fields, so they have
+// to be written explicitly or they vanish on write.
 #define EXTRACT_COMMON_LIGHT(light) \
+  if (!ExtractImageableAttrs((light)->visibility, (light)->purpose, fields, err)) return false; \
   if ((light)->specular.authored()) \
     if (!ExtractAnimatableDefault((light)->specular.get_value(), "inputs:specular", fields, err)) return false; \
   if ((light)->diffuse.authored()) \

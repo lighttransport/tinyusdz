@@ -585,6 +585,8 @@ private:
 
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractScopeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  // Shared by every imageable prim (GPrim, Scope, lights, Material/NodeGraph).
+  bool ExtractImageableAttrs(const TypedAttributeWithFallback<Animatable<Visibility>>& visibility, const TypedAttributeWithFallback<Purpose>& purpose, crate::FieldValuePairVector& fields, std::string* err);
   bool ExtractGPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Material properties (outputs: surface, displacement, volume)
