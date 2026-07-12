@@ -165,7 +165,7 @@ The regression now enumerates every public `TypeId` and fails if a newly added f
 
 At the baseline revision, the valid prim declaration `def Xform "München"` was accepted by OpenUSD and rejected by both `next_usdcat` and legacy `tusdcat`. Remediated `next` uses validated UTF-8 plus Unicode `XID_Start`/`XID_Continue`; the legacy parser already had the shared XID utility used for this fix.
 
-The remaining boundary is programmatic authoring: lightweight `Path`/name construction does not automatically validate untrusted strings. Parser and validator paths use the shared UTF-8/XID implementation; authoring callers must still request validation explicitly.
+Programmatic authoring boundaries now validate: `Path::append_child` / `append_property` reject invalid components (returning an empty `Path`), `Path::is_valid()` / `Path::Parse()` expose full-grammar validation for untrusted strings, and `Layer::define_prim_at_path` rejects paths with non-XID components. The validation module's previous file-local approximation (which accepted any byte ≥ 0x80) is replaced by the shared strict validator. Raw `Path` CONSTRUCTION stays unvalidated by design — hot composition paths build Paths from already-validated parser output. Boundary cases (truncated/overlong/surrogate/lone-continuation UTF-8, U+110000, noncharacters, private-use, XID_Start vs XID_Continue) are covered in `TestUnicodeAndPaths`.
 
 ### AOUSD-PATH-001 — Invalid paths are accepted as opaque strings (P1)
 
@@ -173,13 +173,13 @@ The remaining boundary is programmatic authoring: lightweight `Path`/name constr
 
 **Normative area:** §8.3 Path Grammar.
 
-At the baseline revision, a relationship target `</Root//Child>` loaded successfully in `next` while OpenUSD rejected it. Strict parsing now validates path-reference tokens before a stage can be returned. Programmatically constructed `Path` remains a lightweight string type, so authoring callers should validate untrusted strings explicitly.
+At the baseline revision, a relationship target `</Root//Child>` loaded successfully in `next` while OpenUSD rejected it. Strict parsing now validates path-reference tokens before a stage can be returned. Programmatic authoring is now validated too: `Path::append_child`/`append_property` reject invalid components, `Path::is_valid()`/`Path::Parse()` provide full-grammar checks, and `Layer::define_prim_at_path` rejects non-XID components; raw `Path` construction stays unvalidated for hot composition paths that consume parser-validated strings.
 
 The deeper audit added the specification's valid/invalid example table as a regression and found two boundary errors in the first validator: repeated parent traversal such as `../..` was rejected, while an absolute relational-property chain such as `/Prim.relationship.attribute` was accepted even though absolute paths use `PrimFirstPathElements` and permit at most one property element. Both are now corrected.
 
 Permissive invalid paths can later affect namespace lookup, composition, relationship forwarding, and security policy decisions.
 
-**Remaining fix needed:** extend the canonical validator to every programmatic/untrusted authoring boundary and generate cases directly from every grammar production, including malformed UTF-8 and noncharacter/private-use boundaries beyond the normative example table.
+The canonical validator now runs at the programmatic authoring boundaries (`Path` appends, `Path::Parse`, `Layer::define_prim_at_path`) and in the validation module (replacing the byte-≥0x80 approximation), with generated boundary cases for malformed UTF-8 (truncated / lone continuation / overlong / surrogate / beyond U+10FFFF) and noncharacter / private-use / XID_Start-vs-Continue codepoints. **Remaining:** `PrimSpec::set_name` and reader-internal setters stay unvalidated by design (lexer-validated input); revisit if a public mutation API grows around them.
 
 ### AOUSD-ORDER-001 — Prim and property ordering is not preserved or composed (P1)
 
