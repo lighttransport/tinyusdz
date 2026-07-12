@@ -37,17 +37,25 @@ enum class USDValidationSeverity {
 // and USD schema constraints. They are warning-heavy and composition-
 // sensitive, so they are off by default and must be opted into explicitly.
 //
-// `crate` is accepted for option/JSON compatibility with the legacy
-// validator, but Crate container-table introspection is not implemented on
-// the next crate reader; the group never runs (checked_groups.crate stays
-// false).
+// `package` and `crate` select byte-container checks. Layer-only validation
+// leaves them unchecked; a caller retaining the original bytes can run and
+// merge those checks.
+//
+// `arkit` is the ARKit / RealityKit USDZ compatibility profile, modeled on
+// OpenUSD `usdchecker --arkit` (see doc/openusd-usdz.md). It is a delivery
+// profile rather than a defect class: a perfectly valid USD layer can be
+// non-ARKit (e.g. Z-up, a BasisCurves prim, a .usdz payload with a .tif
+// texture). It is therefore NOT enabled by MakeValidateAllOptions() and must
+// be requested explicitly.
 struct ValidationOptions {
   bool core{true};
   bool geom{false};
   bool shade{false};
   bool lux{false};
   bool physics{false};
+  bool package{false};
   bool crate{false};
+  bool arkit{false};
 
   // Human-readable list of enabled groups, e.g. "core, geom, shade".
   std::string group_summary() const;
@@ -75,10 +83,12 @@ struct USDValidationResult {
 const char *GetAOUSDCoreSpecVersionString();
 
 // Convenience option builder for callers that want CLI-compatible behavior.
+// Enables every defect-class group (core/geom/shade/lux/physics/package/crate)
+// but leaves `arkit` off; ARKit is an opt-in delivery profile.
 ValidationOptions MakeValidateAllOptions();
 
 // Stable group-name order for structured reports ("core", "geom", "shade",
-// "lux", "physics", "crate").
+// "lux", "physics", "package", "crate", "arkit").
 std::vector<std::string> GetValidationGroupNames(
     const ValidationOptions &options);
 
