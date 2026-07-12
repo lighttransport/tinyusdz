@@ -147,4 +147,63 @@ if ! "$TUSDCAT" --output-format usdc -o "$TMP/imageable.usdc" "$TMP/imageable.us
 fi
 sweep all-types-usdc "$TMP/imageable.usdc"
 
+# Lights are Xformable as well as imageable, and NO light extractor wrote
+# xformOps -- so a scene round-tripped through .usdc came back with every light
+# at the world origin. intensity/color/exposure were copy-pasted per light type
+# and half of them omitted `exposure`; RectLight never wrote its texture.
+cat > "$TMP/light.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "W"
+)
+
+def Xform "W"
+{
+    def RectLight "Key"
+    {
+        float inputs:exposure = 1.5
+        float inputs:intensity = 900
+        asset inputs:texture:file = @key.png@
+        double3 xformOp:translate = (5, 3, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def DomeLight "Sky"
+    {
+        float inputs:exposure = 0.5
+        asset inputs:texture:file = @sky.hdr@
+        token inputs:texture:format = "latlong"
+        double3 xformOp:translate = (0, 10, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/light.usdc" "$TMP/light.usda" \
+     >"$TMP/write3.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the light scene to usdc"
+  cat "$TMP/write3.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/light.usdc" > "$TMP/light-rt.usda" 2>/dev/null
+lost=""
+for expect in \
+  'xformOp:translate = (5, 3, 0)' \
+  'xformOp:translate = (0, 10, 0)' \
+  'inputs:exposure = 1.5' \
+  'inputs:exposure = 0.5' \
+  'inputs:texture:file = @key.png@' \
+  'inputs:texture:file = @sky.hdr@' \
+  'inputs:texture:format = "latlong"'; do
+  grep -qF "$expect" "$TMP/light-rt.usda" || lost="$lost
+    $expect"
+done
+if [ -n "$lost" ]; then
+  echo "FAIL[lights-usdc]: dropped on round-trip:$lost"
+  status=1
+else
+  echo "ok[lights-usdc]: light transforms, exposure and textures survived"
+fi
+
 exit "$status"
