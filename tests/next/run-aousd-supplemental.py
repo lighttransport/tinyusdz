@@ -24,6 +24,9 @@ def main():
                         default=os.environ.get("AOUSD_CORE_SUPPLEMENTAL_ROOT"))
     parser.add_argument("--next-usdcat", required=True)
     parser.add_argument("--aousd-test")
+    parser.add_argument("--aousd-value-test",
+                        help="test_aousd_value_resolution binary: asserts the "
+                             "corpus's expected resolved sample values")
     parser.add_argument("--max-composition-fail", type=int, default=0,
                         help="ratchet ceiling for known composition gaps")
     parser.add_argument("--category", action="append",
@@ -103,6 +106,14 @@ def main():
             if result.returncode:
                 failures.append(("value_resolution", asset, result.stderr))
         counts["value_resolution"] = len(assets)
+        # Sampled-value oracle: compare resolved values (bracketing, layer
+        # offsets, interpolation, clips) against the corpus expectations.
+        if args.aousd_value_test:
+            result = run((args.aousd_value_test, str(root)))
+            if result.returncode:
+                failures.append(("value_resolution",
+                                 pathlib.Path(args.aousd_value_test),
+                                 result.stderr or "sampled-value oracle failed"))
 
     for category in sorted(counts):
         print(f"AOUSD supplemental {category}: {counts[category]} cases")
