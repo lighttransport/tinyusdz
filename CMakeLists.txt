@@ -2469,6 +2469,23 @@ if(TINYUSDZ_BUILD_TESTS)
                              PROPERTIES SKIP_RETURN_CODE 77)
       endforeach()
 
+      # An instanced prototype under the RAY TRACER: RT cannot use the raster vertex
+      # shader's deform (the BLAS is built from vertex buffers, so the geometry itself
+      # has to move), and for a prototype those re-posed vertices are prototype-LOCAL
+      # -- one BLAS, re-posed once, referenced by every placement's TLAS instance.
+      # Raster and RT therefore reach the same pixels by genuinely different routes.
+      add_test(
+        NAME tusdview-deform-instanced-proto-rt
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-deform-parity.py
+                "$<TARGET_FILE:tusdview>"
+                "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/deform-instanced-proto.usda"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-deform-instanced-proto-rt"
+                rt
+        )
+      set_tests_properties(tusdview-deform-instanced-proto-rt
+                           PROPERTIES SKIP_RETURN_CODE 77)
+
       # The CUDA tracer builds its BVH from draw_ geometry, so it takes the deform
       # through poseNextDrawForTracer instead of the vertex shader. It used to be
       # pinned to the load-time CPU bake -- a second deform implementation, free to
