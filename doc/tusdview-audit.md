@@ -38,20 +38,22 @@ Fixed, each with a pinning regression test that fails against the old behavior:
   prototype, instead of being world-baked into an absPath-less shared batch.
   `tusdview-noninstanced-blendshape`.
 
-Deferred — the two remaining findings each need a major rework of a hot path and
-are left scoped here for a focused follow-up (each still has its finding below):
-
-- **R1** — per-face GeomSubset materials in the tusdrender next path. The
-  streaming path is one-material-per-mesh-job (the concat assigns every triangle
-  of a job one `mat_id`); per-face subsets need either N materials per job with
-  per-triangle local indices remapped at concat, or one job per subset with a
-  face filter through `AddRTPreviewMeshNext` + the templated TriStore/FlatTri
-  concat. Both touch the core streaming/BLAS build.
-- **T3** — Vulkan raster per-vertex `displayColor`. `vtxColorBuf` today is created
-  as a device-address SSBO (for the RT MeshDesc), not a vertex binding, so the fix
-  needs a new vertex-input binding on the mesh pipeline(s) + a white fallback
-  buffer for meshes without color + `mesh.vert`/`mesh.frag` changes + a SPIR-V
-  recompile, on the raster pipeline every headless test depends on.
+- **R1** — per-face GeomSubset materials render on the tusdrender next path.
+  `ExpandGeomSubsetJobsNext` splits a subset-bound mesh into one mesh-job per
+  bound subset (an authored-face mask honored by `AddRTPreviewMeshNext`, and the
+  GeomSubset prim as the binding source — `GetInheritedBoundMaterialPath` on it
+  gives exact UsdShade semantics) plus a remainder job, so the existing
+  one-material-per-job streaming concat needs no change.
+  `tool-tusdrender-geomsubset-materials`.
+- **T3** — per-vertex `displayColor` renders on the Vulkan raster backend.
+  Rather than a new vertex-input binding (which would need a white fallback
+  buffer per colorless mesh), `mesh.vert` fetches the color by `gl_VertexIndex`
+  from a set-24 SSBO — the same dummy-descriptor pattern as the morph sets 7–9,
+  gated by push-constant flag `ids.w & 32` — and `mesh.frag` multiplies it into
+  the base color (and the Albedo AOV), matching GL's attrib-9 path. The SSBO is
+  the pre-existing `vtxColorBuf`, now created regardless of RT support; the tess
+  path outputs white. SPIR-V regenerated for `mesh.vert`/`mesh.frag`/
+  `mesh_tess.tese` only. `tusdview-vertex-color`.
 
 Severity key: **critical** (crash/DoS or silent data loss on common assets) ·
 **high** (wrong render on a common asset, or a crash on hostile input) ·

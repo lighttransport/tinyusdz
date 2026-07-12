@@ -7,6 +7,7 @@ layout(location = 3) flat in int vDomJoint;   // dominant skin joint (SkinWeight
 layout(location = 4) in float vDomWeight;
 layout(location = 5) in vec2 vUV1;            // 2nd texcoord set (multi-UV AOV)
 layout(location = 6) in float vMorphInfl;     // blendshape influence (world units)
+layout(location = 7) in vec3 vColor;          // per-vertex displayColor (white = none)
 
 // Base-color texture (white 1x1 when the material is untextured).
 layout(set = 0, binding = 0) uniform sampler2D uBaseColorTex;
@@ -192,7 +193,7 @@ void main() {
     }
     if (fr.mode.x == 5) { outColor = vec4(fract(vUV), 0.0, 1.0); return; }
     if (fr.mode.x == 7) {  // albedo (unlit)
-      outColor = vec4(pc.baseColor.rgb * sampleBaseColor(vUV).rgb, 1.0);
+      outColor = vec4(pc.baseColor.rgb * vColor * sampleBaseColor(vUV).rgb, 1.0);
       return;
     }
     if (fr.mode.x == 8) {  // facing
@@ -306,7 +307,9 @@ void main() {
     if (opacity < pc.matAux.w) discard;
     opacity = 1.0;
   }
-  vec3 base = pc.baseColor.rgb * baseSample.rgb;
+  // Per-vertex displayColor multiplies the base color (GL parity: attrib 9's
+  // vColor does the same in material.cpp). White when the mesh has none.
+  vec3 base = pc.baseColor.rgb * vColor * baseSample.rgb;
   MaterialTexParam m = matTexParam();
   vec4 mr = sampleMetalRough(vUV);
   float metallic = pc.matAux.x * (channelOf(mr, m.scalar0.x) * m.scalar0.z + m.scalar0.w);
