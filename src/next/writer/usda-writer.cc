@@ -328,14 +328,18 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
                          ? field.unregistered_source
                          : PrintValue(field.value, PrintOptions{})));
   }
-  if (!meta.relocates.empty()) {
-    std::string s = opts.indent + "relocates = {\n";
-    for (const auto& r : meta.relocates) {
-      s += opts.indent + opts.indent + "<" + r.first + ">: <" + r.second +
-           ">,\n";
+  if (meta.relocates_set || !meta.relocates.empty()) {
+    if (meta.relocates.empty()) {
+      lines.push_back(opts.indent + "relocates = {}");
+    } else {
+      std::string s = opts.indent + "relocates = {\n";
+      for (const auto& r : meta.relocates) {
+        s += opts.indent + opts.indent + "<" + r.first + ">: <" + r.second +
+             ">,\n";
+      }
+      s += opts.indent + "}";
+      lines.push_back(s);
     }
-    s += opts.indent + "}";
-    lines.push_back(s);
   }
   if (meta.colorConfiguration_set || !meta.colorConfiguration.empty()) {
     lines.push_back(opts.indent + "colorConfiguration = " +
@@ -367,7 +371,9 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     if (!s.empty()) lines.push_back(opts.indent + s);
   }
 
-  if (!meta.subLayers.empty()) {
+  if (meta.subLayers_set && meta.subLayers.empty()) {
+    lines.push_back(opts.indent + "subLayers = []");
+  } else if (!meta.subLayers.empty()) {
     std::string s = opts.indent + "subLayers = [\n";
     for (size_t i = 0; i < meta.subLayers.size(); ++i) {
       s += opts.indent + opts.indent + FormatAssetPathForUsda(meta.subLayers[i]);
@@ -1115,7 +1121,9 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                   has_clip_set_edits ||
                   !meta.references.empty() || !meta.payloads.empty() ||
                   !meta.inherits.empty() || !meta.specializes.empty() ||
-                  has_arc_edits || !meta.relocates().empty() ||
+                  has_arc_edits || meta.relocatesAuthored() ||
+                  !meta.relocates().empty() ||
+                  meta.variantSelectionsAuthored() ||
                   !meta.variantSelections().empty() ||
                   !meta.variantSelection.empty() ||
                   has_variant_edits || !meta.variantSets().empty() ||
@@ -1185,7 +1193,9 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         if (meta.apiSchemas().empty()) kv("apiSchemas = None");
       }
     }
-    if (!meta.relocates().empty()) {
+    if (meta.relocatesAuthored() && meta.relocates().empty()) {
+      kv("relocates = {}");
+    } else if (!meta.relocates().empty()) {
       WriteIndent(os, md, opts.indent);
       os << "relocates = {\n";
       for (const auto& r : meta.relocates()) {
@@ -1314,7 +1324,11 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                   meta.variantSelection.substr(eq + 1));
         }
       }
-      if (!sels.empty()) write_variants(sels);
+      if (!sels.empty()) {
+        write_variants(sels);
+      } else if (meta.variantSelectionsAuthored()) {
+        kv("variants = {}");
+      }
     }
 
     // Variant set declarations retain their exact authored SdfStringListOp
@@ -1728,8 +1742,10 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.customLayerData_set = root_layer->meta().customLayerData_set;
   meta.expressionVariables_set = root_layer->meta().expressionVariables_set;
   meta.subLayers = root_layer->meta().subLayers;
+  meta.subLayers_set = root_layer->meta().subLayers_set;
   meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
   meta.relocates = root_layer->meta().relocates;
+  meta.relocates_set = root_layer->meta().relocates_set;
   meta.unknownMeta = root_layer->meta().unknownMeta;
   meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
   meta.rootPrimOrder_set = root_layer->meta().rootPrimOrder_set;

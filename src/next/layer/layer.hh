@@ -66,9 +66,14 @@ struct LayerMeta {
   // Layer-level relocates (SdfRelocates, USD 24.11+): composed source path
   // -> new path. Applied by pcp during stage build (cross-arc prims only).
   std::vector<std::pair<std::string, std::string>> relocates;
+  // Authored bit: distinguishes explicit-empty `relocates = {}` from
+  // unauthored (matters for layer diffing and round-trip fidelity).
+  bool relocates_set = false;
 
   // Sublayer paths for composition
   std::vector<std::string> subLayers;
+  // Authored bit for subLayers (explicit-empty `subLayers = []` vs absent).
+  bool subLayers_set = false;
   // Per-sublayer layer offsets (offset, scale), parallel to subLayers.
   // May be shorter than subLayers (older files / API construction): missing
   // entries are identity (0, 1).

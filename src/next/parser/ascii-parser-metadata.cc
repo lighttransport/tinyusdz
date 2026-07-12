@@ -93,6 +93,7 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         }
       } else if (key == "relocates") {
         // Layer relocates: { </old/path>: </new/path>, ... }
+        layer_->meta().relocates_set = true;
         if (Match(TokenType::OpenBrace)) {
           while (!Check(TokenType::CloseBrace) && !AtEnd()) {
             std::string src, dst;
@@ -153,6 +154,7 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         // a String) or a quoted string. Decide with a non-consuming Check first:
         // `expect()` always consumes, so `expect(A) || expect(B)` would eat two
         // tokens per element and corrupt the list.
+        layer_->meta().subLayers_set = true;
         if (Match(TokenType::OpenBracket)) {
           while (!Check(TokenType::CloseBracket) && !AtEnd()) {
             std::string path;

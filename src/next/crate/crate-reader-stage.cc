@@ -247,6 +247,7 @@ bool CrateReader::Impl::BuildStage() {
         }
       } else if (field.first == "layerRelocates" ||
                  field.first == "relocates") {
+        layer.meta().relocates_set = true;
         if (const std::vector<std::string>* pairs =
                 field.second.as_token_array()) {
           for (size_t i = 0; i + 1 < pairs->size(); i += 2) {
@@ -326,6 +327,7 @@ bool CrateReader::Impl::BuildStage() {
           }
         }
       } else if (field.first == "subLayers") {
+        layer.meta().subLayers_set = true;
         if (const std::vector<std::string>* arr = field.second.as_token_array()) {
           for (const auto& s : *arr) layer.meta().subLayers.push_back(s);
         } else if (const std::string* s = field.second.as_string()) {
@@ -420,7 +422,10 @@ bool CrateReader::Impl::BuildStage() {
         if (f.first == "variantSelection") {
           std::vector<std::pair<std::string, std::string>> sels;
           if (DecodeVariantSelectionMap(f.second, sels)) {
-            for (auto& kv : sels) variant_sel[full_path][kv.first] = kv.second;
+            // Create the entry even for an authored-EMPTY selection map so
+            // the authored bit survives the round trip.
+            auto& per_prim = variant_sel[full_path];
+            for (auto& kv : sels) per_prim[kv.first] = kv.second;
           }
           break;
         }
@@ -1018,6 +1023,7 @@ bool CrateReader::Impl::BuildStage() {
           continue;
         }
         if (field.first == "relocates") {
+          ps->meta().setRelocatesAuthored();
           if (const std::vector<std::string>* pairs =
                   field.second.as_token_array()) {
             for (size_t i = 0; i + 1 < pairs->size(); i += 2) {
@@ -1415,12 +1421,16 @@ bool CrateReader::Impl::BuildStage() {
       // Record ALL selections in the plural list (the single legacy string
       // can carry only one set; consumers that read it alone would lose
       // every selection after the first on a multi-set prim).
-      if (sel != variant_sel.end() && !sel->second.empty()) {
-        for (const auto& kv : sel->second) {
-          ps->meta().variantSelections().emplace_back(kv.first, kv.second);
+      if (sel != variant_sel.end()) {
+        // Authored bit even for an explicit-empty selection dict.
+        ps->meta().setVariantSelectionsAuthored();
+        if (!sel->second.empty()) {
+          for (const auto& kv : sel->second) {
+            ps->meta().variantSelections().emplace_back(kv.first, kv.second);
+          }
+          const auto& first = *sel->second.begin();
+          ps->meta().variantSelection = first.first + "=" + first.second;
         }
-        const auto& first = *sel->second.begin();
-        ps->meta().variantSelection = first.first + "=" + first.second;
       }
     }
   }

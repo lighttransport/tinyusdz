@@ -536,6 +536,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       // relocates = { </old/path>: </new/path>, ... } — namespace renames
       // consumed by pcp (SdfRelocates). Relative paths resolve against the
       // owning prim.
+      if (prim) prim->meta().setRelocatesAuthored();
       if (Match(TokenType::OpenBrace)) {
         while (!Check(TokenType::CloseBrace) && !AtEnd()) {
           std::string src, dst;
@@ -843,6 +844,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       // variants = { string set = "selection"  string set2 = "sel2" }. USD
       // supports a selection per set; record them all in variantSelections()
       // (keeping the legacy single field set to the first for back-compat).
+      if (prim) prim->meta().setVariantSelectionsAuthored();
       if (Match(TokenType::OpenBrace)) {
         while (!Check(TokenType::CloseBrace) && !AtEnd()) {
           // Optional leading type name ("string"); the key may be a quoted
