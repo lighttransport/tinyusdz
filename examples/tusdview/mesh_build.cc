@@ -5,6 +5,15 @@
 #include "lightrt_mtlx_bridge.hh"
 #include "texture_tools.hh"
 
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+extern "C" {
+#include "texpipe.h"  // tp_ktx2_read[_zstd] for the kept-compressed passthrough
+}
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+#include "external/zstd.h"  // ZSTD_decompress (KTX2 supercompressionScheme 2)
+#endif
+#endif
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -958,6 +967,39 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
   EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed);
 }
 
+}  // namespace  (the texture post-passes below are shared with the --next loader)
+
+// GPU block-compression pass over already-decoded DrawScene textures. Split out
+// of ApplyTextureRuntimeOptions so the `--next` loader — which does its own size
+// cap / byte budget inside its texture decoder and must not re-run those passes —
+// can still honor `--texture-compress`. Declared in mesh_build.hh, so these three
+// live outside the anonymous namespace (external linkage).
+void ApplyTextureCompression(const TextureRuntimeOptions& opt, DrawScene* out) {
+  if (!out || opt.compression == TextureCompressionMode::Off) return;
+  size_t n = 0, raw = 0, comp = 0;
+  for (DrawTextureCPU& tex : out->textures) {
+    if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
+    tex.requestedCompressed = true;
+    CompressTexture(&tex, opt.compression, opt.caps);
+    if (!tex.compressed.data.empty()) {
+      ++n;
+      raw += tex.image.data.size();
+      comp += tex.compressed.data.size();
+    }
+  }
+  if (n) {
+    std::fprintf(stderr,
+                 "[tusdview] texture-compress: %zu texture(s) -> fmt %d, "
+                 "%.1f MB -> %.1f MB (%.1fx)\n",
+                 n, static_cast<int>(out->textures.empty()
+                                         ? DrawCompressedFormat::None
+                                         : out->textures[0].compressed.format),
+                 double(raw) / (1024.0 * 1024.0),
+                 double(comp) / (1024.0 * 1024.0),
+                 comp ? double(raw) / double(comp) : 0.0);
+  }
+}
+
 void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out) {
   if (!out) return;
   if (opt.maxTextureSize > 0) {
@@ -1014,13 +1056,7 @@ void ApplyTextureRuntimeOptions(const TextureRuntimeOptions& opt, DrawScene* out
     }
   }
 
-  if (opt.compression != TextureCompressionMode::Off) {
-    for (DrawTextureCPU& tex : out->textures) {
-      if (tex.compressedFinal) continue;  // kept-compressed KTX2 — already final
-      tex.requestedCompressed = true;
-      CompressTexture(&tex, opt.compression, opt.caps);
-    }
-  }
+  ApplyTextureCompression(opt, out);
 }
 
 // Classify texture usage from the built materials, then (with --texture-mips)
@@ -1124,6 +1160,106 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
     }
   }
 }
+
+#if defined(TUSDVIEW_WITH_TEXTOOLS)
+namespace {
+
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+size_t Ktx2ZstdDecompress(void* /*user*/, uint8_t* dst, size_t dst_cap,
+                          const uint8_t* src, size_t src_size) {
+  const size_t r = ZSTD_decompress(dst, dst_cap, src, src_size);
+  return ZSTD_isError(r) ? 0u : r;
+}
+#endif
+
+// Map a KTX2 block codec to the draw format (uni is handled via `isUni`).
+DrawCompressedFormat Ktx2CodecToDraw(tp_codec c) {
+  switch (c) {
+    case TP_CODEC_BC1: return DrawCompressedFormat::BC1;
+    case TP_CODEC_BC3: return DrawCompressedFormat::BC3;
+    case TP_CODEC_BC5: return DrawCompressedFormat::BC5;
+    case TP_CODEC_BC6H: return DrawCompressedFormat::BC6H;
+    case TP_CODEC_BC7: return DrawCompressedFormat::BC7;
+    case TP_CODEC_ETC2_RGB: return DrawCompressedFormat::ETC2_RGB;
+    case TP_CODEC_ETC2_RGBA: return DrawCompressedFormat::ETC2_RGBA;
+    case TP_CODEC_ASTC: return DrawCompressedFormat::ASTC_4x4;
+    default: return DrawCompressedFormat::None;  // EAC / ASTC-HDR
+  }
+}
+
+}  // namespace
+
+bool BuildKeptCompressedFromKtx2(const uint8_t* data, size_t size,
+                                 const TextureRuntimeOptions& opt,
+                                 DrawTextureCPU* tex) {
+  if (!data || !size || !tex) return false;
+  // A size cap / byte budget needs decoded texels; fall back to the normal path.
+  if (opt.maxTextureSize > 0 || opt.textureBudgetMB > 0) return false;
+
+  tp_ktx2_image k;
+#if defined(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+  if (!TP_OK(tp_ktx2_read_zstd(data, size, nullptr, &Ktx2ZstdDecompress, nullptr,
+                               &k))) {
+    return false;
+  }
+#else
+  if (!TP_OK(tp_ktx2_read(data, size, &k))) return false;
+#endif
+
+  bool ok = false;
+  const bool isUni = k.is_uni != 0;
+  const DrawCompressedFormat srcFmt =
+      isUni ? DrawCompressedFormat::ASTC_4x4 : Ktx2CodecToDraw(k.codec);
+  if (k.num_faces == 1 && k.num_layers <= 1 && k.num_levels >= 1 &&
+      (isUni || srcFmt != DrawCompressedFormat::None)) {
+    const uint32_t w = k.levels[0].width;
+    const uint32_t h = k.levels[0].height;
+    DrawCompressedImageCPU comp;
+    light3d::Image rgba;
+    if (TexToolsAdaptCompressed(k.levels[0].data, k.levels[0].size, isUni, srcFmt,
+                                w, h, opt.caps, &comp, &rgba)) {
+      if (!comp.data.empty()) {
+        // Carry the KTX2's precomputed mip chain to the same target format.
+        for (int l = 1; l < k.num_levels; ++l) {
+          std::vector<uint8_t> mip;
+          if (!TexToolsAdaptCompressedLevel(k.levels[l].data, k.levels[l].size,
+                                            isUni, srcFmt, comp.format,
+                                            k.levels[l].width,
+                                            k.levels[l].height, &mip)) {
+            comp.mips.clear();
+            break;
+          }
+          DrawCompressedMipCPU m;
+          m.width = static_cast<int>(k.levels[l].width);
+          m.height = static_cast<int>(k.levels[l].height);
+          m.data = std::move(mip);
+          comp.mips.push_back(std::move(m));
+        }
+        std::fprintf(stderr,
+                     "[tusdview] kept-compressed KTX2: %s -> draw fmt %d, %ux%u, "
+                     "%zu levels, %zu base bytes (no re-encode)\n",
+                     isUni ? "uni" : "block", static_cast<int>(comp.format), w, h,
+                     1 + comp.mips.size(), comp.data.size());
+        tex->compressed = std::move(comp);
+        tex->requestedCompressed = true;
+        tex->compressedFinal = true;
+        // Metadata only; the blocks (+ mips) are uploaded directly.
+        tex->image.width = static_cast<int>(w);
+        tex->image.height = static_cast<int>(h);
+        tex->image.channels = 4;
+        tex->image.data.clear();
+      } else {
+        tex->image = std::move(rgba);  // uncompressed fallback
+      }
+      ok = true;
+    }
+  }
+  tp_ktx2_image_free(nullptr, &k);
+  return ok;
+}
+#endif  // TUSDVIEW_WITH_TEXTOOLS
+
+namespace {  // (resume the file-local helpers)
 
 // --- Shared per-element builders (used by both BuildDrawScene and the
 // streaming path so the two produce identical output) ---------------------

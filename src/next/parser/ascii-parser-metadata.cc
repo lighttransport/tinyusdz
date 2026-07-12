@@ -90,6 +90,19 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           layer_->meta().kilogramsPerUnit = *result.value.as_double();
           layer_->meta().kilogramsPerUnit_set = true;
         }
+      } else if (key == "relocates") {
+        // Layer relocates: { </old/path>: </new/path>, ... }
+        if (Match(TokenType::OpenBrace)) {
+          while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+            std::string src, dst;
+            if (!lexer_->expect(TokenType::PathRef, src)) break;
+            if (!Match(TokenType::Colon)) break;
+            if (!lexer_->expect(TokenType::PathRef, dst)) break;
+            layer_->meta().relocates.emplace_back(src, dst);
+            Match(TokenType::Comma);
+          }
+          Match(TokenType::CloseBrace);
+        }
       } else if (key == "colorConfiguration") {
         // asset (`@path@`, lexed as String) or quoted string
         std::string value;
@@ -151,6 +164,21 @@ bool AsciiParser::Impl::ParseStageMetadata() {
               }
               Match(TokenType::CloseParen);
             }
+            // `!(scale > 0)` also rejects NaN, which `scale <= 0` would let
+            // through to poison every time-mapped sample of the sublayer.
+            if (!(sl_scale > 0.0)) {
+              if (options_.strict_aousd_conformance) {
+                AddError("AOUSD layer-offset scale must be greater than zero");
+                return false;
+              }
+              // pxr warns and substitutes NO offset (identity) — retaining a
+              // negative/NaN scale would time-reverse or destroy the samples.
+              AddWarning(
+                  "Invalid sublayer offset (non-positive scale); using no "
+                  "offset instead");
+              sl_offset = 0.0;
+              sl_scale = 1.0;
+            }
             // Keep the offsets vector parallel to subLayers.
             auto& offs = layer_->meta().subLayerOffsets;
             offs.resize(layer_->meta().subLayers.size() - 1, {0.0, 1.0});
@@ -160,9 +188,31 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           Match(TokenType::CloseBracket);
         }
       } else {
-        // Generic metadata may be a dictionary/list; skip it structurally.
-        SkipValueLike();
-        AddWarning("Unknown stage metadata: " + key);
+        if (options_.strict_aousd_conformance) {
+          AddError("Unsupported stage metadata in strict AOUSD mode: " + key);
+          return false;
+        }
+        // Generic metadata may be a dictionary/list: consume it structurally
+        // but PRESERVE the raw source text so the writer re-emits it verbatim
+        // (uniform losslessness with prim/property metadata).
+        lexer_->peek();  // ensure the value's first token is scanned
+        const size_t vstart = lexer_->token_start();
+        const bool skipped = SkipValueLike();
+        if (skipped) {
+          lexer_->peek();  // the following token's start bounds the value
+          size_t vend = lexer_->token_start();
+          const char* base = lexer_->input_data();
+          while (vend > vstart &&
+                 (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+                  base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+            vend--;
+          }
+          if (vend > vstart) {
+            layer_->meta().unknownMeta.emplace_back(
+                key, std::string(base + vstart, vend - vstart));
+          }
+        }
+        AddWarning("Unknown stage metadata (preserved): " + key);
       }
     }
 

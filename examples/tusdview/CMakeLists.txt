@@ -273,6 +273,12 @@ if(TINYUSDZ_WITH_TEXTOOLS)
   foreach(tt_consumer IN LISTS TUSDVIEW_TEXTOOLS_CONSUMERS)
     target_link_libraries(${tt_consumer} PRIVATE tinyusdz_textools)
     target_compile_definitions(${tt_consumer} PRIVATE TUSDVIEW_WITH_TEXTOOLS=1)
+    # Zstd-supercompressed KTX2 (scheme 2) is what usd-texcomp writes by default;
+    # the core lib defines this PRIVATEly, so mesh_build.cc needs its own copy.
+    # ZSTD_decompress itself comes from tinyusdz_static (src/external/zstd.c).
+    if(TINYUSDZ_WITH_ZSTD_COMPRESSION)
+      target_compile_definitions(${tt_consumer} PRIVATE TINYUSDZ_WITH_ZSTD_COMPRESSION)
+    endif()
   endforeach()
 endif()
 

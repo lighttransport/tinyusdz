@@ -5,6 +5,8 @@
 #define TEST_NO_MAIN
 #include "acutest.h"
 
+#include <cmath>
+
 #include "unit-composition-arcs.h"
 #include "composition.hh"
 #include "core/prim.hh"
@@ -2538,6 +2540,273 @@ void comp_relocates_path_remap_test(void) {
           }
         }
       }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Regression: `append references` must NOT override local(direct) opinions.
+// LIVRPS: Local > References, regardless of prepend/append qualifier.
+// Local `x = 1` + append reference to a prim authoring `x = 2` and `y = 20`
+// => composed prim keeps x = 1 and gains y = 20 (pxr behavior).
+// ---------------------------------------------------------------------------
+void comp_append_reference_local_wins_test(void) {
+  Layer layer;
+
+  // -- /base: the referenced prim --
+  PrimSpec base(Specifier::Def, "Xform", "base");
+  {
+    Attribute ax;
+    ax.set_value(2);
+    ax.set_type_name("int");
+    base.props()["x"] = Property(ax, false);
+
+    Attribute ay;
+    ay.set_value(20);
+    ay.set_type_name("int");
+    base.props()["y"] = Property(ay, false);
+  }
+  layer.add_primspec("base", base);
+
+  // -- /root: local x = 1, append references = </base> (in-layer reference) --
+  PrimSpec root(Specifier::Def, "Xform", "root");
+  {
+    Attribute ax;
+    ax.set_value(1);
+    ax.set_type_name("int");
+    root.props()["x"] = Property(ax, false);
+
+    Reference ref;
+    ref.asset_path = value::AssetPath("");  // in-layer reference
+    ref.prim_path = Path("/base", "");
+    std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
+    refs.push_back({ListEditQual::Append, {ref}});
+    root.metas().references = refs;
+  }
+  layer.add_primspec("root", root);
+
+  AssetResolutionResolver resolver;
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeReferences(resolver, layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeReferences failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("root");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it == result.primspecs().end()) return;
+
+  // Local opinion x = 1 must win over referenced x = 2.
+  TEST_CHECK(it->second.props().count("x") > 0);
+  if (it->second.props().count("x")) {
+    auto v = it->second.props().at("x").get_attribute().get_value<int>();
+    TEST_CHECK(v.has_value());
+    if (v.has_value()) {
+      TEST_CHECK(v.value() == 1);
+      TEST_MSG("append reference must not override local opinion: expected "
+               "x = 1, got %d", v.value());
+    }
+  }
+
+  // Referenced-only opinion y = 20 must be brought in.
+  TEST_CHECK(it->second.props().count("y") > 0);
+  if (it->second.props().count("y")) {
+    auto v = it->second.props().at("y").get_attribute().get_value<int>();
+    TEST_CHECK(v.has_value());
+    if (v.has_value()) {
+      TEST_CHECK(v.value() == 20);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Regression: variant opinions must NOT override local(direct) prim opinions.
+// LIVRPS: Local > VariantSets.
+// Local `x = 1` + selected variant authoring `x = 2` and `fromVariant = 10`
+// => composed prim keeps x = 1 and gains fromVariant = 10 (pxr behavior).
+// ---------------------------------------------------------------------------
+void comp_variant_local_wins_test(void) {
+  PrimSpec ps(Specifier::Def, "Xform", "root");
+
+  // Local opinion x = 1
+  {
+    Attribute ax;
+    ax.set_value(1);
+    ax.set_type_name("int");
+    ps.props()["x"] = Property(ax, false);
+  }
+
+  // variantSets = ["shading"], variants = { shading = "red" }
+  {
+    std::vector<std::pair<ListEditQual, std::vector<std::string>>> vsets;
+    vsets.push_back({ListEditQual::ResetToExplicit, {"shading"}});
+    ps.metas().variantSets = vsets;
+
+    VariantSelectionMap vsmap;
+    vsmap["shading"] = "red";
+    ps.metas().variants = vsmap;
+  }
+
+  // variantSet "shading" = { "red" { x = 2, fromVariant = 10 } }
+  {
+    VariantSetSpec vss;
+    vss.name = "shading";
+
+    PrimSpec red(Specifier::Def, "", "red");
+    {
+      Attribute ax;
+      ax.set_value(2);
+      ax.set_type_name("int");
+      red.props()["x"] = Property(ax, false);
+
+      Attribute av;
+      av.set_value(10);
+      av.set_type_name("int");
+      red.props()["fromVariant"] = Property(av, false);
+    }
+    vss.variantSet["red"] = red;
+
+    ps.variantSets()["shading"] = vss;
+  }
+
+  PrimSpec dst;
+  std::map<std::string, std::string> selection;  // empty: use authored
+  std::string warn, err;
+  bool ok = VariantSelectPrimSpec(dst, ps, selection, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("VariantSelectPrimSpec failed: %s", err.c_str());
+    return;
+  }
+
+  // Local opinion x = 1 must win over variant x = 2.
+  TEST_CHECK(dst.props().count("x") > 0);
+  if (dst.props().count("x")) {
+    auto v = dst.props().at("x").get_attribute().get_value<int>();
+    TEST_CHECK(v.has_value());
+    if (v.has_value()) {
+      TEST_CHECK(v.value() == 1);
+      TEST_MSG("variant must not override local opinion: expected x = 1, "
+               "got %d", v.value());
+    }
+  }
+
+  // Variant-only opinion must be brought in.
+  TEST_CHECK(dst.props().count("fromVariant") > 0);
+  if (dst.props().count("fromVariant")) {
+    auto v = dst.props().at("fromVariant").get_attribute().get_value<int>();
+    TEST_CHECK(v.has_value());
+    if (v.has_value()) {
+      TEST_CHECK(v.value() == 10);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Regression: local-only child prims must survive reference composition.
+// /root references /base; /root also has a local child "localChild" which
+// does not exist in /base => the composed /root must keep "localChild".
+// ---------------------------------------------------------------------------
+void comp_reference_keeps_local_children_test(void) {
+  Layer layer;
+
+  PrimSpec base(Specifier::Def, "Xform", "base");
+  {
+    PrimSpec ref_child(Specifier::Def, "Scope", "refChild");
+    base.children().push_back(ref_child);
+  }
+  layer.add_primspec("base", base);
+
+  PrimSpec root(Specifier::Def, "Xform", "root");
+  {
+    PrimSpec local_child(Specifier::Def, "Sphere", "localChild");
+    {
+      Attribute ar;
+      ar.set_value(3.0);
+      ar.set_type_name("double");
+      local_child.props()["radius"] = Property(ar, false);
+    }
+    root.children().push_back(local_child);
+
+    Reference ref;
+    ref.asset_path = value::AssetPath("");  // in-layer reference
+    ref.prim_path = Path("/base", "");
+    std::vector<std::pair<ListEditQual, std::vector<Reference>>> refs;
+    refs.push_back({ListEditQual::Prepend, {ref}});
+    root.metas().references = refs;
+  }
+  layer.add_primspec("root", root);
+
+  AssetResolutionResolver resolver;
+  Layer result;
+  std::string warn, err;
+  bool ok = CompositeReferences(resolver, layer, &result, &warn, &err);
+  TEST_CHECK(ok);
+  if (!ok) {
+    TEST_MSG("CompositeReferences failed: %s", err.c_str());
+    return;
+  }
+
+  auto it = result.primspecs().find("root");
+  TEST_CHECK(it != result.primspecs().end());
+  if (it == result.primspecs().end()) return;
+
+  bool has_local_child = false;
+  bool has_ref_child = false;
+  for (const auto &child : it->second.children()) {
+    if (child.name() == "localChild") {
+      has_local_child = true;
+    }
+    if (child.name() == "refChild") {
+      has_ref_child = true;
+    }
+  }
+  TEST_CHECK(has_local_child);
+  TEST_MSG("local-only child prim must survive reference composition");
+  TEST_CHECK(has_ref_child);
+  TEST_MSG("referenced child prim must be composed in");
+}
+
+// ---------------------------------------------------------------------------
+// Regression: TimeSamples::apply_time_transform must transform sample times
+// stored in unified binary storage (LayerOffset composition depends on it).
+// ---------------------------------------------------------------------------
+void comp_timesamples_time_transform_test(void) {
+  // Unified binary storage (add_binary_sample)
+  {
+    value::TimeSamples ts;
+    std::string err;
+    TEST_CHECK(ts.add_binary_sample<double>(0.0, 1.5, &err));
+    TEST_CHECK(ts.add_binary_sample<double>(10.0, 2.5, &err));
+
+    // t_new = t * 2 + 5
+    ts.apply_time_transform(2.0, 5.0);
+
+    const auto &samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 2);
+    if (samples.size() == 2) {
+      TEST_CHECK(std::fabs(samples[0].t - 5.0) < 1e-12);
+      TEST_CHECK(std::fabs(samples[1].t - 25.0) < 1e-12);
+    }
+  }
+
+  // Generic Value storage (add_sample)
+  {
+    value::TimeSamples ts;
+    std::string err;
+    TEST_CHECK(ts.add_sample(0.0, value::Value(std::string("a")), &err));
+    TEST_CHECK(ts.add_sample(10.0, value::Value(std::string("b")), &err));
+
+    ts.apply_time_transform(2.0, 5.0);
+
+    const auto &samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 2);
+    if (samples.size() == 2) {
+      TEST_CHECK(std::fabs(samples[0].t - 5.0) < 1e-12);
+      TEST_CHECK(std::fabs(samples[1].t - 25.0) < 1e-12);
     }
   }
 }

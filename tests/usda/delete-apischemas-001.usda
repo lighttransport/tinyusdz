@@ -1,0 +1,8 @@
+#usda 1.0
+# XDIFF: delete-apiSchemas applies as in-place removal; qualifier not re-emitted
+def Xform "A" (
+    delete apiSchemas = ["PhysicsRigidBodyAPI"]
+    prepend apiSchemas = ["CollectionAPI:foo"]
+)
+{
+}

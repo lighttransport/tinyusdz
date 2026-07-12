@@ -8,14 +8,17 @@ Four pure-C11 texture libraries imported as a **pristine snapshot** (not a
 fork, not a submodule). Initial import at upstream commit
 `8b89eea948b221321df19773968d38735a611257` on 2026-07-05.
 
-Re-synced 2026-07-11 from upstream branch `texcomp-ktx2-reader` commit
-`14a2c9d` (adds the KTX2 reader / transcode-on-load API, the previously
-missing `texcomp/src/texcomp_astc_decode.c`, KTX2 Zstd-supercompression read via
-`tp_ktx2_read_zstd` + a host decompressor callback, and the PR #258 hardening of
-the KTX2 parser against crafted headers — unsigned range checks on
-pixelWidth/Height, levelCount/layerCount/faceCount, an in-bounds DFD check, and
-64-bit `w*h*4` in the decoders. See "KTX2 reader" below).
-Earlier imports: `b113e0e`, `1d6ad64`.
+Re-synced 2026-07-11 from upstream **`release`** commit `4066447` (PR #258
+merged). This brings the KTX2 reader / transcode-on-load API (incl. Zstd-super-
+compression read via `tp_ktx2_read_zstd`, the crafted-header hardening, cube/array
+slice decode `tp_ktx2_decode_slice_rgba8`, KV data `tp_ktx2_kv_lookup`, and float
+decode `tp_ktx2_decode_*_rgbaf`) plus a **complete decoder set**: new
+`texcomp/src/texcomp_bc6h_decode.c` and `texcomp/src/texcomp_etc2_decode.c` mean
+BC1/BC3/BC5/BC6H/BC7, ETC2/EAC, ASTC LDR+HDR and `uni` all decode, so
+`tp_ktx2_decode_level_rgba8` now handles every LDR codec (previously only
+uni/BC7/ASTC). Also picks up the BC5_SNORM, ETC2 differential-mode and ASTC-HDR
+CEM15 fixes. Earlier imports: `14a2c9d`, `b113e0e`, `1d6ad64` (branch
+`texcomp-ktx2-reader`, now merged).
 
 Keep it pristine: prefer fixing bugs upstream and re-syncing over patching
 here. If a local patch becomes unavoidable, list it under "tinyusdz-local

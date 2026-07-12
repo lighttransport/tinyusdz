@@ -47,6 +47,7 @@ const char *tp_result_string(tp_result r) {
     case TP_ERROR_OUT_OF_MEMORY: return "out of memory";
     case TP_ERROR_UNSUPPORTED: return "unsupported";
     case TP_ERROR_IO: return "i/o error";
+    case TP_ERROR_NOT_FOUND: return "not found";
     }
     return "unknown";
 }
@@ -211,10 +212,12 @@ tp_result tp_vk_format_describe(uint32_t vk, tp_codec_desc *d,
     case TP_VK_BC5_UNORM:
     case TP_VK_BC5_SNORM:
         d->name = "bc5"; d->block_bytes = 16; d->channels_in = 4;
+        d->is_signed = (vk == TP_VK_BC5_SNORM);
         *out_codec = TP_CODEC_BC5; return TP_SUCCESS;
     case TP_VK_BC6H_UFLOAT:
     case TP_VK_BC6H_SFLOAT:
         d->name = "bc6h"; d->block_bytes = 16; d->channels_in = 3; d->is_hdr = 1;
+        d->is_signed = (vk == TP_VK_BC6H_SFLOAT);
         *out_codec = TP_CODEC_BC6H; return TP_SUCCESS;
     case TP_VK_BC7_UNORM:
     case TP_VK_BC7_SRGB:

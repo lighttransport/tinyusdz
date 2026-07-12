@@ -13,7 +13,9 @@ import {
 import {
 	getAssetUriFromURL,
 	getBackendFromURL,
-	makeStaticNextParseOptions
+	LOADER_BACKEND_CHOICES,
+	makeStaticNextParseOptions,
+	setBackendAndReload
 } from 'tinyusdz/LoaderConfigUtils.js';
 import { buildSkeletonDataFromUSD } from 'tinyusdz/USDSkeletonData.js';
 import { extractSkinnedMeshData } from 'tinyusdz/USDSceneSkinningData.js';
@@ -2433,6 +2435,9 @@ const animationParams = {
 // GUI setup
 const gui = new GUI();
 gui.title('Animation Controls');
+// Backend switch reloads the page: the loader binds its WASM module at init.
+gui.add({ backend: LOADER_BACKEND }, 'backend', LOADER_BACKEND_CHOICES)
+	.name('Loader Backend').onChange(setBackendAndReload);
 
 // Store references to GUI controllers for dynamic updates
 let timelineController = null;
@@ -3096,12 +3101,17 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		});
 		const built = buildNextThreeNode(usd_scene, {
 			skipTextures: false,
-			lazyTextures: true
+			lazyTextures: true,
+			// Animations/skinning are extracted from the adapter AFTER the
+			// build; the default releaseBuildData would wipe them.
+			releaseBuildData: false
 		});
 		if (built.textureManager) {
 			startTrackedTextureLoading(built.textureManager, stats, 'nextTextureQueue');
 		}
-		const nodeIndexMap = buildNodeIndexMap(built.node);
+		// Next animation target_node is a RenderScene node-table index; use the
+		// table map from buildNextThreeNode, not a DFS walk of the built tree.
+		const nodeIndexMap = built.nodeIndexMap || buildNodeIndexMap(built.node);
 		const skinningResult = applyUSDSceneSkinningPipeline({
 			threeNode: built.node,
 			characterGroup: usdSceneRoot,
@@ -3131,6 +3141,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 			const animData = extractUSDSceneAnimations(usd_scene, {
 				boneMaps: skeletonBuild.boneMaps,
 				nodeIndexMap,
+				threeRoot: built.node,
 				timeCodesPerSecond,
 				logger: console
 			});

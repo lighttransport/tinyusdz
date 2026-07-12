@@ -27,6 +27,7 @@ namespace next {
 namespace pcp {
 
 struct LayerLoadOptions {
+  bool strict_aousd_conformance = false;
   /// Maximum file/input bytes for each loaded external layer (0 = no limit).
   size_t max_memory = 0;
 
@@ -144,6 +145,17 @@ std::shared_ptr<Layer> LoadLayerFromFile(const std::string &resolved_path,
 /// that entry; otherwise the first .usdc/.usda entry), anything else parses as
 /// USDA text. `key` is used for diagnostics and package-entry selection only.
 /// Returns nullptr on failure.
+/// Synthesize a skeletal /MaterialX layer from MaterialX XML bytes (see
+/// layer-registry.cc for the produced prim shape). Used when a composition
+/// arc references a .mtlx document.
+std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
+                                               const uint8_t *data,
+                                               size_t size, std::string *warn,
+                                               std::string *err);
+
+/// Content sniff: true when the buffer looks like a MaterialX XML document.
+bool LooksLikeMtlxXML(const uint8_t *data, size_t size);
+
 std::shared_ptr<Layer> LoadLayerFromMemory(const std::string &key,
                                            const uint8_t *data, size_t size,
                                            std::string *warn, std::string *err,

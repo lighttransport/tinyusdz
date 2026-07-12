@@ -163,6 +163,22 @@ export function textureColorRoleForMap(mapProperty) {
   return (mapProperty === 'map' || mapProperty === 'emissiveMap') ? 'color' : 'data';
 }
 
+/// Effective color role for a texture: an authored colorspace (colorSpace
+/// asset metadata or inputs:sourceColorSpace) wins over the map-role
+/// default; "auto"/unknown keeps the role-based heuristic (equivalent to
+/// the UsdPreviewSurface auto rule for typical 8-bit web textures).
+export function textureColorRole(mapProperty, authoredColorSpace) {
+  const authored = String(authoredColorSpace || '').toLowerCase();
+  if (authored === 'srgb' || authored === 'srgb_texture' || authored === 'srgb_displayp3') {
+    return 'color';
+  }
+  if (authored === 'raw' || authored === 'linear' || authored === 'lin_srgb' ||
+      authored === 'lin_rec709' || authored === 'scene-linear rec.709-srgb') {
+    return 'data';
+  }
+  return textureColorRoleForMap(mapProperty);
+}
+
 function isUnsupportedBrowserTexturePath(assetPath) {
   return /\.(psd|tga|dds|ktx2?)($|[?#])/i.test(String(assetPath || ''));
 }
@@ -467,10 +483,22 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     ? (rawData.hasUsdPreviewSurface ? 'OpenPBR + PreviewSurface' : 'OpenPBR')
     : (rawData.hasUsdPreviewSurface ? 'PreviewSurface' : 'Unknown');
 
+  // Authored colorspace lives in textureMetadata keyed by texture role.
+  const metadataRoleForMap = {
+    map: 'baseColor',
+    normalMap: 'normal',
+    roughnessMap: 'roughness',
+    metalnessMap: 'metallic',
+    aoMap: 'occlusion',
+    emissiveMap: 'emissive'
+  };
   const queue = (mapProperty, assetPath) => {
     if (!assetPath || skipTextures || !textureManager) return;
+    const meta = material.userData.nextTextureMetadata?.[metadataRoleForMap[mapProperty]];
+    const authored = meta?.sourceColorSpace || meta?.colorspace || '';
     textureManager.queueTexture(
-      material, mapProperty, adapter, assetPath, textureColorRoleForMap(mapProperty));
+      material, mapProperty, adapter, assetPath,
+      textureColorRole(mapProperty, authored));
   };
   queue('map', paths.baseColor);
   queue('normalMap', paths.normal);
@@ -504,6 +532,7 @@ export function buildNextThreeNode(adapter, {
   const meshes = adapter.meshes || [];
   const points = adapter.points || [];
   const curves = adapter.curves || [];
+
   const totalMeshes = meshes.length;
   const totalPoints = points.length;
   const totalCurves = curves.length;
@@ -553,6 +582,52 @@ export function buildNextThreeNode(adapter, {
     );
     object.matrixAutoUpdate = false;
   };
+
+  // Reconstruct the USD xform hierarchy from the RenderScene node table.
+  // UsdSkel needs it: skeleton binding and mesh placement must share the
+  // ancestor transforms (e.g. axis-correcting Z_UP xforms), and
+  // findNodeByUSDPath walks nodes by prim name like the legacy tree.
+  // Renderables attach at their prim's node — matched by PRIM PATH, never by
+  // data id: the adapter indexes renderables by schema order while node
+  // dataId refers to RenderScene ids, and the two drift when the converter
+  // skips a prim. Anything without a node falls back to flat baked-world
+  // placement.
+  const nodeGroupByPath = new Map();
+  const buildNodeGroup = (node, seen) => {
+    if (!node || !node.absPath || seen.has(node.absPath)) return null;
+    seen.add(node.absPath);
+    const g = new THREE.Group();
+    g.name = node.primName || node.displayName || 'node';
+    g.userData['primMeta.absPath'] = node.absPath || '';
+    if (Array.isArray(node.localMatrix) && node.localMatrix.length === 16) {
+      applyUsdRowMajorMatrix(g, node.localMatrix);
+    }
+    if (node.visible === false) g.visible = false;
+    nodeGroupByPath.set(node.absPath, g);
+    for (const child of (node.children || [])) {
+      const childGroup = buildNodeGroup(child, seen);
+      if (childGroup) g.add(childGroup);
+    }
+    return g;
+  };
+  {
+    const seen = new Set();
+    const rootCount = typeof adapter.numRootNodes === 'function' ? adapter.numRootNodes() : 0;
+    for (let r = 0; r < rootCount; ++r) {
+      const rootGroup = buildNodeGroup(adapter.getRootNode(r), seen);
+      if (rootGroup) group.add(rootGroup);
+    }
+  }
+  // Attach a renderable under its prim's node (identity local: the node chain
+  // carries the transform). Returns true when attached; false -> caller keeps
+  // the flat baked-world placement.
+  const attachAtNode = (object3d, primPath) => {
+    const parent = primPath ? nodeGroupByPath.get(primPath) : null;
+    if (!parent) return false;
+    parent.add(object3d);
+    return true;
+  };
+
   const pointNodes = new Map();
   const curveNodes = new Map();
   for (const node of adapter.nodes || []) {
@@ -700,11 +775,23 @@ export function buildNextThreeNode(adapter, {
         }))
       })) : []
     };
-    applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);
-    if (geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
-      sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threeMesh.matrix));
+    if (!attachAtNode(threeMesh, mesh.primPath)) {
+      applyUsdRowMajorMatrix(threeMesh, mesh.worldMatrix);
+      group.add(threeMesh);
     }
-    group.add(threeMesh);
+    if (geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
+      const worldBoxMatrix = new THREE.Matrix4();
+      if (Array.isArray(mesh.worldMatrix) && mesh.worldMatrix.length === 16) {
+        const m = mesh.worldMatrix;
+        worldBoxMatrix.set(
+          m[0], m[4], m[8], m[12],
+          m[1], m[5], m[9], m[13],
+          m[2], m[6], m[10], m[14],
+          m[3], m[7], m[11], m[15]
+        );
+      }
+      sceneBox.union(geometry.boundingBox.clone().applyMatrix4(worldBoxMatrix));
+    }
     reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
   }
 
@@ -740,11 +827,23 @@ export function buildNextThreeNode(adapter, {
       hasColors
     };
     const pointNode = pointNodes.get(pointCloud.index);
-    applyUsdRowMajorMatrix(threePoints, pointNode?.worldMatrix);
-    if (geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
-      sceneBox.union(geometry.boundingBox.clone().applyMatrix4(threePoints.matrix));
+    if (!attachAtNode(threePoints, pointCloud.primPath)) {
+      applyUsdRowMajorMatrix(threePoints, pointNode?.worldMatrix);
+      group.add(threePoints);
     }
-    group.add(threePoints);
+    if (geometry.boundingBox && !geometry.boundingBox.isEmpty()) {
+      const worldBoxMatrix = new THREE.Matrix4();
+      const m = pointNode?.worldMatrix;
+      if (Array.isArray(m) && m.length === 16) {
+        worldBoxMatrix.set(
+          m[0], m[4], m[8], m[12],
+          m[1], m[5], m[9], m[13],
+          m[2], m[6], m[10], m[14],
+          m[3], m[7], m[11], m[15]
+        );
+      }
+      sceneBox.union(geometry.boundingBox.clone().applyMatrix4(worldBoxMatrix));
+    }
     reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
   }
 
@@ -813,10 +912,12 @@ export function buildNextThreeNode(adapter, {
     }
 
     const curveNode = curveNodes.get(curveSet.index);
-    applyUsdRowMajorMatrix(curveGroup, curveNode?.worldMatrix);
+    if (!attachAtNode(curveGroup, curveSet.primPath)) {
+      applyUsdRowMajorMatrix(curveGroup, curveNode?.worldMatrix);
+      group.add(curveGroup);
+    }
     const localBox = new THREE.Box3().setFromObject(curveGroup);
     if (!localBox.isEmpty()) sceneBox.union(localBox);
-    group.add(curveGroup);
     reportProgress(`Building next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables})...`);
   }
   reportProgress(`Built next scene (${builtMeshes + builtPoints + builtCurves}/${totalRenderables}), meshes=${builtMeshes}, points=${builtPoints}, curves=${builtCurves}, materials=${materialCache.size}, textures=${textureManager ? textureManager.total : 0}`, true);
@@ -825,11 +926,23 @@ export function buildNextThreeNode(adapter, {
     group.userData.localBoundsBox = sceneBox;
   }
 
+  // Animation channels address nodes by RenderScene node-table index
+  // (channel.target_node), NOT by DFS order over the three.js hierarchy —
+  // the built tree inserts wrapper groups and attaches renderables as extra
+  // children, so a generic buildNodeIndexMap(built.node) DFS would bind
+  // tracks to the wrong objects. Map table index -> group by prim path.
+  const nodeIndexMap = new Map();
+  for (const node of adapter.nodes || []) {
+    if (!node || node.error || !Number.isFinite(node.index)) continue;
+    const nodeGroup = nodeGroupByPath.get(node.primPath);
+    if (nodeGroup) nodeIndexMap.set(node.index, nodeGroup);
+  }
+
   if (releaseBuildData && adapter && typeof adapter.releaseBuildData === 'function') {
     adapter.releaseBuildData();
   }
 
-  return { node: group, textureManager };
+  return { node: group, textureManager, nodeIndexMap };
 }
 
 export function readNextSceneMeta(usd) {

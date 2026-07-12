@@ -359,6 +359,17 @@ export function convertUSDNodeAnimationsToThreeJS(usdLoader, nodeIndexMap) {
 				continue;
 			}
 
+			// Matrix-driven nodes (next backend groups set matrix +
+			// matrixAutoUpdate=false) ignore the position/quaternion/scale
+			// that AnimationMixer writes. Decompose once and switch the
+			// target back to TRS-driven updates so tracks take effect.
+			if (targetObject.matrixAutoUpdate === false) {
+				targetObject.matrix.decompose(
+					targetObject.position, targetObject.quaternion, targetObject.scale
+				);
+				targetObject.matrixAutoUpdate = true;
+			}
+
 			// Use UUID for reliable hierarchical animation targeting
 			const targetUUID = targetObject.uuid;
 			const interpolation = getUSDInterpolationMode(sampler.interpolation);
@@ -432,9 +443,159 @@ export function convertUSDNodeAnimationsToThreeJS(usdLoader, nodeIndexMap) {
 	return animationClips;
 }
 
+/**
+ * Convert SkelAnimation blendShapeWeights channels ('Weights') into
+ * morphTargetInfluences tracks for meshes that carry morph targets.
+ *
+ * Weight channels are authored in the animation's blendShapes token order;
+ * each mesh maps its own skel:blendShapes tokens (== morph slot names) into
+ * that order. Meshes are matched to a channel when at least one primary
+ * shape token appears in the channel's blendShapeOrder — skeleton-id
+ * matching is not available for unskinned blendshape meshes.
+ *
+ * In-between shapes occupy their own morph slots (built as
+ * "<shape>:<inbetween>" right after the primary slot). A single authored
+ * weight w resolves to per-slot influences through the UsdSkel
+ * piecewise-linear basis over knots (0, w_ib1, ..., w_ibk, 1), with linear
+ * extrapolation at the ends.
+ *
+ * @param {Object} usdLoader - TinyUSDZ loader / next adapter instance
+ * @param {THREE.Object3D} threeRoot - Built three.js scene root
+ * @returns {Array<THREE.AnimationClip>} morph animation clips
+ */
+export function convertUSDMorphAnimationsToThreeJS(usdLoader, threeRoot) {
+	const animationClips = [];
+	if (!usdLoader || !threeRoot || typeof usdLoader.numAnimations !== 'function') {
+		return animationClips;
+	}
+	const numAnimations = usdLoader.numAnimations();
+	if (!numAnimations) return animationClips;
+
+	// Collect morph meshes: slot layout comes from the geometry morph
+	// attributes; primary/inbetween structure from userData.usdMesh.
+	const morphMeshes = [];
+	threeRoot.traverse((obj) => {
+		const attrs = obj.geometry?.morphAttributes?.position;
+		if (!obj.isMesh || !Array.isArray(attrs) || attrs.length === 0) return;
+		const shapeMeta = obj.userData?.usdMesh?.blendShapes;
+		if (!Array.isArray(shapeMeta) || shapeMeta.length === 0) return;
+		// Rebuild slot indices in build order: primary, then its inbetweens.
+		const shapes = [];
+		let slot = 0;
+		for (const shape of shapeMeta) {
+			const entry = { name: shape.name, primarySlot: slot++, inbetweens: [] };
+			for (const inbetween of shape.inbetweens || []) {
+				if (slot >= attrs.length) break;
+				const w = Number(inbetween.weight);
+				if (Number.isFinite(w)) entry.inbetweens.push({ slot, weight: w });
+				slot++;
+			}
+			entry.inbetweens.sort((a, b) => a.weight - b.weight);
+			shapes.push(entry);
+			if (slot >= attrs.length) break;
+		}
+		morphMeshes.push({ mesh: obj, shapes, slotCount: attrs.length });
+	});
+	if (!morphMeshes.length) return animationClips;
+
+	// Distribute one authored weight over the shape's morph slots
+	// (piecewise-linear UsdSkel in-between basis).
+	const applyShapeWeight = (entry, w, out, base) => {
+		const knots = [{ w: 0, slot: -1 }];
+		for (const ib of entry.inbetweens) knots.push({ w: ib.weight, slot: ib.slot });
+		knots.push({ w: 1, slot: entry.primarySlot });
+		let j = 0;
+		while (j < knots.length - 2 && w > knots[j + 1].w) j++;
+		const a = knots[j];
+		const b = knots[j + 1];
+		const denom = (b.w - a.w) || 1;
+		const t = (w - a.w) / denom;
+		if (a.slot >= 0) out[base + a.slot] += (1 - t);
+		if (b.slot >= 0) out[base + b.slot] += t;
+	};
+
+	for (let i = 0; i < numAnimations; i++) {
+		const usdAnimation = usdLoader.getAnimation(i);
+		if (!usdAnimation?.channels || !usdAnimation.samplers) continue;
+
+		const keyframeTracks = [];
+		for (const channel of usdAnimation.channels) {
+			if (channel.path !== 'Weights') continue;
+			const sampler = usdAnimation.samplers[channel.sampler];
+			const order = Array.from(channel.blendShapeOrder || []);
+			const times = sampler?.times;
+			const values = sampler?.arrayValues;
+			const elementCount = Number.isFinite(channel.elementCount) && channel.elementCount > 0
+				? channel.elementCount
+				: order.length;
+			if (!times?.length || !values?.length || !order.length || !elementCount) continue;
+			const frameCount = Math.min(times.length, Math.floor(values.length / elementCount));
+			if (frameCount <= 0) continue;
+
+			const orderIndex = new Map(order.map((token, idx) => [token, idx]));
+			let candidates = morphMeshes.filter(({ shapes }) =>
+				shapes.some((shape) => orderIndex.has(shape.name)));
+			if (!candidates.length) continue;
+
+			// Scope: shape tokens are not globally unique, so restrict to the
+			// meshes under the nearest ancestor of the SkelAnimation prim that
+			// contains any token-matching mesh (its SkelRoot in practice). Only
+			// when no ancestor scope matches (animation referenced from outside
+			// the mesh subtree) fall back to token matching alone.
+			const animPath = String(channel.target_prim_path || '');
+			const segments = animPath.split('/').filter(Boolean);
+			for (let depth = segments.length - 1; depth >= 1; depth--) {
+				const prefix = '/' + segments.slice(0, depth).join('/') + '/';
+				const scoped = candidates.filter(({ mesh }) => {
+					const path = mesh.userData?.usdMesh?.primPath
+						|| mesh.userData?.['primMeta.absPath'] || '';
+					return path.startsWith(prefix);
+				});
+				if (scoped.length) { candidates = scoped; break; }
+			}
+
+			for (const { mesh, shapes, slotCount } of candidates) {
+				const driven = shapes.filter((shape) => orderIndex.has(shape.name));
+				if (!driven.length) continue;
+
+				const trackTimes = toOwnedFloat32Array(times, 'weights.times').slice(0, frameCount);
+				const trackValues = new Float32Array(frameCount * slotCount);
+				for (let f = 0; f < frameCount; f++) {
+					const base = f * slotCount;
+					for (const shape of driven) {
+						const weightIdx = orderIndex.get(shape.name);
+						if (weightIdx >= elementCount) continue;
+						const w = values[f * elementCount + weightIdx];
+						if (Number.isFinite(w)) applyShapeWeight(shape, w, trackValues, base);
+					}
+				}
+				keyframeTracks.push(new THREE.NumberKeyframeTrack(
+					`${mesh.uuid}.morphTargetInfluences`,
+					trackTimes,
+					trackValues,
+					getUSDInterpolationMode(sampler.interpolation)
+				));
+			}
+		}
+
+		if (keyframeTracks.length > 0) {
+			const clip = new THREE.AnimationClip(
+				usdAnimation.name ? `${usdAnimation.name}_morphs` : `MorphAnimation_${i}`,
+				-1,
+				keyframeTracks
+			);
+			animationClips.push(clip);
+			console.log(`Created morph animation clip: ${clip.name}, duration: ${clip.duration} frames, ${keyframeTracks.length} tracks`);
+		}
+	}
+
+	return animationClips;
+}
+
 export default {
 	getUSDInterpolationMode,
 	convertUSDSkeletalAnimationsToThreeJS,
 	buildNodeIndexMap,
-	convertUSDNodeAnimationsToThreeJS
+	convertUSDNodeAnimationsToThreeJS,
+	convertUSDMorphAnimationsToThreeJS
 };

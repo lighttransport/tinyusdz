@@ -57,6 +57,7 @@
 
 // Evaluation
 #include "eval/attribute-eval.hh"
+#include "eval/value-clip.hh"
 
 // Asset resolution
 #include "resolver/asset-resolver.hh"
@@ -66,6 +67,7 @@
 
 // Schema APIs
 #include "schema/geom-mesh.hh"
+#include "schema/schema-registry.hh"
 #include "schema/geom-point-instancer.hh"
 #include "schema/geom-xform.hh"
 #include "schema/usd-lux.hh"
@@ -92,6 +94,10 @@ constexpr const char* version_string = "0.1.0-dev";
 
 /// Options for high-level USD loading.
 struct LoadUSDOptions {
+  /// Fail closed on unsupported/invalid AOUSD-authored data across USDA and
+  /// USDC. Compatibility mode (false) preserves legacy permissive ingestion.
+  bool strict_aousd_conformance = false;
+
   /// Global per-input memory cap in bytes (0 = no limit). Applied to USDA file
   /// size, USDC crate input/allocation checks, USDZ archive/entry size, and
   /// composed external layer loads. Nested format-specific caps are combined

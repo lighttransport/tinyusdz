@@ -87,6 +87,12 @@
 
       if (is_instance) continue;  // prototype provides the subtree
 
+      // A deactivated prim composes NO subtree (pxr prunes children of an
+      // inactive prim; usdcat --flatten drops the prim itself too — the prim
+      // is kept here, with its authored active=false, so stage consumers can
+      // still query IsActive on it).
+      if (!ComposedActive(srcs)) continue;
+
       // Push children in reverse order so the first child processes first
       // (preserving the original visitation order).
       for (auto it = children.rbegin(); it != children.rend(); ++it) {
@@ -94,14 +100,27 @@
         Path child_src = w.src_path.append_child(cn);
         Path child_out;
         auto rit = relocates_map.find(child_src.str());
-        if (rit != relocates_map.end() &&
-            Path(rit->second).parent().str() == w.out_path.str()) {
-          child_out = Path(rit->second);
+        if (rit != relocates_map.end()) {
+          if (Path(rit->second).parent().str() == w.out_path.str()) {
+            child_out = Path(rit->second);  // same-parent rename
+          } else {
+            continue;  // departs; the destination parent's visit pulls it in
+          }
         } else {
           child_out = w.out_path.append_child(cn);
         }
         stack.push_back({child_src, child_out, idx, /*is_root=*/false,
                          w.depth + 1});
+      }
+      // Prims relocated INTO this prim from another parent.
+      {
+        auto ait = relocate_arrivals.find(w.out_path.str());
+        if (ait != relocate_arrivals.end()) {
+          for (const auto &a : ait->second) {
+            stack.push_back({Path(a.first), Path(a.second), idx,
+                             /*is_root=*/false, w.depth + 1});
+          }
+        }
       }
     }
   }

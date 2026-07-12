@@ -1,0 +1,6 @@
+#usda 1.0
+def Xform "A"
+{
+    uchar b = 255
+    uchar[] ba = [0, 1, 128, 255]
+}

@@ -75,6 +75,17 @@ static bool WriteLocalFileHeader(std::vector<uint8_t>& buf,
 
   size_t local_header_offset = buf.size();
 
+  // ZIP32 limits: entry size and local-header offset are 4-byte fields.
+  // Exceeding them silently truncated (corrupt archive); fail loudly until
+  // ZIP64 records are implemented.
+  if (data_size > 0xFFFFFFFFull || local_header_offset > 0xFFFFFFFFull) {
+    if (err) {
+      *err = "USDZ entry '" + name +
+             "' exceeds the 4 GiB ZIP32 limit (ZIP64 is not supported)";
+    }
+    return false;
+  }
+
   uint32_t crc = 0;
   if (data && data_size > 0) {
     crc = ComputeCRC32(data, data_size);
@@ -163,6 +174,8 @@ static void WriteCentralDirectory(
   }
 
   size_t cd_size = buf.size() - cd_offset;
+  // entries.size()/cd offsets were bounds-checked by the caller before the
+  // local headers were laid down; offsets past 4 GiB cannot reach here.
 
   // End of central directory record
   uint8_t eocd[22];
@@ -274,6 +287,13 @@ USDZWriteResult WriteUSDZFromUSDCAndAssetsToMemory(
       return result;
     }
     entries.push_back(std::move(asset_entry));
+  }
+
+  // ZIP32 EOCD limits: 2-byte entry count, 4-byte central-dir offset.
+  if (entries.size() > 0xFFFFu || buffer.size() > 0xFFFFFFFFull) {
+    result.error = "USDZ archive exceeds ZIP32 limits (ZIP64 not supported)";
+    buffer.clear();
+    return result;
   }
 
   // Write central directory

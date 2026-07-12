@@ -1967,6 +1967,9 @@ json AttributeValueJson(const tinyusdz::Attribute &attr) {
   if (auto v = attr.get_value<tinyusdz::value::StringData>()) return v.value().value;
   if (auto v = attr.get_value<tinyusdz::value::token>()) return v.value().str();
   if (auto v = attr.get_value<tinyusdz::value::AssetPath>()) return v.value().GetAssetPath();
+  // SdfPathExpression (e.g. CollectionAPI membershipExpression) — serialize its
+  // text so the web collision-group evaluator can read the pattern.
+  if (auto v = attr.get_value<tinyusdz::value::PathExpression>()) return v.value().GetText();
   if (auto v = attr.get_value<tinyusdz::value::point3f>()) return Vec3Json(v.value());
   if (auto v = attr.get_value<tinyusdz::value::float3>()) return Vec3Json(v.value());
   if (auto v = attr.get_value<tinyusdz::value::vector3f>()) return Vec3Json(v.value());
@@ -2324,6 +2327,13 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
   } else if (const auto *scene = prim.as<tinyusdz::PhysicsScene>()) {
     AddSceneJson(props, *scene);
     AddPropertyMap(props, rels, scene->props);
+  } else if (const auto *group = prim.as<tinyusdz::PhysicsCollisionGroup>()) {
+    AddTypedAttr(props, "physics:mergeGroup", group->mergeGroup);
+    AddFallbackAttr(props, "physics:invertFilteredGroups",
+                    group->invertFilteredGroups);
+    rels["physics:filteredGroups"] =
+        RelationshipTargetsJson(group->filteredGroups);
+    AddPropertyMap(props, rels, group->props);
   } else if (const auto *joint = prim.as<tinyusdz::PhysicsRevoluteJoint>()) {
     AddJointBaseJson(props, rels, *joint);
     AddTypedAttr(props, "physics:axis", joint->axis);
@@ -3562,6 +3572,35 @@ class TinyUSDZLoaderNative {
         src_layer = std::move(composited_layer);
       }
 
+      // Full-arc requests route through CompositeAllArcs, which implements
+      // the correct LIVRPS strength ordering (L > I > V > R > P > S) with
+      // deferred variant evaluation and cross-iteration selection
+      // persistence (the tusdcat driver uses the same routing). The
+      // per-feature loop below is kept for feature-subset requests; it
+      // applies R -> P -> I -> V, which inverts LIVRPS.
+      const bool full_livrps = comp_features.inherits &&
+                               comp_features.variantSets &&
+                               comp_features.references &&
+                               comp_features.payload;
+      if (full_livrps) {
+        for (int i = 0; i < kMaxIteration; i++) {
+          const bool has_unresolved =
+              src_layer.check_unresolved_references() ||
+              src_layer.check_unresolved_payload() ||
+              src_layer.check_unresolved_inherits() ||
+              src_layer.check_unresolved_variant() ||
+              src_layer.check_unresolved_specializes();
+          if (!has_unresolved) break;
+
+          tinyusdz::Layer composited_layer;
+          if (!tinyusdz::CompositeAllArcs(resolver, src_layer,
+                                          &composited_layer, &warn_,
+                                          &error_)) {
+            return false;
+          }
+          src_layer = std::move(composited_layer);
+        }
+      } else {
       // TODO: Find more better way to Recursively resolve references/payload/variants
       for (int i = 0; i < kMaxIteration; i++) {
 
@@ -3647,6 +3686,7 @@ class TinyUSDZLoaderNative {
         }
 
       }
+      }  // !full_livrps
 
       tinyusdz::Stage comp_stage;
       ret = LayerToStage(src_layer, &comp_stage, &warn_, &error_);
@@ -5342,6 +5382,9 @@ class TinyUSDZLoaderNative {
     metadata.set("comment", render_scene_.meta.comment);
     metadata.set("upAxis", render_scene_.meta.upAxis);
     metadata.set("metersPerUnit", render_scene_.meta.metersPerUnit);
+    const tinyusdz::Layer &meta_layer = composited_ ? composed_layer_ : layer_;
+    metadata.set("kilogramsPerUnit",
+                 meta_layer.metas().kilogramsPerUnit.get_value());
     metadata.set("framesPerSecond", render_scene_.meta.framesPerSecond);
     metadata.set("timeCodesPerSecond", render_scene_.meta.timeCodesPerSecond);
     metadata.set("autoPlay", render_scene_.meta.autoPlay);
@@ -7704,6 +7747,8 @@ class TinyUSDZLoaderNative {
 
     json root;
     root["upAxis"] = AxisName(stage.metas().upAxis.get_value());
+    root["metersPerUnit"] = stage.metas().metersPerUnit.get_value();
+    root["kilogramsPerUnit"] = stage.metas().kilogramsPerUnit.get_value();
     root["prims"] = json::array();
 
     for (const auto &prim : stage.root_prims()) {

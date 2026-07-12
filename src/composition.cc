@@ -1046,10 +1046,11 @@ void ApplyLayerOffsetRec(PrimSpec &ps, const LayerOffset &offset) {
     if (prop_item.second.is_attribute()) {
       Attribute &attr = prop_item.second.attribute();
       if (attr.has_timesamples()) {
-        auto &samples = attr.get_var().ts_raw().samples();
-        for (auto &sample : samples) {
-          sample.t = sample.t * offset._scale + offset._offset;
-        }
+        // NOTE: Use apply_time_transform() instead of mutating samples()
+        // directly: TimeSamples may hold samples in unified binary
+        // storage(_times), which samples() does not write back to.
+        attr.get_var().ts_raw().apply_time_transform(offset._scale,
+                                                     offset._offset);
       }
     }
   }
@@ -1077,12 +1078,16 @@ void TagPrimSpecArcOriginRec(PrimSpec &ps, const std::string &layer_id) {
   }
 }
 
+// `accum_offset` is the accumulated LayerOffset from the root layer down to
+// `in_layer`(identity for the root layer). Nested sublayer offsets compose:
+// offset_total = accum ∘ child (i.e. t_root = child(t) * accum_scale + accum_offset).
 bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                            const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
                            Layer *composited_layer, std::string *warn,
                            std::string *err,
-                           const SublayersCompositionOptions &options) {
+                           const SublayersCompositionOptions &options,
+                           const LayerOffset &accum_offset = LayerOffset()) {
   if (layer_names_stack.size() > options.max_depth) {
     if (err) {
       (*err) += "subLayer is nested too deeply.";
@@ -1162,9 +1167,17 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
 
     // AOUSD Core Spec 10.3.1: Apply sublayer offset/scale to timeSamples.
     // t_stage = t_layer * scale + offset
-    if (layer.layerOffset._offset != 0.0 || layer.layerOffset._scale != 1.0) {
+    // Nested sublayer offsets accumulate(compose like pcp LayerOffset):
+    // total = accum ∘ child => scale = s_accum * s_child,
+    //                          offset = o_accum + s_accum * o_child
+    LayerOffset total_offset;
+    total_offset._scale = accum_offset._scale * layer.layerOffset._scale;
+    total_offset._offset =
+        accum_offset._offset + accum_offset._scale * layer.layerOffset._offset;
+
+    if (total_offset._offset != 0.0 || total_offset._scale != 1.0) {
       for (auto &ps_item : sublayer.primspecs()) {
-        ApplyLayerOffsetRec(ps_item.second, layer.layerOffset);
+        ApplyLayerOffsetRec(ps_item.second, total_offset);
       }
     }
 
@@ -1176,9 +1189,11 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
 
     curr_layer_names.insert(sublayer_asset_path);
 
-    // Recursively load subLayer
+    // Recursively load subLayer. Pass down the accumulated offset so that
+    // grandchild sublayer offsets compose with this one.
     if (!CompositeSublayersRec(resolver, sublayer, layer_names_stack,
-                               composited_layer, warn, err, options)) {
+                               composited_layer, warn, err, options,
+                               total_offset)) {
       return false;
     }
   }
@@ -1573,8 +1588,12 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
             primspec.metas().arc_origins.push_back(origin);
           }
 
-          // `over` op
-          if (!OverridePrimSpec(primspec, prepared_src, warn, err)) {
+          // LIVRPS: local(direct) opinions are stronger than referenced ones,
+          // for both `prepend` and `append` (the qualifier only orders
+          // reference arcs relative to each other). Merge the referenced
+          // PrimSpec UNDERNEATH the local opinions, same as the prepend path
+          // (OverridePrimSpec let the referenced layer clobber local values).
+          if (!InheritPrimSpec(primspec, prepared_src, warn, err)) {
             PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
                                               reference.asset_path));
           }
@@ -1850,8 +1869,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           // AOUSD Core Spec 10.3.2.3/10.3.2.4: Propagate implied arc paths.
           PropagateImpliedArcPaths(prepared_src, primspec);
 
-          // `over` op
-          if (!OverridePrimSpec(primspec, prepared_src, warn, err)) {
+          // LIVRPS: local(direct) opinions are stronger than payloaded ones,
+          // for both `prepend` and `append` (the qualifier only orders
+          // payload arcs relative to each other). Merge the payloaded
+          // PrimSpec UNDERNEATH the local opinions, same as the prepend path.
+          if (!InheritPrimSpec(primspec, prepared_src, warn, err)) {
             PUSH_ERROR_AND_RETURN(
                 fmt::format("Failed to payload layer `{}`", asset_path));
           }
@@ -3239,6 +3261,22 @@ bool ApplyDeferredVariantSelectionsRec(
   }
 
   primspec = std::move(dst);
+
+  // Re-stamp the resolved selection: a deep arc chain may deliver the
+  // POPULATED variantSet in a later fixpoint iteration (reference ->
+  // payload -> reference, the Kitchen_set pattern). VariantSelectPrimSpec
+  // consumes the selection metadata with the (possibly empty) set it just
+  // applied; without re-stamping, the strongest selection is lost and the
+  // late-arriving set falls back to its own weaker default. Leftover
+  // selections are stripped by CompositeAllArcs once no unresolved arcs
+  // remain.
+  if (!selection.empty()) {
+    VariantSelectionMap vsm;
+    for (const auto &kv : selection) {
+      vsm[kv.first] = kv.second;
+    }
+    primspec.metas().variants = vsm;
+  }
   return true;
 }
 
@@ -3803,6 +3841,27 @@ bool CompositeAllArcs(AssetResolutionResolver &resolver, const Layer &layer,
         PushError("Composite `specializes` failed.\n");
         return false;
       }
+    }
+  }
+
+  // Fully resolved (no arcs left anywhere): strip the re-stamped variant
+  // selections — they were kept only so later fixpoint iterations could
+  // apply them to late-arriving variantSets.
+  {
+    const bool fully_resolved = !working.check_unresolved_references() &&
+                                !working.check_unresolved_payload() &&
+                                !working.check_unresolved_inherits() &&
+                                !working.check_unresolved_specializes() &&
+                                !working.check_unresolved_variant();
+    if (fully_resolved) {
+      std::function<void(PrimSpec&)> strip = [&](PrimSpec &ps) {
+        if (ps.metas().variants && !ps.metas().variantSets &&
+            ps.variantSets().empty()) {
+          ps.metas().variants.reset();
+        }
+        for (auto &child : ps.children()) strip(child);
+      };
+      for (auto &ps_item : working.primspecs()) strip(ps_item.second);
     }
   }
 

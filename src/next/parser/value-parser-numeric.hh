@@ -100,6 +100,49 @@ inline uint32_t DecimalToU32(const char* s) {
   return v > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(v);
 }
 
+// Overflow-CHECKED variants for scalar value parsing: pxr errors on
+// out-of-range integer literals; silent saturation corrupts data.
+inline bool DecimalToI64Checked(const char* s, int64_t* out) {
+  if (!s || !out) return false;
+  bool neg = false;
+  if (*s == '+' || *s == '-') {
+    neg = (*s == '-');
+    ++s;
+  }
+  const uint64_t lim = neg ? (static_cast<uint64_t>(INT64_MAX) + 1u)
+                           : static_cast<uint64_t>(INT64_MAX);
+  uint64_t v = 0;
+  while (*s >= '0' && *s <= '9') {
+    const uint64_t d = static_cast<uint64_t>(*s - '0');
+    if (v > (lim - d) / 10u) return false;  // would overflow
+    v = v * 10u + d;
+    ++s;
+  }
+  if (neg) {
+    // -(2^63) can't be produced by negating an int64; build it directly.
+    *out = (v == static_cast<uint64_t>(INT64_MAX) + 1u)
+               ? INT64_MIN
+               : -static_cast<int64_t>(v);
+  } else {
+    *out = static_cast<int64_t>(v);
+  }
+  return true;
+}
+
+inline bool DecimalToU64Checked(const char* s, uint64_t* out) {
+  if (!s || !out) return false;
+  if (*s == '+') ++s;
+  uint64_t v = 0;
+  while (*s >= '0' && *s <= '9') {
+    const uint64_t d = static_cast<uint64_t>(*s - '0');
+    if (v > (UINT64_MAX - d) / 10u) return false;
+    v = v * 10u + d;
+    ++s;
+  }
+  *out = v;
+  return true;
+}
+
 }  // namespace value_parser_detail
 }  // namespace next
 }  // namespace tinyusdz

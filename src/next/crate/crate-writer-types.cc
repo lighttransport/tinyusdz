@@ -20,6 +20,7 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Half3: return CrateTypeId::Vec3h;
     case TypeId::Half4: return CrateTypeId::Vec4h;
     case TypeId::Quath: return CrateTypeId::Quath;
+    case TypeId::UChar: return CrateTypeId::UChar;
     case TypeId::Float: return CrateTypeId::Float;
     case TypeId::Double: return CrateTypeId::Double;
     case TypeId::String: return CrateTypeId::String;
@@ -28,6 +29,13 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Int2: return CrateTypeId::Vec2i;
     case TypeId::Int3: return CrateTypeId::Vec3i;
     case TypeId::Int4: return CrateTypeId::Vec4i;
+    // pxr's Sdf has no unsigned vector types; encode as the signed twin
+    // (same 32-bit lanes, bit-exact round-trip; the declared type name
+    // "uintN" restores the USDA-facing type). Previously these mapped to
+    // Invalid and the VALUE was silently dropped.
+    case TypeId::UInt2: return CrateTypeId::Vec2i;
+    case TypeId::UInt3: return CrateTypeId::Vec3i;
+    case TypeId::UInt4: return CrateTypeId::Vec4i;
     case TypeId::Float2: return CrateTypeId::Vec2f;
     case TypeId::Float3:
     case TypeId::Point3f:
@@ -66,6 +74,11 @@ CrateTypeId ToCrateTypeId(TypeId type_id) {
     case TypeId::Matrix2d: return CrateTypeId::Matrix2d;
     case TypeId::Matrix3d: return CrateTypeId::Matrix3d;
     case TypeId::Matrix4d: return CrateTypeId::Matrix4d;
+    // frame4d shares matrix4d's crate encoding; the declared type name
+    // restores the role on read (retag_role: Double x16 both sides).
+    case TypeId::Frame4d: return CrateTypeId::Matrix4d;
+    // pathExpression: crate 0.10 type 57 shares the Token payload form.
+    case TypeId::PathExpression: return CrateTypeId::PathExpression;
     case TypeId::Matrix2f: return CrateTypeId::Matrix2d;
     case TypeId::Matrix3f: return CrateTypeId::Matrix3d;
     case TypeId::Matrix4f: return CrateTypeId::Matrix4d;
@@ -77,6 +90,7 @@ uint32_t ArrayComps(TypeId type_id) {
   switch (type_id) {
     case TypeId::Half:
     case TypeId::TimeCode:
+    case TypeId::UChar:
       return 1;
     case TypeId::Float2:
     case TypeId::Double2:

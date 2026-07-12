@@ -98,12 +98,13 @@ constexpr uint8_t kCrateMinVersionMinor = 4;
 constexpr uint8_t kCrateMinVersionPatch = 0;
 
 /// Maximum supported version.
-/// 0.10.0 only ADDS timecode/timecode[] value types over 0.9.0 (structural
-/// sections unchanged), so accepting it is safe: the new type ids simply
-/// surface as unsupported values if actually authored. (UE 5.6 exports write
-/// 0.10.0.)
+/// Versions past 0.9.0 only ADD value types / fields over the structurally
+/// stable section layout: 0.10 timecode, 0.11 relocates, 0.12/0.13 splines,
+/// 0.14 array edits. Unknown type ids / fields surface as per-value warnings
+/// rather than wholesale rejection, so accept the whole window (legacy reads
+/// through 0.14 too; pxr 25.x writes 0.11+ when those features are authored).
 constexpr uint8_t kCrateMaxVersionMajor = 0;
-constexpr uint8_t kCrateMaxVersionMinor = 10;
+constexpr uint8_t kCrateMaxVersionMinor = 14;
 constexpr uint8_t kCrateMaxVersionPatch = 0;
 
 /// Bootstrap header size
@@ -192,7 +193,8 @@ enum class CrateTypeId : uint8_t {
   PayloadListOp = 55,
   TimeCode = 56,
   PathExpression = 57,  // SdfPathExpression (crate >= 0.10.0)
-  // 58 = Relocates (SdfRelocates) -- reserved, not yet implemented
+  Relocates = 58,       // SdfRelocates (crate >= 0.11.0):
+                        //   [u64 count][(u32 srcPathIdx, u32 dstPathIdx)*]
   Spline = 59,          // TsSpline (crate >= 0.12.0)
   // 60 = AnimationBlock (SdfAnimationBlock) -- reserved, not yet implemented
 };
@@ -226,6 +228,11 @@ public:
   bool is_array() const { return (data_ >> 63) & 1; }
   bool is_inlined() const { return (data_ >> 62) & 1; }
   bool is_compressed() const { return (data_ >> 61) & 1; }
+  /// VtArrayEdit flag (crate >= 0.14). The type byte holds the ELEMENT type
+  /// and is_array() is false, so an unhandled array-edit rep looks like a
+  /// plain scalar whose payload points at the edit tuple — it must be
+  /// detected explicitly or it decodes to garbage.
+  bool is_array_edit() const { return (data_ >> 60) & 1; }
 
   /// Get type ID
   CrateTypeId type_id() const {
@@ -315,6 +322,11 @@ struct CrateVersion {
   std::string to_string() const {
     return UIntToStr(major) + "." + UIntToStr(minor) + "." + UIntToStr(patch);
   }
+
+  /// Crate files older than 0.7.0 store array element counts as uint32 (pxr
+  /// crateFile.cpp _Write/_ReadUncompressedArray:
+  /// `(ver < CrateFile::Version(0,7,0)) ? Read<uint32_t>() : Read<uint64_t>()`).
+  bool is_pre_070() const { return major == 0 && minor < 7; }
 };
 
 // ============================================================

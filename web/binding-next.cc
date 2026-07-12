@@ -320,27 +320,6 @@ uint32_t ChunkedU32At(const tr::UInt32Chunked& values, size_t i,
   return i < values.size() ? values[i] : fallback;
 }
 
-std::vector<uint32_t> CornerToFace(const tr::RenderMesh& mesh) {
-  std::vector<uint32_t> out(mesh.face_vertex_indices.size(), 0);
-  size_t corner = 0;
-  for (size_t face = 0; face < mesh.face_vertex_counts.size(); ++face) {
-    const uint32_t count = mesh.face_vertex_counts[face];
-    for (uint32_t i = 0; i < count && corner < out.size(); ++i, ++corner) {
-      out[corner] = static_cast<uint32_t>(face);
-    }
-  }
-  return out;
-}
-
-int32_t SubsetMaterialForFace(const tr::RenderMesh& mesh, uint32_t face) {
-  for (const tr::RenderMesh::MaterialSubset& subset : mesh.material_subsets) {
-    const uint32_t begin = subset.face_start;
-    const uint32_t end = begin + subset.face_count;
-    if (face >= begin && face < end) return subset.material_id;
-  }
-  return -1;
-}
-
 const tr::RenderTexture* TextureAt(const tr::RenderScene& scene, int32_t id) {
   if (id < 0 || static_cast<size_t>(id) >= scene.textures.size()) return nullptr;
   return &scene.textures[static_cast<size_t>(id)];
@@ -402,6 +381,12 @@ std::string ShaderParamJson(const tr::RenderScene& scene,
   if (p.texture_id >= 0) {
     ss << ",\"texture\":\"" << JsonEscape(TexturePath(scene, p)) << "\"";
     ss << ",\"textureId\":" << p.texture_id;
+    if (static_cast<size_t>(p.texture_id) < scene.textures.size()) {
+      ss << ",\"colorspace\":\""
+         << JsonEscape(scene.textures[static_cast<size_t>(p.texture_id)]
+                           .source_color_space)
+         << "\"";
+    }
   }
   ss << "}";
   return ss.str();
@@ -734,10 +719,12 @@ class NextFlattenSession {
     return result;
   }
 
-  emscripten::val setVariantOverride(const std::string& prim_path,
+  // Key is a variant-set name ("shape", applies stage-wide) or the
+  // prim-scoped form "<primPath>{<set>}" (wins over the bare-set key).
+  emscripten::val setVariantOverride(const std::string& set_or_scoped_key,
                                      const std::string& selection) {
     emscripten::val result = emscripten::val::object();
-    variant_overrides_[prim_path] = selection;
+    variant_overrides_[set_or_scoped_key] = selection;
     result.set("success", true);
     return result;
   }
@@ -960,6 +947,7 @@ nlohmann::json NextValueJSON(const tn::Value& value) {
   if (const uint32_t* v = value.as_uint()) return *v;
   if (const int64_t* v = value.as_int64()) return *v;
   if (const uint64_t* v = value.as_uint64()) return *v;
+  if (const uint8_t* v = value.as_uchar()) return *v;
   if (const float* v = value.as_float()) return *v;
   if (const double* v = value.as_double()) return *v;
   if (const std::string* v = value.as_string()) return *v;
@@ -1013,6 +1001,7 @@ nlohmann::json NextValueJSON(const tn::Value& value) {
     case tn::TypeId::Matrix4f:
       return float_array(value.as_matrix4f(), 16);
     case tn::TypeId::Matrix4d:
+    case tn::TypeId::Frame4d:  // matrix4d role
       return double_array(value.as_matrix4d(), 16);
     default:
       break;
@@ -1389,12 +1378,13 @@ class RenderStream {
   }
   void clearAssets() { clip_assets_.clear(); }
 
-  // Strongest variant selection for a variant SET (applies to every prim
-  // carrying that set, matching the compositor's set-name-keyed overrides).
-  // Takes effect on the next begin()/beginOwned().
-  void setVariantOverride(const std::string &set_name,
+  // Strongest variant selection. `key` is a variant-set name (applies to
+  // every prim carrying that set) or the prim-scoped form
+  // "<primPath>{<set>}" which wins over the bare-set key. Takes effect on
+  // the next begin()/beginOwned().
+  void setVariantOverride(const std::string &key,
                           const std::string &selection) {
-    variant_overrides_[set_name] = selection;
+    variant_overrides_[key] = selection;
   }
   void clearVariantOverrides() { variant_overrides_.clear(); }
 
@@ -1647,6 +1637,12 @@ class RenderStream {
     out.set("lightLinkTargets", VectorToArray(light.light_link_targets));
     out.set("shadowLinkTargets", VectorToArray(light.shadow_link_targets));
     out.set("filterTargets", VectorToArray(light.filter_targets));
+    // Resolved CollectionAPI membership: when *LinksAll is false, the
+    // *LinkMeshIndices arrays list the affected RenderScene mesh ids.
+    out.set("lightLinksAll", light.light_links_all);
+    out.set("lightLinkMeshIndices", VectorToArray(light.light_link_mesh_indices));
+    out.set("shadowLinksAll", light.shadow_links_all);
+    out.set("shadowLinkMeshIndices", VectorToArray(light.shadow_link_mesh_indices));
     out.set("enableShadow", light.enable_shadow);
     out.set("color", Float3Value(light.color));
     out.set("transform", MatrixValue(MatrixToArray(light.transform)));
@@ -1668,9 +1664,21 @@ class RenderStream {
       case tr::LightType::Spot:
         out.set("angle", light.params.spot.angle);
         break;
-      case tr::LightType::Dome:
+      case tr::LightType::Dome: {
         out.set("textureId", light.params.dome.texture_id);
+        const char* format = "automatic";
+        switch (light.params.dome.texture_format) {
+          case tr::RenderLight::DomeTextureFormat::Latlong:
+            format = "latlong"; break;
+          case tr::RenderLight::DomeTextureFormat::MirroredBall:
+            format = "mirroredBall"; break;
+          case tr::RenderLight::DomeTextureFormat::Angular:
+            format = "angular"; break;
+          default: break;
+        }
+        out.set("domeTextureFormat", std::string(format));
         break;
+      }
       case tr::LightType::Cylinder:
         out.set("radius", light.params.cylinder.radius);
         out.set("length", light.params.cylinder.length);
@@ -2220,6 +2228,9 @@ class RenderStream {
     const tinyusdz::next::StageMeta &meta = stage_.GetMeta();
     metadata.set("upAxis", meta.upAxis);
     metadata.set("metersPerUnit", meta.metersPerUnit);
+    // MassAPI SI conversion on the web/sim side (parity with the legacy
+    // binding's kilogramsPerUnit export).
+    metadata.set("kilogramsPerUnit", meta.kilogramsPerUnit);
     metadata.set("framesPerSecond", meta.framesPerSecond);
     metadata.set("timeCodesPerSecond", meta.timeCodesPerSecond);
     metadata.set("startTimeCode", meta.startTimeCode);
@@ -2524,7 +2535,7 @@ class RenderStream {
       }
     }
     out.set("localMatrix", matArray_(localMatrix_(prim)));
-    out.set("worldMatrix", matArray_(worldMatrix_(prim)));
+    out.set("worldMatrix", matArray_(worldMatrixForPrim_(prim)));
     const int32_t material_id = materialIdForBoundPrim_(prim);
     out.set("materialId", material_id);
     out.set("material", materialObject_(material_id));
@@ -3055,6 +3066,14 @@ class RenderStream {
       }
     };
     read_tokenish("inputs:sourceColorSpace", &meta.source_color_space);
+    // colorSpace asset metadata on inputs:file wins over sourceColorSpace
+    // (legacy tydra resolution order).
+    if (const tinyusdz::next::PropMeta *file_meta =
+            tex.GetPropertyMeta("inputs:file")) {
+      if (!file_meta->colorSpace.empty()) {
+        meta.source_color_space = file_meta->colorSpace;
+      }
+    }
     read_tokenish("inputs:wrapS", &meta.wrap_s);
     read_tokenish("inputs:wrapT", &meta.wrap_t);
     meta.is_udim = isUdimPath_(meta.path);
@@ -3264,7 +3283,7 @@ class RenderStream {
         return false;
       }
     }
-    const std::array<double, 16> world = worldMatrix_(prim);
+    const std::array<double, 16> world = worldMatrixForPrim_(prim);
     if (acc->source_count == 0) {
       acc->mesh.soup = soup;
       acc->mesh.material_id = material_id;
@@ -3340,7 +3359,7 @@ class RenderStream {
       }
       const bool has_normals = !s_normals_.empty();
       const bool has_uv = !s_uv_.empty();
-      const std::array<double, 16> world = worldMatrix_(prim);
+      const std::array<double, 16> world = worldMatrixForPrim_(prim);
       std::ostringstream key;
       key << material_id << "|soup=" << soup << "|n=" << has_normals
           << "|uv=" << has_uv;
@@ -3568,6 +3587,28 @@ class RenderStream {
     return world;
   }
 
+  // World transform for a prim, preferring the RenderScene node table: its
+  // hierarchy traversal handles native instances correctly, while the plain
+  // GetParent() chain in worldMatrix_ drops the instance root's own xform.
+  std::array<double, 16> worldMatrixForPrim_(
+      const tinyusdz::next::UsdPrim &prim) const {
+    if (render_scene_valid_) {
+      const auto it = render_scene_.node_by_path.find(prim.GetPath().str());
+      if (it != render_scene_.node_by_path.end() && it->second >= 0 &&
+          static_cast<size_t>(it->second) < render_scene_.nodes.size()) {
+        const tr::SceneNode &node =
+            render_scene_.nodes[static_cast<size_t>(it->second)];
+        std::array<double, 16> world;
+        for (int i = 0; i < 16; ++i) {
+          world[static_cast<size_t>(i)] =
+              static_cast<double>(node.world_transform.m[i]);
+        }
+        return world;
+      }
+    }
+    return worldMatrix_(prim);
+  }
+
   emscripten::val materialObjectForPrim_(
       const tinyusdz::next::UsdPrim &mat) {
     emscripten::val m = emscripten::val::object();
@@ -3706,6 +3747,57 @@ class RenderStream {
 
   void addGeomSubsetMaterials_(const tinyusdz::next::UsdPrim &prim,
                                emscripten::val &out) {
+    // Prefer the converter's triangle-space subset ranges: they account for
+    // holes, degenerate faces, earcut splits and topology sanitization,
+    // which the stage-side re-derivation below cannot.
+    if (render_scene_valid_) {
+      const auto mit = render_scene_.mesh_by_path.find(prim.GetPath().str());
+      if (mit != render_scene_.mesh_by_path.end() &&
+          static_cast<size_t>(mit->second) < render_scene_.meshes.size()) {
+        const tr::RenderMesh &rmesh =
+            render_scene_.meshes[static_cast<size_t>(mit->second)];
+        if (!rmesh.material_subsets.empty() &&
+            !rmesh.face_triangle_offsets.empty()) {
+          emscripten::val materials = emscripten::val::array();
+          emscripten::val groups = emscripten::val::array();
+          std::map<int32_t, int> mat_index_by_scene_id;
+          int group_index = 0;
+          for (const tr::RenderMesh::MaterialSubset &ms :
+               rmesh.material_subsets) {
+            if (ms.material_id < 0 ||
+                static_cast<size_t>(ms.material_id) >=
+                    render_scene_.materials.size()) {
+              continue;
+            }
+            int mat_index = -1;
+            const auto found = mat_index_by_scene_id.find(ms.material_id);
+            if (found == mat_index_by_scene_id.end()) {
+              const std::string &mat_path =
+                  render_scene_.materials[static_cast<size_t>(ms.material_id)]
+                      .prim_path;
+              tinyusdz::next::UsdPrim mat_prim = stage_.GetPrimAtPath(mat_path);
+              const int32_t record_id = registerMaterial_(mat_prim);
+              mat_index = static_cast<int>(mat_index_by_scene_id.size());
+              mat_index_by_scene_id.emplace(ms.material_id, mat_index);
+              materials.set(mat_index, materialObject_(record_id));
+            } else {
+              mat_index = found->second;
+            }
+            emscripten::val g = emscripten::val::object();
+            g.set("start", static_cast<int>(ms.face_start * 3u));
+            g.set("count", static_cast<int>(ms.face_count * 3u));
+            g.set("materialIndex", mat_index);
+            groups.set(group_index++, g);
+          }
+          if (group_index > 0) {
+            out.set("materials", materials);
+            out.set("submeshes", groups);
+          }
+          return;
+        }
+      }
+    }
+
     std::vector<int32_t> fvc = matIntStatic_(prim, "faceVertexCounts");
     if (fvc.empty()) return;
 

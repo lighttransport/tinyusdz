@@ -585,14 +585,9 @@ class USDAReader::Impl {
           _stage.metas().comment = metas.comment;
 
           if (metas.subLayers.size()) {
-            // TODO subLayer offset.
-            std::vector<SubLayer> sublayers;
-            for (size_t i = 0; i < metas.subLayers.size(); i++) {
-              SubLayer sublayer;
-              sublayer.assetPath = metas.subLayers[i];
-              sublayers.push_back(sublayer);
-            }
-            _stage.metas().subLayers = sublayers;
+            // subLayers items carry an optional LayerOffset (parsed by the
+            // custom subLayers loop in ascii-parser.cc).
+            _stage.metas().subLayers = metas.subLayers;
           }
 
           _stage.metas().defaultPrim = metas.defaultPrim;
@@ -1148,6 +1143,18 @@ class USDAReader::Impl {
           value::StringData sdata;
           sdata.value = spv.value();
           out->set_comment(sdata);
+        }
+      } else if (meta.first == "reorder:nameChildren" ||
+                 meta.first == "reorder:properties") {
+        // `reorder` body statements stashed by the parser: route to the
+        // dedicated PrimMetas fields (NOT unregisteredMetas — they are body
+        // statements, not paren metadata).
+        if (auto tv = var.get_value<std::vector<value::token>>()) {
+          if (meta.first == "reorder:nameChildren") {
+            out->nameChildrenReorder = tv.value();
+          } else {
+            out->propertiesReorder = tv.value();
+          }
         }
       } else {
         // Store unregistered metadata as raw string (OpenUSD-compatible).
