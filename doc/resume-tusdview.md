@@ -99,32 +99,27 @@ The earlier confusion, recorded so it is not re-derived: an explicit `--skinning
 run took the rest-load path and looked fine, which made the raster path seem innocent.
 It was the DEFAULT that was broken.
 
-### Still open: a ~4% legacy residual
+### The ~4% residual: it was the BOUNDS, not the deform
 
-With the double deform gone, the legacy paths still do not agree exactly: mesh
-silhouette IoU is 0.96 (raster vs its own CPU bake) and 0.92 (RT vs the bake), where
-`--next` is 1.0000 against its own bake. Same fixture, same fixed camera. Small, but
-it is a real disagreement and not noise — worth chasing next. Note the ground grid is
-drawn from scene bounds and moves on its own, so compare the mesh only (mask the near
-depths), as the test does.
+Closed. With the double deform gone the legacy paths still disagreed (mesh
+silhouette IoU 0.96 raster vs its own CPU bake). Rendering in `--mode geom-normal`
+showed the mesh itself was already IDENTICAL (mean 0.12 inside the silhouette) —
+the difference was the ground grid and the depth ramp, both of which scale with the
+scene bounds.
 
-Note also that the GPU morph path skins the REST normal (only positions are
-morphed), so it differs from the CPU bake in SHADING, not geometry. That is by
-design on both the instanced and the static path. The two also frame the scene
-differently under auto-fit: the GPU path pads the mesh box by `morphExtent` (so a
-morphed mesh is never frustum-culled) while the bake's box is exact. So
-`tusdview-blendshape-morph` compares them in `--mode depth` through a fixed USD
-camera -- geometry only, no shading, no framing. An earlier silhouette-IoU check
-was vacuous: the luma>25 mask covered the whole frame, because the background grid
-is brighter than that.
+`PlaceDrawMesh` took a mesh's world box from the 8 corners of its LOCAL AABB pushed
+through the world matrix. That is a strict superset — rotate a box and its
+axis-aligned hull grows — and it disagreed with `UpdateMeshBoundsFromVertices`,
+which re-derives a TIGHT box from the vertices once GPU skinning poses a mesh. So
+the same scene got a loose box under CPU skinning and a tight one under GPU, and the
+grid and the depth normalization moved between two paths drawing identical geometry.
+It now takes the box from the vertices, like everything else does.
 
-That same GPU-deform-vs-CPU-bake comparison now runs over three fixtures the suite
-had no coverage for at all (`tests/tusdview/check-deform-parity.py`,
-`examples/tusdview/tests/deform-*.usda`): skinning under a rotated/scaled parent,
-a morphed mesh split into two batches by material-bind GeomSubsets, and a mesh
-that is blendshaped AND skinned at the same time code. The last two found live
-bugs (a morph applied in the wrong space, and the CPU bake skinning before it
-morphed). Anything else that deforms geometry belongs in that harness.
+Legacy raster and the CPU bake are now BYTE-IDENTICAL (0.000). Legacy RT still
+differs by 0.377 — but `--next` RT differs from `--next` raster by 0.401, so that is
+the inherent RT-vs-raster edge difference, not a deform bug. The two LOADERS also
+agree on the posed mesh (0.23 inside the silhouette); what still differs between them
+outside it is their scene bounds, which is cosmetic (grid extent) and not chased.
 
 ### 4. usd-assets regression harness — DONE, but the baseline is per-machine
 

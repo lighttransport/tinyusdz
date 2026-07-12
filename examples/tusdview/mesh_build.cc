@@ -2410,23 +2410,21 @@ void PlaceDrawMesh(DrawMeshCPU* dm, const matrix4d& worldMat) {
   MatToColMajor(worldMat, world.m);
   std::memcpy(dm->world, world.m, sizeof(world.m));
 
-  float lmin[3] = {1e30f, 1e30f, 1e30f};
-  float lmax[3] = {-1e30f, -1e30f, -1e30f};
-  for (const auto& v : dm->vertices) {
-    const float p[3] = {v.px, v.py, v.pz};
-    for (int c = 0; c < 3; ++c) {
-      lmin[c] = std::min(lmin[c], p[c]);
-      lmax[c] = std::max(lmax[c], p[c]);
-    }
-  }
+  // World bounds from the vertices THEMSELVES, not from the 8 corners of the local
+  // AABB transformed into world -- that box is a strict superset (rotate a box and
+  // its axis-aligned hull grows), so it disagreed with every other bounds
+  // computation in the app. UpdateMeshBoundsFromVertices, which re-derives the box
+  // once GPU skinning poses a mesh, walks the vertices; so the same scene came out
+  // with a LOOSE box under CPU skinning and a TIGHT one under GPU, which moved the
+  // ground grid and the depth normalization (both scale with scene bounds) between
+  // two paths that render identical geometry. One extra transform per vertex, in a
+  // loop that already visits every vertex.
   float wmin[3] = {1e30f, 1e30f, 1e30f};
   float wmax[3] = {-1e30f, -1e30f, -1e30f};
-  for (int corner = 0; corner < 8; ++corner) {
-    light3d::Vec3 lp{(corner & 1) ? lmax[0] : lmin[0],
-                     (corner & 2) ? lmax[1] : lmin[1],
-                     (corner & 4) ? lmax[2] : lmin[2]};
-    light3d::Vec3 wp = light3d::transformPoint(world, lp);
-    float wparr[3] = {wp.x, wp.y, wp.z};
+  for (const auto& v : dm->vertices) {
+    const light3d::Vec3 wp =
+        light3d::transformPoint(world, light3d::Vec3{v.px, v.py, v.pz});
+    const float wparr[3] = {wp.x, wp.y, wp.z};
     for (int c = 0; c < 3; ++c) {
       wmin[c] = std::min(wmin[c], wparr[c]);
       wmax[c] = std::max(wmax[c], wparr[c]);

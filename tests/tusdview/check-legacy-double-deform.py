@@ -32,6 +32,11 @@ import zlib
 
 SKIP = 77
 MIN_IOU = 0.90
+# The raster path and the CPU bake render the same geometry through the same
+# rasterizer, so once the deform is applied once and both agree on the scene bounds
+# (depth is normalized by them) the two images are IDENTICAL. Not a tolerance to
+# tune: it is 0.000 or something is wrong.
+MAX_RASTER_MEAN = 0.5
 
 
 def render(binary, scene, out, extra=(), env=None):
@@ -103,6 +108,13 @@ def iou(a, b):
     return sum(1 for x, y in zip(A, B) if x and y) / union
 
 
+def mean_diff(a, b):
+    A, B = read_luma(a), read_luma(b)
+    if len(A) != len(B):
+        return float("inf")
+    return sum(abs(x - y) for x, y in zip(A, B)) / len(A)
+
+
 def main():
     if len(sys.argv) < 4:
         print("usage: check-legacy-double-deform.py <tusdview> <scene.usda> <work_dir>")
@@ -134,6 +146,23 @@ def main():
               f"that might deform again downstream -- Auto as much as an explicit "
               f"GPU -- or the shader poses the already-posed geometry and the bend "
               f"comes out twice as far.")
+        return 1
+
+    # Same geometry, same rasterizer, same camera: the whole frame must match, not
+    # just the mesh. Depth is normalized by the scene bounds, and the ground grid is
+    # drawn from them, so this also catches the two paths computing DIFFERENT bounds
+    # for identical geometry -- which they did: the load-time box was the local AABB's
+    # 8 corners pushed through the world matrix (a strict superset once the mesh is
+    # rotated), while GPU skinning re-derived a tight box from the vertices.
+    d = mean_diff(auto, ref)
+    if d > MAX_RASTER_MEAN:
+        print(f"FAIL: the default legacy raster path and the CPU bake do not render "
+              f"the same frame (mean depth diff {d:.3f} > {MAX_RASTER_MEAN}), even "
+              f"though the mesh silhouettes agree ({a:.4f}). The geometry matches, so "
+              f"this is the SCENE BOUNDS: depth is normalized by them and the ground "
+              f"grid is sized from them. PlaceDrawMesh must take the world box from "
+              f"the vertices, as UpdateMeshBoundsFromVertices does -- not from the "
+              f"local AABB's corners, which inflate under rotation.")
         return 1
 
     if render(binary, scene, rt, extra=["--rt"]):
