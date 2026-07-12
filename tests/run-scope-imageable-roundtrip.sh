@@ -79,4 +79,72 @@ if ! "$TUSDCAT" --output-format usdc -o "$TMP/scope.usdc" "$TMP/scope.usda" \
 fi
 check usdc-to-usda "$TMP/scope.usdc"
 
+# Scope was one instance of a class: `visibility` / `purpose` are TYPED fields on
+# every imageable, so each writer must emit them, and several forgot. All the
+# lights and Volume lost BOTH through the crate writer; Material and NodeGraph
+# lost `purpose` through both writers. Sweep every imageable prim type so a new
+# one cannot quietly start dropping them again.
+TYPES="Xform Scope Mesh Sphere Cube Cylinder Cone Capsule Plane Points BasisCurves
+NurbsCurves PointInstancer Camera SkelRoot Skeleton Material NodeGraph SphereLight
+DistantLight RectLight DiskLight DomeLight Volume GeomSubset Model"
+
+{
+  echo '#usda 1.0'
+  echo '('
+  echo '    defaultPrim = "W"'
+  echo ')'
+  echo
+  echo 'def Xform "W"'
+  echo '{'
+  for t in $TYPES; do
+    echo "    def $t \"P$t\""
+    echo '    {'
+    echo '        token visibility = "invisible"'
+    echo '        uniform token purpose = "render"'
+    echo '    }'
+  done
+  echo '}'
+} > "$TMP/imageable.usda"
+
+# Reports every prim that came back missing either attribute.
+sweep() {
+  local label="$1" file="$2"
+  local out="$TMP/sweep-$label.usda"
+  if ! "$TUSDCAT" "$file" > "$out" 2>/dev/null; then
+    echo "FAIL[$label]: tusdcat exited nonzero on the imageable sweep"
+    status=1
+    return
+  fi
+  local lost=""
+  for t in $TYPES; do
+    # The prim's body runs until the next `def` or the closing brace.
+    local body
+    body="$(sed -n "/def $t \"P$t\"/,/^    }/p" "$out")"
+    case "$body" in
+      *'purpose = "render"'*) ;;
+      *) lost="$lost $t:purpose" ;;
+    esac
+    case "$body" in
+      *'visibility = "invisible"'*) ;;
+      *) lost="$lost $t:visibility" ;;
+    esac
+  done
+  if [ -n "$lost" ]; then
+    echo "FAIL[$label]: dropped on round-trip:$lost"
+    status=1
+  else
+    echo "ok[$label]: all imageable prim types kept visibility + purpose"
+  fi
+}
+
+sweep all-types-usda "$TMP/imageable.usda"
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/imageable.usdc" "$TMP/imageable.usda" \
+     >"$TMP/write2.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the imageable sweep to usdc"
+  cat "$TMP/write2.log"
+  exit 1
+fi
+sweep all-types-usdc "$TMP/imageable.usdc"
+
 exit "$status"

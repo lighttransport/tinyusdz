@@ -33,6 +33,17 @@ bool CrateWriter::ExtractMaterialProperties(
     return false;
   }
 
+  // Material is imageable: `purpose` is a typed field (UsdShadePrim::purpose),
+  // so it has to be written explicitly or it vanishes on write.
+  if (material->purpose.authored()) {
+    const Purpose purpose_val = material->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose_val)));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
+  }
+
 
   // Material outputs (surface, displacement, volume) are handled separately
   // by AddMaterialOutputSpecs() which is called AFTER the Material prim spec is added
@@ -1267,6 +1278,16 @@ bool CrateWriter::ExtractNodeGraphProperties(
   if (!node_graph) {
     if (err) *err = "Failed to cast prim to NodeGraph";
     return false;
+  }
+
+  // Same typed `purpose` as Material (both derive from UsdShadePrim).
+  if (node_graph->purpose.authored()) {
+    const Purpose purpose_val = node_graph->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose_val)));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
   }
 
   // NodeGraph is primarily a container for organizing shader nodes and interfaces.
