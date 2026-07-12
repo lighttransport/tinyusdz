@@ -1405,17 +1405,19 @@ void SplitProtoSubtree(const tnext::UsdPrim& root,
 // nests (same mesh order, same per-placement loop). `placementColors`, when set, is
 // 3 floats/placement applied as per-instance color to this level's direct meshes.
 //
-// SKINNED prototypes (`gpuSkinning`) are DE-INSTANCED: each placement becomes its
-// own non-instanced DrawMeshCPU carrying the prototype's skin attributes, with the
-// placement in `world`. The raster backends only skin the non-instanced program
-// (the flat instanced shader has no bone path, on GL and Vulkan alike), and the
-// tracers read the same DrawScene, so this is the one representation every path
-// already poses. It costs a vertex-buffer copy per instance, so it is capped at
-// kMaxSkinnedProtoInstances; past that the prototype keeps its instancing and
-// falls back to a static baked pose. All instances of a prototype share ONE bone
-// block: USD instancing requires identical composed contents, so they necessarily
-// share a skeleton and animation -- which is also why the bone rows here fold in
-// geomBind only, never a world transform (each copy's `world` supplies that).
+// SKINNED prototypes stay INSTANCED (an earlier design de-instanced them, one
+// DrawMeshCPU per placement; the comment here outlived it, along with a
+// kMaxSkinnedProtoInstances cap that no longer exists). Under `gpuSkinning` the
+// prototype emits skin attributes plus ONE bone block whose rows carry geomBind but
+// an IDENTITY world: the bones are prototype-local, and the instanced vertex shader
+// applies each instance's o2w AFTER skinning. All placements share that block, which
+// is sound because USD instancing requires identical composed contents -- so they
+// necessarily share a skeleton and an animation. Without `gpuSkinning` the static
+// pose at `time` is baked into the prototype's geometry instead.
+//
+// The corollary for anything reading these meshes back: a skinned/morphed prototype's
+// vertices (rest OR posed) are prototype-LOCAL, and mean nothing until they go through
+// instanceXforms. BuildNextPosedSceneBounds learned that the hard way.
 void EmitInstancedProto(const tnext::Stage& stage,
                         tydn::RenderSceneConverter& conv,
                         const tnext::UsdPrim& protoRoot,
