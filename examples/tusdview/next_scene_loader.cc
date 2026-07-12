@@ -2226,9 +2226,26 @@ bool BuildNextPosedSceneBounds(
     const DrawMeshCPU& m = draw.meshes[mi];
     auto pit = posedByMesh.find(static_cast<int>(mi));
     if (pit != posedByMesh.end()) {
-      for (const DrawVertex& v : *pit->second) {
-        const float p[3] = {v.px, v.py, v.pz};
-        grow(p);
+      const size_t ninst = m.instanceCount();
+      if (ninst > 0) {
+        // An instanced prototype's posed vertices are prototype-LOCAL (that is the
+        // whole point of the instanced path: the placement lives in the instance
+        // matrix, not in the vertices). Each placement gets its own box.
+        for (size_t k = 0; k < ninst; ++k) {
+          const float* X = &m.instanceXforms[k * 12];  // 3 rows of (x,y,z,tx)
+          for (const DrawVertex& v : *pit->second) {
+            const float p[3] = {
+                X[0] * v.px + X[1] * v.py + X[2] * v.pz + X[3],
+                X[4] * v.px + X[5] * v.py + X[6] * v.pz + X[7],
+                X[8] * v.px + X[9] * v.py + X[10] * v.pz + X[11]};
+            grow(p);
+          }
+        }
+      } else {
+        for (const DrawVertex& v : *pit->second) {
+          const float p[3] = {v.px, v.py, v.pz};
+          grow(p);
+        }
       }
       continue;
     }
