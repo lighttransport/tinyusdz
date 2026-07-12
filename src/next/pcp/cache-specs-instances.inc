@@ -106,23 +106,52 @@
 
   // Record `spec`'s variant selections into the accumulator (strong-first wins,
   // so a selection authored on a stronger source overrides a weaker one).
+  // Backtick selection values are variable expressions and evaluate against
+  // the recording source's composed expression variables; an expression that
+  // fails (or evaluates to None) records no selection for that set.
   void RecordSelections(const PrimSpec &spec,
-                        std::map<std::string, std::string> *sels) const {
+                        std::map<std::string, std::string> *sels,
+                        const std::shared_ptr<const Value> &expr_vars = nullptr,
+                        std::string *warn = nullptr,
+                        std::string *err = nullptr) {
+    const auto record = [&](const std::string &set, const std::string &sel) {
+      if (!sel.empty() && sel.front() == '`' &&
+          options.expression_variable_policy !=
+              ExpressionVariablePolicy::Disabled) {
+        const Value empty = Value::MakeDictionary();
+        const ExpressionEvaluation expression = EvaluateAssetPathExpression(
+            sel, expr_vars ? *expr_vars : empty);
+        if (expression.is_expression && !expression.success) {
+          AddIssue(ErrorCode::ExpressionVariableError, sel, expression.error,
+                   options.expression_variable_policy ==
+                           ExpressionVariablePolicy::RequireResolved
+                       ? err
+                       : warn);
+          return;
+        }
+        if (expression.is_none) return;  // no opinion
+        if (expression.success && expression.is_expression) {
+          sels->emplace(set, expression.value);
+          return;
+        }
+      }
+      sels->emplace(set, sel);
+    };
     // Per-set `selected` field FIRST: it is the authoritative per-set form (what
     // the crate reader sets for EVERY selected set, and what the Compositor's
     // ApplyVariants reads first). The legacy variantSelection string carries only
     // ONE set, so without this a MULTI-set selection loaded from USDC loses every
     // set after the first. (emplace keeps the first/strongest opinion per set.)
     for (const VariantSetData &vss : spec.meta().variantSets()) {
-      if (!vss.selected.empty()) sels->emplace(vss.name, vss.selected);
+      if (!vss.selected.empty()) record(vss.name, vss.selected);
     }
     if (!spec.meta().variantSelection.empty()) {
       VariantSelection s =
           Compositor::ParseVariantSelection(spec.meta().variantSelection);
-      if (!s.variant_set.empty()) sels->emplace(s.variant_set, s.variant_name);
+      if (!s.variant_set.empty()) record(s.variant_set, s.variant_name);
     }
     for (const auto &sel : spec.meta().variantSelections()) {
-      sels->emplace(sel.first, sel.second);
+      record(sel.first, sel.second);
     }
   }
 

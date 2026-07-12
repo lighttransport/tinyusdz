@@ -369,14 +369,16 @@ from a valid explicit-empty result.
 
 **Normative area:** §9 Asset Resolution.
 
-The resolver supports relative/absolute filesystem paths, anchors, configured search paths, deterministic recursive search, package paths, suffix fallback, custom callbacks, and explicit case-insensitive URI/IRI-style scheme handlers. Unresolved relative identifiers are anchored before cache comparison, malformed package identifiers are rejected, registered scheme identifiers are never filesystem-normalized, and in-memory registration creates stable `usd-anon:` assets that work through normal composition loaders. Composition now evaluates direct and quoted/interpolated asset-path expressions with explicit disabled/evaluate/require-resolved policy; the general expression function language is not implemented.
+The resolver supports relative/absolute filesystem paths, anchors, configured search paths, deterministic recursive search, package paths, suffix fallback, custom callbacks, and explicit case-insensitive URI/IRI-style scheme handlers. Unresolved relative identifiers are anchored before cache comparison, malformed package identifiers are rejected, registered scheme identifiers are never filesystem-normalized, and in-memory registration creates stable `usd-anon:` assets that work through normal composition loaders. Composition evaluates the full SdfVariableExpression function language (`expression-variables.cc`: typed literals — int64/bool/None/lists, `${VAR}` references with recursive evaluation + cycle detection, quoted-string interpolation with escapes, and the `if / and / or / not / eq / neq / lt / leq / gt / geq / contains / at / len / defined` function set, with hard nesting/expansion caps) under the explicit disabled/evaluate/require-resolved policy. Expressions apply at reference/payload arcs, SUBLAYER asset paths (against the stack root layer's `expressionVariables`), and VARIANT SELECTIONS (against the source's composed variables); a `None` result means "no opinion" and skips the arc/sublayer/selection.
 
 Callbacks can emulate some missing schemes, but conformance-sensitive callers need explicit identifier classification and stable resolver semantics, not implicit filesystem handling. Strict compositor, PCP cache, and layer-registry paths now disable suffix fallback per resolver call, so a permissive shared resolver cannot silently rehome an asset during strict loading.
 
-**Remaining fix needed:** define expression-variable substitution policy and
-broaden scheme-specific context objects as demanded. Address the documented
-`lstat`-then-open TOCTOU window where security policy depends on the checked
-path.
+**Remaining fix needed:** broaden scheme-specific context objects as demanded.
+Address the documented `lstat`-then-open TOCTOU window where security policy
+depends on the checked path. Layer-stack identity does not yet incorporate
+expression variables (pxr keys layer stacks by (identifier, expression
+variables)), so a referenced stack whose sublayer expressions depend on
+variables that differ per referencing site shares one cached stack.
 
 ### AOUSD-USDC-001 — Declared 0.12 support is incomplete (P0)
 

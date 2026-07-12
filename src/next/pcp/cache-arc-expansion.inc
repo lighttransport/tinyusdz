@@ -103,6 +103,9 @@
             ExpressionVariablePolicy::RequireResolved) {
           return;
         }
+      } else if (expression.is_expression && expression.is_none) {
+        // The expression evaluated to None: the arc authors no opinion.
+        return;
       } else if (expression.success) {
         evaluated_asset_path = expression.value;
       }
@@ -332,7 +335,8 @@
         // then overlay it onto the accumulated selection context.
         std::map<std::string, std::string> ancestor_selections;
         for (const SpecRef& implied_spec : implied_specs) {
-          RecordSelections(*implied_spec.spec, &ancestor_selections);
+          RecordSelections(*implied_spec.spec, &ancestor_selections,
+                           arc_src.expression_variables, warn, err);
         }
         for (const auto& selection : ancestor_selections) {
           (*sels)[selection.first] = selection.second;
@@ -481,7 +485,9 @@
     // Record this source's variant selections (strong-first wins) so a selection
     // authored on a stronger source applies to a variantSet defined on a weaker
     // one (cross-source selection).
-    for (const SpecRef &sr : specs) RecordSelections(*sr.spec, sels);
+    for (const SpecRef &sr : specs) {
+      RecordSelections(*sr.spec, sels, src.expression_variables, warn, err);
+    }
 
     // Phase 7 (S5): with apply_list_ops, gather each arc field once across the
     // whole site (cross-layer list-op merge: explicit-replace / prepend /
