@@ -187,6 +187,14 @@ TUSDVIEW_RUN_GOLDEN=1 tests/tusdview/run-usd-assets-batch.sh \
 Recorded 2026-07-12 on an RTX 5060 Ti (driver 610.43.02). A different GPU will
 likely need its own baseline; that is why the gate exists.
 
+Refreshed 2026-07-12 for the PointInstancer quaternion fix, and it earned its keep:
+it flagged `full_assets/OpenChessSet` (in BOTH modes, which is what a real geometry
+change looks like), and the render showed why -- every PAWN was missing. The pawns
+are the PointInstancer'd pieces, and the misread orientation flipped them upside
+down THROUGH the board, hiding them underneath. Two `intent-vfx` teapot layouts (a
+field of instanced teapots, ~800 of them) also shifted, within tolerance: their
+per-instance rotations are simply right now. Nothing else in the 280 moved.
+
 ## Dormant by decision (2026-07-11) — do not re-litigate
 
 ### Geometry tangents
