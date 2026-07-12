@@ -1359,7 +1359,8 @@ void App::updateGpuSkinningFrameIfNeeded() {
   // Bone matrices for GPU skinning. Blendshapes are applied in the vertex shader
   // (GPU morph, via updateMorphWeights below), not by CPU-morphing the VBO.
   if (BuildGpuSkinningFrame(loaded_.render, &draw_, animTime_, &skinFrame_,
-                            gui_.showSkeletonOverlay())) {
+                            gui_.showSkeletonOverlay(), &loaded_.stage,
+                            gui_.blendOverrides())) {
     renderer_->uploadSkinningFrame(skinFrame_);
   }
   // GPU blendshape morph: upload only the tiny per-channel coefficient array per
@@ -1391,6 +1392,24 @@ void App::updateNextDeformFrameIfNeeded() {
   // (The bone texture is scene-wide, so it is safe to upload before then -- but
   // keep both on one clock so a partially-streamed frame is never half-posed.)
   if (renderer_->meshCount() != static_cast<int>(draw_.meshes.size())) return;
+
+  // The load-time scene box is the REST box (the loader world-bakes and uploads
+  // rest vertices; the pose only happens downstream), so refresh it for the pose
+  // at this time code -- the ground grid is sized from it, `--mode depth` is
+  // normalized by it, and the initial auto-fit frames on it. Per-MESH boxes are
+  // left alone on purpose: a skinned batch keeps the conservative scene box so a
+  // moving rig cannot cull or LOD itself out of the frame.
+  {
+    float bmin[3], bmax[3];
+    if (BuildNextPosedSceneBounds(nextSession_->GetStage(), draw_, animTime_,
+                                  gui_.blendOverrides(), bmin, bmax)) {
+      for (int k = 0; k < 3; ++k) {
+        draw_.aabbMin[k] = bmin[k];
+        draw_.aabbMax[k] = bmax[k];
+      }
+      draw_.hasBounds = true;
+    }
+  }
 
   // Ray tracing traces the vertex buffers themselves, so the raster shader's
   // deform never reaches it: re-pose the retained rest vertices on the CPU and

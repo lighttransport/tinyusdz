@@ -2184,6 +2184,100 @@ bool BuildNextSkinningFrame(const tnext::Stage& stage, DrawScene* draw,
   return true;
 }
 
+bool BuildNextPosedSceneBounds(
+    const tnext::Stage& stage, const DrawScene& draw, double time,
+    const std::unordered_map<std::string, float>* blendOverride,
+    float outMin[3], float outMax[3]) {
+  // The box is taken from the POSED VERTICES, and from the same deform the ray
+  // tracer uploads -- not from a cheaper conservative bound. It has to be the
+  // tight box: the Tydra/CPU-bake path derives its box from posed vertices too,
+  // and the scene box drives the ground grid, the depth normalization and the
+  // auto-fit, so a looser box here would make the two paths render the same
+  // geometry differently. (A bone-box union -- 8 rest corners through each bone
+  // -- was tried first and is ~10% loose on a 60-degree bend, which was visible.)
+  std::vector<RtSkinnedMeshUpload> posed;
+  if (!BuildNextRtDeformedVertices(stage, draw, time, blendOverride, &posed)) {
+    return false;
+  }
+  std::unordered_map<int, const std::vector<DrawVertex>*> posedByMesh;
+  for (const RtSkinnedMeshUpload& up : posed)
+    posedByMesh[up.meshIndex] = &up.vertices;
+
+  bool has = false;
+  float mn[3] = {0, 0, 0}, mx[3] = {0, 0, 0};
+  auto grow = [&](const float p[3]) {
+    for (int k = 0; k < 3; ++k) {
+      if (!has) { mn[k] = mx[k] = p[k]; continue; }
+      mn[k] = std::min(mn[k], p[k]);
+      mx[k] = std::max(mx[k], p[k]);
+    }
+    has = true;
+  };
+
+  // Fallback for a deformable mesh whose CPU geometry WAS freed (so it has no
+  // posed vertices here): push the 8 corners of its rest box through each bone it
+  // references. A posed vertex is a convex combination of itself under its bones,
+  // so the union of those boxes contains it -- conservative, but it keeps such a
+  // mesh inside the scene box instead of dropping it out of the framing.
+  std::vector<matrix4d> bones;
+  bool bonesReady = false, bonesOk = false;
+
+  for (size_t mi = 0; mi < draw.meshes.size(); ++mi) {
+    const DrawMeshCPU& m = draw.meshes[mi];
+    auto pit = posedByMesh.find(static_cast<int>(mi));
+    if (pit != posedByMesh.end()) {
+      for (const DrawVertex& v : *pit->second) {
+        const float p[3] = {v.px, v.py, v.pz};
+        grow(p);
+      }
+      continue;
+    }
+    if (m.boneLo >= 0 && m.boneHi >= m.boneLo && m.vertices.empty()) {
+      if (!bonesReady) {
+        bonesOk = ComputeNextBoneRows(stage, draw, time, &bones);
+        bonesReady = true;
+      }
+      const float rlo[3] = {m.restAabbMin[0] - m.morphExtent[0],
+                            m.restAabbMin[1] - m.morphExtent[1],
+                            m.restAabbMin[2] - m.morphExtent[2]};
+      const float rhi[3] = {m.restAabbMax[0] + m.morphExtent[0],
+                            m.restAabbMax[1] + m.morphExtent[1],
+                            m.restAabbMax[2] + m.morphExtent[2]};
+      if (bonesOk && rlo[0] <= rhi[0]) {
+        for (int row = m.boneLo; row <= m.boneHi; ++row) {
+          if (static_cast<size_t>(row) >= bones.size()) break;
+          const matrix4d& B = bones[static_cast<size_t>(row)];
+          for (int c = 0; c < 8; ++c) {
+            const double p[3] = {(c & 1) ? rhi[0] : rlo[0],
+                                 (c & 2) ? rhi[1] : rlo[1],
+                                 (c & 4) ? rhi[2] : rlo[2]};
+            float q[3];  // row-vector p*B, as the vertex shader applies it
+            for (int k = 0; k < 3; ++k) {
+              q[k] = static_cast<float>(p[0] * B.m[0][k] + p[1] * B.m[1][k] +
+                                        p[2] * B.m[2][k] + B.m[3][k]);
+            }
+            grow(q);
+          }
+        }
+        continue;
+      }
+    }
+    // Everything else -- static meshes, instanced prototypes -- already carries a
+    // correct world box (morphExtent included).
+    if (m.aabbMax[0] >= m.aabbMin[0] && std::isfinite(m.aabbMin[0]) &&
+        std::isfinite(m.aabbMax[0])) {
+      grow(m.aabbMin);
+      grow(m.aabbMax);
+    }
+  }
+  if (!has) return false;
+  for (int k = 0; k < 3; ++k) {
+    outMin[k] = mn[k];
+    outMax[k] = mx[k];
+  }
+  return true;
+}
+
 void BuildNextMorphWeights(
     const tnext::Stage& stage, const DrawScene& draw, double time,
     const std::unordered_map<std::string, float>* blendOverride,
@@ -3113,19 +3207,34 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     // vertices here are a single pose -- rest for GPU skinning, one sampled time
     // for CPU skinning -- so they do not bound the mesh over the animation, and a
     // tight box would pop it out of view as the rig moves.
+    float lo[3] = {b.dm.vertices[0].px, b.dm.vertices[0].py,
+                   b.dm.vertices[0].pz};
+    float hi[3] = {lo[0], lo[1], lo[2]};
+    for (const DrawVertex& v : b.dm.vertices) {
+      lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
+      lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
+      lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
+    }
+    // The rest box and the bone range are kept even for a skinned batch, whose
+    // aabbMin/Max is the scene box: BuildNextPosedSceneBounds re-derives the
+    // scene's box at a new time code from these.
+    for (int k = 0; k < 3; ++k) {
+      b.dm.restAabbMin[k] = lo[k];
+      b.dm.restAabbMax[k] = hi[k];
+    }
+    if (!b.dm.jointIdx.empty()) {
+      uint32_t jlo = std::numeric_limits<uint32_t>::max(), jhi = 0;
+      for (uint32_t j : b.dm.jointIdx) { jlo = std::min(jlo, j); jhi = std::max(jhi, j); }
+      if (jlo <= jhi) {
+        b.dm.boneLo = static_cast<int>(jlo);
+        b.dm.boneHi = static_cast<int>(jhi);
+      }
+    }
     if ((b.anySkin || b.anyCpuSkin) && bounds.has) {
       for (int k = 0; k < 3; ++k) {
         b.dm.aabbMin[k] = bounds.mn[k]; b.dm.aabbMax[k] = bounds.mx[k];
       }
     } else {
-      float lo[3] = {b.dm.vertices[0].px, b.dm.vertices[0].py,
-                     b.dm.vertices[0].pz};
-      float hi[3] = {lo[0], lo[1], lo[2]};
-      for (const DrawVertex& v : b.dm.vertices) {
-        lo[0] = std::min(lo[0], v.px); hi[0] = std::max(hi[0], v.px);
-        lo[1] = std::min(lo[1], v.py); hi[1] = std::max(hi[1], v.py);
-        lo[2] = std::min(lo[2], v.pz); hi[2] = std::max(hi[2], v.pz);
-      }
       for (int k = 0; k < 3; ++k) {
         b.dm.aabbMin[k] = lo[k] - b.dm.morphExtent[k];
         b.dm.aabbMax[k] = hi[k] + b.dm.morphExtent[k];
@@ -3536,7 +3645,11 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
     }
 
-    // World-space AABB from the 8 local-bbox corners (scene bounds for framing).
+    // Provisional scene bounds, from the 8 local-bbox corners pushed through the
+    // world matrix. Loose once the mesh is rotated (the axis-aligned hull of a
+    // rotated box grows), and it is REPLACED below by the union of the batches'
+    // own vertex boxes -- but a skinned batch reads `bounds` inside flushBatch (it
+    // deliberately carries the whole-scene box), so it has to exist by then.
     const tydn::Float3& lo = m.bbox_min;
     const tydn::Float3& hi = m.bbox_max;
     for (int corner = 0; corner < 8; ++corner) {
@@ -3565,6 +3678,37 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
          deferredProxyCount);
   }
   for (auto& kv : open) flushBatch(kv.second);
+
+  // Re-derive the scene box from the batches' own (tight, vertex-derived) boxes,
+  // discarding the provisional corner-transformed one. The corner box is a strict
+  // superset under rotation, and the scene box is not cosmetic: the ground grid is
+  // sized from it, `--mode depth` is normalized by it, and the auto-fit frames on
+  // it -- so a loose box here made the next loader draw the same geometry
+  // differently from the Tydra path, which takes its box from vertices.
+  // restAabb is the batch's tight box in every skinning mode (aabbMin/Max is not:
+  // a skinned batch keeps the conservative scene box there on purpose); meshes
+  // with no restAabb -- instanced prototypes -- carry a correct world box in aabb.
+  {
+    Bounds tight;
+    for (const DrawMeshCPU& dm : draw->meshes) {
+      const bool haveRest = dm.restAabbMax[0] >= dm.restAabbMin[0] &&
+                            (dm.restAabbMax[0] != dm.restAabbMin[0] ||
+                             dm.restAabbMax[1] != dm.restAabbMin[1] ||
+                             dm.restAabbMax[2] != dm.restAabbMin[2]);
+      const float* blo = haveRest ? dm.restAabbMin : dm.aabbMin;
+      const float* bhi = haveRest ? dm.restAabbMax : dm.aabbMax;
+      if (!(bhi[0] >= blo[0]) || !std::isfinite(blo[0]) || !std::isfinite(bhi[0]))
+        continue;
+      const float pad[3] = {haveRest ? dm.morphExtent[0] : 0.0f,
+                            haveRest ? dm.morphExtent[1] : 0.0f,
+                            haveRest ? dm.morphExtent[2] : 0.0f};
+      const float p0[3] = {blo[0] - pad[0], blo[1] - pad[1], blo[2] - pad[2]};
+      const float p1[3] = {bhi[0] + pad[0], bhi[1] + pad[1], bhi[2] + pad[2]};
+      tight.add(p0);
+      tight.add(p1);
+    }
+    if (tight.has) bounds = tight;
+  }
 
   // UsdVol volumes (OpenVDB): emit DrawVolumeCPU + extend bounds.
   BuildNextVolumes(stage, path, time, draw, &bounds);

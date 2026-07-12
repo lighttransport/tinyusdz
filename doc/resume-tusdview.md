@@ -117,9 +117,37 @@ It now takes the box from the vertices, like everything else does.
 
 Legacy raster and the CPU bake are now BYTE-IDENTICAL (0.000). Legacy RT still
 differs by 0.377 — but `--next` RT differs from `--next` raster by 0.401, so that is
-the inherent RT-vs-raster edge difference, not a deform bug. The two LOADERS also
-agree on the posed mesh (0.23 inside the silhouette); what still differs between them
-outside it is their scene bounds, which is cosmetic (grid extent) and not chased.
+the inherent RT-vs-raster edge difference, not a deform bug.
+
+### The bounds, part 2: the two LOADERS did not agree either
+
+Also closed, and it was three separate holes in the same invariant — *the scene box
+is the box of the geometry you are actually drawing*. It is not cosmetic: the ground
+grid is sized from it, `--mode depth` is normalized by it, and the auto-fit frames
+on it, so any of these made two paths render identical geometry differently.
+
+1. `next` built the SCENE box from the 8 corners of each mesh's local bbox pushed
+   through its world matrix — the same loose-under-rotation box `PlaceDrawMesh` had
+   (its per-BATCH boxes were already tight, from the vertices). It now re-derives
+   the scene box from the batches' own vertex boxes after the batches are flushed.
+2. `next` never refreshed the box after the deform: the loader uploads REST
+   vertices and the pose happens in the shader, so an animated `--time` load framed,
+   gridded and depth-normalized against a pose it was not showing.
+   `BuildNextPosedSceneBounds` (called from `updateNextDeformFrameIfNeeded`) now
+   re-derives it from the POSED vertices — the same ones the RT path uploads, so
+   raster and RT cannot drift. Per-MESH boxes are deliberately left alone: a skinned
+   batch keeps the conservative whole-scene box so a moving rig cannot cull or LOD
+   itself out of the frame.
+3. The LEGACY raster bounds pass (`BuildGpuSkinningFrame`) re-posed only SKINNED
+   meshes, so a blendshaped mesh kept its rest box. It now morphs a scratch copy
+   first — from the half-precision GPU channels, since `dm.morphs` is freed once
+   those are built.
+
+On `deform-skin-xform` (rotated + non-uniformly scaled SkelRoot) at t=20, through a
+fixed camera, legacy vs next full-frame mean depth diff: **1.259 → 0.028** (mesh IoU
+0.963 → 0.998). Asserted by `check-deform-parity.py`, which now also compares the
+two LOADERS (`MAX_LOADER_DIFF`) on every deform fixture, not just next against its
+own CPU bake.
 
 ### 4. usd-assets regression harness — DONE, but the baseline is per-machine
 
