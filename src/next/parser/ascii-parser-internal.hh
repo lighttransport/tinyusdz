@@ -65,6 +65,7 @@ private:
   // prim-metadata arcs and variant-option arcs. Returns false if no arc token.
   bool ReadArcRef(std::string* out);
   bool ParseNamespacedName(std::string* out, const char* what);
+  bool ParseOrderList(std::vector<std::string>* out);
   bool SkipBalancedBlock(TokenType open, TokenType close, size_t depth = 0);
   bool SkipValueLike();
   void SkipPropertyMetadata();

@@ -53,3 +53,36 @@ tc_result tc_bc3_compress_rgba8(const uint8_t *rgba, uint32_t width,
     }
     return TC_SUCCESS;
 }
+
+/* --- decode ------------------------------------------------------------- */
+
+tc_result tc_bc3_decompress_rgba8(const uint8_t *bc3, uint32_t width,
+                                  uint32_t height, size_t stride,
+                                  uint8_t *out_rgba, size_t out_size) {
+    uint32_t bxc, bx, by, xx, yy;
+    if (!bc3 || !out_rgba || !width || !height) return TC_ERROR_INVALID_ARGUMENT;
+    if (stride < (size_t)width * 4u) return TC_ERROR_INVALID_ARGUMENT;
+    if (out_size < (size_t)(height - 1u) * stride + (size_t)width * 4u)
+        return TC_ERROR_INVALID_ARGUMENT;
+    bxc = (width + 3u) / 4u;
+    for (by = 0; by < height; by += 4u)
+        for (bx = 0; bx < width; bx += 4u) {
+            uint8_t px[16][4], alpha[16];
+            /* DXT5 block: 8-byte BC4 alpha, then the 8-byte colour block (which
+             * is always 4-colour in BC3 -- hence dxt1 = 0). */
+            size_t bi = ((size_t)(by / 4u) * bxc + bx / 4u) * 16u;
+            tc_decode_bc4_block(bc3 + bi, alpha);
+            tc_decode_bc1_color_block(bc3 + bi + 8u, 0, px);
+            for (yy = 0; yy < 4u && by + yy < height; ++yy)
+                for (xx = 0; xx < 4u && bx + xx < width; ++xx) {
+                    uint8_t *d = out_rgba + (size_t)(by + yy) * stride +
+                                 (size_t)(bx + xx) * 4u;
+                    uint32_t t = yy * 4u + xx;
+                    d[0] = px[t][0];
+                    d[1] = px[t][1];
+                    d[2] = px[t][2];
+                    d[3] = alpha[t];
+                }
+        }
+    return TC_SUCCESS;
+}

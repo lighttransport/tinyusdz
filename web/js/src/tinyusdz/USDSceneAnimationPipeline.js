@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import {
   convertUSDSkeletalAnimationsToThreeJS,
-  convertUSDNodeAnimationsToThreeJS
+  convertUSDNodeAnimationsToThreeJS,
+  convertUSDMorphAnimationsToThreeJS
 } from './USDAnimationConverter.js';
 
 /**
@@ -37,6 +38,16 @@ export function extractUSDSceneAnimations(usdScene, options = {}) {
     logger.log(
       `Extracted ${usdNodeAnimations.length} node animation clip(s) for scene graph xformOps`
     );
+  }
+
+  // Morph-target (blendShapeWeights) clips join the node-animation set so
+  // they play alongside skeletal clips in every demo's playback path.
+  if (options.threeRoot) {
+    const morphAnimations = convertUSDMorphAnimationsToThreeJS(usdScene, options.threeRoot);
+    if (morphAnimations.length > 0) {
+      logger.log(`Extracted ${morphAnimations.length} morph (blendshape) animation clip(s)`);
+      usdNodeAnimations.push(...morphAnimations);
+    }
   }
 
   const hasAnyAnimation =

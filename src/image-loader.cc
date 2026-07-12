@@ -1076,10 +1076,46 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
   }
   bool ok = false;
   if (kimg.is_hdr) {
-    if (err) {
-      (*err) +=
-          "KTX2: HDR block formats (BC6H / ASTC-HDR) are not CPU-decoded to "
-          "RGBA8; upload the blocks directly or keep them compressed.\n";
+    // HDR block formats (BC6H / ASTC-HDR) have no meaningful RGBA8 form: decode
+    // them to float RGBA, mirroring the EXR/HDR decoders in this file.
+    const uint32_t w = kimg.levels[0].width;
+    const uint32_t h = kimg.levels[0].height;
+    size_t nfloats = 0, nbytes = 0;
+    if (!safe::mul3(size_t(w), size_t(h), size_t(4), &nfloats) ||
+        !safe::mul(nfloats, sizeof(float), &nbytes)) {
+      if (err) {
+        (*err) += "KTX2: decoded HDR size overflows size_t for: " + uri + "\n";
+      }
+      tp_ktx2_image_free(&kalloc, &kimg);
+      return false;
+    }
+    if (nbytes > kMaxDecodedImageBytes) {
+      if (err) {
+        (*err) += "KTX2: decoded HDR image exceeds the maximum allowed size "
+                  "for: " + uri + "\n";
+      }
+      tp_ktx2_image_free(&kalloc, &kimg);
+      return false;
+    }
+    image->data.resize(nbytes);
+    // NOTE: out_size is in *bytes* (as on the RGBA8 path), not float count.
+    r = tp_ktx2_decode_level_rgbaf(
+        &kimg, 0, reinterpret_cast<float *>(image->data.data()), nbytes);
+    if (!TP_OK(r)) {
+      image->data.clear();
+      if (err) {
+        (*err) += "KTX2: failed to decode HDR level 0: " +
+                  std::string(tp_result_string(r)) + "\n";
+      }
+    } else {
+      image->uri = uri;
+      image->width = int(w);
+      image->height = int(h);
+      image->channels = 4;
+      image->bpp = 32;
+      image->format = Image::PixelFormat::Float;
+      image->colorspace = "";  // HDR block formats are linear
+      ok = true;
     }
   } else {
     const uint32_t w = kimg.levels[0].width;
@@ -1109,10 +1145,8 @@ static bool DecodeImageKTX2(const uint8_t *addr, size_t sz,
     if (!TP_OK(r)) {
       image->data.clear();
       if (err) {
-        (*err) +=
-            "KTX2: level 0 decode/transcode is unsupported for this format "
-            "(only uni / BC7 / ASTC LDR are CPU-decodable): " +
-            std::string(tp_result_string(r)) + "\n";
+        (*err) += "KTX2: failed to decode level 0: " +
+                  std::string(tp_result_string(r)) + "\n";
       }
     } else {
       image->uri = uri;

@@ -1,0 +1,13 @@
+#usda 1.0
+# XDIFF: per-arc customData is skipped by design (arc preserved)
+def Xform "A" (
+    references = @./b.usda@</B> (
+        customData = {
+            int priority = 7
+            string note = "hello"
+        }
+    )
+)
+{
+    int after = 5
+}

@@ -366,8 +366,12 @@
 					.replace(/'/g, '&#39;');
 			}
 
-			// Function to update animation list display
-			window.updateAnimationList = function(animations, animationInfos) {
+			// Function to update animation list display.
+			// Clip durations are in USD timeCodes (frames); timeCodesPerSecond
+			// converts them for the human-readable seconds suffix.
+			window.updateAnimationList = function(animations, animationInfos, timeCodesPerSecond) {
+				const tps = (Number.isFinite(timeCodesPerSecond) && timeCodesPerSecond > 0)
+					? timeCodesPerSecond : 24;
 				const animInfo = document.getElementById('animation-info');
 				const animList = document.getElementById('animationList');
 
@@ -389,7 +393,7 @@
 						}
 
 						const trackCount = anim.tracks ? anim.tracks.length : 0;
-						item.innerHTML = `<strong>${index}:</strong> ${escapeHtml(anim.name || 'Unnamed')} - ${anim.duration.toFixed(2)}s, ${trackCount} tracks${jointInfo}`;
+						item.innerHTML = `<strong>${index}:</strong> ${escapeHtml(anim.name || 'Unnamed')} - ${anim.duration.toFixed(0)} frames (${(anim.duration / tps).toFixed(2)}s), ${trackCount} tracks${jointInfo}`;
 						animList.appendChild(item);
 					});
 				} else {

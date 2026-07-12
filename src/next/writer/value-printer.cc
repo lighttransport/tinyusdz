@@ -445,7 +445,8 @@ bool PrintArrayToStream(StreamWriter& os, const Value& value,
                       [&](int32_t v) { out.append_int(v); });
       return true;
     }
-    case TypeId::UInt: {
+    case TypeId::UInt:
+    case TypeId::UChar: {
       ArrayScratch<uint32_t> scratch;
       ArrayView<uint32_t> view;
       if (!GetUIntArrayView(value, &scratch, &view)) return false;
@@ -654,7 +655,8 @@ void PrintValueInto(std::string& out, const Value& value,
         }
         break;
       }
-      case TypeId::UInt: {
+      case TypeId::UInt:
+      case TypeId::UChar: {
         if (const auto* a = value.as_uint_array()) {
           size_t limit = (maxN > 0) ? std::min(maxN, a->size()) : a->size();
           ReserveArrayHeadroom(out, limit * 8);
@@ -789,6 +791,12 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
+    case TypeId::UChar: {
+      const uint8_t* v = value.as_uchar();
+      if (v) AppendUInt(out, *v); else out += "None";
+      return;
+    }
+
     case TypeId::Int64: {
       const int64_t* v = value.as_int64();
       if (v) AppendInt(out, *v); else out += "None";
@@ -807,13 +815,15 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
-    case TypeId::Double: {
+    case TypeId::Double:
+    case TypeId::TimeCode: {  // scalar timecode: same 8-byte double storage
       const double* v = value.as_double();
       if (v) AppendDouble(out, *v); else out += "None";
       return;
     }
 
-    case TypeId::String: {
+    case TypeId::String:
+    case TypeId::PathExpression: {  // SdfPathExpression prints as a string
       const std::string* v = value.as_string();
       out += v ? EscapeString(*v) : "None";
       return;
@@ -1010,7 +1020,8 @@ void PrintValueInto(std::string& out, const Value& value,
       return;
     }
 
-    case TypeId::Matrix4d: {
+    case TypeId::Matrix4d:
+    case TypeId::Frame4d: {  // matrix4d role
       const double* v = value.as_matrix4d();
       if (!v) { out += "None"; return; }
       out += "((";
@@ -1117,6 +1128,7 @@ bool IsChunkableType(const Value& value, const PrintOptions& opts) {
   switch (type_id) {
     case TypeId::Int:
     case TypeId::UInt:
+    case TypeId::UChar:
     case TypeId::Int64:
     case TypeId::UInt64:
       return true;
@@ -1149,6 +1161,7 @@ bool IsChunkableArray(const Value& value, const PrintOptions& opts) {
   switch (type_id) {
     case TypeId::Int:
     case TypeId::UInt:
+    case TypeId::UChar:
     case TypeId::Int64:
     case TypeId::UInt64:
       return true;

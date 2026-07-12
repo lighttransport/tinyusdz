@@ -38,3 +38,7 @@ void comp_relocates_simple_rename_test(void);
 void comp_relocates_root_rename_test(void);
 void comp_relocates_cross_parent_test(void);
 void comp_relocates_path_remap_test(void);
+void comp_append_reference_local_wins_test(void);
+void comp_variant_local_wins_test(void);
+void comp_reference_keeps_local_children_test(void);
+void comp_timesamples_time_transform_test(void);

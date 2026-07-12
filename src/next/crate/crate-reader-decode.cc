@@ -128,9 +128,13 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   // reconstruct the authored list-op edits.
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
-  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
-                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
-  const bool mark = with_markers && !(bits & kHasExplicit);
+  // 0x01 is pxr's SEMANTIC explicit flag (set with no sublist for
+  // explicit-empty); 0x02 flags the explicit-items sublist.
+  const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
+                kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
+                kHasAppended = 0x40;
+  const bool mark =
+      with_markers && !(bits & kIsExplicit) && !(bits & kHasExplicit);
   auto marked_run = [&](const char* marker) -> bool {
     if (mark) out.push_back(marker);
     return read_run();
@@ -141,6 +145,11 @@ bool CrateReader::Impl::DecodePathTargets(ValueRep rep,
   if ((bits & kHasAppended) && !marked_run("\x01" "A")) return false;
   if ((bits & kHasDeleted) && !(mark ? marked_run("\x01" "D") : read_run())) return false;
   if ((bits & kHasOrdered) && !(mark ? marked_run("\x01" "O") : read_run())) return false;
+  // Explicit-clear (`inherits = None` / `rel r = None`): surface as the E
+  // marker so arc/relationship consumers record an authored empty edit.
+  if (with_markers && (bits & kIsExplicit) && out.empty()) {
+    out.push_back("\x01" "E");
+  }
   return true;
 }
 
@@ -170,14 +179,29 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
       }
     }
     if (!is_payload) {
-      // customData dict: u64 count, then per-entry recursive offsets. UE/pxr
-      // references rarely author it; decoding requires recursive value reads,
-      // so bail (drop the whole listop with a warning) when non-empty.
+      // customData dict: pxr WriteMap layout — u64 count, then per entry
+      // [u32 key idx][i64 forward offset to the 8-byte ValueRep][nested
+      // data][ValueRep]. The dict has no slot in the canonical arc string,
+      // so walk-skip it structurally (dropping the whole ARC because it
+      // carries customData loses the reference itself).
       uint64_t dict_count = 0;
       if (!reader_->read_u64(dict_count)) return false;
+      if (dict_count > options_.max_array_elements) return false;
       if (dict_count != 0) {
-        AddWarning("Reference customData is not supported; arc dropped");
-        return false;
+        AddWarning("Reference customData is ignored");
+        for (uint64_t d = 0; d < dict_count; ++d) {
+          uint32_t key_idx = 0;
+          if (!reader_->read_u32(key_idx)) return false;
+          const size_t val_start = reader_->position();
+          uint64_t rec_off_raw = 0;
+          if (!reader_->read_u64(rec_off_raw)) return false;
+          const size_t rep_pos = static_cast<size_t>(
+              static_cast<int64_t>(val_start) +
+              static_cast<int64_t>(rec_off_raw));
+          // Skip past this entry's ValueRep; the next entry (or the rest of
+          // the reference item) begins right after it.
+          if (!reader_->seek(rep_pos + 8)) return false;
+        }
       }
     }
     if (!keep) return true;
@@ -212,9 +236,14 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
   // reconstruct the authored list-op edits.
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
-  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
-                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
-  const bool mark = !(bits & kHasExplicit);
+  // pxr ListOpHeader: 0x01 is the SEMANTIC explicit flag; 0x02 says an
+  // explicit-items sublist is present. Explicit-empty (`references = []` /
+  // `= None`) authors 0x01 alone — keying "non-explicit" off 0x02 read that
+  // as a no-opinion listop and lost the explicit-clear.
+  const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
+                kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
+                kHasAppended = 0x40;
+  const bool mark = !(bits & kIsExplicit) && !(bits & kHasExplicit);
   auto marked_run = [&](const char* marker, bool keep) -> bool {
     if (mark && keep) out.push_back(marker);
     return read_run(keep);
@@ -225,6 +254,12 @@ bool CrateReader::Impl::DecodeReferenceListOp(ValueRep rep, bool is_payload,
   if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
   if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;
   if ((bits & kHasOrdered) && !marked_run("\x01" "O", mark)) return false;
+  // Explicit-clear: IsExplicit with no items — either header 0x01 alone
+  // (pxr) or 0x03 with a zero-item run (next's own writer). Emit the E
+  // marker so BuildStage records an authored explicit-empty edit.
+  if ((bits & kIsExplicit) && out.empty()) {
+    out.push_back("\x01" "E");
+  }
   return true;
 }
 
@@ -280,12 +315,14 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
 
   // ListOpHeader bits / read order match DecodeReferenceListOp. Non-explicit
   // sublists are marker-delimited ("\x01" "P"/"A"/"D"/"O") so BuildStage can
-  // recover the authored qualifier (e.g. `prepend apiSchemas`).
+  // recover the authored qualifier (e.g. `prepend apiSchemas` or
+  // `delete apiSchemas` — deleted/ordered items used to be dropped).
   uint8_t bits = 0;
   if (!reader_->read_u8(bits)) return false;
-  const uint8_t kHasExplicit = 0x02, kHasAdded = 0x04, kHasDeleted = 0x08,
-                kHasOrdered = 0x10, kHasPrepended = 0x20, kHasAppended = 0x40;
-  const bool mark = !(bits & kHasExplicit);
+  const uint8_t kIsExplicit = 0x01, kHasExplicit = 0x02, kHasAdded = 0x04,
+                kHasDeleted = 0x08, kHasOrdered = 0x10, kHasPrepended = 0x20,
+                kHasAppended = 0x40;
+  const bool mark = !(bits & kIsExplicit) && !(bits & kHasExplicit);
   auto marked_run = [&](const char* marker, bool keep) -> bool {
     if (mark && keep) out.push_back(marker);
     return read_run(keep);
@@ -294,8 +331,11 @@ bool CrateReader::Impl::DecodeTokenListOp(ValueRep rep,
   if ((bits & kHasAdded) && !marked_run("\x01" "A", true)) return false;
   if ((bits & kHasPrepended) && !marked_run("\x01" "P", true)) return false;
   if ((bits & kHasAppended) && !marked_run("\x01" "A", true)) return false;
-  if ((bits & kHasDeleted) && !read_run(false)) return false;
-  if ((bits & kHasOrdered) && !read_run(false)) return false;
+  if ((bits & kHasDeleted) && !marked_run("\x01" "D", mark)) return false;
+  if ((bits & kHasOrdered) && !marked_run("\x01" "O", mark)) return false;
+  if ((bits & kIsExplicit) && out.empty()) {
+    out.push_back("\x01" "E");  // explicit-clear (0x01 alone or empty run)
+  }
   return true;
 }
 
@@ -431,6 +471,10 @@ bool CrateReader::Impl::ReportProgress(const char* phase, size_t current,
 }
 
 void CrateReader::Impl::AddWarning(const std::string& msg) {
+  if (options_.strict_aousd_conformance) {
+    AddError("Strict AOUSD mode: " + msg);
+    return;
+  }
   result_.warnings.push_back(msg);
 }
 

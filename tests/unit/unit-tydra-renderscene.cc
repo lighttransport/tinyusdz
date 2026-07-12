@@ -970,3 +970,129 @@ void tydra_renderscene_streaming_cancel_test(void) {
   TEST_MSG("expected exactly 1 mesh delivered before cancel, got %zu",
            meshes_seen);
 }
+
+// ---------------------------------------------------------------------------
+// Legacy-audit regressions: holeIndices skipped during triangulation and
+// leftHanded meshes get flipped computed normals.
+// ---------------------------------------------------------------------------
+void tydra_renderscene_hole_indices_test(void) {
+  const char *usda = R"(#usda 1.0
+def Xform "Root" {
+  def Mesh "TwoQuads" {
+    point3f[] points = [(0,0,0),(1,0,0),(1,1,0),(0,1,0),(2,0,0),(2,1,0)]
+    int[] faceVertexCounts = [4, 4]
+    int[] faceVertexIndices = [0,1,2,3, 1,4,5,2]
+    int[] holeIndices = [0]
+  }
+}
+)";
+
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "test.usda", &stage, &warn, &err);
+  TEST_CHECK(ok);
+  TEST_MSG("LoadUSDAFromMemory failed: %s", err.c_str());
+
+  tydra::RenderSceneConverterEnv env(stage);
+  env.mesh_config.triangulate = true;
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+
+  ok = converter.ConvertToRenderScene(env, &scene);
+  TEST_CHECK(ok);
+  TEST_MSG("ConvertToRenderScene failed: %s", converter.GetError().c_str());
+
+  TEST_CHECK(scene.meshes.size() == 1);
+  TEST_MSG("Expected 1 mesh, got %zu", scene.meshes.size());
+
+  const tydra::RenderMesh &rmesh = scene.meshes[0];
+
+  // 2 quads = 4 triangles, but face 0 is a hole => only 2 triangles.
+  TEST_CHECK(rmesh.triangulatedFaceVertexCounts.size() == 2);
+  TEST_MSG("Hole face must be removed: expected 2 triangles, got %zu",
+           rmesh.triangulatedFaceVertexCounts.size());
+
+  // All triangulated indices must reference the non-hole face's vertices
+  // {1, 4, 5, 2} only.
+  for (size_t i = 0; i < rmesh.triangulatedFaceVertexIndices.size(); i++) {
+    uint32_t idx = rmesh.triangulatedFaceVertexIndices[i];
+    bool from_face1 = (idx == 1) || (idx == 4) || (idx == 5) || (idx == 2);
+    TEST_CHECK(from_face1);
+    TEST_MSG("triangulated index %u does not belong to the non-hole face",
+             idx);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// i. leftHanded orientation -> computed normals must be flipped
+// ---------------------------------------------------------------------------
+static bool GetComputedNormalZ(const char *usda, float *out_z) {
+  Stage stage;
+  std::string warn, err;
+  bool ok = LoadUSDAFromMemory(
+      reinterpret_cast<const uint8_t *>(usda), std::strlen(usda),
+      "test.usda", &stage, &warn, &err);
+  if (!ok) {
+    return false;
+  }
+
+  tydra::RenderSceneConverterEnv env(stage);
+  env.mesh_config.triangulate = true;
+  env.mesh_config.compute_normals = true;
+  tydra::RenderScene scene;
+  tydra::RenderSceneConverter converter;
+
+  ok = converter.ConvertToRenderScene(env, &scene);
+  if (!ok || scene.meshes.size() != 1) {
+    return false;
+  }
+
+  const tydra::RenderMesh &rmesh = scene.meshes[0];
+  const std::vector<uint8_t> &data = rmesh.normals.get_data();
+  if (data.size() < 3 * sizeof(float)) {
+    return false;
+  }
+
+  const float *fp = reinterpret_cast<const float *>(data.data());
+  (*out_z) = fp[2];  // z component of the first normal
+  return true;
+}
+
+void tydra_renderscene_lefthanded_normals_test(void) {
+  // CCW triangle in the XY plane. Geometric(CCW) normal is +Z.
+  const char *usda_right = R"(#usda 1.0
+def Mesh "Tri" {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0,1,2]
+  uniform token orientation = "rightHanded"
+}
+)";
+
+  // Same index order, but leftHanded orientation: faces wind clockwise,
+  // so the geometric normal must be -Z.
+  const char *usda_left = R"(#usda 1.0
+def Mesh "Tri" {
+  point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+  int[] faceVertexCounts = [3]
+  int[] faceVertexIndices = [0,1,2]
+  uniform token orientation = "leftHanded"
+}
+)";
+
+  float rz{0.0f};
+  bool ok = GetComputedNormalZ(usda_right, &rz);
+  TEST_CHECK(ok);
+  TEST_MSG("Failed to compute normals for rightHanded mesh");
+  TEST_CHECK(rz > 0.5f);
+  TEST_MSG("rightHanded mesh: expected +Z normal, got z = %f", double(rz));
+
+  float lz{0.0f};
+  ok = GetComputedNormalZ(usda_left, &lz);
+  TEST_CHECK(ok);
+  TEST_MSG("Failed to compute normals for leftHanded mesh");
+  TEST_CHECK(lz < -0.5f);
+  TEST_MSG("leftHanded mesh: expected -Z normal, got z = %f", double(lz));
+}

@@ -1017,6 +1017,34 @@ struct TimeSamples {
     _samples_ready.store(false);
   }
 
+ public:
+  /// Apply a time transform to all sample times: t_new = t_old * scale + offset.
+  /// Used for LayerOffset composition (AOUSD Core Spec 10.3.1).
+  /// Works for both unified binary storage(_times) and generic storage(_samples).
+  void apply_time_transform(double scale, double offset) {
+    if ((offset == 0.0) && (scale == 1.0)) {
+      return;  // Identity
+    }
+
+    if (!_times.empty()) {
+      for (auto &t : _times) {
+        t = t * scale + offset;
+      }
+      // _samples may hold a reconstructed cache of _times. Drop it so it gets
+      // rebuilt with the transformed times.
+      invalidate_reconstructed_samples_cache();
+    } else {
+      for (auto &s : _samples) {
+        s.t = s.t * scale + offset;
+      }
+    }
+
+    // Negative scale reverses the ordering; mark dirty to force re-sort.
+    _dirty = true;
+  }
+
+ private:
+
   /// Find index for time value in _times vector using epsilon comparison
   /// @param t Time value to search for
   /// @return Index if found, or size_t(-1) if not found

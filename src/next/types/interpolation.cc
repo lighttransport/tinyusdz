@@ -152,27 +152,75 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       return Value();
     }
 
-    // Handle float arrays
-    if (type == TypeId::Float || type == TypeId::Float3 || type == TypeId::Point3f ||
-        type == TypeId::Vector3f || type == TypeId::Normal3f || type == TypeId::Color3f) {
+    const size_t comps = GetComponentCount(type);
+
+    // Quaternion arrays: per-element slerp. Elementwise lerp is wrong for
+    // rotations between keys (SkelAnimation `rotations` is quatf[]); quath
+    // arrays materialize into the float buffer like the other half types.
+    if (type == TypeId::Quatf || type == TypeId::Quath) {
       const std::vector<float>* arr_a = a.as_float_array();
       const std::vector<float>* arr_b = b.as_float_array();
-      if (arr_a && arr_b && arr_a->size() == arr_b->size()) {
+      if (arr_a && arr_b && arr_a->size() == arr_b->size() &&
+          (arr_a->size() % 4) == 0) {
         std::vector<float> result(arr_a->size());
-        LerpFloatN(result.data(), arr_a->data(), arr_b->data(), tf, arr_a->size());
-        return Value::MakeFloatArray(std::move(result));
+        for (size_t i = 0; i < result.size(); i += 4) {
+          SlerpQuatf(result.data() + i, arr_a->data() + i, arr_b->data() + i,
+                     tf);
+        }
+        return Value::MakeFloatCompArray(std::move(result), type, 4);
       }
+      return Value();
+    }
+    if (type == TypeId::Quatd) {
+      const std::vector<double>* arr_a = a.as_double_array();
+      const std::vector<double>* arr_b = b.as_double_array();
+      if (arr_a && arr_b && arr_a->size() == arr_b->size() &&
+          (arr_a->size() % 4) == 0) {
+        std::vector<double> result(arr_a->size());
+        for (size_t i = 0; i < result.size(); i += 4) {
+          SlerpQuatd(result.data() + i, arr_a->data() + i, arr_b->data() + i,
+                     t);
+        }
+        return Value::MakeDoubleCompArray(std::move(result), type, 4);
+      }
+      return Value();
     }
 
-    // Handle int arrays - use held interpolation (can't lerp integers meaningfully)
-    if (type == TypeId::Int) {
-      const std::vector<int32_t>* arr_a = a.as_int_array();
-      if (arr_a) {
-        return Value::MakeIntArray(*arr_a);
+    // Any float-backed array (float/half scalars, vectors, matrices — half
+    // element types materialize into the float buffer): lerp all lanes.
+    if (const std::vector<float>* arr_a = a.as_float_array()) {
+      const std::vector<float>* arr_b = b.as_float_array();
+      if (arr_b && arr_a->size() == arr_b->size() && comps > 0) {
+        std::vector<float> result(arr_a->size());
+        LerpFloatN(result.data(), arr_a->data(), arr_b->data(), tf,
+                   arr_a->size());
+        if (type == TypeId::Float) {
+          return Value::MakeFloatArray(std::move(result));
+        }
+        return Value::MakeFloatCompArray(std::move(result), type,
+                                         static_cast<uint32_t>(comps));
       }
+      return Value();
     }
 
-    return Value();
+    // Double-backed arrays.
+    if (const std::vector<double>* arr_a = a.as_double_array()) {
+      const std::vector<double>* arr_b = b.as_double_array();
+      if (arr_b && arr_a->size() == arr_b->size() && comps > 0) {
+        std::vector<double> result(arr_a->size());
+        LerpDoubleN(result.data(), arr_a->data(), arr_b->data(), t,
+                    arr_a->size());
+        if (type == TypeId::Double) {
+          return Value::MakeDoubleArray(std::move(result));
+        }
+        return Value::MakeDoubleCompArray(std::move(result), type,
+                                          static_cast<uint32_t>(comps));
+      }
+      return Value();
+    }
+
+    // Non-interpolatable arrays (int/uint/bool/string-like): held.
+    return Value(a);
   }
 
   // Handle scalar/vector types
@@ -192,6 +240,16 @@ Value TimeInterpolator::InterpolateValues(const Value& a, const Value& b, double
       const double* vb = b.as_double();
       if (va && vb) {
         return Value(LerpDouble(*va, *vb, t));
+      }
+      break;
+    }
+
+    case TypeId::TimeCode: {  // same 8-byte double storage; keep the type
+      const double* va = a.as_double();
+      const double* vb = b.as_double();
+      if (va && vb) {
+        const double r = LerpDouble(*va, *vb, t);
+        return Value::MakeFromRaw(TypeId::TimeCode, &r);
       }
       break;
     }

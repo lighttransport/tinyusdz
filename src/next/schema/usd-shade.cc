@@ -114,9 +114,8 @@ std::string ParentPathOf(const std::string& path) {
   return path.substr(0, slash);
 }
 
-// Does this prim's winning binding declare `bindMaterialAs =
-// "strongerThanDescendants"`? (The default is "weakerThanDescendants", i.e. a
-// descendant binding overrides an ancestor's.)
+}  // namespace
+
 bool BindingIsStrongerThanDescendants(const UsdPrim& prim) {
   static const char* kBindingOrder[] = {"material:binding:preview",
                                         "material:binding",
@@ -136,8 +135,6 @@ bool BindingIsStrongerThanDescendants(const UsdPrim& prim) {
   }
   return false;
 }
-
-}  // namespace
 
 std::string GetInheritedBoundMaterialPath(const Stage& stage,
                                           const std::string& prim_path) {
@@ -455,20 +452,47 @@ bool IsPrimvarReader(const UsdPrim& shader) {
   return id.size() >= 16 && id.substr(0, 16) == "UsdPrimvarReader";
 }
 
+namespace {
+
+std::string TokenishValue(const Value* v) {
+  if (!v) return "";
+  if (const std::string* tok = v->as_token()) return *tok;
+  if (const std::string* str = v->as_string()) return *str;
+  return "";
+}
+
+}  // namespace
+
 std::string GetPrimvarReaderVarname(const UsdPrim& shader) {
   if (!IsPrimvarReader(shader)) return "";
+  return TokenishValue(shader.GetPropertyValue("inputs:varname"));
+}
 
-  const Value* result = shader.GetPropertyValue("inputs:varname");
-  if (result) {
-    if (result->type_id() == TypeId::Token) {
-      if (const std::string* str = result->as_token()) {
-        return *str;
-      }
-    } else if (result->type_id() == TypeId::String) {
-      if (const std::string* str = result->as_string()) {
-        return *str;
-      }
-    }
+std::string GetPrimvarReaderVarname(const Stage& stage,
+                                    const UsdPrim& shader) {
+  if (!IsPrimvarReader(shader)) return "";
+
+  // Authored value wins; otherwise follow inputs:varname connections
+  // (usdMtlx/Apple flattens author e.g.
+  // `token inputs:varname.connect = </Mat.inputs:frame:stPrimvarName>`).
+  std::string value = TokenishValue(shader.GetPropertyValue("inputs:varname"));
+  if (!value.empty()) return value;
+
+  const ::tinyusdz::next::PrimSpec* spec = shader.GetPrimSpec();
+  const std::vector<Path>* conns =
+      spec ? spec->connection("inputs:varname") : nullptr;
+  for (int hop = 0; conns && !conns->empty() && hop < 4; ++hop) {
+    const std::string target = (*conns)[0].str();
+    const size_t dot = target.rfind('.');
+    if (dot == std::string::npos) break;
+    const std::string prim_path = target.substr(0, dot);
+    const std::string prop_name = target.substr(dot + 1);
+    UsdPrim src = stage.GetPrimAtPath(prim_path);
+    if (!src.IsValid()) break;
+    value = TokenishValue(src.GetPropertyValue(prop_name));
+    if (!value.empty()) return value;
+    const ::tinyusdz::next::PrimSpec* src_spec = src.GetPrimSpec();
+    conns = src_spec ? src_spec->connection(prop_name) : nullptr;
   }
   return "";
 }

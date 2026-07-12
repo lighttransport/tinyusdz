@@ -37,6 +37,13 @@ struct LightData {
   float diffuse = 1.0f;
   float specular = 1.0f;
   bool normalize = false;
+  // ShadowAPI (inputs:shadow:*). Distance/falloff use the UsdLux -1
+  // "unset/infinite" sentinel.
+  bool shadow_enable = true;
+  float shadow_color[3] = {0.0f, 0.0f, 0.0f};
+  float shadow_distance = -1.0f;
+  float shadow_falloff = -1.0f;
+  float shadow_falloff_gamma = 1.0f;
 };
 
 // ============================================================

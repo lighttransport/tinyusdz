@@ -68,6 +68,12 @@ std::string GetBoundMaterialPath(const UsdPrim& prim);
 std::string GetInheritedBoundMaterialPath(const Stage& stage,
                                           const std::string& prim_path);
 
+/// Does this prim's winning binding declare `bindMaterialAs =
+/// "strongerThanDescendants"`? (The default is "weakerThanDescendants", i.e. a
+/// descendant binding overrides an ancestor's.) Callers doing their own
+/// inheritance walk -- e.g. one that also skips dangling targets -- need this.
+bool BindingIsStrongerThanDescendants(const UsdPrim& prim);
+
 // ============================================================
 // Shader API
 // ============================================================
@@ -166,6 +172,10 @@ bool IsPrimvarReader(const UsdPrim& shader);
 
 /// Get primvar name being read
 std::string GetPrimvarReaderVarname(const UsdPrim& shader);
+
+/// Stage-aware variant: additionally follows inputs:varname connections
+/// (e.g. to a Material's inputs:frame:stPrimvarName interface attribute).
+std::string GetPrimvarReaderVarname(const Stage& stage, const UsdPrim& shader);
 
 }  // namespace next
 }  // namespace tinyusdz

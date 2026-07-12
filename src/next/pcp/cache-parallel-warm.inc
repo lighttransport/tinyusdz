@@ -70,10 +70,20 @@
 
     out->finalize();
     out->meta() = root->meta();
+    // Stage metadata resolves through the whole root layer stack: fields the
+    // root leaves unauthored fill from the strongest sublayer that authors
+    // them (upAxis/metersPerUnit/... — pxr's UsdStage semantics).
+    for (size_t li = 1; li < layer_stacks[0].layers.size(); ++li) {
+      if (layer_stacks[0].layers[li]) {
+        out->meta().FillAbsentStageMetaFrom(layer_stacks[0].layers[li]->meta());
+      }
+    }
     // Sublayer opinions are baked into the flattened output; keeping the
     // subLayers list would re-apply (now stale) layers when the exported
-    // layer is read back.
+    // layer is read back. Relocates are likewise already APPLIED by the
+    // stage-build walk — keeping them would re-relocate on re-read.
     out->meta().subLayers.clear();
+    out->meta().relocates.clear();
     stage->SetRootLayer(std::move(*out));
     return true;
   }
@@ -506,6 +516,8 @@
             LayerLoadOptions load_opts;
             load_opts.max_memory = options.max_layer_memory;
             load_opts.usda_parse_options = options.usda_parse_options;
+            load_opts.strict_aousd_conformance =
+                options.strict_aousd_conformance;
             reg_->GetOrLoad(*resolver, assets[i].first, assets[i].second, &w,
                             &e, load_opts);
           }

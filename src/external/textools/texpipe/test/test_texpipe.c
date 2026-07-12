@@ -69,6 +69,31 @@ static double psnr_rgba(const uint8_t *a, const uint8_t *b, size_t npix) {
     return 10.0 * log10(255.0 * 255.0 / mse);
 }
 
+/* PSNR over the first `nc` of the 4 interleaved channels: BC1 discards alpha
+ * and BC5 keeps only R/G, so those decoders can only be judged on what the
+ * codec actually carries. */
+static double psnr_nc(const uint8_t *a, const uint8_t *b, size_t npix, int nc) {
+    double mse = 0.0;
+    size_t i;
+    int c;
+    for (i = 0; i < npix; ++i)
+        for (c = 0; c < nc; ++c) {
+            double d = (double)a[i * 4u + (size_t)c] - (double)b[i * 4u + (size_t)c];
+            mse += d * d;
+        }
+    mse /= (double)(npix * (size_t)nc);
+    if (mse <= 0.0) return 1e9;
+    return 10.0 * log10(255.0 * 255.0 / mse);
+}
+
+static double psnr_rgb(const uint8_t *a, const uint8_t *b, size_t npix) {
+    return psnr_nc(a, b, npix, 3);
+}
+
+static double psnr_rg(const uint8_t *a, const uint8_t *b, size_t npix) {
+    return psnr_nc(a, b, npix, 2);
+}
+
 /* ------------------------------------------------------------ fixtures */
 
 /* Smooth RGBA gradient (opaque). */
@@ -429,6 +454,28 @@ static void test_cube_container(void) {
         CHECK(rd_u64(ktx + 88) == 6u * tc_bc7_compressed_size(n, n),
               "ktx2 cube level0 length = 6 faces");
     }
+    /* Read the cube back and decode each face. Face f was painted with a
+     * constant blue of f*40, so the decoded blue identifies the face -- that
+     * pins the per-face slice offsets and their order, not just that a decode
+     * succeeded. (Seam fixup only touches face borders, so sample the centre.) */
+    if (ktx) {
+        tp_ktx2_image ki;
+        uint8_t *d = (uint8_t *)malloc((size_t)n * n * 4u);
+        CHECK(TP_OK(tp_ktx2_read(ktx, ktx_n, &ki)), "cube: read back");
+        CHECK(ki.num_faces == 6 && ki.num_layers == 0, "cube: faces/layers");
+        for (f = 0; f < 6; ++f) {
+            int blue;
+            CHECK(TP_OK(tp_ktx2_decode_slice_rgba8(&ki, 0, 0, f, d,
+                                                   (size_t)n * n * 4u)),
+                  "cube: decode face");
+            blue = d[((n / 2) * n + n / 2) * 4 + 2];
+            CHECK(abs(blue - f * 40) <= 8, "cube: face decodes to its own blue");
+        }
+        CHECK(tp_ktx2_decode_slice_rgba8(&ki, 0, 0, 6, d, (size_t)n * n * 4u) ==
+                  TP_ERROR_INVALID_ARGUMENT, "cube: reject out-of-range face");
+        free(d);
+    }
+
     /* DDS cube caps. */
     {
         uint8_t *dds = NULL; size_t dds_n = 0;
@@ -707,6 +754,32 @@ static void test_array_ktx2(void) {
         CHECK(rd_u64(buf + 88) == 3u * tc_bc7_compressed_size(64, 64),
               "ktx2 array level0 length = 3 layers");
         CHECK(rd_u64(buf + 80) + rd_u64(buf + 88) <= wrote, "array level0 in bounds");
+    }
+    /* Read the array back: every layer must parse and decode. The three layers
+     * are the same blocks, so all three slices must decode identically. */
+    if (buf) {
+        tp_ktx2_image ki;
+        uint8_t *d0 = (uint8_t *)malloc(64u * 64u * 4u);
+        uint8_t *dn = (uint8_t *)malloc(64u * 64u * 4u);
+        int layer;
+        CHECK(TP_OK(tp_ktx2_read(buf, wrote, &ki)), "array: read back");
+        CHECK(ki.num_layers == 3 && ki.num_faces == 1, "array: layers/faces");
+        CHECK(TP_OK(tp_ktx2_decode_slice_rgba8(&ki, 0, 0, 0, d0, 64u * 64u * 4u)),
+              "array: decode layer 0");
+        for (layer = 1; layer < 3; ++layer) {
+            CHECK(TP_OK(tp_ktx2_decode_slice_rgba8(&ki, 0, layer, 0, dn,
+                                                   64u * 64u * 4u)),
+                  "array: decode layer n");
+            CHECK(memcmp(d0, dn, 64u * 64u * 4u) == 0,
+                  "array: identical layers decode identically");
+        }
+        CHECK(psnr_rgba(img, d0, 64u * 64u) >= 30.0, "array: layer 0 PSNR >= 30 dB");
+        CHECK(tp_ktx2_decode_slice_rgba8(&ki, 0, 3, 0, dn, 64u * 64u * 4u) ==
+                  TP_ERROR_INVALID_ARGUMENT, "array: reject out-of-range layer");
+        CHECK(tp_ktx2_decode_slice_rgba8(&ki, 0, 0, 1, dn, 64u * 64u * 4u) ==
+                  TP_ERROR_INVALID_ARGUMENT, "array: reject out-of-range face");
+        free(d0);
+        free(dn);
     }
     printf("  array ktx2 (layerCount=3): ok\n");
     free(buf);
@@ -1078,6 +1151,212 @@ static void test_kaiser(void) {
     free(img);
 }
 
+/* ------------------------------------------------------- KTX2 BC6H (HDR float) */
+
+/* BC6H is the one codec with no RGBA8 form, so it reads back through the float
+ * path. Covers both variants: uf16 (unsigned) and sf16, which disagree on
+ * endpoint unquantisation -- decoding one as the other is badly wrong, so the
+ * PSNR floor here also pins that img->is_signed survives the VkFormat round
+ * trip (BC6H_UFLOAT 143 vs BC6H_SFLOAT 144). */
+static void test_ktx2_bc6h_float(void) {
+    const int W = 64, H = 64;
+    tir_image_view v;
+    tp_options opt;
+    float *ref = (float *)malloc((size_t)W * H * 3u * sizeof(float));
+    float *dec = (float *)malloc((size_t)W * H * 4u * sizeof(float));
+    int sgn, x, y;
+
+    for (y = 0; y < H; ++y)
+        for (x = 0; x < W; ++x) {
+            float *p = ref + ((size_t)y * W + x) * 3u;
+            /* HDR range: values well above 1.0 are the point of BC6H. */
+            p[0] = 0.25f + 3.0f * ((float)x / (float)W);
+            p[1] = 0.10f + 6.0f * ((float)y / (float)H);
+            p[2] = 1.50f;
+        }
+
+    for (sgn = 0; sgn < 2; ++sgn) {
+        uint8_t *ktx = NULL;
+        size_t ktx_n = 0;
+        tp_ktx2_image img;
+        double mse = 0.0, psnr, peak = 6.1;
+        size_t i;
+        v.data = ref; v.width = W; v.height = H; v.channels = 3;
+        v.type = TIR_F32; v.row_stride_bytes = 0;
+        tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_BC6H);
+        opt.container = TP_CONTAINER_KTX2;
+        opt.bc6h.signed_float = sgn;
+        CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)), "bc6h ktx2 write");
+        CHECK(TP_OK(tp_ktx2_read(ktx, ktx_n, &img)), "bc6h ktx2 read");
+        CHECK(img.codec == TP_CODEC_BC6H && img.is_hdr, "bc6h codec mapped, hdr");
+        CHECK(img.is_signed == sgn, "bc6h signedness from vkFormat");
+
+        /* The RGBA8 path must refuse it rather than produce garbage. */
+        CHECK(tp_ktx2_decode_level_rgba8(&img, 0, (uint8_t *)dec,
+                                         (size_t)W * H * 4u) ==
+                  TP_ERROR_UNSUPPORTED, "bc6h rejected on the rgba8 path");
+
+        CHECK(TP_OK(tp_ktx2_decode_level_rgbaf(&img, 0, dec,
+                                               (size_t)W * H * 4u * sizeof(float))),
+              "bc6h float decode");
+        for (i = 0; i < (size_t)W * H; ++i) {
+            int ch;
+            for (ch = 0; ch < 3; ++ch) {
+                double d = (double)dec[i * 4u + (size_t)ch] -
+                           (double)ref[i * 3u + (size_t)ch];
+                mse += d * d;
+            }
+            CHECK(dec[i * 4u + 3u] == 1.0f, "bc6h alpha is 1.0");
+        }
+        mse /= (double)((size_t)W * H * 3u);
+        psnr = 10.0 * log10(peak * peak / (mse > 0.0 ? mse : 1e-12));
+        printf("    bc6h %s ktx2 read+float-decode PSNR=%.2f dB\n",
+               sgn ? "sf16" : "uf16", psnr);
+        CHECK(psnr >= 30.0, "bc6h float decode PSNR >= 30 dB");
+
+        /* An undersized float destination must be refused. */
+        CHECK(tp_ktx2_decode_level_rgbaf(&img, 0, dec,
+                                         (size_t)W * H * 4u * sizeof(float) - 1u) ==
+                  TP_ERROR_INVALID_ARGUMENT, "bc6h float rejects short output");
+        tp_free(NULL, ktx);
+    }
+    /* ASTC HDR reads back through the same float path. */
+    {
+        uint8_t *ktx = NULL;
+        size_t ktx_n = 0;
+        tp_ktx2_image img;
+        double mse = 0.0, psnr, peak = 6.1;
+        size_t i;
+        v.data = ref; v.width = W; v.height = H; v.channels = 3;
+        v.type = TIR_F32; v.row_stride_bytes = 0;
+        tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_ASTC_HDR);
+        opt.container = TP_CONTAINER_KTX2;
+        CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)),
+              "astc_hdr ktx2 write");
+        CHECK(TP_OK(tp_ktx2_read(ktx, ktx_n, &img)), "astc_hdr ktx2 read");
+        CHECK(img.codec == TP_CODEC_ASTC_HDR && img.is_hdr,
+              "astc_hdr codec mapped, hdr");
+        CHECK(img.block_w == 4 && img.block_h == 4, "astc_hdr block 4x4");
+        CHECK(tp_ktx2_decode_level_rgba8(&img, 0, (uint8_t *)dec,
+                                         (size_t)W * H * 4u) ==
+                  TP_ERROR_UNSUPPORTED, "astc_hdr rejected on the rgba8 path");
+        CHECK(TP_OK(tp_ktx2_decode_level_rgbaf(&img, 0, dec,
+                                               (size_t)W * H * 4u * sizeof(float))),
+              "astc_hdr float decode");
+        for (i = 0; i < (size_t)W * H; ++i) {
+            int ch;
+            for (ch = 0; ch < 3; ++ch) {
+                double d = (double)dec[i * 4u + (size_t)ch] -
+                           (double)ref[i * 3u + (size_t)ch];
+                mse += d * d;
+            }
+        }
+        mse /= (double)((size_t)W * H * 3u);
+        psnr = 10.0 * log10(peak * peak / (mse > 0.0 ? mse : 1e-12));
+        printf("    astc_hdr ktx2 read+float-decode PSNR=%.2f dB\n", psnr);
+        CHECK(psnr >= 30.0, "astc_hdr float decode PSNR >= 30 dB");
+        tp_free(NULL, ktx);
+    }
+
+    free(ref);
+    free(dec);
+    printf("  ktx2 hdr float decode (bc6h uf16/sf16 + astc_hdr): ok\n");
+}
+
+/* ------------------------------------------------------------ KTX2 key/value */
+
+static void wr_u32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+
+static void wr_u64(uint8_t *p, uint64_t v) {
+    wr_u32(p, (uint32_t)v);
+    wr_u32(p + 4, (uint32_t)(v >> 32));
+}
+
+/* Our writers emit no KVD, so build a KTX2 by hand: one 4x4 BC7 level plus a
+ * key/value block. Doubles as the reader's only test against a file it did not
+ * produce itself. Layout: id(12) hdr(68) index(24) dfd(44) kvd level(16). */
+static void test_ktx2_kv(void) {
+    /* "KTXorientation" -> "rd", then "tinyexr" -> "1" (unsorted on purpose:
+     * the lookup must not assume the sorted order a valid file would have). */
+    static const uint8_t kvd[] = {
+        18, 0, 0, 0, /* keyAndValueByteLength: key 14+NUL, value "rd"+NUL */
+        'K','T','X','o','r','i','e','n','t','a','t','i','o','n',0, 'r','d',0,
+        0, 0, /* pad 18 -> 20 */
+        10, 0, 0, 0, /* key 7+NUL, value "1"+NUL */
+        't','i','n','y','e','x','r',0, '1',0,
+        0, 0, /* pad to 4 */
+    };
+    const size_t kvd_off = 148u, kvd_len = sizeof(kvd);
+    const size_t lvl_off = ((kvd_off + kvd_len) + 15u) & ~(size_t)15u;
+    const size_t total = lvl_off + 16u;
+    uint8_t *f = (uint8_t *)calloc(1, total);
+    static const uint8_t id[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
+                                   0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
+    tp_ktx2_image img;
+    const uint8_t *val = NULL;
+    size_t val_n = 0;
+
+    memcpy(f, id, 12);
+    wr_u32(f + 12, 145u);       /* vkFormat = BC7_UNORM */
+    wr_u32(f + 16, 1u);         /* typeSize */
+    wr_u32(f + 20, 4u);         /* pixelWidth */
+    wr_u32(f + 24, 4u);         /* pixelHeight */
+    wr_u32(f + 40, 1u);         /* levelCount */
+    wr_u32(f + 48, 104u);       /* dfdByteOffset */
+    wr_u32(f + 52, 44u);        /* dfdByteLength */
+    wr_u32(f + 56, (uint32_t)kvd_off);
+    wr_u32(f + 60, (uint32_t)kvd_len);
+    wr_u64(f + 80, (uint64_t)lvl_off); /* level 0: offset / len / ulen */
+    wr_u64(f + 88, 16u);
+    wr_u64(f + 96, 16u);
+    memcpy(f + kvd_off, kvd, kvd_len);
+
+    CHECK(TP_OK(tp_ktx2_read(f, total, &img)), "kv: read hand-built ktx2");
+    CHECK(img.codec == TP_CODEC_BC7 && img.width == 4 && img.height == 4,
+          "kv: header parsed");
+    CHECK(img.kvd != NULL && img.kvd_size == kvd_len, "kv: kvd located");
+
+    CHECK(TP_OK(tp_ktx2_kv_lookup(&img, "KTXorientation", &val, &val_n)),
+          "kv: find KTXorientation");
+    CHECK(val_n == 3 && memcmp(val, "rd", 3) == 0, "kv: orientation value 'rd'");
+    /* The second entry is only reachable through correct padding arithmetic. */
+    CHECK(TP_OK(tp_ktx2_kv_lookup(&img, "tinyexr", &val, &val_n)),
+          "kv: find second key past the pad");
+    CHECK(val_n == 2 && memcmp(val, "1", 2) == 0, "kv: second value");
+    CHECK(tp_ktx2_kv_lookup(&img, "absent", &val, &val_n) == TP_ERROR_NOT_FOUND,
+          "kv: absent key -> NOT_FOUND");
+    /* A prefix of a present key must not match it. */
+    CHECK(tp_ktx2_kv_lookup(&img, "KTX", &val, &val_n) == TP_ERROR_NOT_FOUND,
+          "kv: prefix is not a match");
+
+    /* An entry length that runs past the block is malformed, not "not found". */
+    wr_u32(f + kvd_off, 0xFFFFu);
+    CHECK(TP_OK(tp_ktx2_read(f, total, &img)), "kv: re-read with bad entry");
+    CHECK(tp_ktx2_kv_lookup(&img, "tinyexr", &val, &val_n) ==
+              TP_ERROR_INVALID_ARGUMENT, "kv: overlong entry rejected");
+    wr_u32(f + kvd_off, 18u);
+
+    /* A KVD range outside the file must be rejected by the parser itself. */
+    wr_u32(f + 60, (uint32_t)(total - kvd_off + 1u));
+    CHECK(tp_ktx2_read(f, total, &img) == TP_ERROR_INVALID_ARGUMENT,
+          "kv: out-of-bounds kvd range rejected");
+    wr_u32(f + 60, (uint32_t)kvd_len);
+
+    /* No KVD at all is a miss, not an error. */
+    wr_u32(f + 56, 0u);
+    wr_u32(f + 60, 0u);
+    CHECK(TP_OK(tp_ktx2_read(f, total, &img)), "kv: read without kvd");
+    CHECK(img.kvd == NULL, "kv: no kvd");
+    CHECK(tp_ktx2_kv_lookup(&img, "KTXorientation", &val, &val_n) ==
+              TP_ERROR_NOT_FOUND, "kv: lookup without kvd -> NOT_FOUND");
+
+    free(f);
+    printf("  ktx2 key/value lookup: ok\n");
+}
+
 /* ------------------------------------------------- KTX2 read / decode / uni */
 
 static void test_ktx2_read_roundtrip(void) {
@@ -1106,6 +1385,76 @@ static void test_ktx2_read_roundtrip(void) {
     printf("    bc7 ktx2 read+decode level0 PSNR=%.2f dB\n", p);
     CHECK(p >= 30.0, "bc7 ktx2 decode PSNR >= 30 dB");
     tp_free(NULL, ktx); ktx = NULL;
+
+    /* --- BC1 / BC3 / BC5: the rest of the writer's LDR set is now decodable,
+     * so every codec we can emit as KTX2 reads back through the same path.
+     * BC5 keeps only two channels, so it is compared on R/G alone. --- */
+    {
+        static const struct { tp_codec codec; const char *name; double floor; }
+        bc[3] = {{TP_CODEC_BC1, "bc1", 24.0},
+                 {TP_CODEC_BC3, "bc3", 24.0},
+                 {TP_CODEC_BC5, "bc5", 24.0}};
+        int ci;
+        for (ci = 0; ci < 3; ++ci) {
+            tp_options_init(&opt, TP_CONTENT_COLOR, bc[ci].codec);
+            opt.container = TP_CONTAINER_KTX2;
+            CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)),
+                  "process bc1/3/5 ktx2");
+            CHECK(TP_OK(tp_ktx2_read(ktx, ktx_n, &img)), "read bc1/3/5 ktx2");
+            CHECK(!img.is_uni && img.codec == bc[ci].codec, "bc1/3/5 codec mapped");
+            CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)),
+                  "decode bc1/3/5 l0");
+            p = (bc[ci].codec == TP_CODEC_BC5) ? psnr_rg(ref, dec, npix)
+                                               : psnr_rgb(ref, dec, npix);
+            printf("    %s ktx2 read+decode level0 PSNR=%.2f dB\n", bc[ci].name, p);
+            CHECK(p >= bc[ci].floor, "bc1/3/5 ktx2 decode PSNR above floor");
+            tp_free(NULL, ktx); ktx = NULL;
+        }
+    }
+
+    /* --- BC5_SNORM: the signed variant is a different decode (int8 endpoints,
+     * a different 6-value palette), and the reader has to carry that through
+     * from the VkFormat (BC5_SNORM 142 vs BC5_UNORM 141). --- */
+    {
+        tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_BC5);
+        opt.container = TP_CONTAINER_KTX2;
+        opt.bc5.snorm = 1;
+        CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)), "process bc5 snorm ktx2");
+        CHECK(TP_OK(tp_ktx2_read(ktx, ktx_n, &img)), "read bc5 snorm ktx2");
+        CHECK(img.codec == TP_CODEC_BC5 && img.is_signed,
+              "bc5 snorm: signedness from vkFormat");
+        CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)),
+              "decode bc5 snorm l0");
+        p = psnr_rg(ref, dec, npix);
+        printf("    bc5_snorm ktx2 read+decode level0 PSNR=%.2f dB\n", p);
+        CHECK(p >= 24.0, "bc5 snorm ktx2 decode PSNR above floor");
+        tp_free(NULL, ktx); ktx = NULL;
+    }
+
+    /* --- ETC2 / EAC: the mobile half of the writer set. EAC carries only R
+     * (R11) or R+G (RG11), so those are scored on the channels they keep. --- */
+    {
+        static const struct { tp_codec codec; const char *name; int nc; double floor; }
+        et[4] = {{TP_CODEC_ETC2_RGB, "etc2_rgb", 3, 24.0},
+                 {TP_CODEC_ETC2_RGBA, "etc2_rgba", 3, 24.0},
+                 {TP_CODEC_EAC_R11, "eac_r11", 1, 24.0},
+                 {TP_CODEC_EAC_RG11, "eac_rg11", 2, 24.0}};
+        int ci;
+        for (ci = 0; ci < 4; ++ci) {
+            tp_options_init(&opt, TP_CONTENT_COLOR, et[ci].codec);
+            opt.container = TP_CONTAINER_KTX2;
+            CHECK(TP_OK(tp_process(NULL, &v, 1, &opt, &ktx, &ktx_n)),
+                  "process etc2/eac ktx2");
+            CHECK(TP_OK(tp_ktx2_read(ktx, ktx_n, &img)), "read etc2/eac ktx2");
+            CHECK(!img.is_uni && img.codec == et[ci].codec, "etc2/eac codec mapped");
+            CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)),
+                  "decode etc2/eac l0");
+            p = psnr_nc(ref, dec, npix, et[ci].nc);
+            printf("    %s ktx2 read+decode level0 PSNR=%.2f dB\n", et[ci].name, p);
+            CHECK(p >= et[ci].floor, "etc2/eac ktx2 decode PSNR above floor");
+            tp_free(NULL, ktx); ktx = NULL;
+        }
+    }
 
     /* --- ASTC 4x4 KTX2: exercises the newly-exposed ASTC decoder --- */
     tp_options_init(&opt, TP_CONTENT_COLOR, TP_CODEC_ASTC);
@@ -1231,7 +1580,7 @@ static void test_ktx2_read_roundtrip(void) {
 
     free(dec);
     free(ref);
-    printf("  ktx2 read + decode (bc7 / astc / uni) + transcode: ok\n");
+    printf("  ktx2 read + decode (bc1/3/5/7, etc2, eac, astc, uni) + transcode: ok\n");
 }
 
 /* Identity "decompressor": the scheme-2 payloads in this test are stored
@@ -1243,6 +1592,130 @@ static size_t passthrough_zdec(void *user, uint8_t *dst, size_t dst_cap,
     if (src_size > dst_cap) return 0;
     memcpy(dst, src, src_size);
     return src_size;
+}
+
+/* Identity compressor pair, the write-side mirror of passthrough_zdec: exercises
+ * the tp_ktx2_write_uni_zstd layout / index / callback path without a real zstd
+ * (a stream it writes is then read back with passthrough_zdec). */
+static size_t passthrough_zbound(void *user, size_t src_size) {
+    (void)user;
+    return src_size;
+}
+static size_t passthrough_zenc(void *user, uint8_t *dst, size_t dst_cap,
+                               const uint8_t *src, size_t src_size) {
+    (void)user;
+    if (src_size > dst_cap) return 0;
+    memcpy(dst, src, src_size);
+    return src_size;
+}
+
+/* uni levels -> Zstd-supercompressed KTX2 -> read back -> decode. */
+static void test_ktx2_uni_zstd_write(void) {
+    const uint32_t W = 64, H = 64;
+    uint8_t *ref = make_gradient((int)W, (int)H);
+    uint8_t *uni = NULL, *ktx = NULL, *dec = NULL;
+    /* Sized for the largest num_levels the negative cases below pass in, so a
+     * writer that validated in the wrong order would read past the array rather
+     * than quietly staying in bounds. */
+    const uint8_t *levels[TP_KTX2_MAX_LEVELS];
+    size_t sizes[TP_KTX2_MAX_LEVELS], usz, ktx_n = 0;
+    uint32_t lw[TP_KTX2_MAX_LEVELS], lh[TP_KTX2_MAX_LEVELS];
+    tp_ktx2_image img;
+    const size_t npix = (size_t)W * H;
+    int i;
+
+    usz = tc_uni_compressed_size(W, H);
+    uni = (uint8_t *)malloc(usz);
+    CHECK(tc_uni_compress_rgba8(ref, W, H, (size_t)W * 4u, uni, usz) == TC_SUCCESS,
+          "uni compress");
+    for (i = 0; i < TP_KTX2_MAX_LEVELS; ++i) {
+        levels[i] = uni; sizes[i] = usz; lw[i] = W; lh[i] = H;
+    }
+
+    CHECK(TP_OK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound, passthrough_zenc,
+                                       NULL, levels, sizes, lw, lh, 1, &ktx,
+                                       &ktx_n)),
+          "write uni zstd ktx2");
+    CHECK(ktx != NULL && ktx_n > 0, "zstd ktx2 produced");
+    CHECK(rd_u32(ktx + 44) == 2u, "supercompressionScheme = 2");
+    CHECK(rd_u32(ktx + 12) == 0u, "vkFormat = UNDEFINED (uni)");
+    CHECK(rd_u64(ktx + 96) == (uint64_t)usz, "uncompressedByteLength = uni size");
+
+    /* Plain tp_ktx2_read must refuse it; tp_ktx2_read_zstd must accept it. */
+    CHECK(tp_ktx2_read(ktx, ktx_n, &img) == TP_ERROR_UNSUPPORTED,
+          "scheme-2 needs a decompressor");
+    CHECK(TP_OK(tp_ktx2_read_zstd(ktx, ktx_n, NULL, passthrough_zdec, NULL, &img)),
+          "read back written zstd ktx2");
+    CHECK(img.is_uni && img.supercompression == 2u && img.width == W &&
+              img.num_levels == 1,
+          "round-trip header");
+
+    dec = (uint8_t *)malloc(npix * 4u);
+    CHECK(TP_OK(tp_ktx2_decode_level_rgba8(&img, 0, dec, npix * 4u)),
+          "decode round-tripped level0");
+    {
+        double p = psnr_rgba(ref, dec, npix);
+        printf("    uni->zstd-KTX2->read->decode PSNR=%.2f dB\n", p);
+        CHECK(p >= 30.0, "zstd-ktx2 round-trip PSNR >= 30 dB");
+    }
+    tp_ktx2_image_free(NULL, &img);
+    tp_free(NULL, ktx);
+
+    /* Inputs the writer must refuse, because each one yields a file that either
+     * its own reader or `ktx validate` rejects. Every rejection must also leave
+     * *out / *out_size cleared: callers free unconditionally. */
+    {
+        struct { const char *what; size_t sz; uint32_t w, h; int n; } bad_in[] = {
+            /* size disagrees with the dims (reader pins uncompressedByteLength) */
+            {"level size mismatches the dimensions", 0, 64, 64, 1},
+            /* dims past TP_KTX2_MAX_DIM: the reader refuses to load them back */
+            {"dimension over TP_KTX2_MAX_DIM", 0, 131072, 64, 1},
+            /* more levels than the 64x64 pyramid has (7) */
+            {"levelCount past the mip pyramid", 0, 64, 64, 9},
+            /* The MAX_DIM corner: the level payload is exactly 2^32 B, which the
+             * expected-size math must not wrap to 0 (it would then match this
+             * zero-length level and emit a file the reader rejects). Rejected on
+             * every target -- 2^32 does not fit a 32-bit size_t at all. */
+            {"zero-length level at the 65536x65536 corner", 0, 65536, 65536, 1},
+        };
+        size_t i;
+        bad_in[0].sz = usz - 16u;
+        bad_in[1].sz = usz;
+        bad_in[2].sz = usz;
+        bad_in[3].sz = 0;
+        for (i = 0; i < sizeof(bad_in) / sizeof(bad_in[0]); ++i) {
+            uint8_t *bad = (uint8_t *)0x1; /* must be overwritten with NULL */
+            size_t bad_n = 123u;
+            sizes[0] = bad_in[i].sz; lw[0] = bad_in[i].w; lh[0] = bad_in[i].h;
+            CHECK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound,
+                                         passthrough_zenc, NULL, levels, sizes,
+                                         lw, lh, bad_in[i].n, &bad,
+                                         &bad_n) == TP_ERROR_INVALID_ARGUMENT,
+                  bad_in[i].what);
+            CHECK(bad == NULL && bad_n == 0u, "outputs cleared on failure");
+        }
+        sizes[0] = usz; lw[0] = W; lh[0] = H;
+    }
+
+    /* KTX2 >= 2.0.4: a supercompressed file keeps the real pre-deflation
+     * bytesPlane0 (the old "must be 0" rule is retired), so the DFD the writer
+     * emits must still say 16 even under scheme 2. */
+    {
+        uint8_t *k2 = NULL;
+        size_t k2n = 0, dfd_off;
+        CHECK(TP_OK(tp_ktx2_write_uni_zstd(NULL, passthrough_zbound,
+                                           passthrough_zenc, NULL, levels, sizes,
+                                           lw, lh, 1, &k2, &k2n)),
+              "rewrite for DFD check");
+        dfd_off = rd_u32(k2 + 48);
+        CHECK(k2[dfd_off + 20] == 16u, "DFD bytesPlane0 = 16 under scheme 2");
+        tp_free(NULL, k2);
+    }
+
+    free(dec);
+    free(uni);
+    free(ref);
+    printf("  ktx2 uni Zstd writer (write -> read -> decode): ok\n");
 }
 
 static void test_ktx2_zstd_scheme(void) {
@@ -1361,7 +1834,10 @@ int main(void) {
     test_alpha_coverage();
     test_containers();
     test_ktx2_read_roundtrip();
+    test_ktx2_kv();
+    test_ktx2_bc6h_float();
     test_ktx2_zstd_scheme();
+    test_ktx2_uni_zstd_write();
     test_cube_seam_fixup();
     test_cube_split();
     test_cube_container();

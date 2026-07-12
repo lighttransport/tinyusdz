@@ -75,6 +75,13 @@ class TextureDecoder {
   /// cannot be resolved or decoded; `out` is left untouched.
   bool Decode(const std::string& asset, bool srgb, DecodedImage* out);
 
+  /// Read `asset`'s raw bytes, resolving it exactly like Decode does (a .usdz
+  /// entry when one is set, else `base_dir`-relative on disk). For assets a
+  /// consumer must interpret itself rather than have decoded to pixels -- e.g. a
+  /// GPU-compressed `.ktx2`, whose blocks are uploaded as-is. Returns false when
+  /// the asset cannot be resolved or read.
+  bool ReadAssetBytes(const std::string& asset, std::vector<uint8_t>* out) const;
+
   /// Running total of the decoded bytes handed out (post-shrink).
   uint64_t decoded_bytes() const { return decoded_bytes_; }
   /// How many images were shrunk by the size cap or the byte budget.

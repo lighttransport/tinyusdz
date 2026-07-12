@@ -18,6 +18,7 @@ void tp_dealloc(const tir_allocator *a, void *ptr);
 typedef struct tp_codec_desc {
     const char *name;
     int is_hdr;          /* 1 = consumes float RGB, 0 = 8-bit RGBA */
+    int is_signed;       /* 1 = signed variant (BC6H sf16, BC5 snorm)        */
     int block_w;         /* texels per block (4 for BC/ETC; ASTC uses opt) */
     int block_h;
     int block_bytes;     /* bytes per block */
