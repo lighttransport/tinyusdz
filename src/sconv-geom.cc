@@ -1660,6 +1660,34 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     xformable = static_cast<const Xformable*>(instancer);
   } else if (auto* xform = prim.data().as<Xform>()) {
     xformable = xform;
+  } else if (auto* volume = prim.data().as<Volume>()) {
+    xformable = static_cast<const Xformable*>(volume);
+  } else if (auto* skelroot = prim.data().as<SkelRoot>()) {
+    xformable = static_cast<const Xformable*>(skelroot);
+  } else if (auto* skel = prim.data().as<Skeleton>()) {
+    xformable = static_cast<const Xformable*>(skel);
+  }
+  // Lights are Xformable too (via Boundable/NonboundableLight). Leaving them out
+  // of this list silently dropped every light's transform on write, so a scene
+  // round-tripped through .usdc came back with all its lights at the origin.
+  else if (auto* l = prim.data().as<SphereLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<RectLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DiskLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<CylinderLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DistantLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DomeLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<DomeLight_1>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<GeometryLight>()) {
+    xformable = static_cast<const Xformable*>(l);
+  } else if (auto* l = prim.data().as<PortalLight>()) {
+    xformable = static_cast<const Xformable*>(l);
   } else {
     // Not a type we handle yet
     return true;
