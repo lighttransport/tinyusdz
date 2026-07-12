@@ -26,10 +26,12 @@ large-scene.md §2.12), and the `lightrt-bsdf` IBL energy (the furnace now lands
 1.00x the dome that lights it, from 2.00x).
 
 Done since (2026-07-13), all committed, none pushed: the proxy/render purpose
-supersede (both loaders), and a family of **silent data-loss bugs in the writers**
-found by sweeping fixtures through `tusdcat` — see [Open](#open) for what is left
-of that sweep, and [Prompts for a fresh session](#prompts-for-a-fresh-session) to
-pick it up cold.
+supersede (both loaders), a family of **silent data-loss bugs in the writers**
+found by sweeping fixtures through `tusdcat`, and — later the same day — the
+**typeless-prim-invents-a-`Model`-typeName** bug, which was the sole cause of
+68 of the then-133 round-trip failures (133 -> 65). See
+[Open](#open) for what is left of that sweep, and
+[Prompts for a fresh session](#prompts-for-a-fresh-session) to pick it up cold.
 
 ## Prompts for a fresh session
 
@@ -38,15 +40,26 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-133-of-422-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-65-of-422-fixtures)):
 
-> The tinyusdz crate (.usdc) writer silently drops authored data. Reproduce with
-> the sweep in doc/resume-tusdview.md ("The crate writer drops data"): 133 of 422
-> `tests/usda` fixtures do not survive `usda -> usdc -> usda` intact. Known
-> categories: a TYPELESS prim (`def "bora"`) comes back as `def Model "bora"`
-> (the writer invents a typeName); Camera `shutter:open` / `shutter:close` are
-> dropped; `hidden` metadata, `bindMaterialAs` and some `material:binding`
-> relationships are dropped. Fix them one category at a time, smallest first.
+> The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
+> Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
+> data"): 65 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug).
+> Read the full categorized list in that section before starting — it spans
+> Camera `shutter:open`/`shutter:close` written under the wrong attribute name,
+> `apiSchemas` list-op deletes and `None` blocks dropped, relationship
+> variability/`bindMaterialAs`/`proxyPrim` dropped, variant-statement metadata
+> (`active`/`hidden`/`kind`/`variantSets`) dropped, several `.connect` shader
+> connections baked down to plain constants, several more `timeSamples`
+> attributes dropped wholesale, `skel:blendShapes` losing its namespace,
+> spurious unauthored `visibility`/`purpose` invented on Skeleton-family prims,
+> and stage/layer metadata dictionaries (`customLayerData`, `kilogramsPerUnit`,
+> `sdrMetadata`, etc.) dropped. Fix them one category at a time, smallest/most
+> self-contained first (shutter naming and the apiSchemas/rel list-op deletes
+> look smallest); the `.connect`-baked-to-constant bug is probably the most
+> consequential since it silently changes an asset's shading network rather
+> than dropping inert metadata.
 > Each fix must come with a mutation-verified assertion in
 > `tests/run-scope-imageable-roundtrip.sh` (revert the fix, watch the test fail),
 > and must not regress the 87-test suite or raise the fixture count. Do not
@@ -69,7 +82,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (133 of 422 fixtures)
+### The crate writer drops data (65 of 422 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -81,21 +94,56 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 133 as of 2026-07-13 (was 140)
+done | wc -l          # 65 as of 2026-07-13 (was 133, was 140)
 ```
 
 The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a
-diff here is the crate writer losing data, not the printer being creative. Known
-remaining categories, in rough order of how much they matter:
+diff here is the crate writer losing data, not the printer being creative. A
+full detailed diff of all 65 turned up more categories than earlier notes here
+described — do not re-derive this from scratch:
 
-- a TYPELESS prim (`def "bora"`, 49 lines) comes back as `def Model "bora"`: the
-  writer invents a typeName where USD has none.
-- Camera `shutter:open` / `shutter:close` are never written.
-- `hidden` metadata, `bindMaterialAs`, and some `material:binding` relationships.
+- Camera `shutter:open` / `shutter:close` are not dropped, they are written
+  under the WRONG attribute name (`shutterOpen`/`shutterClose`, no namespace).
+- `apiSchemas` list-ops: a standalone or combined `delete apiSchemas` is not
+  written; an explicit `apiSchemas = None` block is dropped; the surviving
+  `prepend apiSchemas` order is not preserved.
+- Relationships: `varying` variability on a `rel` is lost; `append custom
+  varying rel` loses both `custom` and `varying`; `delete rel` (a rel list-op
+  delete) is dropped; `rel proxyPrim` is dropped; `bindMaterialAs` metadata on
+  a relationship is lost in several fixtures; `material:binding:collection:
+  <purpose>:<name>` comes back with the two namespace components swapped.
+- Variant-statement metadata (`active`, `hidden`, `kind`, `variantSets`
+  authored in a variant's own metadata block) is dropped — the variant
+  survives, its metadata does not.
+- Several `inputs:foo.connect = </target>` shader connections come back baked
+  down to a plain constant value instead of the connection; a declared but
+  unconnected `outputs:foo.connect` (no RHS) is dropped, and its type can come
+  back wrong.
+- `timeSamples` dropped wholesale on several attributes outside the
+  well-trodden xformOp/mesh paths: `extent`, a token attribute
+  (`projection`), PointInstancer `positions`/`orientations`/`scales`, `asset
+  inputs:file`, and an explicitly-empty `timeSamples = {}` block. A plain
+  attribute's explicit `= None` also comes back as the type's zero value
+  instead of a value-block.
+- `skel:blendShapes` and `subsetFamily:<name>:familyType` both lose their
+  namespace prefix on write; `GeomSubset`'s `elementType` is dropped outright.
+- Spurious UNAUTHORED `visibility`/`purpose` are invented on Skeleton-family
+  prims that never had them authored (the opposite problem from the
+  Scope/lights fix below, which was about not DROPPING authored opinions).
+- `physics:invertFilteredGroups` and `mediaOffset` are written even when not
+  authored at all (a spurious default-value write, not the "authored-equals-
+  default must still be written" case below).
+- `reorder nameChildren` (a prim metadata list-op) is dropped.
+- Stage/layer metadata dictionaries dropped wholesale: `customLayerData`,
+  `kilogramsPerUnit`, `sdrMetadata`, `autoPlay`/`playbackMode`, an attribute's
+  `customData` dictionary, a triple-quoted-string attribute-metadata comment,
+  an unregistered custom prim-metadata key, and `colorSpace` metadata on an
+  `asset` attribute value.
 
 **Why this kept happening:** the extraction was copy-pasted per prim type, so each
-new prim type was one omission away from losing data — and several did. Three
-rounds of this are already fixed (below); prefer a shared helper over another copy.
+new prim type was one omission away from losing data — and several did. Four
+rounds of this are already fixed (below, including the `Model`-typeName bug);
+prefer a shared helper over another copy.
 
 CAVEAT on all of it: the checks verify that tinyusdz's reader and writer agree
 with each other. A bug they SHARE is invisible to them. The pxr comparison
@@ -132,6 +180,28 @@ worth keeping at all.
 
 The deform/bounds work below is DONE and guarded by tests. It stays written down
 because each item cost a wrong turn that is easy to re-take.
+
+### A typeless prim invented a `Model` typeName on write
+
+`def "bora"` (no typeName authored) came back as `def Model "bora"` after a
+`.usdc` round-trip. Sole cause of 68 of the (then) 133 fixture failures.
+
+`src/stage-converter.cc` has two identical fallback blocks that, when a prim's
+AUTHORED typeName (`prim_type_name()`) is empty, fall back to
+`prim.type_name()` — the registered C++ label of whatever struct backs the
+prim's value. That fallback exists on purpose: in-memory, programmatically
+built prims (tydra-built `Material`/`Shader`) have an empty authored typeName
+too but a real schema, and without the fallback the writer would drop their
+typeName and type-specific properties entirely. The bug: a genuinely typeless
+prim is ALSO represented internally by a catch-all `Model` struct, whose
+`type_name()` unconditionally returns the literal string `"Model"` — so the
+fallback resurrected a typeName the prim never had. Fix: exclude `Model`
+specifically from the fallback, since a `Model`-backed prim already carries
+the correct empty string via `prim_type_name()`. Guarded by a new
+`typeless-usdc` check in `tests/run-scope-imageable-roundtrip.sh` covering
+`def`/`over`/`class` (all three specifiers share the fallback);
+mutation-verified by reverting the fix and confirming the check reproduces
+`def Model "W"` / `over Model "child"` / `class Model "TheClass"`.
 
 ### `proxy` and `render` are ALTERNATIVES, not two things to draw
 
