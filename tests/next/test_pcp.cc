@@ -3585,6 +3585,133 @@ static void test_relative_class_arc_target() {
   std::cout << "  OK" << std::endl;
 }
 
+// Composed specifier resolution (pxr _GetPrimSpecifierImpl): a defining
+// specifier always beats `over`, and a `class` due to a DIRECT inherit is
+// weaker than any other defining specifier (classness is not inherited) —
+// but a class reached through an ANCESTRAL inherit resolves in plain
+// strength order and must NOT be downgraded by a weaker `def`.
+static void test_specifier_resolution() {
+  std::cout << "test_specifier_resolution..." << std::endl;
+
+  // Case 1 (regression): /World/Foo inherits /_C; `class _C { class Child }`;
+  // _C inherits /_D; `class _D { def Child }`. The inherit arcs are introduced
+  // at Foo, so for the CHILD they are ancestral: /World/Foo/Child stays class.
+  {
+    auto rootL = std::make_shared<Layer>();
+    {
+      LayerBuilder rb(*rootL);
+      rb.begin_prim("_D", "");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.begin_prim("Child", "Scope");  // def Child
+      rb.end_prim();
+      rb.end_prim();
+      rb.begin_prim("_C", "");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.current()->meta().inherits.push_back("</_D>");
+      rb.begin_prim("Child", "Scope");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.end_prim();
+      rb.end_prim();
+      rb.begin_prim("World", "Xform");
+      rb.begin_prim("Foo", "Xform");
+      rb.current()->meta().inherits.push_back("</_C>");
+      rb.end_prim();
+      rb.end_prim();
+      rb.finalize();
+    }
+    AssetResolver resolver;
+    auto opened = pcp::Cache::Open(resolver, rootL);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim child = stage.GetPrimAtPath("/World/Foo/Child");
+    assert(child.IsValid());
+    assert(child.GetSpecifier() == PrimSpecifier::Class &&
+           "ancestral-inherit class must not be downgraded by a weaker def");
+    UsdPrim foo = stage.GetPrimAtPath("/World/Foo");
+    assert(foo.IsValid() && foo.GetSpecifier() == PrimSpecifier::Def);
+  }
+
+  // Case 2 (pxr stage.cpp doc case): `over A (references @other@</B>)` where
+  // `def B (inherits </C>)` and `class C {}`. The class comes from a DIRECT
+  // inherit, so the weaker def from /B wins: /A composes as `def`.
+  {
+    auto other = std::make_shared<Layer>();
+    {
+      LayerBuilder ob(*other);
+      ob.begin_prim("C", "");
+      ob.current()->set_specifier(PrimSpecifier::Class);
+      ob.end_prim();
+      ob.begin_prim("B", "Xform");
+      ob.current()->meta().inherits.push_back("</C>");
+      ob.end_prim();
+      ob.finalize();
+    }
+    auto rootL = std::make_shared<Layer>();
+    {
+      LayerBuilder rb(*rootL);
+      rb.begin_prim("C", "");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.end_prim();
+      rb.begin_prim("A", "");
+      rb.current()->set_specifier(PrimSpecifier::Over);
+      rb.current()->meta().references.push_back("@mem_other@</B>");
+      rb.end_prim();
+      rb.finalize();
+    }
+    AssetResolver resolver;
+    resolver.SetCustomResolver(
+        [](const std::string &a, const std::string &) { return a; });
+    auto opened = pcp::Cache::Open(resolver, rootL);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    cache.PreloadLayer("mem_other", other);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim a = stage.GetPrimAtPath("/A");
+    assert(a.IsValid());
+    assert(a.GetSpecifier() == PrimSpecifier::Def &&
+           "class due to a direct inherit must lose to a weaker def");
+  }
+
+  // Case 3: an `over` prim with direct inherits [class, def] composes as
+  // `def` regardless of the inherit list order (a direct-inherit class is
+  // weaker than any other defining specifier).
+  {
+    auto rootL = std::make_shared<Layer>();
+    {
+      LayerBuilder rb(*rootL);
+      rb.begin_prim("_CLS", "");
+      rb.current()->set_specifier(PrimSpecifier::Class);
+      rb.end_prim();
+      rb.begin_prim("_DEF", "Scope");  // def
+      rb.end_prim();
+      rb.begin_prim("O", "");
+      rb.current()->set_specifier(PrimSpecifier::Over);
+      rb.current()->meta().inherits.push_back("</_CLS>");
+      rb.current()->meta().inherits.push_back("</_DEF>");
+      rb.end_prim();
+      rb.finalize();
+    }
+    AssetResolver resolver;
+    auto opened = pcp::Cache::Open(resolver, rootL);
+    assert(opened);
+    pcp::Cache cache = std::move(*opened);
+    Stage stage;
+    std::string warn, err;
+    assert(cache.BuildStage(&stage, &warn, &err));
+    UsdPrim o = stage.GetPrimAtPath("/O");
+    assert(o.IsValid());
+    assert(o.GetSpecifier() == PrimSpecifier::Def &&
+           "def among direct inherits wins over class regardless of order");
+  }
+
+  std::cout << "  OK" << std::endl;
+}
+
 // P2 audit: a reference that names no prim path to a layer without an
 // authored defaultPrim contributes NOTHING and warns (pxr: "Unresolved
 // reference prim path @...@<defaultPrim>") — never silently the first root
@@ -3841,6 +3968,7 @@ int main() {
   test_relocates_in_referenced_layer_stack();
   test_relocate_to_new_root_prim();
   test_relative_class_arc_target();
+  test_specifier_resolution();
   test_reorder_children();
   test_p2_ref_no_default_prim();
   test_p2_inactive_subtree_pruned();
