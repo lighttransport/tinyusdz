@@ -16,6 +16,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "frame_packet.hh"
@@ -178,7 +179,7 @@ class App
   void setLodStream(bool on) { lodStream_ = on; }
   void setLodMaxMemGiB(double g) { lodMaxMemGiB_ = g; }
   void setLodMaxVramGiB(double g) { lodMaxVramGiB_ = g; }
-  // --camera <name>: frame the viewer on a named USD Camera (--next path) instead
+  // --camera <name>: frame the viewer on a named USD Camera (either loader) instead
   // of auto-fitting the whole scene. Essential for vast scenes (e.g. Caldera).
   void setCameraName(const std::string& n) { cameraName_ = n; }
   // Recently-opened scenes: the config file path to persist to, and the initial
