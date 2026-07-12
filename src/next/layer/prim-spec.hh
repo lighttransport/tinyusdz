@@ -12,6 +12,7 @@
 #include "../types/interpolation.hh"
 #include "../prim/path.hh"
 #include <algorithm>
+#include <list>
 #include <string>
 #include <vector>
 #include <deque>
@@ -256,6 +257,38 @@ inline void MergeWeakerRawFields(
 /// Apply an authored string list-op to a weaker effective list. This preserves
 /// the authored sublists above while providing one shared effective-order rule
 /// for composition and consumers such as value clips.
+/// Apply an `ordered` (reorder) sublist to `list` with pxr SdfListOp
+/// semantics (_ReorderKeysHelper): each ordered item present drags along the
+/// contiguous run of non-ordered items that follow it, sequences are emitted
+/// in the authored ordered order, and items before any ordered item stay at
+/// the front.
+inline void ApplyStringListOrder(const std::vector<std::string> &order,
+                                 std::vector<std::string> *list) {
+  if (!list || list->empty() || order.empty()) return;
+  std::vector<std::string> unique_order;
+  for (const std::string &o : order) {
+    if (std::find(unique_order.begin(), unique_order.end(), o) ==
+        unique_order.end()) {
+      unique_order.push_back(o);
+    }
+  }
+  auto in_set = [&](const std::string &s) {
+    return std::find(unique_order.begin(), unique_order.end(), s) !=
+           unique_order.end();
+  };
+  std::list<std::string> scratch(list->begin(), list->end());
+  std::list<std::string> result;
+  for (const std::string &o : unique_order) {
+    auto j = std::find(scratch.begin(), scratch.end(), o);
+    if (j == scratch.end()) continue;
+    auto e = std::next(j);
+    while (e != scratch.end() && !in_set(*e)) ++e;
+    result.splice(result.end(), scratch, j, e);
+  }
+  result.splice(result.begin(), scratch);
+  list->assign(result.begin(), result.end());
+}
+
 inline std::vector<std::string> ApplyStringListOp(
     const StringListOpEdits &edits,
     const std::vector<std::string> &weaker) {
@@ -286,16 +319,8 @@ inline std::vector<std::string> ApplyStringListOp(
     result.erase(std::remove(result.begin(), result.end(), item), result.end());
     result.push_back(item);
   }
-  std::vector<std::string> ordered;
-  for (const std::string &item : edits.ordered) {
-    auto it = std::find(result.begin(), result.end(), item);
-    if (it != result.end()) {
-      ordered.push_back(*it);
-      result.erase(it);
-    }
-  }
-  ordered.insert(ordered.end(), result.begin(), result.end());
-  return ordered;
+  ApplyStringListOrder(edits.ordered, &result);
+  return result;
 }
 
 /// Cold PrimSpec metadata: fields that are empty on the vast majority of prims

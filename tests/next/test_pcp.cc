@@ -3765,6 +3765,70 @@ static void test_expression_sublayer_and_variant_selection() {
   std::cout << "  OK" << std::endl;
 }
 
+// Generated multi-layer string list-op combinations (item 4b breadth):
+// every qualifier of a STRONGER layer's apiSchemas edit applied over a
+// weaker layer's explicit list, plus a clipSets ordering edit. Locks in the
+// weakest->strongest AOUSD list-op merge across a sublayer stack.
+static void test_cross_layer_string_listop_matrix() {
+  std::cout << "test_cross_layer_string_listop_matrix..." << std::endl;
+  const std::string weak_path = "/tmp/next_listop_weak.usda";
+  {
+    std::ofstream o(weak_path);
+    o << "#usda 1.0\n"
+         "def Xform \"P\" (\n"
+         "    apiSchemas = [\"CollectionAPI:a\", \"CollectionAPI:b\"]\n"
+         ") {}\n";
+  }
+  struct Case {
+    const char* edit;                       // authored in the STRONG layer
+    std::vector<std::string> expected;      // composed apiSchemas
+  };
+  const Case cases[] = {
+      {"apiSchemas = [\"NewAPI\"]", {"NewAPI"}},  // explicit replaces
+      {"prepend apiSchemas = [\"NewAPI\"]",
+       {"NewAPI", "CollectionAPI:a", "CollectionAPI:b"}},
+      {"append apiSchemas = [\"NewAPI\"]",
+       {"CollectionAPI:a", "CollectionAPI:b", "NewAPI"}},
+      {"add apiSchemas = [\"NewAPI\"]",
+       {"CollectionAPI:a", "CollectionAPI:b", "NewAPI"}},
+      {"delete apiSchemas = [\"CollectionAPI:b\"]", {"CollectionAPI:a"}},
+      {"reorder apiSchemas = [\"CollectionAPI:b\", \"CollectionAPI:a\"]",
+       {"CollectionAPI:b", "CollectionAPI:a"}},
+      // Multi-op in one stronger layer: delete + prepend compose.
+      {"prepend apiSchemas = [\"NewAPI\"]\n"
+       "    delete apiSchemas = [\"CollectionAPI:a\"]",
+       {"NewAPI", "CollectionAPI:b"}},
+  };
+  for (const Case& c : cases) {
+    const std::string root_path = "/tmp/next_listop_root.usda";
+    {
+      std::ofstream o(root_path);
+      o << "#usda 1.0\n"
+           "( subLayers = [@next_listop_weak.usda@] )\n"
+           "over \"P\" (\n    "
+        << c.edit << "\n) {}\n";
+    }
+    AssetResolver resolver;
+    Stage stage;
+    pcp::CompositionOptions opts;
+    std::string warn, err;
+    assert(pcp::ComposeStageFromFile(root_path, resolver, &stage, opts, &warn,
+                                     &err)
+               ? true
+               : (std::cerr << err << std::endl, false));
+    UsdPrim p = stage.GetPrimAtPath("/P");
+    assert(p.IsValid());
+    const std::vector<std::string>& got = p.GetMeta().apiSchemas();
+    if (got != c.expected) {
+      std::cerr << "  edit: " << c.edit << "\n  got: [";
+      for (const auto& s : got) std::cerr << s << ", ";
+      std::cerr << "]" << std::endl;
+    }
+    assert(got == c.expected && "cross-layer apiSchemas list-op combination");
+  }
+  std::cout << "  OK" << std::endl;
+}
+
 // P2 audit: a reference that names no prim path to a layer without an
 // authored defaultPrim contributes NOTHING and warns (pxr: "Unresolved
 // reference prim path @...@<defaultPrim>") — never silently the first root
@@ -4023,6 +4087,7 @@ int main() {
   test_relative_class_arc_target();
   test_specifier_resolution();
   test_expression_sublayer_and_variant_selection();
+  test_cross_layer_string_listop_matrix();
   test_reorder_children();
   test_p2_ref_no_default_prim();
   test_p2_inactive_subtree_pruned();

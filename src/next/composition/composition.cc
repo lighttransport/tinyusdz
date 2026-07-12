@@ -1038,8 +1038,9 @@ void Compositor::CopyLocalOpinions(
                         applied.end());
           applied.push_back(schema);
         }
-        // Ordered-list cross-site resolution is retained in authored form but
-        // remains a separately audited gap; do not invent a total-order rule.
+        // Ordered-list cross-site resolution: pxr SdfListOp reorder
+        // semantics (shared ApplyStringListOrder helper).
+        ApplyStringListOrder(edits.ordered, &applied);
         tgt = std::move(applied);
       }
       // The composed/flattened prim no longer has a weaker list beneath it;
