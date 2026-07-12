@@ -2341,6 +2341,17 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
   item["properties"] = json::object();
   item["relationships"] = json::object();
   AddAPISchemasJson(item, prim);
+  // Collection membership predicates such as `{kind:component}` need prim
+  // metadata in addition to schema/type records. Keep this top-level (rather
+  // than pretending metadata is an attribute in `properties`) so JS can
+  // distinguish authored metadata from regular USD properties.
+  const std::string prim_kind = prim.metas().get_kind();
+  if (!prim_kind.empty()) item["kind"] = prim_kind;
+  item["specifier"] = tinyusdz::to_string(prim.specifier());
+  item["active"] = prim.IsActive();
+  item["abstract"] = prim.IsAbstract();
+  item["model"] = prim.IsModel();
+  item["group"] = prim.IsGroup();
 
   json &props = item["properties"];
   json &rels = item["relationships"];
@@ -2420,6 +2431,14 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
     AddTypedAttr(props, "newton:lookupPositions", act->lookupPositions);
     AddTypedAttr(props, "newton:lookupEfforts", act->lookupEfforts);
     AddPropertyMap(props, rels, act->props);
+  } else if (const auto *model = prim.as<tinyusdz::Model>()) {
+    // Unknown/custom schema prims are reconstructed through the generic Model
+    // carrier. Preserve their authored properties so an explicit
+    // `mjc:jointType` representation hint can map a foreign joint schema on
+    // the JS side without guessing its semantics.
+    AddPropertyMap(props, rels, model->props);
+  } else if (const auto *scope = prim.as<tinyusdz::Scope>()) {
+    AddPropertyMap(props, rels, scope->props);
   }
 
   prims.push_back(std::move(item));
