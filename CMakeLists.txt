@@ -2286,6 +2286,16 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   if(TARGET tusdcat AND _tinyusdz_tusdcat_e2e_ok)
+    # Scope is imageable, so `visibility` / `purpose` are parsed into TYPED
+    # fields (not `props`) and every writer must emit them explicitly. Neither
+    # the USDA printer nor the crate writer did, so they vanished on write.
+    add_test(
+      NAME scope-imageable-roundtrip
+      COMMAND bash "${PROJECT_SOURCE_DIR}/tests/run-scope-imageable-roundtrip.sh"
+              "$<TARGET_FILE:tusdcat>"
+      )
+    set_tests_properties(scope-imageable-roundtrip PROPERTIES SKIP_RETURN_CODE 77)
+
     add_test(
       NAME validation-suite-test
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py

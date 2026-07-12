@@ -69,22 +69,8 @@ bool TypedAuthoredPurpose(const tinyusdz::Prim& prim, std::string* out) {
 }
 
 bool AuthoredPurpose(const tinyusdz::Prim& prim, std::string* out) {
-  // Scope is the odd one out: ReconstructPrim<Scope> parses only `visibility`
-  // into a typed field and drops every other property into the generic `props`
-  // map (Scope::purpose exists but is never populated -- reading it always
-  // yields Default). So take the token from `props`, which is where the reader
-  // actually leaves it.
-  if (const auto* scope = prim.as<tinyusdz::Scope>()) {
-    const auto it = scope->props.find("purpose");
-    if (it == scope->props.end() || !it->second.is_attribute()) return false;
-    tinyusdz::value::token tok;
-    if (!it->second.get_attribute().get_value(&tok) || tok.str().empty()) {
-      return false;
-    }
-    *out = tok.str();
-    return true;
-  }
-  return TypedAuthoredPurpose<tinyusdz::GeomMesh>(prim, out) ||
+  return TypedAuthoredPurpose<tinyusdz::Scope>(prim, out) ||
+         TypedAuthoredPurpose<tinyusdz::GeomMesh>(prim, out) ||
          TypedAuthoredPurpose<tinyusdz::Xform>(prim, out) ||
          TypedAuthoredPurpose<tinyusdz::GeomSphere>(prim, out) ||
          TypedAuthoredPurpose<tinyusdz::GeomCube>(prim, out) ||
