@@ -1051,7 +1051,7 @@ bool CrateWriter::ConvertSinglePrim(
         std::string ce;
         if (!ConvertRelationshipToFields(prefix + ":includes",
                                          inst.includes.relationship(),
-                                         prim_path, &ce)) {
+                                         prim_path, &ce, /*is_custom=*/false)) {
           DCOUT("WARNING: Collection includes emit failed: " << ce);
         }
       }
@@ -1059,7 +1059,7 @@ bool CrateWriter::ConvertSinglePrim(
         std::string ce;
         if (!ConvertRelationshipToFields(prefix + ":excludes",
                                          inst.excludes.relationship(),
-                                         prim_path, &ce)) {
+                                         prim_path, &ce, /*is_custom=*/false)) {
           DCOUT("WARNING: Collection excludes emit failed: " << ce);
         }
       }
@@ -2842,7 +2842,8 @@ bool CrateWriter::ConvertPropertyToFields(
         prop.get_listedit_qual() != ListEditQual::ResetToExplicit) {
       rel_copy.set_listedit_qual(prop.get_listedit_qual());
     }
-    return ConvertRelationshipToFields(prop_name, rel_copy, parent_path, err);
+    return ConvertRelationshipToFields(prop_name, rel_copy, parent_path, err,
+                                       prop.has_custom());
   } else if (prop.is_attribute_connection()) {
     // Convert connection - creates separate spec, doesn't add to fields
     return ConvertConnectionToFields(prop_name, prop.get_attribute(), parent_path, err);
@@ -3146,7 +3147,8 @@ bool CrateWriter::ConvertRelationshipToFields(
     const std::string& rel_name,
     const Relationship& rel,
     const Path& parent_path,
-    std::string* err) {
+    std::string* err,
+    bool is_custom) {
 
   // Create separate spec for this relationship (proper USD Crate format)
   // Relationships are property specs, not prim fields
@@ -3225,12 +3227,24 @@ bool CrateWriter::ConvertRelationshipToFields(
   // A DefineOnly relationship with no qualifier (`rel myrel`) adds no
   // targetPaths field: there is nothing to record.
 
-  // 3. Relationships have implicit uniform variability
-  // Add it explicitly in the Crate format
+  // 3. Relationships are uniform by convention, but USD still allows (and the
+  // ascii/crate readers both preserve, via Relationship::is_varying_authored)
+  // an explicitly-authored `varying rel`. Hardcoding Uniform here silently
+  // dropped that authored opinion on every round-trip.
   crate::CrateValue var_value;
-  Variability var = Variability::Uniform;  // Relationships are always uniform
+  Variability var = rel.is_varying_authored() ? Variability::Varying
+                                              : Variability::Uniform;
   var_value.Set(var);
   rel_fields.push_back({"variability", var_value});
+
+  // `custom` lives on the enclosing Property, not the Relationship itself
+  // (mirrors ConvertAttributeToFields's `is_custom` parameter); callers that
+  // have no Property wrapper (e.g. Collection includes/excludes) pass false.
+  if (is_custom) {
+    crate::CrateValue custom_value;
+    custom_value.Set(true);
+    rel_fields.push_back({"custom", custom_value});
+  }
 
   // 4. Add relationship metadata from AttrMetas
   const AttrMeta& metas = rel.metas();
@@ -3247,6 +3261,18 @@ bool CrateWriter::ConvertRelationshipToFields(
     crate::CrateValue hidden_value;
     hidden_value.Set(metas.get_hidden());
     rel_fields.push_back({"hidden", hidden_value});
+  }
+
+  // Add bindMaterialAs if present. Written for Attribute metadata
+  // (ConvertAttributeToFields) but never for Relationship metadata, even
+  // though `bindMaterialAs` is authored on RELATIONSHIPS (e.g.
+  // `material:binding`) far more often than on attributes -- every
+  // `strongerThanDescendants`/`weakerThanDescendants` qualifier on a
+  // material binding was silently dropped on USDC round-trip.
+  if (metas.has_bindMaterialAs()) {
+    crate::CrateValue bind_material_as_value;
+    bind_material_as_value.Set(metas.get_bindMaterialAs());
+    rel_fields.push_back({"bindMaterialAs", bind_material_as_value});
   }
 
   // Add customData if present
@@ -3436,7 +3462,8 @@ bool CrateWriter::ConvertVariantToFields(
         return false;
       }
     } else if (prop.is_relationship()) {
-      if (!ConvertRelationshipToFields(prop_name, prop.get_relationship(), v_path, err)) {
+      if (!ConvertRelationshipToFields(prop_name, prop.get_relationship(), v_path, err,
+                                       prop.has_custom())) {
         if (err) *err = "Failed to convert variant relationship: " + prop_name;
         return false;
       }
