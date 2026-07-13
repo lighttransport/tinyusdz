@@ -358,4 +358,72 @@ else
   echo "ok[apischemas-usdc]: delete+prepend, explicit None, and prepend order survived"
 fi
 
+# Relationships: several distinct properties were dropped by
+# ConvertRelationshipToFields (src/stage-converter.cc) because it never
+# received the enclosing Property's `custom` flag, hardcoded `variability` to
+# Uniform instead of consulting Relationship::is_varying_authored(), and never
+# wrote `bindMaterialAs` metadata at all (only ConvertAttributeToFields did).
+# Separately, GPrim's `proxyPrim` was parsed into a typed field and never
+# re-emitted (same class of bug as the earlier Scope visibility/purpose fix),
+# and the collection-based material-binding writer
+# (mat_binding->materialBindingCollectionMap() in sconv-geom.cc) built
+# `material:binding:collection:<name>:<purpose>` when a purpose is present,
+# the wrong order -- it must be `<purpose>:<name>`.
+cat > "$TMP/relationships.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "W"
+)
+
+def "W"
+{
+    varying rel myrel = </W>
+    append custom varying rel myrel2 = </W>
+
+    rel material:binding = </W> (
+        bindMaterialAs = "strongerThanDescendants"
+    )
+}
+
+def Xform "hasProxy"
+{
+    rel proxyPrim = </W>
+
+    # material:binding:collection:<name>[:<purpose>] only goes through the
+    # typed MaterialBinding map (the buggy code path) on a schema type that
+    # inherits it -- a typeless prim stores these as generic named
+    # relationships and would pass even with the writer bug present.
+    rel material:binding:collection:beauty = </W>
+    rel material:binding:collection:mypurpose:beauty = </W>
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/relationships.usdc" "$TMP/relationships.usda" \
+     >"$TMP/write7.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the relationships scene to usdc"
+  cat "$TMP/write7.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/relationships.usdc" > "$TMP/relationships-rt.usda" 2>/dev/null
+lost=""
+for expect in \
+  'varying rel myrel = </W>' \
+  'append custom varying rel myrel2 = </W>' \
+  'bindMaterialAs = "strongerThanDescendants"' \
+  'rel proxyPrim = </W>' \
+  'material:binding:collection:beauty = </W>' \
+  'material:binding:collection:mypurpose:beauty = </W>'; do
+  grep -qF "$expect" "$TMP/relationships-rt.usda" || lost="$lost
+    $expect"
+done
+if [ -n "$lost" ]; then
+  echo "FAIL[relationships-usdc]: dropped/altered on round-trip:$lost"
+  echo "--- got ---"
+  cat "$TMP/relationships-rt.usda"
+  status=1
+else
+  echo "ok[relationships-usdc]: varying/custom, bindMaterialAs, proxyPrim, and collection-binding order survived"
+fi
+
 exit "$status"
