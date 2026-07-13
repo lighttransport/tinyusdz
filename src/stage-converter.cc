@@ -3263,6 +3263,12 @@ bool CrateWriter::ConvertVariantToFields(
   spec_value.Set(Specifier::Def);
   v_fields.push_back({"specifier", spec_value});
 
+  // A variant statement carries its own Prim metadata block -- `active`,
+  // `hidden`, `kind`, and (for a nested variantSet) `variantSets`. It is a
+  // full PrimMeta, populated by the readers just like a Prim's, so reuse the
+  // same extractor rather than hand-rolling a subset here.
+  ExtractPrimMeta(variant.metas(), v_fields);
+
   // Add variant properties as separate attribute specs
   for (const auto& prop_item : variant.properties()) {
     const auto& prop_name = prop_item.first;
