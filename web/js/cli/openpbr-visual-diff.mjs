@@ -36,6 +36,8 @@ const DEFAULT_SCENES = [
   'mtlx/test-divide-nodes.usda',
   'mtlx/test-min-nodes.usda',
   'mtlx/test-max-nodes.usda',
+  'mtlx/test-complex-chain.usdz',
+  'mtlx/test-texture-extract-nodes.usdz',
   'colorspace-constant-test.usdz',
   'colorspace-gamut-test.usdz',
   'colorspace-texture-test.usdz',

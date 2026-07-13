@@ -30,6 +30,11 @@ namespace next {
 //
 
 struct MeshConfig {
+  // Subdivision level for generated analytic spheres. Match the legacy
+  // converter default so backend switches do not expose faceted silhouettes.
+  // Clamped to [0, 6] by the converter.
+  int sphere_subdivisions = 4;
+
   // Triangulation
   bool triangulate = true;
   enum class TriangulationMethod { Earcut, Fan } triangulation_method = TriangulationMethod::Earcut;

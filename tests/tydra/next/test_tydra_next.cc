@@ -866,7 +866,7 @@ def Xform "World"
 
         def NodeGraph "NG"
         {
-            color3f outputs:out.connect = </World/OpenPBRMat/NG/Mix.outputs:out>
+            color3f outputs:out.connect = </World/OpenPBRMat/NG/Pass8.outputs:out>
             float outputs:opacity.connect = </World/OpenPBRMat/NG/OpacityExtract.outputs:out>
 
             def Shader "Constant"
@@ -892,6 +892,18 @@ def Xform "World"
                 float inputs:mix = 1.0
                 color3f outputs:out
             }
+
+            # Keep a moderately deep, acyclic graph in this regression. Each
+            # node/input/connection hop consumes evaluator depth; the old
+            # limit of 16 silently replaced this valid result with white.
+            def Shader "Pass1" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Mix.outputs:out> color3f outputs:out }
+            def Shader "Pass2" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass1.outputs:out> color3f outputs:out }
+            def Shader "Pass3" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass2.outputs:out> color3f outputs:out }
+            def Shader "Pass4" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass3.outputs:out> color3f outputs:out }
+            def Shader "Pass5" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass4.outputs:out> color3f outputs:out }
+            def Shader "Pass6" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass5.outputs:out> color3f outputs:out }
+            def Shader "Pass7" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass6.outputs:out> color3f outputs:out }
+            def Shader "Pass8" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass7.outputs:out> color3f outputs:out }
 
             def Shader "OpacityImage"
             {
@@ -4262,6 +4274,8 @@ def Xform "World"
     };
     // Baseline: the generators themselves are outward (+Y sphere).
     assert(signed_volume("/World/BallY") > 0.01);
+    // Match legacy's subdivision-4 sphere (10 * 4^4 + 2 vertices).
+    assert(find_mesh("/World/BallY").point_count() == 2562);
     // A mirror would flip these negative.
     assert(signed_volume("/World/CapX") > 0.01);
     assert(signed_volume("/World/CapZ") > 0.01);
