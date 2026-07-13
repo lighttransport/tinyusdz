@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
+#include <memory>
 #include <sstream>
 
 namespace tinyusdz {
@@ -112,8 +114,13 @@ int ActiveIndex(const ValueClipSet& set, double time) {
 
 double ClipTime(const ValueClipSet& set, double time) {
   if (set.times.empty()) return time;
-  if (time <= set.times.front().first) return set.times.front().second;
-  if (time >= set.times.back().first) return set.times.back().second;
+  // Stage times strictly OUTSIDE the authored `times` range map to the
+  // boundary STAGE time (AOUSD supplemental value-resolution reference
+  // semantics), which the clip's own sample range then clamps.
+  if (time < set.times.front().first) return set.times.front().first;
+  if (time > set.times.back().first) return set.times.back().first;
+  if (time == set.times.front().first) return set.times.front().second;
+  if (time == set.times.back().first) return set.times.back().second;
   for (size_t i = 0; i + 1 < set.times.size(); ++i) {
     const auto& a = set.times[i];
     const auto& b = set.times[i + 1];
@@ -145,8 +152,16 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
           set.asset_paths = *paths;
       }
       set.times = PairArray(dict->find("times"));
-      for (const auto& pair : PairArray(dict->find("active")))
+      for (const auto& pair : PairArray(dict->find("active"))) {
+        if (!std::isfinite(pair.first) || !std::isfinite(pair.second) ||
+            std::floor(pair.second) != pair.second || pair.second < 0.0 ||
+            pair.second > static_cast<double>(std::numeric_limits<int>::max())) {
+          if (error) *error = "Invalid value-clip active entry in set `" +
+                              set.name + "`";
+          return false;
+        }
         set.active.emplace_back(pair.first, static_cast<int>(pair.second));
+      }
     }
     ToString(dict->find("primPath"), &set.prim_path);
     if (!ToString(dict->find("manifestAssetPath"),
@@ -156,11 +171,65 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
     const Value* interpolate = dict->find("interpolateMissingClipValues");
     if (interpolate && interpolate->as_bool())
       set.interpolate_missing = *interpolate->as_bool();
+    for (const std::string& path : set.asset_paths) {
+      if (path.empty()) {
+        if (error) *error = "Empty value-clip asset path in set `" + set.name + "`";
+        return false;
+      }
+    }
+    for (const auto& pair : set.times) {
+      if (!std::isfinite(pair.first) || !std::isfinite(pair.second)) {
+        if (error) *error = "Non-finite value-clip time mapping in set `" +
+                            set.name + "`";
+        return false;
+      }
+    }
     if (set.active.empty() && !set.asset_paths.empty())
       set.active.emplace_back(0.0, 0);
     std::sort(set.active.begin(), set.active.end());
+    // Jump discontinuity: two consecutive authored entries with the SAME
+    // stage time mean "clip time approaches the first entry's value up to
+    // (not including) the stage time, then jumps to the second's". Encode
+    // the first entry at stage_time - epsilon BEFORE sorting, so the sort
+    // cannot reorder the pair and destroy the discontinuity.
+    for (size_t i = 0; i + 1 < set.times.size(); ++i) {
+      if (set.times[i].first == set.times[i + 1].first) {
+        set.times[i].first -= 1e-9;
+      }
+    }
     std::sort(set.times.begin(), set.times.end());
+    for (const auto& active : set.active) {
+      if (active.second < 0 ||
+          static_cast<size_t>(active.second) >= set.asset_paths.size()) {
+        if (error) *error = "Value-clip active index is out of range in set `" +
+                            set.name + "`";
+        return false;
+      }
+    }
     if (!set.asset_paths.empty()) out->push_back(std::move(set));
+  }
+  // Dictionary storage order is not strength order. Use name order as the
+  // deterministic weaker baseline, then apply the separately-authored
+  // clipSets list-op to select/order strongest-to-weakest traversal.
+  std::sort(out->begin(), out->end(),
+            [](const ValueClipSet& a, const ValueClipSet& b) {
+              return a.name < b.name;
+            });
+  const StringListOpEdits& edits = prim.GetPrimSpec()->meta().clipSetEdits();
+  if (edits.authored) {
+    std::vector<std::string> weaker;
+    weaker.reserve(out->size());
+    for (const ValueClipSet& set : *out) weaker.push_back(set.name);
+    const std::vector<std::string> order = ApplyStringListOp(edits, weaker);
+    std::vector<ValueClipSet> ordered;
+    ordered.reserve(out->size());
+    for (const std::string& name : order) {
+      auto it = std::find_if(out->begin(), out->end(), [&](const ValueClipSet& s) {
+        return s.name == name;
+      });
+      if (it != out->end()) ordered.push_back(std::move(*it));
+    }
+    *out = std::move(ordered);
   }
   return !out->empty();
 }
@@ -168,14 +237,54 @@ bool ParseValueClipSets(const UsdPrim& prim, std::vector<ValueClipSet>* out,
 bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
                       double stage_time, const ValueClipStageLoader& loader,
                       Value* out, std::string* source_asset,
-                      std::string* error) {
-  if (!out) return false;
+                      std::string* error, std::string* source_clip_set,
+                      ValueClipStageCache* stage_cache) {
   std::vector<ValueClipSet> sets;
   if (!ParseValueClipSets(prim, &sets, error)) return false;
+  return ResolveValueClipFromSets(sets, prim, property, stage_time, loader,
+                                  out, source_asset, error, source_clip_set,
+                                  stage_cache);
+}
+
+bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
+                              const UsdPrim& prim, const std::string& property,
+                              double stage_time,
+                              const ValueClipStageLoader& loader, Value* out,
+                              std::string* source_asset, std::string* error,
+                              std::string* source_clip_set,
+                              ValueClipStageCache* stage_cache) {
+  if (!out || sets.empty()) return false;
   if (!loader) {
     if (error) *error = "Value clips require a clip_stage_loader";
     return false;
   }
+  ValueClipStageCache query_cache;
+  ValueClipStageCache* cache = stage_cache ? stage_cache : &query_cache;
+  auto load_stage = [&](const std::string& asset) -> const Stage* {
+    auto found = cache->entries.find(asset);
+    if (found != cache->entries.end()) {
+      if (!found->second.stage && error && error->empty()) {
+        *error = found->second.error;
+      }
+      return found->second.stage.get();
+    }
+    std::shared_ptr<Stage> stage = std::make_shared<Stage>();
+    std::string warn, load_error;
+    if (!loader(asset, stage.get(), &warn, &load_error)) {
+      std::string message = "Failed to load value-clip asset `" + asset + "`";
+      if (!load_error.empty()) message += ": " + load_error;
+      ValueClipStageCache::Entry entry;
+      entry.error = message;
+      cache->entries.emplace(asset, std::move(entry));
+      if (error && error->empty()) *error = std::move(message);
+      return nullptr;
+    }
+    const Stage* result = stage.get();
+    ValueClipStageCache::Entry entry;
+    entry.stage = std::move(stage);
+    cache->entries.emplace(asset, std::move(entry));
+    return result;
+  };
   for (const ValueClipSet& set : sets) {
     const int index = ActiveIndex(set, stage_time);
     if (index < 0 || static_cast<size_t>(index) >= set.asset_paths.size())
@@ -189,10 +298,8 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
     // here — it also reports schema-fallback properties (visibility, radius,
     // ...) that are not in the manifest, which would leak them into clips.
     if (!set.manifest_asset_path.empty()) {
-      Stage manifest_stage;
-      std::string mwarn, merr;
-      if (loader(set.manifest_asset_path, &manifest_stage, &mwarn, &merr)) {
-        const UsdPrim mprim = manifest_stage.GetPrimAtPath(clip_path);
+      if (const Stage* manifest_stage = load_stage(set.manifest_asset_path)) {
+        const UsdPrim mprim = manifest_stage->GetPrimAtPath(clip_path);
         const PrimSpec* mspec = mprim.GetPrimSpec();
         if (!mspec || !mspec->property(property)) continue;
       }
@@ -208,15 +315,42 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
       Value none;
       if (clip_index >= set.asset_paths.size()) return none;
       const std::string& asset = set.asset_paths[clip_index];
-      Stage clip_stage;
-      std::string warn, err;
-      if (!loader(asset, &clip_stage, &warn, &err)) return none;
-      const UsdPrim clip_prim = clip_stage.GetPrimAtPath(clip_path);
+      const Stage* clip_stage = load_stage(asset);
+      if (!clip_stage) return none;
+      const UsdPrim clip_prim = clip_stage->GetPrimAtPath(clip_path);
       if (!clip_prim.IsValid() || !clip_prim.HasProperty(property)) {
         return none;
       }
       Value v = clip_prim.GetInterpolatedValue(property,
                                                ClipTime(set, at_time));
+      if ((v.is_empty() || v.is_block()) && clip_prim.GetPrimSpec() &&
+          clip_prim.GetPrimSpec()->meta().clips().is_dictionary()) {
+        const std::string key = asset + "|" + clip_path + "." + property;
+        if (std::find(cache->resolution_stack.begin(),
+                      cache->resolution_stack.end(), key) !=
+            cache->resolution_stack.end()) {
+          if (error && error->empty())
+            *error = "Value-clip cycle detected at `" + key + "`";
+          return none;
+        }
+        if (cache->resolution_stack.size() >= cache->max_recursion_depth) {
+          if (error && error->empty())
+            *error = "Value-clip recursion depth exceeded at `" + key + "`";
+          return none;
+        }
+        cache->resolution_stack.push_back(key);
+        Value nested;
+        std::string nested_asset;
+        const bool resolved = ResolveValueClip(
+            clip_prim, property, ClipTime(set, at_time), loader, &nested,
+            &nested_asset, error, nullptr, cache);
+        cache->resolution_stack.pop_back();
+        if (resolved) {
+          if (asset_out)
+            *asset_out = nested_asset.empty() ? asset : nested_asset;
+          return nested;
+        }
+      }
       if (v.is_empty() || v.is_block()) return none;
       if (asset_out) *asset_out = asset;
       return v;
@@ -284,6 +418,7 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
     if (value.is_empty()) continue;
     *out = std::move(value);
     if (source_asset) *source_asset = asset;
+    if (source_clip_set) *source_clip_set = set.name;
     return true;
   }
   return false;

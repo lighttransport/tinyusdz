@@ -126,7 +126,7 @@ class LayerRegistry {
 };
 
 /// Load a layer from a resolved file/package path, dispatching by extension to
-/// the next USDA / USDC / USDZ readers. Returns nullptr on failure.
+/// the next USDA / USDC / USDZ / MaterialX readers. Returns nullptr on failure.
 /// `options.parse_num_threads` forwards to ParseOptions::num_threads for the
 /// USDA large-array parallel parse; `options.max_memory` caps USDA file size
 /// and USDC crate input/allocation checks.

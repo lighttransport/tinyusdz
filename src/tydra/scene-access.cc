@@ -3750,11 +3750,16 @@ bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage,
     // nested evaluation (vector reallocation would dangle the sub-evaluator's
     // reference).
     auto subexprs = std::make_shared<std::deque<ParsedPathExpression>>();
+    const std::string expression_owner = query.owner_prim_path;
     ctx.resolve_ref =
-        [&stage, subexprs](
+        [&stage, subexprs, expression_owner](
             const ExpressionReference &ref) -> const ParsedPathExpression * {
-      if (ref.path.empty()) return nullptr;  // same-scope/weaker: unsupported here
-      Path owner(ref.path, "");
+      // Composition resolves `%_` while both opinions are available. A
+      // surviving weaker ref therefore means there was no weaker authored
+      // expression and correctly evaluates as the empty set.
+      if (ref.is_weaker()) return nullptr;
+      const std::string owner_path = ref.path.empty() ? expression_owner : ref.path;
+      Path owner(owner_path, "");
       if (!owner.is_valid()) return nullptr;
       auto pret = stage.GetPrimAtPath(owner);
       if (!pret || !pret.value()) return nullptr;
@@ -3765,7 +3770,18 @@ bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage,
       if (!inst->has_membershipExpression()) return nullptr;
       value::PathExpression expr;
       if (!inst->membershipExpression.get_value(&expr)) return nullptr;
-      subexprs->push_back(ParsedPathExpression::Parse(expr.GetText()));
+      std::string text = expr.GetText();
+      // The evaluator callback does not carry the currently evaluated
+      // reference's owner. Qualify same-scope refs before parsing a nested
+      // expression so `%:base` inside `%/Sets:alias` remains relative to
+      // `/Sets`, not to the original seed collection.
+      const std::string qualified = "%" + owner_path + ":";
+      size_t pos = 0;
+      while ((pos = text.find("%:", pos)) != std::string::npos) {
+        text.replace(pos, 2, qualified);
+        pos += qualified.size();
+      }
+      subexprs->push_back(ParsedPathExpression::Parse(text));
       return &subexprs->back();
     };
     return MatchPath(query.membership_expression, qpath, ctx);

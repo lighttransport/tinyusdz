@@ -1205,8 +1205,35 @@ async function loadModel(bytes, name, stats = null) {
 
 	let baseResult = null;
 	try {
-		// Baseline: everything off (bake-transform is irrelevant when not merging).
 		const parseStart = performance.now();
+		// The next worker's optimized result already carries exact source mesh,
+		// material and texture counts. Mesh merging preserves triangles, and its
+		// merged/group counters give the exact draw-call reduction. Avoid a
+		// second full conversion used only to populate the baseline column.
+		if (params.backend === 'next' && params.useWorker &&
+				!params.jsBatchByMaterial && typeof Worker !== 'undefined') {
+			let convertedAt = null;
+			const built = await rebuild({
+				deriveNextBaseline: true,
+				onConverted: () => {
+					convertedAt = performance.now();
+					if (stats) stats.parseMs = convertedAt - parseStart;
+				}
+			});
+			if (!built) throw new Error('next scene conversion failed');
+			if (stats) stats.processMs = performance.now() - convertedAt;
+			frameCameraToScene();
+			finishLoadStats(stats);
+			window.renderComplete = true;
+			if (!textureManager || textureManager.total <= 0) {
+				showProgress('complete', 100, 'Load complete');
+				hideProgress();
+			}
+			updateDebugHandle();
+			return;
+		}
+
+		// Baseline: everything off (bake-transform is irrelevant when not merging).
 		baseResult = await convertScene(bytes, name, {
 			materialDedup: false,
 			mergeMeshes: false,
@@ -1258,7 +1285,7 @@ async function loadModel(bytes, name, stats = null) {
 }
 
 // Re-convert + rebuild with the current optimization options (baseline kept).
-async function rebuild() {
+async function rebuild({ deriveNextBaseline = false, onConverted = null } = {}) {
 	if (!rawBytes) return;
 	setStatus('Converting with current options…');
 	showProgress('processing', 45, 'Converting with current options...');
@@ -1274,6 +1301,7 @@ async function rebuild() {
 		});
 		const usd = result.usd;
 		const counts = result.counts;
+		if (typeof onConverted === 'function') onConverted(result);
 		sceneMeta = readSceneMeta(usd);
 		currentUsd = usd;
 		result = null;
@@ -1285,6 +1313,18 @@ async function rebuild() {
 			progressBase: 55,
 			progressRange: params.loadTextures ? 25 : 40 });
 		const info = measureSceneInfo();
+		if (deriveNextBaseline) {
+			const native = counts.stats || {};
+			const merged = Number(native.mergedMeshes) || 0;
+			const groups = Number(native.mergeGroups) || 0;
+			baseline = {
+				meshes: Number.isFinite(native.sourceMeshes) ? native.sourceMeshes : counts.meshes,
+				materials: Number.isFinite(native.sourceMaterials) ? native.sourceMaterials : counts.materials,
+				textures: Number.isFinite(native.sourceTextures) ? native.sourceTextures : counts.textures,
+				draws: info.draws + Math.max(0, merged - groups),
+				triangles: info.triangles
+			};
+		}
 		updateStatsUI(counts, info);
 		setStatus(describeOptions());
 		startLazyTextureLoading();
@@ -1297,6 +1337,7 @@ async function rebuild() {
 			hideProgress();
 		}
 		updateDebugHandle();
+		return { counts, info };
 	} catch (err) {
 		if (result) {
 			freeUsd(result.usd);
@@ -1306,6 +1347,7 @@ async function rebuild() {
 		setStatus('Error: ' + (err && err.message ? err.message : String(err)));
 		showProgress('failed', 100, 'Update failed');
 		updateDebugHandle();
+		return null;
 	}
 }
 

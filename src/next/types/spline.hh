@@ -43,6 +43,10 @@ struct SplineKnot {
   // requires ts-binary version 2 (Crate >= 0.13.0).
   int pre_algo{0};
   int post_algo{0};
+
+  // Authored USDA dictionary for this knot, including its outer braces.
+  // Kept as source text so unknown dictionary value types remain lossless.
+  std::string custom_data_source;
 };
 
 struct SplineData {

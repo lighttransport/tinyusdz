@@ -1,0 +1,17 @@
+#usda 1.0
+
+def "WeakDefStrongOver"
+{
+}
+
+class "WeakClassStrongOver"
+{
+}
+
+def "WeakDefStrongClass"
+{
+}
+
+class "WeakClassStrongDef"
+{
+}

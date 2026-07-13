@@ -47,6 +47,7 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         std::string value;
         if (lexer_->expect(TokenType::String, value)) {
           layer_->meta().defaultPrim = value;
+          layer_->meta().defaultPrim_set = true;
         }
       } else if (key == "upAxis") {
         std::string value;
@@ -92,6 +93,7 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         }
       } else if (key == "relocates") {
         // Layer relocates: { </old/path>: </new/path>, ... }
+        layer_->meta().relocates_set = true;
         if (Match(TokenType::OpenBrace)) {
           while (!Check(TokenType::CloseBrace) && !AtEnd()) {
             std::string src, dst;
@@ -109,33 +111,50 @@ bool AsciiParser::Impl::ParseStageMetadata() {
         if (Check(TokenType::String)) {
           lexer_->expect(TokenType::String, value);
           layer_->meta().colorConfiguration = value;
+          layer_->meta().colorConfiguration_set = true;
         }
       } else if (key == "colorManagementSystem") {
         std::string value;
         if (lexer_->expect(TokenType::String, value)) {
           layer_->meta().colorManagementSystem = value;
+          layer_->meta().colorManagementSystem_set = true;
         }
       } else if (key == "doc" || key == "documentation") {
         std::string value;
         if (lexer_->expect(TokenType::String, value)) {
           layer_->meta().doc = value;
+          layer_->meta().doc_set = true;
         }
       } else if (key == "comment") {
         std::string value;
         if (lexer_->expect(TokenType::String, value)) {
           layer_->meta().comment = value;
+          layer_->meta().comment_set = true;
+        }
+      } else if (key == "owner") {
+        std::string value;
+        if (lexer_->expect(TokenType::String, value)) {
+          layer_->meta().owner = value;
+          layer_->meta().owner_set = true;
         }
       } else if (key == "customLayerData") {
         ParseResult r = ParseDict(*lexer_);
-        if (r.success) layer_->meta().customLayerData = std::move(r.value);
+        if (r.success) {
+          layer_->meta().customLayerData = std::move(r.value);
+          layer_->meta().customLayerData_set = true;
+        }
       } else if (key == "expressionVariables") {
         ParseResult r = ParseDict(*lexer_);
-        if (r.success) layer_->meta().expressionVariables = std::move(r.value);
+        if (r.success) {
+          layer_->meta().expressionVariables = std::move(r.value);
+          layer_->meta().expressionVariables_set = true;
+        }
       } else if (key == "subLayers") {
         // Parse sublayer list. Each element is an asset ref (`@path@`, lexed as
         // a String) or a quoted string. Decide with a non-consuming Check first:
         // `expect()` always consumes, so `expect(A) || expect(B)` would eat two
         // tokens per element and corrupt the list.
+        layer_->meta().subLayers_set = true;
         if (Match(TokenType::OpenBracket)) {
           while (!Check(TokenType::CloseBracket) && !AtEnd()) {
             std::string path;

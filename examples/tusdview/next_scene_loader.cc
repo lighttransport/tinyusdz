@@ -3129,11 +3129,9 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         nativeGroups[s->meta().instance_prototype()].push_back(Mat4dFromArray(w16));
         // The instance's children are proxies of the prototype; the converter
         // flattened them, so consume those mesh paths (excluded from 3b).
-        // An instance's children ARE the prototype's children (UsdPrim follows
-        // instance_prototype), so these paths are the PROTOTYPE's mesh paths.
-        // Consuming them keeps the static-batching pass from drawing the
-        // prototype's geometry a second time -- every placement, including the
-        // prototype prim's own, is emitted below.
+        // These resolve to the INSTANCE's own paths: pcp remaps
+        // prototype_root -> instance_root, so they are NOT the prototype's mesh
+        // paths. The prototype's own paths are consumed separately below.
         std::vector<tnext::UsdPrim> ms;
         tydn::GatherMeshPrims(p, &ms);
         for (const tnext::UsdPrim& m : ms) consumed.insert(m.GetPath().str());
@@ -3148,10 +3146,19 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       if (!protoRoot.IsValid()) continue;
       // The prototype of a native-instance group is ITSELF one of the authored
       // instanceable prims (the pcp cache designates the first sibling and points
-      // the others at it), so it needs its own placement here. It cannot fall back
-      // to the static-batching pass: every sibling's mesh paths resolve to the
-      // prototype's, so they were consumed above -- without this, one instance
-      // (all of them, for a 2-instance group) silently vanished.
+      // the others at it), so it needs its own placement here -- without this, one
+      // instance (all of them, for a 2-instance group) silently vanished.
+      //
+      // Consume the PROTOTYPE's mesh paths too. An instance's children resolve to
+      // the instance's own paths (pcp remaps prototype_root -> instance_root), so
+      // the loop above consumed those, not these. EmitInstancedProto draws the
+      // prototype's geometry at EVERY placement below, including the prototype
+      // prim's own, so leaving its paths unconsumed makes the static-batching pass
+      // in 3b draw that same geometry a second time as a standalone mesh.
+      std::vector<tnext::UsdPrim> pms;
+      tydn::GatherMeshPrims(protoRoot, &pms);
+      for (const tnext::UsdPrim& m : pms) consumed.insert(m.GetPath().str());
+
       std::vector<matrix4d> placements;
       placements.reserve(kv.second.size() + 1);
       double pw16[16];

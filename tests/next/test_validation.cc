@@ -10,6 +10,7 @@
 
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -259,6 +260,32 @@ def Xform "Root" (
         "invalid reference primPath flagged");
 }
 
+static void test_layer_offset_rules() {
+  std::cout << "[layer offset validation]\n";
+  Layer layer;
+  layer.meta().subLayers = {"zero.usda", "negative.usda", "offset.usda",
+                            "nan.usda"};
+  const double inf = std::numeric_limits<double>::infinity();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  layer.meta().subLayerOffsets = {
+      {0.0, 0.0}, {0.0, -1.0}, {inf, 1.0}, {0.0, nan}};
+
+  PrimSpec prim("Root", "Xform");
+  prim.set_path(Path("/Root"));
+  prim.meta().layer_offset = {inf, nan};
+  prim.meta().references.push_back(
+      "@asset.usda@</Root>?layerOffset=1:0");
+  const uint32_t index = layer.add_prim(std::move(prim));
+  layer.add_root(index);
+  layer.finalize();
+
+  const USDValidationResult result = ValidateLayerAgainstAOUSDCore(layer);
+  CHECK(CountErrors(result, "core.layer.subLayerOffset") == 4,
+        "zero/negative/non-finite sublayer offsets flagged");
+  CHECK(CountErrors(result, "core.composition.reference") >= 3,
+        "arc and prim layer offsets reject zero/non-finite components");
+}
+
 static void test_geom_group_toggle() {
   std::cout << "[geom group toggle]\n";
   const std::string usda = R"(#usda 1.0
@@ -353,6 +380,35 @@ def Material "Mat"
         "unknown UsdPreviewSurface input warns");
 }
 
+static void test_materialx_rules() {
+  std::cout << "[shade.materialX.*]\n";
+  const std::string usda = R"(#usda 1.0
+
+def Material "BadMtlx"
+{
+    token config:mtlx:version = "2.0"
+    token outputs:mtlx:surface
+
+    def Shader "Node"
+    {
+        uniform token info:id = "ND_test_color3"
+    }
+}
+)";
+  ValidationOptions opts;
+  opts.shade = true;
+  USDValidationResult result;
+  CHECK(Validate(usda, opts, &result), "parses");
+  CHECK(CountWarnings(result, "shade.materialX.configAPI") == 1,
+        "MaterialX properties without MaterialXConfigAPI flagged");
+  CHECK(CountErrors(result, "shade.materialX.version") == 1,
+        "non-string MaterialX version flagged");
+  CHECK(CountErrors(result, "shade.material.outputConnection") == 1,
+        "unconnected MaterialX terminal flagged");
+  CHECK(CountWarnings(result, "shade.materialX.output") == 1,
+        "MaterialX shader without an output flagged");
+}
+
 static void test_lux_rules() {
   std::cout << "[lux.*]\n";
   const std::string usda = R"(#usda 1.0
@@ -423,6 +479,277 @@ static void test_prim_name_and_kind() {
         "invalid kind token flagged");
 }
 
+static void test_arkit_rules() {
+  std::cout << "[arkit.*]\n";
+  const std::string usda = R"(#usda 1.0
+(
+    upAxis = "Z"
+    subLayers = [
+        @notes.txt@
+    ]
+)
+
+def Xform "Asset"
+{
+    def BasisCurves "Hair"
+    {
+    }
+
+    def Mesh "Body" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Asset/Hair>
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </Asset/Mat/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            normal3f inputs:normal.connect = </Asset/Mat/Normal.outputs:rgb>
+            color3f inputs:diffuseColor.connect = [
+                </Asset/Mat/Normal.outputs:rgb>,
+                </Asset/Mat/Tex.outputs:rgb>
+            ]
+            token outputs:surface
+        }
+
+        def Shader "Normal"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @normal.png@
+            float3 outputs:rgb
+        }
+
+        def Shader "Tex"
+        {
+            uniform token info:implementationSource = "sourceCode"
+            uniform token info:id = "MyBrdf"
+            asset inputs:file = @albedo.tga@
+            float3 outputs:rgb
+        }
+    }
+}
+)";
+
+  // The arkit group is opt-in: none of it runs under MakeValidateAllOptions().
+  USDValidationResult all_groups;
+  CHECK(Validate(usda, MakeValidateAllOptions(), &all_groups), "parses (all)");
+  CHECK(!all_groups.checked_groups.arkit,
+        "arkit is not part of MakeValidateAllOptions()");
+  size_t arkit_issues = 0;
+  for (const auto &issue : all_groups.issues) {
+    if (issue.rule_id.rfind("arkit.", 0) == 0) {
+      arkit_issues++;
+    }
+  }
+  CHECK(arkit_issues == 0, "no arkit.* rules run when the group is off");
+
+  ValidationOptions opts;
+  opts.core = false;
+  opts.arkit = true;
+  USDValidationResult result;
+  CHECK(Validate(usda, opts, &result), "parses (arkit)");
+  if (result.error_count() == 0) {
+    DumpIssues(result);
+  }
+  CHECK(result.checked_groups.arkit, "arkit group reported as checked");
+  CHECK(CountErrors(result, "arkit.stage.upAxis") == 1, "Z-up flagged");
+  CHECK(CountErrors(result, "arkit.stage.metersPerUnit") == 1,
+        "unauthored metersPerUnit flagged");
+  CHECK(CountErrors(result, "arkit.stage.defaultPrim") == 1,
+        "unauthored defaultPrim flagged");
+  CHECK(CountErrors(result, "arkit.prim.type") == 1,
+        "BasisCurves is outside the ARKit prim-type set");
+  CHECK(CountErrors(result, "arkit.material.binding") == 1,
+        "material:binding to a non-Material flagged");
+  CHECK(CountErrors(result, "arkit.shader.implementationSource") == 1,
+        "non-id implementation source flagged");
+  CHECK(CountErrors(result, "arkit.shader.id") == 1,
+        "unknown shader id flagged");
+  CHECK(CountErrors(result, "arkit.shader.connection") == 1,
+        "multiple connections on one input flagged");
+  CHECK(CountErrors(result, "arkit.texture.format") == 1,
+        "non-portable tga texture flagged");
+  // scale, bias and sourceColorSpace are all missing on the normal texture.
+  CHECK(CountErrors(result, "arkit.normalMap.scaleBias") == 3,
+        "8-bit normal map without scale/bias/raw flagged");
+  CHECK(CountErrors(result, "arkit.layer.extension") == 1,
+        "non-layer subLayer extension flagged");
+
+  const std::vector<std::string> groups =
+      GetValidationGroupNames(result.checked_groups);
+  CHECK(groups.size() == 1 && groups[0] == "arkit",
+        "arkit appears last in the stable group-name order");
+
+  // An ARKit-clean asset reports nothing.
+  const std::string clean = R"(#usda 1.0
+(
+    defaultPrim = "Asset"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Asset"
+{
+    def Mesh "Body" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </Asset/Mat>
+    }
+
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </Asset/Mat/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            normal3f inputs:normal.connect = </Asset/Mat/Normal.outputs:rgb>
+            token outputs:surface
+        }
+
+        def Shader "Normal"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @normal.png@
+            float4 inputs:scale = (2, 2, 2, 1)
+            float4 inputs:bias = (-1, -1, -1, 0)
+            token inputs:sourceColorSpace = "raw"
+            float3 outputs:rgb
+        }
+    }
+}
+)";
+  USDValidationResult clean_result;
+  CHECK(Validate(clean, opts, &clean_result), "parses (clean)");
+  if (!clean_result.ok()) {
+    DumpIssues(clean_result);
+  }
+  CHECK(clean_result.ok(), "ARKit-clean asset has no errors");
+}
+
+// UsdVol / UsdRender structural checks (product parity).
+static void test_vol_render_rules() {
+  std::cout << "[vol/render rules]\n";
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+def Xform "World"
+{
+    def Volume "Smoke"
+    {
+        token field:density = "oops"
+        rel field:temperature
+        rel field:velocity = </World/VelField>
+    }
+    def OpenVDBAsset "VelField"
+    {
+        token fieldDataType = "banana"
+        token fieldClass = "levelSet"
+    }
+    def OpenVDBAsset "Animated"
+    {
+        asset filePath.timeSamples = {
+            1: @./smoke.0001.vdb@,
+            2: @./smoke.0002.vdb@,
+        }
+        token fieldDataType = "float"
+    }
+    def OpenVDBAsset "NoDataType"
+    {
+        asset filePath = @./still.vdb@
+    }
+    def OpenVDBAsset "DeclaredOnlyDataType"
+    {
+        asset filePath = @./still2.vdb@
+        token fieldDataType
+    }
+    def Field3DAsset "F3D"
+    {
+        asset filePath = @./vol.f3d@
+        token fieldDataType = "float"
+    }
+    def RenderSettings "Rs"
+    {
+        token aspectRatioConformPolicy = "bogusPolicy"
+        rel products = </World/Rp>
+        string orderedVars = "customAttrNotASchemaProperty"
+    }
+    def RenderProduct "Rp"
+    {
+        rel orderedVars = </World/Rv>
+    }
+    def RenderVar "Rv"
+    {
+        token sourceType = "telepathy"
+    }
+    def RenderVar "DeclaredOnly"
+    {
+        token sourceType
+    }
+    def RenderVar "AnimatedBad"
+    {
+        token sourceType.timeSamples = {
+            1: "telepathy",
+        }
+    }
+    def RenderVar "AnimatedGood"
+    {
+        token sourceType.timeSamples = {
+            1: "lpe",
+            2: "raw",
+        }
+    }
+}
+)";
+  ValidationOptions options;
+  options.geom = true;
+  options.render = true;
+  USDValidationResult result;
+  CHECK(Validate(usda, options, &result), "vol/render usda parses");
+  CHECK(CountErrors(result, "vol.volume.fieldRel") == 1,
+        "field:* attribute (not relationship) is an error");
+  CHECK(CountWarnings(result, "vol.volume.fieldRel") == 1,
+        "targetless field relationship warns");
+  CHECK(CountWarnings(result, "vol.fieldAsset.filePath") == 1,
+        "only the asset without any filePath warns (time-sampled filePath "
+        "is valid animated-volume authoring)");
+  CHECK(CountErrors(result, "vol.fieldAsset.dataType") == 1,
+        "invalid fieldDataType is an error");
+  CHECK(CountWarnings(result, "vol.fieldAsset.dataType") == 2,
+        "missing and declared-only fieldDataType VALUES warn (per-layer "
+        "check; the value may arrive from another layer)");
+  CHECK(CountErrors(result, "vol.fieldAsset.fieldClass") == 0,
+        "valid fieldClass is clean");
+  CHECK(CountErrors(result, "render.settings.aspectRatioConformPolicy") == 1,
+        "invalid aspectRatioConformPolicy is an error");
+  CHECK(CountErrors(result, "render.var.sourceType") == 2,
+        "invalid sourceType errors (authored default AND animated sample); "
+        "declared-only and validly-animated sourceType are clean");
+  CHECK(CountErrors(result, "render.settings.relationship") == 0,
+        "authored relationships are clean; a custom `orderedVars` attribute "
+        "on RenderSettings is not kind-checked");
+  if (g_fail) DumpIssues(result);
+
+  // render.* rules are their own group: geom alone must not run them.
+  ValidationOptions geom_only;
+  geom_only.geom = true;
+  USDValidationResult geom_result;
+  CHECK(Validate(usda, geom_only, &geom_result), "geom-only re-run parses");
+  CHECK(CountErrors(geom_result, "render.settings.aspectRatioConformPolicy") ==
+                0 &&
+            CountErrors(geom_result, "render.var.sourceType") == 0,
+        "render rules do not run under the geom group");
+}
+
 static void test_parse_failure() {
   std::cout << "[parse failure]\n";
   const std::string garbage = "this is not a USD file {{{";
@@ -469,13 +796,17 @@ int main() {
   test_attr_metadata_rules();
   test_empty_over_and_variant_selection();
   test_reference_arc_rules();
+  test_layer_offset_rules();
   test_geom_group_toggle();
   test_geom_primitive_and_subset();
   test_shade_rules();
+  test_materialx_rules();
   test_lux_rules();
   test_physics_rules();
   test_prim_name_and_kind();
+  test_arkit_rules();
   test_parse_failure();
+  test_vol_render_rules();
   test_report_formatting();
 
   if (g_fail) {

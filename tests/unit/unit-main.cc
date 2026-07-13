@@ -622,6 +622,7 @@ TEST_LIST = {
   { "comp_variant_nested_children_test", comp_variant_nested_children_test },
   { "comp_reference_suffix_fallback_test", comp_reference_suffix_fallback_test },
   { "comp_sublayer_variant_sets_merge_test", comp_sublayer_variant_sets_merge_test },
+  { "comp_sublayer_path_expression_weaker_test", comp_sublayer_path_expression_weaker_test },
   { "comp_override_basic_test", comp_override_basic_test },
   { "comp_override_replace_property_test", comp_override_replace_property_test },
   { "comp_override_add_new_property_test", comp_override_add_new_property_test },

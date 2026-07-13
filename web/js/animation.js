@@ -2157,8 +2157,8 @@ const animationParams = {
 		// Update all loaded USD objects
 		usdSceneRoot.traverse((child) => {
 			if (child.isMesh) {
-				child.castShadow = this.shadowsEnabled;
-				child.receiveShadow = this.shadowsEnabled;
+				child.castShadow = this.shadowsEnabled && !child.userData.skipShadows;
+				child.receiveShadow = this.shadowsEnabled && !child.userData.skipShadows;
 			}
 		});
 	},
@@ -2255,6 +2255,14 @@ const animationParams = {
 				ground.userData.originalMaterial = null;
 			}
 		}
+	},
+
+	// Curves can be numerous and expensive, and are usually guide/debug data.
+	showCurves: false,
+	toggleCurves: function() {
+		usdSceneRoot.traverse((child) => {
+			if (child.userData?.usdCurves) child.visible = this.showCurves;
+		});
 	},
 
 	// Scene scaling
@@ -2547,6 +2555,9 @@ renderingFolder.add(animationParams, 'doubleSided')
 renderingFolder.add(animationParams, 'showNormals')
 	.name('Show Normals')
 	.onChange(() => animationParams.toggleNormalVisualization());
+renderingFolder.add(animationParams, 'showCurves')
+	.name('Show Curves')
+	.onChange(() => animationParams.toggleCurves());
 
 // Add master helpers toggle
 renderingFolder.add(animationParams, 'showHelpers')
@@ -3102,6 +3113,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		const built = buildNextThreeNode(usd_scene, {
 			skipTextures: false,
 			lazyTextures: true,
+			showCurves: animationParams.showCurves,
 			// Animations/skinning are extracted from the adapter AFTER the
 			// build; the default releaseBuildData would wipe them.
 			releaseBuildData: false
@@ -3133,8 +3145,14 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename, stats = null) {
 		animationParams.applySceneScale();
 		for (const child of skinningResult.allSceneMeshes || []) {
 			if (child.isMesh) {
-				child.castShadow = true;
-				child.receiveShadow = true;
+				const materials = Array.isArray(child.material) ? child.material : [child.material];
+				const opacityMapped = materials.some((material) =>
+					!!material?.userData?.nextTexturePaths?.opacity);
+				// VFX cards (lasers, beams, projected shadows) should not render
+				// another full-card pass into the directional shadow map.
+				child.userData.skipShadows = opacityMapped;
+				child.castShadow = !opacityMapped;
+				child.receiveShadow = !opacityMapped;
 			}
 		}
 		try {

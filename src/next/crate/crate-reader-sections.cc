@@ -101,6 +101,19 @@ bool CrateReader::Impl::ReadBootstrap() {
     AddError("Unsupported USDC version: " + version_.to_string());
     return false;
   }
+  // AOUSD Core 1.0.1 standardizes Crate through 0.12. Compatibility mode can
+  // read additive OpenUSD 0.13/0.14 containers and diagnose any unsupported
+  // values, but strict conformance must not imply support for those versions.
+  if (version_.major == 0 && version_.minor > 12) {
+    const std::string message =
+        "USDC version " + version_.to_string() +
+        " is newer than the AOUSD Core 1.0.1 Crate 0.12 profile";
+    if (options_.strict_aousd_conformance) {
+      AddError("Strict AOUSD mode: " + message);
+      return false;
+    }
+    AddWarning(message);
+  }
 
   // Read TOC offset
   int64_t toc_offset;

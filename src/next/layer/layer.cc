@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Layer Implementation
 
 #include "layer.hh"
+#include "../prim/identifier.hh"
 #include <algorithm>
 
 namespace tinyusdz {
@@ -141,6 +142,20 @@ uint32_t Layer::define_prim_at_path(const std::string& path,
   for (size_t i = 1; i < path.size(); ++i) {
     if (path[i] == '/' && (i + 1 == path.size() || path[i + 1] == '/')) {
       return UINT32_MAX;
+    }
+  }
+  // Authoring boundary: every component must be a valid identifier
+  // (strict UTF-8 + Unicode XID), so untrusted strings cannot author prims
+  // the parser/validator would reject.
+  {
+    size_t comp = 1;
+    while (comp < path.size()) {
+      size_t next = path.find('/', comp);
+      if (next == std::string::npos) next = path.size();
+      if (!IsValidIdentifier(path.substr(comp, next - comp))) {
+        return UINT32_MAX;
+      }
+      comp = next + 1;
     }
   }
 

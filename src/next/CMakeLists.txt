@@ -95,6 +95,7 @@ set(TINYUSDZ_NEXT_SOURCES
     resolver/asset-resolver.cc
 
     # Composition
+    composition/expression-variables.cc
     composition/composition.cc
 
     # Layer / PrimSpec diff
@@ -134,6 +135,9 @@ set(TINYUSDZ_NEXT_HEADERS
     prim/identifier.hh
     prim/attribute.hh
     prim/prim.hh
+
+    # Composition policy
+    composition/expression-variables.hh
 
     # Layer (unified PrimSpec storage)
     layer/property-index.hh
@@ -310,6 +314,8 @@ endif()
 # and run its ctests. Keep the tests in a Debug build: many test programs use
 # assert(), which is compiled out under NDEBUG.
 option(TINYUSDZ_NEXT_BUILD_TESTS "Build tests for stable TinyUSDZ Next" OFF)
+set(TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT "" CACHE PATH
+    "External AOUSD Core supplemental release checkout")
 
 if(TINYUSDZ_NEXT_BUILD_TESTS)
     # The next tests validate behavior with assert(); a Release build (-DNDEBUG)
@@ -452,6 +458,13 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_aousd_conformance.cc
     )
     target_link_libraries(test_aousd_conformance PRIVATE tinyusdz_next)
+
+    # Sampled-value oracle for the AOUSD supplemental value_resolution cases
+    # (self-skips with exit 77 when the corpus is unavailable).
+    add_executable(test_aousd_value_resolution
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_aousd_value_resolution.cc
+    )
+    target_link_libraries(test_aousd_value_resolution PRIVATE tinyusdz_next)
 
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
@@ -715,6 +728,43 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         PROPERTIES LABELS "next")
     set_tests_properties(next_benchmark
         PROPERTIES LABELS "next;benchmark")
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME next_aousd_generated_tables
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/generate-next-aousd-tables.py
+                    --root ${CMAKE_CURRENT_SOURCE_DIR}/../.. --check)
+        set_tests_properties(next_aousd_generated_tables
+            PROPERTIES LABELS "next;aousd;generated")
+    endif()
+    if(NOT TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT AND
+       DEFINED ENV{AOUSD_CORE_SUPPLEMENTAL_ROOT})
+        set(TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT
+            "$ENV{AOUSD_CORE_SUPPLEMENTAL_ROOT}")
+    endif()
+    if(Python3_Interpreter_FOUND AND TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT AND
+       EXISTS "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}/composition")
+        add_test(
+            NAME next_aousd_supplemental
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/run-aousd-supplemental.py
+                    --suite-root "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}"
+                    --next-usdcat "$<TARGET_FILE:next_usdcat>"
+                    --aousd-test "$<TARGET_FILE:test_aousd_conformance>"
+                    --aousd-value-test "$<TARGET_FILE:test_aousd_value_resolution>"
+                    --max-composition-fail 0)
+        set_tests_properties(next_aousd_supplemental
+            PROPERTIES LABELS "next;aousd;supplemental" TIMEOUT 600)
+    endif()
+    # Sampled-value oracle also runs as its own ctest entry; the binary
+    # self-skips (exit 77) when the corpus is missing.
+    add_test(NAME next_test_aousd_value_resolution
+        COMMAND test_aousd_value_resolution "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_aousd_value_resolution
+        PROPERTIES SKIP_RETURN_CODE 77 LABELS "next;aousd")
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when

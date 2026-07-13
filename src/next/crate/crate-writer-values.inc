@@ -52,6 +52,25 @@
     return ValueRep::Make(CrateTypeId::Dictionary, idx, false, false);
   }
 
+  ValueRep EncodeUnregisteredValue(const std::string& source) {
+    const ValueRep nested = EncodeValue(Value(source));
+    std::vector<uint8_t> block(16);
+    const int64_t recursive_offset = 8;
+    const uint64_t nested_raw = nested.raw();
+    std::memcpy(block.data(), &recursive_offset, 8);
+    std::memcpy(block.data() + 8, &nested_raw, 8);
+    const uint64_t index = InternBlock({TypeId::Invalid, std::move(block)});
+    return ValueRep::Make(CrateTypeId::UnregisteredValue, index, false, false);
+  }
+
+  ValueRep EncodeExtensionField(const TypedExtensionField& field) {
+    if (!field.unregistered) return EncodeValue(field.value);
+    return EncodeUnregisteredValue(
+        field.unregistered_source.empty()
+            ? PrintValue(field.value, PrintOptions{})
+            : field.unregistered_source);
+  }
+
   ValueRep EncodeValue(const Value& val) {
     if (val.is_dictionary()) {
       const Dict* d = val.as_dictionary();

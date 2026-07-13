@@ -107,9 +107,9 @@
       }
 
       // doc
-      if (!prim.meta().doc().empty()) {
+      if (prim.meta().doc_authored() || !prim.meta().doc().empty()) {
         CrateField f;
-        f.token_index.value = InternToken("doc");
+        f.token_index.value = InternToken("documentation");
         uint32_t str_idx = InternString(prim.meta().doc());
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, true);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -122,7 +122,13 @@
       // is an EXPLICIT list (0x03 = IsExplicit|HasExplicitItems), NOT a
       // prepend: pxr round-trips a bare authoring as explicit, and writing it
       // as prepend flipped the qualifier on every USDC round trip.
-      if (!prim.meta().apiSchemas().empty()) {
+      if (prim.meta().apiSchemasAuthored() ||
+          !prim.meta().apiSchemas().empty()) {
+        if (prim.meta().apiSchemaEdits().authored) {
+          fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(
+              MakeTokenListOpField("apiSchemas", prim.meta().apiSchemaEdits()));
+        } else {
         size_t count = prim.meta().apiSchemas().size();
         size_t items_bytes = 0;
         size_t api_data_size = 0;
@@ -154,11 +160,12 @@
         f.value_rep = ValueRep::Make(CrateTypeId::TokenListOp, data_idx, false, false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
+        }
       }
 
       // relocates (SdfRelocates, crate >= 0.11):
       //   [u64 count][(u32 srcPathIdx, u32 dstPathIdx)*]
-      if (!prim.meta().relocates().empty()) {
+      if (prim.meta().relocatesAuthored() || !prim.meta().relocates().empty()) {
         const auto& rel = prim.meta().relocates();
         std::vector<uint8_t> blob(8 + rel.size() * 8);
         uint64_t cnt = rel.size();
@@ -177,6 +184,28 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
         if (required_version_minor_ < 11) required_version_minor_ = 11;
+      }
+
+      // Population-order opinions are distinct from the persistent natural
+      // child/property lists below. Preserve the sparse authored fields so a
+      // Crate round trip retains traversal semantics.
+      if (prim.meta().primOrderAuthored() ||
+          !prim.meta().primOrder().empty()) {
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(
+            MakeTokenVectorField("primOrder", prim.meta().primOrder()));
+      }
+      if (prim.meta().propertyOrderAuthored() ||
+          !prim.meta().propertyOrder().empty()) {
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(MakeTokenVectorField(
+            "propertyOrder", prim.meta().propertyOrder()));
+      }
+      if (prim.meta().displayGroupOrderAuthored() ||
+          !prim.meta().displayGroupOrder().empty()) {
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(MakeStringVectorField(
+            "displayGroupOrder", prim.meta().displayGroupOrder()));
       }
 
       {
@@ -254,7 +283,7 @@
       // encodings above (no next-private companion fields).
       // comment must be a String rep: pxr's SdfSchema types `comment` as
       // string and silently drops a Token-typed field on read.
-      if (!prim.meta().comment().empty()) {
+      if (prim.meta().comment_authored() || !prim.meta().comment().empty()) {
         CrateField f;
         f.token_index.value = InternToken("comment");
         uint32_t str_idx = InternString(prim.meta().comment());
@@ -264,7 +293,7 @@
       }
 
       // kind (token), displayName (string), instanceable (bool).
-      if (!prim.meta().kind().empty()) {
+      if (prim.meta().kindAuthored() || !prim.meta().kind().empty()) {
         CrateField f;
         f.token_index.value = InternToken("kind");
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
@@ -273,7 +302,8 @@
         fields_.push_back(f);
       }
       // displayName is string-typed in pxr's schema (Token would be dropped).
-      if (!prim.meta().displayName().empty()) {
+      if (prim.meta().displayNameAuthored() ||
+          !prim.meta().displayName().empty()) {
         CrateField f;
         f.token_index.value = InternToken("displayName");
         uint32_t str_idx = InternString(prim.meta().displayName());
@@ -294,9 +324,10 @@
 
       // Dictionary-valued metadata: pxr binary VtDictionary (round-trips through
       // both this reader and OpenUSD).
-      auto add_dict_field = [&](const char* name, const Value& v) {
+      auto add_dict_field = [&](const char* name, const Value& v,
+                                bool authored) {
         if (!v.is_dictionary() || !v.as_dictionary() ||
-            v.as_dictionary()->empty()) {
+            (!authored && v.as_dictionary()->empty())) {
           return;
         }
         CrateField f;
@@ -305,10 +336,19 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       };
-      add_dict_field("customData", prim.meta().customData());
-      add_dict_field("assetInfo", prim.meta().assetInfo());
-      add_dict_field("sdrMetadata", prim.meta().sdrMetadata());
-      add_dict_field("clips", prim.meta().clips());
+      add_dict_field("customData", prim.meta().customData(),
+                     prim.meta().customDataAuthored());
+      add_dict_field("assetInfo", prim.meta().assetInfo(),
+                     prim.meta().assetInfoAuthored());
+      add_dict_field("sdrMetadata", prim.meta().sdrMetadata(),
+                     prim.meta().sdrMetadataAuthored());
+      add_dict_field("clips", prim.meta().clips(),
+                     prim.meta().clipsAuthored());
+      if (prim.meta().clipSetEdits().authored) {
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(
+            MakeTokenListOpField("clipSets", prim.meta().clipSetEdits()));
+      }
       // Unknown (unmodeled) prim metadata the parser preserved verbatim
       // (`aa = a`, `autoPlay = false`, custom pipeline keys, ...). Serialize the
       // (key, raw-value-text) pairs into a single length-prefixed string field
@@ -329,6 +369,20 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
+      for (const auto& extension : prim.meta().unknownFields()) {
+        CrateField f;
+        f.token_index.value = InternToken(extension.name);
+        f.value_rep = EncodeExtensionField(extension);
+        if (f.value_rep.type_id() == CrateTypeId::Invalid) {
+          if (options_.strict_aousd_conformance && result_.error.empty()) {
+            result_.error = "Cannot encode extension prim field '" +
+                            extension.name + "'";
+          }
+          continue;
+        }
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
       // variantSelection: a VariantSelectionMap of each set's selected variant.
       // The reader rebuilds the VariantSetData from this plus the bracketed
       // holder prims, so no separate variantSets token field is emitted. (The
@@ -345,14 +399,14 @@
         // all three, per-set `selected` first (matches RecordSelections).
         std::vector<std::pair<std::string, std::string>> sels;
         auto add_sel = [&sels](const std::string& set, const std::string& v) {
-          if (set.empty() || v.empty()) return;
+          if (set.empty()) return;
           for (auto& kv : sels) {
             if (kv.first == set) return;  // first writer wins
           }
           sels.emplace_back(set, v);
         };
         for (const auto& vs : prim.meta().variantSets()) {
-          add_sel(vs.name, vs.selected);
+          if (!vs.selected.empty()) add_sel(vs.name, vs.selected);
         }
         for (const auto& kv : prim.meta().variantSelections()) {
           add_sel(kv.first, kv.second);
@@ -364,7 +418,7 @@
                     prim.meta().variantSelection.substr(eq + 1));
           }
         }
-        if (!sels.empty()) {
+        if (!sels.empty() || prim.meta().variantSelectionsAuthored()) {
           uint64_t blk = StoreVariantSelectionMap(sels);
           CrateField vf;
           vf.token_index.value = InternToken("variantSelection");
@@ -402,7 +456,32 @@
             decl_sets.push_back(vs.name);
           }
         }
-        if (!decl_sets.empty()) {
+        const StringListOpEdits& authored_variant_sets =
+            prim.meta().variantSetNameEdits();
+        if (authored_variant_sets.authored) {
+          StringListOpEdits edits = authored_variant_sets;
+          auto contains = [&](const std::string& name) {
+            const std::vector<std::string>* lists[] = {
+                &edits.explicit_items, &edits.added, &edits.prepended,
+                &edits.appended, &edits.deleted, &edits.ordered};
+            for (const std::vector<std::string>* list : lists) {
+              if (std::find(list->begin(), list->end(), name) != list->end())
+                return true;
+            }
+            return false;
+          };
+          // Variant holder content implies declaration. Keep an exact raw
+          // list-op when it already names every content set; otherwise add the
+          // missing holder names without rewriting the authored sublists.
+          for (const std::string& name : content_sets) {
+            if (contains(name)) continue;
+            if (edits.is_explicit) edits.explicit_items.push_back(name);
+            else edits.prepended.push_back(name);
+          }
+          fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+          fields_.push_back(
+              MakeStringListOpField("variantSetNames", edits));
+        } else if (!decl_sets.empty()) {
           fieldset.push_back(static_cast<uint32_t>(fields_.size()));
           fields_.push_back(MakeStringListOpField("variantSetNames", decl_sets));
         }
@@ -461,7 +540,7 @@
       std::vector<uint32_t> fieldset;
 
       // defaultPrim
-      if (!layer.meta().defaultPrim.empty()) {
+      if (layer.meta().defaultPrim_set || !layer.meta().defaultPrim.empty()) {
         CrateField f;
         f.token_index.value = InternToken("defaultPrim");
         f.value_rep = ValueRep::Make(CrateTypeId::Token,
@@ -557,9 +636,10 @@
       }
 
       // Dictionary-valued stage metadata (pxr binary VtDictionary).
-      auto add_layer_dict = [&](const char* name, const Value& v) {
+      auto add_layer_dict = [&](const char* name, const Value& v,
+                                bool authored) {
         if (!v.is_dictionary() || !v.as_dictionary() ||
-            v.as_dictionary()->empty()) {
+            (!authored && v.as_dictionary()->empty())) {
           return;
         }
         CrateField f;
@@ -568,13 +648,15 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       };
-      add_layer_dict("customLayerData", layer.meta().customLayerData);
-      add_layer_dict("expressionVariables", layer.meta().expressionVariables);
+      add_layer_dict("customLayerData", layer.meta().customLayerData,
+                     layer.meta().customLayerData_set);
+      add_layer_dict("expressionVariables", layer.meta().expressionVariables,
+                     layer.meta().expressionVariables_set);
 
       // doc
-      if (!layer.meta().doc.empty()) {
+      if (layer.meta().doc_set || !layer.meta().doc.empty()) {
         CrateField f;
-        f.token_index.value = InternToken("doc");
+        f.token_index.value = InternToken("documentation");
         uint32_t str_idx = InternString(layer.meta().doc);
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
@@ -582,11 +664,21 @@
       }
 
       // comment
-      if (!layer.meta().comment.empty()) {
+      if (layer.meta().comment_set || !layer.meta().comment.empty()) {
         CrateField f;
         f.token_index.value = InternToken("comment");
         uint32_t str_idx = InternString(layer.meta().comment);
         f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false, false);
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
+
+      if (layer.meta().owner_set || !layer.meta().owner.empty()) {
+        CrateField f;
+        f.token_index.value = InternToken("owner");
+        uint32_t str_idx = InternString(layer.meta().owner);
+        f.value_rep = ValueRep::Make(CrateTypeId::String, str_idx, false,
+                                     false);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
@@ -607,10 +699,24 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
+      for (const auto& extension : layer.meta().unknownFields) {
+        CrateField f;
+        f.token_index.value = InternToken(extension.name);
+        f.value_rep = EncodeExtensionField(extension);
+        if (f.value_rep.type_id() == CrateTypeId::Invalid) {
+          if (options_.strict_aousd_conformance && result_.error.empty()) {
+            result_.error = "Cannot encode extension layer field '" +
+                            extension.name + "'";
+          }
+          continue;
+        }
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(f);
+      }
 
       // layerRelocates (SdfRelocates, crate >= 0.11), same wire layout as
       // the prim-level field: [u64 count][(u32 src, u32 dst)*].
-      if (!layer.meta().relocates.empty()) {
+      if (layer.meta().relocates_set || !layer.meta().relocates.empty()) {
         const auto& rel = layer.meta().relocates;
         std::vector<uint8_t> blob(8 + rel.size() * 8);
         uint64_t cnt = rel.size();
@@ -631,10 +737,18 @@
         if (required_version_minor_ < 11) required_version_minor_ = 11;
       }
 
+      if (layer.meta().rootPrimOrder_set ||
+          !layer.meta().rootPrimOrder.empty()) {
+        fieldset.push_back(static_cast<uint32_t>(fields_.size()));
+        fields_.push_back(
+            MakeTokenVectorField("primOrder", layer.meta().rootPrimOrder));
+      }
+
       // Color management (pxr schema: colorConfiguration is asset,
       // colorManagementSystem is token). Previously dropped by the crate
       // writer while the USDA writer kept them.
-      if (!layer.meta().colorConfiguration.empty()) {
+      if (layer.meta().colorConfiguration_set ||
+          !layer.meta().colorConfiguration.empty()) {
         CrateField f;
         f.token_index.value = InternToken("colorConfiguration");
         f.value_rep = ValueRep::Make(
@@ -643,7 +757,8 @@
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
       }
-      if (!layer.meta().colorManagementSystem.empty()) {
+      if (layer.meta().colorManagementSystem_set ||
+          !layer.meta().colorManagementSystem.empty()) {
         CrateField f;
         f.token_index.value = InternToken("colorManagementSystem");
         f.value_rep = ValueRep::Make(
@@ -655,7 +770,7 @@
 
       // subLayers (StringVector — pxr's schema type; a token[] here reads back
       // in pxr as an empty sublayer list)
-      if (!layer.meta().subLayers.empty()) {
+      if (layer.meta().subLayers_set || !layer.meta().subLayers.empty()) {
         CrateField f = MakeStringVectorField("subLayers", layer.meta().subLayers);
         fieldset.push_back(static_cast<uint32_t>(fields_.size()));
         fields_.push_back(f);
