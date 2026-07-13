@@ -5,8 +5,12 @@
 
 #include "asset-resolver.hh"
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <cstring>
+#if !defined(__EMSCRIPTEN__)
+#include <filesystem>
+#endif
 
 #ifdef _WIN32
 #include <direct.h>
@@ -56,6 +60,45 @@ bool HasParentComponent(const std::string& path) {
     begin = end + 1;
   }
   return false;
+}
+
+std::string FindRecursively(const std::string& root,
+                            const std::string& asset_path) {
+#if defined(__EMSCRIPTEN__)
+  (void)root;
+  (void)asset_path;
+  return {};
+#else
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path root_path(root);
+  if (!fs::is_directory(root_path, ec) || ec) return {};
+
+  const fs::path wanted(asset_path);
+  std::vector<std::string> matches;
+  fs::recursive_directory_iterator it(
+      root_path, fs::directory_options::skip_permission_denied, ec);
+  const fs::recursive_directory_iterator end;
+  for (; it != end; it.increment(ec)) {
+    if (ec) {
+      ec.clear();
+      continue;
+    }
+    if (!it->is_regular_file(ec) || ec) {
+      ec.clear();
+      continue;
+    }
+    // Recursive search is a basename lookup. Authored directory suffixes are
+    // already handled deterministically by the normal and suffix-fallback
+    // paths before reaching this broader search.
+    if (it->path().filename() == wanted.filename()) {
+      matches.push_back(it->path().lexically_normal().string());
+    }
+  }
+  if (matches.empty()) return {};
+  std::sort(matches.begin(), matches.end());
+  return matches.front();
+#endif
 }
 
 std::string NormalizePackageEntryPath(std::string path) {
@@ -119,6 +162,50 @@ AssetResolver::AssetResolver(const ResolverConfig& config) : config_(config) {
   }
 }
 
+AssetResolver::AssetResolver(const AssetResolver& other) {
+  std::lock_guard<std::mutex> lock(other.registry_mutex_);
+  config_ = other.config_;
+  custom_resolver_ = other.custom_resolver_;
+  asset_reader_ = other.asset_reader_;
+  scheme_handlers_ = other.scheme_handlers_;
+  memory_assets_ = other.memory_assets_;
+  next_anonymous_id_ = other.next_anonymous_id_;
+}
+
+AssetResolver& AssetResolver::operator=(const AssetResolver& other) {
+  if (this == &other) return *this;
+  std::scoped_lock lock(registry_mutex_, other.registry_mutex_);
+  config_ = other.config_;
+  custom_resolver_ = other.custom_resolver_;
+  asset_reader_ = other.asset_reader_;
+  scheme_handlers_ = other.scheme_handlers_;
+  memory_assets_ = other.memory_assets_;
+  next_anonymous_id_ = other.next_anonymous_id_;
+  return *this;
+}
+
+AssetResolver::AssetResolver(AssetResolver&& other) noexcept {
+  std::lock_guard<std::mutex> lock(other.registry_mutex_);
+  config_ = std::move(other.config_);
+  custom_resolver_ = std::move(other.custom_resolver_);
+  asset_reader_ = std::move(other.asset_reader_);
+  scheme_handlers_ = std::move(other.scheme_handlers_);
+  memory_assets_ = std::move(other.memory_assets_);
+  next_anonymous_id_ = other.next_anonymous_id_;
+}
+
+AssetResolver& AssetResolver::operator=(AssetResolver&& other) noexcept {
+  if (this == &other) return *this;
+  std::scoped_lock lock(registry_mutex_, other.registry_mutex_);
+  config_ = std::move(other.config_);
+  custom_resolver_ = std::move(other.custom_resolver_);
+  asset_reader_ = std::move(other.asset_reader_);
+  scheme_handlers_ = std::move(other.scheme_handlers_);
+  memory_assets_ = std::move(other.memory_assets_);
+  next_anonymous_id_ = other.next_anonymous_id_;
+  return *this;
+}
+
 AssetResolver::~AssetResolver() = default;
 
 void AssetResolver::SetWorkingDirectory(const std::string& dir) {
@@ -145,6 +232,57 @@ void AssetResolver::SetAssetReader(AssetReadCallback reader) {
   asset_reader_ = std::move(reader);
 }
 
+void AssetResolver::RegisterScheme(const std::string& scheme,
+                                   ResolverCallback resolver,
+                                   AssetReadCallback reader) {
+  std::string normalized = scheme;
+  if (!normalized.empty() && normalized.back() == ':') normalized.pop_back();
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (normalized.empty() ||
+      GetIdentifierScheme(normalized + ":asset") != normalized) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  scheme_handlers_[normalized] =
+      SchemeHandler{std::move(resolver), std::move(reader)};
+}
+
+bool AssetResolver::UnregisterScheme(const std::string& scheme) {
+  std::string normalized = scheme;
+  if (!normalized.empty() && normalized.back() == ':') normalized.pop_back();
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  return scheme_handlers_.erase(normalized) != 0;
+}
+
+bool AssetResolver::HasScheme(const std::string& scheme) const {
+  std::string normalized = scheme;
+  if (!normalized.empty() && normalized.back() == ':') normalized.pop_back();
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  return scheme_handlers_.find(normalized) != scheme_handlers_.end();
+}
+
+std::string AssetResolver::RegisterMemoryAsset(const std::string& identifier,
+                                               std::vector<uint8_t> bytes) {
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  std::string key = identifier;
+  if (key.empty()) {
+    key = "usd-anon:" + std::to_string(next_anonymous_id_++);
+  }
+  memory_assets_[key] =
+      std::make_shared<const std::vector<uint8_t>>(std::move(bytes));
+  return key;
+}
+
+bool AssetResolver::UnregisterMemoryAsset(const std::string& identifier) {
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  return memory_assets_.erase(identifier) != 0;
+}
+
 bool AssetResolver::ReadAsset(const std::string& resolved_path,
                               std::vector<uint8_t>* out,
                               std::string* err) const {
@@ -154,8 +292,30 @@ bool AssetResolver::ReadAsset(const std::string& resolved_path,
   }
   out->clear();
 
+  std::shared_ptr<const std::vector<uint8_t>> memory;
+  AssetReadCallback scheme_reader;
+  const std::string scheme = GetIdentifierScheme(resolved_path);
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+    const auto memory_it = memory_assets_.find(resolved_path);
+    if (memory_it != memory_assets_.end()) memory = memory_it->second;
+    const auto scheme_it = scheme_handlers_.find(scheme);
+    if (scheme_it != scheme_handlers_.end()) scheme_reader = scheme_it->second.reader;
+  }
+  if (memory) {
+    *out = *memory;
+    return true;
+  }
+  if (scheme_reader) return scheme_reader(resolved_path, out, err);
+
   if (asset_reader_) {
     return asset_reader_(resolved_path, out, err);
+  }
+
+  if (!scheme.empty()) {
+    if (err) *err += "ReadAsset: no reader registered for scheme `" + scheme +
+                     "`: " + resolved_path + "\n";
+    return false;
   }
 
 #if defined(__EMSCRIPTEN__)
@@ -189,13 +349,16 @@ bool AssetResolver::ReadAsset(const std::string& resolved_path,
 }
 
 ResolvedAsset AssetResolver::Resolve(const std::string& asset_path,
-                                      const std::string& anchor_path) const {
-  return ResolveInternal(asset_path, anchor_path);
+                                      const std::string& anchor_path,
+                                      bool allow_suffix_fallback) const {
+  return ResolveInternal(asset_path, anchor_path, allow_suffix_fallback);
 }
 
 std::string AssetResolver::ResolvePath(const std::string& asset_path,
-                                        const std::string& anchor_path) const {
-  ResolvedAsset resolved = Resolve(asset_path, anchor_path);
+                                        const std::string& anchor_path,
+                                        bool allow_suffix_fallback) const {
+  ResolvedAsset resolved =
+      Resolve(asset_path, anchor_path, allow_suffix_fallback);
   return resolved.resolved_path;
 }
 
@@ -207,7 +370,18 @@ bool AssetResolver::Exists(const std::string& asset_path,
 
 std::string AssetResolver::CreateIdentifier(const std::string& asset_path,
                                              const std::string& anchor_path) const {
-  return ResolvePath(asset_path, anchor_path);
+  const ResolvedAsset resolved = Resolve(asset_path, anchor_path);
+  if (resolved.exists || IsAbsolutePath(asset_path) ||
+      IsPackagePath(asset_path) || !GetIdentifierScheme(asset_path).empty()) {
+    return resolved.resolved_path;
+  }
+  // Identifiers must remain context-dependent even when the asset has not
+  // been created yet; otherwise two layers authoring the same relative token
+  // collide in caches.
+  const std::string base = anchor_path.empty()
+                               ? config_.working_directory
+                               : GetDirectory(anchor_path);
+  return NormalizePath(JoinPath(base, asset_path));
 }
 
 ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
@@ -220,7 +394,24 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     return result;
   }
 
+  // Reject `..` escapes before any lookup -- this is a containment check, so it
+  // must run ahead of the scheme/memory-asset resolution below.
   if (!config_.allow_parent_paths && HasParentComponent(asset_path)) {
+    return result;
+  }
+
+  ResolverCallback scheme_resolver;
+  bool memory_asset = false;
+  const std::string identifier_scheme = GetIdentifierScheme(asset_path);
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+    memory_asset = memory_assets_.find(asset_path) != memory_assets_.end();
+    const auto it = scheme_handlers_.find(identifier_scheme);
+    if (it != scheme_handlers_.end()) scheme_resolver = it->second.resolver;
+  }
+  if (memory_asset) {
+    result.resolved_path = asset_path;
+    result.exists = true;
     return result;
   }
 
@@ -229,7 +420,8 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     result.is_package = true;
     if (ParsePackagePath(asset_path, &result.package_path, &result.asset_in_package)) {
       // Resolve the package file itself
-      ResolvedAsset pkg = ResolveInternal(result.package_path, anchor_path);
+      ResolvedAsset pkg = ResolveInternal(result.package_path, anchor_path,
+                                          allow_suffix_fallback);
       if (pkg.exists) {
         result.resolved_path = pkg.resolved_path + "[" + result.asset_in_package + "]";
         result.package_path = pkg.resolved_path;
@@ -239,11 +431,32 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     return result;
   }
 
+  // Explicit schemes never fall through into filesystem path handling.
+  if (!identifier_scheme.empty()) {
+    std::string scheme_result;
+    if (scheme_resolver) {
+      scheme_result = scheme_resolver(asset_path, anchor_path);
+    } else if (custom_resolver_) {
+      // Backward compatibility: the catch-all callback historically emulated
+      // URI schemes before explicit registration existed.
+      scheme_result = custom_resolver_(asset_path, anchor_path);
+    }
+    if (!scheme_result.empty()) {
+      result.resolved_path = scheme_result;
+      result.exists = true;
+    } else {
+      result.resolved_path = asset_path;
+    }
+    return result;
+  }
+
   // Try custom resolver first
   if (custom_resolver_) {
     std::string custom_result = custom_resolver_(asset_path, anchor_path);
     if (!custom_result.empty()) {
-      result.resolved_path = NormalizePath(custom_result);
+      result.resolved_path = GetIdentifierScheme(custom_result).empty()
+                                 ? NormalizePath(custom_result)
+                                 : custom_result;
       // A custom resolver returning a path asserts the asset resolved; its
       // result need not be a filesystem path (e.g. a wasm asset-cache key),
       // so don't second-guess it with a file probe.
@@ -324,6 +537,17 @@ ResolvedAsset AssetResolver::ResolveInternal(const std::string& asset_path,
     }
   }
 
+  if (config_.search_recursively) {
+    for (const auto& search_path : config_.search_paths) {
+      const std::string candidate = FindRecursively(search_path, asset_path);
+      if (!candidate.empty()) {
+        result.resolved_path = NormalizePath(candidate);
+        result.exists = true;
+        return result;
+      }
+    }
+  }
+
   // Suffix fallback: rehome paths authored with absolute / machine-specific
   // prefixes by retrying progressively shorter suffixes (down to the
   // basename) through the same anchor / working-dir / search-path order.
@@ -365,11 +589,34 @@ bool AssetResolver::IsAbsolutePath(const std::string& path) {
   return path[0] == '/' || path[0] == '\\';
 }
 
+std::string AssetResolver::GetIdentifierScheme(
+    const std::string& identifier) {
+  const size_t colon = identifier.find(':');
+  if (colon == std::string::npos || colon == 0) return {};
+  // Do not classify Windows drive paths as URI schemes on any host platform.
+  if (colon == 1 && std::isalpha(static_cast<unsigned char>(identifier[0])) &&
+      identifier.size() > 2 &&
+      (identifier[2] == '/' || identifier[2] == '\\')) {
+    return {};
+  }
+  if (!std::isalpha(static_cast<unsigned char>(identifier[0]))) return {};
+  for (size_t i = 1; i < colon; ++i) {
+    const unsigned char c = static_cast<unsigned char>(identifier[i]);
+    if (!(std::isalnum(c) || c == '+' || c == '-' || c == '.')) return {};
+  }
+  std::string scheme = identifier.substr(0, colon);
+  std::transform(scheme.begin(), scheme.end(), scheme.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return scheme;
+}
+
 bool AssetResolver::IsPackagePath(const std::string& path) {
   // Package paths look like: /path/to/file.usdz[asset.usda]
   size_t bracket = path.find('[');
-  if (bracket == std::string::npos) return false;
-  return path.find(']', bracket) != std::string::npos;
+  if (bracket == std::string::npos || bracket == 0) return false;
+  const size_t end = path.find(']', bracket);
+  return end != std::string::npos && end == path.size() - 1 &&
+         end > bracket + 1;
 }
 
 bool AssetResolver::ParsePackagePath(const std::string& path,
@@ -379,7 +626,11 @@ bool AssetResolver::ParsePackagePath(const std::string& path,
   if (bracket_start == std::string::npos) return false;
 
   size_t bracket_end = path.find(']', bracket_start);
-  if (bracket_end == std::string::npos) return false;
+  if (bracket_end == std::string::npos || bracket_end + 1 != path.size() ||
+      bracket_start == 0 || bracket_end == bracket_start + 1 ||
+      !package_file || !asset_in_package) {
+    return false;
+  }
 
   *package_file = path.substr(0, bracket_start);
   *asset_in_package = path.substr(bracket_start + 1, bracket_end - bracket_start - 1);

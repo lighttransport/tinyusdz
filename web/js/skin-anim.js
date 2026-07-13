@@ -1133,9 +1133,21 @@ function updateLoadStatsPanel(stats) {
 		`JS heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'jsHeap')}`,
 		`WASM heap: ${formatMemoryUse(stats.memoryBefore, stats.memoryAfter, 'wasmHeap')}`
 	];
+	if (stats.nextTimings) {
+		const timing = stats.nextTimings;
+		lines.push(
+			`Next archive setup: ${formatDurationMs(timing.archiveMs)}`,
+			`Next native begin: ${formatDurationMs(timing.nativeBeginMs)}`,
+			`Next animation copy: ${formatDurationMs(timing.animationCopyMs)}`,
+			`Next entity copy: ${formatDurationMs(timing.entityCopyMs)}`,
+			`Next mesh copy: ${formatDurationMs(timing.meshCopyMs)}`,
+			`Next adapter total: ${formatDurationMs(timing.totalMs)}`
+		);
+	}
 
 	details.textContent = lines.join('\n');
 	details.style.whiteSpace = 'pre-line';
+	window.__skinAnimLoadStats = stats;
 }
 
 function beginLoadStats(fileSize = null) {
@@ -1160,6 +1172,9 @@ async function parseAndProcessUSD(loader, arrayBuffer, filename, stats) {
 	const { usdScene: usd_scene, variantInfos } =
 		await parseSkinAnimUSDSceneFromArrayBuffer(loader, arrayBuffer, filename, currentVariantSelection);
 	stats.parseMs = performance.now() - parseStart;
+	stats.nextTimings = isNextScene(usd_scene)
+		? (usd_scene.getStats?.().timings || null)
+		: null;
 	updateVariantControls(variantInfos, currentVariantSelection);
 
 	console.log('USD scene loaded:', usd_scene);
@@ -1728,6 +1743,13 @@ async function processUSDScene(usd_scene, filename) {
 		if (typeof updateAnimationCheckboxes === 'function') {
 			updateAnimationCheckboxes();
 		}
+	}
+
+	// Geometry, skeleton, metadata, and animation data are now JS-owned. Drop
+	// the next adapter's large build-time arrays while retaining archiveEntries
+	// for the lazy texture loader. delete() still runs after textures settle.
+	if (isNextScene(usd_scene) && typeof usd_scene.releaseBuildData === 'function') {
+		usd_scene.releaseBuildData();
 	}
 
 	// Update mesh list GUI

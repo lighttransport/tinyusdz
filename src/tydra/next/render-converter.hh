@@ -66,6 +66,14 @@ struct MeshConfig {
 
   // Memory optimization
   bool use_chunked_arrays = true;
+
+  // Keep the converted vertex/topology payload in RenderScene. Consumers
+  // which source geometry elsewhere (for example the web RenderStream, which
+  // lazily builds one output mesh from Stage at a time) can disable this to
+  // retain only mesh metadata, material bindings, skinning and blend shapes.
+  // Bulk arrays are released incrementally during conversion so the peak does
+  // not include both the Stage and a second complete copy of every mesh.
+  bool retain_geometry = true;
 };
 
 struct MaterialConfig {

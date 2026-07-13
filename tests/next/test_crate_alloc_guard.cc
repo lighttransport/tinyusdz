@@ -120,8 +120,8 @@ int main() {
     assert((*out.as_float_array())[0] == 1.5f);
   }
 
-  // Bool arrays are raw byte arrays in this implementation. A compressed bool
-  // ValueRep is rejected explicitly rather than guessed as compressed ints.
+  // AOUSD permits bool arrays to use Crate's compressed-integral encoding.
+  // Decode a real delta/LZ4 payload and canonicalize non-zero lanes to true.
   {
     std::vector<uint8_t> buf(8, 0);
     auto put_u64 = [&](uint64_t v) {
@@ -147,18 +147,52 @@ int main() {
     assert((*arr)[1] == 1);
     assert((*arr)[2] == 1);
 
-    ValueRep compressed_rep = ValueRep::Make(CrateTypeId::Bool,
-                                             /*payload=*/8,
-                                             /*is_array=*/true,
-                                             /*is_inlined=*/false,
-                                             /*is_compressed=*/true);
-    Value compressed_out;
-    bool compressed_ok = DecodeCrateArray(buf.data(), buf.size(),
-                                          compressed_rep, tokens,
-                                          1024ull * 1024 * 1024,
-                                          &compressed_out);
-    assert(!compressed_ok);
-    assert(compressed_out.is_empty());
+    // The compressed bit is authoritative even below the writer's preferred
+    // threshold. Exercise both sides of the former 16-element reader gate.
+    for (size_t count : {size_t(1), size_t(8), size_t(16)}) {
+      std::vector<uint32_t> lanes(count);
+      for (size_t i = 0; i < lanes.size(); ++i) {
+        lanes[i] = (i == 3) ? 7u : static_cast<uint32_t>(i & 1u);
+      }
+      CompressResult compressed =
+          WriteCompressedU32(lanes.data(), lanes.size());
+      assert(compressed.success);
+      std::vector<uint8_t> compressed_buf(16, 0);
+      const uint64_t lane_count = lanes.size();
+      const uint64_t compressed_size = compressed.data.size();
+      std::memcpy(compressed_buf.data() + 8, &lane_count, 8);
+      const size_t old_size = compressed_buf.size();
+      compressed_buf.resize(old_size + 8 + compressed.data.size());
+      std::memcpy(compressed_buf.data() + old_size, &compressed_size, 8);
+      std::memcpy(compressed_buf.data() + old_size + 8,
+                  compressed.data.data(), compressed.data.size());
+
+      auto decode = [&](CrateTypeId type, Value* value) {
+        ValueRep compressed_rep = ValueRep::Make(
+            type, /*payload=*/8, /*is_array=*/true,
+            /*is_inlined=*/false, /*is_compressed=*/true);
+        return DecodeCrateArray(compressed_buf.data(), compressed_buf.size(),
+                                compressed_rep, tokens,
+                                1024ull * 1024 * 1024, value);
+      };
+
+      Value compressed_bool;
+      assert(decode(CrateTypeId::Bool, &compressed_bool));
+      const std::vector<uint8_t>* compressed_arr =
+          compressed_bool.as_bool_array();
+      assert(compressed_arr && compressed_arr->size() == lanes.size());
+      for (size_t i = 0; i < lanes.size(); ++i) {
+        assert((*compressed_arr)[i] == (lanes[i] != 0 ? 1 : 0));
+      }
+
+      Value compressed_int;
+      assert(decode(CrateTypeId::Int, &compressed_int));
+      const std::vector<int32_t>* ints = compressed_int.as_int_array();
+      assert(ints && ints->size() == lanes.size());
+      for (size_t i = 0; i < lanes.size(); ++i) {
+        assert((*ints)[i] == static_cast<int32_t>(lanes[i]));
+      }
+    }
   }
 
   // ProbeArrayBlock is intentionally conservative for layouts we cannot safely

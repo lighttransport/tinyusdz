@@ -39,6 +39,49 @@ Also fixed, not yet pushed: **variant-statement metadata dropped**
 [Open](#open) for what is left of that sweep, and
 [Prompts for a fresh session](#prompts-for-a-fresh-session) to pick it up cold.
 
+### Merging `physics-2026-fix2` (read before you merge it again)
+
+That branch and this one have **independently rewritten `src/next`**, so `git`'s
+"clean" auto-merge is not to be trusted. This has bitten once already: commit
+`e9bd3aeff` ("Repair the physics-2026-fix2 merge") records a merge that
+auto-resolved clean, kept BOTH sides' copies of similar blocks, mixed the two
+sides' APIs, and did not compile. 15 `src/next` files change on both sides but
+only 5 conflict — the 10 silent ones are the hazard.
+
+Merged again on 2026-07-13. What needed hand-resolution, and why:
+
+- **`stat` vs `lstat` (`resolver/asset-resolver.cc`) — a direct behavioral
+  contradiction.** This branch uses `stat` so symlinked assets resolve (ALab
+  depends on it, `2b3fd37ec`); physics-2026-fix2 deliberately went back to
+  `lstat` with a TOCTOU rationale. **Keep `stat`** (decided 2026-07-13). Check
+  this every merge — it will keep coming back.
+- **`variant_overrides_by_path` does not exist on physics-2026-fix2 at all.** It
+  powers `--variant` (tusdrender) and the viewer's variant overrides, and it was
+  built on the OLD pcp. They rewrote pcp underneath it. The auto-merge grafted
+  the seeding block into their new `ExpandList` correctly, but the CALL SITES are
+  a trap: their cache key is now the composite `SourcesKey(stack, path)`, whereas
+  `root_prim_path` must be the bare **prim path** (`p.str()`). Passing the cache
+  key silently makes the override lookup never match.
+- **`PromoteMaterialUVPrimvars` is 2-arg ON PURPOSE here.** Their 3-arg
+  `default_uv` version still derives the secondary UV set as `<primary> + "1"` —
+  the exact bug `53415635e` fixed by comparing against the mesh's real
+  `texcoords_0_name`/`texcoords_1_name`. Do not "restore" their signature or the
+  `default_uv_primvar` config field; keep their `retain_geometry` /
+  `ReleaseMeshGeometry` addition alongside it.
+- **Their pcp now remaps `prototype_root` -> `instance_root`**, so an instance's
+  children resolve to the INSTANCE's paths, not the prototype's. `tusdview`'s
+  native-instancing pass in `next_scene_loader.cc` assumed the opposite (its own
+  comment said so), so the prototype's mesh paths stopped being consumed and the
+  static-batching pass drew that geometry a SECOND time — 2 meshes for a
+  1-prototype/2-instance scene. Caught by `tusdview-blas-compaction` (which
+  asserts one BLAS per prototype); fixed by consuming the prototype root's mesh
+  paths explicitly. **This is the test that will catch a bad merge here — do not
+  skip it.**
+
+Their `usda: accept layer-level reorder and unregistered metadata` (`8e77cd30d`)
+lands on the READ side of two still-open sweep categories; the writer still drops
+both (the 2 new `aousd-*` fixtures below).
+
 ## Prompts for a fresh session
 
 Paste one of these verbatim. Each is self-contained: it says what is broken, how
@@ -46,11 +89,11 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-41-of-422-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-43-of-427-fixtures)):
 
 > The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
 > Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 41 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> data"): 43 of 427 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
 > intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug,
 > the Camera shutter:open/shutter:close naming bug, the apiSchemas
 > list-op delete/None/prepend-order bugs, five rel/relationship bugs, and
@@ -95,7 +138,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (41 of 422 fixtures)
+### The crate writer drops data (43 of 427 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -107,7 +150,9 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 41 as of 2026-07-13 (was 50, 60, 64, 65, 133, 140)
+done | wc -l          # 43 of 427 as of 2026-07-13 (was 41 of 422 before the
+                      # physics-2026-fix2 merge, which ADDED 5 fixtures, 2 of
+                      # which fail on already-known gaps; was 50, 60, 64, 65, 133, 140)
 ```
 
 The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a

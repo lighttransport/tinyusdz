@@ -9,7 +9,10 @@
  */
 
 import * as THREE from 'three';
-import { toOwnedFloat32Array } from './TypedArrayOwnership.js';
+import {
+	markOwnedFloat32Array,
+	toOwnedFloat32Array
+} from './TypedArrayOwnership.js';
 
 /**
  * Convert USD interpolation mode to Three.js InterpolateMode
@@ -63,7 +66,9 @@ function expandArraySkeletalChannels(usdAnimation, samplers) {
 			const jointId = jointRemap.length > elem ? jointRemap[elem] : elem;
 			if (!Number.isFinite(jointId) || jointId < 0) continue;
 
-			const values = new Float32Array(frameCount * stride);
+			const values = markOwnedFloat32Array(
+				new Float32Array(frameCount * stride),
+				'expanded skeletal values');
 			for (let frame = 0; frame < frameCount; ++frame) {
 				const src = (frame * elementCount + elem) * stride;
 				const dst = frame * stride;

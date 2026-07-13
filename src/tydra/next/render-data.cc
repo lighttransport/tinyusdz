@@ -107,6 +107,7 @@ size_t RenderMesh::memory_usage() const {
   total += colors.memory_usage();
   total += opacities.memory_usage();
   total += triangulated_indices.memory_usage();
+  total += triangulated_face_vertex_indices.memory_usage();
 
   for (const auto& pv : primvars) {
     total += pv.memory_usage();

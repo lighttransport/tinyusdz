@@ -152,18 +152,22 @@ bool AsciiParser::Impl::ParsePrimContents() {
 
     if (tok.type == TokenType::Reorder) {
       lexer_->next();
+      if (lexer_->peek().type == TokenType::Rel) {
+        if (!ParseRelationship(PrimSpec::RelationshipListOp::Reorder,
+                               /*explicit_list=*/false)) return false;
+        continue;
+      }
       std::string what;
       if (!lexer_->expect(TokenType::Identifier, what)) return false;
       if (what == "nameChildren" || what == "primChildren") {
         if (!ParseOrderList(&prim->meta().primOrder())) return false;
+        prim->meta().setPrimOrderAuthored();
       } else if (what == "properties" || what == "propertyChildren") {
         if (!ParseOrderList(&prim->meta().propertyOrder())) return false;
-      } else if (options_.strict_aousd_conformance) {
-        AddError("Unsupported prim reorder field: " + what);
-        return false;
+        prim->meta().setPropertyOrderAuthored();
       } else {
-        if (Match(TokenType::Equals)) SkipValueLike();
-        AddWarning("Unknown prim reorder field ignored: " + what);
+        if (!ParseAttribute(PrimSpec::RelationshipListOp::Reorder,
+                            /*explicit_connection=*/false, what)) return false;
       }
       continue;
     }
@@ -184,12 +188,15 @@ bool AsciiParser::Impl::ParsePrimContents() {
         if (!ParseRelationship(op, /*explicit_list=*/false)) return false;
         continue;
       }
-      // A list-edit qualifier before an ATTRIBUTE statement: silently
-      // continuing would parse `delete float x.connect = </A>` as an ADD —
-      // a semantic inversion. Attribute connection list-editing is not
-      // modeled here; error out like the legacy parser.
-      AddError("List-editing qualifier is not supported for attributes");
-      return false;
+      PrimSpec::RelationshipListOp op = PrimSpec::RelationshipListOp::Append;
+      if (op_tok == TokenType::Prepend)
+        op = PrimSpec::RelationshipListOp::Prepend;
+      else if (op_tok == TokenType::Delete)
+        op = PrimSpec::RelationshipListOp::Delete;
+      else if (op_tok == TokenType::Add)
+        op = PrimSpec::RelationshipListOp::Add;
+      if (!ParseAttribute(op, /*explicit_connection=*/false)) return false;
+      continue;
     }
 
     if (tok.type == TokenType::Identifier && tok.value == "variantSet") {
@@ -224,9 +231,13 @@ bool AsciiParser::Impl::ParsePrimContents() {
   return true;
 }
 
-bool AsciiParser::Impl::ParseAttribute() {
+bool AsciiParser::Impl::ParseAttribute(
+    PrimSpec::RelationshipListOp connection_op, bool explicit_connection,
+    const std::string& preconsumed_type) {
   bool is_custom = false;
   bool is_uniform = false;
+  bool is_varying = false;
+  bool variability_authored = false;
 
   while (true) {
     const Token& tok = lexer_->peek();
@@ -235,8 +246,11 @@ bool AsciiParser::Impl::ParseAttribute() {
       lexer_->next();
     } else if (tok.type == TokenType::Uniform) {
       is_uniform = true;
+      variability_authored = true;
       lexer_->next();
     } else if (tok.type == TokenType::Varying) {
+      is_varying = true;
+      variability_authored = true;
       lexer_->next();
     } else {
       break;
@@ -247,12 +261,14 @@ bool AsciiParser::Impl::ParseAttribute() {
     uint16_t rflags = 0;
     if (is_custom) rflags |= PropSlot::kFlagCustom;
     if (is_uniform) rflags |= PropSlot::kFlagUniform;
+    if (variability_authored) rflags |= PropSlot::kFlagVariabilityAuthored;
+    if (is_varying) rflags |= PropSlot::kFlagVarying;
     return ParseRelationship(PrimSpec::RelationshipListOp::Append,
                              /*explicit_list=*/true, rflags);
   }
 
-  std::string type_name;
-  if (!lexer_->expect(TokenType::Identifier, type_name)) {
+  std::string type_name = preconsumed_type;
+  if (type_name.empty() && !lexer_->expect(TokenType::Identifier, type_name)) {
     AddError("Expected attribute type");
     return false;
   }
@@ -291,9 +307,29 @@ bool AsciiParser::Impl::ParseAttribute() {
   if (is_uniform) flags |= PropSlot::kFlagUniform;
 
   if (Check(TokenType::Equals)) {
+    if (!explicit_connection) {
+      AddError("List-edit qualifier is valid only for attribute connections");
+      return false;
+    }
     lexer_->next();
 
     if (type_id == TypeId::Invalid) {
+      // `opaque` and its `group` role cannot carry ordinary serialized values,
+      // but AOUSD permits the universal ValueBlock sentinel. Accept that form
+      // in strict mode without pretending either type has a concrete codec.
+      if ((type_name == "opaque" || type_name == "group") &&
+          Check(TokenType::None)) {
+        ParseResult result = ParseValue(*lexer_, type_id);
+        if (!result.success) {
+          AddError(result.error);
+          return false;
+        }
+        if (PrimSpec* cur = builder_->current()) {
+          cur->upsert_property(attr_name, std::move(result.value), flags);
+        }
+        ParsePropertyMetadata(attr_name);
+        return true;
+      }
       const bool normative_unsupported =
           type_name == "frame4d" || type_name == "opaque" ||
           type_name == "group";
@@ -375,8 +411,18 @@ bool AsciiParser::Impl::ParseAttribute() {
   } else if (Check(TokenType::Dot)) {
     lexer_->next();
     const Token& prop_tok = lexer_->peek();
+    if (!explicit_connection &&
+        !(prop_tok.type == TokenType::Identifier &&
+          prop_tok.value == "connect")) {
+      AddError("List-edit qualifier is valid only for attribute connections");
+      return false;
+    }
 
     if (prop_tok.type == TokenType::TimeSamples) {
+      if (!explicit_connection) {
+        AddError("List-edit qualifier is valid only for attribute connections");
+        return false;
+      }
       lexer_->next();
       if (!Match(TokenType::Equals)) {
         AddError("Expected '=' after timeSamples");
@@ -401,17 +447,18 @@ bool AsciiParser::Impl::ParseAttribute() {
       if (cur && !cur->property(nid)) {
         cur->add_property_slot(nid, type_id, flags);
       }
+      std::vector<Path> targets;
+      bool authored_empty = false;
       if (Check(TokenType::None)) {
         // `.connect = None`: an authored connection block.
         lexer_->next();
-        if (cur) cur->set_connection_block(attr_name);
+        authored_empty = true;
       } else if (Check(TokenType::OpenBracket)) {
         lexer_->next();
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
           std::string p;
           if (lexer_->expect(TokenType::PathRef, p) && cur) {
-            cur->add_connection(attr_name,
-                                Path(ResolveRelativeTargetPath(cur, p)));
+            targets.emplace_back(ResolveRelativeTargetPath(cur, p));
           }
           Match(TokenType::Comma);
         }
@@ -422,10 +469,52 @@ bool AsciiParser::Impl::ParseAttribute() {
           AddError("Expected path for connection");
           return false;
         }
-        if (cur) {
-          cur->add_connection(attr_name,
-                              Path(ResolveRelativeTargetPath(cur, path)));
+        if (cur) targets.emplace_back(ResolveRelativeTargetPath(cur, path));
+      }
+      if (cur) {
+        if (explicit_connection) {
+          cur->set_connection_targets(attr_name, std::move(targets));
+          ArcEdit& edit = cur->ensure_connection_edit(attr_name);
+          edit = ArcEdit();
+          edit.authored = true;
+          edit.is_explicit = true;
+        } else {
+          const ArcEdit* prior_edit = cur->connection_edit(attr_name);
+          const bool explicit_base =
+              prior_edit && prior_edit->authored && prior_edit->is_explicit &&
+              cur->connection(attr_name) && !cur->connection(attr_name)->empty();
+          cur->apply_connection_list_op(attr_name, targets, connection_op);
+          ArcEdit& edit = cur->ensure_connection_edit(attr_name);
+          if (explicit_base) {
+            edit = ArcEdit();
+            edit.authored = true;
+            edit.is_explicit = true;
+            ParsePropertyMetadata(attr_name);
+            return true;
+          }
+          edit.authored = true;
+          edit.is_explicit = false;
+          std::vector<std::string>* sublist = nullptr;
+          switch (connection_op) {
+            case PrimSpec::RelationshipListOp::Add: sublist = &edit.added; break;
+            case PrimSpec::RelationshipListOp::Prepend:
+              sublist = &edit.prepended;
+              break;
+            case PrimSpec::RelationshipListOp::Append:
+              sublist = &edit.appended;
+              break;
+            case PrimSpec::RelationshipListOp::Delete:
+              sublist = &edit.deleted;
+              break;
+            case PrimSpec::RelationshipListOp::Reorder:
+              sublist = &edit.ordered;
+              break;
+          }
+          if (sublist) {
+            for (const Path& target : targets) sublist->push_back(target.str());
+          }
         }
+        if (authored_empty && explicit_connection) cur->set_connection_block(attr_name);
       }
       ParsePropertyMetadata(attr_name);
     } else if (prop_tok.type == TokenType::Identifier &&
@@ -487,6 +576,10 @@ bool AsciiParser::Impl::ParseAttribute() {
       if (Match(TokenType::Equals)) SkipValueLike();
     }
   } else {
+    if (!explicit_connection) {
+      AddError("List-edit qualifier is valid only for attribute connections");
+      return false;
+    }
     // Bare declaration (`token outputs:out`): declared-only slot with no
     // value; an Invalid-typed Value would emit a type-enum-0 `default` field.
     if (PrimSpec* cur = builder_->current()) {
@@ -555,10 +648,15 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
   if (PrimSpec* prim = builder_->current()) {
     if (targets.empty()) {
       // `= None` / `= []`: keep the relationship declared (empty) rather than
-      // dropping it.
+      // dropping it, and retain the authored explicit-empty targetPaths
+      // opinion separately from a bare relationship declaration.
       if (!prim->relationship(rel_name)) {
         prim->set_relationship_targets(rel_name, {});
       }
+      ArcEdit& e = prim->ensure_relationship_edit(rel_name);
+      e = ArcEdit();
+      e.authored = true;
+      e.is_explicit = explicit_list;
     } else {
       // A bare explicit list authored BEFORE any edits dominates: the
       // explicit base is not representable in edit sublists, so subsequent
@@ -580,11 +678,16 @@ bool AsciiParser::Impl::ParseRelationship(PrimSpec::RelationshipListOp op,
             sub = &e.prepended;
             break;
           case PrimSpec::RelationshipListOp::Append:
-          case PrimSpec::RelationshipListOp::Add:
             sub = &e.appended;
+            break;
+          case PrimSpec::RelationshipListOp::Add:
+            sub = &e.added;
             break;
           case PrimSpec::RelationshipListOp::Delete:
             sub = &e.deleted;
+            break;
+          case PrimSpec::RelationshipListOp::Reorder:
+            sub = &e.ordered;
             break;
         }
         if (sub) {

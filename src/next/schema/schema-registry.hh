@@ -28,6 +28,15 @@ class SchemaRegistry {
   const SchemaPropertyDefinition* FindProperty(
       const PrimSpec& prim, const std::string& property_name) const;
   std::vector<std::string> PropertyNames(const PrimSpec& prim) const;
+  bool IsKnownSchema(const std::string& schema_type) const;
+  std::vector<std::string> SchemaTypes() const;
+  /// True when `schema_type` is `ancestor` or reaches it through the
+  /// registered parents chain (e.g. InheritsFrom("Volume", "Gprim")).
+  bool InheritsFrom(const std::string& schema_type,
+                    const std::string& ancestor) const;
+  /// True when the registry records an inheritance parent for `schema_type`
+  /// (i.e. its ancestry is KNOWN — InheritsFrom answers are meaningful).
+  bool HasParentEntry(const std::string& schema_type) const;
 
  private:
   SchemaRegistry();

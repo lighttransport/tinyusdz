@@ -10,6 +10,7 @@
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_set>
 #include <fstream>
 #include <system_error>
@@ -127,6 +128,7 @@ bool AsciiParser::Impl::ParseWithSource(const char* data, size_t length,
       if (!lexer_->expect(TokenType::Identifier, what)) return false;
       if (what == "rootPrims") {
         if (!ParseOrderList(&layer_->meta().rootPrimOrder)) return false;
+        layer_->meta().rootPrimOrder_set = true;
       } else if (options_.strict_aousd_conformance) {
         AddError("Unsupported root reorder field: " + what);
         return false;
@@ -291,13 +293,15 @@ bool AsciiParser::Impl::ReadArcRef(std::string* out) {
       Match(TokenType::Semicolon);
     }
     Match(TokenType::CloseParen);
-    if (scl <= 0.0) {
+    if (!std::isfinite(off) || !std::isfinite(scl) || !(scl > 0.0)) {
       if (options_.strict_aousd_conformance) {
-        AddError("AOUSD composition-arc scale must be greater than zero");
+        AddError("AOUSD composition-arc offset must be finite and scale must "
+                 "be finite and greater than zero");
         return false;
       }
-      AddWarning("Non-positive composition-arc scale retained in compatibility "
-                 "mode");
+      AddWarning("Invalid composition-arc layer offset; using identity mapping");
+      off = 0.0;
+      scl = 1.0;
     }
     if (off != 0.0 || scl != 1.0) {
       ref += "?layerOffset=" + std::to_string(off) + ":" + std::to_string(scl);
@@ -320,7 +324,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 
   // Read an arc value that may be a bracketed list or a single value.
   // List-op qualifier applied to an arc list (prepend/append/delete/explicit).
-  enum class ArcQual { Explicit, Prepend, Append, Delete, Reorder };
+  enum class ArcQual { Explicit, Add, Prepend, Append, Delete, Reorder };
 
   enum class ArcField { References, Payloads, Inherits, Specializes };
   auto SelectArc = [](PrimSpecMeta& meta,
@@ -392,6 +396,11 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         e.is_explicit = false;
         e.appended.insert(e.appended.end(), items.begin(), items.end());
         break;
+      case ArcQual::Add:
+        e.authored = true;
+        e.is_explicit = false;
+        e.added.insert(e.added.end(), items.begin(), items.end());
+        break;
       case ArcQual::Delete:
         e.authored = true;
         e.is_explicit = false;
@@ -413,6 +422,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         target->insert(target->begin(), items.begin(), items.end());
         break;
       case ArcQual::Append:
+      case ArcQual::Add:
       case ArcQual::Reorder:
         target->insert(target->end(), items.begin(), items.end());
         break;
@@ -433,12 +443,14 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
   };
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
+    if (Match(TokenType::Semicolon)) continue;
     // A bare (often triple-quoted) string is the prim documentation —
     // USD shorthand for `doc = "..."`.
     if (Check(TokenType::String)) {
       std::string d;
       lexer_->expect(TokenType::String, d);
       prim->meta().doc() = d;
+      prim->meta().set_doc_authored();
       continue;
     }
     // Optional list-op qualifier keyword (prepend/append/delete/reorder)
@@ -446,9 +458,10 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
     ArcQual arc_qual = ArcQual::Explicit;
     if (Match(TokenType::Prepend)) {
       arc_qual = ArcQual::Prepend;
-    } else if (Match(TokenType::Append) || Match(TokenType::Add)) {
-      // `add` is USD's legacy list-op; treat it as append.
+    } else if (Match(TokenType::Append)) {
       arc_qual = ArcQual::Append;
+    } else if (Match(TokenType::Add)) {
+      arc_qual = ArcQual::Add;
     } else if (Match(TokenType::Delete)) {
       arc_qual = ArcQual::Delete;
     } else if (Match(TokenType::Reorder)) {
@@ -487,21 +500,31 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       std::string doc;
       if (lexer_->expect(TokenType::String, doc)) {
         prim->meta().doc() = doc;
+        prim->meta().set_doc_authored();
       }
     } else if (key == "comment") {
       std::string v;
       if (lexer_->expect(TokenType::String, v)) {
         prim->meta().comment() = v;
+        prim->meta().set_comment_authored();
       }
     } else if (key == "kind") {
       std::string v;
       if (lexer_->expect(TokenType::String, v)) {
         prim->meta().kind() = v;
+        prim->meta().setKindAuthored();
       }
     } else if (key == "displayName") {
       std::string v;
       if (lexer_->expect(TokenType::String, v)) {
         prim->meta().displayName() = v;
+        prim->meta().setDisplayNameAuthored();
+      }
+    } else if (key == "displayGroupOrder") {
+      ParseResult r = ParseArrayValue(*lexer_, TypeId::String);
+      if (r.success && r.value.as_token_array()) {
+        prim->meta().displayGroupOrder() = *r.value.as_token_array();
+        prim->meta().setDisplayGroupOrderAuthored();
       }
     } else if (key == "instanceable") {
       ParseResult result = ParseValue(*lexer_, TypeId::Bool);
@@ -513,6 +536,7 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       // relocates = { </old/path>: </new/path>, ... } — namespace renames
       // consumed by pcp (SdfRelocates). Relative paths resolve against the
       // owning prim.
+      if (prim) prim->meta().setRelocatesAuthored();
       if (Match(TokenType::OpenBrace)) {
         while (!Check(TokenType::CloseBrace) && !AtEnd()) {
           std::string src, dst;
@@ -531,8 +555,11 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
         Match(TokenType::CloseBrace);
       }
     } else if (key == "apiSchemas") {
+      prim->meta().setApiSchemasAuthored();
       std::vector<std::string> schemas;
-      if (Match(TokenType::OpenBracket)) {
+      if (Check(TokenType::None)) {
+        lexer_->next();
+      } else if (Match(TokenType::OpenBracket)) {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
           // Schema names are authored as quoted strings (`"PhysicsRigidBodyAPI"`);
           // accept bare identifiers too. expect() consumes even on mismatch, so
@@ -555,43 +582,65 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           schemas.push_back(schema);
         }
       }
-      // Apply per the authored qualifier: `delete apiSchemas = [...]` must
-      // REMOVE the schemas (appending them would invert the opinion). Record
-      // only the ADDITIVE qualifier: next collapses the sublists into a single
-      // resolved list, so that list must be written as prepend/append/explicit
-      // and NEVER as `delete` — a delete list-op would re-subtract the resolved
-      // items on read (dropping e.g. a `prepend [3]` + `delete [1]` prim's two
-      // remaining schemas entirely). The authored delete is applied here.
-      switch (arc_qual) {
-        case ArcQual::Prepend: prim->meta().apiSchemasQualifier() = "prepend"; break;
-        case ArcQual::Append: prim->meta().apiSchemasQualifier() = "append"; break;
-        default: break;
+      StringListOpEdits& edits = prim->meta().apiSchemaEdits();
+      edits.authored = true;
+      if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
+        edits = StringListOpEdits();
+        edits.authored = true;
       }
-      std::vector<std::string>& applied = prim->meta().apiSchemas();
+      auto append = [&](std::vector<std::string>* dst) {
+        dst->insert(dst->end(), schemas.begin(), schemas.end());
+      };
       switch (arc_qual) {
-        case ArcQual::Delete: {
-          // Hash-set membership instead of std::find per element (was
-          // O(applied * schemas)).
-          const std::unordered_set<std::string> del(schemas.begin(),
-                                                    schemas.end());
-          applied.erase(
-              std::remove_if(applied.begin(), applied.end(),
-                             [&](const std::string& a) {
-                               return del.count(a) != 0;
-                             }),
-              applied.end());
-          break;
-        }
         case ArcQual::Explicit:
-          applied = std::move(schemas);
+          edits = StringListOpEdits();
+          edits.authored = true;
+          edits.is_explicit = true;
+          edits.explicit_items = schemas;
+          prim->meta().apiSchemasQualifier().clear();
+          break;
+        case ArcQual::Add:
+          edits.is_explicit = false;
+          append(&edits.added);
+          prim->meta().apiSchemasQualifier() = "append";
           break;
         case ArcQual::Prepend:
-          applied.insert(applied.begin(), schemas.begin(), schemas.end());
+          edits.is_explicit = false;
+          append(&edits.prepended);
+          prim->meta().apiSchemasQualifier() = "prepend";
           break;
         case ArcQual::Append:
-        case ArcQual::Reorder:
-          applied.insert(applied.end(), schemas.begin(), schemas.end());
+          edits.is_explicit = false;
+          append(&edits.appended);
+          prim->meta().apiSchemasQualifier() = "append";
           break;
+        case ArcQual::Delete:
+          edits.is_explicit = false;
+          append(&edits.deleted);
+          prim->meta().apiSchemasQualifier() = "delete";
+          break;
+        case ArcQual::Reorder:
+          edits.is_explicit = false;
+          append(&edits.ordered);
+          break;
+      }
+      std::vector<std::string>& applied = prim->meta().apiSchemas();
+      applied = edits.is_explicit ? edits.explicit_items : edits.added;
+      if (!edits.is_explicit) {
+        applied.insert(applied.begin(), edits.prepended.begin(),
+                       edits.prepended.end());
+        applied.insert(applied.end(), edits.appended.begin(),
+                       edits.appended.end());
+        std::vector<std::string> reordered;
+        for (const std::string& schema : edits.ordered) {
+          auto it = std::find(applied.begin(), applied.end(), schema);
+          if (it != applied.end()) {
+            reordered.push_back(*it);
+            applied.erase(it);
+          }
+        }
+        reordered.insert(reordered.end(), applied.begin(), applied.end());
+        applied = std::move(reordered);
       }
     } else if (key == "references") {
       ReadArcList(prim->meta(), ArcField::References, arc_qual);
@@ -603,25 +652,95 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
       ReadArcList(prim->meta(), ArcField::Specializes, arc_qual);
     } else if (key == "customData") {
       ParseResult r = ParseDict(*lexer_);
-      if (r.success) prim->meta().customData() = std::move(r.value);
+      if (r.success) {
+        prim->meta().customData() = std::move(r.value);
+        prim->meta().setCustomDataAuthored();
+      }
     } else if (key == "assetInfo") {
       ParseResult r = ParseDict(*lexer_);
-      if (r.success) prim->meta().assetInfo() = std::move(r.value);
+      if (r.success) {
+        prim->meta().assetInfo() = std::move(r.value);
+        prim->meta().setAssetInfoAuthored();
+      }
     } else if (key == "sdrMetadata") {
       ParseResult r = ParseDict(*lexer_);
-      if (r.success) prim->meta().sdrMetadata() = std::move(r.value);
+      if (r.success) {
+        prim->meta().sdrMetadata() = std::move(r.value);
+        prim->meta().setSdrMetadataAuthored();
+      }
     } else if (key == "clips") {
       ParseResult r = ParseDict(*lexer_);
-      if (r.success) prim->meta().clips() = std::move(r.value);
+      if (r.success) {
+        prim->meta().clips() = std::move(r.value);
+        prim->meta().setClipsAuthored();
+      }
+    } else if (key == "clipSets") {
+      std::vector<std::string> names;
+      if (Check(TokenType::None)) {
+        lexer_->next();
+      } else if (Match(TokenType::OpenBracket)) {
+        while (!Check(TokenType::CloseBracket) && !AtEnd()) {
+          std::string name;
+          if (Check(TokenType::String)
+                  ? lexer_->expect(TokenType::String, name)
+                  : lexer_->expect(TokenType::Identifier, name)) {
+            names.push_back(name);
+          }
+          Match(TokenType::Comma);
+        }
+        Match(TokenType::CloseBracket);
+      } else {
+        std::string name;
+        if (Check(TokenType::String)
+                ? lexer_->expect(TokenType::String, name)
+                : lexer_->expect(TokenType::Identifier, name)) {
+          names.push_back(name);
+        }
+      }
+
+      StringListOpEdits& edits = prim->meta().clipSetEdits();
+      edits.authored = true;
+      if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
+        edits = StringListOpEdits();
+        edits.authored = true;
+      }
+      auto append = [&](std::vector<std::string>* dst) {
+        dst->insert(dst->end(), names.begin(), names.end());
+      };
+      switch (arc_qual) {
+        case ArcQual::Explicit:
+          edits = StringListOpEdits();
+          edits.authored = true;
+          edits.is_explicit = true;
+          edits.explicit_items = names;
+          break;
+        case ArcQual::Add:
+          edits.is_explicit = false;
+          append(&edits.added);
+          break;
+        case ArcQual::Prepend:
+          edits.is_explicit = false;
+          append(&edits.prepended);
+          break;
+        case ArcQual::Append:
+          edits.is_explicit = false;
+          append(&edits.appended);
+          break;
+        case ArcQual::Delete:
+          edits.is_explicit = false;
+          append(&edits.deleted);
+          break;
+        case ArcQual::Reorder:
+          edits.is_explicit = false;
+          append(&edits.ordered);
+          break;
+      }
     } else if (key == "variantSets") {
       // variantSets = ["setName1", "setName2"]  OR a single bare string
       // (`add variantSets = "shadingVariant"`). Declarations only; no body here.
+      std::vector<std::string> authored_names;
       auto add_vs = [&](const std::string& vs_name) {
-        for (const auto& vs : prim->meta().variantSets()) {
-          if (vs.name == vs_name) return;  // already declared
-        }
-        prim->meta().variantSets().emplace_back();
-        prim->meta().variantSets().back().name = vs_name;
+        authored_names.push_back(vs_name);
       };
       if (Match(TokenType::OpenBracket)) {
         while (!Check(TokenType::CloseBracket) && !AtEnd()) {
@@ -645,10 +764,87 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           add_vs(vs_name);
         }
       }
+
+      StringListOpEdits& edits = prim->meta().variantSetNameEdits();
+      edits.authored = true;
+      if (arc_qual != ArcQual::Explicit && edits.is_explicit) {
+        edits = StringListOpEdits();
+        edits.authored = true;
+      }
+      auto append = [&](std::vector<std::string>* dst) {
+        dst->insert(dst->end(), authored_names.begin(), authored_names.end());
+      };
+      switch (arc_qual) {
+        case ArcQual::Explicit:
+          edits = StringListOpEdits();
+          edits.authored = true;
+          edits.is_explicit = true;
+          edits.explicit_items = authored_names;
+          break;
+        case ArcQual::Add:
+          edits.is_explicit = false;
+          append(&edits.added);
+          break;
+        case ArcQual::Prepend:
+          edits.is_explicit = false;
+          append(&edits.prepended);
+          break;
+        case ArcQual::Append:
+          edits.is_explicit = false;
+          append(&edits.appended);
+          break;
+        case ArcQual::Delete:
+          edits.is_explicit = false;
+          append(&edits.deleted);
+          break;
+        case ArcQual::Reorder:
+          edits.is_explicit = false;
+          append(&edits.ordered);
+          break;
+      }
+
+      std::vector<std::string> effective = edits.is_explicit
+          ? edits.explicit_items
+          : edits.added;
+      if (!edits.is_explicit) {
+        effective.insert(effective.begin(), edits.prepended.begin(),
+                         edits.prepended.end());
+        effective.insert(effective.end(), edits.appended.begin(),
+                         edits.appended.end());
+        std::vector<std::string> reordered;
+        for (const std::string& name : edits.ordered) {
+          auto it = std::find(effective.begin(), effective.end(), name);
+          if (it != effective.end()) {
+            reordered.push_back(*it);
+            effective.erase(it);
+          }
+        }
+        reordered.insert(reordered.end(), effective.begin(), effective.end());
+        effective = std::move(reordered);
+      }
+      std::vector<VariantSetData> old =
+          std::move(prim->meta().variantSets());
+      std::vector<VariantSetData>& sets = prim->meta().variantSets();
+      sets.clear();
+      for (const std::string& name : effective) {
+        auto it = std::find_if(old.begin(), old.end(),
+                               [&](const VariantSetData& set) {
+                                 return set.name == name;
+                               });
+        if (it != old.end()) {
+          sets.push_back(std::move(*it));
+          old.erase(it);
+        } else {
+          VariantSetData set;
+          set.name = name;
+          sets.push_back(std::move(set));
+        }
+      }
     } else if (key == "variants" || key == "variantSelection") {
       // variants = { string set = "selection"  string set2 = "sel2" }. USD
       // supports a selection per set; record them all in variantSelections()
       // (keeping the legacy single field set to the first for back-compat).
+      if (prim) prim->meta().setVariantSelectionsAuthored();
       if (Match(TokenType::OpenBrace)) {
         while (!Check(TokenType::CloseBrace) && !AtEnd()) {
           // Optional leading type name ("string"); the key may be a quoted

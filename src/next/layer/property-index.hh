@@ -127,6 +127,8 @@ struct PropSlot {
   static constexpr uint16_t kFlagConnection = 0x0008;
   static constexpr uint16_t kFlagRelationship = 0x0010;
   static constexpr uint16_t kFlagArray = 0x0020;
+  static constexpr uint16_t kFlagVariabilityAuthored = 0x0040;
+  static constexpr uint16_t kFlagVarying = 0x0080;
 
   bool is_custom() const { return flags & kFlagCustom; }
   bool is_uniform() const { return flags & kFlagUniform; }
@@ -134,6 +136,10 @@ struct PropSlot {
   bool is_connection() const { return flags & kFlagConnection; }
   bool is_relationship() const { return flags & kFlagRelationship; }
   bool is_array() const { return flags & kFlagArray; }
+  bool variability_authored() const {
+    return flags & kFlagVariabilityAuthored;
+  }
+  bool is_varying() const { return flags & kFlagVarying; }
 };
 
 /// Property index for a single prim

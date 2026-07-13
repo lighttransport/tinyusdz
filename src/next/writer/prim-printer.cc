@@ -292,7 +292,7 @@ void PrintLayerMeta(StreamWriter& os, const LayerMeta& meta, const PrimPrintOpti
   os << "(\n";
 
   bool first = true;
-  if (!meta.defaultPrim.empty()) {
+  if (meta.defaultPrim_set || !meta.defaultPrim.empty()) {
     os << opts.indent << "defaultPrim = \"" << meta.defaultPrim << "\"";
     first = false;
   }

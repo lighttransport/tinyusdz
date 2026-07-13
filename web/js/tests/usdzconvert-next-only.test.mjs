@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { convertFolderToUSDZ, loadWasm, unpackUSDZ } from '../src/usdzconvert.js';
 import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { buildNextThreeNode } from '../src/tinyusdz/NextRenderSceneUtils.js';
 
 const SCENE_USDA = `#usda 1.0
 (
@@ -105,6 +106,7 @@ def Xform "World"
         {
             uniform token info:id = "UsdPreviewSurface"
             color3f inputs:diffuseColor.connect = </World/Mat/BaseTex.outputs:rgb>
+            float inputs:opacity.connect = </World/Mat/BaseTex.outputs:r>
             token outputs:surface
         }
 
@@ -116,6 +118,7 @@ def Xform "World"
             token inputs:wrapS = "clamp"
             token inputs:wrapT = "repeat"
             color3f outputs:rgb
+            float outputs:r
         }
     }
 
@@ -175,6 +178,7 @@ function assertReloadsWithRenderStream(usdz, label) {
     assert.equal(typeof stream.getSkeleton, 'function', `${label}: RenderStream should expose skeleton getter`);
     assert.equal(typeof stream.numAnimations, 'function', `${label}: RenderStream should expose animation count`);
     assert.equal(typeof stream.getAnimation, 'function', `${label}: RenderStream should expose animation getter`);
+    assert.equal(typeof stream.getAnimationView, 'function', `${label}: RenderStream should expose fast animation getter`);
     assert.equal(typeof stream.getAllAnimations, 'function', `${label}: RenderStream should expose all animations getter`);
     assert.equal(typeof stream.getAnimationInfo, 'function', `${label}: RenderStream should expose animation info getter`);
     assert.equal(typeof stream.getAllAnimationInfos, 'function', `${label}: RenderStream should expose all animation info getter`);
@@ -245,6 +249,8 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
     assert.equal(baseMeta.wrapS, 'clamp', `${label}: material metadata should preserve wrapS`);
     assert.equal(baseMeta.wrapT, 'repeat', `${label}: material metadata should preserve wrapT`);
     assert.equal(baseMeta.isUdim, true, `${label}: material metadata should flag UDIM paths`);
+    assert.equal(mesh.material.opacityTexture, 'textures/diffuse.<UDIM>.png',
+      `${label}: material should preserve connected opacity texture path`);
 
     const unsupported = stream.getUnsupportedRenderables();
     assert.ok(Array.isArray(unsupported), `${label}: unsupported renderables should be an array`);
@@ -262,6 +268,16 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
     if (animationCount > 0) {
       const animation = stream.getAnimation(0);
       assert.ok(Array.isArray(animation.channels), `${label}: animation should expose channels`);
+      const animationView = stream.getAnimationView(0);
+      assert.ok(Array.isArray(animationView.channels),
+        `${label}: fast animation should expose channels`);
+      const viewArraySampler = animationView.samplers.find((sampler) => sampler?.arrayValues);
+      if (viewArraySampler) {
+        assert.equal(viewArraySampler.arrayValues.dtype, 'f32',
+          `${label}: fast skeletal data should use a float heap descriptor`);
+        assert.ok(viewArraySampler.arrayValues.ptr >= 0 && viewArraySampler.arrayValues.length >= 12,
+          `${label}: fast skeletal descriptor should preserve the complete array`);
+      }
       const skeletal = stream.getAllAnimations()
         .find((item) => item && item.has_skeletal_animation);
       assert.ok(skeletal, `${label}: animation should expose skeletal animation metadata`);
@@ -318,6 +334,21 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
     assert.ok(points?.points instanceof Float32Array, `${label}: adapter should expose point cloud data`);
     assert.equal(points.pointCount, 2, `${label}: adapter should expose point cloud point count`);
     assert.equal(adapter.numImages(), 0, `${label}: next adapter should report zero decoded images`);
+    assert.equal(adapter.getStats().providedAssetBytes, 0,
+      `${label}: root layer must not be duplicated in the value-clip asset map`);
+
+    const adapterAnimation = adapter.getAllAnimations()
+      .find((item) => item?.has_skeletal_animation);
+    if (adapterAnimation) {
+      const skeletalTrack = adapterAnimation.tracks.find((track) => track?.arrayValues);
+      assert.ok(skeletalTrack?.arrayValues instanceof Float32Array,
+        `${label}: adapter should own fast skeletal animation data`);
+      const sampler = adapterAnimation.samplers[skeletalTrack.sampler];
+      assert.equal(skeletalTrack.arrayValues, sampler.arrayValues,
+        `${label}: sampler and track should share skeletal array storage`);
+      assert.equal(skeletalTrack.times, sampler.times,
+        `${label}: sampler and track should share time storage`);
+    }
 
     const materialResult = adapter.getMaterialWithFormat(0, 'json');
     assert.equal(materialResult.error, null, `${label}: material JSON should be available`);
@@ -332,8 +363,45 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       `${label}: adapter should expose unsupported renderable count`);
     assert.ok(Array.isArray(adapter.getUnsupportedRenderables()),
       `${label}: adapter should expose unsupported renderable list`);
+    const built = buildNextThreeNode(adapter, {
+      skipTextures: true,
+      showCurves: false,
+      releaseBuildData: false,
+    });
+    const curveGroups = [];
+    built.node.traverse((object) => {
+      if (object.userData?.usdCurves) curveGroups.push(object);
+    });
+    assert.ok(curveGroups.length >= 1, `${label}: fixture should build curve primitives`);
+    assert.ok(curveGroups.every((object) => object.visible === false),
+      `${label}: curve primitives should honor the default-off viewer option`);
+    built.node.traverse((object) => {
+      object.geometry?.dispose?.();
+      object.material?.dispose?.();
+    });
   } finally {
     adapter.end();
+  }
+}
+
+async function assertMeshOnlyAdapter(usdz, label) {
+  const loader = new TinyUSDZLoader({ suppressNativeInfoLogs: true });
+  await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
+  const adapter = await new Promise((resolve, reject) => {
+    loader.parse(usdz, `${label}.usdz`, resolve, reject, {
+      backend: 'next',
+      meshOnly: true,
+    });
+  });
+  try {
+    assert.ok(adapter.numMeshes() >= 1, `${label}: mesh-only adapter should retain meshes`);
+    assert.equal(adapter.numNodes(), 0, `${label}: mesh-only adapter should skip nodes`);
+    assert.equal(adapter.numPointInstanceDraws(), 0,
+      `${label}: mesh-only adapter should skip point-instance draws`);
+    assert.equal(adapter.getStats().renderSceneNodes, 0,
+      `${label}: mesh-only native stream should skip full render-scene conversion`);
+  } finally {
+    adapter.delete();
   }
 }
 
@@ -408,6 +476,7 @@ await testAsync('next-only WASM exposes next scene entities to web adapters', as
   assert.equal(stats.pipeline, 'next-only');
   assertEntityAccessorsWithRenderStream(usdz, 'entity-scene RenderStream');
   await assertEntityAccessorsWithAdapter(usdz, 'entity-scene adapter');
+  await assertMeshOnlyAdapter(usdz, 'entity-scene mesh-only adapter');
 });
 
 await testAsync('next-only WASM worker module remains importable', async () => {

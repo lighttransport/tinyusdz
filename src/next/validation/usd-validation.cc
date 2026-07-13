@@ -6,34 +6,25 @@
 // Port of the legacy validator (src/usd-validation.cc) onto the next-core
 // layer model. Rule ids / severities / messages mirror the legacy validator.
 //
-// Legacy checks that are NOT expressible on next::Layer / next::PrimSpec and
-// are therefore skipped or structurally approximated:
-//  - crate.* rules: the next crate reader does not expose Crate
-//    TOC/field/spec tables for introspection. The `crate` option is accepted
-//    but the group never runs.
-//  - core.apiSchema.unknown: next-core has no API-schema registry (schema
-//    names are plain strings), so "unknown schema" warnings are not emitted.
-//    The generic single-apply-with-instance-name error is likewise limited to
-//    schemas known to be single-apply (ColorSpaceAPI/ColorSpaceDefinitionAPI)
-//    to avoid false positives on custom multiple-apply schemas.
-//  - core.layer.owner: next LayerMeta has no `owner` field.
-//  - core.layer.colorConfiguration / colorManagementSystem emptiness: next
-//    stores these as plain strings where authored-empty is indistinguishable
-//    from unauthored, so the "authored but empty" error cannot fire.
-//  - core.relationship.variability: next relationships carry no
-//    "varying authored" flag.
+// Legacy checks that are not fully expressible on next::Layer / next::PrimSpec
+// are skipped or structurally approximated:
+//  - crate/package rules require the original bytes and are run by callers
+//    such as tusdchecker, not by Layer-only validation.
+//  - API-schema validation uses next's compact built-in inventory rather than
+//    OpenUSD's dynamically discovered plugin registry.
 //  - Invalid list-edit qualifiers: next ArcEdit qualifiers are typed enums;
 //    an invalid qualifier is rejected at parse time and cannot be
 //    represented.
 //  - layerRelocates live per-prim in next (PrimSpecMeta::relocates); they are
 //    validated at the prim location under the legacy core.layer.layerRelocates
 //    rule ids.
-//  - Variant OPTION bodies (properties/prims inside `variant "x" { ... }`)
-//    are stored as VariantData/graft layers rather than PrimSpecs; only
-//    variant set / variant / selection names are validated (deep validation
-//    of variant bodies is a structural approximation gap).
 
 #include "usd-validation.hh"
+
+#include "../prim/identifier.hh"
+#include "../schema/schema-registry.hh"
+
+#include "../../external/fast_float/include/fast_float/fast_float.h"
 
 #include <algorithm>
 #include <array>
@@ -66,6 +57,9 @@ struct AppliedSchema {
   std::string name;
   std::string instance_name;
 };
+
+bool HasAppliedSchema(const std::vector<AppliedSchema> &schemas,
+                      const std::string &schema_name);
 
 using ColorSpaceSet = std::set<std::string>;
 using PrimTypeByPath = std::unordered_map<std::string, std::string>;
@@ -100,41 +94,12 @@ bool EndsWith(const std::string &s, const std::string &suffix) {
          s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-// Approximation of the legacy is_valid_utf8_identifier(): ASCII
-// [A-Za-z_][A-Za-z0-9_]* with any non-ASCII (UTF-8 continuation/lead) byte
-// accepted as an identifier character.
-bool IsValidIdentifier(const std::string &name) {
-  if (name.empty()) {
-    return false;
-  }
-  auto is_alpha = [](unsigned char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-  };
-  auto is_digit = [](unsigned char c) { return c >= '0' && c <= '9'; };
-  const unsigned char c0 = static_cast<unsigned char>(name[0]);
-  if (!(is_alpha(c0) || c0 == '_' || c0 >= 0x80)) {
-    return false;
-  }
-  for (char ch : name) {
-    const unsigned char c = static_cast<unsigned char>(ch);
-    if (!(is_alpha(c) || is_digit(c) || c == '_' || c >= 0x80)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool IsValidNamespacedIdentifier(const std::string &name) {
-  if (name.empty()) {
-    return false;
-  }
-  for (const std::string &part : SplitString(name, ':')) {
-    if (part.empty() || !IsValidIdentifier(part)) {
-      return false;
-    }
-  }
-  return true;
-}
+// Identifier validation delegates to the shared strict UTF-8 + Unicode XID
+// validator (src/next/prim/identifier.hh) — the same implementation the
+// parser and lexer use. The previous file-local approximation accepted ANY
+// byte >= 0x80, so malformed UTF-8 and non-XID codepoints passed validation.
+// (The shared IsValidIdentifier / IsValidNamespacedIdentifier are visible
+// here through the enclosing tinyusdz::next namespace.)
 
 // ---------------------------------------------------------------------------
 // Issue helpers
@@ -179,7 +144,25 @@ bool IsGprimTypeName(const std::string &type_name) {
       "NurbsPatch",  "HermiteCurves", "Plane",      "TetMesh",
       "PointInstancer",
   };
-  return kGprimTypes.count(type_name) > 0;
+  // Types whose ancestry the schema registry records (e.g. Volume -> Gprim)
+  // derive their placement from it instead of growing this hand list.
+  return kGprimTypes.count(type_name) > 0 ||
+         GetSchemaRegistry().InheritsFrom(type_name, "Gprim");
+}
+
+bool IsXformableTypeName(const std::string &type_name) {
+  static const std::unordered_set<std::string> kNonXformableTypes = {
+      "", "Scope", "GeomSubset", "Material", "Shader", "NodeGraph",
+      "PhysicsScene", "PhysicsCollisionGroup"};
+  if (kNonXformableTypes.count(type_name) > 0) return false;
+  // Registry-recorded ancestry (e.g. RenderSettings -> RenderSettingsBase ->
+  // Typed) decides for the schemas the registry knows; types without a
+  // recorded parent keep the permissive default.
+  const SchemaRegistry &registry = GetSchemaRegistry();
+  if (registry.HasParentEntry(type_name)) {
+    return registry.InheritsFrom(type_name, "Xformable");
+  }
+  return true;
 }
 
 bool IsShadeContainerTypeName(const std::string &type_name) {
@@ -244,7 +227,10 @@ bool IsShaderOutputName(const std::string &prop_name) {
 
 bool IsMaterialTerminalOutputName(const std::string &prop_name) {
   return prop_name == "outputs:surface" ||
-         prop_name == "outputs:displacement" || prop_name == "outputs:volume";
+         prop_name == "outputs:displacement" || prop_name == "outputs:volume" ||
+         prop_name == "outputs:mtlx:surface" ||
+         prop_name == "outputs:mtlx:displacement" ||
+         prop_name == "outputs:mtlx:volume";
 }
 
 bool IsUsdPrimvarReaderId(const std::string &shader_id) {
@@ -285,6 +271,22 @@ bool IsMaterialXAssetPath(const std::string &asset_path) {
 bool IsMultipleApplySchemaName(const std::string &schema_name) {
   return schema_name == "CollectionAPI" || schema_name == "PhysicsDriveAPI" ||
          schema_name == "PhysicsLimitAPI";
+}
+
+bool IsKnownAPISchemaName(const std::string &schema_name) {
+  if (IsPhysicsSchemaName(schema_name)) return true;
+  static const std::unordered_set<std::string> kNames = {
+      "CollectionAPI",          "ColorSpaceAPI",
+      "ColorSpaceDefinitionAPI", "SkelBindingAPI",
+      "MaterialBindingAPI",     "MaterialXConfigAPI",
+      "ShapingAPI",             "ShadowAPI",
+      "LightAPI",               "MeshLightAPI",
+      "VolumeLightAPI",         "PortalAPI",
+      "LightListAPI",           "MotionAPI",
+      "PrimvarsAPI",            "VisibilityAPI",
+      "ModelAPI",               "AssetPreviewsAPI",
+      "NodeDefAPI",             "CoordSysAPI"};
+  return kNames.count(schema_name) != 0;
 }
 
 // UsdPreviewSurface input name -> expected (role) value type. Shares the
@@ -926,15 +928,38 @@ void ValidateTokenSetProperty(const PrimSpec &ps, const std::string &prop_name,
              prop_name + " must be a token attribute");
     return;
   }
-  std::string token;
-  if (!GetTokenProperty(ps, prop_name, &token)) {
-    AddError(result, rule_id, location,
-             prop_name + " must have a token value");
-    return;
+  // A declared-only or timeSamples-only attribute is valid authoring (the
+  // schema fallback / animation supplies the value); only an authored
+  // DEFAULT of the wrong type is an error. GetAttrValue returns null for
+  // slots without an authored default.
+  if (const Value *v = GetAttrValue(ps, prop_name)) {
+    const std::string *token = v->as_token();
+    if (!token) {
+      AddError(result, rule_id, location,
+               prop_name + " must have a token value");
+      return;
+    }
+    if (allowed.count(*token) == 0) {
+      AddError(result, rule_id, location,
+               prop_name + " token `" + *token + "` is not valid");
+      return;
+    }
   }
-  if (allowed.count(token) == 0) {
-    AddError(result, rule_id, location,
-             prop_name + " token `" + token + "` is not valid");
+  // Animated tokens must also stay inside the allowed set. One diagnostic
+  // (the first offending sample) per property keeps reports readable.
+  if (const std::vector<std::pair<double, uint32_t>> *samples =
+          GetTimeSamplesOf(ps, prop_name)) {
+    for (const auto &sample : *samples) {
+      const Value *sv = ps.time_sample_value(sample.second);
+      if (!sv || sv->is_block()) continue;
+      const std::string *token = sv->as_token();
+      if (token && allowed.count(*token) > 0) continue;
+      AddError(result, rule_id, location,
+               prop_name + " timeSample at " + std::to_string(sample.first) +
+                   (token ? " token `" + *token + "` is not valid"
+                          : " must be a token value"));
+      return;
+    }
   }
 }
 
@@ -1548,6 +1573,8 @@ struct AncestorContext {
   std::string parent_type;         // immediate parent typeName ("" at root)
   bool parent_mesh_face_count_known{false};
   size_t parent_mesh_face_count{0};
+  bool has_skel_root_ancestor{false};
+  bool has_articulation_ancestor{false};
 };
 
 void ValidateGeomCommonProperties(const PrimSpec &ps,
@@ -1749,6 +1776,139 @@ void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
                MakePropertyLocation(prim_location, "widths"),
                "widths length must be 1, match points, or match curve count");
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UsdVol / UsdRender structural checks (PRODUCT PARITY, not AOUSD Core):
+// vol.volume.fieldRel / vol.fieldAsset.* / render.*
+// ---------------------------------------------------------------------------
+
+void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
+                    USDValidationResult *result) {
+  // Volume binds its fields through `field:<name>` RELATIONSHIPS; an
+  // attribute in that namespace is an authoring error, and a bound field
+  // relationship without a target renders nothing. Attributes live in the
+  // property slots; relationships (including declared-only ones) live in the
+  // prim's relationship map, so both containers are walked.
+  for (const PropSlot &slot : ps.properties().slots()) {
+    const std::string &prop_name = GetPropNameTable().get(slot.name_id);
+    if (prop_name.compare(0, 6, "field:") != 0) continue;
+    if (slot.is_relationship()) continue;  // targets checked below
+    AddError(result, "vol.volume.fieldRel",
+             MakePropertyLocation(prim_location, prop_name),
+             "Volume `" + prop_name +
+                 "` must be a relationship targeting a field prim");
+  }
+  for (const std::string &rel_name : ps.relationship_names()) {
+    if (rel_name.compare(0, 6, "field:") != 0) continue;
+    const std::vector<Path> *targets = ps.relationship(rel_name);
+    if (!targets || targets->empty()) {
+      AddWarning(result, "vol.volume.fieldRel",
+                 MakePropertyLocation(prim_location, rel_name),
+                 "Volume field relationship `" + rel_name +
+                     "` has no target");
+    }
+  }
+}
+
+void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
+                        USDValidationResult *result) {
+  static const std::set<std::string> kVdbDataTypes = {
+      "half",  "float",  "double", "int",     "uint",     "int64",
+      "half2", "float2", "double2", "int2",   "half3",    "float3",
+      "double3", "int3", "matrix3d", "matrix4d", "quatd", "bool",
+      "mask",  "string"};
+  static const std::set<std::string> kField3dDataTypes = {
+      "half", "float", "double", "half3", "float3", "double3"};
+  static const std::set<std::string> kFieldClass = {"levelSet", "fogVolume",
+                                                    "staggered", "unknown"};
+  static const std::set<std::string> kVectorRole = {"None", "Point", "Normal",
+                                                    "Vector", "Color"};
+
+  std::string file;
+  if (!HasAttributeProp(ps, "filePath")) {
+    AddWarning(result, "vol.fieldAsset.filePath",
+               MakePropertyLocation(prim_location, "filePath"),
+               ps.type_name() + " should author filePath");
+  } else {
+    // A time-sampled filePath is the canonical animated-volume authoring
+    // (one asset per sample); only a sample-less, default-less (or empty)
+    // filePath warrants a diagnostic.
+    const std::vector<std::pair<double, uint32_t>> *file_samples =
+        GetTimeSamplesOf(ps, "filePath");
+    if ((!file_samples || file_samples->empty()) &&
+        (!GetAssetPathProperty(ps, "filePath", &file) || file.empty())) {
+      AddWarning(result, "vol.fieldAsset.filePath",
+                 MakePropertyLocation(prim_location, "filePath"),
+                 ps.type_name() + " filePath should be a non-empty asset path");
+    }
+  }
+  // pxr usdVol schema: for fieldDataType, "A missing value is considered an
+  // error." That statement is about the COMPOSED stage; this checker sees one
+  // layer, where the value may legitimately arrive from a sublayer or another
+  // arc — so a missing VALUE (no default, no timeSamples; the registry has no
+  // fallback either) reports as a warning, not a hard error.
+  {
+    const std::vector<std::pair<double, uint32_t>> *dt_samples =
+        GetTimeSamplesOf(ps, "fieldDataType");
+    if (!GetAttrValue(ps, "fieldDataType") &&
+        (!dt_samples || dt_samples->empty())) {
+      AddWarning(result, "vol.fieldAsset.dataType",
+                 MakePropertyLocation(prim_location, "fieldDataType"),
+                 ps.type_name() + " does not author a fieldDataType value "
+                 "(pxr: a missing value is an error on the composed stage)");
+    }
+  }
+  if (ps.type_name() == "OpenVDBAsset") {
+    ValidateTokenSetProperty(ps, "fieldDataType", kVdbDataTypes,
+                             "vol.fieldAsset.dataType", prim_location, result);
+    ValidateTokenSetProperty(ps, "fieldClass", kFieldClass,
+                             "vol.fieldAsset.fieldClass", prim_location,
+                             result);
+  } else if (ps.type_name() == "Field3DAsset") {
+    ValidateTokenSetProperty(ps, "fieldDataType", kField3dDataTypes,
+                             "vol.fieldAsset.dataType", prim_location, result);
+  }
+  ValidateTokenSetProperty(ps, "vectorDataRoleHint", kVectorRole,
+                           "vol.fieldAsset.vectorDataRoleHint", prim_location,
+                           result);
+}
+
+void ValidateRenderPrim(const PrimSpec &ps, const std::string &prim_location,
+                        USDValidationResult *result) {
+  static const std::set<std::string> kConformPolicy = {
+      "expandAperture", "cropAperture", "adjustApertureWidth",
+      "adjustApertureHeight", "adjustPixelAspectRatio"};
+  static const std::set<std::string> kSourceType = {"raw", "primvar", "lpe",
+                                                    "intrinsic"};
+  const std::string &type_name = ps.type_name();
+  if (type_name == "RenderSettings" || type_name == "RenderProduct") {
+    // Rule ids name the prim type they fire on (render.settings.* vs
+    // render.product.*) so id-based filtering points at the right schema.
+    const bool is_settings = type_name == "RenderSettings";
+    ValidateTokenSetProperty(ps, "aspectRatioConformPolicy", kConformPolicy,
+                             is_settings
+                                 ? "render.settings.aspectRatioConformPolicy"
+                                 : "render.product.aspectRatioConformPolicy",
+                             prim_location, result);
+    // Per pxr, `products` is a RenderSettings property and `orderedVars` a
+    // RenderProduct property; the same name on the OTHER type is an ordinary
+    // custom property and must not be kind-checked.
+    const char *rels[2] = {"camera",
+                           is_settings ? "products" : "orderedVars"};
+    for (const char *rel : rels) {
+      if (HasProperty(ps, rel) && !IsRelationshipProp(ps, rel)) {
+        AddError(result,
+                 is_settings ? "render.settings.relationship"
+                             : "render.product.relationship",
+                 MakePropertyLocation(prim_location, rel),
+                 std::string(rel) + " must be a relationship");
+      }
+    }
+  } else if (type_name == "RenderVar") {
+    ValidateTokenSetProperty(ps, "sourceType", kSourceType,
+                             "render.var.sourceType", prim_location, result);
   }
 }
 
@@ -2274,9 +2434,33 @@ void ValidateBlendShape(const PrimSpec &ps, const std::string &prim_location,
   }
 }
 
-void ValidateSkelBinding(const PrimSpec &ps, const std::string &prim_location,
+void ValidateSkelBinding(const PrimSpec &ps,
+                         const std::vector<AppliedSchema> &applied_schemas,
+                         const std::string &prim_location,
                          const PrimTypeByPath &prim_types,
+                         const AncestorContext &ancestors,
                          USDValidationResult *result) {
+  bool has_binding_property = false;
+  for (const PropSlot &slot : ps.properties().slots()) {
+    const std::string &name = GetPropNameTable().get(slot.name_id);
+    if (StartsWith(name, "skel:") || StartsWith(name, "primvars:skel:")) {
+      has_binding_property = true;
+      break;
+    }
+  }
+  const bool has_binding_api =
+      HasAppliedSchema(applied_schemas, "SkelBindingAPI");
+  if (has_binding_property && !has_binding_api) {
+    AddError(result, "geom.skel.binding.api", prim_location,
+             "SkelBinding property is authored without applying "
+             "SkelBindingAPI");
+  }
+  if (has_binding_api && ps.type_name() != "SkelRoot" &&
+      !ancestors.has_skel_root_ancestor) {
+    AddError(result, "geom.skel.binding.root", prim_location,
+             "SkelBindingAPI must be applied on a SkelRoot or beneath one");
+  }
+
   if (HasProperty(ps, "skel:skeleton")) {
     ValidateRelationshipTargetPaths(
         ps, "skel:skeleton", "geom.skel.binding.skeleton",
@@ -2303,7 +2487,8 @@ void ValidateSkelBinding(const PrimSpec &ps, const std::string &prim_location,
         ps, "skel:animationSource", "geom.skel.binding.animationSource",
         MakePropertyLocation(prim_location, "skel:animationSource"), result);
     if (IsRelationshipProp(ps, "skel:animationSource")) {
-      const std::vector<Path> targets = RelTargets(ps, "skel:animationSource");
+      const std::vector<Path> targets =
+          RelTargets(ps, "skel:animationSource");
       for (const Path &target : targets) {
         std::string prim_part;
         SplitScenePathString(target.str(), &prim_part, nullptr);
@@ -2670,9 +2855,13 @@ void ValidateMaterialXConfig(const PrimSpec &ps,
 
   const bool has_config_api =
       HasAppliedSchema(applied_schemas, "MaterialXConfigAPI");
-  if (has_config_property && !has_config_api) {
+  const bool has_mtlx_terminal =
+      HasProperty(ps, "outputs:mtlx:surface") ||
+      HasProperty(ps, "outputs:mtlx:displacement") ||
+      HasProperty(ps, "outputs:mtlx:volume");
+  if ((has_config_property || has_mtlx_terminal) && !has_config_api) {
     AddWarning(result, "shade.materialX.configAPI", prim_location,
-               "config:mtlx:* properties are authored without applying "
+               "MaterialX properties are authored without applying "
                "MaterialXConfigAPI");
   }
 
@@ -2682,16 +2871,24 @@ void ValidateMaterialXConfig(const PrimSpec &ps,
   }
 
   std::string version;
-  if (GetStringProperty(ps, "config:mtlx:version", &version) &&
-      (version.empty() || !StartsWith(version, "1."))) {
-    AddWarning(result, "shade.materialX.version",
-               MakePropertyLocation(prim_location, "config:mtlx:version"),
-               "MaterialX version should be a 1.x version string, but is `" +
-                   version + "`");
+  if (HasProperty(ps, "config:mtlx:version")) {
+    const std::string location =
+        MakePropertyLocation(prim_location, "config:mtlx:version");
+    if (IsRelationshipProp(ps, "config:mtlx:version") ||
+        AttrTypeNameOf(ps, "config:mtlx:version") != "string" ||
+        !GetStringProperty(ps, "config:mtlx:version", &version)) {
+      AddError(result, "shade.materialX.version", location,
+               "config:mtlx:version must be a string attribute");
+    } else if (version.empty() || !StartsWith(version, "1.")) {
+      AddWarning(result, "shade.materialX.version", location,
+                 "MaterialX version should be a 1.x version string, but is `" +
+                     version + "`");
+    }
   }
 
   std::string source_uri;
-  if (GetStringProperty(ps, "config:mtlx:sourceUri", &source_uri) &&
+  if ((GetStringProperty(ps, "config:mtlx:sourceUri", &source_uri) ||
+       GetAssetPathProperty(ps, "config:mtlx:sourceUri", &source_uri)) &&
       !source_uri.empty() && !IsMaterialXAssetPath(source_uri)) {
     AddWarning(result, "shade.materialX.sourceUri",
                MakePropertyLocation(prim_location, "config:mtlx:sourceUri"),
@@ -2706,10 +2903,67 @@ void ValidateMaterialXShader(const PrimSpec &ps, const std::string &shader_id,
     return;
   }
 
-  if (!HasProperty(ps, "outputs:surface") && !HasProperty(ps, "outputs:out")) {
+  bool has_output = false;
+  for (const PropSlot &slot : ps.properties().slots()) {
+    const std::string &prop_name = GetPropNameTable().get(slot.name_id);
+    if (StartsWith(prop_name, "outputs:")) {
+      has_output = true;
+      break;
+    }
+  }
+  if (!has_output) {
     AddWarning(result, "shade.materialX.output", prim_location,
                "MaterialX shader `" + shader_id +
-                   "` should author outputs:surface or outputs:out");
+                   "` should author at least one outputs:* port");
+  }
+}
+
+void ValidateMaterialXSynthesizedMaterial(
+    const PrimSpec &ps, const std::string &prim_location,
+    const PrimTypeByPath &prim_types, USDValidationResult *result) {
+  if (ps.type_name() != "Material" ||
+      !StartsWith(prim_location, "/MaterialX/Materials/")) {
+    return;
+  }
+
+  bool has_shader = false;
+  for (const char *rel_name : {"mtlx:surface:source",
+                               "mtlx:displacement:source",
+                               "mtlx:volume:source"}) {
+    const std::string relationship_name(rel_name);
+    if (!HasProperty(ps, relationship_name)) {
+      continue;
+    }
+    has_shader = true;
+    const std::string location =
+        MakePropertyLocation(prim_location, relationship_name);
+    if (!IsRelationshipProp(ps, relationship_name)) {
+      AddError(result, "shade.materialX.nodeReference", location,
+               relationship_name + " must be a relationship");
+      continue;
+    }
+    ValidateRelationshipTargetPaths(ps, relationship_name,
+                                    "shade.materialX.nodeReference", location,
+                                    result);
+    for (const Path &target : RelTargets(ps, relationship_name)) {
+      std::string target_prim;
+      SplitScenePathString(target.str(), &target_prim, nullptr);
+      const std::string *target_type = FindPrimType(prim_types, target_prim);
+      if (!target_type) {
+        AddError(result, "shade.materialX.nodeReference", location,
+                 "MaterialX shader target `" + target_prim +
+                     "` does not exist");
+      } else if (*target_type != "Shader" && *target_type != "NodeGraph") {
+        AddError(result, "shade.materialX.nodeReference", location,
+                 "MaterialX shader target `" + target_prim + "` has type `" +
+                     *target_type + "`");
+      }
+    }
+  }
+  if (!has_shader) {
+    AddError(result, "shade.materialX.nodeReference", prim_location,
+             "MaterialX material has no surface, displacement, or volume "
+             "shader reference");
   }
 }
 
@@ -3489,6 +3743,7 @@ void ValidatePhysics(const PrimSpec &ps,
                      const std::vector<AppliedSchema> &applied_schemas,
                      const std::string &prim_location,
                      const PrimTypeByPath &prim_types,
+                     const AncestorContext &ancestors,
                      USDValidationResult *result) {
   const std::string &type_name = ps.type_name();
   if (!IsPhysicsPrimTypeName(type_name) &&
@@ -3502,6 +3757,42 @@ void ValidatePhysics(const PrimSpec &ps,
 
   if (type_name == "PhysicsScene") {
     ValidatePhysicsScene(ps, prim_location, result);
+  }
+
+  const bool rigid_body =
+      HasAppliedSchema(applied_schemas, "PhysicsRigidBodyAPI");
+  const bool collision =
+      HasAppliedSchema(applied_schemas, "PhysicsCollisionAPI");
+  const bool articulation =
+      HasAppliedSchema(applied_schemas, "PhysicsArticulationRootAPI");
+
+  if (rigid_body && !IsXformableTypeName(type_name)) {
+    AddError(result, "physics.rigidBody.xformable", prim_location,
+             "PhysicsRigidBodyAPI must be applied to an Xformable prim");
+  }
+  if (articulation && ancestors.has_articulation_ancestor) {
+    AddError(result, "physics.articulation.nested", prim_location,
+             "nested PhysicsArticulationRootAPI prims are not supported");
+  }
+  if (articulation && rigid_body) {
+    const Value *enabled = GetAttrValue(ps, "physics:rigidBodyEnabled");
+    if (enabled && enabled->as_bool() && !*enabled->as_bool()) {
+      AddError(result, "physics.articulation.staticBody", prim_location,
+               "ArticulationRootAPI cannot be applied to a disabled/static "
+               "rigid body");
+    }
+  }
+  if (collision && type_name == "Points") {
+    size_t point_count = 0;
+    std::vector<float> widths;
+    const bool have_points = GetPoint3ArrayLen(ps, "points", &point_count);
+    const bool have_widths = GetFloatArrayProperty(ps, "widths", &widths);
+    if (!have_points || !have_widths || point_count == 0 || widths.empty() ||
+        point_count != widths.size()) {
+      AddError(result, "physics.collider.points", prim_location,
+               "Points collider requires non-empty points and widths arrays "
+               "of equal length");
+    }
   }
 
   ValidatePhysicsScalarProperties(ps, prim_location, result);
@@ -3686,6 +3977,46 @@ std::vector<std::string> GatherArcStrings(const std::vector<std::string> &inline
   return items;
 }
 
+bool ParseFiniteLayerOffsetNumber(const char *begin, const char *end,
+                                  double *out) {
+  if (!out || begin == end) return false;
+  auto parsed = fast_float::from_chars(begin, end, *out);
+  if (!(parsed.ec == std::errc{} && parsed.ptr == end) && begin < end &&
+      *begin == '+') {
+    parsed = fast_float::from_chars(begin + 1, end, *out);
+  }
+  return parsed.ec == std::errc{} && parsed.ptr == end;
+}
+
+bool ParseRawLayerOffset(const std::string &text, double *offset,
+                         double *scale) {
+  if (!offset || !scale) return false;
+  *offset = 0.0;
+  *scale = 1.0;
+  const char *begin = text.data();
+  const char *end = begin + text.size();
+  const size_t colon = text.find(':');
+  if (colon == std::string::npos) {
+    return ParseFiniteLayerOffsetNumber(begin, end, offset);
+  }
+  return ParseFiniteLayerOffsetNumber(begin, begin + colon, offset) &&
+         ParseFiniteLayerOffsetNumber(begin + colon + 1, end, scale);
+}
+
+void ValidateLayerOffset(double offset, double scale,
+                         const std::string &rule_id,
+                         const std::string &location,
+                         USDValidationResult *result) {
+  if (!std::isfinite(offset)) {
+    AddError(result, rule_id, location,
+             "composition layerOffset offset must be finite");
+  }
+  if (!std::isfinite(scale) || !(scale > 0.0)) {
+    AddError(result, rule_id, location,
+             "composition layerOffset scale must be finite and greater than 0");
+  }
+}
+
 void ValidateRefArcString(const std::string &arc_str, bool is_payload,
                           const std::string &rule_id,
                           const std::string &prim_location,
@@ -3714,10 +4045,11 @@ void ValidateRefArcString(const std::string &arc_str, bool is_payload,
   if (!arc.layer_offset.empty()) {
     double offset = 0.0;
     double scale = 1.0;
-    Compositor::ParseLayerOffset(arc.layer_offset, offset, scale);
-    if (scale == 0.0) {
+    if (!ParseRawLayerOffset(arc.layer_offset, &offset, &scale)) {
       AddError(result, rule_id, prim_location,
-               "composition layerOffset scale must not be 0");
+               "composition layerOffset must contain numeric offset/scale values");
+    } else {
+      ValidateLayerOffset(offset, scale, rule_id, prim_location, result);
     }
   }
 }
@@ -3892,12 +4224,10 @@ void ValidateCompositionMetadata(const PrimSpec &ps,
                           /* expect_class_target */ true);
   }
 
-  // The prim-level layer offset holds the offset applied by composition arcs
-  // authored on this prim; a zero scale is always invalid.
-  if (m.layer_offset.second == 0.0) {
-    AddError(result, "core.composition.reference", prim_location,
-             "composition layerOffset scale must not be 0");
-  }
+  // Programmatic and USDC inputs can bypass USDA's strict parser, so validate
+  // both components here as well as on the authored arc strings above.
+  ValidateLayerOffset(m.layer_offset.first, m.layer_offset.second,
+                      "core.composition.reference", prim_location, result);
 
   ValidateVariantSetsAndSelections(ps, prim_location, result);
   ValidateRelocates(ps, prim_location, result);
@@ -3944,10 +4274,6 @@ std::set<std::string> CollectAppliedCollectionInstances(
 void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
                                 const std::string &prim_location,
                                 USDValidationResult *result) {
-  // NOTE (structural approximation): next-core has no API-schema registry, so
-  // the legacy core.apiSchema.unknown warning and the generic
-  // single-apply-with-instance-name error cannot be evaluated; only the known
-  // multiple-apply schemas' instance requirement is enforced.
   std::set<std::string> seen;
   for (const AppliedSchema &schema : schemas) {
     if (schema.name.empty() || !IsValidIdentifier(schema.name)) {
@@ -3966,6 +4292,18 @@ void ValidateAPISchemasMetadata(const std::vector<AppliedSchema> &schemas,
       AddError(result, "core.apiSchema.instance", prim_location,
                schema.name + " is a multiple-apply API schema and requires "
                              "an instance name");
+    }
+    if (IsKnownAPISchemaName(schema.name) &&
+        !IsMultipleApplySchemaName(schema.name) &&
+        !schema.instance_name.empty()) {
+      AddError(result, "core.apiSchema.instance", prim_location,
+               schema.name + " is a single-apply API schema and must not "
+                             "have an instance name");
+    }
+    if (!schema.name.empty() && !IsKnownAPISchemaName(schema.name)) {
+      AddWarning(result, "core.apiSchema.unknown", prim_location,
+                 "API schema `" + schema.name +
+                     "` is not present in TinyUSDZ's built-in schema registry");
     }
     const std::string key = schema.name + ":" + schema.instance_name;
     if (!seen.insert(key).second) {
@@ -4388,9 +4726,13 @@ void ValidateRelationshipMetadata(const PrimSpec &ps,
                                   const std::string &rel_name,
                                   const std::string &location,
                                   USDValidationResult *result) {
-  // NOTE: the legacy core.relationship.variability warning ("authored varying
-  // variability is ignored") is unrepresentable in next-core (relationships
-  // carry no varying-authored flag).
+  const uint16_t flags = ps.relationship_flags(rel_name);
+  if ((flags & PropSlot::kFlagVariabilityAuthored) &&
+      (flags & PropSlot::kFlagVarying)) {
+    AddWarning(result, "core.relationship.variability", location,
+               "relationships have uniform variability; authored `varying` "
+               "is ignored by USD value resolution");
+  }
   const PropMeta *metas = ps.property_meta(rel_name);
   if (!metas) {
     return;
@@ -4690,16 +5032,26 @@ void ValidateLayerMetas(const Layer &layer, USDValidationResult *result) {
       AddError(result, "core.layer.subLayers", location,
                "subLayer asset path must not be empty");
     }
-    if (i < metas.subLayerOffsets.size() &&
-        metas.subLayerOffsets[i].second == 0.0) {
-      AddError(result, "core.layer.subLayerOffset", location,
-               "composition layerOffset scale must not be 0");
+    if (i < metas.subLayerOffsets.size()) {
+      ValidateLayerOffset(metas.subLayerOffsets[i].first,
+                          metas.subLayerOffsets[i].second,
+                          "core.layer.subLayerOffset", location, result);
     }
   }
 
-  // NOTE: core.layer.colorConfiguration / core.layer.colorManagementSystem /
-  // core.layer.owner are unrepresentable in next-core (plain string storage
-  // cannot distinguish authored-empty from unauthored; no owner field).
+  if (metas.colorConfiguration_set && metas.colorConfiguration.empty()) {
+    AddError(result, "core.layer.colorConfiguration", kLayerLocation,
+             "colorConfiguration asset path must not be empty");
+  }
+  if (metas.colorManagementSystem_set &&
+      metas.colorManagementSystem.empty()) {
+    AddError(result, "core.layer.colorManagementSystem", kLayerLocation,
+             "colorManagementSystem must not be empty");
+  }
+  if (metas.owner_set && metas.owner.empty()) {
+    AddWarning(result, "core.layer.owner", kLayerLocation,
+               "owner should not be empty when authored");
+  }
 
   ValidateDictValue(metas.customLayerData, "core.layer.customLayerData",
                     "<layer>.customLayerData", result);
@@ -4745,6 +5097,461 @@ void BuildPrimIndexRecursive(const Layer &layer, uint32_t prim_index,
 }
 
 // ---------------------------------------------------------------------------
+// arkit rules -- the ARKit / RealityKit USDZ delivery profile, modeled on
+// OpenUSD's `usdchecker --arkit` (pxr/usd/usdUtils/complianceChecker.py; see
+// doc/openusd-usdz.md for the rule inventory this mirrors).
+//
+// NOTE (structural approximations, in the spirit of the rest of this file):
+//  - OpenUSD checks a *composed* stage. These rules run on the uncomposed
+//    Layer, so cross-layer targets (a Material or normal-map texture brought
+//    in by a reference) cannot be resolved. Target-resolution rules therefore
+//    only hard-fail when the layer is self-contained (no sublayers and no
+//    reference/payload asset arcs) -- which is what an ARKit-ready `.usdz`
+//    root layer is required to be anyway.
+//  - OpenUSD's NormalMapTextureChecker inspects the actual image bit depth.
+//    We do not decode images: the 8-bit determination is made from the file
+//    extension (png/jpg/jpeg/bmp/tga are treated as 8-bit; exr/hdr as float).
+//  - The `package` container rules (zip layout, allowed entry extensions,
+//    `.usdc` root layer) need the original bytes and are run by callers such
+//    as tusdchecker under the `arkit.package.*` rule ids.
+// ---------------------------------------------------------------------------
+
+// complianceChecker.py:792 `_allowedPrimTypeNames`.
+bool IsArkitAllowedPrimTypeName(const std::string &type_name) {
+  if (type_name.empty()) {
+    return true;  // untyped prims ("over", pure namespace parents) are allowed
+  }
+  if (StartsWith(type_name, "RealityKit")) {
+    return true;
+  }
+  static const std::unordered_set<std::string> kAllowed = {
+      "Scope",        "Xform",       "Camera",
+      "Shader",       "Material",    "Mesh",
+      "Sphere",       "Cube",        "Cylinder",
+      "Cone",         "Capsule",     "GeomSubset",
+      "Points",       "SkelRoot",    "Skeleton",
+      "SkelAnimation", "BlendShape", "SpatialAudio",
+      "PhysicsScene", "Preliminary_ReferenceImage",
+      "Preliminary_Text", "Preliminary_Trigger"};
+  return kAllowed.count(type_name) > 0;
+}
+
+// Lowercase file extension of an asset path (without the dot). UDIM-style
+// paths ("tex.<UDIM>.png") still yield the trailing extension.
+std::string LowerAssetExtension(const std::string &asset_path) {
+  const size_t slash = asset_path.find_last_of("/\\");
+  const size_t dot = asset_path.find_last_of('.');
+  if (dot == std::string::npos ||
+      (slash != std::string::npos && dot < slash)) {
+    return std::string();
+  }
+  std::string ext = asset_path.substr(dot + 1);
+  // Drop any package-relative suffix ("scene.usdz[tex.png]" is handled by the
+  // caller; a trailing "]" would otherwise leak into the extension).
+  const size_t bad = ext.find_first_of("[]?#");
+  if (bad != std::string::npos) {
+    ext = ext.substr(0, bad);
+  }
+  for (char &c : ext) {
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+  }
+  return ext;
+}
+
+// complianceChecker.py:232 `_basicUSDZImageFormats`.
+bool IsArkitTextureExtension(const std::string &ext) {
+  return ext == "exr" || ext == "jpg" || ext == "jpeg" || ext == "png";
+}
+
+// complianceChecker.py `_extsForFilesThatCanBeDecoded`: readable by the USD
+// image plugins, but not portable to ARKit/RealityKit.
+bool IsDecodableButNonPortableTextureExtension(const std::string &ext) {
+  return ext == "bmp" || ext == "tga" || ext == "hdr" || ext == "tif" ||
+         ext == "tiff" || ext == "tx" || ext == "zfile";
+}
+
+// Extension-based 8-bit determination (see NOTE above).
+bool IsEightBitTextureExtension(const std::string &ext) {
+  return ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "bmp" ||
+         ext == "tga";
+}
+
+bool IsArkitLayerExtension(const std::string &ext) {
+  return ext == "usd" || ext == "usda" || ext == "usdc" || ext == "usdz";
+}
+
+// ARKitShaderChecker: `id`-implementation shaders drawn from the UsdPreview /
+// MaterialX node families.
+bool IsArkitShaderId(const std::string &shader_id) {
+  return shader_id == "UsdPreviewSurface" || shader_id == "UsdUVTexture" ||
+         shader_id == "UsdTransform2d" || IsUsdPrimvarReaderId(shader_id) ||
+         StartsWith(shader_id, "UsdPrimvarReader") ||
+         StartsWith(shader_id, "ND_");
+}
+
+bool ValueToFloat4(const Value &v, std::array<double, 4> *out) {
+  if (!out || v.is_array()) {
+    return false;
+  }
+  if (v.type_id() == TypeId::Float4 || v.type_id() == TypeId::Color4f) {
+    const float *p = static_cast<const float *>(v.raw_data());
+    if (!p) return false;
+    for (size_t i = 0; i < 4; i++) (*out)[i] = static_cast<double>(p[i]);
+    return true;
+  }
+  if (v.type_id() == TypeId::Double4) {
+    const double *p = static_cast<const double *>(v.raw_data());
+    if (!p) return false;
+    for (size_t i = 0; i < 4; i++) (*out)[i] = p[i];
+    return true;
+  }
+  return false;
+}
+
+bool GetFloat4Property(const PrimSpec &ps, const std::string &name,
+                       std::array<double, 4> *out) {
+  const Value *v = GetAttrValue(ps, name);
+  if (!v) return false;
+  return ValueToFloat4(*v, out);
+}
+
+bool Float4Equals(const std::array<double, 4> &v, double x, double y, double z,
+                  double w) {
+  const double kEps = 1.0e-4;
+  return std::fabs(v[0] - x) <= kEps && std::fabs(v[1] - y) <= kEps &&
+         std::fabs(v[2] - z) <= kEps && std::fabs(v[3] - w) <= kEps;
+}
+
+std::string FormatFloat4(const std::array<double, 4> &v) {
+  std::ostringstream ss;
+  ss << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return ss.str();
+}
+
+// arkit.texture.format: every asset-path-valued shader input.
+void ValidateArkitTextureFormats(const PrimSpec &ps,
+                                 const std::string &prim_location,
+                                 USDValidationResult *result) {
+  for (const std::string &prop_name : AllPropertyNames(ps)) {
+    if (!IsShaderInputName(prop_name) || IsRelationshipProp(ps, prop_name)) {
+      continue;
+    }
+    std::string asset_path;
+    if (!GetAssetPathProperty(ps, prop_name, &asset_path) ||
+        asset_path.empty()) {
+      continue;
+    }
+    const std::string location = MakePropertyLocation(prim_location, prop_name);
+    const std::string ext = LowerAssetExtension(asset_path);
+    if (IsArkitTextureExtension(ext)) {
+      continue;
+    }
+    if (IsDecodableButNonPortableTextureExtension(ext)) {
+      AddError(result, "arkit.texture.format", location,
+               "texture `" + asset_path + "` has extension `" + ext +
+                   "`, which is decodable by USD but not portable to ARKit; "
+                   "convert it to exr, jpg, jpeg, or png");
+    } else {
+      AddError(result, "arkit.texture.format", location,
+               "texture `" + asset_path + "` has unsupported extension `" +
+                   ext + "`; ARKit allows only exr, jpg, jpeg, and png");
+    }
+  }
+}
+
+// arkit.normalMap.scaleBias: an 8-bit UsdUVTexture feeding a
+// UsdPreviewSurface `inputs:normal` must remap [0,1] to [-1,1] and stay raw.
+void ValidateArkitNormalMapTexture(const Layer &layer, const PrimSpec &surface,
+                                   const std::string &surface_location,
+                                   USDValidationResult *result) {
+  const std::vector<Path> *conns = surface.connection("inputs:normal");
+  if (!conns) {
+    return;
+  }
+  for (const Path &conn : *conns) {
+    std::string prim_part;
+    SplitScenePathString(conn.str(), &prim_part, nullptr);
+    const PrimSpec *tex = layer.prim_at_path(prim_part);
+    if (!tex || tex->type_name() != "Shader" ||
+        GetShaderInfoId(*tex) != "UsdUVTexture") {
+      // Cross-layer or non-texture source; nothing structural to check.
+      continue;
+    }
+    std::string file;
+    if (!GetAssetPathProperty(*tex, "inputs:file", &file) || file.empty()) {
+      continue;
+    }
+    if (!IsEightBitTextureExtension(LowerAssetExtension(file))) {
+      continue;
+    }
+
+    const std::string scale_location =
+        MakePropertyLocation(prim_part, "inputs:scale");
+    std::array<double, 4> scale{};
+    if (!GetFloat4Property(*tex, "inputs:scale", &scale)) {
+      AddError(result, "arkit.normalMap.scaleBias", scale_location,
+               "8-bit normal map read by `" + surface_location +
+                   ".inputs:normal` must author inputs:scale = (2, 2, 2, 1)");
+    } else if (!Float4Equals(scale, 2.0, 2.0, 2.0, 1.0)) {
+      AddError(result, "arkit.normalMap.scaleBias", scale_location,
+               "8-bit normal map inputs:scale must be (2, 2, 2, 1), but is " +
+                   FormatFloat4(scale));
+    }
+
+    const std::string bias_location =
+        MakePropertyLocation(prim_part, "inputs:bias");
+    std::array<double, 4> bias{};
+    if (!GetFloat4Property(*tex, "inputs:bias", &bias)) {
+      AddError(result, "arkit.normalMap.scaleBias", bias_location,
+               "8-bit normal map read by `" + surface_location +
+                   ".inputs:normal` must author inputs:bias = (-1, -1, -1, 0)");
+    } else if (!Float4Equals(bias, -1.0, -1.0, -1.0, 0.0)) {
+      AddError(result, "arkit.normalMap.scaleBias", bias_location,
+               "8-bit normal map inputs:bias must be (-1, -1, -1, 0), but is " +
+                   FormatFloat4(bias));
+    }
+
+    std::string color_space;
+    const std::string cs_location =
+        MakePropertyLocation(prim_part, "inputs:sourceColorSpace");
+    if (!GetTokenProperty(*tex, "inputs:sourceColorSpace", &color_space)) {
+      AddError(result, "arkit.normalMap.scaleBias", cs_location,
+               "normal map read by `" + surface_location +
+                   ".inputs:normal` must author "
+                   "inputs:sourceColorSpace = \"raw\"");
+    } else if (color_space != "raw") {
+      AddError(result, "arkit.normalMap.scaleBias", cs_location,
+               "normal map inputs:sourceColorSpace must be `raw`, but is `" +
+                   color_space + "`");
+    }
+  }
+}
+
+// arkit.shader.*
+void ValidateArkitShader(const Layer &layer, const PrimSpec &ps,
+                         const std::string &prim_location,
+                         USDValidationResult *result) {
+  std::string impl_source;
+  if (GetTokenProperty(ps, "info:implementationSource", &impl_source) &&
+      impl_source != "id") {
+    AddError(result, "arkit.shader.implementationSource",
+             MakePropertyLocation(prim_location, "info:implementationSource"),
+             "ARKit shaders must use the `id` implementation source, but `" +
+                 impl_source + "` is authored");
+  }
+
+  const std::string shader_id = GetShaderInfoId(ps);
+  if (shader_id.empty()) {
+    AddError(result, "arkit.shader.id",
+             MakePropertyLocation(prim_location, "info:id"),
+             "Shader must author an `info:id` token");
+  } else if (!IsArkitShaderId(shader_id)) {
+    AddError(result, "arkit.shader.id",
+             MakePropertyLocation(prim_location, "info:id"),
+             "shader id `" + shader_id +
+                 "` is not supported by ARKit; allowed ids are "
+                 "UsdPreviewSurface, UsdUVTexture, UsdTransform2d, "
+                 "UsdPrimvarReader*, and ND_*");
+  }
+
+  // arkit.shader.connection: at most one connection source per input.
+  for (const std::string &prop_name : AllPropertyNames(ps)) {
+    if (!IsShaderInputName(prop_name)) {
+      continue;
+    }
+    const std::vector<Path> *conns = ps.connection(prop_name);
+    if (conns && conns->size() > 1) {
+      AddError(result, "arkit.shader.connection",
+               MakePropertyLocation(prim_location, prop_name),
+               "ARKit allows at most one connection per shader input, but `" +
+                   prop_name + "` has " + std::to_string(conns->size()));
+    }
+  }
+
+  ValidateArkitTextureFormats(ps, prim_location, result);
+
+  if (shader_id == "UsdPreviewSurface") {
+    ValidateArkitNormalMapTexture(layer, ps, prim_location, result);
+  }
+}
+
+// arkit.material.binding: direct and collection-based bindings must resolve to
+// an existing Material prim.
+void ValidateArkitMaterialBinding(const PrimSpec &ps,
+                                  const std::string &prim_location,
+                                  const PrimTypeByPath &prim_types,
+                                  bool layer_self_contained,
+                                  USDValidationResult *result) {
+  for (const std::string &prop_name : AllPropertyNames(ps)) {
+    if (prop_name != "material:binding" &&
+        !StartsWith(prop_name, "material:binding:")) {
+      continue;
+    }
+    if (!IsRelationshipProp(ps, prop_name)) {
+      // Reported as an error by shade.material.binding.
+      continue;
+    }
+    const std::string location = MakePropertyLocation(prim_location, prop_name);
+    const bool is_collection =
+        StartsWith(prop_name, "material:binding:collection:");
+    const std::vector<Path> &targets = RelTargets(ps, prop_name);
+    if (targets.empty()) {
+      AddError(result, "arkit.material.binding", location,
+               "material binding relationship has no target");
+      continue;
+    }
+    bool found_material = false;
+    for (const Path &target : targets) {
+      std::string prim_part;
+      std::string prop_part;
+      SplitScenePathString(target.str(), &prim_part, &prop_part);
+      if (!prop_part.empty()) {
+        // The collection property target of a collection-based binding.
+        if (!is_collection) {
+          AddError(result, "arkit.material.binding", location,
+                   "direct material binding target `" + target.str() +
+                       "` must be a Material prim path, not a property path");
+        }
+        continue;
+      }
+      const std::string *target_type = FindPrimType(prim_types, prim_part);
+      if (!target_type) {
+        if (layer_self_contained) {
+          AddError(result, "arkit.material.binding", location,
+                   "material binding target `" + prim_part +
+                       "` does not resolve to a prim in this layer");
+        }
+        continue;
+      }
+      if (*target_type != "Material") {
+        AddError(result, "arkit.material.binding", location,
+                 "material binding target `" + prim_part + "` is a `" +
+                     *target_type + "`, not a Material");
+        continue;
+      }
+      found_material = true;
+    }
+    if (is_collection && !found_material && layer_self_contained) {
+      AddError(result, "arkit.material.binding", location,
+               "collection-based material binding does not target a Material "
+               "prim");
+    }
+  }
+}
+
+// arkit.layer.extension: reference / payload asset paths (sublayers are
+// checked at layer scope).
+void ValidateArkitCompositionAssetPaths(const PrimSpec &ps,
+                                        const std::string &prim_location,
+                                        USDValidationResult *result) {
+  const PrimSpecMeta &m = ps.meta();
+  const ArcListOpEdits *edits = m.arc_edits();
+  const auto check = [&](const std::vector<std::string> &arcs,
+                         const char *what) {
+    for (const std::string &encoded : arcs) {
+      const CompositionArc arc = Compositor::ParseReference(encoded);
+      if (arc.asset_path.empty()) {
+        continue;
+      }
+      const std::string ext = LowerAssetExtension(arc.asset_path);
+      if (!IsArkitLayerExtension(ext)) {
+        AddError(result, "arkit.layer.extension", prim_location,
+                 std::string(what) + " asset `" + arc.asset_path +
+                     "` must be a usd, usda, usdc, or usdz layer");
+      }
+    }
+  };
+  check(GatherArcStrings(m.references, edits ? &edits->references : nullptr),
+        "reference");
+  check(GatherArcStrings(m.payloads, edits ? &edits->payloads : nullptr),
+        "payload");
+}
+
+void ValidateArkitPrim(const Layer &layer, const PrimSpec &ps,
+                       const std::string &prim_location,
+                       const PrimTypeByPath &prim_types,
+                       bool layer_self_contained,
+                       USDValidationResult *result) {
+  const std::string &type_name = ps.type_name();
+  if (!IsArkitAllowedPrimTypeName(type_name)) {
+    AddError(result, "arkit.prim.type", prim_location,
+             "prim type `" + type_name +
+                 "` is not in the ARKit-supported prim type set");
+  }
+
+  if (type_name == "Shader") {
+    ValidateArkitShader(layer, ps, prim_location, result);
+  }
+
+  ValidateArkitMaterialBinding(ps, prim_location, prim_types,
+                               layer_self_contained, result);
+  ValidateArkitCompositionAssetPaths(ps, prim_location, result);
+}
+
+// arkit.stage.* / arkit.layer.extension at layer scope.
+void ValidateArkitLayerMetas(const Layer &layer, USDValidationResult *result) {
+  const LayerMeta &metas = layer.meta();
+
+  if (!metas.upAxis_set) {
+    AddError(result, "arkit.stage.upAxis", kLayerLocation,
+             "ARKit assets must author upAxis = \"Y\"");
+  } else if (metas.upAxis != "Y") {
+    AddError(result, "arkit.stage.upAxis", kLayerLocation,
+             "ARKit assets must be Y-up, but upAxis is `" + metas.upAxis + "`");
+  }
+
+  if (!metas.metersPerUnit_set) {
+    AddError(result, "arkit.stage.metersPerUnit", kLayerLocation,
+             "ARKit assets must author metersPerUnit");
+  }
+
+  if (metas.defaultPrim.empty()) {
+    AddError(result, "arkit.stage.defaultPrim", kLayerLocation,
+             "ARKit assets must author a defaultPrim");
+  }
+
+  for (size_t i = 0; i < metas.subLayers.size(); i++) {
+    const std::string &sublayer = metas.subLayers[i];
+    if (sublayer.empty()) {
+      continue;  // reported by core.layer.subLayers
+    }
+    const std::string ext = LowerAssetExtension(sublayer);
+    if (!IsArkitLayerExtension(ext)) {
+      AddError(result, "arkit.layer.extension",
+               std::string(kLayerLocation) + ".subLayers[" +
+                   std::to_string(i) + "]",
+               "subLayer asset `" + sublayer +
+                   "` must be a usd, usda, usdc, or usdz layer");
+    }
+  }
+}
+
+// A layer whose targets are all local: no sublayers and no external
+// reference/payload asset arcs. Only then can missing targets be reported.
+bool IsSelfContainedLayer(const Layer &layer) {
+  if (!layer.meta().subLayers.empty()) {
+    return false;
+  }
+  for (const PrimSpec &ps : layer.prims()) {
+    const PrimSpecMeta &m = ps.meta();
+    const ArcListOpEdits *edits = m.arc_edits();
+    for (const std::vector<std::string> &arcs :
+         {GatherArcStrings(m.references,
+                           edits ? &edits->references : nullptr),
+          GatherArcStrings(m.payloads, edits ? &edits->payloads : nullptr)}) {
+      for (const std::string &encoded : arcs) {
+        if (!Compositor::ParseReference(encoded).asset_path.empty()) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Recursive prim validation
 // ---------------------------------------------------------------------------
 
@@ -4756,6 +5563,7 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
                                const PrimTypeByPath &prim_types,
                                const PrimSpecifierByPath &prim_specifiers,
                                const SkeletonJointCountByPath &skeleton_joints,
+                               bool layer_self_contained,
                                std::unordered_set<uint32_t> *visited,
                                USDValidationResult *result) {
   const PrimSpec *psp = layer.prim(prim_index);
@@ -4806,6 +5614,14 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
       ValidatePointInstancer(ps, prim_location, result);
     } else if (type_name == "Camera") {
       ValidateCamera(ps, prim_location, result);
+    } else if (type_name == "Volume") {
+      // UsdVol runs under `geom` BY CONTRACT: Volume is a Gprim (a
+      // renderable), and its field-asset prims are the data sources that
+      // geometry references — unlike UsdRender, which is pure scene
+      // description and has its own group below.
+      ValidateVolume(ps, prim_location, result);
+    } else if (type_name == "OpenVDBAsset" || type_name == "Field3DAsset") {
+      ValidateFieldAsset(ps, prim_location, result);
     }
     ValidatePrimvars(ps, prim_location, result);
     if (type_name == "Mesh") {
@@ -4824,18 +5640,35 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
     ValidateLuxLight(ps, prim_location, result);
   }
 
+  // UsdRender is its own rule group: scene-description checks, not geometry.
+  if (options.render && !has_arc && !is_over &&
+      (type_name == "RenderSettings" || type_name == "RenderProduct" ||
+       type_name == "RenderVar")) {
+    ValidateRenderPrim(ps, prim_location, result);
+  }
+
   if (options.physics && !has_arc && !is_over) {
-    ValidatePhysics(ps, applied_schemas, prim_location, prim_types, result);
+    ValidatePhysics(ps, applied_schemas, prim_location, prim_types, ancestors,
+                    result);
   }
 
   if (options.geom && !has_arc && !is_over) {
-    ValidateSkelBinding(ps, prim_location, prim_types, result);
+    ValidateSkelBinding(ps, applied_schemas, prim_location, prim_types,
+                        ancestors, result);
   }
 
   if (options.core) {
     ValidateCompositionMetadata(ps, prim_location, prim_specifiers, result);
     ValidatePrimMetadata(ps, prim_location, applied_schemas, result);
     ValidateClipsMetadata(ps, prim_location, result);
+  }
+
+  // ---- arkit.prim.type / arkit.shader.* / arkit.texture.format /
+  //      arkit.normalMap.scaleBias / arkit.material.binding /
+  //      arkit.layer.extension ----
+  if (options.arkit) {
+    ValidateArkitPrim(layer, ps, prim_location, prim_types,
+                      layer_self_contained, result);
   }
 
   // ---- shade.encapsulation.shaderParent ----
@@ -4864,6 +5697,7 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
     if (type_name == "Shader") {
       ValidateMaterialXShader(ps, shader_id, prim_location, result);
     }
+    ValidateMaterialXSynthesizedMaterial(ps, prim_location, prim_types, result);
     ValidateMaterialXReferenceConventions(ps, prim_location, result);
   }
 
@@ -5018,6 +5852,11 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
   child_ctx.parent_type = type_name;
   child_ctx.parent_mesh_face_count_known = local_mesh_face_count_known;
   child_ctx.parent_mesh_face_count = local_mesh_face_count;
+  child_ctx.has_skel_root_ancestor =
+      ancestors.has_skel_root_ancestor || type_name == "SkelRoot";
+  child_ctx.has_articulation_ancestor =
+      ancestors.has_articulation_ancestor ||
+      HasAppliedSchema(applied_schemas, "PhysicsArticulationRootAPI");
   if (IsGprimTypeName(type_name)) {
     child_ctx.has_gprim_ancestor = true;
     child_ctx.nearest_gprim_path = prim_location;
@@ -5035,7 +5874,7 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
                               prim_location + "/" + child->name(),
                               visible_color_spaces, child_ctx, options,
                               prim_types, prim_specifiers, skeleton_joints,
-                              visited, result);
+                              layer_self_contained, visited, result);
   }
 }
 
@@ -5076,7 +5915,11 @@ ValidationOptions MakeValidateAllOptions() {
   options.shade = true;
   options.lux = true;
   options.physics = true;
+  options.render = true;
+  options.package = true;
   options.crate = true;
+  // `arkit` stays off: it is an opt-in delivery profile (Y-up, whitelisted
+  // prim types, portable textures), not a class of defects. See the header.
   return options;
 }
 
@@ -5098,8 +5941,17 @@ std::vector<std::string> GetValidationGroupNames(
   if (options.physics) {
     groups.emplace_back("physics");
   }
+  if (options.render) {
+    groups.emplace_back("render");
+  }
+  if (options.package) {
+    groups.emplace_back("package");
+  }
   if (options.crate) {
     groups.emplace_back("crate");
+  }
+  if (options.arkit) {
+    groups.emplace_back("arkit");
   }
   return groups;
 }
@@ -5145,24 +5997,97 @@ void MergeValidationResults(USDValidationResult *dst,
   dst->checked_groups.lux = dst->checked_groups.lux || src.checked_groups.lux;
   dst->checked_groups.physics =
       dst->checked_groups.physics || src.checked_groups.physics;
+  dst->checked_groups.package =
+      dst->checked_groups.package || src.checked_groups.package;
   dst->checked_groups.crate =
       dst->checked_groups.crate || src.checked_groups.crate;
+  dst->checked_groups.arkit =
+      dst->checked_groups.arkit || src.checked_groups.arkit;
 }
 
 USDValidationResult ValidateLayerAgainstAOUSDCore(const Layer &layer) {
   return ValidateLayerAgainstAOUSDCore(layer, ValidationOptions());
 }
 
-USDValidationResult ValidateLayerAgainstAOUSDCore(
-    const Layer &layer, const ValidationOptions &options) {
+namespace {
+
+// Layer validation core. `is_root_layer` is false for the synthetic graft
+// layers that hold variant option bodies: those carry no stage metadata of
+// their own, so the layer-scope arkit stage rules must not fire on them.
+USDValidationResult ValidateLayerImpl(const Layer &layer,
+                                      const ValidationOptions &options,
+                                      bool is_root_layer);
+
+std::string VariantIssueLocation(const std::string &owner,
+                                 const std::string &set_name,
+                                 const std::string &variant_name,
+                                 const std::string &nested_location) {
+  std::string base = owner + "{" + set_name + "=" + variant_name + "}";
+  static const std::string kSelf = "/__self__";
+  if (nested_location == kSelf) return base;
+  if (StartsWith(nested_location, kSelf + "/")) {
+    return base + nested_location.substr(kSelf.size());
+  }
+  if (nested_location == kLayerLocation || nested_location.empty()) {
+    return base;
+  }
+  return base + ":" + nested_location;
+}
+
+void ValidateVariantSetsRecursive(
+    const std::vector<VariantSetData> &sets, const std::string &owner,
+    const ValidationOptions &options, USDValidationResult *result) {
+  if (!result) return;
+  for (const VariantSetData &set : sets) {
+    for (const VariantData &variant : set.variants) {
+      const std::string variant_owner =
+          owner + "{" + set.name + "=" + variant.name + "}";
+      if (variant.content) {
+        USDValidationResult nested =
+            ValidateLayerImpl(*variant.content, options,
+                              /* is_root_layer */ false);
+        for (USDValidationIssue &issue : nested.issues) {
+          issue.location = VariantIssueLocation(owner, set.name, variant.name,
+                                                issue.location);
+          result->issues.push_back(std::move(issue));
+        }
+      }
+      ValidateVariantSetsRecursive(variant.variantSets, variant_owner, options,
+                                   result);
+    }
+  }
+}
+
+USDValidationResult ValidateLayerImpl(const Layer &layer,
+                                      const ValidationOptions &options,
+                                      bool is_root_layer) {
   USDValidationResult result;
   result.checked_groups = options;
-  // Crate container introspection is not implemented on the next crate
-  // reader; the crate group never runs.
+  // Container groups need the original package/crate bytes and are run by
+  // callers that retain them (for example tusdchecker), not by Layer-only
+  // semantic validation.
+  result.checked_groups.package = false;
   result.checked_groups.crate = false;
 
   if (options.core) {
     ValidateLayerMetas(layer, &result);
+  }
+  if (options.arkit && is_root_layer) {
+    ValidateArkitLayerMetas(layer, &result);
+  }
+  // A variant-content fragment (is_root_layer == false) is only PART of the
+  // composed namespace: its relationship/connection targets may resolve to
+  // prims outside the fragment, and its composed ancestor chain (SkelRoot,
+  // Gprim, ...) is not present. So it is never treated as self-contained for
+  // target resolution, and ancestor-context rules must not hard-fail on it.
+  const bool layer_self_contained =
+      options.arkit && is_root_layer ? IsSelfContainedLayer(layer) : false;
+  AncestorContext root_ancestors;
+  if (!is_root_layer) {
+    // Unknown composed ancestor: assume it could satisfy the placement rules so
+    // a valid asset's variant body is not falsely rejected.
+    root_ancestors.has_skel_root_ancestor = true;
+    root_ancestors.has_articulation_ancestor = true;
   }
 
   PrimTypeByPath prim_types;
@@ -5188,12 +6113,29 @@ USDValidationResult ValidateLayerAgainstAOUSDCore(
       continue;
     }
     ValidatePrimSpecRecursive(layer, root_index, "/" + root->name(),
-                              ColorSpaceSet(), AncestorContext(), options,
+                              ColorSpaceSet(), root_ancestors, options,
                               prim_types, prim_specifiers, skeleton_joints,
-                              &visited, &result);
+                              layer_self_contained, &visited, &result);
+  }
+
+  // Validate every authored variant option, not only the selected option that
+  // composition materializes. Variant content uses a synthetic /__self__ root;
+  // rewrite that diagnostic namespace to an explicit {set=option} location.
+  for (const PrimSpec &prim : layer.prims()) {
+    if (!prim.meta().variantSets().empty()) {
+      ValidateVariantSetsRecursive(prim.meta().variantSets(), prim.path().str(),
+                                   options, &result);
+    }
   }
 
   return result;
+}
+
+}  // namespace
+
+USDValidationResult ValidateLayerAgainstAOUSDCore(
+    const Layer &layer, const ValidationOptions &options) {
+  return ValidateLayerImpl(layer, options, /* is_root_layer */ true);
 }
 
 bool ValidateUSDFromMemoryAgainstAOUSDCore(
@@ -5289,7 +6231,9 @@ std::string ValidationOptions::group_summary() const {
   add(shade, "shade");
   add(lux, "lux");
   add(physics, "physics");
+  add(package, "package");
   add(crate, "crate");
+  add(arkit, "arkit");
   if (s.empty()) {
     s = "(none)";
   }

@@ -199,9 +199,36 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           if (ReadArcRef(&ref)) apply_arc(std::move(ref));
         }
       } else {
-        SkipValueLike();
+        // Unknown (unmodeled) variant-option metadata: consume the value
+        // structurally but PRESERVE its raw source text so the writer can
+        // re-emit it verbatim (same policy as prim-level unknownMeta).
+        lexer_->peek();  // ensure the value's first token is scanned
+        const size_t vstart = lexer_->token_start();
+        const bool skipped = SkipValueLike();
         while (Check(TokenType::PathRef)) lexer_->next();
         if (Check(TokenType::OpenParen)) SkipValueLike();
+        if (skipped) {
+          lexer_->peek();  // the following token's start bounds the value
+          size_t vend = lexer_->token_start();
+          const char* base = lexer_->input_data();
+          while (vend > vstart &&
+                 (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+                  base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+            vend--;
+          }
+          if (vend > vstart) {
+            std::string qual_prefix;
+            switch (arc_op) {
+              case ArcOp::Prepend: qual_prefix = "prepend "; break;
+              case ArcOp::Append: qual_prefix = "append "; break;
+              case ArcOp::Delete: qual_prefix = "delete "; break;
+              case ArcOp::Reorder: qual_prefix = "reorder "; break;
+              default: break;
+            }
+            out->unknownMeta.emplace_back(
+                qual_prefix + key, std::string(base + vstart, vend - vstart));
+          }
+        }
       }
     }
     Match(TokenType::CloseParen);
@@ -281,9 +308,12 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           vflags |= PropSlot::kFlagCustom;
           lexer_->next();
         } else if (tt == TokenType::Uniform) {
-          vflags |= PropSlot::kFlagUniform;
+          vflags |= PropSlot::kFlagUniform |
+                    PropSlot::kFlagVariabilityAuthored;
           lexer_->next();
         } else if (tt == TokenType::Varying) {
+          vflags |= PropSlot::kFlagVarying |
+                    PropSlot::kFlagVariabilityAuthored;
           lexer_->next();
         } else {
           break;
@@ -321,6 +351,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           out->relationships[rel_name];  // declaration without targets
         }
         SkipPropertyMetadata();
+        out->relationshipFlags[rel_name] = vflags;
         continue;
       }
       std::string type_name;
@@ -498,6 +529,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
 
   // Apply nested selections stashed from the option metadata to the nested
   // sets parsed from the body.
+  out->variantSelections = pending_selections;
   for (const auto& sel : pending_selections) {
     for (VariantSetData& nvs : out->variantSets) {
       if (nvs.name == sel.first) {

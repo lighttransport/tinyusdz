@@ -44,6 +44,19 @@ static bool hasReason(const PropDiffs& pd, const std::string& path,
   return false;
 }
 
+static bool hasPrimReason(const PsDiffs& diffs, const std::string& path,
+                          const std::string& reason) {
+  const size_t slash = path.rfind('/');
+  const std::string parent = slash == 0 ? "/" : path.substr(0, slash);
+  const std::string name = path.substr(slash + 1);
+  const auto it = diffs.find(parent);
+  if (it == diffs.end()) return false;
+  for (const auto& detail : it->second.modifiedDetails) {
+    if (detail.name == name && has(detail.reasons, reason)) return true;
+  }
+  return false;
+}
+
 // Build a tiny scene through the Layer authoring API. `mutate` tweaks the
 // second copy.
 struct SceneOpts {
@@ -296,6 +309,51 @@ static void test_metadata_gating() {
   CHECK(!lm.changed(), "layer meta diff suppressed with compareMetadata=false");
 }
 
+static void test_authored_empty_metadata_diff() {
+  std::cout << "[authored-empty metadata diff]\n";
+  SceneOpts o;
+  Layer a = BuildScene(o);
+  Layer b = BuildScene(o);
+  b.meta().defaultPrim_set = true;
+  b.meta().rootPrimOrder_set = true;
+  PrimSpec* root = b.prim_at_path_mutable("/Root");
+  CHECK(root != nullptr, "root prim available for authored-state mutation");
+  if (!root) return;
+  root->meta().setPrimOrderAuthored();
+  root->meta().setPropertyOrderAuthored();
+  StringListOpEdits& variants = root->meta().variantSetNameEdits();
+  variants.authored = true;
+  variants.is_explicit = true;
+  root->meta().setApiSchemasAuthored();
+  StringListOpEdits& api_schemas = root->meta().apiSchemaEdits();
+  api_schemas.authored = true;
+  api_schemas.is_explicit = true;
+
+  PsDiffs ps;
+  PropDiffs pp;
+  LayerMetaDiff lm;
+  RunDiff(a, b, ps, pp, {}, &lm);
+  CHECK(has(lm.changedFields, "~defaultPrim"),
+        "empty authored defaultPrim differs from unauthored");
+  CHECK(has(lm.changedFields, "~primOrder"),
+        "empty authored root primOrder differs from unauthored");
+  bool primOrder = false;
+  bool propertyOrder = false;
+  bool variantSetNames = false;
+  bool apiSchemas = false;
+  if (ps.count("/")) {
+    for (const auto& modified : ps["/"].modifiedDetails) {
+      if (modified.name != "Root") continue;
+      primOrder = has(modified.reasons, "meta:primOrder");
+      propertyOrder = has(modified.reasons, "meta:propertyOrder");
+      variantSetNames = has(modified.reasons, "meta:variantSetNames");
+      apiSchemas = has(modified.reasons, "meta:apiSchemasListOp");
+    }
+  }
+  CHECK(primOrder && propertyOrder && variantSetNames && apiSchemas,
+        "prim authored-empty order/list-op states are diff-visible");
+}
+
 static void test_array_diff() {
   std::cout << "[array diff]\n";
   SceneOpts o;
@@ -416,6 +474,32 @@ static void test_property_add_remove_and_relationship() {
         "removed property reported");
 }
 
+static void test_extension_field_diff() {
+  std::cout << "[typed extension fields]\n";
+  SceneOpts opts;
+  Layer a = BuildScene(opts);
+  Layer b = BuildScene(opts);
+  b.meta().unknownFields.push_back(
+      TypedExtensionField{"layerExt", Value(int32_t(1)), false, {}});
+  PrimSpec* ball = b.prim_at_path_mutable("/Root/Ball");
+  ball->meta().unknownFields().push_back(
+      TypedExtensionField{"primExt", Value(std::string("raw")), true,
+                          "\"raw\""});
+  ball->ensure_property_meta("radius").unknownFields.push_back(
+      TypedExtensionField{"propExt", Value(true), false, {}});
+
+  PsDiffs ps;
+  PropDiffs pp;
+  LayerMetaDiff lm;
+  RunDiff(a, b, ps, pp, {}, &lm);
+  CHECK(has(lm.changedFields, "~extensionFields"),
+        "layer extension-field difference reported");
+  CHECK(hasPrimReason(ps, "/Root/Ball", "meta:extensionFields"),
+        "prim extension-field difference reported");
+  CHECK(hasReason(pp, "/Root/Ball", "radius", "meta:extensionFields"),
+        "property extension-field difference reported");
+}
+
 static void test_json_output() {
   std::cout << "[JSON renderer]\n";
   SceneOpts o;
@@ -454,6 +538,112 @@ static void test_json_output() {
         "empty diff JSON keeps the shape");
 }
 
+// Deep per-field variant differentials: variant-INNER edits (properties,
+// unknown metadata) must surface as granular reasons instead of comparing
+// only set/option names.
+static void test_variant_deep_diff() {
+  std::cout << "[variant deep diff]\n";
+  auto make_layer = [](const char* tag, const char* value) {
+    std::string usda =
+        "#usda 1.0\n"
+        "def Xform \"P\" (prepend variantSets = \"look\") {\n"
+        "    variantSet \"look\" = {\n"
+        "        \"red\" (\n"
+        "            customPipelineTag = \"";
+    usda += tag;
+    usda +=
+        "\"\n"
+        "        ) {\n"
+        "            int c = ";
+    usda += value;
+    usda +=
+        "\n"
+        "        }\n"
+        "    }\n"
+        "}\n";
+    return LoadUSDAFromString(usda);
+  };
+  LoadResult base = make_layer("hero", "1");
+  LoadResult same = make_layer("hero", "1");
+  LoadResult prop_changed = make_layer("hero", "5");
+  LoadResult meta_changed = make_layer("bg", "1");
+  CHECK(base.success && same.success && prop_changed.success &&
+            meta_changed.success,
+        "variant layers parse");
+
+  const auto reason_contains = [](const PsDiffs& ps, const char* needle) {
+    for (const auto& entry : ps) {
+      for (const ModifiedPrimSpec& m : entry.second.modifiedDetails) {
+        for (const std::string& r : m.reasons) {
+          if (r.find(needle) != std::string::npos) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  PsDiffs ps;
+  PropDiffs pp;
+  RunDiff(*base.stage.GetRootLayer(), *same.stage.GetRootLayer(), ps, pp);
+  CHECK(ps.empty() && pp.empty(), "identical variants self-compare clean");
+
+  RunDiff(*base.stage.GetRootLayer(), *prop_changed.stage.GetRootLayer(), ps,
+          pp);
+  CHECK(reason_contains(ps, "variantSets:look/red:properties"),
+        "variant-inner property edit produces a granular differential");
+
+  RunDiff(*base.stage.GetRootLayer(), *meta_changed.stage.GetRootLayer(), ps,
+          pp);
+  CHECK(reason_contains(ps, "variantSets:look/red:unknownMeta"),
+        "variant-option unknown-metadata edit produces a differential");
+}
+
+// Deleted/blocked-value and dictionary type-conflict differentials.
+static void test_blocked_and_type_conflict_diff() {
+  std::cout << "[blocked value + dict type-conflict diff]\n";
+  LoadResult with_value = LoadUSDAFromString(
+      "#usda 1.0\ndef Xform \"P\" { float v = 1.5 }\n");
+  LoadResult blocked = LoadUSDAFromString(
+      "#usda 1.0\ndef Xform \"P\" { float v = None }\n");
+  CHECK(with_value.success && blocked.success, "layers parse");
+
+  PsDiffs ps;
+  PropDiffs pp;
+  RunDiff(*with_value.stage.GetRootLayer(), *blocked.stage.GetRootLayer(), ps,
+          pp);
+  bool saw_blocked = false;
+  for (const auto& entry : pp) {
+    for (const auto& m : entry.second.modifiedPropDetails) {
+      for (const std::string& r : m.reasons) {
+        if (r == "blocked") saw_blocked = true;
+      }
+    }
+  }
+  CHECK(saw_blocked, "value -> block transition reports `blocked`");
+
+  LoadResult dict_nested = LoadUSDAFromString(
+      "#usda 1.0\n"
+      "def Xform \"P\" (customData = { dictionary k = { int a = 1 } }) {}\n");
+  LoadResult dict_scalar = LoadUSDAFromString(
+      "#usda 1.0\n"
+      "def Xform \"P\" (customData = { int k = 3 }) {}\n");
+  CHECK(dict_nested.success && dict_scalar.success, "dict layers parse");
+  RunDiff(*dict_nested.stage.GetRootLayer(), *dict_scalar.stage.GetRootLayer(),
+          ps, pp);
+  bool saw_conflict = false;
+  for (const auto& entry : ps) {
+    for (const ModifiedPrimSpec& m : entry.second.modifiedDetails) {
+      for (const std::string& r : m.reasons) {
+        if (r.find("customData(type-conflict)") != std::string::npos) {
+          saw_conflict = true;
+        }
+      }
+    }
+  }
+  CHECK(saw_conflict,
+        "dict-vs-scalar key reports a type-conflict differential");
+}
+
 int main() {
   test_identical_api_layers();
   test_identical_parsed_layers();
@@ -462,10 +652,14 @@ int main() {
   test_prim_add_remove();
   test_type_change();
   test_metadata_gating();
+  test_authored_empty_metadata_diff();
   test_array_diff();
   test_timesample_diff();
   test_fuzzy_asset_paths();
   test_property_add_remove_and_relationship();
+  test_extension_field_diff();
+  test_variant_deep_diff();
+  test_blocked_and_type_conflict_diff();
   test_json_output();
 
   if (g_fail) {

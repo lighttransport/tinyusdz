@@ -38,7 +38,11 @@ import {
 import { raycastSkinnedMeshes, expandBoxByMeshBones } from 'tinyusdz/SkinnedMeshUtils.js';
 import { attachSceneHelpers } from 'tinyusdz/SceneHelpers.js';
 
-const MAX_RENDER_PIXEL_RATIO = 2.0;
+// Keep the animation preview at a 1:1 drawing buffer. Large animated meshes
+// already consume substantial GPU buffer memory; a 2x device-pixel ratio
+// quadruples framebuffer storage and can make WebGL shader/program creation
+// fail on otherwise renderable scenes.
+const MAX_RENDER_PIXEL_RATIO = 1.0;
 const LOADER_BACKEND = getBackendFromURL();
 
 function getStartupUSDModelURI(params = new URLSearchParams(window.location.search)) {
@@ -273,6 +277,15 @@ scene.add(ground);
 const gridHelper = new THREE.GridHelper(10, 20, 0x444466, 0x333355);
 scene.add(gridHelper);
 
+// The next backend can preview very large static/transform-animated scenes.
+// Avoid allocating and rendering a second full shadow pass for those meshes;
+// the legacy demo keeps its original shadows for the small skinned fixture.
+if (LOADER_BACKEND === 'next') {
+	renderer.shadowMap.enabled = false;
+	dirLight.castShadow = false;
+	ground.receiveShadow = false;
+}
+
 // =====================================================
 // State
 // =====================================================
@@ -438,6 +451,10 @@ async function processUSDScene(usdScene, filename, stats = null) {
 			usdScene,
 			showMesh: true,
 			showSkeleton: showSkeletonVisualization,
+			// Large static next scenes can exhaust WebGL resources compiling a
+			// second depth program for every mesh. Animation preview does not
+			// require those shadow passes.
+			enableShadows: false,
 			useWASMBoneTexture: false,
 			logger: console
 		});
@@ -521,10 +538,6 @@ async function processUSDScene(usdScene, filename, stats = null) {
 	const threeNode = await TinyUSDZLoaderUtils.buildThreeNode(
 		usdRootNode, defaultMtl, usdScene, buildOptions
 	);
-	if (buildOptions.textureLoadingManager) {
-		startTrackedTextureLoading(buildOptions.textureLoadingManager, stats, 'textureQueue', usdScene);
-	}
-
 	// Build node index map before skinning pipeline
 	const nodeIndexMap = buildNodeIndexMap(threeNode);
 
@@ -589,7 +602,18 @@ async function processUSDScene(usdScene, filename, stats = null) {
 		console.error('Animation extraction failed:', err);
 	}
 
-	if (!buildOptions.textureLoadingManager || buildOptions.textureLoadingManager.total <= 0) {
+	// Keep the native scene alive through animation extraction. An empty
+	// texture queue completes synchronously and owns deletion of sceneToDelete,
+	// so starting it before extraction used to delete the scene too early.
+	if (buildOptions.textureLoadingManager &&
+		buildOptions.textureLoadingManager.total > 0) {
+		startTrackedTextureLoading(
+			buildOptions.textureLoadingManager,
+			stats,
+			'textureQueue',
+			usdScene
+		);
+	} else {
 		deleteUSDScene(usdScene);
 	}
 
@@ -638,18 +662,36 @@ async function processUSDScene(usdScene, filename, stats = null) {
 // =====================================================
 
 function fitCamera() {
+	characterGroup.updateMatrixWorld(true);
 	const box = new THREE.Box3().setFromObject(characterGroup);
-	if (box.isEmpty()) return;
+	if (box.isEmpty()) return false;
 
 	const center = box.getCenter(new THREE.Vector3());
 	const size = box.getSize(new THREE.Vector3());
-	const maxDim = Math.max(size.x, size.y, size.z);
-	const dist = maxDim * 2.5;
+	const radius = Math.max(size.length() * 0.5, 0.01);
+	const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+	const horizontalFov = 2 * Math.atan(Math.tan(verticalFov * 0.5) * camera.aspect);
+	const limitingHalfFov = Math.max(
+		Math.min(verticalFov, horizontalFov) * 0.5,
+		THREE.MathUtils.degToRad(5)
+	);
+	const dist = radius / Math.sin(limitingHalfFov) * 1.15;
+	const direction = camera.position.clone().sub(controls.target);
+	if (direction.lengthSq() < 1.0e-8) direction.set(0.5, 0.35, 1);
+	direction.normalize();
 
 	controls.target.copy(center);
-	camera.position.set(center.x + dist * 0.5, center.y + dist * 0.4, center.z + dist);
+	camera.position.copy(center).addScaledVector(direction, dist);
+	camera.near = Math.max(radius * 0.001, 0.01);
+	camera.far = Math.max(dist + radius * 4, camera.near * 1000);
+	camera.updateProjectionMatrix();
+	controls.minDistance = Math.max(radius * 0.01, camera.near * 2);
+	controls.maxDistance = camera.far * 0.5;
 	controls.update();
+	return true;
 }
+
+window._fitToScene = fitCamera;
 
 // =====================================================
 // Object-Clip Mapping

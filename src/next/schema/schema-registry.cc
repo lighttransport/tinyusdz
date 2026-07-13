@@ -25,6 +25,24 @@ bool HasAppliedSchema(const PrimSpec& prim, const std::string& schema) {
   return false;
 }
 
+bool MatchDefinitionName(const PrimSpec& prim,
+                         const SchemaPropertyDefinition& def,
+                         const std::string& property_name) {
+  const std::string marker = "__INSTANCE__";
+  const size_t marker_pos = def.name.find(marker);
+  if (marker_pos == std::string::npos) return def.name == property_name;
+  for (const std::string& applied : prim.meta().apiSchemas()) {
+    const std::string prefix = def.schema_type + ":";
+    if (applied.compare(0, prefix.size(), prefix) != 0) continue;
+    const std::string instance = applied.substr(prefix.size());
+    if (instance.empty()) continue;
+    std::string instantiated = def.name;
+    instantiated.replace(marker_pos, marker.size(), instance);
+    if (instantiated == property_name) return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 SchemaRegistry::SchemaRegistry() {
@@ -47,6 +65,25 @@ SchemaRegistry::SchemaRegistry() {
       {"DomeLight", "Xformable"}, {"RectLight", "Xformable"},
       {"DiskLight", "Xformable"}, {"SphereLight", "Xformable"},
       {"CylinderLight", "Xformable"},
+      // Non-core OpenUSD domains (PRODUCT PARITY, not AOUSD Core):
+      // UsdGeom breadth (Hermite/TetMesh/NURBS patch) + UsdVol + UsdRender.
+      {"HermiteCurves", "Curves"}, {"TetMesh", "PointBased"},
+      {"NurbsPatch", "PointBased"},
+      {"Volume", "Gprim"},
+      // pxr 25.x renamed FieldBase/FieldAsset to VolumeFieldBase/
+      // VolumeFieldAsset and kept the old names as deprecated aliases; both
+      // spellings resolve through the same chain here.
+      {"VolumeFieldBase", "Xformable"}, {"FieldBase", "VolumeFieldBase"},
+      {"VolumeFieldAsset", "FieldBase"}, {"FieldAsset", "VolumeFieldAsset"},
+      {"Field3DAsset", "FieldAsset"}, {"OpenVDBAsset", "FieldAsset"},
+      // UsdRender types inherit Typed in pxr (NOT Imageable/Xformable): no
+      // visibility/purpose fallbacks. Typed is a terminal marker with no
+      // properties; recording it makes the ancestry KNOWN so consumers can
+      // derive non-Xformable/non-Gprim placement from the registry.
+      {"RenderSettingsBase", "Typed"},
+      {"RenderSettings", "RenderSettingsBase"},
+      {"RenderProduct", "RenderSettingsBase"},
+      {"RenderVar", "Typed"},
   };
 
   auto add = [&](const char* schema, const char* name, const char* type,
@@ -59,6 +96,20 @@ SchemaRegistry::SchemaRegistry() {
     d.has_fallback = true;
     properties_.push_back(std::move(d));
   };
+  auto declare = [&](const char* schema, const char* name, const char* type) {
+    SchemaPropertyDefinition d;
+    d.schema_type = schema;
+    d.name = name;
+    d.type_name = type;
+    properties_.push_back(std::move(d));
+  };
+
+#define AOUSD_SCHEMA_FALLBACK(schema, name, type, fallback) \
+  add(schema, name, type, fallback);
+#define AOUSD_SCHEMA_DECLARE(schema, name, type) declare(schema, name, type);
+#include "generated/aousd-core-schema-definitions.inc"
+#undef AOUSD_SCHEMA_DECLARE
+#undef AOUSD_SCHEMA_FALLBACK
   add("Imageable", "visibility", "token", Token("inherited"));
   add("Imageable", "purpose", "token", Token("default"));
   add("Xformable", "xformOpOrder", "token[]",
@@ -160,6 +211,127 @@ SchemaRegistry::SchemaRegistry() {
   add("ShadowAPI", "inputs:shadow:distance", "float", Value(-1.0f));
   add("ShadowAPI", "inputs:shadow:falloff", "float", Value(-1.0f));
   add("ShadowAPI", "inputs:shadow:falloffGamma", "float", Value(1.0f));
+
+  // Non-core OpenUSD domain fallbacks (PRODUCT PARITY; values verified
+  // against pxr's generated usdGeom/usdVol/usdRender schema.usda).
+  add("NurbsPatch", "uForm", "token", Token("open"));
+  add("NurbsPatch", "vForm", "token", Token("open"));
+  add("NurbsCurves", "order", "int[]",
+      Value::MakeIntArray(std::vector<int32_t>()));
+  // pxr: `vector3f[] tangents = []` (an authored empty-array fallback).
+  add("HermiteCurves", "tangents", "vector3f[]",
+      Value::MakeFloatCompArray(std::vector<float>(), TypeId::Vector3f, 3));
+  add("VolumeFieldAsset", "vectorDataRoleHint", "token", Token("None"));
+  add("RenderSettingsBase", "resolution", "int2", Value::MakeInt2(2048, 1080));
+  add("RenderSettingsBase", "pixelAspectRatio", "float", Value(1.0f));
+  add("RenderSettingsBase", "aspectRatioConformPolicy", "token",
+      Token("expandAperture"));
+  add("RenderSettingsBase", "dataWindowNDC", "float4",
+      Value::MakeFloat4(0.0f, 0.0f, 1.0f, 1.0f));
+  add("RenderSettingsBase", "instantaneousShutter", "bool", Value(false));
+  add("RenderSettingsBase", "disableMotionBlur", "bool", Value(false));
+  add("RenderSettingsBase", "disableDepthOfField", "bool", Value(false));
+  add("RenderSettings", "includedPurposes", "token[]",
+      Value::MakeTokenArray({"default", "render"}));
+  add("RenderSettings", "materialBindingPurposes", "token[]",
+      Value::MakeTokenArray({"full", ""}));
+  add("RenderVar", "dataType", "token", Token("color3f"));
+  add("RenderVar", "sourceName", "string", Value(std::string("")));
+  add("RenderVar", "sourceType", "token", Token("raw"));
+  add("RenderProduct", "productType", "token", Token("raster"));
+  add("RenderProduct", "productName", "token", Token(""));
+
+  // Data-driven declarations for the remaining schemas implemented by next.
+  // Declarations populate HasProperty()/property-name queries without
+  // inventing a fallback where the schema intentionally has none.
+  const struct Decl { const char* schema; const char* name; const char* type; }
+      declarations[] = {
+          {"Boundable", "extent", "float3[]"},
+          {"PointBased", "points", "point3f[]"},
+          {"PointBased", "velocities", "vector3f[]"},
+          {"PointBased", "accelerations", "vector3f[]"},
+          {"PointBased", "normals", "normal3f[]"},
+          {"PointBased", "widths", "float[]"},
+          {"Mesh", "faceVertexCounts", "int[]"},
+          {"Mesh", "faceVertexIndices", "int[]"},
+          {"PointInstancer", "protoIndices", "int[]"},
+          {"PointInstancer", "positions", "point3f[]"},
+          {"PointInstancer", "orientations", "quath[]"},
+          {"PointInstancer", "scales", "float3[]"},
+          {"PointInstancer", "ids", "int64[]"},
+          {"PointInstancer", "invisibleIds", "int64[]"},
+          {"PointInstancer", "prototypes", "relationship"},
+          {"Shader", "info:id", "token"},
+          {"NodeGraph", "outputs", "namespace"},
+          {"Material", "outputs:surface", "token"},
+          {"Material", "outputs:displacement", "token"},
+          {"Material", "outputs:volume", "token"},
+          {"Skeleton", "joints", "token[]"},
+          {"Skeleton", "bindTransforms", "matrix4d[]"},
+          {"Skeleton", "restTransforms", "matrix4d[]"},
+          {"SkelAnimation", "joints", "token[]"},
+          {"SkelAnimation", "translations", "float3[]"},
+          {"SkelAnimation", "rotations", "quath[]"},
+          {"SkelAnimation", "scales", "half3[]"},
+          {"BlendShape", "offsets", "vector3f[]"},
+          {"BlendShape", "normalOffsets", "vector3f[]"},
+          {"BlendShape", "pointIndices", "int[]"},
+          {"SkelBindingAPI", "skel:joints", "token[]"},
+          {"SkelBindingAPI", "skel:jointIndices", "int[]"},
+          {"SkelBindingAPI", "skel:jointWeights", "float[]"},
+          {"SkelBindingAPI", "skel:skeleton", "relationship"},
+          {"SkelBindingAPI", "skel:animationSource", "relationship"},
+          {"PhysicsDriveAPI", "physics:drive:type", "token"},
+          {"PhysicsDriveAPI", "physics:drive:maxForce", "float"},
+          {"PhysicsDriveAPI", "physics:drive:targetPosition", "float"},
+          {"PhysicsDriveAPI", "physics:drive:targetVelocity", "float"},
+          {"PhysicsLimitAPI", "physics:limit:low", "float"},
+          {"PhysicsLimitAPI", "physics:limit:high", "float"},
+          // Non-core OpenUSD domains (PRODUCT PARITY): UsdGeom breadth.
+          {"TetMesh", "tetVertexIndices", "int4[]"},
+          {"TetMesh", "surfaceFaceVertexIndices", "int3[]"},
+          {"NurbsPatch", "uVertexCount", "int"},
+          {"NurbsPatch", "vVertexCount", "int"},
+          {"NurbsPatch", "uOrder", "int"},
+          {"NurbsPatch", "vOrder", "int"},
+          {"NurbsPatch", "uKnots", "double[]"},
+          {"NurbsPatch", "vKnots", "double[]"},
+          {"NurbsPatch", "uRange", "double2"},
+          {"NurbsPatch", "vRange", "double2"},
+          {"NurbsPatch", "pointWeights", "double[]"},
+          {"NurbsPatch", "trimCurve:counts", "int[]"},
+          {"NurbsPatch", "trimCurve:orders", "int[]"},
+          {"NurbsPatch", "trimCurve:vertexCounts", "int[]"},
+          {"NurbsPatch", "trimCurve:knots", "double[]"},
+          {"NurbsPatch", "trimCurve:ranges", "double2[]"},
+          {"NurbsPatch", "trimCurve:points", "double3[]"},
+          {"NurbsCurves", "knots", "double[]"},
+          {"NurbsCurves", "ranges", "double2[]"},
+          {"NurbsCurves", "pointWeights", "double[]"},
+          // UsdVol: Volume's `field:<name>` relationships are DYNAMIC (any
+          // name in the namespace), so no builtin is declared for them —
+          // pxr's UsdVolVolume likewise has no property literally named
+          // "field". The validator checks the namespace structurally.
+          {"VolumeFieldAsset", "filePath", "asset"},
+          {"VolumeFieldAsset", "fieldName", "token"},
+          {"VolumeFieldAsset", "fieldIndex", "int"},
+          {"VolumeFieldAsset", "fieldDataType", "token"},
+          {"OpenVDBAsset", "fieldClass", "token"},
+          {"Field3DAsset", "fieldPurpose", "token"},
+          // UsdRender relationships + optional token.
+          {"RenderSettingsBase", "camera", "relationship"},
+          {"RenderSettings", "products", "relationship"},
+          {"RenderSettings", "renderingColorSpace", "token"},
+          {"RenderProduct", "orderedVars", "relationship"},
+      };
+  for (const Decl& declaration : declarations) {
+    declare(declaration.schema, declaration.name, declaration.type);
+  }
+
+  add("Shader", "info:implementationSource", "token", Token("id"));
+  add("PhysicsMaterialAPI", "physics:staticFriction", "float", Value(0.0f));
+  add("PhysicsMaterialAPI", "physics:dynamicFriction", "float", Value(0.0f));
+  add("PhysicsMaterialAPI", "physics:restitution", "float", Value(0.0f));
 }
 
 const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
@@ -174,7 +346,7 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
     current = it->second;
   }
   for (const SchemaPropertyDefinition& def : properties_) {
-    if (def.name != property_name) continue;
+    if (!MatchDefinitionName(prim, def, property_name)) continue;
     if (std::find(schemas.begin(), schemas.end(), def.schema_type) !=
         schemas.end()) {
       return &def;
@@ -187,12 +359,88 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
 std::vector<std::string> SchemaRegistry::PropertyNames(
     const PrimSpec& prim) const {
   std::vector<std::string> result;
+  std::vector<std::string> schemas;
+  std::string current = prim.type_name();
+  while (!current.empty()) {
+    schemas.push_back(current);
+    auto it = std::find_if(parents_.begin(), parents_.end(),
+                           [&](const auto& p) { return p.first == current; });
+    if (it == parents_.end()) break;
+    current = it->second;
+  }
+  const auto applies = [&](const SchemaPropertyDefinition& def) {
+    return std::find(schemas.begin(), schemas.end(), def.schema_type) !=
+               schemas.end() ||
+           HasAppliedSchema(prim, def.schema_type);
+  };
   for (const SchemaPropertyDefinition& def : properties_) {
-    if (FindProperty(prim, def.name) != &def) continue;
-    if (std::find(result.begin(), result.end(), def.name) == result.end()) {
-      result.push_back(def.name);
+    if (!applies(def)) continue;
+    std::string name = def.name;
+    const std::string marker = "__INSTANCE__";
+    const size_t marker_pos = name.find(marker);
+    if (marker_pos != std::string::npos) {
+      for (const std::string& applied : prim.meta().apiSchemas()) {
+        const std::string prefix = def.schema_type + ":";
+        if (applied.compare(0, prefix.size(), prefix) != 0) continue;
+        std::string instantiated = name;
+        instantiated.replace(marker_pos, marker.size(),
+                             applied.substr(prefix.size()));
+        if (std::find(result.begin(), result.end(), instantiated) ==
+            result.end()) {
+          result.push_back(std::move(instantiated));
+        }
+      }
+      continue;
+    }
+    if (std::find(result.begin(), result.end(), name) == result.end()) {
+      result.push_back(std::move(name));
     }
   }
+  return result;
+}
+
+bool SchemaRegistry::InheritsFrom(const std::string& schema_type,
+                                  const std::string& ancestor) const {
+  std::string current = schema_type;
+  // The parents table is a forest; a generous hop cap guards against an
+  // accidentally-authored cycle.
+  for (int hops = 0; hops < 32 && !current.empty(); ++hops) {
+    if (current == ancestor) return true;
+    auto it = std::find_if(parents_.begin(), parents_.end(),
+                           [&](const auto& p) { return p.first == current; });
+    if (it == parents_.end()) return false;
+    current = it->second;
+  }
+  return false;
+}
+
+bool SchemaRegistry::HasParentEntry(const std::string& schema_type) const {
+  return std::find_if(parents_.begin(), parents_.end(), [&](const auto& p) {
+           return p.first == schema_type;
+         }) != parents_.end();
+}
+
+bool SchemaRegistry::IsKnownSchema(const std::string& schema_type) const {
+  if (std::find_if(properties_.begin(), properties_.end(), [&](const auto& p) {
+        return p.schema_type == schema_type;
+      }) != properties_.end()) return true;
+  return std::find_if(parents_.begin(), parents_.end(), [&](const auto& p) {
+           return p.first == schema_type || p.second == schema_type;
+         }) != parents_.end();
+}
+
+std::vector<std::string> SchemaRegistry::SchemaTypes() const {
+  std::vector<std::string> result;
+  auto add_unique = [&](const std::string& schema) {
+    if (std::find(result.begin(), result.end(), schema) == result.end())
+      result.push_back(schema);
+  };
+  for (const auto& parent : parents_) {
+    add_unique(parent.first);
+    add_unique(parent.second);
+  }
+  for (const auto& property : properties_) add_unique(property.schema_type);
+  std::sort(result.begin(), result.end());
   return result;
 }
 

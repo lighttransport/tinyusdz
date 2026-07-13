@@ -1,0 +1,69 @@
+#usda 1.0
+(
+    defaultPrim = "Asset"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# An ARKit-compliant asset: Y-up, authored stage metadata, whitelisted prim
+# types, id-based UsdPreviewSurface / UsdUVTexture network, png textures, and
+# a normal map with the required scale/bias/raw color space.
+def Xform "Asset"
+{
+    def Mesh "Body" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </Asset/Materials/Paint>
+    }
+
+    def Scope "Materials"
+    {
+        def Material "Paint"
+        {
+            token outputs:surface.connect = </Asset/Materials/Paint/Surface.outputs:surface>
+
+            def Shader "Surface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </Asset/Materials/Paint/Diffuse.outputs:rgb>
+                normal3f inputs:normal.connect = </Asset/Materials/Paint/Normal.outputs:rgb>
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+
+            def Shader "Diffuse"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/paint_diffuse.png@
+                float2 inputs:st.connect = </Asset/Materials/Paint/UV.outputs:result>
+                token inputs:sourceColorSpace = "sRGB"
+                float3 outputs:rgb
+            }
+
+            def Shader "Normal"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/paint_normal.png@
+                float2 inputs:st.connect = </Asset/Materials/Paint/UV.outputs:result>
+                float4 inputs:scale = (2, 2, 2, 1)
+                float4 inputs:bias = (-1, -1, -1, 0)
+                token inputs:sourceColorSpace = "raw"
+                float3 outputs:rgb
+            }
+
+            def Shader "UV"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                token inputs:varname = "st"
+                float2 outputs:result
+            }
+        }
+    }
+}

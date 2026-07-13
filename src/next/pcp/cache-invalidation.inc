@@ -52,9 +52,18 @@
     for (const std::string &k : to_drop) DropIndex(k);
 
     // sources_cache + deferred state may have descendants not in index_cache.
+    // Stack-qualified intermediate keys ("@N:/path" / "!N:/path") are not prim
+    // paths, so IsPathAtOrUnder never matches them; drop them all (they are
+    // cheap to recompute and a stale relocate-source / arc-target expansion
+    // under the invalidated subtree would otherwise survive).
     for (auto it = sources_cache.begin(); it != sources_cache.end();) {
-      if (IsPathAtOrUnder(it->first, base)) it = sources_cache.erase(it);
-      else ++it;
+      const bool qualified =
+          !it->first.empty() && (it->first[0] == '@' || it->first[0] == '!');
+      if (qualified || IsPathAtOrUnder(it->first, base)) {
+        it = sources_cache.erase(it);
+      } else {
+        ++it;
+      }
     }
     for (auto it = deferred_payload_prims.begin();
          it != deferred_payload_prims.end();) {

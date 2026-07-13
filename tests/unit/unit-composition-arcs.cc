@@ -11,6 +11,7 @@
 #include "composition.hh"
 #include "core/prim.hh"
 #include "core/prim-spec.hh"
+#include "core/path-expression-eval.hh"
 #include "layer.hh"
 #include "io-util.hh"
 #include "tinyusdz.hh"
@@ -653,6 +654,7 @@ over "Root" (
         }
     }
 }
+
 )";
 
   const std::string root_usda = R"(#usda 1.0
@@ -752,6 +754,57 @@ def Xform "Root" (
   TEST_CHECK(geom_it->props().count("shapeMarker") == 1);
   TEST_CHECK(geom_it->props().count("lookMarker") == 1);
 
+  tinyusdz::io::RemoveFile(root_path);
+  tinyusdz::io::RemoveFile(weak_path);
+  tinyusdz::io::RemoveAll(dir);
+}
+
+void comp_sublayer_path_expression_weaker_test(void) {
+  const std::string dir = tinyusdz::io::JoinPath(
+      tinyusdz::io::GetTempDir(), "tinyusdz_comp_path_expr_weaker");
+  TEST_CHECK(tinyusdz::io::CreateDirectories(dir));
+  if (!tinyusdz::io::IsDirectory(dir)) return;
+  const std::string weak_path = tinyusdz::io::JoinPath(dir, "weak.usda");
+  const std::string root_path = tinyusdz::io::JoinPath(dir, "root.usda");
+  const std::string weak_usda = R"(#usda 1.0
+def Xform "World"
+{
+    uniform pathExpression collection:test:membershipExpression = "/World/A"
+}
+)";
+  const std::string root_usda = R"(#usda 1.0
+(
+    subLayers = [@weak.usda@]
+)
+over "World"
+{
+    uniform pathExpression collection:test:membershipExpression = "%_ + /World/B"
+}
+)";
+  TEST_CHECK(WriteTextFileForCompositionTest(weak_path, weak_usda));
+  TEST_CHECK(WriteTextFileForCompositionTest(root_path, root_usda));
+  Layer root_layer;
+  std::string warn, err;
+  TEST_CHECK(LoadLayerFromFile(root_path, &root_layer, &warn, &err));
+  AssetResolutionResolver resolver;
+  Layer composed;
+  TEST_CHECK(CompositeSublayers(resolver, root_layer, &composed, &warn, &err));
+  auto world = composed.primspecs().find("World");
+  TEST_CHECK(world != composed.primspecs().end());
+  if (world == composed.primspecs().end()) return;
+  auto prop = world->second.props().find(
+      "collection:test:membershipExpression");
+  TEST_CHECK(prop != world->second.props().end());
+  if (prop == world->second.props().end() || !prop->second.is_attribute()) return;
+  auto expr = prop->second.get_attribute().get_value<value::PathExpression>();
+  TEST_CHECK(expr.has_value());
+  if (!expr) return;
+  TEST_CHECK(expr->GetText().find("%_") == std::string::npos);
+  const ParsedPathExpression parsed = ParsedPathExpression::Parse(expr->GetText());
+  TEST_CHECK(parsed.valid());
+  TEST_CHECK(MatchPath(parsed, "/World/A"));
+  TEST_CHECK(MatchPath(parsed, "/World/B"));
+  TEST_CHECK(!MatchPath(parsed, "/World/C"));
   tinyusdz::io::RemoveFile(root_path);
   tinyusdz::io::RemoveFile(weak_path);
   tinyusdz::io::RemoveAll(dir);

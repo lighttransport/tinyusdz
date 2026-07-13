@@ -17,6 +17,7 @@
 #include "next/layer/layer.hh"
 #include "next/crate/stream-reader.hh"
 #include "next/reader/usdc-reader.hh"
+#include "next/writer/usdc-writer.hh"
 
 using namespace tinyusdz::next;
 
@@ -459,6 +460,55 @@ static std::string FindUsdcFixture(const char* basename) {
 void test_crate_reader_audit_cluster() {
   std::cout << "Testing crate-reader audit cluster..." << std::endl;
 
+  // Decodable OpenUSD extension fields at every core spec scope survive as
+  // typed generic metadata and round-trip without becoming phantom properties.
+  {
+    std::string fx =
+        FindUsdcFixture("aousd-unknown-property-metadata.usdc");
+    assert(!fx.empty() && "AOUSD unknown-property fixture is required");
+    USDCLoadResult compat = LoadUSDCFromFile(fx.c_str());
+    assert(compat.success);
+    auto field = [](const auto& fields, const std::string& name)
+        -> const TypedExtensionField* {
+      for (const auto& item : fields) if (item.name == name) return &item;
+      return nullptr;
+    };
+    const Layer* root = compat.stage.GetRootLayer();
+    assert(root);
+    const TypedExtensionField* layer_probe =
+        field(root->meta().unknownFields, "extensionLayerProbe");
+    assert(layer_probe && layer_probe->unregistered &&
+           layer_probe->unregistered_source == "\"kept-by-openusd\"");
+    UsdPrim p = compat.stage.GetPrimAtPath("/P");
+    assert(p.IsValid() && !p.HasProperty("extensionPrimProbe") &&
+           "unknown Prim metadata must not become a phantom property");
+    const TypedExtensionField* prim_probe =
+        field(p.GetMeta().unknownFields(), "extensionPrimProbe");
+    assert(prim_probe && prim_probe->unregistered_source == "17");
+    const PropMeta* attr_meta = p.GetPrimSpec()->property_meta("v");
+    const PropMeta* rel_meta = p.GetPrimSpec()->property_meta("r");
+    const TypedExtensionField* attr_probe =
+        attr_meta ? field(attr_meta->unknownFields, "extensionProbe") : nullptr;
+    const TypedExtensionField* rel_probe =
+        rel_meta ? field(rel_meta->unknownFields, "extensionRelProbe") : nullptr;
+    assert(attr_probe && attr_probe->unregistered_source == "42");
+    assert(rel_probe &&
+           rel_probe->unregistered_source == "\"kept-by-openusd\"");
+    USDCLoadOptions strict_options;
+    strict_options.crate_options.strict_aousd_conformance = true;
+    USDCLoadResult strict = LoadUSDCFromFile(fx.c_str(), strict_options);
+    assert(strict.success &&
+           "strict AOUSD read must accept losslessly preserved extensions");
+    std::vector<uint8_t> rewritten;
+    assert(WriteUSDCToMemory(rewritten, compat.stage).success);
+    USDCLoadResult back =
+        LoadUSDCFromMemory(rewritten.data(), rewritten.size(), strict_options);
+    assert(back.success);
+    const UsdPrim back_p = back.stage.GetPrimAtPath("/P");
+    assert(back_p && field(back_p.GetMeta().unknownFields(),
+                           "extensionPrimProbe"));
+  }
+
   // Reference with per-arc customData: the ARC must survive (the dict is
   // skipped). Previously the whole listop was dropped.
   {
@@ -517,8 +567,9 @@ void test_crate_reader_audit_cluster() {
     const double* dv = t->as_double();
     assert(dv && *dv == 10.5);
 
-    // Version window: the same bytes with the version bumped to 0.14 must
-    // load (additive versions); 0.15 must be rejected.
+    // Version window: compatibility mode reads additive 0.14 with a warning;
+    // strict AOUSD Core 1.0.1 mode rejects versions newer than 0.12. Version
+    // 0.15 remains outside even the compatibility window.
     std::ifstream f(fx, std::ios::binary);
     std::vector<char> bytes((std::istreambuf_iterator<char>(f)),
                             std::istreambuf_iterator<char>());
@@ -527,6 +578,13 @@ void test_crate_reader_audit_cluster() {
     USDCLoadResult ok = LoadUSDCFromMemory(
         reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
     assert(ok.success);
+    assert(!ok.warnings.empty());
+    USDCLoadOptions strict_options;
+    strict_options.crate_options.strict_aousd_conformance = true;
+    USDCLoadResult strict_bad = LoadUSDCFromMemory(
+        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(),
+        strict_options);
+    assert(!strict_bad.success);
     bytes[9] = 15;
     USDCLoadResult bad = LoadUSDCFromMemory(
         reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());

@@ -17,6 +17,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "logger.hh"  // tinyusdz::logging (next routes diagnostics through it)
 #include "next/pcp/cache.hh"
@@ -60,6 +61,7 @@ int main(int argc, char **argv) {
   int compose_threads = 1;
   const char *filename = nullptr;
   const char *out_path = nullptr;  // -o/--output: write flatten to a file (FdSink)
+  std::vector<std::string> required_prims;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "-f") == 0) {
       flatten = true;
@@ -74,6 +76,8 @@ int main(int argc, char **argv) {
       openusd_compat = true;  // re-emit deprecated qualifiers (e.g. `custom`)
     } else if (std::strcmp(argv[i], "--aousd-strict") == 0) {
       aousd_strict = true;
+    } else if (std::strcmp(argv[i], "--require-prim") == 0 && i + 1 < argc) {
+      required_prims.emplace_back(argv[++i]);
     } else if (std::strcmp(argv[i], "--instance-mode") == 0 && i + 1 < argc) {
       const char *m = argv[++i];
       if (std::strcmp(m, "native") == 0)
@@ -111,9 +115,11 @@ int main(int argc, char **argv) {
                          "[--prototype-numbering deterministic|usdcat] "
                          "[--compose-threads N] "
                          "[--aousd-strict] "
+                         "[--require-prim /Path] "
                          "file.usd[acz]\n");
     return 2;
   }
+
   if (rewrite_layer && flatten) {
     std::fprintf(stderr, "--rewrite-layer and -f cannot be combined "
                          "(rewrite-layer is a compose-free parse->write).\n");
@@ -253,6 +259,13 @@ int main(int argc, char **argv) {
   if (!ok) {
     emit_lines(err.empty() ? std::string("load failed") : err, "ERR : ");
     return 1;
+  }
+  for (const std::string& path : required_prims) {
+    if (!stage.GetPrimAtPath(path).IsValid()) {
+      std::fprintf(stderr, "ERR : required composed prim is missing: %s\n",
+                   path.c_str());
+      return 1;
+    }
   }
   // Composition errors are accumulated non-fatally; surface them as warnings
   // in flatten mode (the file still loaded).

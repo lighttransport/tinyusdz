@@ -1,0 +1,37 @@
+#usda 1.0
+
+def Scope "RootGroup" (
+    kind = "group"
+)
+{
+    def Scope "Assembly" (
+        kind = "assembly"
+    )
+    {
+        def Scope "Component" (
+            kind = "component"
+        )
+        {
+            def Scope "Subcomponent" (
+                kind = "subcomponent"
+            )
+            {
+            }
+        }
+    }
+}
+
+def Scope "RootComponent" (
+    kind = "component"
+)
+{
+}
+
+def Scope "Broken"
+{
+    def Scope "Component" (
+        kind = "component"
+    )
+    {
+    }
+}

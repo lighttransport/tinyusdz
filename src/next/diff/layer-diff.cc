@@ -237,6 +237,25 @@ bool CompareDicts(const Dict *lhs, const Dict *rhs, const DiffOptions &opts,
 }
 
 // Dictionary-valued metadata Values (empty Value == unauthored == empty dict).
+// True when two dictionaries share a key whose value is a dictionary on one
+// side and a scalar on the other (recursively) — the "dictionary type
+// conflict" differential: composition would keep the stronger opinion and
+// silently shadow the weaker subtree.
+bool DictsHaveTypeConflict(const Value &l, const Value &r) {
+  const Dict *ld = l.as_dictionary();
+  const Dict *rd = r.as_dictionary();
+  if (!ld || !rd) return false;
+  for (const auto &e : ld->entries) {
+    const Value *o = rd->find(e.first);
+    if (!o) continue;
+    if (e.second.is_dictionary() != o->is_dictionary()) return true;
+    if (e.second.is_dictionary() && DictsHaveTypeConflict(e.second, *o)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool CompareDictValues(const Value &lhs, const Value &rhs,
                        const DiffOptions &opts,
                        std::vector<std::string> *changed) {
@@ -459,22 +478,11 @@ std::string ArcEditToStr(const ArcEdit &e) {
   if (!e.authored) return "<none>";
   std::stringstream ss;
   ss << (e.is_explicit ? "explicit" : "listop");
+  ss << " add" << StrListToStr(e.added);
   ss << " prepend" << StrListToStr(e.prepended);
   ss << " append" << StrListToStr(e.appended);
   ss << " delete" << StrListToStr(e.deleted);
   ss << " order" << StrListToStr(e.ordered);
-  return ss.str();
-}
-
-std::string VariantSetsToStr(const std::vector<VariantSetData> &sets) {
-  std::stringstream ss;
-  for (const auto &s : sets) {
-    ss << s.name << "(sel=" << s.selected << ")[";
-    for (const auto &v : s.variants) {
-      ss << v.name << ",";
-    }
-    ss << "];";
-  }
   return ss.str();
 }
 
@@ -613,6 +621,24 @@ std::string FormatPropertyForDiff(const PrimSpec &ps, const std::string &name,
 // Per-property metadata (PropMeta) comparison.
 // ---------------------------------------------------------------------------
 
+bool ExtensionFieldsEqual(const std::vector<TypedExtensionField>& lhs,
+                          const std::vector<TypedExtensionField>& rhs,
+                          const DiffOptions& opts) {
+  if (lhs.size() != rhs.size()) return false;
+  for (const TypedExtensionField& field : lhs) {
+    const auto it = std::find_if(
+        rhs.begin(), rhs.end(), [&](const TypedExtensionField& candidate) {
+          return candidate.name == field.name;
+        });
+    if (it == rhs.end() || it->unregistered != field.unregistered ||
+        it->unregistered_source != field.unregistered_source ||
+        !ValuesEquivalentForDiff(field.value, it->value, opts)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool ComparePropMetas(const PropMeta *lhs, const PropMeta *rhs,
                       const DiffOptions &opts,
                       std::vector<std::string> *reasons) {
@@ -674,13 +700,19 @@ bool ComparePropMetas(const PropMeta *lhs, const PropMeta *rhs,
     note("allowedTokens");
   }
   if (!CompareDictValues(l.customData, r.customData, opts, nullptr)) {
-    note("customData");
+    note(DictsHaveTypeConflict(l.customData, r.customData) ? "customData(type-conflict)"
+                                      : "customData");
   }
   if (!CompareDictValues(l.assetInfo, r.assetInfo, opts, nullptr)) {
-    note("assetInfo");
+    note(DictsHaveTypeConflict(l.assetInfo, r.assetInfo) ? "assetInfo(type-conflict)"
+                                      : "assetInfo");
   }
   if (!CompareDictValues(l.sdrMetadata, r.sdrMetadata, opts, nullptr)) {
-    note("sdrMetadata");
+    note(DictsHaveTypeConflict(l.sdrMetadata, r.sdrMetadata) ? "sdrMetadata(type-conflict)"
+                                      : "sdrMetadata");
+  }
+  if (!ExtensionFieldsEqual(l.unknownFields, r.unknownFields, opts)) {
+    note("extensionFields");
   }
   return equal;
 }
@@ -760,15 +792,28 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
     }
     if (!cEqual) note("connections");
   }
+  static const ArcEdit kNoConnectionEdit;
+  const ArcEdit* lce = lp.connection_edit(name);
+  const ArcEdit* rce = rp.connection_edit(name);
+  if (ArcEditToStr(lce ? *lce : kNoConnectionEdit) !=
+      ArcEditToStr(rce ? *rce : kNoConnectionEdit)) {
+    note("connectionListOp");
+  }
 
-  // Default value.
+  // Default value. A value BLOCK (`= None`) transition gets its own
+  // differential: "blocked" distinguishes deleting/blocking an opinion from
+  // an ordinary value edit.
   const Value *lval = lv.slot ? lp.property_value(lv.slot->name_id) : nullptr;
   const Value *rval = rv.slot ? rp.property_value(rv.slot->name_id) : nullptr;
   const bool lhas = lval && !lval->is_empty();
   const bool rhas = rval && !rval->is_empty();
-  if (lhas != rhas) {
+  const bool lblock = lval && lval->is_block();
+  const bool rblock = rval && rval->is_block();
+  if (lblock != rblock) {
+    note("blocked");
+  } else if (lhas != rhas) {
     note("value");
-  } else if (lhas) {
+  } else if (lhas && !lblock) {
     if (!ValuesEquivalentForDiff(*lval, *rval, opts)) {
       note("value");
     }
@@ -816,6 +861,128 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
 }
 
 // ---------------------------------------------------------------------------
+// Deep per-field variant-set comparison. Replaces the former stringified
+// name/selection/option-name comparison, which produced no differential for
+// variant-INNER edits (properties, arcs, relationships, unknown metadata,
+// nested sets). On the first difference, `reason` is set to a granular
+// "variantSets:<set>/<option>:<field>" tag.
+// ---------------------------------------------------------------------------
+
+bool VariantOptionEqual(const VariantData &l, const VariantData &r,
+                        const DiffOptions &opts, std::string *reason,
+                        int depth);
+
+bool VariantSetsEqual(const std::vector<VariantSetData> &l,
+                      const std::vector<VariantSetData> &r,
+                      const DiffOptions &opts, std::string *reason,
+                      int depth = 0) {
+  auto fail = [&](const std::string &r_) {
+    if (reason && reason->empty()) *reason = r_;
+    return false;
+  };
+  if (depth > 64) return true;  // matches the parser's nesting cap
+  if (l.size() != r.size()) return fail("variantSets:count");
+  for (const VariantSetData &ls : l) {
+    const VariantSetData *rs = nullptr;
+    for (const VariantSetData &cand : r) {
+      if (cand.name == ls.name) {
+        rs = &cand;
+        break;
+      }
+    }
+    if (!rs) return fail("variantSets:" + ls.name);
+    if (ls.selected != rs->selected) {
+      return fail("variantSets:" + ls.name + ":selected");
+    }
+    if (ls.variants.size() != rs->variants.size()) {
+      return fail("variantSets:" + ls.name + ":options");
+    }
+    for (const VariantData &lv : ls.variants) {
+      const VariantData *rv = nullptr;
+      for (const VariantData &cand : rs->variants) {
+        if (cand.name == lv.name) {
+          rv = &cand;
+          break;
+        }
+      }
+      const std::string opt = "variantSets:" + ls.name + "/" + lv.name;
+      if (!rv) return fail(opt);
+      std::string inner;
+      if (!VariantOptionEqual(lv, *rv, opts, &inner, depth)) {
+        return fail(opt + ":" + inner);
+      }
+    }
+  }
+  return true;
+}
+
+bool VariantOptionEqual(const VariantData &l, const VariantData &r,
+                        const DiffOptions &opts, std::string *reason,
+                        int depth) {
+  auto fail = [&](const char *r_) {
+    if (reason && reason->empty()) *reason = r_;
+    return false;
+  };
+  if (l.active != r.active) return fail("active");
+  if (l.hidden != r.hidden) return fail("hidden");
+  if (l.doc != r.doc) return fail("doc");
+  if (l.references != r.references) return fail("references");
+  if (l.payloads != r.payloads) return fail("payload");
+  if (l.inherits != r.inherits) return fail("inherits");
+  if (l.specializes != r.specializes) return fail("specializes");
+  if (l.variantSelections != r.variantSelections) return fail("variants");
+  if (l.unknownMeta != r.unknownMeta) return fail("unknownMeta");
+  if (!ExtensionFieldsEqual(l.unknownFields, r.unknownFields, opts)) {
+    return fail("extensionFields");
+  }
+  if (l.properties.size() != r.properties.size()) return fail("properties");
+  for (const VariantProperty &lp : l.properties) {
+    const VariantProperty *rp = nullptr;
+    for (const VariantProperty &cand : r.properties) {
+      if (cand.name == lp.name) {
+        rp = &cand;
+        break;
+      }
+    }
+    if (!rp || lp.flags != rp->flags || !(lp.value == rp->value)) {
+      return fail("properties");
+    }
+  }
+  if (l.relationships.size() != r.relationships.size()) {
+    return fail("relationships");
+  }
+  for (const auto &lr : l.relationships) {
+    auto it = r.relationships.find(lr.first);
+    if (it == r.relationships.end() || it->second != lr.second) {
+      return fail("relationships");
+    }
+  }
+  if (l.relationshipFlags != r.relationshipFlags) {
+    return fail("relationships");
+  }
+  // Content subtrees compare structurally (prim count + paths): a full
+  // recursive layer diff here would recurse into this same machinery.
+  const size_t lc = l.content ? l.content->prim_count() : 0;
+  const size_t rc = r.content ? r.content->prim_count() : 0;
+  if (lc != rc) return fail("content");
+  if (l.content && r.content) {
+    for (size_t i = 0; i < lc; ++i) {
+      const PrimSpec *lp = l.content->prim(static_cast<uint32_t>(i));
+      const PrimSpec *rp = r.content->prim(static_cast<uint32_t>(i));
+      if (!lp || !rp || lp->path().str() != rp->path().str()) {
+        return fail("content");
+      }
+    }
+  }
+  std::string nested;
+  if (!VariantSetsEqual(l.variantSets, r.variantSets, opts, &nested,
+                        depth + 1)) {
+    return fail("nested");
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // PrimSpec own-field comparison (specifier / typeName / metadata).
 // ---------------------------------------------------------------------------
 
@@ -860,17 +1027,41 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
       VariantSelectionsToStr(r.variantSelection, r.variantSelections())) {
     note("meta:variants");
   }
-  if (VariantSetsToStr(l.variantSets()) != VariantSetsToStr(r.variantSets())) {
-    note("meta:variantSets");
+  {
+    std::string vreason;
+    if (!VariantSetsEqual(l.variantSets(), r.variantSets(), opts,
+                          &vreason)) {
+      equal = false;
+      if (reasons) reasons->push_back("meta:" + vreason);
+    }
+  }
+  const StringListOpEdits& lv = l.variantSetNameEdits();
+  const StringListOpEdits& rv = r.variantSetNameEdits();
+  if (lv.authored != rv.authored || lv.is_explicit != rv.is_explicit ||
+      lv.explicit_items != rv.explicit_items || lv.added != rv.added ||
+      lv.prepended != rv.prepended || lv.appended != rv.appended ||
+      lv.deleted != rv.deleted || lv.ordered != rv.ordered) {
+    note("meta:variantSetNames");
+  }
+  if (l.primOrder() != r.primOrder() ||
+      l.primOrderAuthored() != r.primOrderAuthored()) {
+    note("meta:primOrder");
+  }
+  if (l.propertyOrder() != r.propertyOrder() ||
+      l.propertyOrderAuthored() != r.propertyOrderAuthored()) {
+    note("meta:propertyOrder");
   }
   if (l.layer_offset != r.layer_offset) {
     note("meta:layerOffset");
   }
 
-  if (l.kind() != r.kind()) note("meta:kind");
+  if (l.kind() != r.kind() || l.kindAuthored() != r.kindAuthored())
+    note("meta:kind");
   if (l.doc() != r.doc()) note("meta:doc");
   if (l.comment() != r.comment()) note("meta:comment");
-  if (l.displayName() != r.displayName()) note("meta:displayName");
+  if (l.displayName() != r.displayName() ||
+      l.displayNameAuthored() != r.displayNameAuthored())
+    note("meta:displayName");
   if (l.instance_prototype() != r.instance_prototype()) {
     note("meta:instancePrototype");
   }
@@ -878,20 +1069,42 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
       l.apiSchemasQualifier() != r.apiSchemasQualifier()) {
     note("meta:apiSchemas");
   }
+  const StringListOpEdits& la = l.apiSchemaEdits();
+  const StringListOpEdits& ra = r.apiSchemaEdits();
+  if (la.authored != ra.authored || la.is_explicit != ra.is_explicit ||
+      la.explicit_items != ra.explicit_items || la.added != ra.added ||
+      la.prepended != ra.prepended || la.appended != ra.appended ||
+      la.deleted != ra.deleted || la.ordered != ra.ordered) {
+    note("meta:apiSchemasListOp");
+  }
   if (PairListToStr(l.relocates()) != PairListToStr(r.relocates())) {
     note("meta:relocates");
   }
   if (!CompareDictValues(l.customData(), r.customData(), opts, nullptr)) {
-    note("meta:customData");
+    note(DictsHaveTypeConflict(l.customData(), r.customData()) ? "meta:customData(type-conflict)"
+                                      : "meta:customData");
   }
   if (!CompareDictValues(l.assetInfo(), r.assetInfo(), opts, nullptr)) {
-    note("meta:assetInfo");
+    note(DictsHaveTypeConflict(l.assetInfo(), r.assetInfo()) ? "meta:assetInfo(type-conflict)"
+                                      : "meta:assetInfo");
   }
   if (!CompareDictValues(l.sdrMetadata(), r.sdrMetadata(), opts, nullptr)) {
-    note("meta:sdrMetadata");
+    note(DictsHaveTypeConflict(l.sdrMetadata(), r.sdrMetadata()) ? "meta:sdrMetadata(type-conflict)"
+                                      : "meta:sdrMetadata");
   }
   if (!CompareDictValues(l.clips(), r.clips(), opts, nullptr)) {
     note("meta:clips");
+  }
+  if (!ExtensionFieldsEqual(l.unknownFields(), r.unknownFields(), opts)) {
+    note("meta:extensionFields");
+  }
+  const StringListOpEdits& lc = l.clipSetEdits();
+  const StringListOpEdits& rc = r.clipSetEdits();
+  if (lc.authored != rc.authored || lc.is_explicit != rc.is_explicit ||
+      lc.explicit_items != rc.explicit_items || lc.added != rc.added ||
+      lc.prepended != rc.prepended || lc.appended != rc.appended ||
+      lc.deleted != rc.deleted || lc.ordered != rc.ordered) {
+    note("meta:clipSets");
   }
   return equal;
 }
@@ -1066,14 +1279,23 @@ bool CompareLayerMetas(const LayerMeta &lhs, const LayerMeta &rhs,
   if (lhs.upAxis != rhs.upAxis) {
     noteField("upAxis", lhs.upAxis, rhs.upAxis);
   }
-  if (lhs.defaultPrim != rhs.defaultPrim) {
+  if (lhs.defaultPrim != rhs.defaultPrim ||
+      lhs.defaultPrim_set != rhs.defaultPrim_set) {
     noteField("defaultPrim", lhs.defaultPrim, rhs.defaultPrim);
+  }
+  if (lhs.rootPrimOrder != rhs.rootPrimOrder ||
+      lhs.rootPrimOrder_set != rhs.rootPrimOrder_set) {
+    noteField("primOrder", std::to_string(lhs.rootPrimOrder.size()),
+              std::to_string(rhs.rootPrimOrder.size()));
   }
   if (lhs.comment != rhs.comment) {
     noteField("comment", lhs.comment, rhs.comment);
   }
   if (lhs.doc != rhs.doc) {
     noteField("documentation", lhs.doc, rhs.doc);
+  }
+  if (lhs.owner != rhs.owner || lhs.owner_set != rhs.owner_set) {
+    noteField("owner", lhs.owner, rhs.owner);
   }
   if (lhs.colorConfiguration != rhs.colorConfiguration) {
     noteField("colorConfiguration", lhs.colorConfiguration,
@@ -1124,6 +1346,10 @@ bool CompareLayerMetas(const LayerMeta &lhs, const LayerMeta &rhs,
         out.changedFields.push_back("expressionVariables:" + k);
       }
     }
+  }
+  if (!ExtensionFieldsEqual(lhs.unknownFields, rhs.unknownFields, opts)) {
+    noteField("extensionFields", std::to_string(lhs.unknownFields.size()),
+              std::to_string(rhs.unknownFields.size()));
   }
 
   return out.changed();

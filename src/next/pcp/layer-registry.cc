@@ -16,6 +16,7 @@
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <limits>
 
 namespace tinyusdz {
 namespace next {
@@ -280,6 +281,37 @@ std::shared_ptr<Layer> LoadLayerFromFileUnstamped(
     return LoadLayerFromUSDZ(resolved_path, std::string(), options, warn, err);
   }
 
+  if (ext == "mtlx") {
+    std::ifstream f(resolved_path, std::ios::binary | std::ios::ate);
+    if (!f) {
+      if (err) *err += "Failed to open MaterialX layer: " + resolved_path + "\n";
+      return nullptr;
+    }
+    const std::streamoff end = f.tellg();
+    if (end <= 0 ||
+        static_cast<uint64_t>(end) >
+            static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+      if (err) *err += "Invalid MaterialX layer size: " + resolved_path + "\n";
+      return nullptr;
+    }
+    const size_t size = static_cast<size_t>(end);
+    if (options.max_memory > 0 && size > options.max_memory) {
+      if (err) {
+        *err += "MaterialX layer exceeds max_memory: " + resolved_path + "\n";
+      }
+      return nullptr;
+    }
+    std::string data(size, '\0');
+    f.seekg(0, std::ios::beg);
+    if (!f.read(&data[0], static_cast<std::streamsize>(size))) {
+      if (err) *err += "Failed to read MaterialX layer: " + resolved_path + "\n";
+      return nullptr;
+    }
+    return LoadLayerFromMtlxMemory(
+        resolved_path, reinterpret_cast<const uint8_t *>(data.data()),
+        data.size(), warn, err);
+  }
+
   if (err) {
     *err += "Unsupported layer file format for: " + resolved_path + "\n";
   }
@@ -371,6 +403,9 @@ void EmitMtlxNodePrim(LayerBuilder &lb, const mtlx::MtlxNode &node,
       lb.add_property("inputs:" + input->GetName(), std::move(value));
     }
   }
+  if (!node.GetType().empty()) {
+    lb.add_property("outputs:out", Value::MakeToken(node.GetType()));
+  }
   lb.end_prim();
 }
 
@@ -404,18 +439,29 @@ std::shared_ptr<Layer> LoadLayerFromMtlxMemory(const std::string &key,
   for (const mtlx::MtlxMaterialPtr &mat : doc.GetMaterials()) {
     if (!mat || mat->GetName().empty()) continue;
     lb.begin_prim(mat->GetName(), "Material");
+    if (PrimSpec *prim = lb.current()) {
+      prim->meta().apiSchemas().push_back("MaterialXConfigAPI");
+    }
     if (!doc.GetVersion().empty()) {
-      lb.add_property("config:mtlx:version",
-                      Value::MakeToken(doc.GetVersion()));
+      lb.add_property("config:mtlx:version", Value(doc.GetVersion()));
     }
     if (!doc.GetColorSpace().empty()) {
-      lb.add_property("config:mtlx:colorspace",
-                      Value::MakeToken(doc.GetColorSpace()));
+      lb.add_property("config:mtlx:colorspace", Value(doc.GetColorSpace()));
     }
     if (!mat->GetSurfaceShader().empty()) {
       lb.add_relationship(
           "mtlx:surface:source",
           Path("/MaterialX/Shaders/" + mat->GetSurfaceShader()));
+    }
+    if (!mat->GetDisplacementShader().empty()) {
+      lb.add_relationship(
+          "mtlx:displacement:source",
+          Path("/MaterialX/Shaders/" + mat->GetDisplacementShader()));
+    }
+    if (!mat->GetVolumeShader().empty()) {
+      lb.add_relationship("mtlx:volume:source",
+                          Path("/MaterialX/Shaders/" +
+                               mat->GetVolumeShader()));
     }
     lb.end_prim();
   }
@@ -540,6 +586,13 @@ std::shared_ptr<Layer> LoadLayerFromMemoryOwned(const std::string &key,
                                data.size(), warn, err, options);
   }
 
+  if (LooksLikeMtlxXML(reinterpret_cast<const uint8_t *>(data.data()),
+                       data.size())) {
+    return LoadLayerFromMtlxMemory(
+        key, reinterpret_cast<const uint8_t *>(data.data()), data.size(), warn,
+        err);
+  }
+
   LoadOptions lopts;
   lopts.parse_options = MakeUSDAParseOptions(options);
   return ConvertLoadedUSDA(LoadUSDAFromStringOwned(std::move(data), lopts),
@@ -552,12 +605,24 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
                                                 std::string *warn,
                                                 std::string *err,
                                                 const LayerLoadOptions &options) {
-  ResolvedAsset resolved_asset = resolver.Resolve(asset_path, anchor);
+  ResolvedAsset resolved_asset = resolver.Resolve(
+      asset_path, anchor, !options.strict_aousd_conformance);
   const std::string resolved = resolved_asset.resolved_path;
   if (resolved.empty()) {
     if (err) *err += "Failed to resolve asset path: " + asset_path + "\n";
     return nullptr;
   }
+  auto load_resolved = [&](std::string* load_warn,
+                           std::string* load_err) -> std::shared_ptr<Layer> {
+    if (!AssetResolver::GetIdentifierScheme(resolved).empty() ||
+        resolver.HasAssetReader()) {
+      std::vector<uint8_t> bytes;
+      if (!resolver.ReadAsset(resolved, &bytes, load_err)) return nullptr;
+      return LoadLayerFromMemory(resolved, bytes.data(), bytes.size(),
+                                 load_warn, load_err, options);
+    }
+    return LoadLayerFromFile(resolved, load_warn, load_err, options);
+  };
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
   std::shared_future<LoadOutcome> wait_fut;
@@ -587,8 +652,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
 
   // Parse WITHOUT holding the lock, so other paths load concurrently.
   LoadOutcome outcome;
-  outcome.layer = LoadLayerFromFile(resolved, &outcome.warn, &outcome.err,
-                                    options);
+  outcome.layer = load_resolved(&outcome.warn, &outcome.err);
   {
     std::lock_guard<std::mutex> lk(*mu_);
     if (outcome.layer) {
@@ -607,8 +671,7 @@ std::shared_ptr<Layer> LayerRegistry::GetOrLoad(AssetResolver &resolver,
     return it->second;  // Cache hit -- no re-parse.
   }
 
-  std::shared_ptr<Layer> layer = LoadLayerFromFile(resolved, warn, err,
-                                                   options);
+  std::shared_ptr<Layer> layer = load_resolved(warn, err);
   if (!layer) {
     return nullptr;
   }

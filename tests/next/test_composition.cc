@@ -1309,6 +1309,41 @@ static void test_audit_p2_default_blocks_equal_samples() {
         "unblocked property keeps its samples");
 }
 
+// A weaker layer's dictionary entry shadowed by a stronger scalar (or vice
+// versa) is a TYPE CONFLICT: composition keeps the stronger opinion but must
+// surface a diagnostic instead of silently dropping the weaker subtree.
+static void test_dictionary_type_conflict_diagnostic() {
+  std::cout << "[dictionary type-conflict diagnostic]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"p\" (customData = { dictionary k = { int a = 1 } }) {}\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n(\n subLayers = [ @./weak.usda@ ]\n)\n"
+      "def Xform \"p\" (customData = { int k = 3 }) {}\n");
+  CHECK(root != nullptr, "root parses");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const PrimSpec* p = out->prim_at_path("/p");
+  CHECK(p != nullptr, "prim composed");
+  const Dict* cd = p ? p->meta().customData().as_dictionary() : nullptr;
+  const Value* k = cd ? cd->find("k") : nullptr;
+  CHECK(k && k->as_int() && *k->as_int() == 3,
+        "stronger scalar opinion wins the conflicting key");
+  bool saw = false;
+  for (const CompositionError& e : comp.GetErrors()) {
+    if (e.message.find("Dictionary type conflict") != std::string::npos &&
+        e.message.find("customData.k") != std::string::npos) {
+      saw = true;
+    }
+  }
+  CHECK(saw, "type conflict surfaces a diagnostic naming the key");
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -1326,6 +1361,7 @@ int main() {
   test_extref_non_self_contained_fallback();
   test_variant_selected_field_over_reference();
   test_sublayer_merge();
+  test_dictionary_type_conflict_diagnostic();
   test_livrps_strength();
   test_graft_retargeting();
   test_layer_offset_baking();
