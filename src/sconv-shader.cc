@@ -627,7 +627,7 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
 ) {
 
   // Helper lambda to add an input spec as a separate attribute
-  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value, const std::vector<Path>* connections = nullptr) -> bool {
+  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value, const std::vector<Path>* connections = nullptr, const AttrMeta* attr_metas = nullptr) -> bool {
     Path input_path = prim_path.AppendProperty(input_name);
     crate::FieldValuePairVector input_fields;
 
@@ -636,6 +636,16 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     value::token typename_tok(type_name);
     typename_value.Set(typename_tok);
     input_fields.push_back({"typeName", typename_value});
+
+    // The input's OWN metadata block, e.g.
+    //   asset inputs:file = @f.png@ ( colorSpace = "Raw" )
+    // The shader writer builds its specs by hand and emitted no attribute
+    // metadata at all, so colorSpace was dropped on write.
+    if (attr_metas && attr_metas->has_colorSpace()) {
+      crate::CrateValue cs_value;
+      cs_value.Set(attr_metas->get_colorSpace());
+      input_fields.push_back({"colorSpace", cs_value});
+    }
 
     // default field (the value)
     input_fields.push_back({"default", value});
@@ -667,6 +677,7 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     value::token type_tok(type_name);
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
+
     ListOp<Path> conn_listop;
     conn_listop.ClearAndMakeExplicit();
     conn_listop.SetExplicitItems(conn_paths);
@@ -754,7 +765,8 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
         if (file_animatable.get_scalar(&file_path)) {
           crate::CrateValue file_value;
           file_value.Set(file_path);
-          if (!add_input_spec("inputs:file", "asset", file_value, conns)) {
+          if (!add_input_spec("inputs:file", "asset", file_value, conns,
+                              &uv_texture->file.metas())) {
             return false;
           }
           emitted_value = true;
