@@ -1937,6 +1937,16 @@ bool CrateWriter::ExtractGPrimProperties(
     return false;
   }
 
+  // Extract proxyPrim (rel proxyPrim). Parsed into a typed field on every
+  // GPrim but never re-emitted by this function, so it was silently dropped
+  // on USDC round-trip -- same class of bug as visibility/purpose above.
+  if (gprim->proxyPrim.authored()) {
+    if (!ConvertRelationshipToFields("proxyPrim", gprim->proxyPrim.relationship(),
+                                     prim_path, err)) {
+      return false;
+    }
+  }
+
   // Extract extent (bounding box) - stored as float3[2] in USD
   if (gprim->extent.has_value()) {
     auto extent_animatable = gprim->extent.get_value();
@@ -2092,19 +2102,27 @@ bool CrateWriter::AddMaterialBindingSpecs(
     }
   }
 
-  // Add collection-based material bindings
+  // Add collection-based material bindings. The map's outer key is the
+  // binding/collection NAME (e.g. "beauty"); the inner dict's key is the
+  // material PURPOSE ("" for no purpose). The property name syntax orders
+  // these `material:binding:collection:<purpose>:<name>` -- purpose FIRST --
+  // when a purpose is present. The old code always wrote name-then-purpose
+  // (correct only for the no-purpose case, where there is nothing to put
+  // first), so a purpose-qualified binding like
+  // `material:binding:collection:mypurpose:beauty` came back on USDC
+  // round-trip as `material:binding:collection:beauty:mypurpose`.
   for (const auto& coll_entry : mat_binding->materialBindingCollectionMap()) {
     const std::string& coll_name = coll_entry.first;
     const auto& purpose_map = coll_entry.second;
 
-    // Iterate through all purposes in this collection
     for (const auto& purpose : purpose_map.keys()) {
       const Relationship* rel = nullptr;
       if (purpose_map.at(purpose, &rel)) {
-        std::string rel_name = "material:binding:collection:" + coll_name;
+        std::string rel_name = "material:binding:collection:";
         if (!purpose.empty()) {
-          rel_name += ":" + purpose;
+          rel_name += purpose + ":";
         }
+        rel_name += coll_name;
 
         if (!ConvertRelationshipToFields(rel_name, *rel, prim_path, err)) {
           if (err) *err = "Failed to add " + rel_name + " relationship: " + *err;

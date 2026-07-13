@@ -31,8 +31,11 @@ through `tusdcat`, and the **typeless-prim-invents-a-`Model`-typeName** bug
 (sole cause of 68 of the then-133 round-trip failures, 133 -> 65) — all
 pushed. Also fixed, not yet pushed: the **Camera
 `shutter:open`/`shutter:close` written under the wrong attribute name** bug
-(65 -> 64) and the **`apiSchemas` list-op delete/`None`/prepend-order** bugs
-(64 -> 60). See [Open](#open) for what is left of that sweep, and
+(65 -> 64), the **`apiSchemas` list-op delete/`None`/prepend-order** bugs
+(64 -> 60), and **five `rel`/relationship bugs** — varying/custom dropped,
+`bindMaterialAs` dropped, `proxyPrim` dropped, and a
+material-binding-collection namespace order swap (60 -> 50). See
+[Open](#open) for what is left of that sweep, and
 [Prompts for a fresh session](#prompts-for-a-fresh-session) to pick it up cold.
 
 ## Prompts for a fresh session
@@ -42,32 +45,39 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-60-of-422-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-50-of-422-fixtures)):
 
 > The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
 > Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 60 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> data"): 50 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
 > intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug,
-> the Camera shutter:open/shutter:close naming bug, and the apiSchemas
-> list-op delete/None/prepend-order bugs). Read the full categorized
-> list in that section before starting — it spans relationship
-> variability/`bindMaterialAs`/`proxyPrim` dropped, variant-statement metadata
-> (`active`/`hidden`/`kind`/`variantSets`) dropped, several `.connect` shader
-> connections baked down to plain constants, several more `timeSamples`
-> attributes dropped wholesale, `skel:blendShapes` losing its namespace,
-> spurious unauthored `visibility`/`purpose` invented on Skeleton-family prims,
-> and stage/layer metadata dictionaries (`customLayerData`, `kilogramsPerUnit`,
+> the Camera shutter:open/shutter:close naming bug, the apiSchemas
+> list-op delete/None/prepend-order bugs, and five rel/relationship bugs).
+> Read the full categorized list in that section before starting — it spans
+> variant-statement metadata (`active`/`hidden`/`kind`/`variantSets`)
+> dropped, several `.connect` shader connections baked down to plain
+> constants, several more `timeSamples` attributes dropped wholesale,
+> `skel:blendShapes` losing its namespace, spurious unauthored
+> `visibility`/`purpose` invented on Skeleton-family prims, and stage/layer
+> metadata dictionaries (`customLayerData`, `kilogramsPerUnit`,
 > `sdrMetadata`, etc.) dropped. Fix them one category at a time, smallest/most
-> self-contained first (the `rel` list-op-delete/variability bugs look smallest
-> next); the `.connect`-baked-to-constant bug is probably the most consequential
+> self-contained first (variant-statement metadata looks smallest next);
+> the `.connect`-baked-to-constant bug is probably the most consequential
 > since it silently changes an asset's shading network rather than dropping
-> inert metadata.
+> inert metadata. NOTE: a value-less relationship with an authored list-edit
+> qualifier (`append rel myval`, `delete rel myheight`) was investigated and
+> left ALONE on purpose — it looks like a `ListOp<T>` data-model gap (no way
+> to record "authored but empty"), not a quick writer fix; see the note under
+> "Left for later" in that section before attempting it.
 > Each fix must come with a mutation-verified assertion in
 > `tests/run-scope-imageable-roundtrip.sh` (revert the fix, watch the test fail),
 > and must not regress the ctest suite or raise the fixture count. Do not
 > "fix" a diff by making the printer match the writer — the printer is already a
 > fixed point (all 422 fixtures re-print identically); the writer is what is
-> wrong.
+> wrong. Watch out for a fixture that accidentally bypasses the buggy code path
+> (e.g. a schema-typed-only property authored on a typeless prim instead) --
+> verify the mutation test actually FAILS with the bug reintroduced before
+> trusting it.
 
 **2. Get the pxr reference comparison running** (this whole workstream is
 currently self-referential — see the caveat in that section):
@@ -84,7 +94,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (60 of 422 fixtures)
+### The crate writer drops data (50 of 422 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -96,20 +106,19 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 60 as of 2026-07-13 (was 64, was 65, was 133, was 140)
+done | wc -l          # 50 as of 2026-07-13 (was 60, was 64, was 65, was 133, was 140)
 ```
 
 The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a
 diff here is the crate writer losing data, not the printer being creative. A
 full detailed diff turned up more categories than earlier notes here described
-— do not re-derive this from scratch (Camera shutter naming and apiSchemas
-list-ops are fixed, see below; not relisted here):
+— do not re-derive this from scratch (Camera shutter naming, apiSchemas
+list-ops, and five rel/relationship bugs are fixed, see below; not relisted
+here). **Still open on `rel`:** a list-edit qualifier (`append`/`delete`) on a
+value-LESS relationship (`append rel myval`, `delete rel myheight`) — see
+"Left for later" below, this looks like a `ListOp<T>` data-model gap, not a
+quick writer fix.
 
-- Relationships: `varying` variability on a `rel` is lost; `append custom
-  varying rel` loses both `custom` and `varying`; `delete rel` (a rel list-op
-  delete) is dropped; `rel proxyPrim` is dropped; `bindMaterialAs` metadata on
-  a relationship is lost in several fixtures; `material:binding:collection:
-  <purpose>:<name>` comes back with the two namespace components swapped.
 - Variant-statement metadata (`active`, `hidden`, `kind`, `variantSets`
   authored in a variant's own metadata block) is dropped — the variant
   survives, its metadata does not.
@@ -139,9 +148,10 @@ list-ops are fixed, see below; not relisted here):
   `asset` attribute value.
 
 **Why this kept happening:** the extraction was copy-pasted per prim type, so each
-new prim type was one omission away from losing data — and several did. Four
-rounds of this are already fixed (below, including the `Model`-typeName bug);
-prefer a shared helper over another copy.
+new prim type was one omission away from losing data — and several did. Five
+rounds of this are already fixed (below, including the `Model`-typeName bug
+and the five `rel`/relationship bugs); prefer a shared helper over another
+copy.
 
 CAVEAT on all of it: the checks verify that tinyusdz's reader and writer agree
 with each other. A bug they SHARE is invisible to them. The pxr comparison
@@ -252,6 +262,67 @@ this plain round-trip sees `authoredOps` intact. Guarded by a new
 `apischemas-usdc` check in `tests/run-scope-imageable-roundtrip.sh` covering
 all three cases in one fixture; mutation-verified by reverting the fix and
 confirming the check reproduces all three symptoms at once.
+
+### Five separate `rel`/relationship bugs
+
+All in `ConvertRelationshipToFields` (`src/stage-converter.cc`) and its
+callers, plus one in the collection-material-binding writer
+(`src/sconv-geom.cc`):
+
+1. `varying rel` was hardcoded to `Variability::Uniform`, ignoring
+   `Relationship::is_varying_authored()` (a real field both readers already
+   populate). Fixed by writing `Varying` when authored.
+2. `custom rel` was never written: `ConvertRelationshipToFields` only ever
+   took a bare `Relationship`, never the enclosing `Property`'s
+   `has_custom()` — unlike `ConvertAttributeToFields`, which already takes
+   an explicit `is_custom` parameter for this reason. Added the same
+   parameter and threaded `prop.has_custom()` through both call sites that
+   have a `Property` (`ConvertPropertyToFields`, `ConvertVariantToFields`);
+   the two Collection includes/excludes call sites pass `false` (no
+   `Property` wrapper there).
+3. `bindMaterialAs` metadata on a RELATIONSHIP (e.g.
+   `material:binding = </X> (bindMaterialAs = "...")`) was written for
+   attribute metadata but never for relationship metadata — the far more
+   common case, since it is a UsdShade relationship-strength qualifier.
+4. `rel proxyPrim` (every GPrim's proxy-geometry relationship) was parsed
+   into a typed field and never re-emitted at all — same shape as the
+   Scope visibility/purpose bug, found in `ExtractGPrimProperties` (which
+   already handles visibility/purpose/extent/orientation but stopped short
+   of `proxyPrim`).
+5. `material:binding:collection:<name>:<purpose>` order: the writer
+   concatenated `<name>:<purpose>` when a purpose is present; the correct
+   order is `<purpose>:<name>`. Only the no-purpose case happened to come
+   out right (there was nothing to put first). A same-shaped sibling
+   printer function (`pprint-meta.cc`'s `materialBindingCollectionMap()`
+   loop) uses variable names that look like the opposite convention at
+   first read -- the actual outer/inner role only became clear by testing
+   against the two fixture lines. Don't trust a sibling function's variable
+   names without checking a live example.
+
+Guarded by a new `relationships-usdc` check in
+`tests/run-scope-imageable-roundtrip.sh` covering all five in one fixture.
+The first draft of that check put the collection-material-binding
+relationships on a typeless prim, which bypasses the buggy typed
+`MaterialBinding` map entirely (typeless prims store
+`material:binding:collection:*` as generic named relationships) -- it passed
+even with the bug reverted. Moved those two relationships onto an `Xform`
+prim (which inherits the typed `MaterialBinding` interface) so
+mutation-verification actually exercises the buggy code path.
+
+**Left for later, likely not fixable without a deeper change:** two related
+fixtures (`rel-003`, `listop-delete-000`) author a list-edit qualifier
+(`append`/`delete`) on a value-less relationship (`append rel myval`,
+`delete rel myheight` -- zero target paths). `ListOp<T>`'s `Has*Items()`
+methods are purely `.size() > 0`, so an empty `SetDeletedItems({})` is
+indistinguishable from never calling it -- `DecodeListOp` (the reader) then
+sees no populated bucket and hard-ERRORS with "`targetPaths` is empty"
+rather than silently dropping the qualifier. This looks like a genuine gap
+in `ListOp<T>`'s data model (no way to record "this bucket was authored, but
+empty"), not a simple writer oversight; fixing it would mean adding
+per-bucket "was set" tracking to `ListOp<T>` and touching every one of its
+many users (variantSets, references, payloads, apiSchemas, inherits,
+specializes, connections, relationships). Left alone -- verify the read-side
+`DecodeListOp`/`ListOp<T>` change first if picking this up.
 
 ### `proxy` and `render` are ALTERNATIVES, not two things to draw
 
