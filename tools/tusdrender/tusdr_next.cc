@@ -4649,6 +4649,20 @@ void CollectLightsNext(const tinyusdz::next::Stage &stage,
     else if (kind == PreviewLight::Kind::Sphere) dst.area = 4 * kPi * radius * radius;
     else if (kind == PreviewLight::Kind::Disk) dst.area = kPi * radius * radius;
     else if (kind == PreviewLight::Kind::Cylinder) dst.area = 2 * kPi * radius * length;
+    // UsdLux inputs:normalize: hold the light's POWER fixed as its size
+    // changes, by dividing the radiance by the shape's full surface area --
+    // the same convention as AddFiniteLight on the RenderScene path, tusdview
+    // and the mesh lights. A sphere at or below the punctual gate (1e-5) keeps
+    // the undivided intensity: it is shaded as a point light (I/d^2), where
+    // the division would blow up as r -> 0.
+    bool normalize = false;
+    if (const tinyusdz::next::Value *v =
+            prim.GetPropertyValue("inputs:normalize"))
+      if (const bool *b = v->as_bool()) normalize = *b;
+    if (normalize && dst.area > 1.0e-8f &&
+        (kind != PreviewLight::Kind::Sphere || radius > 1.0e-5f)) {
+      dst.radiance = Mul(dst.radiance, 1.0f / dst.area);
+    }
     dst.power = std::max(0.0f, Luminance(dst.radiance) * std::max(1.0f, dst.area));
     cache->finite.push_back(std::move(dst));
   }
@@ -4692,6 +4706,7 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
   Vec3 scale{1.0f, 1.0f, 1.0f};
   bool rotated = false;
   bool have_dome = false;  // a DomeLight prim was found (may be textureless)
+  int probe_format = 0;    // texture:format: 2 mirroredBall / 3 angular
   Vec3 rx{1.0f, 0.0f, 0.0f}, ry{0.0f, 1.0f, 0.0f}, rz{0.0f, 0.0f, 1.0f};
   if (env_path.empty()) {
     for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
@@ -4705,6 +4720,15 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
         const std::string *ap = v->as_asset_path();
         if (!ap) ap = v->as_string();
         if (ap) env_path = *ap;
+      }
+      if (const tinyusdz::next::Value *v =
+              dome.GetPropertyValue("inputs:texture:format")) {
+        const std::string *t = v->as_token();
+        if (!t) t = v->as_string();
+        if (t) {
+          if (*t == "mirroredBall") probe_format = 2;
+          else if (*t == "angular") probe_format = 3;
+        }
       }
       float intensity = 1.0f;
       if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:intensity"))
@@ -4760,6 +4784,7 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
     std::string path = env_path;
     if (path[0] != '/' && !base_dir.empty()) path = base_dir + "/" + path;
     if (!LoadEnvImageFromFile(path, scale, &env)) return false;
+    env = RemapProbeToLatlong(std::move(env), probe_format);
   }
   if (!BuildIblFromEnv(std::move(env), ibl)) return false;
   ibl->rotated = rotated;

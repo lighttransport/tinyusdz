@@ -454,6 +454,11 @@ struct LightCache {
   Vec3 dome_ry{0.0f, 1.0f, 0.0f};
   Vec3 dome_rz{0.0f, 0.0f, 1.0f};
   Vec3 env_color{0.0f, 0.0f, 0.0f};
+  // UsdLux texture:format of the dome's envmap, as
+  // RenderLight::DomeTextureFormat (0 Automatic, 1 Latlong, 2 MirroredBall,
+  // 3 Angular). Automatic/Latlong sample the image as-is; the probe formats
+  // are resampled to latlong before the IBL bake (RemapProbeToLatlong).
+  int dome_texture_format{0};
 };
 
 struct EnvImage {
