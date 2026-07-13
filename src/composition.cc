@@ -744,6 +744,38 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   return true;
 }
 
+namespace {
+
+std::string ResolveWeakerPathExpressionText(const std::string &stronger,
+                                            const std::string &weaker) {
+  if (stronger.find("%_") == std::string::npos) return stronger;
+  const std::string replacement = weaker.empty()
+      ? "(/ & ~/)" : ("(" + weaker + ")");
+  std::string out = stronger;
+  size_t pos = 0;
+  while ((pos = out.find("%_", pos)) != std::string::npos) {
+    out.replace(pos, 2, replacement);
+    pos += replacement.size();
+  }
+  return out;
+}
+
+void ComposeWeakerPathExpression(Attribute *stronger,
+                                 const Attribute &weaker) {
+  if (!stronger || stronger->is_blocked() || weaker.is_blocked()) return;
+  const auto *strong_expr =
+      stronger->get_var().as<value::PathExpression>();
+  const auto *weak_expr = weaker.get_var().as<value::PathExpression>();
+  if (!strong_expr || !weak_expr) return;
+  const std::string resolved = ResolveWeakerPathExpressionText(
+      strong_expr->GetText(), weak_expr->GetText());
+  if (resolved != strong_expr->GetText()) {
+    stronger->get_var().set_value(value::PathExpression(resolved));
+  }
+}
+
+}  // namespace
+
 bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std::string *warn,
                       std::string *err) {
   (void)warn;
@@ -918,6 +950,10 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
             dst_attr.variability() = Variability::Uniform;
           }
         }
+        // SdfPathExpression's `%_` operand means the weaker authored value.
+        // Resolve it while both layer opinions are still available; a
+        // flattened Stage intentionally has no property stack to consult.
+        ComposeWeakerPathExpression(&dst_attr, src_attr);
       }
     }
   }
@@ -2636,6 +2672,8 @@ static Property ComposeStrongerPropertyOverWeaker(const Property &stronger,
     primvar::PrimVar weaker_var = weaker_attr.get_var();
     composed_attr.set_var(weaker_var);
   }
+
+  ComposeWeakerPathExpression(&composed_attr, weaker_attr);
 
   return composed;
 }
