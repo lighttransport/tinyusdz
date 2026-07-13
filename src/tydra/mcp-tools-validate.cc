@@ -47,6 +47,9 @@ ValidationOptions ParseGroups(const nlohmann::json &args) {
         opts.lux = true;
       } else if (name == "physics") {
         opts.physics = true;
+        // NOTE: no "render" group here — this tool drives the LEGACY
+        // validator, which has no UsdRender rules; next's validator (web
+        // binding, tusdchecker) is where the render group exists.
       } else if (name == "crate") {
         opts.crate = true;
       } else if (name == "all") {

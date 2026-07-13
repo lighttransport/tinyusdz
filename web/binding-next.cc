@@ -4009,6 +4009,8 @@ tn::ValidationOptions ParseValidationOptionsJSONForWeb(
       opts.lux = true;
     } else if (name == "physics") {
       opts.physics = true;
+    } else if (name == "render") {
+      opts.render = true;
     } else if (name == "crate") {
       opts.crate = true;
     } else if (name == "all") {
@@ -4016,7 +4018,7 @@ tn::ValidationOptions ParseValidationOptionsJSONForWeb(
     }
   }
   if (!opts.core && !opts.geom && !opts.shade && !opts.lux && !opts.physics &&
-      !opts.crate) {
+      !opts.render && !opts.crate) {
     opts.core = true;
   }
   return opts;
