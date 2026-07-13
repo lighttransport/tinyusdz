@@ -673,6 +673,21 @@ private:
   bool ExtractAnimatableDefault(const Animatable<T>& anim, const char* name,
                                 crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Emit one TypedAttributeWithFallback<Animatable<T>>, whole: its value (or,
+  /// if it was DECLARED without one, a bare declaration rather than the schema
+  /// fallback), plus its metadata block and its connections.
+  ///
+  /// Always prefer this to calling ExtractAnimatableDefault() off `authored()`:
+  /// get_value() returns the SCHEMA FALLBACK for an authored-but-empty
+  /// attribute, so doing so writes `double radius = 2` for a bare
+  /// `double radius` -- inventing a STRONG opinion the author never authored.
+  /// Defined in sconv-geom.cc, alongside the helpers it composes.
+  template<typename AttrT>
+  bool EmitTypedAnimatableAttr(const char* name, const char* type_name,
+                               const AttrT& attr,
+                               crate::FieldValuePairVector& fields,
+                               std::string* err);
+
   // ======================================================================
   // Layer/PrimSpec conversion helpers
   // ======================================================================

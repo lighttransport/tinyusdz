@@ -576,16 +576,9 @@ bool CrateWriter::ExtractCubeProperties(
     return false;
   }
 
-  if (cube->size.authored()) {
-    if (cube->size.is_value_empty()) {
-      EmitAttrDeclaration("size", "double", fields);
-    } else if (!ExtractAnimatableDefault(cube->size.get_value(), "size", fields,
-                                         err)) {
-      return false;
-    }
-    EmitAttrMetas("size", cube->size.metas(), fields);
+  if (!EmitTypedAnimatableAttr("size", "double", cube->size, fields, err)) {
+    return false;
   }
-  EmitAttrConnections("size", cube->size, fields);
 
   // Extract extent
   if (cube->extent.has_value()) {
@@ -625,18 +618,36 @@ bool CrateWriter::ExtractSphereProperties(
     return false;
   }
 
-  if (sphere->radius.authored()) {
-    if (sphere->radius.is_value_empty()) {
-      EmitAttrDeclaration("radius", "double", fields);
-    } else if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius",
-                                         fields, err)) {
-      return false;
-    }
-    EmitAttrMetas("radius", sphere->radius.metas(), fields);
+  if (!EmitTypedAnimatableAttr("radius", "double", sphere->radius, fields,
+                               err)) {
+    return false;
   }
-  EmitAttrConnections("radius", sphere->radius, fields);
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
+}
+
+template <typename AttrT>
+bool CrateWriter::EmitTypedAnimatableAttr(const char *name,
+                                          const char *type_name,
+                                          const AttrT &attr,
+                                          crate::FieldValuePairVector &fields,
+                                          std::string *err) {
+  if (attr.authored()) {
+    if (attr.is_value_empty()) {
+      // DECLARED with no value. Emitting attr.get_value() here would emit the
+      // schema fallback -- see EmitAttrDeclaration.
+      EmitAttrDeclaration(name, type_name, fields);
+    } else if (!ExtractAnimatableDefault(attr.get_value(), name, fields, err)) {
+      return false;
+    }
+    EmitAttrMetas(name, attr.metas(), fields);
+  }
+
+  // A connection is authored independently of a value, so this sits outside the
+  // authored() branch -- `double radius.connect = </x.y>` with no value at all.
+  EmitAttrConnections(name, attr, fields);
+
+  return true;
 }
 
 // ============================================================================
@@ -731,11 +742,11 @@ bool CrateWriter::ExtractCylinderProperties(
     return false;
   }
 
-  if (cylinder->radius.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->radius.get_value(), "radius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radius", "double", cylinder->radius, fields, err)) {
+    return false;
   }
-  if (cylinder->height.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", "double", cylinder->height, fields, err)) {
+    return false;
   }
 
   // Extract axis (mirrors Cone/Capsule). Was missing — caused the
@@ -764,11 +775,11 @@ bool CrateWriter::ExtractConeProperties(
     return false;
   }
 
-  if (cone->radius.authored()) {
-    if (!ExtractAnimatableDefault(cone->radius.get_value(), "radius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radius", "double", cone->radius, fields, err)) {
+    return false;
   }
-  if (cone->height.authored()) {
-    if (!ExtractAnimatableDefault(cone->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", "double", cone->height, fields, err)) {
+    return false;
   }
 
   // Extract axis
@@ -796,11 +807,11 @@ bool CrateWriter::ExtractCapsuleProperties(
     return false;
   }
 
-  if (capsule->radius.authored()) {
-    if (!ExtractAnimatableDefault(capsule->radius.get_value(), "radius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radius", "double", capsule->radius, fields, err)) {
+    return false;
   }
-  if (capsule->height.authored()) {
-    if (!ExtractAnimatableDefault(capsule->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", "double", capsule->height, fields, err)) {
+    return false;
   }
 
   // Extract axis
@@ -2470,11 +2481,11 @@ bool CrateWriter::ExtractGeomPlaneProperties(
     return false;
   }
 
-  if (plane->width.authored()) {
-    if (!ExtractAnimatableDefault(plane->width.get_value(), "width", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("width", "double", plane->width, fields, err)) {
+    return false;
   }
-  if (plane->length.authored()) {
-    if (!ExtractAnimatableDefault(plane->length.get_value(), "length", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("length", "double", plane->length, fields, err)) {
+    return false;
   }
 
   // Extract axis (uniform token, non-animatable)
@@ -2506,14 +2517,14 @@ bool CrateWriter::ExtractGeomCylinder1Properties(
     return false;
   }
 
-  if (cylinder->height.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", "double", cylinder->height, fields, err)) {
+    return false;
   }
-  if (cylinder->radiusTop.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->radiusTop.get_value(), "radiusTop", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radiusTop", "double", cylinder->radiusTop, fields, err)) {
+    return false;
   }
-  if (cylinder->radiusBottom.authored()) {
-    if (!ExtractAnimatableDefault(cylinder->radiusBottom.get_value(), "radiusBottom", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radiusBottom", "double", cylinder->radiusBottom, fields, err)) {
+    return false;
   }
 
   // Extract axis (uniform token, non-animatable)
@@ -2545,14 +2556,14 @@ bool CrateWriter::ExtractGeomCapsule1Properties(
     return false;
   }
 
-  if (capsule->height.authored()) {
-    if (!ExtractAnimatableDefault(capsule->height.get_value(), "height", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("height", "double", capsule->height, fields, err)) {
+    return false;
   }
-  if (capsule->radiusTop.authored()) {
-    if (!ExtractAnimatableDefault(capsule->radiusTop.get_value(), "radiusTop", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radiusTop", "double", capsule->radiusTop, fields, err)) {
+    return false;
   }
-  if (capsule->radiusBottom.authored()) {
-    if (!ExtractAnimatableDefault(capsule->radiusBottom.get_value(), "radiusBottom", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("radiusBottom", "double", capsule->radiusBottom, fields, err)) {
+    return false;
   }
 
   // Extract axis (uniform token, non-animatable)

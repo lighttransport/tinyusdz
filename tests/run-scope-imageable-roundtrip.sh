@@ -1176,4 +1176,70 @@ else
   fi
 fi
 
+# -------------------------------------------------------------------------
+# 20. The SAME declaration-only bug across every shape that has a fallback.
+#
+# Check 19 covers Sphere/Cube because those are the ones the fixtures happened to
+# exercise. Cylinder, Cone, Capsule and Plane have exactly the same
+# TypedAttributeWithFallback<Animatable<double>> radius/height/width/length with a
+# NON-ZERO fallback, so each was inventing a value too -- silently, with no
+# fixture to catch it. They all go through EmitTypedAnimatableAttr now; this pins
+# every one of them so the next shape added cannot quietly regress.
+#
+# Every attribute below is DECLARED with no value, so NONE may come back with one.
+# -------------------------------------------------------------------------
+cat > "$TMP/shapes.usda" <<'USD'
+#usda 1.0
+
+def Cylinder "Cy"
+{
+    double radius
+    double height
+}
+
+def Cone "Co"
+{
+    double radius
+    double height
+}
+
+def Capsule "Ca"
+{
+    double radius
+    double height
+}
+
+def Plane "Pl"
+{
+    double width
+    double length
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/shapes.usdc" "$TMP/shapes.usda" \
+     >"$TMP/write20.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the shapes scene to usdc"
+  cat "$TMP/write20.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/shapes.usdc" > "$TMP/shapes-rt.usda" 2>/dev/null
+bad=""
+for prop in radius height width length; do
+  # declared, so it must survive...
+  grep -qE "double $prop\$" "$TMP/shapes-rt.usda" || bad="$bad
+    $prop: declaration dropped"
+  # ...and must NOT have acquired the schema fallback
+  grep -qE "double $prop *=" "$TMP/shapes-rt.usda" && bad="$bad
+    $prop: came back WITH a value (fallback invented)"
+done
+if [ -n "$bad" ]; then
+  echo "FAIL[shape-defonly-usdc]:$bad"
+  echo "--- got ---"
+  cat "$TMP/shapes-rt.usda"
+  status=1
+else
+  echo "ok[shape-defonly-usdc]: Cylinder/Cone/Capsule/Plane radius/height/width/length stayed declaration-only"
+fi
+
 exit "$status"
