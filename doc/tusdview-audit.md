@@ -110,14 +110,36 @@ Fixed:
 - `--next` metal/rough scalar textures carry their per-channel `inputs:scale` /
   `inputs:bias` (tusdrender already applied them; the tools disagreed).
 
+**R10 — FIXED (2026-07-13).** The convention decision was taken in favor of
+UsdLux/tusdview semantics, on both light-collection paths (RenderScene and
+next):
+
+- `inputs:normalize` divides the emitted radiance by the shape's full surface
+  area (sphere 4πr², rect w·h, disk πr², cylinder 2πrL) — the same convention as
+  tusdview's `BakeLightDerivedParams` and the mesh lights (bff972850).
+- The sphere's implicit, always-on ÷πr² is GONE: an unnormalized sphere now
+  emits `color·intensity` as radiance, like every other shape and like tusdview.
+- NEE↔punctual consistency is preserved by construction: the punctual sphere
+  fallback now uses the small-sphere limit of the area integral
+  (E = L·πr²/d²), so both estimators read the same collection-time radiance
+  whatever the normalize flag. A sphere at/below the sampler gate (r ≤ 1e-5)
+  keeps the plain I/d² point-light behavior. `sphere-light-nee` re-pins the old
+  energies via `normalize=true` at 4× intensity (identically I/πr²).
+- DomeLight `texture:format` "mirroredBall"/"angular" probes are resampled to
+  latlong before the IBL bake (`RemapProbeToLatlong`, the same projection as
+  tusdview's `TexToolsProbeToEquirect`).
+- Appearance note: an unnormalized SphereLight's radiance changes from I/(πr²)
+  to I — a factor of πr² brighter (12.6× at radius 2, dimmer below r ≈ 0.56);
+  author `normalize = true` (4× intensity for identical output) to keep the
+  previous power-invariant behavior.
+- Tests: `tool-tusdrender-light-normalize` (normalize=true, intensity I ≡
+  normalize=false, intensity I/area, sphere + rect, both paths),
+  `tool-tusdrender-dome-format` (mirroredBall probe never samples outside the
+  disc; latlong control sees the pole red). DistantLight `angle` remains unused
+  (no soft distant shadows anywhere in tusdrender) — out of scope here.
+
 Deferred, with reasons:
 
-- **R10 (light `normalize`, dome `texture:format`)** — tusdrender's sphere-light
-  photometry is pinned by the NEE↔punctual energy test (`sphere-light-nee`), and
-  its convention (L = I/πr² by default) differs from both UsdLux and tusdview's
-  normalize handling (÷4πr² when normalized). Honoring the flag without breaking
-  the pinned punctual consistency needs a deliberate photometric-convention
-  decision across punctual/NEE/tusdview at once — an appearance-changing call.
 - **T8 (doubleSided plumbing + culling), T11 (sRGB linearization in tusdview
   raster), GL↔VK normal-map/shaded-diffuse unification** — appearance-changing
   across every scene; need golden-image re-baselines and a deliberate look call.
@@ -416,7 +438,7 @@ the legacy-fallback resolver does read `sourceColorSpace`.
   the next resolver sRGB-decodes it a second time (0.5 → ~0.21); `-materialResolver
   legacy` renders it correctly → the two resolvers disagree silently.
 
-### R10. [medium] Analytic-light `normalize` and dome `texture:format` ignored (vs tusdview)
+### R10. [medium] Analytic-light `normalize` and dome `texture:format` ignored (vs tusdview)  **[FIXED — see the backlog-sweep status above]**
 `tusdr_lighting.cc:448` — `normalize` is honored only for mesh/area lights; a
 SphereLight is always `÷ πr²` (`integrator.cc:312`), rect/disk always `× area`.
 DistantLight `angle` is unused; dome `texture:format` always sampled as latlong.

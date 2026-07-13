@@ -317,15 +317,12 @@ void OrthoBasis(const Vec3 &w, Vec3 *u, Vec3 *v) {
 }
 
 Vec3 SphereLightRadiance(const PreviewLight &light) {
-  // Same radius gate as SampleSphereLight/SphereLightPdf (1e-5): the old
-  // 1e-4 clamp here disagreed with the raw radius the sampler used, so a
-  // sphere with 1e-5 < r < 1e-4 sampled with the true (smaller) area but
-  // emitted the clamped (larger) area's radiance -- up to 100x too dark.
-  // Below the sampler's gate the light takes the punctual path, where this
-  // radiance is unused, so the clamp only has to guard division by ~0.
-  const float r = std::max(1.0e-5f, light.radius);
-  const float scale = 1.0f / (MTLX_PI * r * r);
-  return Mul(light.radiance, scale);
+  // PreviewLight.radiance IS the sphere's emitted radiance: color * intensity *
+  // 2^exposure, divided by the surface area when inputs:normalize is authored
+  // (UsdLux semantics, applied at collection). The old convention here divided
+  // by pi*r^2 unconditionally -- an implicit, always-on normalize that ignored
+  // the authored flag and disagreed with tusdview and the other shapes.
+  return light.radiance;
 }
 
 // Uniform cone sampling of the sphere's visible solid angle.
@@ -1479,6 +1476,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
         float emit_cos = std::max(0.0f, Dot(light.normal, Mul(l, -1.0f)));
         if (emit_cos <= 0.0f) return;
         radiance = Mul(radiance, emit_cos * std::max(1.0f, light.area));
+      } else if (light.kind == PreviewLight::Kind::Sphere &&
+                 light.radius > 1.0e-5f) {
+        // Small-sphere limit of the area integral: E = L * (projected area
+        // pi*r^2) / d^2. This is what NEE converges to for a distant sphere, so
+        // the punctual fallback (NEE disabled, non-bsdf modes) agrees with it
+        // for both normalize settings. At or below the gate the sphere is a
+        // point-light stand-in and keeps the plain I/d^2 (its radiance was
+        // never area-divided at collection).
+        radiance = Mul(radiance, MTLX_PI * light.radius * light.radius);
       }
       radiance = Mul(radiance, 1.0f / std::max(1.0e-4f, dist * dist));
     }
