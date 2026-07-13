@@ -5,6 +5,7 @@
 // Full support: references, payloads, inherits, specializes, variants, layer offsets
 
 #include "composition.hh"
+#include "../layer/listop-field-table.hh"
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 #include <algorithm>
 #include <cmath>
@@ -605,12 +606,9 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
     merge_deleted(se->inherits, tedits.inherits);
     merge_deleted(se->specializes, tedits.specializes);
   }
-  // Variant sets/selections: fill-absent by set name.
-  if (!target.meta().variantSetNameEdits().authored &&
-      source.meta().variantSetNameEdits().authored) {
-    target.meta().variantSetNameEdits() =
-        source.meta().variantSetNameEdits();
-  }
+  // Variant sets/selections: fill-absent by set name. (variantSetNames
+  // list-op edits are merged inside CopyLocalOpinions' registered string
+  // list-op field loop.)
   if (!source.meta().variantSets().empty()) {
     for (const VariantSetData& svs : source.meta().variantSets()) {
       bool have = false;
@@ -1008,79 +1006,18 @@ void Compositor::CopyLocalOpinions(
     target.meta().displayGroupOrder() = source.meta().displayGroupOrder();
     target.meta().setDisplayGroupOrderAuthored();
   }
-  if (source.meta().apiSchemasAuthored() ||
-      !source.meta().apiSchemas().empty()) {
-    const bool target_had_api_opinion = target.meta().apiSchemasAuthored();
-    if (!target.meta().apiSchemasAuthored() &&
-        source.meta().apiSchemaEdits().authored) {
-      target.meta().apiSchemaEdits() = source.meta().apiSchemaEdits();
+  // Registered string list-op metadata fields (apiSchemas / variantSetNames /
+  // clipSets): one shared merge — a stronger authored op resolves over the
+  // weaker effective name list and is stored explicitly (flatten semantics);
+  // an absent stronger opinion fill-copies the weaker authored op. Per-field
+  // storage nuances (apiSchemas' applied vector + legacy qualifier) live in
+  // the table's normalization/post hooks (listop-field-table.hh).
+  {
+    size_t field_count = 0;
+    const StringListOpFieldDef* fields = GetStringListOpFieldTable(&field_count);
+    for (size_t i = 0; i < field_count; ++i) {
+      MergeWeakerStringListOpField(fields[i], source.meta(), target.meta());
     }
-    std::vector<std::string>& tgt = target.meta().apiSchemas();
-    const std::string& tq = target.meta().apiSchemasQualifier();
-    if (target_had_api_opinion && target.meta().apiSchemaEdits().authored) {
-      const StringListOpEdits edits = target.meta().apiSchemaEdits();
-      if (edits.is_explicit) {
-        tgt = edits.explicit_items;
-      } else {
-        std::vector<std::string> applied = edits.prepended;
-        const std::unordered_set<std::string> deleted(
-            edits.deleted.begin(), edits.deleted.end());
-        auto append_unique = [&](const std::string& schema) {
-          if (std::find(applied.begin(), applied.end(), schema) == applied.end())
-            applied.push_back(schema);
-        };
-        for (const std::string& schema : source.meta().apiSchemas()) {
-          if (!deleted.count(schema)) append_unique(schema);
-        }
-        for (const std::string& schema : edits.added) append_unique(schema);
-        for (const std::string& schema : edits.appended) {
-          applied.erase(std::remove(applied.begin(), applied.end(), schema),
-                        applied.end());
-          applied.push_back(schema);
-        }
-        // Ordered-list cross-site resolution: pxr SdfListOp reorder
-        // semantics (shared ApplyStringListOrder helper).
-        ApplyStringListOrder(edits.ordered, &applied);
-        tgt = std::move(applied);
-      }
-      // The composed/flattened prim no longer has a weaker list beneath it;
-      // encode its resolved result explicitly instead of re-emitting the local
-      // edit and accidentally applying it a second time downstream.
-      StringListOpEdits& resolved = target.meta().apiSchemaEdits();
-      resolved = StringListOpEdits();
-      resolved.authored = true;
-      resolved.is_explicit = true;
-      resolved.explicit_items = tgt;
-      target.meta().apiSchemasQualifier().clear();
-    } else if (!target.meta().apiSchemasAuthored() && tgt.empty()) {
-      tgt = source.meta().apiSchemas();
-      target.meta().setApiSchemasAuthored();
-      if (target.meta().apiSchemasQualifier().empty()) {
-        target.meta().apiSchemasQualifier() =
-            source.meta().apiSchemasQualifier();
-      }
-    } else if (tq == "prepend" || tq == "append") {
-      // List-op merge across arcs (pxr): a prepend-qualified stronger list
-      // goes IN FRONT of the weaker composed list (append: after), with
-      // stronger-wins dedup. Fill-absent alone dropped every weaker schema
-      // the moment the stronger spec authored any.
-      std::vector<std::string> merged;
-      merged.reserve(tgt.size() + source.meta().apiSchemas().size());
-      std::unordered_set<std::string> seen;
-      auto push = [&](const std::string& v) {
-        if (seen.insert(v).second) merged.push_back(v);
-      };
-      if (tq == "prepend") {
-        for (const auto& v : tgt) push(v);
-        for (const auto& v : source.meta().apiSchemas()) push(v);
-      } else {
-        for (const auto& v : source.meta().apiSchemas()) push(v);
-        for (const auto& v : tgt) push(v);
-      }
-      tgt = std::move(merged);
-    }
-    // Bare (explicit) stronger list: replaces the weaker one — pxr explicit
-    // list semantics; nothing to do.
   }
   // Dictionary-valued metadata (fill-absent). `ct` binds a const view so the
   // gap check never allocates the target's metadata ext.
@@ -1116,41 +1053,9 @@ void Compositor::CopyLocalOpinions(
                                  cs.unknownFields());
     }
 
-    // clipSets is a separate SdfStringListOp controlling strength among the
-    // dictionaries above. Resolve a stronger edit over the weaker effective
-    // order and store the flattened result explicitly, so downstream
-    // evaluation cannot accidentally apply the local edit twice.
-    const bool target_had_clip_sets = ct.clipSetEdits().authored;
-    if (target_had_clip_sets || cs.clipSetEdits().authored) {
-      std::vector<std::string> weaker_names;
-      if (const Dict* d = cs.clips().as_dictionary()) {
-        for (const auto& entry : d->entries) weaker_names.push_back(entry.first);
-      }
-      std::sort(weaker_names.begin(), weaker_names.end());
-      weaker_names = ApplyStringListOp(cs.clipSetEdits(), weaker_names);
-      if (target_had_clip_sets) {
-        if (const Dict* d = ct.clips().as_dictionary()) {
-          std::vector<std::string> local_names;
-          for (const auto& entry : d->entries) local_names.push_back(entry.first);
-          std::sort(local_names.begin(), local_names.end());
-          for (const std::string& name : local_names) {
-            if (std::find(weaker_names.begin(), weaker_names.end(), name) ==
-                weaker_names.end()) {
-              weaker_names.push_back(name);
-            }
-          }
-        }
-        std::vector<std::string> resolved =
-            ApplyStringListOp(ct.clipSetEdits(), weaker_names);
-        StringListOpEdits& dst = target.meta().clipSetEdits();
-        dst = StringListOpEdits();
-        dst.authored = true;
-        dst.is_explicit = true;
-        dst.explicit_items = std::move(resolved);
-      } else {
-        target.meta().clipSetEdits() = cs.clipSetEdits();
-      }
-    }
+    // clipSets (a separate SdfStringListOp controlling strength among the
+    // dictionaries above) is merged by the registered string list-op field
+    // loop earlier in this function.
   }
 
   // Variant sets + selections ride along from the weaker `source`, MERGED
@@ -1163,11 +1068,8 @@ void Compositor::CopyLocalOpinions(
   // An all-or-nothing copy would drop that content because the target "already
   // has" the (empty) set. The selection itself is left to the referencing prim
   // (ApplyVariants runs after arc resolution and is strongest).
-  if (!target.meta().variantSetNameEdits().authored &&
-      source.meta().variantSetNameEdits().authored) {
-    target.meta().variantSetNameEdits() =
-        source.meta().variantSetNameEdits();
-  }
+  // (variantSetNames list-op edits merge in the registered string list-op
+  // field loop earlier in this function.)
   if (!source.meta().variantSets().empty()) {
     std::vector<VariantSetData>& tsets = target.meta().variantSets();
     // The host (target) may express its selection as the legacy variantSelection
