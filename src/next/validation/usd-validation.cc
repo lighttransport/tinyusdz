@@ -942,6 +942,23 @@ void ValidateTokenSetProperty(const PrimSpec &ps, const std::string &prop_name,
     if (allowed.count(*token) == 0) {
       AddError(result, rule_id, location,
                prop_name + " token `" + *token + "` is not valid");
+      return;
+    }
+  }
+  // Animated tokens must also stay inside the allowed set. One diagnostic
+  // (the first offending sample) per property keeps reports readable.
+  if (const std::vector<std::pair<double, uint32_t>> *samples =
+          GetTimeSamplesOf(ps, prop_name)) {
+    for (const auto &sample : *samples) {
+      const Value *sv = ps.time_sample_value(sample.second);
+      if (!sv || sv->is_block()) continue;
+      const std::string *token = sv->as_token();
+      if (token && allowed.count(*token) > 0) continue;
+      AddError(result, rule_id, location,
+               prop_name + " timeSample at " + std::to_string(sample.first) +
+                   (token ? " token `" + *token + "` is not valid"
+                          : " must be a token value"));
+      return;
     }
   }
 }
@@ -1828,11 +1845,20 @@ void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
     }
   }
   // pxr usdVol schema: for fieldDataType, "A missing value is considered an
-  // error."
-  if (!HasAttributeProp(ps, "fieldDataType")) {
-    AddError(result, "vol.fieldAsset.dataType",
-             MakePropertyLocation(prim_location, "fieldDataType"),
-             ps.type_name() + " must author fieldDataType");
+  // error." That statement is about the COMPOSED stage; this checker sees one
+  // layer, where the value may legitimately arrive from a sublayer or another
+  // arc — so a missing VALUE (no default, no timeSamples; the registry has no
+  // fallback either) reports as a warning, not a hard error.
+  {
+    const std::vector<std::pair<double, uint32_t>> *dt_samples =
+        GetTimeSamplesOf(ps, "fieldDataType");
+    if (!GetAttrValue(ps, "fieldDataType") &&
+        (!dt_samples || dt_samples->empty())) {
+      AddWarning(result, "vol.fieldAsset.dataType",
+                 MakePropertyLocation(prim_location, "fieldDataType"),
+                 ps.type_name() + " does not author a fieldDataType value "
+                 "(pxr: a missing value is an error on the composed stage)");
+    }
   }
   if (ps.type_name() == "OpenVDBAsset") {
     ValidateTokenSetProperty(ps, "fieldDataType", kVdbDataTypes,

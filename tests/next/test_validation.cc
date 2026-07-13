@@ -667,6 +667,11 @@ def Xform "World"
     {
         asset filePath = @./still.vdb@
     }
+    def OpenVDBAsset "DeclaredOnlyDataType"
+    {
+        asset filePath = @./still2.vdb@
+        token fieldDataType
+    }
     def Field3DAsset "F3D"
     {
         asset filePath = @./vol.f3d@
@@ -690,6 +695,19 @@ def Xform "World"
     {
         token sourceType
     }
+    def RenderVar "AnimatedBad"
+    {
+        token sourceType.timeSamples = {
+            1: "telepathy",
+        }
+    }
+    def RenderVar "AnimatedGood"
+    {
+        token sourceType.timeSamples = {
+            1: "lpe",
+            2: "raw",
+        }
+    }
 }
 )";
   ValidationOptions options;
@@ -704,16 +722,18 @@ def Xform "World"
   CHECK(CountWarnings(result, "vol.fieldAsset.filePath") == 1,
         "only the asset without any filePath warns (time-sampled filePath "
         "is valid animated-volume authoring)");
-  CHECK(CountErrors(result, "vol.fieldAsset.dataType") == 2,
-        "invalid fieldDataType errors; missing fieldDataType errors (pxr: "
-        "a missing value is an error)");
+  CHECK(CountErrors(result, "vol.fieldAsset.dataType") == 1,
+        "invalid fieldDataType is an error");
+  CHECK(CountWarnings(result, "vol.fieldAsset.dataType") == 2,
+        "missing and declared-only fieldDataType VALUES warn (per-layer "
+        "check; the value may arrive from another layer)");
   CHECK(CountErrors(result, "vol.fieldAsset.fieldClass") == 0,
         "valid fieldClass is clean");
   CHECK(CountErrors(result, "render.settings.aspectRatioConformPolicy") == 1,
         "invalid aspectRatioConformPolicy is an error");
-  CHECK(CountErrors(result, "render.var.sourceType") == 1,
-        "invalid sourceType errors; a declared-only sourceType is clean "
-        "(schema fallback applies)");
+  CHECK(CountErrors(result, "render.var.sourceType") == 2,
+        "invalid sourceType errors (authored default AND animated sample); "
+        "declared-only and validly-animated sourceType are clean");
   CHECK(CountErrors(result, "render.settings.relationship") == 0,
         "authored relationships are clean; a custom `orderedVars` attribute "
         "on RenderSettings is not kind-checked");
