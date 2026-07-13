@@ -1703,8 +1703,20 @@ bool CrateWriter::ExtractXformOpsFromXformable(
     type_value.Set(type_tok);
     attr_fields.push_back({"typeName", type_value});
 
-    // Add default value if present
-    if (xformOp.has_default()) {
+    // A BLOCKED value (`float xformOp:rotateZ:spin = None`) must be written as a
+    // ValueBlock. It has to be tested BEFORE has_default(), because has_default()
+    // is has_value(), which deliberately reports true for a ValueBlock -- so the
+    // block fell into the branch below, where ConvertValue turned it into the
+    // type's zero and `= None` came back as `= 0`. ConvertAttributeToFields (the
+    // generic path, stage-converter.cc) already ordered these two correctly.
+    // Use XformOp::is_blocked(), not _var.is_blocked(): XformOp keeps its OWN
+    // _is_blocked flag (the reader sets that one) and only its accessor ORs the
+    // two together.
+    if (xformOp.is_blocked()) {
+      crate::CrateValue blocked_value;
+      blocked_value.Set(value::ValueBlock());
+      attr_fields.push_back({"default", blocked_value});
+    } else if (xformOp.has_default()) {
       const value::Value& val = xformOp._var.value_raw();
 
       crate::CrateValue crate_val;
