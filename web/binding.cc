@@ -32,8 +32,10 @@
 #include "typed-array-core.hh"
 #include "value-types.hh"
 
-// next: low-memory lazy-ValueRep flatten pipeline (src/next/).
 #include "io-util.hh"  // AssetPathSuffixCandidates (UE-export suffix fallback)
+// next: low-memory lazy-ValueRep flatten pipeline (src/next/). Compiled out
+// in the legacy-only module (TINYUSDZ_WASM_LEGACY_ONLY).
+#if defined(TINYUSDZ_WASM_WITH_NEXT)
 #include "next/pipeline/flatten.hh"
 #include "next/pcp/layer-registry.hh"
 #include "next/resolver/asset-resolver.hh"
@@ -43,6 +45,7 @@
 #include "next/schema/geom-mesh.hh"
 #include "next/schema/geom-xform.hh"
 #include "next/schema/usd-shade.hh"
+#endif  // TINYUSDZ_WASM_WITH_NEXT
 #include "tydra/render-data.hh"
 #include "tydra/tangent-quantize.hh"
 #include "tydra/scene-access.hh"
@@ -2387,6 +2390,7 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
   }
 }
 
+#if defined(TINYUSDZ_WASM_WITH_NEXT)
 // Parse a dependency layer's bytes for the next flatten compositor. Crate
 // bytes keep the lazy CrateReader path (arrays pass through verbatim);
 // anything else (USDA text, USDZ package) dispatches through the
@@ -2464,6 +2468,7 @@ static std::unique_ptr<tinyusdz::next::Layer> ParseNextLayerBytes(
   layer->build_path_index();
   return layer;
 }
+#endif  // TINYUSDZ_WASM_WITH_NEXT
 
 }  // namespace
 
@@ -7026,6 +7031,7 @@ class TinyUSDZLoaderNative {
   // ============================================================
   // next: low-memory lazy-ValueRep flatten pipeline
   // ============================================================
+#if defined(TINYUSDZ_WASM_WITH_NEXT)
 
   /// Flatten a USDC buffer via the next lazy pipeline: numeric arrays are kept
   /// as lazy references into a single moved-in source buffer, composed
@@ -7708,6 +7714,8 @@ class TinyUSDZLoaderNative {
     }
     return result;
   }
+
+#endif  // TINYUSDZ_WASM_WITH_NEXT
 
   /// Helper: convert current loaded layer to a Stage
   bool getStageFromLayer(tinyusdz::Stage &stage) {
@@ -9060,6 +9068,7 @@ class TinyUSDZLoaderNative {
   // composePayload fixed-point loop (cleared by clearAssets()/reset()).
   std::map<std::string, tinyusdz::Layer> compose_layer_cache_;
 
+#if defined(TINYUSDZ_WASM_WITH_NEXT)
   struct NextAsyncFlattenSession {
     std::string root;
     std::string root_name;
@@ -9070,6 +9079,7 @@ class TinyUSDZLoaderNative {
     std::map<std::string, std::shared_ptr<tinyusdz::next::Layer>> parsed_layers;
   };
   std::map<std::string, NextAsyncFlattenSession> next_async_flatten_sessions_;
+#endif  // TINYUSDZ_WASM_WITH_NEXT
 
   bool parseAssetPathRemap(emscripten::val remap,
                            std::map<std::string, std::string> *out) {
@@ -9832,6 +9842,7 @@ emscripten::val convertFloat16ToFloat32Array(const emscripten::val& uint16Data) 
 // values + texture ASSET PATHS; the JS caller maps a path to its in-archive
 // texture entry (which it already holds) and uploads it to the GPU.
 // ============================================================================
+#if defined(TINYUSDZ_WASM_WITH_NEXT)
 class RenderStream {
  public:
   RenderStream() = default;
@@ -11051,8 +11062,10 @@ class RenderStream {
   std::vector<float> s_points_, s_normals_, s_uv_;
   std::vector<uint32_t> s_indices_;
 };
+#endif  // TINYUSDZ_WASM_WITH_NEXT
 
 EMSCRIPTEN_BINDINGS(render_stream_module) {
+#if defined(TINYUSDZ_WASM_WITH_NEXT)
   emscripten::class_<RenderStream>("RenderStream")
       .constructor<>()
       .function("setMaterialDedup", &RenderStream::setMaterialDedup)
@@ -11067,6 +11080,7 @@ EMSCRIPTEN_BINDINGS(render_stream_module) {
       .function("getMesh", &RenderStream::getMesh)
       .function("error", &RenderStream::error)
       .function("end", &RenderStream::end);
+#endif  // TINYUSDZ_WASM_WITH_NEXT
 }
 
 // Register STL
@@ -11216,6 +11230,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 #endif
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+#if defined(TINYUSDZ_WASM_WITH_NEXT)
       .function("nextFlattenUSDC", &TinyUSDZLoaderNative::nextFlattenUSDC)
       .function("nextFlattenBuffer", &TinyUSDZLoaderNative::nextFlattenBuffer)
       .function("nextFlattenBufferRemap",
@@ -11248,6 +11263,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::nextFlattenAsyncStep)
       .function("nextFlattenAsyncEnd",
                 &TinyUSDZLoaderNative::nextFlattenAsyncEnd)
+#endif  // TINYUSDZ_WASM_WITH_NEXT
 #if defined(TINYUSDZ_USE_COROUTINE)
       .function("loadFromBinaryAsync", &TinyUSDZLoaderNative::loadFromBinaryAsync)  // C++20 coroutine async version
 #endif

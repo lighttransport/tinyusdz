@@ -13,12 +13,21 @@ option(TINYUSDZ_WASM_SIMD "Enable WebAssembly SIMD (128-bit, widely supported si
 option(TINYUSDZ_WASM_RELAXED_SIMD "Enable WebAssembly Relaxed SIMD (requires recent browsers)" OFF)
 option(TINYUSDZ_WASM_COROUTINE "Enable C++20 coroutine-based async loading (allows browser repaint during loading)" ON)
 option(TINYUSDZ_WASM_NEXT_ONLY "Build next-core + tydra-next only WASM module as tinyusdz_next" OFF)
+option(TINYUSDZ_WASM_LEGACY_ONLY "Build the tinyusdz WASM module WITHOUT the next core (legacy loader only; drops nextFlatten*/RenderStream APIs)" OFF)
 
 if (TINYUSDZ_WASM_NEXT_ONLY)
   if (TINYUSDZ_WASM64)
     set(BUILD_TARGET "tinyusdz_next_64")
   else()
     set(BUILD_TARGET "tinyusdz_next")
+  endif()
+elseif (TINYUSDZ_WASM_LEGACY_ONLY)
+  # Distinct module name so the stripped variant never clobbers the default
+  # legacy+next tinyusdz.js/wasm output.
+  if (TINYUSDZ_WASM64)
+    set(BUILD_TARGET "tinyusdz_legacy_64")
+  else()
+    set(BUILD_TARGET "tinyusdz_legacy")
   endif()
 elseif (TINYUSDZ_WASM64)
   set(BUILD_TARGET "tinyusdz_64")
@@ -273,8 +282,14 @@ list(
   APPEND
   SOURCES
   binding.cc
-  ${NEXT_SOURCES}
 )
+# Default module = legacy + next (nextFlatten* lazy pipeline + RenderStream).
+# TINYUSDZ_WASM_LEGACY_ONLY=ON strips the next core: NEXT_SOURCES are not
+# compiled and binding.cc's next-dependent APIs compile out (guarded by
+# TINYUSDZ_WASM_WITH_NEXT).
+if (NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  list(APPEND SOURCES ${NEXT_SOURCES})
+endif()
 
 
 add_executable(${BUILD_TARGET} ${SOURCES})
@@ -289,6 +304,9 @@ target_compile_definitions(${BUILD_TARGET}
                                    TINYUSDZ_CXX_EXCEPTIONS=0
                                    TINYUSDZ_CXX_RTTI=0
                                    EMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0)
+if (NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_WITH_NEXT=1)
+endif()
 if (TINYUSDZ_WASM64)
   target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()
