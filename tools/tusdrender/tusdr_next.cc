@@ -830,9 +830,15 @@ int32_t LoadTextureCached(TextureCache &tc, const std::string &asset_path,
                           WrapMode ws, WrapMode wt, bool srgb,
                           const Vec3 &scale = Vec3{1.0f, 1.0f, 1.0f},
                           const Vec3 &bias = Vec3{0.0f, 0.0f, 0.0f}) {
-  const std::string key = asset_path + "|" + std::to_string(int(ws)) + "," +
-                          std::to_string(int(wt)) + (srgb ? "|s" : "|r") + "|" +
-                          std::to_string(scale.x) + "," + std::to_string(bias.x);
+  // Key on ALL scale/bias channels: keying only .x collided two materials
+  // sharing a file with equal red-scale but different green/blue scale, so the
+  // second silently reused the first's tint.
+  const std::string key =
+      asset_path + "|" + std::to_string(int(ws)) + "," +
+      std::to_string(int(wt)) + (srgb ? "|s" : "|r") + "|" +
+      std::to_string(scale.x) + "," + std::to_string(scale.y) + "," +
+      std::to_string(scale.z) + "|" + std::to_string(bias.x) + "," +
+      std::to_string(bias.y) + "," + std::to_string(bias.z);
   auto it = tc.by_key.find(key);
   if (it != tc.by_key.end()) return it->second;
 
@@ -1436,8 +1442,22 @@ bool LoadRenderTexture(const tinyusdz::tydra::next::RenderScene &scene,
     scale = *fallback_scale;
     bias = *fallback_bias;
   }
-  const int32_t id = LoadTextureCached(tc, asset, ToTusdrWrap(tex.wrap_s),
-                                       ToTusdrWrap(tex.wrap_t), srgb, scale, bias);
+  // The caller's per-slot default ("color slots sRGB, data slots raw") is only
+  // the fallback for "auto": an AUTHORED sourceColorSpace / colorSpace asset
+  // metadata overrides it. Without this, a base-color map authored "raw"
+  // (linear) was sRGB-decoded a second time, crushing the midtones -- and
+  // disagreeing with the legacy resolver, which honors the attribute.
+  bool effective_srgb = srgb;
+  if (tex.source_color_space == "raw" || tex.source_color_space == "Raw" ||
+      tex.source_color_space == "linear") {
+    effective_srgb = false;
+  } else if (tex.source_color_space == "sRGB" ||
+             tex.source_color_space == "srgb") {
+    effective_srgb = true;
+  }
+  const int32_t id =
+      LoadTextureCached(tc, asset, ToTusdrWrap(tex.wrap_s),
+                        ToTusdrWrap(tex.wrap_t), effective_srgb, scale, bias);
   if (id < 0) return false;
   *out = id;
   return true;
@@ -2059,6 +2079,14 @@ static void CollectPreviewImplNext(const tinyusdz::next::Stage &stage,
                                    const RtInstanceSink *sink, size_t *emitted,
                                    bool expand_instancers, size_t max_jobs) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  // visibility="invisible" prunes the prim and its subtree, exactly like the
+  // legacy path (BuildLegacyPurposeVisibility) and per UsdGeomImageable. It
+  // used to be ignored here, so invisible prims rendered.
+  if (const tinyusdz::next::Value *vv = prim.GetPropertyValue("visibility")) {
+    if (const std::string *t = vv->as_token()) {
+      if (*t == "invisible") return;
+    }
+  }
   if (max_jobs && EmittedCountNext(jobs, emitted) >= max_jobs)
     return;  // instance budget reached
   double dmat[16];
@@ -2553,7 +2581,11 @@ void ResolveCameraNext(RenderContext &ctx) {
     if (FindNextCameraFrame(ctx.stage, opt.camera, ctx.frame_time, &ctx.camera,
                             &cam_aspect)) {
       if (height <= 0) {
-        height = std::max(1, int(std::lround(float(ctx.width) / cam_aspect)));
+        {
+          double dh = double(ctx.width) / double(cam_aspect);
+          if (!std::isfinite(dh)) dh = 540.0;
+          height = std::max(1, int(std::lround(std::min(32768.0, dh))));
+        }
       }
     } else {
       std::cerr << "WARN: camera not found: " << opt.camera
@@ -2708,6 +2740,13 @@ void CollectCurvesNextRec(const tinyusdz::next::UsdPrim &prim,
                           tinyusdz::Purpose inherited_purpose, double time,
                           std::vector<CurveJobNext> *out) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  // visibility="invisible" prunes the prim and its subtree (parity with the
+  // legacy path and UsdGeomImageable).
+  if (const tinyusdz::next::Value *vv = prim.GetPropertyValue("visibility")) {
+    if (const std::string *t = vv->as_token()) {
+      if (*t == "invisible") return;
+    }
+  }
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);
@@ -2921,6 +2960,13 @@ void CollectSceneSplit(const tinyusdz::next::Stage &stage,
                        CurveProtoCollect *curve_inst, RTPreviewStats *stats,
                        const std::unordered_set<std::string> *proto_holders) {
   if (!prim.IsActive()) return;  // inactive prim + its subtree are pruned
+  // visibility="invisible" prunes the prim and its subtree (parity with the
+  // legacy path and UsdGeomImageable).
+  if (const tinyusdz::next::Value *vv = prim.GetPropertyValue("visibility")) {
+    if (const std::string *t = vv->as_token()) {
+      if (*t == "invisible") return;
+    }
+  }
   double dmat[16];
   tinyusdz::tydra::next::ComputeLocalTransform(prim, dmat, time);
   const matrix4d local = Mat4FromArray(dmat);

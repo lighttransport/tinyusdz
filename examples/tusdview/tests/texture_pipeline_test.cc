@@ -250,52 +250,77 @@ void TestPipelineClassification() {
   material.computeMaterialTag();
   scene.materials.push_back(std::move(material));
 
-  tusdview::TextureRuntimeOptions opt;
-  opt.generateMips = true;
-  opt.compression = tusdview::TextureCompressionMode::BCn;
-
-  tusdview::DrawScene out;
-  tusdview::BuildDrawScene(scene, &out, nullptr, nullptr, opt);
-
-  CHECK(out.materials.size() == 1);
-  if (out.materials.size() != 1) return;
-  const tusdview::DrawMaterialCPU& m = out.materials[0];
-  CHECK(m.baseColorTex >= 0 && m.normalTex >= 0);
-  if (m.baseColorTex < 0 || m.normalTex < 0) return;
-
-  const tusdview::DrawTextureCPU& bt =
-      out.textures[static_cast<size_t>(m.baseColorTex)];
-  const tusdview::DrawTextureCPU& nt =
-      out.textures[static_cast<size_t>(m.normalTex)];
-  CHECK(!bt.isNormalMap);
-  CHECK(nt.isNormalMap);
+  // Pass 1: UNCOMPRESSED, so the RGBA mip chains survive for content checks
+  // (the compressed path frees them once the compressed chain is built).
+  {
+    tusdview::TextureRuntimeOptions opt;
+    opt.generateMips = true;
+    opt.compression = tusdview::TextureCompressionMode::Off;
+    tusdview::DrawScene out;
+    tusdview::BuildDrawScene(scene, &out, nullptr, nullptr, opt);
+    CHECK(out.materials.size() == 1);
+    if (out.materials.size() != 1) return;
+    const tusdview::DrawMaterialCPU& m = out.materials[0];
+    CHECK(m.baseColorTex >= 0 && m.normalTex >= 0);
+    if (m.baseColorTex < 0 || m.normalTex < 0) return;
+    const tusdview::DrawTextureCPU& bt =
+        out.textures[static_cast<size_t>(m.baseColorTex)];
+    const tusdview::DrawTextureCPU& nt =
+        out.textures[static_cast<size_t>(m.normalTex)];
+    CHECK(!bt.isNormalMap);
+    CHECK(nt.isNormalMap);
+    if (!tusdview::TexToolsAvailable()) return;
+    CHECK(bt.mipImages.size() == 4);  // 8,4,2,1
+    CHECK(nt.mipImages.size() == 4);
+    // Flat +Z normal map must stay flat at every level.
+    for (const light3d::Image& mip : nt.mipImages) {
+      CHECK(std::abs(int(mip.data[0]) - 128) <= 2);
+      CHECK(std::abs(int(mip.data[1]) - 128) <= 2);
+      CHECK(int(mip.data[2]) >= 252);
+    }
+  }
   if (!tusdview::TexToolsAvailable()) return;
 
-  CHECK(bt.mipImages.size() == 4);  // 8,4,2,1
-  CHECK(nt.mipImages.size() == 4);
-  // Flat +Z normal map must stay flat at every level.
-  for (const light3d::Image& mip : nt.mipImages) {
-    CHECK(std::abs(int(mip.data[0]) - 128) <= 2);
-    CHECK(std::abs(int(mip.data[1]) - 128) <= 2);
-    CHECK(int(mip.data[2]) >= 252);
+  // Pass 2: COMPRESSED (BCn). Format choice must be usage-aware, the compressed
+  // chain complete, and the now-dead RGBA chain freed (memory contract).
+  {
+    tusdview::TextureRuntimeOptions opt;
+    opt.generateMips = true;
+    opt.compression = tusdview::TextureCompressionMode::BCn;
+    tusdview::DrawScene out;
+    tusdview::BuildDrawScene(scene, &out, nullptr, nullptr, opt);
+    CHECK(out.materials.size() == 1);
+    if (out.materials.size() != 1) return;
+    const tusdview::DrawMaterialCPU& m = out.materials[0];
+    if (m.baseColorTex < 0 || m.normalTex < 0) return;
+    const tusdview::DrawTextureCPU& bt =
+        out.textures[static_cast<size_t>(m.baseColorTex)];
+    const tusdview::DrawTextureCPU& nt =
+        out.textures[static_cast<size_t>(m.normalTex)];
+    // Compressed chain: one format, one payload per level (8,4,2,1).
+    CHECK(bt.requestedCompressed);
+    CHECK(bt.compressed.format != tusdview::DrawCompressedFormat::None);
+    CHECK(bt.compressed.mips.size() == 4);
+    int expectW = 8;
+    for (size_t l = 0; l < bt.compressed.mips.size(); ++l) {
+      CHECK(bt.compressed.mips[l].width == expectW);
+      CHECK(!bt.compressed.mips[l].data.empty());
+      expectW /= 2;
+    }
+    // The RGBA chain is an intermediate on this path; it must be FREED once the
+    // compressed chain is built (it retained ~21 MB/4K texture of dead CPU RAM).
+    CHECK(bt.mipImages.empty());
+    CHECK(nt.mipImages.empty());
+    // Block-format choice must be usage-aware: an OPAQUE base color under BCn
+    // goes to BC1 (a 2-endpoint color line is fine for color), but a NORMAL map
+    // must NOT -- BC1/BC3 cross-contaminate its independent X/Y. It goes to a
+    // full-channel format (BC7 on this BC-capable default cap set) instead.
+    // This is the T4 regression: normal maps used to be squeezed onto BC1.
+    CHECK(bt.compressed.format == tusdview::DrawCompressedFormat::BC1);
+    CHECK(nt.compressed.format != tusdview::DrawCompressedFormat::BC1);
+    CHECK(nt.compressed.format != tusdview::DrawCompressedFormat::BC3);
+    CHECK(nt.compressed.format == tusdview::DrawCompressedFormat::BC7);
   }
-  // Compressed chain: one format, one payload per level.
-  CHECK(bt.requestedCompressed);
-  CHECK(bt.compressed.format != tusdview::DrawCompressedFormat::None);
-  CHECK(bt.compressed.mips.size() == bt.mipImages.size());
-  for (size_t l = 0; l < bt.compressed.mips.size(); ++l) {
-    CHECK(bt.compressed.mips[l].width == bt.mipImages[l].width);
-    CHECK(!bt.compressed.mips[l].data.empty());
-  }
-  // Block-format choice must be usage-aware: an OPAQUE base color under BCn goes
-  // to BC1 (2-endpoint color line is fine for color), but a NORMAL map must NOT
-  // -- BC1/BC3 cross-contaminate its independent X/Y. It goes to a full-channel
-  // format (BC7 on this BC-capable default cap set) instead. This is the T4
-  // regression: normal maps used to be squeezed onto BC1.
-  CHECK(bt.compressed.format == tusdview::DrawCompressedFormat::BC1);
-  CHECK(nt.compressed.format != tusdview::DrawCompressedFormat::BC1);
-  CHECK(nt.compressed.format != tusdview::DrawCompressedFormat::BC3);
-  CHECK(nt.compressed.format == tusdview::DrawCompressedFormat::BC7);
 }
 
 void TestDecodedFormatNormalization() {

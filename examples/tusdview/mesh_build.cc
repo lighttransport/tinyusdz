@@ -777,13 +777,26 @@ void NormalizeUdimTiles(DrawTextureCPU* tex, bool srgb, DrawScene* out) {
     h = std::max(h, tile.image.height);
   }
   if (w <= 0 || h <= 0) return;
+  // Resize every tile to the common (w,h); DROP any that fail -- the renderer
+  // uploads udimTiles as a 2D array requiring all layers to be exactly
+  // udimTileWidth/Height, so a leftover wrong-sized tile rendered as a
+  // black/garbage layer instead of the intended "missing" sentinel. Mirrors the
+  // --next loader (LoadNextUdimTexture); the dropped tile's UDIM id stays
+  // unmapped in the LUT rebuilt by InitUdimLookup below.
+  std::vector<DrawUdimTileCPU> sized;
+  sized.reserve(tex->udimTiles.size());
   for (DrawUdimTileCPU& tile : tex->udimTiles) {
-    if (tile.image.width == w && tile.image.height == h) continue;
-    std::string err;
-    if (!ResizeDrawImage(&tile.image, w, h, srgb, &err) && out) {
-      out->skipped.push_back("UDIM tile resize failed: " + err);
+    if (tile.image.width != w || tile.image.height != h) {
+      std::string err;
+      if (!ResizeDrawImage(&tile.image, w, h, srgb, &err)) {
+        if (out) out->skipped.push_back("UDIM tile resize failed (dropped): " + err);
+        continue;
+      }
     }
+    sized.push_back(std::move(tile));
   }
+  tex->udimTiles = std::move(sized);
+  if (tex->udimTiles.empty()) return;
   tex->udimTileWidth = w;
   tex->udimTileHeight = h;
   tex->image = tex->udimTiles.front().image;  // representative fallback.
@@ -943,16 +956,24 @@ DrawCompressedFormat ChooseCompressedFormat(TextureCompressionMode mode,
 
 bool EncodeBCn(const light3d::Image& img, bool srgb,
                TextureCompressionMode mode, const TextureCompressCaps& caps,
-               DrawCompressedImageCPU* out, bool normal_map) {
+               DrawCompressedImageCPU* out, bool normal_map,
+               const bool* opaque_override = nullptr) {
   if (!out || img.width <= 0 || img.height <= 0 || img.channels != 4 ||
       img.data.empty()) {
     return false;
   }
   bool opaque = true;
-  for (size_t i = 3; i < img.data.size(); i += 4) {
-    if (img.data[i] < 250) {
-      opaque = false;
-      break;
+  if (opaque_override) {
+    // UDIM: one opacity decision for the whole tile set (see CompressTexture) --
+    // per-tile choices mixed BC1 (8 B) and BC3 (16 B) blocks, which the 2D-array
+    // upload cannot combine, silently falling back to uncompressed.
+    opaque = *opaque_override;
+  } else {
+    for (size_t i = 3; i < img.data.size(); i += 4) {
+      if (img.data[i] < 250) {
+        opaque = false;
+        break;
+      }
     }
   }
 #if defined(TUSDVIEW_WITH_TEXTOOLS)
@@ -1006,9 +1027,23 @@ void CompressTexture(DrawTextureCPU* tex, TextureCompressionMode mode,
                      const TextureCompressCaps& caps, bool normal_map) {
   if (!tex) return;
   if (tex->isUdim) {
-    for (DrawUdimTileCPU& tile : tex->udimTiles) {
-      EncodeBCn(tile.image, tex->srgb, mode, caps, &tile.compressed, normal_map);
+    // One opacity decision for the whole tile set, so every layer gets the SAME
+    // block format (the 2D-array upload needs uniform format + layer size).
+    bool set_opaque = true;
+    for (const DrawUdimTileCPU& tile : tex->udimTiles) {
+      const auto& d = tile.image.data;
+      for (size_t i = 3; i < d.size(); i += 4) {
+        if (d[i] < 250) { set_opaque = false; break; }
+      }
+      if (!set_opaque) break;
     }
+    for (DrawUdimTileCPU& tile : tex->udimTiles) {
+      EncodeBCn(tile.image, tex->srgb, mode, caps, &tile.compressed, normal_map,
+                &set_opaque);
+    }
+    EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed, normal_map,
+              &set_opaque);
+    return;
   }
   EncodeBCn(tex->image, tex->srgb, mode, caps, &tex->compressed, normal_map);
 }
@@ -1178,7 +1213,16 @@ void FinalizeDrawTextures(const TextureRuntimeOptions& opt, DrawScene* out) {
         lvl.data = std::move(c.data);
         compressed->mips.push_back(std::move(lvl));
       }
-      if (!ok) compressed->mips.clear();  // base-only upload fallback
+      if (!ok) {
+        compressed->mips.clear();  // base-only upload fallback
+      } else {
+        // The uploaders read compressed.mips on this path and never touch the
+        // RGBA chain; keeping it retained ~21 MB of dead CPU RAM per 4K texture
+        // for the DrawScene's lifetime. The format was cap-gated, so no
+        // uncompressed fallback needs these levels.
+        mips->clear();
+        mips->shrink_to_fit();
+      }
     }
     return true;
   };

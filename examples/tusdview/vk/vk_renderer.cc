@@ -2734,8 +2734,18 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   mai.allocationSize = req.size;
   mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -2887,8 +2897,18 @@ bool VulkanRenderer::createCompressedTextureImage(const DrawCompressedImageCPU& 
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -3038,8 +3058,18 @@ bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -3138,8 +3168,18 @@ bool VulkanRenderer::createUdimLookupImage(const DrawTextureCPU& tex,
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -3224,8 +3264,18 @@ bool VulkanRenderer::createRgba32fTextureImage(int width, int height,
   mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   mai.allocationSize = req.size;
   mai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -3427,8 +3477,18 @@ bool VulkanRenderer::createIblCubeImage(
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -3520,8 +3580,18 @@ bool VulkanRenderer::createIblLutImage(const std::vector<float>& rg, int size,
   mai.allocationSize = req.size;
   mai.memoryTypeIndex =
       findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device_, &mai, nullptr, outMem);
-  vkBindImageMemory(device_, *outImg, *outMem, 0);
+  // Checked: on OOM (VK_ERROR_OUT_OF_DEVICE_MEMORY) the old unchecked calls
+  // proceeded to record copies into an UNBOUND image -> validation error /
+  // device loss. Failing here lets the caller keep the white-texture fallback.
+  if (vkAllocateMemory(device_, &mai, nullptr, outMem) != VK_SUCCESS ||
+      vkBindImageMemory(device_, *outImg, *outMem, 0) != VK_SUCCESS) {
+    if (*outMem) { vkFreeMemory(device_, *outMem, nullptr); *outMem = VK_NULL_HANDLE; }
+    vkDestroyImage(device_, *outImg, nullptr);
+    *outImg = VK_NULL_HANDLE;
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMem, nullptr);
+    return false;
+  }
 
   VkCommandBuffer cb = beginOneShot();
   VkImageMemoryBarrier toDst{};
@@ -4343,7 +4413,16 @@ void VulkanRenderer::updateMeshWorld(int meshIndex, const float world[16]) {
 }
 
 void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
-  if (sm.vertices.empty() || sm.indices.empty()) return;
+  if (sm.vertices.empty() || sm.indices.empty()) {
+    // Keep the SLOT: meshes_ must stay 1:1 with DrawScene/appendMesh order --
+    // every per-mesh index (visibility mask, highlight, updateMeshWorld/
+    // Vertices, RT meshId) is keyed by it. The GL backend keeps a placeholder
+    // for empty meshes; silently dropping here desynced all of those (toggling
+    // mesh N's visibility affected the wrong mesh). A default VkMeshGPU draws
+    // nothing (null vbo, no submeshes) and builds no BLAS (indexCount < 3).
+    meshes_.push_back(VkMeshGPU{});
+    return;
+  }
   VkMeshGPU gm;
   gm.submeshes = sm.submeshes;
   std::memcpy(gm.world, sm.world, sizeof(gm.world));
@@ -5507,7 +5586,16 @@ void VulkanRenderer::rebuildTlas() {
     insts.push_back(inst);
     InstanceInfoGPU info{};
     info.meshId = s.meshId;  // Proxy: boxMeshId; Full: the real mesh
-    info.useMaterial = (s.level == RtLod::Full && !s.instanced) ? 1u : 0u;
+    // Instanced prototypes historically had no material (submesh id 0), so RT
+    // shaded them by per-instance tint only. The loader now resolves the
+    // prototype's bound material (matId >= 1); use it when present so an
+    // instanced prototype's material (color/roughness/metal) shades in RT like
+    // a non-instanced mesh. Unmateraled prototypes (matId <= 0) keep the tint.
+    const bool instHasMaterial =
+        s.instanced && s.level == RtLod::Full &&
+        size_t(s.meshId) < meshes_.size() && meshes_[s.meshId].matId > 0;
+    info.useMaterial =
+        ((s.level == RtLod::Full && !s.instanced) || instHasMaterial) ? 1u : 0u;
     info.tint[0] = s.tint[0];
     info.tint[1] = s.tint[1];
     info.tint[2] = s.tint[2];
@@ -6878,6 +6966,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       }
       if (meshes_[mi].instanceCount > 0) continue;  // drawn in the instanced pass
       const auto& mesh = meshes_[mi];
+      // Empty-mesh placeholder (slot kept for index sync): nothing to draw.
+      if (mesh.vbo == VK_NULL_HANDLE || mesh.submeshes.empty()) continue;
       light3d::Mat4 W = ToMat4(mesh.world);
       // mvp = viewProj*model and the normal matrix are derived in the shader from
       // pc.model (frees the push-constant lanes they used).

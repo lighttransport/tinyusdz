@@ -416,7 +416,20 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       const matrix4d &world, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
                       LightCache *lights, std::vector<float> *tri_uvs,
-                      const std::vector<LegacyMaterialTex> *mat_tex) {
+                      const std::vector<LegacyMaterialTex> *mat_tex,
+                      const PurposeVisibilityMap *pv) {
+  // Resolved purpose/visibility (BuildLegacyPurposeVisibility): value 0 means an
+  // ancestor (or the mesh) authored visibility=invisible -- emit nothing. Any
+  // other value is the inherited purpose bit for every triangle of this mesh.
+  // No map / no entry keeps the old behavior (default purpose, visible).
+  uint32_t purpose_bit = kPurposeDefaultBit;
+  if (pv) {
+    auto it = pv->find(mesh.abs_path);
+    if (it != pv->end()) {
+      if (it->second == 0u) return;  // invisible
+      purpose_bit = it->second;
+    }
+  }
   if (!vertices || !tris || !bounds) return;
   const std::vector<uint32_t> &indices = mesh.faceVertexIndices();
   const std::vector<uint32_t> &counts = mesh.faceVertexCounts();
@@ -494,6 +507,7 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
         n = Mul(n, -1.0f);
       }
       TriInfo tri;
+      tri.purpose_bit = purpose_bit;
       tri.p0 = p0;
       tri.p1 = p1;
       tri.p2 = p2;
@@ -502,6 +516,8 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
       tri.emission = MaterialEmission(scene, mat_id);
       tri.roughness = MaterialRoughness(scene, mat_id);
       tri.metallic = MaterialMetallic(scene, mat_id);
+      tri.opacity = MaterialOpacity(scene, mesh, mat_id);
+      tri.opacity_threshold = MaterialOpacityThreshold(scene, mat_id);
       if (mesh.is_area_light) {
         tri.emission = MeshLightEmission(scene, mesh, mat_id, mesh_area);
       }
@@ -579,18 +595,19 @@ void CollectGeometry(const RenderScene &scene, const Node &node,
                      Bounds *bounds,
                      const std::unordered_set<std::string> *skip_paths,
                      LightCache *lights, std::vector<float> *tri_uvs,
-                     const std::vector<LegacyMaterialTex> *mat_tex) {
+                     const std::vector<LegacyMaterialTex> *mat_tex,
+                     const PurposeVisibilityMap *pv) {
   if (node.nodeType == NodeType::Mesh && node.id >= 0 &&
       size_t(node.id) < scene.meshes.size()) {
     const RenderMesh &mesh = scene.meshes[size_t(node.id)];
     if (!skip_paths || !skip_paths->count(mesh.abs_path)) {
       AddMeshTriangles(scene, mesh, node.global_matrix, vertices, tris, bounds,
-                       lights, tri_uvs, mat_tex);
+                       lights, tri_uvs, mat_tex, pv);
     }
   }
   for (const Node &child : node.children) {
     CollectGeometry(scene, child, vertices, tris, bounds, skip_paths, lights,
-                    tri_uvs, mat_tex);
+                    tri_uvs, mat_tex, pv);
   }
 }
 
@@ -598,20 +615,22 @@ void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         std::vector<TriInfo> *tris, Bounds *bounds,
                         const std::unordered_set<std::string> *skip_paths,
                         LightCache *lights, std::vector<float> *tri_uvs,
-                        const std::vector<LegacyMaterialTex> *mat_tex) {
+                        const std::vector<LegacyMaterialTex> *mat_tex,
+                        const PurposeVisibilityMap *pv) {
   for (const Node &root : scene.nodes) {
     CollectGeometry(scene, root, vertices, tris, bounds, skip_paths, lights,
-                    tri_uvs, mat_tex);
+                    tri_uvs, mat_tex, pv);
   }
   for (const tinyusdz::tydra::RenderInstance &inst : scene.instances) {
     if (inst.mesh_id >= 0 && size_t(inst.mesh_id) < scene.meshes.size() &&
         inst.visible) {
       const RenderMesh &mesh = scene.meshes[size_t(inst.mesh_id)];
       AddMeshTriangles(scene, mesh, inst.global_matrix, vertices, tris, bounds,
-                       lights, tri_uvs, mat_tex);
+                       lights, tri_uvs, mat_tex, pv);
     }
   }
 }
+
 
 
 template <typename T>
@@ -775,6 +794,38 @@ tinyusdz::Purpose ResolvePurpose(const tinyusdz::Prim &prim,
 bool PurposeVisible(uint32_t purpose_bit, uint32_t purpose_mask) {
   return (purpose_bit & purpose_mask) != 0;
 }
+
+// Resolve inherited purpose + visibility for every prim of the (legacy) Stage,
+// keyed by absolute prim path. Value = the purpose bit the subtree inherits, or
+// 0 when an ancestor (or the prim itself) authored visibility="invisible". The
+// tydra RenderScene carries neither, so without this the legacy shaded path
+// drew guide/proxy geometry unconditionally (-purpose/-hideProxy/... were
+// no-ops) and rendered invisible prims.
+void BuildLegacyPurposeVisibility(const tinyusdz::Stage &stage,
+                                  PurposeVisibilityMap *out) {
+  if (!out) return;
+  std::function<void(const tinyusdz::Prim &, tinyusdz::Purpose, bool)> walk =
+      [&](const tinyusdz::Prim &prim, tinyusdz::Purpose inherited,
+          bool invisible) {
+        if (const tinyusdz::GPrim *gp = AsPreviewGPrim(prim)) {
+          tinyusdz::Visibility vis = tinyusdz::Visibility::Inherited;
+          if (gp->visibility.get_value().get_default(&vis) &&
+              vis == tinyusdz::Visibility::Invisible) {
+            invisible = true;
+          }
+        }
+        inherited = ResolvePurpose(prim, inherited);
+        const std::string path = prim.absolute_path().full_path_name();
+        (*out)[path] = invisible ? 0u : PurposeBit(inherited);
+        for (const tinyusdz::Prim &child : prim.children()) {
+          walk(child, inherited, invisible);
+        }
+      };
+  for (const tinyusdz::Prim &root : stage.root_prims()) {
+    walk(root, tinyusdz::Purpose::Default, false);
+  }
+}
+
 
 bool AddRTPreviewMesh(const tinyusdz::Stage &stage, const std::string &prim_path,
                       const tinyusdz::GeomMesh &mesh, const matrix4d &world,

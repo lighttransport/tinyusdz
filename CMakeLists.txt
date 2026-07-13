@@ -2246,6 +2246,7 @@ if(TINYUSDZ_BUILD_TESTS)
   if(TARGET tusdrender)
     set(TUSDR_SHELL_TESTS
         camera-modes
+        cli-robustness
         cmyk-jpeg-texture
         degraded-material
         frames-framespec
@@ -2260,6 +2261,7 @@ if(TINYUSDZ_BUILD_TESTS)
         mtlx-usdz-udim-equivalence
         opacity-texture-alpha
         purpose-filtering
+        purpose-visibility
         shaped-area-lights
         sphere-light-nee
         subdivision-schemes
