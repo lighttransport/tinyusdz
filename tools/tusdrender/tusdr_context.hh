@@ -80,6 +80,11 @@ Vec3 MaterialEmission(const RenderScene &scene, int material_id);
 float MaterialRoughness(const RenderScene &scene, int material_id);
 
 float MaterialMetallic(const RenderScene &scene, int material_id);
+// Constant opacity (surface opacity x constant displayOpacity) and the
+// UsdPreviewSurface alpha-cutout threshold; see tusdr_material.cc.
+float MaterialOpacity(const RenderScene &scene, const RenderMesh &mesh,
+                      int material_id);
+float MaterialOpacityThreshold(const RenderScene &scene, int material_id);
 
 Vec3 MeshLightEmission(const RenderScene &scene, const RenderMesh &mesh,
                        int material_id, float total_area);
@@ -653,15 +658,24 @@ struct LegacyMaterialTex {
 std::vector<LegacyMaterialTex> BuildLegacyTextures(const RenderScene &scene,
                                                    std::vector<Texture> *out);
 
+// Absolute prim path -> inherited purpose bit; 0 = visibility="invisible"
+// (subtree pruned). Built by BuildLegacyPurposeVisibility.
+using PurposeVisibilityMap = std::unordered_map<std::string, uint32_t>;
+void BuildLegacyPurposeVisibility(const tinyusdz::Stage &stage,
+                                  PurposeVisibilityMap *out);
+
 // `tri_uvs` (when non-null) receives 6 floats per emitted triangle — the raw USD
 // per-corner UVs, parallel to *tris, as the integrator expects. Textures are
 // bound per triangle from `mat_tex` (null = untextured, the old behavior).
+// `pv` (when non-null) stamps each mesh's inherited purpose bit and prunes
+// invisible meshes.
 void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
                       const matrix4d &world, std::vector<float> *vertices,
                       std::vector<TriInfo> *tris, Bounds *bounds,
                       LightCache *lights = nullptr,
                       std::vector<float> *tri_uvs = nullptr,
-                      const std::vector<LegacyMaterialTex> *mat_tex = nullptr);
+                      const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                      const PurposeVisibilityMap *pv = nullptr);
 
 void CollectGeometry(const RenderScene &scene, const Node &node,
                      std::vector<float> *vertices, std::vector<TriInfo> *tris,
@@ -669,14 +683,16 @@ void CollectGeometry(const RenderScene &scene, const Node &node,
                      const std::unordered_set<std::string> *skip_paths,
                      LightCache *lights,
                      std::vector<float> *tri_uvs = nullptr,
-                     const std::vector<LegacyMaterialTex> *mat_tex = nullptr);
+                     const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                     const PurposeVisibilityMap *pv = nullptr);
 
 void CollectAllGeometry(const RenderScene &scene, std::vector<float> *vertices,
                         std::vector<TriInfo> *tris, Bounds *bounds,
                         const std::unordered_set<std::string> *skip_paths,
                         LightCache *lights,
                         std::vector<float> *tri_uvs = nullptr,
-                        const std::vector<LegacyMaterialTex> *mat_tex = nullptr);
+                        const std::vector<LegacyMaterialTex> *mat_tex = nullptr,
+                        const PurposeVisibilityMap *pv = nullptr);
 
 matrix4d LocalMatrixOrIdentity(const tinyusdz::Xformable *xformable, double time,
                                bool *reset);

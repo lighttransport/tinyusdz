@@ -237,14 +237,18 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       std::exit(EXIT_SUCCESS);
     } else if (a == "-w" || a == "-width" || a == "--width") {
       const char *v = need_value(a.c_str());
-      if (!v || !ParseIntStrict(v, &opt->width) || opt->width <= 0) {
-        std::cerr << "Invalid width.\n";
+      // Capped: the framebuffer is width*height*4 floats with no other guard, so
+      // an absurd size is an OOM, not a render. 32k is far above real use.
+      if (!v || !ParseIntStrict(v, &opt->width) || opt->width <= 0 ||
+          opt->width > 32768) {
+        std::cerr << "Invalid width (1..32768).\n";
         return false;
       }
     } else if (a == "-height" || a == "--height") {
       const char *v = need_value(a.c_str());
-      if (!v || !ParseIntStrict(v, &opt->height) || opt->height <= 0) {
-        std::cerr << "Invalid height.\n";
+      if (!v || !ParseIntStrict(v, &opt->height) || opt->height <= 0 ||
+          opt->height > 32768) {
+        std::cerr << "Invalid height (1..32768).\n";
         return false;
       }
     } else if (a == "-camera" || a == "--camera") {
@@ -254,8 +258,13 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       opt->camera_explicit = true;
     } else if (a == "-fitScale" || a == "--fitScale") {
       const char *v = need_value(a.c_str());
-      if (!v) return false;
-      opt->fit_scale = std::max(0.05f, std::stof(v));
+      // std::stof threw (uncaught -> SIGABRT) on non-numeric/out-of-range input.
+      float fs = 0.0f;
+      if (!v || !ParseFloatStrict(v, &fs)) {
+        std::cerr << "Invalid fitScale.\n";
+        return false;
+      }
+      opt->fit_scale = std::max(0.05f, fs);
     } else if (a == "-viewDir" || a == "--viewDir") {
       const char *v = need_value(a.c_str());
       if (!v || !ParseColor(v, &opt->view_dir) || Length(opt->view_dir) < 1.0e-6f) {
@@ -306,8 +315,10 @@ bool ParseArgs(int argc, char **argv, Options *opt) {
       }
     } else if (a == "-samples" || a == "--samples") {
       const char *v = need_value(a.c_str());
-      if (!v || !ParseIntStrict(v, &opt->samples) || opt->samples <= 0) {
-        std::cerr << "Invalid samples.\n";
+      // Capped: samples multiplies the whole render time with no other guard.
+      if (!v || !ParseIntStrict(v, &opt->samples) || opt->samples <= 0 ||
+          opt->samples > 65536) {
+        std::cerr << "Invalid samples (1..65536).\n";
         return false;
       }
     } else if (a == "-bg" || a == "--bg") {
