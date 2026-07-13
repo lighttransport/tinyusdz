@@ -37,6 +37,10 @@ endif()
 
 project(${BUILD_TARGET} CXX C)
 
+include(CTest)
+option(TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS
+       "Register host-browser WASM regression tests with CTest" ON)
+
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "TinyUSDZ WASM: CMAKE_BUILD_TYPE not set; defaulting to MinSizeRel.")
   set(CMAKE_BUILD_TYPE "MinSizeRel" CACHE STRING
@@ -77,6 +81,34 @@ endif()
 
 if (TINYUSDZ_WASM64)
   list(APPEND TINYUSDZ_WASM_COMMON_COMPILE_OPTIONS "-sMEMORY64=1")
+endif()
+
+# The OpenPBR visual parity test requires the combined module because it renders
+# every fixture through both the legacy and next backends. It is a host-side
+# Node/Puppeteer test even though this project is configured through emcmake.
+if (BUILD_TESTING AND TINYUSDZ_WASM_BROWSER_REGRESSION_TESTS AND
+    NOT TINYUSDZ_WASM_NEXT_ONLY AND NOT TINYUSDZ_WASM_LEGACY_ONLY)
+  find_program(TINYUSDZ_NODE_EXECUTABLE NAMES node nodejs)
+  set(TINYUSDZ_OPENPBR_VISUAL_DIFF
+      "${PROJECT_SOURCE_DIR}/js/cli/openpbr-visual-diff.mjs")
+  if (TINYUSDZ_NODE_EXECUTABLE AND EXISTS "${TINYUSDZ_OPENPBR_VISUAL_DIFF}")
+    add_test(
+      NAME wasm-regression-openpbr-visual-diff
+      COMMAND "${TINYUSDZ_NODE_EXECUTABLE}" "${TINYUSDZ_OPENPBR_VISUAL_DIFF}"
+              --sw --dump-images --dump-composite
+              --out "${CMAKE_CURRENT_BINARY_DIR}/test-artifacts/openpbr-visual-diff")
+    set_tests_properties(
+      wasm-regression-openpbr-visual-diff
+      PROPERTIES
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/js"
+        TIMEOUT 300
+        RUN_SERIAL TRUE
+        LABELS "wasm;browser;regression")
+  else()
+    message(STATUS
+      "TinyUSDZ WASM: skipping OpenPBR browser regression registration "
+      "(Node or visual-diff CLI not found)")
+  endif()
 endif()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")

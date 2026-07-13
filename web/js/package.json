@@ -45,6 +45,7 @@
     "anim-info": "vite-node cli/animation-info.js",
     "anim-info:detailed": "vite-node cli/animation-info.js --detailed",
     "verify-materialx": "vite-node cli/verify-materialx.js",
+    "test:openpbr-visual-diff": "node cli/openpbr-visual-diff.mjs",
     "test:validation-parity": "node tests/validation-parity.mjs",
     "test:colorspace": "vite-node tests/colorspace-test.js",
     "benchmark:exr": "vite-node cli/benchmark-exr.js",

@@ -8,7 +8,13 @@ import * as THREE from 'three';
 
 import { convertFolderToUSDZ, loadWasm, unpackUSDZ } from '../src/usdzconvert.js';
 import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
-import { buildNextThreeNode } from '../src/tinyusdz/NextRenderSceneUtils.js';
+import {
+  buildNextThreeNode,
+  createNextMaterial,
+  materialXTextureSpecForParam,
+  NextTextureLoadingManager,
+  textureColorRole
+} from '../src/tinyusdz/NextRenderSceneUtils.js';
 
 const SCENE_USDA = `#usda 1.0
 (
@@ -22,6 +28,54 @@ def Xform "World"
         int[] faceVertexCounts = [3]
         int[] faceVertexIndices = [0, 1, 2]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+}
+`;
+
+const OPENPBR_NODEGRAPH_SPHERE_USDA = `#usda 1.0
+(
+    defaultPrim = "World"
+)
+def Xform "World"
+{
+    def Sphere "Ball"
+    {
+        rel material:binding = </World/Mat>
+    }
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/PreviewFallback.outputs:surface>
+        token outputs:mtlx:surface.connect = </World/Mat/Surface.outputs:surface>
+        string config:mtlx:version = "1.39"
+        def Shader "PreviewFallback"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 1, 1)
+            token outputs:surface
+        }
+        def Shader "Surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color.connect = </World/Mat/Graph.outputs:result>
+            token outputs:surface
+        }
+        def NodeGraph "Graph"
+        {
+            color3f outputs:result.connect = </World/Mat/Graph/invert.outputs:out>
+            def Shader "color"
+            {
+                uniform token info:id = "ND_constant_color3"
+                color3f inputs:value = (1, 0.5, 0.1)
+                color3f outputs:out
+            }
+            def Shader "invert"
+            {
+                uniform token info:id = "ND_subtract_color3"
+                color3f inputs:in1 = (1, 1, 1)
+                color3f inputs:in2.connect = </World/Mat/Graph/color.outputs:out>
+                color3f outputs:out
+            }
+        }
     }
 }
 `;
@@ -176,10 +230,126 @@ const native = await loadWasm(() => import(glueUrl), {
   locateFile: (file) => new URL(file, wasmDir).pathname,
 });
 
+await testAsync('next texture roles preserve linear wide-gamut inputs', async () => {
+  assert.equal(textureColorRole('map', 'lin_rec2020'), 'data');
+  assert.equal(textureColorRole('map', 'lin_displayp3'), 'data');
+  assert.equal(textureColorRole('map', 'acescg'), 'data');
+  assert.equal(textureColorRole('map', 'srgb_displayp3'), 'color');
+});
+
+await testAsync('next texture graph preserves image power operations', async () => {
+  const graph = {
+    nodegraph: {
+      nodes: [
+        {
+          name: 'image', category: 'image_color4', inputs: [
+            { name: 'file', value: './checker.png', colorspace: 'lin_rec709' }
+          ]
+        },
+        {
+          name: 'convert', category: 'convert_color4_color3', inputs: [
+            { name: 'in', nodename: 'image' }
+          ]
+        },
+        {
+          name: 'gamma', category: 'power_color3', inputs: [
+            { name: 'in1', nodename: 'convert' },
+            { name: 'in2', value: [0.4545, 0.4545, 0.4545] }
+          ]
+        }
+      ],
+      outputs: [{ name: 'gamma_out', nodename: 'gamma' }]
+    },
+    connections: [{ input: 'base_color', output: 'gamma_out' }]
+  };
+  const spec = materialXTextureSpecForParam(graph, 'base_color');
+  assert.equal(spec.filename, './checker.png');
+  assert.equal(spec.colorspace, 'lin_rec709');
+  assert.deepEqual(spec.ops.map((op) => op.category), ['power']);
+  assert.deepEqual(spec.ops[0].node.inputs[1].value, [0.4545, 0.4545, 0.4545]);
+});
+
+await testAsync('next queues graph-derived opacity from a shared color image', async () => {
+  const graph = {
+    nodegraph: {
+      nodes: [
+        {
+          name: 'image', category: 'image', inputs: [
+            { name: 'file', value: './beam.png' }
+          ]
+        },
+        {
+          name: 'extract', category: 'extract', inputs: [
+            { name: 'in', nodename: 'image' },
+            { name: 'index', value: 0 }
+          ]
+        }
+      ],
+      outputs: [{ name: 'opacity_out', nodename: 'extract' }]
+    },
+    connections: [{ input: 'geometry_opacity', output: 'opacity_out' }]
+  };
+  const manager = new NextTextureLoadingManager();
+  const material = createNextMaterial({
+    material: {
+      baseColor: [1, 1, 1],
+      opacity: 1,
+      openPBRNodeGraphJson: JSON.stringify(graph),
+      textureMetadata: {
+        baseColor: { sourceColorSpace: 'sRGB' },
+        opacity: { sourceColorSpace: 'sRGB' }
+      }
+    },
+    texturePaths: {
+      baseColor: './beam.png',
+      opacity: './beam.png'
+    }
+  }, {}, manager, false);
+  assert.equal(material.transparent, true);
+  assert.equal(manager.tasks.length, 2,
+    'shared color/opacity image needs separate direct and baked tasks');
+  const alphaTask = manager.tasks.find((task) =>
+    task.bindings.some((binding) => binding.mapProperty === 'alphaMap'));
+  assert.ok(alphaTask, 'graph-derived opacity must queue an alphaMap');
+  assert.deepEqual(alphaTask.materialXOps.map((op) => op.category), ['extract']);
+});
+
 assert.equal(typeof native.NextUSDZConverterNative, 'function',
   'next-only glue should expose NextUSDZConverterNative');
 assert.equal(typeof native.TinyUSDZLoaderNative, 'undefined',
   'next-only glue must not depend on the legacy converter binding');
+
+await testAsync('next RenderStream exposes analytic geometry and MaterialX node graphs', async () => {
+  const stream = new native.RenderStream();
+  try {
+    const bytes = new TextEncoder().encode(OPENPBR_NODEGRAPH_SPHERE_USDA);
+    const result = stream.begin(bytes);
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(result.meshCount, 1,
+      'analytic Sphere should be exposed as a render mesh');
+    const mesh = stream.getMesh(0);
+    assert.equal(mesh.primPath, '/World/Ball');
+    assert.ok(mesh.points?.length > 0, 'generated sphere should expose positions');
+    assert.ok(mesh.normals?.length > 0, 'generated sphere should expose normals');
+    assert.equal(mesh.material?.shaderType, 'OpenPBR');
+    assert.ok(mesh.material?.baseColor?.every((value, index) =>
+      Math.abs(value - [0, 0.5, 0.9][index]) < 1e-6),
+    'constant MaterialX subtract network should drive the fallback color');
+    assert.deepEqual(mesh.material?.emissive, [0, 0, 0],
+      'zero OpenPBR emission luminance should suppress authored emission color');
+    const graph = JSON.parse(mesh.material.openPBRNodeGraphJson);
+    assert.equal(graph.nodegraph.name, 'Graph');
+    assert.deepEqual(graph.nodegraph.nodes.map((node) => node.name),
+      ['color', 'invert']);
+    assert.equal(graph.nodegraph.nodes[1].inputs[1].nodename, 'color');
+    assert.deepEqual(graph.connections, [{
+      input: 'base_color', nodegraph: 'Graph', output: 'result'
+    }]);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
 
 function assertReloadsWithRenderStream(usdz, label) {
   const stream = new native.RenderStream();

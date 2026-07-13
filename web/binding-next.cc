@@ -1009,6 +1009,150 @@ nlohmann::json NextValueJSON(const tn::Value& value) {
   return nullptr;
 }
 
+const std::vector<tn::Path>* NextPropertyConnections(
+    const tn::UsdPrim& prim, const std::string& property_name) {
+  const tn::PrimSpec* spec = prim.GetPrimSpec();
+  return spec ? spec->connection(property_name) : nullptr;
+}
+
+std::string NextConnectionPrimPath(const std::string& connection) {
+  size_t dot = connection.find(".outputs:");
+  if (dot == std::string::npos) dot = connection.find(".inputs:");
+  if (dot == std::string::npos) dot = connection.rfind('.');
+  return dot == std::string::npos ? connection : connection.substr(0, dot);
+}
+
+std::string NextConnectionOutputName(const std::string& connection) {
+  const size_t marker = connection.find(".outputs:");
+  if (marker != std::string::npos) return connection.substr(marker + 9);
+  const size_t dot = connection.rfind('.');
+  return dot == std::string::npos ? std::string() : connection.substr(dot + 1);
+}
+
+std::string NextConnectionNodeName(const std::string& connection) {
+  const std::string path = NextConnectionPrimPath(connection);
+  const size_t slash = path.rfind('/');
+  return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+std::string NextMtlxCategory(const std::string& node_id) {
+  if (node_id.rfind("ND_", 0) != 0) return node_id;
+  const std::string body = node_id.substr(3);
+  const size_t suffix = body.rfind('_');
+  return suffix == std::string::npos ? body : body.substr(0, suffix);
+}
+
+void CollectNextNodeGraphs(const tn::UsdPrim& prim,
+                           std::vector<tn::UsdPrim>* graphs) {
+  if (!graphs) return;
+  for (const tn::UsdPrim& child : prim.GetChildren()) {
+    if (child.GetTypeName() == "NodeGraph") graphs->push_back(child);
+    CollectNextNodeGraphs(child, graphs);
+  }
+}
+
+// Reconstruct the compact MaterialX graph payload expected by the web graph
+// editor. The next render converter deliberately stores GPU-facing shader
+// parameters; the authored node network remains in the Stage and must be
+// serialized before RenderStream releases it.
+std::string BuildNextNodeGraphJson(const tn::UsdPrim& material,
+                                   const tn::UsdPrim& shader,
+                                   const std::string& version) {
+  if (!material.IsValid() || !shader.IsValid()) return {};
+  std::vector<tn::UsdPrim> graphs;
+  CollectNextNodeGraphs(material, &graphs);
+  if (graphs.empty()) return {};
+
+  tn::UsdPrim graph = graphs.front();
+  for (const std::string& property : shader.GetPropertyNames()) {
+    if (property.rfind("inputs:", 0) != 0) continue;
+    const std::vector<tn::Path>* connections =
+        NextPropertyConnections(shader, property);
+    if (!connections || connections->empty()) continue;
+    const std::string source = NextConnectionPrimPath((*connections)[0].str());
+    for (const tn::UsdPrim& candidate : graphs) {
+      const std::string candidate_path = candidate.GetPath().str();
+      if (source == candidate_path ||
+          source.rfind(candidate_path + "/", 0) == 0) {
+        graph = candidate;
+        break;
+      }
+    }
+  }
+
+  nlohmann::json root;
+  root["version"] = version.empty() ? "1.39" : version;
+  nlohmann::json graph_json;
+  graph_json["name"] = graph.GetName();
+  graph_json["nodes"] = nlohmann::json::array();
+  graph_json["outputs"] = nlohmann::json::array();
+
+  for (const tn::UsdPrim& node : graph.GetChildren()) {
+    if (!tn::IsShader(node)) continue;
+    std::string node_id;
+    if (const tn::Value* value = node.GetPropertyValue("info:id")) {
+      if (const std::string* token = value->as_token()) node_id = *token;
+      else if (const std::string* str = value->as_string()) node_id = *str;
+    }
+    nlohmann::json node_json;
+    node_json["name"] = node.GetName();
+    node_json["category"] = NextMtlxCategory(node_id);
+    node_json["type"] = node_id;
+    node_json["inputs"] = nlohmann::json::array();
+    for (const std::string& property : node.GetPropertyNames()) {
+      if (property.rfind("inputs:", 0) != 0) continue;
+      nlohmann::json input;
+      input["name"] = property.substr(7);
+      const std::vector<tn::Path>* connections =
+          NextPropertyConnections(node, property);
+      if (connections && !connections->empty()) {
+        const std::string source = (*connections)[0].str();
+        input["nodename"] = NextConnectionNodeName(source);
+        input["output"] = NextConnectionOutputName(source);
+      } else if (const tn::Value* value = node.GetPropertyValue(property)) {
+        nlohmann::json encoded = NextValueJSON(*value);
+        if (!encoded.is_null()) input["value"] = std::move(encoded);
+      }
+      node_json["inputs"].push_back(std::move(input));
+    }
+    graph_json["nodes"].push_back(std::move(node_json));
+  }
+
+  for (const std::string& property : graph.GetPropertyNames()) {
+    if (property.rfind("outputs:", 0) != 0) continue;
+    nlohmann::json output;
+    output["name"] = property.substr(8);
+    const std::vector<tn::Path>* connections =
+        NextPropertyConnections(graph, property);
+    if (connections && !connections->empty()) {
+      const std::string source = (*connections)[0].str();
+      output["nodename"] = NextConnectionNodeName(source);
+      output["output"] = NextConnectionOutputName(source);
+    }
+    graph_json["outputs"].push_back(std::move(output));
+  }
+
+  root["nodegraph"] = std::move(graph_json);
+  root["connections"] = nlohmann::json::array();
+  const std::string graph_path = graph.GetPath().str();
+  for (const std::string& property : shader.GetPropertyNames()) {
+    if (property.rfind("inputs:", 0) != 0) continue;
+    const std::vector<tn::Path>* connections =
+        NextPropertyConnections(shader, property);
+    if (!connections || connections->empty()) continue;
+    const std::string source = (*connections)[0].str();
+    const std::string source_prim = NextConnectionPrimPath(source);
+    if (source_prim != graph_path &&
+        source_prim.rfind(graph_path + "/", 0) != 0) continue;
+    nlohmann::json connection;
+    connection["input"] = property.substr(7);
+    connection["nodegraph"] = graph.GetName();
+    connection["output"] = NextConnectionOutputName(source);
+    root["connections"].push_back(std::move(connection));
+  }
+  return root.dump();
+}
+
 void AppendNextPhysicsPrimJSON(const tn::UsdPrim& prim, nlohmann::json* out) {
   if (!out || !prim.IsValid()) return;
   nlohmann::json item;
@@ -1484,7 +1628,10 @@ class RenderStream {
     if (mesh_merge_) {
       buildOptimizedOutputs_();
     }
-    if (!mesh_only_) buildRenderScene_();
+    if (!mesh_only_) {
+      buildRenderScene_();
+      buildAnalyticOutputs_();
+    }
     loaded_ = true;
     r.set("success", true);
     r.set("meshCount", meshCount());
@@ -1537,8 +1684,8 @@ class RenderStream {
 
   int meshCount() const {
     if (!loaded_ && outputs_.empty()) return 0;
-    if (mesh_merge_) return static_cast<int>(outputs_.size());
-    return static_cast<int>(meshes_.size());
+    const size_t authored = mesh_merge_ ? outputs_.size() : meshes_.size();
+    return static_cast<int>(authored + analytic_outputs_.size());
   }
 
   int nodeCount() const {
@@ -1667,6 +1814,19 @@ class RenderStream {
         break;
       case tr::LightType::Dome: {
         out.set("textureId", light.params.dome.texture_id);
+        // Legacy light consumers use textureFile/envmapTextureId. The next
+        // scene keeps dome images in RenderScene::images rather than the
+        // legacy decoded-image table, so expose the authored path and let the
+        // browser archive adapter resolve it (or recognize color_RRGGBB.exr).
+        out.set("envmapTextureId", -1);
+        if (light.params.dome.texture_id >= 0 &&
+            static_cast<size_t>(light.params.dome.texture_id) <
+                render_scene_.images.size()) {
+          const tr::TextureImage& image = render_scene_.images[
+              static_cast<size_t>(light.params.dome.texture_id)];
+          out.set("textureFile", image.name.empty() ? image.resolved_path
+                                                    : image.name);
+        }
         const char* format = "automatic";
         switch (light.params.dome.texture_format) {
           case tr::RenderLight::DomeTextureFormat::Latlong:
@@ -2372,11 +2532,17 @@ class RenderStream {
       return out;
     }
     if (mesh_merge_) {
-      const OutputMesh &record = outputs_[static_cast<size_t>(i)];
-      if (record.merged) return outputMergedMesh_(record);
-      return outputSourceMesh_(record.source_index);
+      if (static_cast<size_t>(i) < outputs_.size()) {
+        const OutputMesh &record = outputs_[static_cast<size_t>(i)];
+        if (record.merged) return outputMergedMesh_(record);
+        return outputSourceMesh_(record.source_index);
+      }
+      return outputMergedMesh_(
+          analytic_outputs_[static_cast<size_t>(i) - outputs_.size()]);
     }
-    return outputSourceMesh_(i);
+    if (static_cast<size_t>(i) < meshes_.size()) return outputSourceMesh_(i);
+    return outputMergedMesh_(
+        analytic_outputs_[static_cast<size_t>(i) - meshes_.size()]);
   }
 
   // Free the stage, mesh list and scratch (returns the heap to the allocator).
@@ -2389,6 +2555,8 @@ class RenderStream {
     meshes_.shrink_to_fit();
     outputs_.clear();
     outputs_.shrink_to_fit();
+    analytic_outputs_.clear();
+    analytic_outputs_.shrink_to_fit();
     materials_.clear();
     material_key_to_id_.clear();
     material_path_to_id_.clear();
@@ -2513,6 +2681,107 @@ class RenderStream {
     std::array<double, 16> local_matrix;
     std::array<double, 16> world_matrix;
   };
+
+  template <typename Chunked>
+  static void copyChunked_(const Chunked& src, std::vector<float>* dst) {
+    if (!dst) return;
+    dst->resize(src.size());
+    for (size_t i = 0; i < src.size(); ++i) (*dst)[i] = src[i];
+  }
+
+  void buildAnalyticOutputs_() {
+    analytic_outputs_.clear();
+    if (!render_scene_valid_) return;
+    for (const tr::RenderMesh& source : render_scene_.meshes) {
+      const tinyusdz::next::UsdPrim prim =
+          stage_.GetPrimAtPath(source.prim_path);
+      if (!prim.IsValid() || prim.GetTypeName() == "Mesh") continue;
+
+      OutputMesh out;
+      out.name = source.name;
+      out.prim_path = source.prim_path;
+      out.double_sided = matBool_(prim, "doubleSided", false);
+      out.local_matrix = localMatrix_(prim);
+      out.world_matrix = worldMatrixForPrim_(prim);
+
+      tinyusdz::next::UsdPrim material;
+      if (source.material_id >= 0 &&
+          static_cast<size_t>(source.material_id) <
+              render_scene_.materials.size()) {
+        material = stage_.GetPrimAtPath(
+            render_scene_.materials[static_cast<size_t>(source.material_id)]
+                .prim_path);
+      }
+      if (!material.IsValid()) {
+        material = tinyusdz::next::GetBoundMaterial(stage_, prim);
+      }
+      out.material_id = registerMaterial_(material);
+
+      const size_t point_count = source.points.size() / 3;
+      const bool vertex_normals =
+          source.normals.empty() ||
+          (source.normals_interp == tr::Interpolation::Vertex &&
+           source.normals.size() == point_count * 3);
+      const bool vertex_uvs =
+          source.texcoords_0.empty() ||
+          (source.texcoords_0_interp == tr::Interpolation::Vertex &&
+           source.texcoords_0.size() == point_count * 2);
+
+      if (vertex_normals && vertex_uvs) {
+        copyChunked_(source.points, &out.points);
+        copyChunked_(source.normals, &out.normals);
+        copyChunked_(source.texcoords_0, &out.uv);
+        out.indices.resize(source.triangulated_indices.size());
+        for (size_t i = 0; i < source.triangulated_indices.size(); ++i) {
+          out.indices[i] = source.triangulated_indices[i];
+        }
+      } else {
+        // Face-varying analytic attributes need one vertex per triangulated
+        // corner. Preserve the converter's authored-corner remap so generated
+        // sphere/cone UV seams and normals stay aligned.
+        out.soup = true;
+        const size_t corners = source.triangulated_indices.size();
+        out.points.reserve(corners * 3);
+        if (!source.normals.empty()) out.normals.reserve(corners * 3);
+        if (!source.texcoords_0.empty()) out.uv.reserve(corners * 2);
+        for (size_t corner = 0; corner < corners; ++corner) {
+          const uint32_t vertex = source.triangulated_indices[corner];
+          if (vertex >= point_count) continue;
+          for (size_t c = 0; c < 3; ++c) {
+            out.points.push_back(source.points[static_cast<size_t>(vertex) * 3 + c]);
+          }
+          const size_t authored_corner =
+              corner < source.triangulated_face_vertex_indices.size()
+                  ? source.triangulated_face_vertex_indices[corner]
+                  : corner;
+          if (!source.normals.empty()) {
+            const size_t normal_element =
+                source.normals_interp == tr::Interpolation::FaceVarying
+                    ? authored_corner
+                    : static_cast<size_t>(vertex);
+            if (normal_element * 3 + 2 < source.normals.size()) {
+              for (size_t c = 0; c < 3; ++c) {
+                out.normals.push_back(source.normals[normal_element * 3 + c]);
+              }
+            }
+          }
+          if (!source.texcoords_0.empty()) {
+            const size_t uv_element =
+                source.texcoords_0_interp == tr::Interpolation::FaceVarying
+                    ? authored_corner
+                    : static_cast<size_t>(vertex);
+            if (uv_element * 2 + 1 < source.texcoords_0.size()) {
+              out.uv.push_back(source.texcoords_0[uv_element * 2]);
+              out.uv.push_back(source.texcoords_0[uv_element * 2 + 1]);
+            }
+          }
+        }
+        if (out.normals.size() != out.points.size()) out.normals.clear();
+        if (out.uv.size() * 3 != out.points.size() * 2) out.uv.clear();
+      }
+      if (!out.points.empty()) analytic_outputs_.push_back(std::move(out));
+    }
+  }
 
   struct Stats {
     size_t source_mesh_count = 0;
@@ -3518,6 +3787,37 @@ class RenderStream {
         rec.opacity_texture = rec.opacity_meta.path;
       }
     }
+    // The schema helper above intentionally models PreviewSurface only.
+    // Pull evaluated OpenPBR values from the next render converter so
+    // constant MaterialX node networks drive the Three.js fallback material.
+    const auto render_material_it =
+        render_scene_.material_by_path.find(rec.prim_path);
+    if (render_material_it != render_scene_.material_by_path.end()) {
+      const tr::RenderMaterial* render_material =
+          render_scene_.get_material(render_material_it->second);
+      if (render_material && render_material->openpbr) {
+        const tr::OpenPBRSurfaceShader& openpbr = *render_material->openpbr;
+        rec.base_color[0] = openpbr.base_color.value.x;
+        rec.base_color[1] = openpbr.base_color.value.y;
+        rec.base_color[2] = openpbr.base_color.value.z;
+        rec.metallic = openpbr.base_metalness.value.x;
+        rec.roughness = openpbr.specular_roughness.value.x;
+        rec.opacity = openpbr.opacity.value.x;
+        const float emission = openpbr.emission_luminance.value.x;
+        rec.emissive[0] = openpbr.emission_color.value.x * emission;
+        rec.emissive[1] = openpbr.emission_color.value.y * emission;
+        rec.emissive[2] = openpbr.emission_color.value.z * emission;
+        rec.base_color_texture = TexturePath(render_scene_, openpbr.base_color);
+        rec.normal_texture = TexturePath(render_scene_, openpbr.normal);
+        rec.roughness_texture =
+            TexturePath(render_scene_, openpbr.specular_roughness);
+        rec.metallic_texture =
+            TexturePath(render_scene_, openpbr.base_metalness);
+        rec.emissive_texture =
+            TexturePath(render_scene_, openpbr.emission_color);
+        rec.opacity_texture = TexturePath(render_scene_, openpbr.opacity);
+      }
+    }
     std::ostringstream ss;
     appendMaterialKey_(rec, &ss);
     rec.key = ss.str();
@@ -4047,9 +4347,32 @@ class RenderStream {
       mtlx.set("sourceUri", render_mat->mtlx_config.source_uri);
       m.set("materialXConfig", mtlx);
       m.set("materialXJson", RenderMaterialJson(render_scene_, *render_mat));
-      if (render_mat->openpbr &&
-          !render_mat->openpbr->nodegraph_json.empty()) {
-        m.set("openPBRNodeGraphJson", render_mat->openpbr->nodegraph_json);
+      std::string nodegraph_json = render_mat->openpbr
+                                       ? render_mat->openpbr->nodegraph_json
+                                       : std::string();
+      if (nodegraph_json.empty()) {
+        const tinyusdz::next::UsdPrim mat =
+            stage_.GetPrimAtPath(rec.prim_path);
+        tinyusdz::next::UsdPrim shader;
+        // A material may author both PreviewSurface and MaterialX terminals.
+        // Graph reconstruction must prefer outputs:mtlx:surface even when the
+        // renderer intentionally chose the generic outputs:surface fallback.
+        const std::vector<tinyusdz::next::Path>* mtlx_connections =
+            NextPropertyConnections(mat, "outputs:mtlx:surface");
+        if (mtlx_connections && !mtlx_connections->empty()) {
+          shader = stage_.GetPrimAtPath(
+              NextConnectionPrimPath((*mtlx_connections)[0].str()));
+        }
+        if (!shader.IsValid()) {
+          const std::string shader_path =
+              tinyusdz::next::GetSurfaceShader(stage_, mat);
+          if (!shader_path.empty()) shader = stage_.GetPrimAtPath(shader_path);
+        }
+        nodegraph_json = BuildNextNodeGraphJson(
+            mat, shader, render_mat->mtlx_config.version);
+      }
+      if (!nodegraph_json.empty()) {
+        m.set("openPBRNodeGraphJson", nodegraph_json);
       }
     }
     m.set("baseColor", arr3_(rec.base_color));
@@ -4251,6 +4574,7 @@ class RenderStream {
   std::vector<std::string> render_scene_warnings_;
   std::vector<tinyusdz::next::UsdGeomMesh> meshes_;
   std::vector<OutputMesh> outputs_;
+  std::vector<OutputMesh> analytic_outputs_;
   std::vector<MaterialRecord> materials_;
   std::unordered_map<std::string, int32_t> material_key_to_id_;
   std::unordered_map<std::string, int32_t> material_path_to_id_;
