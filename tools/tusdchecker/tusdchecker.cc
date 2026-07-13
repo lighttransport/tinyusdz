@@ -181,7 +181,7 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
     } else if (arg == "--list-groups") {
       std::cout
           << "core      AOUSD layer, composition, metadata, and value rules\n"
-          << "geom      UsdGeom and UsdSkel structural rules\n"
+          << "geom      UsdGeom, UsdSkel, and UsdVol structural rules\n"
           << "shade     UsdShade, preview-surface, and MaterialX rules\n"
           << "lux       UsdLux structural and value rules\n"
           << "physics   UsdPhysics placement, joint, and extension rules\n"
