@@ -672,4 +672,98 @@ else
   echo "ok[unauthored-usdc]: no unauthored fallbacks invented; both blendShapes spellings survived"
 fi
 
+# Stage metadata + `reorder` body statements.
+#
+# 1. The Stage write path (stage-converter.cc) had drifted behind the Layer path
+#    (sconv-layer.cc): kilogramsPerUnit and the two USDZ playback metas were
+#    written by the latter and simply vanished through the former. An
+#    AUTHORED-but-EMPTY `customLayerData = {}` was dropped too -- !empty() is not
+#    an authored test, which is what the customLayerDataAuthored flag is for.
+#    (The timecode family is written FURTHER UP in the same function. Do not
+#    "helpfully" add it again: a duplicate root field corrupts the fieldset
+#    encoding and the crate then fails to read back AT ALL -- caught here by
+#    stage-meta-001 going from pass to a zero-byte round-trip.)
+#
+# 2. `reorder nameChildren` / `reorder properties` were parsed into PrimMeta and
+#    written by nobody. Their crate spelling is primOrder / propertyOrder (NOT
+#    primChildren / properties, which are the full name vectors). Both sides
+#    needed work: the reader had no branch for them, AND stage-converter.cc has a
+#    kPrimFields WHITELIST -- any field name not on it is re-routed into an
+#    ATTRIBUTE spec, so before whitelisting them they came back as bogus
+#    `token[] primOrder = [...]` properties rather than as metadata.
+cat > "$TMP/stagemeta.usda" <<'USD'
+#usda 1.0
+(
+    customLayerData = {
+    }
+    endTimeCode = 21
+    framesPerSecond = 10
+    kilogramsPerUnit = 3.14
+    startTimeCode = 3
+    upAxis = "Y"
+    autoPlay = false
+    playbackMode = "loop"
+)
+
+def Xform "W"
+{
+    reorder nameChildren = ["C", "A"]
+    reorder properties = ["y", "x"]
+    double x = 1
+    double y = 2
+
+    def Sphere "A"
+    {
+    }
+
+    def Cone "C"
+    {
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/stagemeta.usdc" "$TMP/stagemeta.usda" \
+     >"$TMP/write11.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the stage-meta scene to usdc"
+  cat "$TMP/write11.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/stagemeta.usdc" > "$TMP/stagemeta-rt.usda" 2>/dev/null
+# A corrupt fieldset makes the read produce NOTHING -- check that first, or the
+# grep loop below just reports every line as "lost" and buries the real cause.
+if [ ! -s "$TMP/stagemeta-rt.usda" ]; then
+  echo "FAIL[stagemeta-usdc]: crate read back EMPTY -- the fieldset encoding is corrupt"
+  echo "(a duplicate root field will do this)"
+  status=1
+else
+  lost=""
+  for expect in \
+    'kilogramsPerUnit = 3.14' \
+    'autoPlay = false' \
+    'playbackMode = "loop"' \
+    'customLayerData = {' \
+    'startTimeCode = 3' \
+    'endTimeCode = 21' \
+    'framesPerSecond = 10' \
+    'reorder nameChildren = ["C", "A"]' \
+    'reorder properties = ["y", "x"]'; do
+    grep -qF "$expect" "$TMP/stagemeta-rt.usda" || lost="$lost
+    $expect"
+  done
+  # reorder must come back as METADATA, not as a re-routed attribute spec.
+  for bogus in 'token[] primOrder' 'token[] propertyOrder'; do
+    grep -qF "$bogus" "$TMP/stagemeta-rt.usda" && lost="$lost
+    RE-ROUTED TO A PROPERTY (missing from kPrimFields): $bogus"
+  done
+  if [ -n "$lost" ]; then
+    echo "FAIL[stagemeta-usdc]: stage metadata / reorder lost on round-trip:$lost"
+    echo "--- got ---"
+    cat "$TMP/stagemeta-rt.usda"
+    status=1
+  else
+    echo "ok[stagemeta-usdc]: stage metadata and reorder nameChildren/properties survived"
+  fi
+fi
+
 exit "$status"
