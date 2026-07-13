@@ -19,6 +19,48 @@ namespace tinyusdz {
 
 namespace {
 
+// Emit an attribute's OWN metadata block as `<name>.<key>` fields. The field
+// router in ConvertSinglePrim (stage-converter.cc, kAttrMetaSuffixes) recognises
+// that spelling and folds each one into the attribute's spec.
+//
+// The TYPED writers build their fields by hand and never emitted any of this, so
+// an attribute's customData / comment / colorSpace / ... were dropped on write
+// even though the generic attribute path (ConvertAttributeToFields) has handled
+// them all along.
+void EmitAttrMetas(const std::string &name, const AttrMeta &metas,
+                   crate::FieldValuePairVector &fields) {
+  if (metas.has_customData()) {
+    crate::CrateValue v;
+    v.Set(metas.get_customData());
+    fields.push_back({name + ".customData", v});
+  }
+
+  if (metas.has_comment()) {
+    crate::CrateValue v;
+    v.Set(metas.get_comment().value);
+    fields.push_back({name + ".comment", v});
+  }
+
+  if (metas.has_colorSpace()) {
+    crate::CrateValue v;
+    v.Set(metas.get_colorSpace());
+    fields.push_back({name + ".colorSpace", v});
+  }
+
+  if (metas.has_displayName()) {
+    crate::CrateValue v;
+    v.Set(metas.get_displayName());
+    fields.push_back({name + ".displayName", v});
+  }
+
+  if (metas.has_doc()) {
+    crate::CrateValue v;
+    v.Set(metas.get_doc().value);
+    fields.push_back({name + ".documentation", v});
+  }
+}
+
+
 // Emit `<name>.timeSamples` for an Animatable<T> whose samples are stored in the
 // SAME representation on disk as in memory (arrays of points/floats/quats, ...),
 // i.e. everything except the enums and Extent, which need a shape conversion and
@@ -507,6 +549,7 @@ bool CrateWriter::ExtractSphereProperties(
 
   if (sphere->radius.authored()) {
     if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius", fields, err)) return false;
+    EmitAttrMetas("radius", sphere->radius.metas(), fields);
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);

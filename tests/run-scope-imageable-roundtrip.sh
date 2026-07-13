@@ -900,4 +900,67 @@ else
   fi
 fi
 
+# -------------------------------------------------------------------------
+# 16. Metadata blocks on prims and on individual attributes.
+#
+# The crate writer only emitted the handful of prim metas it knew by name and
+# emitted no attribute metadata at all, so `sdrMetadata`, any unregistered
+# (custom) prim meta, an attribute's `customData`, and a texture input's
+# `colorSpace` were all silently dropped on write.
+# -------------------------------------------------------------------------
+cat > "$TMP/meta.usda" <<'USD'
+#usda 1.0
+
+def Sphere "S" (
+    myCustomMeta = "hello"
+)
+{
+    double radius = 3 (
+        customData = {
+            string note = "authored"
+        }
+    )
+}
+
+def Shader "Tex" (
+    sdrMetadata = {
+        string role = "texture"
+    }
+)
+{
+    uniform token info:id = "UsdUVTexture"
+    asset inputs:file = @./tex.png@ (
+        colorSpace = "Raw"
+    )
+    float outputs:r
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/meta.usdc" "$TMP/meta.usda" \
+     >"$TMP/write16.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the metadata scene to usdc"
+  cat "$TMP/write16.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/meta.usdc" > "$TMP/meta-rt.usda" 2>/dev/null
+lost=""
+for expect in \
+  'myCustomMeta = "hello"' \
+  'sdrMetadata' \
+  'string role = "texture"' \
+  'string note = "authored"' \
+  'colorSpace = "Raw"'; do
+  grep -qF "$expect" "$TMP/meta-rt.usda" || lost="$lost
+    $expect"
+done
+if [ -n "$lost" ]; then
+  echo "FAIL[metadata-usdc]: dropped on round-trip:$lost"
+  echo "--- got ---"
+  cat "$TMP/meta-rt.usda"
+  status=1
+else
+  echo "ok[metadata-usdc]: sdrMetadata, unregistered prim meta, attribute customData and inputs:file colorSpace survived"
+fi
+
 exit "$status"
