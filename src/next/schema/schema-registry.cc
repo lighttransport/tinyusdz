@@ -214,6 +214,9 @@ SchemaRegistry::SchemaRegistry() {
   add("NurbsPatch", "vForm", "token", Token("open"));
   add("NurbsCurves", "order", "int[]",
       Value::MakeIntArray(std::vector<int32_t>()));
+  // pxr: `vector3f[] tangents = []` (an authored empty-array fallback).
+  add("HermiteCurves", "tangents", "vector3f[]",
+      Value::MakeFloatCompArray(std::vector<float>(), TypeId::Vector3f, 3));
   add("VolumeFieldAsset", "vectorDataRoleHint", "token", Token("None"));
   add("RenderSettingsBase", "resolution", "int2", Value::MakeInt2(2048, 1080));
   add("RenderSettingsBase", "pixelAspectRatio", "float", Value(1.0f));
@@ -281,7 +284,6 @@ SchemaRegistry::SchemaRegistry() {
           {"PhysicsLimitAPI", "physics:limit:low", "float"},
           {"PhysicsLimitAPI", "physics:limit:high", "float"},
           // Non-core OpenUSD domains (PRODUCT PARITY): UsdGeom breadth.
-          {"HermiteCurves", "tangents", "vector3f[]"},
           {"TetMesh", "tetVertexIndices", "int4[]"},
           {"TetMesh", "surfaceFaceVertexIndices", "int3[]"},
           {"NurbsPatch", "uVertexCount", "int"},
@@ -302,9 +304,10 @@ SchemaRegistry::SchemaRegistry() {
           {"NurbsCurves", "knots", "double[]"},
           {"NurbsCurves", "ranges", "double2[]"},
           {"NurbsCurves", "pointWeights", "double[]"},
-          {"NurbsCurves", "ids", "int64[]"},
-          // UsdVol: `field:<name>` relationships are the namespace binding.
-          {"Volume", "field", "namespace"},
+          // UsdVol: Volume's `field:<name>` relationships are DYNAMIC (any
+          // name in the namespace), so no builtin is declared for them —
+          // pxr's UsdVolVolume likewise has no property literally named
+          // "field". The validator checks the namespace structurally.
           {"VolumeFieldAsset", "filePath", "asset"},
           {"VolumeFieldAsset", "fieldName", "token"},
           {"VolumeFieldAsset", "fieldIndex", "int"},

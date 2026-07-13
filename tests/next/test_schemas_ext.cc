@@ -619,7 +619,24 @@ static void test_domain_schema_breadth() {
   // Declarations (no fallback, but the property is known).
   assert(registry.FindProperty(*spec("/Tet"), "tetVertexIndices"));
   assert(registry.FindProperty(*spec("/Tet"), "surfaceFaceVertexIndices"));
-  assert(registry.FindProperty(*spec("/Hermite"), "tangents"));
+  const SchemaPropertyDefinition* tangents =
+      registry.FindProperty(*spec("/Hermite"), "tangents");
+  assert(tangents && tangents->has_fallback &&
+         tangents->fallback.is_array() && tangents->fallback.array_size() == 0 &&
+         "pxr: vector3f[] tangents = [] (empty-array fallback)");
+  // pxr parity: NurbsCurves has no `ids`; Volume has no builtin literally
+  // named "field" (field:<name> relationships are dynamic).
+  {
+    StageBuilder nb;
+    auto& nl = nb.GetLayerBuilder();
+    nl.begin_prim("NC", "NurbsCurves");
+    nl.end_prim();
+    nl.finalize();
+    Stage nstage = nb.Build();
+    assert(!registry.FindProperty(*nstage.GetPrimAtPath("/NC").GetPrimSpec(),
+                                  "ids"));
+  }
+  assert(!registry.FindProperty(*spec("/Vol"), "field"));
   assert(registry.FindProperty(*spec("/Patch"), "trimCurve:knots"));
   assert(registry.FindProperty(*spec("/Vdb"), "filePath"));
   assert(registry.FindProperty(*spec("/Vdb"), "fieldClass"));
@@ -656,10 +673,10 @@ int main() {
   test_physics_scene();
   test_physics_api_schemas();
   test_physics_joints();
+  test_physics_collision_group();
 
   printf("\nDomain breadth (product parity):\n");
   test_domain_schema_breadth();
-  test_physics_collision_group();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);
   return pass_count == test_count ? 0 : 1;

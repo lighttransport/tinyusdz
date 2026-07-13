@@ -53,6 +53,7 @@ struct ValidationOptions {
   bool shade{false};
   bool lux{false};
   bool physics{false};
+  bool render{false};
   bool package{false};
   bool crate{false};
   bool arkit{false};
