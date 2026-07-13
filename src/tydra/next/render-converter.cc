@@ -36,6 +36,8 @@ using ::tinyusdz::next::Value;
 
 namespace {
 
+constexpr int kMaxMtlxConstantDepth = 64;
+
 constexpr float kAlphaEpsilon = 1.0e-6f;
 // 2GB is the typical hard limit for legacy WebAssembly linear memory growth in
 // non-shared-memory builds. Keep a conservative per-mesh budget for temporary
@@ -298,7 +300,7 @@ bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
                    const std::string& input, double time_code,
                    MtlxConstantValue* out, std::set<std::string>* visiting,
                    int depth) {
-  if (!out || depth > 16) return false;
+  if (!out || depth > kMaxMtlxConstantDepth) return false;
   const std::string property = "inputs:" + input;
   const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec();
   const std::vector<::tinyusdz::next::Path>* connections =
@@ -319,7 +321,9 @@ bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
 bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
                           double time_code, MtlxConstantValue* out,
                           std::set<std::string>* visiting, int depth) {
-  if (!out || !node.IsValid() || depth > 16 || !visiting) return false;
+  if (!out || !node.IsValid() || depth > kMaxMtlxConstantDepth || !visiting) {
+    return false;
+  }
   const std::string key = node.GetPath().str();
   if (!visiting->insert(key).second) return false;
   struct VisitGuard {
@@ -484,7 +488,7 @@ bool EvalMtlxConstantConnection(const Stage& stage,
                                 MtlxConstantValue* out,
                                 std::set<std::string>* visiting,
                                 int depth) {
-  if (!out || depth > 16) return false;
+  if (!out || depth > kMaxMtlxConstantDepth) return false;
   std::string prim_path, property;
   if (!SplitConnectionPath(connection, &prim_path, &property)) return false;
   const UsdPrim prim = stage.GetPrimAtPath(prim_path);
@@ -2764,7 +2768,9 @@ bool RenderSceneConverter::ConvertGeomPrimitive(const UsdPrim& prim,
         face_indices, normals, uvs);
   } else if (type == "Sphere") {
     ::tinyusdz::tydra::GenerateIcosphereMesh(
-        ReadDoubleProperty(prim, "radius", 2.0), 2, points, face_counts,
+        ReadDoubleProperty(prim, "radius", 2.0),
+        std::max(0, std::min(config_.mesh.sphere_subdivisions, 6)), points,
+        face_counts,
         face_indices, normals, uvs);
   } else if (type == "Cylinder" || type == "Cylinder_1") {
     double radius = ReadDoubleProperty(prim, "radius", 1.0);

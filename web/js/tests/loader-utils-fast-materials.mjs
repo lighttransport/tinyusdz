@@ -7,6 +7,10 @@ import { TinyUSDZLoaderUtils, TextureLoadingManager } from '../src/tinyusdz/Tiny
 globalThis.THREE = THREE;
 globalThis.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);
 
+assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1 }), 1);
+assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exposure: 0 }), 1);
+assert.equal(TinyUSDZLoaderUtils.calculateDomeLightIntensity({ intensity: 1, exposure: 2 }), 4);
+
 function makeMesh(materialId) {
   return {
     primName: `Mesh_${materialId}`,
