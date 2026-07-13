@@ -2249,6 +2249,7 @@ if(TINYUSDZ_BUILD_TESTS)
         cmyk-jpeg-texture
         degraded-material
         frames-framespec
+        geomsubset-materials
         ibl-specular-bound
         instancer-invisible-ids
         instancer-orientation
@@ -2462,6 +2463,17 @@ if(TINYUSDZ_BUILD_TESTS)
         )
       set_tests_properties(tusdview-noninstanced-blendshape
                            PROPERTIES SKIP_RETURN_CODE 77)
+
+      # Per-vertex displayColor must render on the Vulkan raster backend (it used
+      # to reach only the RT path; VK raster drew the flat material color).
+      add_test(
+        NAME tusdview-vertex-color
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-vertex-color.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-vertex-color"
+        )
+      set_tests_properties(tusdview-vertex-color PROPERTIES SKIP_RETURN_CODE 77)
 
       # Vulkan RT BLAS compaction: must shrink the acceleration structures, must
       # build ONE BLAS per prototype (not per instance), and must be image-neutral.

@@ -790,6 +790,15 @@ struct MeshJobNext {
   tinyusdz::next::UsdPrim prim;
   matrix4d world{matrix4d::identity()};
   tinyusdz::Purpose purpose{tinyusdz::Purpose::Default};
+  // Face-GeomSubset split (ExpandGeomSubsetJobsNext): a mesh whose faces are
+  // material-bound per GeomSubset becomes one job per bound subset + a
+  // remainder job.
+  // `subset_faces` (indexed by AUTHORED face id; empty = whole mesh) masks which
+  // faces this job emits, and `bind_prim` (the GeomSubset prim) supplies the
+  // material binding instead of the mesh -- GetInheritedBoundMaterialPath on it
+  // finds the subset's own binding first, then falls back up the ancestry.
+  std::vector<char> subset_faces;
+  tinyusdz::next::UsdPrim bind_prim;
   Vec3 base_color{0.55f, 0.55f, 0.55f};  // resolved diffuse constant
   int32_t tex_id{-1};                    // resolved diffuse texture, or -1
   float roughness{0.55f};                // resolved inputs:roughness
