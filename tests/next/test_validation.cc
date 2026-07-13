@@ -633,6 +633,71 @@ def Xform "Asset"
   CHECK(clean_result.ok(), "ARKit-clean asset has no errors");
 }
 
+// UsdVol / UsdRender structural checks (product parity).
+static void test_vol_render_rules() {
+  std::cout << "[vol/render rules]\n";
+  const std::string usda = R"(#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+def Xform "World"
+{
+    def Volume "Smoke"
+    {
+        token field:density = "oops"
+        rel field:temperature
+        rel field:velocity = </World/VelField>
+    }
+    def OpenVDBAsset "VelField"
+    {
+        token fieldDataType = "banana"
+        token fieldClass = "levelSet"
+    }
+    def Field3DAsset "F3D"
+    {
+        asset filePath = @./vol.f3d@
+        token fieldDataType = "float"
+    }
+    def RenderSettings "Rs"
+    {
+        token aspectRatioConformPolicy = "bogusPolicy"
+        rel products = </World/Rp>
+    }
+    def RenderProduct "Rp"
+    {
+        rel orderedVars = </World/Rv>
+    }
+    def RenderVar "Rv"
+    {
+        token sourceType = "telepathy"
+    }
+}
+)";
+  ValidationOptions options;
+  options.geom = true;
+  USDValidationResult result;
+  CHECK(Validate(usda, options, &result), "vol/render usda parses");
+  CHECK(CountErrors(result, "vol.volume.fieldRel") == 1,
+        "field:* attribute (not relationship) is an error");
+  CHECK(CountWarnings(result, "vol.volume.fieldRel") == 1,
+        "targetless field relationship warns");
+  CHECK(CountWarnings(result, "vol.fieldAsset.filePath") == 1,
+        "OpenVDBAsset without filePath warns (Field3DAsset has one)");
+  CHECK(CountErrors(result, "vol.fieldAsset.dataType") == 1,
+        "invalid OpenVDB fieldDataType is an error");
+  CHECK(CountErrors(result, "vol.fieldAsset.fieldClass") == 0,
+        "valid fieldClass is clean");
+  CHECK(CountErrors(result, "render.settings.aspectRatioConformPolicy") == 1,
+        "invalid aspectRatioConformPolicy is an error");
+  CHECK(CountErrors(result, "render.var.sourceType") == 1,
+        "invalid RenderVar sourceType is an error");
+  CHECK(CountErrors(result, "render.settings.relationship") == 0,
+        "authored relationships are clean");
+  if (g_fail) DumpIssues(result);
+}
+
 static void test_parse_failure() {
   std::cout << "[parse failure]\n";
   const std::string garbage = "this is not a USD file {{{";
@@ -689,6 +754,7 @@ int main() {
   test_prim_name_and_kind();
   test_arkit_rules();
   test_parse_failure();
+  test_vol_render_rules();
   test_report_formatting();
 
   if (g_fail) {
