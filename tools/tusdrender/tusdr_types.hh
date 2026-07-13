@@ -802,6 +802,11 @@ struct MeshJobNext {
   float occlusion{1.0f};                 // resolved inputs:occlusion
   ScalarTex occ_tex;                     // occlusion texture + channel
   UvXform uv_xform;                      // UsdTransform2d on the st chain
+  // The UV set the bound base-color texture reads (RenderTexture::uv_primvar,
+  // i.e. its UsdPrimvarReader varname). Empty = fall back to the exporter
+  // preference list. Used to pick which mesh primvar feeds `st` so a texture
+  // bound to a secondary set (e.g. `uvSet1`) is not silently sampled with `st`.
+  std::string uv_primvar;
   float opacity{1.0f};                   // displayOpacity / inputs:opacity constant
   ScalarTex opacity_tex;                 // UsdPreviewSurface inputs:opacity texture
   float opacity_threshold{0.0f};         // inputs:opacityThreshold (alpha cutout)

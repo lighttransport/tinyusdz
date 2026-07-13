@@ -522,25 +522,19 @@ Vec3 EvalMaterialIblDiffuse(
               brdf.z * diffuse_irradiance.z * scale};
 }
 
-Vec3 EvalMaterialIblSpecular(
-    const TriInfo &tri, const Vec3 &normal, const Vec3 &wo, const Vec3 &wi,
-    const Vec3 &prefiltered_radiance, const Options &opt,
-    const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
-  if (opt.material_shading != Options::MaterialShading::LightRtBsdf) {
-    return Vec3{0.0f, 0.0f, 0.0f};
-  }
-  const float ndotl = std::max(0.0f, Dot(normal, wi));
-  if (ndotl <= 0.0f) return Vec3{0.0f, 0.0f, 0.0f};
-  OpenPBRParams p = OpenPBRParamsForMaterial(tri, normal, openpbr);
-  float pdf = 0.0f;
-  v3 fd, fs;
-  // ... and only the specular half (spec + sheen + coat) belongs against the
-  // prefiltered reflection map.
-  bsdf_eval_lobes(&p, ToMtlxV3(normal), ToMtlxV3(wo), ToMtlxV3(wi), &fd, &fs, &pdf);
-  Vec3 brdf = FromMtlxV3(fs);
-  return Vec3{brdf.x * prefiltered_radiance.x * ndotl,
-              brdf.y * prefiltered_radiance.y * ndotl,
-              brdf.z * prefiltered_radiance.z * ndotl};
+// Environment specular for a prefiltered radiance, via the bounded split-sum
+// approximation: spec_env * (F0*A + B), where (A,B) come from the environment
+// BRDF LUT. This is used for BOTH shading modes. The old lightrt-bsdf path
+// instead evaluated the analytic microfacet BRDF at the exact mirror direction
+// and multiplied it by the prefiltered radiance -- but the prefilter already
+// integrated the NDF, so at the mirror direction D = 1/(pi*alpha) blew the term
+// up without bound as roughness -> 0 (a ~280x-too-bright highlight at
+// roughness 0.05). f0 already carries the material's reflectance (OpenPBR
+// metalness/specularColor/ior in bsdf mode), so the split-sum stays material-
+// correct while remaining bounded.
+Vec3 EvalIblSpecularSplitSum(const Vec3 &spec_env, const Vec3 &f0, float brdf_a,
+                             float brdf_b) {
+  return Mul(spec_env, Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
 }
 
 bool IntersectDirectScene(const DirectScene *direct, const Vec3 &ray_org,
@@ -1252,12 +1246,10 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     float brdf_a = 1.0f;
     float brdf_b = 0.0f;
     SampleBrdfLut(*ibl, ndotv, tri.roughness, &brdf_a, &brdf_b);
-    Vec3 spec =
-        opt.material_shading == Options::MaterialShading::LightRtBsdf
-            ? EvalMaterialIblSpecular(tri, n, view, refl, spec_env, opt,
-                                      tri_openpbr)
-            : Mul(spec_env,
-                  Add(Mul(f0, brdf_a), Vec3{brdf_b, brdf_b, brdf_b}));
+    // Both modes use the bounded split-sum for environment specular (see
+    // EvalIblSpecularSplitSum). f0 already reflects the OpenPBR reflectance in
+    // bsdf mode, so this stays material-correct.
+    Vec3 spec = EvalIblSpecularSplitSum(spec_env, f0, brdf_a, brdf_b);
     Vec3 kd = Mul(Vec3{1.0f - f0.x, 1.0f - f0.y, 1.0f - f0.z},
                   1.0f - kd_metal);
     Vec3 diff =
