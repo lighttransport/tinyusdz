@@ -178,6 +178,7 @@ function assertReloadsWithRenderStream(usdz, label) {
     assert.equal(typeof stream.getSkeleton, 'function', `${label}: RenderStream should expose skeleton getter`);
     assert.equal(typeof stream.numAnimations, 'function', `${label}: RenderStream should expose animation count`);
     assert.equal(typeof stream.getAnimation, 'function', `${label}: RenderStream should expose animation getter`);
+    assert.equal(typeof stream.getAnimationView, 'function', `${label}: RenderStream should expose fast animation getter`);
     assert.equal(typeof stream.getAllAnimations, 'function', `${label}: RenderStream should expose all animations getter`);
     assert.equal(typeof stream.getAnimationInfo, 'function', `${label}: RenderStream should expose animation info getter`);
     assert.equal(typeof stream.getAllAnimationInfos, 'function', `${label}: RenderStream should expose all animation info getter`);
@@ -267,6 +268,16 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
     if (animationCount > 0) {
       const animation = stream.getAnimation(0);
       assert.ok(Array.isArray(animation.channels), `${label}: animation should expose channels`);
+      const animationView = stream.getAnimationView(0);
+      assert.ok(Array.isArray(animationView.channels),
+        `${label}: fast animation should expose channels`);
+      const viewArraySampler = animationView.samplers.find((sampler) => sampler?.arrayValues);
+      if (viewArraySampler) {
+        assert.equal(viewArraySampler.arrayValues.dtype, 'f32',
+          `${label}: fast skeletal data should use a float heap descriptor`);
+        assert.ok(viewArraySampler.arrayValues.ptr >= 0 && viewArraySampler.arrayValues.length >= 12,
+          `${label}: fast skeletal descriptor should preserve the complete array`);
+      }
       const skeletal = stream.getAllAnimations()
         .find((item) => item && item.has_skeletal_animation);
       assert.ok(skeletal, `${label}: animation should expose skeletal animation metadata`);
@@ -323,6 +334,21 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
     assert.ok(points?.points instanceof Float32Array, `${label}: adapter should expose point cloud data`);
     assert.equal(points.pointCount, 2, `${label}: adapter should expose point cloud point count`);
     assert.equal(adapter.numImages(), 0, `${label}: next adapter should report zero decoded images`);
+    assert.equal(adapter.getStats().providedAssetBytes, 0,
+      `${label}: root layer must not be duplicated in the value-clip asset map`);
+
+    const adapterAnimation = adapter.getAllAnimations()
+      .find((item) => item?.has_skeletal_animation);
+    if (adapterAnimation) {
+      const skeletalTrack = adapterAnimation.tracks.find((track) => track?.arrayValues);
+      assert.ok(skeletalTrack?.arrayValues instanceof Float32Array,
+        `${label}: adapter should own fast skeletal animation data`);
+      const sampler = adapterAnimation.samplers[skeletalTrack.sampler];
+      assert.equal(skeletalTrack.arrayValues, sampler.arrayValues,
+        `${label}: sampler and track should share skeletal array storage`);
+      assert.equal(skeletalTrack.times, sampler.times,
+        `${label}: sampler and track should share time storage`);
+    }
 
     const materialResult = adapter.getMaterialWithFormat(0, 'json');
     assert.equal(materialResult.error, null, `${label}: material JSON should be available`);

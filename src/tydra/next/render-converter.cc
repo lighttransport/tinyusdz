@@ -1665,6 +1665,38 @@ RenderSceneConverter::RenderSceneConverter(const ConverterConfig& config)
 
 RenderSceneConverter::~RenderSceneConverter() = default;
 
+namespace {
+
+// Release arrays that are not needed by the metadata-only RenderScene path.
+// Material binding still needs polygon counts/triangle offsets and material UV
+// promotion still needs texcoords/primvars, so conversion uses this in two
+// phases. Assignment from an empty ChunkedArray releases chunks immediately;
+// ChunkedArray::clear() intentionally retains them for reuse.
+void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs) {
+  if (!mesh) return;
+
+  mesh->face_vertex_indices = UInt32Chunked();
+  mesh->points = FloatChunked();
+  mesh->normals = FloatChunked();
+  mesh->tangents = FloatChunked();
+  mesh->colors = FloatChunked();
+  mesh->opacities = FloatChunked();
+  mesh->triangulated_indices = UInt32Chunked();
+  mesh->triangulated_face_vertex_indices = UInt32Chunked();
+
+  if (keep_binding_inputs) return;
+
+  mesh->face_vertex_counts = UInt32Chunked();
+  mesh->texcoords_0 = FloatChunked();
+  mesh->texcoords_1 = FloatChunked();
+  std::vector<VertexAttribute>().swap(mesh->primvars);
+  std::vector<uint32_t>().swap(mesh->face_triangle_offsets);
+  std::vector<int32_t>().swap(mesh->sanitize_face_remap);
+  std::vector<uint32_t>().swap(mesh->hole_faces);
+}
+
+}  // namespace
+
 //
 // Main conversion
 //
@@ -1756,6 +1788,12 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         continue;
       }
       if (converted) {
+        if (!config_.mesh.retain_geometry) {
+          // Retain only the small inputs still required by the later material
+          // binding and UV-selection passes. This bounds conversion memory by
+          // one source mesh instead of accumulating the whole render scene.
+          ReleaseMeshGeometry(&mesh, true);
+        }
         // Release chunk-allocation slack before retaining: thousands of small
         // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
         mesh.compact();
@@ -1868,6 +1906,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
     AssignMaterialBindings(stage, &result.scene);
     PromoteMaterialUVPrimvars(&result.scene, config_.mesh.default_uv_primvar,
                               &warnings_);
+    if (!config_.mesh.retain_geometry) {
+      for (RenderMesh& mesh : result.scene.meshes) {
+        ReleaseMeshGeometry(&mesh, false);
+      }
+    }
     AssignPointInstanceDrawMaterials(&result.scene);
     if (config_.point_instancer.duplicate_meshes) {
       DuplicatePointInstanceMeshes(&result.scene);
@@ -2582,8 +2625,12 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   // warning; also truncate a counts list that overruns the index buffer.
   SanitizeMeshTopology(out);
 
-  // Extract primvars (UVs, colors, etc.)
-  ExtractMeshPrimvars(prim, out);
+  // Extract render vertex attributes only when the caller retains geometry.
+  // Metadata-only consumers source these arrays elsewhere; decoding/copying
+  // large face-varying normals and UVs here would be pure transient overhead.
+  if (config_.mesh.retain_geometry) {
+    ExtractMeshPrimvars(prim, out);
+  }
 
   // Skinning binding (skel:skeleton + skel:jointIndices/Weights primvars).
   {
@@ -2818,7 +2865,8 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   // Triangulate if requested. A mesh whose faces were all sanitized away is
   // still a valid (empty) render mesh; only meshes with real topology that
   // cannot be triangulated (e.g. over the temp-allocation budget) are dropped.
-  if (config_.mesh.triangulate && !out->is_triangulated) {
+  if (config_.mesh.retain_geometry && config_.mesh.triangulate &&
+      !out->is_triangulated) {
     if (!TriangulateMesh(out) && !out->face_vertex_counts.empty()) {
       warnings_.push_back("Failed to triangulate mesh '" + out->prim_path +
                           "'; skipping it to avoid conversion abort");
@@ -2827,13 +2875,15 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   }
 
   // Compute normals if needed
-  if (config_.mesh.compute_normals && out->normals.empty()) {
+  if (config_.mesh.retain_geometry && config_.mesh.compute_normals &&
+      out->normals.empty()) {
     ComputeVertexNormals(out);
   }
 
   // Compute tangents if requested (needs triangles, per-vertex normals and
   // per-vertex UVs).
-  if (config_.mesh.compute_tangents && out->tangents.empty()) {
+  if (config_.mesh.retain_geometry && config_.mesh.compute_tangents &&
+      out->tangents.empty()) {
     ComputeVertexTangents(out);
   }
 
@@ -4643,11 +4693,36 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
 
   std::vector<UsdPrim> candidates;
   {
+    // When both MaterialX and universal PreviewSurface terminals are authored,
+    // prefer the MaterialX terminal. Blender commonly emits a textured OpenPBR
+    // graph plus an untextured PreviewSurface fallback; selecting the fallback
+    // here silently turns the material white.
+    ::tinyusdz::next::AttributeEval eval(&stage);
+    if (eval.HasConnection(prim, "outputs:mtlx:surface")) {
+      const std::string mtlx_surface =
+          eval.GetConnectionPath(prim, "outputs:mtlx:surface");
+      UsdPrim sp = stage.GetPrimAtPath(
+          SourcePrimPathFromConnection(mtlx_surface));
+      if (sp.IsValid()) candidates.push_back(sp);
+    } else if (const std::vector<::tinyusdz::next::Path>* targets =
+                   prim.GetRelationship("outputs:mtlx:surface")) {
+      if (!targets->empty()) {
+        UsdPrim sp = stage.GetPrimAtPath(
+            SourcePrimPathFromConnection((*targets)[0].str()));
+        if (sp.IsValid()) candidates.push_back(sp);
+      }
+    }
     const std::string surf =
         ::tinyusdz::next::GetSurfaceShader(stage, prim);
     if (!surf.empty()) {
       UsdPrim sp = stage.GetPrimAtPath(surf);
-      if (sp.IsValid()) candidates.push_back(sp);
+      if (sp.IsValid() &&
+          std::none_of(candidates.begin(), candidates.end(),
+                       [&sp](const UsdPrim& p) {
+                         return p.GetPath().str() == sp.GetPath().str();
+                       })) {
+        candidates.push_back(sp);
+      }
     }
   }
   for (const auto& child : prim.GetChildren()) {
@@ -4862,6 +4937,8 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "base_color", &out->base_color, scene);
   ExtractShaderParam(stage, shader_prim, "baseColor", &out->base_color, scene);
   ExtractShaderParam(stage, shader_prim, "base_roughness", &out->base_roughness, scene);
+  ExtractShaderParam(stage, shader_prim, "base_diffuse_roughness",
+                     &out->base_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "roughness", &out->base_roughness, scene);
   ExtractShaderParam(stage, shader_prim, "base_metalness", &out->base_metalness, scene);
   ExtractShaderParam(stage, shader_prim, "metalness", &out->base_metalness, scene);
@@ -4904,8 +4981,14 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
   ExtractShaderParam(stage, shader_prim, "emission_color", &out->emission_color, scene);
 
   ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
+  ExtractShaderParam(stage, shader_prim, "geometry_opacity", &out->opacity,
+                     scene);
   ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
+  ExtractShaderParam(stage, shader_prim, "geometry_normal", &out->normal,
+                     scene);
   ExtractShaderParam(stage, shader_prim, "tangent", &out->tangent, scene);
+  ExtractShaderParam(stage, shader_prim, "geometry_tangent", &out->tangent,
+                     scene);
 
   return true;
 }
@@ -4933,7 +5016,14 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       if (!hop_prim.IsValid()) break;
       std::string hop_id;
       GetToken(hop_prim, "info:id", &hop_id);
-      if (hop_id == "UsdUVTexture") break;  // reached a texture node
+      // Both USD PreviewSurface and MaterialX graphs terminate at an image
+      // node. ND_image_* carries inputs:file directly; following one of its
+      // other inputs would incorrectly walk into the texcoord chain and lose
+      // the texture.
+      if (hop_id == "UsdUVTexture" || hop_id.rfind("ND_image_", 0) == 0 ||
+          hop_prim.GetPropertyValue("inputs:file")) {
+        break;
+      }
       std::string pp, prop;
       if (!SplitConnectionPath(connection_path, &pp, &prop)) break;
       const ::tinyusdz::next::PrimSpec* spec = hop_prim.GetPrimSpec();
