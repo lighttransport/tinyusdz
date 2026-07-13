@@ -220,6 +220,10 @@ list(
   ${TINYUSDZ_NEXT_DIR}/types/spline.cc
   ${TINYUSDZ_NEXT_DIR}/types/interpolation.cc
   ${TINYUSDZ_NEXT_DIR}/writer/dtoa.cc
+  # value-printer defines next::PrintValue, referenced by the crate
+  # reader/writer (spline customData round-trip) — without it wasm-ld fails
+  # with an undefined-symbol error on a clean build.
+  ${TINYUSDZ_NEXT_DIR}/writer/value-printer.cc
   ${TINYUSDZ_NEXT_DIR}/prim/path.cc
   ${TINYUSDZ_NEXT_DIR}/prim/attribute.cc
   ${TINYUSDZ_NEXT_DIR}/prim/prim.cc
