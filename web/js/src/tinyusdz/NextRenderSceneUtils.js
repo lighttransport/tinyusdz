@@ -450,15 +450,20 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
   const src = entry.material || {};
   const paths = entry.texturePaths || {};
   const hasBaseMap = !!paths.baseColor && !skipTextures;
+  const hasOpacityMap = !!paths.opacity && !skipTextures;
+  const authoredAlphaTest = (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0;
   const material = new THREE.MeshPhysicalMaterial({
     color: hasBaseMap ? new THREE.Color(1, 1, 1) :
       new THREE.Color(src.baseColor?.[0] ?? 0.8, src.baseColor?.[1] ?? 0.8, src.baseColor?.[2] ?? 0.8),
     metalness: src.metallic ?? 0,
     roughness: src.roughness ?? 0.5,
     emissive: new THREE.Color(src.emissive?.[0] ?? 0, src.emissive?.[1] ?? 0, src.emissive?.[2] ?? 0),
-    transparent: (src.opacity ?? 1) < 1,
+    transparent: (src.opacity ?? 1) < 1 || hasOpacityMap,
     opacity: src.opacity ?? 1,
-    alphaTest: (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0
+    // Discard effectively-zero opacity before PBR lighting. Large VFX cards
+    // otherwise shade millions of invisible fragments and can dominate frame
+    // time even though their final composited contribution is zero.
+    alphaTest: authoredAlphaTest || (hasOpacityMap ? 1 / 255 : 0)
   });
   material.userData.nextTexturePaths = paths;
   material.userData.nextTextureMetadata = src.textureMetadata || entry.textureMetadata || {};
@@ -490,7 +495,8 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     roughnessMap: 'roughness',
     metalnessMap: 'metallic',
     aoMap: 'occlusion',
-    emissiveMap: 'emissive'
+    emissiveMap: 'emissive',
+    alphaMap: 'opacity'
   };
   const queue = (mapProperty, assetPath) => {
     if (!assetPath || skipTextures || !textureManager) return;
@@ -506,6 +512,11 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
   queue('metalnessMap', paths.metallic);
   queue('aoMap', paths.occlusion);
   queue('emissiveMap', paths.emissive);
+  // When opacity and base color use the same RGBA image, Three.js's `map`
+  // already multiplies diffuse alpha. Adding the same image as alphaMap would
+  // multiply alpha by its green channel a second time. A distinct opacity map
+  // is queued as alphaMap (Three.js follows the usual grayscale convention).
+  if (paths.opacity !== paths.baseColor) queue('alphaMap', paths.opacity);
   return material;
 }
 
@@ -517,12 +528,70 @@ export function nextMaterialCacheKey(entry) {
   return `fallback:${JSON.stringify(entry?.material || {})}:${JSON.stringify(entry?.texturePaths || {})}`;
 }
 
+// Three.js submits one draw per BufferGeometry group. USD GeomSubsets are
+// arbitrary face sets, so representing alternating subset faces as contiguous
+// ranges can create tens of thousands of groups. Reorder only the triangle
+// index buffer by material (vertex attributes stay untouched) and emit one
+// contiguous group per material.
+export function compactMaterialGroups(
+  indices, parts, materialCount, fallbackIndex, vertexCount = 0) {
+  const elementCount = indices?.length || Math.floor(vertexCount / 3) * 3;
+  if (!elementCount || !Array.isArray(parts) || parts.length === 0 || materialCount <= 0) {
+    return null;
+  }
+  const triangleCount = Math.floor(elementCount / 3);
+  const triangleMaterial = new Int32Array(triangleCount);
+  triangleMaterial.fill(fallbackIndex);
+  for (const part of parts) {
+    const materialIndex = (part.materialIndex >= 0 && part.materialIndex < materialCount)
+      ? part.materialIndex : fallbackIndex;
+    const first = Math.max(0, Math.floor((part.start || 0) / 3));
+    const end = Math.min(triangleCount,
+      Math.ceil(((part.start || 0) + Math.max(0, part.count || 0)) / 3));
+    for (let triangle = first; triangle < end; ++triangle) {
+      triangleMaterial[triangle] = materialIndex;
+    }
+  }
+
+  const counts = new Uint32Array(materialCount);
+  for (let triangle = 0; triangle < triangleCount; ++triangle) {
+    counts[triangleMaterial[triangle]] += 3;
+  }
+  const offsets = new Uint32Array(materialCount);
+  const cursors = new Uint32Array(materialCount);
+  let offset = 0;
+  for (let materialIndex = 0; materialIndex < materialCount; ++materialIndex) {
+    offsets[materialIndex] = offset;
+    cursors[materialIndex] = offset;
+    offset += counts[materialIndex];
+  }
+  const IndexType = indices?.constructor || Uint32Array;
+  const reordered = new IndexType(elementCount);
+  for (let triangle = 0; triangle < triangleCount; ++triangle) {
+    const materialIndex = triangleMaterial[triangle];
+    const dst = cursors[materialIndex];
+    const src = triangle * 3;
+    reordered[dst] = indices ? indices[src] : src;
+    reordered[dst + 1] = indices ? indices[src + 1] : src + 1;
+    reordered[dst + 2] = indices ? indices[src + 2] : src + 2;
+    cursors[materialIndex] += 3;
+  }
+  const groups = [];
+  for (let materialIndex = 0; materialIndex < materialCount; ++materialIndex) {
+    if (counts[materialIndex] > 0) {
+      groups.push({ start: offsets[materialIndex], count: counts[materialIndex], materialIndex });
+    }
+  }
+  return { indices: reordered, groups };
+}
+
 export function buildNextThreeNode(adapter, {
   skipTextures = true,
   lazyTextures = false,
   onProgress = null,
   progressInterval = 25,
-  releaseBuildData = true
+  releaseBuildData = true,
+  showCurves = true
 } = {}) {
   const group = new THREE.Group();
   group.name = adapter.filename || 'next-scene';
@@ -727,24 +796,37 @@ export function buildNextThreeNode(adapter, {
       });
       const fallbackIndex = materialEntries.length - 1;
       material = materialEntries.map((entry) => getMaterial(entry));
-      const covered = [];
-      for (const part of mesh.submeshes) {
-        const start = Math.max(0, part.start | 0);
-        const count = Math.max(0, part.count | 0);
-        if (count <= 0) continue;
-        const materialIndex = (part.materialIndex >= 0 && part.materialIndex < material.length)
-          ? part.materialIndex : fallbackIndex;
-        geometry.addGroup(start, count, materialIndex);
-        covered.push([start, start + count]);
+      const shouldCompactGroups = mesh.submeshes.length > Math.max(64, material.length * 8);
+      if (shouldCompactGroups) {
+        const compacted = compactMaterialGroups(
+          mesh.indices, mesh.submeshes, material.length, fallbackIndex,
+          mesh.points.length / 3);
+        if (compacted) {
+          geometry.setIndex(new THREE.BufferAttribute(compacted.indices, 1));
+          for (const group of compacted.groups) {
+            geometry.addGroup(group.start, group.count, group.materialIndex);
+          }
+        }
+      } else {
+        const covered = [];
+        for (const part of mesh.submeshes) {
+          const start = Math.max(0, part.start | 0);
+          const count = Math.max(0, part.count | 0);
+          if (count <= 0) continue;
+          const materialIndex = (part.materialIndex >= 0 && part.materialIndex < material.length)
+            ? part.materialIndex : fallbackIndex;
+          geometry.addGroup(start, count, materialIndex);
+          covered.push([start, start + count]);
+        }
+        const total = mesh.indices && mesh.indices.length ? mesh.indices.length : mesh.points.length / 3;
+        covered.sort((a, b) => a[0] - b[0]);
+        let cursor = 0;
+        for (const [start, end] of covered) {
+          if (start > cursor) geometry.addGroup(cursor, start - cursor, fallbackIndex);
+          cursor = Math.max(cursor, end);
+        }
+        if (cursor < total) geometry.addGroup(cursor, total - cursor, fallbackIndex);
       }
-      const total = mesh.indices && mesh.indices.length ? mesh.indices.length : mesh.points.length / 3;
-      covered.sort((a, b) => a[0] - b[0]);
-      let cursor = 0;
-      for (const [start, end] of covered) {
-        if (start > cursor) geometry.addGroup(cursor, start - cursor, fallbackIndex);
-        cursor = Math.max(cursor, end);
-      }
-      if (cursor < total) geometry.addGroup(cursor, total - cursor, fallbackIndex);
     }
     const threeMesh = new THREE.Mesh(geometry, material);
     threeMesh.name = mesh.primPath || mesh.primName || `mesh_${mesh.index}`;
@@ -872,6 +954,7 @@ export function buildNextThreeNode(adapter, {
       widthsInterpolation: curveSet.widthsInterpolation || 'constant',
       colorsInterpolation: curveSet.colorsInterpolation || 'constant'
     };
+    curveGroup.visible = !!showCurves;
 
     const tessellatedColors = curveSet.tessellatedColors;
     const tessellatedWidths = curveSet.tessellatedWidths;

@@ -314,6 +314,7 @@ bool GetPreviewSurfaceData(const Stage& stage, const UsdPrim& shader,
   out->roughness_texture = check_texture("roughness");
   out->emissive_texture = check_texture("emissiveColor");
   out->occlusion_texture = check_texture("occlusion");
+  out->opacity_texture = check_texture("opacity");
 
   return true;
 }

@@ -52,6 +52,7 @@ def Xform "World"
         {
             uniform token info:id = "UsdPreviewSurface"
             color3f inputs:diffuseColor.connect = </World/Mat_A/Texture.outputs:rgb>
+            float inputs:opacity.connect = </World/Mat_A/Texture.outputs:r>
             float inputs:roughness = 0.5
             token outputs:surface
         }
@@ -61,6 +62,7 @@ def Xform "World"
             asset inputs:file = @Texture.png@
             token inputs:sourceColorSpace = "sRGB"
             float3 outputs:rgb
+            float outputs:r
         }
     }
 
@@ -71,6 +73,7 @@ def Xform "World"
         {
             uniform token info:id = "UsdPreviewSurface"
             color3f inputs:diffuseColor.connect = </World/Mat_B/Texture.outputs:rgb>
+            float inputs:opacity.connect = </World/Mat_B/Texture.outputs:r>
             float inputs:roughness = 0.5
             token outputs:surface
         }
@@ -80,6 +83,7 @@ def Xform "World"
             asset inputs:file = @Texture.png@
             token inputs:sourceColorSpace = "sRGB"
             float3 outputs:rgb
+            float outputs:r
         }
     }
 }

@@ -118,6 +118,7 @@ struct PreviewSurfaceData {
   std::string roughness_texture;
   std::string emissive_texture;
   std::string occlusion_texture;
+  std::string opacity_texture;
 };
 
 /// Check if shader is UsdPreviewSurface

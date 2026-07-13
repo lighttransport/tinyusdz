@@ -2361,12 +2361,14 @@ class RenderStream {
     std::string metallic_texture;
     std::string occlusion_texture;
     std::string emissive_texture;
+    std::string opacity_texture;
     TextureMeta base_color_meta;
     TextureMeta normal_meta;
     TextureMeta roughness_meta;
     TextureMeta metallic_meta;
     TextureMeta occlusion_meta;
     TextureMeta emissive_meta;
+    TextureMeta opacity_meta;
   };
 
   struct OutputMesh {
@@ -3105,6 +3107,7 @@ class RenderStream {
     *ss << "|metaltex=" << normTexKey_(m.metallic_texture);
     *ss << "|occtex=" << normTexKey_(m.occlusion_texture);
     *ss << "|emittex=" << normTexKey_(m.emissive_texture);
+    *ss << "|opacitytex=" << normTexKey_(m.opacity_texture);
   }
 
   MaterialRecord materialRecordForPrim_(
@@ -3148,12 +3151,14 @@ class RenderStream {
         rec.metallic_meta = texMeta_(ps.metallic_texture);
         rec.occlusion_meta = texMeta_(ps.occlusion_texture);
         rec.emissive_meta = texMeta_(ps.emissive_texture);
+        rec.opacity_meta = texMeta_(ps.opacity_texture);
         rec.base_color_texture = rec.base_color_meta.path;
         rec.normal_texture = rec.normal_meta.path;
         rec.roughness_texture = rec.roughness_meta.path;
         rec.metallic_texture = rec.metallic_meta.path;
         rec.occlusion_texture = rec.occlusion_meta.path;
         rec.emissive_texture = rec.emissive_meta.path;
+        rec.opacity_texture = rec.opacity_meta.path;
       }
     }
     std::ostringstream ss;
@@ -3173,6 +3178,9 @@ class RenderStream {
     addTextureKey_("data", rec.metallic_texture, &source_texture_keys_);
     addTextureKey_("data", rec.occlusion_texture, &source_texture_keys_);
     addTextureKey_("color", rec.emissive_texture, &source_texture_keys_);
+    if (rec.opacity_texture != rec.base_color_texture) {
+      addTextureKey_("data", rec.opacity_texture, &source_texture_keys_);
+    }
 
     const std::string key = material_dedup_ ? rec.key : mat_path;
     auto it = material_key_to_id_.find(key);
@@ -3188,6 +3196,9 @@ class RenderStream {
     addTextureKey_("data", rec.metallic_texture, &texture_keys_);
     addTextureKey_("data", rec.occlusion_texture, &texture_keys_);
     addTextureKey_("color", rec.emissive_texture, &texture_keys_);
+    if (rec.opacity_texture != rec.base_color_texture) {
+      addTextureKey_("data", rec.opacity_texture, &texture_keys_);
+    }
     return rec.id;
   }
 
@@ -3647,6 +3658,7 @@ class RenderStream {
     setTex("metallicTexture", ps.metallic_texture);
     setTex("occlusionTexture", ps.occlusion_texture);
     setTex("emissiveTexture", ps.emissive_texture);
+    setTex("opacityTexture", ps.opacity_texture);
     return m;
   }
 
@@ -3707,6 +3719,9 @@ class RenderStream {
     if (!rec.emissive_texture.empty()) {
       m.set("emissiveTexture", rec.emissive_texture);
     }
+    if (!rec.opacity_texture.empty()) {
+      m.set("opacityTexture", rec.opacity_texture);
+    }
     auto metaObject = [](const TextureMeta &meta) {
       emscripten::val out = emscripten::val::object();
       out.set("path", meta.path);
@@ -3734,6 +3749,9 @@ class RenderStream {
     }
     if (!rec.emissive_meta.path.empty()) {
       texture_meta.set("emissive", metaObject(rec.emissive_meta));
+    }
+    if (!rec.opacity_meta.path.empty()) {
+      texture_meta.set("opacity", metaObject(rec.opacity_meta));
     }
     m.set("textureMetadata", texture_meta);
     return m;
