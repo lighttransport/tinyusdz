@@ -760,7 +760,43 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     auto file_opt = uv_texture->file.get_value();
     if (file_opt.has_value()) {
       const auto& file_animatable = file_opt.value();
-      if (!file_animatable.is_timesamples()) {
+      if (file_animatable.is_timesamples()) {
+        // An ANIMATED texture path (`asset inputs:file.timeSamples = {...}`).
+        // There is no default here, so the samples must live in the SAME spec as
+        // the typeName: the reader builds one Property per spec, and a spec that
+        // carries nothing but a typeName has no value to construct it from
+        // ("Failed to construct Property `inputs:file`"). The separate
+        // `<name>.timeSamples` spec that add_input_spec_with_timesamples_float2
+        // uses above works only because its base spec also has a default.
+        if (const value::TimeSamples* tsp =
+                file_animatable.get_timesamples_ptr()) {
+          Path input_path = prim_path.AppendProperty("inputs:file");
+          crate::FieldValuePairVector input_fields;
+
+          crate::CrateValue type_value;
+          value::token type_tok("asset");
+          type_value.Set(type_tok);
+          input_fields.push_back({"typeName", type_value});
+
+          crate::CrateValue ts_value;
+          ts_value.Set(*tsp);
+          input_fields.push_back({"timeSamples", ts_value});
+
+          if (conns && !conns->empty()) {
+            ListOp<Path> conn_listop;
+            conn_listop.ClearAndMakeExplicit();
+            conn_listop.SetExplicitItems(*conns);
+            crate::CrateValue conn_value;
+            conn_value.Set(conn_listop);
+            input_fields.push_back({"connectionPaths", conn_value});
+          }
+
+          if (!AddSpec(input_path, SpecType::Attribute, input_fields, err)) {
+            return false;
+          }
+          emitted_value = true;
+        }
+      } else {
         value::AssetPath file_path;
         if (file_animatable.get_scalar(&file_path)) {
           crate::CrateValue file_value;

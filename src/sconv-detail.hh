@@ -139,6 +139,27 @@ void EmitAttrConnections(const std::string &name, const T &attr,
   fields.push_back({name + ".connect", v});
 }
 
+// Emit a DECLARATION-ONLY attribute (`double radius`, no value).
+//
+// An attribute is `authored()` the moment it is DECLARED, with or without a
+// value, and TypedAttributeWithFallback::get_value() silently returns the SCHEMA
+// FALLBACK when no value was authored -- so a writer that calls get_value()
+// straight off authored() invents a value the author never wrote (`double radius`
+// came back as `double radius = 2`). That is not cosmetic: an authored opinion is
+// a STRONG opinion, so a fabricated one WINS over the weaker opinions it should
+// have deferred to during composition.
+//
+// The `.typeName` suffix is understood by the field router in ConvertSinglePrim
+// (stage-converter.cc), which needs it because it otherwise infers the spec's
+// type from the default value -- and here there is none.
+inline void EmitAttrDeclaration(const std::string &name,
+                                const std::string &type_name,
+                                crate::FieldValuePairVector &fields) {
+  crate::CrateValue v;
+  v.Set(value::token(type_name));
+  fields.push_back({name + ".typeName", v});
+}
+
 } // namespace sconv_detail
 
 } // namespace experimental
