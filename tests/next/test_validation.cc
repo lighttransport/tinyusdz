@@ -655,6 +655,18 @@ def Xform "World"
         token fieldDataType = "banana"
         token fieldClass = "levelSet"
     }
+    def OpenVDBAsset "Animated"
+    {
+        asset filePath.timeSamples = {
+            1: @./smoke.0001.vdb@,
+            2: @./smoke.0002.vdb@,
+        }
+        token fieldDataType = "float"
+    }
+    def OpenVDBAsset "NoDataType"
+    {
+        asset filePath = @./still.vdb@
+    }
     def Field3DAsset "F3D"
     {
         asset filePath = @./vol.f3d@
@@ -664,6 +676,7 @@ def Xform "World"
     {
         token aspectRatioConformPolicy = "bogusPolicy"
         rel products = </World/Rp>
+        string orderedVars = "customAttrNotASchemaProperty"
     }
     def RenderProduct "Rp"
     {
@@ -673,10 +686,15 @@ def Xform "World"
     {
         token sourceType = "telepathy"
     }
+    def RenderVar "DeclaredOnly"
+    {
+        token sourceType
+    }
 }
 )";
   ValidationOptions options;
   options.geom = true;
+  options.render = true;
   USDValidationResult result;
   CHECK(Validate(usda, options, &result), "vol/render usda parses");
   CHECK(CountErrors(result, "vol.volume.fieldRel") == 1,
@@ -684,18 +702,32 @@ def Xform "World"
   CHECK(CountWarnings(result, "vol.volume.fieldRel") == 1,
         "targetless field relationship warns");
   CHECK(CountWarnings(result, "vol.fieldAsset.filePath") == 1,
-        "OpenVDBAsset without filePath warns (Field3DAsset has one)");
-  CHECK(CountErrors(result, "vol.fieldAsset.dataType") == 1,
-        "invalid OpenVDB fieldDataType is an error");
+        "only the asset without any filePath warns (time-sampled filePath "
+        "is valid animated-volume authoring)");
+  CHECK(CountErrors(result, "vol.fieldAsset.dataType") == 2,
+        "invalid fieldDataType errors; missing fieldDataType errors (pxr: "
+        "a missing value is an error)");
   CHECK(CountErrors(result, "vol.fieldAsset.fieldClass") == 0,
         "valid fieldClass is clean");
   CHECK(CountErrors(result, "render.settings.aspectRatioConformPolicy") == 1,
         "invalid aspectRatioConformPolicy is an error");
   CHECK(CountErrors(result, "render.var.sourceType") == 1,
-        "invalid RenderVar sourceType is an error");
+        "invalid sourceType errors; a declared-only sourceType is clean "
+        "(schema fallback applies)");
   CHECK(CountErrors(result, "render.settings.relationship") == 0,
-        "authored relationships are clean");
+        "authored relationships are clean; a custom `orderedVars` attribute "
+        "on RenderSettings is not kind-checked");
   if (g_fail) DumpIssues(result);
+
+  // render.* rules are their own group: geom alone must not run them.
+  ValidationOptions geom_only;
+  geom_only.geom = true;
+  USDValidationResult geom_result;
+  CHECK(Validate(usda, geom_only, &geom_result), "geom-only re-run parses");
+  CHECK(CountErrors(geom_result, "render.settings.aspectRatioConformPolicy") ==
+                0 &&
+            CountErrors(geom_result, "render.var.sourceType") == 0,
+        "render rules do not run under the geom group");
 }
 
 static void test_parse_failure() {

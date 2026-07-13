@@ -69,7 +69,7 @@ void PrintUsage(std::ostream& os) {
         "Options:\n"
         "  -g, --groups LIST     Comma-separated rule groups: "
         "core,geom,shade,\n"
-        "                        lux,physics,package,crate,arkit (default: "
+        "                        lux,physics,render,package,crate,arkit (default: "
         "all\n"
         "                        defect-class groups; arkit is opt-in)\n"
         "      --core-only       Run AOUSD Core rules only\n"
@@ -139,6 +139,8 @@ bool SetGroups(const std::string& text, ValidationOptions* groups,
       flag = &groups->lux;
     else if (name == "physics")
       flag = &groups->physics;
+    else if (name == "render")
+      flag = &groups->render;
     else if (name == "package")
       flag = &groups->package;
     else if (name == "crate")
@@ -183,6 +185,7 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
           << "shade     UsdShade, preview-surface, and MaterialX rules\n"
           << "lux       UsdLux structural and value rules\n"
           << "physics   UsdPhysics placement, joint, and extension rules\n"
+          << "render    UsdRender settings/product/var structural rules\n"
           << "package   USDZ layout, path, portability, and dependency rules\n"
           << "crate     USDC decode and cross-table structural rules\n"
           << "arkit     ARKit/RealityKit USDZ delivery profile (opt-in; not "

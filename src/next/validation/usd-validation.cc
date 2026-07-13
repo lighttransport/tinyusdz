@@ -920,6 +920,13 @@ void ValidateTokenSetProperty(const PrimSpec &ps, const std::string &prop_name,
   }
   std::string token;
   if (!GetTokenProperty(ps, prop_name, &token)) {
+    // A declared-only or timeSamples-only attribute is valid authoring (the
+    // schema fallback / animation supplies the value); only an authored
+    // DEFAULT of the wrong type is an error.
+    const Value *v = GetAttrValue(ps, prop_name);
+    if (!v || v->is_empty()) {
+      return;
+    }
     AddError(result, rule_id, location,
              prop_name + " must have a token value");
     return;
@@ -1794,14 +1801,27 @@ void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
                                                     "Vector", "Color"};
 
   std::string file;
+  const std::vector<std::pair<double, uint32_t>> *file_samples =
+      GetTimeSamplesOf(ps, "filePath");
   if (!HasAttributeProp(ps, "filePath")) {
     AddWarning(result, "vol.fieldAsset.filePath",
                MakePropertyLocation(prim_location, "filePath"),
                ps.type_name() + " should author filePath");
-  } else if (!GetAssetPathProperty(ps, "filePath", &file) || file.empty()) {
+  } else if ((!file_samples || file_samples->empty()) &&
+             (!GetAssetPathProperty(ps, "filePath", &file) || file.empty())) {
+    // A time-sampled filePath is the canonical animated-volume authoring
+    // (one asset per sample); only a sample-less, default-less (or empty)
+    // filePath warrants a diagnostic.
     AddWarning(result, "vol.fieldAsset.filePath",
                MakePropertyLocation(prim_location, "filePath"),
                ps.type_name() + " filePath should be a non-empty asset path");
+  }
+  // pxr usdVol schema: for fieldDataType, "A missing value is considered an
+  // error."
+  if (!HasAttributeProp(ps, "fieldDataType")) {
+    AddError(result, "vol.fieldAsset.dataType",
+             MakePropertyLocation(prim_location, "fieldDataType"),
+             ps.type_name() + " must author fieldDataType");
   }
   if (ps.type_name() == "OpenVDBAsset") {
     ValidateTokenSetProperty(ps, "fieldDataType", kVdbDataTypes,
@@ -1830,7 +1850,13 @@ void ValidateRenderPrim(const PrimSpec &ps, const std::string &prim_location,
     ValidateTokenSetProperty(ps, "aspectRatioConformPolicy", kConformPolicy,
                              "render.settings.aspectRatioConformPolicy",
                              prim_location, result);
-    for (const char *rel : {"camera", "products", "orderedVars"}) {
+    // Per pxr, `products` is a RenderSettings property and `orderedVars` a
+    // RenderProduct property; the same name on the OTHER type is an ordinary
+    // custom property and must not be kind-checked.
+    const char *rels[2] = {
+        "camera",
+        type_name == "RenderSettings" ? "products" : "orderedVars"};
+    for (const char *rel : rels) {
       if (HasProperty(ps, rel) && !IsRelationshipProp(ps, rel)) {
         AddError(result, "render.settings.relationship",
                  MakePropertyLocation(prim_location, rel),
@@ -5549,9 +5575,6 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
       ValidateVolume(ps, prim_location, result);
     } else if (type_name == "OpenVDBAsset" || type_name == "Field3DAsset") {
       ValidateFieldAsset(ps, prim_location, result);
-    } else if (type_name == "RenderSettings" || type_name == "RenderProduct" ||
-               type_name == "RenderVar") {
-      ValidateRenderPrim(ps, prim_location, result);
     }
     ValidatePrimvars(ps, prim_location, result);
     if (type_name == "Mesh") {
@@ -5568,6 +5591,13 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
 
   if (options.lux && !has_arc && !is_over && IsLuxLightTypeName(type_name)) {
     ValidateLuxLight(ps, prim_location, result);
+  }
+
+  // UsdRender is its own rule group: scene-description checks, not geometry.
+  if (options.render && !has_arc && !is_over &&
+      (type_name == "RenderSettings" || type_name == "RenderProduct" ||
+       type_name == "RenderVar")) {
+    ValidateRenderPrim(ps, prim_location, result);
   }
 
   if (options.physics && !has_arc && !is_over) {
@@ -5838,6 +5868,7 @@ ValidationOptions MakeValidateAllOptions() {
   options.shade = true;
   options.lux = true;
   options.physics = true;
+  options.render = true;
   options.package = true;
   options.crate = true;
   // `arkit` stays off: it is an opt-in delivery profile (Y-up, whitelisted
@@ -5862,6 +5893,9 @@ std::vector<std::string> GetValidationGroupNames(
   }
   if (options.physics) {
     groups.emplace_back("physics");
+  }
+  if (options.render) {
+    groups.emplace_back("render");
   }
   if (options.package) {
     groups.emplace_back("package");
