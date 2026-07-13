@@ -64,7 +64,7 @@ bool CrateWriter::ExtractSkeletonProperties(
   }
 
   // visibility
-  if (skel->visibility.has_value()) {
+  if (skel->visibility.authored()) {
     const auto& visibility_anim = skel->visibility.get_value();
     if (visibility_anim.has_default()) {
       Visibility vis_val;
@@ -78,7 +78,7 @@ bool CrateWriter::ExtractSkeletonProperties(
   }
 
   // purpose
-  if (skel->purpose.has_value()) {
+  if (skel->purpose.authored()) {
     crate::CrateValue crate_val;
     value::token tok(to_string(skel->purpose.get_value()));
     crate_val.Set(tok);
@@ -173,7 +173,7 @@ bool CrateWriter::ExtractSkelRootProperties(
 
   // SkelRoot has no dedicated attributes beyond visibility, purpose, and extent
   // Extract visibility
-  if (skel_root->visibility.has_value()) {
+  if (skel_root->visibility.authored()) {
     const auto& visibility_anim = skel_root->visibility.get_value();
     if (visibility_anim.has_default()) {
       Visibility visibility_val;
@@ -187,7 +187,7 @@ bool CrateWriter::ExtractSkelRootProperties(
   }
 
   // Extract purpose
-  if (skel_root->purpose.has_value()) {
+  if (skel_root->purpose.authored()) {
     const auto& purpose_val = skel_root->purpose.get_value();
     crate::CrateValue crate_val;
     value::token tok(to_string(purpose_val));
