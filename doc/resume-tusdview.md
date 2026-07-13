@@ -34,10 +34,55 @@ cause of 68 of the then-133 round-trip failures, 133 -> 65), the **Camera
 (64 -> 60), and **five `rel`/relationship bugs** — varying/custom dropped,
 `bindMaterialAs` dropped, `proxyPrim` dropped, and a
 material-binding-collection namespace order swap (60 -> 50) — all pushed.
-Also fixed, not yet pushed: **variant-statement metadata dropped**
-(`active`/`hidden`/`kind`/`variantSets` on a variant, 50 -> 41). See
+**variant-statement metadata dropped** (`active`/`hidden`/`kind`/`variantSets`
+on a variant, 50 -> 41) is pushed too. Also fixed, not yet pushed: the
+**shader-connection-baked-to-constant** bugs (43 -> 39; also ported to
+physics-2026-fix2). See
 [Open](#open) for what is left of that sweep, and
 [Prompts for a fresh session](#prompts-for-a-fresh-session) to pick it up cold.
+
+### Shader connections baked down to constants (43 -> 39 fixtures) — FIXED 2026-07-14
+
+The worst bug of the sweep, because it did not drop inert metadata — it silently
+**rewrote the asset's shading network** into a different, constant-valued one that
+still loads and still renders:
+
+```usda
+    token inputs:wrapS.connect = </mat/pbr.inputs:wrapSDriver>
+->  token inputs:wrapS = "useMetadata"
+```
+
+Two independent causes, both in `src/sconv-shader.cc`:
+
+1. A shader input is `authored()` when it is **declared**, with or without a
+   value, and `TypedAttributeWithFallback::get_value()` silently returns the
+   **schema fallback** when no value was authored. Every typed input except
+   `inputs:st` / `inputs:file` / `inputs:in` / `inputs:normal` called
+   `get_value()` straight off `authored()` without first asking
+   `is_value_empty()`, and never passed the attribute's connections through to
+   `add_input_spec()` — which has accepted an optional `connections` argument all
+   along. So a connection-only input was written as its fallback CONSTANT and the
+   connection was lost. Fixed by giving all 10 affected inputs the shape
+   `inputs:st` already had (`useSpecularWorkflow`, `opacityMode`; UsdUVTexture
+   `wrapS`/`wrapT`/`fallback`/`sourceColorSpace`/`scale`/`bias`/`uv_set`/
+   `uv_set_name`; UsdTransform2d `rotation`/`scale`/`translation`).
+2. A Material terminal is a `TypedConnection` whose `has_value()` IS its
+   connection count (`_targetPaths.size()`), so `AddMaterialOutputSpecs`' 
+   `has_value()` gate dropped a DECLARED-but-unconnected terminal outright
+   (`def Material "mymat" { token outputs:surface }` vanished on write). The three
+   copy-pasted surface/displacement/volume blocks are now one helper.
+
+Guarded by a mutation-verified `shader-connect-usdc` check that asserts both that
+the connections survive AND that none came back as its fallback constant.
+
+**Also ported to `physics-2026-fix2`** (`d35d78ffb`, on the local worktree at
+`~/work/tinyusdz/physics-2026-fix2`, branch `physics-2026-fix2-local`, NOT
+pushed): the bug is in shared core, and that branch had it too (140 -> 136 of its
+423 fixtures; its baseline is higher because it lacks this branch's other writer
+fixes). The `run-scope-imageable-roundtrip.sh` harness does not exist there, so
+the assertion did not come across — and it could not simply be copied, because
+that branch also still lacks the Material/NodeGraph `purpose` fix the harness
+checks.
 
 ### Merging `physics-2026-fix2` (read before you merge it again)
 
@@ -89,26 +134,24 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-43-of-427-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-39-of-427-fixtures)):
 
 > The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
 > Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 43 of 427 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> data"): 39 of 427 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
 > intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug,
 > the Camera shutter:open/shutter:close naming bug, the apiSchemas
-> list-op delete/None/prepend-order bugs, five rel/relationship bugs, and
-> variant-statement metadata).
+> list-op delete/None/prepend-order bugs, five rel/relationship bugs,
+> variant-statement metadata, and the shader-connection-baked-to-constant bugs).
 > Read the full categorized list in that section before starting — it spans
-> several `.connect` shader connections baked down to plain
-> constants, several more `timeSamples` attributes dropped wholesale,
+> several `timeSamples` attributes dropped wholesale,
 > `skel:blendShapes` losing its namespace, spurious unauthored
-> `visibility`/`purpose` invented on Skeleton-family prims, and stage/layer
+> `visibility`/`purpose` invented on Skeleton-family prims, `reorder
+> nameChildren`/`properties` dropped, and stage/layer
 > metadata dictionaries (`customLayerData`, `kilogramsPerUnit`,
-> `sdrMetadata`, etc.) dropped. Fix them one category at a time, smallest/most
-> self-contained first;
-> the `.connect`-baked-to-constant bug is probably the most consequential
-> since it silently changes an asset's shading network rather than dropping
-> inert metadata. NOTE: a value-less relationship with an authored list-edit
+> `sdrMetadata`, unregistered prim/property metadata, etc.) dropped. Fix them
+> one category at a time, smallest/most self-contained first.
+> NOTE: a value-less relationship with an authored list-edit
 > qualifier (`append rel myval`, `delete rel myheight`) was investigated and
 > left ALONE on purpose — it looks like a `ListOp<T>` data-model gap (no way
 > to record "authored but empty"), not a quick writer fix; see the note under
@@ -138,7 +181,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (43 of 427 fixtures)
+### The crate writer drops data (39 of 427 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -150,7 +193,7 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 43 of 427 as of 2026-07-13 (was 41 of 422 before the
+done | wc -l          # 39 of 427 as of 2026-07-13 (was 41 of 422 before the
                       # physics-2026-fix2 merge, which ADDED 5 fixtures, 2 of
                       # which fail on already-known gaps; was 50, 60, 64, 65, 133, 140)
 ```
@@ -165,10 +208,6 @@ qualifier (`append`/`delete`) on a value-LESS relationship (`append rel
 myval`, `delete rel myheight`) — see "Left for later" below, this looks like a
 `ListOp<T>` data-model gap, not a quick writer fix.
 
-- Several `inputs:foo.connect = </target>` shader connections come back baked
-  down to a plain constant value instead of the connection; a declared but
-  unconnected `outputs:foo.connect` (no RHS) is dropped, and its type can come
-  back wrong.
 - `timeSamples` dropped wholesale on several attributes outside the
   well-trodden xformOp/mesh paths: `extent`, a token attribute
   (`projection`), PointInstancer `positions`/`orientations`/`scales`, `asset
