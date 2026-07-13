@@ -60,5 +60,18 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
                       std::string* source_clip_set = nullptr,
                       ValueClipStageCache* stage_cache = nullptr);
 
+/// Same resolution over PRE-PARSED clip sets (from ParseValueClipSets):
+/// callers issuing many queries against one prim (e.g. Tydra's animation
+/// bake) parse the metadata once instead of per query. `prim` is still
+/// needed for the fallback clip prim path and nested-clip recursion.
+bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
+                              const UsdPrim& prim, const std::string& property,
+                              double stage_time,
+                              const ValueClipStageLoader& loader, Value* out,
+                              std::string* source_asset = nullptr,
+                              std::string* error = nullptr,
+                              std::string* source_clip_set = nullptr,
+                              ValueClipStageCache* stage_cache = nullptr);
+
 }  // namespace next
 }  // namespace tinyusdz

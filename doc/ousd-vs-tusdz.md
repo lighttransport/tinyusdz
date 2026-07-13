@@ -296,8 +296,15 @@ stage-time clamping, clip-set name ordering, multi-clip `active` switching,
 and LVRPS clip strength. Composition records per-property clip shadowing
 (`PrimSpecMeta::clipShadowedProps`): opinions filled from sources weaker than
 the clips-introducing source lose to clips, while local opinions keep
-precedence. **Remaining:** make Tydra consume the core resolver rather than
-own duplicate metadata semantics.
+precedence. Tydra's animation bake now CONSUMES the core resolver: it parses
+clip metadata once via `ParseValueClipSets` and resolves every (property,
+time) sample through `ResolveValueClipFromSets` (a pre-parsed-sets overload
+added for many-query callers), seeding the shared `ValueClipStageCache` from
+its own loader. Tydra's former duplicate of the metadata semantics — which
+had drifted (no `times` jump-discontinuity handling, stale out-of-range
+mapping, no clipSets ordering edits, no manifest gating, no nested-clip
+recursion) — is deleted; only the bake-specific sample-time generation
+remains Tydra-side.
 
 ### AOUSD-VR-002 — Default-time queries consult time samples (P1)
 

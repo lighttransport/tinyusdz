@@ -89,8 +89,9 @@ resolved values (ctest `next_test_aousd_value_resolution`, self-skips without
 the corpus; also `run-aousd-supplemental.py --aousd-value-test`, blocking).
 Fixed three real resolver bugs it exposed: LVRPS clip strength (per-property
 `clipShadowedProps` recorded during pcp compose), `times` jump-discontinuity
-ordering, out-of-range stage-time mapping. Remaining follow-on (doc ~:299):
-make Tydra consume the core resolver.
+ordering, out-of-range stage-time mapping. The follow-up commit also routed
+Tydra's animation bake through the core resolver (ParseValueClipSets +
+ResolveValueClipFromSets; duplicate Tydra clip semantics deleted).
 
 ### 2. Composition specifier edge case — DONE
 Ported pxr `_GetPrimSpecifierImpl`: ancestral-inherit class resolves in plain
