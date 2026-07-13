@@ -138,11 +138,30 @@ next):
   disc; latlong control sees the pole red). DistantLight `angle` remains unused
   (no soft distant shadows anywhere in tusdrender) — out of scope here.
 
+**T8 — FIXED (2026-07-13).** doubleSided plumbing + culling parity:
+
+- The `--next` loader now reads the authored `doubleSided` (new
+  `next::RenderMesh::double_sided`, written by the next converter for real
+  meshes and generated gprims) into `DrawMeshCPU.doubleSided` — previously
+  every --next mesh defaulted to single-sided, so GL back-face-culled even
+  authored doubleSided=true geometry. Batches key on it (single- and
+  double-sided meshes must not merge). The legacy path already plumbed it.
+- Vulkan back-face-culls single-sided meshes like GL, via
+  VK_EXT_extended_dynamic_state (per-draw `vkCmdSetCullMode` on the mesh,
+  tessellation and per-mesh instanced pipelines; LOD box proxies cull BACK
+  like GL). Extension absent → static CULL_MODE_NONE, the old behavior.
+  The MDI instanced batch draws many prototypes per indirect call and keeps
+  cull off (documented in-code); GL still culls those — the residual gap.
+- tusdrender still faceforwards every hit (R12, low) — unchanged here.
+- Test: `tusdview-double-sided` — a red quad from front/back cameras on BOTH
+  backends: single-sided is invisible from behind, doubleSided visible, with a
+  fixture-validity guard (front view must show the quad).
+
 Deferred, with reasons:
 
-- **T8 (doubleSided plumbing + culling), T11 (sRGB linearization in tusdview
-  raster), GL↔VK normal-map/shaded-diffuse unification** — appearance-changing
-  across every scene; need golden-image re-baselines and a deliberate look call.
+- **T11 (sRGB linearization in tusdview raster), GL↔VK
+  normal-map/shaded-diffuse unification** — appearance-changing across every
+  scene; need golden-image re-baselines and a deliberate look call.
 
 Refuted on re-test: **T7** (Facing AOV inversion) — see the finding below.
 
@@ -252,7 +271,7 @@ framebuffer winding matches GL. This was a code-derived finding that did not
 survive an actual render; a frontFace "fix" was attempted and correctly rejected
 by the same A/B.
 
-### T8. [medium] Vulkan never back-face culls; GL culls single-sided meshes  **[×2]**
+### T8. [medium] Vulkan never back-face culls; GL culls single-sided meshes  **[×2]**  **[FIXED — see the status above]**
 All VK raster pipelines set `cullMode = VK_CULL_MODE_NONE`
 (`vk_renderer.cc:1327/1475/1621`); GL culls back faces of non-double-sided
 meshes (`gl_renderer.cc:2235`). (Also: authored `doubleSided` never reaches the
