@@ -2249,12 +2249,14 @@ if(TINYUSDZ_BUILD_TESTS)
         cli-robustness
         cmyk-jpeg-texture
         degraded-material
+        dome-format
         frames-framespec
         geomsubset-materials
         ibl-specular-bound
         instancer-invisible-ids
         instancer-orientation
         light-double-count
+        light-normalize
         material-shading-bsdf-sample
         mesh-light-gaps
         mtlx-usdz-texture-equivalence
