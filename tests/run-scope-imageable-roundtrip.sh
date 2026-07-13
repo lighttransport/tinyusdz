@@ -294,4 +294,68 @@ else
   echo "ok[camera-shutter-usdc]: Camera shutter:open/shutter:close survived"
 fi
 
+# apiSchemas list-ops: the crate writer rebuilt a single ListOp from the
+# RESOLVED view (APISchemas::names/unknownSchemas), which can only ever be one
+# explicit-or-prepend op. That silently dropped every `delete apiSchemas`
+# (Omniverse/Newton-asset pattern: `prepend` + `delete` on one prim), dropped
+# `apiSchemas = None` entirely (both resolved vectors are empty, so the old
+# code wrote nothing -- not even an explicit empty list), and reordered
+# `prepend` items because known (`names`) and unknown (`unknownSchemas`)
+# schemas live in separate vectors that got concatenated back in the wrong
+# order. Covers all three in one round-trip.
+cat > "$TMP/apischemas.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "W"
+)
+
+def Xform "W"
+{
+    def Xform "deleteAndPrepend" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI"]
+        delete apiSchemas = ["PhysicsArticulationRootAPI"]
+    )
+    {
+    }
+
+    def Xform "explicitNone" (
+        apiSchemas = None
+    )
+    {
+    }
+
+    def Xform "preserveOrder" (
+        prepend apiSchemas = ["HoudiniViewportGuideAPI", "GeomModelAPI", "MotionAPI"]
+    )
+    {
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/apischemas.usdc" "$TMP/apischemas.usda" \
+     >"$TMP/write6.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the apiSchemas scene to usdc"
+  cat "$TMP/write6.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/apischemas.usdc" > "$TMP/apischemas-rt.usda" 2>/dev/null
+lost=""
+for expect in \
+  'delete apiSchemas = ["PhysicsArticulationRootAPI"]' \
+  'prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI"]' \
+  'apiSchemas = None' \
+  'prepend apiSchemas = ["HoudiniViewportGuideAPI", "GeomModelAPI", "MotionAPI"]'; do
+  grep -qF "$expect" "$TMP/apischemas-rt.usda" || lost="$lost
+    $expect"
+done
+if [ -n "$lost" ]; then
+  echo "FAIL[apischemas-usdc]: dropped/reordered on round-trip:$lost"
+  echo "--- got ---"
+  cat "$TMP/apischemas-rt.usda"
+  status=1
+else
+  echo "ok[apischemas-usdc]: delete+prepend, explicit None, and prepend order survived"
+fi
+
 exit "$status"

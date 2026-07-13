@@ -1295,30 +1295,76 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"clips", v});
   }
 
-  // apiSchemas
+  // apiSchemas. `authoredOps` (populated by the ASCII/USDC readers, see
+  // ToAPISchemas in usdc-reader-prim.cc) is the verbatim authored
+  // SdfTokenListOp -- possibly SEVERAL ops on one prim (e.g. `delete` +
+  // `prepend`, the Omniverse/Newton-asset pattern) -- and is the only source
+  // that can reproduce it losslessly. The OLD code instead rebuilt a single
+  // ListOp from the *resolved* view (`names`/`unknownSchemas`), which always
+  // collapses to one explicit-or-prepend op: any `delete` was silently
+  // dropped, `names` and `unknownSchemas` are separate vectors so interleaved
+  // authoring order was lost, and an `apiSchemas = None` block (explicitly
+  // empty, so both vectors are empty too) wrote nothing at all instead of an
+  // explicit empty list.
   if (metas.has_apiSchemas()) {
-    const auto schemas = metas.get_apiSchemas();
-    // Convert APISchemas to ListOp<value::token>
-    std::vector<value::token> schema_tokens;
-    for (const auto &s : schemas.names) {
-      std::string name = to_string(s.first);
-      if (!s.second.empty()) {
-        name += ":" + s.second;  // Multi-apply instance
+    const auto &schemas = metas.get_apiSchemas();
+    if (schemas.explicitlyEmpty) {
+      // `apiSchemas = None`: an explicit, empty list-op, distinct from no
+      // opinion at all.
+      ListOp<value::token> listop;
+      listop.ClearAndMakeExplicit();
+      crate::CrateValue v;
+      v.Set(listop);
+      fields.push_back({"apiSchemas", v});
+    } else if (!schemas.authoredOps.empty()) {
+      ListOp<value::token> listop;
+      for (const auto &op : schemas.authoredOps) {
+        std::vector<value::token> toks;
+        toks.reserve(op.second.size());
+        for (const auto &item : op.second) {
+          toks.push_back(value::token(item.first));
+        }
+        switch (op.first) {
+          case ListEditQual::ResetToExplicit:
+            listop.ClearAndMakeExplicit();
+            listop.SetExplicitItems(toks);
+            break;
+          case ListEditQual::Append:  listop.SetAppendedItems(toks); break;
+          case ListEditQual::Prepend: listop.SetPrependedItems(toks); break;
+          case ListEditQual::Add:     listop.SetAddedItems(toks); break;
+          case ListEditQual::Delete:  listop.SetDeletedItems(toks); break;
+          default:
+            listop.ClearAndMakeExplicit();
+            listop.SetExplicitItems(toks);
+            break;
+        }
       }
-      schema_tokens.push_back(value::token(name));
-    }
-    for (const auto &s : schemas.unknownSchemas) {
-      std::string name = s.first;
-      if (!s.second.empty()) {
-        name += ":" + s.second;
+      crate::CrateValue v;
+      v.Set(listop);
+      fields.push_back({"apiSchemas", v});
+    } else if (!schemas.names.empty() || !schemas.unknownSchemas.empty()) {
+      // Fallback for APISchemas built programmatically (e.g. attached via the
+      // C API or a tydra converter) with no authored-op history to replay.
+      std::vector<value::token> schema_tokens;
+      for (const auto &s : schemas.names) {
+        std::string name = to_string(s.first);
+        if (!s.second.empty()) {
+          name += ":" + s.second;  // Multi-apply instance
+        }
+        schema_tokens.push_back(value::token(name));
       }
-      schema_tokens.push_back(value::token(name));
-    }
-    if (!schema_tokens.empty()) {
+      for (const auto &s : schemas.unknownSchemas) {
+        std::string name = s.first;
+        if (!s.second.empty()) {
+          name += ":" + s.second;
+        }
+        schema_tokens.push_back(value::token(name));
+      }
       ListOp<value::token> listop;
       if (schemas.listOpQual == ListEditQual::Prepend) {
         listop.SetPrependedItems(schema_tokens);
       } else {
+        listop.ClearAndMakeExplicit();
         listop.SetExplicitItems(schema_tokens);
       }
       crate::CrateValue v;
