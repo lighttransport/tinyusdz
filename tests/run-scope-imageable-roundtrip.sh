@@ -1104,4 +1104,76 @@ else
   echo "ok[attr-connect-listop-stringdata-usdc]: typed-attr .connect, listOp qualifier order, bare-string attr meta and a non-conformant shader terminal type survived"
 fi
 
+# -------------------------------------------------------------------------
+# 19. Declaration-only attributes, and an animated asset path.
+#
+# An attribute is authored() the moment it is DECLARED, and
+# TypedAttributeWithFallback::get_value() returns the SCHEMA FALLBACK when no
+# value was authored -- so the typed writers turned a bare `double radius` into
+# `double radius = 2`, INVENTING an opinion. That is not cosmetic: an authored
+# opinion is a strong one, so the fabricated value wins over the weaker opinions
+# it should have deferred to during composition.
+#
+# `asset inputs:file` with timeSamples and no default is the same shape: the
+# samples must ride in the SAME spec as the typeName, or the reader has no value
+# to build the Property from.
+# -------------------------------------------------------------------------
+cat > "$TMP/defonly.usda" <<'USD'
+#usda 1.0
+
+def Sphere "S"
+{
+    double radius
+}
+
+def Cube "C"
+{
+    double size
+}
+
+def Shader "Tex"
+{
+    uniform token info:id = "UsdUVTexture"
+    asset inputs:file.timeSamples = {
+        0: @a.png@,
+        1: @b.png@,
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/defonly.usdc" "$TMP/defonly.usda" \
+     >"$TMP/write19.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the declaration-only scene to usdc"
+  cat "$TMP/write19.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/defonly.usdc" > "$TMP/defonly-rt.usda" 2>/dev/null
+if [ ! -s "$TMP/defonly-rt.usda" ]; then
+  echo "FAIL[defonly-usdc]: crate read back EMPTY -- a spec carrying only a"
+  echo "  typeName has no value for the reader to build a Property from"
+  status=1
+else
+  bad=""
+  # The fallbacks must NOT have been invented (Sphere radius is 2, Cube size 2).
+  grep -qE 'double radius *=' "$TMP/defonly-rt.usda" && bad="$bad
+    radius came back WITH a value (fallback baked in)"
+  grep -qE 'double size *=' "$TMP/defonly-rt.usda" && bad="$bad
+    size came back WITH a value (fallback baked in)"
+  grep -qF 'double radius' "$TMP/defonly-rt.usda" || bad="$bad
+    radius declaration dropped entirely"
+  grep -qF 'double size' "$TMP/defonly-rt.usda" || bad="$bad
+    size declaration dropped entirely"
+  grep -qF 'inputs:file.timeSamples' "$TMP/defonly-rt.usda" || bad="$bad
+    animated inputs:file timeSamples dropped"
+  if [ -n "$bad" ]; then
+    echo "FAIL[defonly-usdc]:$bad"
+    echo "--- got ---"
+    cat "$TMP/defonly-rt.usda"
+    status=1
+  else
+    echo "ok[defonly-usdc]: declaration-only radius/size kept their (absent) value, animated inputs:file survived"
+  fi
+fi
+
 exit "$status"

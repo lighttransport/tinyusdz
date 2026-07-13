@@ -593,6 +593,7 @@ bool CrateWriter::ConvertSinglePrim(
     bool has_spline{false};
     crate::CrateValue conn_val;
     bool has_conn{false};
+    std::string decl_type_name;  // set for a declaration-only attribute
   };
   std::vector<PropEntry> prop_entries;
 
@@ -641,16 +642,25 @@ bool CrateWriter::ConvertSinglePrim(
     bool is_interp = false;
     bool is_spline = false;
     bool is_conn = false;
+    bool is_decl_type = false;
     std::string meta_key;  // non-empty when fv.first is `<base>.<meta_key>`
     const std::string ts_suffix = ".timeSamples";
     const std::string interp_suffix = ".interpolation";
     const std::string spline_suffix = ".spline";
     const std::string conn_suffix = ".connect";
+    const std::string decl_suffix = ".typeName";
     if (base_name.size() > conn_suffix.size() &&
         base_name.compare(base_name.size() - conn_suffix.size(),
                           conn_suffix.size(), conn_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - conn_suffix.size());
       is_conn = true;
+    } else if (base_name.size() > decl_suffix.size() &&
+               base_name.compare(base_name.size() - decl_suffix.size(),
+                                 decl_suffix.size(), decl_suffix) == 0) {
+      // A declaration-only attribute: the spec carries a typeName and NO
+      // default, so the type cannot be inferred from a value.
+      base_name = base_name.substr(0, base_name.size() - decl_suffix.size());
+      is_decl_type = true;
     } else if (base_name.size() > ts_suffix.size() &&
         base_name.compare(base_name.size() - ts_suffix.size(),
                           ts_suffix.size(), ts_suffix) == 0) {
@@ -706,6 +716,10 @@ bool CrateWriter::ConvertSinglePrim(
     if (is_conn) {
       entry->conn_val = std::move(fv.second);
       entry->has_conn = true;
+    } else if (is_decl_type) {
+      if (auto tok = fv.second.get_value<value::token>()) {
+        entry->decl_type_name = tok.value().str();
+      }
     } else if (is_ts) {
       entry->ts_val = std::move(fv.second);
       entry->has_ts = true;
@@ -770,6 +784,8 @@ bool CrateWriter::ConvertSinglePrim(
     std::string prop_type_name;
     if (pe.has_default) {
       prop_type_name = pe.default_val.type_name();
+    } else if (!pe.decl_type_name.empty()) {
+      prop_type_name = pe.decl_type_name;
     } else if (pe.has_ts) {
       // For timeSamples, get the element type from the first sample
       auto ts_opt = pe.ts_val.get_value<value::TimeSamples>();
