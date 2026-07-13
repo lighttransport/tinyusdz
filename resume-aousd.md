@@ -149,11 +149,19 @@ byte-≥0x80 approximation replaced by the shared strict validator. Generated
 UTF-8/XID boundary cases in `TestUnicodeAndPaths`. `PrimSpec::set_name`
 deliberately stays raw (reader-internal, lexer-validated input).
 
-### 7. Non-core OpenUSD domain-schema breadth  *(large, product-driven — untouched)*
-Schema checks are structural for schemas `next` knows — not a plugin registry.
-Volume/field, Hermite/TetMesh/NURBS-patch, render-settings, shader-node breadth are
-product parity, not AOUSD Core. Prioritize from application requirements; label as
-product parity, not conformance.
+### 7. Non-core OpenUSD domain-schema breadth — SCHEMA/VALIDATION PASS DONE
+(Product parity, not conformance.) The registry now defines UsdVol
+(Volume + VolumeFieldBase/VolumeFieldAsset/OpenVDBAsset/Field3DAsset chains,
+pxr fallbacks), UsdRender (RenderSettingsBase/RenderSettings/RenderProduct/
+RenderVar), and the UsdGeom breadth types (HermiteCurves, TetMesh, NurbsPatch
+incl. trimCurve:*, NurbsCurves knots/orders/ranges/pointWeights/ids); the
+validator adds `vol.volume.fieldRel`, `vol.fieldAsset.*` and `render.*`
+structural checks and knows the new types' Gprim/non-Xformable placement.
+Tests: `test_domain_schema_breadth` (registry), `test_vol_render_rules`
+(validator). REMAINING product work: Tydra RENDERING converters for
+volumes/tet meshes/NURBS (a resource + shader design, per doc ~:557) and
+shader-node coverage beyond UsdPreviewSurface/UsdUVTexture/UsdPrimvarReader/
+MaterialX — prioritize from application requirements.
 
 ### Housekeeping (not conformance, but tracked)
 - 3 legacy-parser roundtrip fixtures fail (`aousd-namespace-order.usda`,

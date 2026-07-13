@@ -65,6 +65,21 @@ SchemaRegistry::SchemaRegistry() {
       {"DomeLight", "Xformable"}, {"RectLight", "Xformable"},
       {"DiskLight", "Xformable"}, {"SphereLight", "Xformable"},
       {"CylinderLight", "Xformable"},
+      // Non-core OpenUSD domains (PRODUCT PARITY, not AOUSD Core):
+      // UsdGeom breadth (Hermite/TetMesh/NURBS patch) + UsdVol + UsdRender.
+      {"HermiteCurves", "Curves"}, {"TetMesh", "PointBased"},
+      {"NurbsPatch", "PointBased"},
+      {"Volume", "Gprim"},
+      // pxr 25.x renamed FieldBase/FieldAsset to VolumeFieldBase/
+      // VolumeFieldAsset and kept the old names as deprecated aliases; both
+      // spellings resolve through the same chain here.
+      {"VolumeFieldBase", "Xformable"}, {"FieldBase", "VolumeFieldBase"},
+      {"VolumeFieldAsset", "FieldBase"}, {"FieldAsset", "VolumeFieldAsset"},
+      {"Field3DAsset", "FieldAsset"}, {"OpenVDBAsset", "FieldAsset"},
+      // UsdRender types inherit Typed in pxr (NOT Imageable): no visibility/
+      // purpose fallbacks, only the hierarchy among themselves.
+      {"RenderSettings", "RenderSettingsBase"},
+      {"RenderProduct", "RenderSettingsBase"},
   };
 
   auto add = [&](const char* schema, const char* name, const char* type,
@@ -193,6 +208,32 @@ SchemaRegistry::SchemaRegistry() {
   add("ShadowAPI", "inputs:shadow:falloff", "float", Value(-1.0f));
   add("ShadowAPI", "inputs:shadow:falloffGamma", "float", Value(1.0f));
 
+  // Non-core OpenUSD domain fallbacks (PRODUCT PARITY; values verified
+  // against pxr's generated usdGeom/usdVol/usdRender schema.usda).
+  add("NurbsPatch", "uForm", "token", Token("open"));
+  add("NurbsPatch", "vForm", "token", Token("open"));
+  add("NurbsCurves", "order", "int[]",
+      Value::MakeIntArray(std::vector<int32_t>()));
+  add("VolumeFieldAsset", "vectorDataRoleHint", "token", Token("None"));
+  add("RenderSettingsBase", "resolution", "int2", Value::MakeInt2(2048, 1080));
+  add("RenderSettingsBase", "pixelAspectRatio", "float", Value(1.0f));
+  add("RenderSettingsBase", "aspectRatioConformPolicy", "token",
+      Token("expandAperture"));
+  add("RenderSettingsBase", "dataWindowNDC", "float4",
+      Value::MakeFloat4(0.0f, 0.0f, 1.0f, 1.0f));
+  add("RenderSettingsBase", "instantaneousShutter", "bool", Value(false));
+  add("RenderSettingsBase", "disableMotionBlur", "bool", Value(false));
+  add("RenderSettingsBase", "disableDepthOfField", "bool", Value(false));
+  add("RenderSettings", "includedPurposes", "token[]",
+      Value::MakeTokenArray({"default", "render"}));
+  add("RenderSettings", "materialBindingPurposes", "token[]",
+      Value::MakeTokenArray({"full", ""}));
+  add("RenderVar", "dataType", "token", Token("color3f"));
+  add("RenderVar", "sourceName", "string", Value(std::string("")));
+  add("RenderVar", "sourceType", "token", Token("raw"));
+  add("RenderProduct", "productType", "token", Token("raster"));
+  add("RenderProduct", "productName", "token", Token(""));
+
   // Data-driven declarations for the remaining schemas implemented by next.
   // Declarations populate HasProperty()/property-name queries without
   // inventing a fallback where the schema intentionally has none.
@@ -239,6 +280,42 @@ SchemaRegistry::SchemaRegistry() {
           {"PhysicsDriveAPI", "physics:drive:targetVelocity", "float"},
           {"PhysicsLimitAPI", "physics:limit:low", "float"},
           {"PhysicsLimitAPI", "physics:limit:high", "float"},
+          // Non-core OpenUSD domains (PRODUCT PARITY): UsdGeom breadth.
+          {"HermiteCurves", "tangents", "vector3f[]"},
+          {"TetMesh", "tetVertexIndices", "int4[]"},
+          {"TetMesh", "surfaceFaceVertexIndices", "int3[]"},
+          {"NurbsPatch", "uVertexCount", "int"},
+          {"NurbsPatch", "vVertexCount", "int"},
+          {"NurbsPatch", "uOrder", "int"},
+          {"NurbsPatch", "vOrder", "int"},
+          {"NurbsPatch", "uKnots", "double[]"},
+          {"NurbsPatch", "vKnots", "double[]"},
+          {"NurbsPatch", "uRange", "double2"},
+          {"NurbsPatch", "vRange", "double2"},
+          {"NurbsPatch", "pointWeights", "double[]"},
+          {"NurbsPatch", "trimCurve:counts", "int[]"},
+          {"NurbsPatch", "trimCurve:orders", "int[]"},
+          {"NurbsPatch", "trimCurve:vertexCounts", "int[]"},
+          {"NurbsPatch", "trimCurve:knots", "double[]"},
+          {"NurbsPatch", "trimCurve:ranges", "double2[]"},
+          {"NurbsPatch", "trimCurve:points", "double3[]"},
+          {"NurbsCurves", "knots", "double[]"},
+          {"NurbsCurves", "ranges", "double2[]"},
+          {"NurbsCurves", "pointWeights", "double[]"},
+          {"NurbsCurves", "ids", "int64[]"},
+          // UsdVol: `field:<name>` relationships are the namespace binding.
+          {"Volume", "field", "namespace"},
+          {"VolumeFieldAsset", "filePath", "asset"},
+          {"VolumeFieldAsset", "fieldName", "token"},
+          {"VolumeFieldAsset", "fieldIndex", "int"},
+          {"VolumeFieldAsset", "fieldDataType", "token"},
+          {"OpenVDBAsset", "fieldClass", "token"},
+          {"Field3DAsset", "fieldPurpose", "token"},
+          // UsdRender relationships + optional token.
+          {"RenderSettingsBase", "camera", "relationship"},
+          {"RenderSettings", "products", "relationship"},
+          {"RenderSettings", "renderingColorSpace", "token"},
+          {"RenderProduct", "orderedVars", "relationship"},
       };
   for (const Decl& declaration : declarations) {
     declare(declaration.schema, declaration.name, declaration.type);

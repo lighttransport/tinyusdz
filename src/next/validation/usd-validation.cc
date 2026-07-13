@@ -141,7 +141,7 @@ bool IsGprimTypeName(const std::string &type_name) {
       "Cone",        "Cylinder",    "Cylinder_1",   "Capsule",
       "Capsule_1",   "Points",      "BasisCurves",  "NurbsCurves",
       "NurbsPatch",  "HermiteCurves", "Plane",      "TetMesh",
-      "PointInstancer",
+      "PointInstancer", "Volume",
   };
   return kGprimTypes.count(type_name) > 0;
 }
@@ -149,7 +149,9 @@ bool IsGprimTypeName(const std::string &type_name) {
 bool IsXformableTypeName(const std::string &type_name) {
   static const std::unordered_set<std::string> kNonXformableTypes = {
       "", "Scope", "GeomSubset", "Material", "Shader", "NodeGraph",
-      "PhysicsScene", "PhysicsCollisionGroup"};
+      "PhysicsScene", "PhysicsCollisionGroup",
+      // UsdRender types inherit Typed, not Xformable.
+      "RenderSettings", "RenderProduct", "RenderVar"};
   return kNonXformableTypes.count(type_name) == 0;
 }
 
@@ -1741,6 +1743,103 @@ void ValidateGeomCurves(const PrimSpec &ps, const std::string &prim_location,
                MakePropertyLocation(prim_location, "widths"),
                "widths length must be 1, match points, or match curve count");
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UsdVol / UsdRender structural checks (PRODUCT PARITY, not AOUSD Core):
+// vol.volume.fieldRel / vol.fieldAsset.* / render.*
+// ---------------------------------------------------------------------------
+
+void ValidateVolume(const PrimSpec &ps, const std::string &prim_location,
+                    USDValidationResult *result) {
+  // Volume binds its fields through `field:<name>` RELATIONSHIPS; an
+  // attribute in that namespace is an authoring error, and a bound field
+  // relationship without a target renders nothing. Attributes live in the
+  // property slots; relationships (including declared-only ones) live in the
+  // prim's relationship map, so both containers are walked.
+  for (const PropSlot &slot : ps.properties().slots()) {
+    const std::string &prop_name = GetPropNameTable().get(slot.name_id);
+    if (prop_name.compare(0, 6, "field:") != 0) continue;
+    if (slot.is_relationship()) continue;  // targets checked below
+    AddError(result, "vol.volume.fieldRel",
+             MakePropertyLocation(prim_location, prop_name),
+             "Volume `" + prop_name +
+                 "` must be a relationship targeting a field prim");
+  }
+  for (const std::string &rel_name : ps.relationship_names()) {
+    if (rel_name.compare(0, 6, "field:") != 0) continue;
+    const std::vector<Path> *targets = ps.relationship(rel_name);
+    if (!targets || targets->empty()) {
+      AddWarning(result, "vol.volume.fieldRel",
+                 MakePropertyLocation(prim_location, rel_name),
+                 "Volume field relationship `" + rel_name +
+                     "` has no target");
+    }
+  }
+}
+
+void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
+                        USDValidationResult *result) {
+  static const std::set<std::string> kVdbDataTypes = {
+      "half",  "float",  "double", "int",     "uint",     "int64",
+      "half2", "float2", "double2", "int2",   "half3",    "float3",
+      "double3", "int3", "matrix3d", "matrix4d", "quatd", "bool",
+      "mask",  "string"};
+  static const std::set<std::string> kField3dDataTypes = {
+      "half", "float", "double", "half3", "float3", "double3"};
+  static const std::set<std::string> kFieldClass = {"levelSet", "fogVolume",
+                                                    "staggered", "unknown"};
+  static const std::set<std::string> kVectorRole = {"None", "Point", "Normal",
+                                                    "Vector", "Color"};
+
+  std::string file;
+  if (!HasAttributeProp(ps, "filePath")) {
+    AddWarning(result, "vol.fieldAsset.filePath",
+               MakePropertyLocation(prim_location, "filePath"),
+               ps.type_name() + " should author filePath");
+  } else if (!GetAssetPathProperty(ps, "filePath", &file) || file.empty()) {
+    AddWarning(result, "vol.fieldAsset.filePath",
+               MakePropertyLocation(prim_location, "filePath"),
+               ps.type_name() + " filePath should be a non-empty asset path");
+  }
+  if (ps.type_name() == "OpenVDBAsset") {
+    ValidateTokenSetProperty(ps, "fieldDataType", kVdbDataTypes,
+                             "vol.fieldAsset.dataType", prim_location, result);
+    ValidateTokenSetProperty(ps, "fieldClass", kFieldClass,
+                             "vol.fieldAsset.fieldClass", prim_location,
+                             result);
+  } else if (ps.type_name() == "Field3DAsset") {
+    ValidateTokenSetProperty(ps, "fieldDataType", kField3dDataTypes,
+                             "vol.fieldAsset.dataType", prim_location, result);
+  }
+  ValidateTokenSetProperty(ps, "vectorDataRoleHint", kVectorRole,
+                           "vol.fieldAsset.vectorDataRoleHint", prim_location,
+                           result);
+}
+
+void ValidateRenderPrim(const PrimSpec &ps, const std::string &prim_location,
+                        USDValidationResult *result) {
+  static const std::set<std::string> kConformPolicy = {
+      "expandAperture", "cropAperture", "adjustApertureWidth",
+      "adjustApertureHeight", "adjustPixelAspectRatio"};
+  static const std::set<std::string> kSourceType = {"raw", "primvar", "lpe",
+                                                    "intrinsic"};
+  const std::string &type_name = ps.type_name();
+  if (type_name == "RenderSettings" || type_name == "RenderProduct") {
+    ValidateTokenSetProperty(ps, "aspectRatioConformPolicy", kConformPolicy,
+                             "render.settings.aspectRatioConformPolicy",
+                             prim_location, result);
+    for (const char *rel : {"camera", "products", "orderedVars"}) {
+      if (HasProperty(ps, rel) && !IsRelationshipProp(ps, rel)) {
+        AddError(result, "render.settings.relationship",
+                 MakePropertyLocation(prim_location, rel),
+                 std::string(rel) + " must be a relationship");
+      }
+    }
+  } else if (type_name == "RenderVar") {
+    ValidateTokenSetProperty(ps, "sourceType", kSourceType,
+                             "render.var.sourceType", prim_location, result);
   }
 }
 
@@ -5446,6 +5545,13 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
       ValidatePointInstancer(ps, prim_location, result);
     } else if (type_name == "Camera") {
       ValidateCamera(ps, prim_location, result);
+    } else if (type_name == "Volume") {
+      ValidateVolume(ps, prim_location, result);
+    } else if (type_name == "OpenVDBAsset" || type_name == "Field3DAsset") {
+      ValidateFieldAsset(ps, prim_location, result);
+    } else if (type_name == "RenderSettings" || type_name == "RenderProduct" ||
+               type_name == "RenderVar") {
+      ValidateRenderPrim(ps, prim_location, result);
     }
     ValidatePrimvars(ps, prim_location, result);
     if (type_name == "Mesh") {
