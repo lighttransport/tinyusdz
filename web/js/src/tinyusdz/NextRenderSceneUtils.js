@@ -20,13 +20,15 @@ export class NextTextureLoadingManager {
     this.pendingReleaseAdapters = new Set();
   }
 
-  queueTexture(material, mapProperty, adapter, assetPath, colorRole = 'data') {
+  queueTexture(material, mapProperty, adapter, assetPath, colorRole = 'data', sampler = null) {
     if (!assetPath) return;
     const role = colorRole === 'color' ? 'color' : 'data';
-    const key = `${role}:${assetPath}`;
+    const wrapS = nextTextureWrapMode(sampler?.wrapS);
+    const wrapT = nextTextureWrapMode(sampler?.wrapT);
+    const key = `${role}:${wrapS}:${wrapT}:${assetPath}`;
     let task = this.taskMap.get(key);
     if (!task) {
-      task = { adapter, assetPath, colorRole: role, bindings: [] };
+      task = { adapter, assetPath, colorRole: role, wrapS, wrapT, bindings: [] };
       this.taskMap.set(key, task);
       this.tasks.push(task);
     }
@@ -147,9 +149,9 @@ export class NextTextureLoadingManager {
 
   async loadTexture(task) {
     const role = task.colorRole === 'color' ? 'color' : 'data';
-    const key = `${role}:${task.assetPath}`;
+    const key = `${role}:${task.wrapS}:${task.wrapT}:${task.assetPath}`;
     if (!this.promiseCache.has(key)) {
-      this.promiseCache.set(key, loadNextArchiveTexture(task.adapter, task.assetPath, role));
+      this.promiseCache.set(key, loadNextArchiveTexture(task.adapter, task.assetPath, role, task));
     }
     return this.promiseCache.get(key);
   }
@@ -161,6 +163,31 @@ export function isNextScene(usd) {
 
 export function textureColorRoleForMap(mapProperty) {
   return (mapProperty === 'map' || mapProperty === 'emissiveMap') ? 'color' : 'data';
+}
+
+export function nextTextureWrapMode(wrap) {
+  if (wrap === THREE.RepeatWrapping || wrap === THREE.MirroredRepeatWrapping ||
+      wrap === THREE.ClampToEdgeWrapping) {
+    return wrap;
+  }
+  switch (String(wrap || '').toLowerCase()) {
+    case 'repeat':
+    case 'tile':
+    case 'tileforever':
+      return THREE.RepeatWrapping;
+    case 'mirror':
+    case 'mirroredrepeat':
+      return THREE.MirroredRepeatWrapping;
+    case 'black':
+    case 'clamp':
+    case 'clamp_to_edge':
+    case 'clamp_to_border':
+    case 'usemetadata':
+    default:
+      // WebGL has no portable border-color sampler. Clamp matches the legacy
+      // renderer and preserves transparent image borders for USD `black`.
+      return THREE.ClampToEdgeWrapping;
+  }
 }
 
 /// Effective color role for a texture: an authored colorspace (colorSpace
@@ -194,7 +221,7 @@ function browserTextureMimeType(assetPath) {
   return '';
 }
 
-export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') {
+export async function loadNextArchiveTexture(adapter, assetPath, role = 'data', sampler = null) {
   if (isUnsupportedBrowserTexturePath(assetPath)) {
     const error = new Error(`texture format is not supported by this browser demo: ${assetPath}`);
     error.name = 'UnsupportedTextureFormatError';
@@ -232,8 +259,8 @@ export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') 
     const texture = new THREE.CanvasTexture(canvas);
     texture.name = `${assetPath} [${images.map((tile) => tile.id).join(',')}]`;
     texture.colorSpace = role === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.wrapS = nextTextureWrapMode(sampler?.wrapS);
+    texture.wrapT = nextTextureWrapMode(sampler?.wrapT);
     texture.flipY = true;
     texture.needsUpdate = true;
     return texture;
@@ -249,8 +276,8 @@ export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') 
   try {
     const texture = await new THREE.TextureLoader().loadAsync(blobUrl);
     texture.colorSpace = role === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
+    texture.wrapS = nextTextureWrapMode(sampler?.wrapS);
+    texture.wrapT = nextTextureWrapMode(sampler?.wrapT);
     texture.flipY = true;
     texture.needsUpdate = true;
     return texture;
@@ -504,7 +531,7 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
     const authored = meta?.sourceColorSpace || meta?.colorspace || '';
     textureManager.queueTexture(
       material, mapProperty, adapter, assetPath,
-      textureColorRole(mapProperty, authored));
+      textureColorRole(mapProperty, authored), meta);
   };
   queue('map', paths.baseColor);
   queue('normalMap', paths.normal);
@@ -632,11 +659,12 @@ export function buildNextThreeNode(adapter, {
       message
     });
   };
-  const getMaterial = (entry) => {
-    const key = nextMaterialCacheKey(entry);
+  const getMaterial = (entry, doubleSided = false) => {
+    const key = `${nextMaterialCacheKey(entry)}|side:${doubleSided ? 'double' : 'front'}`;
     let material = materialCache.get(key);
     if (!material) {
       material = createNextMaterial(entry, adapter, textureManager, skipTextures);
+      material.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
       materialCache.set(key, material);
     }
     return material;
@@ -779,7 +807,7 @@ export function buildNextThreeNode(adapter, {
       }
     }
     geometry.computeBoundingBox();
-    let material = getMaterial(mesh);
+    let material = getMaterial(mesh, !!mesh.doubleSided);
     if (Array.isArray(mesh.materials) && mesh.materials.length &&
         Array.isArray(mesh.submeshes) && mesh.submeshes.length) {
       const materialEntries = mesh.materials.map((entry) => ({
@@ -795,7 +823,7 @@ export function buildNextThreeNode(adapter, {
         materialKey: mesh.materialKey
       });
       const fallbackIndex = materialEntries.length - 1;
-      material = materialEntries.map((entry) => getMaterial(entry));
+      material = materialEntries.map((entry) => getMaterial(entry, !!mesh.doubleSided));
       const shouldCompactGroups = mesh.submeshes.length > Math.max(64, material.length * 8);
       if (shouldCompactGroups) {
         const compacted = compactMaterialGroups(
@@ -837,6 +865,7 @@ export function buildNextThreeNode(adapter, {
       primPath: mesh.primPath || '',
       materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : -1,
       materialKey: mesh.materialKey || '',
+      doubleSided: !!mesh.doubleSided,
       texturePaths: mesh.texturePaths || {},
       materials: Array.isArray(mesh.materials) ? mesh.materials.map((entry) => ({
         materialId: Number.isFinite(entry.materialId) ? entry.materialId : -1,

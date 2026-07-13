@@ -2509,6 +2509,7 @@ class RenderStream {
     std::vector<uint32_t> indices;
     bool soup = false;
     int32_t material_id = -1;
+    bool double_sided = false;
     std::array<double, 16> local_matrix;
     std::array<double, 16> world_matrix;
   };
@@ -2541,6 +2542,7 @@ class RenderStream {
     out.set("vertexCount", static_cast<double>(s_points_.size() / 3));
     out.set("primName", prim.GetName());
     out.set("primPath", prim.GetPath().str());
+    out.set("doubleSided", matBool_(prim, "doubleSided", false));
     out.set("points", heapF_(s_points_, 3));
     if (!soup && !s_indices_.empty()) out.set("indices", heapU32_(s_indices_));
     if (!s_normals_.empty()) out.set("normals", heapF_(s_normals_, 3));
@@ -2678,6 +2680,7 @@ class RenderStream {
     out.set("vertexCount", static_cast<double>(record.points.size() / 3));
     out.set("primName", record.name);
     out.set("primPath", record.prim_path);
+    out.set("doubleSided", record.double_sided);
     out.set("points", heapF_(record.points, 3));
     if (!record.soup && !record.indices.empty()) {
       out.set("indices", heapU32_(record.indices));
@@ -2894,6 +2897,13 @@ class RenderStream {
     const std::vector<int32_t> *a = tmp.as_int_array();
     return a ? *a : std::vector<int32_t>{};
   }
+  static bool matBool_(const tinyusdz::next::UsdPrim &prim, const char *name,
+                       bool fallback) {
+    const tinyusdz::next::Value *v = prim.GetPropertyValue(name);
+    if (!v) return fallback;
+    if (const bool *b = v->as_bool()) return *b;
+    return fallback;
+  }
 
   // Build render geometry for one mesh into the scratch (s_points_/s_normals_/
   // s_uv_/s_indices_). Returns true if the result is a NON-INDEXED triangle soup
@@ -2923,6 +2933,36 @@ class RenderStream {
     const size_t faceVtx = fvi.size();
     const size_t uvCount = UV.size() / 2;
     const size_t nCount = N.size() / 3;
+
+    // The next render converter already performs robust earcut triangulation,
+    // handles left-handed winding, holes and topology sanitization, and keeps
+    // a triangulated-corner -> authored-corner remap for face-varying data.
+    // Reuse that result instead of independently fan-triangulating n-gons.
+    const tr::RenderMesh *converted_mesh = nullptr;
+    if (render_scene_valid_) {
+      const auto it = render_scene_.mesh_by_path.find(prim.GetPath().str());
+      if (it != render_scene_.mesh_by_path.end() && it->second >= 0 &&
+          static_cast<size_t>(it->second) < render_scene_.meshes.size()) {
+        const tr::RenderMesh &candidate =
+            render_scene_.meshes[static_cast<size_t>(it->second)];
+        if (candidate.is_triangulated &&
+            candidate.points.size() == P.size() &&
+            (candidate.triangulated_indices.size() % 3) == 0 &&
+            candidate.triangulated_face_vertex_indices.size() ==
+                candidate.triangulated_indices.size()) {
+          bool valid = true;
+          for (size_t corner = 0;
+               corner < candidate.triangulated_indices.size(); ++corner) {
+            if (candidate.triangulated_indices[corner] >= vtxCount ||
+                candidate.triangulated_face_vertex_indices[corner] >= faceVtx) {
+              valid = false;
+              break;
+            }
+          }
+          if (valid) converted_mesh = &candidate;
+        }
+      }
+    }
 
     auto fail = [&](const std::string &msg) {
       if (err) *err = msg;
@@ -2992,7 +3032,14 @@ class RenderStream {
       for (size_t i = 0; i < vtxCount; ++i) {
         s_point_source_indices_[i] = static_cast<uint32_t>(i);
       }
-      triangulate_(fvi, fvc, s_indices_);
+      if (converted_mesh) {
+        s_indices_.resize(converted_mesh->triangulated_indices.size());
+        for (size_t i = 0; i < s_indices_.size(); ++i) {
+          s_indices_[i] = converted_mesh->triangulated_indices[i];
+        }
+      } else {
+        triangulate_(fvi, fvc, s_indices_);
+      }
       if (nCount == vtxCount) s_normals_ = std::move(N);
       else computeNormals_(s_points_, s_indices_, s_normals_);
       if (uvCount == vtxCount) s_uv_ = std::move(UV);
@@ -3048,15 +3095,19 @@ class RenderStream {
     // Preserve the pre-existing adaptive behavior unless callers explicitly
     // request an index strategy.
     const bool doWeld = build_vertex_indices_set_ ? build_vertex_indices_ : [&]() {
-      size_t triCount = 0;
-      for (int32_t nn : fvc) {
-        if (nn >= 3) {
-          const size_t add = static_cast<size_t>(nn - 2);
-          if (triCount > (std::numeric_limits<size_t>::max)() - add) {
-            triCount = (std::numeric_limits<size_t>::max)();
-            break;
+      size_t triCount = converted_mesh
+                            ? converted_mesh->triangulated_indices.size() / 3
+                            : 0;
+      if (!converted_mesh) {
+        for (int32_t nn : fvc) {
+          if (nn >= 3) {
+            const size_t add = static_cast<size_t>(nn - 2);
+            if (triCount > (std::numeric_limits<size_t>::max)() - add) {
+              triCount = (std::numeric_limits<size_t>::max)();
+              break;
+            }
+            triCount += add;
           }
-          triCount += add;
         }
       }
       const size_t cornerCount =
@@ -3069,21 +3120,28 @@ class RenderStream {
     if (!doWeld) {
       // Non-indexed triangle soup (the minimal form for unique-per-corner UVs).
       std::vector<size_t> slots;
-      size_t b = 0;
-      for (int32_t n : fvc) {
-        if (faceSpanAvailable(b, n, faceVtx)) {
-          for (int32_t k = 2; k < n; ++k) {
-            if (slots.size() > kMaxRenderCorners - 3) {
-              s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
-              if (err) *err = "Mesh exceeds RenderStream triangle-corner limit";
-              return false;
-            }
-            slots.push_back(b);
-            slots.push_back(b + static_cast<size_t>(k) - 1);
-            slots.push_back(b + static_cast<size_t>(k));
-          }
+      if (converted_mesh) {
+        slots.resize(converted_mesh->triangulated_face_vertex_indices.size());
+        for (size_t i = 0; i < slots.size(); ++i) {
+          slots[i] = converted_mesh->triangulated_face_vertex_indices[i];
         }
-        b = advanceFaceBase(b, n);
+      } else {
+        size_t b = 0;
+        for (int32_t n : fvc) {
+          if (faceSpanAvailable(b, n, faceVtx)) {
+            for (int32_t k = 2; k < n; ++k) {
+              if (slots.size() > kMaxRenderCorners - 3) {
+                s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+                if (err) *err = "Mesh exceeds RenderStream triangle-corner limit";
+                return false;
+              }
+              slots.push_back(b);
+              slots.push_back(b + static_cast<size_t>(k) - 1);
+              slots.push_back(b + static_cast<size_t>(k));
+            }
+          }
+          b = advanceFaceBase(b, n);
+        }
       }
       const size_t corners = slots.size();
       // Pre-flight the expanded-soup buffers (~44B per corner incl. this
@@ -3144,9 +3202,13 @@ class RenderStream {
     // per corner). This turns the realistic huge-mesh OOM into a per-mesh
     // error instead of an allocator abort; the map still grows incrementally.
     {
-      size_t weld_corners = 0;
-      for (int32_t nn : fvc) {
-        if (nn >= 3) weld_corners += static_cast<size_t>(nn - 2) * 3;
+      size_t weld_corners = converted_mesh
+                                ? converted_mesh->triangulated_indices.size()
+                                : 0;
+      if (!converted_mesh) {
+        for (int32_t nn : fvc) {
+          if (nn >= 3) weld_corners += static_cast<size_t>(nn - 2) * 3;
+        }
       }
       const size_t probe = weld_corners * 4 +
                            std::min(weld_corners, vtxCount ? vtxCount * 2 : weld_corners) * 56;
@@ -3199,20 +3261,32 @@ class RenderStream {
       return true;
     };
 
-    size_t base = 0;
-    for (int32_t n : fvc) {
-      if (faceSpanAvailable(base, n, faceVtx)) {
-        for (int32_t k = 2; k < n; ++k) {
-          if (!emit(base) ||
-              !emit(base + static_cast<size_t>(k) - 1) ||
-              !emit(base + static_cast<size_t>(k))) {
-            s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
-            if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
-            return false;
-          }
+    if (converted_mesh) {
+      for (size_t corner = 0;
+           corner < converted_mesh->triangulated_face_vertex_indices.size();
+           ++corner) {
+        if (!emit(converted_mesh->triangulated_face_vertex_indices[corner])) {
+          s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+          if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
+          return false;
         }
       }
-      base = advanceFaceBase(base, n);
+    } else {
+      size_t base = 0;
+      for (int32_t n : fvc) {
+        if (faceSpanAvailable(base, n, faceVtx)) {
+          for (int32_t k = 2; k < n; ++k) {
+            if (!emit(base) ||
+                !emit(base + static_cast<size_t>(k) - 1) ||
+                !emit(base + static_cast<size_t>(k))) {
+              s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+              if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
+              return false;
+            }
+          }
+        }
+        base = advanceFaceBase(base, n);
+      }
     }
     // Normals not authored -> smooth normals on the welded indexed mesh.
     if (!haveN) computeNormals_(s_points_, s_indices_, s_normals_);
@@ -3582,6 +3656,7 @@ class RenderStream {
     if (acc->source_count == 0) {
       acc->mesh.soup = soup;
       acc->mesh.material_id = material_id;
+      acc->mesh.double_sided = matBool_(prim, "doubleSided", false);
       acc->mesh.local_matrix = mesh_merge_bake_transform_ ? identityMatrix_()
                                                           : localMatrix_(prim);
       acc->mesh.world_matrix = mesh_merge_bake_transform_ ? identityMatrix_()
@@ -3654,15 +3729,17 @@ class RenderStream {
       }
       const bool has_normals = !s_normals_.empty();
       const bool has_uv = !s_uv_.empty();
+      const bool double_sided = matBool_(prim, "doubleSided", false);
       const std::array<double, 16> world = worldMatrixForPrim_(prim);
       std::ostringstream key;
       key << material_id << "|soup=" << soup << "|n=" << has_normals
-          << "|uv=" << has_uv;
+          << "|uv=" << has_uv << "|double=" << double_sided;
       if (!mesh_merge_bake_transform_) key << "|m=" << matrixKey_(world);
       MergeAccumulator &acc = groups[key.str()];
       if (acc.source_count > 0 &&
           (acc.mesh.soup != soup ||
            acc.mesh.material_id != material_id ||
+           acc.mesh.double_sided != double_sided ||
            (!mesh_merge_bake_transform_ &&
             !sameMatrix_(acc.mesh.world_matrix, world)))) {
         flushAccumulator_(&acc);

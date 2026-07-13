@@ -2,6 +2,7 @@
 // Fixtures are deliberately anonymous: Prim/Mat/Texture names only.
 
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 
 import {
   ZipStreamWriter,
@@ -14,6 +15,7 @@ import {
   NextTextureLoadingManager,
   compactMaterialGroups,
   createNextMaterial,
+  nextTextureWrapMode,
 } from '../src/tinyusdz/NextRenderSceneUtils.js';
 import {
   INVALID_FACE_INDEX_USDA,
@@ -273,6 +275,35 @@ await test('next materials preserve opacity maps without double-applying RGBA al
   }, {}, manager, false);
   assert.deepEqual(queued, [['map', 'color.png'], ['alphaMap', 'mask.png']],
     'a distinct opacity texture should be queued as alphaMap');
+});
+
+await test('next textures preserve authored USD wrap modes', () => {
+  assert.equal(nextTextureWrapMode('black'), THREE.ClampToEdgeWrapping);
+  assert.equal(nextTextureWrapMode('clamp'), THREE.ClampToEdgeWrapping);
+  assert.equal(nextTextureWrapMode('useMetadata'), THREE.ClampToEdgeWrapping);
+  assert.equal(nextTextureWrapMode('repeat'), THREE.RepeatWrapping);
+  assert.equal(nextTextureWrapMode('mirror'), THREE.MirroredRepeatWrapping);
+
+  const queued = [];
+  createNextMaterial({
+    material: {
+      textureMetadata: { baseColor: { wrapS: 'black', wrapT: 'mirror' } },
+    },
+    texturePaths: { baseColor: 'card.png' },
+  }, {}, {
+    queueTexture(_material, property, _adapter, assetPath, _role, sampler) {
+      queued.push([property, assetPath, sampler.wrapS, sampler.wrapT]);
+    },
+  }, false);
+  assert.deepEqual(queued, [['map', 'card.png', 'black', 'mirror']]);
+
+  const manager = new NextTextureLoadingManager();
+  manager.queueTexture({}, 'map', {}, 'shared.png', 'color',
+    { wrapS: 'black', wrapT: 'black' });
+  manager.queueTexture({}, 'map', {}, 'shared.png', 'color',
+    { wrapS: 'repeat', wrapT: 'black' });
+  assert.equal(manager.total, 2,
+    'one image with different authored samplers must not share a texture object');
 });
 
 await test('next material subsets compact alternating faces into bounded draw groups', () => {
