@@ -58,6 +58,9 @@ layout(location = 3) flat out int vDomJoint;
 layout(location = 4) out float vDomWeight;
 layout(location = 5) out vec2 vUV1;
 layout(location = 6) out float vMorphInfl;
+// The frag shader consumes vColor (location 7). The tess path serves displaced
+// meshes and carries no per-vertex color; white keeps shading unmodulated.
+layout(location = 7) out vec3 vColor;
 
 void main() {
   vec3 bc = gl_TessCoord;
@@ -80,5 +83,6 @@ void main() {
   vDomWeight = 0.0;
   vUV1 = vec2(0.0);
   vMorphInfl = 0.0;
+  vColor = vec3(1.0);
   gl_Position = fr.viewProj * pc.model * vec4(pos, 1.0);
 }

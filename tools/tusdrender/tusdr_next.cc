@@ -179,6 +179,9 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
                           const std::string &preferred_uv = std::string(),
+                          // Face whitelist by AUTHORED face id (GeomSubset job
+                          // split); null/empty = emit every face.
+                          const std::vector<char> *face_mask = nullptr,
                           bool purpose_cull = false,
                           TriMat *out_job_mat = nullptr, float opacity = 1.0f,
                           bool want_colors = false, ByteVec *tri_colors = nullptr,
@@ -627,12 +630,18 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   tmpl.use_specular_workflow = use_specular_workflow;
   tmpl.purpose_bit = purpose_bit;
 
+  const bool have_mask = face_mask && !face_mask->empty();
   size_t cursor = 0;
   size_t face_idx = 0;
   for (int32_t c : counts) {
     const size_t face = face_idx++;
     if (c < 3 || cursor + size_t(c) > indices.size()) {
       cursor += size_t(std::max<int32_t>(0, c));
+      continue;
+    }
+    // GeomSubset job split: this job emits only its own faces.
+    if (have_mask && (face >= face_mask->size() || !(*face_mask)[face])) {
+      cursor += size_t(c);
       continue;
     }
     for (int32_t k = 1; k + 1 < c; k++) {
@@ -1747,9 +1756,14 @@ void ReportMaterialResolverDiff(const std::string &key,
 // pure function of the bound material (+ shared texture cache), so a cache hit
 // skips the shader-graph walk entirely. Unbound meshes keep MeshJobNext defaults.
 void ResolveMeshMaterialCached(
-    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh,
+    const tinyusdz::next::Stage &stage, const tinyusdz::next::UsdPrim &mesh_in,
     TextureCache &tc, std::unordered_map<std::string, ResolvedMat> &cache,
     MeshJobNext *job) {
+  // A GeomSubset job resolves its binding from the SUBSET prim: the inheritance
+  // walk finds the subset's own material:binding first, then falls back up the
+  // ancestry (mesh, Xform, ...) -- exact UsdShade semantics for face subsets.
+  const tinyusdz::next::UsdPrim &mesh =
+      job->bind_prim.IsValid() ? job->bind_prim : mesh_in;
   const std::string key =
       tinyusdz::next::GetInheritedBoundMaterialPath(stage, mesh.GetPath().str());
   if (!key.empty()) {
@@ -1809,6 +1823,93 @@ void ResolveMeshMaterialCached(
   if (!key.empty()) {
     cache.emplace(key, CaptureResolvedFromJob(*job));
   }
+}
+
+// Split each job whose mesh has material-bound face GeomSubsets into one job
+// per bound subset (face mask + the subset as binding source) plus a remainder
+// job for unclaimed faces. The streaming concat is one-material-per-job, so
+// this is what makes per-face material bindings render: without it every
+// triangle of the mesh took the single whole-mesh material (or the default
+// gray). Meshes without bound face subsets pass through untouched.
+void ExpandGeomSubsetJobsNext(const tinyusdz::next::Stage &stage, double time,
+                              std::vector<MeshJobNext> *jobs) {
+  (void)stage;
+  if (!jobs) return;
+  std::vector<MeshJobNext> out;
+  out.reserve(jobs->size());
+  for (MeshJobNext &job : *jobs) {
+    // Already split (instanced prototypes may be expanded more than once).
+    if (job.bind_prim.IsValid() || !job.subset_faces.empty()) {
+      out.push_back(std::move(job));
+      continue;
+    }
+    struct Sub {
+      tinyusdz::next::UsdPrim prim;
+      std::vector<int32_t> faces;
+    };
+    std::vector<Sub> subs;
+    for (const tinyusdz::next::UsdPrim &c : job.prim.GetChildren()) {
+      if (c.GetTypeName() != "GeomSubset") continue;
+      // elementType defaults to "face"; other element types don't split faces.
+      bool is_face = true;
+      if (const tinyusdz::next::Value *et = c.GetPropertyValue("elementType"))
+        if (const std::string *t = et->as_token())
+          is_face = t->empty() || *t == "face";
+      if (!is_face) continue;
+      // Material subsets are familyName "materialBind" (accept unauthored).
+      if (const tinyusdz::next::Value *fn = c.GetPropertyValue("familyName"))
+        if (const std::string *t = fn->as_token())
+          if (!t->empty() && *t != "materialBind") continue;
+      // Only subsets that bind a material split faces; an unbound subset keeps
+      // falling back to the whole-mesh material (no ancestor walk here -- that
+      // is the mesh's own binding, i.e. the remainder job).
+      if (tinyusdz::next::GetBoundMaterialPath(c).empty()) continue;
+      std::vector<int32_t> faces = ReadIntArrayLazy(c, "indices", time);
+      if (faces.empty()) continue;
+      subs.push_back({c, std::move(faces)});
+    }
+    if (subs.empty()) {
+      out.push_back(std::move(job));
+      continue;
+    }
+    std::vector<int32_t> counts_probe =
+        ReadIntArrayLazy(job.prim, "faceVertexCounts", time);
+    const size_t nfaces = counts_probe.size();
+    if (nfaces == 0) {
+      out.push_back(std::move(job));
+      continue;
+    }
+    // First claim wins on overlap (a materialBind family should be
+    // non-overlapping per spec; be deterministic if it isn't).
+    std::vector<char> claimed(nfaces, 0);
+    for (Sub &s : subs) {
+      std::vector<char> mask(nfaces, 0);
+      size_t n = 0;
+      for (int32_t f : s.faces) {
+        if (f >= 0 && size_t(f) < nfaces && !claimed[size_t(f)]) {
+          mask[size_t(f)] = 1;
+          claimed[size_t(f)] = 1;
+          ++n;
+        }
+      }
+      if (n == 0) continue;
+      MeshJobNext sj = job;  // copy world/purpose/prim; material resolved later
+      sj.subset_faces = std::move(mask);
+      sj.bind_prim = s.prim;
+      out.push_back(std::move(sj));
+    }
+    // Remainder: faces no bound subset claimed keep the mesh's own binding.
+    size_t unclaimed = 0;
+    for (char cl : claimed)
+      if (!cl) ++unclaimed;
+    if (unclaimed > 0) {
+      MeshJobNext rj = std::move(job);
+      rj.subset_faces.resize(nfaces);
+      for (size_t f = 0; f < nfaces; ++f) rj.subset_faces[f] = claimed[f] ? 0 : 1;
+      out.push_back(std::move(rj));
+    }
+  }
+  *jobs = std::move(out);
 }
 
 // True when `path` is one of the mask paths or a descendant of one. An empty
@@ -3351,6 +3452,7 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 job.specular_tex_id, job.ior, job.use_specular_workflow,
                 job.uv_xform,
                 want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, job.uv_primvar,
+                job.subset_faces.empty() ? nullptr : &job.subset_faces,
                 purpose_cull, &r.mat,
                 job.opacity, want_colors, &r.col, want_normals, &r.nrm,
                 indexed ? &r.uvv : nullptr, indexed ? &r.idx : nullptr,
@@ -3538,6 +3640,10 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
       tc.degraded_materials = &ctx.stats.degraded_materials;
       tc.missing_textures = &ctx.stats.missing_textures;
       std::unordered_map<std::string, ResolvedMat> mat_cache;
+      // Per-face GeomSubset materials: split subset-bound meshes into one job
+      // per subset BEFORE resolution, so each job resolves its own material.
+      ExpandGeomSubsetJobsNext(ctx.stage, time, &base_jobs);
+      ctx.stats.meshes = base_jobs.size();
       for (MeshJobNext &job : base_jobs) {
         ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
       }
@@ -3638,10 +3744,14 @@ bool ExtractAndBuildBVH(RenderContext &ctx, double time) {
     tc.degraded_materials = &ctx.stats.degraded_materials;
     tc.missing_textures = &ctx.stats.missing_textures;
     std::unordered_map<std::string, ResolvedMat> mat_cache;
+    // Per-face GeomSubset materials: split subset-bound meshes (base and
+    // prototype alike) into one job per subset before resolution.
+    ExpandGeomSubsetJobsNext(ctx.stage, time, &base_jobs);
     for (MeshJobNext &job : base_jobs) {
       ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
     }
     for (std::vector<MeshJobNext> &pj : proto_jobs) {
+      ExpandGeomSubsetJobsNext(ctx.stage, time, &pj);
       for (MeshJobNext &job : pj) {
         ResolveMeshMaterialCached(ctx.stage, job.prim, tc, mat_cache, &job);
       }

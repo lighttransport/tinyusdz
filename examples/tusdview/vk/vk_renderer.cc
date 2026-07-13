@@ -1236,7 +1236,8 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   // Sets 10-12: preview-shading metal/roughness, emissive and normal textures.
   // Sets 13-20: sparse UDIM array/LUT pairs for base, MR, normal and emissive.
   // Sets 21-23: DomeLight IBL (irradiance cube, prefiltered cube, BRDF LUT).
-  VkDescriptorSetLayout setLayouts[24] = {texSetLayout_, skinSetLayout_,
+  // Set 24: per-vertex displayColor SSBO (vertex stage; dummy when absent).
+  VkDescriptorSetLayout setLayouts[25] = {texSetLayout_, skinSetLayout_,
                                           influenceSetLayout_, faceSetLayout_,
                                           texSetLayout_, dispParamsSetLayout_,
                                           dispMatSetLayout_, morphSetLayout_,
@@ -1247,8 +1248,9 @@ bool VulkanRenderer::createPipeline(std::string* err) {
                                           texSetLayout_, texSetLayout_,
                                           texSetLayout_, texSetLayout_,
                                           texSetLayout_, texSetLayout_,
-                                          texSetLayout_, texSetLayout_};
-  plci.setLayoutCount = 24;
+                                          texSetLayout_, texSetLayout_,
+                                          morphSetLayout_};
+  plci.setLayoutCount = 25;
   plci.pSetLayouts = setLayouts;
   plci.pushConstantRangeCount = 1;
   plci.pPushConstantRanges = &pcr;
@@ -4571,6 +4573,21 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
   }
   if (gm.faceDesc == VK_NULL_HANDLE) gm.faceDesc = dummyFaceDesc_;
 
+  // Per-vertex displayColor (packed vec3[]) as an SSBO, only when per-vertex
+  // aligned (matches the GL attrib-9 path). The RASTER mesh vertex shader
+  // fetches it by gl_VertexIndex through set 24 (vtxColorDesc, flag-gated); the
+  // RT path additionally takes its device address below. Created regardless of
+  // RT support so vertex-painted meshes color correctly on raster-only devices.
+  if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
+    if (createHostBuffer(sm.vertexColors.size() * sizeof(float),
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.vertexColors.data(),
+                         &gm.vtxColorBuf, &gm.vtxColorMem,
+                         /*deviceAddress=*/rtSupported_, pool)) {
+      gm.vtxColorDesc = allocMorphDescriptor(
+          gm.vtxColorBuf, sm.vertexColors.size() * sizeof(float));
+    }
+  }
+
   if (rtSupported_) {
     gm.vertexCount = static_cast<uint32_t>(sm.vertices.size());
     gm.indexCount = static_cast<uint32_t>(sm.indices.size());
@@ -4601,16 +4618,9 @@ void VulkanRenderer::appendMesh(const DrawMeshCPU& sm) {
     gm.instanceXforms = sm.instanceXforms;
     gm.instanceColors = sm.instanceColors;
     gm.instanceOpacities = sm.instanceOpacities;
-    // Per-vertex displayColor (packed vec3[]) as a device-address SSBO for the
-    // shader; only when it is per-vertex aligned (matches the GL attrib-10 path).
-    if (sm.vertexColors.size() == sm.vertices.size() * 3 && !sm.vertexColors.empty()) {
-      if (createHostBuffer(sm.vertexColors.size() * sizeof(float),
-                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, sm.vertexColors.data(),
-                           &gm.vtxColorBuf, &gm.vtxColorMem, /*deviceAddress=*/true,
-                           pool)) {
-        gm.vtxColorAddr = bufferDeviceAddress(gm.vtxColorBuf);
-      }
-    }
+    // Per-vertex displayColor: the SSBO was created above (shared with raster
+    // set 24); the RT hit shader reads it by device address.
+    if (gm.vtxColorBuf) gm.vtxColorAddr = bufferDeviceAddress(gm.vtxColorBuf);
     // Multi-UV + blendshape-influence per-vertex aux buffers (created above with a
     // device address when RT is on) for the uv1 / influence AOVs in raytrace.comp.
     if (gm.uv1Vbo) gm.uv1Addr = bufferDeviceAddress(gm.uv1Vbo);
@@ -6897,6 +6907,13 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       if (morphCh != VK_NULL_HANDLE)
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                                 9, 1, &morphCh, 0, nullptr);
+      // Set 24: per-vertex displayColor SSBO (dummy + a cleared pc flag when the
+      // mesh carries none -- the shader statically references it).
+      VkDescriptorSet vtxColD =
+          mesh.vtxColorDesc ? mesh.vtxColorDesc : dummyMorphDesc_;
+      if (vtxColD != VK_NULL_HANDLE)
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
+                                24, 1, &vtxColD, 0, nullptr);
       VkDeviceSize offs[7] = {0, 0, 0, 0, 0, 0, 0};
       VkBuffer bufs[7] = {mesh.vbo,          mesh.jointVbo,   mesh.weightVbo,
                           mesh.influenceVbo, mesh.uv1Vbo,     mesh.morphInflVbo,
@@ -7032,6 +7049,8 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
         if (isUdimSlot(nmSlot)) pc.ids[3] |= 4;
         if (isUdimSlot(emSlot)) pc.ids[3] |= 8;
         if (nmSlot >= 0) pc.ids[3] |= 16;
+        // bit 32: per-vertex displayColor present (set-24 SSBO is real, not dummy).
+        if (mesh.vtxColorDesc != VK_NULL_HANDLE) pc.ids[3] |= 32;
         vkCmdPushConstants(cb, pipelineLayout_, pushStages_, 0, sizeof(PushC), &pc);
         // GPU tessellation for displaced meshes in Shaded mode when the slider
         // asks for it: bind the PATCH-list tess pipeline for this draw, then
