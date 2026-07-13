@@ -963,4 +963,69 @@ else
   echo "ok[metadata-usdc]: sdrMetadata, unregistered prim meta, attribute customData and inputs:file colorSpace survived"
 fi
 
+# -------------------------------------------------------------------------
+# 17. A SkelRoot's xformOps, and a Mesh's subsetFamily familyType.
+#
+# SkelRoot is Xformable, but only ExtractSkeletonProperties called
+# ExtractXformOpsFromXformable -- so a rig's transform root snapped back to the
+# origin on write. And `subsetFamily:<name>:familyType` lives in a map on the
+# MESH (not on the GeomSubset), so it belongs to no schema struct and the writer
+# had no branch for it at all.
+# -------------------------------------------------------------------------
+cat > "$TMP/skelsubset.usda" <<'USD'
+#usda 1.0
+
+def SkelRoot "Rig"
+{
+    double3 xformOp:translate = (1, 2, 3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def Mesh "M"
+    {
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subsetFamily:side:familyType = "partition"
+
+        def GeomSubset "sub0"
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "side"
+            int[] indices = [0]
+        }
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/skelsubset.usdc" "$TMP/skelsubset.usda" \
+     >"$TMP/write17.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the skelroot/subset scene to usdc"
+  cat "$TMP/write17.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/skelsubset.usdc" > "$TMP/skelsubset-rt.usda" 2>/dev/null
+if [ ! -s "$TMP/skelsubset-rt.usda" ]; then
+  echo "FAIL[skelroot-subsetfamily-usdc]: crate read back EMPTY -- the prim failed"
+  echo "  to reconstruct (a non-uniform subsetFamily familyType will do this)"
+  status=1
+else
+  lost=""
+  for expect in \
+    'double3 xformOp:translate = (1, 2, 3)' \
+    'uniform token[] xformOpOrder = ["xformOp:translate"]' \
+    'uniform token subsetFamily:side:familyType = "partition"'; do
+    grep -qF "$expect" "$TMP/skelsubset-rt.usda" || lost="$lost
+    $expect"
+  done
+  if [ -n "$lost" ]; then
+    echo "FAIL[skelroot-subsetfamily-usdc]: dropped on round-trip:$lost"
+    echo "--- got ---"
+    cat "$TMP/skelsubset-rt.usda"
+    status=1
+  else
+    echo "ok[skelroot-subsetfamily-usdc]: SkelRoot xformOps and the mesh's subsetFamily familyType survived"
+  fi
+fi
+
 exit "$status"
