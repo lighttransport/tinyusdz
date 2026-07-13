@@ -357,6 +357,12 @@ struct DrawMaterialCPU {
   float alpha{1.0f};
   int alphaMode{static_cast<int>(AlphaMode::Opaque)};
   float alphaCutoff{0.5f};
+  // UsdPreviewSurface specular workflow (T12): when true, F0 is specularColor
+  // directly; else F0 is the dielectric reflectance from `ior` lerped toward the
+  // base color by metalness (ior 1.5 -> the fixed 0.04 the metallic path used).
+  bool useSpecularWorkflow{false};
+  float specularColor[3]{0.0f, 0.0f, 0.0f};
+  float ior{1.5f};
   // Indices into DrawScene::textures (-1 = no texture)
   int baseColorTex{-1};
   int metalRoughTex{-1};

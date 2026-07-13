@@ -349,6 +349,9 @@ struct RenderMesh {
   // triangulated_indices as CCW uniformly; computed normals follow.
   bool left_handed = false;
 
+  // Authored `doubleSided`. false (the USD default) = back-face cull.
+  bool double_sided = false;
+
   // Triangulated data (computed on demand)
   UInt32Chunked triangulated_indices;
   // Per triangulated CORNER, the original face-vertex (corner) index into the

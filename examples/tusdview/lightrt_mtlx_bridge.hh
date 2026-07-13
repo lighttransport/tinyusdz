@@ -15,7 +15,7 @@ constexpr int kRtMaterialTextureParamFloats = 56;
 // Row 18 carries the per-slot UV-set selector (base, metal/rough, normal,
 // emissive): 0 = texcoords_0, 1 = texcoords_1. Keep in lockstep with the
 // MaterialTexParam struct in mesh.vert / mesh.frag.
-constexpr int kRasterMaterialTextureParamVec4s = 19;
+constexpr int kRasterMaterialTextureParamVec4s = 20;  // +1: specular F0 (T12)
 constexpr int kRasterMaterialTextureParamFloats =
     kRasterMaterialTextureParamVec4s * 4;
 

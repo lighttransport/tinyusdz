@@ -535,12 +535,14 @@ def Xform "World"
 def Xform "root"
 {
     def Mesh "back_red" {
+        uniform bool doubleSided = 1
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(-2, -2, 2), (2, -2, 2), (2, 2, 2), (-2, 2, 2)]
         color3f[] primvars:displayColor = [(1, 0, 0)] (interpolation = "constant")
     }
     def Mesh "front_green_glass" {
+        uniform bool doubleSided = 1
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         point3f[] points = [(-1.5, -1.5, -2), (1.5, -1.5, -2), (1.5, 1.5, -2), (-1.5, 1.5, -2)]
@@ -575,6 +577,7 @@ def Xform "root"
 )
 def Mesh "root"
 {
+    uniform bool doubleSided = 1
     int[] faceVertexCounts = [4]
     int[] faceVertexIndices = [0, 1, 2, 3]
     point3f[] points = [(-2, -2, 0), (2, -2, 0), (2, 2, 0), (-2, 2, 0)]

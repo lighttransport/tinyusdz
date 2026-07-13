@@ -512,6 +512,9 @@ void AddMeshTriangles(const RenderScene &scene, const RenderMesh &mesh,
       tri.p1 = p1;
       tri.p2 = p2;
       tri.n = n;
+      // Authored doubleSided (RenderMesh default false = single-sided): drives
+      // back-face culling in the flat integrator, matching the raster backends.
+      tri.double_sided = mesh.doubleSided ? 1 : 0;
       tri.base_color = MaterialColor(scene, mesh, mat_id);
       tri.emission = MaterialEmission(scene, mat_id);
       tri.roughness = MaterialRoughness(scene, mat_id);

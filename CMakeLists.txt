@@ -2253,6 +2253,7 @@ if(TINYUSDZ_BUILD_TESTS)
         cmyk-jpeg-texture
         degraded-material
         dome-format
+        double-sided-cull
         frames-framespec
         geomsubset-materials
         ibl-specular-bound
@@ -2645,6 +2646,28 @@ if(TINYUSDZ_BUILD_TESTS)
       )
     set_tests_properties(tusdview-material-binding-inheritance
                          PROPERTIES SKIP_RETURN_CODE 77)
+
+    # doubleSided (audit T8): a single-sided mesh back-face culls, a doubleSided
+    # one does not -- identically on GL and Vulkan. The --next loader used to
+    # drop the authored flag entirely, and Vulkan never culled anything.
+    add_test(
+      NAME tusdview-double-sided
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-double-sided.sh"
+      )
+    set_tests_properties(tusdview-double-sided PROPERTIES SKIP_RETURN_CODE 77)
+
+    # UsdPreviewSurface specular workflow + IOR on --next (audit T12): a colored
+    # specularColor must tint the highlight (not fall back to white dielectric),
+    # identically on GL and VK.
+    add_test(
+      NAME tusdview-specular-workflow
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-specular-workflow.sh"
+      )
+    set_tests_properties(tusdview-specular-workflow PROPERTIES SKIP_RETURN_CODE 77)
 
     # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
     # both put the stand-in on top of the geometry it stands in for (intent-vfx's

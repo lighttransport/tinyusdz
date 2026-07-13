@@ -62,6 +62,9 @@ struct MaterialTexParam {
   // Displacement is absent on purpose: it is sampled in the vertex/tessellation
   // stages, which do not carry the second set.
   vec4 uvSets;
+  // Specular F0 (T12): rgb = inputs:specularColor, w = ior with the specular-
+  // workflow flag in its sign (w < 0 -> specular workflow, F0 = specularColor).
+  vec4 specParams;
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -79,6 +82,17 @@ vec3 idColor(int id) {
   if (id < 0) return vec3(0.45);
   uint h = (uint(id) + 1u) * 2654435761u;
   return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) * (1.0 / 255.0);
+}
+
+// Linear -> sRGB OETF for the final shaded output. The scene is lit in linear
+// space (sRGB base-color textures are uploaded as _SRGB, so the sampler
+// linearizes them; constants are already linear), and the framebuffer is UNORM,
+// so the encode happens here. Applied only to the lit path -- AOVs stay raw.
+vec3 linearToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, greaterThan(c, vec3(0.0031308)));
 }
 
 vec3 purposeColor(int p) {
@@ -103,6 +117,17 @@ vec4 sampleUdim(sampler2DArray tex, sampler1D lut, vec2 uv) {
   int layer = int(texelFetch(lut, idx, 0).r * 255.0 + 0.5) - 1;
   if (layer < 0) return vec4(1.0, 0.0, 1.0, 1.0);
   return texture(tex, vec3(fract(uv), float(layer)));
+}
+
+// Specular F0 (T12): specular workflow -> specularColor directly; else the
+// dielectric reflectance from ior lerped toward base by metalness. ior 1.5 (the
+// default) gives exactly 0.04, matching the old fixed constant.
+vec3 computeF0(vec3 base, float metallic) {
+  vec4 sp = mtp.p[max(pc.ids.x, 0)].specParams;
+  if (sp.w < 0.0) return sp.rgb;                 // specular workflow
+  float ior = max(1.0, abs(sp.w));
+  float d = (ior - 1.0) / (ior + 1.0);
+  return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
 }
 
 MaterialTexParam matTexParam() {
@@ -179,7 +204,10 @@ vec3 applyNormalMap(vec3 n) {
 }
 
 void main() {
-  vec3 N = normalize(vNormalW);
+  // Shading normal, with the tangent-space normal map applied up front so the
+  // Normals AOV (mode 2) shows the same perturbed normal the lit path uses --
+  // matching the GL backend, which also maps before its AOV branch.
+  vec3 N = applyNormalMap(normalize(vNormalW));
   // Debug AOVs.
   if (fr.mode.x != 0) {
     vec3 Ngeo = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
@@ -315,36 +343,48 @@ void main() {
   float metallic = pc.matAux.x * (channelOf(mr, m.scalar0.x) * m.scalar0.z + m.scalar0.w);
   float roughness = pc.matAux.y * (channelOf(mr, m.scalar0.y) * m.scalar1.x + m.scalar1.y);
   vec3 emissive = pc.emissive.xyz * sampleEmissive(vUV).rgb;
-  N = applyNormalMap(N);
+  vec3 V = normalize(fr.camPos.xyz - vWorldPos);
+
+  // Soft camera-headlight shading, unified with the GL backend
+  // (light3d/material.cpp): face the shading normal toward the camera so
+  // back/grazing faces never read as pure black, then combine a view-aligned
+  // headlight (N.V) with a gentle half-Lambert key and an ambient floor. This
+  // replaces the old hard-Lambert-on-the-key-light term, which collapsed the
+  // shadow side to the ambient floor and diverged visibly from GL.
+  vec3 Nf = (dot(N, V) < 0.0) ? -N : N;
+  float facing = max(dot(Nf, V), 0.0);
   vec3 L = (dot(fr.lightDir.xyz, fr.lightDir.xyz) > 1e-8)
                ? normalize(fr.lightDir.xyz)
-               : normalize(vec3(0.5, 0.8, 0.6));
+               : normalize(vec3(0.3, 0.5, 0.8));
   vec3 lightColor = (dot(fr.lightColor.rgb, fr.lightColor.rgb) > 1e-8)
                         ? fr.lightColor.rgb
                         : vec3(1.0);
-  float diff = max(dot(N, L), 0.0);
-  vec3 V = normalize(fr.camPos.xyz - vWorldPos);
-  vec3 H = normalize(L + V);
-  float spec = pow(max(dot(N, H), 0.0), mix(96.0, 8.0, clamp(roughness, 0.0, 1.0)));
+  float key = dot(Nf, L) * 0.5 + 0.5;         // half-Lambert, never 0
+  float shade = 0.6 * facing + 0.4 * key;     // [0,1]
   // Ambient: DomeLight split-sum IBL when baked, else the constant floor
   // (matches the GL raster path in light3d/material.cpp).
   vec3 ambient;
   if (fr.iblColor.w > 0.5) {
     float rgh = clamp(roughness, 0.0, 1.0);
-    vec3 Ne = normalize(mat3(fr.envRot) * N);
-    vec3 Re = normalize(mat3(fr.envRot) * reflect(-V, N));
+    vec3 Ne = normalize(mat3(fr.envRot) * Nf);
+    vec3 Re = normalize(mat3(fr.envRot) * reflect(-V, Nf));
     vec3 irr = texture(uIrradianceMap, Ne).rgb;
     vec3 pref = textureLod(uPrefilteredMap, Re, rgh * (fr.iblParams.x - 1.0)).rgb;
-    vec2 dfg = texture(uBrdfLut, vec2(max(dot(N, V), 0.0), rgh)).rg;
-    vec3 F0 = mix(vec3(0.04), base, clamp(metallic, 0.0, 1.0));
+    vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0), rgh)).rg;
+    vec3 F0 = computeF0(base, metallic);
     ambient = (base * (1.0 - clamp(metallic, 0.0, 1.0)) * irr +
                pref * (F0 * dfg.x + dfg.y)) * fr.iblColor.rgb;
   } else {
     ambient = base * 0.25;
   }
-  vec3 c = ambient + base * lightColor * (0.85 * diff) +
-           lightColor * vec3(spec) * mix(0.04, 0.35, clamp(metallic, 0.0, 1.0)) +
-           emissive;
+  vec3 diffuse = base * lightColor * (1.0 - clamp(metallic, 0.0, 1.0)) *
+                 (0.75 * shade);
+  vec3 H = normalize(L + V);
+  float NdotH = max(dot(Nf, H), 0.0);
+  float specPower = mix(16.0, 256.0, 1.0 - clamp(roughness, 0.0, 1.0));
+  vec3 specColor = computeF0(base, metallic);
+  vec3 specular = specColor * lightColor * pow(NdotH, specPower) * facing;
+  vec3 c = linearToSrgb(ambient + diffuse + specular + emissive);
   if (pc.matAux.z > 1.5 && opacity < 1.0) {
     c *= opacity;  // pipeline uses premultiplied alpha blending
   }
