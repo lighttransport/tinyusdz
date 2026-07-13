@@ -670,10 +670,19 @@ bool VulkanRenderer::createDevice(std::string* err) {
     std::vector<VkExtensionProperties> have(n);
     vkEnumerateDeviceExtensionProperties(phys_, nullptr, &n, have.data());
     for (const auto& e : have) {
-      if (std::strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0) {
+      if (!memBudgetSupported_ &&
+          std::strcmp(e.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0) {
         devExts.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
         memBudgetSupported_ = true;
-        break;
+      }
+      // Extended dynamic state: per-draw vkCmdSetCullMode, so the mesh pipelines
+      // can back-face-cull single-sided meshes (matching the GL backend) without
+      // doubling every pipeline. Optional -- absent, culling stays off (the old
+      // behavior) rather than failing device creation.
+      if (!dynCullSupported_ &&
+          std::strcmp(e.extensionName,
+                      VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME) == 0) {
+        dynCullSupported_ = true;
       }
     }
   }
@@ -730,6 +739,30 @@ bool VulkanRenderer::createDevice(std::string* err) {
       ci.pNext = &sdp;
     }
   }
+  // Extended-dynamic-state feature bit: confirm the device actually reports the
+  // feature (not just the extension string) before enabling it and declaring
+  // VK_DYNAMIC_STATE_CULL_MODE_EXT in the mesh pipelines.
+  VkPhysicalDeviceExtendedDynamicStateFeaturesEXT eds{};
+  eds.sType =
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+  if (dynCullSupported_) {
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT edsQuery{};
+    edsQuery.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+    VkPhysicalDeviceFeatures2 f2{};
+    f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    f2.pNext = &edsQuery;
+    vkGetPhysicalDeviceFeatures2(phys_, &f2);
+    if (edsQuery.extendedDynamicState) {
+      devExts.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
+      eds.extendedDynamicState = VK_TRUE;
+      eds.pNext = const_cast<void*>(ci.pNext);
+      ci.pNext = &eds;
+    } else {
+      dynCullSupported_ = false;
+    }
+  }
+
   ci.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
   ci.ppEnabledExtensionNames = devExts.data();
 
@@ -775,6 +808,16 @@ bool VulkanRenderer::createDevice(std::string* err) {
   ci.pEnabledFeatures = &enabledFeatures;
   VK_CHECK(vkCreateDevice(phys_, &ci, nullptr, &device_), "vkCreateDevice");
   vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
+
+  if (dynCullSupported_) {
+    vkCmdSetCullMode_ = reinterpret_cast<PFN_vkCmdSetCullModeEXT>(
+        vkGetDeviceProcAddr(device_, "vkCmdSetCullModeEXT"));
+    if (!vkCmdSetCullMode_) {
+      vkCmdSetCullMode_ = reinterpret_cast<PFN_vkCmdSetCullModeEXT>(
+          vkGetDeviceProcAddr(device_, "vkCmdSetCullMode"));  // 1.3 core alias
+    }
+    if (!vkCmdSetCullMode_) dynCullSupported_ = false;
+  }
 
   // Load the RT entrypoints (extension functions aren't statically exported).
   if (rtSupported_) {
@@ -1348,10 +1391,14 @@ bool VulkanRenderer::createPipeline(std::string* err) {
   cb.attachmentCount = 1;
   cb.pAttachments = &cba;
 
-  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  // Cull mode is dynamic when the device supports it: single-sided meshes
+  // back-face-cull (parity with GL), double-sided ones don't. The draw loop
+  // sets it before every draw that uses this pipeline.
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                          VK_DYNAMIC_STATE_CULL_MODE_EXT};
   VkPipelineDynamicStateCreateInfo dynState{};
   dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynState.dynamicStateCount = 2;
+  dynState.dynamicStateCount = dynCullSupported_ ? 3 : 2;
   dynState.pDynamicStates = dyn;
 
   VkGraphicsPipelineCreateInfo ci{};
@@ -1496,10 +1543,14 @@ void VulkanRenderer::createTessPipeline() {
   cb.attachmentCount = 1;
   cb.pAttachments = &cba;
 
-  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  // Cull mode is dynamic when the device supports it: single-sided meshes
+  // back-face-cull (parity with GL), double-sided ones don't. The draw loop
+  // sets it before every draw that uses this pipeline.
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                          VK_DYNAMIC_STATE_CULL_MODE_EXT};
   VkPipelineDynamicStateCreateInfo dynState{};
   dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynState.dynamicStateCount = 2;
+  dynState.dynamicStateCount = dynCullSupported_ ? 3 : 2;
   dynState.pDynamicStates = dyn;
 
   VkGraphicsPipelineCreateInfo ci{};
@@ -1638,10 +1689,14 @@ bool VulkanRenderer::createInstPipeline(std::string* err) {
   cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   cb.attachmentCount = 1;
   cb.pAttachments = &cba;
-  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+  // Cull mode is dynamic when the device supports it: single-sided meshes
+  // back-face-cull (parity with GL), double-sided ones don't. The draw loop
+  // sets it before every draw that uses this pipeline.
+  VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                          VK_DYNAMIC_STATE_CULL_MODE_EXT};
   VkPipelineDynamicStateCreateInfo dynState{};
   dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynState.dynamicStateCount = 2;
+  dynState.dynamicStateCount = dynCullSupported_ ? 3 : 2;
   dynState.pDynamicStates = dyn;
 
   VkGraphicsPipelineCreateInfo ci{};
@@ -4950,6 +5005,8 @@ void VulkanRenderer::drawBoxProxies(VkCommandBuffer cb) {
   }
 
   vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
+  // The LOD box proxy is a closed cube: back-face cull it, as GL does.
+  if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_BACK_BIT);
   {
     // Set 0: dome IBL irradiance cube (black fallback) for the flat ambient.
     VkDescriptorSet irrDs =
@@ -6884,6 +6941,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     for (int apass = 0; apass < alphaPasses; ++apass) {
     const VkPipeline meshPl = (apass == 0) ? pipeline_ : translucentPipeline_;
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPl);
+    int cullState = -1;  // -1 unknown; dedup vkCmdSetCullMode across meshes
     if (boneDesc_ != VK_NULL_HANDLE) {
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout_,
                               1, 1, &boneDesc_, 0, nullptr);
@@ -6968,6 +7026,17 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
       const auto& mesh = meshes_[mi];
       // Empty-mesh placeholder (slot kept for index sync): nothing to draw.
       if (mesh.vbo == VK_NULL_HANDLE || mesh.submeshes.empty()) continue;
+      // Back-face cull single-sided meshes, exactly like the GL backend
+      // (gl_renderer's wantCull). Dynamic state, so it persists across the
+      // tess-pipeline switch below; only touched on a transition.
+      if (dynCullSupported_) {
+        const VkCullModeFlags want =
+            mesh.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+        if (static_cast<int>(want) != cullState) {
+          vkCmdSetCullMode_(cb, want);
+          cullState = static_cast<int>(want);
+        }
+      }
       light3d::Mat4 W = ToMat4(mesh.world);
       // mvp = viewProj*model and the normal matrix are derived in the shader from
       // pc.model (frees the push-constant lanes they used).
@@ -7167,6 +7236,11 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
     }
     if (anyInstanced && instPipeline_) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, instPipeline_);
+      // The MDI batch draws every eligible prototype in a few indirect calls, so
+      // cull mode cannot vary per mesh here: leave it off (the pre-dynamic-state
+      // behavior). The per-mesh instanced loop below does cull single-sided
+      // prototypes; GL culls them in both paths.
+      if (dynCullSupported_) vkCmdSetCullMode_(cb, VK_CULL_MODE_NONE);
       // Set 1: the scene-wide bone rows, so a skinned prototype poses in the
       // instanced vertex shader (same buffer the mesh pass binds). Absent when the
       // scene has no skinning -- every draw then carries jointAddr == 0 and the
@@ -7230,6 +7304,7 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
             translucentInst ? instTranslucentPipeline_ : instPipeline_;
         if (pipe == VK_NULL_HANDLE) continue;
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+        int instCullState = -1;  // dedup vkCmdSetCullMode across prototypes
         InstPushC ipc{};
         for (size_t mi = 0; mi < meshes_.size(); ++mi) {
           if (mi < meshVisible_.size() && !meshVisible_[mi]) continue;
@@ -7238,6 +7313,16 @@ void VulkanRenderer::presentImpl(ImDrawData* drawData, int fbW, int fbH) {
           if (mesh.hasTranslucentInstances != translucentInst) continue;
           if (mesh.instanceCount == 0 || mesh.drawInstanceCount == 0) continue;
           if (!mesh.instVbo || !mesh.instColorBuf || !mesh.instVtxColorBuf) continue;
+          // Back-face cull single-sided prototypes (parity with GL's instanced
+          // pass); only touched on a transition.
+          if (dynCullSupported_) {
+            const VkCullModeFlags want =
+                mesh.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+            if (static_cast<int>(want) != instCullState) {
+              vkCmdSetCullMode_(cb, want);
+              instCullState = static_cast<int>(want);
+            }
+          }
           ipc.draw[0] =
               static_cast<int>(mdiMeshMetaBase_ + mi);  // per-mesh DrawMeta slot
           vkCmdPushConstants(cb, instPipelineLayout_,

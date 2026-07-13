@@ -261,6 +261,11 @@ bool FillFlatGeometry(const tydn::RenderMesh& m, DrawMeshCPU* dm,
   const size_t ncorners = m.triangulated_indices.size();
   if (np == 0 || ncorners < 3) return false;
 
+  // Authored doubleSided reaches the renderers (GL back-face-culls
+  // single-sided meshes; VK matches via dynamic cull mode). Without this every
+  // --next mesh defaulted to single-sided regardless of what was authored.
+  dm->doubleSided = m.double_sided;
+
   // faceVarying lookups need the corner remap; without it, treat faceVarying
   // attributes as absent rather than reading garbage.
   const bool haveCornerMap =
@@ -3191,12 +3196,14 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     bool anyMorph = false;
     int matId = 0;
   };
-  // key = (purpose, geometricNormal, materialId, morphId) -> current batch. Keying
-  // by material keeps per-material draws distinct so each batch can reference its
-  // own DrawMaterialCPU instead of the single default gray material. morphId is 0
-  // for ordinary meshes and unique per BLENDSHAPED mesh: morph channel ids and the
-  // bound SkelAnimation are per-mesh, so two morphed meshes must not share a batch.
-  std::map<std::tuple<std::string, bool, int, int>, Batch> open;
+  // key = (purpose, geometricNormal, doubleSided, materialId, morphId) -> current
+  // batch. Keying by material keeps per-material draws distinct so each batch can
+  // reference its own DrawMaterialCPU instead of the single default gray material.
+  // doubleSided is per-DrawMeshCPU (it drives back-face culling), so single- and
+  // double-sided meshes must not merge. morphId is 0 for ordinary meshes and
+  // unique per BLENDSHAPED mesh: morph channel ids and the bound SkelAnimation
+  // are per-mesh, so two morphed meshes must not share a batch.
+  std::map<std::tuple<std::string, bool, bool, int, int>, Batch> open;
   int nextMorphBatchId = 0;
 
   // Full UsdShade binding semantics: the purpose fallback chain
@@ -3728,7 +3735,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
 
     if (triMat.empty()) {
       // --- Single-material fast path: append the whole mesh to one batch. ---
-      Batch& b = open[{purpose, loc.geometricNormal, wholeMat, morphBatchId}];
+      Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, wholeMat,
+                       morphBatchId}];
       b.matId = wholeMat;
       if (!b.dm.vertices.empty() &&
           b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
@@ -3736,6 +3744,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       }
       b.dm.purpose = purpose;
       b.dm.geometricNormal = loc.geometricNormal;
+      b.dm.doubleSided = m.double_sided;
       // Allocate the batch color buffer only once a mesh actually contributes a
       // color: back-fill white for the vertices already in the batch. No-color
       // batches (e.g. the hotel) then never allocate a 12 B/vertex white buffer.
@@ -3775,7 +3784,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       const size_t numTris = loc.indices.size() / 3;
       bool firstGroup = true;
       for (int gm : groups) {
-        Batch& b = open[{purpose, loc.geometricNormal, gm, morphBatchId}];
+        Batch& b = open[{purpose, loc.geometricNormal, m.double_sided, gm,
+                         morphBatchId}];
         b.matId = gm;
         if (!b.dm.vertices.empty() &&
             b.dm.vertices.size() + loc.vertices.size() > kBatchVtxCap) {
@@ -3783,6 +3793,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         }
         b.dm.purpose = purpose;
         b.dm.geometricNormal = loc.geometricNormal;
+        b.dm.doubleSided = m.double_sided;
         if (hasC && !b.anyColor) {
           b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
           b.anyColor = true;

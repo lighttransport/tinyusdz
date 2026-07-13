@@ -1775,6 +1775,7 @@ void FillGeneratedMesh(const UsdPrim& prim,
   if (GetToken(prim, "orientation", &orientation)) {
     out->left_handed = (orientation == "leftHanded");
   }
+  GetBool(prim, "doubleSided", &out->double_sided);
   if (!points.empty()) {
     out->bbox_min = Float3(1e30f, 1e30f, 1e30f);
     out->bbox_max = Float3(-1e30f, -1e30f, -1e30f);
@@ -4010,6 +4011,8 @@ bool RenderSceneConverter::ExtractMeshTopology(const UsdPrim& prim, RenderMesh* 
   if (GetToken(prim, "orientation", &orientation)) {
     mesh->left_handed = (orientation == "leftHanded");
   }
+
+  GetBool(prim, "doubleSided", &mesh->double_sided);
 
   // holeIndices: face indices excluded from rendering.
   {
