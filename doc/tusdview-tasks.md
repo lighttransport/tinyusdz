@@ -25,12 +25,23 @@ program has web/Basis follow-ups left.
   three uniforms. Pinned by `tusdview-specular-workflow`.
   **Still open:** (1) the **opacity texture** — `s.opacity.texture_id` is a
   SEPARATE grayscale mask (the base-color alpha case already works via
-  `baseSample.a`); loading it needs a new sampler descriptor set (VK) / sampler
-  uniform (GL) + a MaterialTexParam UV slot, i.e. the same per-slot plumbing as
-  base/normal/MR. (2) **varying `displayOpacity`** — `dm.vertexAlpha` is built
+  `baseSample.a`). ATTEMPTED 2026-07-13 and REVERTED: the VK side worked fully
+  (new descriptor set 25 `uOpacityTex` non-UDIM + opacity UV/params in the set-6
+  SSBO, stride 20→23, byte-identical across mesh.frag/.vert/tese; loader loads
+  the mask only when it differs from the base texture; cutout verified) but the
+  **GL side hit a radeonsi shader-complexity ceiling**: adding a 13th
+  distinctly-bound fragment sampler to the GL330 material shader corrupts
+  base-color UV-set routing (`tusdview-uv-set-routing` fails) regardless of the
+  unit chosen (tried 6, 19, 20 — only unit 0, i.e. aliasing the base-color
+  sampler, works, and `GL_MAX_TEXTURE_IMAGE_UNITS`=32 so it is NOT a hard limit).
+  A future attempt must first CONSOLIDATE the GL fragment shader's samplers (it
+  has 12: base/mr/normal/emissive + 8 UDIM tex/lut — e.g. fold the UDIM luts, or
+  go bindless) to make room, then re-land the (working) VK path alongside it. Do
+  NOT ship a VK-only opacity texture — it breaks the GL↔VK parity the rest of the
+  renderer holds. (2) **varying `displayOpacity`** — `dm.vertexAlpha` is built
   and size-tracked but never uploaded as a vertex attribute / sampled (constant
   per-mesh displayOpacity already works via `materialWithAlpha` variants). Both
-  are deferred as a follow-up; neither is wired into GL/VK/RT yet.
+  deferred; neither is wired into GL/VK/RT yet.
 
 - **Cross-tool parity oracle (highest-value test, not built).** Nothing renders
   the *same* scene through both binaries and asserts agreement — exactly why the
