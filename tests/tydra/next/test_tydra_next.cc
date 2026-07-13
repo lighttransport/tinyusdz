@@ -967,7 +967,16 @@ def Xform "World"
 
     def Material "OpenPBRMat"
     {
-        token outputs:surface.connect = </World/OpenPBRMat/Surface.outputs:surface>
+        string config:mtlx:version = "1.39"
+        token outputs:surface.connect = </World/OpenPBRMat/PreviewFallback.outputs:surface>
+        token outputs:mtlx:surface.connect = </World/OpenPBRMat/Surface.outputs:surface>
+
+        def Shader "PreviewFallback"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1.0, 1.0, 1.0)
+            token outputs:surface
+        }
 
         def Shader "Surface"
         {
@@ -975,17 +984,71 @@ def Xform "World"
             color3f inputs:base_color.connect = </World/OpenPBRMat/NG.outputs:out>
             float inputs:base_metalness = 0.8
             float inputs:base_roughness = 0.35
-            float inputs:opacity = 1.0
+            float inputs:geometry_opacity.connect = </World/OpenPBRMat/NG.outputs:opacity>
             token outputs:surface
         }
 
         def NodeGraph "NG"
         {
-            color3f outputs:out.connect = </World/OpenPBRMat/NG/Constant.outputs:out>
+            color3f outputs:out.connect = </World/OpenPBRMat/NG/Pass8.outputs:out>
+            float outputs:opacity.connect = </World/OpenPBRMat/NG/OpacityExtract.outputs:out>
 
             def Shader "Constant"
             {
-                color3f outputs:out = (0.7, 0.6, 0.5)
+                uniform token info:id = "ND_constant_color3"
+                color3f inputs:value = (1.0, 0.5, 0.1)
+                color3f outputs:out
+            }
+
+            def Shader "Subtract"
+            {
+                uniform token info:id = "ND_subtract_color3"
+                color3f inputs:in1 = (1.0, 1.0, 1.0)
+                color3f inputs:in2.connect = </World/OpenPBRMat/NG/Constant.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "Mix"
+            {
+                uniform token info:id = "ND_mix_color3"
+                color3f inputs:bg.connect = </World/OpenPBRMat/NG/Constant.outputs:out>
+                color3f inputs:fg.connect = </World/OpenPBRMat/NG/Subtract.outputs:out>
+                float inputs:mix = 1.0
+                color3f outputs:out
+            }
+
+            # Keep a moderately deep, acyclic graph in this regression. Each
+            # node/input/connection hop consumes evaluator depth; the old
+            # limit of 16 silently replaced this valid result with white.
+            def Shader "Pass1" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Mix.outputs:out> color3f outputs:out }
+            def Shader "Pass2" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass1.outputs:out> color3f outputs:out }
+            def Shader "Pass3" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass2.outputs:out> color3f outputs:out }
+            def Shader "Pass4" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass3.outputs:out> color3f outputs:out }
+            def Shader "Pass5" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass4.outputs:out> color3f outputs:out }
+            def Shader "Pass6" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass5.outputs:out> color3f outputs:out }
+            def Shader "Pass7" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass6.outputs:out> color3f outputs:out }
+            def Shader "Pass8" { uniform token info:id = "ND_convert_color3_color3" color3f inputs:in.connect = </World/OpenPBRMat/NG/Pass7.outputs:out> color3f outputs:out }
+
+            def Shader "OpacityImage"
+            {
+                uniform token info:id = "ND_image_color4"
+                asset inputs:file = @mask.png@
+                color4f outputs:out
+            }
+
+            def Shader "OpacityConvert"
+            {
+                uniform token info:id = "ND_convert_color4_color3"
+                color4f inputs:in.connect = </World/OpenPBRMat/NG/OpacityImage.outputs:out>
+                color3f outputs:out
+            }
+
+            def Shader "OpacityExtract"
+            {
+                uniform token info:id = "ND_extract_color3"
+                color3f inputs:in.connect = </World/OpenPBRMat/NG/OpacityConvert.outputs:out>
+                integer inputs:index = 0
+                float outputs:out
             }
         }
     }
@@ -1020,12 +1083,16 @@ def Xform "World"
   assert(preview.preview_surface->use_specular_workflow);
   assert(preview.alpha_mode == RenderMaterial::AlphaMode::Blend);
 
-  assert(result.scene.images.size() == 1);
-  assert(result.scene.images[0].resolved_path == "metallic.png");
-  assert(result.scene.images[0].color_space == ColorSpace::Raw);
-  assert(result.scene.textures.size() == 1);
-  const RenderTexture& tex = result.scene.textures[0];
-  assert(tex.image_id == 0);
+  assert(result.scene.images.size() == 2);
+  assert(result.scene.textures.size() == 2);
+  const int32_t metallic_texture_id = preview.preview_surface->metallic.texture_id;
+  assert(metallic_texture_id >= 0);
+  assert(static_cast<size_t>(metallic_texture_id) < result.scene.textures.size());
+  const RenderTexture& tex = result.scene.textures[metallic_texture_id];
+  assert(tex.image_id >= 0);
+  assert(static_cast<size_t>(tex.image_id) < result.scene.images.size());
+  assert(result.scene.images[tex.image_id].resolved_path == "metallic.png");
+  assert(result.scene.images[tex.image_id].color_space == ColorSpace::Raw);
   assert(tex.output_channel == RenderTexture::Channel::R);
   assert(tex.wrap_s == WrapMode::Repeat);
   assert(tex.wrap_t == WrapMode::Clamp);
@@ -1037,11 +1104,20 @@ def Xform "World"
   const RenderMaterial& openpbr = result.scene.materials[openpbr_it->second];
   assert(openpbr.shader_type == RenderMaterial::ShaderType::OpenPBR);
   assert(openpbr.openpbr);
-  assert(std::abs(openpbr.openpbr->base_color.value.x - 0.7f) < 0.001f);
-  assert(std::abs(openpbr.openpbr->base_color.value.y - 0.6f) < 0.001f);
-  assert(std::abs(openpbr.openpbr->base_color.value.z - 0.5f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->base_color.value.x - 0.0f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->base_color.value.y - 0.5f) < 0.001f);
+  assert(std::abs(openpbr.openpbr->base_color.value.z - 0.9f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_metalness.value.x - 0.8f) < 0.001f);
   assert(std::abs(openpbr.openpbr->base_roughness.value.x - 0.35f) < 0.001f);
+  assert(openpbr.openpbr->opacity.is_texture());
+  assert(openpbr.alpha_mode == RenderMaterial::AlphaMode::Blend);
+  const int32_t opacity_texture_id = openpbr.openpbr->opacity.texture_id;
+  assert(opacity_texture_id >= 0);
+  assert(static_cast<size_t>(opacity_texture_id) < result.scene.textures.size());
+  const RenderTexture& opacity_tex = result.scene.textures[opacity_texture_id];
+  assert(opacity_tex.image_id >= 0);
+  assert(static_cast<size_t>(opacity_tex.image_id) < result.scene.images.size());
+  assert(result.scene.images[opacity_tex.image_id].resolved_path == "mask.png");
 
   std::cout << "  RenderConverter materials: PASSED\n";
 }
@@ -4354,6 +4430,8 @@ def Xform "World"
     };
     // Baseline: the generators themselves are outward (+Y sphere).
     assert(signed_volume("/World/BallY") > 0.01);
+    // Match legacy's subdivision-4 sphere (10 * 4^4 + 2 vertices).
+    assert(find_mesh("/World/BallY").point_count() == 2562);
     // A mirror would flip these negative.
     assert(signed_volume("/World/CapX") > 0.01);
     assert(signed_volume("/World/CapZ") > 0.01);

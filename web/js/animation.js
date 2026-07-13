@@ -1235,9 +1235,8 @@ async function reloadMaterials() {
 				child.material.needsUpdate = true;
 
 				// Apply double-sided if enabled
-				if (animationParams.doubleSided) {
-					child.material.side = THREE.DoubleSide;
-				}
+				child.material.side = (animationParams.doubleSided ||
+					child.userData?.usdMesh?.doubleSided) ? THREE.DoubleSide : THREE.FrontSide;
 			} catch (e) {
 				console.warn(`Failed to reload material for ${child.name}:`, e);
 			}
@@ -2187,23 +2186,25 @@ const animationParams = {
 		// Update all loaded USD objects
 		usdSceneRoot.traverse((child) => {
 			if (child.isMesh && child.material) {
+				const side = (this.doubleSided || child.userData?.usdMesh?.doubleSided)
+					? THREE.DoubleSide : THREE.FrontSide;
 				if (Array.isArray(child.material)) {
 					child.material.forEach(mat => {
-						mat.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+						mat.side = side;
 						mat.needsUpdate = true;
 					});
 				} else {
-					child.material.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+					child.material.side = side;
 					child.material.needsUpdate = true;
 				}
 				// Also update original material if stored
 				if (child.userData.originalMaterial) {
 					if (Array.isArray(child.userData.originalMaterial)) {
 						child.userData.originalMaterial.forEach(mat => {
-							mat.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+							mat.side = side;
 						});
 					} else {
-						child.userData.originalMaterial.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+						child.userData.originalMaterial.side = side;
 					}
 				}
 			}

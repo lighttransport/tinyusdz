@@ -30,6 +30,11 @@ namespace next {
 //
 
 struct MeshConfig {
+  // Subdivision level for generated analytic spheres. Match the legacy
+  // converter default so backend switches do not expose faceted silhouettes.
+  // Clamped to [0, 6] by the converter.
+  int sphere_subdivisions = 4;
+
   // Triangulation
   bool triangulate = true;
   enum class TriangulationMethod { Earcut, Fan } triangulation_method = TriangulationMethod::Earcut;
@@ -74,6 +79,14 @@ struct MeshConfig {
   // Bulk arrays are released incrementally during conversion so the peak does
   // not include both the Stage and a second complete copy of every mesh.
   bool retain_geometry = true;
+
+  // Metadata-only consumers may still need the converter's robust polygon
+  // triangulation without retaining authored points and vertex attributes.
+  bool retain_triangulation = false;
+
+  // Generated geometric primitives have no authored Mesh arrays for a lazy
+  // consumer to rebuild from. Keep their generated payload when requested.
+  bool retain_analytic_geometry = false;
 };
 
 struct MaterialConfig {

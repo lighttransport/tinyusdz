@@ -924,6 +924,7 @@ export class NextRenderSceneAdapter {
             index,
             primName: mesh.primName || `mesh_${index}`,
             primPath: mesh.primPath || '',
+            doubleSided: !!mesh.doubleSided,
             points: copy(mesh.points, Float32Array),
             indices: copy(mesh.indices, Uint32Array),
             normals: copy(mesh.normals, Float32Array),

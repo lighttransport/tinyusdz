@@ -2373,8 +2373,11 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
      * Calculate DomeLight intensity from USD light properties
      */
     static calculateDomeLightIntensity(light) {
-        let intensity = light.intensity !== undefined ? light.intensity : 1.0;
-        const exposure = (light.exposure !== undefined && light.exposure !== 0) ? light.exposure : 1.0;
+        const intensity = light.intensity !== undefined ? light.intensity : 1.0;
+        // UsdLuxLightAPI defines exposure in stops with a fallback of 0. A
+        // previous fallback of 1 doubled every DomeLight with unauthored or
+        // explicitly-zero exposure.
+        const exposure = light.exposure !== undefined ? light.exposure : 0.0;
         return intensity * Math.pow(2, exposure);
     }
 
@@ -2391,6 +2394,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         const texture = new THREE.CanvasTexture(canvas);
         texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.SRGBColorSpace;
         return texture;
     }
 
@@ -2398,20 +2402,24 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
      * Create a solid color texture
      */
     static createSolidColorTexture(color, size) {
-        const toSRGB = (v) => Math.pow(Math.max(0, Math.min(1, v)), 1 / 2.2);
-        const r = Math.round(toSRGB(color.r) * 255);
-        const g = Math.round(toSRGB(color.g) * 255);
-        const b = Math.round(toSRGB(color.b) * 255);
-
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-        ctx.fillRect(0, 0, size, size);
-
-        const texture = new THREE.CanvasTexture(canvas);
+        // Decoder values are scene-linear. Keep them as floats while
+        // expanding tiny HDR/EXR maps for PMREM; an 8-bit canvas otherwise
+        // risks applying (or omitting) a transfer function at the wrong step.
+        const data = new Float32Array(size * size * 4);
+        for (let i = 0; i < size * size; ++i) {
+            data[i * 4 + 0] = color.r;
+            data[i * 4 + 1] = color.g;
+            data[i * 4 + 2] = color.b;
+            data[i * 4 + 3] = 1.0;
+        }
+        const texture = new THREE.DataTexture(
+            data, size, size, THREE.RGBAFormat, THREE.FloatType);
         texture.mapping = THREE.EquirectangularReflectionMapping;
+        texture.colorSpace = THREE.LinearSRGBColorSpace;
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
         return texture;
     }
 
@@ -2442,7 +2450,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         texture.mapping = THREE.EquirectangularReflectionMapping;
         texture.colorSpace = THREE.LinearSRGBColorSpace;
 
-        return pmremGenerator.fromEquirectangular(texture).texture;
+        const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+        // Preserve the equirectangular source for scene.background. A PMREM
+        // CubeUV texture is filtered renderer data and is not a color-faithful
+        // visible background.
+        envMap.userData.sourceTexture = texture;
+        return envMap;
     }
 
     /**
@@ -2737,12 +2750,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             const pmremResult = pmremGenerator.fromEquirectangular(texture);
             const envMap = pmremResult.texture;
-            texture.dispose();
 
             const intensity = this.calculateDomeLightIntensity(light);
 
             return {
                 texture: envMap,
+                sourceTexture: texture,
                 intensity,
                 name: light.name,
                 textureFile,
@@ -2858,12 +2871,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             texture.mapping = THREE.EquirectangularReflectionMapping;
             const envMap = pmremGenerator.fromEquirectangular(texture).texture;
-            texture.dispose();
 
             const intensity = this.calculateDomeLightIntensity(light);
 
             return {
                 texture: envMap,
+                sourceTexture: texture,
                 intensity,
                 name: light.name,
                 textureFile,
@@ -2891,6 +2904,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         return {
             texture: envMap,
+            sourceTexture: envMap.userData.sourceTexture,
             intensity,
             colorHex,
             name: light.name,
@@ -2927,6 +2941,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 console.log(`DomeLight: Using constant color ${hex} from filename '${textureFile}'`);
                 return {
                     texture: envMap,
+                    sourceTexture: envMap.userData.sourceTexture,
                     intensity,
                     colorHex: hex,
                     name: light.name,
