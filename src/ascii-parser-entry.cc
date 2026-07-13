@@ -1604,6 +1604,54 @@ bool AsciiParser::Parse(const uint32_t load_states,
         return false;
       }
 
+      // Layer-level `reorder rootPrims = [...]`. This is a namespace *ordering*
+      // statement, not a prim, so it appears where a specifier would and would
+      // otherwise be reported as an invalid specifier. Parse and consume it.
+      //
+      // The prim-level counterpart (`reorder nameChildren` / `reorder
+      // properties`, ParsePrimProps) preserves its statements verbatim through
+      // PrimMetas, because PrimMetaMap already has a slot for them and the prim
+      // printer re-emits them. There is no equivalent layer-level slot: storing
+      // this into LayerMetas::primChildren would make the exporter reorder the
+      // emitted root prims (stage.cc), so a parse -> export -> re-parse cycle
+      // would no longer compare equal. Ordering carries no data opinions, so the
+      // statement is consumed rather than applied.
+      if (tok == "reorder") {
+        // Consume the `reorder` identifier we only peeked at above.
+        Identifier reorder_kw;
+        if (!ReadBasicType(&reorder_kw)) {
+          PUSH_ERROR_AND_RETURN("Failed to read `reorder` keyword.");
+        }
+        if (!SkipWhitespace()) {
+          return false;
+        }
+        std::string reorder_field;
+        if (!ReadIdentifier(&reorder_field)) {
+          PUSH_ERROR_AND_RETURN(
+              "Expected a field name (e.g. `rootPrims`) after `reorder`.");
+        }
+        if (!SkipWhitespace()) {
+          return false;
+        }
+        if (!Expect('=')) {
+          PUSH_ERROR_AND_RETURN("Expected `=` in `reorder` statement.");
+        }
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+        std::vector<value::token> reorder_toks;
+        if (!ParseTokenArrayOptimized(&reorder_toks)) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to parse token array for `reorder {}`.", reorder_field));
+        }
+        DCOUT("Parsed layer-level `reorder " << reorder_field << "` ("
+              << reorder_toks.size() << " entries; consumed).");
+        if (!SkipCommentAndWhitespaceAndNewline()) {
+          return false;
+        }
+        continue;
+      }
+
       Specifier spec{Specifier::Invalid};
       if (tok == "def") {
         spec = Specifier::Def;
