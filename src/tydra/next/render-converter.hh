@@ -194,6 +194,11 @@ class RenderSceneConverter {
   bool ConvertAnimation(const ::tinyusdz::next::Stage& stage,
                         const UsdPrim& prim, AnimationClip* out);
 
+  // Robustly triangulate an already-populated RenderMesh. Custom/lazy
+  // pipelines can share the converter's earcut, quad-diagonal, winding and
+  // hole handling without constructing a complete RenderScene.
+  bool TriangulateMesh(RenderMesh* mesh);
+
   // Texture loading
   bool LoadTexture(const std::string& asset_path, TextureImage* out);
 
@@ -223,7 +228,6 @@ class RenderSceneConverter {
   bool ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* mesh);
 
   // Triangulation
-  bool TriangulateMesh(RenderMesh* mesh);
   bool TriangulateFan(const uint32_t* face_vertex_counts, size_t face_count,
                       const uint32_t* indices, size_t index_count,
                       UInt32Chunked* out_indices);
