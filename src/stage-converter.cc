@@ -406,11 +406,38 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     root_fields.push_back({"comment", comment_value});
   }
 
-  // Add customLayerData
-  if (!metas.customLayerData.empty()) {
+  // Add customLayerData. An AUTHORED-but-empty `customLayerData = {}` is an
+  // opinion too, so consult customLayerDataAuthored rather than just !empty().
+  if (metas.customLayerDataAuthored || !metas.customLayerData.empty()) {
     crate::CrateValue cld_value;
     cld_value.Set(metas.customLayerData);
     root_fields.push_back({"customLayerData", cld_value});
+  }
+
+  // kilogramsPerUnit (UsdPhysics) and the two USDZ playback metas were written by
+  // the Layer path (sconv-layer.cc) but not by this one, so they vanished on a
+  // Stage write. (The timecode family above is already handled -- do not add it
+  // again: a duplicate root field corrupts the fieldset encoding and the crate
+  // then fails to read back at all.)
+  if (metas.kilogramsPerUnit.authored()) {
+    crate::CrateValue v;
+    v.Set(metas.kilogramsPerUnit.get_value());
+    root_fields.push_back({"kilogramsPerUnit", v});
+  }
+
+  if (metas.autoPlay.authored()) {
+    crate::CrateValue v;
+    v.Set(metas.autoPlay.get_value());
+    root_fields.push_back({"autoPlay", v});
+  }
+
+  if (metas.playbackMode.authored()) {
+    crate::CrateValue v;
+    v.Set(value::token(
+        metas.playbackMode.get_value() == LayerMetas::PlaybackMode::PlaybackModeLoop
+            ? "loop"
+            : "none"));
+    root_fields.push_back({"playbackMode", v});
   }
 
   // Add subLayers
@@ -590,6 +617,10 @@ bool CrateWriter::ConvertSinglePrim(
     "assetInfo", "instanceable", "clips",
     "apiSchemas", "inherits", "inheritPaths", "specializes", "references", "payload",
     "displayName", "displayGroup", "sceneName",
+    // `reorder nameChildren` / `reorder properties`. Anything NOT named here is
+    // re-routed into an attribute spec below, which is exactly what happened to
+    // these two: they came back as `token[] primOrder = [...]` properties.
+    "primOrder", "propertyOrder",
   };
   std::set<std::string> prim_field_names = kPrimFields;
   for (const auto& kv : prim.metas().data()) {
@@ -1276,6 +1307,23 @@ void CrateWriter::ExtractPrimMeta(
     crate::CrateValue v;
     v.Set(metas.get_instanceable());
     fields.push_back({"instanceable", v});
+  }
+
+  // `reorder nameChildren = [...]` / `reorder properties = [...]`. Parsed into
+  // PrimMeta and then written by nobody, so both statements vanished on write.
+  // pxr's crate spelling for the two body statements is primOrder /
+  // propertyOrder (NOT primChildren / properties, which are the full name
+  // vectors); the reader picks them back up in usdc-reader-prim.cc.
+  if (!metas.nameChildrenReorder.empty()) {
+    crate::CrateValue v;
+    v.Set(metas.nameChildrenReorder);
+    fields.push_back({"primOrder", v});
+  }
+
+  if (!metas.propertiesReorder.empty()) {
+    crate::CrateValue v;
+    v.Set(metas.propertiesReorder);
+    fields.push_back({"propertyOrder", v});
   }
 
   // customData (Dictionary). Keep this on the Stage path so prim-level
