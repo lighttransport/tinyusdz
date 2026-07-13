@@ -237,6 +237,25 @@ bool CompareDicts(const Dict *lhs, const Dict *rhs, const DiffOptions &opts,
 }
 
 // Dictionary-valued metadata Values (empty Value == unauthored == empty dict).
+// True when two dictionaries share a key whose value is a dictionary on one
+// side and a scalar on the other (recursively) — the "dictionary type
+// conflict" differential: composition would keep the stronger opinion and
+// silently shadow the weaker subtree.
+bool DictsHaveTypeConflict(const Value &l, const Value &r) {
+  const Dict *ld = l.as_dictionary();
+  const Dict *rd = r.as_dictionary();
+  if (!ld || !rd) return false;
+  for (const auto &e : ld->entries) {
+    const Value *o = rd->find(e.first);
+    if (!o) continue;
+    if (e.second.is_dictionary() != o->is_dictionary()) return true;
+    if (e.second.is_dictionary() && DictsHaveTypeConflict(e.second, *o)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool CompareDictValues(const Value &lhs, const Value &rhs,
                        const DiffOptions &opts,
                        std::vector<std::string> *changed) {
@@ -681,13 +700,16 @@ bool ComparePropMetas(const PropMeta *lhs, const PropMeta *rhs,
     note("allowedTokens");
   }
   if (!CompareDictValues(l.customData, r.customData, opts, nullptr)) {
-    note("customData");
+    note(DictsHaveTypeConflict(l.customData, r.customData) ? "customData(type-conflict)"
+                                      : "customData");
   }
   if (!CompareDictValues(l.assetInfo, r.assetInfo, opts, nullptr)) {
-    note("assetInfo");
+    note(DictsHaveTypeConflict(l.assetInfo, r.assetInfo) ? "assetInfo(type-conflict)"
+                                      : "assetInfo");
   }
   if (!CompareDictValues(l.sdrMetadata, r.sdrMetadata, opts, nullptr)) {
-    note("sdrMetadata");
+    note(DictsHaveTypeConflict(l.sdrMetadata, r.sdrMetadata) ? "sdrMetadata(type-conflict)"
+                                      : "sdrMetadata");
   }
   if (!ExtensionFieldsEqual(l.unknownFields, r.unknownFields, opts)) {
     note("extensionFields");
@@ -778,14 +800,20 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
     note("connectionListOp");
   }
 
-  // Default value.
+  // Default value. A value BLOCK (`= None`) transition gets its own
+  // differential: "blocked" distinguishes deleting/blocking an opinion from
+  // an ordinary value edit.
   const Value *lval = lv.slot ? lp.property_value(lv.slot->name_id) : nullptr;
   const Value *rval = rv.slot ? rp.property_value(rv.slot->name_id) : nullptr;
   const bool lhas = lval && !lval->is_empty();
   const bool rhas = rval && !rval->is_empty();
-  if (lhas != rhas) {
+  const bool lblock = lval && lval->is_block();
+  const bool rblock = rval && rval->is_block();
+  if (lblock != rblock) {
+    note("blocked");
+  } else if (lhas != rhas) {
     note("value");
-  } else if (lhas) {
+  } else if (lhas && !lblock) {
     if (!ValuesEquivalentForDiff(*lval, *rval, opts)) {
       note("value");
     }
@@ -1053,13 +1081,16 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
     note("meta:relocates");
   }
   if (!CompareDictValues(l.customData(), r.customData(), opts, nullptr)) {
-    note("meta:customData");
+    note(DictsHaveTypeConflict(l.customData(), r.customData()) ? "meta:customData(type-conflict)"
+                                      : "meta:customData");
   }
   if (!CompareDictValues(l.assetInfo(), r.assetInfo(), opts, nullptr)) {
-    note("meta:assetInfo");
+    note(DictsHaveTypeConflict(l.assetInfo(), r.assetInfo()) ? "meta:assetInfo(type-conflict)"
+                                      : "meta:assetInfo");
   }
   if (!CompareDictValues(l.sdrMetadata(), r.sdrMetadata(), opts, nullptr)) {
-    note("meta:sdrMetadata");
+    note(DictsHaveTypeConflict(l.sdrMetadata(), r.sdrMetadata()) ? "meta:sdrMetadata(type-conflict)"
+                                      : "meta:sdrMetadata");
   }
   if (!CompareDictValues(l.clips(), r.clips(), opts, nullptr)) {
     note("meta:clips");
