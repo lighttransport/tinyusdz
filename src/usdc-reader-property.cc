@@ -552,24 +552,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                       << fv.second.type_name() << "`");
       }
 
-    } else if (fv.first == "stringData") {
-      // Bare string(s) in an attribute's metadata block:
-      //   double radius = 1.2 ( """muda""" )
-      // The ASCII parser keeps these in AttrMeta::stringData. Crate has no
-      // standard field for them, so the writer emits this one; to_string()
-      // re-derives the quoting from the value, so the flags need not travel.
-      if (auto pv = fv.second.get_value<std::vector<std::string>>()) {
-        for (const auto &s : pv.value()) {
-          value::StringData sd;
-          sd.value = s;
-          sd.is_triple_quoted = hasNewline(s);
-          meta.stringData.push_back(sd);
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kTag, "`stringData` must be type `string[]`, but got type `"
-                      << fv.second.type_name() << "`");
-      }
     } else if (fv.first == "colorSpace") {
       if (auto pv = fv.second.get_value<value::token>()) {
         meta.set_colorSpace(pv.value());

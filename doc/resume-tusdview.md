@@ -280,10 +280,16 @@ typed writers; prim metadata (sdrMetadata, unregistered) and attribute metadata
 `subsetFamily:<name>:familyType`; typed-attribute `.connect`; non-conformant
 shader terminal types; listOp qualifier print order.
 
-NOTE, one deliberate non-standard crate field: `AttrMeta::stringData` (a bare
-string in an attribute's metadata block) has no field in the USD crate format, so
-the writer emits its own `stringData` string[] and the reader takes it back. It
-round-trips within tinyusdz; pxr would see an unknown field.
+NOTE on bare strings in an attribute's metadata block (`double x = 1 ( """m""" )`):
+these ARE the comment in USD -- the two ASCII spellings are one Sdf field, and
+only the ASCII parser knows which was used (it parks the bare form in
+`AttrMeta::stringData`, the `comment = ...` form in `AttrMeta::comment`). They are
+written as the STANDARD `comment` field. An earlier pass invented a private
+`stringData` crate field for them; that was replaced, because pxr could not have
+read it. The cost is that the ASCII SPELLING is not preserved across a crate
+round-trip (a bare string comes back bare, a `comment = ` stays only if it was
+authored that way in ASCII) -- pxr does not preserve it either. The attribute
+printer now honors `has_comment_prefix`, which the PRIM printer already did.
 
 **Why this kept happening:** the extraction was copy-pasted per prim type, so each
 new prim type was one omission away from losing data — and most of them were.

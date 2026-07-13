@@ -603,7 +603,7 @@ bool CrateWriter::ConvertSinglePrim(
   static const std::set<std::string> kAttrMetaSuffixes = {
     "elementSize", "customData", "displayName", "displayGroup",
     "documentation", "doc", "hidden", "colorSpace", "comment", "weight",
-    "allowedTokens", "stringData",
+    "allowedTokens",
   };
 
   // Set of field names that belong on the prim spec, not as separate attributes
@@ -3023,9 +3023,23 @@ bool CrateWriter::ConvertAttributeToFields(
     v.Set(static_cast<float>(metas.get_weight()));
     attr_fields.push_back({"weight", v});
   }
-  if (metas.has_comment()) {
+  // A bare string in an attribute's metadata block IS the comment in USD -- the
+  // two ASCII spellings are one Sdf field, and only the ASCII parser knows which
+  // was used (it parks the bare form in AttrMeta::stringData). Both go out as
+  // the STANDARD `comment` field rather than a private one pxr could not read.
+  // Emit exactly ONE: two `comment` fields would corrupt the fieldset encoding.
+  if (metas.has_comment() || !metas.stringData.empty()) {
+    std::string comment_str;
+    if (metas.has_comment()) {
+      comment_str = metas.get_comment().value;
+    } else {
+      for (size_t i = 0; i < metas.stringData.size(); i++) {
+        if (i > 0) comment_str += "\n";
+        comment_str += metas.stringData[i].value;
+      }
+    }
     crate::CrateValue v;
-    v.Set(metas.get_comment().value);
+    v.Set(comment_str);
     attr_fields.push_back({"comment", v});
   }
   if (metas.has_bindMaterialAs()) {
@@ -3053,21 +3067,6 @@ bool CrateWriter::ConvertAttributeToFields(
     v.Set(metas.get_sdrMetadata());
     attr_fields.push_back({"sdrMetadata", v});
   }
-  // Bare string(s) in the metadata block (`double x = 1 ( """muda""" )`). Crate
-  // has no standard field for these -- the ASCII parser parks them in
-  // AttrMeta::stringData -- so emit our own, which the crate reader
-  // (usdc-reader-property.cc) puts straight back. Only the values need to
-  // travel: to_string(StringData) re-derives the quoting from the value.
-  if (!metas.stringData.empty()) {
-    std::vector<std::string> strs;
-    for (const auto& sd : metas.stringData) {
-      strs.push_back(sd.value);
-    }
-    crate::CrateValue v;
-    v.Set(strs);
-    attr_fields.push_back({"stringData", v});
-  }
-
   if (metas.has_unauthoredValuesIndex()) {
     crate::CrateValue v;
     v.Set(metas.get_unauthoredValuesIndex());
