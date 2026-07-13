@@ -626,6 +626,12 @@ bool CrateWriter::ConvertSinglePrim(
   for (const auto& kv : prim.metas().data()) {
     prim_field_names.insert(kv.first);
   }
+  // ...and the ASCII-reader-only spelling of the same thing. Without this, an
+  // unregistered prim meta is re-routed into an ATTRIBUTE spec instead of staying
+  // prim metadata (the same trap `reorder` fell into).
+  for (const auto& kv : prim.metas().unregisteredMetas) {
+    prim_field_names.insert(kv.first);
+  }
 
   for (auto& fv : fields) {
     if (prim_field_names.count(fv.first)) {
@@ -1354,6 +1360,31 @@ void CrateWriter::ExtractPrimMeta(
     fields.push_back({"clips", v});
   }
 
+  // sdrMetadata (Dictionary, UsdShade). Parsed by the readers into MetadataBase
+  // and then written by nobody, so it vanished on write.
+  if (metas.has_sdrMetadata()) {
+    crate::CrateValue v;
+    v.Set(metas.get_sdrMetadata());
+    fields.push_back({"sdrMetadata", v});
+  }
+
+  // UNREGISTERED prim metadata (`def "bora" ( aa = a )`) written by the CRATE
+  // reader lands in PrimMeta::data(), and the generic data() loop further down
+  // already emits it. But the ASCII reader does NOT populate data() for these --
+  // it keeps them only in unregisteredMetas, already pretty-printed to their
+  // source spelling (see usda-reader-impl.hh), so a usda-authored one was
+  // dropped. Round-trip that spelling verbatim as a string; the crate reader's
+  // catch-all puts a string field straight back into unregisteredMetas and the
+  // printer emits it as authored.
+  for (const auto &kv : metas.unregisteredMetas) {
+    if (metas.data().count(kv.first)) {
+      continue;  // the data() loop below owns it
+    }
+    crate::CrateValue v;
+    v.Set(kv.second);
+    fields.push_back({kv.first, v});
+  }
+
   // apiSchemas
   if (metas.has_apiSchemas()) {
     const auto schemas = metas.get_apiSchemas();
@@ -1405,6 +1436,7 @@ void CrateWriter::ExtractPrimMeta(
       "properties",
       "references",
       "sceneName",
+      "sdrMetadata",  // emitted above from the typed member
       "specializes",
       "variantChildren",
       "variantSelection",
