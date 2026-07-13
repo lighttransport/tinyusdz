@@ -2178,9 +2178,32 @@ bool AsciiParser::ParseStageMetaOpt() {
   DCOUT("varname = " << varname);
 
   if (!IsStageMeta(varname)) {
-    std::string msg = "'" + varname + "' is not a Stage Metadata variable.\n";
-    PUSH_ERROR_AND_RETURN(msg);
-    return false;
+    // Unregistered layer metadata. OpenUSD accepts (and preserves) metadata it
+    // does not know, so rejecting the file outright is wrong: a single unknown
+    // key made an otherwise valid stage unloadable. Consume the opinion instead.
+    //
+    // It is consumed, not preserved: LayerMetas has no slot for unregistered
+    // entries, and adding one would have to reach the USDA printer and the crate
+    // writer/reader to survive a round-trip. Preservation lives in the next core
+    // (which is what the AOUSD conformance fixtures actually exercise); this
+    // parser only has to stop rejecting the file.
+    //
+    // Line-oriented, matching the unregistered *prim* metadata path in
+    // ascii-parser-props.cc, so a multi-line unknown value is not supported.
+    if (!Expect('=')) {
+      PUSH_ERROR_AND_RETURN(
+          "'=' expected after unregistered Stage metadata '" + varname + "'.");
+    }
+    if (!SkipWhitespace()) {
+      return false;
+    }
+    std::string content;
+    if (!ReadUntilNewline(&content)) {
+      PUSH_ERROR_AND_RETURN(
+          "Failed to parse unregistered Stage metadata '" + varname + "'.");
+    }
+    DCOUT("Consumed unregistered Stage metadata: " << varname);
+    return true;
   }
 
   if (!Expect('=')) {
