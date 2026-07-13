@@ -2820,9 +2820,25 @@ bool CrateWriter::ConvertAttributeToFields(
     v.Set(static_cast<float>(metas.get_weight()));
     attr_fields.push_back({"weight", v});
   }
-  if (metas.has_comment()) {
+  // A bare string in an attribute's metadata block (`double x = 1 ( """m""" )`)
+  // IS the comment in USD -- the two ASCII spellings are one Sdf field, and only
+  // the ASCII parser knows which was used: it parks the bare form in
+  // AttrMeta::stringData and the `comment = ...` form in AttrMeta::comment. Only
+  // the latter was ever written, so a bare string was DROPPED on usdc write.
+  //
+  // Emit exactly ONE `comment` field: two would corrupt the fieldset encoding.
+  if (metas.has_comment() || !metas.stringData.empty()) {
+    std::string comment_str;
+    if (metas.has_comment()) {
+      comment_str = metas.get_comment().value;
+    } else {
+      for (size_t i = 0; i < metas.stringData.size(); i++) {
+        if (i > 0) comment_str += "\n";
+        comment_str += metas.stringData[i].value;
+      }
+    }
     crate::CrateValue v;
-    v.Set(metas.get_comment().value);
+    v.Set(comment_str);
     attr_fields.push_back({"comment", v});
   }
   if (metas.has_bindMaterialAs()) {
