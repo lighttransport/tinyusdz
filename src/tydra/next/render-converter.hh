@@ -67,6 +67,14 @@ struct MeshConfig {
   // Bulk arrays are released incrementally during conversion so the peak does
   // not include both the Stage and a second complete copy of every mesh.
   bool retain_geometry = true;
+
+  // Metadata-only consumers may still need the converter's robust polygon
+  // triangulation without retaining authored points and vertex attributes.
+  bool retain_triangulation = false;
+
+  // Generated geometric primitives have no authored Mesh arrays for a lazy
+  // consumer to rebuild from. Keep their generated payload when requested.
+  bool retain_analytic_geometry = false;
 };
 
 struct MaterialConfig {

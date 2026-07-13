@@ -2592,8 +2592,12 @@ class RenderStream {
     cfg.mesh.target_bone_count = 4;
     // RenderStream builds one browser-facing mesh lazily from Stage. Keeping a
     // second, complete geometry copy in RenderScene only inflates the wasm
-    // heap; retain its material/skinning/animation metadata instead.
+    // heap; retain its material/skinning/animation metadata instead. Keep the
+    // compact earcut result used by the lazy mesh builder, plus generated
+    // analytic geometry which has no authored Mesh payload to rebuild from.
     cfg.mesh.retain_geometry = false;
+    cfg.mesh.retain_triangulation = true;
+    cfg.mesh.retain_analytic_geometry = true;
     cfg.material.load_textures = false;
     cfg.material.allow_missing_textures = true;
     cfg.point_instancer.duplicate_meshes = false;
@@ -3215,7 +3219,7 @@ class RenderStream {
         const tr::RenderMesh &candidate =
             render_scene_.meshes[static_cast<size_t>(it->second)];
         if (candidate.is_triangulated &&
-            candidate.points.size() == P.size() &&
+            (candidate.points.empty() || candidate.points.size() == P.size()) &&
             (candidate.triangulated_indices.size() % 3) == 0 &&
             candidate.triangulated_face_vertex_indices.size() ==
                 candidate.triangulated_indices.size()) {
