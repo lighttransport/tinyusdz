@@ -134,15 +134,14 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-6-of-427-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-3-of-427-fixtures)):
 
 > The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
 > Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 6 of 427 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
-> intact (down from 133). What is left is NOT more of the same copy-paste
-> omissions — it is two structural gaps (an "authored but empty" data-model gap,
-> and a reader that cannot handle a typeName-only attribute spec). Read the
-> section before starting; both are described there.
+> data"): 3 of 427 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> intact (down from 133). All three fail for ONE reason — there is no way to
+> record "authored, but empty" — and fixing it means touching `ListOp<T>`, which
+> has many users. Read the section before starting.
 > Read the full categorized list in that section before starting — it spans
 > several `timeSamples` attributes dropped wholesale,
 > `skel:blendShapes` losing its namespace, spurious unauthored
@@ -181,7 +180,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (6 of 427 fixtures)
+### The crate writer drops data (3 of 427 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -193,40 +192,64 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 6 of 427 as of 2026-07-14 (was 41 of 422 before the
+done | wc -l          # 3 of 427 as of 2026-07-14 (was 41 of 422 before the
                       # physics-2026-fix2 merge, which ADDED 5 fixtures; was
-                      # 10, 12, 17, 21, 50, 60, 64, 65, 133, 140)
+                      # 6, 10, 12, 17, 21, 50, 60, 64, 65, 133, 140)
 ```
 
-The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a
-diff here is the crate writer losing data, not the printer being creative. A
-full detailed diff turned up more categories than earlier notes here described
-— do not re-derive this from scratch (Camera shutter naming, apiSchemas
-list-ops, five rel/relationship bugs, and variant-statement metadata are
-fixed, see below; not relisted here). **Still open on `rel`:** a list-edit
-qualifier (`append`/`delete`) on a value-LESS relationship (`append rel
-myval`, `delete rel myheight`) — see "Left for later" below, this looks like a
-`ListOp<T>` data-model gap, not a quick writer fix.
+The USDA printer is a FIXED POINT — all 427 fixtures re-print identically — so a
+diff here is the crate writer losing data, not the printer being creative.
 
-The 6 that remain fall into exactly TWO groups, both structural. Every
-per-typed-attribute omission found by this sweep is now fixed (timeSamples on
-the typed writers, prim + attribute metadata blocks, SkelRoot xformOps, mesh
-`subsetFamily:<name>:familyType`, typed-attribute `.connect`, non-conformant
-shader terminal types, listOp qualifier order, bare-string attribute metadata) —
-so do NOT go looking for another one-line writer branch. There isn't one.
+The fixture count is NOT the measure of this work any more. The last three
+rounds of fixes moved it by zero, because the bugs they closed were LATENT — real
+data loss that no fixture happened to exercise. Checks 19-21 in
+run-scope-imageable-roundtrip.sh, and the probe described below, are what measure
+those.
 
-**Group A — the reader cannot handle a typeName-only attribute spec (3).** An
-attribute spec that carries a `typeName` but NO `default` either fails to build
-a PropertyMap outright, or comes back with the schema fallback baked in. The
-WRITER is already correct for all three: it emits the bare declaration. This is
-the read half.
-  - `attrib-defonly-000`, `attrib-defonly-with-meta-000`: `double radius` with no
-    value comes back as `double radius = 2`.
-  - `shader-asset-path-animated-000`: an animated `asset inputs:file` has
-    timeSamples but no `default`, and emitting the timeSamples alone makes the
-    reader fail "Failed to build PropertyMap". The writer branch was written and
-    then REVERTED for exactly this reason — do not re-add it until the reader can
-    take it.
+The 3 that remain all fail for ONE reason (Group B below). Every
+per-typed-attribute omission this sweep found is fixed. Do NOT go looking for
+another one-line writer branch — there isn't one.
+
+**CORRECTION, and the most useful thing on this page.** An earlier version of
+these notes claimed the reader "cannot handle a typeName-only attribute spec" and
+filed 3 fixtures under it. **That was wrong.** The reader reads such a spec fine
+(`token outputs:surface` on a Material has always proved it). It was the WRITER,
+committing the single mistake that accounts for most of this entire sweep:
+
+> An attribute is `authored()` the moment it is DECLARED, with or without a
+> value, and `TypedAttributeWithFallback::get_value()` silently returns the
+> SCHEMA FALLBACK when no value was authored. So a writer that calls
+> `get_value()` straight off `authored()` INVENTS a value the author never wrote
+> — `double radius` is written as `double radius = 2`.
+>
+> This is not cosmetic. **An authored opinion is a STRONG opinion**, so the
+> fabricated value wins over the weaker opinions it should have deferred to
+> during composition: it silently changes what a layered scene resolves to.
+
+The predicates, since they are easy to get backwards:
+  - `TypedAttributeWithFallback::has_value()` is `!_empty` — **TRUE even when
+    unauthored**. It is NOT an authored test. Neither is `TypedAttribute`'s.
+  - `authored()` = declared. `is_value_empty()` = declared, but no value given.
+  - Both together are what you want: authored + non-empty means "really has a
+    value"; authored + empty means "emit a bare declaration".
+
+`CrateWriter::EmitTypedAnimatableAttr` (sconv-detail.hh) is the fix, and the ONLY
+correct way to emit a `TypedAttributeWithFallback<Animatable<T>>`: it emits the
+value, or a bare declaration if there is none, plus the attribute's metadata block
+and its connections. It derives the declared type from `T`, so a call site cannot
+name the wrong one. **Never call `ExtractAnimatableDefault()` off `authored()`
+again — that IS the bug.** All of sconv-geom.cc (16 sites) and sconv-light.cc (26
+sites) now route through it.
+
+Found by PROBING, not reading — declare a value-less attribute on each writer,
+round-trip it, and see what comes back with a value it never had. That probe is
+worth re-running after any new writer lands (checks 19-21 in
+run-scope-imageable-roundtrip.sh are the pinned version of it). It caught 8 latent
+shape attributes (Cylinder/Cone/Capsule/Plane), every UsdLux light input,
+GeomCamera's focalLength/clippingRange/fStop, GPrim's doubleSided, and a
+declared-but-value-less `extent` being DROPPED (`has_value()` is not an authored
+test) — none of which any fixture exercised. sconv-skel/physics/media/ar probe
+clean.
 
 **Group B — "authored but empty" has nowhere to live (3). A shared data-model
 gap; do NOT try to patch it per-site.** Three fixtures fail for one reason:
@@ -263,10 +286,12 @@ the writer emits its own `stringData` string[] and the reader takes it back. It
 round-trips within tinyusdz; pxr would see an unknown field.
 
 **Why this kept happening:** the extraction was copy-pasted per prim type, so each
-new prim type was one omission away from losing data — and several did. Five
-rounds of this are already fixed (below, including the `Model`-typeName bug
-and the five `rel`/relationship bugs); prefer a shared helper over another
-copy.
+new prim type was one omission away from losing data — and most of them were.
+That is why the fixes converged on SHARED HELPERS
+(`EmitTypedAnimatableAttr`, `EmitAttrMetas`, `EmitAttrConnections`,
+`EmitAttrDeclaration`, all in sconv-detail.hh) rather than another copy: a new
+prim type that routes through them cannot repeat any of this. Prefer extending a
+helper to hand-rolling a field push.
 
 CAVEAT on all of it: the checks verify that tinyusdz's reader and writer agree
 with each other. A bug they SHARE is invisible to them. The pxr comparison
