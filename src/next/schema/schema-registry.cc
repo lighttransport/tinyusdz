@@ -76,10 +76,14 @@ SchemaRegistry::SchemaRegistry() {
       {"VolumeFieldBase", "Xformable"}, {"FieldBase", "VolumeFieldBase"},
       {"VolumeFieldAsset", "FieldBase"}, {"FieldAsset", "VolumeFieldAsset"},
       {"Field3DAsset", "FieldAsset"}, {"OpenVDBAsset", "FieldAsset"},
-      // UsdRender types inherit Typed in pxr (NOT Imageable): no visibility/
-      // purpose fallbacks, only the hierarchy among themselves.
+      // UsdRender types inherit Typed in pxr (NOT Imageable/Xformable): no
+      // visibility/purpose fallbacks. Typed is a terminal marker with no
+      // properties; recording it makes the ancestry KNOWN so consumers can
+      // derive non-Xformable/non-Gprim placement from the registry.
+      {"RenderSettingsBase", "Typed"},
       {"RenderSettings", "RenderSettingsBase"},
       {"RenderProduct", "RenderSettingsBase"},
+      {"RenderVar", "Typed"},
   };
 
   auto add = [&](const char* schema, const char* name, const char* type,
@@ -382,6 +386,27 @@ std::vector<std::string> SchemaRegistry::PropertyNames(
     }
   }
   return result;
+}
+
+bool SchemaRegistry::InheritsFrom(const std::string& schema_type,
+                                  const std::string& ancestor) const {
+  std::string current = schema_type;
+  // The parents table is a forest; a generous hop cap guards against an
+  // accidentally-authored cycle.
+  for (int hops = 0; hops < 32 && !current.empty(); ++hops) {
+    if (current == ancestor) return true;
+    auto it = std::find_if(parents_.begin(), parents_.end(),
+                           [&](const auto& p) { return p.first == current; });
+    if (it == parents_.end()) return false;
+    current = it->second;
+  }
+  return false;
+}
+
+bool SchemaRegistry::HasParentEntry(const std::string& schema_type) const {
+  return std::find_if(parents_.begin(), parents_.end(), [&](const auto& p) {
+           return p.first == schema_type;
+         }) != parents_.end();
 }
 
 bool SchemaRegistry::IsKnownSchema(const std::string& schema_type) const {

@@ -22,6 +22,7 @@
 #include "usd-validation.hh"
 
 #include "../prim/identifier.hh"
+#include "../schema/schema-registry.hh"
 
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
@@ -141,18 +142,27 @@ bool IsGprimTypeName(const std::string &type_name) {
       "Cone",        "Cylinder",    "Cylinder_1",   "Capsule",
       "Capsule_1",   "Points",      "BasisCurves",  "NurbsCurves",
       "NurbsPatch",  "HermiteCurves", "Plane",      "TetMesh",
-      "PointInstancer", "Volume",
+      "PointInstancer",
   };
-  return kGprimTypes.count(type_name) > 0;
+  // Types whose ancestry the schema registry records (e.g. Volume -> Gprim)
+  // derive their placement from it instead of growing this hand list.
+  return kGprimTypes.count(type_name) > 0 ||
+         GetSchemaRegistry().InheritsFrom(type_name, "Gprim");
 }
 
 bool IsXformableTypeName(const std::string &type_name) {
   static const std::unordered_set<std::string> kNonXformableTypes = {
       "", "Scope", "GeomSubset", "Material", "Shader", "NodeGraph",
-      "PhysicsScene", "PhysicsCollisionGroup",
-      // UsdRender types inherit Typed, not Xformable.
-      "RenderSettings", "RenderProduct", "RenderVar"};
-  return kNonXformableTypes.count(type_name) == 0;
+      "PhysicsScene", "PhysicsCollisionGroup"};
+  if (kNonXformableTypes.count(type_name) > 0) return false;
+  // Registry-recorded ancestry (e.g. RenderSettings -> RenderSettingsBase ->
+  // Typed) decides for the schemas the registry knows; types without a
+  // recorded parent keep the permissive default.
+  const SchemaRegistry &registry = GetSchemaRegistry();
+  if (registry.HasParentEntry(type_name)) {
+    return registry.InheritsFrom(type_name, "Xformable");
+  }
+  return true;
 }
 
 bool IsShadeContainerTypeName(const std::string &type_name) {
@@ -918,22 +928,21 @@ void ValidateTokenSetProperty(const PrimSpec &ps, const std::string &prop_name,
              prop_name + " must be a token attribute");
     return;
   }
-  std::string token;
-  if (!GetTokenProperty(ps, prop_name, &token)) {
-    // A declared-only or timeSamples-only attribute is valid authoring (the
-    // schema fallback / animation supplies the value); only an authored
-    // DEFAULT of the wrong type is an error.
-    const Value *v = GetAttrValue(ps, prop_name);
-    if (!v || v->is_empty()) {
+  // A declared-only or timeSamples-only attribute is valid authoring (the
+  // schema fallback / animation supplies the value); only an authored
+  // DEFAULT of the wrong type is an error. GetAttrValue returns null for
+  // slots without an authored default.
+  if (const Value *v = GetAttrValue(ps, prop_name)) {
+    const std::string *token = v->as_token();
+    if (!token) {
+      AddError(result, rule_id, location,
+               prop_name + " must have a token value");
       return;
     }
-    AddError(result, rule_id, location,
-             prop_name + " must have a token value");
-    return;
-  }
-  if (allowed.count(token) == 0) {
-    AddError(result, rule_id, location,
-             prop_name + " token `" + token + "` is not valid");
+    if (allowed.count(*token) == 0) {
+      AddError(result, rule_id, location,
+               prop_name + " token `" + *token + "` is not valid");
+    }
   }
 }
 
@@ -1801,20 +1810,22 @@ void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
                                                     "Vector", "Color"};
 
   std::string file;
-  const std::vector<std::pair<double, uint32_t>> *file_samples =
-      GetTimeSamplesOf(ps, "filePath");
   if (!HasAttributeProp(ps, "filePath")) {
     AddWarning(result, "vol.fieldAsset.filePath",
                MakePropertyLocation(prim_location, "filePath"),
                ps.type_name() + " should author filePath");
-  } else if ((!file_samples || file_samples->empty()) &&
-             (!GetAssetPathProperty(ps, "filePath", &file) || file.empty())) {
+  } else {
     // A time-sampled filePath is the canonical animated-volume authoring
     // (one asset per sample); only a sample-less, default-less (or empty)
     // filePath warrants a diagnostic.
-    AddWarning(result, "vol.fieldAsset.filePath",
-               MakePropertyLocation(prim_location, "filePath"),
-               ps.type_name() + " filePath should be a non-empty asset path");
+    const std::vector<std::pair<double, uint32_t>> *file_samples =
+        GetTimeSamplesOf(ps, "filePath");
+    if ((!file_samples || file_samples->empty()) &&
+        (!GetAssetPathProperty(ps, "filePath", &file) || file.empty())) {
+      AddWarning(result, "vol.fieldAsset.filePath",
+                 MakePropertyLocation(prim_location, "filePath"),
+                 ps.type_name() + " filePath should be a non-empty asset path");
+    }
   }
   // pxr usdVol schema: for fieldDataType, "A missing value is considered an
   // error."
@@ -1847,18 +1858,24 @@ void ValidateRenderPrim(const PrimSpec &ps, const std::string &prim_location,
                                                     "intrinsic"};
   const std::string &type_name = ps.type_name();
   if (type_name == "RenderSettings" || type_name == "RenderProduct") {
+    // Rule ids name the prim type they fire on (render.settings.* vs
+    // render.product.*) so id-based filtering points at the right schema.
+    const bool is_settings = type_name == "RenderSettings";
     ValidateTokenSetProperty(ps, "aspectRatioConformPolicy", kConformPolicy,
-                             "render.settings.aspectRatioConformPolicy",
+                             is_settings
+                                 ? "render.settings.aspectRatioConformPolicy"
+                                 : "render.product.aspectRatioConformPolicy",
                              prim_location, result);
     // Per pxr, `products` is a RenderSettings property and `orderedVars` a
     // RenderProduct property; the same name on the OTHER type is an ordinary
     // custom property and must not be kind-checked.
-    const char *rels[2] = {
-        "camera",
-        type_name == "RenderSettings" ? "products" : "orderedVars"};
+    const char *rels[2] = {"camera",
+                           is_settings ? "products" : "orderedVars"};
     for (const char *rel : rels) {
       if (HasProperty(ps, rel) && !IsRelationshipProp(ps, rel)) {
-        AddError(result, "render.settings.relationship",
+        AddError(result,
+                 is_settings ? "render.settings.relationship"
+                             : "render.product.relationship",
                  MakePropertyLocation(prim_location, rel),
                  std::string(rel) + " must be a relationship");
       }
@@ -5572,6 +5589,10 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
     } else if (type_name == "Camera") {
       ValidateCamera(ps, prim_location, result);
     } else if (type_name == "Volume") {
+      // UsdVol runs under `geom` BY CONTRACT: Volume is a Gprim (a
+      // renderable), and its field-asset prims are the data sources that
+      // geometry references — unlike UsdRender, which is pure scene
+      // description and has its own group below.
       ValidateVolume(ps, prim_location, result);
     } else if (type_name == "OpenVDBAsset" || type_name == "Field3DAsset") {
       ValidateFieldAsset(ps, prim_location, result);
