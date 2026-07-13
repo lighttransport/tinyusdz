@@ -825,7 +825,8 @@ export function buildNextThreeNode(adapter, {
   onProgress = null,
   progressInterval = 25,
   releaseBuildData = true,
-  showCurves = true
+  showCurves = true,
+  pruneEmptyNodes = false
 } = {}) {
   const group = new THREE.Group();
   group.name = adapter.filename || 'next-scene';
@@ -897,8 +898,37 @@ export function buildNextThreeNode(adapter, {
   // skips a prim. Anything without a node falls back to flat baked-world
   // placement.
   const nodeGroupByPath = new Map();
+  const requiredNodePaths = pruneEmptyNodes ? new Set() : null;
+  if (requiredNodePaths) {
+    const addPathAndAncestors = (path) => {
+      let current = String(path || '');
+      while (current) {
+        requiredNodePaths.add(current);
+        const slash = current.lastIndexOf('/');
+        if (slash <= 0) break;
+        current = current.slice(0, slash);
+      }
+    };
+    for (const renderable of meshes) addPathAndAncestors(renderable?.primPath);
+    for (const renderable of points) addPathAndAncestors(renderable?.primPath);
+    for (const renderable of curves) addPathAndAncestors(renderable?.primPath);
+    for (const skeleton of adapter.skeletons || []) {
+      addPathAndAncestors(skeleton?.primPath);
+    }
+    const nodeByIndex = new Map();
+    for (const node of adapter.nodes || []) {
+      if (node && Number.isFinite(node.index)) nodeByIndex.set(node.index, node);
+    }
+    for (const animation of adapter.animations || []) {
+      for (const channel of animation?.channels || []) {
+        const target = nodeByIndex.get(channel?.target_node);
+        addPathAndAncestors(target?.absPath || target?.primPath);
+      }
+    }
+  }
   const buildNodeGroup = (node, seen) => {
     if (!node || !node.absPath || seen.has(node.absPath)) return null;
+    if (requiredNodePaths && !requiredNodePaths.has(node.absPath)) return null;
     seen.add(node.absPath);
     const g = new THREE.Group();
     g.name = node.primName || node.displayName || 'node';

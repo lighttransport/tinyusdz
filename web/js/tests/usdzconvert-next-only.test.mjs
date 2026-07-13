@@ -351,6 +351,130 @@ await testAsync('next RenderStream exposes analytic geometry and MaterialX node 
   }
 });
 
+await testAsync('next mesh merge preserves singleton mesh transforms', async () => {
+  const fixture = `#usda 1.0
+def Xform "Parent" {
+  double3 xformOp:translate = (10, 0, 0)
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+  def Mesh "Mesh" {
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshMerge(true);
+    stream.setMeshMergeBakeTransform(true);
+    stream.setMeshOnly(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    assert.equal(stream.meshCount(), 1);
+    const mesh = stream.getMesh(0);
+    assert.equal(mesh.primPath, '/Parent/Mesh',
+      'a one-mesh group must retain its authored identity');
+    assert.equal(mesh.worldMatrix[12], 10,
+      'a one-mesh group must retain its authored transform');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next mesh merge preserves geometry in native instances', async () => {
+  const fixture = `#usda 1.0
+def Xform "Prototype" {
+  def Mesh "Mesh" {
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+  }
+}
+def Xform "First" (
+  instanceable = true
+  prepend references = </Prototype>
+) {
+  double3 xformOp:translate = (10, 0, 0)
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Xform "Second" (
+  instanceable = true
+  prepend references = </Prototype>
+) {
+  double3 xformOp:translate = (20, 0, 0)
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+}`;
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshMerge(true);
+    stream.setMeshMergeBakeTransform(true);
+    stream.setMeshOnly(true);
+    const result = stream.begin(new TextEncoder().encode(fixture));
+    assert.ok(result?.success, result?.error || stream.error());
+    let merged = null;
+    for (let i = 0; i < stream.meshCount(); ++i) {
+      const candidate = stream.getMesh(i);
+      if (candidate.primPath?.includes('__tinyusdz_next_merged')) {
+        merged = candidate;
+        break;
+      }
+    }
+    assert.ok(merged, 'instance meshes sharing a material should merge');
+    const points = new Float32Array(native.HEAPU8.buffer,
+      Number(merged.points.ptr), Number(merged.points.length));
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < points.length; i += 3) {
+      minX = Math.min(minX, points[i]);
+      maxX = Math.max(maxX, points[i]);
+    }
+    assert.ok(maxX - minX >= 1,
+      'baked instance triangles must retain non-zero spatial extent');
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
+await testAsync('next mesh-only path uses robust concave triangulation', async () => {
+  const stream = new native.RenderStream();
+  try {
+    stream.setMeshOnly(true);
+    const result = stream.begin(new TextEncoder().encode(ENTITY_SCENE_USDA));
+    assert.ok(result?.success, result?.error || stream.error());
+    let mesh = null;
+    for (let i = 0; i < stream.meshCount(); ++i) {
+      const candidate = stream.getMesh(i);
+      if (candidate.primPath === '/World/Concave') {
+        mesh = candidate;
+        break;
+      }
+    }
+    assert.ok(mesh, 'concave fixture mesh should be present');
+    const points = new Float32Array(native.HEAPU8.buffer,
+      Number(mesh.points.ptr), Number(mesh.points.length));
+    const indices = new Uint32Array(native.HEAPU8.buffer,
+      Number(mesh.indices.ptr), Number(mesh.indices.length));
+    assert.equal(indices.length, 9, 'pentagon should produce three triangles');
+    let area = 0;
+    for (let i = 0; i < indices.length; i += 3) {
+      const a = indices[i] * 3;
+      const b = indices[i + 1] * 3;
+      const c = indices[i + 2] * 3;
+      const cross = (points[b] - points[a]) *
+          (points[c + 1] - points[a + 1]) -
+        (points[b + 1] - points[a + 1]) *
+          (points[c] - points[a]);
+      area += Math.abs(cross) * 0.5;
+    }
+    assert.ok(Math.abs(area - 6) < 1e-5,
+      `mesh-only earcut must preserve the concave notch (area ${area})`);
+  } finally {
+    stream.end();
+    stream.delete();
+  }
+});
+
 function assertReloadsWithRenderStream(usdz, label) {
   const stream = new native.RenderStream();
   try {
@@ -620,6 +744,27 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       return materials.every((material) => material.side === THREE.DoubleSide);
     }), `${label}: authored doubleSided should select Three.DoubleSide`);
+
+    const pruned = buildNextThreeNode(adapter, {
+      skipTextures: true,
+      showCurves: false,
+      releaseBuildData: false,
+      pruneEmptyNodes: true,
+    });
+    let fullObjectCount = 0;
+    let prunedObjectCount = 0;
+    built.node.traverse(() => { fullObjectCount++; });
+    pruned.node.traverse(() => { prunedObjectCount++; });
+    assert.ok(prunedObjectCount < fullObjectCount,
+      `${label}: pruning should omit empty non-rendering hierarchy nodes`);
+    assert.ok(pruned.node.getObjectByName('Animated'),
+      `${label}: pruning must retain animated transform targets`);
+    assert.ok(pruned.node.getObjectByName('Tri'),
+      `${label}: pruning must retain renderable prim transforms`);
+    pruned.node.traverse((object) => {
+      object.geometry?.dispose?.();
+      object.material?.dispose?.();
+    });
     built.node.traverse((object) => {
       object.geometry?.dispose?.();
       object.material?.dispose?.();
