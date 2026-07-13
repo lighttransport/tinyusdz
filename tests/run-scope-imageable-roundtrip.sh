@@ -1242,4 +1242,75 @@ else
   echo "ok[shape-defonly-usdc]: Cylinder/Cone/Capsule/Plane radius/height/width/length stayed declaration-only"
 fi
 
+# -------------------------------------------------------------------------
+# 21. The same fallback-invention bug across the LIGHT and CAMERA writers.
+#
+# Audited by probing, not by reading: declare a value-less attribute on every
+# writer and see which come back with a value. sconv-light.cc had 38 authored()
+# guards and ZERO is_value_empty() checks -- every light input invented its
+# fallback (intensity 1, color (1,1,1), radius 0.5, DistantLight angle 0.53).
+# GeomCamera did the same (focalLength 50, clippingRange (0.1, 1e6)), GPrim's
+# doubleSided invented `false`, and a declared-but-value-less `extent` was
+# DROPPED outright (has_value() is not an authored test).
+#
+# Every attribute below is DECLARED with no value: none may come back with one,
+# and none may vanish.
+# -------------------------------------------------------------------------
+cat > "$TMP/fallback.usda" <<'USD'
+#usda 1.0
+
+def Mesh "M"
+{
+    bool doubleSided
+    float3[] extent
+}
+
+def SphereLight "L"
+{
+    float inputs:intensity
+    color3f inputs:color
+    float inputs:radius
+    float inputs:exposure
+    bool inputs:normalize
+}
+
+def DistantLight "DL"
+{
+    float inputs:angle
+}
+
+def Camera "C"
+{
+    float focalLength
+    float2 clippingRange
+    float fStop
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/fallback.usdc" "$TMP/fallback.usda" \
+     >"$TMP/write21.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the fallback scene to usdc"
+  cat "$TMP/write21.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/fallback.usdc" > "$TMP/fallback-rt.usda" 2>/dev/null
+bad=""
+for prop in doubleSided extent "inputs:intensity" "inputs:color" "inputs:radius" \
+            "inputs:exposure" "inputs:normalize" "inputs:angle" focalLength \
+            clippingRange fStop; do
+  grep -qF "$prop" "$TMP/fallback-rt.usda" || bad="$bad
+    $prop: declaration dropped"
+  grep -qE "$prop *=" "$TMP/fallback-rt.usda" && bad="$bad
+    $prop: came back WITH a value (fallback invented)"
+done
+if [ -n "$bad" ]; then
+  echo "FAIL[light-camera-defonly-usdc]:$bad"
+  echo "--- got ---"
+  cat "$TMP/fallback-rt.usda"
+  status=1
+else
+  echo "ok[light-camera-defonly-usdc]: light inputs, camera params, doubleSided and extent all stayed declaration-only"
+fi
+
 exit "$status"
