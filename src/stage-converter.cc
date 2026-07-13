@@ -785,7 +785,19 @@ bool CrateWriter::ConvertSinglePrim(
     // time-sampled value was authored") by failing the whole prim. Stamping
     // Uniform unconditionally here made an animated `projection` unreadable the
     // moment the writer started emitting its timeSamples at all.
-    if (kUniformProps.count(pe.name) && !pe.has_ts) {
+    // `subsetFamily:<FAMILYNAME>:familyType` is uniform too, but its name is not
+    // a fixed token -- the family name is authored -- so it cannot live in the
+    // set above. The reader parses it with ParseUniformEnumProperty and rejects
+    // a non-uniform one.
+    const std::string kFamilyTypeSuffix = ":familyType";
+    const bool is_family_type =
+        (pe.name.compare(0, 13, "subsetFamily:") == 0) &&
+        (pe.name.size() > kFamilyTypeSuffix.size()) &&
+        (pe.name.compare(pe.name.size() - kFamilyTypeSuffix.size(),
+                         kFamilyTypeSuffix.size(), kFamilyTypeSuffix) == 0);
+    const bool is_uniform = kUniformProps.count(pe.name) || is_family_type;
+
+    if (is_uniform && !pe.has_ts) {
       crate::CrateValue var_value;
       var_value.Set(Variability::Uniform);
       attr_fields.push_back({"variability", var_value});
