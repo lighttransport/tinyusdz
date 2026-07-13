@@ -58,8 +58,46 @@ void EmitAttrMetas(const std::string &name, const AttrMeta &metas,
     v.Set(metas.get_doc().value);
     fields.push_back({name + ".documentation", v});
   }
+
+  // Bare string(s) in the metadata block (`double radius = 1.2 ( """muda""" )`).
+  // Crate has no standard field for these -- the ASCII parser parks them in
+  // AttrMeta::stringData -- so emit our own `stringData` field, which the crate
+  // reader (usdc-reader-property.cc) puts straight back. Only the values need to
+  // travel: to_string(StringData) re-derives the quoting from the value.
+  if (!metas.stringData.empty()) {
+    std::vector<std::string> strs;
+    for (const auto &sd : metas.stringData) {
+      strs.push_back(sd.value);
+    }
+    crate::CrateValue v;
+    v.Set(strs);
+    fields.push_back({name + ".stringData", v});
+  }
 }
 
+
+// Emit `<name>.connect` for a typed attribute that carries connection targets.
+// USD lets ANY attribute be connected -- not just shader inputs -- and the ASCII
+// reader stores those targets on the TypedAttribute itself. The typed writers
+// only ever emitted the value, so `double size.connect = </bora.value>` on a
+// Cube was dropped. The field router in ConvertSinglePrim (stage-converter.cc)
+// recognizes the `.connect` suffix and folds it into the attribute spec's
+// `connectionPaths`.
+template <typename T>
+void EmitAttrConnections(const std::string &name, const T &attr,
+                         crate::FieldValuePairVector &fields) {
+  if (!attr.has_connections()) {
+    return;
+  }
+
+  ListOp<Path> conn_listop;
+  conn_listop.ClearAndMakeExplicit();
+  conn_listop.SetExplicitItems(attr.connections());
+
+  crate::CrateValue v;
+  v.Set(conn_listop);
+  fields.push_back({name + ".connect", v});
+}
 
 // Emit `<name>.timeSamples` for an Animatable<T> whose samples are stored in the
 // SAME representation on disk as in memory (arrays of points/floats/quats, ...),
@@ -520,7 +558,9 @@ bool CrateWriter::ExtractCubeProperties(
 
   if (cube->size.authored()) {
     if (!ExtractAnimatableDefault(cube->size.get_value(), "size", fields, err)) return false;
+    EmitAttrMetas("size", cube->size.metas(), fields);
   }
+  EmitAttrConnections("size", cube->size, fields);
 
   // Extract extent
   if (cube->extent.has_value()) {
@@ -564,6 +604,7 @@ bool CrateWriter::ExtractSphereProperties(
     if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius", fields, err)) return false;
     EmitAttrMetas("radius", sphere->radius.metas(), fields);
   }
+  EmitAttrConnections("radius", sphere->radius, fields);
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
 }

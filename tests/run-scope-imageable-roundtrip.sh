@@ -1028,4 +1028,80 @@ else
   fi
 fi
 
+# -------------------------------------------------------------------------
+# 18. Typed-attribute connections, listOp qualifier order, bare-string attribute
+#     metadata, and a non-conformant shader terminal type.
+#
+# - USD lets ANY attribute be connected, not just shader inputs, but the typed
+#   writers only ever emitted the value, so `double size.connect` was dropped.
+# - A crate ListOp has no record of the order its qualifiers were authored in,
+#   and the reader decoded the buckets append-before-prepend, swapping the two
+#   lines on the way back.
+# - A bare string in an attribute's metadata block lands in AttrMeta::stringData,
+#   which had no crate field at all.
+# - A shader terminal's type came from the C++ template parameter, so an
+#   authored-but-non-conformant `token outputs:result` was rewritten to float2.
+# -------------------------------------------------------------------------
+cat > "$TMP/misc.usda" <<'USD'
+#usda 1.0
+
+def Cube "bora"
+{
+    double size = 100.5
+    double size.connect = </bora.value>
+    double doc_size = 1 (
+        """
+        muda
+        """
+    )
+}
+
+def Xform "StackedRefs" (
+    prepend references = </bora>
+    append references = </Mtl>
+)
+{
+}
+
+def Scope "Mtl"
+{
+    def Shader "Reader"
+    {
+        uniform token info:id = "UsdPrimvarReader_float2"
+        token outputs:result
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/misc.usdc" "$TMP/misc.usda" \
+     >"$TMP/write18.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the misc scene to usdc"
+  cat "$TMP/write18.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/misc.usdc" > "$TMP/misc-rt.usda" 2>/dev/null
+lost=""
+for expect in \
+  'double size.connect = </bora.value>' \
+  'token outputs:result' \
+  'muda'; do
+  grep -qF "$expect" "$TMP/misc-rt.usda" || lost="$lost
+    $expect"
+done
+# `prepend references` must be printed BEFORE `append references`
+if ! awk '/prepend references/{p=NR} /append references/{a=NR} END{exit !(p && a && p < a)}' \
+     "$TMP/misc-rt.usda"; then
+  lost="$lost
+    prepend references before append references"
+fi
+if [ -n "$lost" ]; then
+  echo "FAIL[attr-connect-listop-stringdata-usdc]: wrong or dropped on round-trip:$lost"
+  echo "--- got ---"
+  cat "$TMP/misc-rt.usda"
+  status=1
+else
+  echo "ok[attr-connect-listop-stringdata-usdc]: typed-attr .connect, listOp qualifier order, bare-string attr meta and a non-conformant shader terminal type survived"
+fi
+
 exit "$status"

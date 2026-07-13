@@ -591,6 +591,8 @@ bool CrateWriter::ConvertSinglePrim(
     std::vector<std::pair<std::string, crate::CrateValue>> extra_metas;
     crate::CrateValue spline_val;
     bool has_spline{false};
+    crate::CrateValue conn_val;
+    bool has_conn{false};
   };
   std::vector<PropEntry> prop_entries;
 
@@ -600,7 +602,7 @@ bool CrateWriter::ConvertSinglePrim(
   static const std::set<std::string> kAttrMetaSuffixes = {
     "elementSize", "customData", "displayName", "displayGroup",
     "documentation", "doc", "hidden", "colorSpace", "comment", "weight",
-    "allowedTokens",
+    "allowedTokens", "stringData",
   };
 
   // Set of field names that belong on the prim spec, not as separate attributes
@@ -638,11 +640,18 @@ bool CrateWriter::ConvertSinglePrim(
     bool is_ts = false;
     bool is_interp = false;
     bool is_spline = false;
+    bool is_conn = false;
     std::string meta_key;  // non-empty when fv.first is `<base>.<meta_key>`
     const std::string ts_suffix = ".timeSamples";
     const std::string interp_suffix = ".interpolation";
     const std::string spline_suffix = ".spline";
-    if (base_name.size() > ts_suffix.size() &&
+    const std::string conn_suffix = ".connect";
+    if (base_name.size() > conn_suffix.size() &&
+        base_name.compare(base_name.size() - conn_suffix.size(),
+                          conn_suffix.size(), conn_suffix) == 0) {
+      base_name = base_name.substr(0, base_name.size() - conn_suffix.size());
+      is_conn = true;
+    } else if (base_name.size() > ts_suffix.size() &&
         base_name.compare(base_name.size() - ts_suffix.size(),
                           ts_suffix.size(), ts_suffix) == 0) {
       base_name = base_name.substr(0, base_name.size() - ts_suffix.size());
@@ -694,7 +703,10 @@ bool CrateWriter::ConvertSinglePrim(
       entry = &prop_entries.back();
     }
 
-    if (is_ts) {
+    if (is_conn) {
+      entry->conn_val = std::move(fv.second);
+      entry->has_conn = true;
+    } else if (is_ts) {
       entry->ts_val = std::move(fv.second);
       entry->has_ts = true;
     } else if (is_spline) {
@@ -813,6 +825,10 @@ bool CrateWriter::ConvertSinglePrim(
       attr_fields.push_back({"interpolation", std::move(pe.interpolation_val)});
     }
 
+    if (pe.has_conn) {
+      attr_fields.push_back({"connectionPaths", std::move(pe.conn_val)});
+    }
+
     for (auto& mk : pe.extra_metas) {
       attr_fields.push_back({mk.first, std::move(mk.second)});
     }
@@ -889,7 +905,10 @@ bool CrateWriter::ConvertSinglePrim(
             return false;
           }
           if (transform2d->result.authored()) {
-            Attribute a; a.set_type_name("float2");
+            Attribute a;
+            a.set_type_name(transform2d->result.has_actual_type()
+                                ? transform2d->result.get_actual_type_name()
+                                : "float2");
             ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
           }
         }
@@ -899,9 +918,18 @@ bool CrateWriter::ConvertSinglePrim(
           return false;
         }
         // Terminal output for all PrimvarReader variants
+        // `result.type_name()` is STATIC -- it is the C++ template parameter, so
+        // it always reports the canonical type (float2 for
+        // UsdPrimvarReader_float2) and threw away a non-conformant authored one
+        // (`token outputs:result`). The authored spelling is kept in
+        // actual_type_name, exactly as the UsdUVTexture terminals above use it.
         auto add_pr_terminal = [&](auto *pr) {
           if (pr && pr->result.authored()) {
-            Attribute a; a.set_type_name(pr->result.type_name().empty() ? "float2" : pr->result.type_name());
+            Attribute a;
+            std::string tname = pr->result.has_actual_type()
+                                    ? pr->result.get_actual_type_name()
+                                    : pr->result.type_name();
+            a.set_type_name(tname.empty() ? "float2" : tname);
             ConvertAttributeToFields("outputs:result", a, prim_path, false, err);
           }
         };
@@ -3004,6 +3032,21 @@ bool CrateWriter::ConvertAttributeToFields(
     v.Set(metas.get_sdrMetadata());
     attr_fields.push_back({"sdrMetadata", v});
   }
+  // Bare string(s) in the metadata block (`double x = 1 ( """muda""" )`). Crate
+  // has no standard field for these -- the ASCII parser parks them in
+  // AttrMeta::stringData -- so emit our own, which the crate reader
+  // (usdc-reader-property.cc) puts straight back. Only the values need to
+  // travel: to_string(StringData) re-derives the quoting from the value.
+  if (!metas.stringData.empty()) {
+    std::vector<std::string> strs;
+    for (const auto& sd : metas.stringData) {
+      strs.push_back(sd.value);
+    }
+    crate::CrateValue v;
+    v.Set(strs);
+    attr_fields.push_back({"stringData", v});
+  }
+
   if (metas.has_unauthoredValuesIndex()) {
     crate::CrateValue v;
     v.Set(metas.get_unauthoredValuesIndex());
