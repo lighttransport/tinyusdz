@@ -74,12 +74,14 @@ The `next` PCP composition lives in `src/next/pcp/`. Key pieces after the 22-gap
 
 ## Status (2026-07-13 session)
 
-Items 1, 2, 3, 5, 6 below are DONE; item 4 is partially done (4a + a 4b
-increment). Commits, in order: `a36323902` (item 2), `46d02c244` (item 1),
-`05e9a6bf0` (item 3), `b87303a74` (item 5), `e556b252d` (item 6),
-`5c2aa33fc` (item 4a), `12385cded` (item 4b increment). All gates green at
-each commit (both ctest builds, supplemental ratchet 0, roundtrip baseline,
-main-lib build).
+Items 1–6 below are ALL DONE. Commits, in order: `a36323902` (item 2),
+`46d02c244` (item 1), `05e9a6bf0` (item 3), `b87303a74` (item 5),
+`e556b252d` (item 6), `5c2aa33fc` (item 4a), `12385cded` (item 4b
+increment), `808f2b790` (item 4b registry table), `7e0b3e739` (item 4c
+variant storage + deep diff), `a0a91ce67` (differentials). All gates green
+at each commit (both ctest builds, supplemental ratchet 0, roundtrip
+baseline, main-lib build). Only item 7 (product-driven domain-schema
+breadth) remains untouched.
 
 ### 1. Sampled-value oracle for value resolution — DONE
 `tests/next/test_aousd_value_resolution.cc` translates the corpus's expected
@@ -100,7 +102,7 @@ def. `Src` gained an `ancestral` bit. Regression: `test_specifier_resolution`.
 de-duplicated) and generates default/array/time-sampled/dictionary/alias
 contexts with declared-name + byte-identical crate round-trip assertions.
 
-### 4. Elective authored-state + list-op breadth — PARTIAL
+### 4. Elective authored-state + list-op breadth — DONE
 Done (4a): authored bits + explicit-empty round-trip for layer
 `relocates`/`subLayers` and prim `relocates`/`variants`
 (`TestAuthoredStateBits`). Explicit-empty arc lists were already covered
@@ -109,19 +111,24 @@ Done (4b increment): cross-site `reorder` now applies with pxr SdfListOp
 semantics (`ApplyStringListOrder`, shared with clipSets/variantSet-name
 edits); `test_cross_layer_string_listop_matrix` covers every qualifier
 combination across a sublayer stack.
-REMAINING:
-- Registry-driven field table: apiSchemas / variantSetNames / clipSets
-  composition + crate emission are still bespoke per field
-  (`composition.cc:~1011`, `crate-writer-fields.inc`); a {name, scope, kind,
-  fallback, accessor} table could drive them through `ApplyStringListOp`.
-- Variant-scope generic storage: `VariantData`/`VariantSetData` have no
-  unknownMeta/TypedExtensionField storage or authored bits; also limits
-  `diff/layer-diff.cc` (variants compare via `VariantSetsToStr` only). If
-  added, new variant storage MUST be stripped in flatten
-  (`cache-compose.inc` variant-selection strip block).
-- Differentials: deleted/blocked values, dictionary type-conflict diagnostic
-  (`MergeWeakerDictionaryValue` silently keeps a stronger non-dict).
-- Docs: `:210 :222 :417 :427`.
+Done (follow-up session, commits `808f2b790` `7e0b3e739` `a0a91ce67`):
+- Registry-driven field table: `src/next/layer/listop-field-table.hh`
+  registers apiSchemas/variantSetNames/clipSets with ONE shared
+  stronger-over-weaker merge; the three bespoke composition blocks are
+  gone; variantSetNames upgraded from fill-absent to true list-op merge
+  (`TestStringListOpFieldTable`).
+- Variant-scope generic storage: `VariantData.unknownMeta/unknownFields`
+  plumbed through usda parser/writer + crate (via MaterializeVariantHolders);
+  layer-diff walks variants per field (`meta:variantSets:<set>/<opt>:<field>`)
+  instead of stringified names (`TestVariantExtensionFields`,
+  `test_variant_deep_diff`).
+- Differentials: `blocked` diff reason for value->block transitions,
+  `<field>(type-conflict)` for dict-vs-scalar keys, and a serial-compositor
+  `Dictionary type conflict` diagnostic naming the dotted key
+  (`test_blocked_and_type_conflict_diff`,
+  `test_dictionary_type_conflict_diagnostic`). The parallel pcp fill stays
+  silent by design (issues_ not thread-safe from worker fills).
+
 
 ### 5. General `SdfVariableExpression` function grammar — DONE
 Full recursive-descent typed evaluator (literals, `${VAR}` with recursion +
