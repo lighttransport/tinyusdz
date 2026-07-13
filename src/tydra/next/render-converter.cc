@@ -1935,7 +1935,8 @@ namespace {
 // promotion still needs texcoords/primvars, so conversion uses this in two
 // phases. Assignment from an empty ChunkedArray releases chunks immediately;
 // ChunkedArray::clear() intentionally retains them for reuse.
-void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs) {
+void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs,
+                         bool keep_triangulation = false) {
   if (!mesh) return;
 
   mesh->face_vertex_indices = UInt32Chunked();
@@ -1944,8 +1945,10 @@ void ReleaseMeshGeometry(RenderMesh* mesh, bool keep_binding_inputs) {
   mesh->tangents = FloatChunked();
   mesh->colors = FloatChunked();
   mesh->opacities = FloatChunked();
-  mesh->triangulated_indices = UInt32Chunked();
-  mesh->triangulated_face_vertex_indices = UInt32Chunked();
+  if (!keep_triangulation) {
+    mesh->triangulated_indices = UInt32Chunked();
+    mesh->triangulated_face_vertex_indices = UInt32Chunked();
+  }
 
   if (keep_binding_inputs) return;
 
@@ -2051,11 +2054,14 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
         continue;
       }
       if (converted) {
-        if (!config_.mesh.retain_geometry) {
+        const bool analytic = mesh_prim.GetTypeName() != "Mesh";
+        if (!config_.mesh.retain_geometry &&
+            !(analytic && config_.mesh.retain_analytic_geometry)) {
           // Retain only the small inputs still required by the later material
           // binding and UV-selection passes. This bounds conversion memory by
           // one source mesh instead of accumulating the whole render scene.
-          ReleaseMeshGeometry(&mesh, true);
+          ReleaseMeshGeometry(&mesh, true,
+                              config_.mesh.retain_triangulation);
         }
         // Release chunk-allocation slack before retaining: thousands of small
         // meshes each holding 64KB-minimum chunks otherwise OOM wasm32.
@@ -2171,7 +2177,11 @@ ConvertResult RenderSceneConverter::Convert(const Stage& stage) {
                               &warnings_);
     if (!config_.mesh.retain_geometry) {
       for (RenderMesh& mesh : result.scene.meshes) {
-        ReleaseMeshGeometry(&mesh, false);
+        const UsdPrim source = stage.GetPrimAtPath(mesh.prim_path);
+        const bool analytic = source.IsValid() && source.GetTypeName() != "Mesh";
+        if (analytic && config_.mesh.retain_analytic_geometry) continue;
+        ReleaseMeshGeometry(&mesh, false,
+                            config_.mesh.retain_triangulation);
       }
     }
     AssignPointInstanceDrawMaterials(&result.scene);
@@ -3128,7 +3138,8 @@ bool RenderSceneConverter::ConvertMesh(const Stage& stage, const UsdPrim& prim, 
   // Triangulate if requested. A mesh whose faces were all sanitized away is
   // still a valid (empty) render mesh; only meshes with real topology that
   // cannot be triangulated (e.g. over the temp-allocation budget) are dropped.
-  if (config_.mesh.retain_geometry && config_.mesh.triangulate &&
+  if ((config_.mesh.retain_geometry || config_.mesh.retain_triangulation) &&
+      config_.mesh.triangulate &&
       !out->is_triangulated) {
     if (!TriangulateMesh(out) && !out->face_vertex_counts.empty()) {
       warnings_.push_back("Failed to triangulate mesh '" + out->prim_path +
