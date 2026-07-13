@@ -62,6 +62,9 @@ struct MaterialTexParam {
   // Displacement is absent on purpose: it is sampled in the vertex/tessellation
   // stages, which do not carry the second set.
   vec4 uvSets;
+  // Specular F0 (T12): rgb = inputs:specularColor, w = ior with the specular-
+  // workflow flag in its sign (w < 0 -> specular workflow, F0 = specularColor).
+  vec4 specParams;
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
@@ -114,6 +117,17 @@ vec4 sampleUdim(sampler2DArray tex, sampler1D lut, vec2 uv) {
   int layer = int(texelFetch(lut, idx, 0).r * 255.0 + 0.5) - 1;
   if (layer < 0) return vec4(1.0, 0.0, 1.0, 1.0);
   return texture(tex, vec3(fract(uv), float(layer)));
+}
+
+// Specular F0 (T12): specular workflow -> specularColor directly; else the
+// dielectric reflectance from ior lerped toward base by metalness. ior 1.5 (the
+// default) gives exactly 0.04, matching the old fixed constant.
+vec3 computeF0(vec3 base, float metallic) {
+  vec4 sp = mtp.p[max(pc.ids.x, 0)].specParams;
+  if (sp.w < 0.0) return sp.rgb;                 // specular workflow
+  float ior = max(1.0, abs(sp.w));
+  float d = (ior - 1.0) / (ior + 1.0);
+  return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
 }
 
 MaterialTexParam matTexParam() {
@@ -357,7 +371,7 @@ void main() {
     vec3 irr = texture(uIrradianceMap, Ne).rgb;
     vec3 pref = textureLod(uPrefilteredMap, Re, rgh * (fr.iblParams.x - 1.0)).rgb;
     vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0), rgh)).rg;
-    vec3 F0 = mix(vec3(0.04), base, clamp(metallic, 0.0, 1.0));
+    vec3 F0 = computeF0(base, metallic);
     ambient = (base * (1.0 - clamp(metallic, 0.0, 1.0)) * irr +
                pref * (F0 * dfg.x + dfg.y)) * fr.iblColor.rgb;
   } else {
@@ -368,7 +382,7 @@ void main() {
   vec3 H = normalize(L + V);
   float NdotH = max(dot(Nf, H), 0.0);
   float specPower = mix(16.0, 256.0, 1.0 - clamp(roughness, 0.0, 1.0));
-  vec3 specColor = mix(vec3(0.04), base, clamp(metallic, 0.0, 1.0));
+  vec3 specColor = computeF0(base, metallic);
   vec3 specular = specColor * lightColor * pow(NdotH, specPower) * facing;
   vec3 c = linearToSrgb(ambient + diffuse + specular + emissive);
   if (pc.matAux.z > 1.5 && opacity < 1.0) {

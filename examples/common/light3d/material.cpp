@@ -348,6 +348,11 @@ uniform vec3 uEmissive;
 uniform float uAlpha;
 uniform int uAlphaMode;       // 0=opaque, 1=mask, 2=blend
 uniform float uAlphaCutoff;
+// Specular F0 (T12): specular workflow -> specularColor directly; else the
+// dielectric reflectance from ior. Unified with the Vulkan mesh.frag.
+uniform int uUseSpecularWorkflow;
+uniform vec3 uSpecularColor;
+uniform float uIor;
 // When set, shade with the geometric (screen-derivative) normal -- used for
 // meshes without authored normals so hard surfaces aren't smeared by smooth
 // (averaged) normals.
@@ -477,6 +482,16 @@ vec3 linearToSrgb(vec3 c) {
     vec3 lo = c * 12.92;
     vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
     return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));
+}
+
+// Specular F0 (T12), matching the Vulkan mesh.frag: specular workflow ->
+// specularColor; else the dielectric reflectance from ior lerped to base by
+// metalness. ior 1.5 (the default) gives exactly 0.04.
+vec3 computeF0(vec3 base, float metallic) {
+    if (uUseSpecularWorkflow != 0) return uSpecularColor;
+    float ior = max(1.0, uIor);
+    float d = (ior - 1.0) / (ior + 1.0);
+    return mix(vec3(d * d), base, clamp(metallic, 0.0, 1.0));
 }
 
 float channelOf(vec4 c, int ch) {
@@ -664,7 +679,7 @@ void main() {
         vec3 pref = textureLod(uPrefilteredMap, Re, lod).rgb;
         vec2 dfg = texture(uBrdfLut, vec2(max(dot(Nf, V), 0.0),
                                           clamp(roughness, 0.0, 1.0))).rg;
-        vec3 F0 = mix(vec3(0.04), baseColor, metallic);
+        vec3 F0 = computeF0(baseColor, metallic);
         ambient = (baseColor * (1.0 - metallic) * irr +
                    pref * (F0 * dfg.x + dfg.y)) * uIblColor;
     } else {
@@ -675,7 +690,7 @@ void main() {
     vec3 H = normalize(L + V);
     float NdotH = max(dot(Nf, H), 0.0);
     float specPower = mix(16.0, 256.0, 1.0 - roughness);
-    vec3 specColor = mix(vec3(0.04), baseColor, metallic);
+    vec3 specColor = computeF0(baseColor, metallic);
     vec3 specular = specColor * lightColor * pow(NdotH, specPower) * facing;
 
     if (uAlphaMode == 1 && opacity <= 0.0) {

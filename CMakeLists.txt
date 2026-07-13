@@ -2655,6 +2655,17 @@ if(TINYUSDZ_BUILD_TESTS)
       )
     set_tests_properties(tusdview-double-sided PROPERTIES SKIP_RETURN_CODE 77)
 
+    # UsdPreviewSurface specular workflow + IOR on --next (audit T12): a colored
+    # specularColor must tint the highlight (not fall back to white dielectric),
+    # identically on GL and VK.
+    add_test(
+      NAME tusdview-specular-workflow
+      COMMAND ${CMAKE_COMMAND} -E env
+              "TUSDVIEW=$<TARGET_FILE:tusdview>"
+              bash "${PROJECT_SOURCE_DIR}/examples/tusdview/tests/run-specular-workflow.sh"
+      )
+    set_tests_properties(tusdview-specular-workflow PROPERTIES SKIP_RETURN_CODE 77)
+
     # USD `proxy` and `render` are ALTERNATIVES, not two things to draw. Drawing
     # both put the stand-in on top of the geometry it stands in for (intent-vfx's
     # simpleAsset: a proxy Cube of size 2 exactly encloses the render Sphere of

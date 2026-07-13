@@ -1024,6 +1024,15 @@ void PackRasterMaterialTextureParams(const DrawMaterialCPU& mat, float* dst) {
   dst[18 * 4 + 1] = static_cast<float>(mat.metalRoughSample.uvSet);
   dst[18 * 4 + 2] = static_cast<float>(mat.normalSample.uvSet);
   dst[18 * 4 + 3] = static_cast<float>(mat.emissiveSample.uvSet);
+  // Specular F0 (T12): rgb = inputs:specularColor, w = ior with the specular-
+  // workflow flag folded into its SIGN (w < 0 => use specularColor directly as
+  // F0; w >= 0 => dielectric F0 from |ior|, lerped to base by metalness). ior is
+  // always positive, so the sign is a free flag and no push-constant lane is
+  // needed.
+  dst[19 * 4 + 0] = mat.specularColor[0];
+  dst[19 * 4 + 1] = mat.specularColor[1];
+  dst[19 * 4 + 2] = mat.specularColor[2];
+  dst[19 * 4 + 3] = mat.useSpecularWorkflow ? -mat.ior : mat.ior;
 }
 
 }  // namespace tusdview
