@@ -318,7 +318,8 @@ class VulkanRenderer final : public Renderer {
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView,
-                          const std::vector<light3d::Image>* mips = nullptr);
+                          const std::vector<light3d::Image>* mips = nullptr,
+                          bool srgb = false);
   bool createCompressedTextureImage(const DrawCompressedImageCPU& img, bool srgb,
                                     VkImage* outImg, VkDeviceMemory* outMem,
                                     VkImageView* outView);

@@ -2721,8 +2721,14 @@ VkDescriptorSet VulkanRenderer::allocFaceDescriptor(VkBuffer buffer,
 
 bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outImg,
                                         VkDeviceMemory* outMem, VkImageView* outView,
-                                        const std::vector<light3d::Image>* mips) {
+                                        const std::vector<light3d::Image>* mips,
+                                        bool srgb) {
   if (img.width <= 0 || img.height <= 0 || img.data.empty()) return false;
+  // sRGB color textures (base color / emissive) upload as _SRGB so the sampler
+  // linearizes them for the linear-space lighting (T11); normal / metal-rough
+  // stay _UNORM. Mirrors the compressed path, which already keyed on srgb.
+  const VkFormat texFormat =
+      srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 
   // Precomputed mip chain (FinalizeDrawTextures): validate the level sizes;
   // fall back to a single level when anything looks off.
@@ -2770,7 +2776,7 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   VkImageCreateInfo ici{};
   ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   ici.imageType = VK_IMAGE_TYPE_2D;
-  ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+  ici.format = texFormat;
   ici.extent = {static_cast<uint32_t>(img.width), static_cast<uint32_t>(img.height), 1};
   ici.mipLevels = mipLevels;
   ici.arrayLayers = 1;
@@ -2852,7 +2858,7 @@ bool VulkanRenderer::createTextureImage(const light3d::Image& img, VkImage* outI
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   vci.image = *outImg;
   vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-  vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+  vci.format = texFormat;
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = mipLevels;
   vci.subresourceRange.layerCount = 1;
@@ -3031,6 +3037,10 @@ bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
       tex.udimTileHeight <= 0) {
     return false;
   }
+  // sRGB color UDIM (base color) -> _SRGB; normal / metal-rough UDIM stay
+  // _UNORM (T11), same rule as the single-image path.
+  const VkFormat udimFormat =
+      tex.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
   // Precomputed per-tile mip chains: usable only when every tile carries the
   // same level count (NormalizeDrawTextures equalizes dims first).
   size_t mipCount = tex.udimTiles[0].mipImages.size();
@@ -3092,7 +3102,7 @@ bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
   VkImageCreateInfo ici{};
   ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   ici.imageType = VK_IMAGE_TYPE_2D;
-  ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+  ici.format = udimFormat;
   ici.extent = {static_cast<uint32_t>(tex.udimTileWidth),
                 static_cast<uint32_t>(tex.udimTileHeight), 1};
   ici.mipLevels = mipLevels;
@@ -3177,7 +3187,7 @@ bool VulkanRenderer::createUdimTextureArrayImage(const DrawTextureCPU& tex,
   vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   vci.image = *outImg;
   vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-  vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+  vci.format = udimFormat;
   vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   vci.subresourceRange.levelCount = mipLevels;
   vci.subresourceRange.layerCount = ici.arrayLayers;
@@ -4317,7 +4327,7 @@ void VulkanRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   }
   if (!ok) {
     ok = createTextureImage(t.image, &img, &mem, &view,
-                            t.mipImages.empty() ? nullptr : &t.mipImages);
+                            t.mipImages.empty() ? nullptr : &t.mipImages, t.srgb);
   }
   if (ok) {
     texImgs_.push_back(img);
