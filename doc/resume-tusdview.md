@@ -31,7 +31,8 @@ through `tusdcat`, and the **typeless-prim-invents-a-`Model`-typeName** bug
 (sole cause of 68 of the then-133 round-trip failures, 133 -> 65) — all
 pushed. Also fixed, not yet pushed: the **Camera
 `shutter:open`/`shutter:close` written under the wrong attribute name** bug
-(65 -> 64). See [Open](#open) for what is left of that sweep, and
+(65 -> 64) and the **`apiSchemas` list-op delete/`None`/prepend-order** bugs
+(64 -> 60). See [Open](#open) for what is left of that sweep, and
 [Prompts for a fresh session](#prompts-for-a-fresh-session) to pick it up cold.
 
 ## Prompts for a fresh session
@@ -41,26 +42,26 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-64-of-422-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-60-of-422-fixtures)):
 
 > The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
 > Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 64 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
-> intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug and
-> the Camera shutter:open/shutter:close naming bug). Read the full categorized
-> list in that section before starting — it spans `apiSchemas` list-op deletes
-> and `None` blocks dropped, relationship variability/`bindMaterialAs`/
-> `proxyPrim` dropped, variant-statement metadata
+> data"): 60 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug,
+> the Camera shutter:open/shutter:close naming bug, and the apiSchemas
+> list-op delete/None/prepend-order bugs). Read the full categorized
+> list in that section before starting — it spans relationship
+> variability/`bindMaterialAs`/`proxyPrim` dropped, variant-statement metadata
 > (`active`/`hidden`/`kind`/`variantSets`) dropped, several `.connect` shader
 > connections baked down to plain constants, several more `timeSamples`
 > attributes dropped wholesale, `skel:blendShapes` losing its namespace,
 > spurious unauthored `visibility`/`purpose` invented on Skeleton-family prims,
 > and stage/layer metadata dictionaries (`customLayerData`, `kilogramsPerUnit`,
 > `sdrMetadata`, etc.) dropped. Fix them one category at a time, smallest/most
-> self-contained first (the apiSchemas/rel list-op deletes look smallest next);
-> the `.connect`-baked-to-constant bug is probably the most consequential since
-> it silently changes an asset's shading network rather than dropping inert
-> metadata.
+> self-contained first (the `rel` list-op-delete/variability bugs look smallest
+> next); the `.connect`-baked-to-constant bug is probably the most consequential
+> since it silently changes an asset's shading network rather than dropping
+> inert metadata.
 > Each fix must come with a mutation-verified assertion in
 > `tests/run-scope-imageable-roundtrip.sh` (revert the fix, watch the test fail),
 > and must not regress the ctest suite or raise the fixture count. Do not
@@ -83,7 +84,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (64 of 422 fixtures)
+### The crate writer drops data (60 of 422 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -95,18 +96,15 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 64 as of 2026-07-13 (was 65, was 133, was 140)
+done | wc -l          # 60 as of 2026-07-13 (was 64, was 65, was 133, was 140)
 ```
 
 The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a
 diff here is the crate writer losing data, not the printer being creative. A
 full detailed diff turned up more categories than earlier notes here described
-— do not re-derive this from scratch (Camera shutter naming is fixed, see
-below; not relisted here):
+— do not re-derive this from scratch (Camera shutter naming and apiSchemas
+list-ops are fixed, see below; not relisted here):
 
-- `apiSchemas` list-ops: a standalone or combined `delete apiSchemas` is not
-  written; an explicit `apiSchemas = None` block is dropped; the surviving
-  `prepend apiSchemas` order is not preserved.
 - Relationships: `varying` variability on a `rel` is lost; `append custom
   varying rel` loses both `custom` and `varying`; `delete rel` (a rel list-op
   delete) is dropped; `rel proxyPrim` is dropped; `bindMaterialAs` metadata on
@@ -221,6 +219,39 @@ not a structural one. Guarded by a new `camera-shutter-usdc` check in
 `tests/run-scope-imageable-roundtrip.sh`; mutation-verified by reverting the
 fix and confirming the check reproduces `shutterClose`/`shutterOpen` (no
 colon) in place of `shutter:close`/`shutter:open`.
+
+### `apiSchemas` list-op deletes, `None`, and prepend order dropped/scrambled on write
+
+`CrateWriter::ExtractPrimMeta`'s `apiSchemas` block (`src/stage-converter.cc`)
+rebuilt a single `ListOp<value::token>` from the RESOLVED view
+(`APISchemas::names`/`unknownSchemas`), which can only ever express one
+explicit-or-prepend op. Three losses fell out of that: `delete apiSchemas =
+[...]` was silently dropped (no "deleted" bucket read at all); `apiSchemas =
+None` (`explicitlyEmpty`) wrote nothing, because both resolved vectors are
+empty for it and the old `if (!schema_tokens.empty())` guard skipped the
+field entirely — losing the distinction between "explicitly empty" and "no
+opinion"; and `prepend` order was scrambled because known (`names`) and
+unknown (`unknownSchemas`) schemas live in separate vectors with no
+interleave record, so the old code always emitted unknown-then-known
+regardless of authoring order.
+
+Fix: `APISchemas::authoredOps` already exists and is populated by both
+readers (`usda-reader-impl.hh`, `usdc-reader-prim.cc`'s `ToAPISchemas`) — the
+verbatim authored op list, kept specifically so a writer could reproduce the
+original `SdfTokenListOp` losslessly, but the crate writer never consulted
+it. Now it replays every `authoredOps` entry through the matching `ListOp`
+setter (mirroring the existing `convert_path_listop`/`convert_ref_listop`/
+`convert_payload_listop` pattern used for references/payload/inherits/
+specializes a few lines below) and handles `explicitlyEmpty` as its own case.
+The old resolved-view logic is kept as a fallback for `APISchemas` built
+programmatically (e.g. via the C API) with no authored-op history.
+`FlattenAppliedSchemas`/`BakeAppliedSchemaListOp` (`composition.cc`) already
+collapses `authoredOps` to one op, but only under `tusdcat --flatten`
+(`examples/tusdcat/main.cc`), never during ordinary load/compose/write — so
+this plain round-trip sees `authoredOps` intact. Guarded by a new
+`apischemas-usdc` check in `tests/run-scope-imageable-roundtrip.sh` covering
+all three cases in one fixture; mutation-verified by reverting the fix and
+confirming the check reproduces all three symptoms at once.
 
 ### `proxy` and `render` are ALTERNATIVES, not two things to draw
 
