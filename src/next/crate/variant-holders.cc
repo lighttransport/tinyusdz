@@ -124,6 +124,13 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
   if (!vd.variantSelections.empty()) {
     holder.meta().variantSelections() = vd.variantSelections;
   }
+  // Unknown variant-option metadata rides on the holder prim spec: the crate
+  // prim-spec field writer emits unknownMeta/unknownFields for every spec,
+  // so preserving them here makes variant extension fields lossless in USDC.
+  if (!vd.unknownMeta.empty()) holder.meta().unknownMeta() = vd.unknownMeta;
+  if (!vd.unknownFields.empty()) {
+    holder.meta().unknownFields() = vd.unknownFields;
+  }
   // Nested variant sets: keep them inline on the holder; the caller
   // materializes them recursively (the holder becomes an owning prim).
   if (!vd.variantSets.empty()) {

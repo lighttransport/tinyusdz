@@ -538,6 +538,66 @@ static void test_json_output() {
         "empty diff JSON keeps the shape");
 }
 
+// Deep per-field variant differentials: variant-INNER edits (properties,
+// unknown metadata) must surface as granular reasons instead of comparing
+// only set/option names.
+static void test_variant_deep_diff() {
+  std::cout << "[variant deep diff]\n";
+  auto make_layer = [](const char* tag, const char* value) {
+    std::string usda =
+        "#usda 1.0\n"
+        "def Xform \"P\" (prepend variantSets = \"look\") {\n"
+        "    variantSet \"look\" = {\n"
+        "        \"red\" (\n"
+        "            customPipelineTag = \"";
+    usda += tag;
+    usda +=
+        "\"\n"
+        "        ) {\n"
+        "            int c = ";
+    usda += value;
+    usda +=
+        "\n"
+        "        }\n"
+        "    }\n"
+        "}\n";
+    return LoadUSDAFromString(usda);
+  };
+  LoadResult base = make_layer("hero", "1");
+  LoadResult same = make_layer("hero", "1");
+  LoadResult prop_changed = make_layer("hero", "5");
+  LoadResult meta_changed = make_layer("bg", "1");
+  CHECK(base.success && same.success && prop_changed.success &&
+            meta_changed.success,
+        "variant layers parse");
+
+  const auto reason_contains = [](const PsDiffs& ps, const char* needle) {
+    for (const auto& entry : ps) {
+      for (const ModifiedPrimSpec& m : entry.second.modifiedDetails) {
+        for (const std::string& r : m.reasons) {
+          if (r.find(needle) != std::string::npos) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  PsDiffs ps;
+  PropDiffs pp;
+  RunDiff(*base.stage.GetRootLayer(), *same.stage.GetRootLayer(), ps, pp);
+  CHECK(ps.empty() && pp.empty(), "identical variants self-compare clean");
+
+  RunDiff(*base.stage.GetRootLayer(), *prop_changed.stage.GetRootLayer(), ps,
+          pp);
+  CHECK(reason_contains(ps, "variantSets:look/red:properties"),
+        "variant-inner property edit produces a granular differential");
+
+  RunDiff(*base.stage.GetRootLayer(), *meta_changed.stage.GetRootLayer(), ps,
+          pp);
+  CHECK(reason_contains(ps, "variantSets:look/red:unknownMeta"),
+        "variant-option unknown-metadata edit produces a differential");
+}
+
 int main() {
   test_identical_api_layers();
   test_identical_parsed_layers();
@@ -552,6 +612,7 @@ int main() {
   test_fuzzy_asset_paths();
   test_property_add_remove_and_relationship();
   test_extension_field_diff();
+  test_variant_deep_diff();
   test_json_output();
 
   if (g_fail) {
