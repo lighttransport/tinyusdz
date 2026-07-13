@@ -95,8 +95,10 @@ bool SubtreeIsSelfContained(const Layer& layer, const std::string& root_path) {
 // AOUSD §6.6.2 / §12.2: dictionary opinions combine recursively. Keys from
 // the stronger value keep their values; missing keys (including nested keys)
 // are filled from the weaker value.
-void MergeWeakerDictionary(Value* stronger, const Value& weaker) {
-  MergeWeakerDictionaryValue(stronger, weaker);
+void MergeWeakerDictionary(Value* stronger, const Value& weaker,
+                           std::vector<std::string>* conflicts = nullptr,
+                           const std::string& key_prefix = std::string()) {
+  MergeWeakerDictionaryValue(stronger, weaker, conflicts, key_prefix);
 }
 
 void MergeWeakerPropMeta(PropMeta* stronger, const PropMeta& weaker) {
@@ -556,7 +558,14 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
   // here (append weaker after stronger; stronger arcs resolve first and win
   // under fill-absent), or a sublayer-defined prim's references vanish when
   // a stronger layer also has a spec for it.
-  CopyLocalOpinions(target, source);
+  std::vector<std::string> dict_conflicts;
+  CopyLocalOpinions(target, source, 0.0, 1.0, {}, &dict_conflicts);
+  for (const std::string& key : dict_conflicts) {
+    AddError("Dictionary type conflict at `" + key +
+                 "`: the weaker layer's opinion (dictionary vs scalar) is "
+                 "shadowed by the stronger layer",
+             target.path().str(), "", ArcType::Local);
+  }
   // A STRONGER layer's `delete <arc>` list-edit removes matching arcs coming
   // from weaker layers (previously the union ignored ArcEdits entirely, so
   // `delete references = @a@` in the root still composed @a@ from a sublayer).
@@ -643,7 +652,8 @@ bool Compositor::ComposePrim(PrimSpec& target, const Layer& source_layer,
 void Compositor::CopyLocalOpinions(
     PrimSpec& target, const PrimSpec& source, double time_offset,
     double time_scale,
-    const std::function<std::string(const std::string&)>& remap_path) {
+    const std::function<std::string(const std::string&)>& remap_path,
+    std::vector<std::string>* dict_conflicts) {
   // Remap a relationship/connection target. An empty remap result means the
   // target is not expressible in the composed namespace (outside the arc's
   // scope) and must be DROPPED, not copied verbatim.
@@ -1027,25 +1037,29 @@ void Compositor::CopyLocalOpinions(
     if (cs.customData().is_dictionary()) {
       if (!ct.customData().is_dictionary())
         target.meta().customData() = cs.customData();
-      else MergeWeakerDictionary(&target.meta().customData(), cs.customData());
+      else MergeWeakerDictionary(&target.meta().customData(), cs.customData(),
+                                 dict_conflicts, "customData.");
       if (cs.customDataAuthored()) target.meta().setCustomDataAuthored();
     }
     if (cs.assetInfo().is_dictionary()) {
       if (!ct.assetInfo().is_dictionary())
         target.meta().assetInfo() = cs.assetInfo();
-      else MergeWeakerDictionary(&target.meta().assetInfo(), cs.assetInfo());
+      else MergeWeakerDictionary(&target.meta().assetInfo(), cs.assetInfo(),
+                                 dict_conflicts, "assetInfo.");
       if (cs.assetInfoAuthored()) target.meta().setAssetInfoAuthored();
     }
     if (cs.sdrMetadata().is_dictionary()) {
       if (!ct.sdrMetadata().is_dictionary())
         target.meta().sdrMetadata() = cs.sdrMetadata();
-      else MergeWeakerDictionary(&target.meta().sdrMetadata(), cs.sdrMetadata());
+      else MergeWeakerDictionary(&target.meta().sdrMetadata(), cs.sdrMetadata(),
+                                 dict_conflicts, "sdrMetadata.");
       if (cs.sdrMetadataAuthored()) target.meta().setSdrMetadataAuthored();
     }
     if (cs.clips().is_dictionary()) {
       if (!ct.clips().is_dictionary())
         target.meta().clips() = cs.clips();
-      else MergeWeakerDictionary(&target.meta().clips(), cs.clips());
+      else MergeWeakerDictionary(&target.meta().clips(), cs.clips(),
+                                 dict_conflicts, "clips.");
       if (cs.clipsAuthored()) target.meta().setClipsAuthored();
     }
     if (!cs.unknownFields().empty()) {

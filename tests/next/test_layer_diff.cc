@@ -598,6 +598,52 @@ static void test_variant_deep_diff() {
         "variant-option unknown-metadata edit produces a differential");
 }
 
+// Deleted/blocked-value and dictionary type-conflict differentials.
+static void test_blocked_and_type_conflict_diff() {
+  std::cout << "[blocked value + dict type-conflict diff]\n";
+  LoadResult with_value = LoadUSDAFromString(
+      "#usda 1.0\ndef Xform \"P\" { float v = 1.5 }\n");
+  LoadResult blocked = LoadUSDAFromString(
+      "#usda 1.0\ndef Xform \"P\" { float v = None }\n");
+  CHECK(with_value.success && blocked.success, "layers parse");
+
+  PsDiffs ps;
+  PropDiffs pp;
+  RunDiff(*with_value.stage.GetRootLayer(), *blocked.stage.GetRootLayer(), ps,
+          pp);
+  bool saw_blocked = false;
+  for (const auto& entry : pp) {
+    for (const auto& m : entry.second.modifiedPropDetails) {
+      for (const std::string& r : m.reasons) {
+        if (r == "blocked") saw_blocked = true;
+      }
+    }
+  }
+  CHECK(saw_blocked, "value -> block transition reports `blocked`");
+
+  LoadResult dict_nested = LoadUSDAFromString(
+      "#usda 1.0\n"
+      "def Xform \"P\" (customData = { dictionary k = { int a = 1 } }) {}\n");
+  LoadResult dict_scalar = LoadUSDAFromString(
+      "#usda 1.0\n"
+      "def Xform \"P\" (customData = { int k = 3 }) {}\n");
+  CHECK(dict_nested.success && dict_scalar.success, "dict layers parse");
+  RunDiff(*dict_nested.stage.GetRootLayer(), *dict_scalar.stage.GetRootLayer(),
+          ps, pp);
+  bool saw_conflict = false;
+  for (const auto& entry : ps) {
+    for (const ModifiedPrimSpec& m : entry.second.modifiedDetails) {
+      for (const std::string& r : m.reasons) {
+        if (r.find("customData(type-conflict)") != std::string::npos) {
+          saw_conflict = true;
+        }
+      }
+    }
+  }
+  CHECK(saw_conflict,
+        "dict-vs-scalar key reports a type-conflict differential");
+}
+
 int main() {
   test_identical_api_layers();
   test_identical_parsed_layers();
@@ -613,6 +659,7 @@ int main() {
   test_property_add_remove_and_relationship();
   test_extension_field_diff();
   test_variant_deep_diff();
+  test_blocked_and_type_conflict_diff();
   test_json_output();
 
   if (g_fail) {

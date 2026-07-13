@@ -208,8 +208,16 @@ struct StringListOpEdits {
   }
 };
 
-inline void MergeWeakerDictionaryValue(Value* stronger,
-                                       const Value& weaker) {
+/// Recursively fill a stronger dictionary's missing keys from a weaker one
+/// (AOUSD §6.6.2 / §12.2). A key where one side is a dictionary and the other
+/// is not is a TYPE CONFLICT: the stronger opinion correctly wins, but the
+/// weaker subtree is silently shadowed — when `conflicts` is provided, the
+/// dotted key path of each such collision is recorded so callers can surface
+/// a diagnostic.
+inline void MergeWeakerDictionaryValue(
+    Value* stronger, const Value& weaker,
+    std::vector<std::string>* conflicts = nullptr,
+    const std::string& key_prefix = std::string()) {
   if (!stronger || !weaker.is_dictionary()) return;
   if (!stronger->is_dictionary()) {
     *stronger = weaker;
@@ -223,7 +231,11 @@ inline void MergeWeakerDictionaryValue(Value* stronger,
     if (!existing) {
       destination->set(entry.first, entry.second);
     } else if (existing->is_dictionary() && entry.second.is_dictionary()) {
-      MergeWeakerDictionaryValue(existing, entry.second);
+      MergeWeakerDictionaryValue(existing, entry.second, conflicts,
+                                 key_prefix + entry.first + ".");
+    } else if (conflicts &&
+               existing->is_dictionary() != entry.second.is_dictionary()) {
+      conflicts->push_back(key_prefix + entry.first);
     }
   }
 }
