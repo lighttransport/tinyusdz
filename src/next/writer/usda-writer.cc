@@ -901,9 +901,16 @@ void WriteVariantSets(StreamWriter& os,
           }
         }
       }
+      // Unknown (unmodeled) option metadata: inline (USDA-parsed) or from
+      // the materialized holder prim (crate-read layers).
+      const std::vector<std::pair<std::string, std::string>>& o_unknown =
+          !var.unknownMeta.empty()
+              ? var.unknownMeta
+              : (hmeta ? hmeta->unknownMeta() : var.unknownMeta);
       const bool has_opt_meta = !o_refs.empty() || !o_pls.empty() ||
                                 !o_inh.empty() || !o_spz.empty() ||
                                 o_inactive || o_hidden || !o_sels.empty() ||
+                                !o_unknown.empty() ||
                                 (!o_doc.empty() && opts.include_comments);
       if (has_opt_meta) {
         os << " (\n";
@@ -940,6 +947,11 @@ void WriteVariantSets(StreamWriter& os,
           }
           WriteIndent(os, depth + 2, opts.indent);
           os << "}\n";
+        }
+        // Unknown metadata re-emitted verbatim (raw authored value text).
+        for (const auto& um : o_unknown) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << um.first << " = " << um.second << "\n";
         }
         WriteIndent(os, depth + 1, opts.indent);
         os << ")";

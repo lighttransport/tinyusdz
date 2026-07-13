@@ -467,18 +467,6 @@ std::string ArcEditToStr(const ArcEdit &e) {
   return ss.str();
 }
 
-std::string VariantSetsToStr(const std::vector<VariantSetData> &sets) {
-  std::stringstream ss;
-  for (const auto &s : sets) {
-    ss << s.name << "(sel=" << s.selected << ")[";
-    for (const auto &v : s.variants) {
-      ss << v.name << ",";
-    }
-    ss << "];";
-  }
-  return ss.str();
-}
-
 std::string VariantSelectionsToStr(
     const std::string &legacy_single,
     const std::vector<std::pair<std::string, std::string>> &sels) {
@@ -845,6 +833,128 @@ bool ComparePropertyDetailed(const PrimSpec &lp, const std::string &name,
 }
 
 // ---------------------------------------------------------------------------
+// Deep per-field variant-set comparison. Replaces the former stringified
+// name/selection/option-name comparison, which produced no differential for
+// variant-INNER edits (properties, arcs, relationships, unknown metadata,
+// nested sets). On the first difference, `reason` is set to a granular
+// "variantSets:<set>/<option>:<field>" tag.
+// ---------------------------------------------------------------------------
+
+bool VariantOptionEqual(const VariantData &l, const VariantData &r,
+                        const DiffOptions &opts, std::string *reason,
+                        int depth);
+
+bool VariantSetsEqual(const std::vector<VariantSetData> &l,
+                      const std::vector<VariantSetData> &r,
+                      const DiffOptions &opts, std::string *reason,
+                      int depth = 0) {
+  auto fail = [&](const std::string &r_) {
+    if (reason && reason->empty()) *reason = r_;
+    return false;
+  };
+  if (depth > 64) return true;  // matches the parser's nesting cap
+  if (l.size() != r.size()) return fail("variantSets:count");
+  for (const VariantSetData &ls : l) {
+    const VariantSetData *rs = nullptr;
+    for (const VariantSetData &cand : r) {
+      if (cand.name == ls.name) {
+        rs = &cand;
+        break;
+      }
+    }
+    if (!rs) return fail("variantSets:" + ls.name);
+    if (ls.selected != rs->selected) {
+      return fail("variantSets:" + ls.name + ":selected");
+    }
+    if (ls.variants.size() != rs->variants.size()) {
+      return fail("variantSets:" + ls.name + ":options");
+    }
+    for (const VariantData &lv : ls.variants) {
+      const VariantData *rv = nullptr;
+      for (const VariantData &cand : rs->variants) {
+        if (cand.name == lv.name) {
+          rv = &cand;
+          break;
+        }
+      }
+      const std::string opt = "variantSets:" + ls.name + "/" + lv.name;
+      if (!rv) return fail(opt);
+      std::string inner;
+      if (!VariantOptionEqual(lv, *rv, opts, &inner, depth)) {
+        return fail(opt + ":" + inner);
+      }
+    }
+  }
+  return true;
+}
+
+bool VariantOptionEqual(const VariantData &l, const VariantData &r,
+                        const DiffOptions &opts, std::string *reason,
+                        int depth) {
+  auto fail = [&](const char *r_) {
+    if (reason && reason->empty()) *reason = r_;
+    return false;
+  };
+  if (l.active != r.active) return fail("active");
+  if (l.hidden != r.hidden) return fail("hidden");
+  if (l.doc != r.doc) return fail("doc");
+  if (l.references != r.references) return fail("references");
+  if (l.payloads != r.payloads) return fail("payload");
+  if (l.inherits != r.inherits) return fail("inherits");
+  if (l.specializes != r.specializes) return fail("specializes");
+  if (l.variantSelections != r.variantSelections) return fail("variants");
+  if (l.unknownMeta != r.unknownMeta) return fail("unknownMeta");
+  if (!ExtensionFieldsEqual(l.unknownFields, r.unknownFields, opts)) {
+    return fail("extensionFields");
+  }
+  if (l.properties.size() != r.properties.size()) return fail("properties");
+  for (const VariantProperty &lp : l.properties) {
+    const VariantProperty *rp = nullptr;
+    for (const VariantProperty &cand : r.properties) {
+      if (cand.name == lp.name) {
+        rp = &cand;
+        break;
+      }
+    }
+    if (!rp || lp.flags != rp->flags || !(lp.value == rp->value)) {
+      return fail("properties");
+    }
+  }
+  if (l.relationships.size() != r.relationships.size()) {
+    return fail("relationships");
+  }
+  for (const auto &lr : l.relationships) {
+    auto it = r.relationships.find(lr.first);
+    if (it == r.relationships.end() || it->second != lr.second) {
+      return fail("relationships");
+    }
+  }
+  if (l.relationshipFlags != r.relationshipFlags) {
+    return fail("relationships");
+  }
+  // Content subtrees compare structurally (prim count + paths): a full
+  // recursive layer diff here would recurse into this same machinery.
+  const size_t lc = l.content ? l.content->prim_count() : 0;
+  const size_t rc = r.content ? r.content->prim_count() : 0;
+  if (lc != rc) return fail("content");
+  if (l.content && r.content) {
+    for (size_t i = 0; i < lc; ++i) {
+      const PrimSpec *lp = l.content->prim(static_cast<uint32_t>(i));
+      const PrimSpec *rp = r.content->prim(static_cast<uint32_t>(i));
+      if (!lp || !rp || lp->path().str() != rp->path().str()) {
+        return fail("content");
+      }
+    }
+  }
+  std::string nested;
+  if (!VariantSetsEqual(l.variantSets, r.variantSets, opts, &nested,
+                        depth + 1)) {
+    return fail("nested");
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // PrimSpec own-field comparison (specifier / typeName / metadata).
 // ---------------------------------------------------------------------------
 
@@ -889,8 +999,13 @@ bool ComparePrimMeta(const PrimSpecMeta &l, const PrimSpecMeta &r,
       VariantSelectionsToStr(r.variantSelection, r.variantSelections())) {
     note("meta:variants");
   }
-  if (VariantSetsToStr(l.variantSets()) != VariantSetsToStr(r.variantSets())) {
-    note("meta:variantSets");
+  {
+    std::string vreason;
+    if (!VariantSetsEqual(l.variantSets(), r.variantSets(), opts,
+                          &vreason)) {
+      equal = false;
+      if (reasons) reasons->push_back("meta:" + vreason);
+    }
   }
   const StringListOpEdits& lv = l.variantSetNameEdits();
   const StringListOpEdits& rv = r.variantSetNameEdits();

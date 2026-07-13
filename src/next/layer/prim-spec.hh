@@ -88,6 +88,16 @@ struct VariantData;
 struct VariantSetData;
 class Layer;  // for VariantData::content (variant subtree)
 
+/// Generic decodable extension field retained from USDC. Unregistered fields
+/// use Crate's recursive UnregisteredValue wrapper and must be re-encoded with
+/// that wrapper rather than silently changing their schema type.
+struct TypedExtensionField {
+  std::string name;
+  Value value;
+  bool unregistered = false;
+  std::string unregistered_source;
+};
+
 /// One attribute authored inside a variant option. Carries the property flags
 /// (custom / uniform / connection / array) so the variant graft preserves them
 /// — a bare name->Value pair would silently drop `custom`/`uniform`.
@@ -125,6 +135,12 @@ struct VariantData {
   std::vector<std::pair<std::string, std::string>> variantSelections;
   // Nested variant sets authored inside this variant option (recursive).
   std::vector<VariantSetData> variantSets;
+  // Unknown (unmodeled) variant-option metadata: raw authored source text
+  // (USDA, re-emitted verbatim) and decoded typed extension fields (USDC via
+  // the materialized holder prim). Variant specs previously had NO generic
+  // field storage, silently dropping pipeline-specific opinions.
+  std::vector<std::pair<std::string, std::string>> unknownMeta;
+  std::vector<TypedExtensionField> unknownFields;
   // Optional subtree for variants that add prim-level opinions and/or child
   // prims: a Layer whose root prim "__self__" carries the host opinions and
   // whose descendants become the host prim's children when this variant is
@@ -190,16 +206,6 @@ struct StringListOpEdits {
     return !added.empty() || !prepended.empty() || !appended.empty() ||
            !deleted.empty() || !ordered.empty();
   }
-};
-
-/// Generic decodable extension field retained from USDC. Unregistered fields
-/// use Crate's recursive UnregisteredValue wrapper and must be re-encoded with
-/// that wrapper rather than silently changing their schema type.
-struct TypedExtensionField {
-  std::string name;
-  Value value;
-  bool unregistered = false;
-  std::string unregistered_source;
 };
 
 inline void MergeWeakerDictionaryValue(Value* stronger,

@@ -2011,6 +2011,56 @@ void TestStringListOpFieldTable() {
   }
 }
 
+// Variant-scope generic field storage: unknown (unmodeled) variant-option
+// metadata survives USDA re-emission verbatim and a USDC round trip (via the
+// materialized holder prim's unknownMeta/unknownFields).
+void TestVariantExtensionFields() {
+  const std::string body =
+      "def Xform \"P\" (\n"
+      "    prepend variantSets = \"look\"\n"
+      "    variants = { string look = \"red\" }\n"
+      ") {\n"
+      "    variantSet \"look\" = {\n"
+      "        \"red\" (\n"
+      "            customPipelineTag = \"hero\"\n"
+      "        ) {\n"
+      "            int c = 1\n"
+      "        }\n"
+      "        \"blue\" {\n"
+      "            int c = 2\n"
+      "        }\n"
+      "    }\n"
+      "}\n";
+  LoadResult r = Parse(body);
+  assert(r.success);
+  const PrimSpec* prim = r.stage.GetRootLayer()->prim_at_path("/P");
+  assert(prim);
+  const VariantData* red = nullptr;
+  for (const VariantSetData& vs : prim->meta().variantSets()) {
+    for (const VariantData& vd : vs.variants) {
+      if (vd.name == "red") red = &vd;
+    }
+  }
+  assert(red && red->unknownMeta.size() == 1);
+  assert(red->unknownMeta[0].first == "customPipelineTag" &&
+         red->unknownMeta[0].second == "\"hero\"");
+
+  const std::string usda = WriteUSDAToString(r.stage);
+  assert(usda.find("customPipelineTag = \"hero\"") != std::string::npos &&
+         "variant-option unknown metadata must re-emit verbatim");
+  // The spelling itself round-trips.
+  LoadResult again = LoadUSDAFromString(usda, LoadOptions{});
+  assert(again.success);
+
+  std::vector<uint8_t> crate;
+  assert(WriteUSDCToMemory(crate, r.stage, USDCWriteOptions{}).success);
+  USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+  assert(back.success);
+  const std::string usdc_usda = WriteUSDAToString(back.stage);
+  assert(usdc_usda.find("customPipelineTag") != std::string::npos &&
+         "variant-option unknown metadata must survive USDC");
+}
+
 void TestVariableExpressionGrammar() {
   Value vars = Value::MakeDictionary();
   Dict* d = vars.as_dictionary();
@@ -2905,6 +2955,7 @@ int main() {
   TestVariableExpressionGrammar();
   TestAuthoredStateBits();
   TestStringListOpFieldTable();
+  TestVariantExtensionFields();
   TestRemainingElectiveFieldCoverage();
   std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;
