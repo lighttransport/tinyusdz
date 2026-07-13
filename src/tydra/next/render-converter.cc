@@ -141,12 +141,21 @@ WrapMode ParseWrapMode(const std::string& token) {
 
 ColorSpace ParseColorSpace(const std::string& token) {
   if (token == "raw") return ColorSpace::Raw;
-  if (token == "linear" || token == "Linear") return ColorSpace::Linear;
-  if (token == "sRGB" || token == "srgb") return ColorSpace::sRGB;
+  if (token == "linear" || token == "Linear" || token == "lin_srgb" ||
+      token == "lin_rec709" || token == "scene-linear Rec.709-sRGB") {
+    return ColorSpace::Linear;
+  }
+  if (token == "sRGB" || token == "srgb" || token == "srgb_texture") {
+    return ColorSpace::sRGB;
+  }
   if (token == "acescg" || token == "ACEScg") return ColorSpace::ACEScg;
   if (token == "rec709" || token == "Rec709") return ColorSpace::Rec709;
-  if (token == "rec2020" || token == "Rec2020") return ColorSpace::Rec2020;
-  if (token == "displayP3" || token == "DisplayP3") return ColorSpace::DisplayP3;
+  if (token == "rec2020" || token == "Rec2020" ||
+      token == "lin_rec2020") return ColorSpace::Rec2020;
+  if (token == "displayP3" || token == "DisplayP3" ||
+      token == "lin_displayp3" || token == "srgb_displayp3") {
+    return ColorSpace::DisplayP3;
+  }
   return ColorSpace::Unknown;
 }
 
@@ -237,6 +246,260 @@ bool ValueToShaderParam(const Value& value, ShaderParam* out) {
     }
   }
 
+  return false;
+}
+
+struct MtlxConstantValue {
+  std::array<float, 4> value{{0.0f, 0.0f, 0.0f, 0.0f}};
+  int components = 0;
+
+  float component(int i) const {
+    return value[static_cast<size_t>(i < components ? i : 0)];
+  }
+};
+
+bool ValueToMtlxConstant(const Value& value, MtlxConstantValue* out) {
+  if (!out) return false;
+  ShaderParam param;
+  if (!ValueToShaderParam(value, &param)) return false;
+  out->value = {{param.value.x, param.value.y, param.value.z, param.value.w}};
+  if (value.as_float3() || value.as_double3()) out->components = 3;
+  else if (value.as_float4() || value.as_double4()) out->components = 4;
+  else if (value.as_float2() || value.as_double2()) out->components = 2;
+  else {
+    float widened[4];
+    if (value.to_float4(widened)) out->components = 4;
+    else if (value.to_float3(widened)) out->components = 3;
+    else if (value.to_float2(widened)) out->components = 2;
+    else out->components = 1;
+  }
+  return true;
+}
+
+MtlxConstantValue MtlxBinary(const MtlxConstantValue& a,
+                             const MtlxConstantValue& b,
+                             const std::function<float(float, float)>& op) {
+  MtlxConstantValue out;
+  out.components = std::max(a.components, b.components);
+  for (int i = 0; i < out.components; ++i) {
+    out.value[static_cast<size_t>(i)] = op(a.component(i), b.component(i));
+  }
+  return out;
+}
+
+bool EvalMtlxConstantConnection(const Stage& stage,
+                                const std::string& connection,
+                                double time_code,
+                                MtlxConstantValue* out,
+                                std::set<std::string>* visiting,
+                                int depth);
+
+bool EvalMtlxInput(const Stage& stage, const UsdPrim& node,
+                   const std::string& input, double time_code,
+                   MtlxConstantValue* out, std::set<std::string>* visiting,
+                   int depth) {
+  if (!out || depth > 16) return false;
+  const std::string property = "inputs:" + input;
+  const ::tinyusdz::next::PrimSpec* spec = node.GetPrimSpec();
+  const std::vector<::tinyusdz::next::Path>* connections =
+      spec ? spec->connection(property) : nullptr;
+  if (connections && !connections->empty()) {
+    return EvalMtlxConstantConnection(stage, (*connections)[0].str(),
+                                      time_code, out, visiting, depth + 1);
+  }
+  ::tinyusdz::next::AttributeEval eval(&stage);
+  eval.SetTime(time_code);
+  ::tinyusdz::next::EvalOptions options = eval.GetOptions();
+  options.follow_connections = false;
+  const ::tinyusdz::next::EvalResult result =
+      eval.EvalWith(node, property, options);
+  return result.success && ValueToMtlxConstant(result.value, out);
+}
+
+bool EvalMtlxConstantNode(const Stage& stage, const UsdPrim& node,
+                          double time_code, MtlxConstantValue* out,
+                          std::set<std::string>* visiting, int depth) {
+  if (!out || !node.IsValid() || depth > 16 || !visiting) return false;
+  const std::string key = node.GetPath().str();
+  if (!visiting->insert(key).second) return false;
+  struct VisitGuard {
+    std::set<std::string>* set;
+    std::string key;
+    ~VisitGuard() { set->erase(key); }
+  } guard{visiting, key};
+
+  std::string id;
+  GetToken(node, "info:id", &id);
+  auto input = [&](const char* name, MtlxConstantValue* value) {
+    return EvalMtlxInput(stage, node, name, time_code, value, visiting,
+                         depth + 1);
+  };
+  auto starts = [&id](const char* prefix) { return id.rfind(prefix, 0) == 0; };
+
+  if (id == "ND_constant_float" || id == "ND_constant_color3" ||
+      id == "ND_constant_vector3" || id == "ND_constant_color4") {
+    return input("value", out);
+  }
+
+  if (starts("ND_add_") || starts("ND_subtract_") ||
+      starts("ND_multiply_") || starts("ND_divide_") ||
+      starts("ND_min_") || starts("ND_max_") || starts("ND_power_")) {
+    MtlxConstantValue a, b;
+    if (!input("in1", &a) || !input("in2", &b)) return false;
+    if (starts("ND_add_")) *out = MtlxBinary(a, b, [](float x, float y) { return x + y; });
+    else if (starts("ND_subtract_")) *out = MtlxBinary(a, b, [](float x, float y) { return x - y; });
+    else if (starts("ND_multiply_")) *out = MtlxBinary(a, b, [](float x, float y) { return x * y; });
+    else if (starts("ND_divide_")) *out = MtlxBinary(a, b, [](float x, float y) { return std::abs(y) > 1.0e-8f ? x / y : 0.0f; });
+    else if (starts("ND_min_")) *out = MtlxBinary(a, b, [](float x, float y) { return std::min(x, y); });
+    else if (starts("ND_max_")) *out = MtlxBinary(a, b, [](float x, float y) { return std::max(x, y); });
+    else *out = MtlxBinary(a, b, [](float x, float y) { return std::pow(x, y); });
+    return true;
+  }
+
+  if (starts("ND_mix_")) {
+    MtlxConstantValue bg, fg, amount;
+    if (!input("bg", &bg) || !input("fg", &fg) ||
+        !input("mix", &amount)) return false;
+    const float t = amount.component(0);
+    *out = MtlxBinary(bg, fg, [t](float x, float y) {
+      return x * (1.0f - t) + y * t;
+    });
+    return true;
+  }
+
+  if (starts("ND_clamp_")) {
+    MtlxConstantValue value, low, high;
+    if (!input("in", &value) || !input("low", &low) ||
+        !input("high", &high)) return false;
+    *out = value;
+    for (int i = 0; i < out->components; ++i) {
+      out->value[static_cast<size_t>(i)] = std::min(
+          std::max(value.component(i), low.component(i)), high.component(i));
+    }
+    return true;
+  }
+
+  if (starts("ND_remap_")) {
+    MtlxConstantValue value, in_low, in_high, out_low, out_high;
+    if (!input("in", &value) || !input("inlow", &in_low) ||
+        !input("inhigh", &in_high) || !input("outlow", &out_low) ||
+        !input("outhigh", &out_high)) return false;
+    *out = value;
+    for (int i = 0; i < out->components; ++i) {
+      const float denom = in_high.component(i) - in_low.component(i);
+      const float t = std::abs(denom) > 1.0e-8f
+                          ? (value.component(i) - in_low.component(i)) / denom
+                          : 0.0f;
+      out->value[static_cast<size_t>(i)] =
+          out_low.component(i) + t * (out_high.component(i) - out_low.component(i));
+    }
+    return true;
+  }
+
+  if (starts("ND_combine3_")) {
+    MtlxConstantValue a, b, c;
+    if (!input("in1", &a) || !input("in2", &b) || !input("in3", &c)) {
+      return false;
+    }
+    out->components = 3;
+    out->value = {{a.component(0), b.component(0), c.component(0), 0.0f}};
+    return true;
+  }
+
+  if (starts("ND_extract_")) {
+    MtlxConstantValue value, index;
+    if (!input("in", &value) || !input("index", &index)) return false;
+    int component = static_cast<int>(index.component(0));
+    if (component < 0 || component >= value.components) component = 0;
+    out->components = 1;
+    out->value[0] = value.value[static_cast<size_t>(component)];
+    return true;
+  }
+
+  if (starts("ND_convert_")) return input("in", out);
+
+  if (id == "ND_hsv_adjust_color3" || id == "ND_hsvadjust_color3") {
+    MtlxConstantValue color, hue, saturation, value, factor;
+    float hue_neutral = 0.5f;
+    if (!input("in", &color)) return false;
+    if (id == "ND_hsvadjust_color3") {
+      MtlxConstantValue amount;
+      if (!input("amount", &amount) || amount.components < 3) return false;
+      hue.components = saturation.components = value.components =
+          factor.components = 1;
+      hue.value[0] = amount.component(0);
+      saturation.value[0] = amount.component(1);
+      value.value[0] = amount.component(2);
+      factor.value[0] = 1.0f;
+    } else if (!input("hue", &hue) ||
+               !input("saturation", &saturation) ||
+               !input("value", &value) || !input("fac", &factor)) {
+      return false;
+    }
+    const float r = color.component(0), g = color.component(1), b = color.component(2);
+    const float maximum = std::max({r, g, b});
+    const float minimum = std::min({r, g, b});
+    const float delta = maximum - minimum;
+    float h = 0.0f;
+    if (delta > 1.0e-7f) {
+      if (r >= maximum) h = (g - b) / delta;
+      else if (g >= maximum) h = 2.0f + (b - r) / delta;
+      else h = 4.0f + (r - g) / delta;
+      h /= 6.0f;
+      if (h < 0.0f) h += 1.0f;
+    }
+    float s = maximum > 0.0f ? delta / maximum : 0.0f;
+    float v = maximum;
+    // MaterialX HSV Adjust uses 0.5 as the neutral hue control (matching the
+    // node UI and legacy web evaluator), not 0.0 as a direct hue offset.
+    h = std::fmod(h + (hue.component(0) - hue_neutral) + 1.0f, 1.0f);
+    s *= saturation.component(0);
+    v *= value.component(0);
+    float adjusted[3] = {v, v, v};
+    if (s > 0.0f) {
+      const float hh = h * 6.0f;
+      const int sector = static_cast<int>(std::floor(hh)) % 6;
+      const float fraction = hh - std::floor(hh);
+      const float p = v * (1.0f - s);
+      const float q = v * (1.0f - s * fraction);
+      const float t = v * (1.0f - s * (1.0f - fraction));
+      const float table[6][3] = {{v, t, p}, {q, v, p}, {p, v, t},
+                                 {p, q, v}, {t, p, v}, {v, p, q}};
+      for (int i = 0; i < 3; ++i) adjusted[i] = table[sector][i];
+    }
+    const float mix = factor.component(0);
+    out->components = 3;
+    for (int i = 0; i < 3; ++i) {
+      out->value[static_cast<size_t>(i)] =
+          color.component(i) * (1.0f - mix) + adjusted[i] * mix;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool EvalMtlxConstantConnection(const Stage& stage,
+                                const std::string& connection,
+                                double time_code,
+                                MtlxConstantValue* out,
+                                std::set<std::string>* visiting,
+                                int depth) {
+  if (!out || depth > 16) return false;
+  std::string prim_path, property;
+  if (!SplitConnectionPath(connection, &prim_path, &property)) return false;
+  const UsdPrim prim = stage.GetPrimAtPath(prim_path);
+  if (!prim.IsValid()) return false;
+  const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec();
+  const std::vector<::tinyusdz::next::Path>* forwarded =
+      spec ? spec->connection(property) : nullptr;
+  if (forwarded && !forwarded->empty()) {
+    return EvalMtlxConstantConnection(stage, (*forwarded)[0].str(), time_code,
+                                      out, visiting, depth + 1);
+  }
+  if (::tinyusdz::next::IsShader(prim)) {
+    return EvalMtlxConstantNode(stage, prim, time_code, out, visiting,
+                                depth + 1);
+  }
   return false;
 }
 
@@ -4692,6 +4955,19 @@ bool RenderSceneConverter::ConvertMaterial(const Stage& stage,
   bool found_shader = false;
 
   std::vector<UsdPrim> candidates;
+  // Materials exported by Blender commonly author both a PreviewSurface
+  // fallback on outputs:surface and the authoritative MaterialX graph on
+  // outputs:mtlx:surface. Prefer the explicit MaterialX render context; using
+  // the fallback made every graph-driven parameter look unauthored.
+  if (const ::tinyusdz::next::PrimSpec* spec = prim.GetPrimSpec()) {
+    const std::vector<::tinyusdz::next::Path>* mtlx_surface =
+        spec->connection("outputs:mtlx:surface");
+    if (mtlx_surface && !mtlx_surface->empty()) {
+      UsdPrim sp = stage.GetPrimAtPath(
+          SourcePrimPathFromConnection((*mtlx_surface)[0].str()));
+      if (sp.IsValid()) candidates.push_back(sp);
+    }
+  }
   {
     // When both MaterialX and universal PreviewSurface terminals are authored,
     // prefer the MaterialX terminal. Blender commonly emits a textured OpenPBR
@@ -4980,15 +5256,20 @@ bool RenderSceneConverter::ExtractOpenPBRSurface(const Stage& stage,
                      &out->emission_luminance, scene);
   ExtractShaderParam(stage, shader_prim, "emission_color", &out->emission_color, scene);
 
-  ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
-  ExtractShaderParam(stage, shader_prim, "geometry_opacity", &out->opacity,
-                     scene);
-  ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
-  ExtractShaderParam(stage, shader_prim, "geometry_normal", &out->normal,
-                     scene);
-  ExtractShaderParam(stage, shader_prim, "tangent", &out->tangent, scene);
-  ExtractShaderParam(stage, shader_prim, "geometry_tangent", &out->tangent,
-                     scene);
+  // OpenPBR prefixes geometry inputs. Accept the older short aliases as a
+  // fallback for exporters that authored pre-1.39 spellings.
+  if (!ExtractShaderParam(stage, shader_prim, "geometry_opacity",
+                          &out->opacity, scene)) {
+    ExtractShaderParam(stage, shader_prim, "opacity", &out->opacity, scene);
+  }
+  if (!ExtractShaderParam(stage, shader_prim, "geometry_normal",
+                          &out->normal, scene)) {
+    ExtractShaderParam(stage, shader_prim, "normal", &out->normal, scene);
+  }
+  if (!ExtractShaderParam(stage, shader_prim, "geometry_tangent",
+                          &out->tangent, scene)) {
+    ExtractShaderParam(stage, shader_prim, "tangent", &out->tangent, scene);
+  }
 
   return true;
 }
@@ -5006,6 +5287,21 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
 
   if (eval.HasConnection(shader_prim, attr_name)) {
     std::string connection_path = eval.GetConnectionPath(shader_prim, attr_name);
+    MtlxConstantValue evaluated;
+    std::set<std::string> visiting;
+    if (EvalMtlxConstantConnection(stage, connection_path, config_.time_code,
+                                   &evaluated, &visiting, 0)) {
+      if (evaluated.components >= 3) {
+        SetParamFloat3(out, evaluated.value[0], evaluated.value[1],
+                       evaluated.value[2]);
+      } else if (evaluated.components == 2) {
+        SetParamFloat4(out, evaluated.value[0], evaluated.value[1], 0.0f,
+                       1.0f);
+      } else {
+        SetParamFloat(out, evaluated.value[0]);
+      }
+      return true;
+    }
     // Follow pass-through hops (NodeGraph outputs forwarding to an inner
     // shader): a texture behind `Material/Graph.outputs:out` was previously
     // lost because only the FIRST hop was inspected.
@@ -5021,6 +5317,7 @@ bool RenderSceneConverter::ExtractShaderParam(const Stage& stage,
       // other inputs would incorrectly walk into the texcoord chain and lose
       // the texture.
       if (hop_id == "UsdUVTexture" || hop_id.rfind("ND_image_", 0) == 0 ||
+          hop_id.rfind("ND_tiledimage_", 0) == 0 ||
           hop_prim.GetPropertyValue("inputs:file")) {
         break;
       }
