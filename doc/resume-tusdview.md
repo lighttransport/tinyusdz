@@ -134,15 +134,15 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-21-of-427-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-6-of-427-fixtures)):
 
 > The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
 > Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 21 of 427 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
-> intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug,
-> the Camera shutter:open/shutter:close naming bug, the apiSchemas
-> list-op delete/None/prepend-order bugs, five rel/relationship bugs,
-> variant-statement metadata, and the shader-connection-baked-to-constant bugs).
+> data"): 6 of 427 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> intact (down from 133). What is left is NOT more of the same copy-paste
+> omissions — it is two structural gaps (an "authored but empty" data-model gap,
+> and a reader that cannot handle a typeName-only attribute spec). Read the
+> section before starting; both are described there.
 > Read the full categorized list in that section before starting — it spans
 > several `timeSamples` attributes dropped wholesale,
 > `skel:blendShapes` losing its namespace, spurious unauthored
@@ -181,7 +181,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (21 of 427 fixtures)
+### The crate writer drops data (6 of 427 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -193,9 +193,9 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 21 of 427 as of 2026-07-13 (was 41 of 422 before the
-                      # physics-2026-fix2 merge, which ADDED 5 fixtures, 2 of
-                      # which fail on already-known gaps; was 50, 60, 64, 65, 133, 140)
+done | wc -l          # 6 of 427 as of 2026-07-14 (was 41 of 422 before the
+                      # physics-2026-fix2 merge, which ADDED 5 fixtures; was
+                      # 10, 12, 17, 21, 50, 60, 64, 65, 133, 140)
 ```
 
 The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a
@@ -208,39 +208,29 @@ qualifier (`append`/`delete`) on a value-LESS relationship (`append rel
 myval`, `delete rel myheight`) — see "Left for later" below, this looks like a
 `ListOp<T>` data-model gap, not a quick writer fix.
 
-The 21 that remain, grouped by cause (verified 2026-07-14):
+The 6 that remain fall into exactly TWO groups, both structural. Every
+per-typed-attribute omission found by this sweep is now fixed (timeSamples on
+the typed writers, prim + attribute metadata blocks, SkelRoot xformOps, mesh
+`subsetFamily:<name>:familyType`, typed-attribute `.connect`, non-conformant
+shader terminal types, listOp qualifier order, bare-string attribute metadata) —
+so do NOT go looking for another one-line writer branch. There isn't one.
 
-- **`timeSamples` dropped by the TYPED attribute writers.** GPrim `extent`,
-  PointInstancer `positions`/`orientations`/`scales`, Camera's token
-  `projection`, UsdUVTexture's `asset inputs:file`: each of these writers emits
-  only `has_default()` and has NO timeSamples branch at all, so animation on them
-  is dropped wholesale. The generic path and the xformOp path both handle
-  timeSamples fine — this is per-typed-attribute omission, the same copy-paste
-  failure as the rest of the sweep. Probably the biggest remaining win (4-5
-  fixtures) and entirely mechanical.
-  (`extent-001`, `pointinstancer-full-001`, `enum-roundtrip-002`,
-  `shader-asset-path-animated-000`)
-- **Attribute metadata dropped**: an attribute's `customData` dictionary, a
-  triple-quoted comment, `colorSpace` on an `asset` value, and unregistered
-  property metadata.
-  (`attrib-defonly-with-meta-000`, `triple-quoted-string-in-meta-003`,
-  `texture-colorspace-as-meta-000`, `aousd-unknown-property-metadata`)
-- **Unregistered/`sdrMetadata` prim metadata dropped.**
-  (`unregistered-prim-meta-001`, `shader-sdrmetadata-001`)
-- **One-offs, each its own cause**: `subsetFamily:<name>:familyType` has no
-  writer AT ALL (`geomsubset-double-sided-001`); a declaration-only attribute
-  comes back with the fallback baked in (`attrib-defonly-000` — note this is the
-  READER-side half of the shader-connection fix: the writer now emits the bare
-  declaration, the reader drops a typeName-only spec); `outputs:result` comes
-  back with the wrong TYPE (`shader-nonconformant-types`); a generic attribute's
-  `.connect` is dropped (`multi-attribute-005`); `uniform token orientation` is
-  dropped (`enum-roundtrip-001`); a Skeleton's xformOps are dropped
-  (`skeleton-purpose-001`); prim-metadata `purpose` in the `(...)` block
-  (`purpose-hierarchy-001`); reference ORDERING (`reference-offset-001`).
+**Group A — the reader cannot handle a typeName-only attribute spec (3).** An
+attribute spec that carries a `typeName` but NO `default` either fails to build
+a PropertyMap outright, or comes back with the schema fallback baked in. The
+WRITER is already correct for all three: it emits the bare declaration. This is
+the read half.
+  - `attrib-defonly-000`, `attrib-defonly-with-meta-000`: `double radius` with no
+    value comes back as `double radius = 2`.
+  - `shader-asset-path-animated-000`: an animated `asset inputs:file` has
+    timeSamples but no `default`, and emitting the timeSamples alone makes the
+    reader fail "Failed to build PropertyMap". The writer branch was written and
+    then REVERTED for exactly this reason — do not re-add it until the reader can
+    take it.
 
-**Left for later — a shared data-model gap, do NOT try to patch it per-site.**
-Three fixtures fail for one reason: there is no way to record "authored, but
-empty".
+**Group B — "authored but empty" has nowhere to live (3). A shared data-model
+gap; do NOT try to patch it per-site.** Three fixtures fail for one reason:
+there is no way to record "authored, but empty".
   - `timesamples-empty-001`: an authored `timeSamples = {}` is dropped, because
     `PrimVar::has_timesamples()` is literally `ts.size() > 0`.
   - `rel-003` / `listop-delete-000`: a list-edit qualifier on a value-LESS
@@ -250,7 +240,10 @@ empty".
   (`value::TimeSamples`, and per-bucket on `ListOp<T>`) — and `ListOp<T>` has
   many users (variantSets, references, payloads, apiSchemas, inherits,
   specializes, connections, relationships), so verify the READ side
-  (`DecodeListOp`) before touching it.
+  (`DecodeListOp`) before touching it. Note `DecodeListOp` now emits the buckets
+  in USD's canonical order (delete, add, prepend, append) — that order is what
+  gets PRINTED, since a crate ListOp does not record the order the qualifiers
+  were authored in.
 
 Historical note, all FIXED, do not re-derive: Camera shutter naming; apiSchemas
 list-ops; five rel/relationship bugs; variant-statement metadata; shader
@@ -258,7 +251,16 @@ connections baked to constants; unauthored fallbacks invented (Skeleton
 visibility/purpose, GeomSubset elementType, physics:invertFilteredGroups,
 mediaOffset); Mesh `skel:blendShapes` namespace; stage metadata
 (kilogramsPerUnit, autoPlay/playbackMode, empty customLayerData); `reorder
-nameChildren`/`properties`; blocked xformOp written as zero.
+nameChildren`/`properties`; blocked xformOp written as zero; timeSamples on the
+typed writers; prim metadata (sdrMetadata, unregistered) and attribute metadata
+(customData, colorSpace, bare strings); SkelRoot xformOps; mesh
+`subsetFamily:<name>:familyType`; typed-attribute `.connect`; non-conformant
+shader terminal types; listOp qualifier print order.
+
+NOTE, one deliberate non-standard crate field: `AttrMeta::stringData` (a bare
+string in an attribute's metadata block) has no field in the USD crate format, so
+the writer emits its own `stringData` string[] and the reader takes it back. It
+round-trips within tinyusdz; pxr would see an unknown field.
 
 **Why this kept happening:** the extraction was copy-pasted per prim type, so each
 new prim type was one omission away from losing data — and several did. Five
