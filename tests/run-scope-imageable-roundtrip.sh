@@ -808,4 +808,96 @@ else
   status=1
 fi
 
+# Several TYPED attribute writers emitted only has_default() and had NO
+# timeSamples branch at all, so animation on those attributes was dropped
+# wholesale on write: SkelRoot/GPrim `extent`, PointInstancer
+# positions/orientations/scales (and velocities/accelerations), and Camera's
+# token `projection`. The generic attribute path and the xformOp path both
+# handled timeSamples fine -- this was per-typed-attribute omission.
+#
+# Two traps worth keeping pinned:
+#   - An ENUM's samples are int64 in memory and TOKENS on disk (projection, like
+#     visibility). A pass-through copy emits ints and the file is wrong.
+#   - `projection` is in stage-converter.cc's kUniformProps list, which stamped
+#     Variability::Uniform UNCONDITIONALLY. A uniform attribute cannot vary over
+#     time, and the READER enforces that by failing the entire prim ("declared
+#     `uniform`, but a time-sampled value was authored") -- so the moment the
+#     writer started emitting projection.timeSamples, the file became unreadable.
+#     Uniform is now stamped only when the attribute has no samples.
+#
+# Also pinned: `uniform token orientation = "rightHanded"` was skipped BECAUSE it
+# equals the schema default. An authored opinion is a strong one even when it
+# matches the default -- dropping it changes what the layer means.
+cat > "$TMP/typedts.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "W"
+)
+
+def Xform "W"
+{
+    def SkelRoot "R"
+    {
+        float3[] extent.timeSamples = {
+            2: [(-12, 5, -11), (12, 12, 6)],
+            3: [(-13, 5, -12), (13, 13, 7)],
+        }
+    }
+
+    def Camera "Cam"
+    {
+        token projection.timeSamples = {
+            1: "perspective",
+            30: "orthographic",
+        }
+    }
+
+    def PointInstancer "PI"
+    {
+        point3f[] positions.timeSamples = {
+            1: [(0, 0, 5)],
+            12: [(0, 1, 5)],
+        }
+    }
+
+    def Mesh "M"
+    {
+        uniform token orientation = "rightHanded"
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/typedts.usdc" "$TMP/typedts.usda" \
+     >"$TMP/write13.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the typed-timeSamples scene to usdc"
+  cat "$TMP/write13.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/typedts.usdc" > "$TMP/typedts-rt.usda" 2>/dev/null
+if [ ! -s "$TMP/typedts-rt.usda" ]; then
+  echo "FAIL[typed-timesamples-usdc]: crate read back EMPTY -- the prim failed to"
+  echo "  reconstruct (a `uniform` attribute carrying timeSamples will do this)"
+  status=1
+else
+  lost=""
+  for expect in \
+    'extent.timeSamples' \
+    'projection.timeSamples' \
+    'positions.timeSamples' \
+    '30: "orthographic"' \
+    'uniform token orientation = "rightHanded"'; do
+    grep -qF "$expect" "$TMP/typedts-rt.usda" || lost="$lost
+    $expect"
+  done
+  if [ -n "$lost" ]; then
+    echo "FAIL[typed-timesamples-usdc]: dropped on round-trip:$lost"
+    echo "--- got ---"
+    cat "$TMP/typedts-rt.usda"
+    status=1
+  else
+    echo "ok[typed-timesamples-usdc]: extent/projection/positions timeSamples and an authored-equals-default orientation survived"
+  fi
+fi
+
 exit "$status"
