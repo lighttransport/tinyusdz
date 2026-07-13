@@ -405,17 +405,22 @@ class USDCReader::Impl {
       if (arg.GetExplicitItems().size()) {
         dst.push_back({ListEditQual::ResetToExplicit, arg.GetExplicitItems()});
       }
-      if (arg.GetAddedItems().size()) {
-        dst.push_back({ListEditQual::Add, arg.GetAddedItems()});
-      }
-      if (arg.GetAppendedItems().size()) {
-        dst.push_back({ListEditQual::Append, arg.GetAppendedItems()});
-      }
+      // Bucket order matters: it is the order the qualifiers get PRINTED in, and
+      // a crate ListOp has no record of the order they were authored in. Use
+      // USD's canonical one (delete, add, prepend, append), so a prim authored
+      // with `prepend references` + `append references` does not come back with
+      // the two lines swapped.
       if (arg.GetDeletedItems().size()) {
         dst.push_back({ListEditQual::Delete, arg.GetDeletedItems()});
       }
+      if (arg.GetAddedItems().size()) {
+        dst.push_back({ListEditQual::Add, arg.GetAddedItems()});
+      }
       if (arg.GetPrependedItems().size()) {
         dst.push_back({ListEditQual::Prepend, arg.GetPrependedItems()});
+      }
+      if (arg.GetAppendedItems().size()) {
+        dst.push_back({ListEditQual::Append, arg.GetAppendedItems()});
       }
       if (arg.GetOrderedItems().size()) {
         dst.push_back({ListEditQual::Order, arg.GetOrderedItems()});
