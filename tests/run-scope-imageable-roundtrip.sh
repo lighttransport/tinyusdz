@@ -426,4 +426,71 @@ else
   echo "ok[relationships-usdc]: varying/custom, bindMaterialAs, proxyPrim, and collection-binding order survived"
 fi
 
+# Variant statement metadata: a variant carries its own PrimMeta block
+# (`active`, `hidden`, `kind`, and `variantSets` when it nests a variantSet),
+# populated by the readers exactly like a Prim's. ConvertVariantToFields
+# (src/stage-converter.cc) wrote only the `specifier` field and never called
+# ExtractPrimMeta, so every one of those dropped on write.
+cat > "$TMP/variant-meta.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "V"
+)
+
+def Xform "V" (
+    variants = {
+        string geo = "a"
+    }
+    prepend variantSets = "geo"
+)
+{
+    variantSet "geo" = {
+        "a" (
+            active = true
+            hidden = true
+            kind = "component"
+        ) {
+            def Capsule "Inner"
+            {
+            }
+        }
+
+        "b" (
+            prepend variantSets = "sub"
+        ) {
+            variantSet "sub" = {
+                "x" {
+                }
+            }
+        }
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/variant-meta.usdc" "$TMP/variant-meta.usda" \
+     >"$TMP/write8.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the variant-meta scene to usdc"
+  cat "$TMP/write8.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/variant-meta.usdc" > "$TMP/variant-meta-rt.usda" 2>/dev/null
+lost=""
+for expect in \
+  'active = true' \
+  'hidden = true' \
+  'kind = "component"' \
+  'variantSets = "sub"'; do
+  grep -qF "$expect" "$TMP/variant-meta-rt.usda" || lost="$lost
+    $expect"
+done
+if [ -n "$lost" ]; then
+  echo "FAIL[variant-meta-usdc]: variant statement metadata dropped on round-trip:$lost"
+  echo "--- got ---"
+  cat "$TMP/variant-meta-rt.usda"
+  status=1
+else
+  echo "ok[variant-meta-usdc]: variant active/hidden/kind/variantSets survived"
+fi
+
 exit "$status"

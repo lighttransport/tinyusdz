@@ -27,14 +27,15 @@ large-scene.md §2.12), and the `lightrt-bsdf` IBL energy (the furnace now lands
 
 Done since (2026-07-13): the proxy/render purpose supersede (both loaders), a
 family of **silent data-loss bugs in the writers** found by sweeping fixtures
-through `tusdcat`, and the **typeless-prim-invents-a-`Model`-typeName** bug
-(sole cause of 68 of the then-133 round-trip failures, 133 -> 65) — all
-pushed. Also fixed, not yet pushed: the **Camera
+through `tusdcat`, the **typeless-prim-invents-a-`Model`-typeName** bug (sole
+cause of 68 of the then-133 round-trip failures, 133 -> 65), the **Camera
 `shutter:open`/`shutter:close` written under the wrong attribute name** bug
 (65 -> 64), the **`apiSchemas` list-op delete/`None`/prepend-order** bugs
 (64 -> 60), and **five `rel`/relationship bugs** — varying/custom dropped,
 `bindMaterialAs` dropped, `proxyPrim` dropped, and a
-material-binding-collection namespace order swap (60 -> 50). See
+material-binding-collection namespace order swap (60 -> 50) — all pushed.
+Also fixed, not yet pushed: **variant-statement metadata dropped**
+(`active`/`hidden`/`kind`/`variantSets` on a variant, 50 -> 41). See
 [Open](#open) for what is left of that sweep, and
 [Prompts for a fresh session](#prompts-for-a-fresh-session) to pick it up cold.
 
@@ -45,23 +46,23 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-50-of-422-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-41-of-422-fixtures)):
 
 > The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
 > Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 50 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> data"): 41 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
 > intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug,
 > the Camera shutter:open/shutter:close naming bug, the apiSchemas
-> list-op delete/None/prepend-order bugs, and five rel/relationship bugs).
+> list-op delete/None/prepend-order bugs, five rel/relationship bugs, and
+> variant-statement metadata).
 > Read the full categorized list in that section before starting — it spans
-> variant-statement metadata (`active`/`hidden`/`kind`/`variantSets`)
-> dropped, several `.connect` shader connections baked down to plain
+> several `.connect` shader connections baked down to plain
 > constants, several more `timeSamples` attributes dropped wholesale,
 > `skel:blendShapes` losing its namespace, spurious unauthored
 > `visibility`/`purpose` invented on Skeleton-family prims, and stage/layer
 > metadata dictionaries (`customLayerData`, `kilogramsPerUnit`,
 > `sdrMetadata`, etc.) dropped. Fix them one category at a time, smallest/most
-> self-contained first (variant-statement metadata looks smallest next);
+> self-contained first;
 > the `.connect`-baked-to-constant bug is probably the most consequential
 > since it silently changes an asset's shading network rather than dropping
 > inert metadata. NOTE: a value-less relationship with an authored list-edit
@@ -94,7 +95,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (50 of 422 fixtures)
+### The crate writer drops data (41 of 422 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -106,22 +107,19 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 50 as of 2026-07-13 (was 60, was 64, was 65, was 133, was 140)
+done | wc -l          # 41 as of 2026-07-13 (was 50, 60, 64, 65, 133, 140)
 ```
 
 The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a
 diff here is the crate writer losing data, not the printer being creative. A
 full detailed diff turned up more categories than earlier notes here described
 — do not re-derive this from scratch (Camera shutter naming, apiSchemas
-list-ops, and five rel/relationship bugs are fixed, see below; not relisted
-here). **Still open on `rel`:** a list-edit qualifier (`append`/`delete`) on a
-value-LESS relationship (`append rel myval`, `delete rel myheight`) — see
-"Left for later" below, this looks like a `ListOp<T>` data-model gap, not a
-quick writer fix.
+list-ops, five rel/relationship bugs, and variant-statement metadata are
+fixed, see below; not relisted here). **Still open on `rel`:** a list-edit
+qualifier (`append`/`delete`) on a value-LESS relationship (`append rel
+myval`, `delete rel myheight`) — see "Left for later" below, this looks like a
+`ListOp<T>` data-model gap, not a quick writer fix.
 
-- Variant-statement metadata (`active`, `hidden`, `kind`, `variantSets`
-  authored in a variant's own metadata block) is dropped — the variant
-  survives, its metadata does not.
 - Several `inputs:foo.connect = </target>` shader connections come back baked
   down to a plain constant value instead of the connection; a declared but
   unconnected `outputs:foo.connect` (no RHS) is dropped, and its type can come
@@ -323,6 +321,44 @@ per-bucket "was set" tracking to `ListOp<T>` and touching every one of its
 many users (variantSets, references, payloads, apiSchemas, inherits,
 specializes, connections, relationships). Left alone -- verify the read-side
 `DecodeListOp`/`ListOp<T>` change first if picking this up.
+
+### Variant-statement metadata dropped on write (50 -> 41 fixtures)
+
+A variant statement carries its own Prim metadata block, and the readers
+populate it just like a Prim's:
+
+```usda
+variantSet "geo" = {
+    "a" (
+        active = true
+        hidden = true
+        kind = "component"
+    ) { ... }
+
+    "b" (
+        prepend variantSets = "sub"   # a variant that NESTS a variantSet
+    ) { ... }
+}
+```
+
+`Variant` (`src/core/variant-types.hh`) stores this as a full `PrimMeta` behind
+`metas()`. But `ConvertVariantToFields` (`src/stage-converter.cc`) wrote exactly
+one field to the Variant spec -- `specifier` -- and never called
+`ExtractPrimMeta` at all, so every variant-statement metadatum dropped on write.
+The variant itself, its properties, its prim children, and its nested
+variantSets all survived; only the metadata block vanished. Note the nested case
+is a double loss: the nested variantSet's CONTENT was written (the recursion at
+the bottom of `ConvertVariantToFields` handles it), but the `variantSets = "sub"`
+metadatum that declares it was not.
+
+Fix was one line -- call the existing `ExtractPrimMeta(variant.metas(),
+v_fields)` right after the `specifier` field. `ExtractPrimMeta` already handles
+`active`/`hidden`/`kind`/`variantSets` (and `customData`, `assetInfo`,
+`apiSchemas`, ...), so there was nothing to hand-roll; the variant path had
+simply never been wired to it. Fixed all 9 remaining `variantSet*` /
+`feat-nested-variantset` fixtures at once, no regressions. Guarded by a
+mutation-verified `variant-meta-usdc` check in
+`tests/run-scope-imageable-roundtrip.sh`.
 
 ### `proxy` and `render` are ALTERNATIVES, not two things to draw
 
