@@ -1431,7 +1431,12 @@ void EmitInstancedProto(const tnext::Stage& stage,
                         bool gpuSkinning,
                         DrawScene* draw, Bounds* bounds, long long* instTotal,
                         long long* effectiveTris, size_t instBudget,
-                        std::unordered_set<std::string>* consumed) {
+                        std::unordered_set<std::string>* consumed,
+                        // Resolve a bound-material path to a DrawScene material
+                        // index (the loader's cached resolveMaterialPath).
+                        // Null = keep material 0 (default gray).
+                        const std::function<int(const std::string&)>* resolveMat =
+                            nullptr) {
   if (placements.empty()) return;
   double pr16[16];
   tydn::ComputeWorldTransform(stage, protoRoot, pr16, time);
@@ -1468,6 +1473,21 @@ void EmitInstancedProto(const tnext::Stage& stage,
                                     numPoints, identW, draw);
     }
     if (!gpuSkinned) BakeSkinning(stage, mp, time, &dm, vertexToPoint, numPoints);
+
+    // Resolve the prototype mesh's bound material. FillFlatGeometry emits the
+    // submesh with materialId 0 (default gray); without this every instanced
+    // prototype ignored its material in the RT path and material-driven AOVs
+    // (the flat instanced raster shader shades per-vertex color regardless).
+    if (resolveMat) {
+      const std::string bind =
+          tnext::GetInheritedBoundMaterialPath(stage, mp.GetPath().str());
+      if (!bind.empty()) {
+        const int protoMat = (*resolveMat)(bind);
+        if (protoMat > 0) {
+          for (DrawSubmesh& sub : dm.submeshes) sub.materialId = protoMat;
+        }
+      }
+    }
 
     // Prototype-LOCAL bbox over the (untransformed) vertices, for per-instance
     // frustum culling + CUDA instance world-AABBs (each instance transforms it).
@@ -1591,7 +1611,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
         }
         EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time,
                            gpuSkinning, draw, bounds, instTotal, effectiveTris,
-                           instBudget, consumed);
+                           instBudget, consumed, resolveMat);
       }
     } else {
       const auto* s = ni.GetPrimSpec();
@@ -1613,7 +1633,7 @@ void EmitInstancedProto(const tnext::Stage& stage,
       for (const matrix4d& P : placements) innerPl.push_back(Mul4(m_rel, P));
       EmitInstancedProto(stage, conv, innerRoot, innerPl, nullptr, time,
                          gpuSkinning, draw, bounds, instTotal, effectiveTris,
-                         instBudget, consumed);
+                         instBudget, consumed, resolveMat);
     }
   }
 }
@@ -1999,6 +2019,20 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
   // known Phase-2 limitation for non-packed ORM inputs).
   auto loadMetalRough = [&](const tydn::ShaderParam& metallic,
                             const tydn::ShaderParam& roughness) {
+    // Per-channel value scale/bias for a scalar texture: the sampled channel's
+    // component of the texture's inputs:scale / inputs:bias. Dropping these
+    // (they used to stay 1/0) mis-scaled any roughness/metallic map authored
+    // with a non-identity scale -- tusdrender applies them, so the two tools
+    // disagreed on the same asset.
+    auto channelScaleBias = [](const tydn::RenderTexture& rt, int ch,
+                               float* scale, float* bias) {
+      const float sc[4] = {rt.scale_value.x, rt.scale_value.y,
+                           rt.scale_value.z, rt.scale_value.w};
+      const float bi[4] = {rt.bias.x, rt.bias.y, rt.bias.z, rt.bias.w};
+      const int c = (ch >= 0 && ch < 4) ? ch : 0;
+      *scale = sc[c];
+      *bias = bi[c];
+    };
     if (roughness.texture_id >= 0) {
       int t = LoadNextTexture(texCache, draw, scratch, roughness.texture_id, false);
       if (t >= 0) {
@@ -2007,6 +2041,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
         const tydn::RenderTexture& rt =
             scratch.textures[static_cast<size_t>(roughness.texture_id)];
         dm.roughnessChannel = NextScalarChannel(rt.output_channel);
+        channelScaleBias(rt, dm.roughnessChannel, &dm.roughnessTexScale,
+                         &dm.roughnessTexBias);
         FillNextSample(rt, &dm.metalRoughSample, uv0Name, uv1Name);
       }
     }
@@ -2021,6 +2057,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
         }
         dm.metallic = 1.0f;
         dm.metallicChannel = NextScalarChannel(rt.output_channel);
+        channelScaleBias(rt, dm.metallicChannel, &dm.metallicTexScale,
+                         &dm.metallicTexBias);
       }
     }
   };
@@ -2911,6 +2949,69 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   const std::size_t triCap =
       ctrl ? ctrl->maxTriangles : std::numeric_limits<std::size_t>::max();
 
+  // Texture cache for material building: resolve texture assets against the
+  // source directory and, for a .usdz package, its embedded entries. The size
+  // cap and byte budget are applied while decoding, so a large scene never
+  // materializes every texture at full resolution.
+  NextTexCache texCache;
+  texCache.opt = &opts.textureOptions;  // kept-compressed KTX2 passthrough
+  tydn::TextureDecodeOptions texOpts;
+  texOpts.base_dir = tinyusdz::io::GetBaseDir(path);
+  texOpts.max_edge = opts.textureOptions.maxTextureSize > 0
+                         ? uint32_t(opts.textureOptions.maxTextureSize)
+                         : 0u;
+  texOpts.budget_bytes =
+      opts.textureOptions.textureBudgetMB > 0
+          ? uint64_t(opts.textureOptions.textureBudgetMB) * 1024ull * 1024ull
+          : 0ull;
+  tinyusdz::next::USDZReader usdzArchive;
+  if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".usdz") == 0 &&
+      usdzArchive.OpenFile(path)) {
+    texOpts.usdz = &usdzArchive;
+  }
+  texCache.decoder = std::make_unique<tydn::TextureDecoder>(texOpts);
+
+  // Resolve a material prim path to a DrawScene material index (cached by path).
+  // Unbound / unconvertible -> 0 (default gray material).
+  std::unordered_map<std::string, int> matIndexByPath;
+  // A material is built ONCE and shared by every mesh that binds it, but the
+  // UV-set names are the MESH's. Resolve the texture->UV-set routing at the first
+  // mesh that binds the material, and warn if a later mesh would have resolved it
+  // differently (two meshes binding one material with differently-named secondary
+  // sets cannot both be satisfied without splitting the material -- rare enough
+  // that reporting beats silently rendering one of them with the wrong UVs).
+  std::unordered_map<std::string, std::string> matUv1ByPath;
+  auto resolveMaterialPath = [&](const std::string& mpath,
+                                 const std::string& uv0Name,
+                                 const std::string& uv1Name) -> int {
+    if (mpath.empty()) return 0;
+    auto it = matIndexByPath.find(mpath);
+    if (it != matIndexByPath.end()) {
+      const auto uit = matUv1ByPath.find(mpath);
+      if (uit != matUv1ByPath.end() && uit->second != uv1Name) {
+        LOGW("material '%s' is bound by meshes with different secondary UV sets "
+             "('%s' vs '%s'); keeping the first. Textures routed to the second "
+             "UV set may sample the wrong coordinates on the later mesh.",
+             mpath.c_str(), uit->second.c_str(), uv1Name.c_str());
+      }
+      return it->second;
+    }
+    tnext::UsdPrim matPrim = stage.GetPrimAtPath(mpath);
+    int idx = matPrim.IsValid() ? BuildNextMaterial(stage, conv, matPrim, draw,
+                                                    texCache, uv0Name, uv1Name)
+                                : -1;
+    if (idx < 0) idx = 0;
+    matIndexByPath[mpath] = idx;
+    matUv1ByPath[mpath] = uv1Name;
+    return idx;
+  };
+  // Prototype-material wrapper for EmitInstancedProto (no per-mesh UV-set names
+  // for a shared prototype; secondary-UV routing falls back to set 0).
+  const std::function<int(const std::string&)> resolveProtoMat =
+      [&](const std::string& mpath) -> int {
+    return resolveMaterialPath(mpath, std::string(), std::string());
+  };
+
   // --- 3a. PointInstancer pass: emit one GPU-instanced DrawMeshCPU per prototype
   //         mesh. Prototype geometry lives at the converter's authored location,
   //         so we re-express it relative to the prototype root and bake each
@@ -3003,7 +3104,8 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           EmitInstancedProto(stage, conv, protoRoot, placements,
                              perInstColor ? &colors : nullptr, time,
                              opts.gpuSkinning, draw, &bounds, &instTotal,
-                             &effectiveTris, instBudget, &consumed);
+                             &effectiveTris, instBudget, &consumed,
+                             &resolveProtoMat);
         }
       }
       return;  // do not descend into a PointInstancer's prototypes as geometry
@@ -3061,7 +3163,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
       EmitInstancedProto(stage, conv, protoRoot, placements,
                          /*placementColors=*/nullptr, time, opts.gpuSkinning, draw,
                          &bounds, &instTotal, &effectiveTris, instBudget,
-                         /*consumed=*/nullptr);
+                         /*consumed=*/nullptr, &resolveProtoMat);
     }
   }
 
@@ -3097,62 +3199,6 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   std::map<std::tuple<std::string, bool, int, int>, Batch> open;
   int nextMorphBatchId = 0;
 
-  // Texture cache for material building: resolve texture assets against the
-  // source directory and, for a .usdz package, its embedded entries. The size
-  // cap and byte budget are applied while decoding, so a large scene never
-  // materializes every texture at full resolution.
-  NextTexCache texCache;
-  texCache.opt = &opts.textureOptions;  // kept-compressed KTX2 passthrough
-  tydn::TextureDecodeOptions texOpts;
-  texOpts.base_dir = tinyusdz::io::GetBaseDir(path);
-  texOpts.max_edge = opts.textureOptions.maxTextureSize > 0
-                         ? uint32_t(opts.textureOptions.maxTextureSize)
-                         : 0u;
-  texOpts.budget_bytes =
-      opts.textureOptions.textureBudgetMB > 0
-          ? uint64_t(opts.textureOptions.textureBudgetMB) * 1024ull * 1024ull
-          : 0ull;
-  tinyusdz::next::USDZReader usdzArchive;
-  if (path.size() >= 5 && path.compare(path.size() - 5, 5, ".usdz") == 0 &&
-      usdzArchive.OpenFile(path)) {
-    texOpts.usdz = &usdzArchive;
-  }
-  texCache.decoder = std::make_unique<tydn::TextureDecoder>(texOpts);
-
-  // Resolve a material prim path to a DrawScene material index (cached by path).
-  // Unbound / unconvertible -> 0 (default gray material).
-  std::unordered_map<std::string, int> matIndexByPath;
-  // A material is built ONCE and shared by every mesh that binds it, but the
-  // UV-set names are the MESH's. Resolve the texture->UV-set routing at the first
-  // mesh that binds the material, and warn if a later mesh would have resolved it
-  // differently (two meshes binding one material with differently-named secondary
-  // sets cannot both be satisfied without splitting the material -- rare enough
-  // that reporting beats silently rendering one of them with the wrong UVs).
-  std::unordered_map<std::string, std::string> matUv1ByPath;
-  auto resolveMaterialPath = [&](const std::string& mpath,
-                                 const std::string& uv0Name,
-                                 const std::string& uv1Name) -> int {
-    if (mpath.empty()) return 0;
-    auto it = matIndexByPath.find(mpath);
-    if (it != matIndexByPath.end()) {
-      const auto uit = matUv1ByPath.find(mpath);
-      if (uit != matUv1ByPath.end() && uit->second != uv1Name) {
-        LOGW("material '%s' is bound by meshes with different secondary UV sets "
-             "('%s' vs '%s'); keeping the first. Textures routed to the second "
-             "UV set may sample the wrong coordinates on the later mesh.",
-             mpath.c_str(), uit->second.c_str(), uv1Name.c_str());
-      }
-      return it->second;
-    }
-    tnext::UsdPrim matPrim = stage.GetPrimAtPath(mpath);
-    int idx = matPrim.IsValid() ? BuildNextMaterial(stage, conv, matPrim, draw,
-                                                    texCache, uv0Name, uv1Name)
-                                : -1;
-    if (idx < 0) idx = 0;
-    matIndexByPath[mpath] = idx;
-    matUv1ByPath[mpath] = uv1Name;
-    return idx;
-  };
   // Full UsdShade binding semantics: the purpose fallback chain
   // (material:binding:preview -> material:binding -> material:binding:full) AND
   // inheritance from ancestors. Production scenes (ALab) bind purpose-scoped on
@@ -3228,9 +3274,26 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     if (triFace.size() != numTris) return;  // triangulation mismatch -> whole-mesh
 
     std::vector<int> faceMat(fvc.size(), wholeMat);
-    for (const Sub& s : subs)
-      for (int32_t f : s.faces)
-        if (f >= 0 && static_cast<size_t>(f) < faceMat.size()) faceMat[f] = s.mat;
+    // Authored subset indices use the ORIGINAL face numbering. When
+    // SanitizeMeshTopology dropped faces, fvc/faceMat are in the COMPACTED
+    // numbering, so route each authored index through sanitize_face_remap
+    // (-1 = the face was dropped) -- the core converter does the same
+    // (render-converter.cc); applying authored indices directly shifted the
+    // bindings onto the wrong faces.
+    const bool remap = m.sanitize_dropped_faces > 0 &&
+                       !m.sanitize_face_remap.empty();
+    for (const Sub& s : subs) {
+      for (int32_t f : s.faces) {
+        if (f < 0) continue;
+        int32_t cf = f;
+        if (remap) {
+          if (static_cast<size_t>(f) >= m.sanitize_face_remap.size()) continue;
+          cf = m.sanitize_face_remap[static_cast<size_t>(f)];
+          if (cf < 0) continue;  // face was dropped by sanitize
+        }
+        if (static_cast<size_t>(cf) < faceMat.size()) faceMat[cf] = s.mat;
+      }
+    }
 
     std::vector<int> tm(numTris);
     bool split = false;

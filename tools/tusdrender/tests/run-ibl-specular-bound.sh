@@ -90,10 +90,19 @@ def mean(path):
 sm=mean(sys.argv[1]); rg=mean(sys.argv[2])
 print(f"mean brightness: smooth(r=0.05)={sm:.1f} rough(r=0.9)={rg:.1f}")
 # With the bug the smooth surface reflects the env at ~280x and clips to white
-# (mean near 765), far above the rough surface. Bounded: comparable.
-if sm > rg * 1.5:
+# (mean near 765, ~25x the rough surface). Bounded, the two are within a small
+# factor: a mirror metal IS a little brighter than a rough one under a uniform
+# dome (single-scatter GGX loses energy as roughness rises -- after the
+# energy-conservation fixes the measured ratio is ~1.7), so the gate is 2.5x:
+# far above physical spread, far below the failure mode.
+if sm > rg * 2.5:
     print("FAIL: smooth-metal environment specular is unbounded -- reflecting the "
           "dome far brighter than a rough surface (analytic BRDF at the mirror "
           "direction instead of the split-sum)."); sys.exit(1)
+# Absolute backstop: a unit dome must never drive the reflection into clipped
+# white (the bug's signature), whatever happens to the rough reference.
+if sm > 400:
+    print("FAIL: smooth-metal reflection of a unit dome is clipped-white bright "
+          f"(mean {sm:.1f}) -- environment specular is unbounded."); sys.exit(1)
 print("PASS: environment specular is bounded across roughness in bsdf mode")
 PY

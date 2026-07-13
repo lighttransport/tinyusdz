@@ -216,8 +216,17 @@ OpenPBRParams OpenPBRParamsFromLightRt(
 OpenPBRParams OpenPBRParamsForMaterial(
     const TriInfo &tri, const Vec3 &normal,
     const tinyusdz::tydra::LightRtOpenPBRParams *openpbr) {
-  return openpbr ? OpenPBRParamsFromLightRt(*openpbr, normal)
-                 : OpenPBRParamsFromTri(tri, normal);
+  if (openpbr) {
+    OpenPBRParams p = OpenPBRParamsFromLightRt(*openpbr, normal);
+    // tri.base_color carries the per-hit base-color TEXTURE sample (and any
+    // per-corner displayColor); the resolver neutralizes the constant to white
+    // when a texture loads, so for untextured materials this equals
+    // src.baseColor. The struct's own baseColor is only the constant -- using it
+    // alone shaded textured surfaces flat in lightrt-bsdf mode.
+    p.base_color = v3_make(tri.base_color.x, tri.base_color.y, tri.base_color.z);
+    return p;
+  }
+  return OpenPBRParamsFromTri(tri, normal);
 }
 
 uint32_t FloatBits(float v) {
@@ -308,7 +317,13 @@ void OrthoBasis(const Vec3 &w, Vec3 *u, Vec3 *v) {
 }
 
 Vec3 SphereLightRadiance(const PreviewLight &light) {
-  const float r = std::max(1.0e-4f, light.radius);
+  // Same radius gate as SampleSphereLight/SphereLightPdf (1e-5): the old
+  // 1e-4 clamp here disagreed with the raw radius the sampler used, so a
+  // sphere with 1e-5 < r < 1e-4 sampled with the true (smaller) area but
+  // emitted the clamped (larger) area's radiance -- up to 100x too dark.
+  // Below the sampler's gate the light takes the punctual path, where this
+  // radiance is unused, so the clamp only has to guard division by ~0.
+  const float r = std::max(1.0e-5f, light.radius);
   const float scale = 1.0f / (MTLX_PI * r * r);
   return Mul(light.radiance, scale);
 }
@@ -1409,7 +1424,15 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
     return apply_opacity(c);
   }
   // NEE: sample a point on the light, weigh the estimate against the chance the
-  // BSDF sampler would have found the same direction on its own.
+  // BSDF sampler would have found the same direction on its own. The power
+  // heuristic is only valid when the BSDF-sampling partner actually runs;
+  // sample_bsdf_bounce early-returns at depth >= 2, for non-opaque hits and in
+  // the non-bsdf shading modes, and then nothing supplies the pdf_b^2 share --
+  // the light was systematically under-counted (up to ~2x too dark where
+  // pdf_l ~ pdf_b). Light sampling is the sole estimator there, weight 1.
+  const bool bsdf_partner_runs =
+      opt.material_shading == Options::MaterialShading::LightRtBsdf &&
+      depth < 2 && tri.opacity >= 0.999f;
   auto nee_light = [&](const PreviewLight &light, pcg32 *rng) {
     LightSample ls;
     const float u1 = pcg32_f(rng);
@@ -1430,7 +1453,7 @@ Vec3 Shade(lrt_tri_scene *scene, const DirectScene *direct,
                      &pdf_b);
     const Vec3 brdf = FromMtlxV3(f);
     if (!FiniteColor(brdf)) return;
-    const float w = PowerHeuristic(ls.pdf, pdf_b);
+    const float w = bsdf_partner_runs ? PowerHeuristic(ls.pdf, pdf_b) : 1.0f;
     const float k = w * ndotl / ls.pdf;
     c = Add(c, Vec3{brdf.x * ls.radiance.x * k, brdf.y * ls.radiance.y * k,
                     brdf.z * ls.radiance.z * k});
