@@ -477,7 +477,12 @@ bool CrateWriter::ExtractCubeProperties(
   }
 
   if (cube->size.authored()) {
-    if (!ExtractAnimatableDefault(cube->size.get_value(), "size", fields, err)) return false;
+    if (cube->size.is_value_empty()) {
+      sconv_detail::EmitAttrDeclaration("size", "double", fields);
+    } else if (!ExtractAnimatableDefault(cube->size.get_value(), "size", fields,
+                                         err)) {
+      return false;
+    }
     sconv_detail::EmitAttrMetas("size", cube->size.metas(), fields);
   }
   sconv_detail::EmitAttrConnections("size", cube->size, fields);
@@ -521,7 +526,12 @@ bool CrateWriter::ExtractSphereProperties(
   }
 
   if (sphere->radius.authored()) {
-    if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius", fields, err)) return false;
+    if (sphere->radius.is_value_empty()) {
+      sconv_detail::EmitAttrDeclaration("radius", "double", fields);
+    } else if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius",
+                                         fields, err)) {
+      return false;
+    }
     sconv_detail::EmitAttrMetas("radius", sphere->radius.metas(), fields);
   }
   sconv_detail::EmitAttrConnections("radius", sphere->radius, fields);
