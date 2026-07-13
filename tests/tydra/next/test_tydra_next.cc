@@ -771,6 +771,30 @@ def Xform "World"
   assert(rig_node_it != result.scene.node_by_path.end());
   assert(result.scene.nodes[rig_node_it->second].data_id == 0);
 
+  // Metadata-only consumers retain scene relationships/material IDs while
+  // dropping all bulk mesh arrays after conversion.
+  ConverterConfig metadata_config = config;
+  metadata_config.mesh.retain_geometry = false;
+  RenderSceneConverter metadata_converter(metadata_config);
+  ConvertResult metadata_result = metadata_converter.Convert(load_result.stage);
+  assert(metadata_result.success);
+  assert(metadata_result.scene.meshes.size() == result.scene.meshes.size());
+  for (const RenderMesh& metadata_mesh : metadata_result.scene.meshes) {
+    assert(metadata_mesh.points.empty());
+    assert(metadata_mesh.normals.empty());
+    assert(metadata_mesh.texcoords_0.empty());
+    assert(metadata_mesh.face_vertex_counts.empty());
+    assert(metadata_mesh.face_vertex_indices.empty());
+    assert(metadata_mesh.triangulated_indices.empty());
+    assert(metadata_mesh.triangulated_face_vertex_indices.empty());
+    assert(metadata_result.scene.mesh_by_path.count(metadata_mesh.prim_path) ==
+           1);
+  }
+  const auto metadata_plane =
+      metadata_result.scene.mesh_by_path.find("/World/Plane");
+  assert(metadata_plane != metadata_result.scene.mesh_by_path.end());
+  assert(metadata_result.scene.meshes[metadata_plane->second].material_id >= 0);
+
   std::cout << "  RenderConverter: PASSED\n";
 
   // Print warnings
@@ -1500,6 +1524,58 @@ def Material "Mat"
   assert(usd_mat.openpbr);
   assert(std::abs(usd_mat.openpbr->base_color.value.x - 0.1f) < 0.001f);
   assert(std::abs(usd_mat.openpbr->base_metalness.value.x - 0.4f) < 0.001f);
+
+  // Blender authors a textured MaterialX terminal alongside an untextured
+  // PreviewSurface fallback. The MaterialX terminal must win, otherwise web
+  // renderers receive a white material and no texture records.
+  const char* dual_terminal_usda = R"(#usda 1.0
+def Xform "World"
+{
+    def Mesh "Quad"
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        rel material:binding = </World/Mat>
+    }
+    def Material "Mat"
+    {
+        token outputs:surface.connect = </World/Mat/Preview.outputs:surface>
+        token outputs:mtlx:surface.connect = </World/Mat/OpenPBR.outputs:out>
+        def Shader "Preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 1, 1)
+            token outputs:surface
+        }
+        def Shader "OpenPBR"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color.connect = </World/Mat/Image.outputs:out>
+            token outputs:out
+        }
+        def Shader "Image"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/albedo.png@
+            color3f outputs:out
+        }
+    }
+}
+)";
+  LoadResult dual_lr = LoadUSDAFromString(
+      dual_terminal_usda, std::strlen(dual_terminal_usda));
+  assert(dual_lr.success);
+  RenderSceneConverter render_converter;
+  ConvertResult dual_result = render_converter.Convert(dual_lr.stage);
+  assert(dual_result.success);
+  assert(dual_result.scene.materials.size() == 1);
+  assert(dual_result.scene.textures.size() == 1);
+  const RenderMaterial& dual_mat = dual_result.scene.materials[0];
+  assert(dual_mat.shader_type == RenderMaterial::ShaderType::OpenPBR);
+  assert(dual_mat.openpbr && dual_mat.openpbr->base_color.is_texture());
+  assert(dual_result.scene.textures[0].asset_path ==
+         "./textures/albedo.png");
 
   std::cout << "  MaterialX utilities: PASSED\n";
 }

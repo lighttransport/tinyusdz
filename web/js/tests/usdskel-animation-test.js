@@ -10,6 +10,10 @@ import {
   computeUSDSceneTimelineDuration
 } from '../src/tinyusdz/USDSceneAnimationPipeline.js';
 import { createThreeSkeletonFromUSD } from '../src/tinyusdz/USDSkeletalHelper.js';
+import {
+  isOwnedFloat32Array,
+  markOwnedFloat32Array
+} from '../src/tinyusdz/TypedArrayOwnership.js';
 
 function near(a, b, eps = 1e-4) {
   return Math.abs(a - b) <= eps;
@@ -184,6 +188,69 @@ async function testNodeXformConversionAndEvaluation() {
 
   assertNear(node.position.x, 5, 'node translation at t=50');
   assertNear(node.position.y, 0, 'node y at t=50');
+}
+
+async function testAggregateSkeletalArrayOwnership() {
+  const rootBone = new THREE.Bone();
+  rootBone.name = 'skel0_root';
+  const childBone = new THREE.Bone();
+  childBone.name = 'skel0_child';
+  rootBone.add(childBone);
+  const boneMaps = new Map([[0, new Map([[0, rootBone], [1, childBone]])]]);
+  const times = markOwnedFloat32Array(new Float32Array([0, 1]), 'test times');
+  const channelData = [
+    ['Translation', 3, [
+      0, 0, 0, 10, 0, 0,
+      1, 2, 3, 11, 12, 13
+    ]],
+    ['Rotation', 4, [
+      0, 0, 0, 1, 0, 0, 0, 1,
+      0, 0, 0, 1, 0, 0, 0, 1
+    ]],
+    ['Scale', 3, [
+      1, 1, 1, 1, 1, 1,
+      2, 2, 2, 3, 3, 3
+    ]]
+  ];
+  const animation = {
+    name: 'Aggregate',
+    duration: 1,
+    channels: channelData.map(([path, stride], sampler) => ({
+      sampler,
+      target_type: 'SkelAnimation',
+      skeleton_id: 0,
+      path,
+      isSkeletal: true,
+      jointRemap: [0, 1],
+      valueStride: stride,
+      elementCount: 2
+    })),
+    samplers: channelData.map(([, stride, values], index) => ({
+      index,
+      times,
+      values: markOwnedFloat32Array(new Float32Array(), `preview ${index}`),
+      arrayValues: markOwnedFloat32Array(new Float32Array(values), `array ${index}`),
+      interpolation: 'LINEAR',
+      valueStride: stride,
+      elementCount: 2,
+      isSkeletal: true
+    }))
+  };
+
+  const clips = convertUSDSkeletalAnimationsToThreeJS(
+    createMockUSDScene([animation]), boneMaps, 24);
+  assert.equal(clips.length, 1, 'aggregate animation should produce one clip');
+  assert.equal(clips[0].tracks.length, 6, 'aggregate TRS should produce three tracks per joint');
+  assert.ok(clips[0].tracks.every((track) => track.times === times),
+    'expanded tracks should reuse the JS-owned shared time array');
+  assert.ok(clips[0].tracks.every((track) => isOwnedFloat32Array(track.values)),
+    'expanded track values should remain marked JS-owned');
+  const rootPosition = findTrack(clips[0], 'skel0_root.position');
+  const childScale = findTrack(clips[0], 'skel0_child.scale');
+  assert.deepEqual(Array.from(rootPosition.values), [0, 0, 0, 1, 2, 3],
+    'aggregate translation should transpose frame-major values per joint');
+  assert.deepEqual(Array.from(childScale.values), [1, 1, 1, 3, 3, 3],
+    'aggregate scale should preserve joint remapping');
 }
 
 async function testExtractPipelineMixedAnimation() {
@@ -535,6 +602,7 @@ async function main() {
   const tests = [
     ['usdSkel conversion + evaluation', testSkeletalConversionAndEvaluation],
     ['node xform conversion + evaluation', testNodeXformConversionAndEvaluation],
+    ['aggregate skeletal arrays reuse owned buffers', testAggregateSkeletalArrayOwnership],
     ['extract mixed skeletal/node animation', testExtractPipelineMixedAnimation],
     ['play-all global timeline clip clamping', testPlayAllGlobalTimelineClampsPerClip],
     ['skin-eval bind pose identity (doc)', testSkinEvalBindPoseIdentityFromDoc],

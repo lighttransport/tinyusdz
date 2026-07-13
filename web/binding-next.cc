@@ -2090,6 +2090,99 @@ class RenderStream {
     return out;
   }
 
+  // Adapter-oriented animation getter. Large aggregate skeletal arrays are
+  // exposed as transient WASM heap descriptors instead of being pushed into
+  // JavaScript arrays (and duplicated in both samplers and tracks). Consumers
+  // must copy descriptor-backed data before the next heap-growing native call
+  // or end(). getAnimation() remains the compatibility getter for direct API
+  // users.
+  emscripten::val getAnimationView(int32_t anim_id) const {
+    emscripten::val out = emscripten::val::object();
+    if (!loaded_ || anim_id < 0 ||
+        static_cast<size_t>(anim_id) >= render_scene_.animations.size()) {
+      return out;
+    }
+    const tr::AnimationClip& clip =
+        render_scene_.animations[static_cast<size_t>(anim_id)];
+
+    const double duration = clip.end_time - clip.start_time;
+    const double clamped_duration = std::isfinite(duration)
+                                        ? std::max(0.0, duration)
+                                        : 0.0;
+    out.set("index", anim_id);
+    out.set("name", clip.name.empty()
+                        ? std::string("Animation") + std::to_string(anim_id)
+                        : clip.name);
+    out.set("primPath", clip.prim_path);
+    out.set("startTime", clip.start_time);
+    out.set("endTime", clip.end_time);
+    out.set("duration", clamped_duration);
+
+    emscripten::val channels = emscripten::val::array();
+    emscripten::val samplers = emscripten::val::array();
+    for (size_t i = 0; i < clip.channels.size(); ++i) {
+      const tr::AnimationChannel& channel = clip.channels[i];
+      std::vector<float> times;
+      times.reserve(channel.keyframes.size());
+      std::vector<float> values;
+      values.reserve(channel.keyframes.size() *
+                     AnimationComponentCount(channel));
+      for (const auto& keyframe : channel.keyframes) {
+        times.push_back(static_cast<float>(keyframe.time));
+        AppendAnimationKeyframeValues(channel, keyframe, &values);
+      }
+
+      const std::string path = AnimationPathName(channel.target_path);
+      const std::string interpolation =
+          AnimationInterpolationName(channel.interpolation);
+      const int32_t sampler_id = static_cast<int32_t>(i);
+
+      emscripten::val sampler = emscripten::val::object();
+      sampler.set("index", sampler_id);
+      sampler.set("interpolation", interpolation);
+      sampler.set("times", VectorToArray(times));
+      sampler.set("values", VectorToArray(values));
+      sampler.set("valueStride", static_cast<int>(channel.value_stride));
+      sampler.set("elementCount", static_cast<int>(channel.element_count));
+      sampler.set("isSkeletal", channel.is_skeletal);
+      if (!channel.array_values.empty()) {
+        sampler.set("arrayValues", heapF_(channel.array_values,
+                                          static_cast<int>(channel.value_stride)));
+      }
+      samplers.set(sampler_id, sampler);
+
+      emscripten::val ch = emscripten::val::object();
+      ch.set("sampler", sampler_id);
+      ch.set("target_node", channel.target_node);
+      ch.set("target_prim_path", channel.target_prim_path);
+      ch.set("target_type", channel.is_skeletal ? std::string("SkelAnimation")
+                                                  : std::string("SceneNode"));
+      ch.set("skeleton_id", channel.target_skeleton);
+      ch.set("joint_id", -1);
+      ch.set("path", path);
+      ch.set("isCustomProperty",
+             channel.target_path ==
+                 tr::AnimationChannel::TargetPath::CustomProperty);
+      ch.set("propertyName", channel.property_name);
+      ch.set("isSkeletal", channel.is_skeletal);
+      ch.set("targetSkeletonPath", channel.target_skeleton_path);
+      ch.set("jointOrder", VectorToArray(channel.joint_order));
+      ch.set("jointRemap", VectorToArray(channel.joint_remap));
+      ch.set("blendShapeOrder", VectorToArray(channel.blend_shape_order));
+      ch.set("valueStride", static_cast<int>(channel.value_stride));
+      ch.set("elementCount", static_cast<int>(channel.element_count));
+      channels.set(static_cast<int>(i), ch);
+    }
+
+    out.set("channels", channels);
+    out.set("samplers", samplers);
+    out.set("numChannels", static_cast<int>(clip.channels.size()));
+    out.set("numSamplers", static_cast<int>(clip.channels.size()));
+    out.set("has_skeletal_animation", AnimationHasSkeletalChannels(clip));
+    out.set("has_node_animation", static_cast<bool>(!clip.channels.empty()));
+    return out;
+  }
+
   emscripten::val getAllAnimations() const {
     emscripten::val animations = emscripten::val::array();
     if (!loaded_) {
@@ -2179,7 +2272,37 @@ class RenderStream {
     s.set("meshMerge", mesh_merge_);
     s.set("meshMergeBakeTransform", mesh_merge_bake_transform_);
     s.set("flattenRenderTree", flatten_render_tree_);
+    size_t provided_asset_bytes = 0;
+    for (const auto& asset : clip_assets_) {
+      provided_asset_bytes += asset.second.size();
+    }
+    s.set("providedAssetBytes", static_cast<double>(provided_asset_bytes));
+    s.set("stageMemoryBytes", static_cast<double>(stage_.GetMemoryUsage()));
     if (render_scene_valid_) {
+      s.set("renderSceneMemoryBytes",
+            static_cast<double>(render_scene_.memory_usage()));
+      size_t mesh_points_bytes = 0;
+      size_t mesh_normals_bytes = 0;
+      size_t mesh_uv_bytes = 0;
+      size_t mesh_topology_bytes = 0;
+      size_t mesh_triangulation_bytes = 0;
+      for (const tr::RenderMesh &mesh : render_scene_.meshes) {
+        mesh_points_bytes += mesh.points.memory_usage();
+        mesh_normals_bytes += mesh.normals.memory_usage();
+        mesh_uv_bytes += mesh.texcoords_0.memory_usage() +
+                         mesh.texcoords_1.memory_usage();
+        mesh_topology_bytes += mesh.face_vertex_counts.memory_usage() +
+                               mesh.face_vertex_indices.memory_usage();
+        mesh_triangulation_bytes +=
+            mesh.triangulated_indices.memory_usage() +
+            mesh.triangulated_face_vertex_indices.memory_usage();
+      }
+      s.set("renderMeshPointsBytes", static_cast<double>(mesh_points_bytes));
+      s.set("renderMeshNormalsBytes", static_cast<double>(mesh_normals_bytes));
+      s.set("renderMeshUvBytes", static_cast<double>(mesh_uv_bytes));
+      s.set("renderMeshTopologyBytes", static_cast<double>(mesh_topology_bytes));
+      s.set("renderMeshTriangulationBytes",
+            static_cast<double>(mesh_triangulation_bytes));
       s.set("renderSceneNodes", static_cast<int>(render_scene_.nodes.size()));
       s.set("renderSceneMeshes", static_cast<int>(render_scene_.meshes.size()));
       s.set("renderScenePoints", static_cast<int>(render_scene_.points.size()));
@@ -2299,6 +2422,10 @@ class RenderStream {
     cfg.mesh.tangent_method = tangentMethod_();
     cfg.mesh.enable_bone_reduction = true;
     cfg.mesh.target_bone_count = 4;
+    // RenderStream builds one browser-facing mesh lazily from Stage. Keeping a
+    // second, complete geometry copy in RenderScene only inflates the wasm
+    // heap; retain its material/skinning/animation metadata instead.
+    cfg.mesh.retain_geometry = false;
     cfg.material.load_textures = false;
     cfg.material.allow_missing_textures = true;
     cfg.point_instancer.duplicate_meshes = false;
@@ -2588,16 +2715,91 @@ class RenderStream {
         s_uv_.size() != vertex_count * 2) {
       return false;
     }
-    // ~40B/vertex of temporaries; fail the (optional) tangents instead of
-    // abort()ing when the heap is nearly full.
-    if (!tr::ProbeAlloc(vertex_count * (3 + 3 + 4) * sizeof(float))) {
-      return false;
+
+    // A triangle soup has no shared vertices, so accumulating a tangent and
+    // bitangent for every vertex is unnecessary. Write the final frame for
+    // each triangle directly, avoiding two additional 3-float arrays. This is
+    // a substantial peak-memory reduction for face-varying meshes.
+    if (s_indices_.empty()) {
+      if (vertex_count >
+              (std::numeric_limits<size_t>::max)() / (4 * sizeof(float)) ||
+          !tr::ProbeAlloc(vertex_count * 4 * sizeof(float))) {
+        return false;
+      }
+      s_tangents_.assign(vertex_count * 4, 0.0f);
+      for (size_t i = 0; i + 2 < vertex_count; i += 3) {
+        const float *p0 = &s_points_[i * 3];
+        const float *p1 = &s_points_[(i + 1) * 3];
+        const float *p2 = &s_points_[(i + 2) * 3];
+        const float *u0 = &s_uv_[i * 2];
+        const float *u1 = &s_uv_[(i + 1) * 2];
+        const float *u2 = &s_uv_[(i + 2) * 2];
+        const float e1[3] = {p1[0] - p0[0], p1[1] - p0[1],
+                             p1[2] - p0[2]};
+        const float e2[3] = {p2[0] - p0[0], p2[1] - p0[1],
+                             p2[2] - p0[2]};
+        const float du1 = u1[0] - u0[0];
+        const float dv1 = u1[1] - u0[1];
+        const float du2 = u2[0] - u0[0];
+        const float dv2 = u2[1] - u0[1];
+        const float det = du1 * dv2 - du2 * dv1;
+        const float inv_det = std::fabs(det) > 1.0e-12f ? 1.0f / det : 0.0f;
+        const float tangent[3] = {
+            (dv2 * e1[0] - dv1 * e2[0]) * inv_det,
+            (dv2 * e1[1] - dv1 * e2[1]) * inv_det,
+            (dv2 * e1[2] - dv1 * e2[2]) * inv_det};
+        const float bitangent[3] = {
+            (du1 * e2[0] - du2 * e1[0]) * inv_det,
+            (du1 * e2[1] - du2 * e1[1]) * inv_det,
+            (du1 * e2[2] - du2 * e1[2]) * inv_det};
+        for (size_t corner = 0; corner < 3; ++corner) {
+          const size_t vertex = i + corner;
+          const float *normal = &s_normals_[vertex * 3];
+          const float ndt = normal[0] * tangent[0] +
+                            normal[1] * tangent[1] +
+                            normal[2] * tangent[2];
+          float tx = tangent[0] - normal[0] * ndt;
+          float ty = tangent[1] - normal[1] * ndt;
+          float tz = tangent[2] - normal[2] * ndt;
+          const float length = std::sqrt(tx * tx + ty * ty + tz * tz);
+          if (length > 1.0e-12f) {
+            tx /= length;
+            ty /= length;
+            tz /= length;
+          } else {
+            tx = 1.0f;
+            ty = 0.0f;
+            tz = 0.0f;
+          }
+          const float cx = normal[1] * tz - normal[2] * ty;
+          const float cy = normal[2] * tx - normal[0] * tz;
+          const float cz = normal[0] * ty - normal[1] * tx;
+          const float handedness =
+              (cx * bitangent[0] + cy * bitangent[1] +
+               cz * bitangent[2]) < 0.0f
+                  ? -1.0f
+                  : 1.0f;
+          s_tangents_[vertex * 4 + 0] = tx;
+          s_tangents_[vertex * 4 + 1] = ty;
+          s_tangents_[vertex * 4 + 2] = tz;
+          s_tangents_[vertex * 4 + 3] = handedness;
+        }
+      }
+      return true;
     }
 
-    std::vector<float> tan(vertex_count * 3, 0.0f);
-    std::vector<float> bit(vertex_count * 3, 0.0f);
+    // Accumulate directly into the final xyzw array. Handedness is computed
+    // in a second triangle pass after tangent normalization, avoiding the old
+    // 24B/vertex tangent + bitangent temporaries.
+    if (vertex_count >
+            (std::numeric_limits<size_t>::max)() / (4 * sizeof(float)) ||
+        !tr::ProbeAlloc(vertex_count * 4 * sizeof(float))) {
+      return false;
+    }
+    s_tangents_.assign(vertex_count * 4, 0.0f);
 
-    auto addTri = [&](uint32_t i0, uint32_t i1, uint32_t i2) {
+    auto visitTri = [&](uint32_t i0, uint32_t i1, uint32_t i2,
+                        bool handedness_pass) {
       if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) {
         return;
       }
@@ -2624,30 +2826,32 @@ class RenderStream {
                              (du1 * e2[2] - du2 * e1[2]) * r};
       const uint32_t ids[3] = {i0, i1, i2};
       for (uint32_t id : ids) {
-        tan[size_t(id) * 3 + 0] += sdir[0];
-        tan[size_t(id) * 3 + 1] += sdir[1];
-        tan[size_t(id) * 3 + 2] += sdir[2];
-        bit[size_t(id) * 3 + 0] += tdir[0];
-        bit[size_t(id) * 3 + 1] += tdir[1];
-        bit[size_t(id) * 3 + 2] += tdir[2];
+        float *out = &s_tangents_[size_t(id) * 4];
+        if (!handedness_pass) {
+          out[0] += sdir[0];
+          out[1] += sdir[1];
+          out[2] += sdir[2];
+        } else {
+          const float *normal = &s_normals_[size_t(id) * 3];
+          const float cx = normal[1] * out[2] - normal[2] * out[1];
+          const float cy = normal[2] * out[0] - normal[0] * out[2];
+          const float cz = normal[0] * out[1] - normal[1] * out[0];
+          out[3] += cx * tdir[0] + cy * tdir[1] + cz * tdir[2];
+        }
       }
     };
 
-    if (!s_indices_.empty()) {
+    auto visitAllTriangles = [&](bool handedness_pass) {
       for (size_t i = 0; i + 2 < s_indices_.size(); i += 3) {
-        addTri(s_indices_[i], s_indices_[i + 1], s_indices_[i + 2]);
+        visitTri(s_indices_[i], s_indices_[i + 1], s_indices_[i + 2],
+                 handedness_pass);
       }
-    } else {
-      for (size_t i = 0; i + 2 < vertex_count; i += 3) {
-        addTri(static_cast<uint32_t>(i), static_cast<uint32_t>(i + 1),
-               static_cast<uint32_t>(i + 2));
-      }
-    }
+    };
+    visitAllTriangles(false);
 
-    s_tangents_.assign(vertex_count * 4, 0.0f);
     for (size_t v = 0; v < vertex_count; ++v) {
       const float *n = &s_normals_[v * 3];
-      const float *tv = &tan[v * 3];
+      float *tv = &s_tangents_[v * 4];
       const float ndt = n[0] * tv[0] + n[1] * tv[1] + n[2] * tv[2];
       float tx = tv[0] - n[0] * ndt;
       float ty = tv[1] - n[1] * ndt;
@@ -2662,17 +2866,14 @@ class RenderStream {
         ty = 0.0f;
         tz = 0.0f;
       }
-      const float *bv = &bit[v * 3];
-      const float cx = n[1] * tz - n[2] * ty;
-      const float cy = n[2] * tx - n[0] * tz;
-      const float cz = n[0] * ty - n[1] * tx;
-      const float w = (cx * bv[0] + cy * bv[1] + cz * bv[2]) < 0.0f
-                          ? -1.0f
-                          : 1.0f;
       s_tangents_[v * 4 + 0] = tx;
       s_tangents_[v * 4 + 1] = ty;
       s_tangents_[v * 4 + 2] = tz;
-      s_tangents_[v * 4 + 3] = w;
+    }
+    visitAllTriangles(true);
+    for (size_t v = 0; v < vertex_count; ++v) {
+      s_tangents_[v * 4 + 3] =
+          s_tangents_[v * 4 + 3] < 0.0f ? -1.0f : 1.0f;
     }
     return true;
   }
@@ -3121,6 +3322,88 @@ class RenderStream {
       return rec;
     }
     rec.prim_path = mat.GetPath().str();
+    bool populated_from_render_scene = false;
+    if (render_scene_valid_) {
+      const auto material_it = render_scene_.material_by_path.find(rec.prim_path);
+      if (material_it != render_scene_.material_by_path.end()) {
+        const tr::RenderMaterial *render_mat =
+            render_scene_.get_material(material_it->second);
+        auto metaFromParam = [&](const tr::ShaderParam &param) {
+          TextureMeta meta;
+          const tr::RenderTexture *texture = TextureAt(render_scene_,
+                                                        param.texture_id);
+          if (!texture) return meta;
+          meta.path = texture->asset_path;
+          meta.source_color_space = texture->source_color_space;
+          auto wrapName = [](tr::WrapMode mode) {
+            switch (mode) {
+              case tr::WrapMode::Repeat: return std::string("repeat");
+              case tr::WrapMode::Mirror: return std::string("mirror");
+              case tr::WrapMode::Black: return std::string("black");
+              case tr::WrapMode::Clamp:
+              default: return std::string("clamp");
+            }
+          };
+          meta.wrap_s = wrapName(texture->wrap_s);
+          meta.wrap_t = wrapName(texture->wrap_t);
+          meta.is_udim = isUdimPath_(meta.path);
+          return meta;
+        };
+        if (render_mat && render_mat->preview_surface) {
+          const tr::PreviewSurfaceShader &ps = *render_mat->preview_surface;
+          rec.base_color[0] = ps.diffuse_color.value.x;
+          rec.base_color[1] = ps.diffuse_color.value.y;
+          rec.base_color[2] = ps.diffuse_color.value.z;
+          rec.metallic = ps.metallic.value.x;
+          rec.roughness = ps.roughness.value.x;
+          rec.opacity = ps.opacity.value.x;
+          rec.occlusion = ps.occlusion.value.x;
+          rec.emissive[0] = ps.emissive_color.value.x;
+          rec.emissive[1] = ps.emissive_color.value.y;
+          rec.emissive[2] = ps.emissive_color.value.z;
+          rec.opacity_threshold = ps.opacity_threshold.value.x > 0.0f
+                                      ? ps.opacity_threshold.value.x
+                                      : -1.0f;
+          rec.base_color_meta = metaFromParam(ps.diffuse_color);
+          rec.normal_meta = metaFromParam(ps.normal);
+          rec.roughness_meta = metaFromParam(ps.roughness);
+          rec.metallic_meta = metaFromParam(ps.metallic);
+          rec.occlusion_meta = metaFromParam(ps.occlusion);
+          rec.emissive_meta = metaFromParam(ps.emissive_color);
+          rec.opacity_meta = metaFromParam(ps.opacity);
+          populated_from_render_scene = true;
+        } else if (render_mat && render_mat->openpbr) {
+          const tr::OpenPBRSurfaceShader &op = *render_mat->openpbr;
+          rec.base_color[0] = op.base_color.value.x;
+          rec.base_color[1] = op.base_color.value.y;
+          rec.base_color[2] = op.base_color.value.z;
+          rec.metallic = op.base_metalness.value.x;
+          rec.roughness = op.specular_roughness.value.x;
+          rec.opacity = op.opacity.value.x;
+          rec.emissive[0] = op.emission_color.value.x;
+          rec.emissive[1] = op.emission_color.value.y;
+          rec.emissive[2] = op.emission_color.value.z;
+          rec.base_color_meta = metaFromParam(op.base_color);
+          rec.normal_meta = metaFromParam(op.normal);
+          rec.roughness_meta = metaFromParam(
+              op.specular_roughness.is_texture() ? op.specular_roughness
+                                                 : op.base_roughness);
+          rec.metallic_meta = metaFromParam(op.base_metalness);
+          rec.emissive_meta = metaFromParam(op.emission_color);
+          rec.opacity_meta = metaFromParam(op.opacity);
+          populated_from_render_scene = true;
+        }
+        if (populated_from_render_scene) {
+          rec.base_color_texture = rec.base_color_meta.path;
+          rec.normal_texture = rec.normal_meta.path;
+          rec.roughness_texture = rec.roughness_meta.path;
+          rec.metallic_texture = rec.metallic_meta.path;
+          rec.occlusion_texture = rec.occlusion_meta.path;
+          rec.emissive_texture = rec.emissive_meta.path;
+          rec.opacity_texture = rec.opacity_meta.path;
+        }
+      }
+    }
     tinyusdz::next::UsdPrim shader;
     const std::string shaderPath = tinyusdz::next::GetSurfaceShader(stage_, mat);
     if (!shaderPath.empty()) shader = stage_.GetPrimAtPath(shaderPath);
@@ -3129,7 +3412,7 @@ class RenderStream {
         if (tinyusdz::next::IsPreviewSurface(ch)) { shader = ch; break; }
       }
     }
-    if (shader.IsValid()) {
+    if (!populated_from_render_scene && shader.IsValid()) {
       tinyusdz::next::PreviewSurfaceData ps;
       if (tinyusdz::next::GetPreviewSurfaceData(stage_, shader, &ps)) {
         rec.base_color[0] = ps.diffuse_color[0];
@@ -4272,6 +4555,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("numUnsupportedRenderables", &RenderStream::unsupportedRenderableCount)
       .function("numAnimations", &RenderStream::animationCount)
       .function("getAnimation", &RenderStream::getAnimation)
+      .function("getAnimationView", &RenderStream::getAnimationView)
       .function("getAllAnimations", &RenderStream::getAllAnimations)
       .function("getAnimationInfo", &RenderStream::getAnimationInfo)
       .function("getAllAnimationInfos", &RenderStream::getAllAnimationInfos)
