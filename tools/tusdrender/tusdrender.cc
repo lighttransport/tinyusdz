@@ -260,8 +260,13 @@ static CameraFrame ResolveGpuCameraInst(const tinyusdz::next::Stage &stage,
   if (!opt.camera.empty()) {
     float cam_aspect = 16.0f / 9.0f;
     if (FindNextCameraFrame(stage, opt.camera, opt.timecode, &camera, &cam_aspect)) {
-      if (*out_height <= 0)
-        *out_height = std::max(1, int(std::lround(float(cam_width) / cam_aspect)));
+      if (*out_height <= 0) {
+        // Clamp: a hostile aperture ratio must not overflow the int conversion
+        // (UB) or demand a multi-GB framebuffer.
+        double dh = double(cam_width) / double(cam_aspect);
+        if (!std::isfinite(dh)) dh = 540.0;
+        *out_height = std::max(1, int(std::lround(std::min(32768.0, dh))));
+      }
     } else {
       std::cerr << "WARN: camera not found: " << opt.camera
                 << ". Using auto-fit.\n";
@@ -840,6 +845,17 @@ int main(int argc, char **argv) {
     return RunRTPreviewNext(opt);
   }
 
+  // -frames (per-timecode animation output) is implemented only by the `next`
+  // path above. It used to be silently ignored here -- the run produced one
+  // image literally named with the `####` token and no animation. Fail loudly
+  // instead so the user adds -rtPreview (or drops the flag).
+  if (!opt.frames.empty()) {
+    std::cerr << "-frames is only supported on the next path (a .usdc input or "
+                 "-rtPreview); this run would render a single frame and ignore "
+                 "it. Add -rtPreview, or drop -frames.\n";
+    return EXIT_FAILURE;
+  }
+
 #if defined(HAVE_VULKAN) || defined(HAVE_D3D11) || defined(HAVE_HIP)
   // GPU backends (Vulkan / Direct3D 11 / HIP): load the scene through the `next`
   // lazy loader, build the geometry once, then trace on the selected GPU backend.
@@ -1116,9 +1132,11 @@ int main(int argc, char **argv) {
       float cam_aspect = 16.0f / 9.0f;
       if (FindNextCameraFrame(stage, opt.camera, opt.timecode, &camera,
                               &cam_aspect)) {
-        if (out_height <= 0)
-          out_height =
-              std::max(1, int(std::lround(float(cam_width) / cam_aspect)));
+        if (out_height <= 0) {
+          double dh = double(cam_width) / double(cam_aspect);
+          if (!std::isfinite(dh)) dh = 540.0;
+          out_height = std::max(1, int(std::lround(std::min(32768.0, dh))));
+        }
       } else {
         std::cerr << "WARN: camera not found: " << opt.camera
                   << ". Using auto-fit.\n";
@@ -1479,10 +1497,15 @@ int main(int argc, char **argv) {
     // builder already emitted carry no UVs (and no texture), so pad them.
     tri_uvs.assign(tris.size() * 6, 0.0f);
   }
+  // Inherited purpose + visibility from the source Stage (the tydra
+  // RenderScene carries neither): guide/proxy filtering (-purpose et al.) and
+  // visibility="invisible" now apply on the legacy path like the next path.
+  PurposeVisibilityMap purpose_vis;
+  BuildLegacyPurposeVisibility(stage, &purpose_vis);
   CollectAllGeometry(render_scene, &vertices, &tris, &bounds,
                      opt.direct_prims ? &direct_scene.direct_paths : nullptr,
                      &light_cache, want_uvs ? &tri_uvs : nullptr,
-                     want_uvs ? &legacy_mat_tex : nullptr);
+                     want_uvs ? &legacy_mat_tex : nullptr, &purpose_vis);
   const bool has_direct = direct_scene.spheres || direct_scene.round_curves ||
                           direct_scene.flat_curves || direct_scene.points ||
                           direct_scene.bez_curves || direct_scene.tets ||
@@ -1524,8 +1547,9 @@ int main(int argc, char **argv) {
     if (cam_node) {
       const RenderCamera &cam = render_scene.cameras[size_t(cam_node->id)];
       if (cam.verticalAspectRatio > 0.0f) {
-        height = std::max(1, int(std::round(float(opt.width) *
-                                           cam.verticalAspectRatio)));
+        double dh = double(opt.width) * double(cam.verticalAspectRatio);
+        if (!std::isfinite(dh)) dh = 540.0;
+        height = std::max(1, int(std::lround(std::min(32768.0, dh))));
       }
     }
   }
