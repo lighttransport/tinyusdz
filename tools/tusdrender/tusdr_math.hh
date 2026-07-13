@@ -314,6 +314,8 @@ struct TriInfo {
   Vec3 p1;
   Vec3 p2;
   Vec3 n;
+  // USD doubleSided (default 1 = pre-cull behavior; see FlatTri::double_sided).
+  uint8_t double_sided{1};
   Vec3 base_color{0.18f, 0.18f, 0.18f};
   Vec3 emission{0.0f, 0.0f, 0.0f};
   float roughness{0.55f};
@@ -437,9 +439,13 @@ struct FlatTri {
   Vec3 p0;
   Vec3 p1;
   Vec3 p2;
-  Vec3 n;
+  Vec3 n;  // geometric (winding) normal: the front face points along +n
   uint32_t purpose_bit{kPurposeDefaultBit};
   uint32_t mat_id{0};
+  // USD doubleSided (default 1 here = the pre-cull behavior, so any unstamped
+  // flat tri keeps rendering from both sides). Stamped from the authored value
+  // at every mesh creation site; 0 = single-sided -> back-face culled.
+  uint8_t double_sided{1};
 };
 
 // Build a full TriInfo from a material record (positions/normal are filled by the
@@ -561,6 +567,7 @@ inline void SplitTriInfos(const std::vector<TriInfo> &tris,
     ft.n = t.n;
     ft.purpose_bit = t.purpose_bit;
     ft.mat_id = uint32_t(i);
+    ft.double_sided = t.double_sided;
     (*out_mats)[i] = ExtractTriMat(t);
   }
 }

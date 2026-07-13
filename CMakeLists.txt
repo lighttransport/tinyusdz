@@ -2250,6 +2250,7 @@ if(TINYUSDZ_BUILD_TESTS)
         cmyk-jpeg-texture
         degraded-material
         dome-format
+        double-sided-cull
         frames-framespec
         geomsubset-materials
         ibl-specular-bound
