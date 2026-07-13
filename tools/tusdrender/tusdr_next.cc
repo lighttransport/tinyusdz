@@ -178,6 +178,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
                           const UvXform &uv_xform, bool want_uvs,
                           FVec *vertices, TVec *tris, FVec *tri_uvs,
                           Bounds *bounds, RTPreviewStats *stats,
+                          const std::string &preferred_uv = std::string(),
                           bool purpose_cull = false,
                           TriMat *out_job_mat = nullptr, float opacity = 1.0f,
                           bool want_colors = false, ByteVec *tri_colors = nullptr,
@@ -362,15 +363,23 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
        opacity_tex.id >= 0 || clearcoat_tex.id >= 0 ||
        clearcoat_rough_tex.id >= 0 || specular_tex_id >= 0 ||
        displacement_tex_id >= 0)) {
-    // Exporters disagree on the UV set name; try them in the same preference
-    // order tydra-next's converter uses, so both tools find the same set.
+    // Pick the UV set. If the bound base-color texture names one (its
+    // UsdPrimvarReader varname), use that so a texture reading a secondary set
+    // (e.g. `uvSet1`) is sampled with it, matching tusdview. Otherwise fall back
+    // to the exporter preference list tydra-next's converter uses.
     std::string st_name;
-    for (const std::string &name :
-         tinyusdz::tydra::next::MeshConfig{}.uv_primvar_names) {
-      st = ReadFloatArrayLazy(prim, ("primvars:" + name).c_str(), time);
-      if (!st.empty()) {
-        st_name = name;
-        break;
+    if (!preferred_uv.empty()) {
+      st = ReadFloatArrayLazy(prim, ("primvars:" + preferred_uv).c_str(), time);
+      if (!st.empty()) st_name = preferred_uv;
+    }
+    if (st.empty()) {
+      for (const std::string &name :
+           tinyusdz::tydra::next::MeshConfig{}.uv_primvar_names) {
+        st = ReadFloatArrayLazy(prim, ("primvars:" + name).c_str(), time);
+        if (!st.empty()) {
+          st_name = name;
+          break;
+        }
       }
     }
     if (!st.empty()) {
@@ -1544,6 +1553,13 @@ bool ResolveMeshMaterialTydraNext(const tinyusdz::next::Stage &stage,
       resolved.base_color = Vec3{1.0f, 1.0f, 1.0f};
       ApplyRenderTextureUvXform(stage, scratch, s.diffuse_color.texture_id,
                                 false, &resolved.uv_xform);
+      // Which UV set the base-color texture reads (its UsdPrimvarReader
+      // varname). Drives the mesh's `st` selection so a texture bound to a
+      // secondary set (`uvSet1`) samples that set, not the primary.
+      const int32_t did = s.diffuse_color.texture_id;
+      if (did >= 0 && size_t(did) < scratch.textures.size()) {
+        resolved.uv_primvar = scratch.textures[size_t(did)].uv_primvar;
+      }
     }
     LoadRenderTexture(scratch, s.emissive_color.texture_id, tc, true,
                       nullptr, nullptr,
@@ -3334,7 +3350,8 @@ bool StreamMeshJobs(const std::vector<MeshJobNext> &jobs, uint32_t purpose_mask,
                 job.clearcoat_rough_tex, job.specular_color,
                 job.specular_tex_id, job.ior, job.use_specular_workflow,
                 job.uv_xform,
-                want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, purpose_cull, &r.mat,
+                want_uvs, &r.v, &r.t, &r.uv, &r.b, &r.s, job.uv_primvar,
+                purpose_cull, &r.mat,
                 job.opacity, want_colors, &r.col, want_normals, &r.nrm,
                 indexed ? &r.uvv : nullptr, indexed ? &r.idx : nullptr,
                 indexed ? &jvb : nullptr, job.displacement,
@@ -4518,6 +4535,7 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
   std::string env_path = opt.env_file;
   Vec3 scale{1.0f, 1.0f, 1.0f};
   bool rotated = false;
+  bool have_dome = false;  // a DomeLight prim was found (may be textureless)
   Vec3 rx{1.0f, 0.0f, 0.0f}, ry{0.0f, 1.0f, 0.0f}, rz{0.0f, 0.0f, 1.0f};
   if (env_path.empty()) {
     for (const tinyusdz::next::UsdPrim &root : stage.GetRootPrims()) {
@@ -4525,6 +4543,7 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
       tinyusdz::next::UsdPrim dome =
           FindDomeLightRec(root, matrix4d::identity(), time, &dome_world);
       if (!dome.IsValid()) continue;
+      have_dome = true;
       if (const tinyusdz::next::Value *v =
               dome.GetPropertyValue("inputs:texture:file")) {
         const std::string *ap = v->as_asset_path();
@@ -4534,10 +4553,14 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
       float intensity = 1.0f;
       if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:intensity"))
         if (const float *f = v->as_float()) intensity = *f;
+      float exposure = 0.0f;
+      if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:exposure"))
+        if (const float *f = v->as_float()) exposure = *f;
       Vec3 color{1.0f, 1.0f, 1.0f};
       if (const tinyusdz::next::Value *v = dome.GetPropertyValue("inputs:color"))
         if (const float *f = v->as_float3()) color = Vec3{f[0], f[1], f[2]};
-      scale = Vec3{color.x * intensity, color.y * intensity, color.z * intensity};
+      const float e = intensity * std::exp2(exposure);
+      scale = Vec3{color.x * e, color.y * e, color.z * e};
       // Dome orientation: the dome's local axes in world space (rows of the world
       // rotation, normalized to drop any scale). A world direction is mapped into
       // the dome frame by projecting onto them. Only flagged when meaningfully
@@ -4566,11 +4589,22 @@ bool BuildNextIbl(const tinyusdz::next::Stage &stage, const Options &opt,
       break;
     }
   }
-  if (env_path.empty()) return false;
-  std::string path = env_path;
-  if (path[0] != '/' && !base_dir.empty()) path = base_dir + "/" + path;
   EnvImage env;
-  if (!LoadEnvImageFromFile(path, scale, &env)) return false;
+  if (env_path.empty()) {
+    // A DomeLight with no texture:file is a uniform emitter of color*intensity
+    // (times exposure). Synthesize a constant environment so it still lights the
+    // scene and fills the background, instead of dropping the light entirely
+    // (which rendered a textureless dome black on this path). No dome at all ->
+    // no IBL (headlight fallback), unchanged.
+    if (!have_dome) return false;
+    env.width = 2;
+    env.height = 1;
+    env.pixels.assign(size_t(env.width) * size_t(env.height), scale);
+  } else {
+    std::string path = env_path;
+    if (path[0] != '/' && !base_dir.empty()) path = base_dir + "/" + path;
+    if (!LoadEnvImageFromFile(path, scale, &env)) return false;
+  }
   if (!BuildIblFromEnv(std::move(env), ibl)) return false;
   ibl->rotated = rotated;
   ibl->rx = rx;
@@ -4773,6 +4807,10 @@ void PrintRTStats(const RenderContext &ctx) {
 // separated spec is "t", "start:end", or "start:end x stride" (stride defaults
 // to 1, sign inferred from start/end). Examples: "1", "1:10", "1:10x2",
 // "10:1", "1:5,8,12:20x4".
+// Upper bound on the number of frames a single -frames spec may enumerate.
+// Guards against OOM / non-terminating loops from a huge range or a tiny stride.
+static constexpr size_t kMaxFrameSpecFrames = 100000;
+
 bool ParseFrameSpec(const std::string &spec, std::vector<double> *times) {
   std::string s = spec;
   for (char &c : s) {
@@ -4804,11 +4842,28 @@ bool ParseFrameSpec(const std::string &spec, std::vector<double> *times) {
     }
     if (stride == 0) stride = 1;
     stride = std::fabs(stride);
-    if (start <= end) {
-      for (double t = start; t <= end + 1e-9; t += stride) times->push_back(t);
-    } else {
-      for (double t = start; t >= end - 1e-9; t -= stride) times->push_back(t);
+    // Reject non-finite bounds/stride, and a stride so small relative to the
+    // range that `t += stride` cannot progress (would spin forever) or the range
+    // is so large it would enumerate an unbounded number of frames (OOM). A
+    // per-token count computed up front avoids both.
+    if (!std::isfinite(start) || !std::isfinite(end) || !std::isfinite(stride)) {
+      return false;
     }
+    const double span = std::fabs(end - start);
+    // stride must move the cursor by at least ~1 ULP at the range magnitude.
+    const double min_stride =
+        std::max(std::fabs(start), std::fabs(end)) *
+        std::numeric_limits<double>::epsilon();
+    if (stride <= min_stride) return false;
+    const double steps = std::floor(span / stride + 1e-9);
+    // +1 for the inclusive endpoint. Cap the total across all tokens.
+    if (steps + 1.0 > double(kMaxFrameSpecFrames) ||
+        times->size() + size_t(steps) + 1 > kMaxFrameSpecFrames) {
+      return false;
+    }
+    const long n = long(steps);
+    const double dir = (start <= end) ? 1.0 : -1.0;
+    for (long i = 0; i <= n; ++i) times->push_back(start + dir * stride * double(i));
   }
   return !times->empty();
 }

@@ -2018,6 +2018,15 @@ endif()
 #
 #endif()
 
+# Enable CTest before the example subdirectories are added, so a subdirectory
+# (e.g. examples/tusdview) can register its own tests with add_test(). The
+# main enable_testing() inside the TINYUSDZ_BUILD_TESTS block below runs after
+# these add_subdirectory() calls, which is too late for the subdirectory's own
+# add_test() to take effect. Calling it twice is harmless.
+if(TINYUSDZ_BUILD_TESTS)
+  enable_testing()
+endif()
+
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/tusdcat)
   if(TINYUSDZ_WITH_TEXTOOLS)
@@ -2111,6 +2120,44 @@ if(TINYUSDZ_BUILD_TESTS)
   enable_testing()
 
   #
+  # textools (vendored tir/texcomp/texpipe/envmap) upstream self-tests.
+  # Plain-C main() programs, no GPU/display needed. These were dropped from
+  # CMake in a merge while the sources stayed under src/external/textools;
+  # re-register so `ctest -L textools` runs them again.
+  #
+  if(TINYUSDZ_WITH_TEXTOOLS)
+    set(TEXTOOLS_TEST_PROGRAMS
+      "textools_tir_test|${TEXTOOLS_DIR}/resize/tests/tir_test.c|textools-tir"
+      "textools_tir_f16_test|${TEXTOOLS_DIR}/resize/tests/tir_f16_test.c|textools-tir-f16"
+      "textools_texcomp_test|${TEXTOOLS_DIR}/texcomp/test/test_texcomp.c|textools-texcomp"
+      "textools_texpipe_test|${TEXTOOLS_DIR}/texpipe/test/test_texpipe.c|textools-texpipe"
+      "textools_envmap_test|${TEXTOOLS_DIR}/envmap/test/test_envmap.c|textools-envmap"
+      "textools_pbr_test|${TEXTOOLS_DIR}/envmap/test/test_pbr.c|textools-pbr")
+    foreach(entry IN LISTS TEXTOOLS_TEST_PROGRAMS)
+      string(REPLACE "|" ";" entry "${entry}")
+      list(GET entry 0 tt_target)
+      list(GET entry 1 tt_source)
+      list(GET entry 2 tt_name)
+      add_executable(${tt_target} ${tt_source})
+      target_link_libraries(${tt_target} PRIVATE tinyusdz_textools)
+      # Some tests poke library internals (tir_internal.h / texcomp_internal.h).
+      target_include_directories(${tt_target} PRIVATE
+        ${TEXTOOLS_DIR}/resize/src ${TEXTOOLS_DIR}/texcomp/src)
+      target_compile_features(${tt_target} PRIVATE c_std_11)
+      if(NOT MSVC)
+        target_compile_options(${tt_target} PRIVATE -w)
+      endif()
+      add_test(NAME ${tt_name} COMMAND ${tt_target})
+      set_tests_properties(${tt_name} PROPERTIES LABELS "textools")
+    endforeach()
+  endif()
+
+  # (The tusdview unit tests are registered inside
+  # examples/tusdview/CMakeLists.txt, where their targets are in scope; that
+  # works because enable_testing() is now called before that subdirectory is
+  # added — see the top-level enable_testing() call.)
+
+  #
   # Standalone tester
   #
   set(TINYUSDZ_TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/test-main.cc)
@@ -2201,6 +2248,8 @@ if(TINYUSDZ_BUILD_TESTS)
         camera-modes
         cmyk-jpeg-texture
         degraded-material
+        frames-framespec
+        ibl-specular-bound
         instancer-invisible-ids
         instancer-orientation
         light-double-count
@@ -2213,12 +2262,14 @@ if(TINYUSDZ_BUILD_TESTS)
         shaped-area-lights
         sphere-light-nee
         subdivision-schemes
+        textureless-dome
         timecode-blendshape-animation
         timecode-normals-animation
         timecode-points-animation
         timecode-transform-animation
         transparency
         usdz-texture-equivalence
+        uv-set-routing
         vk-ray-tiling)
     foreach(t ${TUSDR_SHELL_TESTS})
       add_test(
@@ -2397,6 +2448,20 @@ if(TINYUSDZ_BUILD_TESTS)
                 "${CMAKE_BINARY_DIR}/Testing/tusdview-vram-budget"
         )
       set_tests_properties(tusdview-vram-budget PROPERTIES SKIP_RETURN_CODE 77)
+
+      # A non-instanced blendshape mesh must animate on the default --next loader.
+      # Morph used to be built only for instanced prototypes, so a plain
+      # SkelRoot -> Mesh blendshape rendered frozen at its rest pose. Headless
+      # (Vulkan); skips without a device.
+      add_test(
+        NAME tusdview-noninstanced-blendshape
+        COMMAND python3
+                ${PROJECT_SOURCE_DIR}/tests/tusdview/check-noninstanced-blendshape.py
+                "$<TARGET_FILE:tusdview>"
+                "${CMAKE_BINARY_DIR}/Testing/tusdview-noninstanced-blendshape"
+        )
+      set_tests_properties(tusdview-noninstanced-blendshape
+                           PROPERTIES SKIP_RETURN_CODE 77)
 
       # Vulkan RT BLAS compaction: must shrink the acceleration structures, must
       # build ONE BLAS per prototype (not per instance), and must be image-neutral.

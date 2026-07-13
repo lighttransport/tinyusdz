@@ -287,6 +287,15 @@ void TestPipelineClassification() {
     CHECK(bt.compressed.mips[l].width == bt.mipImages[l].width);
     CHECK(!bt.compressed.mips[l].data.empty());
   }
+  // Block-format choice must be usage-aware: an OPAQUE base color under BCn goes
+  // to BC1 (2-endpoint color line is fine for color), but a NORMAL map must NOT
+  // -- BC1/BC3 cross-contaminate its independent X/Y. It goes to a full-channel
+  // format (BC7 on this BC-capable default cap set) instead. This is the T4
+  // regression: normal maps used to be squeezed onto BC1.
+  CHECK(bt.compressed.format == tusdview::DrawCompressedFormat::BC1);
+  CHECK(nt.compressed.format != tusdview::DrawCompressedFormat::BC1);
+  CHECK(nt.compressed.format != tusdview::DrawCompressedFormat::BC3);
+  CHECK(nt.compressed.format == tusdview::DrawCompressedFormat::BC7);
 }
 
 void TestDecodedFormatNormalization() {
