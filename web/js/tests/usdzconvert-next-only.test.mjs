@@ -4,6 +4,7 @@
 // tinyusdz_next_64.js.
 
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 
 import { convertFolderToUSDZ, loadWasm, unpackUSDZ } from '../src/usdzconvert.js';
 import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
@@ -125,9 +126,32 @@ def Xform "World"
     def Mesh "Tri"
     {
         rel material:binding = </World/Mat>
+        uniform bool doubleSided = true
         int[] faceVertexCounts = [3]
         int[] faceVertexIndices = [0, 1, 2]
         point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    }
+
+    def Mesh "Concave"
+    {
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4]
+        point3f[] points = [
+            (0, 0, 0), (3, 0, 0), (3, 3, 0), (2, 1, 0), (0, 3, 0)
+        ]
+    }
+
+    def Mesh "ConcaveFaceVarying"
+    {
+        int[] faceVertexCounts = [5]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4]
+        point3f[] points = [
+            (0, 0, 0), (3, 0, 0), (3, 3, 0), (2, 1, 0), (0, 3, 0)
+        ]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0.66, 0.33), (0, 1)] (
+            interpolation = "faceVarying"
+        )
+        int[] primvars:st:indices = [0, 1, 2, 3, 4]
     }
 }
 `;
@@ -329,6 +353,49 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       `${label}: getMeshCopy should expose legacy uvs alias`);
     assert.equal(JSON.parse(mesh.material.materialXJson).primPath, '/World/Mat',
       `${label}: adapter should preserve material JSON export`);
+    assert.equal(mesh.doubleSided, true,
+      `${label}: adapter should preserve authored mesh doubleSided`);
+
+    let concave = null;
+    let concaveFaceVarying = null;
+    for (let i = 0; i < adapter.numMeshes(); ++i) {
+      const candidate = adapter.getMeshCopy(i);
+      if (candidate?.primPath === '/World/Concave') concave = candidate;
+      if (candidate?.primPath === '/World/ConcaveFaceVarying') {
+        concaveFaceVarying = candidate;
+      }
+    }
+    assert.ok(concave?.indices?.length === 9,
+      `${label}: concave pentagon should produce three triangles`);
+    let triangleArea = 0;
+    for (let i = 0; i < concave.indices.length; i += 3) {
+      const a = concave.indices[i] * 3;
+      const b = concave.indices[i + 1] * 3;
+      const c = concave.indices[i + 2] * 3;
+      const cross = (concave.points[b] - concave.points[a]) *
+          (concave.points[c + 1] - concave.points[a + 1]) -
+        (concave.points[b + 1] - concave.points[a + 1]) *
+          (concave.points[c] - concave.points[a]);
+      triangleArea += Math.abs(cross) * 0.5;
+    }
+    assert.ok(Math.abs(triangleArea - 6) < 1e-5,
+      `${label}: robust triangulation must not overlap the concave notch (area ${triangleArea})`);
+    assert.ok(concaveFaceVarying?.points?.length === 27,
+      `${label}: face-varying concave pentagon should expand to nine triangle corners`);
+    assert.ok(!concaveFaceVarying.indices || concaveFaceVarying.indices.length === 0,
+      `${label}: face-varying fixture should exercise the non-indexed soup path`);
+    let soupArea = 0;
+    for (let a = 0; a < concaveFaceVarying.points.length; a += 9) {
+      const b = a + 3;
+      const c = a + 6;
+      const cross = (concaveFaceVarying.points[b] - concaveFaceVarying.points[a]) *
+          (concaveFaceVarying.points[c + 1] - concaveFaceVarying.points[a + 1]) -
+        (concaveFaceVarying.points[b + 1] - concaveFaceVarying.points[a + 1]) *
+          (concaveFaceVarying.points[c] - concaveFaceVarying.points[a]);
+      soupArea += Math.abs(cross) * 0.5;
+    }
+    assert.ok(Math.abs(soupArea - 6) < 1e-5,
+      `${label}: face-varying corner remap must preserve earcut area (area ${soupArea})`);
     assert.equal(typeof adapter.getUpAxis(), 'string', `${label}: adapter should expose up axis`);
     const points = adapter.getPoints(0);
     assert.ok(points?.points instanceof Float32Array, `${label}: adapter should expose point cloud data`);
@@ -369,12 +436,20 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       releaseBuildData: false,
     });
     const curveGroups = [];
+    const authoredDoubleSidedMeshes = [];
     built.node.traverse((object) => {
       if (object.userData?.usdCurves) curveGroups.push(object);
+      if (object.userData?.usdMesh?.doubleSided) authoredDoubleSidedMeshes.push(object);
     });
     assert.ok(curveGroups.length >= 1, `${label}: fixture should build curve primitives`);
     assert.ok(curveGroups.every((object) => object.visible === false),
       `${label}: curve primitives should honor the default-off viewer option`);
+    assert.ok(authoredDoubleSidedMeshes.length >= 1,
+      `${label}: fixture should build an authored double-sided mesh`);
+    assert.ok(authoredDoubleSidedMeshes.every((object) => {
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      return materials.every((material) => material.side === THREE.DoubleSide);
+    }), `${label}: authored doubleSided should select Three.DoubleSide`);
     built.node.traverse((object) => {
       object.geometry?.dispose?.();
       object.material?.dispose?.();
