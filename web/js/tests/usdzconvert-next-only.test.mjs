@@ -620,6 +620,27 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       return materials.every((material) => material.side === THREE.DoubleSide);
     }), `${label}: authored doubleSided should select Three.DoubleSide`);
+
+    const pruned = buildNextThreeNode(adapter, {
+      skipTextures: true,
+      showCurves: false,
+      releaseBuildData: false,
+      pruneEmptyNodes: true,
+    });
+    let fullObjectCount = 0;
+    let prunedObjectCount = 0;
+    built.node.traverse(() => { fullObjectCount++; });
+    pruned.node.traverse(() => { prunedObjectCount++; });
+    assert.ok(prunedObjectCount < fullObjectCount,
+      `${label}: pruning should omit empty non-rendering hierarchy nodes`);
+    assert.ok(pruned.node.getObjectByName('Animated'),
+      `${label}: pruning must retain animated transform targets`);
+    assert.ok(pruned.node.getObjectByName('Tri'),
+      `${label}: pruning must retain renderable prim transforms`);
+    pruned.node.traverse((object) => {
+      object.geometry?.dispose?.();
+      object.material?.dispose?.();
+    });
     built.node.traverse((object) => {
       object.geometry?.dispose?.();
       object.material?.dispose?.();
