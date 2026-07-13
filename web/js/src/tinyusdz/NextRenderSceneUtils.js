@@ -20,13 +20,21 @@ export class NextTextureLoadingManager {
     this.pendingReleaseAdapters = new Set();
   }
 
-  queueTexture(material, mapProperty, adapter, assetPath, colorRole = 'data') {
+  queueTexture(
+    material, mapProperty, adapter, assetPath, colorRole = 'data', sampler = null,
+    materialXOps = null) {
     if (!assetPath) return;
     const role = colorRole === 'color' ? 'color' : 'data';
-    const key = `${role}:${assetPath}`;
+    const wrapS = nextTextureWrapMode(sampler?.wrapS);
+    const wrapT = nextTextureWrapMode(sampler?.wrapT);
+    const opsKey = materialXTextureOpsKey(materialXOps);
+    const key = `${role}:${wrapS}:${wrapT}:${assetPath}:${opsKey}`;
     let task = this.taskMap.get(key);
     if (!task) {
-      task = { adapter, assetPath, colorRole: role, bindings: [] };
+      task = {
+        adapter, assetPath, colorRole: role, wrapS, wrapT,
+        materialXOps: materialXOps || [], bindings: []
+      };
       this.taskMap.set(key, task);
       this.tasks.push(task);
     }
@@ -147,11 +155,28 @@ export class NextTextureLoadingManager {
 
   async loadTexture(task) {
     const role = task.colorRole === 'color' ? 'color' : 'data';
-    const key = `${role}:${task.assetPath}`;
-    if (!this.promiseCache.has(key)) {
-      this.promiseCache.set(key, loadNextArchiveTexture(task.adapter, task.assetPath, role));
+    const sourceKey = `${role}:${task.wrapS}:${task.wrapT}:${task.assetPath}`;
+    if (!this.promiseCache.has(sourceKey)) {
+      this.promiseCache.set(
+        sourceKey, loadNextArchiveTexture(task.adapter, task.assetPath, role, task));
     }
-    return this.promiseCache.get(key);
+    const opsKey = materialXTextureOpsKey(task.materialXOps);
+    if (!opsKey) return this.promiseCache.get(sourceKey);
+
+    const instanceKey = `${sourceKey}:${opsKey}`;
+    if (!this.promiseCache.has(instanceKey)) {
+      this.promiseCache.set(instanceKey, this.promiseCache.get(sourceKey).then((source) => {
+        const texture = source.clone();
+        // Texture.clone() may share its Source with the original. Baking by
+        // assigning texture.image would then rewrite every material using the
+        // deduplicated archive image (e.g. direct, gamma, and inverse-gamma
+        // variants of one PNG). Give the transformed instance its own Source.
+        texture.source = new THREE.Source(source.image);
+        bakeMaterialXTextureOps(texture, task.materialXOps);
+        return texture;
+      }));
+    }
+    return this.promiseCache.get(instanceKey);
   }
 }
 
@@ -161,6 +186,31 @@ export function isNextScene(usd) {
 
 export function textureColorRoleForMap(mapProperty) {
   return (mapProperty === 'map' || mapProperty === 'emissiveMap') ? 'color' : 'data';
+}
+
+export function nextTextureWrapMode(wrap) {
+  if (wrap === THREE.RepeatWrapping || wrap === THREE.MirroredRepeatWrapping ||
+      wrap === THREE.ClampToEdgeWrapping) {
+    return wrap;
+  }
+  switch (String(wrap || '').toLowerCase()) {
+    case 'repeat':
+    case 'tile':
+    case 'tileforever':
+      return THREE.RepeatWrapping;
+    case 'mirror':
+    case 'mirroredrepeat':
+      return THREE.MirroredRepeatWrapping;
+    case 'black':
+    case 'clamp':
+    case 'clamp_to_edge':
+    case 'clamp_to_border':
+    case 'usemetadata':
+    default:
+      // WebGL has no portable border-color sampler. Clamp matches the legacy
+      // renderer and preserves transparent image borders for USD `black`.
+      return THREE.ClampToEdgeWrapping;
+  }
 }
 
 /// Effective color role for a texture: an authored colorspace (colorSpace
@@ -173,10 +223,170 @@ export function textureColorRole(mapProperty, authoredColorSpace) {
     return 'color';
   }
   if (authored === 'raw' || authored === 'linear' || authored === 'lin_srgb' ||
-      authored === 'lin_rec709' || authored === 'scene-linear rec.709-srgb') {
+      authored === 'lin_rec709' || authored === 'scene-linear rec.709-srgb' ||
+      authored === 'lin_rec2020' || authored === 'lin_displayp3' ||
+      authored === 'acescg') {
     return 'data';
   }
   return textureColorRoleForMap(mapProperty);
+}
+
+function materialXCategory(node) {
+  return String(node?.category || '')
+    .replace(/_(color[234]|vector[234]|float|integer|boolean)$/, '');
+}
+
+function materialXTextureOpsKey(ops) {
+  if (!Array.isArray(ops) || ops.length === 0) return '';
+  return ops.map((op) => {
+    const values = {};
+    for (const input of (op.node?.inputs || [])) {
+      if (input.value !== undefined) values[input.name] = input.value;
+    }
+    return `${op.category}:${JSON.stringify(values)}`;
+  }).join('|');
+}
+
+function materialXOpsNeedBake(ops) {
+  if (!Array.isArray(ops) || ops.length === 0) return false;
+  const hasCombine = ops.some((op) => String(op.category || '').startsWith('combine'));
+  return ops.some((op) =>
+    op.category === 'power' || op.category === 'multiply' ||
+    op.category === 'add' || op.category === 'invert' ||
+    (op.category === 'extract' && !hasCombine));
+}
+
+function bakeMaterialXTextureOps(texture, ops) {
+  if (!texture?.image || !materialXOpsNeedBake(ops)) return;
+  const image = texture.image;
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.drawImage(image, 0, 0);
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  const hasCombine = ops.some((op) => String(op.category || '').startsWith('combine'));
+
+  // Graph traversal records output-to-image order. Pixel operations execute in
+  // the authored image-to-output order.
+  for (const op of [...ops].reverse()) {
+    const inputValue = (name) =>
+      (op.node?.inputs || []).find((input) => input.name === name)?.value;
+    const components = (value, fallback = 0) => {
+      if (Array.isArray(value)) {
+        return [value[0] ?? fallback, value[1] ?? value[0] ?? fallback,
+          value[2] ?? value[0] ?? fallback];
+      }
+      const scalar = value ?? fallback;
+      return [scalar, scalar, scalar];
+    };
+    if (op.category === 'power') {
+      const exponent = inputValue('in2');
+      if (exponent === undefined) continue;
+      const e = components(exponent, 1);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = Math.round(Math.pow(data[i] / 255, e[0]) * 255);
+        data[i + 1] = Math.round(Math.pow(data[i + 1] / 255, e[1]) * 255);
+        data[i + 2] = Math.round(Math.pow(data[i + 2] / 255, e[2]) * 255);
+      }
+    } else if (op.category === 'multiply') {
+      const factor = inputValue('in2');
+      if (factor === undefined) continue;
+      const f = components(factor, 1);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = Math.min(255, Math.round(data[i] * f[0]));
+        data[i + 1] = Math.min(255, Math.round(data[i + 1] * f[1]));
+        data[i + 2] = Math.min(255, Math.round(data[i + 2] * f[2]));
+      }
+    } else if (op.category === 'add') {
+      const offset = inputValue('in2');
+      if (offset === undefined) continue;
+      const o = components(offset);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = Math.min(255, Math.max(0, Math.round(data[i] + o[0] * 255)));
+        data[i + 1] = Math.min(255, Math.max(0, Math.round(data[i + 1] + o[1] * 255)));
+        data[i + 2] = Math.min(255, Math.max(0, Math.round(data[i + 2] + o[2] * 255)));
+      }
+    } else if (op.category === 'invert') {
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = 255 - data[i];
+        data[i + 1] = 255 - data[i + 1];
+        data[i + 2] = 255 - data[i + 2];
+      }
+    } else if (op.category === 'extract' && !hasCombine) {
+      const channel = Math.max(0, Math.min(3, Number(inputValue('index') ?? 0)));
+      for (let i = 0; i < data.length; i += 4) {
+        const value = data[i + channel];
+        data[i] = value;
+        data[i + 1] = value;
+        data[i + 2] = value;
+        data[i + 3] = 255;
+      }
+    }
+  }
+  context.putImageData(imageData, 0, 0);
+  texture.image = canvas;
+  texture.needsUpdate = true;
+}
+
+// Resolve the image and pixel-operation chain feeding one OpenPBR input.
+// This mirrors the legacy demo's graph-aware texture path, but lives in the
+// shared next scene builder so every next consumer gets identical behavior.
+export function materialXTextureSpecForParam(nodeGraphData, paramName) {
+  if (!nodeGraphData || !paramName) return null;
+  const graph = nodeGraphData.nodegraph || nodeGraphData;
+  const nodes = graph.nodes || [];
+  const outputs = graph.outputs || [];
+  const connections = nodeGraphData.connections || graph.connections || [];
+  const nodeMap = new Map(nodes.map((node) => [node.name, node]));
+  const images = new Map();
+  for (const node of nodes) {
+    const category = materialXCategory(node);
+    if (category !== 'image' && category !== 'tiledimage') continue;
+    const file = (node.inputs || []).find((input) => input.name === 'file');
+    if (file?.value) {
+      images.set(node.name, {
+        filename: file.value,
+        colorspace: file.colorspace || file.colorSpace || ''
+      });
+    }
+  }
+  if (images.size === 0) return null;
+
+  const targetOutputs = new Set(connections
+    .filter((connection) => connection.input === paramName)
+    .map((connection) => connection.output));
+  // If the graph has an explicit surface-connection table, absence of this
+  // parameter means it is not graph-driven. Falling back to the first graph
+  // output can otherwise apply an opacity extract to the base-color map.
+  if (connections.length > 0 && targetOutputs.size === 0) return null;
+  const trace = (nodeName, ops = [], visited = new Set()) => {
+    if (!nodeName || visited.has(nodeName)) return null;
+    if (images.has(nodeName)) return { ...images.get(nodeName), ops };
+    const node = nodeMap.get(nodeName);
+    if (!node) return null;
+    const nextVisited = new Set(visited);
+    nextVisited.add(nodeName);
+    const category = materialXCategory(node);
+    const passThrough = category.startsWith('convert') || category.startsWith('texcoord') ||
+      category.startsWith('normalmap') || category.startsWith('heighttonormal');
+    const nextOps = passThrough ? ops : [...ops, { name: nodeName, category, node }];
+    for (const input of (node.inputs || [])) {
+      if (!input.nodename) continue;
+      const found = trace(input.nodename, nextOps, nextVisited);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  for (const output of outputs) {
+    if (targetOutputs.size > 0 && !targetOutputs.has(output.name)) continue;
+    const found = trace(output.nodename);
+    if (found) return found;
+  }
+  return null;
 }
 
 function isUnsupportedBrowserTexturePath(assetPath) {
@@ -194,7 +404,7 @@ function browserTextureMimeType(assetPath) {
   return '';
 }
 
-export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') {
+export async function loadNextArchiveTexture(adapter, assetPath, role = 'data', sampler = null) {
   if (isUnsupportedBrowserTexturePath(assetPath)) {
     const error = new Error(`texture format is not supported by this browser demo: ${assetPath}`);
     error.name = 'UnsupportedTextureFormatError';
@@ -232,8 +442,8 @@ export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') 
     const texture = new THREE.CanvasTexture(canvas);
     texture.name = `${assetPath} [${images.map((tile) => tile.id).join(',')}]`;
     texture.colorSpace = role === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.wrapS = nextTextureWrapMode(sampler?.wrapS);
+    texture.wrapT = nextTextureWrapMode(sampler?.wrapT);
     texture.flipY = true;
     texture.needsUpdate = true;
     return texture;
@@ -249,8 +459,8 @@ export async function loadNextArchiveTexture(adapter, assetPath, role = 'data') 
   try {
     const texture = await new THREE.TextureLoader().loadAsync(blobUrl);
     texture.colorSpace = role === 'color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
+    texture.wrapS = nextTextureWrapMode(sampler?.wrapS);
+    texture.wrapT = nextTextureWrapMode(sampler?.wrapT);
     texture.flipY = true;
     texture.needsUpdate = true;
     return texture;
@@ -449,12 +659,13 @@ export function normalizeNextMaterialData(materialRecord = {}, texturePaths = {}
 export function createNextMaterial(entry, adapter, textureManager, skipTextures) {
   const src = entry.material || {};
   const paths = entry.texturePaths || {};
-  const hasBaseMap = !!paths.baseColor && !skipTextures;
   const hasOpacityMap = !!paths.opacity && !skipTextures;
   const authoredAlphaTest = (src.opacityThreshold ?? -1) > 0 ? src.opacityThreshold : 0;
   const material = new THREE.MeshPhysicalMaterial({
-    color: hasBaseMap ? new THREE.Color(1, 1, 1) :
-      new THREE.Color(src.baseColor?.[0] ?? 0.8, src.baseColor?.[1] ?? 0.8, src.baseColor?.[2] ?? 0.8),
+    // A connected shader input replaces its fallback value; it is not a tint.
+    color: paths.baseColor && !skipTextures ? new THREE.Color(1, 1, 1) :
+      new THREE.Color(src.baseColor?.[0] ?? 0.8, src.baseColor?.[1] ?? 0.8,
+        src.baseColor?.[2] ?? 0.8),
     metalness: src.metallic ?? 0,
     roughness: src.roughness ?? 0.5,
     emissive: new THREE.Color(src.emissive?.[0] ?? 0, src.emissive?.[1] ?? 0, src.emissive?.[2] ?? 0),
@@ -501,10 +712,29 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
   const queue = (mapProperty, assetPath) => {
     if (!assetPath || skipTextures || !textureManager) return;
     const meta = material.userData.nextTextureMetadata?.[metadataRoleForMap[mapProperty]];
-    const authored = meta?.sourceColorSpace || meta?.colorspace || '';
+    const graphParamForMap = {
+      map: 'base_color',
+      normalMap: 'geometry_normal',
+      roughnessMap: 'specular_roughness',
+      metalnessMap: 'base_metalness',
+      emissiveMap: 'emission_color',
+      alphaMap: 'geometry_opacity'
+    };
+    let graphSpec = materialXTextureSpecForParam(
+      rawData.openPBR?.nodeGraph, graphParamForMap[mapProperty]);
+    if (!graphSpec && mapProperty === 'normalMap') {
+      graphSpec = materialXTextureSpecForParam(rawData.openPBR?.nodeGraph, 'normal');
+    }
+    const openPBRParam = rawData.openPBR?.[graphParamForMap[mapProperty]] ||
+      (mapProperty === 'normalMap' ? rawData.openPBR?.normal : null);
+    // The next node-graph JSON intentionally keeps the graph structural and
+    // may omit SdfAssetPath metadata. Its reconstructed OpenPBR parameter
+    // retains that colorspace, so consult it before PreviewSurface metadata.
+    const authored = graphSpec?.colorspace || openPBRParam?.colorspace ||
+      meta?.sourceColorSpace || meta?.colorspace || '';
     textureManager.queueTexture(
       material, mapProperty, adapter, assetPath,
-      textureColorRole(mapProperty, authored));
+      textureColorRole(mapProperty, authored), meta, graphSpec?.ops);
   };
   queue('map', paths.baseColor);
   queue('normalMap', paths.normal);
@@ -512,11 +742,15 @@ export function createNextMaterial(entry, adapter, textureManager, skipTextures)
   queue('metalnessMap', paths.metallic);
   queue('aoMap', paths.occlusion);
   queue('emissiveMap', paths.emissive);
-  // When opacity and base color use the same RGBA image, Three.js's `map`
-  // already multiplies diffuse alpha. Adding the same image as alphaMap would
-  // multiply alpha by its green channel a second time. A distinct opacity map
-  // is queued as alphaMap (Three.js follows the usual grayscale convention).
-  if (paths.opacity !== paths.baseColor) queue('alphaMap', paths.opacity);
+  // When opacity and base color use the same plain RGBA image, Three.js's map
+  // already carries its alpha. A MaterialX opacity connection can instead
+  // extract/transform an RGB channel from that same image (laser beams and
+  // projected-shadow cards); those still require a separately baked alphaMap.
+  const opacityGraphSpec = materialXTextureSpecForParam(
+    rawData.openPBR?.nodeGraph, 'geometry_opacity');
+  if (paths.opacity !== paths.baseColor || opacityGraphSpec) {
+    queue('alphaMap', paths.opacity);
+  }
   return material;
 }
 
@@ -632,11 +866,12 @@ export function buildNextThreeNode(adapter, {
       message
     });
   };
-  const getMaterial = (entry) => {
-    const key = nextMaterialCacheKey(entry);
+  const getMaterial = (entry, doubleSided = false) => {
+    const key = `${nextMaterialCacheKey(entry)}|side:${doubleSided ? 'double' : 'front'}`;
     let material = materialCache.get(key);
     if (!material) {
       material = createNextMaterial(entry, adapter, textureManager, skipTextures);
+      material.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
       materialCache.set(key, material);
     }
     return material;
@@ -779,7 +1014,7 @@ export function buildNextThreeNode(adapter, {
       }
     }
     geometry.computeBoundingBox();
-    let material = getMaterial(mesh);
+    let material = getMaterial(mesh, !!mesh.doubleSided);
     if (Array.isArray(mesh.materials) && mesh.materials.length &&
         Array.isArray(mesh.submeshes) && mesh.submeshes.length) {
       const materialEntries = mesh.materials.map((entry) => ({
@@ -795,7 +1030,7 @@ export function buildNextThreeNode(adapter, {
         materialKey: mesh.materialKey
       });
       const fallbackIndex = materialEntries.length - 1;
-      material = materialEntries.map((entry) => getMaterial(entry));
+      material = materialEntries.map((entry) => getMaterial(entry, !!mesh.doubleSided));
       const shouldCompactGroups = mesh.submeshes.length > Math.max(64, material.length * 8);
       if (shouldCompactGroups) {
         const compacted = compactMaterialGroups(
@@ -837,6 +1072,7 @@ export function buildNextThreeNode(adapter, {
       primPath: mesh.primPath || '',
       materialId: Number.isFinite(mesh.materialId) ? mesh.materialId : -1,
       materialKey: mesh.materialKey || '',
+      doubleSided: !!mesh.doubleSided,
       texturePaths: mesh.texturePaths || {},
       materials: Array.isArray(mesh.materials) ? mesh.materials.map((entry) => ({
         materialId: Number.isFinite(entry.materialId) ? entry.materialId : -1,
