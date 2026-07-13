@@ -493,4 +493,90 @@ else
   echo "ok[variant-meta-usdc]: variant active/hidden/kind/variantSets survived"
 fi
 
+# Shader input connections must not be BAKED DOWN TO CONSTANTS. A shader input
+# is `authored` when it is declared, whether or not it carries a value -- and
+# TypedAttributeWithFallback::get_value() silently returns the SCHEMA FALLBACK
+# when no value was authored. Every typed input in sconv-shader.cc except
+# inputs:st / inputs:file / inputs:in / inputs:normal read get_value() without
+# first checking is_value_empty(), and never passed its connections through, so
+# a connection-only input (`token inputs:wrapS.connect = </...>`) was written as
+# the fallback CONSTANT ("useMetadata") and the connection was lost -- silently
+# rewriting the asset's shading network rather than dropping inert metadata.
+#
+# Separately, a Material terminal is a TypedConnection whose has_value() IS its
+# connection count, so a DECLARED-but-unconnected `token outputs:surface` was
+# dropped entirely by AddMaterialOutputSpecs.
+cat > "$TMP/shader-connect.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "mat"
+)
+
+def Material "mat"
+{
+    token outputs:surface
+
+    def Shader "pbr"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        int inputs:useSpecularWorkflowDriver = 1
+        token inputs:wrapSDriver = "repeat"
+        token inputs:sourceColorSpace = "raw"
+        int inputs:useSpecularWorkflow.connect = </mat/pbr.inputs:useSpecularWorkflowDriver>
+    }
+
+    def Shader "tex"
+    {
+        uniform token info:id = "UsdUVTexture"
+        token inputs:wrapS.connect = </mat/pbr.inputs:wrapSDriver>
+        token inputs:sourceColorSpace.connect = </mat/pbr.inputs:sourceColorSpace>
+    }
+
+    def Shader "xf"
+    {
+        uniform token info:id = "UsdTransform2d"
+        float inputs:rotationDriver = 45
+        float inputs:rotation.connect = </mat/xf.inputs:rotationDriver>
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/shader-connect.usdc" "$TMP/shader-connect.usda" \
+     >"$TMP/write9.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the shader-connect scene to usdc"
+  cat "$TMP/write9.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/shader-connect.usdc" > "$TMP/shader-connect-rt.usda" 2>/dev/null
+lost=""
+for expect in \
+  'int inputs:useSpecularWorkflow.connect = </mat/pbr.inputs:useSpecularWorkflowDriver>' \
+  'token inputs:wrapS.connect = </mat/pbr.inputs:wrapSDriver>' \
+  'token inputs:sourceColorSpace.connect = </mat/pbr.inputs:sourceColorSpace>' \
+  'float inputs:rotation.connect = </mat/xf.inputs:rotationDriver>' \
+  'token outputs:surface'; do
+  grep -qF "$expect" "$TMP/shader-connect-rt.usda" || lost="$lost
+    $expect"
+done
+# The connections must not have been replaced by their schema fallbacks.
+for baked in \
+  'inputs:useSpecularWorkflow = 0' \
+  'inputs:wrapS = "useMetadata"' \
+  'inputs:sourceColorSpace = "auto"' \
+  'inputs:rotation = 0'; do
+  if grep -qF "$baked" "$TMP/shader-connect-rt.usda"; then
+    lost="$lost
+    BAKED TO CONSTANT: $baked"
+  fi
+done
+if [ -n "$lost" ]; then
+  echo "FAIL[shader-connect-usdc]: connections lost or baked to constants:$lost"
+  echo "--- got ---"
+  cat "$TMP/shader-connect-rt.usda"
+  status=1
+else
+  echo "ok[shader-connect-usdc]: shader input connections and the declared-but-unconnected Material terminal survived"
+fi
+
 exit "$status"
