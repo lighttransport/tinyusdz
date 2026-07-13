@@ -58,5 +58,65 @@ bool CrateWriter::ExtractAnimatableDefault(
   return true;
 }
 
+namespace sconv_detail {
+
+// Emit an attribute's OWN metadata block as `<name>.<key>` fields. The field
+// router in ConvertSinglePrim (stage-converter.cc, kAttrMetaSuffixes) recognises
+// that spelling and folds each one into the attribute's spec.
+//
+// The TYPED writers build their fields by hand and never emitted any of this, so
+// an attribute's comment / customData / colorSpace / ... were dropped on write
+// even though the generic attribute path (ConvertAttributeToFields) has handled
+// them all along.
+inline void EmitAttrMetas(const std::string &name, const AttrMeta &metas,
+                          crate::FieldValuePairVector &fields) {
+  // A bare string in an attribute's metadata block (`double x = 1 ( """m""" )`)
+  // IS the comment in USD -- the two ASCII spellings are one Sdf field, and only
+  // the ASCII parser knows which was used: it parks the bare form in
+  // AttrMeta::stringData and the `comment = ...` form in AttrMeta::comment.
+  //
+  // Emit exactly ONE `comment` field: two would corrupt the fieldset encoding.
+  if (metas.has_comment() || !metas.stringData.empty()) {
+    std::string comment_str;
+    if (metas.has_comment()) {
+      comment_str = metas.get_comment().value;
+    } else {
+      for (size_t i = 0; i < metas.stringData.size(); i++) {
+        if (i > 0) comment_str += "\n";
+        comment_str += metas.stringData[i].value;
+      }
+    }
+    crate::CrateValue v;
+    v.Set(comment_str);
+    fields.push_back({name + ".comment", v});
+  }
+
+  if (metas.has_customData()) {
+    crate::CrateValue v;
+    v.Set(metas.get_customData());
+    fields.push_back({name + ".customData", v});
+  }
+
+  if (metas.has_colorSpace()) {
+    crate::CrateValue v;
+    v.Set(metas.get_colorSpace());
+    fields.push_back({name + ".colorSpace", v});
+  }
+
+  if (metas.has_displayName()) {
+    crate::CrateValue v;
+    v.Set(metas.get_displayName());
+    fields.push_back({name + ".displayName", v});
+  }
+
+  if (metas.has_doc()) {
+    crate::CrateValue v;
+    v.Set(metas.get_doc().value);
+    fields.push_back({name + ".documentation", v});
+  }
+}
+
+} // namespace sconv_detail
+
 } // namespace experimental
 } // namespace tinyusdz

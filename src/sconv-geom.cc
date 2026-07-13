@@ -462,6 +462,7 @@ bool CrateWriter::ExtractSphereProperties(
 
   if (sphere->radius.authored()) {
     if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius", fields, err)) return false;
+    sconv_detail::EmitAttrMetas("radius", sphere->radius.metas(), fields);
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);

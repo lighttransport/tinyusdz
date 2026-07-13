@@ -602,8 +602,14 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   }
 
   if (meta.has_comment()) {
-    ss << pprint::Indent(indent)
-       << "comment = " << to_string(meta.get_comment()) << "\n";
+    // Honor how it was authored, exactly as the PRIM metadata printer above
+    // does. A bare string in a metadata block IS the comment in USD; only the
+    // ASCII spelling differs, and only the ASCII parser knows which was used.
+    ss << pprint::Indent(indent);
+    if (meta.get_comment().has_comment_prefix) {
+      ss << "comment = ";
+    }
+    ss << to_string(meta.get_comment()) << "\n";
   }
 
   if (meta.has_weight()) {
