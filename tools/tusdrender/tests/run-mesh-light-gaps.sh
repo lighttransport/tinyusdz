@@ -43,6 +43,7 @@ trap 'rm -rf "$TMP"' EXIT
 floor() {  # $1 = out path; a white floor in the z=0 plane, camera on +z
   cat <<'USDA'
   def Mesh "Floor" {
+    uniform bool doubleSided = 1
     int[] faceVertexCounts = [4]
     int[] faceVertexIndices = [0, 1, 2, 3]
     point3f[] points = [(-4,-4,0), (4,-4,0), (4,4,0), (-4,4,0)]
@@ -57,6 +58,7 @@ USDA
 emitter() {
   cat <<USDA
   def Mesh "Emitter" (prepend apiSchemas = ["MeshLightAPI"]) {
+    uniform bool doubleSided = 1
     int[] faceVertexCounts = [4]
     int[] faceVertexIndices = [3, 2, 1, 0]
     point3f[] points = [(-1,-1,6), (1,-1,6), (1,1,6), (-1,1,6)]
@@ -91,6 +93,7 @@ cat > "$TMP/lamp.usda" <<'USDA'
 (defaultPrim = "Lamp" upAxis = "Y")
 def Xform "Lamp" {
   def Mesh "Emitter" (prepend apiSchemas = ["MeshLightAPI"]) {
+    uniform bool doubleSided = 1
     int[] faceVertexCounts = [4]
     int[] faceVertexIndices = [3, 2, 1, 0]
     point3f[] points = [(-1,-1,6), (1,-1,6), (1,1,6), (-1,1,6)]

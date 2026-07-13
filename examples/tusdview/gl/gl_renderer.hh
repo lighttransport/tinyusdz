@@ -122,6 +122,10 @@ class GLRenderer final : public Renderer {
     float alpha{1.0f};
     int alphaMode{0};
     float alphaCutoff{0.5f};
+    // Specular workflow + IOR for F0 (T12).
+    bool useSpecularWorkflow{false};
+    float specularColor[3]{0.0f, 0.0f, 0.0f};
+    float ior{1.5f};
     // Texture slot indices into textures_ (-1 = none). Resolved at draw time so
     // lazily-uploaded textures appear without re-touching materials.
     int baseColorTex{-1}, metalRoughTex{-1}, normalTex{-1}, emissiveTex{-1};
@@ -174,6 +178,7 @@ class GLRenderer final : public Renderer {
   GLint uFaceIdTex_{-1}, uFaceBase_{-1}, uHasFaceId_{-1}; // source-face-id AOV
   GLint uBaseColor_{-1}, uMetallic_{-1}, uRoughness_{-1}, uEmissive_{-1}, uAlpha_{-1};
   GLint uAlphaMode_{-1}, uAlphaCutoff_{-1};
+  GLint uUseSpecularWorkflow_{-1}, uSpecularColor_{-1}, uIor_{-1};  // F0 (T12)
   GLint uHasBaseColorTex_{-1}, uHasMetalRoughTex_{-1}, uHasNormalTex_{-1}, uHasEmissiveTex_{-1};
   GLint uBaseColorTexIsUdim_{-1}, uMetalRoughTexIsUdim_{-1};
   GLint uNormalTexIsUdim_{-1}, uEmissiveTexIsUdim_{-1};

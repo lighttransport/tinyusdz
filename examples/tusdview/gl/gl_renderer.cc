@@ -203,6 +203,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
+  uUseSpecularWorkflow_ = glGetUniformLocation(program_, "uUseSpecularWorkflow");
+  uSpecularColor_ = glGetUniformLocation(program_, "uSpecularColor");
+  uIor_ = glGetUniformLocation(program_, "uIor");
   uEmissive_ = glGetUniformLocation(program_, "uEmissive");
   uAlpha_ = glGetUniformLocation(program_, "uAlpha");
   uAlphaMode_ = glGetUniformLocation(program_, "uAlphaMode");
@@ -419,6 +422,14 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  if (k==4) return vec3(0.5,0.85,0.4);\n"
       "  return vec3(0.35);\n"
       "}\n"
+      // Linear -> sRGB OETF for the final shaded output (see material.cpp):
+      // scene lit in linear, FBO is RGBA8. Lit path only.
+      "vec3 linearToSrgb(vec3 c){\n"
+      "  c = clamp(c, 0.0, 1.0);\n"
+      "  vec3 lo = c * 12.92;\n"
+      "  vec3 hi = 1.055 * pow(c, vec3(1.0/2.4)) - 0.055;\n"
+      "  return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));\n"
+      "}\n"
       "void main(){\n"
       // Geometric (screen-derivative) normal: instanced prototypes usually ship
       // without authored normals, and faceted shading reads cleanly for them.
@@ -463,7 +474,7 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
       "  float NdotH = max(dot(Nf, H), 0.0);\n"
       "  vec3 amb = uHasIbl ? texture(uIrradianceMap, normalize(uEnvRotation * Nf)).rgb * uIblColor : vec3(0.25);\n"
       "  vec3 col = vColor * (amb + lightColor * (shade - 0.25)) + lightColor * 0.12 * pow(NdotH, 32.0) * facing;\n"
-      "  FragColor = vec4(col + uEmissive, vOpacity);\n"
+      "  FragColor = vec4(linearToSrgb(col + uEmissive), vOpacity);\n"
       "}\n";
   instProgram_ = glutil::CompileProgram(kInstancedVS, kInstancedFS, err);
   if (!instProgram_) {
@@ -1004,6 +1015,11 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.alpha = m.alpha;
     gm.alphaMode = m.alphaMode;
     gm.alphaCutoff = m.alphaCutoff;
+    gm.useSpecularWorkflow = m.useSpecularWorkflow;
+    gm.specularColor[0] = m.specularColor[0];
+    gm.specularColor[1] = m.specularColor[1];
+    gm.specularColor[2] = m.specularColor[2];
+    gm.ior = m.ior;
     gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
     gm.metalRoughTex = m.metalRoughTex;
     gm.normalTex = m.normalTex;
@@ -1030,6 +1046,10 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
 void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
   if (slot < 0 || static_cast<size_t>(slot) >= textures_.size()) return;
   GLTexture gpu;
+  // sRGB color textures (base color / emissive) upload as GL_SRGB8_ALPHA8 so the
+  // sampler linearizes them for the linear-space lighting (T11); normal /
+  // metal-rough stay GL_RGBA8. Same rule the compressed path already applies.
+  const GLenum uncompFmt = t.srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
   if (t.isUdim && !t.udimTiles.empty() && t.udimTileWidth > 0 &&
       t.udimTileHeight > 0) {
     glGenTextures(1, &gpu.arrayTex);
@@ -1100,7 +1120,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                                static_cast<GLsizei>(lvl.size()), lvl.data());
       }
     } else {
-      glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, t.udimTileWidth,
+      glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, uncompFmt, t.udimTileWidth,
                    t.udimTileHeight, static_cast<GLsizei>(t.udimTiles.size()), 0,
                    GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
       for (size_t layer = 0; layer < t.udimTiles.size(); ++layer) {
@@ -1116,7 +1136,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
       }
       for (size_t l = 1; l <= arrayMips; ++l) {
         const light3d::Image& ref = t.udimTiles[0].mipImages[l - 1];
-        glTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l), GL_RGBA8,
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(l), uncompFmt,
                      ref.width, ref.height,
                      static_cast<GLsizei>(t.udimTiles.size()), 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, nullptr);
@@ -1169,7 +1189,7 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                              static_cast<GLsizei>(t.compressed.data.size()),
                              t.compressed.data.data());
     } else {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0,
+      glTexImage2D(GL_TEXTURE_2D, 0, uncompFmt, t.image.width, t.image.height, 0,
                    GL_RGBA, GL_UNSIGNED_BYTE,
                    t.image.data.empty() ? nullptr : t.image.data.data());
     }
@@ -1206,12 +1226,12 @@ void GLRenderer::uploadTexture(int slot, const DrawTextureCPU& t) {
                                mip.data.data());
       }
     } else {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, t.image.width, t.image.height, 0,
+      glTexImage2D(GL_TEXTURE_2D, 0, uncompFmt, t.image.width, t.image.height, 0,
                    GL_RGBA, GL_UNSIGNED_BYTE,
                    t.image.data.empty() ? nullptr : t.image.data.data());
       for (size_t l = 0; l < t.mipImages.size(); ++l) {
         const light3d::Image& mip = t.mipImages[l];
-        glTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l + 1), GL_RGBA8,
+        glTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(l + 1), uncompFmt,
                      mip.width, mip.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                      mip.data.empty() ? nullptr : mip.data.data());
       }
@@ -2363,6 +2383,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3f(uBaseColor_, 0.f, 0.f, 0.f);
         glUniform1f(uMetallic_, 0.f);
         glUniform1f(uRoughness_, 1.f);
+        glUniform1i(uUseSpecularWorkflow_, 0);
+        glUniform3f(uSpecularColor_, 0.f, 0.f, 0.f);
+        glUniform1f(uIor_, 1.5f);
         glUniform3fv(uEmissive_, 1, overrideEmissive);
         glUniform1f(uAlpha_, 1.f);
         glUniform1i(uAlphaMode_, 0);
@@ -2379,6 +2402,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
         glUniform1f(uRoughness_, mat.roughness);
+        glUniform1i(uUseSpecularWorkflow_, mat.useSpecularWorkflow ? 1 : 0);
+        glUniform3fv(uSpecularColor_, 1, mat.specularColor);
+        glUniform1f(uIor_, mat.ior);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
         glUniform1i(uAlphaMode_, mat.alphaMode);

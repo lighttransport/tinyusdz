@@ -318,7 +318,8 @@ class VulkanRenderer final : public Renderer {
   void freeHostPool();  // unmap + free every block (after buffers are destroyed)
   bool createTextureImage(const light3d::Image& img, VkImage* outImg,
                           VkDeviceMemory* outMem, VkImageView* outView,
-                          const std::vector<light3d::Image>* mips = nullptr);
+                          const std::vector<light3d::Image>* mips = nullptr,
+                          bool srgb = false);
   bool createCompressedTextureImage(const DrawCompressedImageCPU& img, bool srgb,
                                     VkImage* outImg, VkDeviceMemory* outMem,
                                     VkImageView* outView);
@@ -401,6 +402,10 @@ class VulkanRenderer final : public Renderer {
   // topology + tesc/tese). Created only when the device supports the
   // tessellationShader feature; otherwise displaced meshes stay coarse.
   bool tessSupported_{false};
+  // VK_EXT_extended_dynamic_state: per-draw cull mode, so single-sided meshes
+  // back-face-cull like the GL backend. Optional; false = no culling (legacy).
+  bool dynCullSupported_{false};
+  PFN_vkCmdSetCullModeEXT vkCmdSetCullMode_{nullptr};
   // multiDrawIndirect + drawIndirectFirstInstance + shaderDrawParameters all
   // present -> the instanced raster pass can draw via vkCmdDrawIndexedIndirect
   // batches (per-draw meshId/flags come from a gl_DrawIDARB-indexed SSBO).
