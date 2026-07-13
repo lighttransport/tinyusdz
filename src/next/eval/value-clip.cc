@@ -239,9 +239,21 @@ bool ResolveValueClip(const UsdPrim& prim, const std::string& property,
                       Value* out, std::string* source_asset,
                       std::string* error, std::string* source_clip_set,
                       ValueClipStageCache* stage_cache) {
-  if (!out) return false;
   std::vector<ValueClipSet> sets;
   if (!ParseValueClipSets(prim, &sets, error)) return false;
+  return ResolveValueClipFromSets(sets, prim, property, stage_time, loader,
+                                  out, source_asset, error, source_clip_set,
+                                  stage_cache);
+}
+
+bool ResolveValueClipFromSets(const std::vector<ValueClipSet>& sets,
+                              const UsdPrim& prim, const std::string& property,
+                              double stage_time,
+                              const ValueClipStageLoader& loader, Value* out,
+                              std::string* source_asset, std::string* error,
+                              std::string* source_clip_set,
+                              ValueClipStageCache* stage_cache) {
+  if (!out || sets.empty()) return false;
   if (!loader) {
     if (error) *error = "Value clips require a clip_stage_loader";
     return false;
