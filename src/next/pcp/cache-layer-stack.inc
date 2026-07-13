@@ -14,23 +14,73 @@
   static constexpr uint32_t kInvalidStack =
       (std::numeric_limits<uint32_t>::max)();
 
-  uint32_t InternLayerStack(std::shared_ptr<Layer> layer,
-                            const std::string &identifier, std::string *warn,
-                            std::string *err) {
-    auto it = stack_by_id.find(identifier);
+  // Deterministic fingerprint of an expression-variable dictionary, appended
+  // to the layer-stack identity: pxr keys layer stacks by (identifier,
+  // expression variables), so the same asset referenced under different
+  // inherited variable contexts is a DIFFERENT stack (its sublayer
+  // expressions can resolve differently). Keys sort for stability; scalar
+  // kinds render directly, nested dictionaries recurse, other kinds render
+  // their type id (identity-conservative: distinct enough to split).
+  static void AppendExpressionVarsFingerprint(const Value &vars,
+                                              std::string *out) {
+    const Dict *d = vars.as_dictionary();
+    if (!d || d->entries.empty()) return;
+    std::vector<const std::pair<std::string, Value> *> sorted;
+    sorted.reserve(d->entries.size());
+    for (const auto &entry : d->entries) sorted.push_back(&entry);
+    std::sort(sorted.begin(), sorted.end(),
+              [](const std::pair<std::string, Value> *a,
+                 const std::pair<std::string, Value> *b) {
+                return a->first < b->first;
+              });
+    for (const auto *entry : sorted) {
+      *out += '\x1f';
+      *out += entry->first;
+      *out += '=';
+      const Value &v = entry->second;
+      if (const std::string *s = v.as_string()) *out += *s;
+      else if (const std::string *s = v.as_token()) *out += *s;
+      else if (const std::string *s = v.as_asset_path()) *out += *s;
+      else if (const bool *b = v.as_bool()) *out += *b ? '1' : '0';
+      else if (const int32_t *i = v.as_int()) *out += IntToStr(*i);
+      else if (const int64_t *i = v.as_int64()) *out += IntToStr(*i);
+      else if (const uint32_t *u = v.as_uint()) *out += UIntToStr(*u);
+      else if (v.is_dictionary()) {
+        *out += '{';
+        AppendExpressionVarsFingerprint(v, out);
+        *out += '}';
+      } else {
+        *out += '?';
+        *out += UIntToStr(static_cast<uint32_t>(v.type_id()));
+      }
+    }
+  }
+
+  uint32_t InternLayerStack(
+      std::shared_ptr<Layer> layer, const std::string &identifier,
+      std::string *warn, std::string *err,
+      const std::shared_ptr<const Value> &inherited_vars = nullptr) {
+    std::string key = identifier;
+    if (inherited_vars) AppendExpressionVarsFingerprint(*inherited_vars, &key);
+    auto it = stack_by_id.find(key);
     if (it != stack_by_id.end()) return it->second;
 
     LayerStack st;
     st.identifier = identifier;
+    st.cache_key = key;
     std::set<std::string> visiting;
     visiting.insert(identifier);
     // Sublayer asset-path expressions evaluate against the STACK ROOT layer's
-    // expressionVariables (pxr consults only the root/session layer of the
-    // stack for expression variables; sublayers' own expressionVariables do
-    // not feed sibling sublayer paths).
+    // expressionVariables with the REFERENCING site's variables composed over
+    // them (pxr: the root-most opinion wins; sublayers' own
+    // expressionVariables do not feed sibling sublayer paths).
+    Value sublayer_vars = layer->meta().expressionVariables;
+    if (inherited_vars && inherited_vars->is_dictionary()) {
+      sublayer_vars =
+          ComposeExpressionVariables(sublayer_vars, *inherited_vars);
+    }
     if (!AppendLayerAndSublayers(st, layer, identifier, &visiting, 0,
-                                 LayerOffset{}, layer->meta().expressionVariables,
-                                 warn, err)) {
+                                 LayerOffset{}, sublayer_vars, warn, err)) {
       return kInvalidStack;
     }
     Value vars = Value::MakeDictionary();
@@ -43,7 +93,7 @@
 
     uint32_t idx = static_cast<uint32_t>(layer_stacks.size());
     layer_stacks.push_back(std::move(st));
-    stack_by_id.emplace(identifier, idx);
+    stack_by_id.emplace(std::move(key), idx);
     return idx;
   }
 

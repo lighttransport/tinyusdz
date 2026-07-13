@@ -216,7 +216,11 @@
       }
       const std::string arc_id = resolver->ResolvePath(
           evaluated_asset_path, anchor, !options.strict_aousd_conformance);
-      arc_stack_idx = InternLayerStack(arc_layer, arc_id, warn, err);
+      // The referencing site's composed expression variables become part of
+      // the target stack's IDENTITY (pxr: (identifier, expression variables))
+      // and feed its sublayer path expressions.
+      arc_stack_idx = InternLayerStack(arc_layer, arc_id, warn, err,
+                                       src.expression_variables);
       if (arc_stack_idx == kInvalidStack) return;
       if (!arc.prim_path.empty()) {
         arc_site = arc.prim_path;
