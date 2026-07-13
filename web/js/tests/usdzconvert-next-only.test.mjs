@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { convertFolderToUSDZ, loadWasm, unpackUSDZ } from '../src/usdzconvert.js';
 import { TinyUSDZLoader } from '../src/tinyusdz/TinyUSDZLoader.js';
+import { buildNextThreeNode } from '../src/tinyusdz/NextRenderSceneUtils.js';
 
 const SCENE_USDA = `#usda 1.0
 (
@@ -105,6 +106,7 @@ def Xform "World"
         {
             uniform token info:id = "UsdPreviewSurface"
             color3f inputs:diffuseColor.connect = </World/Mat/BaseTex.outputs:rgb>
+            float inputs:opacity.connect = </World/Mat/BaseTex.outputs:r>
             token outputs:surface
         }
 
@@ -116,6 +118,7 @@ def Xform "World"
             token inputs:wrapS = "clamp"
             token inputs:wrapT = "repeat"
             color3f outputs:rgb
+            float outputs:r
         }
     }
 
@@ -245,6 +248,8 @@ function assertEntityAccessorsWithRenderStream(usdz, label) {
     assert.equal(baseMeta.wrapS, 'clamp', `${label}: material metadata should preserve wrapS`);
     assert.equal(baseMeta.wrapT, 'repeat', `${label}: material metadata should preserve wrapT`);
     assert.equal(baseMeta.isUdim, true, `${label}: material metadata should flag UDIM paths`);
+    assert.equal(mesh.material.opacityTexture, 'textures/diffuse.<UDIM>.png',
+      `${label}: material should preserve connected opacity texture path`);
 
     const unsupported = stream.getUnsupportedRenderables();
     assert.ok(Array.isArray(unsupported), `${label}: unsupported renderables should be an array`);
@@ -332,6 +337,22 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
       `${label}: adapter should expose unsupported renderable count`);
     assert.ok(Array.isArray(adapter.getUnsupportedRenderables()),
       `${label}: adapter should expose unsupported renderable list`);
+    const built = buildNextThreeNode(adapter, {
+      skipTextures: true,
+      showCurves: false,
+      releaseBuildData: false,
+    });
+    const curveGroups = [];
+    built.node.traverse((object) => {
+      if (object.userData?.usdCurves) curveGroups.push(object);
+    });
+    assert.ok(curveGroups.length >= 1, `${label}: fixture should build curve primitives`);
+    assert.ok(curveGroups.every((object) => object.visible === false),
+      `${label}: curve primitives should honor the default-off viewer option`);
+    built.node.traverse((object) => {
+      object.geometry?.dispose?.();
+      object.material?.dispose?.();
+    });
   } finally {
     adapter.end();
   }

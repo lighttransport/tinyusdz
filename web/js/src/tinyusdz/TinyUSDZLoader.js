@@ -771,7 +771,8 @@ export class NextRenderSceneAdapter {
                 roughness: material.roughnessTexture || '',
                 metallic: material.metallicTexture || '',
                 occlusion: material.occlusionTexture || '',
-                emissive: material.emissiveTexture || ''
+                emissive: material.emissiveTexture || '',
+                opacity: material.opacityTexture || ''
             };
             const textureMetadata = material.textureMetadata || {};
             return {

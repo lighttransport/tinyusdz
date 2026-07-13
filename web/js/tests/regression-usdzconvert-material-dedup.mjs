@@ -10,7 +10,11 @@ import {
   nextFlattenViaStreaming,
   unpackUSDZ,
 } from '../src/usdzconvert.js';
-import { NextTextureLoadingManager } from '../src/tinyusdz/NextRenderSceneUtils.js';
+import {
+  NextTextureLoadingManager,
+  compactMaterialGroups,
+  createNextMaterial,
+} from '../src/tinyusdz/NextRenderSceneUtils.js';
 import {
   INVALID_FACE_INDEX_USDA,
   SIMPLE_TRIANGLE_USDA,
@@ -243,6 +247,62 @@ await test('next lazy texture reset defers archive release until active loads se
   await loading;
   assert.equal(releaseCount, 1, 'archive bytes should release after in-flight load settles');
   assert.equal(material.map, undefined, 'aborted texture load should not mutate stale material');
+});
+
+await test('next materials preserve opacity maps without double-applying RGBA alpha', () => {
+  const queued = [];
+  const manager = {
+    queueTexture(_material, property, _adapter, assetPath) {
+      queued.push([property, assetPath]);
+    },
+  };
+  const shared = createNextMaterial({
+    material: { opacity: 1 },
+    texturePaths: { baseColor: 'rgba.png', opacity: 'rgba.png' },
+  }, {}, manager, false);
+  assert.equal(shared.transparent, true, 'an opacity connection must enable blending');
+  assert.equal(shared.alphaTest, 1 / 255,
+    'opacity-textured cards should discard effectively transparent fragments');
+  assert.deepEqual(queued, [['map', 'rgba.png']],
+    'shared RGBA alpha should come from map and must not be multiplied twice');
+
+  queued.length = 0;
+  createNextMaterial({
+    material: { opacity: 1 },
+    texturePaths: { baseColor: 'color.png', opacity: 'mask.png' },
+  }, {}, manager, false);
+  assert.deepEqual(queued, [['map', 'color.png'], ['alphaMap', 'mask.png']],
+    'a distinct opacity texture should be queued as alphaMap');
+});
+
+await test('next material subsets compact alternating faces into bounded draw groups', () => {
+  const indices = new Uint32Array([
+    0, 1, 2,
+    3, 4, 5,
+    6, 7, 8,
+    9, 10, 11,
+  ]);
+  const compacted = compactMaterialGroups(indices, [
+    { start: 0, count: 3, materialIndex: 0 },
+    { start: 6, count: 3, materialIndex: 0 },
+  ], 2, 1);
+  assert.deepEqual(compacted.groups, [
+    { start: 0, count: 6, materialIndex: 0 },
+    { start: 6, count: 6, materialIndex: 1 },
+  ]);
+  assert.deepEqual(Array.from(compacted.indices), [
+    0, 1, 2, 6, 7, 8,
+    3, 4, 5, 9, 10, 11,
+  ]);
+  const soup = compactMaterialGroups(null, [
+    { start: 3, count: 3, materialIndex: 0 },
+  ], 2, 1, 6);
+  assert.deepEqual(soup.groups, [
+    { start: 0, count: 3, materialIndex: 0 },
+    { start: 3, count: 3, materialIndex: 1 },
+  ]);
+  assert.deepEqual(Array.from(soup.indices), [3, 4, 5, 0, 1, 2],
+    'non-indexed triangle soup should compact through an identity index buffer');
 });
 
 await test('simple anonymous fixture remains reloadable through legacy usdzconvert', async () => {
