@@ -468,6 +468,17 @@ vec2 xformUv(vec2 uv, vec3 row0, vec3 row1) {
     return vec2(dot(vec3(uv, 1.0), row0), dot(vec3(uv, 1.0), row1));
 }
 
+// Linear -> sRGB OETF for the final shaded output. sRGB base-color textures are
+// uploaded as GL_SRGB8_ALPHA8 (linearized on sample) and the scene is lit in
+// linear space, so the encode happens here (the FBO is plain RGBA8). Lit path
+// only -- AOVs stay raw. Matches the Vulkan mesh.frag.
+vec3 linearToSrgb(vec3 c) {
+    c = clamp(c, 0.0, 1.0);
+    vec3 lo = c * 12.92;
+    vec3 hi = 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055;
+    return mix(lo, hi, vec3(greaterThan(c, vec3(0.0031308))));
+}
+
 float channelOf(vec4 c, int ch) {
     if (ch == 1) return c.g;
     if (ch == 2) return c.b;
@@ -516,7 +527,21 @@ void main() {
                                   ? sampleUdim(uNormalUdimTex, uNormalUdimLut, uv)
                                   : texture(uNormalTex, uv)) * uNormalTexScale +
                               uNormalTexBias).xyz;
-        N = normalize(N + tangentNormal * 0.1);
+        // Full derivative TBN (unified with the Vulkan backend). The old
+        // `normalize(N + tangentNormal*0.1)` was a weak non-TBN perturbation
+        // that made relief nearly flat on GL and pronounced on VK; build the
+        // tangent frame from the screen-space position/UV gradients so the
+        // tangent-space sample perturbs N at full strength in the right basis.
+        vec3 dp1 = dFdx(vWorldPos);
+        vec3 dp2 = dFdy(vWorldPos);
+        vec2 du1 = dFdx(uv);
+        vec2 du2 = dFdy(uv);
+        float r = du1.x * du2.y - du2.x * du1.y;
+        vec3 t = dp1 * du2.y - dp2 * du1.y;
+        t = (abs(r) > 1e-8) ? t / r : dp1;
+        t = normalize(t - N * dot(N, t));
+        vec3 b = normalize(cross(N, t)) * (r < 0.0 ? -1.0 : 1.0);
+        N = normalize(mat3(t, b, N) * tangentNormal);
     }
     if (uAlphaMode == 1) {
         opacity = (opacity >= uAlphaCutoff) ? 1.0 : 0.0;
@@ -656,7 +681,7 @@ void main() {
     if (uAlphaMode == 1 && opacity <= 0.0) {
         discard;
     }
-    vec3 color = ambient + diffuse + specular + emissive;
+    vec3 color = linearToSrgb(ambient + diffuse + specular + emissive);
     fragColor = vec4(color, opacity);
 }
 )glsl";

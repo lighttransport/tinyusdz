@@ -157,11 +157,43 @@ next):
   backends: single-sided is invisible from behind, doubleSided visible, with a
   fixture-validity guard (front view must show the quad).
 
-Deferred, with reasons:
+**T11 + GL↔VK shading unification — FIXED (2026-07-13).** The look call was
+taken toward a correct linear workflow, applied consistently across all three
+tusdview renderers (GL raster, VK raster, VK ray-query):
 
-- **T11 (sRGB linearization in tusdview raster), GL↔VK
-  normal-map/shaded-diffuse unification** — appearance-changing across every
-  scene; need golden-image re-baselines and a deliberate look call.
+- **T11 (sRGB):** sRGB color textures (base color / emissive; the per-texture
+  `DrawTextureCPU.srgb` flag already distinguished them) now upload as `_SRGB`
+  formats — `VK_FORMAT_R8G8B8A8_SRGB` / `GL_SRGB8_ALPHA8`, single-image and
+  UDIM-array — so the sampler linearizes them; normal / metal-rough stay
+  `_UNORM`. This matched the already-correct compressed (BC) path, which the
+  uncompressed path had silently disagreed with. The scene is lit in linear
+  space (constants are already linear, per USD), and the framebuffer is UNORM,
+  so a `linearToSrgb` OETF encodes the final shaded output — in the lit path
+  only, so debug AOVs stay raw. Without the paired encode, linearizing input
+  would have darkened everything; with it, textured mid-tones now match
+  tusdrender's linear lighting.
+- **Diffuse unification (finding B):** the VK raster shader adopted the GL
+  soft-headlight model (face the normal to the camera, `0.6·(N·V) + 0.4·half-
+  Lambert`, ambient floor), replacing its hard-Lambert-on-the-key-light that
+  collapsed the shadow side to the ambient floor.
+- **Normal-map unification (finding A):** the GL shader adopted VK's full
+  derivative-TBN mapping, replacing the weak `N + tangentNormal·0.1` that made
+  relief nearly flat on GL. Both now apply the map before the AOV branch, so
+  the Normals AOV shows the same perturbed normal.
+- **Instanced prototypes** (mesh_inst.frag ↔ kInstancedFS) were aligned to each
+  other and given the same encode.
+- **RT (ray-query):** the compute tracer keeps its own (superior) real-shadow
+  lighting but gained the same `linearToSrgb` encode on shaded/wireframe output,
+  so all three renderers are gamma-consistent. NOTE: `raytrace_comp.spv.h` must
+  be regenerated with the SDK glslang (14.0.0 here); the PATH glslang (15.1.0)
+  emits ray-query SPIR-V that crashes radv.
+- **Verified:** GL and VK raster now render byte-identical means/variance on
+  textured and normal-mapped scenes (previously they diverged); relief is now
+  present on GL. Full ctest green on software + hardware GL (the goldens are
+  coverage/silhouette fingerprints, robust to the shading change by design).
+
+Deferred, with reasons: (none from this pass — R10, T8, T11 and the GL↔VK
+unification are all fixed above.)
 
 Refuted on re-test: **T7** (Facing AOV inversion) — see the finding below.
 
@@ -304,7 +336,7 @@ highlight, `updateMeshWorld/Vertices`) is off.
 - **Fix:** push a zero-draw placeholder `VkMeshGPU` and guard the draw with
   `indexCount == 0`.
 
-### T11. [medium] sRGB base-color textures not linearized in tusdview raster
+### T11. [medium] sRGB base-color textures not linearized in tusdview raster  **[FIXED — see the status above]**
 tusdview uploads uncompressed textures as `_UNORM` with no shader `pow(2.2)` and
 a non-sRGB framebuffer (`vk_renderer.cc:2716`; the `srgb` flag only picks resize
 filter / block format). tusdrender applies `SrgbToLinear` on color slots.
@@ -348,10 +380,13 @@ varying `displayOpacity` is stored but never sampled (3322).
   at the load-time pose; `--rt --legacy-load` animates.
 - **[low] Normal mapping math differs GL vs VK** — GL adds `tangentNormal*0.1`
   (weak, no TBN), VK uses a full derivative TBN; relief is pronounced on VK,
-  nearly flat on GL. Normals AOV diverges too.
+  nearly flat on GL. Normals AOV diverges too. **[FIXED: GL adopted VK's
+  derivative TBN; both apply the map before the AOV branch — see the T11/
+  unification status above.]**
 - **[low] Default Shaded diffuse differs GL vs VK** — VK is hard Lambert on the
   key light (shadow side → dark ambient floor), GL is a soft headlight +
-  half-Lambert. Only the ambient term was matched.
+  half-Lambert. Only the ambient term was matched. **[FIXED: VK adopted GL's
+  soft-headlight model; GL and VK now render identically.]**
 - **[low] Wireframe render mode renders solid on Vulkan** — VK `mesh.frag` has no
   mode==1 case (may be by design; VK has no wireframe pass).
 - **[low] UDIM sRGB flag / NaN texel** — `mesh_build.cc:1454` lets the last decoded
