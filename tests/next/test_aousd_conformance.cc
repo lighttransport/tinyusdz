@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "next/composition/composition.hh"
+#include "next/layer/listop-field-table.hh"
 #include "next/prim/identifier.hh"
 #include "next/eval/attribute-eval.hh"
 #include "next/pcp/cache.hh"
@@ -1924,6 +1925,92 @@ void TestAuthoredStateBits() {
   }
 }
 
+// Registered string list-op field table (listop-field-table.hh): the shared
+// stronger-over-weaker merge drives apiSchemas / variantSetNames / clipSets
+// uniformly, including apiSchemas' legacy qualifier normalization.
+void TestStringListOpFieldTable() {
+  size_t count = 0;
+  const StringListOpFieldDef* fields = GetStringListOpFieldTable(&count);
+  assert(count == 3);
+  const StringListOpFieldDef* api = nullptr;
+  const StringListOpFieldDef* vsets = nullptr;
+  const StringListOpFieldDef* clips = nullptr;
+  for (size_t i = 0; i < count; ++i) {
+    if (std::string(fields[i].name) == "apiSchemas") api = &fields[i];
+    if (std::string(fields[i].name) == "variantSetNames") vsets = &fields[i];
+    if (std::string(fields[i].name) == "clipSets") clips = &fields[i];
+  }
+  assert(api && vsets && clips);
+
+  // apiSchemas: stronger prepend+delete edits over a weaker bare list.
+  {
+    PrimSpecMeta weaker;
+    weaker.apiSchemas() = {"KeepAPI", "DropAPI"};
+    weaker.setApiSchemasAuthored();
+    PrimSpecMeta stronger;
+    StringListOpEdits& e = stronger.apiSchemaEdits();
+    e.authored = true;
+    e.is_explicit = false;
+    e.prepended = {"NewAPI"};
+    e.deleted = {"DropAPI"};
+    MergeWeakerStringListOpField(*api, weaker, stronger);
+    const std::vector<std::string> expected = {"NewAPI", "KeepAPI"};
+    assert(stronger.apiSchemas() == expected);
+    assert(stronger.apiSchemaEdits().is_explicit &&
+           stronger.apiSchemaEdits().explicit_items == expected);
+  }
+  // apiSchemas: legacy qualifier (no edits) normalizes and merges.
+  {
+    PrimSpecMeta weaker;
+    weaker.apiSchemas() = {"WeakAPI"};
+    weaker.setApiSchemasAuthored();
+    PrimSpecMeta stronger;
+    stronger.apiSchemas() = {"StrongAPI"};
+    stronger.setApiSchemasAuthored();
+    stronger.apiSchemasQualifier() = "append";
+    MergeWeakerStringListOpField(*api, weaker, stronger);
+    const std::vector<std::string> expected = {"WeakAPI", "StrongAPI"};
+    assert(stronger.apiSchemas() == expected);
+    assert(stronger.apiSchemasQualifier().empty() &&
+           "legacy qualifier resolves into an explicit edit");
+  }
+  // variantSetNames: stronger prepend MERGES over the weaker declaration
+  // (was fill-absent-only, dropping the weaker set name).
+  {
+    PrimSpecMeta weaker;
+    StringListOpEdits& we = weaker.variantSetNameEdits();
+    we.authored = true;
+    we.is_explicit = false;
+    we.prepended = {"vsWeak"};
+    PrimSpecMeta stronger;
+    StringListOpEdits& se = stronger.variantSetNameEdits();
+    se.authored = true;
+    se.is_explicit = false;
+    se.prepended = {"vsStrong"};
+    MergeWeakerStringListOpField(*vsets, weaker, stronger);
+    const std::vector<std::string> expected = {"vsStrong", "vsWeak"};
+    assert(stronger.variantSetNameEdits().is_explicit &&
+           stronger.variantSetNameEdits().explicit_items == expected);
+  }
+  // clipSets: stronger reorder over the weaker clips dictionary's name order.
+  {
+    PrimSpecMeta weaker;
+    Value wclips = Value::MakeDictionary();
+    wclips.as_dictionary()->set("setA", Value::MakeDictionary());
+    wclips.as_dictionary()->set("setB", Value::MakeDictionary());
+    weaker.clips() = std::move(wclips);
+    PrimSpecMeta stronger;
+    StringListOpEdits& ce = stronger.clipSetEdits();
+    ce.authored = true;
+    ce.is_explicit = false;
+    ce.ordered = {"setB", "setA"};
+    MergeWeakerStringListOpField(*clips, weaker, stronger);
+    const std::vector<std::string> expected = {"setB", "setA"};
+    assert(stronger.clipSetEdits().is_explicit &&
+           stronger.clipSetEdits().explicit_items == expected);
+  }
+}
+
 void TestVariableExpressionGrammar() {
   Value vars = Value::MakeDictionary();
   Dict* d = vars.as_dictionary();
@@ -2817,6 +2904,7 @@ int main() {
   TestExpressionVariablePolicy();
   TestVariableExpressionGrammar();
   TestAuthoredStateBits();
+  TestStringListOpFieldTable();
   TestRemainingElectiveFieldCoverage();
   std::cout << "AOUSD conformance regressions: PASSED\n";
   return 0;
