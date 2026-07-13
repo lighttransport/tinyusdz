@@ -480,11 +480,28 @@ hostile camera aperture can overflow the auto-derived `int` height
 - **Fix:** clamp width/height/samples to sane maxima; validate the derived height;
   use `ParseFloatStrict` for `-fitScale`.
 
-### R12. [low] `visibility="invisible"` and `doubleSided=false` culling honored by neither path
+### R12. [low] `visibility="invisible"` and `doubleSided=false` culling honored by neither path  **[FIXED]**
 Next checks only `IsActive()` (`tusdr_next.cc:1865`); legacy ignores visibility
 (`tusdr_legacy.cc:579`); the integrator faceforwards every hit
 (`integrator.cc:1062`), so `doubleSided=false` never culls.
 - **Scenario:** a `visibility="invisible"` prim still renders on both paths.
+- **Fixed (2026-07-13):** visibility pruning landed in the backlog sweep (next
+  collectors + `BuildLegacyPurposeVisibility`). doubleSided back-face culling
+  now lands here: `FlatTri`/`TriInfo` carry the authored `double_sided`
+  (stamped from `RenderMesh::doubleSided` on the legacy path and read off the
+  prim on the next path); `IntersectVisibleTriangles` skips a single-sided
+  triangle's back face during the primary/bounce hit walk, so the ray sees
+  THROUGH it (USD default single-sided, matching the raster backends verified
+  pixel-for-pixel). Culling is a VISIBILITY property only: shadow rays are NOT
+  face-culled, so a single-sided surface still occludes light from either side
+  (an opaque blocker), as GPU shadowing does. The TLAS/instanced path keeps
+  faceforwarding (`lrt_tlas_intersect1` has no per-prim filter) — a documented
+  residual, like the T8 VK MDI batch. Test: `tool-tusdrender-double-sided-cull`
+  (single-sided culled from behind, doubleSided visible from both, both
+  loaders). Fixtures that authored single-sided cards viewed from their back
+  (smoke, mesh-light-gaps, opacity-texture-alpha) now mark those probe cards
+  `doubleSided` — the correct authoring, and what tusdview raster already
+  required.
 
 ### Lower-severity / other (tusdrender)
 - **[low] Default gray + roughness floor differ between paths** — legacy 0.18 gray

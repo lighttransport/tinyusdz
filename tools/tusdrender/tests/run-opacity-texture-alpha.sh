@@ -56,6 +56,7 @@ def Xform "World"
     prepend apiSchemas = ["MaterialBindingAPI"]
   )
   {
+    uniform bool doubleSided = 1
     int[] faceVertexCounts = [4]
     int[] faceVertexIndices = [0, 1, 2, 3]
     point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]

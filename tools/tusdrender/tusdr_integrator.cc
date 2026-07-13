@@ -24,6 +24,10 @@ int PurposeAnyHitFilter(void *user, uint32_t prim_id, float, float, float) {
   if (!filter || !filter->tris || size_t(prim_id) >= filter->tris->size()) {
     return 0;
   }
+  // Back-face culling is a VISIBILITY property, not an occlusion one: a
+  // single-sided surface still blocks light from either side (an opaque
+  // occluder, like the raster backends' shadowing), so shadow rays are NOT
+  // face-culled -- only the primary/bounce visibility walk is.
   return PurposeVisible((*filter->tris)[size_t(prim_id)].purpose_bit,
                         filter->mask)
              ? 1
@@ -46,10 +50,20 @@ bool IntersectVisibleTriangles(lrt_tri_scene *scene,
       if (prim_id == LRT_TRI_NO_HIT || size_t(prim_id) >= tris.size()) {
         continue;
       }
-      if (PurposeVisible(tris[size_t(prim_id)].purpose_bit, purpose_mask)) {
-        *hit = hits[i];
-        return true;
+      const FlatTri &ft = tris[size_t(prim_id)];
+      if (!PurposeVisible(ft.purpose_bit, purpose_mask)) continue;
+      // Back-face cull a single-sided triangle: the ray sees through it to
+      // whatever lies behind (USD doubleSided=false, matching the raster
+      // backends). The geometric normal points out of the front face, so a ray
+      // travelling with it (dot > 0) struck the back. Skip and keep walking the
+      // hit list rather than stopping here.
+      if (!ft.double_sided) {
+        const float d = ft.n.x * query.dir[0] + ft.n.y * query.dir[1] +
+                        ft.n.z * query.dir[2];
+        if (d > 0.0f) continue;
       }
+      *hit = hits[i];
+      return true;
     }
     query.tmin = std::nextafter(hits[n - 1].t, query.tmax);
     if (!(query.tmin < query.tmax)) return false;

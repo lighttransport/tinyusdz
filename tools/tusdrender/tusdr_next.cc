@@ -586,7 +586,14 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
   // per-tri; the flat path copies this template and overwrites only the positions.
   const uint32_t purpose_bit = PurposeBit(purpose);
   const bool visible_for_fit = PurposeVisible(purpose_bit, purpose_mask);
+  // USD doubleSided (schema default false = single-sided -> back-face cull).
+  bool double_sided = false;
+  if (const tinyusdz::next::Value *v = prim.GetPropertyValue("doubleSided"))
+    if (const bool *b = v->as_bool()) double_sided = *b;
+  const uint8_t ds_flag = double_sided ? 1 : 0;
+
   TriInfo tmpl;
+  tmpl.double_sided = ds_flag;
   tmpl.base_color = base_color;
   tmpl.tex_id = tex_id;
   tmpl.normal_tex_id = normal_tex_id;
@@ -695,6 +702,7 @@ void AddRTPreviewMeshNext(const tinyusdz::next::UsdPrim &prim,
         ft.n = n;
         ft.purpose_bit = purpose_bit;
         ft.mat_id = 0;
+        ft.double_sided = ds_flag;
         tris->push_back(ft);
       } else {
         TriInfo tri = tmpl;  // per-mesh material; per-tri geometry below
