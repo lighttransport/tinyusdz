@@ -101,6 +101,19 @@ bool CrateWriter::ExtractMeshProperties(
     return false;
   }
 
+  // `uniform token subsetFamily:<FAMILYNAME>:familyType`. This lives on the
+  // MESH, not on the GeomSubset (see usdGeom.hh), so it is not a member of any
+  // schema struct -- it is a map keyed by family name, and the writer had no
+  // branch for it at all, silently dropping every family's type on write. The
+  // reader reconstructs it by pattern-matching the property name
+  // (prim-reconstruct-geom2.cc), so emitting the same spelling is enough.
+  for (const auto& item : mesh->subsetFamilyTypeMap) {
+    crate::CrateValue crate_val;
+    crate_val.Set(value::token(to_string(item.second)));
+    fields.push_back(
+        {"subsetFamily:" + item.first.str() + ":familyType", crate_val});
+  }
+
   // Extract points
   if (mesh->points.has_value()) {
     auto points_animatable = mesh->points.get_value();
