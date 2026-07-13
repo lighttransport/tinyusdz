@@ -773,8 +773,13 @@ bool CrateWriter::ConvertSinglePrim(
       attr_fields.push_back({"typeName", type_value});
     }
 
-    // Add variability for uniform properties
-    if (kUniformProps.count(pe.name)) {
+    // Add variability for uniform properties -- but NOT when the attribute is
+    // time-sampled. A uniform attribute cannot vary over time, and the reader
+    // enforces it ("Attribute `projection` is declared `uniform`, but a
+    // time-sampled value was authored") by failing the whole prim. Stamping
+    // Uniform unconditionally here made an animated `projection` unreadable the
+    // moment the writer started emitting its timeSamples at all.
+    if (kUniformProps.count(pe.name) && !pe.has_ts) {
       crate::CrateValue var_value;
       var_value.Set(Variability::Uniform);
       attr_fields.push_back({"variability", var_value});

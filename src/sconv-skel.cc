@@ -211,6 +211,30 @@ bool CrateWriter::ExtractSkelRootProperties(
           }
         }
       }
+
+      // ANIMATED extent. This branch did not exist, so `extent.timeSamples` was
+      // dropped wholesale. Samples hold an Extent struct in memory and float3[2]
+      // on disk -- the same shape conversion the default above does.
+      if (extent_animatable.has_timesamples()) {
+        const value::TimeSamples *ext_ts = extent_animatable.get_timesamples_ptr();
+
+        value::TimeSamples ts;
+        const auto &samples = ext_ts->get_samples();
+        for (size_t i = 0; i < samples.size(); i++) {
+          if (samples[i].blocked) {
+            ts.add_blocked_sample(samples[i].t, value::Value());
+          } else if (const Extent *ev = samples[i].value.as<Extent>()) {
+            std::vector<value::float3> ev_vec = {ev->lower, ev->upper};
+            ts.add_sample(samples[i].t, value::Value(ev_vec));
+          } else {
+            ts.add_sample(samples[i].t, samples[i].value);
+          }
+        }
+
+        crate::CrateValue ts_crate_val;
+        ts_crate_val.Set(ts);
+        fields.push_back({"extent.timeSamples", ts_crate_val});
+      }
     }
   }
 
