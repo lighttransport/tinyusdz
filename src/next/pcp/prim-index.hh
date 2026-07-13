@@ -93,6 +93,13 @@ struct LayerStack {
   // `layers`; entry 0 (the root) is identity.
   std::vector<LayerOffset> layer_offsets;
   std::string identifier;                       // resolved asset path (registry key)
+  // Stack-table dedup key: identifier plus a fingerprint of the expression
+  // variables inherited from the referencing site (pxr keys layer stacks by
+  // (identifier, expression variables) — the same asset referenced under
+  // different variable contexts is a DIFFERENT stack when its sublayer
+  // expressions can resolve differently). Equals `identifier` when no
+  // variables were inherited.
+  std::string cache_key;
   LayerOffset offset;                           // cumulative time offset to root
   // Variables authored by this stack, composed weakest-to-strongest.
   Value expression_variables;

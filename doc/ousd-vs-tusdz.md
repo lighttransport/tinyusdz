@@ -373,12 +373,18 @@ The resolver supports relative/absolute filesystem paths, anchors, configured se
 
 Callbacks can emulate some missing schemes, but conformance-sensitive callers need explicit identifier classification and stable resolver semantics, not implicit filesystem handling. Strict compositor, PCP cache, and layer-registry paths now disable suffix fallback per resolver call, so a permissive shared resolver cannot silently rehome an asset during strict loading.
 
+Layer-stack identity now incorporates expression variables (pxr keys layer
+stacks by (identifier, expression variables)): the referencing site's composed
+variables are fingerprinted into the stack-table key (`LayerStack::cache_key`,
+`InternLayerStack`/`AdoptStack`), and a referenced stack's sublayer path
+expressions evaluate against the root layer's `expressionVariables` with the
+inherited variables composed over them (root-most opinion wins). The same
+asset referenced under two different variable contexts composes as two
+distinct stacks (`test_layer_stack_identity_expression_vars`).
+
 **Remaining fix needed:** broaden scheme-specific context objects as demanded.
 Address the documented `lstat`-then-open TOCTOU window where security policy
-depends on the checked path. Layer-stack identity does not yet incorporate
-expression variables (pxr keys layer stacks by (identifier, expression
-variables)), so a referenced stack whose sublayer expressions depend on
-variables that differ per referencing site shares one cached stack.
+depends on the checked path.
 
 ### AOUSD-USDC-001 — Declared 0.12 support is incomplete (P0)
 

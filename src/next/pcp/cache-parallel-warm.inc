@@ -303,15 +303,20 @@
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // --- parallel-build merge helpers (main thread only) --------------------
 
-  // Adopt a worker's prebuilt LayerStack into the main table (dedup by resolved
-  // identifier). Returns the main-table index. The LayerStack is copied, which
-  // just bumps the shared_ptr<Layer> refcounts -- the layers stay shared.
+  // Adopt a worker's prebuilt LayerStack into the main table (dedup by the
+  // stack's full identity key — (identifier, expression variables), see
+  // InternLayerStack; the bare identifier is the fallback for stacks built
+  // without a key). Returns the main-table index. The LayerStack is copied,
+  // which just bumps the shared_ptr<Layer> refcounts -- the layers stay
+  // shared.
   uint32_t AdoptStack(const LayerStack &ws) {
-    auto it = stack_by_id.find(ws.identifier);
+    const std::string &key =
+        ws.cache_key.empty() ? ws.identifier : ws.cache_key;
+    auto it = stack_by_id.find(key);
     if (it != stack_by_id.end()) return it->second;
     uint32_t idx = static_cast<uint32_t>(layer_stacks.size());
     layer_stacks.push_back(ws);
-    stack_by_id.emplace(ws.identifier, idx);
+    stack_by_id.emplace(key, idx);
     return idx;
   }
 

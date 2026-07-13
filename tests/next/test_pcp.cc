@@ -3765,6 +3765,62 @@ static void test_expression_sublayer_and_variant_selection() {
   std::cout << "  OK" << std::endl;
 }
 
+// Layer-stack identity includes expression variables (pxr keys stacks by
+// (identifier, expression variables)): the SAME asset referenced from two
+// sites whose inherited variables differ must produce two DISTINCT layer
+// stacks, and each stack's sublayer expressions must evaluate against the
+// referencing site's variables (root-most opinion wins).
+static void test_layer_stack_identity_expression_vars() {
+  std::cout << "test_layer_stack_identity_expression_vars..." << std::endl;
+  {
+    std::ofstream o("/tmp/next_stackid_sub_a.usda");
+    o << "#usda 1.0\ndef Xform \"X\" { int tag = 1 }\n";
+  }
+  {
+    std::ofstream o("/tmp/next_stackid_sub_b.usda");
+    o << "#usda 1.0\ndef Xform \"X\" { int tag = 2 }\n";
+  }
+  {
+    // The shared lib: its only content arrives through an EXPRESSION-valued
+    // sublayer path; the variable is authored by the REFERENCING stacks.
+    std::ofstream o("/tmp/next_stackid_lib.usda");
+    o << "#usda 1.0\n( subLayers = [@`${SUB}`@] )\n";
+  }
+  {
+    std::ofstream o("/tmp/next_stackid_mid_a.usda");
+    o << "#usda 1.0\n"
+         "( expressionVariables = { string SUB = \"next_stackid_sub_a.usda\" } )\n"
+         "def Xform \"P\" (references = @next_stackid_lib.usda@</X>) {}\n";
+  }
+  {
+    std::ofstream o("/tmp/next_stackid_mid_b.usda");
+    o << "#usda 1.0\n"
+         "( expressionVariables = { string SUB = \"next_stackid_sub_b.usda\" } )\n"
+         "def Xform \"Q\" (references = @next_stackid_lib.usda@</X>) {}\n";
+  }
+  {
+    std::ofstream o("/tmp/next_stackid_root.usda");
+    o << "#usda 1.0\n"
+         "def Xform \"A\" (references = @next_stackid_mid_a.usda@</P>) {}\n"
+         "def Xform \"B\" (references = @next_stackid_mid_b.usda@</Q>) {}\n";
+  }
+
+  AssetResolver resolver;
+  Stage stage;
+  pcp::CompositionOptions opts;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile("/tmp/next_stackid_root.usda", resolver,
+                                   &stage, opts, &warn, &err));
+  const Value* a = stage.GetPrimAtPath("/A").GetPropertyValue("tag");
+  const Value* b = stage.GetPrimAtPath("/B").GetPropertyValue("tag");
+  assert(a && a->as_int() && *a->as_int() == 1 &&
+         "lib referenced under SUB=sub_a must compose sub_a's content");
+  assert(b && b->as_int() && *b->as_int() == 2 &&
+         "the same lib under SUB=sub_b must be a DISTINCT stack with "
+         "sub_b's content");
+  std::cout << "  OK" << std::endl;
+}
+
 // Generated multi-layer string list-op combinations (item 4b breadth):
 // every qualifier of a STRONGER layer's apiSchemas edit applied over a
 // weaker layer's explicit list, plus a clipSets ordering edit. Locks in the
@@ -4088,6 +4144,7 @@ int main() {
   test_specifier_resolution();
   test_expression_sublayer_and_variant_selection();
   test_cross_layer_string_listop_matrix();
+  test_layer_stack_identity_expression_vars();
   test_reorder_children();
   test_p2_ref_no_default_prim();
   test_p2_inactive_subtree_pruned();

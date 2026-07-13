@@ -136,9 +136,10 @@ cycle detection, escapes, if/and/or/not/eq/neq/lt/leq/gt/geq/contains/at/
 len/defined; nesting/expansion caps). Wired at reference/payload arcs,
 sublayer paths (vs the stack ROOT layer's expressionVariables), and variant
 selections; `None` = no opinion. Tests: `TestVariableExpressionGrammar`,
-`test_expression_sublayer_and_variant_selection`. Known gap (doc'd):
-layer-stack identity does not include expression variables (pxr keys stacks
-by (identifier, vars)).
+`test_expression_sublayer_and_variant_selection`. The follow-up commit closed
+the last gap: layer-stack identity now includes expression variables
+(`LayerStack::cache_key`; inherited vars feed sublayer expressions;
+`test_layer_stack_identity_expression_vars`).
 
 ### 6. Identifier validation at authoring boundaries — DONE
 `Path::is_valid`/`Path::Parse`; validating `append_child`/`append_property`;
