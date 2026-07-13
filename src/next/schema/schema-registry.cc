@@ -359,28 +359,39 @@ const SchemaPropertyDefinition* SchemaRegistry::FindProperty(
 std::vector<std::string> SchemaRegistry::PropertyNames(
     const PrimSpec& prim) const {
   std::vector<std::string> result;
+  std::vector<std::string> schemas;
+  std::string current = prim.type_name();
+  while (!current.empty()) {
+    schemas.push_back(current);
+    auto it = std::find_if(parents_.begin(), parents_.end(),
+                           [&](const auto& p) { return p.first == current; });
+    if (it == parents_.end()) break;
+    current = it->second;
+  }
+  const auto applies = [&](const SchemaPropertyDefinition& def) {
+    return std::find(schemas.begin(), schemas.end(), def.schema_type) !=
+               schemas.end() ||
+           HasAppliedSchema(prim, def.schema_type);
+  };
   for (const SchemaPropertyDefinition& def : properties_) {
+    if (!applies(def)) continue;
     std::string name = def.name;
     const std::string marker = "__INSTANCE__";
     const size_t marker_pos = name.find(marker);
     if (marker_pos != std::string::npos) {
-      bool emitted = false;
       for (const std::string& applied : prim.meta().apiSchemas()) {
         const std::string prefix = def.schema_type + ":";
         if (applied.compare(0, prefix.size(), prefix) != 0) continue;
         std::string instantiated = name;
         instantiated.replace(marker_pos, marker.size(),
                              applied.substr(prefix.size()));
-        if (FindProperty(prim, instantiated) == &def &&
-            std::find(result.begin(), result.end(), instantiated) ==
-                result.end()) {
+        if (std::find(result.begin(), result.end(), instantiated) ==
+            result.end()) {
           result.push_back(std::move(instantiated));
         }
-        emitted = true;
       }
-      if (emitted) continue;
+      continue;
     }
-    if (FindProperty(prim, name) != &def) continue;
     if (std::find(result.begin(), result.end(), name) == result.end()) {
       result.push_back(std::move(name));
     }

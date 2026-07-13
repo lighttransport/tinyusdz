@@ -337,6 +337,27 @@ async function assertEntityAccessorsWithAdapter(usdz, label) {
   }
 }
 
+async function assertMeshOnlyAdapter(usdz, label) {
+  const loader = new TinyUSDZLoader({ suppressNativeInfoLogs: true });
+  await loader.init({ useMemory64: wasm64, useNextOnlyWasm: true });
+  const adapter = await new Promise((resolve, reject) => {
+    loader.parse(usdz, `${label}.usdz`, resolve, reject, {
+      backend: 'next',
+      meshOnly: true,
+    });
+  });
+  try {
+    assert.ok(adapter.numMeshes() >= 1, `${label}: mesh-only adapter should retain meshes`);
+    assert.equal(adapter.numNodes(), 0, `${label}: mesh-only adapter should skip nodes`);
+    assert.equal(adapter.numPointInstanceDraws(), 0,
+      `${label}: mesh-only adapter should skip point-instance draws`);
+    assert.equal(adapter.getStats().renderSceneNodes, 0,
+      `${label}: mesh-only native stream should skip full render-scene conversion`);
+  } finally {
+    adapter.delete();
+  }
+}
+
 async function assertWorkerModuleImports() {
   const previousSelf = globalThis.self;
   const messages = [];
@@ -408,6 +429,7 @@ await testAsync('next-only WASM exposes next scene entities to web adapters', as
   assert.equal(stats.pipeline, 'next-only');
   assertEntityAccessorsWithRenderStream(usdz, 'entity-scene RenderStream');
   await assertEntityAccessorsWithAdapter(usdz, 'entity-scene adapter');
+  await assertMeshOnlyAdapter(usdz, 'entity-scene mesh-only adapter');
 });
 
 await testAsync('next-only WASM worker module remains importable', async () => {

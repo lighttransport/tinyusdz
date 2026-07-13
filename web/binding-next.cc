@@ -1359,6 +1359,7 @@ class RenderStream {
     mesh_merge_bake_transform_ = enabled;
   }
   void setFlattenRenderTree(bool enabled) { flatten_render_tree_ = enabled; }
+  void setMeshOnly(bool enabled) { mesh_only_ = enabled; }
   void setComputeTangents(bool enabled) { compute_tangents_ = enabled; }
   void setBuildVertexIndices(bool enabled) {
     build_vertex_indices_ = enabled;
@@ -1483,7 +1484,7 @@ class RenderStream {
     if (mesh_merge_) {
       buildOptimizedOutputs_();
     }
-    buildRenderScene_();
+    if (!mesh_only_) buildRenderScene_();
     loaded_ = true;
     r.set("success", true);
     r.set("meshCount", meshCount());
@@ -3930,6 +3931,7 @@ class RenderStream {
   bool mesh_merge_ = false;
   bool mesh_merge_bake_transform_ = false;
   bool flatten_render_tree_ = false;
+  bool mesh_only_ = false;
   bool compute_tangents_ = false;
   bool build_vertex_indices_ = true;
   bool build_vertex_indices_set_ = false;
@@ -4218,6 +4220,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_next_render_stream) {
       .function("setMeshMergeBakeTransform",
                 &RenderStream::setMeshMergeBakeTransform)
       .function("setFlattenRenderTree", &RenderStream::setFlattenRenderTree)
+      .function("setMeshOnly", &RenderStream::setMeshOnly)
       .function("setComputeTangents", &RenderStream::setComputeTangents)
       .function("setBuildVertexIndices", &RenderStream::setBuildVertexIndices)
       .function("setTangentMethod", &RenderStream::setTangentMethod)
