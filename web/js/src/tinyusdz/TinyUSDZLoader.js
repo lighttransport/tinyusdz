@@ -425,6 +425,10 @@ export class NextRenderSceneAdapter {
                 typeof renderStream.setFlattenRenderTree === 'function') {
                 renderStream.setFlattenRenderTree(!!options.flattenRenderTree);
             }
+            if (options.meshOnly !== undefined &&
+                typeof renderStream.setMeshOnly === 'function') {
+                renderStream.setMeshOnly(!!options.meshOnly);
+            }
             if (options.computeTangents !== undefined &&
                 typeof renderStream.setComputeTangents === 'function') {
                 renderStream.setComputeTangents(!!options.computeTangents);
@@ -487,57 +491,58 @@ export class NextRenderSceneAdapter {
             const metadata = typeof renderStream.getSceneMetadata === 'function'
                 ? renderStream.getSceneMetadata()
                 : {};
+            const meshOnly = options.meshOnly === true;
             const meshCount = beginResult.meshCount ?? renderStream.meshCount();
-            const nodeCount = Number.isFinite(beginResult.nodeCount)
+            const nodeCount = meshOnly ? 0 : Number.isFinite(beginResult.nodeCount)
                 ? beginResult.nodeCount
                 : (typeof renderStream.nodeCount === 'function'
                     ? renderStream.nodeCount()
                     : 0);
-            const lightCount = Number.isFinite(beginResult.lightCount)
+            const lightCount = meshOnly ? 0 : Number.isFinite(beginResult.lightCount)
                 ? beginResult.lightCount
                 : (typeof renderStream.lightCount === 'function'
                     ? renderStream.lightCount()
                     : 0);
-            const pointsCount = Number.isFinite(beginResult.pointsCount)
+            const pointsCount = meshOnly ? 0 : Number.isFinite(beginResult.pointsCount)
                 ? beginResult.pointsCount
                 : (typeof beginResult.points === 'number' ? beginResult.points
                     : (typeof renderStream.numPoints === 'function'
                         ? renderStream.numPoints()
                         : 0));
-            const curvesCount = Number.isFinite(beginResult.curvesCount)
+            const curvesCount = meshOnly ? 0 : Number.isFinite(beginResult.curvesCount)
                 ? beginResult.curvesCount
                 : (typeof beginResult.curves === 'number' ? beginResult.curves
                     : (typeof renderStream.numCurves === 'function'
                         ? renderStream.numCurves()
                         : 0));
-            const cameraCount = Number.isFinite(beginResult.cameraCount)
+            const cameraCount = meshOnly ? 0 : Number.isFinite(beginResult.cameraCount)
                 ? beginResult.cameraCount
                 : (typeof renderStream.cameraCount === 'function'
                     ? renderStream.cameraCount()
                     : 0);
-            const animationCount = Number.isFinite(beginResult.animationCount)
+            const animationCount = meshOnly ? 0 : Number.isFinite(beginResult.animationCount)
                 ? beginResult.animationCount
                 : (typeof beginResult.animations === 'number' ? beginResult.animations
                     : (typeof renderStream.numAnimations === 'function'
                         ? renderStream.numAnimations()
                         : 0));
-            const pointInstancerCount = Number.isFinite(beginResult.pointInstancerCount)
+            const pointInstancerCount = meshOnly ? 0 : Number.isFinite(beginResult.pointInstancerCount)
                 ? beginResult.pointInstancerCount
                 : (typeof renderStream.pointInstancerCount === 'function'
                     ? renderStream.pointInstancerCount()
                     : 0);
-            const skeletonCount = Number.isFinite(beginResult.skeletonCount)
+            const skeletonCount = meshOnly ? 0 : Number.isFinite(beginResult.skeletonCount)
                 ? beginResult.skeletonCount
                 : (typeof renderStream.skeletonCount === 'function'
                     ? renderStream.skeletonCount()
                 : 0);
-            const unsupportedRenderableCount = Number.isFinite(
+            const unsupportedRenderableCount = meshOnly ? 0 : Number.isFinite(
                 beginResult.unsupportedRenderableCount)
                 ? beginResult.unsupportedRenderableCount
                 : (typeof renderStream.unsupportedRenderableCount === 'function'
                     ? renderStream.unsupportedRenderableCount()
                     : 0);
-            const pointInstanceDrawCount = Number.isFinite(
+            const pointInstanceDrawCount = meshOnly ? 0 : Number.isFinite(
                 beginResult.pointInstanceDrawCount)
                 ? beginResult.pointInstanceDrawCount
                 : (typeof renderStream.pointInstanceDrawCount === 'function'
