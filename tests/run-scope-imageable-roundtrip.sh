@@ -579,4 +579,97 @@ else
   echo "ok[shader-connect-usdc]: shader input connections and the declared-but-unconnected Material terminal survived"
 fi
 
+# UNAUTHORED attributes must not be INVENTED on write. A TypedAttributeWithFallback
+# always yields a value from get_value() -- the schema fallback when nothing was
+# authored -- so any writer that emits it unconditionally (or gates on has_value(),
+# which for that type returns !_empty and is therefore true for an UNAUTHORED attr)
+# turns "no opinion" into an AUTHORED opinion on read-back. That is not cosmetic:
+# an authored opinion is a STRONG one and blocks weaker opinions during
+# composition, so a scene that composed one way before the round-trip composes
+# differently after it.
+#
+# This bit: Skeleton/SkelRoot visibility+purpose (sconv-skel.cc gated on
+# has_value()), GeomSubset elementType (written unconditionally), and everything
+# behind the EXTRACT_FALLBACK / EXTRACT_TOKEN_FALLBACK macros -- physics
+# (invertFilteredGroups) and media (mediaOffset, gain) among them.
+#
+# Also pinned here: a Mesh's blendShapes is the NAMESPACED UsdSkelBindingAPI
+# attribute `skel:blendShapes`; the Mesh writer emitted it unprefixed. (A
+# SkelAnimation's own `blendShapes` IS unprefixed -- both spellings are correct,
+# on different prim types, so this guards against "fixing" the wrong one.)
+cat > "$TMP/unauthored.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "W"
+)
+
+def Xform "W"
+{
+    def SkelRoot "R"
+    {
+        def Skeleton "S"
+        {
+        }
+
+        def SkelAnimation "A"
+        {
+            uniform token[] blendShapes = ["a", "b"]
+        }
+
+        def Mesh "M"
+        {
+            uniform token[] skel:blendShapes = ["a", "b"]
+
+            def GeomSubset "sub"
+            {
+            }
+        }
+    }
+
+    def SpatialAudio "Sound"
+    {
+    }
+
+    def PhysicsCollisionGroup "CG"
+    {
+    }
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/unauthored.usdc" "$TMP/unauthored.usda" \
+     >"$TMP/write10.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the unauthored-attrs scene to usdc"
+  cat "$TMP/write10.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/unauthored.usdc" > "$TMP/unauthored-rt.usda" 2>/dev/null
+bad=""
+# Nothing below was authored, so none of it may come back.
+for invented in \
+  'token visibility' \
+  'uniform token purpose' \
+  'uniform token elementType' \
+  'physics:invertFilteredGroups' \
+  'uniform double mediaOffset'; do
+  grep -qF "$invented" "$TMP/unauthored-rt.usda" && bad="$bad
+    INVENTED (never authored): $invented"
+done
+# ...while the two legitimately-authored, differently-spelled blendShapes must
+# both survive, each on its own prim type.
+for expect in \
+  'uniform token[] blendShapes = ["a", "b"]' \
+  'uniform token[] skel:blendShapes = ["a", "b"]'; do
+  grep -qF "$expect" "$TMP/unauthored-rt.usda" || bad="$bad
+    LOST: $expect"
+done
+if [ -n "$bad" ]; then
+  echo "FAIL[unauthored-usdc]: writer invented and/or lost attributes:$bad"
+  echo "--- got ---"
+  cat "$TMP/unauthored-rt.usda"
+  status=1
+else
+  echo "ok[unauthored-usdc]: no unauthored fallbacks invented; both blendShapes spellings survived"
+fi
+
 exit "$status"

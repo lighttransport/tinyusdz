@@ -373,7 +373,11 @@ bool CrateWriter::ExtractMeshProperties(
       crate::CrateValue crate_val;
       value::Value val(*blend_shapes_val);
       if (ConvertValue(val, crate_val, err)) {
-        fields.push_back({"blendShapes", crate_val});
+        // On a Mesh this is the UsdSkelBindingAPI attribute, so it is NAMESPACED:
+        // `uniform token[] skel:blendShapes`. (SkelAnimation's own `blendShapes`
+        // is genuinely unprefixed -- both spellings are correct, on different
+        // prim types. See AddSkelAnimationAttrs in sconv-skel.cc.)
+        fields.push_back({"skel:blendShapes", crate_val});
       }
     }
   }
@@ -1451,8 +1455,11 @@ bool CrateWriter::ExtractGeomSubsetProperties(
 
 
 
-  // Extract elementType enum (Face/Point/Edge/Tetrahedron)
-  {
+  // Extract elementType enum (Face/Point/Edge/Tetrahedron). Only when AUTHORED:
+  // elementType is a TypedAttributeWithFallback, so get_value() hands back
+  // ElementType::Face for an unauthored subset and writing it unconditionally
+  // invented `uniform token elementType = "face"` on read-back.
+  if (subset->elementType.authored()) {
     const GeomSubset::ElementType& elem_type = subset->elementType.get_value();
     std::string elem_str;
     switch (elem_type) {
