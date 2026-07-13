@@ -284,6 +284,9 @@ void path_expression_collection_membership_test(void) {
       "    def Xform \"Asset\" (kind = \"component\") {}\n"
       "\n"
       "    uniform pathExpression collection:expr:membershipExpression = \"/World/C*\"\n"
+      "    uniform pathExpression collection:base:membershipExpression = \"/World/C*\"\n"
+      "    uniform pathExpression collection:alias:membershipExpression = \"%:base\"\n"
+      "    uniform pathExpression collection:outer:membershipExpression = \"%/World:alias\"\n"
       "    uniform pathExpression collection:models:membershipExpression = \"/World//*{component}\"\n"
       "    rel collection:rel:includes = [</World>]\n"
       "    rel collection:rel:excludes = [</World/Box>]\n"
@@ -312,6 +315,19 @@ void path_expression_collection_membership_test(void) {
     if (inst) {
       auto q = tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
       TEST_CHECK(q.mode == tydra::CollectionMembershipQuery::Mode::Expression);
+      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
+      TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cone", "")));
+      TEST_CHECK(!tydra::IsPathIncluded(q, stage, Path("/World/Box", "")));
+    }
+  }
+
+  // Nested expression refs preserve the referenced collection's owner:
+  // outer -> absolute alias -> same-owner base.
+  {
+    const CollectionInstance *inst = nullptr;
+    TEST_CHECK(coll->get_instance("outer", &inst) && inst);
+    if (inst) {
+      auto q = tydra::BuildCollectionMembershipQuery(stage, *inst, "/World");
       TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cube", "")));
       TEST_CHECK(tydra::IsPathIncluded(q, stage, Path("/World/Cone", "")));
       TEST_CHECK(!tydra::IsPathIncluded(q, stage, Path("/World/Box", "")));

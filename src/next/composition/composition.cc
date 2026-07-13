@@ -161,6 +161,20 @@ void MergeWeakerPropMeta(PropMeta* stronger, const PropMeta& weaker) {
   MergeWeakerExtensionFields(&stronger->unknownFields, weaker.unknownFields);
 }
 
+std::string ResolveWeakerPathExpressionText(const std::string& stronger,
+                                            const std::string& weaker) {
+  if (stronger.find("%_") == std::string::npos) return stronger;
+  const std::string replacement = weaker.empty()
+      ? "(/ & ~/)" : ("(" + weaker + ")");
+  std::string out = stronger;
+  size_t pos = 0;
+  while ((pos = out.find("%_", pos)) != std::string::npos) {
+    out.replace(pos, 2, replacement);
+    pos += replacement.size();
+  }
+  return out;
+}
+
 void ApplyRelationshipEdit(std::vector<Path>* values, const ArcEdit& edit) {
   if (!values) return;
   auto as_path = [](const std::string& s) { return Path(s); };
@@ -756,6 +770,22 @@ void Compositor::CopyLocalOpinions(
     const std::string& pname = name_table.get(slot.name_id);
     const PropSlot* tgt_slot = target.property(slot.name_id);
     if (tgt_slot) {
+      const Value* target_value = target.property_value(slot.name_id);
+      const Value* source_value = source.property_value(slot.name_id);
+      if (target_value && source_value &&
+          target_value->type_id() == TypeId::PathExpression &&
+          source_value->type_id() == TypeId::PathExpression) {
+        const std::string* stronger = target_value->as_string();
+        const std::string* weaker = source_value->as_string();
+        if (stronger && weaker) {
+          const std::string resolved = ResolveWeakerPathExpressionText(
+              *stronger, *weaker);
+          if (resolved != *stronger) {
+            target.set_property_value(slot.name_id,
+                Value::MakeStringLike(resolved, TypeId::PathExpression));
+          }
+        }
+      }
       // Field-level fill-absent: pxr composes a property's default VALUE and its
       // CONNECTIONS as INDEPENDENT fields. A stronger source may author only one
       // of them; fill the other from this weaker source rather than dropping it.

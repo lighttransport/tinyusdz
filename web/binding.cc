@@ -80,6 +80,7 @@
 #include "usdPhysics.hh"
 #include "mjcPhysics.hh"
 #include "usdShade.hh"
+#include "usdSkel.hh"  // Skeleton / SkelRoot / SkelAnimation (mh:* profile)
 #include "pprint-enum.hh"
 #include "stage.hh"
 #include "sha256.hh"
@@ -1987,6 +1988,7 @@ json AttributeValueJson(const tinyusdz::Attribute &attr) {
   if (auto v = attr.get_value<std::vector<int32_t>>()) return v.value();
   if (auto v = attr.get_value<std::vector<float>>()) return v.value();
   if (auto v = attr.get_value<std::vector<double>>()) return v.value();
+  if (auto v = attr.get_value<std::vector<std::string>>()) return v.value();
   if (auto v = attr.get_value<std::vector<tinyusdz::value::token>>()) {
     json arr = json::array();
     for (const auto &tok : v.value()) {
@@ -2003,6 +2005,26 @@ json AttributeValueJson(const tinyusdz::Attribute &attr) {
   }
 
   return {{"unsupportedType", attr.type_name()}};
+}
+
+// mh:* attribute → JSON. Time-sampled float[] curves (mh:rig:guiControlValues,
+// mh:animatedMapWeights) become { timeSamples: [{t, v:[...]}, ...] }; other
+// attrs fall through to AttributeValueJson (scalars + static arrays).
+json MhAttrJson(const tinyusdz::Attribute &attr) {
+  if (attr.get_var().has_timesamples()) {
+    const auto &ts = attr.get_var().ts_raw();
+    json samples = json::array();
+    for (size_t i = 0; i < ts.size(); ++i) {
+      const auto t = ts.get_time(i);
+      if (!t) continue;
+      std::vector<float> v;
+      if (attr.get_value(static_cast<double>(*t), &v)) {
+        samples.push_back({{"t", *t}, {"v", v}});
+      }
+    }
+    return json{{"timeSamples", samples}};
+  }
+  return AttributeValueJson(attr);
 }
 
 void AddPropertyMap(json &props, json &rels,
@@ -2149,10 +2171,30 @@ void AddSceneJson(json &props, const tinyusdz::PhysicsScene &scene) {
   if (scene.mjcScene) {
     AddFallbackAttr(props, "mjc:option:timestep",
                     scene.mjcScene.value().timestep);
+    AddFallbackAttr(props, "mjc:option:impratio",
+                    scene.mjcScene.value().impratio);
     AddFallbackAttr(props, "mjc:option:iterations",
                     scene.mjcScene.value().iterations);
     AddFallbackAttr(props, "mjc:option:integrator",
                     scene.mjcScene.value().integrator);
+    AddFallbackAttr(props, "mjc:option:cone",
+                    scene.mjcScene.value().cone);
+#define ADD_MJC_FLAG_JSON(name) \
+    AddFallbackAttr(props, "mjc:flag:" #name, \
+                    scene.mjcScene.value().flag_##name)
+    ADD_MJC_FLAG_JSON(constraint); ADD_MJC_FLAG_JSON(equality);
+    ADD_MJC_FLAG_JSON(frictionloss); ADD_MJC_FLAG_JSON(limit);
+    ADD_MJC_FLAG_JSON(contact); ADD_MJC_FLAG_JSON(spring);
+    ADD_MJC_FLAG_JSON(damper); ADD_MJC_FLAG_JSON(gravity);
+    ADD_MJC_FLAG_JSON(clampctrl); ADD_MJC_FLAG_JSON(warmstart);
+    ADD_MJC_FLAG_JSON(filterparent); ADD_MJC_FLAG_JSON(actuation);
+    ADD_MJC_FLAG_JSON(refsafe); ADD_MJC_FLAG_JSON(sensor);
+    ADD_MJC_FLAG_JSON(midphase); ADD_MJC_FLAG_JSON(nativeccd);
+    ADD_MJC_FLAG_JSON(eulerdamp); ADD_MJC_FLAG_JSON(autoreset);
+    ADD_MJC_FLAG_JSON(island); ADD_MJC_FLAG_JSON(override);
+    ADD_MJC_FLAG_JSON(energy); ADD_MJC_FLAG_JSON(fwdinv);
+    ADD_MJC_FLAG_JSON(invdiscrete); ADD_MJC_FLAG_JSON(multiccd);
+#undef ADD_MJC_FLAG_JSON
   }
   if (scene.newtonScene) {
     AddFallbackAttr(props, "newton:maxSolverIterations",
@@ -2302,6 +2344,17 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
   item["properties"] = json::object();
   item["relationships"] = json::object();
   AddAPISchemasJson(item, prim);
+  // Collection membership predicates such as `{kind:component}` need prim
+  // metadata in addition to schema/type records. Keep this top-level (rather
+  // than pretending metadata is an attribute in `properties`) so JS can
+  // distinguish authored metadata from regular USD properties.
+  const std::string prim_kind = prim.metas().get_kind();
+  if (!prim_kind.empty()) item["kind"] = prim_kind;
+  item["specifier"] = tinyusdz::to_string(prim.specifier());
+  item["active"] = prim.IsActive();
+  item["abstract"] = prim.IsAbstract();
+  item["model"] = prim.IsModel();
+  item["group"] = prim.IsGroup();
 
   json &props = item["properties"];
   json &rels = item["relationships"];
@@ -2381,6 +2434,14 @@ void AppendPhysicsPrimJson(const tinyusdz::Prim &prim, const std::string &path,
     AddTypedAttr(props, "newton:lookupPositions", act->lookupPositions);
     AddTypedAttr(props, "newton:lookupEfforts", act->lookupEfforts);
     AddPropertyMap(props, rels, act->props);
+  } else if (const auto *model = prim.as<tinyusdz::Model>()) {
+    // Unknown/custom schema prims are reconstructed through the generic Model
+    // carrier. Preserve their authored properties so an explicit
+    // `mjc:jointType` representation hint can map a foreign joint schema on
+    // the JS side without guessing its semantics.
+    AddPropertyMap(props, rels, model->props);
+  } else if (const auto *scope = prim.as<tinyusdz::Scope>()) {
+    AddPropertyMap(props, rels, scope->props);
   }
 
   prims.push_back(std::move(item));
@@ -2782,6 +2843,11 @@ class TinyUSDZLoaderNative {
 
     loaded_as_layer_ = true;
     filename_ = filename;
+    // Layer-only load: no render conversion runs, so extractPhysicsSceneJSON can
+    // safely re-derive from the (uncorrupted) layer. Drop any stale snapshot from
+    // a prior stage load so it doesn't shadow this layer's physics scene.
+    has_stage_ = false;
+    physics_scene_json_cache_.clear();
 
     return true;
   }
@@ -2804,33 +2870,14 @@ class TinyUSDZLoaderNative {
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
     options.mmap_zero_copy = mmap_zero_copy_;
 
-    tinyusdz::Layer layer;
-    loaded_ = tinyusdz::LoadLayerFromMemory(
+    tinyusdz::Stage stage;
+    loaded_ = tinyusdz::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
-        filename, &layer, &warn_, &error_, options);
+        filename, &stage, &warn_, &error_, options);
 
     if (!loaded_) {
       ReportTinyUSDZDebugEvent(
           "loadFromBinary.parseFailed", error_, binary.size(), is_usdz);
-      return false;
-    }
-
-    if (tinyusdz::HasVariants(layer)) {
-      tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeVariant(layer, &composited_layer, &warn_, &error_)) {
-        ReportTinyUSDZDebugEvent(
-            "loadFromBinary.variantComposeFailed", error_, binary.size(), is_usdz);
-        loaded_ = false;
-        return false;
-      }
-      layer = std::move(composited_layer);
-    }
-
-    tinyusdz::Stage stage;
-    if (!tinyusdz::LayerToStage(std::move(layer), &stage, &warn_, &error_)) {
-      ReportTinyUSDZDebugEvent(
-          "loadFromBinary.layerToStageFailed", error_, binary.size(), is_usdz);
-      loaded_ = false;
       return false;
     }
 
@@ -2845,6 +2892,14 @@ class TinyUSDZLoaderNative {
     filename_ = filename;
     export_stage_ = stage;
     has_stage_ = true;
+    // Cache the physics-scene JSON from the freshly-parsed, pristine stage
+    // BEFORE the Tydra RenderSceneConverter runs below. The converter mutates
+    // the source stage in place (const_cast + BuildInstancePrototypes and the
+    // low-memory mesh takeover), which strips custom `props` off GeomMesh prims
+    // — so extracting physics after conversion loses per-mesh mjc:* collider
+    // attributes. Primitive colliders (Cube/Sphere/…) are untouched by the mesh
+    // converter, which is why only mesh colliders regressed.
+    physics_scene_json_cache_ = BuildPhysicsSceneJSON(stage);
 
     //std::cout << "[tusd:loadFromBinary] loaded << " filename << "\n";
 #if 0
@@ -3022,6 +3077,11 @@ class TinyUSDZLoaderNative {
 
     loaded_as_layer_ = false;
     filename_ = filename;
+    export_stage_ = stage;
+    has_stage_ = true;
+    // Snapshot physics JSON before the Tydra converter mutates the meshes
+    // (see loadFromBinary for the rationale).
+    physics_scene_json_cache_ = BuildPhysicsSceneJSON(stage);
 
     // Yield after parsing to allow UI update
     co_await yieldToEventLoop();
@@ -6388,7 +6448,50 @@ class TinyUSDZLoaderNative {
 
     return true;
   }
-  
+
+  // External variant override (LIVRPS V): force `variant_name` on every
+  // variantSet in the layer tree (e.g. LOD="LOD2"), unlike composeVariants
+  // which honors the authored selection. Pair with layerToRenderScene() to
+  // rebuild the scene at that variant (USD `LOD` variantSet switching).
+  bool applyVariantSelection(const std::string &variant_name) {
+    if (!loaded_as_layer_) {
+      error_ = "not loaded as layer";
+      return false;
+    }
+    // Always resolve from the pristine base `layer_` into `composed_layer_` —
+    // ApplyVariantSelector strips variant info from its output, so folding a
+    // prior result back into `layer_` (as composeVariants does) would make
+    // repeated selections (LOD switching) operate on a variant-free layer.
+    // `layer_` is const input here, so it stays pristine across calls.
+    if (!tinyusdz::ApplyVariantSelector(layer_, variant_name, &composed_layer_,
+                                        &warn_, &error_)) {
+      composited_ = false;
+      return false;
+    }
+    composited_ = true;
+    return true;
+  }
+
+  // Number of variants in the `LOD` variantSet (max across prims) on the
+  // pristine layer — sizes a viewer LOD selector. Call before
+  // applyVariantSelection (which strips variant info from the composed layer).
+  // Returns 0 when there is no `LOD` variantSet.
+  int lodVariantCount() {
+    if (!loaded_as_layer_) return 0;
+    int maxc = 0;
+    std::function<void(const tinyusdz::PrimSpec &)> visit =
+        [&](const tinyusdz::PrimSpec &ps) {
+          const auto it = ps.variantSets().find("LOD");
+          if (it != ps.variantSets().end()) {
+            maxc = std::max(maxc, static_cast<int>(it->second.variantSet.size()));
+          }
+          for (const auto &c : ps.children()) visit(c);
+        };
+    const tinyusdz::Layer &L = composited_ ? composed_layer_ : layer_;
+    for (const auto &kv : L.primspecs()) visit(kv.second);
+    return maxc;
+  }
+
   bool layerToRenderScene() {
 
     if (!loaded_as_layer_) {
@@ -6533,6 +6636,7 @@ class TinyUSDZLoaderNative {
     // Clear export state
     export_stage_ = tinyusdz::Stage();
     has_stage_ = false;
+    physics_scene_json_cache_.clear();
     // (USDC export no longer retains a wasm-side buffer; it copies straight to a
     // JS-owned Uint8Array — see toOwnedUint8Array().)
     usdz_export_buf_.clear();
@@ -7747,12 +7851,10 @@ class TinyUSDZLoaderNative {
 
   /// Extract a compact JSON view of UsdPhysics/MuJoCo prims and geometry.
   /// This is intentionally shaped for JS-side URDF conversion and testing.
-  std::string extractPhysicsSceneJSON() {
-    tinyusdz::Stage stage;
-    if (!getStageFromLayer(stage)) {
-      return std::string();
-    }
-
+  // Build the physics-scene JSON from a specific Stage. Kept separate from
+  // extractPhysicsSceneJSON() so the load paths can snapshot it from the
+  // pristine parsed stage before the Tydra converter mutates the meshes.
+  std::string BuildPhysicsSceneJSON(const tinyusdz::Stage &stage) {
     json root;
     root["upAxis"] = AxisName(stage.metas().upAxis.get_value());
     root["metersPerUnit"] = stage.metas().metersPerUnit.get_value();
@@ -7763,6 +7865,75 @@ class TinyUSDZLoaderNative {
       AppendPhysicsPrimJson(prim, "/" + prim.element_name(), root["prims"], 0);
     }
 
+    return root.dump();
+  }
+
+  std::string extractPhysicsSceneJSON() {
+    // Prefer the snapshot captured at load time from the pristine stage. The
+    // in-memory `export_stage_`/`layer_` may have had custom GeomMesh `props`
+    // (e.g. per-mesh mjc:* collider params) stripped by the Tydra render
+    // conversion that runs during load, so re-deriving here would drop them.
+    if (!physics_scene_json_cache_.empty()) {
+      return physics_scene_json_cache_;
+    }
+
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return std::string();
+    }
+    return BuildPhysicsSceneJSON(stage);
+  }
+
+  /// Structured metahuman-usd-1.0 (mh:*) profile: one entry per Skeleton /
+  /// SkelAnimation / Material / SkelRoot prim carrying mh:* attributes or
+  /// relationships. Shaped for the web reader (src/mh-profile.js) — avoids
+  /// brittle exportAsUSDA text parsing, and carries time-sampled control
+  /// curves as { timeSamples: [{t, v}] }. Returns "[]" when none.
+  std::string getMhProfileJSON() {
+    tinyusdz::Stage stage;
+    if (!getStageFromLayer(stage)) {
+      return std::string("[]");
+    }
+    json root = json::array();
+    std::function<void(const tinyusdz::Prim &, const std::string &, int)> visit =
+        [&](const tinyusdz::Prim &prim, const std::string &path, int depth) {
+          if (depth > 1024) return;  // guard deeply nested stages (as AppendPhysicsPrimJson)
+          const std::map<std::string, tinyusdz::Property> *props = nullptr;
+          if (const auto *s = prim.as<tinyusdz::Skeleton>()) props = &s->props;
+          else if (const auto *a = prim.as<tinyusdz::SkelAnimation>()) props = &a->props;
+          else if (const auto *m = prim.as<tinyusdz::Material>()) props = &m->props;
+          else if (const auto *r = prim.as<tinyusdz::SkelRoot>()) props = &r->props;
+          if (props) {
+            json attrs = json::object();
+            json rels = json::object();
+            for (const auto &kv : *props) {
+              if (kv.first.rfind("mh:", 0) != 0) continue;
+              if (const tinyusdz::Attribute *at = kv.second.get_attribute_or_null()) {
+                attrs[kv.first] = MhAttrJson(*at);
+              } else if (kv.second.is_relationship()) {
+                json targets = json::array();
+                for (const auto &p : kv.second.get_relationTargets()) {
+                  targets.push_back(PathName(p));
+                }
+                rels[kv.first] = targets;
+              }
+            }
+            if (!attrs.empty() || !rels.empty()) {
+              json item;
+              item["path"] = path;
+              item["type"] = prim.type_name();
+              item["attrs"] = attrs;
+              if (!rels.empty()) item["rels"] = rels;
+              root.push_back(std::move(item));
+            }
+          }
+          for (const auto &child : prim.children()) {
+            visit(child, path + "/" + child.element_name(), depth + 1);
+          }
+        };
+    for (const auto &prim : stage.root_prims()) {
+      visit(prim, "/" + prim.element_name(), 0);
+    }
     return root.dump();
   }
 
@@ -8874,6 +9045,11 @@ class TinyUSDZLoaderNative {
 
     loaded_as_layer_ = false;
     filename_ = filename;
+    export_stage_ = stage;
+    has_stage_ = true;
+    // Snapshot physics JSON before the Tydra converter mutates the meshes
+    // (see loadFromBinary for the rationale).
+    physics_scene_json_cache_ = BuildPhysicsSceneJSON(stage);
 
     // Now convert to render scene
     parsing_progress_.setStage(ParsingProgress::Stage::Converting);
@@ -9177,6 +9353,10 @@ class TinyUSDZLoaderNative {
   // Export state
   tinyusdz::Stage export_stage_;
   bool has_stage_{false};
+  // Physics-scene JSON snapshotted from the pristine parsed stage at load time,
+  // before the Tydra render conversion strips custom GeomMesh props. Empty when
+  // no USD stage load path populated it (e.g. layer-only load).
+  std::string physics_scene_json_cache_;
   std::vector<uint8_t> usdz_export_buf_;
   std::vector<uint8_t> image_export_buf_;
   // Optional USDC writer resource-limit overrides (bytes; 0 = built-in default).
@@ -11450,10 +11630,19 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::extractVariants)
 
       .function("applyVariantSelection",
-                &TinyUSDZLoaderNative::applyVariantSelection)
+                select_overload<bool(const std::string &, const std::string &,
+                                     const std::string &)>(
+                    &TinyUSDZLoaderNative::applyVariantSelection))
 
       .function("composeVariants",
                 &TinyUSDZLoaderNative::composeVariants)
+
+      .function("applyVariantSelection",
+                select_overload<bool(const std::string &)>(
+                    &TinyUSDZLoaderNative::applyVariantSelection))
+
+      .function("lodVariantCount",
+                &TinyUSDZLoaderNative::lodVariantCount)
 
       .function("layerToRenderScene",
                 &TinyUSDZLoaderNative::layerToRenderScene)
@@ -11591,6 +11780,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("exportAsUSDZWithOptions", &TinyUSDZLoaderNative::exportAsUSDZWithOptions)
       .function("exportLayerAsUSDZWithOptions", &TinyUSDZLoaderNative::exportLayerAsUSDZWithOptions)
       .function("extractPhysicsSceneJSON", &TinyUSDZLoaderNative::extractPhysicsSceneJSON)
+      .function("getMhProfileJSON", &TinyUSDZLoaderNative::getMhProfileJSON)
       .function("createSampleScene", &TinyUSDZLoaderNative::createSampleScene)
       .function("clearURDFMeshBuffers", &TinyUSDZLoaderNative::clearURDFMeshBuffers)
       .function("setVisualMesh", &TinyUSDZLoaderNative::setVisualMesh)

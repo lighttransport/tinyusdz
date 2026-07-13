@@ -1,0 +1,45 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+)
+
+def Xform "World" (
+    variants = {
+        string LOD = "LOD0"
+    }
+    prepend variantSets = ["LOD"]
+)
+{
+    variantSet "LOD" = {
+        "LOD0" {
+            custom int lodLevel = 0
+
+            def Mesh "LOD0Mesh"
+            {
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            }
+        }
+        "LOD1" {
+            custom int lodLevel = 1
+
+            def Mesh "LOD1Mesh"
+            {
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] points = [(0, 0, 0), (2, 0, 0), (0, 2, 0)]
+            }
+        }
+        "LOD2" {
+            custom int lodLevel = 2
+
+            def Mesh "LOD2Mesh"
+            {
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] points = [(0, 0, 0), (3, 0, 0), (0, 3, 0)]
+            }
+        }
+    }
+}
