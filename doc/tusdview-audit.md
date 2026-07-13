@@ -55,6 +55,75 @@ Fixed, each with a pinning regression test that fails against the old behavior:
   path outputs white. SPIR-V regenerated for `mesh.vert`/`mesh.frag`/
   `mesh_tess.tese` only. `tusdview-vertex-color`.
 
+## Backlog sweep (2026-07-13)
+
+The lower-severity backlog was worked through in themed batches; each fix is
+covered by `tool-tusdrender-cli-robustness` / `tool-tusdrender-purpose-visibility`
+(new) or by existing suites (88/88 green on software and hardware GL).
+
+Fixed:
+
+- **R11** — `-fitScale` uses the strict parser (no more SIGABRT); width/height
+  capped at 32768, samples at 65536; the camera-aperture-derived height is
+  clamped and NaN-guarded at all four derivation sites.
+- **R6** — `-frames` on a path that cannot honor it (plain `.usda`/`.usdz`
+  without `-rtPreview`) now errors instead of silently rendering one literally-
+  named `####` file.
+- **R7 + R12** — the legacy path resolves inherited purpose AND
+  `visibility="invisible"` from the source Stage (`BuildLegacyPurposeVisibility`
+  → `TriInfo.purpose_bit`; invisible subtrees pruned), so `-purpose`/`-showGuide`
+  /`-hideProxy` work on plain `.usda`; the next-path collectors (meshes, curves,
+  scene-split) prune `visibility="invisible"` too.
+- **R8** — legacy path honors constant `inputs:opacity`, `opacityThreshold`, and
+  constant `displayOpacity` (`MaterialOpacity`/`MaterialOpacityThreshold`).
+- **R9** — the tydra-next resolver honors an authored `sourceColorSpace`
+  ("raw"/"sRGB") over the per-slot default, matching the legacy resolver.
+- Numerics: SphereLight radiance uses the sampler's radius gate (no more
+  100x-dark 1e-5..1e-4 spheres); the diffuse-IBL spec-lobe contamination was
+  fixed upstream with a per-lobe eval (`bsdf_eval_lobes`, furnace 1.32x → 1.00x)
+  which superseded this sweep's approximation during rebase; area-light NEE uses
+  weight 1 when the BSDF MIS partner cannot run (depth ≥ 2 / non-opaque /
+  non-bsdf modes); the
+  texture cache keys on all scale/bias channels; lightrt-bsdf mode shades from
+  `tri.base_color` so base-color TEXTURES apply (the struct constant alone
+  rendered textured surfaces flat).
+- **T9** — the seven texture-image upload paths check `vkAllocateMemory` /
+  `vkBindImageMemory` and fall back to the white texture instead of recording
+  copies into an unbound image (device loss on VRAM exhaustion).
+- **T10** — an empty mesh keeps its slot in `meshes_` (placeholder, draws
+  nothing) so per-mesh indices (visibility, highlight, updateMeshWorld/Vertices,
+  RT meshId) stay aligned with DrawScene order, as GL already did.
+- **T5** — instanced prototypes resolve their bound material (loader:
+  `EmitInstancedProto` + the cached material resolver; RT instance info sets
+  `useMaterial` when a real material id is present). Verified data-side
+  (material built, submesh id + instance flags correct); the headless `--rt`
+  screenshot shows no material color even for non-instanced meshes on this box,
+  so the visual could not be confirmed through that harness.
+- **T6** — the `--next` loader's GeomSubset face bindings route authored face
+  ids through `sanitize_face_remap` (parity with the core converter).
+- UDIM trio — the legacy path DROPS tiles that fail to resize (parity with
+  `--next`; a wrong-sized tile rendered as a garbage layer); a UDIM tile set
+  under BCn picks ONE block format (mixed per-tile BC1/BC3 forced the whole
+  array back to uncompressed); the RGBA mip chain is freed once the compressed
+  chain is built (~21 MB dead RAM per 4K texture; the pipeline test asserts the
+  new contract).
+- `--next` metal/rough scalar textures carry their per-channel `inputs:scale` /
+  `inputs:bias` (tusdrender already applied them; the tools disagreed).
+
+Deferred, with reasons:
+
+- **R10 (light `normalize`, dome `texture:format`)** — tusdrender's sphere-light
+  photometry is pinned by the NEE↔punctual energy test (`sphere-light-nee`), and
+  its convention (L = I/πr² by default) differs from both UsdLux and tusdview's
+  normalize handling (÷4πr² when normalized). Honoring the flag without breaking
+  the pinned punctual consistency needs a deliberate photometric-convention
+  decision across punctual/NEE/tusdview at once — an appearance-changing call.
+- **T8 (doubleSided plumbing + culling), T11 (sRGB linearization in tusdview
+  raster), GL↔VK normal-map/shaded-diffuse unification** — appearance-changing
+  across every scene; need golden-image re-baselines and a deliberate look call.
+
+Refuted on re-test: **T7** (Facing AOV inversion) — see the finding below.
+
 Severity key: **critical** (crash/DoS or silent data loss on common assets) ·
 **high** (wrong render on a common asset, or a crash on hostile input) ·
 **medium** (wrong on a less-common asset, or a parity gap) · **low** (edge case).
@@ -152,14 +221,14 @@ converter does, `render-converter.cc:3025`).
 - **Fix:** when `sanitize_dropped_faces > 0`, remap each authored subset index
   through `sanitize_face_remap` (skip −1) before indexing, as the core does.
 
-### T7. [medium] Facing AOV (mode 8) is inverted on Vulkan
-`vk/shaders/mesh.frag:198` and `mesh_inst.frag:88` read `gl_FrontFacing` for the
-Facing AOV, but VK uses a Y-flipped (negative-height) viewport
-(`vk_renderer.cc:6748`) that reverses winding vs GL. The shaded path avoids this
-(uses N·V), the AOV does not.
-- **Scenario:** RenderMode::Facing on a closed single-sided sphere: GL paints the
-  visible surface green (front), VK paints it red (back).
-- **Fix:** derive front/back from `dot(Ngeo, V)` in the AOV, as the shaded path does.
+### T7. [REFUTED 2026-07-13] Facing AOV inversion on Vulkan
+Reported as: `gl_FrontFacing` in the Facing AOV inverted by VK's Y-flipped
+viewport. **Empirically false**: a camera-facing CCW quad reads FRONT/green on
+both backends (VK headless green=426439 px vs GL green=426435). The projection
+matrix also flips Y, so the viewport flip and clip-space flip cancel and
+framebuffer winding matches GL. This was a code-derived finding that did not
+survive an actual render; a frontFace "fix" was attempted and correctly rejected
+by the same A/B.
 
 ### T8. [medium] Vulkan never back-face culls; GL culls single-sided meshes  **[×2]**
 All VK raster pipelines set `cullMode = VK_CULL_MODE_NONE`
