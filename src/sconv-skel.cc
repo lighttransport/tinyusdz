@@ -171,6 +171,11 @@ bool CrateWriter::ExtractSkelRootProperties(
     return false;
   }
 
+  // SkelRoot is Xformable -- it is the transform root of the rig -- but this
+  // writer never emitted its xformOps, so the whole rig snapped back to the
+  // origin on write. ExtractSkeletonProperties already does this.
+  ExtractXformOpsFromXformable(prim, prim_path, fields, err);
+
   // SkelRoot has no dedicated attributes beyond visibility, purpose, and extent
   // Extract visibility
   if (skel_root->visibility.authored()) {
