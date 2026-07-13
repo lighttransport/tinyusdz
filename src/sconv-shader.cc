@@ -193,12 +193,18 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
 
-    ListOp<Path> conn_listop;
-    conn_listop.ClearAndMakeExplicit();
-    conn_listop.SetExplicitItems(conn_paths);
-    crate::CrateValue conn_value;
-    conn_value.Set(conn_listop);
-    input_fields.push_back({"connectionPaths", conn_value});
+    // Empty => a DECLARED-but-unconnected, value-less input (`token inputs:wrapS`
+    // on its own). It still has to be written, as typeName alone: dropping it
+    // loses the declaration, and writing a `default` would invent the schema
+    // fallback as an authored value -- the bug this whole change is about.
+    if (!conn_paths.empty()) {
+      ListOp<Path> conn_listop;
+      conn_listop.ClearAndMakeExplicit();
+      conn_listop.SetExplicitItems(conn_paths);
+      crate::CrateValue conn_value;
+      conn_value.Set(conn_listop);
+      input_fields.push_back({"connectionPaths", conn_value});
+    }
 
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
@@ -306,8 +312,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", "color3f", diffuse_value, &preview_surface->diffuseColor.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:diffuseColor", "color3f", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:diffuseColor", "color3f",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -326,8 +333,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", "color3f", emissive_value, &preview_surface->emissiveColor.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:emissiveColor", "color3f", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:emissiveColor", "color3f",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -352,8 +360,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
         emitted = true;
       }
     }
-    if (!emitted && conns) {
-      if (!add_input_connection_spec("inputs:useSpecularWorkflow", "int", *conns)) {
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:useSpecularWorkflow", "int",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -372,8 +381,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", "color3f", spec_color_value, &preview_surface->specularColor.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:specularColor", "color3f", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:specularColor", "color3f",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -420,8 +430,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
         emitted = true;
       }
     }
-    if (!emitted && conns) {
-      if (!add_input_connection_spec("inputs:opacityMode", "token", *conns)) {
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:opacityMode", "token",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -447,8 +458,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (!add_input_spec("inputs:normal", "normal3f", normal_value, conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:normal", "normal3f", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:normal", "normal3f",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -777,8 +789,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
       if (!add_input_spec_with_timesamples_float2("inputs:st", st_value, &uv_texture->st.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:st", "float2", *conns)) return false;
+    } else {
+      if (!add_input_connection_spec("inputs:st", "float2",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
@@ -799,8 +812,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
         emitted = true;
       }
     }
-    if (!emitted && conns) {
-      if (!add_input_connection_spec("inputs:wrapS", "token", *conns)) return false;
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:wrapS", "token",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
@@ -821,8 +835,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
         emitted = true;
       }
     }
-    if (!emitted && conns) {
-      if (!add_input_connection_spec("inputs:wrapT", "token", *conns)) return false;
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:wrapT", "token",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
@@ -843,8 +858,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
         emitted = true;
       }
     }
-    if (!emitted && conns) {
-      if (!add_input_connection_spec("inputs:fallback", "float4", *conns)) return false;
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:fallback", "float4",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
@@ -866,8 +882,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
         emitted = true;
       }
     }
-    if (!emitted && conns) {
-      if (!add_input_connection_spec("inputs:sourceColorSpace", "token", *conns)) {
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:sourceColorSpace", "token",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -883,8 +900,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
       if (!add_input_spec("inputs:scale", "float4", scale_value, conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:scale", "float4", *conns)) return false;
+    } else {
+      if (!add_input_connection_spec("inputs:scale", "float4",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
@@ -898,8 +916,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
       if (!add_input_spec("inputs:bias", "float4", bias_value, conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:bias", "float4", *conns)) return false;
+    } else {
+      if (!add_input_connection_spec("inputs:bias", "float4",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
@@ -914,8 +933,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
       if (!add_input_spec("inputs:uv_set", "int", uv_set_value, conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:uv_set", "int", *conns)) return false;
+    } else {
+      if (!add_input_connection_spec("inputs:uv_set", "int",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
@@ -935,8 +955,9 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
       }
       emitted = true;
     }
-    if (!emitted && conns) {
-      if (!add_input_connection_spec("inputs:uv_set_name", "token", *conns)) {
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:uv_set_name", "token",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -1003,12 +1024,18 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
 
-    ListOp<Path> conn_listop;
-    conn_listop.ClearAndMakeExplicit();
-    conn_listop.SetExplicitItems(conn_paths);
-    crate::CrateValue conn_value;
-    conn_value.Set(conn_listop);
-    input_fields.push_back({"connectionPaths", conn_value});
+    // Empty => a DECLARED-but-unconnected, value-less input (`token inputs:wrapS`
+    // on its own). It still has to be written, as typeName alone: dropping it
+    // loses the declaration, and writing a `default` would invent the schema
+    // fallback as an authored value -- the bug this whole change is about.
+    if (!conn_paths.empty()) {
+      ListOp<Path> conn_listop;
+      conn_listop.ClearAndMakeExplicit();
+      conn_listop.SetExplicitItems(conn_paths);
+      crate::CrateValue conn_value;
+      conn_value.Set(conn_listop);
+      input_fields.push_back({"connectionPaths", conn_value});
+    }
 
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
@@ -1135,12 +1162,18 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
 
-    ListOp<Path> conn_listop;
-    conn_listop.ClearAndMakeExplicit();
-    conn_listop.SetExplicitItems(conn_paths);
-    crate::CrateValue conn_value;
-    conn_value.Set(conn_listop);
-    input_fields.push_back({"connectionPaths", conn_value});
+    // Empty => a DECLARED-but-unconnected, value-less input (`token inputs:wrapS`
+    // on its own). It still has to be written, as typeName alone: dropping it
+    // loses the declaration, and writing a `default` would invent the schema
+    // fallback as an authored value -- the bug this whole change is about.
+    if (!conn_paths.empty()) {
+      ListOp<Path> conn_listop;
+      conn_listop.ClearAndMakeExplicit();
+      conn_listop.SetExplicitItems(conn_paths);
+      crate::CrateValue conn_value;
+      conn_value.Set(conn_listop);
+      input_fields.push_back({"connectionPaths", conn_value});
+    }
 
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
@@ -1227,8 +1260,9 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
       if (!add_input_spec_with_timesamples_float2("inputs:in", in_crate_value, &transform2d->in.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:in", "float2", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:in", "float2",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -1246,8 +1280,9 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
       if (!add_input_spec_with_timesamples_float("inputs:rotation", rotation_crate_value, &transform2d->rotation.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:rotation", "float", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:rotation", "float",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -1265,8 +1300,9 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
       if (!add_input_spec_with_timesamples_float2("inputs:scale", scale_crate_value, &transform2d->scale.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:scale", "float2", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:scale", "float2",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -1284,8 +1320,9 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
       if (!add_input_spec_with_timesamples_float2("inputs:translation", translation_crate_value, &transform2d->translation.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:translation", "float2", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:translation", "float2",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
