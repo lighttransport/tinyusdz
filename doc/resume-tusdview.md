@@ -25,12 +25,13 @@ nothing), the TLAS `PREFER_FAST_BUILD` question (measured, rejected —
 large-scene.md §2.12), and the `lightrt-bsdf` IBL energy (the furnace now lands at
 1.00x the dome that lights it, from 2.00x).
 
-Done since (2026-07-13), all committed, none pushed: the proxy/render purpose
-supersede (both loaders), a family of **silent data-loss bugs in the writers**
-found by sweeping fixtures through `tusdcat`, and — later the same day — the
-**typeless-prim-invents-a-`Model`-typeName** bug, which was the sole cause of
-68 of the then-133 round-trip failures (133 -> 65). See
-[Open](#open) for what is left of that sweep, and
+Done since (2026-07-13): the proxy/render purpose supersede (both loaders), a
+family of **silent data-loss bugs in the writers** found by sweeping fixtures
+through `tusdcat`, and the **typeless-prim-invents-a-`Model`-typeName** bug
+(sole cause of 68 of the then-133 round-trip failures, 133 -> 65) — all
+pushed. Also fixed, not yet pushed: the **Camera
+`shutter:open`/`shutter:close` written under the wrong attribute name** bug
+(65 -> 64). See [Open](#open) for what is left of that sweep, and
 [Prompts for a fresh session](#prompts-for-a-fresh-session) to pick it up cold.
 
 ## Prompts for a fresh session
@@ -40,29 +41,29 @@ to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
 **1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-65-of-422-fixtures)):
+hole; see [The crate writer drops data](#the-crate-writer-drops-data-64-of-422-fixtures)):
 
 > The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
 > Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 65 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
-> intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug).
-> Read the full categorized list in that section before starting — it spans
-> Camera `shutter:open`/`shutter:close` written under the wrong attribute name,
-> `apiSchemas` list-op deletes and `None` blocks dropped, relationship
-> variability/`bindMaterialAs`/`proxyPrim` dropped, variant-statement metadata
+> data"): 64 of 422 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
+> intact (down from 133, after fixing the typeless-prim-becomes-`Model` bug and
+> the Camera shutter:open/shutter:close naming bug). Read the full categorized
+> list in that section before starting — it spans `apiSchemas` list-op deletes
+> and `None` blocks dropped, relationship variability/`bindMaterialAs`/
+> `proxyPrim` dropped, variant-statement metadata
 > (`active`/`hidden`/`kind`/`variantSets`) dropped, several `.connect` shader
 > connections baked down to plain constants, several more `timeSamples`
 > attributes dropped wholesale, `skel:blendShapes` losing its namespace,
 > spurious unauthored `visibility`/`purpose` invented on Skeleton-family prims,
 > and stage/layer metadata dictionaries (`customLayerData`, `kilogramsPerUnit`,
 > `sdrMetadata`, etc.) dropped. Fix them one category at a time, smallest/most
-> self-contained first (shutter naming and the apiSchemas/rel list-op deletes
-> look smallest); the `.connect`-baked-to-constant bug is probably the most
-> consequential since it silently changes an asset's shading network rather
-> than dropping inert metadata.
+> self-contained first (the apiSchemas/rel list-op deletes look smallest next);
+> the `.connect`-baked-to-constant bug is probably the most consequential since
+> it silently changes an asset's shading network rather than dropping inert
+> metadata.
 > Each fix must come with a mutation-verified assertion in
 > `tests/run-scope-imageable-roundtrip.sh` (revert the fix, watch the test fail),
-> and must not regress the 87-test suite or raise the fixture count. Do not
+> and must not regress the ctest suite or raise the fixture count. Do not
 > "fix" a diff by making the printer match the writer — the printer is already a
 > fixed point (all 422 fixtures re-print identically); the writer is what is
 > wrong.
@@ -82,7 +83,7 @@ whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (65 of 422 fixtures)
+### The crate writer drops data (64 of 422 fixtures)
 
 `.usdc` is not a faithful round-trip today. Sweep, from the repo root:
 
@@ -94,16 +95,15 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 65 as of 2026-07-13 (was 133, was 140)
+done | wc -l          # 64 as of 2026-07-13 (was 65, was 133, was 140)
 ```
 
 The USDA printer is a FIXED POINT — all 422 fixtures re-print identically — so a
 diff here is the crate writer losing data, not the printer being creative. A
-full detailed diff of all 65 turned up more categories than earlier notes here
-described — do not re-derive this from scratch:
+full detailed diff turned up more categories than earlier notes here described
+— do not re-derive this from scratch (Camera shutter naming is fixed, see
+below; not relisted here):
 
-- Camera `shutter:open` / `shutter:close` are not dropped, they are written
-  under the WRONG attribute name (`shutterOpen`/`shutterClose`, no namespace).
 - `apiSchemas` list-ops: a standalone or combined `delete apiSchemas` is not
   written; an explicit `apiSchemas = None` block is dropped; the surviving
   `prepend apiSchemas` order is not preserved.
@@ -202,6 +202,25 @@ the correct empty string via `prim_type_name()`. Guarded by a new
 `def`/`over`/`class` (all three specifiers share the fallback);
 mutation-verified by reverting the fix and confirming the check reproduces
 `def Model "W"` / `over Model "child"` / `class Model "TheClass"`.
+
+### Camera `shutter:open`/`shutter:close` written under the wrong attribute name
+
+Written, not dropped — but under the wrong name. `src/sconv-geom.cc`'s
+`CrateWriter::ExtractCameraProperties` writes every other Camera attribute
+(`exposure`, `focalLength`, `horizontalAperture`, ...) under its plain USD
+name, which is correct for those. `shutter:open`/`shutter:close` are the two
+Camera attributes that ARE namespaced in the schema (`usdGeom.hh`,
+`prim-property-tables.hh`), and the writer used the same plain-name
+convention for them too (`add_double_attr("shutterOpen", ...)`). The reader
+never finds a namespaced `shutter:open` back, and the printer falls back to
+the schema default of `0.0` for both — an authored motion-blur interval
+silently became `0/0` on round-trip. Fix: write the namespaced strings
+directly; the field-name mechanism already handles colons fine elsewhere
+(`inputs:texture:file` in `sconv-light.cc`), so this was a two-string change,
+not a structural one. Guarded by a new `camera-shutter-usdc` check in
+`tests/run-scope-imageable-roundtrip.sh`; mutation-verified by reverting the
+fix and confirming the check reproduces `shutterClose`/`shutterOpen` (no
+colon) in place of `shutter:close`/`shutter:open`.
 
 ### `proxy` and `render` are ALTERNATIVES, not two things to draw
 

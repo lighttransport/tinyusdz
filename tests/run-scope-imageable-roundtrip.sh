@@ -252,4 +252,46 @@ else
   echo "ok[typeless-usdc]: typeless def/over/class stayed typeless"
 fi
 
+# Camera's `shutter:open` / `shutter:close` are namespaced in the schema
+# (usdGeom.hh, prim-property-tables.hh), unlike this Camera's other
+# attributes, which are all plain names. The crate writer wrote them under
+# the plain names `shutterOpen`/`shutterClose` instead -- a property name the
+# reader never looks for -- so a round-trip came back as if they were never
+# authored at all (the printer then fell back to the schema default of 0.0
+# for both, silently changing an authored motion-blur interval).
+cat > "$TMP/camera.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "W"
+)
+
+def Camera "W"
+{
+    double shutter:open = -0.25
+    double shutter:close = 0.25
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/camera.usdc" "$TMP/camera.usda" \
+     >"$TMP/write5.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the camera scene to usdc"
+  cat "$TMP/write5.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/camera.usdc" > "$TMP/camera-rt.usda" 2>/dev/null
+lost=""
+for expect in 'shutter:open = -0.25' 'shutter:close = 0.25'; do
+  grep -qF "$expect" "$TMP/camera-rt.usda" || lost="$lost
+    $expect"
+done
+if [ -n "$lost" ]; then
+  echo "FAIL[camera-shutter-usdc]: dropped/renamed on round-trip:$lost"
+  echo "--- got ---"
+  cat "$TMP/camera-rt.usda"
+  status=1
+else
+  echo "ok[camera-shutter-usdc]: Camera shutter:open/shutter:close survived"
+fi
+
 exit "$status"

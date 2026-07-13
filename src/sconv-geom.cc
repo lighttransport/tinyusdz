@@ -884,11 +884,15 @@ bool CrateWriter::ExtractCameraProperties(
     fields.push_back({"stereoRole", crate_val});
   }
 
-  // Extract shutterOpen (double)
-  add_double_attr("shutterOpen", camera->shutterOpen);
+  // Extract shutter:open (double). Namespaced in the schema (usdGeom.hh,
+  // prim-property-tables.hh) unlike this function's other Camera attributes,
+  // which are all plain names -- writing it as "shutterOpen" put it under a
+  // property name the reader never looks for, so it round-tripped as if
+  // never authored.
+  add_double_attr("shutter:open", camera->shutterOpen);
 
-  // Extract shutterClose (double)
-  add_double_attr("shutterClose", camera->shutterClose);
+  // Extract shutter:close (double), same namespacing as shutter:open above.
+  add_double_attr("shutter:close", camera->shutterClose);
 
   // Extract clippingPlanes (float4[]) if present - TypedAttribute (no fallback)
   if (camera->clippingPlanes.authored()) {
