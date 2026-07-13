@@ -16,6 +16,47 @@
 #endif
 
 namespace tinyusdz {
+
+namespace {
+
+// Emit `<name>.timeSamples` for an Animatable<T> whose samples are stored in the
+// SAME representation on disk as in memory (arrays of points/floats/quats, ...),
+// i.e. everything except the enums and Extent, which need a shape conversion and
+// are handled at their own sites.
+//
+// Several typed writers emitted only has_default() and had NO timeSamples branch
+// at all, so animation on those attributes was dropped wholesale on write. This
+// is the missing half.
+template <typename T>
+void EmitAnimatableTimeSamples(const std::string &name,
+                               const Animatable<T> &anim,
+                               crate::FieldValuePairVector &fields) {
+  if (!anim.has_timesamples()) {
+    return;
+  }
+
+  const value::TimeSamples *src = anim.get_timesamples_ptr();
+  if (!src) {
+    return;
+  }
+
+  value::TimeSamples ts;
+  const auto &samples = src->get_samples();
+  for (size_t i = 0; i < samples.size(); i++) {
+    if (samples[i].blocked) {
+      ts.add_blocked_sample(samples[i].t, value::Value());
+    } else {
+      ts.add_sample(samples[i].t, samples[i].value);
+    }
+  }
+
+  crate::CrateValue ts_crate_val;
+  ts_crate_val.Set(ts);
+  fields.push_back({name + ".timeSamples", ts_crate_val});
+}
+
+}  // namespace
+
 namespace experimental {
 
 // ============================================================================
@@ -742,6 +783,7 @@ bool CrateWriter::ExtractPointsProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("velocities", velocities_anim, fields);
     }
   }
 
@@ -759,6 +801,7 @@ bool CrateWriter::ExtractPointsProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("accelerations", accelerations_anim, fields);
     }
   }
 
@@ -862,13 +905,42 @@ bool CrateWriter::ExtractCameraProperties(
   // Extract projection (token enum)
   if (camera->projection.authored()) {
     const Animatable<GeomCamera::Projection>& proj_anim = camera->projection.get_value();
+
+    auto proj_to_token = [](GeomCamera::Projection p) {
+      return value::token(p == GeomCamera::Projection::Perspective ? "perspective"
+                                                                  : "orthographic");
+    };
+
     GeomCamera::Projection proj_val;
-    if (proj_anim.get_scalar(&proj_val)) {
-      std::string proj_str = (proj_val == GeomCamera::Projection::Perspective) ? "perspective" : "orthographic";
+    if (proj_anim.has_default() && proj_anim.get_default(&proj_val)) {
       crate::CrateValue crate_val;
-      value::token tok(proj_str);
-      crate_val.Set(tok);
+      crate_val.Set(proj_to_token(proj_val));
       fields.push_back({"projection", crate_val});
+    }
+
+    // ANIMATED projection. There was no timeSamples branch, so `token
+    // projection.timeSamples` was dropped wholesale. An enum's samples are stored
+    // as int64 in memory (same as visibility, see ExtractImageableAttrs) and must
+    // go out as tokens.
+    if (proj_anim.has_timesamples()) {
+      const value::TimeSamples *proj_ts = proj_anim.get_timesamples_ptr();
+
+      value::TimeSamples ts;
+      const auto &samples = proj_ts->get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        if (samples[i].blocked) {
+          ts.add_blocked_sample(samples[i].t, value::Value());
+        } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
+          ts.add_sample(samples[i].t, value::Value(proj_to_token(
+                                          static_cast<GeomCamera::Projection>(*iv))));
+        } else {
+          ts.add_sample(samples[i].t, samples[i].value);
+        }
+      }
+
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({"projection.timeSamples", ts_crate_val});
     }
   }
 
@@ -1300,6 +1372,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("positions", positions_anim, fields);
     }
   }
 
@@ -1317,6 +1390,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("scales", scales_anim, fields);
     }
   }
 
@@ -1402,6 +1476,7 @@ bool CrateWriter::ExtractPointInstancerProperties(
           }
         }
       }
+      EmitAnimatableTimeSamples("orientations", orientations_anim, fields);
     }
   }
 
@@ -1901,6 +1976,32 @@ bool CrateWriter::ExtractGPrimProperties(
         }
       }
     }
+
+    // ANIMATED extent. This branch did not exist: the writer emitted only the
+    // default, so `extent.timeSamples` was dropped wholesale. Each sample is an
+    // Extent struct in memory and float3[2] on disk, the same shape conversion
+    // the default above does.
+    if (extent_animatable && extent_animatable->has_timesamples()) {
+      const value::TimeSamples *ext_ts = extent_animatable->get_timesamples_ptr();
+
+      value::TimeSamples ts;
+      const auto &samples = ext_ts->get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        if (samples[i].blocked) {
+          ts.add_blocked_sample(samples[i].t, value::Value());
+        } else if (const Extent *ev = samples[i].value.as<Extent>()) {
+          std::vector<value::float3> ev_vec = {ev->lower, ev->upper};
+          ts.add_sample(samples[i].t, value::Value(ev_vec));
+        } else {
+          // Already float3[2] (e.g. a programmatically-built prim).
+          ts.add_sample(samples[i].t, samples[i].value);
+        }
+      }
+
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({"extent.timeSamples", ts_crate_val});
+    }
   }
 
   // doubleSided is handled in ConvertSinglePrim via ConvertPropertyToFields
@@ -1909,7 +2010,10 @@ bool CrateWriter::ExtractGPrimProperties(
   // Extract orientation
   if (gprim->orientation.authored()) {
     Orientation orient_val = gprim->orientation.get_value();
-    if (orient_val != Orientation::RightHanded) {  // Only write if not default
+    {  // Write it even when it EQUALS the default: `uniform token orientation =
+       // "rightHanded"` is an authored opinion, and an authored opinion blocks
+       // weaker ones during composition. Skipping it "because it looks like the
+       // default" silently changed what the layer means.
       crate::CrateValue orient_crate_val;
       value::token orient_tok(to_string(orient_val));
       orient_crate_val.Set(orient_tok);
