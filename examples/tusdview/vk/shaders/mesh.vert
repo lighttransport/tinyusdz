@@ -48,6 +48,8 @@ struct MaterialTexParam {
   vec4 scalar1;  // roughnessScale, roughnessBias, displacementScale, displacementBias
   vec4 uvSets;   // per-slot UV set (see mesh.frag); unused here but the struct
                  // layout must stay byte-identical across every stage.
+  vec4 specParams;  // specular F0 (see mesh.frag); unused here, kept for
+                    // the byte-identical SSBO stride.
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 // Per-vertex displayColor (set 24): packed floats, 3 per vertex, indexed by

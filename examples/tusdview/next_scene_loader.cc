@@ -2101,6 +2101,11 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.roughness = s.roughness.value.x;
     setRGB(dm.emissive, s.emissive_color.value, 1.0f);
     dm.alpha = s.opacity.value.x;
+    // Specular workflow + IOR (T12): tusdrender honors both; tusdview used to
+    // fall back to the metallic workflow at a fixed dielectric IOR 1.5.
+    dm.useSpecularWorkflow = s.use_specular_workflow;
+    setRGB(dm.specularColor, s.specular_color.value, 1.0f);
+    dm.ior = s.ior.value.x;
     colorSlot(s.diffuse_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
     colorSlot(s.emissive_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
     loadNormal(s.normal);
@@ -2114,6 +2119,8 @@ int BuildNextMaterial(const tnext::Stage& stage, tydn::RenderSceneConverter& con
     dm.roughness = s.specular_roughness.value.x;
     setRGB(dm.emissive, s.emission_color.value, s.emission_luminance.value.x);
     dm.alpha = s.opacity.value.x;
+    // OpenPBR is a metalness workflow; honor its dielectric IOR for F0 (T12).
+    dm.ior = s.specular_ior.value.x;
     colorSlot(s.base_color, true, &dm.baseColorTex, &dm.baseColorSample, dm.baseColor);
     colorSlot(s.emission_color, true, &dm.emissiveTex, &dm.emissiveSample, dm.emissive);
     loadNormal(s.normal);

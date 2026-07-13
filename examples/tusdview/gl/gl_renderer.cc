@@ -203,6 +203,9 @@ bool GLRenderer::init(GLFWwindow* window, std::string* err) {
   uBaseColor_ = glGetUniformLocation(program_, "uBaseColor");
   uMetallic_ = glGetUniformLocation(program_, "uMetallic");
   uRoughness_ = glGetUniformLocation(program_, "uRoughness");
+  uUseSpecularWorkflow_ = glGetUniformLocation(program_, "uUseSpecularWorkflow");
+  uSpecularColor_ = glGetUniformLocation(program_, "uSpecularColor");
+  uIor_ = glGetUniformLocation(program_, "uIor");
   uEmissive_ = glGetUniformLocation(program_, "uEmissive");
   uAlpha_ = glGetUniformLocation(program_, "uAlpha");
   uAlphaMode_ = glGetUniformLocation(program_, "uAlphaMode");
@@ -1012,6 +1015,11 @@ void GLRenderer::beginScene(const std::vector<DrawMaterialCPU>& materials,
     gm.alpha = m.alpha;
     gm.alphaMode = m.alphaMode;
     gm.alphaCutoff = m.alphaCutoff;
+    gm.useSpecularWorkflow = m.useSpecularWorkflow;
+    gm.specularColor[0] = m.specularColor[0];
+    gm.specularColor[1] = m.specularColor[1];
+    gm.specularColor[2] = m.specularColor[2];
+    gm.ior = m.ior;
     gm.baseColorTex = m.baseColorTex;  // slot indices (resolved at draw)
     gm.metalRoughTex = m.metalRoughTex;
     gm.normalTex = m.normalTex;
@@ -2375,6 +2383,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3f(uBaseColor_, 0.f, 0.f, 0.f);
         glUniform1f(uMetallic_, 0.f);
         glUniform1f(uRoughness_, 1.f);
+        glUniform1i(uUseSpecularWorkflow_, 0);
+        glUniform3f(uSpecularColor_, 0.f, 0.f, 0.f);
+        glUniform1f(uIor_, 1.5f);
         glUniform3fv(uEmissive_, 1, overrideEmissive);
         glUniform1f(uAlpha_, 1.f);
         glUniform1i(uAlphaMode_, 0);
@@ -2391,6 +2402,9 @@ void GLRenderer::drawMeshes(const RenderFrameParams& params, bool wireframe,
         glUniform3fv(uBaseColor_, 1, mat.baseColor);
         glUniform1f(uMetallic_, mat.metallic);
         glUniform1f(uRoughness_, mat.roughness);
+        glUniform1i(uUseSpecularWorkflow_, mat.useSpecularWorkflow ? 1 : 0);
+        glUniform3fv(uSpecularColor_, 1, mat.specularColor);
+        glUniform1f(uIor_, mat.ior);
         glUniform3fv(uEmissive_, 1, mat.emissive);
         glUniform1f(uAlpha_, mat.alpha);
         glUniform1i(uAlphaMode_, mat.alphaMode);

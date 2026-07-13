@@ -15,16 +15,22 @@ program has web/Basis follow-ups left.
 
 ### Audit (A)
 
-- **T12 [medium] — tusdview `--next` material gaps.** `next_scene_loader.cc`
-  (~2043–2076) reads only baseColor / metal-rough / emissive / normal. It does
-  NOT read `opacity.texture_id`, does not sample the stored varying
-  `displayOpacity` (~3322), and ignores `use_specular_workflow` / `specular_color`
-  / `ior`. So an RGB diffuse + separate grayscale `inputs:opacity` mask with
-  `opacityThreshold` cuts out in tusdrender but renders opaque in tusdview; a
-  `useSpecularWorkflow=1, ior=1.33` material is honored by tusdrender and falls
-  back to dielectric IOR 1.5 in tusdview. Fix: read the opacity texture, sample
-  `displayOpacity`, honor the specular workflow + ior. Pin with a headless
-  cutout + a specular-vs-metallic render.
+- **T12 [medium] — tusdview `--next` material gaps.** PARTIALLY FIXED
+  (2026-07-13): **specular workflow + IOR done.** The loader now reads
+  `use_specular_workflow` / `specular_color` / `ior` (UsdPreviewSurface) and
+  `specular_ior` (OpenPBR) into `DrawMaterialCPU`; both raster backends compute
+  F0 = specularColor (spec workflow) or dielectric-from-ior (metallic), unified
+  GL↔VK (`computeF0`). VK routes it through a new `specParams` vec4 in the set-6
+  SSBO (workflow flag folded into ior's sign, so no push-constant lane); GL uses
+  three uniforms. Pinned by `tusdview-specular-workflow`.
+  **Still open:** (1) the **opacity texture** — `s.opacity.texture_id` is a
+  SEPARATE grayscale mask (the base-color alpha case already works via
+  `baseSample.a`); loading it needs a new sampler descriptor set (VK) / sampler
+  uniform (GL) + a MaterialTexParam UV slot, i.e. the same per-slot plumbing as
+  base/normal/MR. (2) **varying `displayOpacity`** — `dm.vertexAlpha` is built
+  and size-tracked but never uploaded as a vertex attribute / sampled (constant
+  per-mesh displayOpacity already works via `materialWithAlpha` variants). Both
+  are deferred as a follow-up; neither is wired into GL/VK/RT yet.
 
 - **Cross-tool parity oracle (highest-value test, not built).** Nothing renders
   the *same* scene through both binaries and asserts agreement — exactly why the

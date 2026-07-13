@@ -40,6 +40,8 @@ struct MaterialTexParam {
   vec4 scalar1;
   vec4 uvSets;  // per-slot UV set (see mesh.frag); unused here, but every stage's
                 // copy of this struct must stay byte-identical.
+  vec4 specParams;  // specular F0 (see mesh.frag); unused here, kept for
+                    // the byte-identical SSBO stride.
 };
 layout(set = 6, binding = 0, std430) readonly buffer MatTex { MaterialTexParam p[]; } mtp;
 
