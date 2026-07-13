@@ -766,4 +766,46 @@ else
   fi
 fi
 
+# A BLOCKED xformOp value (`float xformOp:rotateZ:spin = None`) came back as the
+# type's ZERO -- `= 0` -- which is not the same thing at all: None blocks weaker
+# opinions, 0 is an authored number. ExtractXformOpsFromXformable (sconv-geom.cc)
+# tested has_default() before is_blocked(), and has_default() is has_value(),
+# which deliberately reports TRUE for a ValueBlock -- so the block fell into the
+# value branch and ConvertValue rendered it as zero. ConvertAttributeToFields (the
+# generic path) already had the two ordered correctly.
+#
+# Note it must consult XformOp::is_blocked(), not XformOp::_var.is_blocked():
+# XformOp keeps its OWN _is_blocked flag (the one the reader sets) and only the
+# accessor ORs the two.
+cat > "$TMP/xformblock.usda" <<'USD'
+#usda 1.0
+(
+    defaultPrim = "W"
+)
+
+def Xform "W"
+{
+    float xformOp:rotateZ:spin = None
+    uniform token[] xformOpOrder = ["xformOp:rotateZ:spin"]
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/xformblock.usdc" "$TMP/xformblock.usda" \
+     >"$TMP/write12.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the blocked-xformOp scene to usdc"
+  cat "$TMP/write12.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/xformblock.usdc" > "$TMP/xformblock-rt.usda" 2>/dev/null
+if grep -qF 'xformOp:rotateZ:spin = None' "$TMP/xformblock-rt.usda"; then
+  echo "ok[xformop-block-usdc]: a blocked xformOp survived as None"
+else
+  echo "FAIL[xformop-block-usdc]: blocked xformOp did not survive (a `= 0` here means"
+  echo "  the ValueBlock was rendered as the type's zero)"
+  echo "--- got ---"
+  cat "$TMP/xformblock-rt.usda"
+  status=1
+fi
+
 exit "$status"
