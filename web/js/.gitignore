@@ -13,6 +13,8 @@ src/tinyusdz/tinyusdz.js
 src/tinyusdz/tinyusdz_64.js
 src/tinyusdz/tinyusdz_next.js
 src/tinyusdz/tinyusdz_next_64.js
+src/tinyusdz/tinyusdz_legacy.js
+src/tinyusdz/tinyusdz_legacy_64.js
 
 # Patch scripts (temporary)
 apply-nodematerial-patch.sh
