@@ -103,6 +103,13 @@ Vec3 SampleEnv(const EnvImage &img, const Vec3 &dir);
 bool DecodeTextureToEnvImage(const RenderScene &scene, int texture_id,
                              EnvImage *out);
 
+// Resample a light-probe environment (UsdLux texture:format "mirroredBall" = 2
+// or "angular" = 3, the RenderLight::DomeTextureFormat values) into the latlong
+// layout every sampler here assumes; other formats pass through untouched.
+// Same probe mapping as tusdview's TexToolsProbeToEquirect, so both tools read
+// a probe identically.
+EnvImage RemapProbeToLatlong(EnvImage &&env, int format);
+
 EnvImage ConvolveDiffuseEnv(const EnvImage &env, int width, int height);
 
 EnvImage PrefilterEnvMip(const EnvImage &env, int width, int height,

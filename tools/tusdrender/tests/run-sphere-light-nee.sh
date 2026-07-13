@@ -23,6 +23,10 @@
 #      in the suite would notice.
 #
 # TUSDR_LIGHT_NEE=0 restores the punctual path; the test A/Bs against it.
+#
+# The lights author `normalize = true` with 4x the original intensity: under the
+# normalize-aware convention (R10) that is radiance I/(pi r^2) -- exactly the
+# implicit convention these energies were originally pinned against.
 set -uo pipefail
 
 SKIP=77
@@ -66,7 +70,8 @@ def Xform "World" {
   }
   def SphereLight "Key" {
     float inputs:radius = 2.0
-    float inputs:intensity = 120
+    float inputs:intensity = 480
+    bool inputs:normalize = true
     color3f inputs:color = (1, 1, 1)
     double3 xformOp:translate = (0, 0, 4)
     uniform token[] xformOpOrder = ["xformOp:translate"]
@@ -89,7 +94,8 @@ def Xform "World" {
   }
   def SphereLight "Key" {
     float inputs:radius = 0.5
-    float inputs:intensity = 400
+    float inputs:intensity = 1600
+    bool inputs:normalize = true
     color3f inputs:color = (1, 1, 1)
     double3 xformOp:translate = (0, 0, 20)
     uniform token[] xformOpOrder = ["xformOp:translate"]
