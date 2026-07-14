@@ -1,0 +1,7 @@
+#usda 1.0
+def "Root"
+{
+    double v = 1
+    double v.timeSamples = { 0: 2, 10: 3 }
+    double only_default = 7
+}

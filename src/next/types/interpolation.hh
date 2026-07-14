@@ -25,6 +25,10 @@ struct SampleResult {
   Value value;
   bool success = false;
   bool interpolated = false;  // True if value was interpolated, false if exact match
+  // The governing sample is an authored value BLOCK (`None`): the attribute
+  // has no value at this time, and resolution must STOP (the block is a real
+  // opinion — weaker defaults/fallbacks do not shine through).
+  bool blocked = false;
 };
 
 /// Time sample interpolator
@@ -101,14 +105,24 @@ SampleResult TimeInterpolator::InterpolateWithOffsets(
     return result;
   }
 
-  // Single sample case
-  if (time_offsets.size() == 1) {
-    const Value* v = get_value(time_offsets[0].second);
+  // A held-style resolution (exact hit, boundary clamp, Held mode) that lands
+  // on an authored BLOCK yields "no value, stop resolving" (pxr parity).
+  auto take_held = [&](uint32_t offset) {
+    const Value* v = get_value(offset);
     if (v) {
+      if (v->is_block()) {
+        result.blocked = true;
+        return;
+      }
       result.value = *v;
       result.success = true;
       result.interpolated = false;
     }
+  };
+
+  // Single sample case
+  if (time_offsets.size() == 1) {
+    take_held(time_offsets[0].second);
     return result;
   }
 
@@ -117,45 +131,25 @@ SampleResult TimeInterpolator::InterpolateWithOffsets(
 
   // Exact match - no interpolation needed
   if (is_exact) {
-    const Value* v = get_value(time_offsets[lower_idx].second);
-    if (v) {
-      result.value = *v;
-      result.success = true;
-      result.interpolated = false;
-    }
+    take_held(time_offsets[lower_idx].second);
     return result;
   }
 
   // Before first sample - use first value
   if (lower_idx == upper_idx && time < time_offsets[0].first) {
-    const Value* v = get_value(time_offsets[0].second);
-    if (v) {
-      result.value = *v;
-      result.success = true;
-      result.interpolated = false;
-    }
+    take_held(time_offsets[0].second);
     return result;
   }
 
   // After last sample - use last value
   if (lower_idx == upper_idx && time > time_offsets.back().first) {
-    const Value* v = get_value(time_offsets.back().second);
-    if (v) {
-      result.value = *v;
-      result.success = true;
-      result.interpolated = false;
-    }
+    take_held(time_offsets.back().second);
     return result;
   }
 
   // Held interpolation - use lower value
   if (mode == TimeInterpolation::Held) {
-    const Value* v = get_value(time_offsets[lower_idx].second);
-    if (v) {
-      result.value = *v;
-      result.success = true;
-      result.interpolated = false;
-    }
+    take_held(time_offsets[lower_idx].second);
     return result;
   }
 
@@ -164,6 +158,19 @@ SampleResult TimeInterpolator::InterpolateWithOffsets(
   const Value* v_upper = get_value(time_offsets[upper_idx].second);
 
   if (!v_lower || !v_upper) {
+    return result;
+  }
+  // A blocked LOWER bracket governs this interval: no value. A blocked UPPER
+  // bracket cannot be lerped into: hold the lower value until the block time
+  // (pxr parity).
+  if (v_lower->is_block()) {
+    result.blocked = true;
+    return result;
+  }
+  if (v_upper->is_block()) {
+    result.value = *v_lower;
+    result.success = true;
+    result.interpolated = false;
     return result;
   }
 

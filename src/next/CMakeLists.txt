@@ -465,6 +465,15 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
     )
     target_link_libraries(test_aousd_value_resolution PRIVATE tinyusdz_next)
 
+    # Self-contained value-resolution edge matrix (pxr-baked expectations in
+    # tests/next/generated/vr-edge-expected.inc; never skips).
+    add_executable(test_vr_edge_matrix
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/test_vr_edge_matrix.cc
+    )
+    target_link_libraries(test_vr_edge_matrix PRIVATE tinyusdz_next)
+    target_include_directories(test_vr_edge_matrix PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next)
+
     # tusdcat-compatible CLI: drives the usd-wg asset-corpus regression gate
     # (tests/parse-asset-corpus.mjs --tusdcat $<TARGET_FILE:next_usdcat>).
     add_executable(next_usdcat
@@ -763,6 +772,12 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(next_test_aousd_value_resolution
         PROPERTIES SKIP_RETURN_CODE 77 LABELS "next;aousd")
+
+    add_test(NAME next_test_vr_edge_matrix
+        COMMAND test_vr_edge_matrix "${CMAKE_CURRENT_SOURCE_DIR}/../.."
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(next_test_vr_edge_matrix
+        PROPERTIES LABELS "next;aousd;pxrdiff")
 
     # usd-wg asset-corpus regression gate (mirrors the top-level
     # corpus-parse-native test, but drives next_usdcat). Registered only when

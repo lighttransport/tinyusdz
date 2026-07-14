@@ -1,0 +1,24 @@
+#usda 1.0
+def "Root"
+{
+    float f.timeSamples = { 0: 0, 10: 10 }
+    double d.timeSamples = { 0: 0, 10: 10 }
+    half h.timeSamples = { 0: 0, 10: 10 }
+    int i.timeSamples = { 0: 0, 10: 10 }
+    int64 i64.timeSamples = { 0: 0, 10: 10 }
+    uchar uc.timeSamples = { 0: 0, 10: 10 }
+    uint ui.timeSamples = { 0: 0, 10: 10 }
+    bool b.timeSamples = { 0: false, 10: true }
+    token tok.timeSamples = { 0: "lo", 10: "hi" }
+    string s.timeSamples = { 0: "lo", 10: "hi" }
+    timecode tc.timeSamples = { 0: 0, 10: 10 }
+    float2 f2.timeSamples = { 0: (0, 0), 10: (10, 20) }
+    float3 f3.timeSamples = { 0: (0, 0, 0), 10: (10, 20, 30) }
+    double3 d3.timeSamples = { 0: (0, 0, 0), 10: (10, 20, 30) }
+    float4 f4.timeSamples = { 0: (0, 0, 0, 0), 10: (10, 20, 30, 40) }
+    quatf q.timeSamples = { 0: (1, 0, 0, 0), 10: (0, 1, 0, 0) }
+    matrix4d m.timeSamples = { 0: ( (1,0,0,0),(0,1,0,0),(0,0,1,0),(0,0,0,1) ), 10: ( (2,0,0,0),(0,2,0,0),(0,0,2,0),(10,20,30,1) ) }
+    color3f c3.timeSamples = { 0: (0, 0, 0), 10: (1, 2, 3) }
+    normal3f n3.timeSamples = { 0: (0, 0, 1), 10: (1, 0, 0) }
+    texCoord2f uv.timeSamples = { 0: (0, 0), 10: (1, 1) }
+}
