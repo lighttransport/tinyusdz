@@ -290,6 +290,25 @@
       }
       arc_off = LayerOffset{o, s};
     }
+    // timeCodesPerSecond auto-scale between the referencing layer stack and
+    // the referenced layer stack (pxr parity), composed UNDER the authored
+    // offset — same rule as the sublayer edge in cache-layer-stack.inc.
+    if (arc_stack_idx != src.stack_idx &&
+        !layer_stacks[src.stack_idx].layers.empty() &&
+        !layer_stacks[arc_stack_idx].layers.empty() &&
+        layer_stacks[src.stack_idx].layers[0] &&
+        layer_stacks[arc_stack_idx].layers[0]) {
+      const double parent_tcps = layer_stacks[src.stack_idx]
+                                     .layers[0]
+                                     ->effective_timeCodesPerSecond();
+      const double child_tcps = layer_stacks[arc_stack_idx]
+                                    .layers[0]
+                                    ->effective_timeCodesPerSecond();
+      if (parent_tcps != child_tcps && child_tcps > 0.0 &&
+          std::isfinite(parent_tcps) && std::isfinite(child_tcps)) {
+        arc_off = arc_off.Compose(LayerOffset{0.0, parent_tcps / child_tcps});
+      }
+    }
     arc_src.offset = src.offset.Compose(arc_off);
     arc_src.arc_kind = kind;
     if (arc_stack_idx == src.stack_idx) {
