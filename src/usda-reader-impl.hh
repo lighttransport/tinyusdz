@@ -656,6 +656,11 @@ class USDAReader::Impl {
             _stage.metas().layerRelocates = metas.relocates;
           }
 
+          // Unregistered layer metadata (preserved verbatim by the parser).
+          if (!metas.unregisteredMetas.empty()) {
+            _stage.metas().unregisteredMetas = metas.unregisteredMetas;
+          }
+
           return true;  // ok
         });
   }

@@ -92,6 +92,10 @@ bool ConvertTokenAttributeToStringAttribute(
     TypedAttribute<Animatable<std::string>> &out) {
 
     out.metas() = inp.metas();
+    // The author wrote `token`, the schema field is string-typed. Preserve the
+    // authored spelling so printers/writers re-declare it as authored (OpenUSD
+    // keeps the authored typeName; usdchecker flags the type on BOTH sides).
+    out.set_actual_type_name("token");
 
     if (inp.is_blocked()) {
       out.set_blocked(true);

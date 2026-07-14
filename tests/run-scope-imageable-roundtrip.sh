@@ -1482,4 +1482,200 @@ USD
   fi
 fi
 
+# -------------------------------------------------------------------------
+# 25. Unregistered (unknown-schema) metadata must survive at EVERY level.
+#
+# OpenUSD preserves metadata it does not recognise (SdfUnregisteredValue) at
+# the layer, prim, attribute, and relationship level. tinyusdz used to parse
+# and DISCARD three of the four: only the prim level survived. The raw USDA
+# text of the value is kept verbatim (quotes included for strings) in the
+# unregisteredMetas maps on LayerMetas / PrimMeta / AttrMetas, and travels
+# through the crate as the UNREGISTERED_VALUE wire type -- the same encoding
+# pxr uses, so a pxr usdcat read-back of our .usdc shows the original values.
+# -------------------------------------------------------------------------
+cat > "$TMP/unreg.usda" <<'USD'
+#usda 1.0
+(
+    extensionLayerProbe = "kept-by-openusd"
+)
+
+def Scope "P" (
+    extensionPrimProbe = 17
+)
+{
+    int v = 1 (
+        extensionProbe = 42
+    )
+    rel r (
+        extensionRelProbe = "kept-by-openusd"
+    )
+}
+USD
+
+check_unreg_output() {
+  # $1: file to check, $2: label
+  local lost=""
+  for expect in \
+      'extensionLayerProbe = "kept-by-openusd"' \
+      'extensionPrimProbe = 17' \
+      'extensionProbe = 42' \
+      'extensionRelProbe = "kept-by-openusd"'; do
+    grep -qF "$expect" "$1" || lost="$lost
+    $expect"
+  done
+  if [ -n "$lost" ]; then
+    echo "FAIL[$2]: unregistered metadata dropped or corrupted:$lost"
+    echo "--- output ---"
+    cat "$1"
+    status=1
+  else
+    echo "ok[$2]"
+  fi
+}
+
+"$TUSDCAT" "$TMP/unreg.usda" > "$TMP/unreg-ascii.usda" 2>/dev/null
+check_unreg_output "$TMP/unreg-ascii.usda" "unregistered-metadata-usda"
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/unreg.usdc" "$TMP/unreg.usda" \
+     >"$TMP/write25.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the unregistered-metadata scene to usdc"
+  cat "$TMP/write25.log"
+  exit 1
+fi
+"$TUSDCAT" "$TMP/unreg.usdc" > "$TMP/unreg-crate.usda" 2>/dev/null
+check_unreg_output "$TMP/unreg-crate.usda" "unregistered-metadata-usdc"
+
+if [ -x "$PXR_USDCAT" ]; then
+  if ! "$PXR_USDCAT" "$TMP/unreg.usdc" > "$TMP/unreg-pxr.usda" 2>"$TMP/pxr25.err"; then
+    echo "FAIL[pxr-unregistered-metadata]: OpenUSD cannot read the .usdc we wrote"
+    cat "$TMP/pxr25.err"
+    status=1
+  else
+    check_unreg_output "$TMP/unreg-pxr.usda" "pxr-unregistered-metadata"
+  fi
+else
+  echo "skip[pxr-unregistered-metadata]: OpenUSD usdcat not found at $PXR_USDCAT (set USDCAT_PATH)"
+fi
+
+# -------------------------------------------------------------------------
+# 26. OpenUSD must SEE the sublayers in our .usdc.
+#
+# Two wire bugs, both invisible to tinyusdz-only tests:
+#   - `subLayers` must be the dedicated StringVector crate type. As a
+#     VtArray<string> the field decodes but SdfLayer does not recognise it,
+#     so pxr silently composed NOTHING from any sublayer we wrote.
+#   - `subLayerOffsets` must ALWAYS accompany subLayers with the same length
+#     (pxr writes identity offsets); omitting it for default offsets raises
+#     "Invalid sublayer index" and makes the whole file unreadable.
+# -------------------------------------------------------------------------
+cat > "$TMP/sub26.usda" <<'USD'
+#usda 1.0
+
+def Scope "FromSub"
+{
+}
+USD
+cat > "$TMP/main26.usda" <<'USD'
+#usda 1.0
+(
+    subLayers = [ @./sub26.usda@ ]
+)
+
+def Scope "Main"
+{
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/main26.usdc" "$TMP/main26.usda" \
+     >"$TMP/write26.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the sublayer scene to usdc"
+  cat "$TMP/write26.log"
+  exit 1
+fi
+
+if [ -x "$PXR_USDCAT" ]; then
+  if ! "$PXR_USDCAT" --flatten "$TMP/main26.usdc" > "$TMP/main26-flat.usda" 2>"$TMP/pxr26.err"; then
+    echo "FAIL[pxr-sublayers]: OpenUSD cannot open the sublayer .usdc we wrote"
+    cat "$TMP/pxr26.err"
+    status=1
+  elif ! grep -qF 'def Scope "FromSub"' "$TMP/main26-flat.usda"; then
+    echo "FAIL[pxr-sublayers]: OpenUSD opened the file but composed nothing from the sublayer"
+    cat "$TMP/main26-flat.usda"
+    status=1
+  else
+    echo "ok[pxr-sublayers]: OpenUSD composes prims out of the sublayer we wrote"
+  fi
+else
+  echo "skip[pxr-sublayers]: OpenUSD usdcat not found at $PXR_USDCAT (set USDCAT_PATH)"
+fi
+
+# -------------------------------------------------------------------------
+# 27. The AUTHORED typeName must survive -- role spellings and legacy types.
+#
+# Two families of silent re-typing:
+#   - schema role types: `point3f[] points` came back (and was shown to
+#     OpenUSD) as `float3[] points`, because ConvertValue degrades role types
+#     to their underlying storage and the spec typeName was inferred from the
+#     VALUE. The writers now declare the role spelling explicitly.
+#   - authored variants the schema accepts: `token inputs:varname` (older
+#     UsdPrimvarReader spec) was re-typed to `string`, and an authored
+#     `float3 inputs:diffuseColor` to `color3f`. usdchecker flags (or not)
+#     these AS AUTHORED; re-typing made our output lie about the source.
+# -------------------------------------------------------------------------
+cat > "$TMP/roletype.usda" <<'USD'
+#usda 1.0
+
+def Mesh "M"
+{
+    point3f[] points = [(0, 0, 0)]
+}
+
+def Shader "TexReader"
+{
+    uniform token info:id = "UsdPrimvarReader_float2"
+    token inputs:varname = "st"
+    float2 outputs:result
+}
+USD
+
+check_roletype_output() {
+  local lost=""
+  for expect in 'point3f[] points' 'token inputs:varname'; do
+    grep -qF "$expect" "$1" || lost="$lost
+    $expect"
+  done
+  if [ -n "$lost" ]; then
+    echo "FAIL[$2]: authored typeName re-typed:$lost"
+    echo "--- output ---"
+    cat "$1"
+    status=1
+  else
+    echo "ok[$2]"
+  fi
+}
+
+"$TUSDCAT" "$TMP/roletype.usda" > "$TMP/roletype-ascii.usda" 2>/dev/null
+check_roletype_output "$TMP/roletype-ascii.usda" "authored-typename-usda"
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/roletype.usdc" "$TMP/roletype.usda" \
+     >"$TMP/write27.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the role-type scene to usdc"
+  cat "$TMP/write27.log"
+  exit 1
+fi
+"$TUSDCAT" "$TMP/roletype.usdc" > "$TMP/roletype-crate.usda" 2>/dev/null
+check_roletype_output "$TMP/roletype-crate.usda" "authored-typename-usdc"
+
+if [ -x "$PXR_USDCAT" ]; then
+  if ! "$PXR_USDCAT" "$TMP/roletype.usdc" > "$TMP/roletype-pxr.usda" 2>"$TMP/pxr27.err"; then
+    echo "FAIL[pxr-authored-typename]: OpenUSD cannot read the .usdc we wrote"
+    cat "$TMP/pxr27.err"
+    status=1
+  else
+    check_roletype_output "$TMP/roletype-pxr.usda" "pxr-authored-typename"
+  fi
+else
+  echo "skip[pxr-authored-typename]: OpenUSD usdcat not found at $PXR_USDCAT (set USDCAT_PATH)"
+fi
+
 exit "$status"

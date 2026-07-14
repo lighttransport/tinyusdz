@@ -125,6 +125,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value points_value(points_val);
         if (ConvertValue(points_value, crate_val, err)) {
           fields.push_back({"points", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (points_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(points_value.type_name()));
+            fields.push_back({std::string("points") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -190,6 +198,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value normals_value(normals_val);
         if (ConvertValue(normals_value, crate_val, err)) {
           fields.push_back({"normals", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (normals_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(normals_value.type_name()));
+            fields.push_back({std::string("normals") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -246,6 +262,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value val(vel_val);
         if (ConvertValue(val, crate_val, err)) {
           fields.push_back({"velocities", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (val.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(val.type_name()));
+            fields.push_back({std::string("velocities") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -261,6 +285,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value counts_value(counts_val);
         if (ConvertValue(counts_value, crate_val, err)) {
           fields.push_back({"faceVertexCounts", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (counts_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(counts_value.type_name()));
+            fields.push_back({std::string("faceVertexCounts") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -276,6 +308,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value indices_value(indices_val);
         if (ConvertValue(indices_value, crate_val, err)) {
           fields.push_back({"faceVertexIndices", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (indices_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(indices_value.type_name()));
+            fields.push_back({std::string("faceVertexIndices") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -292,6 +332,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value corner_indices_value(corner_indices_val);
         if (ConvertValue(corner_indices_value, crate_val, err)) {
           fields.push_back({"cornerIndices", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (corner_indices_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(corner_indices_value.type_name()));
+            fields.push_back({std::string("cornerIndices") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -307,6 +355,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value corner_sharp_value(corner_sharp_val);
         if (ConvertValue(corner_sharp_value, crate_val, err)) {
           fields.push_back({"cornerSharpnesses", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (corner_sharp_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(corner_sharp_value.type_name()));
+            fields.push_back({std::string("cornerSharpnesses") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -323,6 +379,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value crease_indices_value(crease_indices_val);
         if (ConvertValue(crease_indices_value, crate_val, err)) {
           fields.push_back({"creaseIndices", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (crease_indices_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(crease_indices_value.type_name()));
+            fields.push_back({std::string("creaseIndices") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -338,6 +402,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value crease_lengths_value(crease_lengths_val);
         if (ConvertValue(crease_lengths_value, crate_val, err)) {
           fields.push_back({"creaseLengths", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (crease_lengths_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(crease_lengths_value.type_name()));
+            fields.push_back({std::string("creaseLengths") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -353,6 +425,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value crease_sharp_value(crease_sharp_val);
         if (ConvertValue(crease_sharp_value, crate_val, err)) {
           fields.push_back({"creaseSharpnesses", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (crease_sharp_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(crease_sharp_value.type_name()));
+            fields.push_back({std::string("creaseSharpnesses") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -368,6 +448,14 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value hole_indices_value(hole_indices_val);
         if (ConvertValue(hole_indices_value, crate_val, err)) {
           fields.push_back({"holeIndices", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (hole_indices_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(hole_indices_value.type_name()));
+            fields.push_back({std::string("holeIndices") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -493,6 +581,14 @@ bool CrateWriter::ExtractCubeProperties(
         value::Value extent_value(extent_array);
         if (ConvertValue(extent_value, crate_val, err)) {
           fields.push_back({"extent", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (extent_value.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(extent_value.type_name()));
+            fields.push_back({std::string("extent") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -760,6 +856,14 @@ bool CrateWriter::ExtractPointsProperties(
         value::Value val(ids_val);
         if (ConvertValue(val, crate_val, err)) {
           fields.push_back({"ids", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (val.type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(val.type_name()));
+            fields.push_back({std::string("ids") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -959,6 +1063,14 @@ bool CrateWriter::ExtractCameraProperties(
         crate::CrateValue crate_val;
         if (ConvertValue(value::Value(planes_val), crate_val, err)) {
           fields.push_back({"clippingPlanes", crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (value::Value(planes_val).type_name() != crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(value::Value(planes_val).type_name()));
+            fields.push_back({std::string("clippingPlanes") + ".typeName", ty_val});
+          }
         }
       }
     }
@@ -2040,6 +2152,14 @@ bool CrateWriter::ExtractGPrimProperties(
         value::Value extent_value(extent_vec);
         if (ConvertValue(extent_value, extent_crate_val, err)) {
           fields.push_back({"extent", extent_crate_val});
+          // Preserve the role spelling degraded by ConvertValue (point3f[] ->
+          // float3[] crate value): declare it explicitly or the attribute is
+          // re-typed on the wire (see AddArrayAttribute).
+          if (extent_value.type_name() != extent_crate_val.type_name()) {
+            crate::CrateValue ty_val;
+            ty_val.Set(value::token(extent_value.type_name()));
+            fields.push_back({std::string("extent") + ".typeName", ty_val});
+          }
         }
       }
     }
