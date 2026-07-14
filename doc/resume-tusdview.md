@@ -35,11 +35,27 @@ cause of 68 of the then-133 round-trip failures, 133 -> 65), the **Camera
 `bindMaterialAs` dropped, `proxyPrim` dropped, and a
 material-binding-collection namespace order swap (60 -> 50) — all pushed.
 **variant-statement metadata dropped** (`active`/`hidden`/`kind`/`variantSets`
-on a variant, 50 -> 41) is pushed too. Also fixed, not yet pushed: the
+on a variant, 50 -> 41) is pushed too, as are the
 **shader-connection-baked-to-constant** bugs (43 -> 39; also ported to
-physics-2026-fix2). See
-[Open](#open) for what is left of that sweep, and
-[Prompts for a fresh session](#prompts-for-a-fresh-session) to pick it up cold.
+physics-2026-fix2).
+
+Done since (2026-07-14), all pushed on BOTH branches: **the sweep is finished —
+0 of 427 fixtures fail**, including Group B ("authored but empty" now has a
+home: per-bucket `has_*` flags on `ListOp<T>`, `set_authored()` on
+`value::TimeSamples`). **OpenUSD is installed** (`~/work/OpenUSD/dist`) and the
+cross-check found the bug class our own tests cannot see — reader/writer bugs
+they SHARE: empty-timeSamples inlined as payload=0 (pxr read it as file offset
+0 -> "Corrupt asset"), four variant path-encoding wire bugs, `subLayers`
+written as a type pxr silently IGNORES (must be the StringVector crate type,
+with `subLayerOffsets` ALWAYS alongside), and authored typeNames re-typed
+(`point3f[] points` -> `float3[]`, `token inputs:varname` -> `string`).
+Unregistered metadata is now preserved at ALL levels (layer/prim/attr/rel) as
+the UNREGISTERED_VALUE wire type. A **usdchecker parity pass** in
+`tests/run-usdcat-compare.sh` pins the lot: usdchecker must report the SAME
+validator rules on our written .usdc as on the source .usda (425 compared, 0
+failed). Printer comparison: 0 different. pxr read sweep: 0 of 427. Checks
+22-27 in `run-scope-imageable-roundtrip.sh` pin it all, mutation-verified. See
+[Closed](#closed--kept-for-the-reasoning-not-because-they-are-open).
 
 ### Shader connections baked down to constants (43 -> 39 fixtures) — FIXED 2026-07-14
 
@@ -133,56 +149,50 @@ Paste one of these verbatim. Each is self-contained: it says what is broken, how
 to reproduce it, and how to know when it is fixed. Read the section it points at
 before starting — the reasoning there is the part that is expensive to re-derive.
 
-**1. Finish the crate-writer round-trip sweep** (the biggest known correctness
-hole; see [The crate writer drops data](#the-crate-writer-drops-data-3-of-427-fixtures)):
+**1. (DONE 2026-07-14)** The crate-writer round-trip sweep is finished — 0 of
+427 — and the pxr cross-check runs (OpenUSD at `~/work/OpenUSD/dist`). The
+verification battery to hold, from the repo root, on BOTH branches (tusdview
+and the `physics-2026-fix2` worktree at `~/work/tinyusdz/physics-2026-fix2`):
 
-> The tinyusdz crate (.usdc) writer silently drops or corrupts authored data.
-> Reproduce with the sweep in doc/resume-tusdview.md ("The crate writer drops
-> data"): 3 of 427 `tests/usda` fixtures do not survive `usda -> usdc -> usda`
-> intact (down from 133). All three fail for ONE reason — there is no way to
-> record "authored, but empty" — and fixing it means touching `ListOp<T>`, which
-> has many users. Read the section before starting.
-> Read the full categorized list in that section before starting — it spans
-> several `timeSamples` attributes dropped wholesale,
-> `skel:blendShapes` losing its namespace, spurious unauthored
-> `visibility`/`purpose` invented on Skeleton-family prims, `reorder
-> nameChildren`/`properties` dropped, and stage/layer
-> metadata dictionaries (`customLayerData`, `kilogramsPerUnit`,
-> `sdrMetadata`, unregistered prim/property metadata, etc.) dropped. Fix them
-> one category at a time, smallest/most self-contained first.
-> NOTE: a value-less relationship with an authored list-edit
-> qualifier (`append rel myval`, `delete rel myheight`) was investigated and
-> left ALONE on purpose — it looks like a `ListOp<T>` data-model gap (no way
-> to record "authored but empty"), not a quick writer fix; see the note under
-> "Left for later" in that section before attempting it.
-> Each fix must come with a mutation-verified assertion in
-> `tests/run-scope-imageable-roundtrip.sh` (revert the fix, watch the test fail),
-> and must not regress the ctest suite or raise the fixture count. Do not
-> "fix" a diff by making the printer match the writer — the printer is already a
-> fixed point (all 422 fixtures re-print identically); the writer is what is
-> wrong. Watch out for a fixture that accidentally bypasses the buggy code path
-> (e.g. a schema-typed-only property authored on a typeless prim instead) --
-> verify the mutation test actually FAILS with the bug reintroduced before
-> trusting it.
+> ```bash
+> bash tests/run-scope-imageable-roundtrip.sh      # 31 checks, self-skips pxr ones
+> USDCAT_PATH=$HOME/work/OpenUSD/dist/bin/usdcat bash tests/run-usdcat-compare.sh
+>   # printer comparison must be 0 different AND the usdchecker parity pass
+>   # must be 0 failed (it exits 1 otherwise)
+> cd build && ctest --output-on-failure
+> ```
+> Plus the two sweeps in the "Closed" section (writer round-trip and pxr read),
+> both 0/427. Any new writer/reader work must keep all of these green, and any
+> new wire-format fix needs a mutation-verified check in
+> run-scope-imageable-roundtrip.sh (the pxr-facing ones are checks 22-27).
 
-**2. Get the pxr reference comparison running** (this whole workstream is
-currently self-referential — see the caveat in that section):
+**2. Audit the remaining hand-rolled writer paths for role-typeName loss**
+(small, self-contained):
 
-> `tests/run-usdcat-compare.sh` diffs tusdcat against pxr's usdcat, but pxr is not
-> installed at the path it expects (`/home/syoyo/local/USD/dist/bin/usdcat`), so
-> it cannot run here. Every round-trip claim we have verifies only that tinyusdz's
-> own reader and writer agree with EACH OTHER — a bug they share is invisible.
-> Install/point at a pxr build and run the comparison over `tests/usda`, then
-> triage what it finds.
+> ConvertValue degrades role types (point3f[] -> float3[] crate value), so any
+> writer site that pushes a converted value WITHOUT also emitting a
+> `<name>.typeName` field re-types the attribute on the wire. The shared
+> helpers (EmitTypedAnimatableAttr, ExtractAnimatableDefault,
+> AddTypedArrayAttribute, AddArrayAttribute) and the EXTRACT_* macros in
+> sconv-physics.cc / sconv-ar.cc are fixed; sconv-geom.cc's 15 direct sites are
+> fixed. Two sites were inspected and left alone (token[] blendShapes, xformOp
+> defaults — no role types flow through them). If a new fixture shows
+> `point3f`/`vector3f`/`normal3f`/`color3f`/`texCoord2f` coming back as the
+> underlying float type, the writer site is missing the typeName emission —
+> grep for "Preserve the role spelling" for the pattern. Also note: the
+> connection-only non-conformant-type path in ParseTypedAttributeUnified
+> (prim-reconstruct-common.inc) deliberately does NOT record the authored
+> spelling; revisit only with a fixture in hand.
 
 **3. Mesh lights on the legacy `-rtPreview` path** — see the section below; decide
 whether that path is worth keeping before building anything.
 
 ## Open
 
-### The crate writer drops data (3 of 427 fixtures)
+### The crate writer drops data — CLOSED 2026-07-14 (0 of 427; kept for the sweep commands and reasoning)
 
-`.usdc` is not a faithful round-trip today. Sweep, from the repo root:
+`.usdc` round-trips all 427 fixtures byte-identically, and pxr reads every
+crate we write (pxr read sweep 0/427). Sweep, from the repo root:
 
 ```bash
 for f in tests/usda/*.usda; do
@@ -192,9 +202,18 @@ for f in tests/usda/*.usda; do
   ./build/tusdcat "$c" > "$d" 2>/dev/null
   cmp -s "$a" "$d" || echo "DIFF $f"
   rm -f "$a" "$c" "$d"
-done | wc -l          # 3 of 427 as of 2026-07-14 (was 41 of 422 before the
-                      # physics-2026-fix2 merge, which ADDED 5 fixtures; was
-                      # 6, 10, 12, 17, 21, 50, 60, 64, 65, 133, 140)
+done | wc -l          # 0 of 427 as of 2026-07-14 (was 3, 6, 10, 12, 17, 21,
+                      # 50, 60, 64, 65, 133, 140; the physics-2026-fix2 merge
+                      # ADDED 5 fixtures at the 41-of-422 point)
+
+# and the pxr READ sweep — the one that catches bugs our reader/writer SHARE:
+for f in tests/usda/*.usda; do
+  c=$(mktemp --suffix=.usdc)
+  ./build/tusdcat --output-format usdc -o "$c" "$f" >/dev/null 2>&1 \
+    && ! $HOME/work/OpenUSD/dist/bin/usdcat "$c" >/dev/null 2>&1 \
+    && echo "PXR CANNOT READ: $f"
+  rm -f "$c"
+done                  # 0 of 427 as of 2026-07-14
 ```
 
 The USDA printer is a FIXED POINT — all 427 fixtures re-print identically — so a
@@ -206,9 +225,9 @@ data loss that no fixture happened to exercise. Checks 19-21 in
 run-scope-imageable-roundtrip.sh, and the probe described below, are what measure
 those.
 
-The 3 that remain all fail for ONE reason (Group B below). Every
-per-typed-attribute omission this sweep found is fixed. Do NOT go looking for
-another one-line writer branch — there isn't one.
+Nothing remains. Group B (below) was the last group, fixed with explicit
+authored flags. Every per-typed-attribute omission this sweep found is fixed.
+Do NOT go looking for another one-line writer branch — there isn't one.
 
 **CORRECTION, and the most useful thing on this page.** An earlier version of
 these notes claimed the reader "cannot handle a typeName-only attribute spec" and
@@ -251,9 +270,15 @@ declared-but-value-less `extent` being DROPPED (`has_value()` is not an authored
 test) — none of which any fixture exercised. sconv-skel/physics/media/ar probe
 clean.
 
-**Group B — "authored but empty" has nowhere to live (3). A shared data-model
-gap; do NOT try to patch it per-site.** Three fixtures fail for one reason:
-there is no way to record "authored, but empty".
+**Group B — "authored but empty" — FIXED 2026-07-14.** Three fixtures failed
+for one reason: there was no way to record "authored, but empty". The fix is
+exactly the flag the note below asked for: per-bucket `has_*` flags on
+`ListOp<T>` (set by `Set*Items()`, `Has*Items()` = flag || size) and
+`set_authored()`/`authored()` on `value::TimeSamples` — whose four HAND-WRITTEN
+copy/move special members must each copy the new member or it is silently
+dropped on every copy (that trap was mutation-verified). The crate format
+needed NO change (per-bucket presence bits always existed). Original analysis
+kept below.
   - `timesamples-empty-001`: an authored `timeSamples = {}` is dropped, because
     `PrimVar::has_timesamples()` is literally `ts.size() > 0`.
   - `rel-003` / `listop-delete-000`: a list-edit qualifier on a value-LESS
@@ -299,10 +324,17 @@ That is why the fixes converged on SHARED HELPERS
 prim type that routes through them cannot repeat any of this. Prefer extending a
 helper to hand-rolling a field push.
 
-CAVEAT on all of it: the checks verify that tinyusdz's reader and writer agree
-with each other. A bug they SHARE is invisible to them. The pxr comparison
-(`tests/run-usdcat-compare.sh`) is what would catch that, and it cannot run here —
-pxr is not installed at the path it wants.
+CAVEAT on all of it, now RESOLVED: the checks above verify that tinyusdz's
+reader and writer agree with each other — a bug they SHARE is invisible to
+them. OpenUSD is now installed at `~/work/OpenUSD/dist` and exactly that bug
+class turned up FIVE times: the empty-timeSamples payload=0 encoding, the
+variant path-encoding family, the ignored `subLayers` value type (+ mandatory
+`subLayerOffsets`), re-typed role typeNames, and dropped unregistered
+metadata. All fixed and pinned: checks 22-27 in
+`run-scope-imageable-roundtrip.sh` (they self-skip without pxr), the printer
+comparison at 0 different, and the usdchecker parity pass (same validator
+rules on our .usdc as on the source .usda — 425 compared, 0 failed) in
+`tests/run-usdcat-compare.sh`.
 
 ### Mesh lights on the LEGACY `-rtPreview` path
 
