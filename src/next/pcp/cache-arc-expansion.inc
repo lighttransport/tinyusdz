@@ -64,6 +64,244 @@
     return out;
   }
 
+  // A variantSet whose selection was unknown when its spec expanded
+  // (authored at a weaker site): grafted by ProcessDeferredVariants at the
+  // recorded strength position once the whole prim's selections are known.
+  struct DeferredVariant {
+    std::vector<Src> *out;
+    std::vector<Src> *spec_out;
+    size_t main_pos;
+    size_t spec_pos;
+    Src src;
+    const PrimSpec *spec;
+    std::string set_name;
+    std::string layer_id;
+    ArcChain chain;
+  };
+  std::vector<DeferredVariant> deferred_variants_;
+
+  // Graft every deferred variantSet owned by this ExpandList invocation whose
+  // selection is now known (fixed-point: a grafted option's own selections can
+  // enable further deferred sets), splicing the result at the recorded
+  // position. Leftover entries (still no selection anywhere) are dropped.
+  void ProcessDeferredVariants(std::vector<Src> *main_list,
+                               std::vector<Src> *spec_list,
+                               std::map<std::string, std::string> *sels,
+                               std::string *warn, std::string *err) {
+    const auto owned = [&](const DeferredVariant &e) {
+      return e.out == main_list || e.out == spec_list;
+    };
+    for (int round = 0; round < 8; ++round) {
+      bool applied_any = false;
+      for (size_t ei = 0; ei < deferred_variants_.size(); ++ei) {
+        if (!owned(deferred_variants_[ei])) continue;
+        const VariantSetData *vss = nullptr;
+        for (const VariantSetData &v :
+             deferred_variants_[ei].spec->meta().variantSets()) {
+          if (v.name == deferred_variants_[ei].set_name) {
+            vss = &v;
+            break;
+          }
+        }
+        std::string chosen;
+        if (vss) {
+          auto sit = sels->find(deferred_variants_[ei].set_name);
+          if (sit != sels->end()) {
+            chosen = sit->second;
+          } else if (const std::string *fb = FallbackSelection(*vss)) {
+            chosen = *fb;
+          }
+        }
+        if (!vss || chosen.empty()) continue;
+
+        // Take the entry out BEFORE applying: the graft may push new deferred
+        // entries (nested sets) and reallocate the vector.
+        DeferredVariant e = std::move(deferred_variants_[ei]);
+        deferred_variants_.erase(deferred_variants_.begin() +
+                                 static_cast<ptrdiff_t>(ei));
+        --ei;
+
+        const VariantData *vd = nullptr;
+        for (const VariantData &o : vss->variants) {
+          if (o.name == chosen) {
+            vd = &o;
+            break;
+          }
+        }
+        std::vector<Src> tmp_main;
+        std::vector<Src> tmp_spec;
+        if (vd) {
+          // The chosen option's sibling-set selections become visible first
+          // (first-wins: a stronger recorded selection stays).
+          for (const auto &op : vd->variantSelections) {
+            sels->emplace(op.first, op.second);
+          }
+          ApplyVariantOption(e.src, nullptr, e.set_name, vd, 0, e.layer_id,
+                             &tmp_main, &tmp_spec, sels, e.chain, warn, err);
+        }
+        // Crate-holder representation of the same set.
+        const std::string holder =
+            e.src.site + "/{" + e.set_name + "=" + chosen + "}";
+        if (!Specs(e.src.stack_idx, holder).empty()) {
+          Src vsrc;
+          vsrc.stack_idx = e.src.stack_idx;
+          vsrc.site = holder;
+          vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
+              Mapping(e.src.map_idx), NamespaceMapping{holder, e.src.site}));
+          vsrc.offset = e.src.offset;
+          vsrc.arc_kind = ArcType::Variant;
+          vsrc.implied_anchor = e.src.implied_anchor;
+          ExpandArcs(vsrc, nullptr, &tmp_main, &tmp_spec, sels, e.chain, warn,
+                     err);
+        }
+
+        const auto splice = [&](std::vector<Src> *dst, size_t pos,
+                                std::vector<Src> *tmp) {
+          if (tmp->empty()) return;
+          if (pos > dst->size()) pos = dst->size();
+          const size_t n = tmp->size();
+          // Shift positions of EXISTING entries in the destination list first,
+          // then retarget entries recorded during this graft (they point into
+          // the tmp vector, with tmp-relative positions).
+          for (DeferredVariant &de : deferred_variants_) {
+            if (de.out == dst && de.main_pos >= pos) de.main_pos += n;
+            if (de.spec_out == dst && de.spec_pos >= pos) de.spec_pos += n;
+          }
+          for (DeferredVariant &de : deferred_variants_) {
+            if (de.out == tmp) {
+              de.out = dst;
+              de.main_pos += pos;
+            }
+            if (de.spec_out == tmp) {
+              de.spec_out = dst;
+              de.spec_pos += pos;
+            }
+          }
+          dst->insert(dst->begin() + static_cast<ptrdiff_t>(pos),
+                      std::make_move_iterator(tmp->begin()),
+                      std::make_move_iterator(tmp->end()));
+          tmp->clear();
+        };
+        splice(e.out, e.main_pos, &tmp_main);
+        splice(e.spec_out, e.spec_pos, &tmp_spec);
+        applied_any = true;
+      }
+      if (!applied_any) break;
+    }
+    deferred_variants_.erase(
+        std::remove_if(deferred_variants_.begin(), deferred_variants_.end(),
+                       owned),
+        deferred_variants_.end());
+  }
+
+  // One selected variant OPTION grafted onto its host: content subtree,
+  // inline opinions, option-authored composition arcs, and nested sets.
+  // (Extracted from ExpandArcs so DEFERRED variant sets — whose selection is
+  // authored at a WEAKER site and only known once the whole prim expanded —
+  // can be grafted afterwards at their recorded strength position.)
+  void ApplyVariantOption(const Src &src, const ExpansionFrame *frame,
+                          const std::string &set_name, const VariantData *vd,
+                          int vdepth, const std::string &layer_id,
+                          std::vector<Src> *out, std::vector<Src> *spec_out,
+                          std::map<std::string, std::string> *sels,
+                          const ArcChain &chain, std::string *warn,
+                          std::string *err) {
+
+          // Subtree content: model as a reference-style Variant source into the
+          // content layer's "/__self__" root, so child prims compose normally.
+          if (vd->content) {
+            // Stable variant-content identity: (host layer-stack, host site,
+            // variantSet, variantName). The previous pointer-derived id aliased
+            // after a VariantData was freed and reallocated (stale instance
+            // keys), and never matched across two parses of the same asset.
+            const std::string vid = "variant:" +
+                                    layer_stacks[src.stack_idx].identifier +
+                                    ":" + src.site + ":" + set_name + ":" +
+                                    vd->name;
+            uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
+            if (cstack == kInvalidStack) return;
+            Src vsrc;
+            vsrc.stack_idx = cstack;
+            vsrc.site = "/__self__";
+            vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
+                Mapping(src.map_idx), NamespaceMapping{"/__self__", src.site}));
+            vsrc.offset = src.offset;
+            vsrc.arc_kind = ArcType::Variant;
+            const ExpansionFrame vframe{cstack, vsrc.map_idx, &vsrc.site, frame,
+                                        frame ? frame->depth + 1 : 0};
+            ExpandArcs(vsrc, &vframe, out, spec_out, sels, chain, warn, err);
+          }
+          // Inline opinions (properties/relationships on the host prim
+          // itself), plus prim-state opinions (`active = false` on a variant
+          // option deactivates the host — a common pruning pattern; authored
+          // `hidden = false` / `active = true` are real opinions too, and an
+          // option doc composes onto the prim).
+          if (!vd->properties.empty() || !vd->relationships.empty() ||
+              !vd->active || vd->hidden || vd->active_authored ||
+              vd->hidden_authored || !vd->doc.empty()) {
+            Src vsrc = src;
+            vsrc.arc_kind = ArcType::Variant;
+            vsrc.variant = vd;
+            out->push_back(std::move(vsrc));
+          }
+          // Composition arcs authored on the variant OPTION (e.g. a `payload`
+          // that supplies the def-Mesh geometry — XGen assets author geometry on
+          // the selected variant, not in its body). Compose at the variant's
+          // strength (after the variant's own content/inline, before the host's
+          // references), anchored to the layer that authored the variant so a
+          // relative `@./geo.usd@` resolves correctly.
+          for (const std::string &s : vd->inherits) {
+            ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit,
+                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+          }
+          for (const std::string &s : vd->references) {
+            ProcessArc(src, Compositor::ParseReference(s), ArcType::Reference,
+                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+          }
+          if (!vd->payloads.empty()) {
+            const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
+            bool any_deferred = false;
+            for (const std::string &pl_str : vd->payloads) {
+              CompositionArc arc = Compositor::ParsePayload(pl_str);
+              if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
+                any_deferred = true;
+                continue;
+              }
+              ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
+                         chain, warn, err, layer_id);
+            }
+            // insert-only here: another arc group's loaded payloads must not
+            // clear a deferral recorded for this option's payloads.
+            if (any_deferred) deferred_payload_prims.insert(root_prim_path);
+          }
+          for (const std::string &s : vd->specializes) {
+            ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
+                       frame, out, spec_out, sels, chain, warn, err, layer_id);
+          }
+
+          // Nested variant sets authored on this option (inline / USDA
+          // representation). Crate-representation nesting recurses naturally
+          // through the holder graft below (the holder prim carries the
+          // nested sets in its own meta).
+          if (vdepth < 16) {
+            for (const VariantSetData &nvs : vd->variantSets) {
+              std::string chosen;
+              auto nsit = sels->find(nvs.name);
+              if (nsit != sels->end()) chosen = nsit->second;
+              if (chosen.empty()) chosen = nvs.selected;
+              if (chosen.empty()) continue;
+              for (const VariantData &nvd : nvs.variants) {
+                if (nvd.name == chosen) {
+                  ApplyVariantOption(src, frame, nvs.name, &nvd, vdepth + 1,
+                                     layer_id, out, spec_out, sels, chain, warn,
+                                     err);
+                  break;
+                }
+              }
+            }
+          }
+  }
+
   void ProcessArc(const Src &src, const CompositionArc &arc_in, ArcType kind,
                   const ExpansionFrame *frame, std::vector<Src> *out,
                   std::vector<Src> *spec_out,
@@ -597,104 +835,22 @@
           }
           if (!changed) break;
         }
-        std::function<void(const std::string &, const VariantData *, int)>
-            apply_variant = [&](const std::string &set_name,
-                                const VariantData *vd, int vdepth) {
-          // Subtree content: model as a reference-style Variant source into the
-          // content layer's "/__self__" root, so child prims compose normally.
-          if (vd->content) {
-            // Stable variant-content identity: (host layer-stack, host site,
-            // variantSet, variantName). The previous pointer-derived id aliased
-            // after a VariantData was freed and reallocated (stale instance
-            // keys), and never matched across two parses of the same asset.
-            const std::string vid = "variant:" +
-                                    layer_stacks[src.stack_idx].identifier +
-                                    ":" + src.site + ":" + set_name + ":" +
-                                    vd->name;
-            uint32_t cstack = InternLayerStack(vd->content, vid, warn, err);
-            if (cstack == kInvalidStack) return;
-            Src vsrc;
-            vsrc.stack_idx = cstack;
-            vsrc.site = "/__self__";
-            vsrc.map_idx = InternMapping(NamespaceMapping::Compose(
-                Mapping(src.map_idx), NamespaceMapping{"/__self__", src.site}));
-            vsrc.offset = src.offset;
-            vsrc.arc_kind = ArcType::Variant;
-            const ExpansionFrame vframe{cstack, vsrc.map_idx, &vsrc.site, frame,
-                                        frame ? frame->depth + 1 : 0};
-            ExpandArcs(vsrc, &vframe, out, spec_out, sels, chain, warn, err);
-          }
-          // Inline opinions (properties/relationships on the host prim
-          // itself), plus prim-state opinions (`active = false` on a variant
-          // option deactivates the host — a common pruning pattern; authored
-          // `hidden = false` / `active = true` are real opinions too, and an
-          // option doc composes onto the prim).
-          if (!vd->properties.empty() || !vd->relationships.empty() ||
-              !vd->active || vd->hidden || vd->active_authored ||
-              vd->hidden_authored || !vd->doc.empty()) {
-            Src vsrc = src;
-            vsrc.arc_kind = ArcType::Variant;
-            vsrc.variant = vd;
-            out->push_back(std::move(vsrc));
-          }
-          // Composition arcs authored on the variant OPTION (e.g. a `payload`
-          // that supplies the def-Mesh geometry — XGen assets author geometry on
-          // the selected variant, not in its body). Compose at the variant's
-          // strength (after the variant's own content/inline, before the host's
-          // references), anchored to the layer that authored the variant so a
-          // relative `@./geo.usd@` resolves correctly.
-          for (const std::string &s : vd->inherits) {
-            ProcessArc(src, Compositor::ParseReference(s), ArcType::Inherit,
-                       frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
-          }
-          for (const std::string &s : vd->references) {
-            ProcessArc(src, Compositor::ParseReference(s), ArcType::Reference,
-                       frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
-          }
-          if (!vd->payloads.empty()) {
-            const std::string root_prim_path = Mapping(src.map_idx).Apply(src.site);
-            bool any_deferred = false;
-            for (const std::string &pl_str : vd->payloads) {
-              CompositionArc arc = Compositor::ParsePayload(pl_str);
-              if (!ShouldLoadPayload(root_prim_path, arc.asset_path)) {
-                any_deferred = true;
-                continue;
-              }
-              ProcessArc(src, arc, ArcType::Payload, frame, out, spec_out, sels,
-                         chain, warn, err, sr.layer_id);
-            }
-            // insert-only here: another arc group's loaded payloads must not
-            // clear a deferral recorded for this option's payloads.
-            if (any_deferred) deferred_payload_prims.insert(root_prim_path);
-          }
-          for (const std::string &s : vd->specializes) {
-            ProcessArc(src, Compositor::ParseReference(s), ArcType::Specialize,
-                       frame, out, spec_out, sels, chain, warn, err, sr.layer_id);
-          }
-
-          // Nested variant sets authored on this option (inline / USDA
-          // representation). Crate-representation nesting recurses naturally
-          // through the holder graft below (the holder prim carries the
-          // nested sets in its own meta).
-          if (vdepth < 16) {
-            for (const VariantSetData &nvs : vd->variantSets) {
-              std::string chosen;
-              auto nsit = sels->find(nvs.name);
-              if (nsit != sels->end()) chosen = nsit->second;
-              if (chosen.empty()) chosen = nvs.selected;
-              if (chosen.empty()) continue;
-              for (const VariantData &nvd : nvs.variants) {
-                if (nvd.name == chosen) {
-                  apply_variant(nvs.name, &nvd, vdepth + 1);
-                  break;
-                }
-              }
-            }
-          }
-        };
-
         for (const SelectedVariant &sv : SelectVariants(*spec, *sels)) {
-          apply_variant(*sv.set_name, sv.vd, 0);
+          ApplyVariantOption(src, frame, *sv.set_name, sv.vd, 0, sr.layer_id,
+                             out, spec_out, sels, chain, warn, err);
+        }
+        // A variantSet whose selection is authored at a WEAKER site (not yet
+        // expanded) cannot graft now, but its opinions must compose at THIS
+        // position (variants sit between inherits and references). Record a
+        // deferred entry; ExpandList grafts it once every selection is known
+        // and splices the result back here (pxr computes selections across
+        // the whole index before applying each node's sets —
+        // TrickyVariantWeakerSelection).
+        for (const VariantSetData &vss : spec->meta().variantSets()) {
+          if (sels->count(vss.name) || FallbackSelection(vss)) continue;
+          deferred_variants_.push_back(DeferredVariant{
+              out, spec_out, out->size(), spec_out->size(), src, spec,
+              vss.name, sr.layer_id, chain});
         }
 
         // Crate representation: pxr-authored crates store variant content as
@@ -835,6 +991,10 @@
       const ExpansionFrame seed{s.stack_idx, s.map_idx, &s.site, nullptr, 0};
       ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
     }
+    // Variant sets whose selection was authored at a WEAKER site graft now,
+    // at their recorded strength position (pxr resolves selections across the
+    // whole prim index before applying each node's sets).
+    ProcessDeferredVariants(&main, &spec, &sels, warn, err);
     // pxr strength for IMPLIED classes: the implied block composes at its
     // expressing ancestor stack's position — immediately after that stack's
     // own positional opinions — not at the position of the reference that
