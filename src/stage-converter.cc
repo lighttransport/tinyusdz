@@ -1002,9 +1002,14 @@ bool CrateWriter::ConvertSinglePrim(
       Attribute ds_attr;
       ds_attr.set_type_name("bool");
       ds_attr.variability() = Variability::Uniform;
-      primvar::PrimVar pvar;
-      pvar.set_value(gprim->doubleSided.get_value());
-      ds_attr.set_var(std::move(pvar));
+      // DECLARED without a value (`uniform bool doubleSided`): leave the
+      // Attribute value-less. get_value() would hand back GPrim's `false`
+      // fallback and author it as though the scene had said so.
+      if (!gprim->doubleSided.is_value_empty()) {
+        primvar::PrimVar pvar;
+        pvar.set_value(gprim->doubleSided.get_value());
+        ds_attr.set_var(std::move(pvar));
+      }
       crate::FieldValuePairVector dummy;
       ConvertPropertyToFields("doubleSided", Property(ds_attr, /* custom */ false), prim_path, dummy, err);
     }

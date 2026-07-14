@@ -584,6 +584,8 @@ private:
   void ExtractPrimMeta(const PrimMeta& metas, crate::FieldValuePairVector& fields);
 
   /// Extract common GPrim properties (visibility, purpose, etc.)
+  bool ExtractImageableAttrs(const TypedAttributeWithFallback<Animatable<Visibility>>& visibility, const TypedAttributeWithFallback<Purpose>& purpose, crate::FieldValuePairVector& fields, std::string* err);
+
   bool ExtractGPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Material properties (outputs: surface, displacement, volume)
@@ -678,10 +680,11 @@ private:
   /// get_value() returns the SCHEMA FALLBACK for an authored-but-empty
   /// attribute, so doing so writes `double radius = 2` for a bare
   /// `double radius` -- inventing a STRONG opinion the author never authored.
+  /// The declared type is derived from T, so call sites cannot get it wrong.
   /// Defined in sconv-geom.cc, alongside the helpers it composes.
-  template<typename AttrT>
-  bool EmitTypedAnimatableAttr(const char* name, const char* type_name,
-                               const AttrT& attr,
+  template<typename T>
+  bool EmitTypedAnimatableAttr(const char* name,
+                               const TypedAttributeWithFallback<Animatable<T>>& attr,
                                crate::FieldValuePairVector& fields,
                                std::string* err);
 
