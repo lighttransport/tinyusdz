@@ -129,7 +129,12 @@ struct SliceParser {
     if (q >= end) return false;
     bool neg = false;
     if (*q == '+' || *q == '-') { neg = (*q == '-'); ++q; }
-    if (q >= end || *q < '0' || *q > '9') return false;
+    if (q >= end || *q < '0' || *q > '9') {
+      // Possibly a bare-fraction float literal (`.5`): pxr coerces float
+      // literals to integer types by truncating toward zero.
+      if (q < end && *q == '.') return coerce_float_to_i64(out);
+      return false;
+    }
     // Largest magnitude: INT64_MAX, or INT64_MAX+1 for a negative value.
     const uint64_t limit = neg ? (static_cast<uint64_t>(INT64_MAX) + 1u)
                                : static_cast<uint64_t>(INT64_MAX);
@@ -140,24 +145,62 @@ struct SliceParser {
       val = val * 10u + d;
       ++q;
     }
+    if (q < end && (*q == '.' || *q == 'e' || *q == 'E')) {
+      // Float literal (`1.5`, `3e2`): pxr coerces to integer types with
+      // truncation toward zero; out of range after truncation is an error.
+      return coerce_float_to_i64(out);
+    }
     // 0u - val gives the two's-complement negation, correct even at INT64_MIN.
     *out = neg ? static_cast<int64_t>(0u - val) : static_cast<int64_t>(val);
     p = q;
     return true;
   }
 
+  // Re-parse from the current position as a double and truncate toward zero
+  // (pxr float->int coercion). Callers narrow to their element range after.
+  bool coerce_float_to_i64(int64_t* out) {
+    double v = 0.0;
+    if (!parse_double(&v)) return false;
+    const double d = std::trunc(v);
+    if (!(d >= -9223372036854775808.0 && d < 9223372036854775808.0)) {
+      return false;  // NaN/inf land here too
+    }
+    *out = static_cast<int64_t>(d);
+    return true;
+  }
+
+  bool coerce_float_to_u64(uint64_t* out) {
+    double v = 0.0;
+    if (!parse_double(&v)) return false;
+    const double d = std::trunc(v);
+    if (!(d >= 0.0 && d < 18446744073709551616.0)) return false;
+    *out = static_cast<uint64_t>(d);
+    return true;
+  }
+
   bool parse_u64(uint64_t* out) {
     skip_ws();
     const char* q = p;
-    if (q >= end || *q == '-') return false;
+    if (q >= end) return false;
+    if (*q == '-') {
+      // pxr admits negative float literals that truncate INTO range
+      // (`uint u = -0.5` -> 0); a bare negative integer stays an error.
+      return coerce_float_to_u64(out);
+    }
     if (*q == '+') ++q;
-    if (q >= end || *q < '0' || *q > '9') return false;
+    if (q >= end || *q < '0' || *q > '9') {
+      if (q < end && *q == '.') return coerce_float_to_u64(out);
+      return false;
+    }
     uint64_t val = 0;
     while (q < end && *q >= '0' && *q <= '9') {
       const uint64_t d = static_cast<uint64_t>(*q - '0');
       if (val > (UINT64_MAX - d) / 10u) return false;  // would overflow
       val = val * 10u + d;
       ++q;
+    }
+    if (q < end && (*q == '.' || *q == 'e' || *q == 'E')) {
+      return coerce_float_to_u64(out);
     }
     *out = val;
     p = q;
@@ -1003,7 +1046,12 @@ ParseResult ParseArrayValueFromSlice(const char* data, size_t len, bool simple,
     // Asset path array: @path@ literals.
     auto parse_asset = [](SliceParser* s, std::string* v) {
       s->skip_ws();
-      if (s->p >= s->end || *s->p != '@') return false;
+      if (s->p >= s->end) return false;
+      // pxr also accepts quoted STRING literals as asset paths ('a.jpg',
+      // "b.png", """c.exr"""), the same acceptance as the scalar path (the
+      // lexer turns both spellings into a String token there).
+      if (*s->p == '"' || *s->p == '\'') return s->parse_string(v);
+      if (*s->p != '@') return false;
       // Triple-@ delimited form (path contains '@'): @@@path@@@ with \@@@
       // escaping inside.
       const bool triple =

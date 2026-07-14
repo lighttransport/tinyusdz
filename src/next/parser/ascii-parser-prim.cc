@@ -7,11 +7,160 @@
 #include "../prim/identifier.hh"
 #include "../types/spline.hh"
 #include "value-parser.hh"
+#include "value-parser-numeric.hh"
 
 namespace tinyusdz {
 namespace next {
 
 namespace {
+
+// Grammar and type validation plus canonical-text reconstruction for a
+// VtArrayEdit value: `edit [ <op>; ... ]` (usda 1.2, crate 0.14). The next
+// core does not model VtArrayEdit; the edit is preserved as pxr's canonical
+// one-line `; `-separated spelling in the attribute's raw default source (the
+// usda writer re-emits it verbatim) -- the same keep-don't-evaluate policy as
+// the next crate reader, which warns and drops array-edit reps. Literals are
+// parsed with the array's ELEMENT type, so a type error inside an edit body
+// fails the parse exactly like a plain array literal would.
+bool ParseArrayEditText(Lexer& lexer, TypeId elem_type,
+                        std::string* canonical, std::string* err) {
+  auto fail = [&](const std::string& m) {
+    if (err) *err = "array edit: " + m;
+    return false;
+  };
+  lexer.next();  // `edit` keyword (verified by the caller)
+  if (!lexer.expect(TokenType::OpenBracket)) {
+    return fail("expected `[` after `edit`");
+  }
+
+  // `[ <int> ]` index reference (End-relative negatives are grammatical).
+  auto parse_index = [&](std::string* txt) -> bool {
+    if (!lexer.expect(TokenType::OpenBracket)) return false;
+    const Token& n = lexer.peek();
+    if (n.type != TokenType::Number ||
+        !value_parser_detail::IsDecimalIntToken(n.value, /*allow_neg=*/true)) {
+      return false;
+    }
+    *txt = "[" + n.value + "]";
+    lexer.next();
+    return lexer.expect(TokenType::CloseBracket);
+  };
+
+  // A literal element value, captured as its authored text span.
+  auto parse_literal = [&](std::string* txt) -> bool {
+    lexer.peek();
+    const size_t start = lexer.token_start();
+    const ParseResult r = ParseValue(lexer, elem_type);
+    if (!r.success) return false;
+    lexer.peek();
+    size_t vend = lexer.token_start();
+    const char* base = lexer.input_data();
+    while (vend > start &&
+           (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+            base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+      --vend;
+    }
+    txt->assign(base + start, vend - start);
+    return true;
+  };
+
+  auto expect_word = [&](const char* w) -> bool {
+    const Token& t = lexer.peek();
+    if (t.type != TokenType::Identifier || t.value != w) return false;
+    lexer.next();
+    return true;
+  };
+
+  std::string out = "edit [";
+  bool first = true;
+  while (true) {
+    const Token& tok = lexer.peek();
+    if (tok.type == TokenType::Eof) {
+      return fail("unexpected EOF in edit body");
+    }
+    if (tok.type == TokenType::CloseBracket) {
+      lexer.next();
+      break;
+    }
+    // Ops are separated by `;` and/or newlines (the lexer discards the
+    // latter); pxr's grammar also admits `,`.
+    if (tok.type == TokenType::Semicolon || tok.type == TokenType::Comma) {
+      lexer.next();
+      continue;
+    }
+    // `append` / `prepend` lex as list-edit keyword tokens, not identifiers.
+    std::string kw;
+    if (tok.type == TokenType::Identifier) {
+      kw = tok.value;
+    } else if (tok.type == TokenType::Append) {
+      kw = "append";
+    } else if (tok.type == TokenType::Prepend) {
+      kw = "prepend";
+    } else {
+      return fail("expected an edit op keyword");
+    }
+    lexer.next();
+
+    // Array elements never start with `[` (the element type is scalar or
+    // tuple), so a `[` after the op keyword is always an index reference.
+    auto next_is_index = [&]() {
+      return lexer.peek().type == TokenType::OpenBracket;
+    };
+
+    std::string op;
+    if (kw == "write" || kw == "insert") {
+      const char* conj = (kw == "write") ? "to" : "at";
+      std::string a1;
+      if (next_is_index()) {
+        if (!parse_index(&a1)) return fail("bad source index in `" + kw + "`");
+      } else if (!parse_literal(&a1)) {
+        return fail("bad literal in `" + kw + "`");
+      }
+      if (!expect_word(conj)) {
+        return fail("expected `" + std::string(conj) + "` in `" + kw + "`");
+      }
+      std::string a2;
+      if (!parse_index(&a2)) return fail("bad target index in `" + kw + "`");
+      op = kw + " " + a1 + " " + conj + " " + a2;
+    } else if (kw == "append" || kw == "prepend") {
+      std::string a1;
+      if (next_is_index()) {
+        if (!parse_index(&a1)) return fail("bad index in `" + kw + "`");
+      } else if (!parse_literal(&a1)) {
+        return fail("bad literal in `" + kw + "`");
+      }
+      op = kw + " " + a1;
+    } else if (kw == "erase") {
+      std::string a1;
+      if (!parse_index(&a1)) return fail("bad index in `erase`");
+      op = "erase " + a1;
+    } else if (kw == "minsize" || kw == "resize" || kw == "maxsize") {
+      const Token& n = lexer.peek();
+      if (n.type != TokenType::Number ||
+          !value_parser_detail::IsDecimalIntToken(n.value,
+                                                  /*allow_neg=*/false)) {
+        return fail("expected a size in `" + kw + "`");
+      }
+      op = kw + " " + n.value;
+      lexer.next();
+      if (kw != "maxsize" && lexer.peek().type == TokenType::Identifier &&
+          lexer.peek().value == "fill") {
+        lexer.next();
+        std::string f;
+        if (!parse_literal(&f)) return fail("bad fill literal in `" + kw + "`");
+        op += " fill " + f;
+      }
+    } else {
+      return fail("unknown edit op `" + kw + "`");
+    }
+    if (!first) out += "; ";
+    out += op;
+    first = false;
+  }
+  out += "]";
+  *canonical = std::move(out);
+  return true;
+}
 
 // Resolve a relative prim/property path (../Sibling, ./Child, Child.attr,
 // .prop, ..) against the owning prim's absolute path. Crate files never
@@ -133,6 +282,8 @@ bool AsciiParser::Impl::ParsePrimContents() {
   if (!prim) return false;
 
   while (!Check(TokenType::CloseBrace) && !AtEnd()) {
+    // pxr accepts `;` as an optional statement separator in prim bodies.
+    if (Match(TokenType::Semicolon)) continue;
     const Token& tok = lexer_->peek();
 
     if (tok.type == TokenType::Def || tok.type == TokenType::Over ||
@@ -387,6 +538,29 @@ bool AsciiParser::Impl::ParseAttribute(
       array_ctx.max_usda_lazy_array_elements =
           options_.max_usda_lazy_array_elements;
       array_ctx.num_threads = options_.num_threads;
+      const Token& vtok = lexer_->peek();
+      if (is_array && vtok.type == TokenType::Identifier &&
+          vtok.value == "edit") {
+        // VtArrayEdit value (usda 1.2): validate and preserve as raw text.
+        std::string canonical, edit_err;
+        if (!ParseArrayEditText(*lexer_, type_id, &canonical, &edit_err)) {
+          AddError(edit_err);
+          return false;
+        }
+        if (PrimSpec* cur = builder_->current()) {
+          const PropNameId nid = GetPropNameTable().intern(attr_name);
+          if (!cur->property(nid)) {
+            cur->add_property_slot(
+                nid, type_id,
+                static_cast<uint16_t>(flags | PropSlot::kFlagArray));
+          }
+          cur->set_raw_default_source(attr_name, std::move(canonical));
+        }
+        AddWarning("VtArrayEdit value on `" + attr_name +
+                   "` preserved as authored text; edits are not evaluated");
+        ParsePropertyMetadata(attr_name);
+        return true;
+      }
       if (is_array) {
         result = ParseArrayValue(*lexer_, type_id, array_ctx);
       } else {

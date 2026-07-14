@@ -23,6 +23,8 @@ bool AsciiParser::Impl::ParseStageMetadata() {
 
     // Parse metadata key-value pairs
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
+      // pxr accepts `;` as an optional statement separator.
+      if (Match(TokenType::Semicolon)) continue;
       // A bare (often triple-quoted) string is the layer COMMENT — pxr's
       // only accepted spelling (26.x rejects `comment = "..."`; the bare
       // string maps to `comment`, not `doc`).
