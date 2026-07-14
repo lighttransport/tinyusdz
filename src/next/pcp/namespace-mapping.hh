@@ -200,6 +200,22 @@ struct NamespaceMapping {
     for (const Pair &o : outer.pairs) {
       bool reachable = true;
       for (const Pair &in : inner.pairs) {
+        // A variant-strip inner pair maps the variant CONTENT site onto its
+        // own host namespace: either the crate holder child (source under its
+        // own target, "/X/{s=v}" -> "/X") or the USDA content-root sentinel
+        // ("/__self__" -> "/X", which matches no real host path). Host-
+        // namespace paths authored in the variant body (connection/rel
+        // targets) pass through such a pair UNCHANGED and must still be
+        // mapped by `outer`; longest-prefix matching keeps content-site paths
+        // on the inner pair, so carrying the outer pair cannot alias. Only an
+        // outer source under the inner SOURCE is already covered above.
+        if (in.first == "/__self__" || AtOrUnder(in.first, in.second)) {
+          if (AtOrUnder(o.first, in.first)) {
+            reachable = false;
+            break;
+          }
+          continue;
+        }
         if (AtOrUnder(o.first, in.first) || AtOrUnder(o.first, in.second) ||
             AtOrUnder(in.first, o.first)) {
           reachable = false;

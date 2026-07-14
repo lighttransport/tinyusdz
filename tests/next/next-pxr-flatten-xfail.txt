@@ -15,8 +15,6 @@
 #     mapping through variant+reference, permission enforcement).
 supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
 supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root relationship_value_mismatch /Model/Rig/PathRig Relationship "relationshipToPathAvar2" at "/Model/Rig/PathRig" differs: "null" vs "/Model/Rig/PathRig/P
-supplemental/BasicVariantWithConnections_root attribute_value_mismatch /main_cam/Rig Attribute "breathingScale.connect" at "/main_cam/Rig" differs: "/camera/Lens.breathingScale" vs "/main_cam/Lens
-supplemental/BasicVariantWithReference_root attribute_value_mismatch /ModelRefWithChildren/_prototype Attribute "attr1.connect" at "/ModelRefWithChildren/_prototype" differs: "/Model.modelRootAt
 supplemental/ErrorArcCycle_root specifier_mismatch /AnotherParent/AnotherChild/AnotherChild Specifier mismatch at "/AnotherParent/AnotherChild/AnotherChild": "def" vs "over"
 supplemental/ErrorInconsistentProperties_root relationship_missing /InconsistentPropertyType Relationship "x" at "/InconsistentPropertyType" exists in file1 but not in file2
 supplemental/ErrorInvalidInstanceTargetPath_root attribute_missing /ConnectionToLocalClass/Instance_1 Attribute "x.connect" at "/ConnectionToLocalClass/Instance_1" exists in file2 but not in file1
