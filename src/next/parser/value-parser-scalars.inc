@@ -31,9 +31,18 @@ ParseResult ParseBool(Lexer& lexer) {
 // tokens. Keeps the parser free of libc/locale (and thus WASM/WASI-friendly).
 ParseResult ParseInt(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number ||
-      !IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
+  if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected integer value");
+  }
+  if (!IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
+    // Float literal: coerce with truncation toward zero, like pxr.
+    int64_t coerced = 0;
+    if (!value_parser_detail::CoerceFloatTokenToI64(
+            tok.value, -2147483648.0, 2147483648.0, &coerced)) {
+      return ParseResult::Error("Expected integer value");
+    }
+    lexer.next();
+    return ParseResult::Ok(Value(static_cast<int32_t>(coerced)));
   }
   lexer.next();
   int64_t wide = 0;
@@ -46,9 +55,17 @@ ParseResult ParseInt(Lexer& lexer) {
 
 ParseResult ParseUInt(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number ||
-      !IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+  if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected unsigned integer value");
+  }
+  if (!IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+    uint64_t coerced = 0;
+    if (!value_parser_detail::CoerceFloatTokenToU64(tok.value, 4294967296.0,
+                                                    &coerced)) {
+      return ParseResult::Error("Expected unsigned integer value");
+    }
+    lexer.next();
+    return ParseResult::Ok(Value(static_cast<uint32_t>(coerced)));
   }
   lexer.next();
   uint64_t wide = 0;
@@ -60,9 +77,18 @@ ParseResult ParseUInt(Lexer& lexer) {
 
 ParseResult ParseInt64(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number ||
-      !IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
+  if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected 64-bit integer value");
+  }
+  if (!IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
+    int64_t coerced = 0;
+    if (!value_parser_detail::CoerceFloatTokenToI64(
+            tok.value, -9223372036854775808.0, 9223372036854775808.0,
+            &coerced)) {
+      return ParseResult::Error("Expected 64-bit integer value");
+    }
+    lexer.next();
+    return ParseResult::Ok(Value(coerced));
   }
   lexer.next();
   int64_t value = 0;
@@ -74,9 +100,17 @@ ParseResult ParseInt64(Lexer& lexer) {
 
 ParseResult ParseUInt64(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number ||
-      !IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+  if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
+  }
+  if (!IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+    uint64_t coerced = 0;
+    if (!value_parser_detail::CoerceFloatTokenToU64(
+            tok.value, 18446744073709551616.0, &coerced)) {
+      return ParseResult::Error("Expected 64-bit unsigned integer value");
+    }
+    lexer.next();
+    return ParseResult::Ok(Value(coerced));
   }
   lexer.next();
   uint64_t value = 0;
@@ -123,9 +157,18 @@ ParseResult ParseDouble(Lexer& lexer) {
 
 ParseResult ParseUChar(Lexer& lexer) {
   const Token& tok = lexer.peek();
-  if (tok.type != TokenType::Number ||
-      !IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+  if (tok.type != TokenType::Number) {
     return ParseResult::Error("Expected unsigned integer value");
+  }
+  if (!IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+    uint64_t coerced = 0;
+    if (!value_parser_detail::CoerceFloatTokenToU64(tok.value, 256.0,
+                                                    &coerced)) {
+      return ParseResult::Error("Expected unsigned integer value");
+    }
+    lexer.next();
+    const uint8_t cb = static_cast<uint8_t>(coerced);
+    return ParseResult::Ok(Value::MakeFromRaw(TypeId::UChar, &cb));
   }
   lexer.next();
   uint64_t wide = 0;
@@ -226,14 +269,23 @@ bool ParseIntTuple(Lexer& lexer, int32_t* out, size_t count) {
 
   for (size_t i = 0; i < count; i++) {
     const Token& tok = lexer.peek();
-    if (tok.type != TokenType::Number ||
-        !IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
-      // DecimalToI32 stops at the first non-digit, so "1e3" would silently
-      // become 1 — reject non-integer tokens like the scalar path does.
+    if (tok.type != TokenType::Number) {
       lexer.set_error("Expected integer in tuple");
       return false;
     }
-    out[i] = DecimalToI32(tok.value.c_str());
+    if (!IsDecimalIntToken(tok.value, /*allow_neg=*/true)) {
+      // Float literal: coerce with truncation toward zero, like pxr
+      // (`int2 t = (1.5, 2.7)` -> (1, 2)).
+      int64_t coerced = 0;
+      if (!value_parser_detail::CoerceFloatTokenToI64(
+              tok.value, -2147483648.0, 2147483648.0, &coerced)) {
+        lexer.set_error("Expected integer in tuple");
+        return false;
+      }
+      out[i] = static_cast<int32_t>(coerced);
+    } else {
+      out[i] = DecimalToI32(tok.value.c_str());
+    }
     lexer.next();
 
     if (i < count - 1) {
@@ -254,15 +306,19 @@ bool ParseUIntTuple(Lexer& lexer, uint32_t* out, size_t count) {
       lexer.set_error("Expected unsigned integer in tuple");
       return false;
     }
-    if (!tok.value.empty() && tok.value[0] == '-') {
-      lexer.set_error("Expected non-negative unsigned integer in tuple");
-      return false;
-    }
     if (!IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
-      lexer.set_error("Expected unsigned integer in tuple");
-      return false;
+      // Float literal (including the in-range negatives pxr admits, like
+      // -0.5 -> 0): coerce with truncation toward zero.
+      uint64_t coerced = 0;
+      if (!value_parser_detail::CoerceFloatTokenToU64(tok.value, 4294967296.0,
+                                                      &coerced)) {
+        lexer.set_error("Expected unsigned integer in tuple");
+        return false;
+      }
+      out[i] = static_cast<uint32_t>(coerced);
+    } else {
+      out[i] = DecimalToU32(tok.value.c_str());
     }
-    out[i] = DecimalToU32(tok.value.c_str());
     lexer.next();
 
     if (i < count - 1) {
