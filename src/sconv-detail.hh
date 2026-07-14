@@ -32,9 +32,24 @@ inline void EmitAttrMetas(const std::string &name, const AttrMeta &metas,
     fields.push_back({name + ".customData", v});
   }
 
-  if (metas.has_comment()) {
+  // A bare string in an attribute's metadata block (`double x = 1 ( """m""" )`)
+  // IS the comment in USD -- the two ASCII spellings are one Sdf field, and only
+  // the ASCII parser knows which was used: it parks the bare form in
+  // AttrMeta::stringData and the `comment = ...` form in AttrMeta::comment.
+  //
+  // Emit exactly ONE `comment` field: two would corrupt the fieldset encoding.
+  if (metas.has_comment() || !metas.stringData.empty()) {
+    std::string comment_str;
+    if (metas.has_comment()) {
+      comment_str = metas.get_comment().value;
+    } else {
+      for (size_t i = 0; i < metas.stringData.size(); i++) {
+        if (i > 0) comment_str += "\n";
+        comment_str += metas.stringData[i].value;
+      }
+    }
     crate::CrateValue v;
-    v.Set(metas.get_comment().value);
+    v.Set(comment_str);
     fields.push_back({name + ".comment", v});
   }
 
@@ -56,20 +71,6 @@ inline void EmitAttrMetas(const std::string &name, const AttrMeta &metas,
     fields.push_back({name + ".documentation", v});
   }
 
-  // Bare string(s) in the metadata block (`double radius = 1.2 ( """muda""" )`).
-  // Crate has no standard field for these -- the ASCII parser parks them in
-  // AttrMeta::stringData -- so emit our own `stringData` field, which the crate
-  // reader (usdc-reader-property.cc) puts straight back. Only the values need to
-  // travel: to_string(StringData) re-derives the quoting from the value.
-  if (!metas.stringData.empty()) {
-    std::vector<std::string> strs;
-    for (const auto &sd : metas.stringData) {
-      strs.push_back(sd.value);
-    }
-    crate::CrateValue v;
-    v.Set(strs);
-    fields.push_back({name + ".stringData", v});
-  }
 }
 
 // Emit a DECLARATION-ONLY attribute (`double radius`, no value).
