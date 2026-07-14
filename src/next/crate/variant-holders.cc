@@ -100,6 +100,10 @@ uint32_t AppendVariantHolder(Layer* out, const std::string& owner_path,
   const std::string hp = HolderPath(owner_path, set_name, vd.name);
   PrimSpec holder("{" + set_name + "=" + vd.name + "}");
   holder.set_path(Path(hp));
+  // A variant option spec never DEFINES its host (pxr option specs are
+  // `over`); the PrimSpec default of Def would wrongly promote an
+  // over-authored host prim to def during specifier composition.
+  holder.set_specifier(PrimSpecifier::Over);
 
   // Inline option opinions.
   for (const VariantProperty& vp : vd.properties) {

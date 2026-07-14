@@ -448,7 +448,10 @@ bool CrateReader::Impl::BuildStage() {
     // referenced prim (a forced "Xform" default would mask e.g. a referenced
     // Mesh definition; the writer already skips empty type names).
     entry.type_name.clear();
-    entry.specifier = PrimSpecifier::Def;
+    // Variant/VariantSet holder specs usually carry no `specifier` field and
+    // never DEFINE their host (pxr option specs are `over`); a Def default
+    // here wrongly promoted over-authored prims to def during composition.
+    entry.specifier = is_variant ? PrimSpecifier::Over : PrimSpecifier::Def;
     for (auto& f : value_field_scratch) {
       if (f.first == "typeName") {
         if (const std::string* s = f.second.as_token()) entry.type_name = *s;
