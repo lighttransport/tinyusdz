@@ -1,0 +1,8 @@
+#usda 1.0
+def "Root"
+{
+    float[] same.timeSamples = { 0: [0, 100], 10: [10, 200] }
+    float[] mismatch.timeSamples = { 0: [0, 100], 10: [10, 200, 300] }
+    int[] ints.timeSamples = { 0: [0, 100], 10: [10, 200] }
+    float3[] pts.timeSamples = { 0: [(0,0,0), (1,1,1)], 10: [(10,0,0), (1,1,11)] }
+}

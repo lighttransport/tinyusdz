@@ -394,6 +394,7 @@ CMakeUserPresets.json
 !tests/usda/spec/*.usda
 !tests/unit/fixtures/*.usda
 !tests/next/fixtures/*.usda
+!tests/next/fixtures/vr-edge/**/*.usda
 !tests/usda/validation/valid/*.usda
 !tests/usdc/aousd-unknown-property-metadata.usdc
 # Cross-layer list-op fixtures (Phase 7 S5; consumed by test_pcp, not the

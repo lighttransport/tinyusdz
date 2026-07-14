@@ -254,6 +254,12 @@
         }
         sub_cum = cum_offset.Compose(LayerOffset{offset, scale});
       }
+      // timeCodesPerSecond auto-scale (pxr parity): a sublayer authored at a
+      // different tcps than its PARENT layer is scaled underneath the
+      // authored offset so its samples land at the same wall-clock time.
+      // Effective tcps falls back framesPerSecond -> 24 like
+      // SdfLayer::GetTimeCodesPerSecond. Applied after the sublayer is
+      // loaded (below) since it needs the sublayer's metadata.
       const std::string sub_id = resolver->ResolvePath(
           sub, anchor, !options.strict_aousd_conformance);
       if (sub_id.empty()) {
@@ -276,6 +282,12 @@
       std::shared_ptr<Layer> sl =
           reg_->GetOrLoad(*resolver, sub, anchor, warn, err, load_opts);
       if (sl) {
+        const double parent_tcps = layer->effective_timeCodesPerSecond();
+        const double sub_tcps = sl->effective_timeCodesPerSecond();
+        if (parent_tcps != sub_tcps && sub_tcps > 0.0 &&
+            std::isfinite(parent_tcps) && std::isfinite(sub_tcps)) {
+          sub_cum = sub_cum.Compose(LayerOffset{0.0, parent_tcps / sub_tcps});
+        }
         if (visiting) visiting->insert(sub_id);
         if (!AppendLayerAndSublayers(st, sl, sub_id, visiting, depth + 1,
                                      sub_cum, expr_vars, warn, err)) {

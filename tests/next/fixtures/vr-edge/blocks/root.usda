@@ -1,0 +1,9 @@
+#usda 1.0
+(
+    subLayers = [ @./weak.usda@ ]
+)
+over "Root"
+{
+    double blocked = None
+    double sample_blocked.timeSamples = { 0: 1, 10: None, 20: 3 }
+}

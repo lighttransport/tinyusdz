@@ -276,6 +276,16 @@ public:
   const LayerMeta& meta() const { return meta_; }
   LayerMeta& meta() { return meta_; }
 
+  /// Effective timeCodesPerSecond with pxr SdfLayer fallback order:
+  /// authored timeCodesPerSecond, else authored framesPerSecond, else 24.
+  /// Used for the automatic time scaling between layers authored at
+  /// different rates (sublayer/reference arcs).
+  double effective_timeCodesPerSecond() const {
+    if (meta_.timeCodesPerSecond_set) return meta_.timeCodesPerSecond;
+    if (meta_.framesPerSecond_set) return meta_.framesPerSecond;
+    return 24.0;
+  }
+
   // ============================================================
   // Memory
   // ============================================================
