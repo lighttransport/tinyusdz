@@ -566,22 +566,91 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     return;
   }
 
+  // Type name. Prefer the declared name (round-trips string[] vs token[],
+  // role types, and value-less / connection-only attrs whose stored value type
+  // is Invalid). GetTypeName returns nullptr for Invalid, so guard the fallback.
+  TypeId type_id = static_cast<TypeId>(slot.value_type);
+  std::string type_name;
+  if (const std::string* decl = spec.property_type_name(name)) {
+    type_name = *decl;
+  } else {
+    const char* tn = GetTypeName(type_id);
+    type_name = tn ? tn : "token";
+    if (slot.is_array()) type_name += "[]";
+  }
+
+  // Emit the leading `<indent><qualifiers><type> <name>` shared by the value
+  // line, the `.timeSamples` line and the `.connect` line (USDA repeats the
+  // type on each statement).
+  auto emit_decl = [&](const char* prefix = "") {
+    WriteIndent(os, depth, opts.indent);
+    os << prefix;
+    // `custom` is a deprecated qualifier; emit only under opt-in (--openusd-compat).
+    if (opts.emit_custom && slot.is_custom()) os << "custom ";
+    if (slot.is_uniform()) os << "uniform ";
+    os << type_name << " " << name;
+  };
+
+  // Connection targets live in the prim's connection map, NOT in the property
+  // value (a connection-only attr has no authored default). A property may
+  // carry a value AND time samples AND a connection -> separate statements.
+  // A present-but-empty entry is an authored connection BLOCK
+  // (`.connect = None`); absent means no connection opinion.
+  const std::vector<Path>* conns = spec.connection(name);
+  const bool has_conn = conns != nullptr;
+
+  // Connection statement: `<type> <name>.connect = </path>` (or `[...]`).
+  // `wrote_meta` = authored property metadata already emitted on an earlier
+  // statement for this property.
+  auto emit_connection = [&](bool wrote_meta) {
+    const ArcEdit* edit = spec.connection_edit(name);
+    auto emit_targets = [&](const std::vector<std::string>& targets) {
+      if (targets.empty()) {
+        os << "None";
+      } else if (targets.size() == 1) {
+        os << "<" << targets[0] << ">";
+      } else {
+        os << "[";
+        for (size_t i = 0; i < targets.size(); ++i) {
+          if (i) os << ", ";
+          os << "<" << targets[i] << ">";
+        }
+        os << "]";
+      }
+    };
+    if (edit && edit->authored && !edit->is_explicit) {
+      auto emit_connection_op = [&](const char* qualifier,
+                                    const std::vector<std::string>& targets) {
+        if (targets.empty()) return;
+        emit_decl(qualifier);
+        os << ".connect = ";
+        emit_targets(targets);
+        if (!wrote_meta) {
+          WritePropMeta(os, spec, slot.name_id, depth, opts);
+          wrote_meta = true;
+        }
+        os << "\n";
+      };
+      emit_connection_op("add ", edit->added);
+      emit_connection_op("prepend ", edit->prepended);
+      emit_connection_op("append ", edit->appended);
+      emit_connection_op("delete ", edit->deleted);
+      emit_connection_op("reorder ", edit->ordered);
+    } else {
+      emit_decl();
+      os << ".connect = ";
+      std::vector<std::string> targets;
+      targets.reserve(conns->size());
+      for (const Path& path : *conns) targets.push_back(path.str());
+      emit_targets(targets);
+      if (!wrote_meta) WritePropMeta(os, spec, slot.name_id, depth, opts);
+      os << "\n";
+    }
+  };
+
   // Check if this property has time samples
   if (slot.is_time_sampled() && spec.has_time_samples(slot.name_id)) {
-    // Shared `<qualifiers><type> <name>` prefix for the statements below.
-    auto emit_ts_decl = [&]() {
-      WriteIndent(os, depth, opts.indent);
-      if (opts.emit_custom && slot.is_custom()) os << "custom ";
-      if (slot.is_uniform()) os << "uniform ";
-      if (const std::string* decl = spec.property_type_name(name)) {
-        os << *decl;
-      } else {
-        const char* tn = GetTypeName(static_cast<TypeId>(slot.value_type));
-        os << (tn ? tn : "token");
-        if (slot.is_array()) os << "[]";
-      }
-      os << " " << name;
-    };
+    auto emit_ts_decl = [&]() { emit_decl(); };
     // An authored DEFAULT coexists with time samples as an independent
     // field (pxr keeps both; dropping it loses the value used outside the
     // sampled range / by consumers that ignore samples). Emit it first.
@@ -610,42 +679,18 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
     }
     WriteTimeSamples(os, name, slot.name_id, spec, depth, opts);
     os << "\n";
+    // A connection coexists with time samples (pxr emits it as a third
+    // statement after the `.timeSamples` block); dropping it here silently
+    // severed shading networks with animated fallback values.
+    if (has_conn) {
+      emit_connection(/*wrote_meta=*/(def_val && !def_val->is_empty()) ||
+                      (pm && !pm->empty()));
+    }
     return;
   }
 
-  // Type name. Prefer the declared name (round-trips string[] vs token[],
-  // role types, and value-less / connection-only attrs whose stored value type
-  // is Invalid). GetTypeName returns nullptr for Invalid, so guard the fallback.
-  TypeId type_id = static_cast<TypeId>(slot.value_type);
-  std::string type_name;
-  if (const std::string* decl = spec.property_type_name(name)) {
-    type_name = *decl;
-  } else {
-    const char* tn = GetTypeName(type_id);
-    type_name = tn ? tn : "token";
-    if (slot.is_array()) type_name += "[]";
-  }
-
-  // Emit the leading `<indent><qualifiers><type> <name>` shared by the value
-  // line and the `.connect` line (USDA repeats the type on each statement).
-  auto emit_decl = [&](const char* prefix = "") {
-    WriteIndent(os, depth, opts.indent);
-    os << prefix;
-    // `custom` is a deprecated qualifier; emit only under opt-in (--openusd-compat).
-    if (opts.emit_custom && slot.is_custom()) os << "custom ";
-    if (slot.is_uniform()) os << "uniform ";
-    os << type_name << " " << name;
-  };
-
   const Value* value = spec.property_value(slot.name_id);
   const bool has_value = value && !value->is_empty();
-  // Connection targets live in the prim's connection map, NOT in the property
-  // value (a connection-only attr has no authored default). A property may also
-  // carry BOTH a value and a connection -> emit them as separate statements.
-  const std::vector<Path>* conns = spec.connection(name);
-  // A present-but-empty entry is an authored connection BLOCK
-  // (`.connect = None`); absent means no connection opinion.
-  const bool has_conn = conns != nullptr;
 
   // Value statement (authored default).
   if (has_value && value->is_block()) {
@@ -678,50 +723,7 @@ void WriteProperty(StreamWriter& os, const PropSlot& slot, const PrimSpec& spec,
 
   // Connection statement: `<type> <name>.connect = </path>` (or `[...]`).
   if (has_conn) {
-    const ArcEdit* edit = spec.connection_edit(name);
-    auto emit_targets = [&](const std::vector<std::string>& targets) {
-      if (targets.empty()) {
-        os << "None";
-      } else if (targets.size() == 1) {
-        os << "<" << targets[0] << ">";
-      } else {
-        os << "[";
-        for (size_t i = 0; i < targets.size(); ++i) {
-          if (i) os << ", ";
-          os << "<" << targets[i] << ">";
-        }
-        os << "]";
-      }
-    };
-    bool wrote_meta = has_value;
-    if (edit && edit->authored && !edit->is_explicit) {
-      auto emit_connection_op = [&](const char* qualifier,
-                                    const std::vector<std::string>& targets) {
-        if (targets.empty()) return;
-        emit_decl(qualifier);
-        os << ".connect = ";
-        emit_targets(targets);
-        if (!wrote_meta) {
-          WritePropMeta(os, spec, slot.name_id, depth, opts);
-          wrote_meta = true;
-        }
-        os << "\n";
-      };
-      emit_connection_op("add ", edit->added);
-      emit_connection_op("prepend ", edit->prepended);
-      emit_connection_op("append ", edit->appended);
-      emit_connection_op("delete ", edit->deleted);
-      emit_connection_op("reorder ", edit->ordered);
-    } else {
-      emit_decl();
-      os << ".connect = ";
-      std::vector<std::string> targets;
-      targets.reserve(conns->size());
-      for (const Path& path : *conns) targets.push_back(path.str());
-      emit_targets(targets);
-      if (!wrote_meta) WritePropMeta(os, spec, slot.name_id, depth, opts);
-      os << "\n";
-    }
+    emit_connection(/*wrote_meta=*/has_value);
   }
 
   // Declared-only attribute (no value, no connection): emit the bare
