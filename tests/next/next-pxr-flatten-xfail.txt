@@ -25,7 +25,6 @@ supplemental/TrickyClassHierarchy_root attribute_value_mismatch /Sullivan_1 Attr
 supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanRig/Anim/Face/LEye Attribute "baz" at "/HumanRig/Anim/Face/LEye" exists in file2 but not in file1
 supplemental/TrickyInheritsAndRelocates5_root attribute_value_mismatch /CharRig/Anim/Arms/R1Arm/Knot03 Attribute "foo" at "/CharRig/Anim/Arms/R1Arm/Knot03" differs: "from TentacleRig" vs "from Cha
 supplemental/TrickyInheritsInVariants_root prim_missing /Model/Scope/LowClassStuff Prim "/Model/Scope/LowClassStuff" exists in file1 but not in file2
-supplemental/TrickyLocalClassHierarchyWithRelocates_root specifier_mismatch /C_1/CollisionRig/Body/CollBody/SimRegions/LArm Specifier mismatch at "/C_1/CollisionRig/Body/CollBody/SimRegions/LArm": "over" vs
 supplemental/TrickyMultipleRelocations2_root specifier_mismatch /ModelGroup/Model_2/Anim/Collider Specifier mismatch at "/ModelGroup/Model_2/Anim/Collider": "over" vs "def"
 supplemental/TrickyMultipleRelocations5_root prim_missing /Group/Character Prim "/Group/Character" exists in file1 but not in file2
 supplemental/TrickyMultipleRelocationsAndClasses2_root attribute_missing /CharRig/Anim/Legs/LHip/Knee Attribute "JointBlend" at "/CharRig/Anim/Legs/LHip/Knee" exists in file2 but not in file1

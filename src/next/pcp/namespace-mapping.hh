@@ -48,6 +48,13 @@ struct NamespaceMapping {
   /// only of relocate renames within one layer stack keeps identity fallback:
   /// paths it does not rename still address the same composed prims.
   bool crosses_arc = false;
+  /// True for a LOCAL class-based arc (inherit/specialize whose class and
+  /// instance live in the SAME layer stack). pxr gives such arcs an identity-
+  /// plus-pair map function: target paths outside the class namespace pass
+  /// through unchanged, EXCEPT paths at/under the arc's destination (the
+  /// inheriting instance) — those are "invalid instance target" errors
+  /// (non-invertible path translation) and are dropped.
+  bool intra_stack = false;
 
   NamespaceMapping() = default;
   NamespaceMapping(std::string source_prefix, std::string target_prefix)
@@ -145,7 +152,14 @@ struct NamespaceMapping {
   /// silently aliased unrelated composed prims.
   std::string ApplyTarget(const std::string &path) const {
     const int i = MatchSource(path);
-    if (i < 0) return crosses_arc ? std::string() : path;
+    if (i < 0) {
+      if (intra_stack) {
+        // Local class arc: identity outside the class namespace, except
+        // under the destination (invalid instance target, dropped).
+        return MatchTarget(path) >= 0 ? std::string() : path;
+      }
+      return crosses_arc ? std::string() : path;
+    }
     const Pair &p = pairs[static_cast<size_t>(i)];
     // An empty pair target is a DROP marker: content under this source is
     // not addressable through the arc (e.g. a relocate whose destination
@@ -175,6 +189,13 @@ struct NamespaceMapping {
     if (outer.is_identity()) return inner;
     NamespaceMapping out;
     out.crosses_arc = outer.crosses_arc || inner.crosses_arc;
+    // An intra-stack class map stays intra-stack when composed with a mapping
+    // that does not itself cross an arc (identity or relocate renames within
+    // the same stack). Crossing a real arc (reference/payload) demotes it to
+    // strict cross-arc target dropping.
+    out.intra_stack =
+        (inner.intra_stack && (outer.intra_stack || !outer.crosses_arc)) ||
+        (outer.intra_stack && (inner.intra_stack || !inner.crosses_arc));
     for (const Pair &in : inner.pairs) {
       out.pairs.emplace_back(in.first, outer.Apply(in.second));
       for (const Pair &o : outer.pairs) {
@@ -209,7 +230,11 @@ struct NamespaceMapping {
         // mapped by `outer`; longest-prefix matching keeps content-site paths
         // on the inner pair, so carrying the outer pair cannot alias. Only an
         // outer source under the inner SOURCE is already covered above.
-        if (in.first == "/__self__" || AtOrUnder(in.first, in.second)) {
+        // An intra-stack class pair (local inherit/specialize) likewise maps
+        // between SIBLING sites of one namespace: paths outside the class
+        // pass through it unchanged and remain addressable by `outer`.
+        if (in.first == "/__self__" || AtOrUnder(in.first, in.second) ||
+            inner.intra_stack) {
           if (AtOrUnder(o.first, in.first)) {
             reachable = false;
             break;
