@@ -821,6 +821,14 @@ void Compositor::CopyLocalOpinions(
       }
       continue;  // target opinion otherwise wins (incl. time-sampled merge)
     }
+    // Mirror of the rel-vs-attr form conflict below: a weaker ATTRIBUTE under
+    // an existing stronger relationship of the same name is ignored (pxr
+    // keeps the defining spec's form and drops the conflicting spec).
+    if (!slot.is_relationship() &&
+        (target.relationship(pname) ||
+         target.relationship_opinion_stack(pname))) {
+      continue;
+    }
     const Value* src_val = source.property_value(slot.name_id);
     if (src_val) {
       target.add_property(slot.name_id, *src_val, slot.flags);
@@ -851,6 +859,23 @@ void Compositor::CopyLocalOpinions(
   // is applied to the weaker effective list (the old skip-on-existing path
   // lost `</A>` from weak A + strong prepend B).
   for (const auto& rel_name : source.relationship_names()) {
+    // pxr: property specs whose FORM conflicts with the defining (strongest)
+    // spec are ignored. A weaker RELATIONSHIP under an existing attribute
+    // slot of the same name contributes no targets — but a relationship
+    // spec's intrinsic `uniform` variability is an authored field and still
+    // fills the composed attribute (usdcat prints `uniform double x`).
+    {
+      const PropNameId aid = GetPropNameTable().find(rel_name);
+      if (aid.is_valid()) {
+        const PropSlot* aslot = target.property(aid);
+        if (aslot && !aslot->is_relationship()) {
+          if (PropSlot* ms = target.property_mutable(aid)) {
+            ms->flags |= PropSlot::kFlagUniform;
+          }
+          continue;
+        }
+      }
+    }
     std::vector<PrimSpec::RelationshipOpinion> opinions;
     if (const auto* existing = target.relationship_opinion_stack(rel_name)) {
       opinions = *existing;
