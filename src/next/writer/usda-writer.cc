@@ -404,6 +404,15 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(std::move(s));
   }
 
+  // pxr emits layer metadata in ALPHABETICAL key order (the bare-string
+  // comment's leading quote sorts first, matching pxr's comment-first form).
+  std::stable_sort(lines.begin(), lines.end(),
+                   [&](const std::string& a, const std::string& b) {
+                     const size_t n = opts.indent.size();
+                     return a.compare(n, std::string::npos, b, n,
+                                      std::string::npos) < 0;
+                   });
+
   for (size_t i = 0; i < lines.size(); ++i) {
     os << lines[i];
     if (i + 1 < lines.size()) {
