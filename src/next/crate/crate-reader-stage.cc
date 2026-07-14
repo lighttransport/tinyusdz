@@ -77,6 +77,9 @@ bool CrateReader::Impl::DecodePropMetaField(const std::string& name,
   if (name == "outputName") return tok_or_str(pm.outputName, PropMeta::kOutputName);
   if (name == "bindMaterialAs") return tok_or_str(pm.bindMaterialAs, PropMeta::kBindMaterialAs);
   if (name == "kind") return tok_or_str(pm.kind, PropMeta::kKind);
+  if (name == "permission") {
+    return tok_or_str(pm.permission, PropMeta::kPermission);
+  }
   if (name == "displayName") return tok_or_str(pm.displayName, PropMeta::kDisplayName);
   if (name == "displayGroup") return tok_or_str(pm.displayGroup, PropMeta::kDisplayGroup);
   if (name == "comment") return tok_or_str(pm.comment, PropMeta::kComment);
@@ -194,6 +197,11 @@ bool CrateReader::Impl::BuildStage() {
         if (d) {
           layer.meta().metersPerUnit = *d;
           layer.meta().metersPerUnit_set = true;
+        }
+      } else if (field.first == "hasOwnedSubLayers") {
+        if (const bool* b = field.second.as_bool()) {
+          layer.meta().hasOwnedSubLayers = *b;
+          layer.meta().hasOwnedSubLayers_set = true;
         }
       } else if (field.first == "timeCodesPerSecond") {
         const double* d = field.second.as_double();
@@ -1020,6 +1028,13 @@ bool CrateReader::Impl::BuildStage() {
           else if (const std::string* s = field.second.as_string())
             ps->meta().kind() = *s;
           ps->meta().setKindAuthored();
+          continue;
+        }
+        if (field.first == "permission") {
+          if (const std::string* s = field.second.as_token())
+            ps->meta().permission() = *s;
+          else if (const std::string* s = field.second.as_string())
+            ps->meta().permission() = *s;
           continue;
         }
         if (field.first == "displayName") {

@@ -11,7 +11,6 @@
 # 633 pass / 145 listed; 1 after crate variant-spec specifier; 19 after the
 # unmappable-relocate-target drop + bare-rel + varying-only qualifier -> 653 / 125).
 supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
-supplemental/BasicOwner_root key_missing Key "hasOwnedSubLayers" in metadata exists in file2 but not in file1
 supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root relationship_value_mismatch /Model/Rig/PathRig Relationship "relationshipToPathAvar2" at "/Model/Rig/PathRig" differs: "null" vs "/Model/Rig/PathRig/P
 supplemental/BasicVariantWithConnections_root attribute_value_mismatch /main_cam/Rig Attribute "breathingScale.connect" at "/main_cam/Rig" differs: "/camera/Lens.breathingScale" vs "/main_cam/Lens
 supplemental/BasicVariantWithReference_root attribute_value_mismatch /ModelRefWithChildren/_prototype Attribute "attr1.connect" at "/ModelRefWithChildren/_prototype" differs: "/Model.modelRootAt
@@ -21,7 +20,6 @@ supplemental/ErrorInconsistentProperties_root relationship_missing /Inconsistent
 supplemental/ErrorInvalidInstanceTargetPath_root attribute_missing /ConnectionToLocalClass/Instance_1 Attribute "x.connect" at "/ConnectionToLocalClass/Instance_1" exists in file2 but not in file1
 supplemental/ErrorInvalidPreRelocateTargetPath_root attribute_value_mismatch /SublayerRoot Attribute "badAttrA.connect" at "/SublayerRoot" differs: "/SublayerRoot/Anim/Scope.x" vs "/SublayerRoot/Rig/Sco
 supplemental/ErrorInvalidReferenceToRelocationSource_root prim_missing /Good_RefToRelocated/PreReloChild Prim "/Good_RefToRelocated/PreReloChild" exists in file1 but not in file2
-supplemental/ErrorOwner_root key_missing Key "hasOwnedSubLayers" in metadata exists in file2 but not in file1
 supplemental/ErrorPermissionDenied_root key_missing Key "permission" in /Parent/Child metadata exists in file2 but not in file1
 supplemental/RelocatePrimsWithSameName_root specifier_mismatch /ChainedReferences/Child_1 Specifier mismatch at "/ChainedReferences/Child_1": "def" vs "over"
 supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/defaultImple

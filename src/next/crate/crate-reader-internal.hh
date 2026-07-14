@@ -133,6 +133,7 @@ class CrateReader::Impl {
   bool UnpackMatrix3d(ValueRep rep, Value& out);
   bool UnpackMatrix4d(ValueRep rep, Value& out);
   bool UnpackSpecifier(ValueRep rep, Value& out);
+  bool UnpackPermission(ValueRep rep, Value& out);
   bool UnpackVariability(ValueRep rep, Value& out);
   bool UnpackTimeSamples(ValueRep rep, Value& out);
   bool DecodeTimeSamples(ValueRep rep,

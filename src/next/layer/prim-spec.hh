@@ -362,6 +362,7 @@ struct PrimSpecMetaExt {
   bool kind_authored = false;
   std::string displayName;  // UI display name
   bool display_name_authored = false;
+  std::string permission;   // "public"/"private" (pxr SdfPermission)
   std::vector<std::string> displayGroupOrder;
   bool displayGroupOrderAuthored = false;
   // When non-empty (set by composition), this prim is an instance whose
@@ -422,6 +423,7 @@ struct PrimSpecMetaExt {
         kind_authored(o.kind_authored),
         displayName(o.displayName),
         display_name_authored(o.display_name_authored),
+        permission(o.permission),
         displayGroupOrder(o.displayGroupOrder),
         displayGroupOrderAuthored(o.displayGroupOrderAuthored),
         instance_prototype(o.instance_prototype),
@@ -570,6 +572,14 @@ struct PrimSpecMeta {
   void setKindAuthored(bool authored = true) {
     ensure_ext();
     ext_->kind_authored = authored;
+  }
+  const std::string &permission() const {
+    static const std::string kEmpty;
+    return ext_ ? ext_->permission : kEmpty;
+  }
+  std::string &permission() {
+    ensure_ext();
+    return ext_->permission;
   }
   const std::string &displayName() const {
     static const std::string kEmpty;
@@ -825,6 +835,7 @@ struct PropMeta {
     kAllowedTokens  = 1u << 14, kCustomData    = 1u << 15,
     kAssetInfo      = 1u << 16, kSdrMetadata   = 1u << 17,
     kUnknownMeta    = 1u << 18, kComment = 1u << 19,
+    kPermission     = 1u << 20,
   };
   // token / string fields
   std::string interpolation;   // constant/uniform/varying/vertex/faceVarying
@@ -838,6 +849,7 @@ struct PropMeta {
   std::string displayGroup;
   std::string doc;
   std::string comment;
+  std::string permission;  // "public"/"private" (pxr SdfPermission)
   // scalar fields
   int32_t elementSize = 1;
   int32_t unauthoredValuesIndex = -1;

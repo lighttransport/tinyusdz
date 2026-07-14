@@ -135,6 +135,12 @@ bool AsciiParser::Impl::ParseStageMetadata() {
           layer_->meta().comment = value;
           layer_->meta().comment_set = true;
         }
+      } else if (key == "hasOwnedSubLayers") {
+        ParseResult r = ParseValue(*lexer_, TypeId::Bool);
+        if (r.success && r.value.as_bool()) {
+          layer_->meta().hasOwnedSubLayers = *r.value.as_bool();
+          layer_->meta().hasOwnedSubLayers_set = true;
+        }
       } else if (key == "owner") {
         std::string value;
         if (lexer_->expect(TokenType::String, value)) {

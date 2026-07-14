@@ -39,6 +39,8 @@ struct LayerMeta {
   // opinions.
   double framesPerSecond = 24.0;
   bool framesPerSecond_set = false;
+  bool hasOwnedSubLayers = false;
+  bool hasOwnedSubLayers_set = false;
   double kilogramsPerUnit = 1.0;
   bool kilogramsPerUnit_set = false;
   std::string colorConfiguration;   // asset path

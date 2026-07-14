@@ -288,6 +288,10 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
     lines.push_back(opts.indent + EscapeString(meta.comment));
   }
 
+  if (meta.hasOwnedSubLayers_set) {
+    lines.push_back(opts.indent + std::string("hasOwnedSubLayers = ") +
+                    (meta.hasOwnedSubLayers ? "true" : "false"));
+  }
   if (meta.owner_set || !meta.owner.empty()) {
     lines.push_back(opts.indent + "owner = " + EscapeString(meta.owner));
   }
@@ -440,6 +444,8 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
     kv("doc = " + EscapeString(m->doc));
   if (m->authored & PropMeta::kComment)
     kv(EscapeString(m->comment));  // bare string literal = comment (pxr form)
+  if (m->authored & PropMeta::kPermission)
+    kv("permission = " + m->permission);  // unquoted token
   if (m->authored & PropMeta::kHidden)
     kv(std::string("hidden = ") + (m->hidden ? "true" : "false"));
   if (m->authored & PropMeta::kRenderType)
@@ -1183,6 +1189,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
     else if (meta.hidden_authored) kv("hidden = false");
     if (meta.instanceable) kv("instanceable = true");
     else if (meta.instanceable_authored) kv("instanceable = false");
+    if (!meta.permission().empty()) kv("permission = " + meta.permission());
     if (meta.kindAuthored() || !meta.kind().empty())
       kv("kind = " + EscapeString(meta.kind()));
     if (meta.displayNameAuthored() || !meta.displayName().empty())
@@ -1778,6 +1785,8 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.endTimeCode_set = stage_meta.endTimeCode_set;
   meta.framesPerSecond = stage_meta.framesPerSecond;
   meta.framesPerSecond_set = stage_meta.framesPerSecond_set;
+  meta.hasOwnedSubLayers = root_layer->meta().hasOwnedSubLayers;
+  meta.hasOwnedSubLayers_set = root_layer->meta().hasOwnedSubLayers_set;
   meta.kilogramsPerUnit = stage_meta.kilogramsPerUnit;
   meta.kilogramsPerUnit_set = stage_meta.kilogramsPerUnit_set;
   meta.colorConfiguration = stage_meta.colorConfiguration;

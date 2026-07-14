@@ -170,6 +170,18 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
       continue;
     }
     if (!Match(TokenType::Equals)) break;
+    if (key == "permission" && qualifier.empty()) {
+      // Unquoted token (`permission = private`).
+      std::string v;
+      if (Check(TokenType::Identifier)) lexer_->expect(TokenType::Identifier, v);
+      else if (Check(TokenType::String)) lexer_->expect(TokenType::String, v);
+      if (prim && !v.empty()) {
+        PropMeta& dm = prim->ensure_property_meta(prop_name);
+        dm.permission = v;
+        dm.authored |= PropMeta::kPermission;
+      }
+      continue;
+    }
     if (!prim) {  // no current prim: consume the value and continue
       SkipValueLike();
       continue;
