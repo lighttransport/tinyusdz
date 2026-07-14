@@ -408,6 +408,33 @@
         seed.stack_idx = arc_stack_idx;
         seed.site = arc_site;
         arc_srcs.push_back(std::move(seed));
+        // A ROOT-prim target can still be a relocate ARRIVAL in the target
+        // stack (`relocates = { </CharRig/.../Path>: </Path> }` moves a rig
+        // scope to a NEW root prim that is then referenced directly). The
+        // non-root branch gets this through DeriveChildSources; mirror the
+        // arrival rule here so the relocation SOURCE's opinions (its def
+        // specifier, type, and subtree arcs) compose into the arc target.
+        const StackRelocates &rel = layer_stacks[arc_stack_idx].relocates;
+        if (!rel.empty()) {
+          if (const StackRelocates::Arrival *arrival =
+                  rel.ArrivalOf("/", arc_path.name())) {
+            // Pseudo-parent at the target stack's root: identity mapping, so
+            // the arrival mappings stay expressed in the target stack's
+            // namespace like every other arc_srcs entry (the seed above is
+            // the dst-site spec itself; AddRelocatedSources would re-add it,
+            // so only its relocate-source CONTENT expansion is appended).
+            Src ps;
+            ps.stack_idx = arc_stack_idx;
+            std::vector<Src> with_content;
+            AddRelocatedSources(ps, *arrival, arc_site, &with_content, warn,
+                                err);
+            for (Src &c : with_content) {
+              // The dst-site spec itself is already seeded above.
+              if (c.stack_idx == arc_stack_idx && c.site == arc_site) continue;
+              arc_srcs.push_back(std::move(c));
+            }
+          }
+        }
       } else {
         const std::vector<Src> &ancestral =
             SourcesForSite(arc_stack_idx, arc_parent, warn, err);
