@@ -1162,7 +1162,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                                  : variant_edits.has_nonexplicit_items());
   bool has_meta = !meta.active || meta.active_authored || meta.hidden ||
                   meta.hidden_authored || meta.instanceable ||
-                  meta.instanceable_authored ||
+                  meta.instanceable_authored || !meta.permission().empty() ||
                   meta.kindAuthored() || meta.displayNameAuthored() ||
                   meta.displayGroupOrderAuthored() ||
                   !meta.kind().empty() || !meta.displayName().empty() ||
