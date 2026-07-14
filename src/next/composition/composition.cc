@@ -353,26 +353,11 @@ std::unique_ptr<Layer> Compositor::Compose(const Layer& root_layer,
   graft_paths_.clear();
 
   // The flattened output has all sublayer opinions baked in: keeping the
-  // subLayers list would re-apply (now stale) layers on re-read. Fill stage
-  // metadata gaps from sublayers first (defaultPrim authored only in a
-  // sublayer must survive), then drop the list.
-  if (!result->meta().subLayers.empty()) {
-    // Stage metadata resolves through the whole root layer STACK (root
-    // wins, then sublayers in strength order); gap-fill before dropping
-    // the list — this flatten output IS the stage for downstream
-    // consumers.
-    for (const std::string& sl : result->meta().subLayers) {
-      std::string resolved = sl;
-      if (resolver_) {
-        resolved = resolver_->ResolvePath(
-            sl, anchor_path, !options_.strict_aousd_conformance);
-      }
-      if (const Layer* sub = GetCachedLayer(resolved)) {
-        result->meta().FillAbsentStageMetaFrom(sub->meta());
-      }
-    }
-    result->meta().subLayers.clear();
-  }
+  // subLayers list would re-apply (now stale) layers on re-read. Stage
+  // metadata comes from the ROOT layer only — pxr does not fall back to
+  // sublayer-authored stage fields (verified against the 26.05 oracle) —
+  // so the consumed list is dropped without any gap-fill.
+  result->meta().subLayers.clear();
 
   // The crate writer's compressed-paths encoding requires ancestors before
   // descendants with contiguous subtrees; grafted prims were appended at the

@@ -79,14 +79,11 @@
 
     out->finalize();
     out->meta() = root->meta();
-    // Stage metadata resolves through the whole root layer stack: fields the
-    // root leaves unauthored fill from the strongest sublayer that authors
-    // them (upAxis/metersPerUnit/... — pxr's UsdStage semantics).
-    for (size_t li = 1; li < layer_stacks[0].layers.size(); ++li) {
-      if (layer_stacks[0].layers[li]) {
-        out->meta().FillAbsentStageMetaFrom(layer_stacks[0].layers[li]->meta());
-      }
-    }
+    // Stage metadata comes from the ROOT layer only. pxr does NOT fall back
+    // to sublayer-authored stage fields (verified against the 26.05 oracle:
+    // a sublayer-only upAxis leaves the stage at the fallback "Y" and
+    // usdcat --flatten omits it) — the old fill-from-sublayers pass here was
+    // nonconformant.
     // Sublayer opinions are baked into the flattened output; keeping the
     // subLayers list would re-apply (now stale) layers when the exported
     // layer is read back. Relocates are likewise already APPLIED by the
