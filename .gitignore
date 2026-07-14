@@ -491,3 +491,4 @@ python/tinyusdz/_core.*.so
 # tusdchecker ARKit profile fixtures
 !tools/tusdchecker/testdata/arkit-clean.usda
 !tools/tusdchecker/testdata/arkit-violations.usda
+.xmake/
