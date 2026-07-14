@@ -65,6 +65,26 @@ jobs:
           source ./emsdk/emsdk_env.sh
           cmake --build web/cmake-build64 --parallel
 
+      - name: Configure WASM32 next-only
+        run: |
+          source ./emsdk/emsdk_env.sh
+          emcmake cmake -S web -B web/cmake-build-next -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM_NEXT_ONLY=1
+
+      - name: Build WASM32 next-only
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cmake --build web/cmake-build-next --parallel
+
+      - name: Configure WASM64 next-only
+        run: |
+          source ./emsdk/emsdk_env.sh
+          emcmake cmake -S web -B web/cmake-build-next64 -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DTINYUSDZ_WASM_NEXT_ONLY=1 -DTINYUSDZ_WASM64=1
+
+      - name: Build WASM64 next-only
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cmake --build web/cmake-build-next64 --parallel
+
       # Exercise the WASM `next` (low-memory lazy-ValueRep) flatten pipeline on
       # both arches before packaging, so a next-path regression blocks publish.
       - name: Smoke test (next pipeline)
