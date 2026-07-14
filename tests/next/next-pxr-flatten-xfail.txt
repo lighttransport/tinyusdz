@@ -14,16 +14,16 @@
 #     tail: relocate chains, class-hierarchy value selection, connection
 #     mapping through variant+reference, permission enforcement).
 supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
-supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root relationship_value_mismatch /Model/Rig/PathRig Relationship "relationshipToPathAvar2" at "/Model/Rig/PathRig" differs: "null" vs "/Model/Rig/PathRig/P
+supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root relationship_value_mismatch /Model/Rig/PathRig Relationship "relationshipToPathAvar2" at "/Model/Rig/PathRig" differs: "null" vs "/Model/Rig/PathRig/Path/Anim.t
 supplemental/ErrorArcCycle_root specifier_mismatch /AnotherParent/AnotherChild/AnotherChild Specifier mismatch at "/AnotherParent/AnotherChild/AnotherChild": "def" vs "over"
-supplemental/ErrorInvalidInstanceTargetPath_root attribute_missing /ConnectionToLocalClass/Instance_1 Attribute "x.connect" at "/ConnectionToLocalClass/Instance_1" exists in file2 but not in file1
-supplemental/ErrorInvalidPreRelocateTargetPath_root attribute_value_mismatch /SublayerRoot Attribute "badAttrA.connect" at "/SublayerRoot" differs: "/SublayerRoot/Anim/Scope.x" vs "/SublayerRoot/Rig/Sco
+supplemental/ErrorInvalidInstanceTargetPath_root attribute_missing /FaceRig/BrowRig/LBrow/BrowInnUDPosBrowInnUDNeg_sculpt Attribute "amount.connect" at "/FaceRig/BrowRig/LBrow/BrowInnUDPosBrowInnUDNeg_sculpt" 
+supplemental/ErrorInvalidPreRelocateTargetPath_root attribute_value_mismatch /SublayerRoot Attribute "badAttrA.connect" at "/SublayerRoot" differs: "/SublayerRoot/Anim/Scope.x" vs "/SublayerRoot/Rig/Scope.x"
 supplemental/ErrorInvalidReferenceToRelocationSource_root prim_missing /Good_RefToRelocated/PreReloChild Prim "/Good_RefToRelocated/PreReloChild" exists in file1 but not in file2
 supplemental/RelocatePrimsWithSameName_root specifier_mismatch /ChainedReferences/Child_1 Specifier mismatch at "/ChainedReferences/Child_1": "def" vs "over"
-supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/defaultImple
+supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/defaultImplementation"
 supplemental/TrickyClassHierarchy_root attribute_value_mismatch /Sullivan_1 Attribute "name" at "/Sullivan_1" differs: "_Class_Model" vs "_Class_Sullivan"
 supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanRig/Anim/Face/LEye Attribute "baz" at "/HumanRig/Anim/Face/LEye" exists in file2 but not in file1
-supplemental/TrickyInheritsAndRelocates5_root attribute_value_mismatch /CharRig/Anim/Arms/R1Arm/Knot03 Attribute "foo" at "/CharRig/Anim/Arms/R1Arm/Knot03" differs: "from TentacleRig" vs "from Cha
+supplemental/TrickyInheritsAndRelocates5_root attribute_value_mismatch /CharRig/Anim/Arms/R1Arm/Knot03 Attribute "foo" at "/CharRig/Anim/Arms/R1Arm/Knot03" differs: "from TentacleRig" vs "from CharRig"
 supplemental/TrickyInheritsInVariants_root prim_missing /Model/Scope/LowClassStuff Prim "/Model/Scope/LowClassStuff" exists in file1 but not in file2
 supplemental/TrickyMultipleRelocations2_root specifier_mismatch /ModelGroup/Model_2/Anim/Collider Specifier mismatch at "/ModelGroup/Model_2/Anim/Collider": "over" vs "def"
 supplemental/TrickyMultipleRelocations5_root prim_missing /Group/Character Prim "/Group/Character" exists in file1 but not in file2
@@ -37,7 +37,7 @@ supplemental/VariantSpecializesAndReferenceSurprisingBehavior_root attribute_val
 tests/usda/aousd-unknown-property-metadata.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
 tests/usda/array_edit_basic.usda INTENTIONAL: sparse VtArrayEdit values preserved as authored text (keep-don't-evaluate policy); pxr flatten evaluates them to dense arrays
 tests/usda/clips-primmeta-001.usda INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples
-tests/usda/instancing-001.usda value_mismatch Value for "add references" in /InstancingTests/Forest/Tree1 metadata differs: "/Flattened_Prototype_2" vs "/Flattened_Prototype_1"
+tests/usda/instancing-001.usda value_mismatch Value for "add references" in /InstancingTests/Forest/Tree1 metadata differs: "/Flattened_Prototype_1" vs "/Flattened_Prototype_2"
 tests/usda/layer-metadata-001.usda INTENTIONAL: authored-relative asset paths kept in flatten output (portable/usdz-friendly); pxr rewrites to absolute resolved identifiers
 tests/usda/materialx-001.usda INTENTIONAL: config:mtlx:colorspace attribute preserved; pxr 26.05 drops it on flatten
 tests/usda/purpose-hierarchy-001.usda INTENTIONAL: `purpose` authored as PRIM metadata is unregistered (purpose is an attribute); tinyusdz preserves it losslessly, pxr drops it
