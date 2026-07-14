@@ -5,7 +5,8 @@
 # is a REAL recorded divergence from pinned OpenUSD 26.05 flatten output
 # (first differing item quoted), kept visible here until fixed.
 # Baseline: 2026-07-14, 797 inputs, 608 pass / 170 listed (11 pruned after
-# the stage-metadata root-layer-only fix).
+# the stage-metadata root-layer-only fix; 2 more after the timeSampled
+# value+connect writer fix -> 610 pass / 168 listed).
 supplemental/BasicInstancingAndNestedInstances_root key_missing Key "references" in /Set_1 metadata exists in file1 but not in file2
 supplemental/BasicInstancingAndVariants_root key_missing Key "references" in /InstancedModel metadata exists in file1 but not in file2
 supplemental/BasicInstancing_root key_missing Key "references" in /Set_1/InstancedProp metadata exists in file1 but not in file2
@@ -94,8 +95,6 @@ tests/usda/material-binding-no-target.usda relationship_value_mismatch /world/de
 tests/usda/material-binding-none-001.usda relationship_value_mismatch /geom Relationship "material:binding" at "/geom" differs: "None" vs "null"
 tests/usda/material-binding-none-002.usda relationship_value_mismatch /geom Relationship "material:binding" at "/geom" differs: "None" vs "null"
 tests/usda/materialx-001.usda attribute_missing /bora/Materials/USD_Default Attribute "config:mtlx:colorspace" at "/bora/Materials/USD_Default" exists in file1 but not in
-tests/usda/multi-attribute-003.usda attribute_missing /bora Attribute "val.connect" at "/bora" exists in file2 but not in file1
-tests/usda/multi-attribute-005.usda attribute_missing /bora Attribute "size.connect" at "/bora" exists in file2 but not in file1
 tests/usda/payload-deferred-001.usda prim_missing /HighDetailAsset Prim "/HighDetailAsset" exists in file1 but not in file2
 tests/usda/physics-collision-group-001.usda attribute_value_mismatch /World/GroupA Attribute "physics:invertFilteredGroups" at "/World/GroupA" differs: "false" vs "0"
 tests/usda/physics-collision-group-003.usda attribute_value_mismatch /World/G1 Attribute "physics:invertFilteredGroups" at "/World/G1" differs: "true" vs "1"
