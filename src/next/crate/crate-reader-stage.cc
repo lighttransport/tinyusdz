@@ -457,6 +457,8 @@ bool CrateReader::Impl::BuildStage() {
     for (auto& f : value_field_scratch) {
       if (f.first == "typeName") {
         if (const std::string* s = f.second.as_token()) entry.type_name = *s;
+        // Legacy "no prim type" spelling (pxr composes it as untyped).
+        if (entry.type_name == "__AnyType__") entry.type_name.clear();
       } else if (f.first == "specifier") {
         if (const std::string* s = f.second.as_token()) {
           if (*s == "def") entry.specifier = PrimSpecifier::Def;
