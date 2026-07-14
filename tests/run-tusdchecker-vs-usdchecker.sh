@@ -100,12 +100,6 @@ unmatched_count=0
 declare -A unmapped_rules
 declare -A unmatched_rules
 
-# Fixtures pxr's (newer, more lenient) usda parser reads but the next-core
-# parser rejects: sparse array edits, float-to-int coercion, single-quoted
-# asset paths. Parser gaps, not checker gaps -- reported, not failing.
-KNOWN_PARSE_GAPS="array_edit_basic.usda int-assign-float-001.usda assetpath-array-001.usda"
-parse_gap_count=0
-
 for f in "$FIXTURE_DIR"/*.usda; do
   total_files=$((total_files + 1))
   pxr_out=$("$PXR" -s "$f" 2>/dev/null)
@@ -117,15 +111,6 @@ for f in "$FIXTURE_DIR"/*.usda; do
   files_with_pxr_findings=$((files_with_pxr_findings + 1))
 
   tusd_out=$("$TUSD" --usdchecker-compat --composed -s "$f" 2>/dev/null)
-  if [ $? -eq 2 ] && [ -z "$tusd_out" ]; then
-    base=$(basename "$f")
-    case " $KNOWN_PARSE_GAPS " in
-      *" $base "*)
-        parse_gap_count=$((parse_gap_count + 1))
-        echo "KNOWN PARSE GAP (skipped): $f"
-        continue ;;
-    esac
-  fi
 
   while IFS= read -r rule; do
     [ -z "$rule" ] && continue
@@ -148,7 +133,6 @@ for f in "$FIXTURE_DIR"/*.usda; do
 done
 
 echo "Checked $total_files fixtures; $files_with_pxr_findings with pxr findings ($total_findings finding families)."
-[ "$parse_gap_count" -gt 0 ] && echo "$parse_gap_count known parser-gap fixture(s) skipped (listed above)."
 
 status=0
 if [ "$unmapped_count" -gt 0 ]; then
