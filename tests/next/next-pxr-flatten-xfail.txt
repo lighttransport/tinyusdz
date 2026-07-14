@@ -45,7 +45,6 @@ supplemental/TrickyMultipleRelocationsAndClasses_root value_mismatch Value for "
 supplemental/TrickyRelocationOfPrimFromVariant_root type_mismatch /Char/Anim/Tail Type mismatch at "/Char/Anim/Tail": "" vs "Scope"
 supplemental/TrickySpookyInheritsInSymmetricBrowRig_root prim_missing /FaceRig/BrowRig/Anim/LBrow Prim "/FaceRig/BrowRig/Anim/LBrow" exists in file1 but not in file2
 supplemental/TrickySpookyVariantSelectionInClass_root type_mismatch /Char/Anim/LeftLeg Type mismatch at "/Char/Anim/LeftLeg": "" vs "Scope"
-supplemental/TrickyVariantOverrideOfLocalClass_root attribute_value_mismatch /HandRig/_Class_FingerRig Attribute "armature_enabled" at "/HandRig/_Class_FingerRig" differs: "false" vs "0"
 supplemental/TrickyVariantOverrideOfRelocatedPrim_root attribute_value_mismatch /Model/RelocatedSphere/Geom Attribute "x" at "/Model/RelocatedSphere/Geom" differs: "model_default" vs "variant_override"
 supplemental/TrickyVariantWeakerSelection3_root type_mismatch /Model Type mismatch at "/Model": "__AnyType__" vs "Model"
 supplemental/TypicalReferenceToChargroup_root attribute_value_mismatch /Group/Model Attribute "standin_name" at "/Group/Model" differs: "render" vs "sim"
@@ -55,19 +54,10 @@ supplemental/bug92827_root specifier_mismatch /Rig/B Specifier mismatch at "/Rig
 supplemental/case1_root prim_missing /FergusCloak/rig Prim "/FergusCloak/rig" exists in file1 but not in file2
 tests/usda/anytype-001.usda type_mismatch /bora Type mismatch at "/bora": "__AnyType__" vs ""
 tests/usda/aousd-unknown-property-metadata.usda key_missing Key "extensionLayerProbe" in metadata exists in file1 but not in file2
-tests/usda/ar-interactive.usda attribute_value_mismatch /Root/TapBehavior Attribute "exclusive" at "/Root/TapBehavior" differs: "true" vs "1"
 tests/usda/array_edit_basic.usda prim_missing /W Prim "/W" exists in file2 but not in file1
-tests/usda/bool-array-001.usda attribute_value_mismatch /bora Attribute "myval" at "/bora" differs: "[true, false, false, true, false, true, true, t..." vs "[1, 0, 0, 1, 0, 1, 1, 1,
 tests/usda/clips-primmeta-001.usda key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
-tests/usda/collection-002.usda attribute_value_mismatch /bora Attribute "collection:mycol:includeRoot" at "/bora" differs: "true" vs "1"
-tests/usda/customData-prim-002.usda value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dic
-tests/usda/customData-prim-003.usda value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool[] zUp = [true], dictionary Maya = { bool..." vs "{ bool[] zUp = [1],
-tests/usda/customData-prim.usda value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dic
-tests/usda/customData-stage.usda value_mismatch Value for "customLayerData" in metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dictionary Ma
-tests/usda/enum-roundtrip-002.usda attribute_value_mismatch /EnumTests2/LightWithAPIs Attribute "inputs:shadow:enable" at "/EnumTests2/LightWithAPIs" differs: "true" vs "1"
 tests/usda/instancing-001.usda prim_missing /InstancingTests/Prototypes Prim "/InstancingTests/Prototypes" exists in file1 but not in file2
-tests/usda/layer-metadata-001.usda value_mismatch Value for "customLayerData" in metadata differs: "{ bool isProduction = false, dictionary renderS..." vs "{ bool isProduction = 0, dict
-tests/usda/lights-full-001.usda attribute_value_mismatch /Lights/DistantLight Attribute "inputs:enableColorTemperature" at "/Lights/DistantLight" differs: "false" vs "0"
+tests/usda/layer-metadata-001.usda value_mismatch Value for "assetInfo" in /LayerMetadataTests/AssetWithInfo metadata differs: "{ asset identifier = @./asset.usd@, dictionary ..." vs "{
 tests/usda/listop-delete-000.usda relationship_value_mismatch /hello Relationship "myheight" at "/hello" differs: "None" vs "null"
 tests/usda/material-binding-003.usda relationship_value_mismatch /geom Relationship "material:binding" at "/geom" differs: "None" vs "null"
 tests/usda/material-binding-no-target.usda relationship_value_mismatch /world/decl_only Relationship "material:binding" at "/world/decl_only" differs: "None" vs "null"
@@ -75,14 +65,6 @@ tests/usda/material-binding-none-001.usda relationship_value_mismatch /geom Rela
 tests/usda/material-binding-none-002.usda relationship_value_mismatch /geom Relationship "material:binding" at "/geom" differs: "None" vs "null"
 tests/usda/materialx-001.usda attribute_missing /bora/Materials/USD_Default Attribute "config:mtlx:colorspace" at "/bora/Materials/USD_Default" exists in file1 but not in file2
 tests/usda/payload-deferred-001.usda prim_missing /HighDetailAsset Prim "/HighDetailAsset" exists in file1 but not in file2
-tests/usda/physics-collision-group-001.usda attribute_value_mismatch /World/GroupA Attribute "physics:invertFilteredGroups" at "/World/GroupA" differs: "false" vs "0"
-tests/usda/physics-collision-group-003.usda attribute_value_mismatch /World/G1 Attribute "physics:invertFilteredGroups" at "/World/G1" differs: "true" vs "1"
-tests/usda/physics-joint.usda attribute_value_mismatch /Root/D6Joint Attribute "physics:collisionEnabled" at "/Root/D6Joint" differs: "false" vs "0"
-tests/usda/physics-mjc-actuator-001.usda attribute_value_mismatch /World/SimScene Attribute "mjc:flag:gravity" at "/World/SimScene" differs: "true" vs "1"
-tests/usda/physics-mjc-mesh-collision-001.usda attribute_value_mismatch /World/Robot/DisabledCollider Attribute "physics:collisionEnabled" at "/World/Robot/DisabledCollider" differs: "false" vs "0"
-tests/usda/physics-mjc-scene-001.usda attribute_value_mismatch /SimScene Attribute "mjc:compiler:autoLimits" at "/SimScene" differs: "true" vs "1"
-tests/usda/physics-schema-defaults-001.usda attribute_value_mismatch /World/Body Attribute "physics:kinematicEnabled" at "/World/Body" differs: "true" vs "1"
-tests/usda/pointinstancer-001.usda attribute_value_mismatch /Box Attribute "doubleSided" at "/Box" differs: "true" vs "1"
 tests/usda/purpose-hierarchy-001.usda key_missing Key "purpose" in /PurposeHierarchyTests/RenderPurpose metadata exists in file1 but not in file2
 tests/usda/reference-nested-001.usda prim_missing /BaseGeometry Prim "/BaseGeometry" exists in file1 but not in file2
 tests/usda/reference-offset-001.usda prim_missing /LocalAsset Prim "/LocalAsset" exists in file1 but not in file2
@@ -91,41 +73,23 @@ tests/usda/relocates_basic.usda specifier_mismatch /World/new Specifier mismatch
 tests/usda/sceneLibrary-001.usda key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
 tests/usda/shader-nonconformant-types.usda attribute_value_mismatch /Mtl/Tex Attribute "inputs:file" at "/Mtl/Tex" differs: "@./tex.png@" vs "@/mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/..."
 tests/usda/texture-colorspace-as-meta-000.usda attribute_value_mismatch /knight_rig_file9 Attribute "inputs:file" at "/knight_rig_file9" differs: "@./Textures/brushed_metal_rough_F.png@" vs "@/mnt/
-tests/usda/timesamples-array-bool-001.usda attribute_value_mismatch /test_bool_array Attribute "flags.timeSamples" at "/test_bool_array" differs: "{ 0: [false, true, false], 10: [true, false, t
-tests/usda/timesamples-array-dedup-004.usda attribute_value_mismatch /muda Attribute "primvars:flag.timeSamples" at "/muda" differs: "{ 0: [false, true, false, false, true], 1: [fal..." vs "{ 0:
-tests/usda/timesamples-scalar-bool-001.usda attribute_value_mismatch /test_bool Attribute "enabled.timeSamples" at "/test_bool" differs: "{ 0: false, 10: true, 20: false }" vs "{ 0: 0, 10: 1, 20
 tests/usda/uint2-array-001.usda attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
 tests/usda/uint2-type-001.usda attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
 tests/usda/unregistered-prim-meta-001.usda key_missing Key "aa" in /bora metadata exists in file1 but not in file2
 tests/usda/usdlux_advanced_features.usda attribute_value_mismatch /Scene/Lights/IESLight Attribute "inputs:shaping:ies:file" at "/Scene/Lights/IESLight" differs: "@./lights/chandelier.ies@" v
-tests/usda/usdlux_basic_lights.usda attribute_value_mismatch /World/Lights/KeyLight Attribute "inputs:normalize" at "/World/Lights/KeyLight" differs: "true" vs "1"
-tests/usda/usdlux_mesh_lights_simple.usda attribute_value_mismatch /World/Lights/EmissiveCube Attribute "inputs:normalize" at "/World/Lights/EmissiveCube" differs: "true" vs "1"
 tests/usda/usdz-schema-autoplay-001.usda key_missing Key "autoPlay" in metadata exists in file1 but not in file2
 tests/usda/usdz-schema-playbackmode-001.usda key_missing Key "playbackMode" in metadata exists in file1 but not in file2
 tests/usda/valuetypes-edge-001.usda attribute_value_mismatch /ValueTypeTests/StringTests Attribute "unicodeString" at "/ValueTypeTests/StringTests" differs: "Hello 世界" vs "Hello u4e16u75
 tests/usda/variantSet-comment-block-001.usda key_missing Key "kind" in /isCoral/geometry metadata exists in file2 but not in file1
 tests/usdc/anytype-001.usdc type_mismatch /bora Type mismatch at "/bora": "__AnyType__" vs ""
 tests/usdc/aousd-unknown-property-metadata.usdc relationship_value_mismatch /P Relationship "r" at "/P" differs: "None" vs "null"
-tests/usdc/bool-array-001.usdc attribute_value_mismatch /bora Attribute "myval" at "/bora" differs: "[true, false, false, true, false, true, true, t..." vs "[1, 0, 0, 1, 0, 1, 1, 1,
 tests/usdc/clips-primmeta-001.usdc key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
-tests/usdc/customData-prim-002.usdc value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dic
-tests/usdc/customData-prim-003.usdc value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool[] zUp = [true], dictionary Maya = { bool..." vs "{ bool[] zUp = [1],
-tests/usdc/customData-prim.usdc value_mismatch Value for "customData" in /teapot/Teapot metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dic
-tests/usdc/customData-stage.usdc value_mismatch Value for "customLayerData" in metadata differs: "{ bool zUp = true, dictionary Maya = { bool gen..." vs "{ bool zUp = 1, dictionary Ma
 tests/usdc/listop-delete-000.usdc relationship_value_mismatch /hello Relationship "myheight" at "/hello" differs: "None" vs "null"
 tests/usdc/material-binding-003.usdc relationship_value_mismatch /geom Relationship "material:binding" at "/geom" differs: "None" vs "null"
 tests/usdc/memory-budget-customdata-001-runtime.usdc prim_missing /MetaHeavy Prim "/MetaHeavy" exists in file1 but not in file2
 tests/usdc/prim-with-no-specifier-001.usdc specifier_mismatch /File Specifier mismatch at "/File": "def" vs "over"
 tests/usdc/rel-inherits-none-001.usdc relationship_value_mismatch /A Relationship "r" at "/A" differs: "None" vs "null"
 tests/usdc/sceneLibrary-001.usdc key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
-tests/usdc/schema-collection-001.usdc attribute_value_mismatch /mesh Attribute "collection:foo:includeRoot" at "/mesh" differs: "true" vs "1"
-tests/usdc/schema-light-001.usdc attribute_value_mismatch /light Attribute "inputs:enableColorTemperature" at "/light" differs: "true" vs "1"
-tests/usdc/schema-physics-apis-001.usdc attribute_value_mismatch /body Attribute "physics:collisionEnabled" at "/body" differs: "false" vs "0"
-tests/usdc/schema-physics-collisiongroup-001.usdc attribute_value_mismatch /cg Attribute "physics:invertFilteredGroups" at "/cg" differs: "true" vs "1"
-tests/usdc/schema-physics-joint-001.usdc attribute_value_mismatch /joint Attribute "physics:jointEnabled" at "/joint" differs: "true" vs "1"
-tests/usdc/timesamples-array-bool-001.usdc attribute_value_mismatch /test_bool_array Attribute "flags.timeSamples" at "/test_bool_array" differs: "{ 0: [false, true, false], 10: [true, false, t
-tests/usdc/timesamples-array-dedup-004.usdc attribute_value_mismatch /muda Attribute "primvars:flag.timeSamples" at "/muda" differs: "{ 0: [false, true, false, false, true], 1: [fal..." vs "{ 0:
-tests/usdc/timesamples-scalar-bool-001.usdc attribute_value_mismatch /test_bool Attribute "enabled.timeSamples" at "/test_bool" differs: "{ 0: false, 10: true, 20: false }" vs "{ 0: 0, 10: 1, 20
 tests/usdc/uint2-array-001.usdc attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
 tests/usdc/uint2-type-001.usdc attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
 tests/usdc/unregistered-prim-meta-001.usdc key_missing Key "aa" in /bora metadata exists in file1 but not in file2
