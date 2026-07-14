@@ -58,6 +58,19 @@ struct ValidationOptions {
   bool crate{false};
   bool arkit{false};
 
+  // Not a group: gates the "referenceable asset" presence rule
+  // (core.layer.defaultPrim.missing), mirroring OpenUSD usdchecker's
+  // --noAssetChecks. The geom-group stage-metadata presence rules
+  // (geom.stage.upAxis / geom.stage.metersPerUnit) are NOT gated by this,
+  // matching usdchecker (its --noAssetChecks keeps those on).
+  bool asset_checks{true};
+  // Stage-metadata PRESENCE rules (geom.stage.upAxis / geom.stage.metersPerUnit
+  // / core.layer.defaultPrim.missing). usdchecker resolves these against the
+  // stage ROOT layer only, so a caller validating a COMPOSED layer (whose metas
+  // may have merged sublayer opinions) disables them here and calls
+  // ValidateStageMetadataPresence on the authored root layer instead.
+  bool stage_presence_checks{true};
+
   // Human-readable list of enabled groups, e.g. "core, geom, shade".
   std::string group_summary() const;
 };
@@ -116,6 +129,31 @@ bool ValidateUSDFromMemoryAgainstAOUSDCore(
 
 void MergeValidationResults(USDValidationResult *dst,
                             const USDValidationResult &src);
+
+// One row of the rule registry: a stable rule identifier, the group that
+// emits it, and a one-line description. Powers `tusdchecker --dump-rules`
+// (the counterpart of `usdchecker --dumpRules`).
+struct ValidationRuleInfo {
+  const char *id;
+  const char *group;
+  const char *doc;
+};
+
+// The full rule registry, ordered by (group, id).
+const std::vector<ValidationRuleInfo> &GetValidationRuleTable();
+
+// usdchecker compatibility: OpenUSD reports several of these findings as
+// ERRORS where the tinyusdz defaults use warnings (and the presence rules
+// default to warnings). Applying this to a result upgrades the mapped rules
+// to usdchecker's severities so exit-code behavior matches
+// `usdchecker <file>`. Idempotent.
+void ApplyUsdcheckerCompatSeverities(USDValidationResult *result);
+
+// Stage-metadata presence rules against a ROOT layer's own metas (see
+// ValidationOptions::stage_presence_checks).
+void ValidateStageMetadataPresence(const Layer &layer,
+                                   const ValidationOptions &options,
+                                   USDValidationResult *result);
 
 std::string FormatValidationResult(const USDValidationResult &result);
 

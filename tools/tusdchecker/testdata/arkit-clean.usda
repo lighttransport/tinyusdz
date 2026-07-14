@@ -61,7 +61,7 @@ def Xform "Asset"
             def Shader "UV"
             {
                 uniform token info:id = "UsdPrimvarReader_float2"
-                token inputs:varname = "st"
+                string inputs:varname = "st"
                 float2 outputs:result
             }
         }
