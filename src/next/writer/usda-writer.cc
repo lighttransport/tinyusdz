@@ -1292,6 +1292,11 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       auto emit = [&](const char* qual, const std::vector<std::string>& items) {
         if (items.empty()) return;
         WriteIndent(os, md, opts.indent);
+        // pxr prints a single arc target without list brackets.
+        if (items.size() == 1) {
+          os << qual << field << " = " << FormatArcRef(items[0]) << "\n";
+          return;
+        }
         os << qual << field << " = [\n";
         for (const auto& a : items) {
           WriteIndent(os, md + 1, opts.indent);

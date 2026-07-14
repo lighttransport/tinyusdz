@@ -1952,16 +1952,19 @@ static void test_writer_listop_fidelity() {
 
   std::string out = WriteLayerToString(layer, USDAWriteOptions());
   // The edit's qualifiers are preserved (old writer always emitted `prepend`
-  // and never `delete`).
-  assert(out.find("prepend references = [") != std::string::npos);
-  assert(out.find("delete references = [") != std::string::npos);
+  // and never `delete`). Single arc targets print WITHOUT list brackets
+  // (pxr spelling).
+  assert(out.find("prepend references = ") != std::string::npos &&
+         out.find("prepend references = [") == std::string::npos);
+  assert(out.find("delete references = ") != std::string::npos &&
+         out.find("delete references = [") == std::string::npos);
   // The bare prim emits an unqualified (explicit) list. It is the only prim
-  // whose `references = [` is not preceded by a qualifier word.
-  assert(out.find("\n        references = [") != std::string::npos ||
-         out.find("\n    references = [") != std::string::npos);
-  assert(out.find("inherits = [") != std::string::npos &&
+  // whose `references =` is not preceded by a qualifier word.
+  assert(out.find("\n        references = ") != std::string::npos ||
+         out.find("\n    references = ") != std::string::npos);
+  assert(out.find("inherits = </_class_Base>") != std::string::npos &&
          "USDA writer must emit inherits arcs");
-  assert(out.find("specializes = [") != std::string::npos &&
+  assert(out.find("specializes = </_class_Fallback>") != std::string::npos &&
          "USDA writer must emit specializes arcs");
   std::cout << "  OK" << std::endl;
 }
