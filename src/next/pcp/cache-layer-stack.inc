@@ -135,11 +135,49 @@
       // Invalid authored relocates are composition errors but contribute no
       // namespace edit: identity, ancestor/descendant moves, and root-prim
       // moves are all ignored by Pcp. Applying them would delete valid subtrees
-      // (the supplemental ErrorInvalidAuthoredRelocates cases).
-      if (src.empty() || dst.empty() || src == dst ||
-          IsPathAtOrUnder(src, dst) || IsPathAtOrUnder(dst, src) ||
+      // (the supplemental ErrorInvalidAuthoredRelocates cases). An EMPTY
+      // target is NOT invalid: `</X>: <>` deletes the prim (RelocateToNone).
+      if (src.empty() || src == dst ||
+          (!dst.empty() &&
+           (IsPathAtOrUnder(src, dst) || IsPathAtOrUnder(dst, src))) ||
           sp.parent().str() == "/") {
         invalid[i] = true;
+      }
+      // pxr only relocates prims introduced ACROSS a composition arc: a
+      // source authored purely locally (a spec exists in this stack and no
+      // ancestor-or-self spec carries any arc) cannot be relocated — the edit
+      // is dropped and the local spec composes at its original path
+      // (relocates_basic; "Cannot relocate a prim defined in the local layer
+      // stack").
+      if (!invalid[i]) {
+        bool has_spec = false;
+        bool has_arc = false;
+        for (const auto &lp : st->layers) {
+          // Walk self + every ancestor prim path.
+          std::string cur = src;
+          for (;;) {
+            if (const PrimSpec *psp = lp->prim_at_path(cur)) {
+              if (cur == src) has_spec = true;
+              const PrimSpecMeta &m = psp->meta();
+              const ArcListOpEdits *ae = m.arc_edits();
+              if (!m.references.empty() || !m.payloads.empty() ||
+                  !m.inherits.empty() || !m.specializes.empty() ||
+                  !m.variantSets().empty() ||
+                  (ae && (ae->references.has_authored_opinion() ||
+                          ae->payloads.has_authored_opinion() ||
+                          ae->inherits.has_authored_opinion() ||
+                          ae->specializes.has_authored_opinion()))) {
+                has_arc = true;
+                break;
+              }
+            }
+            const size_t slash = cur.rfind('/');
+            if (slash == std::string::npos || slash == 0) break;
+            cur.resize(slash);
+          }
+          if (has_arc) break;
+        }
+        if (has_spec && !has_arc) invalid[i] = true;
       }
     }
     for (size_t i = 0; i < candidates.size(); ++i) {
@@ -148,8 +186,9 @@
         const auto &b = candidates[j];
         // Two sources cannot claim the same target; and a relocate chain whose
         // target is another relocate's source invalidates both opinions.
-        if (a.second == b.second || a.second == b.first ||
-            b.second == a.first) {
+        // (Empty targets are DELETES: any number may coexist.)
+        if ((!a.second.empty() && a.second == b.second) ||
+            a.second == b.first || b.second == a.first) {
           invalid[i] = true;
           invalid[j] = true;
         }
@@ -173,6 +212,7 @@
         for (size_t k = 0; k < candidates.size(); ++k) {
           if (invalid[k]) continue;
           const std::string &target = candidates[k].second;
+          if (target.empty()) continue;  // deletion edit: no arrival namespace
           if ((path == target || strict_descendant(path, target)) &&
               target.size() > best_len) {
             best = k;
@@ -193,6 +233,9 @@
       const Path sp(src), dp(dst);
       rel.src_to_dst[src] = dst;
       rel.departed[sp.parent().str()].insert(sp.name());
+      if (dst.empty()) continue;  // deletion: departed only, no arrival
+                                  // (and no target rename — pxr keeps
+                                  // targets to deleted paths as authored).
       StackRelocates::Arrival arrival;
       arrival.name = dp.name();
       arrival.src_site = src;

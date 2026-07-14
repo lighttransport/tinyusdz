@@ -94,6 +94,7 @@
         continue;
       }
 
+      if (s.suppress_site_specs) continue;  // relocation-source opinions
       const std::vector<SpecRef> &specs = Specs(s.stack_idx, s.site);
       if (specs.empty()) continue;
 

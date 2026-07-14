@@ -27,7 +27,7 @@ supplemental/ErrorOwner_root key_missing Key "hasOwnedSubLayers" in metadata exi
 supplemental/ErrorPermissionDenied_root key_missing Key "permission" in /Parent/Child metadata exists in file2 but not in file1
 supplemental/PayloadsAndAncestralArcs3_root type_mismatch /ReferencePayloadedModel Type mismatch at "/ReferencePayloadedModel": "__AnyType__" vs "Model"
 supplemental/RelocatePrimsWithSameName_root specifier_mismatch /ChainedReferences/Child_1 Specifier mismatch at "/ChainedReferences/Child_1": "def" vs "over"
-supplemental/RelocateToNone_root prim_missing /Char/ToBeDeleted Prim "/Char/ToBeDeleted" exists in file1 but not in file2
+supplemental/RelocateToNone_root prim_missing /Bad_SubrootRefToDeleted/Child Prim "/Bad_SubrootRefToDeleted/Child" exists in file1 but not in file2
 supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/defaultImple
 supplemental/TrickyClassHierarchy_root attribute_value_mismatch /Sullivan_1 Attribute "name" at "/Sullivan_1" differs: "_Class_Model" vs "_Class_Sullivan"
 supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanRig/Anim/Face/LEye Attribute "baz" at "/HumanRig/Anim/Face/LEye" exists in file2 but not in file1

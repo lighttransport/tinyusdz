@@ -137,9 +137,13 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.current()->meta().references.push_back("</Lib/RefModel>");
   lb.current()->meta().instanceable = true;
   lb.end_prim();
-  // Relocate /World/Old -> /World/New (authored on World).
+  // Relocate /World/Old -> /World/New (authored on World). pxr only
+  // relocates ARC-INTRODUCED prims (a purely local spec cannot move), so
+  // Old carries a reference; its own local spec opinions are "opinions at
+  // the relocation source" and are ignored per pxr.
   lb.current()->meta().relocates().push_back({"/World/Old", "/World/New"});
   lb.begin_prim("Old", "Scope");
+  lb.current()->meta().references.push_back("</Lib/RefModel>");
   lb.end_prim();  // Old (relocated to New)
   lb.end_prim();  // World
 
@@ -1621,7 +1625,9 @@ static void test_relocates() {
 
   assert(stage.GetPrimAtPath("/World/New").IsValid() && "relocate target missing");
   assert(!stage.GetPrimAtPath("/World/Old").IsValid() && "relocate source leaked");
-  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Scope");
+  // Content comes from the reference (Mesh); the local `Scope` spec at the
+  // relocation SOURCE path is ignored (pxr: opinions at relocation source).
+  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Mesh");
   std::cout << "  OK" << std::endl;
 }
 
