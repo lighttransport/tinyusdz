@@ -265,6 +265,14 @@ private:
                        const std::string& anchor_path, int depth,
                        const VariantData& variant);
 
+  // Resolve every remaining sparse array edit in the fully composed layer
+  // against its (absent -> empty) base array, like pxr's flatten. Runs only
+  // at the TOP-LEVEL Compose (compose_depth_ == 1): a nested compose result
+  // (sublayer / referenced layer) is one opinion among many, and its edits
+  // must survive to stack against the arcs still to come.
+  void ResolveArrayEditsInLayer(Layer& layer);
+  int compose_depth_ = 0;
+
   // Helper methods
   void AddError(const std::string& msg, const std::string& prim_path,
                 const std::string& arc_path, ArcType type);
