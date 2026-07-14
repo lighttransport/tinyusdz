@@ -1057,8 +1057,15 @@
       while (k < main.size() && main[k].implied_anchor == anchor) ++k;
       size_t ins = SIZE_MAX;
       for (size_t j = i; j-- > 0;) {
-        if (main[j].implied_anchor == UINT32_MAX &&
-            main[j].stack_idx == anchor) {
+        // Insert just after the anchor stack's last positional opinion OR the
+        // last ALREADY-RELOCATED implied sibling of the same anchor. The latter
+        // keeps a chain of implied classes (A inherits B inherits C, all
+        // implied into the same ancestor stack) in DFS strength order: without
+        // it every block collapses to the same slot and the chain INVERTS
+        // (weakest class ends up strongest — TrickyClassHierarchy).
+        if ((main[j].implied_anchor == UINT32_MAX &&
+             main[j].stack_idx == anchor) ||
+            (main[j].implied_anchor == anchor && main[j].stack_idx == anchor)) {
           ins = j + 1;
           break;
         }
