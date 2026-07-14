@@ -1371,4 +1371,50 @@ else
   echo "ok[authored-but-empty-usdc]: empty timeSamples and target-less list-edit qualifiers survived"
 fi
 
+# -------------------------------------------------------------------------
+# 23. The empty timeSamples block must be readable by OpenUSD, not just by us.
+#
+# Our writer encoded an empty array by INLINING payload=0 (crate-writer-inline.cc).
+# Our reader takes payload=0 to mean "empty array", but OpenUSD reads the payload
+# as a FILE OFFSET: it seeks to byte 0, tries to unpack a vector<double> out of
+# the bootstrap header, and rejects the whole file -- "Corrupt asset". pxr writes
+# the empty times array OUT-OF-LINE (a real offset holding a count of zero).
+#
+# This is the bug class our own tests CANNOT see: reader and writer agreed with
+# each other, so all 427 fixtures round-tripped and every check above passed. It
+# took a real pxr binary to find. Set USDCAT_PATH (or install OpenUSD) to run it.
+# -------------------------------------------------------------------------
+PXR_USDCAT="${USDCAT_PATH:-$HOME/work/OpenUSD/dist/bin/usdcat}"
+if [ ! -x "$PXR_USDCAT" ]; then
+  echo "skip[pxr-empty-timesamples]: OpenUSD usdcat not found at $PXR_USDCAT (set USDCAT_PATH)"
+else
+  cat > "$TMP/pxrts.usda" <<'USD'
+#usda 1.0
+
+def Xform "m"
+{
+    custom float v.timeSamples = {}
+}
+USD
+
+  if ! "$TUSDCAT" --output-format usdc -o "$TMP/pxrts.usdc" "$TMP/pxrts.usda" \
+       >"$TMP/write23.log" 2>&1; then
+    echo "FAIL: tusdcat could not write the empty-timeSamples scene to usdc"
+    cat "$TMP/write23.log"
+    exit 1
+  fi
+
+  if ! "$PXR_USDCAT" "$TMP/pxrts.usdc" > "$TMP/pxrts-rt.usda" 2>"$TMP/pxr23.err"; then
+    echo "FAIL[pxr-empty-timesamples]: OpenUSD cannot read the .usdc we wrote"
+    cat "$TMP/pxr23.err"
+    status=1
+  elif ! grep -qF "v.timeSamples" "$TMP/pxrts-rt.usda"; then
+    echo "FAIL[pxr-empty-timesamples]: OpenUSD read the file but lost the timeSamples block"
+    cat "$TMP/pxrts-rt.usda"
+    status=1
+  else
+    echo "ok[pxr-empty-timesamples]: OpenUSD reads our empty timeSamples block"
+  fi
+fi
+
 exit "$status"
