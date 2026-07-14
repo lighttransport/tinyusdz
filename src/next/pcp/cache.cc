@@ -190,6 +190,9 @@ struct Cache::Impl {
 
   // Instancing: instance key -> prototype prim path; and the groupings.
   std::map<std::string, std::string> prototype_by_key;
+  // Instance keys in DISCOVERY order (first registration during the stage
+  // walk): pxr numbers flattened prototypes by this order, not by path.
+  std::vector<std::string> instance_key_order;
   std::unordered_map<std::string, std::string> prototype_of;           // prim -> prototype
   std::unordered_map<std::string, std::vector<std::string>> instances_by_prototype;
 
