@@ -6,6 +6,7 @@
 //
 
 #include <cstdio>
+#include <cmath>
 #ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -1280,6 +1281,28 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   // Add small buffer for safety but prevent huge strings
   constexpr size_t kMaxDigits = 12;
 
+  // pxrUSD allows a floating-point literal for uint-typed values,
+  // truncating toward zero (see ReadBasicType(int*)). Out of range AFTER
+  // truncation stays an error; NaN fails both comparisons.
+  auto loc = CurrLoc();
+  std::string fp_str;
+  if (LexFloat(&fp_str)) {
+    auto flt = ParseDouble(fp_str);
+    if (!flt) {
+      PUSH_ERROR_AND_RETURN("Failed to parse floating value.");
+    } else {
+      const double d = std::trunc(flt.value());
+      if (!(d >= 0.0 && d < 4294967296.0)) {
+        PUSH_ERROR_AND_RETURN("Floating value out of range for uint.");
+      }
+      (*value) = static_cast<uint32_t>(d);
+      return true;
+    }
+  }
+
+  // revert
+  SeekTo(loc);
+
   // head character
   bool has_sign = false;
   bool negative = false;
@@ -1393,6 +1416,33 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   // Add small buffer for safety but prevent huge strings
   constexpr size_t kMaxDigits = 21;
 
+  // pxrUSD allows a floating-point literal for int64-typed values,
+  // truncating toward zero (see ReadBasicType(int*)). Out of range AFTER
+  // truncation stays an error; NaN fails both comparisons.
+  auto loc = CurrLoc();
+  std::string fp_str;
+  // Coerce ONLY float-formed literals ('.', exponent): a pure-integer literal
+  // must take the exact path below -- int64 values above 2^53 (e.g.
+  // INT64_MAX) are not representable in double and would be rounded or
+  // rejected by the range check.
+  if (LexFloat(&fp_str) &&
+      fp_str.find_first_of(".eE") != std::string::npos) {
+    auto flt = ParseDouble(fp_str);
+    if (!flt) {
+      PUSH_ERROR_AND_RETURN("Failed to parse floating value.");
+    } else {
+      const double d = std::trunc(flt.value());
+      if (!(d >= -9223372036854775808.0 && d < 9223372036854775808.0)) {
+        PUSH_ERROR_AND_RETURN("Floating value out of range for int64.");
+      }
+      (*value) = static_cast<int64_t>(d);
+      return true;
+    }
+  }
+
+  // revert
+  SeekTo(loc);
+
   // head character
   bool has_sign = false;
   {
@@ -1503,6 +1553,33 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   // Maximum digits for uint64_t is 20 (18446744073709551615)
   // Add small buffer for safety but prevent huge strings
   constexpr size_t kMaxDigits = 22;
+
+  // pxrUSD allows a floating-point literal for uint64-typed values,
+  // truncating toward zero (see ReadBasicType(int*)). Out of range AFTER
+  // truncation stays an error; NaN fails both comparisons.
+  auto loc = CurrLoc();
+  std::string fp_str;
+  // Coerce ONLY float-formed literals ('.', exponent): a pure-integer literal
+  // must take the exact path below -- uint64 values above 2^53 (e.g.
+  // INT64_MAX) are not representable in double and would be rounded or
+  // rejected by the range check.
+  if (LexFloat(&fp_str) &&
+      fp_str.find_first_of(".eE") != std::string::npos) {
+    auto flt = ParseDouble(fp_str);
+    if (!flt) {
+      PUSH_ERROR_AND_RETURN("Failed to parse floating value.");
+    } else {
+      const double d = std::trunc(flt.value());
+      if (!(d >= 0.0 && d < 18446744073709551616.0)) {
+        PUSH_ERROR_AND_RETURN("Floating value out of range for uint64.");
+      }
+      (*value) = static_cast<uint64_t>(d);
+      return true;
+    }
+  }
+
+  // revert
+  SeekTo(loc);
 
   // head character
   bool has_sign = false;
