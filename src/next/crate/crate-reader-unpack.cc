@@ -522,6 +522,12 @@ bool CrateReader::Impl::UnpackSpecifier(ValueRep rep, Value& out) {
   return true;
 }
 
+bool CrateReader::Impl::UnpackPermission(ValueRep rep, Value& out) {
+  // SdfPermission enum: 0 = public, 1 = private.
+  out = Value::MakeToken(rep.payload() == 0 ? "public" : "private");
+  return true;
+}
+
 bool CrateReader::Impl::UnpackVariability(ValueRep rep, Value& out) {
   uint32_t var = static_cast<uint32_t>(rep.payload());
   out = Value::MakeToken(var == 0 ? "varying" : "uniform");

@@ -497,6 +497,12 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
           cur->meta().hidden_authored = true;
         }
       }
+    } else if (key == "permission") {
+      // Unquoted token (`permission = private`).
+      std::string v;
+      if (Check(TokenType::Identifier)) lexer_->expect(TokenType::Identifier, v);
+      else lexer_->expect(TokenType::String, v);
+      if (!v.empty()) prim->meta().permission() = v;
     } else if (key == "doc" || key == "documentation") {
       std::string doc;
       if (lexer_->expect(TokenType::String, doc)) {

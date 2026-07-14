@@ -125,6 +125,7 @@ void MergeWeakerPropMeta(PropMeta* stronger, const PropMeta& weaker) {
   fill(PropMeta::kBindMaterialAs, &stronger->bindMaterialAs,
        weaker.bindMaterialAs);
   fill(PropMeta::kKind, &stronger->kind, weaker.kind);
+  fill(PropMeta::kPermission, &stronger->permission, weaker.permission);
   fill(PropMeta::kWeight, &stronger->weight, weaker.weight);
   fill(PropMeta::kUnauthoredIdx, &stronger->unauthoredValuesIndex,
        weaker.unauthoredValuesIndex);
@@ -1028,6 +1029,10 @@ void Compositor::CopyLocalOpinions(
       !target.meta().kindAuthored() && target.meta().kind().empty()) {
     target.meta().kind() = source.meta().kind();
     target.meta().setKindAuthored();
+  }
+  if (!source.meta().permission().empty() &&
+      target.meta().permission().empty()) {
+    target.meta().permission() = source.meta().permission();
   }
   if ((source.meta().displayNameAuthored() ||
        !source.meta().displayName().empty()) &&
