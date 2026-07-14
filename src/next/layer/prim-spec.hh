@@ -116,6 +116,12 @@ struct VariantData {
   std::string name;
   bool active = true;
   bool hidden = false;
+  // Authored-state bits: `active = true` / `hidden = false` authored on the
+  // option are real opinions (they must compose over weaker sources and
+  // round-trip) — distinguishable from the unauthored defaults only via
+  // these flags.
+  bool active_authored = false;
+  bool hidden_authored = false;
   std::string doc;
   std::vector<VariantProperty> properties;
   std::unordered_map<std::string, std::vector<Path>> relationships;

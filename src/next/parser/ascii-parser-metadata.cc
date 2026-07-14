@@ -23,12 +23,14 @@ bool AsciiParser::Impl::ParseStageMetadata() {
 
     // Parse metadata key-value pairs
     while (!Check(TokenType::CloseParen) && !AtEnd()) {
-      // A bare (often triple-quoted) string is the layer documentation --
-      // USD shorthand for `doc = "..."`.
+      // A bare (often triple-quoted) string is the layer COMMENT — pxr's
+      // only accepted spelling (26.x rejects `comment = "..."`; the bare
+      // string maps to `comment`, not `doc`).
       if (Check(TokenType::String)) {
         std::string d;
         lexer_->expect(TokenType::String, d);
-        layer_->meta().doc = d;
+        layer_->meta().comment = d;
+        layer_->meta().comment_set = true;
         continue;
       }
       std::string key;

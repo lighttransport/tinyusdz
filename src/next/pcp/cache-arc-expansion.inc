@@ -595,9 +595,12 @@
           }
           // Inline opinions (properties/relationships on the host prim
           // itself), plus prim-state opinions (`active = false` on a variant
-          // option deactivates the host — a common pruning pattern).
+          // option deactivates the host — a common pruning pattern; authored
+          // `hidden = false` / `active = true` are real opinions too, and an
+          // option doc composes onto the prim).
           if (!vd->properties.empty() || !vd->relationships.empty() ||
-              !vd->active || vd->hidden) {
+              !vd->active || vd->hidden || vd->active_authored ||
+              vd->hidden_authored || !vd->doc.empty()) {
             Src vsrc = src;
             vsrc.arc_kind = ArcType::Variant;
             vsrc.variant = vd;

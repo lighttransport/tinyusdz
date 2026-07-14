@@ -1137,9 +1137,10 @@ def Scope "V"
     // half-role array float-backed.
     const Value* p3h = v->property_value("p3h");
     assert(p3h && p3h->as_float_array() && p3h->as_float_array()->size() == 3);
-    // Property doc shorthand captured.
+    // Property bare-string shorthand = COMMENT (pxr mapping).
     const PropMeta* xm = v->property_meta("x");
-    assert(xm && (xm->authored & PropMeta::kDoc) && xm->doc == "property doc string");
+    assert(xm && (xm->authored & PropMeta::kComment) &&
+           xm->comment == "property doc string");
   }
 
   // Strict scalar integers: overflow-ish garbage must be a parse error now.

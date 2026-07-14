@@ -444,13 +444,14 @@ bool AsciiParser::Impl::ParseMetadataBlock() {
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
     if (Match(TokenType::Semicolon)) continue;
-    // A bare (often triple-quoted) string is the prim documentation —
-    // USD shorthand for `doc = "..."`.
+    // A bare (often triple-quoted) string is the prim COMMENT — pxr's only
+    // accepted spelling (26.x rejects `comment = "..."` as a non-metadata
+    // field; the bare string maps to `comment`, not `doc`).
     if (Check(TokenType::String)) {
       std::string d;
       lexer_->expect(TokenType::String, d);
-      prim->meta().doc() = d;
-      prim->meta().set_doc_authored();
+      prim->meta().comment() = d;
+      prim->meta().set_comment_authored();
       continue;
     }
     // Optional list-op qualifier keyword (prepend/append/delete/reorder)
