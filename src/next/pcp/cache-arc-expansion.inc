@@ -302,6 +302,27 @@
           }
   }
 
+  // Does `path` land in namespace edited by `stack`'s relocates? Source-side
+  // hits are PROHIBITED arc targets (pxr: cannot address pre-relocation
+  // namespace); target-side hits must resolve through the composed/arrival
+  // machinery so relocation-source suppression applies.
+  bool PathInRelocateSource(uint32_t stack, const std::string &path) const {
+    const StackRelocates &rel = layer_stacks[stack].relocates;
+    if (rel.empty()) return false;
+    for (const auto &r : rel.src_to_dst) {
+      if (IsPathAtOrUnder(path, r.first)) return true;
+    }
+    return false;
+  }
+  bool PathInRelocateTarget(uint32_t stack, const std::string &path) const {
+    const StackRelocates &rel = layer_stacks[stack].relocates;
+    if (rel.empty()) return false;
+    for (const auto &r : rel.src_to_dst) {
+      if (!r.second.empty() && IsPathAtOrUnder(path, r.second)) return true;
+    }
+    return false;
+  }
+
   void ProcessArc(const Src &src, const CompositionArc &arc_in, ArcType kind,
                   const ExpansionFrame *frame, std::vector<Src> *out,
                   std::vector<Src> *spec_out,
@@ -360,7 +381,20 @@
     // class path is authored in THIS stack's namespace).
     if ((arc.is_internal || evaluated_asset_path.empty()) &&
         !arc.prim_path.empty() &&
-        Specs(src.stack_idx, arc.prim_path).empty()) {
+        PathInRelocateSource(src.stack_idx, arc.prim_path)) {
+      // An internal arc addressing a relocation SOURCE path is invalid
+      // ("salted earth": BadRigInstance inheriting the class's pre-move
+      // path composes nothing in pxr).
+      AddIssue(ErrorCode::UnresolvedPrimPath, src.site,
+               "Arc targets a relocation source path (prohibited): " +
+                   arc.prim_path,
+               warn);
+      return;
+    }
+    if ((arc.is_internal || evaluated_asset_path.empty()) &&
+        !arc.prim_path.empty() &&
+        (Specs(src.stack_idx, arc.prim_path).empty() ||
+         PathInRelocateTarget(src.stack_idx, arc.prim_path))) {
       const std::string destination = Mapping(src.map_idx).Apply(src.site);
       const std::string composed_path = Mapping(src.map_idx).Apply(arc.prim_path);
       // A target at or under this site composes from this site -- reusing its
@@ -1135,6 +1169,7 @@
     dst.offset = ps.offset;
     dst.arc_kind = ps.arc_kind;
     dst.implied_anchor = ps.implied_anchor;
+    dst.suppress_site_specs = false;  // the TARGET address is a legal site
     dst.expression_variables = ps.expression_variables;
     dst.arc_chain = ps.arc_chain;
     dst.ancestral = true;  // child derivation, like DeriveChildSources
@@ -1201,7 +1236,11 @@
       c.offset = ps.offset;
       c.arc_kind = ps.arc_kind;
       c.implied_anchor = ps.implied_anchor;
-      c.suppress_site_specs = false;  // suppression applies to the source only
+      // Prohibited relocation-source namespace extends to DESCENDANTS: their
+      // raw-site specs (a_src-style overrides at pre-relocation paths) are
+      // ignored, while the Srcs themselves stay traversable for chained
+      // relocations (arrivals registered under another relocate's source).
+      c.suppress_site_specs = ps.suppress_site_specs;
       c.arc_chain = ps.arc_chain;  // implied class arcs need the whole chain
       c.ancestral = true;          // arc was introduced at the parent
       base.push_back(std::move(c));
