@@ -10,7 +10,6 @@
 # bare-string-comment interop fix; 3 after the parser-leniency port ->
 # 633 pass / 145 listed; 1 after crate variant-spec specifier; 19 after the
 # unmappable-relocate-target drop + bare-rel + varying-only qualifier -> 653 / 125).
-supplemental/BasicInstancing_root attribute_value_mismatch /Flattened_Prototype_1/geom Attribute "x" at "/Flattened_Prototype_1/geom" differs: "1" vs "3.5"
 supplemental/BasicListEditing_root relationship_value_mismatch /A Relationship "targets" at "/A" differs: "None" vs "[/A/root_prepend, /A/sub1_prepend, /A/sub2_prep..."
 supplemental/BasicNestedVariantsWithSameName_root attribute_missing /foo/bar Attribute "value" at "/foo/bar" exists in file2 but not in file1
 supplemental/BasicOwner_root key_missing Key "hasOwnedSubLayers" in metadata exists in file2 but not in file1
@@ -32,7 +31,7 @@ supplemental/RelocatePrimsWithSameName_root specifier_mismatch /ChainedReference
 supplemental/RelocateToNone_root prim_missing /Char/ToBeDeleted Prim "/Char/ToBeDeleted" exists in file1 but not in file2
 supplemental/SpecializesAndVariants3_root attribute_missing /implementation Attribute "variantAttr" at "/implementation" exists in file2 but not in file1
 supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/defaultImple
-supplemental/TrickyClassHierarchy_root type_mismatch /Sullivan_1 Type mismatch at "/Sullivan_1": "Model" vs "Scope"
+supplemental/TrickyClassHierarchy_root attribute_value_mismatch /Sullivan_1 Attribute "name" at "/Sullivan_1" differs: "_Class_Model" vs "_Class_Sullivan"
 supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanRig/Anim/Face/LEye Attribute "baz" at "/HumanRig/Anim/Face/LEye" exists in file2 but not in file1
 supplemental/TrickyInheritsAndRelocates5_root attribute_value_mismatch /CharRig/Anim/Arms/R1Arm/Knot03 Attribute "foo" at "/CharRig/Anim/Arms/R1Arm/Knot03" differs: "from TentacleRig" vs "from Cha
 supplemental/TrickyInheritsAndRelocatesToNewRootPrim_root attribute_missing /Model_Renamed/A Attribute "a_src" at "/Model_Renamed/A" exists in file1 but not in file2

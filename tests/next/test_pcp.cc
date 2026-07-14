@@ -1673,7 +1673,10 @@ static void test_implied_inherit() {
 
   UsdPrim q = stage.GetPrimAtPath("/World/Q");
   assert(q.IsValid());
-  assert(q.GetTypeName() == "Mesh" && "cross-file reference type missing");
+  // Oracle-verified (pxr 26.05): the root-stack IMPLIED class is stronger
+  // than the whole reference subtree, so its authored type (Scope) wins over
+  // the referenced Mesh (usdcat --flatten composes `def Scope`).
+  assert(q.GetTypeName() == "Scope" && "implied-class type must win");
   assert(q.GetPropertyValue("libClassProp") != nullptr &&
          "direct (referenced-stack) inherit missing");
   assert(q.GetPropertyValue("rootClassProp") != nullptr &&
@@ -1858,37 +1861,41 @@ static void test_cross_source_variant() {
 static void test_implied_intermediate() {
   std::cout << "test_implied_intermediate..." << std::endl;
 
+  // ROOT-level untyped classes: pxr REJECTS a prim inheriting its own child
+  // class through a reference chain ("Cycle detected ... CANNOT inherit
+  // from"), so the classes live at each layer's root (oracle-verified shape:
+  // T composes Mesh + fooB/fooA/fooRoot).
   auto B = std::make_shared<Layer>();
   {
     LayerBuilder bb(*B);
-    bb.begin_prim("B", "Mesh");
-    bb.current()->meta().inherits.push_back("</B/_class_Foo>");
-    bb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    bb.begin_prim("_class_Foo", "", PrimSpecifier::Class);
     bb.add_property("fooB", Value::MakeFloat3(1, 0, 0));
     bb.end_prim();
+    bb.begin_prim("B", "Mesh");
+    bb.current()->meta().inherits.push_back("</_class_Foo>");
     bb.end_prim();
     bb.finalize();
   }
   auto A = std::make_shared<Layer>();
   {
     LayerBuilder ab(*A);
-    ab.begin_prim("A", "");
-    ab.current()->meta().references.push_back("@assetB@</B>");
-    ab.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
+    ab.begin_prim("_class_Foo", "", PrimSpecifier::Class);
     ab.add_property("fooA", Value::MakeFloat3(0, 1, 0));
     ab.end_prim();
+    ab.begin_prim("A", "");
+    ab.current()->meta().references.push_back("@assetB@</B>");
     ab.end_prim();
     ab.finalize();
   }
   auto rootL = std::make_shared<Layer>();
   {
     LayerBuilder rb(*rootL);
+    rb.begin_prim("_class_Foo", "", PrimSpecifier::Class);
+    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
+    rb.end_prim();
     rb.begin_prim("World", "Xform");
     rb.begin_prim("T", "");
     rb.current()->meta().references.push_back("@assetA@</A>");
-    rb.begin_prim("_class_Foo", "Scope", PrimSpecifier::Class);
-    rb.add_property("fooRoot", Value::MakeFloat3(0, 0, 1));
-    rb.end_prim();
     rb.end_prim();
     rb.end_prim();
     rb.finalize();
