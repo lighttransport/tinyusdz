@@ -541,6 +541,13 @@
     }
 
     NamespaceMapping local{arc_site, src.site};
+    // A LOCAL class-based arc (class and instance in the same layer stack)
+    // gets pxr's identity-plus-pair map function: targets outside the class
+    // namespace pass through; targets under the instance are invalid
+    // instance targets and drop (see NamespaceMapping::intra_stack).
+    if (IsClassBasedArc(kind) && arc_stack_idx == src.stack_idx) {
+      local.intra_stack = true;
+    }
     Src arc_src;
     arc_src.stack_idx = arc_stack_idx;
     arc_src.site = arc_site;
