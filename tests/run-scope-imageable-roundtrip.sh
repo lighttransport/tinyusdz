@@ -1417,4 +1417,69 @@ USD
   fi
 fi
 
+# -------------------------------------------------------------------------
+# 24. OpenUSD must be able to read a variant hierarchy out of our .usdc.
+#
+# Four independent wire-format bugs, all invisible to tinyusdz-only tests (our
+# reader tolerated or mirrored every one of them):
+#   - the path-table element token for /A{v=sel} was the whole slash-segment
+#     ("A{v=sel}"), not the bare "{v=sel}" element -> "Invalid prim name";
+#   - a VariantSet spec was addressed as {set}, a form SdfPath does not have;
+#     pxr puts VariantSet specs at the EMPTY selection, {set=};
+#   - the prim spec carried no `variantSetChildren` and the variant spec no
+#     `primChildren`, so pxr's traversal never DESCENDED into the variants it
+#     could otherwise see (opinion fields like variantSetNames do not count);
+#   - both children fields must be the dedicated TokenVector crate type, like
+#     primChildren/properties, not a Token[] array.
+# -------------------------------------------------------------------------
+if [ ! -x "$PXR_USDCAT" ]; then
+  echo "skip[pxr-variant-hierarchy]: OpenUSD usdcat not found at $PXR_USDCAT (set USDCAT_PATH)"
+else
+  cat > "$TMP/pxrvar.usda" <<'USD'
+#usda 1.0
+
+def Xform "Root" (
+    append variantSets = "look"
+)
+{
+    variantSet "look" = {
+        "red" {
+            def Sphere "Ball"
+            {
+            }
+        }
+        "blue" {
+        }
+    }
+}
+USD
+
+  if ! "$TUSDCAT" --output-format usdc -o "$TMP/pxrvar.usdc" "$TMP/pxrvar.usda" \
+       >"$TMP/write24.log" 2>&1; then
+    echo "FAIL: tusdcat could not write the variant scene to usdc"
+    cat "$TMP/write24.log"
+    exit 1
+  fi
+
+  if ! "$PXR_USDCAT" "$TMP/pxrvar.usdc" > "$TMP/pxrvar-rt.usda" 2>"$TMP/pxr24.err"; then
+    echo "FAIL[pxr-variant-hierarchy]: OpenUSD cannot open the variant .usdc we wrote"
+    cat "$TMP/pxr24.err"
+    status=1
+  else
+    lost=""
+    for expect in 'variantSet "look"' '"red"' '"blue"' 'def Sphere "Ball"'; do
+      grep -qF "$expect" "$TMP/pxrvar-rt.usda" || lost="$lost
+    $expect"
+    done
+    if [ -n "$lost" ]; then
+      echo "FAIL[pxr-variant-hierarchy]: OpenUSD opened the file but the variant content is gone:$lost"
+      echo "--- pxr saw ---"
+      cat "$TMP/pxrvar-rt.usda"
+      status=1
+    else
+      echo "ok[pxr-variant-hierarchy]: OpenUSD reads our variantSet, both variants, and the prim inside"
+    fi
+  fi
+fi
+
 exit "$status"
