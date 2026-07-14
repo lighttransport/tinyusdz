@@ -307,6 +307,9 @@ int main(int argc, char **argv) {
   if (flatten) {
     USDAWriteOptions wopts;
     wopts.emit_custom = openusd_compat;
+    // The stage came from pcp composition: emit composed-stage semantics
+    // (consumed subLayers/relocates dropped, apiSchemas composed to explicit).
+    wopts.composed_stage_output = true;
     // Parallel subtree serialization (only effective in a TINYUSDZ_ENABLE_THREAD
     // build). Default auto (= hardware_concurrency); TINYUSDZ_NEXT_NUM_THREADS
     // overrides (1 = serial). Output is byte-identical regardless of count.

@@ -1186,7 +1186,15 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         kv(s);
       };
       if (edits.authored) {
-        if (edits.is_explicit) {
+        if (opts.composed_stage_output && !edits.is_explicit) {
+          // Composed-stage output: the residual list-op has nothing weaker
+          // left to edit, so publish its composed result as an EXPLICIT list
+          // (pxr UsdStage::Flatten parity).
+          const std::vector<std::string> composed =
+              ApplyStringListOp(edits, {});
+          if (composed.empty()) kv("apiSchemas = None");
+          else write_api_op("", composed);
+        } else if (edits.is_explicit) {
           if (edits.explicit_items.empty()) kv("apiSchemas = None");
           else write_api_op("", edits.explicit_items);
         } else {
@@ -1198,7 +1206,7 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
         }
       } else {
         std::string qualifier;
-        if (!meta.apiSchemasQualifier().empty()) {
+        if (!opts.composed_stage_output && !meta.apiSchemasQualifier().empty()) {
           qualifier = meta.apiSchemasQualifier() + " ";
         }
         write_api_op(qualifier.c_str(), meta.apiSchemas());
@@ -1753,11 +1761,17 @@ USDAWriteResult WriteUSDA(StreamWriter& os, const Stage& stage,
   meta.expressionVariables = root_layer->meta().expressionVariables;
   meta.customLayerData_set = root_layer->meta().customLayerData_set;
   meta.expressionVariables_set = root_layer->meta().expressionVariables_set;
-  meta.subLayers = root_layer->meta().subLayers;
-  meta.subLayers_set = root_layer->meta().subLayers_set;
-  meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
-  meta.relocates = root_layer->meta().relocates;
-  meta.relocates_set = root_layer->meta().relocates_set;
+  // subLayers/relocates are composition directives; when this stage came from
+  // a compose they are CONSUMED and a flattened layer must not re-state them
+  // (pxr UsdStage::Flatten drops them as well). For plain-load stages they
+  // are still live opinions and must round-trip.
+  if (!options.composed_stage_output) {
+    meta.subLayers = root_layer->meta().subLayers;
+    meta.subLayers_set = root_layer->meta().subLayers_set;
+    meta.subLayerOffsets = root_layer->meta().subLayerOffsets;
+    meta.relocates = root_layer->meta().relocates;
+    meta.relocates_set = root_layer->meta().relocates_set;
+  }
   meta.unknownMeta = root_layer->meta().unknownMeta;
   meta.rootPrimOrder = root_layer->meta().rootPrimOrder;
   meta.rootPrimOrder_set = root_layer->meta().rootPrimOrder_set;

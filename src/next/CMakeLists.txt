@@ -793,6 +793,32 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         set_tests_properties(next_corpus_parse
             PROPERTIES LABELS "next;corpus")
     endif()
+
+    # next-vs-pxr flatten differential gate: next_usdcat -f vs the PINNED
+    # OpenUSD 26.05 usdcat --flatten, compared semantically. Ratchet is 0:
+    # any divergence not recorded (with reason) in
+    # tests/next/next-pxr-flatten-xfail.txt fails; entries that start
+    # passing are reported as XPASS for pruning. Set TINYUSDZ_PXR_USDCAT to
+    # relocate the oracle.
+    if(DEFINED ENV{TINYUSDZ_PXR_USDCAT})
+        set(NEXT_PXR_USDCAT "$ENV{TINYUSDZ_PXR_USDCAT}")
+    else()
+        set(NEXT_PXR_USDCAT "/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist/bin/usdcat")
+    endif()
+    if(TINYUSDZ_NEXT_NODE_EXECUTABLE AND EXISTS "${NEXT_PXR_USDCAT}")
+        set(NEXT_PXR_FLATTEN_ARGS
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tests/next/run-next-pxr-flatten-diff.mjs
+            --next-usdcat "$<TARGET_FILE:next_usdcat>"
+            --usdcat "${NEXT_PXR_USDCAT}")
+        if(TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT)
+            list(APPEND NEXT_PXR_FLATTEN_ARGS
+                 --suite-root "${TINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT}")
+        endif()
+        add_test(NAME next_pxr_flatten_diff
+            COMMAND ${TINYUSDZ_NEXT_NODE_EXECUTABLE} ${NEXT_PXR_FLATTEN_ARGS})
+        set_tests_properties(next_pxr_flatten_diff
+            PROPERTIES LABELS "next;pxrdiff" TIMEOUT 900)
+    endif()
 endif()
 
 # ============================================================
