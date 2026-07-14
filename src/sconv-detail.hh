@@ -116,6 +116,29 @@ inline void EmitAttrMetas(const std::string &name, const AttrMeta &metas,
   }
 }
 
+// Emit `<name>.connect` for a typed attribute that carries connection targets.
+// USD lets ANY attribute be connected -- not just shader inputs -- and the ASCII
+// reader stores those targets on the TypedAttribute itself. The typed writers
+// only ever emitted the value, so `double size.connect = </bora.value>` on a
+// Cube was dropped. The field router in ConvertSinglePrim (stage-converter.cc)
+// recognizes the `.connect` suffix and folds it into the attribute spec's
+// `connectionPaths`.
+template <typename T>
+void EmitAttrConnections(const std::string &name, const T &attr,
+                         crate::FieldValuePairVector &fields) {
+  if (!attr.has_connections()) {
+    return;
+  }
+
+  ListOp<Path> conn_listop;
+  conn_listop.ClearAndMakeExplicit();
+  conn_listop.SetExplicitItems(attr.connections());
+
+  crate::CrateValue v;
+  v.Set(conn_listop);
+  fields.push_back({name + ".connect", v});
+}
+
 } // namespace sconv_detail
 
 } // namespace experimental

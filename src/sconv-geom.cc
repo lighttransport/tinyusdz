@@ -478,7 +478,9 @@ bool CrateWriter::ExtractCubeProperties(
 
   if (cube->size.authored()) {
     if (!ExtractAnimatableDefault(cube->size.get_value(), "size", fields, err)) return false;
+    sconv_detail::EmitAttrMetas("size", cube->size.metas(), fields);
   }
+  sconv_detail::EmitAttrConnections("size", cube->size, fields);
 
   // Extract extent
   if (cube->extent.has_value()) {
@@ -522,6 +524,7 @@ bool CrateWriter::ExtractSphereProperties(
     if (!ExtractAnimatableDefault(sphere->radius.get_value(), "radius", fields, err)) return false;
     sconv_detail::EmitAttrMetas("radius", sphere->radius.metas(), fields);
   }
+  sconv_detail::EmitAttrConnections("radius", sphere->radius, fields);
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
 }
