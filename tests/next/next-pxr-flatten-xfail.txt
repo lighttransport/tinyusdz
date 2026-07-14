@@ -4,7 +4,8 @@
 # starts passing the runner reports XPASS and it must be pruned. Every entry
 # is a REAL recorded divergence from pinned OpenUSD 26.05 flatten output
 # (first differing item quoted), kept visible here until fixed.
-# Baseline: 2026-07-14, 797 inputs, 597 pass / 181 listed.
+# Baseline: 2026-07-14, 797 inputs, 608 pass / 170 listed (11 pruned after
+# the stage-metadata root-layer-only fix).
 supplemental/BasicInstancingAndNestedInstances_root key_missing Key "references" in /Set_1 metadata exists in file1 but not in file2
 supplemental/BasicInstancingAndVariants_root key_missing Key "references" in /InstancedModel metadata exists in file1 but not in file2
 supplemental/BasicInstancing_root key_missing Key "references" in /Set_1/InstancedProp metadata exists in file1 but not in file2
@@ -42,13 +43,6 @@ supplemental/SpecializesAndVariants3_root attribute_missing /implementation Attr
 supplemental/SpecializesAndVariants4_root attribute_value_mismatch /A/render Attribute "test" at "/A/render" differs: "value from /_class_/defaultImplementation" vs "value from /A/de
 supplemental/SubrootInheritsAndVariants_root specifier_mismatch /Group Specifier mismatch at "/Group": "def" vs "over"
 supplemental/SubrootReferenceAndVariants2_root key_missing Key "comment" in /Character metadata exists in file1 but not in file2
-supplemental/TimeCodesPerSecond_root key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
-supplemental/TimeCodesPerSecond_root_12fps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
-supplemental/TimeCodesPerSecond_root_24tcps_12fps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
-supplemental/TimeCodesPerSecond_root_48tcps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
-supplemental/TimeCodesPerSecond_session key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
-supplemental/TimeCodesPerSecond_session_24fps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
-supplemental/TimeCodesPerSecond_session_48tcps key_missing Key "timeCodesPerSecond" in metadata exists in file1 but not in file2
 supplemental/TrickyClassHierarchy_root type_mismatch /Sullivan_1 Type mismatch at "/Sullivan_1": "Model" vs "Scope"
 supplemental/TrickyConnectionToRelocatedAttribute_root attribute_missing /HumanRig/Anim/Face/LEye Attribute "baz" at "/HumanRig/Anim/Face/LEye" exists in file2 but not in file1
 supplemental/TrickyInheritsAndRelocates5_root attribute_value_mismatch /CharRig/Anim/Arms/R1Arm/Knot03 Attribute "foo" at "/CharRig/Anim/Arms/R1Arm/Knot03" differs: "from TentacleRig" vs
@@ -119,10 +113,6 @@ tests/usda/relocates_basic.usda specifier_mismatch /World/new Specifier mismatch
 tests/usda/sceneLibrary-001.usda key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
 tests/usda/shader-nonconformant-types.usda attribute_value_mismatch /Mtl/Tex Attribute "inputs:file" at "/Mtl/Tex" differs: "@./tex.png@" vs "@tests
 tests/usda/stmt-semicolon-000.usda next-error: ERR : Failed to load USDA layer: tests/usda/stmt-semicolon-000.usda : Line 3, column 16: Expected metadat
-tests/usda/sublayers-002.usda key_missing Key "startTimeCode" in metadata exists in file1 but not in file2
-tests/usda/sublayers-005.usda key_missing Key "defaultPrim" in metadata exists in file1 but not in file2
-tests/usda/sublayers-006.usda key_missing Key "defaultPrim" in metadata exists in file1 but not in file2
-tests/usda/sublayers.usda key_missing Key "metersPerUnit" in metadata exists in file1 but not in file2
 tests/usda/texture-colorspace-as-meta-000.usda attribute_value_mismatch /knight_rig_file9 Attribute "inputs:file" at "/knight_rig_file9" differs: "@./Textures/brushed_metal_rough_F.png@" 
 tests/usda/timesamples-array-bool-001.usda attribute_value_mismatch /test_bool_array Attribute "flags.timeSamples" at "/test_bool_array" differs: "{ 0: [false, true, false], 10: [true
 tests/usda/timesamples-array-dedup-004.usda attribute_value_mismatch /muda Attribute "primvars:flag.timeSamples" at "/muda" differs: "{ 0: [false, true, false, false, true], 1: [fal...
