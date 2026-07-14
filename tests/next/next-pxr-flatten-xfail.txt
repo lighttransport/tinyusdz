@@ -44,13 +44,11 @@ supplemental/case1_root prim_missing /FergusCloak/rig Prim "/FergusCloak/rig" ex
 tests/usda/aousd-unknown-property-metadata.usda key_missing Key "extensionLayerProbe" in metadata exists in file1 but not in file2
 tests/usda/array_edit_basic.usda prim_missing /W Prim "/W" exists in file2 but not in file1
 tests/usda/clips-primmeta-001.usda key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
-tests/usda/instancing-001.usda prim_missing /InstancingTests/Prototypes Prim "/InstancingTests/Prototypes" exists in file1 but not in file2
+tests/usda/instancing-001.usda value_mismatch Value for "add references" in /InstancingTests/Forest/Tree1 metadata differs: "/Flattened_Prototype_2" vs "/Flattened_Prototype_1"
 tests/usda/layer-metadata-001.usda value_mismatch Value for "assetInfo" in /LayerMetadataTests/AssetWithInfo metadata differs: "{ asset identifier = @./asset.usd@, dictionary ..." vs "{
 tests/usda/materialx-001.usda attribute_missing /bora/Materials/USD_Default Attribute "config:mtlx:colorspace" at "/bora/Materials/USD_Default" exists in file1 but not in file2
-tests/usda/payload-deferred-001.usda prim_missing /HighDetailAsset Prim "/HighDetailAsset" exists in file1 but not in file2
+tests/usda/payload-deferred-001.usda prim_missing /Flattened_Prototype_1 Prim "/Flattened_Prototype_1" exists in file1 but not in file2
 tests/usda/purpose-hierarchy-001.usda key_missing Key "purpose" in /PurposeHierarchyTests/RenderPurpose metadata exists in file1 but not in file2
-tests/usda/reference-nested-001.usda prim_missing /BaseGeometry Prim "/BaseGeometry" exists in file1 but not in file2
-tests/usda/reference-offset-001.usda prim_missing /LocalAsset Prim "/LocalAsset" exists in file1 but not in file2
 tests/usda/sceneLibrary-001.usda key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
 tests/usda/shader-nonconformant-types.usda attribute_value_mismatch /Mtl/Tex Attribute "inputs:file" at "/Mtl/Tex" differs: "@./tex.png@" vs "@/mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/..."
 tests/usda/texture-colorspace-as-meta-000.usda attribute_value_mismatch /knight_rig_file9 Attribute "inputs:file" at "/knight_rig_file9" differs: "@./Textures/brushed_metal_rough_F.png@" vs "@/mnt/

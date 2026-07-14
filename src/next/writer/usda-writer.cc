@@ -1111,6 +1111,11 @@ void WriteVariantSets(StreamWriter& os,
 void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
                    int depth, const USDAWriteOptions& opts,
                    SegmentSink* segsink) {
+  // Composed-stage output: pxr usdcat --flatten DROPS deactivated prims
+  // (and their subtrees) from the flattened layer entirely. The in-memory
+  // stage keeps them (IsActive stays queryable); only the flatten output
+  // prunes.
+  if (opts.composed_stage_output && !spec.meta().active) return;
   // Write prim definition line
   WriteIndent(os, depth, opts.indent);
   os << SpecifierKeyword(spec.specifier());
