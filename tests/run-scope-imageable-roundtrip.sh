@@ -1313,4 +1313,62 @@ else
   echo "ok[light-camera-defonly-usdc]: light inputs, camera params, doubleSided and extent all stayed declaration-only"
 fi
 
+# -------------------------------------------------------------------------
+# 22. "Authored but empty" -- the last data-model gap in the sweep.
+#
+# There was no way to record that something was authored yet holds nothing:
+#   - PrimVar::has_timesamples() was `ts.size() > 0`, so `x.timeSamples = {}`
+#     was indistinguishable from no timeSamples at all, and was dropped.
+#   - ListOp<T>::Has*Items() was `.size() > 0`, so a list-edit qualifier on a
+#     relationship with NO targets (`append rel myval`, `delete rel myheight`)
+#     had nowhere to live and came back as a bare `rel myval`.
+#
+# value::TimeSamples and ListOp<T> now carry explicit authored flags. The crate
+# format needed NO change: it has always had a presence bit per ListOp bucket.
+# -------------------------------------------------------------------------
+cat > "$TMP/empty.usda" <<'USD'
+#usda 1.0
+
+def Xform "muda"
+{
+    float xformOp:rotateZ:spin.timeSamples = {}
+    uniform token[] xformOpOrder = ["xformOp:rotateZ:spin"]
+    custom float plain.timeSamples = {}
+}
+
+def "bora"
+{
+    append custom rel myval
+    delete rel myheight
+    prepend rel myother
+}
+USD
+
+if ! "$TUSDCAT" --output-format usdc -o "$TMP/empty.usdc" "$TMP/empty.usda" \
+     >"$TMP/write22.log" 2>&1; then
+  echo "FAIL: tusdcat could not write the authored-but-empty scene to usdc"
+  cat "$TMP/write22.log"
+  exit 1
+fi
+
+"$TUSDCAT" "$TMP/empty.usdc" > "$TMP/empty-rt.usda" 2>/dev/null
+bad=""
+for expect in \
+  'float xformOp:rotateZ:spin.timeSamples = {' \
+  'custom float plain.timeSamples = {' \
+  'append rel myval' \
+  'delete rel myheight' \
+  'prepend rel myother'; do
+  grep -qF "$expect" "$TMP/empty-rt.usda" || bad="$bad
+    $expect"
+done
+if [ -n "$bad" ]; then
+  echo "FAIL[authored-but-empty-usdc]: dropped on round-trip:$bad"
+  echo "--- got ---"
+  cat "$TMP/empty-rt.usda"
+  status=1
+else
+  echo "ok[authored-but-empty-usdc]: empty timeSamples and target-less list-edit qualifiers survived"
+fi
+
 exit "$status"
