@@ -1,0 +1,26 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    defaultPrim = "t"
+)
+
+# pxrUSD coerces float literals to ALL integer types, in scalars, arrays and
+# tuples alike, truncating toward zero. -0.5 truncates INTO range for uint.
+# The exact_* literals pin that pure-integer int64/uint64 literals above 2^53
+# keep full precision (they must NOT round-trip through double).
+def "t"
+{
+    int[] arr = [1.5, -2.7, 3e2]
+    uint u = 7.9
+    uint[] ua = [7.9]
+    int64 b = 4.5e9
+    int64[] ba = [4.5e9]
+    uint64 ub = 1.5
+    uchar c = 3.5
+    uchar[] ca = [3.5]
+    uint nz = -0.5
+    int2 tup = (1.5, 2.7)
+    int64 exact_max = 9223372036854775807
+    uint64 exact_umax = 18446744073709551615
+}
