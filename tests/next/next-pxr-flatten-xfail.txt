@@ -79,8 +79,8 @@ supplemental/case1_root prim_missing /FergusCloak/rig Prim "/FergusCloak/rig" ex
 tests/usda/anytype-001.usda type_mismatch /bora Type mismatch at "/bora": "__AnyType__" vs ""
 tests/usda/aousd-unknown-property-metadata.usda key_missing Key "extensionLayerProbe" in metadata exists in file1 but not in file2
 tests/usda/ar-interactive.usda attribute_value_mismatch /Root/TapBehavior Attribute "exclusive" at "/Root/TapBehavior" differs: "true" vs "1"
-tests/usda/array_edit_basic.usda next-error: ERR : Failed to load USDA layer: /mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/array_edit_basic.usda : Line 5, column 30: Line 5, column 30:
-tests/usda/assetpath-array-001.usda next-error: ERR : Failed to load USDA layer: /mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/assetpath-array-001.usda : Line 6, column 42: Failed to parse
+tests/usda/array_edit_basic.usda next-error: ERR : Failed to load USDA layer: tests/usda/array_edit_basic.usda : Line 5, column 30: Line 5, column 30:
+tests/usda/assetpath-array-001.usda next-error: ERR : Failed to load USDA layer: tests/usda/assetpath-array-001.usda : Line 6, column 42: Failed to parse
 tests/usda/bool-array-001.usda attribute_value_mismatch /bora Attribute "myval" at "/bora" differs: "[true, false, false, true, false, true, true, t..." vs "[1, 0, 0, 1, 0
 tests/usda/clips-primmeta-001.usda key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
 tests/usda/collection-002.usda attribute_value_mismatch /bora Attribute "collection:mycol:includeRoot" at "/bora" differs: "true" vs "1"
@@ -91,7 +91,7 @@ tests/usda/customData-stage.usda value_mismatch Value for "customLayerData" in m
 tests/usda/enum-roundtrip-002.usda attribute_value_mismatch /EnumTests2/LightWithAPIs Attribute "inputs:shadow:enable" at "/EnumTests2/LightWithAPIs" differs: "true" vs "1"
 tests/usda/geommesh-002.usda key_missing Key "active" in /mymesh metadata exists in file2 but not in file1
 tests/usda/instancing-001.usda prim_missing /InstancingTests/Prototypes Prim "/InstancingTests/Prototypes" exists in file1 but not in file2
-tests/usda/int-assign-float-001.usda next-error: ERR : Failed to load USDA layer: /mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/int-assign-float-001.usda : Line 6, column 15: Expected integ
+tests/usda/int-assign-float-001.usda next-error: ERR : Failed to load USDA layer: tests/usda/int-assign-float-001.usda : Line 6, column 15: Expected integ
 tests/usda/layer-metadata-001.usda value_mismatch Value for "customLayerData" in metadata differs: "{ bool isProduction = false, dictionary renderS..." vs "{ bool isProduction
 tests/usda/lights-full-001.usda attribute_value_mismatch /Lights/DistantLight Attribute "inputs:enableColorTemperature" at "/Lights/DistantLight" differs: "false" vs "0"
 tests/usda/listop-delete-000.usda relationship_value_mismatch /hello Relationship "myheight" at "/hello" differs: "None" vs "null"
@@ -117,8 +117,8 @@ tests/usda/reference-offset-001.usda prim_missing /LocalAsset Prim "/LocalAsset"
 tests/usda/rel-003.usda relationship_value_mismatch /bora Relationship "myval" at "/bora" differs: "None" vs "null"
 tests/usda/relocates_basic.usda specifier_mismatch /World/new Specifier mismatch at "/World/new": "def" vs "over"
 tests/usda/sceneLibrary-001.usda key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
-tests/usda/shader-nonconformant-types.usda attribute_value_mismatch /Mtl/Tex Attribute "inputs:file" at "/Mtl/Tex" differs: "@./tex.png@" vs "@/mnt/nvme02/work/tinyusdz-repo/dev/tests
-tests/usda/stmt-semicolon-000.usda next-error: ERR : Failed to load USDA layer: /mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/stmt-semicolon-000.usda : Line 3, column 16: Expected metadat
+tests/usda/shader-nonconformant-types.usda attribute_value_mismatch /Mtl/Tex Attribute "inputs:file" at "/Mtl/Tex" differs: "@./tex.png@" vs "@tests
+tests/usda/stmt-semicolon-000.usda next-error: ERR : Failed to load USDA layer: tests/usda/stmt-semicolon-000.usda : Line 3, column 16: Expected metadat
 tests/usda/sublayers-002.usda key_missing Key "startTimeCode" in metadata exists in file1 but not in file2
 tests/usda/sublayers-005.usda key_missing Key "defaultPrim" in metadata exists in file1 but not in file2
 tests/usda/sublayers-006.usda key_missing Key "defaultPrim" in metadata exists in file1 but not in file2
