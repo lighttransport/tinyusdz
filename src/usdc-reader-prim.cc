@@ -344,6 +344,14 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
       sdata.is_triple_quoted = hasNewline(sdata.value);
       metas->comment = sdata;
       DCOUT("comment = " << metas->comment.value);
+    } else if (fv.second.IsUnregisteredValue()) {
+      // Unregistered layer metadata (pxr SdfUnregisteredValue): the crate
+      // stores the raw USDA text of the value (quotes included for string
+      // values). Keep it verbatim so the printer can write it back unchanged.
+      if (const std::string *uv = fv.second.GetUnregisteredValueString()) {
+        metas->unregisteredMetas[fv.first] = *uv;
+      }
+      DCOUT("Preserved unregistered layer metadata: " << fv.first);
     } else {
       PUSH_WARN("[StageMeta] TODO: " + fv.first);
     }

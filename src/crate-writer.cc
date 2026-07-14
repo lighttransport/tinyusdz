@@ -432,6 +432,16 @@ bool CrateWriter::Finalize(std::string* err) {
           field_pair.second.as<std::vector<value::token>>()) {
         field.value_rep = PackTokenVectorValue(
             *field_pair.second.as<std::vector<value::token>>(), err);
+      } else if (fname == "subLayers" &&
+                 field_pair.second.as<std::vector<std::string>>()) {
+        // Must be the dedicated StringVector type or pxr ignores the
+        // sublayers entirely (see PackStringVectorValue).
+        field.value_rep = PackStringVectorValue(
+            *field_pair.second.as<std::vector<std::string>>(), err);
+      } else if (fname == "subLayerOffsets" &&
+                 field_pair.second.as<std::vector<LayerOffset>>()) {
+        field.value_rep = PackLayerOffsetVectorValue(
+            *field_pair.second.as<std::vector<LayerOffset>>(), err);
       } else {
         field.value_rep = PackValue(field_pair.second, err);
       }
