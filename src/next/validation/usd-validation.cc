@@ -289,6 +289,18 @@ bool IsKnownAPISchemaName(const std::string &schema_name) {
   return kNames.count(schema_name) != 0;
 }
 
+// Imageable-but-not-connectable prim types for the Material-encapsulation
+// rule. Everything a UsdGeomImageable-derived schema covers except the
+// UsdShade connectables (Material/NodeGraph/Shader are handled by
+// IsShadeConnectableTypeName) and lights (LightAPI makes lights connectable).
+bool IsNonConnectableImageableTypeName(const std::string &type_name) {
+  if (IsGprimTypeName(type_name)) return true;
+  static const std::unordered_set<std::string> kTypes = {
+      "Scope", "Xform", "SkelRoot", "Skeleton", "Camera", "GeomSubset",
+  };
+  return kTypes.count(type_name) != 0;
+}
+
 // UsdPreviewSurface input name -> expected (role) value type. Shares the
 // generated table with the legacy validator (see
 // scripts/gen-usd-preview-surface-inputs.py).
@@ -1575,6 +1587,8 @@ struct AncestorContext {
   size_t parent_mesh_face_count{0};
   bool has_skel_root_ancestor{false};
   bool has_articulation_ancestor{false};
+  bool has_material_ancestor{false};
+  std::string nearest_material_path;  // valid only when has_material_ancestor
 };
 
 void ValidateGeomCommonProperties(const PrimSpec &ps,
@@ -1875,6 +1889,22 @@ void ValidateFieldAsset(const PrimSpec &ps, const std::string &prim_location,
                            result);
 }
 
+// pxr usdValidation:AttributeTypeMismatch for schema attributes whose
+// DECLARED type must match the registry exactly. Empty means "not declared
+// locally" and is fine.
+void CheckDeclaredAttrType(const PrimSpec &ps, const char *prop_name,
+                           const char *expected,
+                           const std::string &prim_location,
+                           USDValidationResult *result) {
+  const std::string authored = AttrTypeNameOf(ps, prop_name);
+  if (!authored.empty() && authored != expected) {
+    AddWarning(result, "core.schema.attributeType",
+               MakePropertyLocation(prim_location, prop_name),
+               std::string(prop_name) + " is declared `" + authored +
+                   "` but the schema attribute type is `" + expected + "`");
+  }
+}
+
 void ValidateRenderPrim(const PrimSpec &ps, const std::string &prim_location,
                         USDValidationResult *result) {
   static const std::set<std::string> kConformPolicy = {
@@ -1906,9 +1936,13 @@ void ValidateRenderPrim(const PrimSpec &ps, const std::string &prim_location,
                  std::string(rel) + " must be a relationship");
       }
     }
+    if (!is_settings) {
+      CheckDeclaredAttrType(ps, "productName", "token", prim_location, result);
+    }
   } else if (type_name == "RenderVar") {
     ValidateTokenSetProperty(ps, "sourceType", kSourceType,
                              "render.var.sourceType", prim_location, result);
+    CheckDeclaredAttrType(ps, "sourceName", "string", prim_location, result);
   }
 }
 
@@ -2434,6 +2468,8 @@ void ValidateBlendShape(const PrimSpec &ps, const std::string &prim_location,
   }
 }
 
+std::vector<std::string> AllPropertyNames(const PrimSpec &ps);
+
 void ValidateSkelBinding(const PrimSpec &ps,
                          const std::vector<AppliedSchema> &applied_schemas,
                          const std::string &prim_location,
@@ -2441,8 +2477,12 @@ void ValidateSkelBinding(const PrimSpec &ps,
                          const AncestorContext &ancestors,
                          USDValidationResult *result) {
   bool has_binding_property = false;
-  for (const PropSlot &slot : ps.properties().slots()) {
-    const std::string &name = GetPropNameTable().get(slot.name_id);
+  // AllPropertyNames, not slots: a relationship WITH targets (`rel
+  // skel:skeleton = </Skel>`) lives only in the relationships map, so the
+  // slot-only loop never saw the most common UsdSkelBinding spelling and the
+  // missing-SkelBindingAPI check was silent on exactly the prims it existed
+  // for (OpenUSD's SkelBindingApiAppliedValidator flags these).
+  for (const std::string &name : AllPropertyNames(ps)) {
     if (StartsWith(name, "skel:") || StartsWith(name, "primvars:skel:")) {
       has_binding_property = true;
       break;
@@ -2691,6 +2731,14 @@ void ValidateUsdPreviewSurface(const PrimSpec &ps,
       AddWarning(result, "shade.preview.inputType", prop_location,
                  "UsdPreviewSurface input `" + input_name + "` should be `" +
                      it->second + "` but is `" + authored + "`");
+    } else if (!authored.empty() && authored != it->second) {
+      // Same storage, different declared spelling (float3 vs color3f).
+      // OpenUSD's ShaderSdrCompliance flags this as MismatchedPropertyType:
+      // the sdr registry type is exact, not role-tolerant.
+      AddWarning(result, "shade.shader.typeMismatch", prop_location,
+                 "UsdPreviewSurface input `" + input_name +
+                     "` is declared `" + authored +
+                     "` but the shader registry type is `" + it->second + "`");
     }
   }
 
@@ -2783,9 +2831,17 @@ void ValidateUsdPrimvarReader(const PrimSpec &ps, const std::string &shader_id,
   }
 
   const std::string varname_type = AttrTypeNameOf(ps, "inputs:varname");
+  if (varname_type == "token") {
+    // Accepted for evaluation (the pre-21.02 spec used token), but the sdr
+    // registry type is `string` -- OpenUSD's ShaderSdrCompliance flags the
+    // token spelling as MismatchedPropertyType, connected or not.
+    AddWarning(result, "shade.shader.typeMismatch",
+               MakePropertyLocation(prim_location, "inputs:varname"),
+               "inputs:varname is declared `token` but the shader registry "
+               "type is `string`");
+  }
   if (HasConnections(ps, "inputs:varname")) {
-    // Connected varname inputs resolve at composition/evaluation time. The
-    // output terminal type is still local schema data and must be checked.
+    // A connected varname's VALUE resolves at composition/evaluation time.
   } else if (varname_type != "token" && varname_type != "string") {
     AddWarning(result, "shade.primvarReader.varname",
                MakePropertyLocation(prim_location, "inputs:varname"),
@@ -3214,6 +3270,8 @@ void ValidatePhysicsCollisionGroup(const PrimSpec &ps,
                                    const PrimTypeByPath &prim_types,
                                    USDValidationResult *result) {
   std::string merge_group;
+  CheckDeclaredAttrType(ps, "physics:mergeGroup", "string", prim_location,
+                        result);
   if (GetTokenProperty(ps, "physics:mergeGroup", &merge_group) &&
       merge_group.empty()) {
     AddError(result, "physics.collisionGroup.mergeGroup",
@@ -5191,6 +5249,15 @@ bool IsArkitShaderId(const std::string &shader_id) {
          StartsWith(shader_id, "ND_");
 }
 
+// The shader ids tinyusdz's built-in registry knows: the UsdPreviewSurface
+// node family plus MaterialX ND_* definitions. OpenUSD's sdr registry is
+// plugin-extensible, so an id outside this set is only a WARNING (it may be
+// perfectly valid in a pipeline that ships the plugin) -- mirrors
+// ShaderSdrCompliance's MissingShaderIdInRegistry.
+bool IsBuiltinRegistryShaderId(const std::string &shader_id) {
+  return IsArkitShaderId(shader_id);
+}
+
 bool ValueToFloat4(const Value &v, std::array<double, 4> *out) {
   if (!out || v.is_array()) {
     return false;
@@ -5261,11 +5328,15 @@ void ValidateArkitTextureFormats(const PrimSpec &ps,
   }
 }
 
-// arkit.normalMap.scaleBias: an 8-bit UsdUVTexture feeding a
-// UsdPreviewSurface `inputs:normal` must remap [0,1] to [-1,1] and stay raw.
-void ValidateArkitNormalMapTexture(const Layer &layer, const PrimSpec &surface,
-                                   const std::string &surface_location,
-                                   USDValidationResult *result) {
+// An 8-bit UsdUVTexture feeding a UsdPreviewSurface `inputs:normal` must
+// remap [0,1] to [-1,1] and stay raw. Shared by the always-on shade rule
+// (`shade.normalMap.scaleBias`, warning -- OpenUSD's NormalMapTextureValidator)
+// and the ARKit profile (`arkit.normalMap.scaleBias`, error).
+void ValidateNormalMapTextureImpl(const Layer &layer, const PrimSpec &surface,
+                                  const std::string &surface_location,
+                                  const char *rule_id,
+                                  USDValidationSeverity severity,
+                                  USDValidationResult *result) {
   const std::vector<Path> *conns = surface.connection("inputs:normal");
   if (!conns) {
     return;
@@ -5291,11 +5362,11 @@ void ValidateArkitNormalMapTexture(const Layer &layer, const PrimSpec &surface,
         MakePropertyLocation(prim_part, "inputs:scale");
     std::array<double, 4> scale{};
     if (!GetFloat4Property(*tex, "inputs:scale", &scale)) {
-      AddError(result, "arkit.normalMap.scaleBias", scale_location,
+      AddIssue(result, severity, rule_id, scale_location,
                "8-bit normal map read by `" + surface_location +
                    ".inputs:normal` must author inputs:scale = (2, 2, 2, 1)");
     } else if (!Float4Equals(scale, 2.0, 2.0, 2.0, 1.0)) {
-      AddError(result, "arkit.normalMap.scaleBias", scale_location,
+      AddIssue(result, severity, rule_id, scale_location,
                "8-bit normal map inputs:scale must be (2, 2, 2, 1), but is " +
                    FormatFloat4(scale));
     }
@@ -5304,11 +5375,11 @@ void ValidateArkitNormalMapTexture(const Layer &layer, const PrimSpec &surface,
         MakePropertyLocation(prim_part, "inputs:bias");
     std::array<double, 4> bias{};
     if (!GetFloat4Property(*tex, "inputs:bias", &bias)) {
-      AddError(result, "arkit.normalMap.scaleBias", bias_location,
+      AddIssue(result, severity, rule_id, bias_location,
                "8-bit normal map read by `" + surface_location +
                    ".inputs:normal` must author inputs:bias = (-1, -1, -1, 0)");
     } else if (!Float4Equals(bias, -1.0, -1.0, -1.0, 0.0)) {
-      AddError(result, "arkit.normalMap.scaleBias", bias_location,
+      AddIssue(result, severity, rule_id, bias_location,
                "8-bit normal map inputs:bias must be (-1, -1, -1, 0), but is " +
                    FormatFloat4(bias));
     }
@@ -5317,12 +5388,12 @@ void ValidateArkitNormalMapTexture(const Layer &layer, const PrimSpec &surface,
     const std::string cs_location =
         MakePropertyLocation(prim_part, "inputs:sourceColorSpace");
     if (!GetTokenProperty(*tex, "inputs:sourceColorSpace", &color_space)) {
-      AddError(result, "arkit.normalMap.scaleBias", cs_location,
+      AddIssue(result, severity, rule_id, cs_location,
                "normal map read by `" + surface_location +
                    ".inputs:normal` must author "
                    "inputs:sourceColorSpace = \"raw\"");
     } else if (color_space != "raw") {
-      AddError(result, "arkit.normalMap.scaleBias", cs_location,
+      AddIssue(result, severity, rule_id, cs_location,
                "normal map inputs:sourceColorSpace must be `raw`, but is `" +
                    color_space + "`");
     }
@@ -5373,7 +5444,9 @@ void ValidateArkitShader(const Layer &layer, const PrimSpec &ps,
   ValidateArkitTextureFormats(ps, prim_location, result);
 
   if (shader_id == "UsdPreviewSurface") {
-    ValidateArkitNormalMapTexture(layer, ps, prim_location, result);
+    ValidateNormalMapTextureImpl(layer, ps, prim_location,
+                                 "arkit.normalMap.scaleBias",
+                                 USDValidationSeverity::Error, result);
   }
 }
 
@@ -5590,6 +5663,20 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
                    ancestors.nearest_gprim_path + "`");
   }
 
+  // ---- shade.encapsulation.imageableInMaterial ----
+  // OpenUSD's EncapsulationMaterialValidator: only connectable prims (Shader,
+  // NodeGraph) belong under a Material; any other imageable descendant (a
+  // Scope, Xform, Gprim, ...) is flagged. Connectable mis-parents are
+  // shade.encapsulation.shaderParent; this rule is about the non-connectables.
+  if (options.shade && ancestors.has_material_ancestor &&
+      !IsShadeConnectableTypeName(type_name) &&
+      IsNonConnectableImageableTypeName(type_name)) {
+    AddWarning(result, "shade.encapsulation.imageableInMaterial", prim_location,
+               "Imageable `" + type_name +
+                   "` is not a valid descendant of Material `" +
+                   ancestors.nearest_material_path + "`");
+  }
+
   size_t local_mesh_face_count = 0;
   bool local_mesh_face_count_known = false;
   if (options.geom && !has_arc && !is_over) {
@@ -5605,6 +5692,32 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
       }
     } else if (type_name == "GeomSubset") {
       ValidateGeomSubsetTopology(ps, prim_location, ancestors, result);
+      // SubsetParentIsImageable: a GeomSubset only means something as the
+      // DIRECT child of the imageable it subsets.
+      if (ancestors.parent_type.empty() ||
+          (!IsGprimTypeName(ancestors.parent_type) &&
+           !IsNonConnectableImageableTypeName(ancestors.parent_type))) {
+        AddWarning(result, "geom.subset.parent", prim_location,
+                   "GeomSubset must be a direct child of an Imageable prim, "
+                   "but its parent is `" +
+                       (ancestors.parent_type.empty()
+                            ? std::string("<root>")
+                            : ancestors.parent_type) +
+                       "`");
+      }
+      // SubsetsMaterialBindFamily: an explicitly unrestricted familyType on
+      // a materialBind-family subset defeats material-binding semantics.
+      std::string family_type;
+      std::string family_name;
+      (void)GetTokenProperty(ps, "familyName", &family_name);
+      if (family_name == "materialBind" &&
+          GetTokenProperty(ps, "familyType", &family_type) &&
+          family_type == "unrestricted") {
+        AddWarning(result, "geom.subset.familyType",
+                   MakePropertyLocation(prim_location, "familyType"),
+                   "materialBind-family GeomSubset must use a restricted "
+                   "familyType (nonOverlapping or partition)");
+      }
     } else if (type_name == "Points") {
       ValidateGeomPoints(ps, prim_location, result);
     } else if (type_name == "BasisCurves" || type_name == "NurbsCurves" ||
@@ -5684,9 +5797,92 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
                                     ? GetShaderInfoId(ps)
                                     : std::string();
 
+  // ---- shade.subset.materialBindFamily ----
+  // SubsetMaterialBindFamilyName: a GeomSubset that binds a material must be
+  // in the `materialBind` family, or the binding is ignored by renderers.
+  if (options.shade && !has_arc && !is_over && type_name == "GeomSubset") {
+    bool has_material_binding = false;
+    for (const std::string &prop_name : AllPropertyNames(ps)) {
+      if (prop_name == "material:binding" ||
+          StartsWith(prop_name, "material:binding:")) {
+        has_material_binding = true;
+        break;
+      }
+    }
+    if (has_material_binding) {
+      std::string family_name;
+      (void)GetTokenProperty(ps, "familyName", &family_name);
+      if (family_name != "materialBind") {
+        AddWarning(result, "shade.subset.materialBindFamily",
+                   MakePropertyLocation(prim_location, "familyName"),
+                   family_name.empty()
+                       ? std::string(
+                             "GeomSubset with a material binding must author "
+                             "familyName = \"materialBind\"")
+                       : "GeomSubset with a material binding must be in the "
+                         "`materialBind` family, but is in `" +
+                             family_name + "`");
+      }
+    }
+  }
+
+  // ---- shade.shader.id ----
+  // ShaderSdrCompliance: an `id`-implementation shader must name a shader the
+  // registry knows. `sourceAsset`/`sourceCode` shaders resolve elsewhere and
+  // are exempt.
+  if (options.shade && !has_arc && !is_over && type_name == "Shader") {
+    std::string impl_source;
+    const bool has_impl_source =
+        GetTokenProperty(ps, "info:implementationSource", &impl_source);
+    if (!has_impl_source || impl_source == "id") {
+      if (shader_id.empty()) {
+        AddWarning(result, "shade.shader.id",
+                   MakePropertyLocation(prim_location, "info:id"),
+                   "Shader should author an `info:id` token (or use a "
+                   "sourceAsset/sourceCode implementation source)");
+      } else if (!IsBuiltinRegistryShaderId(shader_id)) {
+        AddWarning(result, "shade.shader.id",
+                   MakePropertyLocation(prim_location, "info:id"),
+                   "shader id `" + shader_id +
+                       "` is not in the built-in shader registry");
+      }
+    } else if (impl_source == "sourceAsset" || impl_source == "sourceCode") {
+      // ShaderSdrCompliance.MissingSourceTypeInRegistry: the sourceType
+      // spelled in `info:<sourceType>:sourceAsset` / `:sourceCode` must be a
+      // registered shading language. Only osl and glslfx ship with stock
+      // OpenUSD; anything else (mdl, ...) needs a renderer plugin.
+      const std::string suffix =
+          impl_source == "sourceAsset" ? ":sourceAsset" : ":sourceCode";
+      for (const std::string &prop_name : AllPropertyNames(ps)) {
+        if (!StartsWith(prop_name, "info:") || !EndsWith(prop_name, suffix)) {
+          continue;
+        }
+        const std::string source_type = prop_name.substr(
+            5, prop_name.size() - 5 - suffix.size());
+        if (source_type.empty() || source_type.find(':') != std::string::npos) {
+          continue;  // info:sourceAsset (untyped) or a nested key
+        }
+        if (source_type != "osl" && source_type != "glslfx") {
+          AddWarning(result, "shade.shader.id",
+                     MakePropertyLocation(prim_location, prop_name),
+                     "shader source type `" + source_type +
+                         "` is not in the built-in shader registry");
+        }
+      }
+    }
+  }
+
   // ---- shade.preview.* / shade.uvTexture.* / shade.primvarReader.* ----
   if (options.shade && shader_id == "UsdPreviewSurface") {
     ValidateUsdPreviewSurface(ps, prim_location, result);
+    // NormalMapTextureValidator runs unconditionally in usdchecker, not just
+    // under the ARKit profile. Warning here; the ARKit profile re-checks at
+    // error severity.
+    if (!options.arkit) {
+      ValidateNormalMapTextureImpl(layer, ps, prim_location,
+                                   "shade.normalMap.scaleBias",
+                                   USDValidationSeverity::Warning, result);
+    }
   } else if (options.shade && shader_id == "UsdUVTexture") {
     ValidateUsdUVTexture(ps, prim_location, result);
   } else if (options.shade && IsUsdPrimvarReaderId(shader_id)) {
@@ -5857,6 +6053,13 @@ void ValidatePrimSpecRecursive(const Layer &layer, uint32_t prim_index,
   child_ctx.has_articulation_ancestor =
       ancestors.has_articulation_ancestor ||
       HasAppliedSchema(applied_schemas, "PhysicsArticulationRootAPI");
+  if (type_name == "Material") {
+    child_ctx.has_material_ancestor = true;
+    child_ctx.nearest_material_path = prim_location;
+  } else {
+    child_ctx.has_material_ancestor = ancestors.has_material_ancestor;
+    child_ctx.nearest_material_path = ancestors.nearest_material_path;
+  }
   if (IsGprimTypeName(type_name)) {
     child_ctx.has_gprim_ancestor = true;
     child_ctx.nearest_gprim_path = prim_location;
@@ -6009,6 +6212,33 @@ USDValidationResult ValidateLayerAgainstAOUSDCore(const Layer &layer) {
   return ValidateLayerAgainstAOUSDCore(layer, ValidationOptions());
 }
 
+void ValidateStageMetadataPresence(const Layer &layer,
+                                   const ValidationOptions &options,
+                                   USDValidationResult *result) {
+  const LayerMeta &metas = layer.meta();
+  if (options.geom) {
+    // usdGeomValidators:StageMetadataChecker (always-on in usdchecker, even
+    // under --noAssetChecks). Warnings by default;
+    // ApplyUsdcheckerCompatSeverities upgrades them to usdchecker's errors.
+    if (!metas.upAxis_set) {
+      AddWarning(result, "geom.stage.upAxis", kLayerLocation,
+                 "stage does not specify an upAxis");
+    }
+    if (!metas.metersPerUnit_set) {
+      AddWarning(result, "geom.stage.metersPerUnit", kLayerLocation,
+                 "stage does not specify its linear scale in metersPerUnit");
+    }
+  }
+  if (options.core && options.asset_checks && metas.defaultPrim.empty()) {
+    // usdValidation:StageMetadataChecker -- a referenceable asset must name a
+    // defaultPrim. Gated by asset_checks (usdchecker --noAssetChecks).
+    // Validity of an AUTHORED defaultPrim is core.layer.defaultPrim.
+    AddWarning(result, "core.layer.defaultPrim.missing", kLayerLocation,
+               "stage does not author a defaultPrim; it cannot be safely "
+               "referenced as an asset");
+  }
+}
+
 namespace {
 
 // Layer validation core. `is_root_layer` is false for the synthetic graft
@@ -6072,6 +6302,15 @@ USDValidationResult ValidateLayerImpl(const Layer &layer,
   if (options.core) {
     ValidateLayerMetas(layer, &result);
   }
+
+  // Stage-metadata PRESENCE rules, modeled on OpenUSD usdchecker. They apply
+  // to the ROOT layer only: a sublayer or variant fragment legitimately
+  // inherits stage metadata from its parent. Composed-layer callers disable
+  // them (stage_presence_checks) and check the authored root layer instead.
+  if (is_root_layer && options.stage_presence_checks) {
+    ValidateStageMetadataPresence(layer, options, &result);
+  }
+
   if (options.arkit && is_root_layer) {
     ValidateArkitLayerMetas(layer, &result);
   }
@@ -6175,6 +6414,551 @@ std::string Pluralize(size_t n, const char *noun) {
 }
 
 }  // namespace
+
+
+const std::vector<ValidationRuleInfo> &GetValidationRuleTable() {
+  // Ordered by (group, id). `vol.*` rules run under the geom group (Volume is
+  // a renderable; see the Volume dispatch note). Package/crate/checker rules
+  // are emitted by the byte-container checks in tusdchecker, which shares
+  // this registry.
+  static const std::vector<ValidationRuleInfo> kRules = {
+      {"arkit.layer.extension", "arkit",
+       "subLayer assets must be usd/usda/usdc/usdz layers"},
+      {"arkit.material.binding", "arkit",
+       "material bindings must resolve to an existing Material prim"},
+      {"arkit.normalMap.scaleBias", "arkit",
+       "8-bit normal maps must author scale (2,2,2,1), bias (-1,-1,-1,0), and sourceColorSpace raw"},
+      {"arkit.package.fileExtension", "arkit",
+       "a package may only contain USD layers and exr/jpg/jpeg/png textures"},
+      {"arkit.package.rootLayer", "arkit",
+       "the package root layer must be a .usdc crate layer"},
+      {"arkit.prim.type", "arkit",
+       "prim types must be in the ARKit-supported whitelist"},
+      {"arkit.shader.connection", "arkit",
+       "at most one connection source per shader input"},
+      {"arkit.shader.id", "arkit",
+       "shaders must use id-source UsdPreview/MaterialX node ids"},
+      {"arkit.shader.implementationSource", "arkit",
+       "shaders must use the `id` implementation source"},
+      {"arkit.stage.defaultPrim", "arkit",
+       "the stage must author a defaultPrim"},
+      {"arkit.stage.metersPerUnit", "arkit",
+       "the stage must author metersPerUnit"},
+      {"arkit.stage.upAxis", "arkit",
+       "the stage must author upAxis = \"Y\""},
+      {"arkit.texture.format", "arkit",
+       "textures must be exr/jpg/jpeg/png"},
+      {"checker.coverage.skipped", "checker",
+       "a requested validation group was inapplicable to the input (--require-all-groups)"},
+      {"core.apiSchema.duplicate", "core",
+       "an API schema must not be applied twice with the same instance name"},
+      {"core.apiSchema.instance", "core",
+       "multiple-apply API schemas require an instance name; single-apply forbid one"},
+      {"core.apiSchema.name", "core",
+       "apiSchemas entries must be valid identifiers"},
+      {"core.apiSchema.unknown", "core",
+       "apiSchemas entries should name a known API schema"},
+      {"core.attr.allowedTokens", "core",
+       "a token attribute value must be one of its allowedTokens"},
+      {"core.attr.colorSpace", "core",
+       "attribute colorSpace must reference a defined color space"},
+      {"core.attr.connectability", "core",
+       "connectability metadata must be `full` or `interfaceOnly`"},
+      {"core.attr.customData", "core",
+       "attribute customData must be a dictionary"},
+      {"core.attr.elementSize", "core",
+       "primvar elementSize must be a positive integer"},
+      {"core.attr.interpolation", "core",
+       "interpolation metadata must be a valid interpolation token"},
+      {"core.attr.outputName", "core",
+       "outputName metadata must be a valid identifier"},
+      {"core.attr.renderType", "core",
+       "renderType metadata must be a string"},
+      {"core.attr.sdrMetadata", "core",
+       "sdrMetadata must be a dictionary"},
+      {"core.attr.timeSamples", "core",
+       "timeSamples must have finite, ordered times and consistent value types"},
+      {"core.attr.unauthoredValuesIndex", "core",
+       "unauthoredValuesIndex must be a valid index"},
+      {"core.clips", "core",
+       "the clips dictionary must be well-formed"},
+      {"core.clips.active", "core",
+       "clips active entries must be (time, assetIndex) pairs into assets"},
+      {"core.clips.assets", "core",
+       "clips assets must be non-empty asset paths"},
+      {"core.clips.primPath", "core",
+       "clips primPath must be an absolute prim path"},
+      {"core.clips.template", "core",
+       "template clips metadata must be complete and consistent"},
+      {"core.clips.times", "core",
+       "clips times entries must be (stageTime, clipTime) pairs"},
+      {"core.composition.attributeTypeMismatch", "core",
+       "an attribute must have one declared type across composition arcs"},
+      {"core.composition.error", "core",
+       "the stage must compose without composition errors (--composed)"},
+      {"core.composition.inherits", "core",
+       "inherits arcs must target valid absolute prim paths"},
+      {"core.composition.over", "core",
+       "an over must have a defining specifier somewhere in composition"},
+      {"core.composition.payload", "core",
+       "payload arcs must have valid asset paths and prim targets"},
+      {"core.composition.propertyKindMismatch", "core",
+       "a property must not be both an attribute and a relationship across arcs"},
+      {"core.composition.reference", "core",
+       "reference arcs must have valid asset paths and prim targets"},
+      {"core.composition.specializes", "core",
+       "specializes arcs must target valid absolute prim paths"},
+      {"core.composition.variantSelection", "core",
+       "variant selections must name an existing variant"},
+      {"core.composition.variantSet", "core",
+       "variantSets metadata must be well-formed"},
+      {"core.schema.attributeType", "core",
+       "attribute is declared with a different type than its schema defines"},
+      {"core.dependency.unresolvable", "core",
+       "authored asset dependencies must be resolvable (usdchecker MissingReferenceValidator)"},
+      {"core.layer.colorConfiguration", "core",
+       "colorConfiguration must be a non-empty asset path"},
+      {"core.layer.colorManagementSystem", "core",
+       "colorManagementSystem must be a non-empty token"},
+      {"core.layer.customLayerData", "core",
+       "customLayerData must be a dictionary"},
+      {"core.layer.defaultPrim", "core",
+       "an authored defaultPrim must name a root prim"},
+      {"core.layer.defaultPrim.missing", "core",
+       "a referenceable asset should author a defaultPrim (usdchecker asset check)"},
+      {"core.layer.expressionVariables", "core",
+       "expressionVariables must be a dictionary"},
+      {"core.layer.framesPerSecond", "core",
+       "framesPerSecond must be a positive finite number"},
+      {"core.layer.kilogramsPerUnit", "core",
+       "kilogramsPerUnit must be a positive finite number"},
+      {"core.layer.layerRelocates.identity", "core",
+       "a relocate must not map a path to itself"},
+      {"core.layer.layerRelocates.source", "core",
+       "relocate sources must be absolute prim paths"},
+      {"core.layer.layerRelocates.target", "core",
+       "relocate targets must be absolute prim paths or empty (delete)"},
+      {"core.layer.metersPerUnit", "core",
+       "metersPerUnit must be a positive finite number"},
+      {"core.layer.owner", "core",
+       "owner must be a non-empty string"},
+      {"core.layer.subLayerOffset", "core",
+       "subLayer offsets must be finite with non-zero scale"},
+      {"core.layer.subLayers", "core",
+       "subLayers entries must be non-empty asset paths"},
+      {"core.layer.timeCodeRange", "core",
+       "startTimeCode must not exceed endTimeCode"},
+      {"core.layer.timeCodesPerSecond", "core",
+       "timeCodesPerSecond must be a positive finite number"},
+      {"core.layer.upAxis", "core",
+       "an authored upAxis must be X, Y, or Z"},
+      {"core.prim.assetInfo", "core",
+       "assetInfo must be a dictionary"},
+      {"core.prim.customData", "core",
+       "prim customData must be a dictionary"},
+      {"core.prim.instanceable", "core",
+       "instanceable must be authored on a prim that can be instanced"},
+      {"core.prim.kind", "core",
+       "kind must be a known model kind and respect the model hierarchy"},
+      {"core.prim.name", "core",
+       "prim names must be valid USD identifiers"},
+      {"core.relationship.bindMaterialAs", "core",
+       "bindMaterialAs must be strongerThanDescendants or weakerThanDescendants"},
+      {"core.relationship.customData", "core",
+       "relationship customData must be a dictionary"},
+      {"core.relationship.variability", "core",
+       "relationships must be uniform (varying is not meaningful)"},
+      {"core.schema.CollectionAPI.applied", "core",
+       "collection properties require CollectionAPI to be applied"},
+      {"core.schema.CollectionAPI.excludes", "core",
+       "collection excludes must be valid paths inside the collection"},
+      {"core.schema.CollectionAPI.expansionRule", "core",
+       "expansionRule must be a valid expansion token"},
+      {"core.schema.CollectionAPI.includeRoot", "core",
+       "includeRoot must be a bool and consistent with includes"},
+      {"core.schema.CollectionAPI.instance", "core",
+       "CollectionAPI requires an instance name"},
+      {"core.schema.CollectionAPI.property", "core",
+       "collection properties must use the collection: namespace shape"},
+      {"core.schema.CollectionAPI.relationship", "core",
+       "collection includes/excludes must be relationships"},
+      {"core.schema.ColorSpaceAPI.applied", "core",
+       "colorSpace:name requires ColorSpaceAPI to be applied"},
+      {"core.schema.ColorSpaceAPI.name", "core",
+       "colorSpace:name must reference a defined color space"},
+      {"core.schema.ColorSpaceDefinitionAPI.applied", "core",
+       "color space definitions require ColorSpaceDefinitionAPI"},
+      {"core.schema.ColorSpaceDefinitionAPI.coordinates", "core",
+       "color space definition chromaticity coordinates must be finite"},
+      {"core.schema.ColorSpaceDefinitionAPI.curve", "core",
+       "color space transfer-curve parameters must be valid"},
+      {"core.schema.ColorSpaceDefinitionAPI.name", "core",
+       "a color space definition must author a name"},
+      {"core.schema.singleApply.instance", "core",
+       "single-apply API schemas must not carry an instance name"},
+      {"core.xformOp.order", "core",
+       "xformOpOrder entries must reference authored xformOp attributes"},
+      {"crate.decode.warning", "crate",
+       "the crate decoder reported a recoverable inconsistency"},
+      {"crate.field.tokenIndex", "crate",
+       "crate fields must reference valid token indices"},
+      {"crate.fieldset.fieldIndex", "crate",
+       "crate fieldsets must reference valid field indices"},
+      {"crate.fieldset.terminator", "crate",
+       "crate fieldsets must be sentinel-terminated"},
+      {"crate.spec.fieldsetIndex", "crate",
+       "crate specs must reference valid fieldset indices"},
+      {"crate.spec.pathIndex", "crate",
+       "crate specs must reference valid path indices"},
+      {"crate.structure", "crate",
+       "the crate container must decode without structural errors"},
+      {"geom.camera.optics", "geom",
+       "camera optical parameters must be positive and finite"},
+      {"geom.camera.range", "geom",
+       "camera clippingRange must be an increasing positive pair"},
+      {"geom.camera.shutter", "geom",
+       "camera shutter:open must not exceed shutter:close"},
+      {"geom.camera.tokens", "geom",
+       "camera projection/stereoRole must be valid tokens"},
+      {"geom.curves.tokens", "geom",
+       "curve type/basis/wrap must be valid tokens"},
+      {"geom.curves.topology", "geom",
+       "curveVertexCounts must match point counts and basis constraints"},
+      {"geom.curves.widths", "geom",
+       "curve widths must match the topology's expected count"},
+      {"geom.encapsulation.nestedGprim", "geom",
+       "Gprims must not be nested under other Gprims"},
+      {"geom.gprim.arraySize", "geom",
+       "Gprim array attributes must have consistent lengths"},
+      {"geom.gprim.extent", "geom",
+       "extent must be a [min, max] pair of finite vectors"},
+      {"geom.gprim.orientation", "geom",
+       "orientation must be leftHanded or rightHanded"},
+      {"geom.gprim.purpose", "geom",
+       "purpose must be default, render, proxy, or guide"},
+      {"geom.gprim.visibility", "geom",
+       "visibility must be inherited or invisible"},
+      {"geom.mesh.topology.count", "geom",
+       "faceVertexCounts entries must be at least 3"},
+      {"geom.mesh.topology.index", "geom",
+       "faceVertexIndices must be in range for the points array"},
+      {"geom.mesh.topology.size", "geom",
+       "faceVertexIndices length must equal the sum of faceVertexCounts"},
+      {"geom.pointInstancer.arraySize", "geom",
+       "PointInstancer per-instance arrays must have matching lengths"},
+      {"geom.pointInstancer.indices", "geom",
+       "protoIndices must be in range for the prototypes relationship"},
+      {"geom.pointInstancer.prototypes", "geom",
+       "the prototypes relationship must target existing prims"},
+      {"geom.points.size", "geom",
+       "Points positions/widths/ids arrays must have matching lengths"},
+      {"geom.points.widths", "geom",
+       "Points widths must be non-negative"},
+      {"geom.primitive.axis", "geom",
+       "primitive axis must be X, Y, or Z"},
+      {"geom.primitive.size", "geom",
+       "primitive radius/height/size must be positive and finite"},
+      {"geom.primvar.indices", "geom",
+       "primvar :indices must be in range for the value array"},
+      {"geom.primvar.metadata", "geom",
+       "primvars must carry valid interpolation/elementSize metadata"},
+      {"geom.skel.animation.blendShapes", "geom",
+       "SkelAnimation blendShapes and blendShapeWeights must match"},
+      {"geom.skel.animation.joints", "geom",
+       "SkelAnimation joints and per-joint arrays must match"},
+      {"geom.skel.animation.transforms", "geom",
+       "SkelAnimation transforms must match the joint count"},
+      {"geom.skel.binding.animationSource", "geom",
+       "skel:animationSource must target a SkelAnimation prim"},
+      {"geom.skel.binding.api", "geom",
+       "UsdSkelBinding properties require SkelBindingAPI to be applied"},
+      {"geom.skel.binding.root", "geom",
+       "SkelBindingAPI must be applied on a SkelRoot or beneath one"},
+      {"geom.skel.binding.skeleton", "geom",
+       "skel:skeleton must target a Skeleton prim"},
+      {"geom.skel.blendShape.inbetween", "geom",
+       "inbetween shapes must match the blend shape's offset count"},
+      {"geom.skel.blendShape.normalOffsets", "geom",
+       "normalOffsets must match the offsets count"},
+      {"geom.skel.blendShape.offsets", "geom",
+       "BlendShape offsets must be finite vectors"},
+      {"geom.skel.blendShape.pointIndices", "geom",
+       "pointIndices must match the offsets count and be non-negative"},
+      {"geom.skel.skeleton.jointNames", "geom",
+       "jointNames must match the joints count"},
+      {"geom.skel.skeleton.joints", "geom",
+       "Skeleton should author uniform token[] joints"},
+      {"geom.skel.skeleton.topology", "geom",
+       "Skeleton joint paths must form a valid topology"},
+      {"geom.skel.skeleton.transforms", "geom",
+       "bind/rest transforms must match the joint count"},
+      {"geom.skel.skinning.elementSize", "geom",
+       "jointIndices/jointWeights elementSize must agree"},
+      {"geom.skel.skinning.index", "geom",
+       "jointIndices must be in range for the bound skeleton's joints"},
+      {"geom.skel.skinning.interpolation", "geom",
+       "skinning primvars must author constant or vertex interpolation"},
+      {"geom.skel.skinning.pair", "geom",
+       "jointIndices and jointWeights must be authored together"},
+      {"geom.skel.skinning.size", "geom",
+       "skinning primvar lengths must match the point count times elementSize"},
+      {"geom.skel.skinning.weight", "geom",
+       "jointWeights must be non-negative and normalized per point"},
+      {"geom.stage.metersPerUnit", "geom",
+       "the root stage should declare metersPerUnit (usdchecker StageMetadataChecker)"},
+      {"geom.stage.upAxis", "geom",
+       "the root stage should declare an upAxis (usdchecker StageMetadataChecker)"},
+      {"geom.subset.familyType", "geom",
+       "materialBind-family subsets must use a restricted familyType"},
+      {"geom.subset.indices", "geom",
+       "GeomSubset indices must be in range for the parent topology"},
+      {"geom.subset.parent", "geom",
+       "a GeomSubset must be a direct child of an Imageable prim"},
+      {"vol.fieldAsset.dataType", "geom",
+       "field asset dataType must be a valid token"},
+      {"vol.fieldAsset.fieldClass", "geom",
+       "field asset fieldClass must be a valid token"},
+      {"vol.fieldAsset.filePath", "geom",
+       "field asset filePath must be a non-empty asset path"},
+      {"vol.fieldAsset.vectorDataRoleHint", "geom",
+       "vectorDataRoleHint must be a valid token"},
+      {"vol.volume.fieldRel", "geom",
+       "Volume field relationships must target field asset prims"},
+      {"lux.dome.poleAxis", "lux",
+       "dome light poleAxis must be scene, Y, or Z"},
+      {"lux.light.angle", "lux",
+       "distant light angle must be within valid range"},
+      {"lux.light.inputs", "lux",
+       "light inputs must be finite and non-negative where required"},
+      {"lux.light.size", "lux",
+       "light geometric inputs (radius, width, ...) must be positive"},
+      {"lux.relationship.target", "lux",
+       "light relationships (filters, portals) must target existing prims"},
+      {"lux.shadow.inputs", "lux",
+       "ShadowAPI inputs must be finite and valid"},
+      {"lux.shaping.inputs", "lux",
+       "ShapingAPI inputs must be finite and within range"},
+      {"lux.texture.file", "lux",
+       "light texture file must be a non-empty asset path"},
+      {"lux.texture.format", "lux",
+       "dome/rect light texture format must be a supported image type"},
+      {"package.centralDirectory.bounds", "package",
+       "the ZIP central directory must be contiguous and in bounds"},
+      {"package.centralDirectory.comment", "package",
+       "USDZ archives must have an empty ZIP comment"},
+      {"package.centralDirectory.entryCount", "package",
+       "central-directory entry count must match local headers"},
+      {"package.centralDirectory.mismatch", "package",
+       "central-directory metadata must match the local headers"},
+      {"package.centralDirectory.missing", "package",
+       "the ZIP end-of-central-directory record must exist"},
+      {"package.centralDirectory.multidisk", "package",
+       "multi-disk ZIP archives are not valid USDZ packages"},
+      {"package.centralDirectory.structure", "package",
+       "central-directory entry headers must be well-formed"},
+      {"package.centralDirectory.trailingData", "package",
+       "the archive must not carry trailing data after the EOCD"},
+      {"package.dependency.external", "package",
+       "authored dependencies must be package-relative"},
+      {"package.dependency.missing", "package",
+       "authored dependencies must be present in the package"},
+      {"package.entry.alignment", "package",
+       "USDZ entry data must begin on a 64-byte boundary"},
+      {"package.entry.compression", "package",
+       "USDZ entries must use ZIP store mode (no compression)"},
+      {"package.entry.crc", "package",
+       "entry payloads must match their local-header CRC-32"},
+      {"package.entry.dataDescriptor", "package",
+       "USDZ entries must carry sizes in the local-file header"},
+      {"package.entry.duplicate", "package",
+       "package entry names must be unique"},
+      {"package.entry.encryption", "package",
+       "USDZ entries must not be encrypted"},
+      {"package.entry.extension", "package",
+       "entry types should be within the portable USDZ extension set"},
+      {"package.entry.path", "package",
+       "package entry names must be safe relative paths"},
+      {"package.entry.size", "package",
+       "stored entries must have equal compressed/uncompressed sizes"},
+      {"package.root.first", "package",
+       "the first USDZ entry must be the package root USD layer"},
+      {"package.structure.bounds", "package",
+       "ZIP entry payloads must be within the archive bounds"},
+      {"package.structure.empty", "package",
+       "a USDZ archive must contain at least one entry"},
+      {"package.structure.header", "package",
+       "ZIP local-file headers must be well-formed"},
+      {"physics.articulation.nested", "physics",
+       "ArticulationRootAPI must not be nested under another articulation"},
+      {"physics.articulation.staticBody", "physics",
+       "an articulation root must not be a static (kinematic-less) body"},
+      {"physics.collider.points", "physics",
+       "collision meshes must have valid point data"},
+      {"physics.collision.approximation", "physics",
+       "collision approximation must be a valid token"},
+      {"physics.collisionGroup.filteredGroups", "physics",
+       "filteredGroups must target CollisionGroup prims"},
+      {"physics.collisionGroup.mergeGroup", "physics",
+       "mergeGroupName must be consistent across merged groups"},
+      {"physics.drive.dof", "physics",
+       "a drive's degree of freedom must match its joint type"},
+      {"physics.drive.type", "physics",
+       "drive type must be force or acceleration"},
+      {"physics.drive.value", "physics",
+       "drive gains and targets must be finite"},
+      {"physics.extension.mjc.array", "physics",
+       "MJC extension arrays must have valid lengths"},
+      {"physics.extension.mjc.range", "physics",
+       "MJC extension values must be within range"},
+      {"physics.extension.mjc.relationship", "physics",
+       "MJC extension relationships must target valid prims"},
+      {"physics.extension.mjc.token", "physics",
+       "MJC extension tokens must be valid"},
+      {"physics.extension.newton.asset", "physics",
+       "Newton extension asset paths must be non-empty"},
+      {"physics.extension.newton.lookup", "physics",
+       "Newton extension lookups must reference existing entries"},
+      {"physics.extension.newton.range", "physics",
+       "Newton extension values must be within range"},
+      {"physics.extension.newton.relationship", "physics",
+       "Newton extension relationships must target valid prims"},
+      {"physics.extension.newton.token", "physics",
+       "Newton extension tokens must be valid"},
+      {"physics.inertia", "physics",
+       "mass/density/inertia values must be physically meaningful"},
+      {"physics.joint.axis", "physics",
+       "joint axis must be X, Y, or Z"},
+      {"physics.joint.body", "physics",
+       "joint body0/body1 must target Xformable prims"},
+      {"physics.joint.distance", "physics",
+       "distance joint min must not exceed max"},
+      {"physics.joint.limit", "physics",
+       "joint limits must be within the joint type's valid range"},
+      {"physics.joint.transform", "physics",
+       "joint local positions/rotations must be finite"},
+      {"physics.limit.dof", "physics",
+       "a limit's degree of freedom must match its joint type"},
+      {"physics.limit.range", "physics",
+       "limit low must not exceed high"},
+      {"physics.motion", "physics",
+       "MotionAPI values must be finite and valid"},
+      {"physics.preliminary.acceleration", "physics",
+       "preliminary gravitationalForce acceleration must be finite"},
+      {"physics.preliminary.normal", "physics",
+       "preliminary infinite-plane normal must be a unit-lengthable vector"},
+      {"physics.preliminary.range", "physics",
+       "preliminary physics values must be within range"},
+      {"physics.preliminary.relationship", "physics",
+       "preliminary physics relationships must target valid prims"},
+      {"physics.quaternion", "physics",
+       "physics quaternions must be finite and non-zero"},
+      {"physics.relationship.target", "physics",
+       "physics relationships must target existing prims"},
+      {"physics.rigidBody.xformable", "physics",
+       "RigidBodyAPI must be applied to an Xformable prim"},
+      {"physics.scene.gravity", "physics",
+       "gravityDirection must be normalizable and magnitude finite"},
+      {"physics.schemaPlacement", "physics",
+       "physics API schemas must be applied to valid prim types"},
+      {"physics.value.range", "physics",
+       "physics scalar values must be within their valid ranges"},
+      {"render.product.aspectRatioConformPolicy", "render",
+       "RenderProduct aspectRatioConformPolicy must be a valid token"},
+      {"render.product.relationship", "render",
+       "RenderProduct orderedVars/camera must target valid prims"},
+      {"render.settings.aspectRatioConformPolicy", "render",
+       "RenderSettings aspectRatioConformPolicy must be a valid token"},
+      {"render.settings.relationship", "render",
+       "RenderSettings products/camera must target valid prims"},
+      {"render.var.sourceType", "render",
+       "RenderVar sourceType must be a valid token"},
+      {"shade.connection.target", "shade",
+       "shader connections must target existing attributes of connectable prims"},
+      {"shade.encapsulation.imageableInMaterial", "shade",
+       "only connectable prims belong under a Material (usdchecker EncapsulationMaterialValidator)"},
+      {"shade.encapsulation.shaderParent", "shade",
+       "Shaders must be parented by a Material or NodeGraph"},
+      {"shade.material.binding", "shade",
+       "material:binding properties must be relationships"},
+      {"shade.material.bindingAPI", "shade",
+       "material bindings require MaterialBindingAPI to be applied"},
+      {"shade.material.outputConnection", "shade",
+       "Material terminal outputs must connect to a shader output"},
+      {"shade.materialX.configAPI", "shade",
+       "MaterialX layers require MaterialXConfigAPI with version metadata"},
+      {"shade.materialX.nodeReference", "shade",
+       "MaterialX node references must resolve to defined nodes"},
+      {"shade.materialX.output", "shade",
+       "MaterialX shaders must author their declared outputs"},
+      {"shade.materialX.referencePrimPath", "shade",
+       "MaterialX references must use valid prim paths"},
+      {"shade.materialX.sourceUri", "shade",
+       "MaterialX source URIs must be non-empty asset paths"},
+      {"shade.materialX.version", "shade",
+       "MaterialX version metadata must be a valid version string"},
+      {"shade.normalMap.scaleBias", "shade",
+       "8-bit normal maps must remap [0,1] to [-1,1] and stay raw (usdchecker NormalMapTextureValidator)"},
+      {"shade.preview.inputRange", "shade",
+       "UsdPreviewSurface scalar inputs must be within [0,1] where specified"},
+      {"shade.preview.inputType", "shade",
+       "UsdPreviewSurface inputs must match the registry value types"},
+      {"shade.preview.opacityMode", "shade",
+       "opacityThreshold/opacityMode combinations must be consistent"},
+      {"shade.preview.unknownInput", "shade",
+       "inputs:* on UsdPreviewSurface must be registry inputs"},
+      {"shade.primvarReader.result", "shade",
+       "UsdPrimvarReader outputs:result must match the reader's type"},
+      {"shade.primvarReader.varname", "shade",
+       "UsdPrimvarReader must author a non-empty inputs:varname"},
+      {"shade.shader.id", "shade",
+       "id-source shaders must name a registry shader id (usdchecker ShaderSdrCompliance)"},
+      {"shade.shader.typeMismatch", "shade",
+       "shader input declared types must match the registry exactly (usdchecker MismatchedPropertyType)"},
+      {"shade.subset.materialBindFamily", "shade",
+       "material-bound GeomSubsets must be in the materialBind family (usdchecker SubsetMaterialBindFamilyName)"},
+      {"shade.uvTexture.file", "shade",
+       "UsdUVTexture must author a non-empty inputs:file"},
+      {"shade.uvTexture.sourceColorSpace", "shade",
+       "sourceColorSpace must be auto, raw, or sRGB"},
+      {"shade.uvTexture.wrap", "shade",
+       "wrapS/wrapT must be valid wrap tokens"},
+  };
+  return kRules;
+}
+
+void ApplyUsdcheckerCompatSeverities(USDValidationResult *result) {
+  if (!result) {
+    return;
+  }
+  // Rules OpenUSD's usdchecker reports as ERRORS where the tinyusdz defaults
+  // use warnings (or where the presence rules default to warnings). Keyed by
+  // rule id so the upgrade also covers issues merged in from the
+  // byte-container checks.
+  static const std::unordered_set<std::string> kErrorRules = {
+      "geom.stage.upAxis",
+      "geom.stage.metersPerUnit",
+      "core.layer.defaultPrim.missing",
+      "core.dependency.unresolvable",
+      "core.schema.attributeType",
+      "geom.encapsulation.nestedGprim",
+      "geom.subset.parent",
+      "geom.subset.familyType",
+      "shade.material.bindingAPI",
+      "shade.encapsulation.shaderParent",
+      "shade.encapsulation.imageableInMaterial",
+      "shade.preview.inputType",
+      "shade.shader.typeMismatch",
+      "shade.shader.id",
+      "shade.subset.materialBindFamily",
+      "shade.normalMap.scaleBias",
+  };
+  for (USDValidationIssue &issue : result->issues) {
+    if (issue.severity == USDValidationSeverity::Warning &&
+        kErrorRules.count(issue.rule_id)) {
+      issue.severity = USDValidationSeverity::Error;
+    }
+  }
+}
 
 std::string FormatValidationResult(const USDValidationResult &result) {
   std::ostringstream ss;
