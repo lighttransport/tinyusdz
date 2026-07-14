@@ -584,6 +584,10 @@ private:
   void ExtractPrimMeta(const PrimMeta& metas, crate::FieldValuePairVector& fields);
 
   /// Extract common GPrim properties (visibility, purpose, etc.)
+  bool ExtractImageableAttrs(const TypedAttributeWithFallback<Animatable<Visibility>>& visibility, const TypedAttributeWithFallback<Purpose>& purpose, crate::FieldValuePairVector& fields, std::string* err);
+
+  bool ExtractScopeProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+  // Shared by every imageable prim (GPrim, Scope, lights, Material/NodeGraph).
   bool ExtractGPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Material properties (outputs: surface, displacement, volume)
@@ -670,6 +674,22 @@ private:
   bool ExtractAnimatableDefault(const Animatable<T>& anim, const char* name,
                                 crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Emit one TypedAttributeWithFallback<Animatable<T>>, whole: its value (or,
+  /// if it was DECLARED without one, a bare declaration rather than the schema
+  /// fallback), plus its metadata block and its connections.
+  ///
+  /// Always prefer this to calling ExtractAnimatableDefault() off `authored()`:
+  /// get_value() returns the SCHEMA FALLBACK for an authored-but-empty
+  /// attribute, so doing so writes `double radius = 2` for a bare
+  /// `double radius` -- inventing a STRONG opinion the author never authored.
+  /// The declared type is derived from T, so call sites cannot get it wrong.
+  /// Defined in sconv-geom.cc, alongside the helpers it composes.
+  template<typename T>
+  bool EmitTypedAnimatableAttr(const char* name,
+                               const TypedAttributeWithFallback<Animatable<T>>& attr,
+                               crate::FieldValuePairVector& fields,
+                               std::string* err);
+
   // ======================================================================
   // Layer/PrimSpec conversion helpers
   // ======================================================================
@@ -701,7 +721,8 @@ private:
   /// Convert a Relationship to separate spec (proper USD format)
   /// Creates a spec with SpecType::Relationship at parent_path.AppendProperty(rel_name)
   bool ConvertRelationshipToFields(const std::string& rel_name, const Relationship& rel,
-                                   const Path& parent_path, std::string* err);
+                                   const Path& parent_path, std::string* err,
+                                   bool is_custom = false);
 
   /// Convert an Attribute Connection to separate spec (proper USD format)
   /// Creates a spec with SpecType::Connection
@@ -740,6 +761,21 @@ private:
   /// Pack a CrateValue into ValueRep
   /// Returns the ValueRep and may write out-of-line data to file
   crate::ValueRep PackValue(const crate::CrateValue& value, std::string* err);
+
+  /// Pack a TokenVector metadata value into ValueRep.
+  /// primChildren / properties / variantSetChildren / variantChildren must be
+  /// the dedicated uncompressed TokenVector crate type (CrateDataTypeId 41):
+  /// as a Token[] array pxr's hierarchy traversal cannot use them.
+  crate::ValueRep PackTokenVectorValue(const std::vector<value::token>& tokens,
+                                       std::string* err);
+
+  /// Pack a StringVector metadata value (e.g. `subLayers`) into ValueRep.
+  crate::ValueRep PackStringVectorValue(const std::vector<std::string>& strs,
+                                        std::string* err);
+
+  /// Pack a LayerOffsetVector metadata value (`subLayerOffsets`) into ValueRep.
+  crate::ValueRep PackLayerOffsetVectorValue(
+      const std::vector<LayerOffset>& offsets, std::string* err);
 
   /// Pack a metadata dictionary value into a Crate ValueRep.
   bool PackMetaVariable(const std::string& key, const MetaVariable& meta,

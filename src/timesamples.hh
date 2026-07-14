@@ -77,6 +77,13 @@ struct TimeSamples {
     return _type_id != 0;
   }
 
+  // "timeSamples was AUTHORED", independent of whether it has any samples.
+  // `float x.timeSamples = {}` is authored-but-empty, and size()/empty() cannot
+  // tell that apart from "no timeSamples at all" -- which is why an empty
+  // timeSamples block was dropped on write.
+  void set_authored(bool onoff = true) { _authored = onoff; }
+  bool authored() const { return _authored || (size() > 0); }
+
   void clear();
 
   /// Pre-allocate internal vectors for the expected number of samples.
@@ -1001,6 +1008,12 @@ struct TimeSamples {
   mutable bool _dirty{false};
   mutable bool _has_error{false};                   // Set if update() detected a parallel-array invariant violation
   bool _is_array{false};                            // true if storing array data
+
+  // "timeSamples was AUTHORED", even if it holds no samples. See set_authored().
+  // NOTE: TimeSamples has hand-written copy/move ctors and assignment operators
+  // (timesamples.cc) that copy member-by-member -- a new member added here MUST
+  // be added to all four, or it is silently dropped on every copy.
+  bool _authored{false};
 
   // Guards the one-time lazy materialization of `_samples` from unified
   // (`_times`/`_data`) storage in get_samples(): once finalized (set at parse

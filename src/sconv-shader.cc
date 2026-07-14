@@ -33,6 +33,17 @@ bool CrateWriter::ExtractMaterialProperties(
     return false;
   }
 
+  // Material is imageable: `purpose` is a typed field (UsdShadePrim::purpose),
+  // so it has to be written explicitly or it vanishes on write.
+  if (material->purpose.authored()) {
+    const Purpose purpose_val = material->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose_val)));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
+  }
+
 
   // Material outputs (surface, displacement, volume) are handled separately
   // by AddMaterialOutputSpecs() which is called AFTER the Material prim spec is added
@@ -298,7 +309,7 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       value::float3 color_as_float3 = {color.r, color.g, color.b};
       crate::CrateValue diffuse_value;
       diffuse_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", "color3f", diffuse_value, &preview_surface->diffuseColor.get_value(), conns)) {
+      if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", preview_surface->diffuseColor.has_actual_type() ? preview_surface->diffuseColor.get_actual_type_name() : "color3f", diffuse_value, &preview_surface->diffuseColor.get_value(), conns)) {
         return false;
       }
     } else {
@@ -319,7 +330,7 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       value::float3 color_as_float3 = {color.r, color.g, color.b};
       crate::CrateValue emissive_value;
       emissive_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", "color3f", emissive_value, &preview_surface->emissiveColor.get_value(), conns)) {
+      if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", preview_surface->emissiveColor.has_actual_type() ? preview_surface->emissiveColor.get_actual_type_name() : "color3f", emissive_value, &preview_surface->emissiveColor.get_value(), conns)) {
         return false;
       }
     } else {
@@ -367,7 +378,7 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       value::float3 color_as_float3 = {color.r, color.g, color.b};
       crate::CrateValue spec_color_value;
       spec_color_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", "color3f", spec_color_value, &preview_surface->specularColor.get_value(), conns)) {
+      if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", preview_surface->specularColor.has_actual_type() ? preview_surface->specularColor.get_actual_type_name() : "color3f", spec_color_value, &preview_surface->specularColor.get_value(), conns)) {
         return false;
       }
     } else {
@@ -627,7 +638,7 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
 ) {
 
   // Helper lambda to add an input spec as a separate attribute
-  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value, const std::vector<Path>* connections = nullptr) -> bool {
+  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value, const std::vector<Path>* connections = nullptr, const AttrMeta* attr_metas = nullptr) -> bool {
     Path input_path = prim_path.AppendProperty(input_name);
     crate::FieldValuePairVector input_fields;
 
@@ -636,6 +647,16 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     value::token typename_tok(type_name);
     typename_value.Set(typename_tok);
     input_fields.push_back({"typeName", typename_value});
+
+    // The input's OWN metadata block, e.g.
+    //   asset inputs:file = @f.png@ ( colorSpace = "Raw" )
+    // The shader writer builds its specs by hand and emitted no attribute
+    // metadata at all, so colorSpace was dropped on write.
+    if (attr_metas && attr_metas->has_colorSpace()) {
+      crate::CrateValue cs_value;
+      cs_value.Set(attr_metas->get_colorSpace());
+      input_fields.push_back({"colorSpace", cs_value});
+    }
 
     // default field (the value)
     input_fields.push_back({"default", value});
@@ -667,6 +688,7 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     value::token type_tok(type_name);
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
+
     ListOp<Path> conn_listop;
     conn_listop.ClearAndMakeExplicit();
     conn_listop.SetExplicitItems(conn_paths);
@@ -749,12 +771,49 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     auto file_opt = uv_texture->file.get_value();
     if (file_opt.has_value()) {
       const auto& file_animatable = file_opt.value();
-      if (!file_animatable.is_timesamples()) {
+      if (file_animatable.is_timesamples()) {
+        // An ANIMATED texture path (`asset inputs:file.timeSamples = {...}`).
+        // There is no default here, so the samples must live in the SAME spec as
+        // the typeName: the reader builds one Property per spec, and a spec that
+        // carries nothing but a typeName has no value to construct it from
+        // ("Failed to construct Property `inputs:file`"). The separate
+        // `<name>.timeSamples` spec that add_input_spec_with_timesamples_float2
+        // uses above works only because its base spec also has a default.
+        if (const value::TimeSamples* tsp =
+                file_animatable.get_timesamples_ptr()) {
+          Path input_path = prim_path.AppendProperty("inputs:file");
+          crate::FieldValuePairVector input_fields;
+
+          crate::CrateValue type_value;
+          value::token type_tok("asset");
+          type_value.Set(type_tok);
+          input_fields.push_back({"typeName", type_value});
+
+          crate::CrateValue ts_value;
+          ts_value.Set(*tsp);
+          input_fields.push_back({"timeSamples", ts_value});
+
+          if (conns && !conns->empty()) {
+            ListOp<Path> conn_listop;
+            conn_listop.ClearAndMakeExplicit();
+            conn_listop.SetExplicitItems(*conns);
+            crate::CrateValue conn_value;
+            conn_value.Set(conn_listop);
+            input_fields.push_back({"connectionPaths", conn_value});
+          }
+
+          if (!AddSpec(input_path, SpecType::Attribute, input_fields, err)) {
+            return false;
+          }
+          emitted_value = true;
+        }
+      } else {
         value::AssetPath file_path;
         if (file_animatable.get_scalar(&file_path)) {
           crate::CrateValue file_value;
           file_value.Set(file_path);
-          if (!add_input_spec("inputs:file", "asset", file_value, conns)) {
+          if (!add_input_spec("inputs:file", "asset", file_value, conns,
+                              &uv_texture->file.metas())) {
             return false;
           }
           emitted_value = true;
@@ -1035,6 +1094,9 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
   bool has_varname = false;
   std::vector<Path> varname_conns;
   bool has_varname_conn = false;
+  // Authored typeName spelling: the older UsdPrimvarReader spec used `token`,
+  // and OpenUSD preserves whichever the author wrote.
+  std::string varname_type = "string";
 
   // The varname field is TypedAttribute<Animatable<std::string>>
   // We need to extract it generically from the shader_value
@@ -1045,6 +1107,9 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
     if (!has_varname && !has_varname_conn) { \
       if (auto* reader = shader_value.as<ReaderType>()) { \
         if (reader->varname.authored()) { \
+          if (reader->varname.has_actual_type()) { \
+            varname_type = reader->varname.get_actual_type_name(); \
+          } \
           if (reader->varname.has_connections()) { \
             varname_conns = reader->varname.connections(); \
             has_varname_conn = !varname_conns.empty(); \
@@ -1078,16 +1143,21 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
 
   #undef TRY_EXTRACT_VARNAME
 
-  // Add inputs:varname (string) - value and/or connection (USD allows both).
+  // Add inputs:varname - value and/or connection (USD allows both). Declared
+  // with the AUTHORED type: `token` (older spec) or `string`.
   if (has_varname) {
     crate::CrateValue varname_value;
-    varname_value.Set(varname_str);
-    if (!add_input_spec("inputs:varname", "string", varname_value,
+    if (varname_type == "token") {
+      varname_value.Set(value::token(varname_str));
+    } else {
+      varname_value.Set(varname_str);
+    }
+    if (!add_input_spec("inputs:varname", varname_type, varname_value,
                         has_varname_conn ? &varname_conns : nullptr)) {
       return false;
     }
   } else if (has_varname_conn) {
-    if (!add_input_connection_spec("inputs:varname", "string", varname_conns)) {
+    if (!add_input_connection_spec("inputs:varname", varname_type, varname_conns)) {
       return false;
     }
   }
@@ -1359,6 +1429,16 @@ bool CrateWriter::ExtractNodeGraphProperties(
   if (!node_graph) {
     if (err) *err = "Failed to cast prim to NodeGraph";
     return false;
+  }
+
+  // Same typed `purpose` as Material (both derive from UsdShadePrim).
+  if (node_graph->purpose.authored()) {
+    const Purpose purpose_val = node_graph->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose_val)));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
   }
 
   // NodeGraph is primarily a container for organizing shader nodes and interfaces.

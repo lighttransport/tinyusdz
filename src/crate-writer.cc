@@ -420,33 +420,35 @@ bool CrateWriter::Finalize(std::string* err) {
       crate::Field field;
       field.token_index = GetOrCreateToken(field_pair.first);
 
-      // Pack value
-      field.value_rep = PackValue(field_pair.second, err);
+      // USD metadata fields `primChildren` and `properties` store a list of
+      // child/property names. On the wire, pxrusd expects these as the
+      // dedicated uncompressed `TokenVector` type (CrateDataTypeId 41), not
+      // as a `Token[]` array. Large Token[] arrays may be integer-compressed,
+      // and retagging those bytes as TokenVector produces scalar ValueReps
+      // with the compressed bit set, which OpenUSD rejects.
+      const std::string& fname = field_pair.first;
+      if ((fname == "primChildren" || fname == "properties" ||
+           fname == "variantSetChildren" || fname == "variantChildren") &&
+          field_pair.second.as<std::vector<value::token>>()) {
+        field.value_rep = PackTokenVectorValue(
+            *field_pair.second.as<std::vector<value::token>>(), err);
+      } else if (fname == "subLayers" &&
+                 field_pair.second.as<std::vector<std::string>>()) {
+        // Must be the dedicated StringVector type or pxr ignores the
+        // sublayers entirely (see PackStringVectorValue).
+        field.value_rep = PackStringVectorValue(
+            *field_pair.second.as<std::vector<std::string>>(), err);
+      } else if (fname == "subLayerOffsets" &&
+                 field_pair.second.as<std::vector<LayerOffset>>()) {
+        field.value_rep = PackLayerOffsetVectorValue(
+            *field_pair.second.as<std::vector<LayerOffset>>(), err);
+      } else {
+        field.value_rep = PackValue(field_pair.second, err);
+      }
       if (err && !err->empty()) {
         return false;
       }
 
-      // USD metadata fields `primChildren` and `properties` store a list of
-      // child/property names. On the wire, pxrusd expects these as the
-      // dedicated `TokenVector` type (CrateDataTypeId 41), not as a
-      // `Token[]` array (CrateDataTypeId 11 with IsArray). The serialized
-      // bytes are identical — uint64 count followed by uint32 token
-      // indices — so we just retag the ValueRep after PackValue emitted
-      // it as Token[]. Without this, pxrusd loads the layer but silently
-      // drops every prim because its primChildren field fails type
-      // validation, and we ship USDC that downstream DCCs can't read.
-      const std::string& fname = field_pair.first;
-      if ((fname == "primChildren" || fname == "properties") &&
-          field_pair.second.as<std::vector<value::token>>() &&
-          field.value_rep.IsArray() &&
-          field.value_rep.GetType() ==
-              static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN)) {
-        uint64_t data = field.value_rep.GetData();
-        data &= ~crate::ValueRep::IsArrayBit_;
-        field.value_rep = crate::ValueRep(data);
-        field.value_rep.SetType(static_cast<int32_t>(
-            crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR));
-      }
 
       // Get or create field index
       crate::FieldIndex field_idx = GetOrCreateField(field);
@@ -498,6 +500,17 @@ bool CrateWriter::Finalize(std::string* err) {
   GetOrCreateToken("");
   for (const auto& path : paths_) {
     std::string elem = path.element_name();
+    // Keep in lockstep with WritePathsSection: a trailing variant selection is
+    // tokenized as the bare `{set=sel}` group, not the whole slash-segment.
+    // Registering the unstripped form here would leave the stripped one to be
+    // appended AFTER the TOKENS section is serialized -- the exact "Corrupt
+    // path element token index" failure this loop exists to prevent.
+    if (!elem.empty() && elem.back() == '}') {
+      size_t open = elem.find_last_of('{');
+      if (open != std::string::npos) {
+        elem = elem.substr(open);
+      }
+    }
     if (!elem.empty() && elem != "/") {
       GetOrCreateToken(elem);
     }
@@ -985,6 +998,22 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       bool is_prop = p.first.is_prim_property_path();
       std::string elem = is_prop ? p.first.prop_part() : p.first.element_name();
       if (elem == "/") elem.clear();
+
+      // A variant selection is its OWN path element on the crate wire: the
+      // node for /Implicits{shapeVariant=Capsule} carries the element token
+      // `{shapeVariant=Capsule}` (its tree parent is the /Implicits node).
+      // element_name() returns the last '/'-segment, so it hands back
+      // `Implicits{shapeVariant=Capsule}` -- which OpenUSD's reader rejects
+      // ("Invalid prim name") and then cascades into empty/repeated specs,
+      // refusing the whole file. Strip to the last `{...}` group; a multi-group
+      // tail (`/A{v1=x}{v2=y}`, nested variantSets) peels one group per tree
+      // level because get_parent_path() strips exactly one group too.
+      if (!is_prop && !elem.empty() && elem.back() == '}') {
+        size_t open = elem.find_last_of('{');
+        if (open != std::string::npos) {
+          elem = elem.substr(open);
+        }
+      }
 
       uint32_t thisIdx = currentIdx++;
       encoded_path_indices[thisIdx] = p.second.value;
