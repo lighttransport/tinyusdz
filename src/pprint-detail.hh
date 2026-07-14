@@ -249,6 +249,10 @@ inline std::string print_typed_attr(
   std::stringstream ss;
 
   if (attr.authored()) {
+    const std::string &tyname = attr.has_actual_type()
+        ? attr.get_actual_type_name()
+        : value::TypeTraits<T>::type_name();
+
 
     bool is_value_empty = attr.is_value_empty();
     bool is_connection = attr.is_connection();
@@ -275,7 +279,7 @@ inline std::string print_typed_attr(
     if (should_emit_declaration) {
 
       ss << pprint::Indent(indent);
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
 
       if (attr.is_blocked()) {
         ss << " = None";
@@ -286,7 +290,7 @@ inline std::string print_typed_attr(
           // Set prefix_columns for column-wrapping of arrays
           uint32_t pcols = static_cast<uint32_t>(
               pprint::Indent(indent).size() +
-              std::string(value::TypeTraits<T>::type_name()).size() +
+              tyname.size() +
               1 + name.size() + 3);  // " " + name + " = "
           pprint::ScopedPrefixColumns spc(pcols);
           val_ss << a;
@@ -305,7 +309,7 @@ inline std::string print_typed_attr(
     // timesamples
     if (has_timesamples) {
       ss << pprint::Indent(indent);
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
       ss << ".timeSamples = "
          << print_value_typed_timesamples<T>(*pv.value().get_timesamples_ptr(), indent);
       ss << "\n";
@@ -315,7 +319,7 @@ inline std::string print_typed_attr(
     if (attr.has_connections()) {
 
       ss << pprint::Indent(indent);
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
 
       ss << ".connect = " << fmt_connections(attr.get_connections()) << "\n";
     }
@@ -334,6 +338,10 @@ inline std::string print_str_attr(
   std::stringstream ss;
 
   if (attr.authored()) {
+    const std::string &tyname = attr.has_actual_type()
+        ? attr.get_actual_type_name()
+        : value::TypeTraits<std::string>::type_name();
+
 
     bool is_value_empty = attr.is_value_empty();
     bool is_connection = attr.is_connection();
@@ -353,7 +361,7 @@ inline std::string print_str_attr(
     if (attr.metas().authored() || attr.is_blocked() || has_default ||
         is_value_empty || ((!is_connection) && (!is_timesamples))) {
       ss << pprint::Indent(indent);
-      ss << value::TypeTraits<std::string>::type_name() << " " << name;
+      ss << tyname << " " << name;
 
       if (attr.is_blocked()) {
         ss << " = None";
@@ -373,7 +381,7 @@ inline std::string print_str_attr(
 
     if (has_timesamples) {
       ss << pprint::Indent(indent);
-      ss << value::TypeTraits<std::string>::type_name() << " " << name;
+      ss << tyname << " " << name;
 
       ss << ".timeSamples = "
          << print_str_timesamples(*pv.value().get_timesamples_ptr(), indent);
@@ -384,7 +392,7 @@ inline std::string print_str_attr(
     if (attr.has_connections()) {
 
       ss << pprint::Indent(indent);
-      ss << value::TypeTraits<std::string>::type_name() << " " << name;
+      ss << tyname << " " << name;
 
       ss << ".connect = ";
       const std::vector<Path> &paths = attr.get_connections();
@@ -414,12 +422,16 @@ inline std::string print_typed_attr(const TypedAttribute<T> &attr,
   std::stringstream ss;
 
   if (attr.authored()) {
+    const std::string &tyname = attr.has_actual_type()
+        ? attr.get_actual_type_name()
+        : value::TypeTraits<T>::type_name();
+
 
     if (attr.metas().authored() || attr.is_blocked() || attr.has_value() ||
         attr.is_value_empty() || (!attr.is_connection())) {
       ss << pprint::Indent(indent);
       ss << "uniform ";
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
 
       if (attr.is_blocked()) {
         ss << " = None";
@@ -431,7 +443,7 @@ inline std::string print_typed_attr(const TypedAttribute<T> &attr,
           // Set prefix_columns for column-wrapping of arrays
           uint32_t pcols = static_cast<uint32_t>(
               pprint::Indent(indent).size() + 8 +  // "uniform "
-              std::string(value::TypeTraits<T>::type_name()).size() +
+              tyname.size() +
               1 + name.size() + 3);  // " " + name + " = "
           pprint::ScopedPrefixColumns spc(pcols);
           ss << " = " << pv.value();
@@ -445,7 +457,7 @@ inline std::string print_typed_attr(const TypedAttribute<T> &attr,
     if (attr.has_connections()) {
       ss << pprint::Indent(indent);
       ss << "uniform ";
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
       ss << ".connect = ";
 
       const std::vector<Path> &paths = attr.get_connections();
@@ -475,6 +487,10 @@ inline std::string print_typed_attr(
   std::stringstream ss;
 
   if (attr.authored()) {
+    const std::string &tyname = attr.has_actual_type()
+        ? attr.get_actual_type_name()
+        : value::TypeTraits<T>::type_name();
+
 
     const auto &v = attr.get_value();
 
@@ -503,21 +519,21 @@ inline std::string print_typed_attr(
         ((!is_connection) && (!has_timesamples) && !is_connection_only)) {
       if (is_value_empty) {
         ss << pprint::Indent(indent);
-        ss << value::TypeTraits<T>::type_name() << " " << name;
+        ss << tyname << " " << name;
       } else if (has_default) {
         ss << pprint::Indent(indent);
-        ss << value::TypeTraits<T>::type_name() << " " << name;
+        ss << tyname << " " << name;
         {
           uint32_t pcols = static_cast<uint32_t>(
               pprint::Indent(indent).size() +
-              std::string(value::TypeTraits<T>::type_name()).size() +
+              tyname.size() +
               1 + name.size() + 3);
           pprint::ScopedPrefixColumns spc(pcols);
           ss << " = " << print_animatable_default(v, indent);
         }
       } else {
         ss << pprint::Indent(indent);
-        ss << value::TypeTraits<T>::type_name() << " " << name;
+        ss << tyname << " " << name;
       }
 
       print_attr_metas_block(ss, attr.metas(), indent);
@@ -526,14 +542,14 @@ inline std::string print_typed_attr(
 
     if (v.has_timesamples()) {
       ss << pprint::Indent(indent);
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
       ss << ".timeSamples = " << print_animatable_timesamples(v, indent);
       ss << "\n";
     }
 
     if (attr.has_connections()) {
       ss << pprint::Indent(indent);
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
       ss << ".connect = ";
 
       const std::vector<Path> &paths = attr.get_connections();
@@ -593,13 +609,17 @@ inline std::string print_typed_attr(
   std::stringstream ss;
 
   if (attr.authored()) {
+    const std::string &tyname = attr.has_actual_type()
+        ? attr.get_actual_type_name()
+        : value::TypeTraits<T>::type_name();
+
 
     // default
     if (attr.metas().authored() || attr.is_blocked() ||
         attr.is_value_empty() || (!attr.is_connection())) {
       ss << pprint::Indent(indent);
       ss << "uniform ";
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
 
       if (attr.is_blocked()) {
         ss << " = None";
@@ -608,7 +628,7 @@ inline std::string print_typed_attr(
       } else {
         uint32_t pcols = static_cast<uint32_t>(
             pprint::Indent(indent).size() + 8 +  // "uniform "
-            std::string(value::TypeTraits<T>::type_name()).size() +
+            tyname.size() +
             1 + name.size() + 3);
         pprint::ScopedPrefixColumns spc(pcols);
         ss << " = " << attr.get_value();
@@ -621,7 +641,7 @@ inline std::string print_typed_attr(
     if (attr.has_connections()) {
       ss << pprint::Indent(indent);
       ss << "uniform ";
-      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << tyname << " " << name;
       ss << ".connect = ";
 
       const std::vector<Path> &paths = attr.get_connections();

@@ -71,6 +71,15 @@ inline void EmitAttrMetas(const std::string &name, const AttrMeta &metas,
     fields.push_back({name + ".documentation", v});
   }
 
+  // Unregistered property metadata: emit as the crate UNREGISTERED_VALUE type
+  // (what pxr writes for SdfUnregisteredValue), carrying the raw USDA text.
+  // The field router recognises the dotted spelling by the UNREGISTERED marker
+  // on the value (the suffix itself is by definition not a known meta key).
+  for (const auto &kv : metas.unregisteredMetas) {
+    crate::CrateValue v;
+    v.SetUnregisteredValueString(kv.second);
+    fields.push_back({name + "." + kv.first, v});
+  }
 }
 
 // Emit a DECLARATION-ONLY attribute (`double radius`, no value).
@@ -123,13 +132,25 @@ bool CrateWriter::EmitTypedAnimatableAttr(
     const char *name, const TypedAttributeWithFallback<Animatable<T>> &attr,
     crate::FieldValuePairVector &fields, std::string *err) {
   if (attr.authored()) {
+    // The authored typeName may be a role-spelling variant of T (e.g. authored
+    // `float3` for a color3f field) -- declare what the author wrote, not the
+    // schema type. Role types share the wire type, only the typeName differs.
+    const std::string decl_type = attr.has_actual_type()
+                                      ? attr.get_actual_type_name()
+                                      : value::TypeTraits<T>::type_name();
     if (attr.is_value_empty()) {
       // DECLARED with no value. Emitting attr.get_value() here would emit the
-      // schema fallback -- see EmitAttrDeclaration. The type comes from T, so a
-      // call site cannot declare the wrong one.
-      sconv_detail::EmitAttrDeclaration(name, value::TypeTraits<T>::type_name(), fields);
-    } else if (!ExtractAnimatableDefault(attr.get_value(), name, fields, err)) {
-      return false;
+      // schema fallback -- see EmitAttrDeclaration.
+      sconv_detail::EmitAttrDeclaration(name, decl_type, fields);
+    } else {
+      if (!ExtractAnimatableDefault(attr.get_value(), name, fields, err)) {
+        return false;
+      }
+      // A VALUED attribute normally gets its typeName inferred from the value;
+      // override it when the authored spelling differs.
+      if (attr.has_actual_type()) {
+        sconv_detail::EmitAttrDeclaration(name, decl_type, fields);
+      }
     }
     sconv_detail::EmitAttrMetas(name, attr.metas(), fields);
   }
@@ -156,6 +177,13 @@ bool CrateWriter::AddTypedArrayAttribute(
         return true;
       }
       fields.push_back({name, crate_val});
+      // Preserve the role spelling degraded by ConvertValue (see
+      // ExtractAnimatableDefault above).
+      if (v.type_name() != crate_val.type_name()) {
+        crate::CrateValue ty;
+        ty.Set(value::token(v.type_name()));
+        fields.push_back({std::string(name) + ".typeName", ty});
+      }
     }
   }
   return true;
@@ -172,6 +200,16 @@ bool CrateWriter::ExtractAnimatableDefault(
       value::Value v(val);
       if (!ConvertValue(v, crate_val, err)) return false;
       fields.push_back({name, crate_val});
+      // ConvertValue degrades role types (color3f -> float3 crate value); the
+      // spec assembly infers typeName from the value, so declare the schema
+      // spelling explicitly or the attribute is re-typed on the wire. An
+      // authored-spelling override (has_actual_type) is emitted AFTER this by
+      // EmitTypedAnimatableAttr and wins in the field router.
+      if (value::TypeTraits<T>::type_name() != crate_val.type_name()) {
+        crate::CrateValue ty;
+        ty.Set(value::token(value::TypeTraits<T>::type_name()));
+        fields.push_back({std::string(name) + ".typeName", ty});
+      }
     }
   }
   if (anim.has_timesamples()) {
