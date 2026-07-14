@@ -865,7 +865,16 @@ void Compositor::CopyLocalOpinions(
       opinions.push_back(std::move(opinion));
     }
 
+    // Track opinions whose every target was DROPPED as unmappable across the
+    // arc: pxr keeps the relationship SPEC but no target opinion (a bare
+    // `rel name` on flatten), NOT an authored-explicit empty list (`= None`).
+    size_t src_opinions = 0;
+    size_t src_vacated = 0;
+    const size_t prior_opinions = opinions.size();
     auto remap_opinion = [&](PrimSpec::RelationshipOpinion opinion) {
+      ++src_opinions;
+      const bool had_items = !opinion.items.empty() ||
+                             opinion.edit.has_authored_opinion();
       std::vector<Path> mapped_items;
       for (const Path& item : opinion.items) {
         if (target_mappable(item)) mapped_items.push_back(map_target(item));
@@ -885,6 +894,10 @@ void Compositor::CopyLocalOpinions(
       remap_edit_items(&opinion.edit.appended);
       remap_edit_items(&opinion.edit.deleted);
       remap_edit_items(&opinion.edit.ordered);
+      if (had_items && opinion.items.empty() &&
+          !opinion.edit.has_authored_opinion()) {
+        ++src_vacated;
+      }
       opinions.push_back(std::move(opinion));
     };
 
@@ -912,12 +925,18 @@ void Compositor::CopyLocalOpinions(
         ApplyRelationshipEdit(&effective, it->edit);
       }
     }
+    // Every contributed opinion lost all its targets to arc mapping and there
+    // was no prior opinion: the composed relationship exists but carries NO
+    // target opinion (bare `rel name`, pxr parity) — an authored-explicit
+    // empty list here would wrongly serialize as `= None`.
+    const bool vacated = prior_opinions == 0 && src_opinions > 0 &&
+                         src_vacated == src_opinions && effective.empty();
     target.set_relationship_targets(rel_name, std::move(effective));
     target.set_relationship_opinion_stack(rel_name, std::move(opinions));
     ArcEdit& resolved = target.ensure_relationship_edit(rel_name);
     resolved = ArcEdit();
-    resolved.authored = true;
-    resolved.is_explicit = true;
+    resolved.authored = !vacated;
+    resolved.is_explicit = !vacated;
     target.set_relationship_flags(
         rel_name, static_cast<uint16_t>(target.relationship_flags(rel_name) |
                                         source.relationship_flags(rel_name)));

@@ -748,9 +748,11 @@ void WriteRelationship(StreamWriter& os, const std::string& name,
   auto head = [&]() {
     WriteIndent(os, depth, opts.indent);
     if (opts.emit_custom && is_custom) os << "custom ";
-    if (relationship_flags & PropSlot::kFlagVariabilityAuthored) {
-      os << ((relationship_flags & PropSlot::kFlagVarying) ? "varying "
-                                                           : "uniform ");
+    // Uniform is the relationship DEFAULT: pxr only ever prints `varying rel`
+    // (an authored-uniform variability field, e.g. from crate, stays silent).
+    if ((relationship_flags & PropSlot::kFlagVariabilityAuthored) &&
+        (relationship_flags & PropSlot::kFlagVarying)) {
+      os << "varying ";
     }
     os << "rel " << name;
   };

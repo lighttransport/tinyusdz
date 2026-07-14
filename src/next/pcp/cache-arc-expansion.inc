@@ -853,7 +853,13 @@
     std::vector<NamespaceMapping::Pair> renames;
     renames.reserve(rel.src_to_dst.size());
     for (const auto &r : rel.src_to_dst) {
-      renames.emplace_back(r.first, m.Apply(r.second));
+      // A relocate destination OUTSIDE the arc's namespace means the moved
+      // content is not addressable through this arc: record a DROP-marker
+      // pair (empty target) so relationship/connection targets under the
+      // source are dropped like pxr, instead of leaking the raw dst path.
+      renames.emplace_back(r.first,
+                           m.crosses_arc ? m.ApplyTarget(r.second)
+                                         : m.Apply(r.second));
     }
     for (auto &rename : renames) {
       m.AddRename(rename.first, rename.second);
