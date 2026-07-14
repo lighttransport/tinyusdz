@@ -818,9 +818,10 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
         # Compose differential over the same corpus: flatten every asset and
         # cross-check against the pinned OpenUSD usdcat (needs the legacy
         # build's tusddiff for the layer re-serialization diff). Ratchets
-        # (2026-07-14 baseline: 268 PASS/11 WARN/1 TIMEOUT, FAIL+CRASH 0;
-        # compare MATCH 247, DIFFER 11 + DIFFERR 20 = 31): small headroom
-        # only — raising either number requires justification.
+        # (2026-07-15 baseline: MATCH 267, DIFFER 2 + DIFFERR 9 = 11; the
+        # DIFFERR set is the LEGACY tusddiff parser failing on pxr output
+        # forms, not next divergences): small headroom only — raising either
+        # number requires justification.
         if(EXISTS "${NEXT_PXR_USDCAT}" AND
            EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../build/tusddiff")
             add_test(
@@ -830,13 +831,13 @@ if(TINYUSDZ_NEXT_BUILD_TESTS)
                         --assets "${NEXT_CORPUS_ASSETS_DIR}"
                         --mode flatten
                         --tusdcat "$<TARGET_FILE:next_usdcat>"
-                        --serialize-args --rewrite-layer
+                        --serialize-args "--rewrite-layer --openusd-compat"
                         --compare
                         --usdcat "${NEXT_PXR_USDCAT}"
                         --tusddiff "${CMAKE_CURRENT_SOURCE_DIR}/../../build/tusddiff"
                         --out "${CMAKE_CURRENT_BINARY_DIR}/corpus-flatten-results"
                         --max-fail 3
-                        --max-differ 35
+                        --max-differ 15
             )
             set_tests_properties(next_corpus_flatten_compare
                 PROPERTIES LABELS "next;corpus;pxrdiff" TIMEOUT 1800)
