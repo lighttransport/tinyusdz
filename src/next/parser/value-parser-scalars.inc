@@ -13,8 +13,14 @@ ParseResult ParseBool(Lexer& lexer) {
     lexer.next();
     return ParseResult::Ok(Value(false));
   } else if (tok.type == TokenType::Number) {
-    lexer.next();
-    return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value) != 0.0));
+    // pxr accepts ONLY the integer literals 0 and 1 for bool (not arbitrary
+    // numerics: `bool b = 5` / `= 0.5` are parse errors, not truthiness).
+    if (tok.value == "0" || tok.value == "1") {
+      const bool b = (tok.value == "1");
+      lexer.next();
+      return ParseResult::Ok(Value(b));
+    }
+    return ParseResult::Error("Invalid boolean value (expected 0, 1, true or false)");
   }
   return ParseResult::Error("Expected boolean value");
 }
@@ -30,8 +36,12 @@ ParseResult ParseInt(Lexer& lexer) {
     return ParseResult::Error("Expected integer value");
   }
   lexer.next();
-  int32_t value = DecimalToI32(tok.value.c_str());
-  return ParseResult::Ok(Value(value));
+  int64_t wide = 0;
+  if (!value_parser_detail::DecimalToI64Checked(tok.value.c_str(), &wide) ||
+      wide > INT32_MAX || wide < INT32_MIN) {
+    return ParseResult::Error("Integer value out of range");
+  }
+  return ParseResult::Ok(Value(static_cast<int32_t>(wide)));
 }
 
 ParseResult ParseUInt(Lexer& lexer) {
@@ -41,8 +51,11 @@ ParseResult ParseUInt(Lexer& lexer) {
     return ParseResult::Error("Expected unsigned integer value");
   }
   lexer.next();
-  uint32_t value = DecimalToU32(tok.value.c_str());
-  return ParseResult::Ok(Value(value));
+  uint64_t wide = 0;
+  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &wide) || wide > UINT32_MAX) {
+    return ParseResult::Error("Unsigned integer value out of range");
+  }
+  return ParseResult::Ok(Value(static_cast<uint32_t>(wide)));
 }
 
 ParseResult ParseInt64(Lexer& lexer) {
@@ -52,7 +65,10 @@ ParseResult ParseInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit integer value");
   }
   lexer.next();
-  int64_t value = DecimalToI64(tok.value.c_str());
+  int64_t value = 0;
+  if (!value_parser_detail::DecimalToI64Checked(tok.value.c_str(), &value)) {
+    return ParseResult::Error("64-bit integer value out of range");
+  }
   return ParseResult::Ok(Value(value));
 }
 
@@ -63,7 +79,10 @@ ParseResult ParseUInt64(Lexer& lexer) {
     return ParseResult::Error("Expected 64-bit unsigned integer value");
   }
   lexer.next();
-  uint64_t value = DecimalToU64(tok.value.c_str());
+  uint64_t value = 0;
+  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &value)) {
+    return ParseResult::Error("64-bit unsigned integer value out of range");
+  }
   return ParseResult::Ok(Value(value));
 }
 
@@ -100,6 +119,34 @@ ParseResult ParseDouble(Lexer& lexer) {
   }
   lexer.next();
   return ParseResult::Ok(Value(FastFloatParseToken<double>(tok.value)));
+}
+
+ParseResult ParseUChar(Lexer& lexer) {
+  const Token& tok = lexer.peek();
+  if (tok.type != TokenType::Number ||
+      !IsDecimalIntToken(tok.value, /*allow_neg=*/false)) {
+    return ParseResult::Error("Expected unsigned integer value");
+  }
+  lexer.next();
+  uint64_t wide = 0;
+  if (!value_parser_detail::DecimalToU64Checked(tok.value.c_str(), &wide) ||
+      wide > 255) {
+    return ParseResult::Error("uchar value out of range");
+  }
+  const uint8_t b = static_cast<uint8_t>(wide);
+  return ParseResult::Ok(Value::MakeFromRaw(TypeId::UChar, &b));
+}
+
+ParseResult ParseTimeCode(Lexer& lexer) {
+  // Same wire format as double, but the value keeps its TimeCode identity
+  // (matches the crate reader; a rewrite must not mutate timecode -> double).
+  const Token& tok = lexer.peek();
+  if (!IsNumberToken(tok)) {
+    return ParseResult::Error("Expected timecode value");
+  }
+  lexer.next();
+  const double d = FastFloatParseToken<double>(tok.value);
+  return ParseResult::Ok(Value::MakeFromRaw(TypeId::TimeCode, &d));
 }
 
 ParseResult ParseString(Lexer& lexer) {
@@ -455,6 +502,26 @@ ParseResult ParseMatrix4d(Lexer& lexer) {
   return ParseMatrixDoubleN<4>(lexer, TypeId::Matrix4d);
 }
 
+ParseResult ParseFrame4d(Lexer& lexer) {
+  // Same wire form as matrix4d; keep the frame4d role identity.
+  ParseResult r = ParseMatrix4d(lexer);
+  if (r.success) r.value.retag_role(TypeId::Frame4d);
+  return r;
+}
+
+ParseResult ParsePathExpression(Lexer& lexer) {
+  // SdfPathExpression is authored as a quoted string.
+  ParseResult r = ParseString(lexer);
+  if (r.success) {
+    if (const std::string* sp = r.value.as_string()) {
+      return ParseResult::Ok(
+          Value::MakeStringLike(*sp, TypeId::PathExpression));
+    }
+  }
+  return r;
+}
+
+
 ParseResult ParseMatrix3d(Lexer& lexer) {
   return ParseMatrixDoubleN<3>(lexer, TypeId::Matrix3d);
 }
@@ -470,6 +537,7 @@ ParseFn GetParseFunction(TypeId type_id) {
     case TypeId::Bool: return &ParseBool;
     case TypeId::Int: return &ParseInt;
     case TypeId::UInt: return &ParseUInt;
+    case TypeId::UChar: return &ParseUChar;
     case TypeId::Int64: return &ParseInt64;
     case TypeId::UInt64: return &ParseUInt64;
     case TypeId::Half: return &ParseHalf;
@@ -502,6 +570,8 @@ ParseFn GetParseFunction(TypeId type_id) {
     case TypeId::Matrix2d: return &ParseMatrix2d;
     case TypeId::Matrix3d: return &ParseMatrix3d;
     case TypeId::Matrix4d: return &ParseMatrix4d;
+    case TypeId::Frame4d: return &ParseFrame4d;
+    case TypeId::PathExpression: return &ParsePathExpression;
 
     // Semantic types that share storage with vectors
     case TypeId::Point3h: return &ParseHalf3;
@@ -526,7 +596,7 @@ ParseFn GetParseFunction(TypeId type_id) {
     case TypeId::Texcoord3f: return &ParseFloat3;
     case TypeId::Texcoord3d: return &ParseDouble3;
 
-    case TypeId::TimeCode: return &ParseDouble;
+    case TypeId::TimeCode: return &ParseTimeCode;
 
     default:
       return nullptr;

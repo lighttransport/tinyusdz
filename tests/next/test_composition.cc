@@ -1099,6 +1099,251 @@ static void test_audit_2026_07() {
   }
 }
 
+
+// 2026-07 composition audit: sublayer stage-metadata gap-fill (root wins,
+// strongest sublayer fills unauthored fields) and prim-scoped variant
+// overrides ("<primPath>{<set>}" beats the bare-set key).
+static void test_audit_stage_meta_and_variant_overrides() {
+  std::cout << "[stage-meta gap-fill + prim-scoped variant overrides]\n";
+  auto loader = [&](const std::string& path,
+                    std::string*) -> std::unique_ptr<Layer> {
+    if (path.find("sub.usda") != std::string::npos) {
+      return ParseLayer(
+          "#usda 1.0\n(\n    upAxis = \"Z\"\n"
+          "    metersPerUnit = 0.01\n    timeCodesPerSecond = 30\n)\n"
+          "def Xform \"FromSub\" { }\n");
+    }
+    return nullptr;
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n(\n    upAxis = \"Y\"\n"
+      "    subLayers = [@./sub.usda@]\n)\n"
+      "def Xform \"A\" (variants = { string shape = \"s1\" } "
+      "prepend variantSets = [\"shape\"]) {\n"
+      "    variantSet \"shape\" = { \"s1\" { int v = 1 } "
+      "\"s2\" { int v = 2 } }\n"
+      "}\n"
+      "def Xform \"B\" (variants = { string shape = \"s1\" } "
+      "prepend variantSets = [\"shape\"]) {\n"
+      "    variantSet \"shape\" = { \"s1\" { int v = 1 } "
+      "\"s2\" { int v = 2 } }\n"
+      "}\n");
+
+  // Root-authored upAxis wins; sublayer fills mPU/tCPS. Prim-scoped
+  // override flips only /B to s2.
+  CompositionOptions opts;
+  opts.variant_overrides["/B{shape}"] = "s2";
+  Compositor comp;
+  comp.SetOptions(opts);
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  CHECK(out->meta().upAxis == "Y" && out->meta().upAxis_set,
+        "root upAxis wins over sublayer");
+  CHECK(out->meta().timeCodesPerSecond == 30.0 &&
+            out->meta().timeCodesPerSecond_set,
+        "sublayer tCPS gap-fills");
+  CHECK(out->meta().metersPerUnit_set, "sublayer mPU gap-fills");
+  const Value* va = PropOf(*out, "/A", "v");
+  CHECK(va && va->as_int() && *va->as_int() == 1,
+        "/A keeps authored selection (s1)");
+  const Value* vb = PropOf(*out, "/B", "v");
+  CHECK(vb && vb->as_int() && *vb->as_int() == 2,
+        "/B prim-scoped override applies (s2)");
+
+  // Bare-set key still applies stage-wide.
+  CompositionOptions opts2;
+  opts2.variant_overrides["shape"] = "s2";
+  Compositor comp2;
+  comp2.SetOptions(opts2);
+  comp2.SetLayerLoader(loader);
+  auto out2 = comp2.Compose(*root);
+  CHECK(out2 != nullptr, "compose 2 succeeds");
+  const Value* va2 = PropOf(*out2, "/A", "v");
+  const Value* vb2 = PropOf(*out2, "/B", "v");
+  CHECK(va2 && va2->as_int() && *va2->as_int() == 2 && vb2 &&
+            vb2->as_int() && *vb2->as_int() == 2,
+        "bare-set override applies to both prims");
+}
+
+
+// apiSchemas list-op merge across arcs: a prepend-qualified stronger list
+// composes IN FRONT of the weaker layer's schemas instead of replacing them.
+static void test_apischemas_cross_arc_merge() {
+  std::cout << "[apiSchemas cross-arc merge]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"M\" (prepend apiSchemas = [\"PhysicsRigidBodyAPI\"]) "
+        "{ }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"M\" (prepend references = @./base.usda@</M>\n"
+      "                 prepend apiSchemas = [\"PhysicsMassAPI\"]) { }\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const PrimSpec* m = out->prim_at_path("/M");
+  CHECK(m != nullptr, "prim exists");
+  const auto& schemas = m->meta().apiSchemas();
+  CHECK(schemas.size() == 2 && schemas[0] == "PhysicsMassAPI" &&
+            schemas[1] == "PhysicsRigidBodyAPI",
+        "stronger prepend merges in front of weaker schemas");
+}
+
+// P2 audit: a reference that names no prim path to a layer with no authored
+// defaultPrim contributes NOTHING (pxr: "Unresolved reference prim path
+// @...@<defaultPrim>" warning + empty prim) — never silently the first root.
+static void test_audit_p2_ref_no_default_prim() {
+  std::cout << "[P2: reference without prim path or defaultPrim]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"First\" { double size = 1 }\n"
+        "def Xform \"Second\" { double size = 2 }\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"Hello\" (prepend references = @./lib.usda@) { }\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds (arc dropped, not fatal)");
+  CHECK(out->prim_at_path("/Hello") != nullptr, "referencing prim kept");
+  CHECK(PropOf(*out, "/Hello", "size") == nullptr,
+        "no silent fallback to the first root prim");
+  bool has_msg = false;
+  for (const auto& e : comp.GetErrors()) {
+    if (e.message.find("defaultPrim") != std::string::npos) has_msg = true;
+  }
+  CHECK(has_msg, "diagnostic mentions the missing defaultPrim");
+}
+
+// P2 audit: children of a deactivated prim are pruned from the final flatten
+// (pxr composes no subtree under active=false; the prim itself is kept here
+// with its authored active=false). A stronger layer re-activating the prim
+// keeps the subtree.
+static void test_audit_p2_inactive_subtree_pruned() {
+  std::cout << "[P2: inactive prim subtree pruned]\n";
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"A\" (active = false) {\n"
+      "    def Sphere \"B\" { double radius = 3 }\n"
+      "}\n"
+      "def Xform \"C\" { double v = 1 }\n");
+  Compositor comp;
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const PrimSpec* a = out->prim_at_path("/A");
+  CHECK(a && a->meta().active_authored && !a->meta().active,
+        "inactive prim kept with active=false");
+  CHECK(out->prim_at_path("/A/B") == nullptr,
+        "child of inactive prim pruned");
+  CHECK(out->prim_at_path("/C") != nullptr, "sibling untouched");
+
+  // Re-activation: the root's authored active=true is stronger than the
+  // referenced layer's active=false — the subtree must survive.
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"R\" (active = false) {\n"
+        "    def Sphere \"S\" { double radius = 1 }\n"
+        "}\n");
+  };
+  auto root2 = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"P\" (active = true\n"
+      "                 prepend references = @./lib.usda@</R>) { }\n");
+  Compositor comp2;
+  comp2.SetLayerLoader(loader);
+  auto out2 = comp2.Compose(*root2);
+  CHECK(out2 != nullptr, "compose 2 succeeds");
+  const PrimSpec* p = out2->prim_at_path("/P");
+  CHECK(p && p->meta().active, "stronger active=true wins");
+  CHECK(out2->prim_at_path("/P/S") != nullptr,
+        "re-activated prim keeps its referenced subtree");
+}
+
+// P2 audit: a stronger spec's authored DEFAULT blocks a weaker spec's
+// timeSamples even when the two defaults happen to be VALUE-EQUAL (the old
+// check compared values, so equal defaults let the weaker samples through).
+static void test_audit_p2_default_blocks_equal_samples() {
+  std::cout << "[P2: equal-value default still blocks weaker samples]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"P\" {\n"
+        "    double x = 5\n"
+        "    double x.timeSamples = { 1: 10, 2: 20 }\n"
+        "    double y = 7\n"
+        "    double y.timeSamples = { 1: 70 }\n"
+        "}\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n"
+      "def Xform \"P\" (prepend references = @./weak.usda@</P>) {\n"
+      "    double x = 5\n"
+      "}\n");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const PrimSpec* p = out->prim_at_path("/P");
+  CHECK(p != nullptr, "prim composed");
+  const Value* x = PropOf(*out, "/P", "x");
+  CHECK(x && x->as_double() && *x->as_double() == 5.0, "default kept (5)");
+  PropNameId xid = GetPropNameTable().find("x");
+  CHECK(p && !p->has_time_samples(xid),
+        "stronger equal-value default blocks weaker samples");
+  // Control: a property the stronger spec does NOT author rides through
+  // whole (default + samples from the weaker spec).
+  PropNameId yid = GetPropNameTable().find("y");
+  const auto* yts = p ? p->time_samples(yid) : nullptr;
+  CHECK(yts && yts->size() == 1,
+        "unblocked property keeps its samples");
+}
+
+// A weaker layer's dictionary entry shadowed by a stronger scalar (or vice
+// versa) is a TYPE CONFLICT: composition keeps the stronger opinion but must
+// surface a diagnostic instead of silently dropping the weaker subtree.
+static void test_dictionary_type_conflict_diagnostic() {
+  std::cout << "[dictionary type-conflict diagnostic]\n";
+  auto loader = [&](const std::string&,
+                    std::string*) -> std::unique_ptr<Layer> {
+    return ParseLayer(
+        "#usda 1.0\n"
+        "def Xform \"p\" (customData = { dictionary k = { int a = 1 } }) {}\n");
+  };
+  auto root = ParseLayer(
+      "#usda 1.0\n(\n subLayers = [ @./weak.usda@ ]\n)\n"
+      "def Xform \"p\" (customData = { int k = 3 }) {}\n");
+  CHECK(root != nullptr, "root parses");
+  Compositor comp;
+  comp.SetLayerLoader(loader);
+  auto out = comp.Compose(*root);
+  CHECK(out != nullptr, "compose succeeds");
+  const PrimSpec* p = out->prim_at_path("/p");
+  CHECK(p != nullptr, "prim composed");
+  const Dict* cd = p ? p->meta().customData().as_dictionary() : nullptr;
+  const Value* k = cd ? cd->find("k") : nullptr;
+  CHECK(k && k->as_int() && *k->as_int() == 3,
+        "stronger scalar opinion wins the conflicting key");
+  bool saw = false;
+  for (const CompositionError& e : comp.GetErrors()) {
+    if (e.message.find("Dictionary type conflict") != std::string::npos &&
+        e.message.find("customData.k") != std::string::npos) {
+      saw = true;
+    }
+  }
+  CHECK(saw, "type conflict surfaces a diagnostic naming the key");
+}
+
 int main() {
   test_inherits();
   test_internal_reference();
@@ -1116,6 +1361,7 @@ int main() {
   test_extref_non_self_contained_fallback();
   test_variant_selected_field_over_reference();
   test_sublayer_merge();
+  test_dictionary_type_conflict_diagnostic();
   test_livrps_strength();
   test_graft_retargeting();
   test_layer_offset_baking();
@@ -1123,6 +1369,11 @@ int main() {
   test_active_authored();
   test_cross_layer_arc_merge();
   test_audit_2026_07();
+  test_audit_stage_meta_and_variant_overrides();
+  test_apischemas_cross_arc_merge();
+  test_audit_p2_ref_no_default_prim();
+  test_audit_p2_inactive_subtree_pruned();
+  test_audit_p2_default_blocks_equal_samples();
 
   if (g_fail) {
     std::cerr << "\n" << g_fail << " composition check(s) FAILED\n";

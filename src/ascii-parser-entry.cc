@@ -1249,6 +1249,9 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   }
 
   PrimMetaMap in_metas;
+  // Reorder statements collected while parsing THIS block's body (nested
+  // blocks consume their own entries before returning).
+  const size_t reorder_mark = _pending_reorders.size();
   {
     // look ahead
     char c;
@@ -1432,6 +1435,18 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     }
   }
 
+  // Attach `reorder` body statements parsed in THIS block to the prim's
+  // metas as synthetic "reorder:<field>" entries (nested blocks already
+  // consumed theirs); the reader routes them to PrimMetas and the printer
+  // re-emits the body statements (pxr keeps them verbatim).
+  for (size_t ri = reorder_mark; ri < _pending_reorders.size(); ri++) {
+    MetaVariable rv;
+    rv.set_value(_pending_reorders[ri].second);
+    in_metas.emplace("reorder:" + _pending_reorders[ri].first,
+                     std::make_pair(ListEditQual::ResetToExplicit, rv));
+  }
+  _pending_reorders.resize(reorder_mark);
+
   std::string pTy = prim_type;
 
   if (_primspec_mode) {
@@ -1587,6 +1602,54 @@ bool AsciiParser::Parse(const uint32_t load_states,
       // Rewind
       if (!SeekTo(curr_loc)) {
         return false;
+      }
+
+      // Layer-level `reorder rootPrims = [...]`. This is a namespace *ordering*
+      // statement, not a prim, so it appears where a specifier would and would
+      // otherwise be reported as an invalid specifier. Parse and consume it.
+      //
+      // The prim-level counterpart (`reorder nameChildren` / `reorder
+      // properties`, ParsePrimProps) preserves its statements verbatim through
+      // PrimMetas, because PrimMetaMap already has a slot for them and the prim
+      // printer re-emits them. There is no equivalent layer-level slot: storing
+      // this into LayerMetas::primChildren would make the exporter reorder the
+      // emitted root prims (stage.cc), so a parse -> export -> re-parse cycle
+      // would no longer compare equal. Ordering carries no data opinions, so the
+      // statement is consumed rather than applied.
+      if (tok == "reorder") {
+        // Consume the `reorder` identifier we only peeked at above.
+        Identifier reorder_kw;
+        if (!ReadBasicType(&reorder_kw)) {
+          PUSH_ERROR_AND_RETURN("Failed to read `reorder` keyword.");
+        }
+        if (!SkipWhitespace()) {
+          return false;
+        }
+        std::string reorder_field;
+        if (!ReadIdentifier(&reorder_field)) {
+          PUSH_ERROR_AND_RETURN(
+              "Expected a field name (e.g. `rootPrims`) after `reorder`.");
+        }
+        if (!SkipWhitespace()) {
+          return false;
+        }
+        if (!Expect('=')) {
+          PUSH_ERROR_AND_RETURN("Expected `=` in `reorder` statement.");
+        }
+        if (!SkipWhitespaceAndNewline()) {
+          return false;
+        }
+        std::vector<value::token> reorder_toks;
+        if (!ParseTokenArrayOptimized(&reorder_toks)) {
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Failed to parse token array for `reorder {}`.", reorder_field));
+        }
+        DCOUT("Parsed layer-level `reorder " << reorder_field << "` ("
+              << reorder_toks.size() << " entries; consumed).");
+        if (!SkipCommentAndWhitespaceAndNewline()) {
+          return false;
+        }
+        continue;
       }
 
       Specifier spec{Specifier::Invalid};

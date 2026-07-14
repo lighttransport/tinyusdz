@@ -18,6 +18,7 @@ namespace next {
 /// Stage metadata (derived from root layer)
 struct StageMeta {
   std::string defaultPrim;
+  bool defaultPrim_set = false;
   std::string upAxis = "Y";
   double metersPerUnit = 0.01;
   double timeCodesPerSecond = 24.0;
@@ -34,8 +35,14 @@ struct StageMeta {
   bool kilogramsPerUnit_set = false;
   std::string colorConfiguration;
   std::string colorManagementSystem;
+  bool colorConfiguration_set = false;
+  bool colorManagementSystem_set = false;
   std::string doc;
   std::string comment;
+  std::string owner;
+  bool doc_set = false;
+  bool comment_set = false;
+  bool owner_set = false;
 };
 
 /// Prim handle for stage traversal
@@ -45,6 +52,13 @@ public:
   UsdPrim() = default;
   UsdPrim(const PrimSpec* spec, const Layer* layer, uint32_t index)
       : spec_(spec), layer_(layer), index_(index) {}
+  UsdPrim(const PrimSpec* spec, const Layer* layer, uint32_t index,
+          Path proxy_path, std::string prototype_root,
+          std::string instance_root)
+      : spec_(spec), layer_(layer), index_(index),
+        proxy_path_(std::move(proxy_path)),
+        prototype_root_(std::move(prototype_root)),
+        instance_root_(std::move(instance_root)) {}
 
   /// Check if this prim handle is valid
   bool IsValid() const { return spec_ != nullptr; }
@@ -62,11 +76,25 @@ public:
   /// Get specifier (Def, Over, Class)
   PrimSpecifier GetSpecifier() const;
 
-  /// Check if prim is active
+  /// Check whether this prim and all ancestors resolve active=true.
   bool IsActive() const;
 
-  /// Check if prim is a concrete definition (not over or class)
+  /// Whether this prim and all ancestors have no deferred payload.
+  bool IsLoaded() const;
+
+  /// Check whether this prim and all ancestors have defining specifiers
+  /// (`def` or `class`).
   bool IsDefined() const;
+
+  /// Check whether this prim or any ancestor is abstract (`class`).
+  bool IsAbstract() const;
+
+  /// Check whether this prim and all ancestors are concretely defining (`def`).
+  bool IsConcretelyDefined() const;
+
+  /// Check whether this prim participates in the contiguous model hierarchy
+  /// (`group`/`assembly` ancestry ending in group/assembly/component).
+  bool IsInModelHierarchy() const;
 
   // ============================================================
   // Properties
@@ -75,16 +103,21 @@ public:
   /// Check if prim has a property
   bool HasProperty(const std::string& name) const;
 
-  /// Get property value. Default-time resolution matches OpenUSD: when no
-  /// default is authored but the property has timeSamples, returns the
-  /// earliest sample's value.
+  /// Resolve at USD DefaultTime: authored default, then schema fallback.
+  /// Time samples are never consulted.
   const Value* GetPropertyValue(const std::string& name) const;
 
   /// Get property value by pre-registered ID (faster)
   const Value* GetPropertyValue(PropNameId name_id) const;
 
+  /// Compatibility convenience: DefaultTime resolution, then the earliest
+  /// time sample when no default/fallback exists.
+  const Value* GetPropertyValueOrEarliestTimeSample(
+      const std::string& name) const;
+  const Value* GetPropertyValueOrEarliestTimeSample(PropNameId name_id) const;
+
   /// Earliest time sample's value, or nullptr when the property has no
-  /// samples. Used as the default-time fallback for GetPropertyValue.
+  /// samples. This is not USD DefaultTime resolution.
   const Value* EarliestTimeSampleValue(PropNameId name_id) const;
 
   /// Get all property names
@@ -112,6 +145,13 @@ public:
 
   /// Get relationship targets
   const std::vector<Path>* GetRelationship(const std::string& name) const;
+
+  /// Resolve relationship-to-relationship target chains. Terminal prim and
+  /// attribute paths are returned in first-seen order with duplicates removed.
+  /// Cycles are ignored after the first visit. Returns false when this prim has
+  /// no relationship with `name` or `targets` is null.
+  bool GetForwardedRelationshipTargets(const std::string& name,
+                                       std::vector<Path>* targets) const;
 
   /// Get all relationship names
   std::vector<std::string> GetRelationshipNames() const;
@@ -167,6 +207,9 @@ private:
   const PrimSpec* spec_ = nullptr;
   const Layer* layer_ = nullptr;
   uint32_t index_ = UINT32_MAX;
+  Path proxy_path_;
+  std::string prototype_root_;
+  std::string instance_root_;
 
   friend class Stage;
 };

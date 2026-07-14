@@ -1,0 +1,39 @@
+#usda 1.0
+
+class "ClassBase"
+{
+}
+
+def "DefBase"
+{
+}
+
+over "OnlySpecializedClass" (
+    specializes = </ClassBase>
+)
+{
+}
+
+over "OnlySpecializedDef" (
+    specializes = </DefBase>
+)
+{
+}
+
+over "TwoInherits" (
+    inherits = [</ClassBase>, </DefBase>]
+)
+{
+}
+
+over "TwoInheritsReversed" (
+    inherits = [</DefBase>, </ClassBase>]
+)
+{
+}
+
+over "TwoSpecializes" (
+    specializes = [</ClassBase>, </DefBase>]
+)
+{
+}

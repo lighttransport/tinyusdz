@@ -185,6 +185,13 @@ struct PrimMetas : public MetadataBase {
   // USDA: By appearance. USDC: "properties" TokenVector field
   std::vector<value::token> properties;
 
+  // Authored `reorder nameChildren = [...]` / `reorder properties = [...]`
+  // body statements (partial ordering hints, pxr keeps them verbatim in
+  // unflattened output). Preserved for round-trip; not applied by the
+  // legacy flatten engine.
+  std::vector<value::token> nameChildrenReorder;
+  std::vector<value::token> propertiesReorder;
+
   // Implied inherit/specialize paths propagated from referenced layers.
   // These are populated during reference/payload composition and consumed
   // during the inherits/specializes composition phase.

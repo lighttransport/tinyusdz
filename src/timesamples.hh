@@ -77,6 +77,13 @@ struct TimeSamples {
     return _type_id != 0;
   }
 
+  // "timeSamples was AUTHORED", independent of whether it has any samples.
+  // `float x.timeSamples = {}` is authored-but-empty, and size()/empty() cannot
+  // tell that apart from "no timeSamples at all" -- which is why an empty
+  // timeSamples block was dropped on write.
+  void set_authored(bool onoff = true) { _authored = onoff; }
+  bool authored() const { return _authored || (size() > 0); }
+
   void clear();
 
   /// Pre-allocate internal vectors for the expected number of samples.
@@ -1002,6 +1009,12 @@ struct TimeSamples {
   mutable bool _has_error{false};                   // Set if update() detected a parallel-array invariant violation
   bool _is_array{false};                            // true if storing array data
 
+  // "timeSamples was AUTHORED", even if it holds no samples. See set_authored().
+  // NOTE: TimeSamples has hand-written copy/move ctors and assignment operators
+  // (timesamples.cc) that copy member-by-member -- a new member added here MUST
+  // be added to all four, or it is silently dropped on every copy.
+  bool _authored{false};
+
   // Guards the one-time lazy materialization of `_samples` from unified
   // (`_times`/`_data`) storage in get_samples(): once finalized (set at parse
   // time, see update()), reads must be pure so a shared TimeSamples is safe to
@@ -1016,6 +1029,34 @@ struct TimeSamples {
     // Force get_samples() to re-materialize from unified storage on next call.
     _samples_ready.store(false);
   }
+
+ public:
+  /// Apply a time transform to all sample times: t_new = t_old * scale + offset.
+  /// Used for LayerOffset composition (AOUSD Core Spec 10.3.1).
+  /// Works for both unified binary storage(_times) and generic storage(_samples).
+  void apply_time_transform(double scale, double offset) {
+    if ((offset == 0.0) && (scale == 1.0)) {
+      return;  // Identity
+    }
+
+    if (!_times.empty()) {
+      for (auto &t : _times) {
+        t = t * scale + offset;
+      }
+      // _samples may hold a reconstructed cache of _times. Drop it so it gets
+      // rebuilt with the transformed times.
+      invalidate_reconstructed_samples_cache();
+    } else {
+      for (auto &s : _samples) {
+        s.t = s.t * scale + offset;
+      }
+    }
+
+    // Negative scale reverses the ordering; mark dirty to force re-sort.
+    _dirty = true;
+  }
+
+ private:
 
   /// Find index for time value in _times vector using epsilon comparison
   /// @param t Time value to search for

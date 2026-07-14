@@ -33,6 +33,17 @@ bool CrateWriter::ExtractMaterialProperties(
     return false;
   }
 
+  // Material is imageable: `purpose` is a typed field (UsdShadePrim::purpose),
+  // so it has to be written explicitly or it vanishes on write.
+  if (material->purpose.authored()) {
+    const Purpose purpose_val = material->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose_val)));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
+  }
+
 
   // Material outputs (surface, displacement, volume) are handled separately
   // by AddMaterialOutputSpecs() which is called AFTER the Material prim spec is added
@@ -76,24 +87,35 @@ bool CrateWriter::AddMaterialOutputSpecs(
   std::string* err
 ) {
 
-  // Handle outputs:surface
-  if (material->surface.authored() && material->surface.has_value()) {
-    const auto& connections = material->surface.get_connections();
+  // A Material terminal is a TypedConnection: `authored()` means the output was
+  // declared, and its "value" IS its connection (has_value() is literally
+  // _targetPaths.size()). A terminal can legally be DECLARED but left
+  // unconnected --
+  //
+  //   def Material "mymat" { token outputs:surface }
+  //
+  // -- which set_empty() records as authored-with-no-targets. Gating the spec on
+  // has_value()/non-empty connections therefore dropped that declaration on write
+  // entirely. Emit the spec whenever the terminal is authored, and attach
+  // connectionPaths only when there is something to connect.
+  auto add_terminal = [&](const std::string& output_name,
+                          const TypedConnection<value::token>& terminal) -> bool {
+    if (!terminal.authored()) {
+      return true;
+    }
+
+    Path output_path = prim_path.AppendProperty(output_name);
+    crate::FieldValuePairVector output_fields;
+
+    crate::CrateValue type_value;
+    value::token type_tok("token");
+    type_value.Set(type_tok);
+    output_fields.push_back({"typeName", type_value});
+
+    // "connectionPaths" for Attribute connections ("targetPaths" is the
+    // Relationship spelling).
+    const std::vector<Path>& connections = terminal.get_connections();
     if (!connections.empty()) {
-      std::string output_name = "outputs:surface";
-      Path output_path = prim_path.AppendProperty(output_name);
-
-
-      crate::FieldValuePairVector output_fields;
-
-      // Add typeName field
-      crate::CrateValue type_value;
-      value::token type_tok("token");
-      type_value.Set(type_tok);
-      output_fields.push_back({"typeName", type_value});
-
-      // Add connectionPaths as a ListOp[Path] (for Attribute connections)
-      // Note: Use "connectionPaths" for Attribute connections, "targetPaths" for Relationships
       ListOp<Path> connection_paths_listop;
       connection_paths_listop.ClearAndMakeExplicit();
       connection_paths_listop.SetExplicitItems(connections);
@@ -101,73 +123,14 @@ bool CrateWriter::AddMaterialOutputSpecs(
       crate::CrateValue conn_value;
       conn_value.Set(connection_paths_listop);
       output_fields.push_back({"connectionPaths", conn_value});
-
-      if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
-        return false;
-      }
-
     }
-  }
 
-  // Handle outputs:displacement
-  if (material->displacement.authored() && material->displacement.has_value()) {
-    const auto& connections = material->displacement.get_connections();
-    if (!connections.empty()) {
-      std::string output_name = "outputs:displacement";
-      Path output_path = prim_path.AppendProperty(output_name);
+    return AddSpec(output_path, SpecType::Attribute, output_fields, err);
+  };
 
-      crate::FieldValuePairVector output_fields;
-
-      crate::CrateValue type_value;
-      value::token type_tok("token");
-      type_value.Set(type_tok);
-      output_fields.push_back({"typeName", type_value});
-
-      // Add connectionPaths as a ListOp[Path] (for Attribute connections)
-      // Note: Use "connectionPaths" for Attribute connections, "targetPaths" for Relationships
-      ListOp<Path> connection_paths_listop;
-      connection_paths_listop.ClearAndMakeExplicit();
-      connection_paths_listop.SetExplicitItems(connections);
-
-      crate::CrateValue conn_value;
-      conn_value.Set(connection_paths_listop);
-      output_fields.push_back({"connectionPaths", conn_value});
-
-      if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
-        return false;
-      }
-    }
-  }
-
-  // Handle outputs:volume
-  if (material->volume.authored() && material->volume.has_value()) {
-    const auto& connections = material->volume.get_connections();
-    if (!connections.empty()) {
-      std::string output_name = "outputs:volume";
-      Path output_path = prim_path.AppendProperty(output_name);
-
-      crate::FieldValuePairVector output_fields;
-
-      crate::CrateValue type_value;
-      value::token type_tok("token");
-      type_value.Set(type_tok);
-      output_fields.push_back({"typeName", type_value});
-
-      // Add connectionPaths as a ListOp[Path] (for Attribute connections)
-      // Note: Use "connectionPaths" for Attribute connections, "targetPaths" for Relationships
-      ListOp<Path> connection_paths_listop;
-      connection_paths_listop.ClearAndMakeExplicit();
-      connection_paths_listop.SetExplicitItems(connections);
-
-      crate::CrateValue conn_value;
-      conn_value.Set(connection_paths_listop);
-      output_fields.push_back({"connectionPaths", conn_value});
-
-      if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
-        return false;
-      }
-    }
-  }
+  if (!add_terminal("outputs:surface", material->surface)) return false;
+  if (!add_terminal("outputs:displacement", material->displacement)) return false;
+  if (!add_terminal("outputs:volume", material->volume)) return false;
 
   return true;
 }
@@ -230,12 +193,18 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
 
-    ListOp<Path> conn_listop;
-    conn_listop.ClearAndMakeExplicit();
-    conn_listop.SetExplicitItems(conn_paths);
-    crate::CrateValue conn_value;
-    conn_value.Set(conn_listop);
-    input_fields.push_back({"connectionPaths", conn_value});
+    // Empty => a DECLARED-but-unconnected, value-less input (`token inputs:wrapS`
+    // on its own). It still has to be written, as typeName alone: dropping it
+    // loses the declaration, and writing a `default` would invent the schema
+    // fallback as an authored value -- the bug this whole change is about.
+    if (!conn_paths.empty()) {
+      ListOp<Path> conn_listop;
+      conn_listop.ClearAndMakeExplicit();
+      conn_listop.SetExplicitItems(conn_paths);
+      crate::CrateValue conn_value;
+      conn_value.Set(conn_listop);
+      input_fields.push_back({"connectionPaths", conn_value});
+    }
 
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
@@ -343,8 +312,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", "color3f", diffuse_value, &preview_surface->diffuseColor.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:diffuseColor", "color3f", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:diffuseColor", "color3f",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -363,8 +333,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", "color3f", emissive_value, &preview_surface->emissiveColor.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:emissiveColor", "color3f", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:emissiveColor", "color3f",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -372,14 +343,27 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
 
   // inputs:useSpecularWorkflow (int)
   if (preview_surface->useSpecularWorkflow.authored()) {
-    crate::CrateValue use_spec_value;
-    if (!preview_surface->useSpecularWorkflow.get_value().is_timesamples()) {
+    const std::vector<Path>* conns =
+        preview_surface->useSpecularWorkflow.has_connections()
+            ? &preview_surface->useSpecularWorkflow.connections() : nullptr;
+    bool emitted = false;
+    if (!preview_surface->useSpecularWorkflow.is_value_empty() &&
+        !preview_surface->useSpecularWorkflow.get_value().is_timesamples()) {
       int use_spec;
       if (preview_surface->useSpecularWorkflow.get_value().get_scalar(&use_spec)) {
+        crate::CrateValue use_spec_value;
         use_spec_value.Set(use_spec);
-        if (!add_input_spec("inputs:useSpecularWorkflow", "int", use_spec_value)) {
+        if (!add_input_spec("inputs:useSpecularWorkflow", "int", use_spec_value,
+                            conns)) {
           return false;
         }
+        emitted = true;
+      }
+    }
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:useSpecularWorkflow", "int",
+                                      conns ? *conns : std::vector<Path>{})) {
+        return false;
       }
     }
   }
@@ -397,8 +381,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", "color3f", spec_color_value, &preview_surface->specularColor.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:specularColor", "color3f", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:specularColor", "color3f",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -429,15 +414,26 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
 
   // inputs:opacityMode (token) - Controls transparency behavior (transparent or presence)
   if (preview_surface->opacityMode.authored()) {
-    crate::CrateValue opacity_mode_value;
-    if (!preview_surface->opacityMode.get_value().is_timesamples()) {
+    const std::vector<Path>* conns = preview_surface->opacityMode.has_connections()
+        ? &preview_surface->opacityMode.connections() : nullptr;
+    bool emitted = false;
+    if (!preview_surface->opacityMode.is_value_empty() &&
+        !preview_surface->opacityMode.get_value().is_timesamples()) {
       UsdPreviewSurface::OpacityMode mode;
       if (preview_surface->opacityMode.get_value().get_scalar(&mode)) {
-        value::token mode_tok(opacity_mode_to_string(mode));
-        opacity_mode_value.Set(mode_tok);
-        if (!add_input_spec("inputs:opacityMode", "token", opacity_mode_value)) {
+        crate::CrateValue opacity_mode_value;
+        opacity_mode_value.Set(value::token(opacity_mode_to_string(mode)));
+        if (!add_input_spec("inputs:opacityMode", "token", opacity_mode_value,
+                            conns)) {
           return false;
         }
+        emitted = true;
+      }
+    }
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:opacityMode", "token",
+                                      conns ? *conns : std::vector<Path>{})) {
+        return false;
       }
     }
   }
@@ -462,8 +458,9 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (!add_input_spec("inputs:normal", "normal3f", normal_value, conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:normal", "normal3f", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:normal", "normal3f",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -641,7 +638,7 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
 ) {
 
   // Helper lambda to add an input spec as a separate attribute
-  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value, const std::vector<Path>* connections = nullptr) -> bool {
+  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value, const std::vector<Path>* connections = nullptr, const AttrMeta* attr_metas = nullptr) -> bool {
     Path input_path = prim_path.AppendProperty(input_name);
     crate::FieldValuePairVector input_fields;
 
@@ -650,6 +647,16 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     value::token typename_tok(type_name);
     typename_value.Set(typename_tok);
     input_fields.push_back({"typeName", typename_value});
+
+    // The input's OWN metadata block, e.g.
+    //   asset inputs:file = @f.png@ ( colorSpace = "Raw" )
+    // The shader writer builds its specs by hand and emitted no attribute
+    // metadata at all, so colorSpace was dropped on write.
+    if (attr_metas && attr_metas->has_colorSpace()) {
+      crate::CrateValue cs_value;
+      cs_value.Set(attr_metas->get_colorSpace());
+      input_fields.push_back({"colorSpace", cs_value});
+    }
 
     // default field (the value)
     input_fields.push_back({"default", value});
@@ -681,6 +688,7 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     value::token type_tok(type_name);
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
+
     ListOp<Path> conn_listop;
     conn_listop.ClearAndMakeExplicit();
     conn_listop.SetExplicitItems(conn_paths);
@@ -763,12 +771,49 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     auto file_opt = uv_texture->file.get_value();
     if (file_opt.has_value()) {
       const auto& file_animatable = file_opt.value();
-      if (!file_animatable.is_timesamples()) {
+      if (file_animatable.is_timesamples()) {
+        // An ANIMATED texture path (`asset inputs:file.timeSamples = {...}`).
+        // There is no default here, so the samples must live in the SAME spec as
+        // the typeName: the reader builds one Property per spec, and a spec that
+        // carries nothing but a typeName has no value to construct it from
+        // ("Failed to construct Property `inputs:file`"). The separate
+        // `<name>.timeSamples` spec that add_input_spec_with_timesamples_float2
+        // uses above works only because its base spec also has a default.
+        if (const value::TimeSamples* tsp =
+                file_animatable.get_timesamples_ptr()) {
+          Path input_path = prim_path.AppendProperty("inputs:file");
+          crate::FieldValuePairVector input_fields;
+
+          crate::CrateValue type_value;
+          value::token type_tok("asset");
+          type_value.Set(type_tok);
+          input_fields.push_back({"typeName", type_value});
+
+          crate::CrateValue ts_value;
+          ts_value.Set(*tsp);
+          input_fields.push_back({"timeSamples", ts_value});
+
+          if (conns && !conns->empty()) {
+            ListOp<Path> conn_listop;
+            conn_listop.ClearAndMakeExplicit();
+            conn_listop.SetExplicitItems(*conns);
+            crate::CrateValue conn_value;
+            conn_value.Set(conn_listop);
+            input_fields.push_back({"connectionPaths", conn_value});
+          }
+
+          if (!AddSpec(input_path, SpecType::Attribute, input_fields, err)) {
+            return false;
+          }
+          emitted_value = true;
+        }
+      } else {
         value::AssetPath file_path;
         if (file_animatable.get_scalar(&file_path)) {
           crate::CrateValue file_value;
           file_value.Set(file_path);
-          if (!add_input_spec("inputs:file", "asset", file_value, conns)) {
+          if (!add_input_spec("inputs:file", "asset", file_value, conns,
+                              &uv_texture->file.metas())) {
             return false;
           }
           emitted_value = true;
@@ -792,106 +837,175 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
       if (!add_input_spec_with_timesamples_float2("inputs:st", st_value, &uv_texture->st.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:st", "float2", *conns)) return false;
+    } else {
+      if (!add_input_connection_spec("inputs:st", "float2",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
   // inputs:wrapS (token) - S axis wrap mode
   if (uv_texture->wrapS.authored()) {
-    crate::CrateValue wraps_value;
-    if (!uv_texture->wrapS.get_value().is_timesamples()) {
+    const std::vector<Path>* conns = uv_texture->wrapS.has_connections()
+        ? &uv_texture->wrapS.connections() : nullptr;
+    bool emitted = false;
+    if (!uv_texture->wrapS.is_value_empty() &&
+        !uv_texture->wrapS.get_value().is_timesamples()) {
       UsdUVTexture::Wrap wrap_s;
       if (uv_texture->wrapS.get_value().get_scalar(&wrap_s)) {
-        value::token wrap_tok(wrap_to_string(wrap_s));
-        wraps_value.Set(wrap_tok);
-        if (!add_input_spec("inputs:wrapS", "token", wraps_value)) {
+        crate::CrateValue wraps_value;
+        wraps_value.Set(value::token(wrap_to_string(wrap_s)));
+        if (!add_input_spec("inputs:wrapS", "token", wraps_value, conns)) {
           return false;
         }
+        emitted = true;
       }
+    }
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:wrapS", "token",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
   // inputs:wrapT (token) - T axis wrap mode
   if (uv_texture->wrapT.authored()) {
-    crate::CrateValue wrapt_value;
-    if (!uv_texture->wrapT.get_value().is_timesamples()) {
+    const std::vector<Path>* conns = uv_texture->wrapT.has_connections()
+        ? &uv_texture->wrapT.connections() : nullptr;
+    bool emitted = false;
+    if (!uv_texture->wrapT.is_value_empty() &&
+        !uv_texture->wrapT.get_value().is_timesamples()) {
       UsdUVTexture::Wrap wrap_t;
       if (uv_texture->wrapT.get_value().get_scalar(&wrap_t)) {
-        value::token wrap_tok(wrap_to_string(wrap_t));
-        wrapt_value.Set(wrap_tok);
-        if (!add_input_spec("inputs:wrapT", "token", wrapt_value)) {
+        crate::CrateValue wrapt_value;
+        wrapt_value.Set(value::token(wrap_to_string(wrap_t)));
+        if (!add_input_spec("inputs:wrapT", "token", wrapt_value, conns)) {
           return false;
         }
+        emitted = true;
       }
+    }
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:wrapT", "token",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
   // inputs:fallback (float4) - fallback color when texture is missing
   if (uv_texture->fallback.authored()) {
-    const Animatable<value::float4> &fallback =
-        uv_texture->fallback.get_value();
-    if (fallback.has_default()) {
-      crate::CrateValue fallback_value;
-      fallback_value.Set(fallback.get_scalar_ref());
-      if (!add_input_spec("inputs:fallback", "float4", fallback_value)) {
-        return false;
+    const std::vector<Path>* conns = uv_texture->fallback.has_connections()
+        ? &uv_texture->fallback.connections() : nullptr;
+    bool emitted = false;
+    if (!uv_texture->fallback.is_value_empty()) {
+      const Animatable<value::float4> &fallback =
+          uv_texture->fallback.get_value();
+      if (fallback.has_default()) {
+        crate::CrateValue fallback_value;
+        fallback_value.Set(fallback.get_scalar_ref());
+        if (!add_input_spec("inputs:fallback", "float4", fallback_value, conns)) {
+          return false;
+        }
+        emitted = true;
       }
+    }
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:fallback", "float4",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
   // inputs:sourceColorSpace (token) - color space
   if (uv_texture->sourceColorSpace.authored()) {
-    crate::CrateValue colorspace_value;
-    if (!uv_texture->sourceColorSpace.get_value().is_timesamples()) {
+    const std::vector<Path>* conns = uv_texture->sourceColorSpace.has_connections()
+        ? &uv_texture->sourceColorSpace.connections() : nullptr;
+    bool emitted = false;
+    if (!uv_texture->sourceColorSpace.is_value_empty() &&
+        !uv_texture->sourceColorSpace.get_value().is_timesamples()) {
       UsdUVTexture::SourceColorSpace cs;
       if (uv_texture->sourceColorSpace.get_value().get_scalar(&cs)) {
-        value::token cs_tok(colorspace_to_string(cs));
-        colorspace_value.Set(cs_tok);
-        if (!add_input_spec("inputs:sourceColorSpace", "token", colorspace_value)) {
+        crate::CrateValue colorspace_value;
+        colorspace_value.Set(value::token(colorspace_to_string(cs)));
+        if (!add_input_spec("inputs:sourceColorSpace", "token", colorspace_value,
+                            conns)) {
           return false;
         }
+        emitted = true;
+      }
+    }
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:sourceColorSpace", "token",
+                                      conns ? *conns : std::vector<Path>{})) {
+        return false;
       }
     }
   }
 
   // inputs:scale (float4) - scale factor
   if (uv_texture->scale.authored()) {
-    crate::CrateValue scale_value;
-    const value::float4& scale = uv_texture->scale.get_value();
-    scale_value.Set(scale);
-    if (!add_input_spec("inputs:scale", "float4", scale_value)) {
-      return false;
+    const std::vector<Path>* conns = uv_texture->scale.has_connections()
+        ? &uv_texture->scale.connections() : nullptr;
+    if (!uv_texture->scale.is_value_empty()) {
+      crate::CrateValue scale_value;
+      scale_value.Set(uv_texture->scale.get_value());
+      if (!add_input_spec("inputs:scale", "float4", scale_value, conns)) {
+        return false;
+      }
+    } else {
+      if (!add_input_connection_spec("inputs:scale", "float4",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
   // inputs:bias (float4) - bias offset
   if (uv_texture->bias.authored()) {
-    crate::CrateValue bias_value;
-    const value::float4& bias = uv_texture->bias.get_value();
-    bias_value.Set(bias);
-    if (!add_input_spec("inputs:bias", "float4", bias_value)) {
-      return false;
+    const std::vector<Path>* conns = uv_texture->bias.has_connections()
+        ? &uv_texture->bias.connections() : nullptr;
+    if (!uv_texture->bias.is_value_empty()) {
+      crate::CrateValue bias_value;
+      bias_value.Set(uv_texture->bias.get_value());
+      if (!add_input_spec("inputs:bias", "float4", bias_value, conns)) {
+        return false;
+      }
+    } else {
+      if (!add_input_connection_spec("inputs:bias", "float4",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
   // inputs:uv_set (int) - UV set index (tinyusdz extension; mirrors the reader
   // in prim-reconstruct-shader3.cc and the USDA printer in pprint-shader.cc).
   if (uv_texture->uv_set.authored()) {
-    crate::CrateValue uv_set_value;
-    uv_set_value.Set(uv_texture->uv_set.get_value());
-    if (!add_input_spec("inputs:uv_set", "int", uv_set_value)) {
-      return false;
+    const std::vector<Path>* conns = uv_texture->uv_set.has_connections()
+        ? &uv_texture->uv_set.connections() : nullptr;
+    if (!uv_texture->uv_set.is_value_empty()) {
+      crate::CrateValue uv_set_value;
+      uv_set_value.Set(uv_texture->uv_set.get_value());
+      if (!add_input_spec("inputs:uv_set", "int", uv_set_value, conns)) {
+        return false;
+      }
+    } else {
+      if (!add_input_connection_spec("inputs:uv_set", "int",
+                                      conns ? *conns : std::vector<Path>{})) return false;
     }
   }
 
   // inputs:uv_set_name (token) - UV set name (tinyusdz extension).
   if (uv_texture->uv_set_name.authored()) {
+    const std::vector<Path>* conns = uv_texture->uv_set_name.has_connections()
+        ? &uv_texture->uv_set_name.connections() : nullptr;
+    bool emitted = false;
     value::token uv_set_name_tok;
-    if (uv_texture->uv_set_name.get_value(&uv_set_name_tok)) {
+    if (!uv_texture->uv_set_name.is_value_empty() &&
+        uv_texture->uv_set_name.get_value(&uv_set_name_tok)) {
       crate::CrateValue uv_set_name_value;
       uv_set_name_value.Set(uv_set_name_tok);
-      if (!add_input_spec("inputs:uv_set_name", "token", uv_set_name_value)) {
+      if (!add_input_spec("inputs:uv_set_name", "token", uv_set_name_value,
+                          conns)) {
+        return false;
+      }
+      emitted = true;
+    }
+    if (!emitted) {
+      if (!add_input_connection_spec("inputs:uv_set_name", "token",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -958,12 +1072,18 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
 
-    ListOp<Path> conn_listop;
-    conn_listop.ClearAndMakeExplicit();
-    conn_listop.SetExplicitItems(conn_paths);
-    crate::CrateValue conn_value;
-    conn_value.Set(conn_listop);
-    input_fields.push_back({"connectionPaths", conn_value});
+    // Empty => a DECLARED-but-unconnected, value-less input (`token inputs:wrapS`
+    // on its own). It still has to be written, as typeName alone: dropping it
+    // loses the declaration, and writing a `default` would invent the schema
+    // fallback as an authored value -- the bug this whole change is about.
+    if (!conn_paths.empty()) {
+      ListOp<Path> conn_listop;
+      conn_listop.ClearAndMakeExplicit();
+      conn_listop.SetExplicitItems(conn_paths);
+      crate::CrateValue conn_value;
+      conn_value.Set(conn_listop);
+      input_fields.push_back({"connectionPaths", conn_value});
+    }
 
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
@@ -1090,12 +1210,18 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
     type_value.Set(type_tok);
     input_fields.push_back({"typeName", type_value});
 
-    ListOp<Path> conn_listop;
-    conn_listop.ClearAndMakeExplicit();
-    conn_listop.SetExplicitItems(conn_paths);
-    crate::CrateValue conn_value;
-    conn_value.Set(conn_listop);
-    input_fields.push_back({"connectionPaths", conn_value});
+    // Empty => a DECLARED-but-unconnected, value-less input (`token inputs:wrapS`
+    // on its own). It still has to be written, as typeName alone: dropping it
+    // loses the declaration, and writing a `default` would invent the schema
+    // fallback as an authored value -- the bug this whole change is about.
+    if (!conn_paths.empty()) {
+      ListOp<Path> conn_listop;
+      conn_listop.ClearAndMakeExplicit();
+      conn_listop.SetExplicitItems(conn_paths);
+      crate::CrateValue conn_value;
+      conn_value.Set(conn_listop);
+      input_fields.push_back({"connectionPaths", conn_value});
+    }
 
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
@@ -1182,8 +1308,9 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
       if (!add_input_spec_with_timesamples_float2("inputs:in", in_crate_value, &transform2d->in.get_value(), conns)) {
         return false;
       }
-    } else if (conns) {
-      if (!add_input_connection_spec("inputs:in", "float2", *conns)) {
+    } else {
+      if (!add_input_connection_spec("inputs:in", "float2",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -1191,11 +1318,19 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
 
   // Extract inputs:rotation (float) - in degrees, CCW
   if (transform2d->rotation.authored()) {
-    crate::CrateValue rotation_crate_value;
+    const std::vector<Path>* conns = transform2d->rotation.has_connections()
+        ? &transform2d->rotation.connections() : nullptr;
     float rotation_value = 0.0f;
-    if (transform2d->rotation.get_value().get_scalar(&rotation_value)) {
+    if (!transform2d->rotation.is_value_empty() &&
+        transform2d->rotation.get_value().get_scalar(&rotation_value)) {
+      crate::CrateValue rotation_crate_value;
       rotation_crate_value.Set(rotation_value);
-      if (!add_input_spec_with_timesamples_float("inputs:rotation", rotation_crate_value, &transform2d->rotation.get_value())) {
+      if (!add_input_spec_with_timesamples_float("inputs:rotation", rotation_crate_value, &transform2d->rotation.get_value(), conns)) {
+        return false;
+      }
+    } else {
+      if (!add_input_connection_spec("inputs:rotation", "float",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -1203,11 +1338,19 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
 
   // Extract inputs:scale (float2)
   if (transform2d->scale.authored()) {
-    crate::CrateValue scale_crate_value;
+    const std::vector<Path>* conns = transform2d->scale.has_connections()
+        ? &transform2d->scale.connections() : nullptr;
     value::float2 scale_value = {1.0f, 1.0f};
-    if (transform2d->scale.get_value().get_scalar(&scale_value)) {
+    if (!transform2d->scale.is_value_empty() &&
+        transform2d->scale.get_value().get_scalar(&scale_value)) {
+      crate::CrateValue scale_crate_value;
       scale_crate_value.Set(scale_value);
-      if (!add_input_spec_with_timesamples_float2("inputs:scale", scale_crate_value, &transform2d->scale.get_value())) {
+      if (!add_input_spec_with_timesamples_float2("inputs:scale", scale_crate_value, &transform2d->scale.get_value(), conns)) {
+        return false;
+      }
+    } else {
+      if (!add_input_connection_spec("inputs:scale", "float2",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -1215,11 +1358,19 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
 
   // Extract inputs:translation (float2)
   if (transform2d->translation.authored()) {
-    crate::CrateValue translation_crate_value;
+    const std::vector<Path>* conns = transform2d->translation.has_connections()
+        ? &transform2d->translation.connections() : nullptr;
     value::float2 translation_value = {0.0f, 0.0f};
-    if (transform2d->translation.get_value().get_scalar(&translation_value)) {
+    if (!transform2d->translation.is_value_empty() &&
+        transform2d->translation.get_value().get_scalar(&translation_value)) {
+      crate::CrateValue translation_crate_value;
       translation_crate_value.Set(translation_value);
-      if (!add_input_spec_with_timesamples_float2("inputs:translation", translation_crate_value, &transform2d->translation.get_value())) {
+      if (!add_input_spec_with_timesamples_float2("inputs:translation", translation_crate_value, &transform2d->translation.get_value(), conns)) {
+        return false;
+      }
+    } else {
+      if (!add_input_connection_spec("inputs:translation", "float2",
+                                      conns ? *conns : std::vector<Path>{})) {
         return false;
       }
     }
@@ -1267,6 +1418,16 @@ bool CrateWriter::ExtractNodeGraphProperties(
   if (!node_graph) {
     if (err) *err = "Failed to cast prim to NodeGraph";
     return false;
+  }
+
+  // Same typed `purpose` as Material (both derive from UsdShadePrim).
+  if (node_graph->purpose.authored()) {
+    const Purpose purpose_val = node_graph->purpose.get_value();
+    if (purpose_val != Purpose::Default) {
+      crate::CrateValue purpose_crate_val;
+      purpose_crate_val.Set(value::token(to_string(purpose_val)));
+      fields.push_back({"purpose", purpose_crate_val});
+    }
   }
 
   // NodeGraph is primarily a container for organizing shader nodes and interfaces.

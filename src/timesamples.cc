@@ -509,11 +509,13 @@ TimeSamples::TimeSamples(TimeSamples&& other) noexcept
       _element_size(other._element_size),
       _dirty(other._dirty),
       _is_array(other._is_array),
+      _authored(other._authored),
       _samples_ready(other._samples_ready.load()) {
   other._type_id = 0;
   other._element_size = 0;
   other._dirty = false;
   other._is_array = false;
+  other._authored = false;
   other._samples_ready.store(false);
 }
 
@@ -530,12 +532,14 @@ TimeSamples& TimeSamples::operator=(TimeSamples&& other) noexcept {
     _element_size = other._element_size;
     _dirty = other._dirty;
     _is_array = other._is_array;
+    _authored = other._authored;
     _samples_ready.store(other._samples_ready.load());
 
     other._type_id = 0;
     other._element_size = 0;
     other._dirty = false;
     other._is_array = false;
+    other._authored = false;
     other._samples_ready.store(false);
   }
   return *this;
@@ -553,6 +557,7 @@ TimeSamples::TimeSamples(const TimeSamples& other)
       _element_size(other._element_size),
       _dirty(other._dirty),
       _is_array(other._is_array),
+      _authored(other._authored),
       _samples_ready(other._samples_ready.load()) {
 }
 
@@ -569,6 +574,7 @@ TimeSamples& TimeSamples::operator=(const TimeSamples& other) {
     _element_size = other._element_size;
     _dirty = other._dirty;
     _is_array = other._is_array;
+    _authored = other._authored;
     _samples_ready.store(other._samples_ready.load());
   }
   return *this;
@@ -587,6 +593,7 @@ void TimeSamples::clear() {
   _element_size = 0;
   _dirty = true;
   _is_array = false;
+  _authored = false;
 }
 
 

@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <surfacematerial name="Broken" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="Missing" />
+  </surfacematerial>
+</materialx>

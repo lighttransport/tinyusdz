@@ -26,21 +26,34 @@ class ListOp {
     deleted_items.clear();
     ordered_items.clear();
 
+    has_explicit = false;
+    has_added = false;
+    has_prepended = false;
+    has_appended = false;
+    has_deleted = false;
+    has_ordered = false;
+
     is_explicit = true;
   }
 
   bool IsExplicit() const { return is_explicit; }
-  bool HasExplicitItems() const { return explicit_items.size(); }
 
-  bool HasAddedItems() const { return added_items.size(); }
+  // A bucket can be AUTHORED YET EMPTY -- `delete rel myheight` is a list-edit
+  // qualifier on a relationship with no targets at all -- and `size() > 0`
+  // cannot tell that apart from "never authored", which is why the qualifier was
+  // dropped on write. Set*Items() is the only way to populate a bucket, so the
+  // flag it sets is exact; the size() term keeps any direct-mutation path honest.
+  bool HasExplicitItems() const { return has_explicit || explicit_items.size(); }
 
-  bool HasPrependedItems() const { return prepended_items.size(); }
+  bool HasAddedItems() const { return has_added || added_items.size(); }
 
-  bool HasAppendedItems() const { return appended_items.size(); }
+  bool HasPrependedItems() const { return has_prepended || prepended_items.size(); }
 
-  bool HasDeletedItems() const { return deleted_items.size(); }
+  bool HasAppendedItems() const { return has_appended || appended_items.size(); }
 
-  bool HasOrderedItems() const { return ordered_items.size(); }
+  bool HasDeletedItems() const { return has_deleted || deleted_items.size(); }
+
+  bool HasOrderedItems() const { return has_ordered || ordered_items.size(); }
 
   const std::vector<T> &GetExplicitItems() const { return explicit_items; }
 
@@ -54,20 +67,29 @@ class ListOp {
 
   const std::vector<T> &GetOrderedItems() const { return ordered_items; }
 
-  void SetExplicitItems(const std::vector<T> &v) { explicit_items = v; }
+  void SetExplicitItems(const std::vector<T> &v) { explicit_items = v; has_explicit = true; }
 
-  void SetAddedItems(const std::vector<T> &v) { added_items = v; }
+  void SetAddedItems(const std::vector<T> &v) { added_items = v; has_added = true; }
 
-  void SetPrependedItems(const std::vector<T> &v) { prepended_items = v; }
+  void SetPrependedItems(const std::vector<T> &v) { prepended_items = v; has_prepended = true; }
 
-  void SetAppendedItems(const std::vector<T> &v) { appended_items = v; }
+  void SetAppendedItems(const std::vector<T> &v) { appended_items = v; has_appended = true; }
 
-  void SetDeletedItems(const std::vector<T> &v) { deleted_items = v; }
+  void SetDeletedItems(const std::vector<T> &v) { deleted_items = v; has_deleted = true; }
 
-  void SetOrderedItems(const std::vector<T> &v) { ordered_items = v; }
+  void SetOrderedItems(const std::vector<T> &v) { ordered_items = v; has_ordered = true; }
 
  private:
   bool is_explicit{false};
+
+  // "This bucket was authored", independent of whether it has any items.
+  bool has_explicit{false};
+  bool has_added{false};
+  bool has_prepended{false};
+  bool has_appended{false};
+  bool has_deleted{false};
+  bool has_ordered{false};
+
   std::vector<T> explicit_items;
   std::vector<T> added_items;
   std::vector<T> prepended_items;

@@ -77,6 +77,8 @@ using next::GetAllPointInstancers;
 using next::AttributeEval;
 using next::EvalResult;
 using next::EvalOptions;
+using next::TimeQuery;
+using next::ValueClipStageCache;
 
 }  // namespace compat
 }  // namespace tinyusdz

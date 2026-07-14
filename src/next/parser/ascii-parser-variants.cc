@@ -199,9 +199,36 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           if (ReadArcRef(&ref)) apply_arc(std::move(ref));
         }
       } else {
-        SkipValueLike();
+        // Unknown (unmodeled) variant-option metadata: consume the value
+        // structurally but PRESERVE its raw source text so the writer can
+        // re-emit it verbatim (same policy as prim-level unknownMeta).
+        lexer_->peek();  // ensure the value's first token is scanned
+        const size_t vstart = lexer_->token_start();
+        const bool skipped = SkipValueLike();
         while (Check(TokenType::PathRef)) lexer_->next();
         if (Check(TokenType::OpenParen)) SkipValueLike();
+        if (skipped) {
+          lexer_->peek();  // the following token's start bounds the value
+          size_t vend = lexer_->token_start();
+          const char* base = lexer_->input_data();
+          while (vend > vstart &&
+                 (base[vend - 1] == ' ' || base[vend - 1] == '\t' ||
+                  base[vend - 1] == '\r' || base[vend - 1] == '\n')) {
+            vend--;
+          }
+          if (vend > vstart) {
+            std::string qual_prefix;
+            switch (arc_op) {
+              case ArcOp::Prepend: qual_prefix = "prepend "; break;
+              case ArcOp::Append: qual_prefix = "append "; break;
+              case ArcOp::Delete: qual_prefix = "delete "; break;
+              case ArcOp::Reorder: qual_prefix = "reorder "; break;
+              default: break;
+            }
+            out->unknownMeta.emplace_back(
+                qual_prefix + key, std::string(base + vstart, vend - vstart));
+          }
+        }
       }
     }
     Match(TokenType::CloseParen);
@@ -281,9 +308,12 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           vflags |= PropSlot::kFlagCustom;
           lexer_->next();
         } else if (tt == TokenType::Uniform) {
-          vflags |= PropSlot::kFlagUniform;
+          vflags |= PropSlot::kFlagUniform |
+                    PropSlot::kFlagVariabilityAuthored;
           lexer_->next();
         } else if (tt == TokenType::Varying) {
+          vflags |= PropSlot::kFlagVarying |
+                    PropSlot::kFlagVariabilityAuthored;
           lexer_->next();
         } else {
           break;
@@ -321,6 +351,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
           out->relationships[rel_name];  // declaration without targets
         }
         SkipPropertyMetadata();
+        out->relationshipFlags[rel_name] = vflags;
         continue;
       }
       std::string type_name;
@@ -449,8 +480,44 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
             result = ParseValue(*lexer_, tid);
           }
           if (result.success) {
-            out->properties.push_back(
-                {prop_name, std::move(result.value), vflags});
+            if (Check(TokenType::OpenParen)) {
+              // Trailing property metadata (`( interpolation = "constant" )`):
+              // VariantProperty cannot carry PropMeta, so author value + meta
+              // on the content "__self__" prim instead — both graft onto the
+              // host prim on selection (CopyLocalOpinions merges PropMeta),
+              // and the writer emits __self__ properties back into the body.
+              if (!content_layer) {
+                content_layer.reset(new Layer());
+                content_builder.reset(new LayerBuilder(*content_layer));
+                content_builder->begin_prim("__self__", "",
+                                            PrimSpecifier::Over);
+              }
+              PrimSpec* self = content_builder->current();
+              if (self) {
+                self->add_property(prop_name, std::move(result.value), vflags);
+                const bool has_sfx =
+                    type_name.size() >= 2 &&
+                    type_name.compare(type_name.size() - 2, 2, "[]") == 0;
+                self->set_property_type_name(
+                    prop_name,
+                    (is_array && !has_sfx) ? type_name + "[]" : type_name);
+                std::unique_ptr<Layer> host_layer = std::move(layer_);
+                std::unique_ptr<LayerBuilder> host_builder = std::move(builder_);
+                layer_ = std::move(content_layer);
+                builder_ = std::move(content_builder);
+                ParsePropertyMetadata(prop_name);
+                content_layer = std::move(layer_);
+                content_builder = std::move(builder_);
+                layer_ = std::move(host_layer);
+                builder_ = std::move(host_builder);
+              } else {
+                out->properties.push_back(
+                    {prop_name, std::move(result.value), vflags});
+              }
+            } else {
+              out->properties.push_back(
+                  {prop_name, std::move(result.value), vflags});
+            }
           }
         }
         SkipPropertyMetadata();
@@ -462,6 +529,7 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
 
   // Apply nested selections stashed from the option metadata to the nested
   // sets parsed from the body.
+  out->variantSelections = pending_selections;
   for (const auto& sel : pending_selections) {
     for (VariantSetData& nvs : out->variantSets) {
       if (nvs.name == sel.first) {

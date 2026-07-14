@@ -642,7 +642,10 @@ bool VariantSelectPrimSpec(
 
   dst = src;
 
-  PrimSpec ps = src;  // temp PrimSpec. Init with src.
+  // Temp PrimSpec collecting the selected variants' opinions only.
+  // NOTE: Do NOT init with `src`: local(direct) opinions must stay separate so
+  // they can win over variant opinions per LIVRPS (Local > VariantSets).
+  PrimSpec ps;
 
   // Evaluate from the last element.
   for (int64_t i = int64_t(allVariantSetNames.size()) - 1; i >= 0; i--) {
@@ -746,10 +749,11 @@ bool VariantSelectPrimSpec(
 
   DCOUT("Variant resolved prim: " << prim::print_primspec(ps));
 
-  // Local properties/metadatum wins against properties/metadataum from Variant
-  ps.specifier() = Specifier::Over;
-  if (!OverridePrimSpec(dst, ps, warn, err)) {
-    PUSH_ERROR_AND_RETURN("Failed to override PrimSpec.");
+  // Local properties/metadatum win against properties/metadataum from Variant
+  // (LIVRPS: Local > VariantSets), so merge the variant opinions underneath
+  // the local ones.
+  if (!InheritPrimSpec(dst, ps, warn, err)) {
+    PUSH_ERROR_AND_RETURN("Failed to merge variant PrimSpec.");
   }
 
   // OverridePrimSpec APPENDS children that are new in `ps` (the variant-selected

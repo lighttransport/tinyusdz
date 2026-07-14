@@ -52,6 +52,25 @@
     return ValueRep::Make(CrateTypeId::Dictionary, idx, false, false);
   }
 
+  ValueRep EncodeUnregisteredValue(const std::string& source) {
+    const ValueRep nested = EncodeValue(Value(source));
+    std::vector<uint8_t> block(16);
+    const int64_t recursive_offset = 8;
+    const uint64_t nested_raw = nested.raw();
+    std::memcpy(block.data(), &recursive_offset, 8);
+    std::memcpy(block.data() + 8, &nested_raw, 8);
+    const uint64_t index = InternBlock({TypeId::Invalid, std::move(block)});
+    return ValueRep::Make(CrateTypeId::UnregisteredValue, index, false, false);
+  }
+
+  ValueRep EncodeExtensionField(const TypedExtensionField& field) {
+    if (!field.unregistered) return EncodeValue(field.value);
+    return EncodeUnregisteredValue(
+        field.unregistered_source.empty()
+            ? PrintValue(field.value, PrintOptions{})
+            : field.unregistered_source);
+  }
+
   ValueRep EncodeValue(const Value& val) {
     if (val.is_dictionary()) {
       const Dict* d = val.as_dictionary();
@@ -69,6 +88,11 @@
     TypeId type_id = val.type_id();
     CrateTypeId crate_type = ToCrateTypeId(type_id);
     bool is_array = val.is_array();
+
+    // pxr-style write-version upgrade: timecode values require crate 0.9.
+    if (type_id == TypeId::TimeCode && required_version_minor_ < 9) {
+      required_version_minor_ = 9;
+    }
 
     if (crate_type == CrateTypeId::Invalid) {
       return ValueRep::Make(CrateTypeId::Invalid, 0, is_array, false);
@@ -104,6 +128,11 @@
         }
         case TypeId::UInt: {
           const uint32_t* v = val.as_uint();
+          if (v) { payload = *v; can_inline = true; }
+          break;
+        }
+        case TypeId::UChar: {
+          const uint8_t* v = val.as_uchar();
           if (v) { payload = *v; can_inline = true; }
           break;
         }
@@ -172,6 +201,19 @@
 
     // Non-inline scalars: store in the VALUE data section.
     if (!is_array) {
+      // pathExpression: pxr writes the expression TEXT as a u32 string
+      // index (crate >= 0.10).
+      if (type_id == TypeId::PathExpression) {
+        const std::string* str = val.as_string();
+        if (str) {
+          uint32_t sidx = InternString(*str);
+          uint64_t data_idx = StoreValueData(&sidx, 4, type_id);
+          if (required_version_minor_ < 10) required_version_minor_ = 10;
+          return ValueRep::Make(CrateTypeId::PathExpression, data_idx, false,
+                                false);
+        }
+        return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+      }
       // Quaternions: crate / GfQuat memory layout is imaginary-first
       // (x, y, z, w); the internal layout (usda text order) is real-first
       // (w, x, y, z). Swizzle on write; the reader swizzles back.
@@ -386,6 +428,22 @@
           }
           break;
         }
+        case TypeId::UChar: {
+          // uchar[]: narrow the widened uint32 storage back to the tightly
+          // packed uint8 wire form pxr writes/reads.
+          const std::vector<uint32_t>* arr = val.as_uint_array();
+          if (arr) {
+            std::vector<uint8_t> raw8(arr->size());
+            for (size_t k = 0; k < arr->size(); ++k) {
+              raw8[k] = static_cast<uint8_t>((*arr)[k] & 0xFFu);
+            }
+            count = raw8.size();
+            if (!copy_counted_payload(count, raw8.data(), sizeof(uint8_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+          }
+          break;
+        }
         case TypeId::UInt64: {
           const std::vector<uint64_t>* arr = val.as_uint64_array();
           if (arr) {
@@ -463,6 +521,24 @@
             count = arr->size() / comps;
             if (!copy_counted_payload(arr->size(), arr->data(),
                                       sizeof(int32_t))) {
+              return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
+            }
+            std::memcpy(arr_data.data(), &count, 8);
+          }
+          break;
+        }
+        case TypeId::UInt2:
+        case TypeId::UInt3:
+        case TypeId::UInt4: {
+          // UInt-vector arrays share the Vec*i crate encoding (same 32-bit
+          // lanes, bit-exact; declared type name restores uintN). Without
+          // this case they fell into `default:` and were written as EMPTY.
+          const std::vector<uint32_t>* arr = val.as_uint_array();
+          const uint32_t comps = ArrayComps(type_id);
+          if (arr && comps && arr->size() % comps == 0) {
+            count = arr->size() / comps;
+            if (!copy_counted_payload(arr->size(), arr->data(),
+                                      sizeof(uint32_t))) {
               return ValueRep::Make(CrateTypeId::Invalid, 0, false, false);
             }
             std::memcpy(arr_data.data(), &count, 8);

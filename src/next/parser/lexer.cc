@@ -4,6 +4,7 @@
 // TinyUSDZ Next - Lexer implementation
 
 #include "lexer.hh"
+#include "../prim/identifier.hh"
 #include "../strfmt.hh"
 #include "simd-scan.hh"
 
@@ -15,11 +16,14 @@ namespace next {
 
 namespace {
 
-bool IsIdentifierStart(char c) {
-  return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
+bool IsIdentifierStart(const char* data, size_t size, size_t pos) {
+  uint32_t cp = 0;
+  size_t width = 0;
+  return identifier_detail::DecodeUtf8(data, size, pos, &cp, &width) &&
+         identifier_detail::IsStart(cp);
 }
 
-bool IsIdentifierContinue(char c) {
+bool IsIdentifierContinueAscii(char c) {
   return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
 }
 
@@ -42,7 +46,7 @@ size_t MatchFloatSpecial(const char* p, const char* end) {
     return true;
   };
   auto word_boundary = [&](size_t n) {
-    return (p + n == end) || !IsIdentifierContinue(p[n]);
+    return (p + n == end) || !IsIdentifierContinueAscii(p[n]);
   };
   if (p + 8 <= end && ieq(p, "infinity", 8) && word_boundary(8)) return 8;
   if (p + 3 <= end && ieq(p, "inf", 3) && word_boundary(3)) return 3;
@@ -86,7 +90,9 @@ const Keyword kKeywords[] = {
   {"over", TokenType::Over},
   {"class", TokenType::Class},
   {"true", TokenType::True},
+  {"True", TokenType::True},
   {"false", TokenType::False},
+  {"False", TokenType::False},
   {"None", TokenType::None},
   {"timeSamples", TokenType::TimeSamples},
   {"custom", TokenType::Custom},
@@ -142,6 +148,19 @@ void Lexer::skip_whitespace() {
       advance();
     } else if (c == '#') {
       skip_comment();
+    } else if (c == '/' && peek_char() == '*') {
+      // USDA accepts C-style separating comments in addition to `#` line
+      // comments. They are whitespace and may occur between a type and name.
+      advance();
+      advance();
+      while (pos_ < length_) {
+        if (current_char() == '*' && peek_char() == '/') {
+          advance();
+          advance();
+          break;
+        }
+        advance();
+      }
     } else {
       break;
     }
@@ -341,6 +360,13 @@ void Lexer::set_error(const std::string& msg) {
   }
 }
 
+void Lexer::set_fatal_error(const std::string& msg) {
+  fatal_ = true;
+  // A fatal lexical malformation must be the surfaced message even when a
+  // recoverable expect() mismatch was recorded first.
+  error_ = "Line " + UIntToStr(line_) + ", column " + UIntToStr(column_) + ": " + msg;
+}
+
 Token Lexer::make_token(TokenType type, size_t start_line, size_t start_col) {
   Token tok;
   tok.type = type;
@@ -360,6 +386,7 @@ Token Lexer::make_token(TokenType type, const std::string& value, size_t start_l
 
 Token Lexer::scan_token() {
   skip_whitespace();
+  token_start_ = pos_;
 
   if (at_end()) {
     return make_token(TokenType::Eof, line_, column_);
@@ -403,7 +430,7 @@ Token Lexer::scan_token() {
   }
 
   // Identifier or keyword
-  if (IsIdentifierStart(c)) {
+  if (IsIdentifierStart(data_, length_, pos_)) {
     return scan_identifier();
   }
 
@@ -429,8 +456,23 @@ Token Lexer::scan_identifier() {
   size_t start_col = column_;
   size_t start = pos_;
 
-  while (IsIdentifierContinue(current_char())) {
-    advance();
+  while (pos_ < length_) {
+    uint32_t cp = 0;
+    size_t width = 0;
+    if (!identifier_detail::DecodeUtf8(data_, length_, pos_, &cp, &width)) {
+      if (static_cast<unsigned char>(current_char()) >= 0x80) {
+        set_fatal_error("Malformed UTF-8 in identifier");
+        return make_token(TokenType::Invalid, start_line, start_col);
+      }
+      break;
+    }
+    if (!identifier_detail::IsContinue(cp)) break;
+    for (size_t i = 0; i < width; ++i) advance();
+  }
+
+  if (pos_ - start > kMaxTokenLength) {
+    set_fatal_error("Identifier token too large");
+    return make_token(TokenType::Invalid, start_line, start_col);
   }
 
   std::string value(data_ + start, pos_ - start);
@@ -499,6 +541,11 @@ Token Lexer::scan_number() {
     }
   }
 
+  if (pos_ - start > kMaxTokenLength) {
+    set_fatal_error("Number token too large");
+    return make_token(TokenType::Invalid, start_line, start_col);
+  }
+
   std::string value(data_ + start, pos_ - start);
   return make_token(TokenType::Number, value, start_line, start_col);
 }
@@ -512,6 +559,7 @@ Token Lexer::scan_string() {
 
   std::string value;
   bool is_multiline = false;
+  bool terminated = false;
 
   // Check for triple-quoted string
   if (current_char() == quote && peek_char() == quote) {
@@ -523,22 +571,29 @@ Token Lexer::scan_string() {
   while (!at_end()) {
     char c = current_char();
 
+    if (value.size() > kMaxTokenLength) {
+      set_fatal_error("String literal too large");
+      return make_token(TokenType::Invalid, start_line, start_col);
+    }
+
     if (is_multiline) {
       // Check for closing triple quotes
       if (c == quote && peek_char() == quote && peek_char(2) == quote) {
         advance();
         advance();
         advance();
+        terminated = true;
         break;
       }
     } else {
       if (c == quote) {
         advance();
+        terminated = true;
         break;
       }
       if (c == '\n') {
-        set_error("Unterminated string literal");
-        break;
+        set_fatal_error("Unterminated string literal");
+        return make_token(TokenType::Invalid, start_line, start_col);
       }
     }
 
@@ -608,6 +663,14 @@ Token Lexer::scan_string() {
     }
   }
 
+  if (!terminated) {
+    // Reached EOF inside the string (single- or triple-quoted): the token
+    // stream is broken; silently returning a String here made truncated files
+    // "parse" successfully.
+    set_fatal_error("Unterminated string literal (EOF inside string)");
+    return make_token(TokenType::Invalid, start_line, start_col);
+  }
+
   return make_token(TokenType::String, value, start_line, start_col);
 }
 
@@ -619,6 +682,10 @@ Token Lexer::scan_path_ref() {
 
   std::string value;
   while (!at_end() && current_char() != '>') {
+    if (value.size() > kMaxTokenLength) {
+      set_fatal_error("Path reference token too large");
+      return make_token(TokenType::Invalid, start_line, start_col);
+    }
     value += current_char();
     advance();
   }
@@ -626,9 +693,14 @@ Token Lexer::scan_path_ref() {
   if (current_char() == '>') {
     advance();
   } else {
-    set_error("Unterminated path reference");
+    set_fatal_error("Unterminated path reference");
+    return make_token(TokenType::Invalid, start_line, start_col);
   }
 
+  if (strict_aousd_conformance && !IsValidPathString(value)) {
+    set_fatal_error("Invalid AOUSD path reference: <" + value + ">");
+    return make_token(TokenType::Invalid, start_line, start_col);
+  }
   return make_token(TokenType::PathRef, value, start_line, start_col);
 }
 
@@ -647,25 +719,50 @@ Token Lexer::scan_asset_ref() {
   }
 
   std::string value;
+  bool terminated = false;
   while (!at_end()) {
     char c = current_char();
 
+    if (value.size() > kMaxTokenLength) {
+      set_fatal_error("Asset reference token too large");
+      return make_token(TokenType::Invalid, start_line, start_col);
+    }
+
     if (is_triple) {
+      // Inside @@@...@@@, `\@@@` is an ESCAPED literal `@@@` (SdfAssetPath
+      // escaping) — consume it without terminating, else the tail desyncs
+      // the token stream.
+      if (c == '\\' && peek_char() == '@' && peek_char(2) == '@' &&
+          peek_char(3) == '@') {
+        value += "@@@";
+        advance();
+        advance();
+        advance();
+        advance();
+        continue;
+      }
       if (c == '@' && peek_char() == '@' && peek_char(2) == '@') {
         advance();
         advance();
         advance();
+        terminated = true;
         break;
       }
     } else {
       if (c == '@') {
         advance();
+        terminated = true;
         break;
       }
     }
 
     value += c;
     advance();
+  }
+
+  if (!terminated) {
+    set_fatal_error("Unterminated asset reference (EOF inside '@' literal)");
+    return make_token(TokenType::Invalid, start_line, start_col);
   }
 
   // Return as a string token (asset references are essentially strings)

@@ -23,6 +23,10 @@ using CrateWriteSink = std::function<bool(const uint8_t* data, size_t size)>;
 
 /// Options for crate writing
 struct CrateWriteOptions {
+  /// Refuse authored fields that cannot be represented in the selected Crate
+  /// version instead of silently omitting or approximating them.
+  bool strict_aousd_conformance = false;
+
   /// Version to write (default 0.8.0 for broad compatibility)
   uint8_t version_major = 0;
   uint8_t version_minor = 8;

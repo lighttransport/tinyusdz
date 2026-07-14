@@ -32,9 +32,15 @@ function skeletonWorldParentFromScene(usdScene, skelAbsPath) {
   return group;
 }
 
-function registerMeshVisibility(mesh, showMesh, allSceneMeshes, meshVisibility) {
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
+function registerMeshVisibility(
+  mesh,
+  showMesh,
+  allSceneMeshes,
+  meshVisibility,
+  enableShadows
+) {
+  mesh.castShadow = enableShadows;
+  mesh.receiveShadow = enableShadows;
   mesh.visible = showMesh;
   allSceneMeshes.push(mesh);
   meshVisibility.set(mesh, true);
@@ -227,6 +233,7 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
   const skinnedMeshDataByName = options.skinnedMeshDataByName || new Map();
   const usdScene = options.usdScene;
   const showMesh = options.showMesh !== false;
+  const enableShadows = options.enableShadows !== false;
   const showSkeleton = !!options.showSkeleton;
   const skeletonDisplayMode = options.skeletonDisplayMode || 'full';
   const showSkeletonTips = options.showSkeletonTips !== false;
@@ -372,7 +379,13 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
         logger.log(`  Skinning mode: ${skinningConfig.mode}`);
 
         const newSkinnedMesh = replaceWithSkinnedMesh(mesh);
-        registerMeshVisibility(newSkinnedMesh, showMesh, allSceneMeshes, meshVisibility);
+        registerMeshVisibility(
+          newSkinnedMesh,
+          showMesh,
+          allSceneMeshes,
+          meshVisibility,
+          enableShadows
+        );
 
         newSkinnedMesh.bind(meshSkeleton);
         logger.log(
@@ -411,7 +424,13 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
         logger.log(
           `Mesh ${meshName} (${meshAbsPath || 'no absPath'}): no USD skinning data, keeping as regular mesh`
         );
-        registerMeshVisibility(mesh, showMesh, allSceneMeshes, meshVisibility);
+        registerMeshVisibility(
+          mesh,
+          showMesh,
+          allSceneMeshes,
+          meshVisibility,
+          enableShadows
+        );
         if (!firstRenderableMesh) {
           firstRenderableMesh = mesh;
         }
@@ -462,7 +481,13 @@ export function applyUSDSceneSkinningPipeline(options = {}) {
   } else {
     logger.log('No skeleton data or no meshes, scene added as-is');
     for (const child of allMeshes) {
-      registerMeshVisibility(child, showMesh, allSceneMeshes, meshVisibility);
+      registerMeshVisibility(
+        child,
+        showMesh,
+        allSceneMeshes,
+        meshVisibility,
+        enableShadows
+      );
       if (!firstRenderableMesh) {
         firstRenderableMesh = child;
       }

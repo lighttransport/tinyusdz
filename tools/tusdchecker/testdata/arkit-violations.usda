@@ -1,0 +1,76 @@
+#usda 1.0
+(
+    # No defaultPrim         -> arkit.stage.defaultPrim
+    # No metersPerUnit       -> arkit.stage.metersPerUnit
+    upAxis = "Z"           # -> arkit.stage.upAxis
+    subLayers = [
+        @extras/notes.txt@ # -> arkit.layer.extension
+    ]
+)
+
+def Xform "Asset"
+{
+    # BasisCurves is not in the ARKit prim-type whitelist ->  arkit.prim.type
+    def BasisCurves "Hair"
+    {
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)]
+    }
+
+    def Mesh "Body" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        # Binds to an Xform, not a Material -> arkit.material.binding
+        rel material:binding = </Asset/NotAMaterial>
+    }
+
+    def Xform "NotAMaterial"
+    {
+    }
+
+    def Material "Paint"
+    {
+        token outputs:surface.connect = </Asset/Paint/Surface.outputs:surface>
+
+        def Shader "Surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            # Two connection sources on one input -> arkit.shader.connection
+            color3f inputs:diffuseColor.connect = [
+                </Asset/Paint/Diffuse.outputs:rgb>,
+                </Asset/Paint/Normal.outputs:rgb>
+            ]
+            # 8-bit normal map without scale/bias/raw -> arkit.normalMap.scaleBias
+            normal3f inputs:normal.connect = </Asset/Paint/Normal.outputs:rgb>
+            token outputs:surface
+        }
+
+        def Shader "Diffuse"
+        {
+            uniform token info:id = "UsdUVTexture"
+            # tif is decodable but non-portable -> arkit.texture.format
+            asset inputs:file = @textures/paint_diffuse.tif@
+            float3 outputs:rgb
+        }
+
+        def Shader "Normal"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @textures/paint_normal.png@
+            float3 outputs:rgb
+        }
+
+        # Source-code shaders are not allowed -> arkit.shader.implementationSource
+        # and the id is outside the ARKit set -> arkit.shader.id
+        def Shader "Custom"
+        {
+            uniform token info:implementationSource = "sourceAsset"
+            uniform token info:id = "MyStudioBrdf"
+            token outputs:surface
+        }
+    }
+}

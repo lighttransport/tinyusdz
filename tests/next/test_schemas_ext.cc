@@ -10,6 +10,7 @@
 #include "next/schema/physics-api.hh"
 #include "next/schema/physics-joint.hh"
 #include "next/schema/physics-collision.hh"
+#include "next/schema/schema-registry.hh"
 #include "next/prim/path.hh"
 #include <cstdio>
 #include <cassert>
@@ -556,6 +557,95 @@ void test_physics_collision_group() {
 }
 
 // ============================================================
+// Non-core OpenUSD domain-schema breadth (product parity):
+// UsdVol / UsdRender / UsdGeom Hermite-TetMesh-NurbsPatch registry entries.
+// ============================================================
+
+static void test_domain_schema_breadth() {
+  TEST("domain schema breadth (UsdVol/UsdRender/geom)");
+
+  StageBuilder sb;
+  auto& layer = sb.GetLayerBuilder();
+  layer.begin_prim("Patch", "NurbsPatch");
+  layer.end_prim();
+  layer.begin_prim("Tet", "TetMesh");
+  layer.end_prim();
+  layer.begin_prim("Hermite", "HermiteCurves");
+  layer.end_prim();
+  layer.begin_prim("Vdb", "OpenVDBAsset");
+  layer.end_prim();
+  layer.begin_prim("Vol", "Volume");
+  layer.end_prim();
+  layer.begin_prim("Rs", "RenderSettings");
+  layer.end_prim();
+  layer.begin_prim("Rv", "RenderVar");
+  layer.end_prim();
+  layer.finalize();
+  Stage stage = sb.Build();
+
+  const SchemaRegistry& registry = GetSchemaRegistry();
+  auto spec = [&](const char* path) {
+    const PrimSpec* ps = stage.GetPrimAtPath(path).GetPrimSpec();
+    assert(ps);
+    return ps;
+  };
+
+  // Fallbacks (direct + inherited through the parents chain).
+  const SchemaPropertyDefinition* uform =
+      registry.FindProperty(*spec("/Patch"), "uForm");
+  assert(uform && uform->has_fallback &&
+         *uform->fallback.as_token() == "open");
+  const SchemaPropertyDefinition* role =
+      registry.FindProperty(*spec("/Vdb"), "vectorDataRoleHint");
+  assert(role && role->has_fallback && *role->fallback.as_token() == "None" &&
+         "OpenVDBAsset inherits VolumeFieldAsset's vectorDataRoleHint");
+  const SchemaPropertyDefinition* res =
+      registry.FindProperty(*spec("/Rs"), "resolution");
+  assert(res && res->has_fallback &&
+         "RenderSettings inherits RenderSettingsBase's resolution");
+  const int32_t* res2 = res->fallback.as_int2();
+  assert(res2 && res2[0] == 2048 && res2[1] == 1080);
+  const SchemaPropertyDefinition* dt =
+      registry.FindProperty(*spec("/Rv"), "dataType");
+  assert(dt && dt->has_fallback && *dt->fallback.as_token() == "color3f");
+  // Volume is a Gprim: Imageable fallbacks resolve through the chain.
+  const SchemaPropertyDefinition* vis =
+      registry.FindProperty(*spec("/Vol"), "visibility");
+  assert(vis && vis->has_fallback &&
+         *vis->fallback.as_token() == "inherited");
+  // RenderSettings is NOT Imageable: no visibility definition.
+  assert(!registry.FindProperty(*spec("/Rs"), "visibility"));
+
+  // Declarations (no fallback, but the property is known).
+  assert(registry.FindProperty(*spec("/Tet"), "tetVertexIndices"));
+  assert(registry.FindProperty(*spec("/Tet"), "surfaceFaceVertexIndices"));
+  const SchemaPropertyDefinition* tangents =
+      registry.FindProperty(*spec("/Hermite"), "tangents");
+  assert(tangents && tangents->has_fallback &&
+         tangents->fallback.is_array() && tangents->fallback.array_size() == 0 &&
+         "pxr: vector3f[] tangents = [] (empty-array fallback)");
+  // pxr parity: NurbsCurves has no `ids`; Volume has no builtin literally
+  // named "field" (field:<name> relationships are dynamic).
+  {
+    StageBuilder nb;
+    auto& nl = nb.GetLayerBuilder();
+    nl.begin_prim("NC", "NurbsCurves");
+    nl.end_prim();
+    nl.finalize();
+    Stage nstage = nb.Build();
+    assert(!registry.FindProperty(*nstage.GetPrimAtPath("/NC").GetPrimSpec(),
+                                  "ids"));
+  }
+  assert(!registry.FindProperty(*spec("/Vol"), "field"));
+  assert(registry.FindProperty(*spec("/Patch"), "trimCurve:knots"));
+  assert(registry.FindProperty(*spec("/Vdb"), "filePath"));
+  assert(registry.FindProperty(*spec("/Vdb"), "fieldClass"));
+  assert(registry.FindProperty(*spec("/Rs"), "products"));
+
+  PASS();
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -584,6 +674,9 @@ int main() {
   test_physics_api_schemas();
   test_physics_joints();
   test_physics_collision_group();
+
+  printf("\nDomain breadth (product parity):\n");
+  test_domain_schema_breadth();
 
   printf("\n%d/%d tests passed\n", pass_count, test_count);
   return pass_count == test_count ? 0 : 1;

@@ -16,6 +16,11 @@ namespace next {
 
 /// Options for parsing USDA files
 struct ParseOptions {
+  /// Enforce AOUSD Core grammar and fail rather than accepting constructs that
+  /// next cannot interpret conformantly. The default keeps legacy permissive
+  /// ingestion, but lossy constructs are still preserved and diagnosed.
+  bool strict_aousd_conformance = false;
+
   /// Allow unknown/unrecognized prim types (stored as generic prims)
   bool allow_unknown_types = true;
 

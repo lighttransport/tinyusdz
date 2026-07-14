@@ -64,7 +64,7 @@ bool CrateWriter::ExtractSkeletonProperties(
   }
 
   // visibility
-  if (skel->visibility.has_value()) {
+  if (skel->visibility.authored()) {
     const auto& visibility_anim = skel->visibility.get_value();
     if (visibility_anim.has_default()) {
       Visibility vis_val;
@@ -78,7 +78,7 @@ bool CrateWriter::ExtractSkeletonProperties(
   }
 
   // purpose
-  if (skel->purpose.has_value()) {
+  if (skel->purpose.authored()) {
     crate::CrateValue crate_val;
     value::token tok(to_string(skel->purpose.get_value()));
     crate_val.Set(tok);
@@ -171,9 +171,14 @@ bool CrateWriter::ExtractSkelRootProperties(
     return false;
   }
 
+  // SkelRoot is Xformable -- it is the transform root of the rig -- but this
+  // writer never emitted its xformOps, so the whole rig snapped back to the
+  // origin on write. ExtractSkeletonProperties already does this.
+  ExtractXformOpsFromXformable(prim, prim_path, fields, err);
+
   // SkelRoot has no dedicated attributes beyond visibility, purpose, and extent
   // Extract visibility
-  if (skel_root->visibility.has_value()) {
+  if (skel_root->visibility.authored()) {
     const auto& visibility_anim = skel_root->visibility.get_value();
     if (visibility_anim.has_default()) {
       Visibility visibility_val;
@@ -187,7 +192,7 @@ bool CrateWriter::ExtractSkelRootProperties(
   }
 
   // Extract purpose
-  if (skel_root->purpose.has_value()) {
+  if (skel_root->purpose.authored()) {
     const auto& purpose_val = skel_root->purpose.get_value();
     crate::CrateValue crate_val;
     value::token tok(to_string(purpose_val));
@@ -210,6 +215,30 @@ bool CrateWriter::ExtractSkelRootProperties(
             fields.push_back({"extent", crate_val});
           }
         }
+      }
+
+      // ANIMATED extent. This branch did not exist, so `extent.timeSamples` was
+      // dropped wholesale. Samples hold an Extent struct in memory and float3[2]
+      // on disk -- the same shape conversion the default above does.
+      if (extent_animatable.has_timesamples()) {
+        const value::TimeSamples *ext_ts = extent_animatable.get_timesamples_ptr();
+
+        value::TimeSamples ts;
+        const auto &samples = ext_ts->get_samples();
+        for (size_t i = 0; i < samples.size(); i++) {
+          if (samples[i].blocked) {
+            ts.add_blocked_sample(samples[i].t, value::Value());
+          } else if (const Extent *ev = samples[i].value.as<Extent>()) {
+            std::vector<value::float3> ev_vec = {ev->lower, ev->upper};
+            ts.add_sample(samples[i].t, value::Value(ev_vec));
+          } else {
+            ts.add_sample(samples[i].t, samples[i].value);
+          }
+        }
+
+        crate::CrateValue ts_crate_val;
+        ts_crate_val.Set(ts);
+        fields.push_back({"extent.timeSamples", ts_crate_val});
       }
     }
   }

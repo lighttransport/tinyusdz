@@ -241,6 +241,16 @@ std::array<TypeInfo, kTypeCount> g_type_info = {{
   // Relationship types
   { TypeId::Relationship, "rel", "Relationship", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
   { TypeId::Reference, "reference", "Reference", 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr },
+
+  // uchar (appended; keep in enum order)
+  POD_TYPE_INFO(UChar, "uchar", "uint8_t", uint8_t),
+
+  // frame4d: matrix4d role (double[16] storage).
+  { TypeId::Frame4d, "frame4d", "frame4d", sizeof(double) * 16, alignof(double),
+    nullptr, nullptr, nullptr, nullptr, nullptr },
+  // pathExpression: string storage (variable size).
+  { TypeId::PathExpression, "pathExpression", "PathExpression", 0, 1,
+    nullptr, nullptr, nullptr, nullptr, nullptr },
 }};
 
 #undef POD_TYPE_INFO
@@ -336,6 +346,7 @@ bool IsScalarType(TypeId id) {
     case TypeId::Float:
     case TypeId::Double:
     case TypeId::TimeCode:
+    case TypeId::UChar:
       return true;
     default:
       return false;
@@ -345,6 +356,7 @@ bool IsScalarType(TypeId id) {
 bool IsNumericType(TypeId id) {
   switch (id) {
     case TypeId::Bool:
+    case TypeId::UChar:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::Int64:
@@ -376,6 +388,7 @@ bool IsNumericType(TypeId id) {
     case TypeId::Matrix3d:
     case TypeId::Matrix4f:
     case TypeId::Matrix4d:
+    case TypeId::Frame4d:
       return true;
     default:
       return false;
@@ -393,6 +406,9 @@ TypeId GetComponentType(TypeId id) {
     case TypeId::UInt3:
     case TypeId::UInt4:
       return TypeId::UInt;
+
+    case TypeId::Frame4d:
+      return TypeId::Double;
 
     case TypeId::Half2:
     case TypeId::Half3:
@@ -448,6 +464,7 @@ size_t GetComponentCount(TypeId id) {
   switch (id) {
     // Scalars
     case TypeId::Bool:
+    case TypeId::UChar:
     case TypeId::Int:
     case TypeId::UInt:
     case TypeId::Int64:
@@ -516,6 +533,7 @@ size_t GetComponentCount(TypeId id) {
     // 16-component (4x4 matrix)
     case TypeId::Matrix4f:
     case TypeId::Matrix4d:
+    case TypeId::Frame4d:
       return 16;
 
     default:

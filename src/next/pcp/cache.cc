@@ -13,6 +13,7 @@
 #include "../../logger.hh"                 // tinyusdz::logging TUSDZ_LOG_*
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <limits>
 #include <chrono>
@@ -31,6 +32,14 @@ namespace pcp {
 
 namespace {
 
+// The layer stacks an arc chain crossed to reach a source, as (stack, map_idx)
+// pairs from the root stack down to the source's own stack -- one entry per
+// composition node. Implied class arcs are re-expressed in each of these
+// namespaces, so the chain must survive the re-rooting a child prim does; an
+// INTERMEDIATE stack's opinion on the class path is otherwise lost (bug69932).
+// Shared, so propagating it to a whole subtree costs one refcount.
+using ArcChain = std::vector<std::pair<uint32_t, uint32_t>>;
+
 // A single composition source (one node's worth of provenance).
 struct Src {
   uint32_t stack_idx = 0;
@@ -43,9 +52,20 @@ struct Src {
   std::string site;            // prim path within the layer stack
   LayerOffset offset;
   ArcType arc_kind = ArcType::Root;  // arc this source arrived through
+  // True when the arc was introduced at a namespace ANCESTOR (the source was
+  // derived by DeriveChildSources rather than by this prim's own arc
+  // expansion). pxr PcpNodeRef::IsDueToAncestor analogue; specifier
+  // resolution treats a class from a direct inherit as weaker than any other
+  // defining specifier, but an ancestral one composes in plain strength order.
+  bool ancestral = false;
   // For Variant sources: the selected variant's inline opinions (lives inside a
   // shared layer's PrimSpecMeta, so the pointer is stable). null otherwise.
   const VariantData *variant = nullptr;
+  // Composed expression-variable context visible at this source. Shared so
+  // propagating a source to thousands of descendants stays cheap.
+  std::shared_ptr<const Value> expression_variables;
+  // The arc chain this source was reached through (null == the root stack).
+  std::shared_ptr<const ArcChain> arc_chain;
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.
@@ -71,6 +91,7 @@ struct SiteHash {
 // a ProcessArc local).
 struct ExpansionFrame {
   uint32_t stack_idx;
+  uint32_t map_idx;
   const std::string *site;
   const ExpansionFrame *prev;
   uint32_t depth;  // number of frames above the seed (seed == 0)
@@ -127,6 +148,8 @@ struct Cache::Impl {
 
   std::map<std::string, std::unique_ptr<PrimIndex>> index_cache;
   std::unordered_map<std::string, std::vector<Src>> sources_cache;  // path -> expanded sources
+  std::set<std::string> sources_in_progress;
+  const std::vector<Src> empty_sources_;
 
   // Pool of namespace mappings shared by Src.map_idx. Index 0 is identity, so a
   // default Src (and the bulk of subtree children) needs no pool entry. New
@@ -158,20 +181,13 @@ struct Cache::Impl {
   std::unordered_map<std::string, std::string> prototype_of;           // prim -> prototype
   std::unordered_map<std::string, std::vector<std::string>> instances_by_prototype;
 
-  // Relocates: composed source path -> target path (collected from the root
-  // layer stack at Open). Applied as a same-parent namespace rename in BuildStage.
-  std::map<std::string, std::string> relocates_map;
+  // Relocates are a per-LAYER-STACK property (LayerStack::relocates, built in
+  // InternLayerStack) and are applied while deriving a prim's composition
+  // sources (DeriveChildSources), so a relocate authored in a referenced or
+  // payloaded layer stack renames prims inside THAT stack's namespace and the
+  // rename maps through the arc into root space.
 
-  void CollectRelocates() {
-    relocates_map.clear();
-    for (const auto &lp : layer_stacks[0].layers) {
-      for (const PrimSpec &ps : lp->prims()) {
-        for (const auto &r : ps.meta().relocates()) {
-          relocates_map[r.first] = r.second;
-        }
-      }
-    }
-  }
+
 
   // --- typed composition diagnostics (Phase 7 E4) -------------------------
   // Accumulated typed issues. Recorded regardless of whether a caller passed an
@@ -222,6 +238,9 @@ nonstd::expected<Cache, std::string> Cache::Open(
   Cache cache;
   cache.impl_->resolver = &resolver;
   cache.impl_->options = options;
+  if (cache.impl_->options.strict_aousd_conformance) {
+    cache.impl_->options.usda_parse_options.strict_aousd_conformance = true;
+  }
   // Back-compat: a lone `flatten_instances = true` (mode left Native) means the
   // self-contained Holder flatten.
   if (cache.impl_->options.flatten_instances &&
@@ -240,7 +259,6 @@ nonstd::expected<Cache, std::string> Cache::Open(
                                                      "to build root layer stack")
                                        : err);
   }
-  cache.impl_->CollectRelocates();
   return cache;
 }
 
@@ -404,7 +422,11 @@ bool ComposeStageFromFile(const std::string &filename, AssetResolver &resolver,
                           std::string *warn, std::string *err) {
   LayerLoadOptions lopts;
   lopts.max_memory = options.max_layer_memory;
+  lopts.strict_aousd_conformance = options.strict_aousd_conformance;
   lopts.usda_parse_options = options.usda_parse_options;
+  if (options.strict_aousd_conformance) {
+    lopts.usda_parse_options.strict_aousd_conformance = true;
+  }
   std::shared_ptr<Layer> root = LoadLayerFromFile(
       filename, warn, err, lopts);
   if (!root) return false;

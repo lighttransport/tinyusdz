@@ -3361,7 +3361,10 @@ async function buildScene() {
     if (isNextScene(usd)) {
         const built = buildNextThreeNode(usd, {
             skipTextures: false,
-            lazyTextures: true
+            lazyTextures: true,
+            // Keep light records until the authored dome/direct lights below
+            // have been consumed. They are released at the end of this branch.
+            releaseBuildData: false
         });
         const root = built.node;
         const metadata = readNextSceneMeta(usd);
@@ -3388,9 +3391,32 @@ async function buildScene() {
             return rawData;
         });
         fitCameraToObject(root);
-        state.envPreset = 'studio';
-        setEnvFromResult(createStudioEnvironment());
-        applyEnvironment();
+
+        // The next RenderStream exposes the same light records consumed by
+        // the legacy path. Honor authored dome/direct lights here as well;
+        // forcing the studio environment made identical colorspace textures
+        // appear substantially brighter and more saturated in next.
+        clearUSDLights();
+        try {
+            const domeLightData = await TinyUSDZLoaderUtils.loadDomeLightFromUSD(
+                usd, state.pmremGenerator);
+            if (domeLightData) {
+                state.domeLightData = domeLightData;
+                state.envMap = domeLightData.texture;
+                state.envMapSource = domeLightData.sourceTexture || domeLightData.texture;
+                state.envIntensity = domeLightData.intensity || 1.0;
+                state.envPreset = 'usd_dome';
+                applyEnvironment();
+            }
+        } catch (e) {
+            console.warn('Failed to load next DomeLight:', e);
+        }
+        await loadUSDLights(usd);
+        if (!state.domeLightData) {
+            state.envPreset = 'studio';
+            setEnvFromResult(createStudioEnvironment());
+            applyEnvironment();
+        }
         updateEnvUI();
         const counts = nextCountsFromScene(usd);
         const meshCount = usd.numMeshes ? usd.numMeshes() : 0;

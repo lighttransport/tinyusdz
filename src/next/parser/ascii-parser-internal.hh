@@ -49,7 +49,11 @@ private:
   bool ParseStageMetadata();
   bool ParsePrim();
   bool ParsePrimContents();
-  bool ParseAttribute();
+  bool ParseAttribute(
+      PrimSpec::RelationshipListOp connection_op =
+          PrimSpec::RelationshipListOp::Append,
+      bool explicit_connection = true,
+      const std::string& preconsumed_type = std::string());
   bool ParseRelationship(PrimSpec::RelationshipListOp op =
                              PrimSpec::RelationshipListOp::Append,
                          bool explicit_list = true, uint16_t flags = 0);
@@ -65,6 +69,7 @@ private:
   // prim-metadata arcs and variant-option arcs. Returns false if no arc token.
   bool ReadArcRef(std::string* out);
   bool ParseNamespacedName(std::string* out, const char* what);
+  bool ParseOrderList(std::vector<std::string>* out);
   bool SkipBalancedBlock(TokenType open, TokenType close, size_t depth = 0);
   bool SkipValueLike();
   void SkipPropertyMetadata();

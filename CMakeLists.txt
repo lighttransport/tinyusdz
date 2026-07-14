@@ -2006,10 +2006,16 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
 
+# Register tool-local tests added below as part of the top-level test tree.
+if(TINYUSDZ_BUILD_TESTS)
+  enable_testing()
+endif()
+
 # Tools
 if(TINYUSDZ_BUILD_TOOLS)
   add_subdirectory(tools/tusddumpcrate)
   add_subdirectory(tools/tusdzconvert)
+  add_subdirectory(tools/tusdchecker)
   # tusddiff uses the Tydra diff-and-compare API.
   if(TINYUSDZ_WITH_TYDRA)
     add_subdirectory(tools/tusddiff)
@@ -2050,9 +2056,6 @@ if(WIN32)
 endif()
 
 if(TINYUSDZ_BUILD_TESTS)
-
-  enable_testing()
-
   #
   # Standalone tester
   #
@@ -2138,6 +2141,19 @@ if(TINYUSDZ_BUILD_TESTS)
   endif()
 
   if(TARGET tusdcat AND _tinyusdz_tusdcat_e2e_ok)
+    # Crate-writer round-trip pins. Every check here is a fix for authored USD
+    # data that the .usdc writer silently DROPPED or INVENTED: schema fallbacks
+    # written for declaration-only attributes, prim/attribute metadata blocks,
+    # timeSamples on the typed writers, list-edit qualifiers, and so on. Several
+    # of them are latent -- no tests/usda fixture exercises them -- so this suite
+    # is the only thing standing between those bugs and a silent return.
+    add_test(
+      NAME scope-imageable-roundtrip
+      COMMAND bash "${PROJECT_SOURCE_DIR}/tests/run-scope-imageable-roundtrip.sh"
+              "$<TARGET_FILE:tusdcat>"
+      )
+    set_tests_properties(scope-imageable-roundtrip PROPERTIES SKIP_RETURN_CODE 77)
+
     add_test(
       NAME validation-suite-test
       COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/usda/validation/run-validation-suite.py

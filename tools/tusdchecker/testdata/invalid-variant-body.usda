@@ -1,0 +1,22 @@
+#usda 1.0
+
+def Xform "Root" (
+    variants = {
+        string shape = "good"
+    }
+    prepend variantSets = "shape"
+)
+{
+    variantSet "shape" = {
+        "bad" {
+            def Mesh "Broken"
+            {
+                point3f[] points = [(0, 0, 0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+            }
+        }
+        "good" {
+        }
+    }
+}

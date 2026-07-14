@@ -27,7 +27,13 @@ namespace experimental {
 } while(0)
 
 // Helper macro: extract a TypedAttributeWithFallback<T>
+// NOTE: guarded on authored(). A TypedAttributeWithFallback ALWAYS yields a
+// value from get_value() -- the schema fallback when nothing was authored -- so
+// writing it unconditionally turns "no opinion" into an AUTHORED opinion on
+// read-back. That is not cosmetic: an authored opinion is a STRONG one, and it
+// blocks weaker opinions during composition.
 #define EXTRACT_FALLBACK(attr, name) do { \
+  if (!(attr).authored()) break; \
   crate::CrateValue _cv; \
   value::Value _v((attr).get_value()); \
   std::string _cerr; \
@@ -48,6 +54,7 @@ namespace experimental {
 
 // Helper macro: extract a token TypedAttributeWithFallback directly
 #define EXTRACT_TOKEN_FALLBACK(attr, name) do { \
+  if (!(attr).authored()) break; \
   crate::CrateValue _cv; \
   _cv.Set((attr).get_value()); \
   fields.push_back({(name), _cv}); \

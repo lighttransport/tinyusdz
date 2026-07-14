@@ -30,6 +30,11 @@ namespace next {
 //
 
 struct MeshConfig {
+  // Subdivision level for generated analytic spheres. Match the legacy
+  // converter default so backend switches do not expose faceted silhouettes.
+  // Clamped to [0, 6] by the converter.
+  int sphere_subdivisions = 4;
+
   // Triangulation
   bool triangulate = true;
   enum class TriangulationMethod { Earcut, Fan } triangulation_method = TriangulationMethod::Earcut;
@@ -59,12 +64,35 @@ struct MeshConfig {
 
   // Memory optimization
   bool use_chunked_arrays = true;
+
+  // Keep the converted vertex/topology payload in RenderScene. Consumers
+  // which source geometry elsewhere (for example the web RenderStream, which
+  // lazily builds one output mesh from Stage at a time) can disable this to
+  // retain only mesh metadata, material bindings, skinning and blend shapes.
+  // Bulk arrays are released incrementally during conversion so the peak does
+  // not include both the Stage and a second complete copy of every mesh.
+  bool retain_geometry = true;
+
+  // Metadata-only consumers may still need the converter's robust polygon
+  // triangulation without retaining authored points and vertex attributes.
+  bool retain_triangulation = false;
+
+  // Generated geometric primitives have no authored Mesh arrays for a lazy
+  // consumer to rebuild from. Keep their generated payload when requested.
+  bool retain_analytic_geometry = false;
 };
 
 struct MaterialConfig {
   // Texture loading
   bool load_textures = true;
   bool allow_missing_textures = true;
+
+  // Assign a generated default PreviewSurface material to meshes/curves that
+  // have no authored material binding (legacy assign_default_material parity).
+  // Disabled by default so callers can distinguish unbound geometry via
+  // material_id == -1.
+  bool assign_default_material = false;
+  std::string default_material_name = "defaultMaterial";
 
   // Color space
   ColorSpace target_color_space = ColorSpace::Linear;
@@ -166,6 +194,11 @@ class RenderSceneConverter {
   bool ConvertAnimation(const ::tinyusdz::next::Stage& stage,
                         const UsdPrim& prim, AnimationClip* out);
 
+  // Robustly triangulate an already-populated RenderMesh. Custom/lazy
+  // pipelines can share the converter's earcut, quad-diagonal, winding and
+  // hole handling without constructing a complete RenderScene.
+  bool TriangulateMesh(RenderMesh* mesh);
+
   // Texture loading
   bool LoadTexture(const std::string& asset_path, TextureImage* out);
 
@@ -179,6 +212,9 @@ class RenderSceneConverter {
                                  RenderScene* scene);
   void AssignMaterialBindings(const ::tinyusdz::next::Stage& stage,
                               RenderScene* scene);
+  /// Lazily create the shared default material (MaterialConfig::
+  /// assign_default_material); returns its id.
+  int32_t GetOrCreateDefaultMaterial(RenderScene* scene);
   void AssignPointInstanceDrawMaterials(RenderScene* scene);
   void DuplicatePointInstanceMeshes(RenderScene* scene);
 
@@ -192,7 +228,6 @@ class RenderSceneConverter {
   bool ExtractMeshPrimvars(const UsdPrim& prim, RenderMesh* mesh);
 
   // Triangulation
-  bool TriangulateMesh(RenderMesh* mesh);
   bool TriangulateFan(const uint32_t* face_vertex_counts, size_t face_count,
                       const uint32_t* indices, size_t index_count,
                       UInt32Chunked* out_indices);

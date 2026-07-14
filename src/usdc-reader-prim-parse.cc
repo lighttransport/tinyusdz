@@ -56,6 +56,26 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`primChildren` must be type `token[]`, but got type `"
                       << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "primOrder") {
+      // `reorder nameChildren = [...]`. pxr keeps the body statement verbatim as
+      // a token vector under primOrder (NOT primChildren, which is the full
+      // child-name list).
+      if (auto pv = fv.second.as<std::vector<value::token>>()) {
+        primMeta.nameChildrenReorder = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`primOrder` must be type `token[]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "propertyOrder") {
+      // `reorder properties = [...]`
+      if (auto pv = fv.second.as<std::vector<value::token>>()) {
+        primMeta.propertiesReorder = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`propertyOrder` must be type `token[]`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "active") {
       if (auto pv = fv.second.as<bool>()) {
         primMeta.set_active(*pv);

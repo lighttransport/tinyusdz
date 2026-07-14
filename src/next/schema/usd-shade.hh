@@ -118,6 +118,7 @@ struct PreviewSurfaceData {
   std::string roughness_texture;
   std::string emissive_texture;
   std::string occlusion_texture;
+  std::string opacity_texture;
 };
 
 /// Check if shader is UsdPreviewSurface
@@ -159,6 +160,10 @@ bool IsPrimvarReader(const UsdPrim& shader);
 
 /// Get primvar name being read
 std::string GetPrimvarReaderVarname(const UsdPrim& shader);
+
+/// Stage-aware variant: additionally follows inputs:varname connections
+/// (e.g. to a Material's inputs:frame:stPrimvarName interface attribute).
+std::string GetPrimvarReaderVarname(const Stage& stage, const UsdPrim& shader);
 
 }  // namespace next
 }  // namespace tinyusdz

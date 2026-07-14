@@ -64,6 +64,13 @@
       removeAll(e->deleted);
       removeAll(e->prepended);
       removeAll(e->appended);
+      for (const auto &added : tag(e->added)) {
+        const bool present = std::find_if(
+            result.begin(), result.end(), [&](const auto &p) {
+              return p.first == added.first;
+            }) != result.end();
+        if (!present) result.push_back(added);
+      }
       std::vector<std::pair<std::string, std::string>> merged;
       merged.reserve(e->prepended.size() + result.size() + e->appended.size());
       auto pre = tag(e->prepended), app = tag(e->appended);
