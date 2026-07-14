@@ -66,6 +66,13 @@ struct Src {
   std::shared_ptr<const Value> expression_variables;
   // The arc chain this source was reached through (null == the root stack).
   std::shared_ptr<const ArcChain> arc_chain;
+  // For IMPLIED class sources (and their subtree): the layer stack whose
+  // strength position this source composes at. pxr expresses an implied
+  // class in each ancestor stack of the introducing arc chain, and its
+  // opinions sit immediately after that stack's own positional opinions —
+  // NOT at the introducing reference's position (see ExpandList's reorder).
+  // UINT32_MAX == not an implied source.
+  uint32_t implied_anchor = UINT32_MAX;
 };
 
 // Reverse-dependency key: which (layer, prim-path) an index read from.

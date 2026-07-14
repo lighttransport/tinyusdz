@@ -272,6 +272,9 @@
     Src arc_src;
     arc_src.stack_idx = arc_stack_idx;
     arc_src.site = arc_site;
+    // A subtree expanded under an implied class stays anchored to the same
+    // expressing stack (the whole block composes at that strength position).
+    arc_src.implied_anchor = src.implied_anchor;
     arc_src.map_idx = InternMapping(WithStackRelocates(
         arc_stack_idx,
         NamespaceMapping::Compose(Mapping(src.map_idx), local)));
@@ -366,6 +369,7 @@
         }
         Src implied = arc_src;
         implied.stack_idx = as;
+        implied.implied_anchor = as;  // composes at stack `as`'s position
         if (implied_site != arc_site) {
           implied.site = implied_site;
           // Implied specs live at implied_site and compose onto the SAME
@@ -831,6 +835,38 @@
       const ExpansionFrame seed{s.stack_idx, s.map_idx, &s.site, nullptr, 0};
       ExpandArcs(s, &seed, tgt, &spec, &sels, chain, warn, err);
     }
+    // pxr strength for IMPLIED classes: the implied block composes at its
+    // expressing ancestor stack's position — immediately after that stack's
+    // own positional opinions — not at the position of the reference that
+    // introduced the inherit. (BasicInstancing pcp.txt prim stack:
+    // root-local, root-implied-class, set-ancestral, set-implied-class,
+    // prop-ref, prop-class.) Move each contiguous implied block up to just
+    // after the last earlier non-implied source of its anchor stack.
+    for (size_t i = 0; i < main.size();) {
+      const uint32_t anchor = main[i].implied_anchor;
+      if (anchor == UINT32_MAX) {
+        ++i;
+        continue;
+      }
+      size_t k = i + 1;
+      while (k < main.size() && main[k].implied_anchor == anchor) ++k;
+      size_t ins = SIZE_MAX;
+      for (size_t j = i; j-- > 0;) {
+        if (main[j].implied_anchor == UINT32_MAX &&
+            main[j].stack_idx == anchor) {
+          ins = j + 1;
+          break;
+        }
+      }
+      if (ins == SIZE_MAX || ins >= i) {
+        i = k;
+        continue;
+      }
+      std::rotate(main.begin() + static_cast<ptrdiff_t>(ins),
+                  main.begin() + static_cast<ptrdiff_t>(i),
+                  main.begin() + static_cast<ptrdiff_t>(k));
+      i = k;
+    }
     main.insert(main.end(), spec.begin(), spec.end());
     return main;
   }
@@ -930,6 +966,7 @@
     dst.map_idx = InternMapping(renamed_map(arrival.dst_site));
     dst.offset = ps.offset;
     dst.arc_kind = ps.arc_kind;
+    dst.implied_anchor = ps.implied_anchor;
     dst.expression_variables = ps.expression_variables;
     dst.arc_chain = ps.arc_chain;
     dst.ancestral = true;  // child derivation, like DeriveChildSources
@@ -986,6 +1023,7 @@
       c.expression_variables = ps.expression_variables;
       c.offset = ps.offset;
       c.arc_kind = ps.arc_kind;
+      c.implied_anchor = ps.implied_anchor;
       c.arc_chain = ps.arc_chain;  // implied class arcs need the whole chain
       c.ancestral = true;          // arc was introduced at the parent
       base.push_back(std::move(c));
