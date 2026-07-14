@@ -257,6 +257,25 @@ if(TINYUSDZ_BUILD_TESTS)
   set_tests_properties(tusdchecker_parity_dump_rules PROPERTIES
     PASS_REGULAR_EXPRESSION "\\[core:core.layer.defaultPrim.missing\\]")
 
+  # next-parser leniency parity with pxr's usda parser: sparse array edits
+  # (preserved as raw text), float->int literal coercion, quoted-string asset
+  # paths. Each fixture previously failed to parse (exit 2).
+  add_test(NAME tusdchecker_parse_array_edit
+    COMMAND tusdchecker --groups core
+            ${PROJECT_SOURCE_DIR}/tests/usda/array_edit_basic.usda)
+  set_tests_properties(tusdchecker_parse_array_edit PROPERTIES
+    PASS_REGULAR_EXPRESSION "Result: PASSED")
+  add_test(NAME tusdchecker_parse_int_coercion
+    COMMAND tusdchecker --groups core
+            ${PROJECT_SOURCE_DIR}/tests/usda/int-assign-float-001.usda)
+  set_tests_properties(tusdchecker_parse_int_coercion PROPERTIES
+    PASS_REGULAR_EXPRESSION "Result: PASSED")
+  add_test(NAME tusdchecker_parse_quoted_asset
+    COMMAND tusdchecker --groups core
+            ${PROJECT_SOURCE_DIR}/tests/usda/assetpath-array-001.usda)
+  set_tests_properties(tusdchecker_parse_quoted_asset PROPERTIES
+    PASS_REGULAR_EXPRESSION "Result: PASSED")
+
   # Differential parity harness vs pxr usdchecker over tests/usda.
   # Self-skips when pxr is not installed.
   add_test(NAME tusdchecker_vs_usdchecker
