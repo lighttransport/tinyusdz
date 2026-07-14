@@ -109,7 +109,8 @@ struct PrimVar {
   }
 
   bool has_timesamples() const {
-    return _extras && _extras->ts.size() > 0;
+    // `.authored()` is size() > 0 OR an explicitly-authored EMPTY block.
+    return _extras && _extras->ts.authored();
   }
 
   bool is_blocked() const {
