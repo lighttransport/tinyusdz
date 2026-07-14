@@ -760,6 +760,23 @@ bool CrateWriter::ConvertSinglePrim(
     prim_fields.push_back({"primChildren", children_value});
   }
 
+  // Add "variantSetChildren": the names of the variantSets that have specs
+  // beneath this prim. This is the HIERARCHY field -- pxr's reader walks from
+  // the prim to its {set=} VariantSet specs through it (variantSetNames is
+  // only the list-op OPINION, not the child list). Without it, OpenUSD opens
+  // the file, shows the prim, and silently never visits a single variant spec.
+  // Our own reader reconstructs variants from the spec PATHS, so it never
+  // noticed the field was missing.
+  if (!prim.variantSets().empty()) {
+    std::vector<value::token> vs_tokens;
+    for (const auto& vs : prim.variantSets()) {
+      vs_tokens.push_back(value::token(vs.first));
+    }
+    crate::CrateValue vs_children_value;
+    vs_children_value.Set(vs_tokens);
+    prim_fields.push_back({"variantSetChildren", vs_children_value});
+  }
+
   // Add spec for this prim (prim-level fields only; "properties" added later)
   if (!AddSpec(prim_path, SpecType::Prim, prim_fields, err)) {
     if (err) *err = "Failed to add spec for: " + abs_path_str + ": " + *err;
@@ -3383,7 +3400,10 @@ bool CrateWriter::ConvertVariantSetToFields(
     std::string* err) {
 
   // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
-  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
+  // pxr's SdfPath has no bare `{set}` form: a VariantSet spec lives at the
+  // EMPTY variant selection, `{set=}` (see any pxr-written crate). Our old
+  // `{set}` spelling made OpenUSD reject the element outright.
+  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "=}";
   Path vs_path(variantset_path_str, "");
 
   DCOUT("[ConvertVariantSetToFields] Creating VariantSet spec: "
@@ -3473,6 +3493,23 @@ bool CrateWriter::ConvertVariantToFields(
         if (err) *err = "Failed to convert variant relationship: " + prop_name;
         return false;
       }
+    }
+  }
+
+  // "primChildren" on the VARIANT spec: pxr descends from the variant to the
+  // prims defined inside it through this field, exactly as it does from a
+  // regular prim. (Our reader walks spec paths instead, so round-trips never
+  // missed it.)
+  {
+    const auto& vchildren = variant.primChildren();
+    if (!vchildren.empty()) {
+      std::vector<value::token> child_tokens;
+      for (const auto& child_prim : vchildren) {
+        child_tokens.push_back(value::token(child_prim.element_name()));
+      }
+      crate::CrateValue children_value;
+      children_value.Set(child_tokens);
+      v_fields.push_back({"primChildren", children_value});
     }
   }
 
