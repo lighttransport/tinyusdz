@@ -78,7 +78,6 @@ tests/usdc/anytype-001.usdc type_mismatch /bora Type mismatch at "/bora": "__Any
 tests/usdc/aousd-unknown-property-metadata.usdc key_missing Key "extensionPrimProbe" in /P metadata exists in file1 but not in file2
 tests/usdc/clips-primmeta-001.usdc key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
 tests/usdc/memory-budget-customdata-001-runtime.usdc prim_missing /MetaHeavy Prim "/MetaHeavy" exists in file1 but not in file2
-tests/usdc/prim-with-no-specifier-001.usdc specifier_mismatch /File Specifier mismatch at "/File": "def" vs "over"
 tests/usdc/sceneLibrary-001.usdc key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
 tests/usdc/uint2-array-001.usdc attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
 tests/usdc/uint2-type-001.usdc attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
