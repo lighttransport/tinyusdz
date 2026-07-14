@@ -244,6 +244,9 @@ bool AsciiParser::Impl::ParsePrim() {
     return false;
   }
 
+  // `__AnyType__` is legacy spelling for "no prim type" — pxr composes and
+  // re-serializes it as an untyped prim.
+  if (type_name == "__AnyType__") type_name.clear();
   builder_->begin_prim(prim_name, type_name, specifier);
 
   if (Check(TokenType::OpenParen)) {
