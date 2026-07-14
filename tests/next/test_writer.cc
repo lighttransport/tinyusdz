@@ -65,7 +65,7 @@ void test_value_printer() {
   {
     Value v = Value(true);
     std::string s = PrintValue(v);
-    assert(s == "true");
+    assert(s == "1");  // pxr spells VALUE bools 1/0
     std::cout << "  Bool: " << s << "\n";
   }
 
