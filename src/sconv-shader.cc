@@ -309,7 +309,7 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       value::float3 color_as_float3 = {color.r, color.g, color.b};
       crate::CrateValue diffuse_value;
       diffuse_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", "color3f", diffuse_value, &preview_surface->diffuseColor.get_value(), conns)) {
+      if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", preview_surface->diffuseColor.has_actual_type() ? preview_surface->diffuseColor.get_actual_type_name() : "color3f", diffuse_value, &preview_surface->diffuseColor.get_value(), conns)) {
         return false;
       }
     } else {
@@ -330,7 +330,7 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       value::float3 color_as_float3 = {color.r, color.g, color.b};
       crate::CrateValue emissive_value;
       emissive_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", "color3f", emissive_value, &preview_surface->emissiveColor.get_value(), conns)) {
+      if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", preview_surface->emissiveColor.has_actual_type() ? preview_surface->emissiveColor.get_actual_type_name() : "color3f", emissive_value, &preview_surface->emissiveColor.get_value(), conns)) {
         return false;
       }
     } else {
@@ -378,7 +378,7 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       value::float3 color_as_float3 = {color.r, color.g, color.b};
       crate::CrateValue spec_color_value;
       spec_color_value.Set(color_as_float3);
-      if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", "color3f", spec_color_value, &preview_surface->specularColor.get_value(), conns)) {
+      if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", preview_surface->specularColor.has_actual_type() ? preview_surface->specularColor.get_actual_type_name() : "color3f", spec_color_value, &preview_surface->specularColor.get_value(), conns)) {
         return false;
       }
     } else {
@@ -1094,6 +1094,9 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
   bool has_varname = false;
   std::vector<Path> varname_conns;
   bool has_varname_conn = false;
+  // Authored typeName spelling: the older UsdPrimvarReader spec used `token`,
+  // and OpenUSD preserves whichever the author wrote.
+  std::string varname_type = "string";
 
   // The varname field is TypedAttribute<Animatable<std::string>>
   // We need to extract it generically from the shader_value
@@ -1104,6 +1107,9 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
     if (!has_varname && !has_varname_conn) { \
       if (auto* reader = shader_value.as<ReaderType>()) { \
         if (reader->varname.authored()) { \
+          if (reader->varname.has_actual_type()) { \
+            varname_type = reader->varname.get_actual_type_name(); \
+          } \
           if (reader->varname.has_connections()) { \
             varname_conns = reader->varname.connections(); \
             has_varname_conn = !varname_conns.empty(); \
@@ -1137,16 +1143,21 @@ bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
 
   #undef TRY_EXTRACT_VARNAME
 
-  // Add inputs:varname (string) - value and/or connection (USD allows both).
+  // Add inputs:varname - value and/or connection (USD allows both). Declared
+  // with the AUTHORED type: `token` (older spec) or `string`.
   if (has_varname) {
     crate::CrateValue varname_value;
-    varname_value.Set(varname_str);
-    if (!add_input_spec("inputs:varname", "string", varname_value,
+    if (varname_type == "token") {
+      varname_value.Set(value::token(varname_str));
+    } else {
+      varname_value.Set(varname_str);
+    }
+    if (!add_input_spec("inputs:varname", varname_type, varname_value,
                         has_varname_conn ? &varname_conns : nullptr)) {
       return false;
     }
   } else if (has_varname_conn) {
-    if (!add_input_connection_spec("inputs:varname", "string", varname_conns)) {
+    if (!add_input_connection_spec("inputs:varname", varname_type, varname_conns)) {
       return false;
     }
   }

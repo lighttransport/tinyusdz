@@ -191,6 +191,15 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
     add("layerRelocates", ss.str());
   }
 
+  // Unregistered layer metadata: write the stored raw text verbatim -- it
+  // already contains quotes if the original value was a quoted string, and
+  // non-string values (numbers, arrays, None, ...) are stored without quotes.
+  // This matches OpenUSD behaviour (SdfUnregisteredValue).
+  for (const auto &item : metas.unregisteredMetas) {
+    add(item.first,
+        pprint::Indent(indent) + item.first + " = " + item.second + "\n");
+  }
+
   if (pprint::GetUSDTextFormat()) {
     std::stable_sort(fields.begin(), fields.end(),
                      [](const std::pair<std::string, std::string> &a,

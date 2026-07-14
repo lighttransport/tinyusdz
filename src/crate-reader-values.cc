@@ -3536,8 +3536,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
             // Preserve the string exactly as stored in the crate file.
             // Quotes are part of the value for string-typed unregistered
-            // metadata and must roundtrip losslessly.
-            value->Set(str);
+            // metadata and must roundtrip losslessly. Keep the UNREGISTERED
+            // marker on the CrateValue: consumers (property/prim/stage meta
+            // reconstruction) use it to route the raw text into their
+            // unregisteredMetas maps instead of treating it as a typed string.
+            value->SetUnregisteredValueString(str);
 
             if (!_sr->seek_set(saved_position)) {
               PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to set seek.");

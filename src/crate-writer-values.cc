@@ -2394,6 +2394,81 @@ crate::ValueRep CrateWriter::PackTokenVectorValue(
       false, false, static_cast<uint64_t>(value_offset));
 }
 
+// `subLayers` must be the dedicated StringVector crate type (uint64 count +
+// uint32 STRING indices), like pxr writes it. A VtArray<string> encoding is
+// readable but has the wrong value type, so SdfLayer never recognises the
+// entries as sublayers -- pxr silently composed nothing from them.
+crate::ValueRep CrateWriter::PackStringVectorValue(
+    const std::vector<std::string>& strs, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for StringVector";
+    return crate::ValueRep();
+  }
+
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(strs.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write StringVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& str : strs) {
+    const uint32_t string_index = GetOrCreateString(str).value;
+    if (!Write(string_index)) {
+      if (err) *err = "Failed to write StringVector string index";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing StringVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
+}
+
+// `subLayerOffsets` is the LayerOffsetVector crate type: uint64 count + raw
+// (double offset, double scale) pairs.
+crate::ValueRep CrateWriter::PackLayerOffsetVectorValue(
+    const std::vector<LayerOffset>& offsets, std::string* err) {
+  const int64_t current_pos = Tell();
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to value data section for LayerOffsetVector";
+    return crate::ValueRep();
+  }
+
+  const int64_t value_offset = Tell();
+  const uint64_t count = static_cast<uint64_t>(offsets.size());
+  if (!Write(count)) {
+    if (err) *err = "Failed to write LayerOffsetVector count";
+    return crate::ValueRep();
+  }
+
+  for (const auto& lo : offsets) {
+    if (!Write(lo._offset) || !Write(lo._scale)) {
+      if (err) *err = "Failed to write LayerOffsetVector element";
+      return crate::ValueRep();
+    }
+  }
+
+  value_data_end_offset_ = Tell();
+  if (!Seek(current_pos)) {
+    if (err) *err = "Failed to seek back after writing LayerOffsetVector";
+    return crate::ValueRep();
+  }
+
+  return crate::ValueRep(
+      static_cast<int32_t>(
+          crate::CrateDataTypeId::CRATE_DATA_TYPE_LAYER_OFFSET_VECTOR),
+      false, false, static_cast<uint64_t>(value_offset));
+}
+
 } // namespace experimental
 } // namespace tinyusdz
 

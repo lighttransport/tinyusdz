@@ -150,6 +150,11 @@ class AsciiParser {
     nonstd::optional<std::map<std::string, MetaVariable>> expressionVariables;
     // relocates: source path -> target path mappings
     std::vector<std::pair<Path, Path>> relocates;
+
+    // Unregistered layer metadata, preserved verbatim as the raw USDA text of
+    // the value (quotes included for string values). OpenUSD preserves such
+    // opinions; mirrors the unregistered *prim* metadata handling.
+    std::map<std::string, std::string> unregisteredMetas;
   };
 
   struct ParseState {

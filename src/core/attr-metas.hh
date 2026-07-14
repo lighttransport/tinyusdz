@@ -5,6 +5,7 @@
 //
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -118,11 +119,18 @@ struct AttrMetas : public MetadataBase {
   //
   std::vector<value::StringData> stringData;
 
+  // Unregistered (unknown-to-tinyusdz) property metadata, preserved verbatim as
+  // the raw USDA text of the value (quotes included for string values), keyed by
+  // the metadatum name. OpenUSD preserves such opinions (SdfUnregisteredValue);
+  // dropping them silently loses authored data. Mirrors PrimMeta::unregisteredMetas.
+  std::map<std::string, std::string> unregisteredMetas;
+
   //
   // Check if any metadata is authored
   //
   bool authored() const {
-    return MetadataBase::authored() || !stringData.empty();
+    return MetadataBase::authored() || !stringData.empty() ||
+           !unregisteredMetas.empty();
   }
 
   //

@@ -642,8 +642,8 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
       if (!supported) {
         // Unregistered property metadata (attribute or relationship). OpenUSD
         // accepts metadata it does not know; rejecting made an otherwise valid
-        // property unloadable. Consume the opinion and continue, matching the
-        // unregistered Prim/Stage metadata paths.
+        // property unloadable. Preserve the opinion verbatim (raw USDA text of
+        // the value), matching the unregistered Prim/Stage metadata paths.
         if (!Expect('=')) {
           PUSH_ERROR_AND_RETURN_TAG(
               kAscii,
@@ -660,7 +660,8 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
               fmt::format("Failed to parse unregistered Property metadatum "
                           "'{}'.", varname));
         }
-        DCOUT("Consumed unregistered Property metadatum: " << varname);
+        DCOUT("Preserved unregistered Property metadatum: " << varname);
+        out_meta->unregisteredMetas[varname] = content;
         if (!SkipCommentAndWhitespaceAndNewline()) {
           return false;
         }

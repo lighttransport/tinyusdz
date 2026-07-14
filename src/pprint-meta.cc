@@ -640,6 +640,14 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
     ss << print_meta(item.second, indent, /* emit_type_name */false, item.first);
   }
 
+  // Unregistered property metadata: write the stored raw text verbatim -- it
+  // already contains quotes if the original value was a quoted string, and
+  // non-string values (numbers, arrays, None, ...) are stored without quotes.
+  // This matches OpenUSD behaviour (SdfUnregisteredValue).
+  for (const auto &item : meta.unregisteredMetas) {
+    ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
+  }
+
   for (const auto &item : meta.stringData) {
     ss << pprint::Indent(indent) << to_string(item) << "\n";
   }

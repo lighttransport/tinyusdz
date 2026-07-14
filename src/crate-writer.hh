@@ -765,6 +765,14 @@ private:
   crate::ValueRep PackTokenVectorValue(const std::vector<value::token>& tokens,
                                        std::string* err);
 
+  /// Pack a StringVector metadata value (e.g. `subLayers`) into ValueRep.
+  crate::ValueRep PackStringVectorValue(const std::vector<std::string>& strs,
+                                        std::string* err);
+
+  /// Pack a LayerOffsetVector metadata value (`subLayerOffsets`) into ValueRep.
+  crate::ValueRep PackLayerOffsetVectorValue(
+      const std::vector<LayerOffset>& offsets, std::string* err);
+
   /// Pack a metadata dictionary value into a Crate ValueRep.
   bool PackMetaVariable(const std::string& key, const MetaVariable& meta,
                         crate::ValueRep* value_rep, std::string* err);
