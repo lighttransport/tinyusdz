@@ -26,9 +26,17 @@ cmake --build build-next-threaded-debug -j16 && ctest --test-dir build-next-thre
 
 ### The supplemental corpus (the conformance oracle)
 
-- **Location:** `/tmp/mxpv-openusd/vendor/core-spec-supplemental-release_dec2025`
-  — **ephemeral `/tmp`; re-fetch if gone.** It is intentionally NOT vendored.
-- `build-next` is already configured with `-DTINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT` pointing there.
+- **Fetch (pinned, stable path):** `bash scripts/fetch-aousd-supplemental.sh`
+  clones `aousd/core-spec-supplemental-public` at tag `release/1.0.1.post0`
+  (commit `c15ae0cad3ed`) and prints the suite root:
+  `~/.cache/tinyusdz/core-spec-supplemental-release_dec2025/releases/1.0.1`.
+  It is intentionally NOT vendored.
+- `build-next` is configured with `-DTINYUSDZ_AOUSD_SUPPLEMENTAL_ROOT` pointing there.
+- **pxr oracle (PINNED):** OpenUSD **26.05** dist at
+  `/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist` — use its `bin/usdcat` and its
+  python (`PYTHONPATH=.../dist/lib/python`, `Usd.GetVersion()==(0,26,5)`) for
+  ALL differential gates and expectation baking. Do not mix with
+  `/home/syoyo/local/USD` or the v26.03 source checkout.
 - Run the gate directly:
 
 ```sh
@@ -167,8 +175,9 @@ MaterialX — prioritize from application requirements.
 - 3 legacy-parser roundtrip fixtures fail (`aousd-namespace-order.usda`,
   `aousd-unknown-property-metadata.usda`, one USDC variant) — the LEGACY binary,
   which `next` does not feed. XFAIL; only relevant if touching `src/usda-*`.
-- Oracle pinning: OpenUSD source checkout says `v26.03-278`, installed headers say
-  26.05 — rebuild + pin ONE oracle before trusting differential comparisons.
+- Oracle pinning: RESOLVED — standardized on the OpenUSD 26.05 dist
+  (`/mnt/nvme02/work/tinyusdz-repo/OpenUSD/dist`, binary + python) for all
+  differential gates; see "The supplemental corpus" section above.
 
 ## Working rules
 
