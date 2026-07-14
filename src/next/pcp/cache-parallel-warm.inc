@@ -268,6 +268,12 @@
           clone.meta().instance_prototype().clear();
           clone.meta().references.clear();
           clone.meta().references.push_back("<" + *ref + ">");
+          // pxr flatten spells the prototype arc `add references = </FP_N>`.
+          ArcEdit &redit = clone.meta().ensure_arc_edits().references;
+          redit = ArcEdit();
+          redit.authored = true;
+          redit.is_explicit = false;
+          redit.added.push_back("<" + *ref + ">");
         }
         uint32_t new_idx = out->add_prim(std::move(clone));  // invalidates ptrs
         out->set_parent(new_idx, cw.dst_parent_idx);
@@ -293,6 +299,12 @@
         auto &refs = mp->meta().references;
         if (std::find(refs.begin(), refs.end(), ref) == refs.end())
           refs.push_back(ref);
+        // pxr flatten spells the prototype arc `add references = </FP_N>`.
+        ArcEdit &redit = mp->meta().ensure_arc_edits().references;
+        redit = ArcEdit();
+        redit.authored = true;
+        redit.is_explicit = false;
+        redit.added.push_back(ref);
       }
     }
   }

@@ -10,9 +10,8 @@
 # bare-string-comment interop fix; 3 after the parser-leniency port ->
 # 633 pass / 145 listed; 1 after crate variant-spec specifier; 19 after the
 # unmappable-relocate-target drop + bare-rel + varying-only qualifier -> 653 / 125).
-supplemental/BasicInstancingAndNestedInstances_root key_missing Key "references" in /Set_1 metadata exists in file1 but not in file2
-supplemental/BasicInstancingAndVariants_root key_missing Key "references" in /InstancedModel metadata exists in file1 but not in file2
-supplemental/BasicInstancing_root key_missing Key "references" in /Set_1/InstancedProp metadata exists in file1 but not in file2
+supplemental/BasicInstancingAndNestedInstances_root prim_missing /Flattened_Prototype_1/PropInstance_2 Prim "/Flattened_Prototype_1/PropInstance_2" exists in file1 but not in file2
+supplemental/BasicInstancing_root attribute_value_mismatch /Flattened_Prototype_1/geom Attribute "x" at "/Flattened_Prototype_1/geom" differs: "3" vs "3.5"
 supplemental/BasicListEditing_root relationship_value_mismatch /A Relationship "targets" at "/A" differs: "None" vs "[/A/root_prepend, /A/sub1_prepend, /A/sub2_prep..."
 supplemental/BasicNestedVariantsWithSameName_root attribute_missing /foo/bar Attribute "value" at "/foo/bar" exists in file2 but not in file1
 supplemental/BasicOwner_root key_missing Key "hasOwnedSubLayers" in metadata exists in file2 but not in file1
