@@ -862,7 +862,12 @@ void Compositor::CopyLocalOpinions(
         opinion.edit = it->second;
         opinion.qualified = !it->second.is_explicit;
       }
-      opinions.push_back(std::move(opinion));
+      // A DECLARED-ONLY relationship (no targets, no authored edit) carries
+      // no target opinion — pushing an empty explicit one here BLOCKED
+      // weaker list-edited targets (BasicListEditing).
+      if (!opinion.items.empty() || opinion.edit.authored) {
+        opinions.push_back(std::move(opinion));
+      }
     }
 
     // Track opinions whose every target was DROPPED as unmappable across the
@@ -914,7 +919,10 @@ void Compositor::CopyLocalOpinions(
         opinion.edit = it->second;
         opinion.qualified = !it->second.is_explicit;
       }
-      remap_opinion(std::move(opinion));
+      // Declared-only source rel: no target opinion (see above).
+      if (!opinion.items.empty() || opinion.edit.authored) {
+        remap_opinion(std::move(opinion));
+      }
     }
 
     std::vector<Path> effective;
@@ -1568,6 +1576,11 @@ void Compositor::ApplyOneVariant(PrimSpec& prim, const Layer& layer,
   }
   if (!variant.doc.empty() && prim.meta().doc().empty()) {
     prim.meta().doc() = variant.doc;
+  }
+  if (!variant.kind.empty() && !prim.meta().kindAuthored() &&
+      prim.meta().kind().empty()) {
+    prim.meta().kind() = variant.kind;
+    prim.meta().setKindAuthored();
   }
   if (!variant.active) {
     prim.meta().active = false;

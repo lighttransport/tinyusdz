@@ -74,6 +74,11 @@
         if (!s.variant->doc.empty() && out->meta().doc().empty()) {
           out->meta().doc() = s.variant->doc;
         }
+        if (!s.variant->kind.empty() && !out->meta().kindAuthored() &&
+            out->meta().kind().empty()) {
+          out->meta().kind() = s.variant->kind;
+          out->meta().setKindAuthored();
+        }
         for (const auto &pr : s.variant->properties) {
           const PropSlot *ts = out->property(pr.name);
           if (!ts) {

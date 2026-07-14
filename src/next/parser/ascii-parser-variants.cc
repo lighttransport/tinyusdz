@@ -109,6 +109,9 @@ bool AsciiParser::Impl::ParseVariantOption(VariantData* out, int depth) {
       } else if (key == "doc" || key == "documentation") {
         std::string v;
         if (lexer_->expect(TokenType::String, v)) out->doc = v;
+      } else if (key == "kind") {
+        std::string v;
+        if (lexer_->expect(TokenType::String, v)) out->kind = v;
       } else if (key == "variants" || key == "variantSelection") {
         // Same grammar as prim-level `variants = { string set = "sel" }`.
         if (Match(TokenType::OpenBrace)) {

@@ -11,7 +11,6 @@
 # 633 pass / 145 listed; 1 after crate variant-spec specifier; 19 after the
 # unmappable-relocate-target drop + bare-rel + varying-only qualifier -> 653 / 125).
 supplemental/BasicInstancingAndNestedInstances_root ORACLE-NONDETERMINISTIC: pxr usdcat --flatten emits two different outputs run-to-run for nested-instance prototype numbering; cannot be a stable gate input
-supplemental/BasicListEditing_root relationship_value_mismatch /A Relationship "targets" at "/A" differs: "null" vs "[/A/root_prepend, /A/sub1_prepend, /A/sub2_prep..."
 supplemental/BasicOwner_root key_missing Key "hasOwnedSubLayers" in metadata exists in file2 but not in file1
 supplemental/BasicRelocateToAnimInterfaceAsNewRootPrim_root relationship_value_mismatch /Model/Rig/PathRig Relationship "relationshipToPathAvar2" at "/Model/Rig/PathRig" differs: "null" vs "/Model/Rig/PathRig/P
 supplemental/BasicVariantWithConnections_root attribute_value_mismatch /main_cam/Rig Attribute "breathingScale.connect" at "/main_cam/Rig" differs: "/camera/Lens.breathingScale" vs "/main_cam/Lens
@@ -35,7 +34,7 @@ supplemental/TrickyLocalClassHierarchyWithRelocates_root specifier_mismatch /C_1
 supplemental/TrickyMultipleRelocations2_root specifier_mismatch /ModelGroup/Model_2/Anim/Collider Specifier mismatch at "/ModelGroup/Model_2/Anim/Collider": "over" vs "def"
 supplemental/TrickyMultipleRelocations5_root prim_missing /Group/Character Prim "/Group/Character" exists in file1 but not in file2
 supplemental/TrickyMultipleRelocationsAndClasses2_root attribute_missing /CharRig/Anim/Legs/LHip/Knee Attribute "JointBlend" at "/CharRig/Anim/Legs/LHip/Knee" exists in file2 but not in file1
-supplemental/TrickyMultipleRelocationsAndClasses_root value_mismatch Value for "prefix" in /HumanRig/rig/Face/EyeLidRig/SymEyeLidRig/Mover metadata differs: "Side" vs "$Side"
+supplemental/TrickyMultipleRelocationsAndClasses_root attribute_value_mismatch /HumanRig/Face/Eyes/LEye Attribute "value" at "/HumanRig/Face/Eyes/LEye" differs: "9" vs "808"
 supplemental/TrickyRelocationOfPrimFromVariant_root specifier_mismatch /Char/Anim/Tail Specifier mismatch at "/Char/Anim/Tail": "over" vs "def"
 supplemental/TrickySpookyInheritsInSymmetricBrowRig_root prim_missing /FaceRig/BrowRig/Anim/LBrow Prim "/FaceRig/BrowRig/Anim/LBrow" exists in file1 but not in file2
 supplemental/TrickySpookyVariantSelectionInClass_root specifier_mismatch /Char/Anim/LeftLeg Specifier mismatch at "/Char/Anim/LeftLeg": "over" vs "def"
@@ -63,8 +62,6 @@ tests/usda/unregistered-prim-meta-001.usda key_missing Key "aa" in /bora metadat
 tests/usda/usdlux_advanced_features.usda attribute_value_mismatch /Scene/Lights/IESLight Attribute "inputs:shaping:ies:file" at "/Scene/Lights/IESLight" differs: "@./lights/chandelier.ies@" v
 tests/usda/usdz-schema-autoplay-001.usda key_missing Key "autoPlay" in metadata exists in file1 but not in file2
 tests/usda/usdz-schema-playbackmode-001.usda key_missing Key "playbackMode" in metadata exists in file1 but not in file2
-tests/usda/valuetypes-edge-001.usda attribute_value_mismatch /ValueTypeTests/StringTests Attribute "unicodeString" at "/ValueTypeTests/StringTests" differs: "Hello 世界" vs "Hello u4e16u75
-tests/usda/variantSet-comment-block-001.usda key_missing Key "kind" in /isCoral/geometry metadata exists in file2 but not in file1
 tests/usdc/aousd-unknown-property-metadata.usdc key_missing Key "extensionPrimProbe" in /P metadata exists in file1 but not in file2
 tests/usdc/clips-primmeta-001.usdc key_missing Key "clips" in /GEO metadata exists in file1 but not in file2
 tests/usdc/memory-budget-customdata-001-runtime.usdc prim_missing /MetaHeavy Prim "/MetaHeavy" exists in file1 but not in file2
@@ -72,4 +69,3 @@ tests/usdc/sceneLibrary-001.usdc key_missing Key "sceneName" in /Root/PrimarySce
 tests/usdc/uint2-array-001.usdc attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
 tests/usdc/uint2-type-001.usdc attribute_missing /bora Attribute "v" at "/bora" exists in file1 but not in file2
 tests/usdc/unregistered-prim-meta-001.usdc key_missing Key "aa" in /bora metadata exists in file1 but not in file2
-tests/usdc/utf8-001.usdc key_missing Key "displayName" in /hello metadata exists in file1 but not in file2
