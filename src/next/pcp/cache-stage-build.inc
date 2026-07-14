@@ -86,7 +86,10 @@
       // -- children are provided by the prototype (UsdPrim follows
       // instance_prototype).
       auto pr0 = prof ? ProfClock::now() : ProfClock::time_point{};
-      RegisterInstance(w.out_path.str(), srcs);
+      // A deactivated prim composes no subtree and forms NO instance in pxr —
+      // registering it would extract an orphan Flattened_Prototype for
+      // content the flatten output prunes.
+      if (ComposedActive(srcs)) RegisterInstance(w.out_path.str(), srcs);
       if (prof) prof_reg_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(ProfClock::now() - pr0).count();
       bool is_instance = false;
       {
