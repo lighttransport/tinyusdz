@@ -86,7 +86,13 @@ def main():
             # The expected PCP paths include instance-proxy descendants. Keep
             # native instancing for the query; holder/prototype flatten modes
             # intentionally replace duplicate subtrees with references.
-            command = [args.next_usdcat, "-f", "--instance-mode", "native"]
+            # The corpus expectations (pcp.txt) were generated in a pxr
+            # environment with the classic Presto standin->render variant
+            # fallback registered (e.g. case1 requires /FergusCloak/rig, which
+            # only composes under standin=render). next's default is now
+            # fallback-free like stock usdcat, so opt in here.
+            command = [args.next_usdcat, "-f", "--instance-mode", "native",
+                       "--variant-fallback", "standin=render,proxy"]
             for prim_path in expected.get("Composing", {}):
                 command.extend(("--require-prim", prim_path))
             command.append(str(entry))

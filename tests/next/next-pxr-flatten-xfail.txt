@@ -37,10 +37,7 @@ supplemental/TrickyRelocationOfPrimFromVariant_root specifier_mismatch /Char/Ani
 supplemental/TrickySpookyInheritsInSymmetricBrowRig_root prim_missing /FaceRig/BrowRig/Anim/LBrow Prim "/FaceRig/BrowRig/Anim/LBrow" exists in file1 but not in file2
 supplemental/TrickySpookyVariantSelectionInClass_root specifier_mismatch /Char/Anim/LeftLeg Specifier mismatch at "/Char/Anim/LeftLeg": "over" vs "def"
 supplemental/TrickyVariantOverrideOfRelocatedPrim_root attribute_value_mismatch /Model/RelocatedSphere/Geom Attribute "x" at "/Model/RelocatedSphere/Geom" differs: "model_default" vs "variant_override"
-supplemental/TypicalReferenceToChargroup_root attribute_value_mismatch /Group/Model Attribute "standin_name" at "/Group/Model" differs: "render" vs "sim"
-supplemental/TypicalReferenceToRiggedModel_root attribute_missing /Model Attribute "standin_name" at "/Model" exists in file1 but not in file2
 supplemental/VariantSpecializesAndReferenceSurprisingBehavior_root attribute_value_mismatch /Model/Material_Child Attribute "myInt" at "/Model/Material_Child" differs: "1" vs "0"
-supplemental/case1_root prim_missing /FergusCloak/rig Prim "/FergusCloak/rig" exists in file1 but not in file2
 tests/usda/aousd-unknown-property-metadata.usda INTENTIONAL: lossless unknown-metadata preservation (AOUSD-META-001); pxr 26.05 drops unregistered fields
 tests/usda/array_edit_basic.usda INTENTIONAL: sparse VtArrayEdit values preserved as authored text (keep-don't-evaluate policy); pxr flatten evaluates them to dense arrays
 tests/usda/clips-primmeta-001.usda INTENTIONAL: value-clips metadata preserved on flatten (lossless clip indirection); pxr flatten bakes clips into dense samples

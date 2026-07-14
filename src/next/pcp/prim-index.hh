@@ -216,11 +216,10 @@ struct CompositionOptions {
   /// Fallback variant selections, consulted ONLY when no selection is authored
   /// anywhere for that set (pxr's PcpVariantFallbackMap / UsdStage global
   /// variant fallbacks). Candidates are tried in order; the first one the set
-  /// actually defines is selected. Defaults to USD's registered `standin`
-  /// fallbacks, so an asset whose standin set is left unselected still composes
-  /// its render standin, as pxr does.
-  std::map<std::string, std::vector<std::string>> variant_fallbacks{
-      {"standin", {"render", "proxy"}}};
+  /// actually defines is selected. EMPTY by default: stock OpenUSD registers
+  /// no fallbacks (the classic `standin -> render` map is a Presto plugin
+  /// registration) — pass {"standin", {"render", "proxy"}} to opt in.
+  std::map<std::string, std::vector<std::string>> variant_fallbacks;
 
   /// Variant selection overrides: map of variantSet -> variantName. Overrides
   /// any authored variantSelection on the same set (stronger than authored).
