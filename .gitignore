@@ -27,6 +27,10 @@ web/site/dist/
 web/build_ninja/
 web/cmake-build/
 web/cmake-build64/
+web/cmake-build-next/
+web/cmake-build-next64/
+web/cmake-build*-configure.log
+web/cmake-build*-build.log
 web/npm/dist/
 web/npm/.tmp-package-smoke/
 web/npm/.nodejs/

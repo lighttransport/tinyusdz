@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD32_DIR="${WEB_DIR}/cmake-build"
 BUILD64_DIR="${WEB_DIR}/cmake-build64"
+BUILD_NEXT32_DIR="${WEB_DIR}/cmake-build-next"
+BUILD_NEXT64_DIR="${WEB_DIR}/cmake-build-next64"
 CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-MinSizeRel}"
 CMAKE_GENERATOR="${CMAKE_GENERATOR:-Ninja}"
 PARALLEL_JOBS="${PARALLEL_JOBS:-}"
@@ -44,6 +46,8 @@ build_target() {
 
 build_target "${BUILD32_DIR}"
 build_target "${BUILD64_DIR}" -DTINYUSDZ_WASM64=1
+build_target "${BUILD_NEXT32_DIR}" -DTINYUSDZ_WASM_NEXT_ONLY=1
+build_target "${BUILD_NEXT64_DIR}" -DTINYUSDZ_WASM_NEXT_ONLY=1 -DTINYUSDZ_WASM64=1
 
 cat <<EOF
 [build-wasm] Complete.
@@ -52,4 +56,8 @@ cat <<EOF
   ${WEB_DIR}/js/src/tinyusdz/tinyusdz.wasm
   ${WEB_DIR}/js/src/tinyusdz/tinyusdz_64.js
   ${WEB_DIR}/js/src/tinyusdz/tinyusdz_64.wasm
+  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_next.js
+  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_next.wasm
+  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_next_64.js
+  ${WEB_DIR}/js/src/tinyusdz/tinyusdz_next_64.wasm
 EOF
