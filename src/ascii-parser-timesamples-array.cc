@@ -235,6 +235,11 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
     return false;
   }
 
+  // `{` seen: a timeSamples block WAS authored, even if it turns out to hold no
+  // samples (`float x.timeSamples = {}`). Without this, size()==0 is
+  // indistinguishable from "no timeSamples at all" and the block is dropped.
+  ts.set_authored();
+
   if (!SkipWhitespaceAndNewline()) {
     return false;
   }

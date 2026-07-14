@@ -2995,8 +2995,21 @@ bool CrateWriter::ConvertRelationshipToFields(
     apply_listed_qual(listop, rel.targetPathVector);
     paths_value.Set(listop);
     rel_fields.push_back({"targetPaths", paths_value});
+  } else if (rel.get_listedit_qual() != ListEditQual::ResetToExplicit) {
+    // A list-edit qualifier on a relationship with NO targets at all
+    // (`append rel myval`, `delete rel myheight`). The qualifier is the only
+    // thing authored, and it lives on the ListOp -- so emit a targetPaths ListOp
+    // whose qualifier bucket is authored but EMPTY. ListOp records that
+    // faithfully now (see ListOp::Has*Items), and the crate format has always had
+    // a presence bit per bucket, so this needs no format change.
+    crate::CrateValue empty_value;
+    ListOp<Path> listop;
+    apply_listed_qual(listop, std::vector<Path>{});
+    empty_value.Set(listop);
+    rel_fields.push_back({"targetPaths", empty_value});
   }
-  // DefineOnly relationships don't add targetPaths field
+  // A DefineOnly relationship with no qualifier (`rel myrel`) adds no
+  // targetPaths field: there is nothing to record.
 
   // 3. Relationships have implicit uniform variability
   // Add it explicitly in the Crate format

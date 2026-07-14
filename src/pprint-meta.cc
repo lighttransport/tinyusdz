@@ -776,9 +776,11 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       ss << "\n";
     }
 
-    // Check if timeSamples were authored (even if empty)
-    // An authored but empty timeSamples will have a valid type_id but size=0
-    bool has_timesamples_authored = (attr.has_timesamples() || attr.get_var().ts_raw().type_id() != 0);
+    // `has_timesamples()` now means "timeSamples were AUTHORED", empty or not
+    // (value::TimeSamples::authored()). It used to be size() > 0, so this had to
+    // sniff a valid-type_id-but-no-samples TimeSamples to catch an authored-empty
+    // block -- which the WRITER had no equivalent of, so it dropped it.
+    bool has_timesamples_authored = attr.has_timesamples();
 
     if (has_timesamples_authored && (attr.variability() != Variability::Uniform)) {
 
