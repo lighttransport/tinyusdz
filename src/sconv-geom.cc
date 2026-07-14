@@ -1786,24 +1786,24 @@ bool CrateWriter::ExtractXformOpsFromXformable(
   // Lights are Xformable too (via Boundable/NonboundableLight). Leaving them out
   // of this list silently dropped every light's transform on write, so a scene
   // round-tripped through .usdc came back with all its lights at the origin.
-  else if (auto* l = prim.data().as<SphereLight>()) {
-    xformable = static_cast<const Xformable*>(l);
-  } else if (auto* l = prim.data().as<RectLight>()) {
-    xformable = static_cast<const Xformable*>(l);
-  } else if (auto* l = prim.data().as<DiskLight>()) {
-    xformable = static_cast<const Xformable*>(l);
-  } else if (auto* l = prim.data().as<CylinderLight>()) {
-    xformable = static_cast<const Xformable*>(l);
-  } else if (auto* l = prim.data().as<DistantLight>()) {
-    xformable = static_cast<const Xformable*>(l);
-  } else if (auto* l = prim.data().as<DomeLight>()) {
-    xformable = static_cast<const Xformable*>(l);
-  } else if (auto* l = prim.data().as<DomeLight_1>()) {
-    xformable = static_cast<const Xformable*>(l);
-  } else if (auto* l = prim.data().as<GeometryLight>()) {
-    xformable = static_cast<const Xformable*>(l);
-  } else if (auto* l = prim.data().as<PortalLight>()) {
-    xformable = static_cast<const Xformable*>(l);
+  else if (auto* sphere_light = prim.data().as<SphereLight>()) {
+    xformable = static_cast<const Xformable*>(sphere_light);
+  } else if (auto* rect_light = prim.data().as<RectLight>()) {
+    xformable = static_cast<const Xformable*>(rect_light);
+  } else if (auto* disk_light = prim.data().as<DiskLight>()) {
+    xformable = static_cast<const Xformable*>(disk_light);
+  } else if (auto* cylinder_light = prim.data().as<CylinderLight>()) {
+    xformable = static_cast<const Xformable*>(cylinder_light);
+  } else if (auto* distant_light = prim.data().as<DistantLight>()) {
+    xformable = static_cast<const Xformable*>(distant_light);
+  } else if (auto* dome_light = prim.data().as<DomeLight>()) {
+    xformable = static_cast<const Xformable*>(dome_light);
+  } else if (auto* dome_light_1 = prim.data().as<DomeLight_1>()) {
+    xformable = static_cast<const Xformable*>(dome_light_1);
+  } else if (auto* geometry_light = prim.data().as<GeometryLight>()) {
+    xformable = static_cast<const Xformable*>(geometry_light);
+  } else if (auto* portal_light = prim.data().as<PortalLight>()) {
+    xformable = static_cast<const Xformable*>(portal_light);
   } else {
     // Not a type we handle yet
     return true;
