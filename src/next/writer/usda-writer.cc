@@ -283,7 +283,9 @@ void WriteLayerMeta(StreamWriter& os, const LayerMeta& meta,
   }
 
   if ((meta.comment_set || !meta.comment.empty()) && opts.include_comments) {
-    lines.push_back(opts.indent + "comment = " + EscapeString(meta.comment));
+    // Comments are spelled as a BARE string literal (pxr 26.x rejects
+    // `comment = "..."` as a non-metadata field).
+    lines.push_back(opts.indent + EscapeString(meta.comment));
   }
 
   if (meta.owner_set || !meta.owner.empty()) {
@@ -435,7 +437,7 @@ bool WritePropMeta(StreamWriter& os, const PrimSpec& spec, PropNameId name_id,
   if (m->authored & PropMeta::kDoc)
     kv("doc = " + EscapeString(m->doc));
   if (m->authored & PropMeta::kComment)
-    kv("comment = " + EscapeString(m->comment));
+    kv(EscapeString(m->comment));  // bare string literal = comment (pxr form)
   if (m->authored & PropMeta::kHidden)
     kv(std::string("hidden = ") + (m->hidden ? "true" : "false"));
   if (m->authored & PropMeta::kRenderType)
@@ -872,6 +874,10 @@ void WriteVariantSets(StreamWriter& os,
           pick_arcs(var.specializes, hmeta ? &hmeta->specializes : nullptr);
       const bool o_inactive = !var.active || (hmeta && !hmeta->active);
       const bool o_hidden = var.hidden || (hmeta && hmeta->hidden);
+      // Authored `hidden = false` is a real opinion that must round-trip.
+      const bool o_hidden_false =
+          !o_hidden && ((var.hidden_authored) ||
+                        (hmeta && hmeta->hidden_authored));
       const std::string& o_doc =
           !var.doc.empty() ? var.doc : (hmeta ? hmeta->doc() : var.doc);
       // Nested variant SELECTIONS: authored on the option's own metadata
@@ -911,7 +917,8 @@ void WriteVariantSets(StreamWriter& os,
               : (hmeta ? hmeta->unknownMeta() : var.unknownMeta);
       const bool has_opt_meta = !o_refs.empty() || !o_pls.empty() ||
                                 !o_inh.empty() || !o_spz.empty() ||
-                                o_inactive || o_hidden || !o_sels.empty() ||
+                                o_inactive || o_hidden || o_hidden_false ||
+                                !o_sels.empty() ||
                                 !o_unknown.empty() ||
                                 (!o_doc.empty() && opts.include_comments);
       if (has_opt_meta) {
@@ -934,6 +941,9 @@ void WriteVariantSets(StreamWriter& os,
         if (o_hidden) {
           WriteIndent(os, depth + 2, opts.indent);
           os << "hidden = true\n";
+        } else if (o_hidden_false) {
+          WriteIndent(os, depth + 2, opts.indent);
+          os << "hidden = false\n";
         }
         if (!o_doc.empty() && opts.include_comments) {
           WriteIndent(os, depth + 2, opts.indent);
@@ -1124,7 +1134,8 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       variant_edits.authored &&
       (variant_edits.is_explicit ? !variant_edits.explicit_items.empty()
                                  : variant_edits.has_nonexplicit_items());
-  bool has_meta = !meta.active || meta.hidden || meta.instanceable ||
+  bool has_meta = !meta.active || meta.active_authored || meta.hidden ||
+                  meta.hidden_authored || meta.instanceable ||
                   meta.instanceable_authored ||
                   meta.kindAuthored() || meta.displayNameAuthored() ||
                   meta.displayGroupOrderAuthored() ||
@@ -1172,7 +1183,8 @@ void WritePrimSpec(StreamWriter& os, const PrimSpec& spec, const Layer& layer,
       kv(value);
     }
     if (has_doc) kv("doc = " + EscapeString(meta.doc()));
-    if (has_comment) kv("comment = " + EscapeString(meta.comment()));
+    // Bare string literal = comment (pxr 26.x rejects `comment = "..."`).
+    if (has_comment) kv(EscapeString(meta.comment()));
     if (meta.apiSchemasAuthored() || !meta.apiSchemas().empty()) {
       const StringListOpEdits& edits = meta.apiSchemaEdits();
       auto write_api_op = [&](const char* qualifier,

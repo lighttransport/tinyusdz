@@ -701,10 +701,11 @@ void TestAuthoredEmptyMetadata() {
          empty_strings_back_prim.GetMeta().comment_authored());
   const std::string empty_strings_usda =
       WriteUSDAToString(empty_strings_back.stage);
+  // Comment round-trips as a BARE empty string literal (pxr spelling).
   assert(empty_strings_usda.find("kind = \"\"") != std::string::npos &&
          empty_strings_usda.find("displayName = \"\"") !=
              std::string::npos &&
-         empty_strings_usda.find("comment = \"\"") != std::string::npos);
+         empty_strings_usda.find("\n    \"\"\n") != std::string::npos);
 
   LoadResult empty_variant_selection = Parse(
       "over \"V\" (variants = { string look = \"\" }) {}\n", true);
@@ -2198,7 +2199,8 @@ void TestRemainingElectiveFieldCoverage() {
   const std::string text = WriteUSDAToString(parsed.stage);
   assert(text.find("displayGroupOrder = [\"Geometry\", \"Look\"]") !=
          std::string::npos);
-  assert(text.find("comment = \"\"") != std::string::npos);
+  // Comment round-trips as a BARE empty string literal (pxr spelling).
+  assert(text.find("\"\"") != std::string::npos);
 
   std::vector<uint8_t> crate;
   assert(WriteUSDCToMemory(crate, parsed.stage, USDCWriteOptions{}).success);
@@ -2206,7 +2208,7 @@ void TestRemainingElectiveFieldCoverage() {
   assert(back.success);
   const std::string binary_text = WriteUSDAToString(back.stage);
   assert(binary_text.find("displayGroupOrder") != std::string::npos);
-  assert(binary_text.find("comment = \"\"") != std::string::npos);
+  assert(binary_text.find("\"\"") != std::string::npos);
 }
 
 void TestTypedSplines() {

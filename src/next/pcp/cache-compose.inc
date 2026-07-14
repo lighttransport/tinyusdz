@@ -58,12 +58,17 @@
         // every other authored opinion: a STRONGER source's authored active
         // wins over a weaker variant's (keeps ComposedActive() in agreement
         // with the filled output).
-        if (!s.variant->active && !out->meta().active_authored) {
-          out->meta().active = false;
+        if ((!s.variant->active || s.variant->active_authored) &&
+            !out->meta().active_authored) {
+          out->meta().active = s.variant->active;
           out->meta().active_authored = true;
         }
-        if (s.variant->hidden) {
-          out->meta().hidden = true;
+        // Authored hidden (true OR false) is a real opinion: `hidden = 0`
+        // on the selected option must appear on the composed prim (pxr
+        // parity — flatten emits `hidden = false`).
+        if ((s.variant->hidden || s.variant->hidden_authored) &&
+            !out->meta().hidden_authored) {
+          out->meta().hidden = s.variant->hidden;
           out->meta().hidden_authored = true;
         }
         if (!s.variant->doc.empty() && out->meta().doc().empty()) {

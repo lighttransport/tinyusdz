@@ -144,15 +144,15 @@ void AsciiParser::Impl::ParsePropertyMetadata(const std::string& prop_name) {
   PrimSpec* prim = builder_->current();
 
   while (!Check(TokenType::CloseParen) && !AtEnd()) {
-    // Bare string = doc shorthand (`float x = 1 ( "doc" )`), same as the
-    // prim/layer metadata blocks.
+    // Bare string = property COMMENT (`float x = 1 ( "note" )`) — pxr's only
+    // accepted spelling, same mapping as the prim/layer metadata blocks.
     if (Check(TokenType::String)) {
-      std::string doc;
-      lexer_->expect(TokenType::String, doc);
+      std::string note;
+      lexer_->expect(TokenType::String, note);
       if (prim) {
         PropMeta& dm = prim->ensure_property_meta(prop_name);
-        dm.doc = std::move(doc);
-        dm.authored |= PropMeta::kDoc;
+        dm.comment = std::move(note);
+        dm.authored |= PropMeta::kComment;
       }
       Match(TokenType::Comma);
       continue;

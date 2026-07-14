@@ -1385,6 +1385,44 @@ static void test_variant_inline_property_flags() {
   std::cout << "  OK" << std::endl;
 }
 
+static void test_variant_option_authored_state() {
+  std::cout << "test_variant_option_authored_state..." << std::endl;
+  const std::string root = "/tmp/next_pcp_var_authored_state.usda";
+  {
+    std::ofstream f(root);
+    // Authored `hidden = 0` on the SELECTED option is a real opinion and must
+    // land on the composed prim (pxr flatten emits `hidden = false`); the
+    // unselected option's `hidden = 1` must not leak.
+    f << "#usda 1.0\n"
+         "def Xform \"P\" (\n"
+         "    variants = { string v = \"a\" }\n"
+         "    prepend variantSets = \"v\"\n"
+         ")\n"
+         "{\n"
+         "    variantSet \"v\" = {\n"
+         "        \"a\" ( hidden = 0 ) {\n"
+         "            float inA = 1\n"
+         "        }\n"
+         "        \"b\" ( hidden = 1 ) {\n"
+         "            float inB = 2\n"
+         "        }\n"
+         "    }\n"
+         "}\n";
+  }
+  AssetResolver resolver;
+  resolver.SetWorkingDirectory("/tmp");
+  Stage stage;
+  std::string warn, err;
+  assert(pcp::ComposeStageFromFile(root, resolver, &stage, {}, &warn, &err));
+  const std::string usda = WriteUSDAToString(stage);
+  assert(usda.find("hidden = false") != std::string::npos &&
+         "authored hidden=0 on the selected variant option must compose");
+  assert(usda.find("hidden = true") == std::string::npos &&
+         "unselected option's hidden=1 must not leak");
+  std::remove(root.c_str());
+  std::cout << "  OK" << std::endl;
+}
+
 static void test_variants() {
   std::cout << "test_variants..." << std::endl;
   AssetResolver resolver;
@@ -4131,6 +4169,7 @@ int main() {
   test_inherits_specializes();
   test_variants();
   test_variant_inline_property_flags();
+  test_variant_option_authored_state();
   test_variant_content_key_stable();
   test_variants_v2();
   test_instancing();
