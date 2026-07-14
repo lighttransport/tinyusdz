@@ -24,38 +24,29 @@ namespace experimental {
 // Macros to reduce boilerplate for common light property extraction.
 // These use the same `light`, `fields`, `err` names from the enclosing scope.
 #define EXTRACT_SHADOW_API(light) \
-  if ((light)->shadowEnable.authored()) \
-    if (!ExtractAnimatableDefault((light)->shadowEnable.get_value(), "inputs:shadow:enable", fields, err)) return false; \
-  if ((light)->shadowColor.authored()) \
-    if (!ExtractAnimatableDefault((light)->shadowColor.get_value(), "inputs:shadow:color", fields, err)) return false; \
-  if ((light)->shadowDistance.authored()) \
-    if (!ExtractAnimatableDefault((light)->shadowDistance.get_value(), "inputs:shadow:distance", fields, err)) return false; \
-  if ((light)->shadowFalloff.authored()) \
-    if (!ExtractAnimatableDefault((light)->shadowFalloff.get_value(), "inputs:shadow:falloff", fields, err)) return false; \
-  if ((light)->shadowFalloffGamma.authored()) \
-    if (!ExtractAnimatableDefault((light)->shadowFalloffGamma.get_value(), "inputs:shadow:falloffGamma", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:shadow:enable", (light)->shadowEnable, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:shadow:color", (light)->shadowColor, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:shadow:distance", (light)->shadowDistance, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:shadow:falloff", (light)->shadowFalloff, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:shadow:falloffGamma", (light)->shadowFalloffGamma, fields, err)) return false;
 
 #define EXTRACT_SHAPING_API(light) \
-  if ((light)->shapingFocus.authored()) \
-    if (!ExtractAnimatableDefault((light)->shapingFocus.get_value(), "inputs:shaping:focus", fields, err)) return false; \
-  if ((light)->shapingFocusTint.authored()) \
-    if (!ExtractAnimatableDefault((light)->shapingFocusTint.get_value(), "inputs:shaping:focusTint", fields, err)) return false; \
-  if ((light)->shapingConeAngle.authored()) \
-    if (!ExtractAnimatableDefault((light)->shapingConeAngle.get_value(), "inputs:shaping:cone:angle", fields, err)) return false; \
-  if ((light)->shapingConeSoftness.authored()) \
-    if (!ExtractAnimatableDefault((light)->shapingConeSoftness.get_value(), "inputs:shaping:cone:softness", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:shaping:focus", (light)->shapingFocus, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:shaping:focusTint", (light)->shapingFocusTint, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:shaping:cone:angle", (light)->shapingConeAngle, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:shaping:cone:softness", (light)->shapingConeSoftness, fields, err)) return false;
 
 #define EXTRACT_COMMON_LIGHT(light) \
-  if ((light)->specular.authored()) \
-    if (!ExtractAnimatableDefault((light)->specular.get_value(), "inputs:specular", fields, err)) return false; \
-  if ((light)->diffuse.authored()) \
-    if (!ExtractAnimatableDefault((light)->diffuse.get_value(), "inputs:diffuse", fields, err)) return false; \
-  if ((light)->normalize.authored()) \
-    if (!ExtractAnimatableDefault((light)->normalize.get_value(), "inputs:normalize", fields, err)) return false; \
-  if ((light)->enableColorTemperature.authored()) \
-    if (!ExtractAnimatableDefault((light)->enableColorTemperature.get_value(), "inputs:enableColorTemperature", fields, err)) return false; \
-  if ((light)->colorTemperature.authored()) \
-    if (!ExtractAnimatableDefault((light)->colorTemperature.get_value(), "inputs:colorTemperature", fields, err)) return false;
+  if (!ExtractImageableAttrs((light)->visibility, (light)->purpose, fields, err)) return false; \
+  if (!ExtractXformOpsFromXformable(prim, prim_path, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:intensity", (light)->intensity, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:color", (light)->color, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:exposure", (light)->exposure, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:specular", (light)->specular, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:diffuse", (light)->diffuse, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:normalize", (light)->normalize, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:enableColorTemperature", (light)->enableColorTemperature, fields, err)) return false; \
+  if (!EmitTypedAnimatableAttr("inputs:colorTemperature", (light)->colorTemperature, fields, err)) return false;
 
 bool CrateWriter::ExtractSphereLightProperties(
     const Prim& prim,
@@ -68,14 +59,7 @@ bool CrateWriter::ExtractSphereLightProperties(
     return false;
   }
 
-  if (light->radius.authored())
-    if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
-  if (light->exposure.authored())
-    if (!ExtractAnimatableDefault(light->exposure.get_value(), "inputs:exposure", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:radius", light->radius, fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -95,14 +79,22 @@ bool CrateWriter::ExtractRectLightProperties(
     return false;
   }
 
-  if (light->width.authored())
-    if (!ExtractAnimatableDefault(light->width.get_value(), "inputs:width", fields, err)) return false;
-  if (light->height.authored())
-    if (!ExtractAnimatableDefault(light->height.get_value(), "inputs:height", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:width", light->width, fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:height", light->height, fields, err)) return false;
+
+  // RectLight carries a texture like DomeLight does; it was never written.
+  if (light->file.authored()) {
+    const auto& file_opt = light->file.get_value();
+    if (file_opt) {
+      const Animatable<value::AssetPath>& file_anim = *file_opt;
+      value::AssetPath file_val;
+      if (file_anim.has_default() && file_anim.get_default(&file_val)) {
+        crate::CrateValue crate_val;
+        crate_val.Set(file_val);
+        fields.push_back({"inputs:texture:file", crate_val});
+      }
+    }
+  }
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -122,12 +114,7 @@ bool CrateWriter::ExtractDiskLightProperties(
     return false;
   }
 
-  if (light->radius.authored())
-    if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:radius", light->radius, fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -147,14 +134,8 @@ bool CrateWriter::ExtractCylinderLightProperties(
     return false;
   }
 
-  if (light->radius.authored())
-    if (!ExtractAnimatableDefault(light->radius.get_value(), "inputs:radius", fields, err)) return false;
-  if (light->length.authored())
-    if (!ExtractAnimatableDefault(light->length.get_value(), "inputs:length", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:radius", light->radius, fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:length", light->length, fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -174,12 +155,7 @@ bool CrateWriter::ExtractDistantLightProperties(
     return false;
   }
 
-  if (light->angle.authored())
-    if (!ExtractAnimatableDefault(light->angle.get_value(), "inputs:angle", fields, err)) return false;
-  if (light->intensity.authored())
-    if (!ExtractAnimatableDefault(light->intensity.get_value(), "inputs:intensity", fields, err)) return false;
-  if (light->color.authored())
-    if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("inputs:angle", light->angle, fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -220,8 +196,7 @@ bool CrateWriter::ExtractDomeLightProperties(
     if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
   // guideRadius is parsed (DOME_LIGHT_TYPED_ATTRS) and printed, so emit it too
   // for USDC round-trip parity. Note: no "inputs:" prefix (matches the reader).
-  if (light->guideRadius.authored())
-    if (!ExtractAnimatableDefault(light->guideRadius.get_value(), "guideRadius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("guideRadius", light->guideRadius, fields, err)) return false;
 
   EXTRACT_COMMON_LIGHT(light)
   EXTRACT_SHADOW_API(light)
@@ -313,8 +288,7 @@ bool CrateWriter::ExtractDomeLight1Properties(
   if (light->color.authored())
     if (!ExtractAnimatableDefault(light->color.get_value(), "inputs:color", fields, err)) return false;
 
-  if (light->guideRadius.authored())
-    if (!ExtractAnimatableDefault(light->guideRadius.get_value(), "guideRadius", fields, err)) return false;
+  if (!EmitTypedAnimatableAttr("guideRadius", light->guideRadius, fields, err)) return false;
 
   // Extract poleAxis (uniform token with fallback) - DomeLight_1 specific
   if (light->poleAxis.authored()) {

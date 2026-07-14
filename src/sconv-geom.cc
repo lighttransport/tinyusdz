@@ -476,7 +476,7 @@ bool CrateWriter::ExtractCubeProperties(
     return false;
   }
 
-  if (!EmitTypedAnimatableAttr("size", "double", cube->size, fields, err)) {
+  if (!EmitTypedAnimatableAttr("size", cube->size, fields, err)) {
     return false;
   }
 
@@ -518,36 +518,12 @@ bool CrateWriter::ExtractSphereProperties(
     return false;
   }
 
-  if (!EmitTypedAnimatableAttr("radius", "double", sphere->radius, fields,
+  if (!EmitTypedAnimatableAttr("radius", sphere->radius, fields,
                                err)) {
     return false;
   }
 
   return ExtractGPrimProperties(prim, prim_path, fields, err);
-}
-
-template <typename AttrT>
-bool CrateWriter::EmitTypedAnimatableAttr(const char *name,
-                                          const char *type_name,
-                                          const AttrT &attr,
-                                          crate::FieldValuePairVector &fields,
-                                          std::string *err) {
-  if (attr.authored()) {
-    if (attr.is_value_empty()) {
-      // DECLARED with no value. Emitting attr.get_value() here would emit the
-      // schema fallback -- see EmitAttrDeclaration.
-      sconv_detail::EmitAttrDeclaration(name, type_name, fields);
-    } else if (!ExtractAnimatableDefault(attr.get_value(), name, fields, err)) {
-      return false;
-    }
-    sconv_detail::EmitAttrMetas(name, attr.metas(), fields);
-  }
-
-  // A connection is authored independently of a value, so this sits outside the
-  // authored() branch -- `double radius.connect = </x.y>` with no value at all.
-  sconv_detail::EmitAttrConnections(name, attr, fields);
-
-  return true;
 }
 
 // ============================================================================
@@ -642,10 +618,10 @@ bool CrateWriter::ExtractCylinderProperties(
     return false;
   }
 
-  if (!EmitTypedAnimatableAttr("radius", "double", cylinder->radius, fields, err)) {
+  if (!EmitTypedAnimatableAttr("radius", cylinder->radius, fields, err)) {
     return false;
   }
-  if (!EmitTypedAnimatableAttr("height", "double", cylinder->height, fields, err)) {
+  if (!EmitTypedAnimatableAttr("height", cylinder->height, fields, err)) {
     return false;
   }
 
@@ -675,10 +651,10 @@ bool CrateWriter::ExtractConeProperties(
     return false;
   }
 
-  if (!EmitTypedAnimatableAttr("radius", "double", cone->radius, fields, err)) {
+  if (!EmitTypedAnimatableAttr("radius", cone->radius, fields, err)) {
     return false;
   }
-  if (!EmitTypedAnimatableAttr("height", "double", cone->height, fields, err)) {
+  if (!EmitTypedAnimatableAttr("height", cone->height, fields, err)) {
     return false;
   }
 
@@ -707,10 +683,10 @@ bool CrateWriter::ExtractCapsuleProperties(
     return false;
   }
 
-  if (!EmitTypedAnimatableAttr("radius", "double", capsule->radius, fields, err)) {
+  if (!EmitTypedAnimatableAttr("radius", capsule->radius, fields, err)) {
     return false;
   }
-  if (!EmitTypedAnimatableAttr("height", "double", capsule->height, fields, err)) {
+  if (!EmitTypedAnimatableAttr("height", capsule->height, fields, err)) {
     return false;
   }
 
@@ -857,62 +833,27 @@ bool CrateWriter::ExtractCameraProperties(
     return false;
   }
 
-  // Helper lambda to add float attributes with fallback.
-  // Only writes when the attribute was actually authored.
-  auto add_float_attr = [&](const std::string& name, const TypedAttributeWithFallback<Animatable<float>>& attr) -> bool {
-    if (!attr.authored()) return true;
-    const Animatable<float>& anim = attr.get_value();
-    float scalar_val;
-    if (anim.get_scalar(&scalar_val)) {
-      crate::CrateValue crate_val;
-      crate_val.Set(scalar_val);
-      fields.push_back({name, crate_val});
-    }
-    // Time-sampled scalar (e.g. animated focalLength)
-    if (anim.has_timesamples()) {
-      value::TimeSamples ts;
-      if (const value::TimeSamples *_tsp = anim.get_timesamples_ptr()) {
-        ts = *_tsp;
-      }
-      crate::CrateValue ts_crate_val;
-      ts_crate_val.Set(ts);
-      fields.push_back({name + ".timeSamples", ts_crate_val});
-    }
-    return true;
+  // Camera's float/double attributes all have NON-ZERO schema fallbacks
+  // (focalLength 50, clippingRange (0.1, 1e6), ...), so they must go through
+  // EmitTypedAnimatableAttr, which declines to invent one for an attribute that
+  // was declared without a value. These two lambdas used to hand-roll the
+  // default + timeSamples extraction that ExtractAnimatableDefault already does.
+  auto add_float_attr =
+      [&](const std::string &name,
+          const TypedAttributeWithFallback<Animatable<float>> &attr) -> bool {
+    return EmitTypedAnimatableAttr(name.c_str(), attr, fields, err);
   };
 
-  // Helper lambda to add double attributes with fallback.
-  // Only writes when the attribute was actually authored.
-  auto add_double_attr = [&](const std::string& name, const TypedAttributeWithFallback<Animatable<double>>& attr) -> bool {
-    if (!attr.authored()) return true;
-    const Animatable<double>& anim = attr.get_value();
-    double scalar_val;
-    if (anim.get_scalar(&scalar_val)) {
-      crate::CrateValue crate_val;
-      crate_val.Set(scalar_val);
-      fields.push_back({name, crate_val});
-    }
-    if (anim.has_timesamples()) {
-      value::TimeSamples ts;
-      if (const value::TimeSamples *_tsp = anim.get_timesamples_ptr()) {
-        ts = *_tsp;
-      }
-      crate::CrateValue ts_crate_val;
-      ts_crate_val.Set(ts);
-      fields.push_back({name + ".timeSamples", ts_crate_val});
-    }
-    return true;
+  auto add_double_attr =
+      [&](const std::string &name,
+          const TypedAttributeWithFallback<Animatable<double>> &attr) -> bool {
+    return EmitTypedAnimatableAttr(name.c_str(), attr, fields, err);
   };
 
   // Extract float2 clippingRange
-  if (camera->clippingRange.authored()) {
-    const Animatable<value::float2>& anim = camera->clippingRange.get_value();
-    value::float2 range_val;
-    if (anim.get_scalar(&range_val)) {
-      crate::CrateValue crate_val;
-      crate_val.Set(range_val);
-      fields.push_back({"clippingRange", crate_val});
-    }
+  if (!EmitTypedAnimatableAttr("clippingRange", camera->clippingRange, fields,
+                               err)) {
+    return false;
   }
 
   // Extract exposure (float)
@@ -1894,6 +1835,64 @@ bool CrateWriter::ExtractXformOpsFromXformable(
   return true;
 }
 
+// Every UsdGeomImageable carries `visibility` and `purpose` as TYPED fields, so
+// each writer has to emit them explicitly -- and the ones that forgot dropped
+// them silently on write (Scope, all the lights, Volume, Material/NodeGraph).
+// One shared implementation so a new imageable cannot quietly lose them again.
+bool CrateWriter::ExtractImageableAttrs(
+  const TypedAttributeWithFallback<Animatable<Visibility>>& visibility,
+  const TypedAttributeWithFallback<Purpose>& purpose,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  (void)err;
+
+  // NOTE: an AUTHORED opinion is written even when it equals the schema fallback.
+  // `visibility = "inherited"` is not the same as no opinion at all: an authored
+  // opinion blocks weaker ones during composition, so dropping it because it
+  // "looks like the default" silently changes what the layer means.
+  if (visibility.authored()) {
+    const auto& vis_animatable = visibility.get_value();
+    if (vis_animatable.has_default()) {
+      Visibility vis_val;
+      if (vis_animatable.get_default(&vis_val)) {
+        crate::CrateValue vis_crate_val;
+        vis_crate_val.Set(value::token(to_string(vis_val)));
+        fields.push_back({"visibility", vis_crate_val});
+      }
+    }
+
+    // Animated visibility (TimeSamples). Enum timesamples are stored as int64;
+    // cast back to Visibility and emit token timeSamples for the crate writer.
+    if (vis_animatable.has_timesamples()) {
+      const value::TimeSamples *vis_ts = vis_animatable.get_timesamples_ptr();
+
+      value::TimeSamples ts;
+      const auto &samples = vis_ts->get_samples();
+      for (size_t i = 0; i < samples.size(); i++) {
+        if (samples[i].blocked) {
+          ts.add_blocked_sample(samples[i].t, value::Value());
+        } else if (const int64_t *iv = samples[i].value.as<int64_t>()) {
+          value::token vis_token(to_string(static_cast<Visibility>(*iv)));
+          ts.add_sample(samples[i].t, value::Value(vis_token));
+        }
+      }
+
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({"visibility.timeSamples", ts_crate_val});
+    }
+  }
+
+  if (purpose.authored()) {
+    crate::CrateValue purpose_crate_val;
+    purpose_crate_val.Set(value::token(to_string(purpose.get_value())));
+    fields.push_back({"purpose", purpose_crate_val});
+  }
+
+  return true;
+}
+
 // ============================================================================
 // GPrim Common Property Extraction
 // ============================================================================
@@ -1999,6 +1998,14 @@ bool CrateWriter::ExtractGPrimProperties(
   }
 
   // Extract extent (bounding box) - stored as float3[2] in USD
+  //
+  // `has_value()` is not an authored test: a DECLARED-but-value-less
+  // `float3[] extent` has no value, so the guard skipped it and the declaration
+  // was dropped outright.
+  if (gprim->extent.authored() && gprim->extent.is_value_empty()) {
+    sconv_detail::EmitAttrDeclaration("extent", "float3[]", fields);
+  }
+
   if (gprim->extent.has_value()) {
     auto extent_animatable = gprim->extent.get_value();
     if (extent_animatable && extent_animatable->has_default()) {
@@ -2292,10 +2299,10 @@ bool CrateWriter::ExtractGeomPlaneProperties(
     return false;
   }
 
-  if (!EmitTypedAnimatableAttr("width", "double", plane->width, fields, err)) {
+  if (!EmitTypedAnimatableAttr("width", plane->width, fields, err)) {
     return false;
   }
-  if (!EmitTypedAnimatableAttr("length", "double", plane->length, fields, err)) {
+  if (!EmitTypedAnimatableAttr("length", plane->length, fields, err)) {
     return false;
   }
 
@@ -2328,13 +2335,13 @@ bool CrateWriter::ExtractGeomCylinder1Properties(
     return false;
   }
 
-  if (!EmitTypedAnimatableAttr("height", "double", cylinder->height, fields, err)) {
+  if (!EmitTypedAnimatableAttr("height", cylinder->height, fields, err)) {
     return false;
   }
-  if (!EmitTypedAnimatableAttr("radiusTop", "double", cylinder->radiusTop, fields, err)) {
+  if (!EmitTypedAnimatableAttr("radiusTop", cylinder->radiusTop, fields, err)) {
     return false;
   }
-  if (!EmitTypedAnimatableAttr("radiusBottom", "double", cylinder->radiusBottom, fields, err)) {
+  if (!EmitTypedAnimatableAttr("radiusBottom", cylinder->radiusBottom, fields, err)) {
     return false;
   }
 
@@ -2367,13 +2374,13 @@ bool CrateWriter::ExtractGeomCapsule1Properties(
     return false;
   }
 
-  if (!EmitTypedAnimatableAttr("height", "double", capsule->height, fields, err)) {
+  if (!EmitTypedAnimatableAttr("height", capsule->height, fields, err)) {
     return false;
   }
-  if (!EmitTypedAnimatableAttr("radiusTop", "double", capsule->radiusTop, fields, err)) {
+  if (!EmitTypedAnimatableAttr("radiusTop", capsule->radiusTop, fields, err)) {
     return false;
   }
-  if (!EmitTypedAnimatableAttr("radiusBottom", "double", capsule->radiusBottom, fields, err)) {
+  if (!EmitTypedAnimatableAttr("radiusBottom", capsule->radiusBottom, fields, err)) {
     return false;
   }
 
