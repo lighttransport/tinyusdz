@@ -283,6 +283,7 @@
       prototype_by_key[ik] = prim_path;  // first of its key seeds the prototype
       prototype_of[prim_path] = prim_path;
       instances_by_prototype[prim_path].push_back(prim_path);
+      instance_key_order.push_back(ik);
       return;
     }
     const std::string old_proto = pit->second;

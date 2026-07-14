@@ -16,6 +16,7 @@
     prototype_by_key.clear();
     prototype_of.clear();
     instances_by_prototype.clear();
+    instance_key_order.clear();
 
     const Layer *root = layer_stacks[0].layers[0].get();
     // Root (pseudo-root child) names compose WEAK->STRONG too, like nested
@@ -171,13 +172,27 @@
       if (numbering == PrototypeNumbering::Deterministic) {
         ordered = std::move(protos);
       } else {
-        // UsdcatCompatible: label groups `__Prototype_{rank+1}` in front-order,
-        // then re-sort by label STRING (pxr GetPrototypes() lexicographic sort;
-        // differs from numeric at >9 groups: _1,_10,_2,...).
+        // UsdcatCompatible: pxr ranks prototypes in DISCOVERY order (the
+        // order their instance keys first appeared during the stage walk),
+        // labels them `__Prototype_{rank+1}`, then GetPrototypes() re-sorts
+        // by label STRING (differs from numeric at >9 groups: _1,_10,_2...).
+        std::vector<std::string> front;
+        front.reserve(protos.size());
+        {
+          std::set<std::string> remaining(protos.begin(), protos.end());
+          for (const std::string &ik : instance_key_order) {
+            auto kit = prototype_by_key.find(ik);
+            if (kit == prototype_by_key.end()) continue;
+            if (remaining.erase(kit->second)) front.push_back(kit->second);
+          }
+          for (const std::string &pp : protos) {  // defensive leftovers
+            if (remaining.count(pp)) front.push_back(pp);
+          }
+        }
         std::vector<std::pair<std::string, std::string>> labelled;
-        labelled.reserve(protos.size());
-        for (size_t i = 0; i < protos.size(); ++i)
-          labelled.emplace_back("__Prototype_" + UIntToStr(i + 1), protos[i]);
+        labelled.reserve(front.size());
+        for (size_t i = 0; i < front.size(); ++i)
+          labelled.emplace_back("__Prototype_" + UIntToStr(i + 1), front[i]);
         std::sort(labelled.begin(), labelled.end(),
                   [](const auto &a, const auto &b) { return a.first < b.first; });
         ordered.reserve(labelled.size());

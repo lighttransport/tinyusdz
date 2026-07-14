@@ -217,13 +217,29 @@ async function main() {
   await Promise.all(Array.from({ length: Math.min(a.jobs, inputs.length) }, worker));
   fs.rmSync(tmpdir, { recursive: true, force: true });
 
-  const counts = { pass: 0, diff: 0, 'next-error': 0, 'pxr-error': 0, skip: 0, xfail: 0, xpass: 0 };
+  const counts = { pass: 0, diff: 0, 'next-error': 0, 'pxr-error': 0, skip: 0, xfail: 0, xpass: 0, intentional: 0 };
+  // Entries whose reason is tagged INTENTIONAL: (deliberate tinyusdz behavior,
+  // e.g. lossless unknown-metadata preservation, portable relative asset
+  // paths) or ORACLE- (a pxr bug/nondeterminism/limitation) are PERMANENT:
+  // counted separately and never expected to prune. Burn-down completion =
+  // zero xfail entries outside this bucket.
+  const isPermanent = (rel) => {
+    const reason = xfails.get(rel) || '';
+    return reason.startsWith('INTENTIONAL:') || reason.startsWith('ORACLE-');
+  };
   const failures = [];
   for (const r of results) {
     const listed = xfails.has(r.rel);
     if (r.status === 'pass' || r.status === 'diff' || r.status === 'next-error') {
-      if (listed && r.status === 'pass') { counts.xpass++; counts.pass++; continue; }
-      if (listed) { counts.xfail++; continue; }
+      if (listed && r.status === 'pass') {
+        if (isPermanent(r.rel)) { counts.pass++; continue; }  // oracle flaps
+        counts.xpass++; counts.pass++; continue;
+      }
+      if (listed) {
+        if (isPermanent(r.rel)) counts.intentional++;
+        else counts.xfail++;
+        continue;
+      }
     }
     counts[r.status]++;
     if (r.status === 'diff' || r.status === 'next-error') failures.push(r);
@@ -240,6 +256,7 @@ async function main() {
 
   console.log(`\nnext-vs-pxr flatten diff: ${inputs.length} inputs — ` +
     `${counts.pass} pass (${counts.xpass} xpass), ${counts.xfail} xfail, ` +
+    `${counts.intentional} intentional, ` +
     `${failures.length} FAIL (${counts.diff} diff + ${counts['next-error']} next-error), ` +
     `${counts['pxr-error']} pxr-skip, ${counts.skip} fixture-skip`);
   if (counts.xpass > 0) {
