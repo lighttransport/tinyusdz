@@ -53,7 +53,22 @@ struct Args {
   bool strict_parse = false;
   bool composed = false;
   bool require_all_groups = false;
+  bool verbose = false;
+  bool usdchecker_compat = false;
+  bool root_package_only = false;
+  // Variant sweep (usdchecker parity). With --composed the checker validates
+  // every combination of authored variant selections (capped) unless
+  // --skip-variants; --variants/--variant-sets restrict the sweep.
+  bool skip_variants = false;
+  bool disable_variant_limit = false;
+  bool no_asset_checks = false;
+  std::vector<std::string> variant_sets;  // --variant-sets NAME (repeatable)
+  // Each --variants occurrence is one validation pass of set:variant pairs.
+  std::vector<std::vector<std::pair<std::string, std::string>>>
+      variant_selections;
 };
+
+constexpr size_t kVariantValidationLimit = 1000;
 
 ValidationOptions AllAvailableGroups() {
   return tinyusdz::next::MakeValidateAllOptions();
@@ -86,6 +101,28 @@ void PrintUsage(std::ostream& os) {
         "flattened stage\n"
         "      --require-all-groups\n"
         "                        Fail if a requested group is inapplicable\n"
+        "      --usdchecker-compat\n"
+        "                        Report usdchecker-mapped rules at OpenUSD\n"
+        "                        usdchecker severities (several warnings\n"
+        "                        become errors)\n"
+        "      --no-asset-checks Skip referenceable-asset checks, like\n"
+        "                        usdchecker --noAssetChecks\n"
+        "  -p, --root-package-only\n"
+        "                        Do not follow or validate dependencies\n"
+        "                        outside the given file/package\n"
+        "  -s, --skip-variants   With --composed, validate only the\n"
+        "                        authored variant selections instead of\n"
+        "                        every combination\n"
+        "      --variants LIST   ','-separated set:variant pairs checked\n"
+        "                        together; repeat for separate passes\n"
+        "                        (implies --composed)\n"
+        "      --variant-sets NAME\n"
+        "                        Validate every variant of the named set\n"
+        "                        (repeatable; implies --composed)\n"
+        "      --disable-variant-validation-limit\n"
+        "                        Lift the 1000-combination sweep cap\n"
+        "  -d, --dump-rules      Dump the rule registry (id, group, doc)\n"
+        "  -v, --verbose         Report per-pass progress on stderr\n"
         "      --json            Emit stable machine-readable JSON\n"
         "  -o, --out FILE        Write report to FILE, stdout, or stderr\n"
         "      --max-memory-mb N Bound input/parser memory (default: 1024)\n"
@@ -122,12 +159,41 @@ std::vector<std::string> Split(const std::string& text, char separator) {
   return values;
 }
 
+// Map an OpenUSD usdchecker validator keyword to tinyusdz group names, so
+// `--include-keywords UsdGeomValidators` style invocations work verbatim.
+// Returns an empty list for a non-keyword (regular group name).
+std::vector<std::string> KeywordToGroups(const std::string& keyword) {
+  std::string lower = keyword;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  if (lower == "usdcorevalidators") return {"core"};
+  if (lower == "usdgeomvalidators") return {"geom"};
+  if (lower == "usdshadevalidators") return {"shade"};
+  if (lower == "usdskelvalidators") return {"geom"};   // skel runs under geom
+  if (lower == "usdluxvalidators") return {"lux"};
+  if (lower == "usdphysicsvalidators") return {"physics"};
+  if (lower == "usdutilsvalidators" || lower == "usdzvalidators")
+    return {"package", "crate"};
+  if (lower == "usdgeomsubset") return {"geom", "shade"};
+  return {};
+}
+
 bool SetGroups(const std::string& text, ValidationOptions* groups,
                std::string* error) {
   if (!groups) return false;
   *groups = ValidationOptions();
   groups->core = false;
-  for (const std::string& name : Split(text, ',')) {
+  std::vector<std::string> names;
+  for (const std::string& entry : Split(text, ',')) {
+    const std::vector<std::string> mapped = KeywordToGroups(entry);
+    if (!mapped.empty()) {
+      names.insert(names.end(), mapped.begin(), mapped.end());
+    } else {
+      names.push_back(entry);
+    }
+  }
+  for (const std::string& name : names) {
     bool* flag = nullptr;
     if (name == "core")
       flag = &groups->core;
@@ -201,6 +267,64 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
       args->composed = true;
     } else if (arg == "--require-all-groups") {
       args->require_all_groups = true;
+    } else if (arg == "--usdchecker-compat") {
+      args->usdchecker_compat = true;
+    } else if (arg == "--no-asset-checks" || arg == "--noAssetChecks") {
+      args->no_asset_checks = true;
+    } else if (arg == "-p" || arg == "--root-package-only" ||
+               arg == "--rootPackageOnly") {
+      args->root_package_only = true;
+    } else if (arg == "-s" || arg == "--skip-variants" ||
+               arg == "--skipVariants") {
+      args->skip_variants = true;
+    } else if (arg == "--disable-variant-validation-limit" ||
+               arg == "--disableVariantValidationLimit") {
+      args->disable_variant_limit = true;
+    } else if (arg == "-v" || arg == "--verbose") {
+      args->verbose = true;
+    } else if (arg == "-d" || arg == "--dump-rules" || arg == "--dumpRules") {
+      for (const tinyusdz::next::ValidationRuleInfo& rule :
+           tinyusdz::next::GetValidationRuleTable()) {
+        std::cout << "[" << rule.group << ":" << rule.id << "]:\n"
+                  << "\tDoc: " << rule.doc << "\n";
+      }
+      return ParseArgsResult::ExitSuccess;
+    } else if (arg == "--variants") {
+      std::string value;
+      if (!next_value(arg.c_str(), &value)) {
+        return ParseArgsResult::Error;
+      }
+      std::vector<std::pair<std::string, std::string>> pairs;
+      for (const std::string& entry : Split(value, ',')) {
+        const size_t colon = entry.find(':');
+        if (colon == std::string::npos || colon == 0 ||
+            colon + 1 >= entry.size()) {
+          if (error) {
+            *error = "--variants entries must be set:variant pairs, got '" +
+                     entry + "'";
+          }
+          return ParseArgsResult::Error;
+        }
+        pairs.emplace_back(entry.substr(0, colon), entry.substr(colon + 1));
+      }
+      args->variant_selections.push_back(std::move(pairs));
+      args->composed = true;
+    } else if (arg == "--variant-sets" || arg == "--variantSets") {
+      std::string value;
+      if (!next_value(arg.c_str(), &value)) {
+        return ParseArgsResult::Error;
+      }
+      for (const std::string& name : Split(value, ',')) {
+        if (!name.empty()) args->variant_sets.push_back(name);
+      }
+      args->composed = true;
+    } else if (arg == "--include-keywords" || arg == "--includeKeywords") {
+      // usdchecker spelling of the group selector.
+      std::string value;
+      if (!next_value(arg.c_str(), &value) ||
+          !SetGroups(value, &args->groups, error)) {
+        return ParseArgsResult::Error;
+      }
     } else if (arg == "--core-only") {
       args->groups = ValidationOptions();
     } else if (arg == "--all") {
@@ -254,6 +378,10 @@ ParseArgsResult ParseArgs(int argc, char** argv, Args* args,
   // than silently skipping them while still reporting arkit as checked. (The
   // `--arkit` flag already sets this explicitly.)
   if (args->groups.arkit) args->groups.package = true;
+  // Applied after the loop: --groups/--all/--core-only rebuild the options
+  // struct, which would otherwise silently discard an earlier
+  // --no-asset-checks depending on flag order.
+  args->groups.asset_checks = !args->no_asset_checks;
   return ParseArgsResult::Run;
 }
 
@@ -302,7 +430,8 @@ void WriteJsonString(std::ostream& os, const std::string& value) {
 }
 
 std::string JsonReport(const Args& args, const USDValidationResult& result,
-                       const std::string& parser_warnings, bool valid) {
+                       const std::string& parser_warnings, bool valid,
+                       size_t variant_pass_count, bool variant_limit_hit) {
   std::ostringstream os;
   os << "{\n  \"tool\":\"tusdchecker\",\n  \"spec\":";
   WriteJsonString(os, GetAOUSDCoreSpecVersionString());
@@ -312,6 +441,14 @@ std::string JsonReport(const Args& args, const USDValidationResult& result,
      << ",\n  \"strict\":" << (args.strict ? "true" : "false")
      << ",\n  \"strictParse\":" << (args.strict_parse ? "true" : "false")
      << ",\n  \"composed\":" << (args.composed ? "true" : "false")
+     << ",\n  \"usdcheckerCompat\":"
+     << (args.usdchecker_compat ? "true" : "false")
+     << ",\n  \"assetChecks\":" << (args.no_asset_checks ? "false" : "true")
+     << ",\n  \"rootPackageOnly\":"
+     << (args.root_package_only ? "true" : "false")
+     << ",\n  \"variantPasses\":" << variant_pass_count
+     << ",\n  \"variantLimitHit\":"
+     << (variant_limit_hit ? "true" : "false")
      << ",\n  \"requireAllGroups\":"
      << (args.require_all_groups ? "true" : "false")
      << ",\n  \"requestedGroups\":[";
@@ -1078,6 +1215,173 @@ void AuditLayerTypesRecursive(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Unresolvable authored dependencies (usdchecker MissingReferenceValidator).
+// Filesystem access lives in the tool, not the validation module.
+// ---------------------------------------------------------------------------
+void ValidateDependencyResolution(const Layer& layer,
+                                  const std::string& anchor,
+                                  USDValidationResult* result) {
+  std::unordered_set<std::string> dependencies;
+  CollectLayerDependencies(layer, &dependencies);
+  std::vector<std::string> ordered(dependencies.begin(), dependencies.end());
+  std::sort(ordered.begin(), ordered.end());
+  for (const std::string& authored : ordered) {
+    // Skip URIs, search-path style references, and templated asset paths
+    // (<UDIM>, clip templates) -- they resolve through mechanisms the default
+    // filesystem resolver does not model, exactly like pxr's checker skips
+    // non-file-resolvable identifiers.
+    if (authored.find("://") != std::string::npos ||
+        authored.find('<') != std::string::npos ||
+        authored.find('[') != std::string::npos) {
+      continue;
+    }
+    const std::string resolved = ResolveDependencyPath(anchor, authored);
+    std::error_code ec;
+    if (!std::filesystem::exists(resolved, ec)) {
+      AddIssue(result, USDValidationSeverity::Warning,
+               "core.dependency.unresolvable", "<layer>",
+               "authored dependency `" + authored +
+                   "` does not resolve to an existing file (" + resolved +
+                   ")");
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Variant sweep (usdchecker parity): enumerate authored variant selections.
+// ---------------------------------------------------------------------------
+struct VariantChoice {
+  std::string key;  // prim-scoped compositor override key: "<primPath>{set}"
+  std::string set_name;
+  std::vector<std::string> options;
+};
+
+std::vector<VariantChoice> CollectVariantChoices(const Layer& layer) {
+  std::vector<VariantChoice> choices;
+  for (const auto& prim : layer.prims()) {
+    for (const auto& vset : prim.meta().variantSets()) {
+      VariantChoice choice;
+      choice.key = prim.path().str() + "{" + vset.name + "}";
+      choice.set_name = vset.name;
+      for (const auto& variant : vset.variants) {
+        choice.options.push_back(variant.name);
+      }
+      if (!choice.options.empty()) {
+        choices.push_back(std::move(choice));
+      }
+    }
+  }
+  // Deterministic sweep order regardless of prim-map iteration order.
+  std::sort(choices.begin(), choices.end(),
+            [](const VariantChoice& a, const VariantChoice& b) {
+              return a.key < b.key;
+            });
+  return choices;
+}
+
+// Build the list of override maps to validate. An empty map means "authored
+// selections". `limit_hit` reports cap truncation (never silent).
+std::vector<std::map<std::string, std::string>> BuildVariantPasses(
+    const Args& args, const std::vector<VariantChoice>& choices,
+    bool* limit_hit) {
+  if (limit_hit) *limit_hit = false;
+
+  // Base passes: each --variants occurrence is its own pass; none -> one
+  // empty base.
+  std::vector<std::map<std::string, std::string>> bases;
+  if (args.variant_selections.empty()) {
+    bases.emplace_back();
+  } else {
+    for (const auto& pairs : args.variant_selections) {
+      std::map<std::string, std::string> base;
+      for (const auto& pair : pairs) {
+        base[pair.first] = pair.second;  // bare set-name key
+      }
+      bases.push_back(std::move(base));
+    }
+  }
+
+  // Which choices get swept: all of them by default; only the named sets when
+  // --variant-sets restricts; none when --skip-variants.
+  std::vector<const VariantChoice*> swept;
+  if (!args.skip_variants) {
+    for (const VariantChoice& choice : choices) {
+      if (!args.variant_sets.empty() &&
+          std::find(args.variant_sets.begin(), args.variant_sets.end(),
+                    choice.set_name) == args.variant_sets.end()) {
+        continue;
+      }
+      // Explicit --variants selections pin a set; do not sweep it too.
+      bool pinned = false;
+      for (const auto& base : bases) {
+        if (base.count(choice.set_name)) pinned = true;
+      }
+      if (pinned) continue;
+      // Default sweep (no --variant-sets): every authored set.
+      if (args.variant_sets.empty() && args.variant_selections.empty()) {
+        swept.push_back(&choice);
+      } else if (!args.variant_sets.empty()) {
+        swept.push_back(&choice);
+      }
+    }
+  }
+
+  const size_t cap =
+      args.disable_variant_limit ? SIZE_MAX : kVariantValidationLimit;
+  std::vector<std::map<std::string, std::string>> passes;
+  for (const auto& base : bases) {
+    // Cartesian product over the swept choices, seeded with the base.
+    std::vector<std::map<std::string, std::string>> partial = {base};
+    for (const VariantChoice* choice : swept) {
+      std::vector<std::map<std::string, std::string>> next;
+      for (const auto& current : partial) {
+        for (const std::string& option : choice->options) {
+          if (passes.size() + next.size() >= cap * 2) break;  // soft guard
+          std::map<std::string, std::string> extended = current;
+          extended[choice->key] = option;
+          next.push_back(std::move(extended));
+        }
+      }
+      partial = std::move(next);
+      if (partial.size() > cap) {
+        partial.resize(cap);
+        if (limit_hit) *limit_hit = true;
+      }
+    }
+    for (auto& pass : partial) {
+      if (passes.size() >= cap) {
+        if (limit_hit) *limit_hit = true;
+        break;
+      }
+      passes.push_back(std::move(pass));
+    }
+  }
+  if (passes.empty()) {
+    passes.emplace_back();
+  }
+  return passes;
+}
+
+// Merge `src` into `dst`, dropping issues already present (the same defect
+// reported by several variant passes).
+void MergeDedupedIssues(USDValidationResult* dst,
+                        std::unordered_set<std::string>* seen,
+                        const USDValidationResult& src) {
+  if (!dst || !seen) return;
+  USDValidationResult unique;
+  unique.checked_groups = src.checked_groups;
+  for (const USDValidationIssue& issue : src.issues) {
+    const std::string key =
+        (issue.severity == USDValidationSeverity::Error ? "E|" : "W|") +
+        issue.rule_id + "|" + issue.location + "|" + issue.message;
+    if (seen->insert(key).second) {
+      unique.issues.push_back(issue);
+    }
+  }
+  MergeValidationResults(dst, unique);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1136,9 +1440,12 @@ int main(int argc, char** argv) {
     return kExitError;
   }
 
-  std::unique_ptr<Layer> composed_layer;
-  std::vector<tinyusdz::next::CompositionError> composition_errors;
-  if (args.composed) {
+  // One composition pass per variant combination (usdchecker parity). A
+  // single pass with no overrides reproduces the previous behavior.
+  auto compose_pass =
+      [&](const std::map<std::string, std::string>& variant_overrides,
+          std::vector<tinyusdz::next::CompositionError>* errors)
+      -> std::unique_ptr<Layer> {
     tinyusdz::next::ResolverConfig resolver_config;
     resolver_config.enable_suffix_fallback = !args.strict_parse;
     tinyusdz::next::AssetResolver resolver(resolver_config);
@@ -1146,6 +1453,7 @@ int main(int argc, char** argv) {
     tinyusdz::next::CompositionOptions composition_options;
     composition_options.strict_aousd_conformance = args.strict_parse;
     composition_options.max_layer_memory = max_memory;
+    composition_options.variant_overrides = variant_overrides;
     compositor.SetOptions(composition_options);
     compositor.SetLayerLoader([&](const std::string& resolved_path,
                                   std::string* load_error) {
@@ -1162,16 +1470,83 @@ int main(int argc, char** argv) {
       }
       return std::make_unique<Layer>(loaded->Clone());
     });
-    composed_layer = compositor.Compose(*layer,
-                                        args.input == "-" ? "" : args.input);
-    composition_errors = compositor.GetErrors();
+    std::unique_ptr<Layer> composed =
+        compositor.Compose(*layer, args.input == "-" ? "" : args.input);
+    if (errors) *errors = compositor.GetErrors();
+    return composed;
+  };
+
+  USDValidationResult result;
+  std::vector<tinyusdz::next::CompositionError> composition_errors;
+  size_t variant_pass_count = 1;
+  bool variant_limit_hit = false;
+  bool any_pass_composed = false;
+
+  if (!args.composed) {
+    result = tinyusdz::next::ValidateLayerAgainstAOUSDCore(*layer, args.groups);
+  } else {
+    const std::vector<VariantChoice> choices = CollectVariantChoices(*layer);
+    const std::vector<std::map<std::string, std::string>> passes =
+        BuildVariantPasses(args, choices, &variant_limit_hit);
+    variant_pass_count = passes.size();
+    if (variant_limit_hit) {
+      std::cerr << "tusdchecker: variant combinations exceed the validation "
+                   "limit of "
+                << kVariantValidationLimit << "; validating the first "
+                << passes.size()
+                << " (use --disable-variant-validation-limit to lift)\n";
+    }
+    if (args.verbose && (passes.size() > 1 || !passes[0].empty())) {
+      std::cerr << "tusdchecker: validating " << passes.size()
+                << " variant combination(s)\n";
+    }
+    std::unordered_set<std::string> seen_issue_keys;
+    std::unordered_set<std::string> seen_composition_errors;
+    // usdchecker resolves stage-metadata presence against the ROOT layer; a
+    // composed layer's metas may have merged sublayer opinions, so check the
+    // authored layer here and disable the per-pass check.
+    tinyusdz::next::ValidationOptions pass_groups = args.groups;
+    pass_groups.stage_presence_checks = false;
+    {
+      USDValidationResult presence;
+      tinyusdz::next::ValidateStageMetadataPresence(*layer, args.groups,
+                                                    &presence);
+      MergeDedupedIssues(&result, &seen_issue_keys, presence);
+    }
+    for (size_t pass_index = 0; pass_index < passes.size(); ++pass_index) {
+      if (args.verbose && passes.size() > 1) {
+        std::cerr << "tusdchecker: [" << (pass_index + 1) << "/"
+                  << passes.size() << "]";
+        for (const auto& kv : passes[pass_index]) {
+          std::cerr << ' ' << kv.first << '=' << kv.second;
+        }
+        std::cerr << '\n';
+      }
+      std::vector<tinyusdz::next::CompositionError> pass_errors;
+      std::unique_ptr<Layer> composed =
+          compose_pass(passes[pass_index], &pass_errors);
+      for (auto& composition_error : pass_errors) {
+        const std::string key =
+            composition_error.prim_path + "|" + composition_error.message;
+        if (seen_composition_errors.insert(key).second) {
+          composition_errors.push_back(std::move(composition_error));
+        }
+      }
+      if (!composed) continue;
+      any_pass_composed = true;
+      const USDValidationResult pass_result =
+          tinyusdz::next::ValidateLayerAgainstAOUSDCore(*composed,
+                                                        pass_groups);
+      MergeDedupedIssues(&result, &seen_issue_keys, pass_result);
+    }
   }
 
-  Layer* validation_layer = composed_layer ? composed_layer.get() : layer.get();
-  USDValidationResult result =
-      tinyusdz::next::ValidateLayerAgainstAOUSDCore(*validation_layer,
-                                                    args.groups);
-  if (args.composed && args.groups.core && args.input != "-") {
+  if (args.groups.core && !args.root_package_only && args.input != "-" &&
+      LowerExtension(args.input) != "usdz") {
+    ValidateDependencyResolution(*layer, args.input, &result);
+  }
+  if (args.composed && args.groups.core && !args.root_package_only &&
+      args.input != "-") {
     std::unordered_set<std::string> visited;
     visited.insert(std::filesystem::path(args.input).lexically_normal().string());
     AuditLayerTypesRecursive(*layer, args.input, load_options, &visited,
@@ -1217,7 +1592,7 @@ int main(int argc, char** argv) {
     issue.message = composition_error.message;
     result.issues.push_back(std::move(issue));
   }
-  if (args.composed && !composed_layer && composition_errors.empty()) {
+  if (args.composed && !any_pass_composed && composition_errors.empty()) {
     USDValidationIssue issue;
     issue.severity = USDValidationSeverity::Error;
     issue.rule_id = "core.composition.error";
@@ -1238,6 +1613,9 @@ int main(int argc, char** argv) {
       }
     }
   }
+  if (args.usdchecker_compat) {
+    tinyusdz::next::ApplyUsdcheckerCompatSeverities(&result);
+  }
   const bool warnings_fail =
       args.strict && (result.warning_count() > 0 || !parser_warnings.empty());
   const bool valid = result.ok() && !warnings_fail;
@@ -1257,7 +1635,8 @@ int main(int argc, char** argv) {
   }
 
   if (args.json) {
-    *output << JsonReport(args, result, parser_warnings, valid);
+    *output << JsonReport(args, result, parser_warnings, valid,
+                          variant_pass_count, variant_limit_hit);
   } else {
     *output << "Input: " << args.input << '\n';
     if (!parser_warnings.empty()) {

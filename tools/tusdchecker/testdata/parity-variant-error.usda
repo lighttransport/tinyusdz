@@ -1,0 +1,26 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    defaultPrim = "root"
+)
+def Xform "root" (
+    variants = {
+        string quality = "good"
+    }
+    prepend variantSets = "quality"
+)
+{
+    variantSet "quality" = {
+        "good" {
+        }
+        "bad" {
+            def Material "mat" {
+                def Shader "reader" {
+                    uniform token info:id = "UsdPrimvarReader_float2"
+                    token inputs:varname = "st"
+                }
+            }
+        }
+    }
+}

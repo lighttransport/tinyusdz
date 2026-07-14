@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    defaultPrim = "root"
+)
+def SkelRoot "root"
+{
+    def Skeleton "skel"
+    {
+    }
+    def Mesh "mesh"
+    {
+        rel skel:skeleton = </root/skel>
+    }
+}
