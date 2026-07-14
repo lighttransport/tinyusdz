@@ -139,7 +139,13 @@
         snapshot_pre_clip_props();
       }
     }
-    if (specifier_seen) out->set_specifier(resolved_specifier);
+    if (specifier_seen) {
+      out->set_specifier(resolved_specifier);
+    } else {
+      // No contributing spec at all (e.g. a relocate-arrival "ghost" prim
+      // whose source authored nothing): pxr materializes it as `over`.
+      out->set_specifier(PrimSpecifier::Over);
+    }
     if (clips_snapshot_taken) {
       for (const PropSlot &sl : out->properties().slots()) {
         if (sl.is_relationship()) continue;

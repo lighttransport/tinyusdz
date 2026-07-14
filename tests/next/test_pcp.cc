@@ -137,14 +137,14 @@ static std::shared_ptr<Layer> BuildRootLayer() {
   lb.current()->meta().references.push_back("</Lib/RefModel>");
   lb.current()->meta().instanceable = true;
   lb.end_prim();
-  // Relocate /World/Old -> /World/New (authored on World). pxr only
-  // relocates ARC-INTRODUCED prims (a purely local spec cannot move), so
-  // Old carries a reference; its own local spec opinions are "opinions at
-  // the relocation source" and are ignored per pxr.
-  lb.current()->meta().relocates().push_back({"/World/Old", "/World/New"});
-  lb.begin_prim("Old", "Scope");
-  lb.current()->meta().references.push_back("</Lib/RefModel>");
-  lb.end_prim();  // Old (relocated to New)
+  // Relocate an ARC-INTRODUCED prim (pxr only relocates prims delivered
+  // across a composition arc on an ANCESTOR): RigHost references /Lib/Model,
+  // whose child Inner (Sphere) is relocated to /World/New.
+  lb.current()->meta().relocates().push_back(
+      {"/World/RigHost/Inner", "/World/New"});
+  lb.begin_prim("RigHost", "");
+  lb.current()->meta().references.push_back("</Lib/Model>");
+  lb.end_prim();  // RigHost
   lb.end_prim();  // World
 
   lb.begin_prim("Lib", "Scope");
@@ -1624,10 +1624,10 @@ static void test_relocates() {
   assert(cache.BuildStage(&stage, &warn, &err));
 
   assert(stage.GetPrimAtPath("/World/New").IsValid() && "relocate target missing");
-  assert(!stage.GetPrimAtPath("/World/Old").IsValid() && "relocate source leaked");
-  // Content comes from the reference (Mesh); the local `Scope` spec at the
-  // relocation SOURCE path is ignored (pxr: opinions at relocation source).
-  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Mesh");
+  assert(!stage.GetPrimAtPath("/World/RigHost/Inner").IsValid() &&
+         "relocate source leaked");
+  // Content is the arc-delivered Sphere child of the referenced Model.
+  assert(stage.GetPrimAtPath("/World/New").GetTypeName() == "Sphere");
   std::cout << "  OK" << std::endl;
 }
 
@@ -3549,12 +3549,17 @@ static void test_relocates_in_referenced_layer_stack() {
 static void test_relocate_to_new_root_prim() {
   std::cout << "test_relocate_to_new_root_prim..." << std::endl;
 
+  // The relocate source must be ARC-INTRODUCED (pxr): the reference sits on
+  // the ANCESTOR /Group, delivering the Model child (museum
+  // TrickyInheritsAndRelocatesToNewRootPrim shape).
   auto model = std::make_shared<Layer>();
   {
     LayerBuilder mb(*model);
+    mb.begin_prim("GroupSrc", "Xform");
     mb.begin_prim("Model", "Xform");
     mb.begin_prim("Scope", "Xform");
     mb.add_property("v", Value(int32_t(3)));
+    mb.end_prim();
     mb.end_prim();
     mb.end_prim();
     mb.finalize();
@@ -3564,9 +3569,7 @@ static void test_relocate_to_new_root_prim() {
     rootL->meta().relocates.emplace_back("/Group/Model", "/Model_Renamed");
     LayerBuilder rb(*rootL);
     rb.begin_prim("Group", "Xform");
-    rb.begin_prim("Model", "Xform");
-    rb.current()->meta().references.push_back("@mem_model@</Model>");
-    rb.end_prim();
+    rb.current()->meta().references.push_back("@mem_model@</GroupSrc>");
     rb.end_prim();
     // An `over` at the new root name: authored at the relocate TARGET.
     rb.begin_prim("Model_Renamed", "");

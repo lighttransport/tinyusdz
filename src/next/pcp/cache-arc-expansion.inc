@@ -771,6 +771,10 @@
                   std::string *err) {
     out->push_back(src);
 
+    // A relocation-source anchor: its own specs (and thus their arcs and
+    // variant selections) are prohibited opinions — expand nothing.
+    if (src.suppress_site_specs) return;
+
     const std::vector<SpecRef> &specs = Specs(src.stack_idx, src.site);
     if (specs.empty()) return;
 
@@ -1263,6 +1267,17 @@
         // contributed by arcs into other stacks still honor their own relocates.
         base = DeriveChildSources(psrc, p.name(), p.str(), warn, err, stack,
                                   parent.str());
+      }
+      // The relocation SOURCE itself: this stack's own opinions there are
+      // prohibited (pxr "opinions at relocation source") — including the
+      // spec's ARCS and variant selections, so mark before expansion.
+      if (p.str() == site) {
+        for (Src &b : base) {
+          if (b.stack_idx == stack && b.arc_kind == ArcType::Root &&
+              b.site == site) {
+            b.suppress_site_specs = true;
+          }
+        }
       }
       std::vector<Src> &slot = sources_cache[raw_key(p.str())];
       slot = ExpandList(base, warn, err);

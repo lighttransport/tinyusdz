@@ -22,7 +22,6 @@ supplemental/ErrorInconsistentProperties_root relationship_missing /Inconsistent
 supplemental/ErrorInvalidInstanceTargetPath_root attribute_missing /ConnectionToLocalClass/Instance_1 Attribute "x.connect" at "/ConnectionToLocalClass/Instance_1" exists in file2 but not in file1
 supplemental/ErrorInvalidPreRelocateTargetPath_root attribute_value_mismatch /SublayerRoot Attribute "badAttrA.connect" at "/SublayerRoot" differs: "/SublayerRoot/Anim/Scope.x" vs "/SublayerRoot/Rig/Sco
 supplemental/ErrorInvalidReferenceToRelocationSource_root prim_missing /Good_RefToRelocated/PreReloChild Prim "/Good_RefToRelocated/PreReloChild" exists in file1 but not in file2
-supplemental/ErrorOpinionAtRelocationSource_root key_missing Key "doc" in /CharRig/Anim/Path metadata exists in file1 but not in file2
 supplemental/ErrorOwner_root key_missing Key "hasOwnedSubLayers" in metadata exists in file2 but not in file1
 supplemental/ErrorPermissionDenied_root key_missing Key "permission" in /Parent/Child metadata exists in file2 but not in file1
 supplemental/PayloadsAndAncestralArcs3_root type_mismatch /ReferencePayloadedModel Type mismatch at "/ReferencePayloadedModel": "__AnyType__" vs "Model"
@@ -36,20 +35,19 @@ supplemental/TrickyInheritsAndRelocatesToNewRootPrim_root attribute_missing /Mod
 supplemental/TrickyInheritsAndRelocates_root attribute_missing /Group/Model_Renamed/A Attribute "a_src" at "/Group/Model_Renamed/A" exists in file1 but not in file2
 supplemental/TrickyInheritsInVariants_root prim_missing /Model/Scope/LowClassStuff Prim "/Model/Scope/LowClassStuff" exists in file1 but not in file2
 supplemental/TrickyListEditedTargetPaths_root key_missing Key "permission" in /Permissions/PrivateChild metadata exists in file2 but not in file1
-supplemental/TrickyLocalClassHierarchyWithRelocates_root type_mismatch /C_1/CollisionRig/Body/CollBody/SimRegions/LArm Type mismatch at "/C_1/CollisionRig/Body/CollBody/SimRegions/LArm": "" vs "PepBase"
-supplemental/TrickyMultipleRelocations2_root type_mismatch /ModelGroup/Model_2/Anim/Collider Type mismatch at "/ModelGroup/Model_2/Anim/Collider": "" vs "Scope"
+supplemental/TrickyLocalClassHierarchyWithRelocates_root specifier_mismatch /C_1/CollisionRig/Body/CollBody/SimRegions/LArm Specifier mismatch at "/C_1/CollisionRig/Body/CollBody/SimRegions/LArm": "over" vs
+supplemental/TrickyMultipleRelocations2_root specifier_mismatch /ModelGroup/Model_2/Anim/Collider Specifier mismatch at "/ModelGroup/Model_2/Anim/Collider": "over" vs "def"
 supplemental/TrickyMultipleRelocations5_root prim_missing /Group/Character Prim "/Group/Character" exists in file1 but not in file2
 supplemental/TrickyMultipleRelocationsAndClasses2_root attribute_missing /CharRig/Anim/Legs/LHip/Knee Attribute "JointBlend" at "/CharRig/Anim/Legs/LHip/Knee" exists in file2 but not in file1
 supplemental/TrickyMultipleRelocationsAndClasses_root value_mismatch Value for "prefix" in /HumanRig/rig/Face/EyeLidRig/SymEyeLidRig/Mover metadata differs: "Side" vs "$Side"
-supplemental/TrickyRelocationOfPrimFromVariant_root type_mismatch /Char/Anim/Tail Type mismatch at "/Char/Anim/Tail": "" vs "Scope"
+supplemental/TrickyRelocationOfPrimFromVariant_root specifier_mismatch /Char/Anim/Tail Specifier mismatch at "/Char/Anim/Tail": "over" vs "def"
 supplemental/TrickySpookyInheritsInSymmetricBrowRig_root prim_missing /FaceRig/BrowRig/Anim/LBrow Prim "/FaceRig/BrowRig/Anim/LBrow" exists in file1 but not in file2
-supplemental/TrickySpookyVariantSelectionInClass_root type_mismatch /Char/Anim/LeftLeg Type mismatch at "/Char/Anim/LeftLeg": "" vs "Scope"
+supplemental/TrickySpookyVariantSelectionInClass_root specifier_mismatch /Char/Anim/LeftLeg Specifier mismatch at "/Char/Anim/LeftLeg": "over" vs "def"
 supplemental/TrickyVariantOverrideOfRelocatedPrim_root attribute_value_mismatch /Model/RelocatedSphere/Geom Attribute "x" at "/Model/RelocatedSphere/Geom" differs: "model_default" vs "variant_override"
 supplemental/TrickyVariantWeakerSelection3_root type_mismatch /Model Type mismatch at "/Model": "__AnyType__" vs "Model"
 supplemental/TypicalReferenceToChargroup_root attribute_value_mismatch /Group/Model Attribute "standin_name" at "/Group/Model" differs: "render" vs "sim"
 supplemental/TypicalReferenceToRiggedModel_root attribute_missing /Model Attribute "standin_name" at "/Model" exists in file1 but not in file2
 supplemental/VariantSpecializesAndReferenceSurprisingBehavior_root attribute_value_mismatch /Model/Material_Child Attribute "myInt" at "/Model/Material_Child" differs: "1" vs "0"
-supplemental/bug92827_root specifier_mismatch /Rig/B Specifier mismatch at "/Rig/B": "def" vs "over"
 supplemental/case1_root prim_missing /FergusCloak/rig Prim "/FergusCloak/rig" exists in file1 but not in file2
 tests/usda/anytype-001.usda type_mismatch /bora Type mismatch at "/bora": "__AnyType__" vs ""
 tests/usda/aousd-unknown-property-metadata.usda key_missing Key "extensionLayerProbe" in metadata exists in file1 but not in file2
@@ -62,7 +60,6 @@ tests/usda/payload-deferred-001.usda prim_missing /HighDetailAsset Prim "/HighDe
 tests/usda/purpose-hierarchy-001.usda key_missing Key "purpose" in /PurposeHierarchyTests/RenderPurpose metadata exists in file1 but not in file2
 tests/usda/reference-nested-001.usda prim_missing /BaseGeometry Prim "/BaseGeometry" exists in file1 but not in file2
 tests/usda/reference-offset-001.usda prim_missing /LocalAsset Prim "/LocalAsset" exists in file1 but not in file2
-tests/usda/relocates_basic.usda specifier_mismatch /World/new Specifier mismatch at "/World/new": "def" vs "over"
 tests/usda/sceneLibrary-001.usda key_missing Key "sceneName" in /Root/PrimaryScene metadata exists in file1 but not in file2
 tests/usda/shader-nonconformant-types.usda attribute_value_mismatch /Mtl/Tex Attribute "inputs:file" at "/Mtl/Tex" differs: "@./tex.png@" vs "@/mnt/nvme02/work/tinyusdz-repo/dev/tests/usda/..."
 tests/usda/texture-colorspace-as-meta-000.usda attribute_value_mismatch /knight_rig_file9 Attribute "inputs:file" at "/knight_rig_file9" differs: "@./Textures/brushed_metal_rough_F.png@" vs "@/mnt/
