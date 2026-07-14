@@ -2928,8 +2928,160 @@ void TestMetadataAndListOpFidelity() {
 
 }  // namespace
 
+// Path grammar production matrix: cases DERIVED FROM the §8.3 PEG rules,
+// beyond the spec's own example tables (those are covered verbatim in
+// TestUnicodeAndPaths). Each row exercises one production choice: variant
+// whitespace, chained selections, prim elements resumed after a selection,
+// XID_Continue-leading variant names vs XID_Start-required set names,
+// reserved characters, and relative-vs-absolute property chain arity.
+void TestPathGrammarProductions() {
+  struct PathCase {
+    const char* path;
+    bool valid;
+  };
+  static const PathCase kPathGrammarMatrix[] = {
+      // VariantSelection whitespace forms ("spaces and tabs" per §8.3).
+      {"/City{\tselection\t=\tNewYork\t}", true},
+      {"/City{ selection = }", true},
+      // Chained selections and prim elements resumed after a selection.
+      {"/A{v=x}{w=y}", true},
+      {"/A{v=x}B", true},
+      {"/A{v=x}B/C", true},
+      {"/A{v=x}B.prop", true},
+      {"/A{v=x}.prop", true},
+      // Variant NAMES start at XID_Continue (digits, combining marks);
+      // variant SET names are Identifiers (XID_Start required).
+      {"/A{v=5th}", true},
+      {"/A{v=\xCC\x81x}", true},  // leading combining acute (XID_Continue)
+      {"/A{5v=x}", false},
+      {"/A{v x=y}", false},
+      {"/A{v=x y}", false},
+      {"/A{v=x}", true},
+      {"/A{v=x", false},
+      // ReservedCharacters can never appear inside an Identifier.
+      {"/Prim=Name", false},
+      {"/Pri{m", false},
+      {"/Prim}", false},
+      // Relative forms: parent chains need '/'; '.' never precedes '/'.
+      {".a.b", true},
+      {"..points", false},
+      {"../", false},
+      {"../../", false},
+      {"a/b.p", true},
+      {"a/b.p.q", true},
+      // Absolute paths take at most ONE property element
+      // (PrimFirstPathElements); relative paths permit chains.
+      {"/a/b.p.q", false},
+      {"/.points", false},
+      // Namespaced property elements inside longer paths.
+      {"a/b.ns:prop", true},
+      {"/a.ns:sub:prop", true},
+      {"/a.ns:", false},
+  };
+  for (const PathCase& c : kPathGrammarMatrix) {
+    if (IsValidPathString(c.path) != c.valid) {
+      std::cout << "path grammar mismatch: '" << c.path << "' expected "
+                << (c.valid ? "VALID" : "INVALID") << "\n";
+      assert(false && "path grammar production mismatch");
+    }
+  }
+}
+
+// USDA escape-sequence matrix from the §usda string grammar: Escaped <-
+// Backslash (EscapeSingleCharacter / EscapeHex / EscapeOct). Each authored
+// escape must decode to the exact byte(s), and the decoded value must
+// round-trip byte-identically through the writer and a re-parse.
+void TestEscapeMatrix() {
+  struct EscapeCase {
+    const char* authored;  // inside double quotes in the layer text
+    const char* expected;  // decoded bytes
+  };
+  static const EscapeCase kEscapeMatrix[] = {
+      {"\\a", "\a"},   {"\\b", "\b"},  {"\\f", "\f"},  {"\\n", "\n"},
+      {"\\r", "\r"},   {"\\t", "\t"},  {"\\v", "\v"},  {"\\'", "'"},
+      {"\\\"", "\""},  {"\\x41", "A"}, {"\\x7", "\x07"},
+      {"\\101", "A"},  {"\\7", "\x07"}, {"\\60", "0"},
+      {"pre\\tpost", "pre\tpost"},
+      {"two\\n\\nlines", "two\n\nlines"},
+  };
+  int idx = 0;
+  for (const EscapeCase& c : kEscapeMatrix) {
+    const std::string attr = "e" + std::to_string(idx++);
+    const std::string body = std::string("def Xform \"E\" {\n    string ") +
+                             attr + " = \"" + c.authored + "\"\n}\n";
+    LoadResult r = Parse(body);
+    assert(r.success && "escape case failed to parse");
+    const Layer* layer = r.stage.GetRootLayer();
+    assert(layer);
+    const PrimSpec* spec = layer->prim_at_path("/E");
+    assert(spec);
+    const Value* v = spec->property_value(attr);
+    assert(v && v->as_string());
+    if (*v->as_string() != c.expected) {
+      std::cout << "escape decode mismatch for '" << c.authored << "'\n";
+      assert(false && "escape decode mismatch");
+    }
+    // Round-trip: write and re-parse must preserve the exact bytes.
+    const std::string out = WriteUSDAToString(r.stage);
+    LoadResult back = LoadUSDAFromString(out);
+    assert(back.success && "escape round-trip failed to re-parse");
+    const PrimSpec* spec2 = back.stage.GetRootLayer()->prim_at_path("/E");
+    assert(spec2);
+    const Value* v2 = spec2->property_value(attr);
+    assert(v2 && v2->as_string() && *v2->as_string() == c.expected &&
+           "escape round-trip byte mismatch");
+  }
+}
+
+// Crate version feature matrix: which authored feature forces which minimum
+// crate minor version on WRITE (bootstrap byte 9), and a minor version past
+// the supported window must be REJECTED on read.
+void TestCrateVersionMatrix() {
+  struct VersionCase {
+    const char* body;
+    uint8_t min_minor;  // required minimum written minor version
+  };
+  static const VersionCase kCrateVersionMatrix[] = {
+      // Plain data stays at the writer default (0.8).
+      {"def Xform \"A\" { double v = 1 }\n", 8},
+      // timecode values need 0.9+.
+      {"def Xform \"A\" { timecode t = 5 }\n", 9},
+      {"def Xform \"A\" { timecode[] t = [5, 6] }\n", 9},
+      // layer relocates need 0.11.
+      {"(\n    relocates = { </A/Old>: </A/New> }\n)\ndef Xform \"A\" {\n"
+       "    def Xform \"Old\" {}\n}\n", 11},
+      // splines need 0.12.
+      {"def Xform \"A\" {\n    double v.spline = {\n        1: 1; post held,\n"
+       "    }\n}\n", 12},
+  };
+  for (const VersionCase& c : kCrateVersionMatrix) {
+    LoadResult r = Parse(c.body);
+    assert(r.success && "crate version case failed to parse");
+    std::vector<uint8_t> crate;
+    assert(WriteUSDCToMemory(crate, r.stage).success);
+    assert(crate.size() > 10);
+    const uint8_t minor = crate[9];
+    if (minor < c.min_minor) {
+      std::cout << "crate version too low: got 0." << int(minor)
+                << " need 0." << int(c.min_minor) << "\n";
+      assert(false && "crate feature did not bump the version");
+    }
+    // The written file must load back.
+    USDCLoadResult back = LoadUSDCFromMemory(crate.data(), crate.size());
+    assert(back.success && "versioned crate failed to load back");
+    // An unsupported NEWER minor version must be rejected wholesale.
+    std::vector<uint8_t> future = crate;
+    future[9] = 99;
+    USDCLoadResult rejected = LoadUSDCFromMemory(future.data(), future.size());
+    assert(!rejected.success && "future crate version must be rejected");
+  }
+}
+
 int main() {
   TestUnicodeAndPaths();
+  TestPathGrammarProductions();
+  TestEscapeMatrix();
+  TestCrateVersionMatrix();
   TestLosslessUnsupportedValues();
   TestTypedSplines();
   TestFoundationalTypeMatrix();
