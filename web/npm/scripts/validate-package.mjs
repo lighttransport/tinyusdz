@@ -23,7 +23,8 @@ const REQUIRED_STAGED_FILES = [
   'tinyusdz_64.wasm.zst',
   'TinyUSDZLoader.js',
   'TinyUSDZLoaderUtils.js',
-  'TinyUSDZWorkerLoader.js'
+  'TinyUSDZWorkerLoader.js',
+  'usdzconvert.js'
 ];
 
 function readPublishManifest() {

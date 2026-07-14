@@ -9,6 +9,11 @@ const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..', '..');
 const sourceDir = path.resolve(packageRoot, '..', 'js', 'src', 'tinyusdz');
+// Dependency-free modules that live one directory above sourceDir but are
+// imported by the packaged loaders (e.g. TinyUSDZLoader.js pulls
+// parseUSDZEntries from ../usdzconvert.js). They are staged flat into dist and
+// the staged importers are rewritten from '../<name>' to './<name>'.
+const PARENT_DIR_MODULES = ['usdzconvert.js'];
 const distDir = path.resolve(packageRoot, 'dist');
 const rootEntrypoint = path.resolve(packageRoot, 'index.js');
 const readmePath = path.resolve(packageRoot, 'README.md');
@@ -120,6 +125,25 @@ function main() {
 
   copyFiles(jsFiles, sourceDir, distDir);
   copyFiles(wasmFiles, sourceDir, distDir);
+
+  const parentSourceDir = path.resolve(sourceDir, '..');
+  for (const module of PARENT_DIR_MODULES) {
+    ensureFileExists(path.join(parentSourceDir, module));
+    fs.copyFileSync(path.join(parentSourceDir, module), path.join(distDir, module));
+  }
+  for (const jsFile of jsFiles) {
+    const stagedPath = path.join(distDir, jsFile);
+    let content = fs.readFileSync(stagedPath, 'utf8');
+    let rewritten = content;
+    for (const module of PARENT_DIR_MODULES) {
+      rewritten = rewritten.split(`'../${module}'`).join(`'./${module}'`);
+      rewritten = rewritten.split(`"../${module}"`).join(`"./${module}"`);
+    }
+    if (rewritten !== content) {
+      fs.writeFileSync(stagedPath, rewritten, 'utf8');
+    }
+  }
+
   fs.copyFileSync(rootEntrypoint, path.join(distDir, 'index.js'));
   fs.copyFileSync(readmePath, path.join(distDir, 'README.md'));
   fs.copyFileSync(licensePath, path.join(distDir, 'LICENSE'));
