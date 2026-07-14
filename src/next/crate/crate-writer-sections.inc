@@ -571,7 +571,8 @@
         uint64_t offset = value_start_offset_ + value_offsets_[data_idx];
         field.value_rep = ValueRep::Make(type, offset,
                                          field.value_rep.is_array(), false,
-                                         field.value_rep.is_compressed());
+                                         field.value_rep.is_compressed(),
+                                         field.value_rep.is_array_edit());
       }
       // Patch embedded ValueReps in TimeSamples data blocks
       if (type == CrateTypeId::TimeSamples) {

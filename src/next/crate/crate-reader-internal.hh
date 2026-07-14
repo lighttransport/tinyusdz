@@ -109,6 +109,10 @@ class CrateReader::Impl {
   bool BuildStage();
 
   bool UnpackValue(ValueRep rep, Value& out);
+  // VtArrayEdit rep (crate 0.14): decode the (valuesRep, indexesRep, isDense)
+  // tuple into the structured op list PrimSpec carries. Literal element
+  // values become canonical usda element text (see layer/array-edit.hh).
+  bool UnpackArrayEditData(ValueRep rep, ArrayEditData* out);
   bool UnpackArray(ValueRep rep, Value& out);
 
   bool UnpackBool(ValueRep rep, Value& out);
