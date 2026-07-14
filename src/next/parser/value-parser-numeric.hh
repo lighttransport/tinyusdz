@@ -7,6 +7,7 @@
 
 #include "../../external/fast_float/include/fast_float/fast_float.h"
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <system_error>
@@ -33,9 +34,35 @@ inline T FastFloatParseToken(const std::string& s) {
   return v;
 }
 
-// Strict decimal-integer token check: pxr rejects `int x = 1e3`, hex, and a
-// sign that doesn't match the type — DecimalTo* would silently stop at the
-// first non-digit instead.
+// pxr's usda parser COERCES float literals to integer types, truncating
+// toward zero: `int a = 3.12` -> 3, `int b = 3.12e+1` -> 31, `uint u = -0.5`
+// -> 0. A value out of the target range AFTER truncation is a parse error
+// (`uint u = -1.5`, `int i = 1e20`), as are inf/nan. `hi_excl` is exclusive
+// so the bound is an exactly-representable power of two (2^31, 2^32, ...).
+inline bool CoerceFloatTokenToI64(const std::string& s, double lo,
+                                  double hi_excl, int64_t* out) {
+  double v = 0.0;
+  if (!FastFloatParse(s.data(), s.data() + s.size(), &v)) return false;
+  const double d = std::trunc(v);
+  if (!(d >= lo && d < hi_excl)) return false;  // NaN/inf land here too
+  *out = static_cast<int64_t>(d);
+  return true;
+}
+
+inline bool CoerceFloatTokenToU64(const std::string& s, double hi_excl,
+                                  uint64_t* out) {
+  double v = 0.0;
+  if (!FastFloatParse(s.data(), s.data() + s.size(), &v)) return false;
+  const double d = std::trunc(v);
+  if (!(d >= 0.0 && d < hi_excl)) return false;
+  *out = static_cast<uint64_t>(d);
+  return true;
+}
+
+// Strict decimal-integer token check (used to pick the exact-int fast path;
+// non-matching Number tokens fall back to the float-coercion path above).
+// Also rejects hex and a sign that doesn't match the type — DecimalTo* would
+// silently stop at the first non-digit instead.
 inline bool IsDecimalIntToken(const std::string& s, bool allow_neg) {
   size_t i = 0;
   if (i < s.size() && (s[i] == '+' || (allow_neg && s[i] == '-'))) ++i;
