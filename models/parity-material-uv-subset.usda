@@ -1,0 +1,182 @@
+#usda 1.0
+(
+    doc = """Cross-tool parity fixture: tusdview and tusdrender must interpret ONE
+tydra-next scene the same way. Four coplanar quads in a row, framed head-on by
+`Cam`, each face carrying a different material through a `materialBind` GeomSubset:
+
+    face 0  -> Red      (constant diffuseColor)
+    face 1  -> Green    (constant diffuseColor)
+    face 2  -> Blue     (constant diffuseColor)
+    face 3  -> Quadrants (a texture read through `uvSet1`)
+
+The mesh has TWO UV sets. `st` is the full [0,1] square on every face. `uvSet1` is
+zero everywhere except face 3, where it is a small sub-tile -- [0.6,0.9] x [0.1,0.4]
+-- that lands wholly inside the texture's BOTTOM-RIGHT quadrant. So face 3 renders
+as flat YELLOW, and only if the secondary UV set actually reaches the shader:
+
+  * route the texture to `st` instead (or fall back to uv0) and face 3 shows all
+    four quadrant colors, not flat yellow;
+  * drop uv1 on the way to the GPU and every texel fetch uses one coordinate, so
+    face 3 goes flat in some OTHER color (a corner texel, or the averaged mip).
+
+Both failure modes are real regressions this fixture pins. The camera aperture is
+square on purpose: tusdview derives its FOV from `verticalAperture` and tusdrender
+from `horizontalAperture`, so an anamorphic aperture frames the two tools
+differently and the comparison stops meaning anything.
+
+Driven by tools/tusdrender/tests/run-cross-tool-parity.sh."""
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Mesh "Strip"
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 6, 5,  1, 2, 7, 6,  2, 3, 8, 7,  3, 4, 9, 8]
+        point3f[] points = [
+            (-4, -1, 0), (-2, -1, 0), (0, -1, 0), (2, -1, 0), (4, -1, 0),
+            (-4,  1, 0), (-2,  1, 0), (0,  1, 0), (2,  1, 0), (4,  1, 0)
+        ]
+
+        # The full square on every face. Face 3's texture must NOT sample this.
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+
+        # Zero on the untextured faces; a sub-tile of the bottom-right (yellow)
+        # quadrant on face 3.
+        texCoord2f[] primvars:uvSet1 = [
+            (0, 0), (0, 0), (0, 0), (0, 0),
+            (0, 0), (0, 0), (0, 0), (0, 0),
+            (0, 0), (0, 0), (0, 0), (0, 0),
+            (0.6, 0.1), (0.9, 0.1), (0.9, 0.4), (0.6, 0.4)
+        ] (
+            interpolation = "faceVarying"
+        )
+
+        def GeomSubset "faceRed" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [0]
+            rel material:binding = </World/Red>
+        }
+
+        def GeomSubset "faceGreen" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [1]
+            rel material:binding = </World/Green>
+        }
+
+        def GeomSubset "faceBlue" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [2]
+            rel material:binding = </World/Blue>
+        }
+
+        def GeomSubset "faceTex" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [3]
+            rel material:binding = </World/Quadrants>
+        }
+    }
+
+    def Material "Red"
+    {
+        token outputs:surface.connect = </World/Red/PBR.outputs:surface>
+        def Shader "PBR"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.9, 0.05, 0.05)
+            float inputs:metallic = 0
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "Green"
+    {
+        token outputs:surface.connect = </World/Green/PBR.outputs:surface>
+        def Shader "PBR"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.05, 0.9, 0.05)
+            float inputs:metallic = 0
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "Blue"
+    {
+        token outputs:surface.connect = </World/Blue/PBR.outputs:surface>
+        def Shader "PBR"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.05, 0.05, 0.9)
+            float inputs:metallic = 0
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "Quadrants"
+    {
+        token outputs:surface.connect = </World/Quadrants/PBR.outputs:surface>
+
+        def Shader "PBR"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </World/Quadrants/Base.outputs:rgb>
+            float inputs:metallic = 0
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+
+        def Shader "Reader1"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            token inputs:varname = "uvSet1"
+            float2 outputs:result
+        }
+
+        def Shader "Base"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/parity-quadrants.png@
+            float2 inputs:st.connect = </World/Quadrants/Reader1.outputs:result>
+            token inputs:wrapS = "clamp"
+            token inputs:wrapT = "clamp"
+            float3 outputs:rgb
+        }
+    }
+
+    def DistantLight "Key"
+    {
+        float inputs:intensity = 3
+    }
+
+    # Square aperture: see the note in the doc string above.
+    def Camera "Cam"
+    {
+        float horizontalAperture = 30
+        float verticalAperture = 30
+        float focalLength = 20
+        double3 xformOp:translate = (0, 0, 12)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

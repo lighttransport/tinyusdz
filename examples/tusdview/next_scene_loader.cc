@@ -3195,6 +3195,12 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   struct Batch {
     DrawMeshCPU dm;
     bool anyColor = false;
+    // Same deal for the SECONDARY UV set: a batch gains a uv1 buffer the first
+    // time a mesh that has one joins it. uv0 rides inside DrawVertex, but uv1 is
+    // a parallel array, so it has to be appended by hand or the batched draw ends
+    // up with an EMPTY uv1 -- and every texture routed to the second UV set then
+    // samples a constant instead of the crop it asked for.
+    bool anyUv1 = false;
     // A batch gains skin attributes the first time a SKINNED mesh joins it; the
     // vertices already in it (and every unskinned mesh that joins later) get
     // zero weights, which the vertex shader passes through unskinned. Joint
@@ -3336,6 +3342,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
   auto flushBatch = [&](Batch& b) {
     if (b.dm.vertices.empty()) return;
     if (!b.anyColor) b.dm.vertexColors.clear();
+    if (!b.anyUv1) b.dm.uv1.clear();
     if (b.anySkin && b.dm.jointIdx.size() == b.dm.vertices.size() * 4) {
       // Bone rows are absolute and geomBind/world are already folded into them
       // (BuildNextSkinningFrame), so the batch needs no per-mesh bind matrix and
@@ -3686,6 +3693,7 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
     }
 
     const bool hasC = !loc.vertexColors.empty();
+    const bool hasUv1 = loc.uv1.size() == loc.vertices.size() * 2;
     const bool hasSkin = loc.jointIdx.size() == loc.vertices.size() * 4 &&
                          loc.jointWt.size() == loc.vertices.size() * 4;
     // Give `b` skin attribute arrays sized to the vertices it already holds
@@ -3766,6 +3774,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
         b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
         b.anyColor = true;
       }
+      if (hasUv1 && !b.anyUv1) {
+        b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
+        b.anyUv1 = true;
+      }
       openSkin(b);
       openMorph(b);
       // NOTE: rely on the vectors' amortized (doubling) growth -- an exact
@@ -3785,6 +3797,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
             b.dm.vertexColors.push_back(1.0f);
             b.dm.vertexColors.push_back(1.0f);
           }
+        }
+        if (b.anyUv1) {
+          b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 0] : 0.0f);
+          b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * i + 1] : 0.0f);
         }
       }
       for (uint32_t idx : loc.indices) b.dm.indices.push_back(vbase + idx);
@@ -3812,6 +3828,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
           b.dm.vertexColors.assign(b.dm.vertices.size() * 3, 1.0f);
           b.anyColor = true;
         }
+        if (hasUv1 && !b.anyUv1) {
+          b.dm.uv1.assign(b.dm.vertices.size() * 2, 0.0f);
+          b.anyUv1 = true;
+        }
         openSkin(b);
         openMorph(b);
         std::vector<int> remap(loc.vertices.size(), -1);
@@ -3831,6 +3851,10 @@ bool LoadUSDViaNext(const std::string& path, const LoadOptions& opts,
                 b.dm.vertexColors.push_back(1.0f);
                 b.dm.vertexColors.push_back(1.0f);
               }
+            }
+            if (b.anyUv1) {
+              b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 0] : 0.0f);
+              b.dm.uv1.push_back(hasUv1 ? loc.uv1[2 * vi + 1] : 0.0f);
             }
           }
           return static_cast<uint32_t>(remap[vi]);
