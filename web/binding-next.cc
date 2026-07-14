@@ -3212,6 +3212,7 @@ class RenderStream {
     // a triangulated-corner -> authored-corner remap for face-varying data.
     // Reuse that result instead of independently fan-triangulating n-gons.
     const tr::RenderMesh *converted_mesh = nullptr;
+    tr::RenderMesh mesh_only_triangulation;
     if (render_scene_valid_) {
       const auto it = render_scene_.mesh_by_path.find(prim.GetPath().str());
       if (it != render_scene_.mesh_by_path.end() && it->second >= 0 &&
@@ -3291,6 +3292,50 @@ class RenderStream {
       }
     }
 
+    // meshOnly deliberately skips the full RenderScene conversion, but it
+    // must not fall back to fan triangulation for polygonal meshes. Populate
+    // only the topology needed by the shared robust converter so this path
+    // matches animation/full-scene earcut, quad, winding and hole behavior.
+    if (!converted_mesh &&
+        std::any_of(fvc.begin(), fvc.end(), [](int32_t n) { return n != 3; })) {
+      mesh_only_triangulation.prim_path = prim.GetPath().str();
+      mesh_only_triangulation.points.append(P.data(), P.size());
+      for (int32_t n : fvc) {
+        mesh_only_triangulation.face_vertex_counts.push_back(
+            static_cast<uint32_t>(n));
+      }
+      for (int32_t index : fvi) {
+        mesh_only_triangulation.face_vertex_indices.push_back(
+            static_cast<uint32_t>(index));
+      }
+      if (const tinyusdz::next::Value *orientation =
+              prim.GetPropertyValue("orientation")) {
+        if (const std::string *token = orientation->as_token()) {
+          mesh_only_triangulation.left_handed = (*token == "leftHanded");
+        }
+      }
+      std::vector<int32_t> holes = matInt_(prim, "holeIndices");
+      for (int32_t face : holes) {
+        if (face >= 0 && static_cast<size_t>(face) < fvc.size()) {
+          mesh_only_triangulation.hole_faces.push_back(
+              static_cast<uint32_t>(face));
+        }
+      }
+      std::sort(mesh_only_triangulation.hole_faces.begin(),
+                mesh_only_triangulation.hole_faces.end());
+      tr::ConverterConfig triangulation_config;
+      triangulation_config.mesh.compute_normals = false;
+      triangulation_config.mesh.compute_tangents = false;
+      tr::RenderSceneConverter triangulator(triangulation_config);
+      if (!mesh_only_triangulation.has_alloc_failure() &&
+          triangulator.TriangulateMesh(&mesh_only_triangulation) &&
+          mesh_only_triangulation.is_triangulated &&
+          mesh_only_triangulation.triangulated_face_vertex_indices.size() ==
+              mesh_only_triangulation.triangulated_indices.size()) {
+        converted_mesh = &mesh_only_triangulation;
+      }
+    }
+
     const bool uvFaceVarying = !UV.empty() && uvCount != vtxCount &&
                                (uvCount == faceVtx || !stIdx.empty());
     const bool nFaceVarying = !N.empty() && nCount != vtxCount && nCount == faceVtx;
@@ -3311,7 +3356,7 @@ class RenderStream {
           s_indices_[i] = converted_mesh->triangulated_indices[i];
         }
       } else {
-        triangulate_(fvi, fvc, s_indices_);
+        triangulate_(P, fvi, fvc, s_indices_);
       }
       if (nCount == vtxCount) s_normals_ = std::move(N);
       else computeNormals_(s_points_, s_indices_, s_normals_);
@@ -3364,6 +3409,23 @@ class RenderStream {
       }
       return base + add;
     };
+    auto quadUsesDiagonal13 = [&](size_t base) {
+      if (base > fvi.size() || 4 > fvi.size() - base) return false;
+      const int32_t ids[4] = {fvi[base], fvi[base + 1],
+                              fvi[base + 2], fvi[base + 3]};
+      for (int32_t id : ids) {
+        if (id < 0 || static_cast<size_t>(id) >= vtxCount) return false;
+      }
+      auto distSq = [&](int32_t a, int32_t b) {
+        const size_t ia = static_cast<size_t>(a) * 3;
+        const size_t ib = static_cast<size_t>(b) * 3;
+        const float dx = P[ia] - P[ib];
+        const float dy = P[ia + 1] - P[ib + 1];
+        const float dz = P[ia + 2] - P[ib + 2];
+        return dx * dx + dy * dy + dz * dz;
+      };
+      return distSq(ids[1], ids[3]) < distSq(ids[0], ids[2]);
+    };
 
     // Preserve the pre-existing adaptive behavior unless callers explicitly
     // request an index strategy.
@@ -3402,7 +3464,11 @@ class RenderStream {
         size_t b = 0;
         for (int32_t n : fvc) {
           if (faceSpanAvailable(b, n, faceVtx)) {
-            for (int32_t k = 2; k < n; ++k) {
+            if (n == 4 && quadUsesDiagonal13(b)) {
+              const size_t quad[6] = {b, b + 1, b + 3,
+                                      b + 1, b + 2, b + 3};
+              slots.insert(slots.end(), quad, quad + 6);
+            } else for (int32_t k = 2; k < n; ++k) {
               if (slots.size() > kMaxRenderCorners - 3) {
                 s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
                 if (err) *err = "Mesh exceeds RenderStream triangle-corner limit";
@@ -3548,7 +3614,17 @@ class RenderStream {
       size_t base = 0;
       for (int32_t n : fvc) {
         if (faceSpanAvailable(base, n, faceVtx)) {
-          for (int32_t k = 2; k < n; ++k) {
+          if (n == 4 && quadUsesDiagonal13(base)) {
+            const size_t quad[6] = {base, base + 1, base + 3,
+                                    base + 1, base + 2, base + 3};
+            for (size_t slot : quad) {
+              if (!emit(slot)) {
+                s_points_.clear(); s_normals_.clear(); s_uv_.clear(); s_indices_.clear();
+                if (err) *err = "Mesh exceeds RenderStream emitted-vertex limit";
+                return false;
+              }
+            }
+          } else for (int32_t k = 2; k < n; ++k) {
             if (!emit(base) ||
                 !emit(base + static_cast<size_t>(k) - 1) ||
                 !emit(base + static_cast<size_t>(k))) {
@@ -3922,6 +3998,7 @@ class RenderStream {
   struct MergeAccumulator {
     OutputMesh mesh;
     size_t source_count = 0;
+    int first_source_index = -1;
   };
 
   static size_t triangleIndexCount_(const std::vector<uint32_t> &indices,
@@ -3931,17 +4008,32 @@ class RenderStream {
 
   void flushAccumulator_(MergeAccumulator *acc) {
     if (!acc || acc->source_count == 0) return;
+    if (acc->source_count == 1) {
+      // A singleton is not a merge. Keep the authored mesh and transform
+      // hierarchy instead of baking it into world-space float vertices.
+      OutputMesh out;
+      out.merged = false;
+      out.source_index = acc->first_source_index;
+      outputs_.push_back(std::move(out));
+      acc->mesh = OutputMesh{};
+      acc->source_count = 0;
+      acc->first_source_index = -1;
+      return;
+    }
     acc->mesh.merged = true;
     acc->mesh.name = "merged_material_" + std::to_string(acc->mesh.material_id);
     acc->mesh.prim_path = "/__tinyusdz_next_merged/" + acc->mesh.name + "_" +
                           std::to_string(outputs_.size());
     outputs_.push_back(std::move(acc->mesh));
     stats_.merge_group_count++;
+    stats_.merged_mesh_count += acc->source_count;
     acc->mesh = OutputMesh{};
     acc->source_count = 0;
+    acc->first_source_index = -1;
   }
 
   bool appendToAccumulator_(const tinyusdz::next::UsdPrim &prim,
+                            int source_index,
                             int32_t material_id,
                             bool soup,
                             MergeAccumulator *acc) {
@@ -3958,6 +4050,7 @@ class RenderStream {
     }
     const std::array<double, 16> world = worldMatrixForPrim_(prim);
     if (acc->source_count == 0) {
+      acc->first_source_index = source_index;
       acc->mesh.soup = soup;
       acc->mesh.material_id = material_id;
       acc->mesh.double_sided = matBool_(prim, "doubleSided", false);
@@ -3999,7 +4092,6 @@ class RenderStream {
       }
     }
     acc->source_count++;
-    stats_.merged_mesh_count++;
     return true;
   }
 
@@ -4056,7 +4148,8 @@ class RenderStream {
           (next_vertices > kMaxGroupVertices || next_indices > kMaxGroupIndices)) {
         flushAccumulator_(&acc);
       }
-      if (!appendToAccumulator_(prim, material_id, soup, &acc)) {
+      if (!appendToAccumulator_(prim, static_cast<int>(i), material_id, soup,
+                                &acc)) {
         // Heap too full to merge: flush the group and emit this mesh unmerged.
         flushAccumulator_(&acc);
         OutputMesh out;
@@ -4087,8 +4180,11 @@ class RenderStream {
     return "";
   }
 
-  // Fan-triangulate faceVertexIndices grouped by faceVertexCounts.
-  static void triangulate_(const std::vector<int32_t> &fvi,
+  // Triangulate faceVertexIndices grouped by faceVertexCounts. Quads use the
+  // shorter diagonal, matching the full render converter; larger polygons
+  // retain the bounded fan fallback used by the mesh-only fast path.
+  static void triangulate_(const std::vector<float> &points,
+                           const std::vector<int32_t> &fvi,
                            const std::vector<int32_t> &fvc,
                            std::vector<uint32_t> &out) {
     out.clear();
@@ -4114,12 +4210,36 @@ class RenderStream {
       }
       return base + add;
     };
+    auto quadUsesDiagonal13 = [&](size_t base) {
+      if (base > fvi.size() || 4 > fvi.size() - base) return false;
+      const int32_t ids[4] = {fvi[base], fvi[base + 1],
+                              fvi[base + 2], fvi[base + 3]};
+      const size_t point_count = points.size() / 3;
+      for (int32_t id : ids) {
+        if (id < 0 || static_cast<size_t>(id) >= point_count) return false;
+      }
+      auto distSq = [&](int32_t a, int32_t b) {
+        const size_t ia = static_cast<size_t>(a) * 3;
+        const size_t ib = static_cast<size_t>(b) * 3;
+        const float dx = points[ia] - points[ib];
+        const float dy = points[ia + 1] - points[ib + 1];
+        const float dz = points[ia + 2] - points[ib + 2];
+        return dx * dx + dy * dy + dz * dz;
+      };
+      return distSq(ids[1], ids[3]) < distSq(ids[0], ids[2]);
+    };
     for (int32_t n : fvc) {
       if (!faceSpanAvailable(base, n, fvi.size())) {
         base = advanceFaceBase(base, n);
         continue;
       }
-      for (int32_t k = 2; k < n; ++k) {
+      if (n == 4 && quadUsesDiagonal13(base)) {
+        const size_t corners[6] = {base, base + 1, base + 3,
+                                   base + 1, base + 2, base + 3};
+        for (size_t corner : corners) {
+          out.push_back(static_cast<uint32_t>(fvi[corner]));
+        }
+      } else for (int32_t k = 2; k < n; ++k) {
         const int32_t a = fvi[base];
         const int32_t b = fvi[base + static_cast<size_t>(k) - 1];
         const int32_t c = fvi[base + static_cast<size_t>(k)];

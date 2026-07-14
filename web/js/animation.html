@@ -95,6 +95,34 @@
 			#loadingIndicator.active {
 				display: block;
 			}
+			#progressPanel {
+				display: none;
+				margin-top: 8px;
+				padding-top: 8px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			#progressLabel {
+				font-size: 11px;
+				color: #bbb;
+				margin-bottom: 5px;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
+			#progressTrack {
+				height: 5px;
+				background: rgba(255, 255, 255, 0.14);
+				border-radius: 999px;
+				overflow: hidden;
+			}
+			#progressBar {
+				height: 100%;
+				width: 100%;
+				transform: scaleX(0);
+				transform-origin: left center;
+				background: linear-gradient(90deg, #4CAF50, #6bb6ff);
+				transition: transform 120ms ease-out;
+			}
 		</style>
 	</head>
 	<body>
@@ -109,6 +137,10 @@
 				<span id="loadingIndicator">⏳ Loading...</span>
 			</p>
 			<p><strong>FPS:</strong> <span id="fpsValue">-</span></p>
+			<div id="progressPanel">
+				<div id="progressLabel">Loading...</div>
+				<div id="progressTrack"><div id="progressBar"></div></div>
+			</div>
 			<div id="loadStats" style="display:none; margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.2); font-size:11px; white-space:pre-line; color:#bbb;"></div>
 			<div id="file-controls">
 				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
